@@ -200,6 +200,6 @@ Read [SECURITY.md](SECURITY.md) and the [GitHub watcher guide](docs/github-watch
 [Pipelines](docs/PIPELINES.md) · [Queue scripting](docs/queue-scripting.md) ·
 [GitHub watcher](docs/github-watcher.md) · [Architecture](docs/ARCHITECTURE.md)
 
-Project version: **1.0.0**. Public home: [mengsig/archon](https://github.com/mengsig/archon).
+Project version: **1.0.1**. Public home: [mengsig/archon](https://github.com/mengsig/archon).
 Licensed under [MIT](LICENSE).
 For development, see [CONTRIBUTING.md](CONTRIBUTING.md).

@@ -1,5 +1,56 @@
 # Changelog
 
+## 1.0.1
+
+Gates and questions can now be answered in the orchestrator's chat, so
+Archon is usable from a surface that is only a chat.
+
+### Answering from chat
+
+- `/answer <n> <answer>`, sent to the orchestrator as the whole message,
+  answers a gate or a question. `archond` applies it itself, through the
+  same checks and with the same feed record as `archon answer`, marked
+  `answered from operator chat`. For a proposal or report gate the answer
+  is `approve`, `reject`, or any other text, which is feedback that sends
+  the work back.
+- When a proposal or report gate opens, the orchestrator restates it in
+  chat: what is asked, a short summary, its number and the `/answer` line
+  that answers it.
+- A plain reply to a question the orchestrator asked itself is now recorded
+  by the orchestrator, so the question leaves `archon questions`.
+- This works in the terminal UI, and is what Archon provides for the remote
+  app of an Aether that has one. See
+  [answering in the orchestrator's chat](https://github.com/mengsig/archon/blob/main/docs/guide.md#answering-in-the-orchestrators-chat)
+  and
+  [using Archon from Aether's remote app](https://github.com/mengsig/archon/blob/main/docs/guide.md#using-archon-from-aethers-remote-app).
+
+After updating: run the commands `archon update` prints. The last one,
+`archon orchestrator restart`, gives the orchestrator its new instructions;
+`archond` applies `/answer` without it. Then run `archon setup --resync`,
+which lists the orchestrator's new `record_chat_answer` tool in Archon's
+Aether registration. In shared mode, add `record_chat_answer = "mutation"`
+to the `classes` table of the `archon` MCP server in your Aether config
+instead.
+
+Archon needs the same Aether as before: one that serves a protocol from 14
+to 17.
+
+### Known limitations
+
+- Chat answers are off with `[aether] mode = "shared"`: there, a client
+  that connects with the Aether daemon's `[listen]` token is the same
+  `user` actor as you. `/answer` is refused with that reason; use
+  `archon answer`.
+- Only your own message counts, and only when `/answer` is all of it. The
+  orchestrator cannot answer a gate, and it records a plain reply only for
+  a question it asked itself.
+- A command is applied at most once. If `archond` stops in the instant
+  between reading it and applying it, nothing is answered; the question
+  stays in `archon questions`, so send it again.
+- The remote app has not been tested with Archon. A gate's Lavish page does
+  not open on a phone, there are no push notifications for gates, and a
+  device paired as an observer cannot answer.
+
 ## 1.0.0
 
 First public release.

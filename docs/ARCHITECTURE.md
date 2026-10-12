@@ -139,7 +139,7 @@ daemon also serves 14).
 
 ```json
 {"req":1,"cmd":"hello","protocol_version":17,"client_name":"archon",
- "client_version":"1.0.0","features":[]}
+ "client_version":"1.0.1","features":[]}
 ```
 
 The reply is `Welcome {protocol_version, daemon_version, instance_id,

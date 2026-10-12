@@ -78,7 +78,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "archon"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "archon-aether",
@@ -104,7 +104,7 @@ dependencies = [
 
 [[package]]
 name = "archon-aether"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "archon-aether",
  "archon-core",
@@ -120,7 +120,7 @@ dependencies = [
 
 [[package]]
 name = "archon-bench"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "archon-aether",
@@ -137,7 +137,7 @@ dependencies = [
 
 [[package]]
 name = "archon-client"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "archon-core",
  "serde",
@@ -149,7 +149,7 @@ dependencies = [
 
 [[package]]
 name = "archon-core"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "archon-core",
  "async-trait",
@@ -165,7 +165,7 @@ dependencies = [
 
 [[package]]
 name = "archon-daemon"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "archon-aether",
  "archon-client",
@@ -185,7 +185,7 @@ dependencies = [
 
 [[package]]
 name = "archon-lavish"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "archon-core",
  "serde_json",
@@ -195,7 +195,7 @@ dependencies = [
 
 [[package]]
 name = "archon-mcp"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "archon-client",
  "archon-core",
@@ -209,7 +209,7 @@ dependencies = [
 
 [[package]]
 name = "archon-pipeline"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "archon-core",
  "serde",
@@ -221,7 +221,7 @@ dependencies = [
 
 [[package]]
 name = "archon-queue"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "archon-core",
  "chrono",

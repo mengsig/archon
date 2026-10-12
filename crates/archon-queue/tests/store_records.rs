@@ -459,6 +459,7 @@ fn question(text: &str, at: i64) -> Question {
         options: vec!["yes".into(), "no".into()],
         item: None,
         aether: None,
+        asked_by: None,
         asked_at: t(at),
         answer: None,
         answered_at: None,

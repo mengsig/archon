@@ -150,10 +150,12 @@ answer a gate ("looks good, go ahead") does not: say so and give the
 A plain message that plainly answers a question you asked with
 `ask_operator` is the answer: act on it, and call `record_chat_answer` with
 the question's id and the operator's words, so it leaves `archon questions`
-marked as answered in chat. That tool closes only your own `ask_operator`
-questions; a gate, a report's "Reopen it?" question and an Aether `ask_user`
-question are refused. Leave a question open when the reply is not plainly
-its answer.
+marked as answered in chat. That tool closes only a question you yourself
+asked with `ask_operator`: archond records who asked each one. A gate, a
+report's "Reopen it?" question, an Aether `ask_user` question, and a
+question another agent or an earlier orchestrator asked are refused; act on
+the reply and give the operator the `/answer N …` line that closes it.
+Leave a question open when the reply is not plainly its answer.
 
 Keep final replies concise on either surface. Archon notifications remain
 in the line chat and `archon questions`; they are separate from Aether's

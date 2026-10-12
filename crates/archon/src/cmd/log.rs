@@ -297,6 +297,7 @@ mod tests {
             options: vec![],
             item: item.cloned(),
             aether: None,
+            asked_by: None,
             asked_at: archon_core::now(),
             answer: None,
             answered_at: None,

@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use archon_client::ArchonClient;
+use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::protocol::{ClientKind, ErrorReply, Reply, Request};
 use serde_json::{Value, json};
@@ -243,17 +244,35 @@ fn request_with_caller(
     params: &Value,
 ) -> Result<Request, tools::ToolError> {
     let mut request = tools::to_request(name, arguments)?;
-    if let Request::MessageOrchestrator { caller, .. } | Request::RecordChatAnswer { caller, .. } =
-        &mut request
-    {
-        let raw = params.pointer("/_meta/aether~1agent_id").and_then(Value::as_str)
-            .ok_or_else(|| tools::ToolError(format!("{name} requires Aether caller metadata; set send_caller_meta = true on the archon MCP server and restart the relevant Aether daemon")))?;
-        *caller = Some(
-            archon_core::aether_ids::AetherAgentId::parse(raw)
-                .map_err(|e| tools::ToolError(format!("invalid Aether caller identity: {e}")))?,
-        );
+    let (caller, required) = match &mut request {
+        Request::MessageOrchestrator { caller, .. } | Request::RecordChatAnswer { caller, .. } => {
+            (caller, true)
+        }
+        // Without it the question is still asked, with no recorded asker.
+        Request::AskOperator { caller, .. } => (caller, false),
+        _ => return Ok(request),
+    };
+    assert!(caller.is_none(), "a tool argument never names the caller");
+    *caller = caller_identity(params)?;
+    if required && caller.is_none() {
+        return Err(tools::ToolError(format!(
+            "{name} requires Aether caller metadata; set send_caller_meta = true on the archon MCP server and restart the relevant Aether daemon"
+        )));
     }
     Ok(request)
+}
+
+/// The agent Aether says made this call, when it sent caller metadata.
+fn caller_identity(params: &Value) -> Result<Option<AetherAgentId>, tools::ToolError> {
+    let Some(raw) = params.pointer("/_meta/aether~1agent_id") else {
+        return Ok(None);
+    };
+    let invalid = |why: String| tools::ToolError(format!("invalid Aether caller identity: {why}"));
+    let raw = raw
+        .as_str()
+        .ok_or_else(|| invalid(format!("{raw} is not a string")))?;
+    let caller = AetherAgentId::parse(raw).map_err(|e| invalid(e.to_string()))?;
+    Ok(Some(caller))
 }
 
 /// The result, or an error saying it is too large: one message over Aether's
@@ -408,6 +427,26 @@ mod tests {
         );
         let spoof = json!({"question": question, "answer": "yes", "caller": "agt_2"});
         assert!(request_with_caller("record_chat_answer", spoof, &params).is_err());
+    }
+
+    #[test]
+    fn asking_the_operator_records_only_the_out_of_band_caller() {
+        let args = json!({"text": "Ship to prod?"});
+        let unvouched = request_with_caller("ask_operator", args.clone(), &json!({})).unwrap();
+        assert!(matches!(
+            unvouched,
+            Request::AskOperator { caller: None, .. }
+        ));
+        let params = json!({"_meta": {"aether/agent_id": "agt_1"}});
+        let request = request_with_caller("ask_operator", args.clone(), &params).unwrap();
+        assert!(
+            matches!(request, Request::AskOperator { caller: Some(id), .. } if id.as_str() == "agt_1")
+        );
+        let spoof = json!({"text": "Ship to prod?", "caller": "agt_2"});
+        assert!(request_with_caller("ask_operator", spoof, &json!({})).is_err());
+        let malformed = json!({"_meta": {"aether/agent_id": 7}});
+        let refused = request_with_caller("ask_operator", args, &malformed).unwrap_err();
+        assert!(refused.0.contains("invalid Aether caller identity"));
     }
 
     fn oversized_error(tool: &str) -> String {

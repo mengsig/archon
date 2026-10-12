@@ -51,11 +51,13 @@ pub(super) async fn notify(
 }
 
 /// Record a non-blocking question; the answer comes back as a trigger.
+/// `asked_by` is Aether's word for who called, kept as the question's asker.
 pub(super) async fn ask(
     ctx: &DaemonContext,
     text: &str,
     item: Option<QueueItemId>,
     options: Vec<String>,
+    asked_by: Option<AetherAgentId>,
 ) -> Result<Reply, ArchonError> {
     let text = checked_text(text, "a question")?;
     let options: Vec<String> = options
@@ -75,6 +77,7 @@ pub(super) async fn ask(
         options,
         item,
         aether: None,
+        asked_by,
         asked_at: archon_core::now(),
         answer: None,
         answered_at: None,
@@ -84,7 +87,12 @@ pub(super) async fn ask(
         if let Some(id) = &question.item {
             store.item(id)?;
         }
-        store.insert_question(&question)?
+        let recorded = store.insert_question(&question)?;
+        assert_eq!(
+            recorded.asked_by, question.asked_by,
+            "the store keeps who asked"
+        );
+        recorded
     };
     feed::append(ctx, FeedEntry::Question(question.clone())).await?;
     Ok(Reply::Question(question))
@@ -130,9 +138,9 @@ pub(super) async fn answer(
     Ok(question)
 }
 
-/// The orchestrator's `record_chat_answer`: close a question it asked with
-/// `ask_operator` with what the operator replied in chat. Nothing is routed,
-/// and a question anyone else waits on is refused.
+/// The orchestrator's `record_chat_answer`: close a question this very agent
+/// asked with `ask_operator` with what the operator replied in chat. Nothing
+/// is routed, and a question anyone else asked or waits on is refused.
 pub(super) async fn record_chat_answer(
     ctx: &DaemonContext,
     id: &QuestionId,
@@ -141,11 +149,11 @@ pub(super) async fn record_chat_answer(
 ) -> Result<Reply, ArchonError> {
     let text = checked_text(text, "an answer")?;
     let orchestrator = supervisor::current_orchestrator(ctx).await?;
-    if caller.is_none() || caller != orchestrator.as_ref() {
+    let Some(caller) = caller.filter(|caller| Some(*caller) == orchestrator.as_ref()) else {
         return Err(ArchonError::Forbidden(
             "record_chat_answer is the orchestrator's own tool and needs Aether caller metadata (send_caller_meta = true)".into(),
         ));
-    }
+    };
     let _answering = ctx.answering.lock().await;
     let (question, echo) = {
         let mut store = ctx.store.lock().await;
@@ -154,10 +162,11 @@ pub(super) async fn record_chat_answer(
             return Err(reports::already_closed(&asked));
         }
         if let Some(asker) = other_asker(&mut store, &asked)? {
-            return Err(ArchonError::Forbidden(format!(
-                "Q{} is {asker}, which only the operator answers (`/answer {} …` in chat, or `archon answer`); record_chat_answer closes only a question you asked with ask_operator",
-                asked.number, asked.number
-            )));
+            return Err(only_the_operator_answers(&asked, &format!("is {asker}")));
+        }
+        if asked.asked_by.as_ref() != Some(caller) {
+            let asker = recorded_asker(&asked);
+            return Err(only_the_operator_answers(&asked, &asker));
         }
         let now = archon_core::now();
         let question = store.answer_question(id, &text, now)?;
@@ -171,6 +180,23 @@ pub(super) async fn record_chat_answer(
     assert!(!question.is_open(), "a recorded answer closes its question");
     feed::publish(ctx, vec![echo]);
     Ok(Reply::Question(question))
+}
+
+/// The refusal of a question the caller did not ask; `whose` completes "Q3 …".
+fn only_the_operator_answers(question: &Question, whose: &str) -> ArchonError {
+    let number = question.number;
+    assert!(number > 0, "a stored question is numbered");
+    ArchonError::Forbidden(format!(
+        "Q{number} {whose}, which only the operator answers (`/answer {number} …` in chat, or `archon answer`); record_chat_answer closes only a question you asked with ask_operator"
+    ))
+}
+
+/// How a refusal names the asker of a question the caller does not own.
+fn recorded_asker(question: &Question) -> String {
+    match &question.asked_by {
+        Some(agent) => format!("was asked by another agent ({agent})"),
+        None => "has no recorded asker".to_owned(),
+    }
 }
 
 /// Who waits on `question`, if it is not one the orchestrator asked with

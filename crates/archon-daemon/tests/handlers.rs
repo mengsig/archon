@@ -543,6 +543,7 @@ async fn only_open_blocking_questions_for_live_stage_agents_derive_a_wait() {
         options: vec![],
         item: Some(item.id.clone()),
         aether: None,
+        asked_by: None,
         asked_at: archon_core::now(),
         answer: None,
         answered_at: None,

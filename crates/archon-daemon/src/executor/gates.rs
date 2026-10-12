@@ -120,6 +120,7 @@ pub(super) async fn announce(ctx: &DaemonContext, key: &GateKey) -> Result<Follo
         options: GATE_OPTIONS.iter().map(|o| (*o).to_owned()).collect(),
         item: Some(item.id.clone()),
         aether: None,
+        asked_by: None,
         asked_at: archon_core::now(),
         answer: None,
         answered_at: None,

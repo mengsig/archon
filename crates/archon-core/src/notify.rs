@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Timestamp;
-use crate::aether_ids::AetherQuestionRef;
+use crate::aether_ids::{AetherAgentId, AetherQuestionRef};
 use crate::id::{FeedItemId, NotificationId, PipelineRunId, QuestionId, QueueItemId, ReportId};
 
 /// The orchestrator's `notify(kind=...)` vocabulary.
@@ -58,6 +58,10 @@ pub struct Question {
     /// Set when the question came from Aether's `ask_user`; the answer then
     /// goes back through `reply_to_question` instead of a trigger.
     pub aether: Option<AetherQuestionRef>,
+    /// The agent whose `ask_operator` recorded this, from Aether's caller
+    /// metadata. `None` when nobody vouched for the asker; never the operator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asked_by: Option<AetherAgentId>,
     pub asked_at: Timestamp,
     pub answer: Option<String>,
     pub answered_at: Option<Timestamp>,
@@ -242,6 +246,7 @@ mod tests {
             options: options.iter().map(|o| (*o).to_owned()).collect(),
             item: None,
             aether: None,
+            asked_by: None,
             asked_at: crate::now(),
             answer: None,
             answered_at: None,

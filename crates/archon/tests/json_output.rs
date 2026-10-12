@@ -182,6 +182,7 @@ impl Canned {
             options: vec!["yes".into(), "no".into()],
             item: None,
             aether: None,
+            asked_by: None,
             asked_at: now,
             answer: None,
             answered_at: None,

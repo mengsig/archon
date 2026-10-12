@@ -136,7 +136,8 @@ async fn handle_operator(ctx: &DaemonContext, request: Request) -> Result<Reply,
             text,
             item,
             options,
-        } => operator::ask(ctx, &text, item, options).await,
+            caller,
+        } => operator::ask(ctx, &text, item, options, caller).await,
         Request::Answer { question, text } => {
             answer_question(ctx, &question, &text, AnswerVia::Archon)
                 .await

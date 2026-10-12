@@ -940,7 +940,8 @@ mod tests {
              plain text and answers nothing.",
             "You have no tool that answers a proposal or report gate, and you never pass one on \
              the operator's behalf.",
-            "That tool closes only your own `ask_operator` questions",
+            "That tool closes only a question you yourself asked with `ask_operator`: archond \
+             records who asked each one.",
             "`gate_opened`: a proposal or report gate now waits for the operator.",
             "never as the only way to answer",
             "`chat_answer`: what the daemon did with an operator `/answer`",

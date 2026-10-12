@@ -407,6 +407,7 @@ async fn an_operator_chat_command_is_applied_once_through_the_pump() {
         text: "Ship to prod?".into(),
         item: None,
         options: vec![],
+        caller: None,
     };
     let reply = handlers::handle(&harness.ctx, ClientKind::ArchonCli, ask).await;
     let Ok(Reply::Question(asked)) = reply else {

@@ -264,8 +264,12 @@ number picks that option.
   works as before, and the orchestrator now records it, so the question
   leaves `archon questions`, marked
   `answered in chat, recorded by the orchestrator`. It can do that only for
-  its own questions, never for a gate. This depends on the orchestrator
-  following its instructions; `archon answer <n> …` always closes it.
+  a question it asked itself, never for a gate: archond stores which agent
+  asked each question and refuses any other, including one another agent
+  asked, one asked before `archon orchestrator restart` replaced the
+  orchestrator, and one asked before this version. This depends on the
+  orchestrator following its instructions; `/answer <n> …` or
+  `archon answer <n> …` always closes it.
 - With `[aether] mode = "shared"` chat answers are **off**: in a shared
   Aether instance a client that connects with the `[listen]` token is the
   same `user` actor as you, so a chat command would widen who can pass a

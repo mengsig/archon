@@ -68,6 +68,7 @@ fn populate(store: &mut Store) -> (Vec<QueueItem>, archon_core::run::PipelineRun
         options: vec![],
         item: Some(a.id.clone()),
         aether: None,
+        asked_by: None,
         asked_at: t(3),
         answer: None,
         answered_at: None,

@@ -135,6 +135,7 @@ mod tests {
             options: options.iter().map(|o| (*o).to_owned()).collect(),
             item: None,
             aether: None,
+            asked_by: None,
             asked_at: archon_core::now() - Duration::seconds(age_secs),
             answer: None,
             answered_at: None,

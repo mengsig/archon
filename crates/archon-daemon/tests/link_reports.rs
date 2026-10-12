@@ -806,6 +806,7 @@ async fn an_answer_to_an_orphan_about_an_unrecorded_page_closes_it() {
         options: vec!["reopen".into(), "leave it closed".into()],
         item: None,
         aether: None,
+        asked_by: None,
         asked_at: archon_core::now(),
         answer: None,
         answered_at: None,

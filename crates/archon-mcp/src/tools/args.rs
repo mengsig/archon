@@ -476,6 +476,7 @@ fn ask_operator(args: &mut Args) -> Result<Request, ToolError> {
         text: args.required_text("text")?,
         item: args.optional("item")?,
         options: args.text_list("options")?,
+        caller: None,
     })
 }
 

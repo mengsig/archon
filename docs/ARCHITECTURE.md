@@ -634,7 +634,8 @@ orchestrator sees all of Archon's tools. Guarded stages now expose only
 ### 5.2 Questions
 
 - `ask_operator` (MCP) does not block. `archond` records a `Question` and a
-  feed entry. When the operator answers (`archon answer <q> <text>` or
+  feed entry, with the caller Aether vouched for as its `asked_by` when the
+  call carried caller metadata. When the operator answers (`archon answer <q> <text>` or
   `/answer` in chat), `archond` triggers the orchestrator with
   `operator_answer`.
 - The store gives every `Question` a permanent `number` as it records it
@@ -706,10 +707,16 @@ orchestrator asked with `ask_operator` once the operator's plain chat reply
 answered it, with the operator's words and `AnswerVia::ChatReply`. Nothing is
 routed and no `operator_answer` follows, since the orchestrator read the
 reply itself. The caller must be the current orchestrator, by Aether's
-out-of-band caller identity (§5.5). A question anyone else waits on is
-`forbidden`: an Aether `ask_user` question, an operator gate's question, and
-a report's "Reopen it?" question, the three cases the answer path routes
-elsewhere. The orchestrator therefore has no way to answer a gate.
+out-of-band caller identity (§5.5), and must be the agent that asked:
+`ask_operator` stores that same caller identity on the `Question`
+(`asked_by`), and the two ids have to match. A question another agent asked,
+one an earlier orchestrator generation asked, and one with no recorded asker
+(asked without caller metadata, or stored before `asked_by` existed) are
+`forbidden`; unknown ownership never authorises closing. So is a question
+anyone else waits on: an Aether `ask_user` question, an operator gate's
+question, and a report's "Reopen it?" question, the three cases the answer
+path routes elsewhere. The orchestrator therefore has no way to answer a
+gate, and the operator's `/answer` or `archon answer` closes what it cannot.
 
 ### 5.3 Spend
 
@@ -1667,8 +1674,8 @@ id.
 | `cost_report` | `{since?, until?, by?: day\|repo\|pipeline\|model\|item\|stage}` | `CostReport` (§5.3) |
 | `pause` / `resume` | `{scope: "global"\|"repo"\|"pipeline", name?}` | `Pause` / `Resume` |
 | `notify` | `{kind: question\|decision\|blocker\|outcome\|progress, text, item?}` | `Notify` |
-| `ask_operator` | `{text, item?, options?}` | `AskOperator` |
-| `record_chat_answer` | `{question, answer}` | `RecordChatAnswer` (the orchestrator only, and only its own `ask_operator` questions; §5.2) |
+| `ask_operator` | `{text, item?, options?}` | `AskOperator` (Aether's caller identity, when sent, is stored as the question's asker; §5.2) |
+| `record_chat_answer` | `{question, answer}` | `RecordChatAnswer` (the orchestrator only, and only `ask_operator` questions it asked itself; §5.2) |
 | `publish_report` | `{title, path (.html or .htm), item?}` | `PublishReport` |
 | `autonomy_policy` | `{repo?}` | `Autonomy` |
 | `set_directive` | `{text, expires_in_hours?}` | `SetDirective` |

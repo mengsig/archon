@@ -599,10 +599,11 @@ fn record_chat_answer() -> ToolDefinition {
         "Record chat answer",
         "Close a question you asked with ask_operator once the operator has plainly answered it \
          in chat and you are acting on that answer: it leaves `archon questions`, recorded as \
-         answered in chat with their words. Only for your own ask_operator questions; a gate or \
-         any other question is refused, because only the operator answers those. No \
-         operator_answer trigger follows. Requires Aether caller metadata \
-         (send_caller_meta = true).",
+         answered in chat with their words. Only for a question you yourself asked with \
+         ask_operator, as recorded when you asked it; a gate, another agent's or an earlier \
+         orchestrator's question, or one with no recorded asker is refused, because only the \
+         operator answers those. No operator_answer trigger follows. Requires Aether caller \
+         metadata (send_caller_meta = true).",
         object(
             json!({
                 "question": {"type": "string", "description": "The question id (`q_…`) ask_operator returned."},

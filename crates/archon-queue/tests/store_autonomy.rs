@@ -193,6 +193,7 @@ fn gate_question(run: &PipelineRun, at: i64) -> Question {
         options: vec!["yes".into(), "reject".into()],
         item: Some(run.item.clone()),
         aether: None,
+        asked_by: None,
         asked_at: t(at),
         answer: None,
         answered_at: None,

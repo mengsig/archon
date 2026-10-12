@@ -110,16 +110,26 @@ async fn question(h: &Harness, id: &QuestionId) -> Question {
     h.ctx.store.lock().await.question(id).expect("question")
 }
 
+/// The orchestrator's `ask_operator`, as Aether's caller metadata vouches.
 async fn ask(h: &Harness, text: &str, options: &[&str]) -> Question {
+    ask_as(h, Some(ORCH), text, options).await
+}
+
+/// An `ask_operator` over MCP that Aether attributes to `caller`, if anyone.
+async fn ask_as(h: &Harness, caller: Option<&str>, text: &str, options: &[&str]) -> Question {
     let request = Request::AskOperator {
         text: text.into(),
         item: None,
         options: options.iter().map(|o| (*o).to_owned()).collect(),
+        caller: caller.map(|id| AetherAgentId::parse(id).unwrap()),
     };
-    match h.cli(request).await.expect("ask") {
-        Reply::Question(question) => question,
-        other => panic!("ask replied {other:?}"),
-    }
+    let reply = handlers::handle(&h.ctx, ClientKind::ArchonMcp, request).await;
+    let Ok(Reply::Question(asked)) = reply else {
+        panic!("ask replied {reply:?}")
+    };
+    assert_eq!(asked.asked_by.as_ref().map(AetherAgentId::as_str), caller);
+    assert_eq!(question(h, &asked.id).await, asked, "stored as replied");
+    asked
 }
 
 async fn enqueue(h: &Harness, title: &str, autonomy: AutonomyPatch) -> QueueItem {
@@ -740,6 +750,71 @@ async fn assert_only_the_operator_answers(h: &Harness, asked: &Question, asker: 
         matches!(forbidden, Err(ArchonError::Forbidden(_))),
         "{asker}: {forbidden:?}"
     );
+}
+
+#[tokio::test]
+async fn the_orchestrator_cannot_close_a_question_another_agent_asked() {
+    let h = harness(AetherMode::Dedicated).await;
+    let theirs = ask_as(&h, Some("agt_stage"), "Which branch?", &[]).await;
+    assert_only_the_operator_answers(&h, &theirs, "was asked by another agent (agt_stage)").await;
+    let asker = record(&h, ClientKind::ArchonMcp, &theirs.id, Some("agt_stage")).await;
+    assert!(
+        matches!(asker, Err(ArchonError::Forbidden(_))),
+        "not the orchestrator: {asker:?}"
+    );
+    assert!(question(&h, &theirs.id).await.is_open());
+}
+
+#[tokio::test]
+async fn a_question_with_no_recorded_asker_is_never_the_orchestrators() {
+    let h = harness(AetherMode::Dedicated).await;
+    let unvouched = ask_as(&h, None, "Which branch?", &[]).await;
+    assert_only_the_operator_answers(&h, &unvouched, "has no recorded asker").await;
+
+    // A row written before questions recorded their asker has no such key.
+    let mut legacy = serde_json::to_value(&unvouched).unwrap();
+    assert!(legacy.get("asked_by").is_none(), "{legacy}");
+    legacy["id"] = json!(QuestionId::new());
+    legacy["number"] = json!(0);
+    let legacy: Question = serde_json::from_value(legacy).unwrap();
+    let legacy = h.ctx.store.lock().await.insert_question(&legacy).unwrap();
+    assert_eq!(legacy.asked_by, None);
+    assert_only_the_operator_answers(&h, &legacy, "has no recorded asker").await;
+}
+
+/// The reviewer's case: a question asked before this orchestrator existed.
+#[tokio::test]
+async fn a_new_orchestrator_cannot_close_what_was_asked_before_it() {
+    const NEXT: &str = "agt_new_orchestrator";
+    let h = harness(AetherMode::Dedicated).await;
+    let unvouched = ask_as(&h, None, "Which branch?", &[]).await;
+    let predecessors = ask(&h, "Ship to prod?", &[]).await;
+    let mut store = h.ctx.store.lock().await;
+    store.kv_set(keys::ORCHESTRATOR_AGENT, NEXT).expect("kv");
+    drop(store);
+
+    for (asked, asker) in [
+        (&unvouched, "has no recorded asker"),
+        (&predecessors, "was asked by another agent (agt_orch)"),
+    ] {
+        let refused = record(&h, ClientKind::ArchonMcp, &asked.id, Some(NEXT)).await;
+        let Err(ArchonError::Forbidden(why)) = refused else {
+            panic!("{asker}: {refused:?}")
+        };
+        assert!(why.contains(asker), "{why}");
+        assert!(question(&h, &asked.id).await.is_open(), "{asker}");
+    }
+    let retired = record(&h, ClientKind::ArchonMcp, &predecessors.id, Some(ORCH)).await;
+    assert!(
+        matches!(retired, Err(ArchonError::Forbidden(_))),
+        "a retired orchestrator records nothing: {retired:?}"
+    );
+    assert!(answers(&h, &predecessors.id).await.is_empty());
+
+    let own = ask_as(&h, Some(NEXT), "And the changelog?", &[]).await;
+    let recorded = record(&h, ClientKind::ArchonMcp, &own.id, Some(NEXT)).await;
+    assert!(matches!(recorded, Ok(Reply::Question(_))), "{recorded:?}");
+    assert!(!question(&h, &own.id).await.is_open());
 }
 
 #[tokio::test]

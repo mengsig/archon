@@ -171,6 +171,15 @@ pub enum Request {
         question: QuestionId,
         text: String,
     },
+    /// The orchestrator records that the operator answered, in chat, a
+    /// question it asked with `ask_operator`. Never a gate's question.
+    RecordChatAnswer {
+        question: QuestionId,
+        /// The operator's words.
+        answer: String,
+        /// Aether's out-of-band MCP caller identity, never a tool argument.
+        caller: Option<AetherAgentId>,
+    },
     ListQuestions {
         open_only: bool,
     },

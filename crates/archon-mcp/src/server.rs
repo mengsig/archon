@@ -243,9 +243,11 @@ fn request_with_caller(
     params: &Value,
 ) -> Result<Request, tools::ToolError> {
     let mut request = tools::to_request(name, arguments)?;
-    if let Request::MessageOrchestrator { caller, .. } = &mut request {
+    if let Request::MessageOrchestrator { caller, .. } | Request::RecordChatAnswer { caller, .. } =
+        &mut request
+    {
         let raw = params.pointer("/_meta/aether~1agent_id").and_then(Value::as_str)
-            .ok_or_else(|| tools::ToolError("message_orchestrator requires Aether caller metadata; set send_caller_meta = true on the archon MCP server and restart the relevant Aether daemon".into()))?;
+            .ok_or_else(|| tools::ToolError(format!("{name} requires Aether caller metadata; set send_caller_meta = true on the archon MCP server and restart the relevant Aether daemon")))?;
         *caller = Some(
             archon_core::aether_ids::AetherAgentId::parse(raw)
                 .map_err(|e| tools::ToolError(format!("invalid Aether caller identity: {e}")))?,
@@ -363,6 +365,7 @@ fn how_to_check(request: &Request) -> String {
     match request {
         Request::MessageOrchestrator { .. } => "the message may already be recorded; check the item's archon log before repeating it, and keep working on your stage".into(),
         Request::GithubReply { thread, .. } => thread.check_before_retry(),
+        Request::RecordChatAnswer { .. } => "the answer may already be recorded; a repeat is then refused as already answered, which is the confirmation".into(),
         _ => "the change may already have been applied, so check with list_queue or get_item \
               before repeating it (an enqueue repeated with the same idempotency_key is always \
               safe)"
@@ -385,6 +388,26 @@ mod tests {
         );
         let spoof = json!({"text": "hello", "_meta": {"aether/agent_id": "agt_2"}});
         assert!(request_with_caller("message_orchestrator", spoof, &params).is_err());
+    }
+
+    #[test]
+    fn recording_a_chat_answer_takes_its_caller_out_of_band_only() {
+        let question = archon_core::id::QuestionId::new().to_string();
+        let args = json!({"question": question, "answer": "yes"});
+        let refused = request_with_caller("record_chat_answer", args.clone(), &json!({}));
+        assert!(
+            refused
+                .unwrap_err()
+                .0
+                .contains("record_chat_answer requires Aether caller")
+        );
+        let params = json!({"_meta": {"aether/agent_id": "agt_1"}});
+        let request = request_with_caller("record_chat_answer", args, &params).unwrap();
+        assert!(
+            matches!(request, Request::RecordChatAnswer { caller: Some(id), .. } if id.as_str() == "agt_1")
+        );
+        let spoof = json!({"question": question, "answer": "yes", "caller": "agt_2"});
+        assert!(request_with_caller("record_chat_answer", spoof, &params).is_err());
     }
 
     fn oversized_error(tool: &str) -> String {

@@ -63,9 +63,76 @@ pub struct Question {
     pub answered_at: Option<Timestamp>,
 }
 
+/// How the operator names a question: `2`, `Q2` or `q_01J…`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QuestionRef {
+    Number(u64),
+    Id(QuestionId),
+}
+
+impl QuestionRef {
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let digits = text.strip_prefix(['Q', 'q']).unwrap_or(text);
+        if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
+            return match digits.parse::<u64>() {
+                Ok(n) if n > 0 => Ok(Self::Number(n)),
+                _ => Err(format!(
+                    "{text:?} is not a question number (they start at 1)"
+                )),
+            };
+        }
+        QuestionId::parse(text)
+            .map(Self::Id)
+            .map_err(|_| format!("{text:?} is neither a question number nor a q_… id"))
+    }
+}
+
 impl Question {
     pub fn is_open(&self) -> bool {
         self.answer.is_none()
+    }
+
+    /// The answer text to record: a bare number picks that option when the
+    /// question offered options; anything else is taken as typed.
+    pub fn expand_option(&self, text: &str) -> String {
+        let text = text.trim();
+        let picked = text
+            .parse::<usize>()
+            .ok()
+            .and_then(|n| n.checked_sub(1))
+            .and_then(|i| self.options.get(i));
+        picked.cloned().unwrap_or_else(|| text.to_owned())
+    }
+}
+
+/// The surface an answer came in through; the audit mark of a feed answer.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnswerVia {
+    /// archond's own socket (`archon answer`, the line chat), Lavish, or a
+    /// withdrawal by the daemon.
+    #[default]
+    Archon,
+    /// The operator's `/answer` command in the orchestrator's Aether chat,
+    /// applied by the daemon.
+    ChatCommand,
+    /// The operator's chat reply to an `ask_operator` question, recorded by
+    /// the orchestrator that asked it.
+    ChatReply,
+}
+
+impl AnswerVia {
+    pub fn is_archon(&self) -> bool {
+        *self == Self::Archon
+    }
+
+    /// What a listing appends to such an answer; `None` for the usual way.
+    pub fn note(self) -> Option<&'static str> {
+        match self {
+            Self::Archon => None,
+            Self::ChatCommand => Some("answered from operator chat"),
+            Self::ChatReply => Some("answered in chat, recorded by the orchestrator"),
+        }
     }
 }
 
@@ -86,6 +153,8 @@ pub enum FeedEntry {
     Answer {
         question: QuestionId,
         text: String,
+        #[serde(default, skip_serializing_if = "AnswerVia::is_archon")]
+        via: AnswerVia,
     },
     /// A report published for review (Lavish URL or plain file path).
     Report {
@@ -123,6 +192,16 @@ impl FeedItem {
 mod tests {
     use super::*;
 
+    #[test]
+    fn references_parse_numbers_q_numbers_and_ids() {
+        assert_eq!(QuestionRef::parse("3"), Ok(QuestionRef::Number(3)));
+        assert_eq!(QuestionRef::parse("Q12"), Ok(QuestionRef::Number(12)));
+        let id = QuestionId::new();
+        assert_eq!(QuestionRef::parse(id.as_str()), Ok(QuestionRef::Id(id)));
+        assert!(QuestionRef::parse("0").is_err());
+        assert!(QuestionRef::parse("qi_01").is_err());
+    }
+
     fn progress_item() -> FeedItem {
         FeedItem {
             id: FeedItemId::new(),
@@ -153,5 +232,59 @@ mod tests {
         assert!(json.contains(r#""entry":"notification""#), "{json}");
         let back: FeedItem = serde_json::from_str(&json).expect("deserialize feed item");
         assert_eq!(back, item);
+    }
+
+    fn question(options: &[&str]) -> Question {
+        Question {
+            id: QuestionId::new(),
+            number: 1,
+            text: "which?".into(),
+            options: options.iter().map(|o| (*o).to_owned()).collect(),
+            item: None,
+            aether: None,
+            asked_at: crate::now(),
+            answer: None,
+            answered_at: None,
+        }
+    }
+
+    #[test]
+    fn a_bare_number_picks_an_option() {
+        let q = question(&["rebase", "merge"]);
+        assert_eq!(q.expand_option("2"), "merge");
+        assert_eq!(q.expand_option(" 1 "), "rebase");
+        assert_eq!(q.expand_option("3"), "3");
+        assert_eq!(q.expand_option("0"), "0");
+        assert_eq!(q.expand_option("merge please"), "merge please");
+        assert_eq!(question(&[]).expand_option("2"), "2");
+    }
+
+    /// An answer through archond's own socket keeps its old wire form, so an
+    /// older client reads it; only another surface adds the mark.
+    #[test]
+    fn an_answer_names_its_surface_only_when_it_is_not_archons_own() {
+        let answer = |via| FeedEntry::Answer {
+            question: QuestionId::new(),
+            text: "yes".into(),
+            via,
+        };
+        let plain = serde_json::to_value(answer(AnswerVia::Archon)).unwrap();
+        assert!(plain.get("via").is_none(), "{plain}");
+        let back: FeedEntry = serde_json::from_value(plain).unwrap();
+        assert!(matches!(
+            back,
+            FeedEntry::Answer {
+                via: AnswerVia::Archon,
+                ..
+            }
+        ));
+        for via in [AnswerVia::ChatCommand, AnswerVia::ChatReply] {
+            let entry = answer(via);
+            let json = serde_json::to_value(&entry).unwrap();
+            assert!(json["via"].is_string(), "{json}");
+            assert_eq!(serde_json::from_value::<FeedEntry>(json).unwrap(), entry);
+            assert!(via.note().is_some_and(|note| note.contains("chat")));
+        }
+        assert_eq!(AnswerVia::Archon.note(), None);
     }
 }

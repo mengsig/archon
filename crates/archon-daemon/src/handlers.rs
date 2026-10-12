@@ -13,6 +13,8 @@ mod stages;
 mod waiting;
 
 use archon_core::error::ArchonError;
+use archon_core::id::QuestionId;
+use archon_core::notify::{AnswerVia, Question};
 use archon_core::protocol::{ClientKind, Reply, Request};
 
 use crate::context::DaemonContext;
@@ -65,6 +67,17 @@ pub async fn handle(
         }
         request => handle_queue(ctx, request).await,
     }
+}
+
+/// The one answer path: `archon answer` and the operator's `/answer` chat
+/// command both end here, differing only in the surface recorded.
+pub(crate) async fn answer_question(
+    ctx: &DaemonContext,
+    question: &QuestionId,
+    text: &str,
+    via: AnswerVia,
+) -> Result<Question, ArchonError> {
+    operator::answer(ctx, question, text, via).await
 }
 
 async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, ArchonError> {
@@ -124,7 +137,16 @@ async fn handle_operator(ctx: &DaemonContext, request: Request) -> Result<Reply,
             item,
             options,
         } => operator::ask(ctx, &text, item, options).await,
-        Request::Answer { question, text } => operator::answer(ctx, &question, &text).await,
+        Request::Answer { question, text } => {
+            answer_question(ctx, &question, &text, AnswerVia::Archon)
+                .await
+                .map(Reply::Question)
+        }
+        Request::RecordChatAnswer {
+            question,
+            answer,
+            caller,
+        } => operator::record_chat_answer(ctx, &question, &answer, caller.as_ref()).await,
         Request::ListQuestions { open_only } => operator::questions(ctx, open_only).await,
         Request::FeedHistory {
             before,

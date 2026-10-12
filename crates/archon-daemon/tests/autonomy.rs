@@ -387,7 +387,9 @@ async fn feed_answers(h: &Harness, question: &QuestionId) -> Vec<String> {
         .expect("feed");
     feed.into_iter()
         .filter_map(|item| match item.entry {
-            FeedEntry::Answer { question: q, text } if &q == question => Some(text),
+            FeedEntry::Answer {
+                question: q, text, ..
+            } if &q == question => Some(text),
             _ => None,
         })
         .collect()

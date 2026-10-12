@@ -56,6 +56,7 @@ pub const TOOLS: &[ToolName] = &[
     tool("resume", ToolClass::Mutation),
     tool("notify", ToolClass::Mutation),
     tool("ask_operator", ToolClass::Mutation),
+    tool("record_chat_answer", ToolClass::Mutation),
     tool("publish_report", ToolClass::Mutation),
     tool("autonomy_policy", ToolClass::ReadOnly),
     tool("set_directive", ToolClass::Mutation),

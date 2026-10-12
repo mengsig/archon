@@ -297,6 +297,15 @@ fn schema_violations() -> Vec<(&'static str, Value)> {
         ("pause", json!({"scope": "everything"})),
         ("clear_directive", json!({"all": "yes"})),
         ("ask_operator", json!({"text": "q", "options": "yes"})),
+        ("record_chat_answer", json!({"answer": "yes"})),
+        (
+            "record_chat_answer",
+            json!({"question": 3, "answer": "yes"}),
+        ),
+        (
+            "record_chat_answer",
+            json!({"question": "q_1", "answer": "yes", "caller": "agt_1"}),
+        ),
         enqueue_with("tags", json!([""])),
         enqueue_with("priority", json!("urgent")),
         enqueue_with("model_plan", json!({})),

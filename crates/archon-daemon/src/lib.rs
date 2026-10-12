@@ -1,6 +1,7 @@
 //! `archond`, the Archon daemon (ARCHITECTURE §2, §5, §16).
 
 mod agent_messages;
+mod chat_answer;
 pub mod context;
 pub mod disk;
 pub mod dispatcher;

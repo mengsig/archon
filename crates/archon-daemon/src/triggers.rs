@@ -14,6 +14,7 @@ use archon_core::autonomy::Directive;
 use archon_core::error::ArchonError;
 use archon_core::github::GithubThread;
 use archon_core::id::{QuestionId, QueueItemId, ReportId, StoreId};
+use archon_core::run::GateSubject;
 use archon_queue::Store;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, watch};
@@ -69,6 +70,31 @@ pub enum TriggerEvent {
         question: QuestionId,
         text: String,
     },
+    /// A proposal or report gate opened and waits for the operator.
+    GateOpened {
+        question: QuestionId,
+        /// The operator's `Q<n>` for the gate's question.
+        number: u64,
+        item: QueueItemId,
+        title: String,
+        subject: GateSubject,
+        /// What the operator is asked to decide.
+        asks: String,
+        /// The gate stage's summary, clipped.
+        summary: String,
+        /// Where the page is: a Lavish URL on archond's machine, or a path.
+        page: String,
+        /// How the operator answers in words, on a surface that takes it.
+        reply: String,
+    },
+    /// What the daemon did with an operator `/answer` chat command.
+    ChatAnswer {
+        /// The question's `Q<n>`, when the command named a recorded one.
+        number: Option<u64>,
+        applied: bool,
+        /// The answer as recorded, or why nothing was; clipped.
+        text: String,
+    },
     LavishFeedback {
         report: ReportId,
         item: Option<QueueItemId>,
@@ -122,6 +148,8 @@ impl TriggerEvent {
             Self::ItemFinished { .. } => "item_finished",
             Self::ItemBlocked { .. } => "item_blocked",
             Self::OperatorAnswer { .. } => "operator_answer",
+            Self::GateOpened { .. } => "gate_opened",
+            Self::ChatAnswer { .. } => "chat_answer",
             Self::LavishFeedback { .. } => "lavish_feedback",
             Self::Budget { .. } => "budget",
             Self::PolicyViolation { .. } => "policy_violation",
@@ -231,25 +259,33 @@ pub struct TriggerQueue {
 /// the event survives a daemon stop or crash and is delivered after it. News
 /// held past [`MAX_PENDING`] is compacted here, not only when keyed.
 pub async fn push(ctx: &DaemonContext, event: TriggerEvent) -> Result<(), ArchonError> {
+    hold(&mut *ctx.store.lock().await, event)?;
+    // Stores a permit when delivery is busy, so no wake-up is lost.
+    ctx.triggers.news.notify_one();
+    Ok(())
+}
+
+/// Save `event` under the caller's store lock, beside the change it reports;
+/// the caller then calls [`wake`].
+pub(crate) fn hold(store: &mut Store, event: TriggerEvent) -> Result<(), ArchonError> {
     assert!(
         !matches!(event, TriggerEvent::NewsDigest { .. }),
         "a digest is made when news is keyed, never pushed"
     );
-    {
-        let mut store = ctx.store.lock().await;
-        let mut outbox = read_outbox(&store)?;
-        outbox.pending.push(Held {
-            event,
-            pushed_at: Some(archon_core::now()),
-        });
-        if outbox.pending.len() > MAX_PENDING {
-            compact_pending(&mut store, &mut outbox)?;
-        }
-        write_outbox(&mut store, &outbox)?;
+    let mut outbox = read_outbox(store)?;
+    let before = outbox.pending.len();
+    outbox.pending.push(Held {
+        event,
+        pushed_at: Some(archon_core::now()),
+    });
+    if outbox.pending.len() > MAX_PENDING {
+        compact_pending(store, &mut outbox)?;
     }
-    // Stores a permit when delivery is busy, so no wake-up is lost.
-    ctx.triggers.news.notify_one();
-    Ok(())
+    assert!(
+        outbox.pending.len() <= before + 1,
+        "holding one event adds at most one"
+    );
+    write_outbox(store, &outbox)
 }
 
 pub(crate) fn record_message(
@@ -585,6 +621,22 @@ mod tests {
             TriggerEvent::OperatorAnswer {
                 question: QuestionId::new(),
                 text: "t".into(),
+            },
+            TriggerEvent::GateOpened {
+                question: QuestionId::new(),
+                number: 4,
+                item: QueueItemId::new(),
+                title: "t".into(),
+                subject: GateSubject::Proposal,
+                asks: "a".into(),
+                summary: "s".into(),
+                page: "p".into(),
+                reply: "r".into(),
+            },
+            TriggerEvent::ChatAnswer {
+                number: Some(4),
+                applied: true,
+                text: "yes".into(),
             },
             TriggerEvent::lavish_feedback(ReportId::new(), None, "raw", vec![]),
             TriggerEvent::NewsDigest {

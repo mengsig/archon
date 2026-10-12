@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use archon_core::config::{Config, LavishConfig, Toggle};
 use archon_core::error::ArchonError;
 use archon_core::id::ReportId;
-use archon_core::notify::{FeedEntry, Question};
+use archon_core::notify::{AnswerVia, FeedEntry, Question};
 use archon_core::protocol::{ClientKind, Reply, ReportState, Request};
 use archon_core::run::{GateDecision, GateSubject, OperatorGate};
 use archon_daemon::triggers::TriggerEvent;
@@ -163,7 +163,9 @@ async fn answers_to(harness: &Harness, question: &Question) -> Vec<String> {
     let feed = harness.feed().await;
     feed.into_iter()
         .filter_map(|entry| match entry {
-            FeedEntry::Answer { question: q, text } if q == question.id => Some(text),
+            FeedEntry::Answer {
+                question: q, text, ..
+            } if q == question.id => Some(text),
             _ => None,
         })
         .collect()
@@ -540,7 +542,8 @@ async fn an_answer_the_sweep_beat_is_refused_and_reaches_no_one() {
         1
     );
 
-    let routed = supervisor::route_answer(&harness.ctx, &question, "reopen").await;
+    let routed =
+        supervisor::route_answer(&harness.ctx, &question, "reopen", AnswerVia::Archon).await;
     let Err(ArchonError::InvalidTransition(why)) = routed else {
         panic!("expected a refusal: {routed:?}");
     };

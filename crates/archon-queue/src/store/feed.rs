@@ -4,7 +4,7 @@ use archon_core::Timestamp;
 use archon_core::aether_ids::AetherQuestionRef;
 use archon_core::error::ArchonError;
 use archon_core::id::{FeedItemId, QuestionId};
-use archon_core::notify::{FeedEntry, FeedItem, Notification, Question};
+use archon_core::notify::{AnswerVia, FeedEntry, FeedItem, Notification, Question};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
@@ -311,6 +311,7 @@ pub(super) fn close_withdrawn(
     let entry = FeedEntry::Answer {
         question: id.clone(),
         text,
+        via: AnswerVia::Archon,
     };
     let item = append_in(tx, entry, at)?;
     debug_assert!(!load_question(tx, id)?.is_open());

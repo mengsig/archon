@@ -32,6 +32,7 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         resume(),
         notify(),
         ask_operator(),
+        record_chat_answer(),
         publish_report(),
         autonomy_policy(),
         set_directive(),
@@ -587,6 +588,27 @@ fn ask_operator() -> ToolDefinition {
                 "options": string_list("Suggested answers, when the answer is a choice."),
             }),
             &["text"],
+        ),
+        false,
+    )
+}
+
+fn record_chat_answer() -> ToolDefinition {
+    define(
+        "record_chat_answer",
+        "Record chat answer",
+        "Close a question you asked with ask_operator once the operator has plainly answered it \
+         in chat and you are acting on that answer: it leaves `archon questions`, recorded as \
+         answered in chat with their words. Only for your own ask_operator questions; a gate or \
+         any other question is refused, because only the operator answers those. No \
+         operator_answer trigger follows. Requires Aether caller metadata \
+         (send_caller_meta = true).",
+        object(
+            json!({
+                "question": {"type": "string", "description": "The question id (`q_…`) ask_operator returned."},
+                "answer": {"type": "string", "description": "The operator's answer, in their words."},
+            }),
+            &["question", "answer"],
         ),
         false,
     )

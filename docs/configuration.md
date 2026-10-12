@@ -28,7 +28,10 @@ cache_dirs = ["target"]        # only these caches; unset = everything git ignor
 To run Archon on your own `aetherd` instead, set `[aether] mode = "shared"`.
 In shared mode, `archon setup` adds the `archon` MCP server to your
 `~/.config/aether/config.toml`, and every agent of that daemon then sees
-Archon's tools.
+Archon's tools. Answering a gate or question with `/answer <n> …` in the
+orchestrator's chat is off in shared mode, because a client holding that
+daemon's `[listen]` token is the same `user` actor as you; see the
+[guide](guide.md#answering-in-the-orchestrators-chat).
 
 A relative path in the config, such as `[worktrees] root`, is relative to
 the directory holding `config.toml`, and `~/` expands to your home

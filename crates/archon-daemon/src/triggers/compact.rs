@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use archon_core::Timestamp;
 use archon_core::error::ArchonError;
-use archon_core::id::{QueueItemId, ReportId};
+use archon_core::id::{QuestionId, QueueItemId, ReportId};
 use archon_core::queue::QueueState;
 use archon_queue::Store;
 use chrono::TimeDelta;
@@ -49,6 +49,8 @@ pub(super) struct Facts {
     pub items: HashMap<QueueItemId, QueueState>,
     /// Reports whose Lavish session is still open.
     pub open_reports: HashSet<ReportId>,
+    /// Gate questions the operator has not answered yet.
+    pub open_gate_questions: HashSet<QuestionId>,
 }
 
 impl Facts {
@@ -64,6 +66,9 @@ impl Facts {
                     if crate::reports::is_open(store, report)? =>
                 {
                     facts.open_reports.insert(report.clone());
+                }
+                TriggerEvent::GateOpened { question, .. } if is_open(store, question)? => {
+                    facts.open_gate_questions.insert(question.clone());
                 }
                 _ => {}
             }
@@ -84,6 +89,18 @@ impl Facts {
             Err(ArchonError::NotFound(_)) => Ok(()),
             Err(e) => Err(e),
         }
+    }
+}
+
+/// Whether `question` still waits for its answer; a pruned one does not.
+fn is_open(store: &Store, question: &QuestionId) -> Result<bool, ArchonError> {
+    match store.question(question) {
+        Ok(found) => {
+            assert_eq!(&found.id, question, "the store returns the question asked");
+            Ok(found.is_open())
+        }
+        Err(ArchonError::NotFound(_)) => Ok(false),
+        Err(e) => Err(e),
     }
 }
 
@@ -186,6 +203,8 @@ fn classify(held: &[Held], facts: &Facts, now: Timestamp) -> Vec<Relevance> {
     relevance
 }
 
+/// A `gate_opened` is pinned while its question is open and stale once it
+/// is answered or withdrawn; a `chat_answer` is the reply the operator awaits.
 /// An `item_finished` stays current while it is the item's newest and the
 /// item still sits in the state it reports; a retry supersedes it. One
 /// asked for on GitHub is pinned then, as its thread awaits the outcome. An
@@ -197,8 +216,14 @@ fn relevance_of(
     finished_later: &mut HashSet<QueueItemId>,
 ) -> Relevance {
     match event {
-        TriggerEvent::OperatorAnswer { .. } | TriggerEvent::AgentMessage { .. } => {
-            Relevance::Pinned
+        TriggerEvent::OperatorAnswer { .. }
+        | TriggerEvent::AgentMessage { .. }
+        | TriggerEvent::ChatAnswer { .. } => Relevance::Pinned,
+        TriggerEvent::GateOpened { question, .. } => {
+            match facts.open_gate_questions.contains(question) {
+                true => Relevance::Pinned,
+                false => Relevance::Stale,
+            }
         }
         TriggerEvent::NewsDigest { .. } => Relevance::Stale,
         TriggerEvent::LavishFeedback { report, .. } if facts.open_reports.contains(report) => {
@@ -393,6 +418,43 @@ mod tests {
         assert_eq!(answers.count(), MAX_BATCH_EVENTS);
         assert!(events.contains(&feedback(&open)));
         assert!(!events.contains(&feedback(&ended)));
+    }
+
+    #[test]
+    fn a_gate_is_news_only_while_it_waits_and_a_chat_outcome_always() {
+        let now = archon_core::now();
+        let long_ago = now - TimeDelta::hours(15);
+        let item = QueueItemId::new();
+        let gate = |question: &QuestionId| TriggerEvent::GateOpened {
+            question: question.clone(),
+            number: 3,
+            item: item.clone(),
+            title: "t".into(),
+            subject: archon_core::run::GateSubject::Proposal,
+            asks: "a".into(),
+            summary: "s".into(),
+            page: "p".into(),
+            reply: "r".into(),
+        };
+        let refused = TriggerEvent::ChatAnswer {
+            number: None,
+            applied: false,
+            text: "usage".into(),
+        };
+        let (waiting, decided) = (QuestionId::new(), QuestionId::new());
+        let facts = Facts {
+            open_gate_questions: HashSet::from([waiting.clone()]),
+            ..Facts::default()
+        };
+        let held = vec![
+            at(gate(&waiting), long_ago),
+            at(gate(&decided), now),
+            at(refused.clone(), long_ago),
+        ];
+        let events = compacted(held, &facts, now);
+        let counts = BTreeMap::from([("gate_opened".to_owned(), 1)]);
+        assert_eq!(dropped(&events), counts, "a decided gate is stale");
+        assert_eq!(events[1..], [gate(&waiting), refused]);
     }
 
     #[test]

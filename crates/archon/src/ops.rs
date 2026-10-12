@@ -7,7 +7,6 @@ use archon_core::notify::Question;
 use archon_core::protocol::{PauseTarget, Reply, Request};
 
 use crate::connect::unexpected;
-use crate::questions::expand_option;
 
 /// Send one line to the orchestrator.
 pub async fn say(client: &ArchonClient, text: String) -> anyhow::Result<()> {
@@ -27,7 +26,7 @@ pub async fn answer(
     text: &str,
 ) -> anyhow::Result<String> {
     assert!(!text.trim().is_empty(), "callers refuse empty answers");
-    let text = expand_option(question, text);
+    let text = question.expand_option(text);
     // Options come from the asker, so an empty one is refused, not sent.
     if text.is_empty() {
         return Err(archon_core::ArchonError::Invalid(

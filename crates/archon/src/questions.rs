@@ -2,46 +2,10 @@
 //! archond gave each one (`Q7` everywhere, never reused) or by id, with
 //! numbered options.
 
-use archon_core::id::QuestionId;
+pub use archon_core::notify::QuestionRef;
 use archon_core::notify::{FeedEntry, Question};
 
 use crate::render::QuestionLabels;
-
-/// How the operator names a question: `2`, `Q2` or `q_01J…`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum QuestionRef {
-    Number(u64),
-    Id(QuestionId),
-}
-
-impl QuestionRef {
-    pub fn parse(text: &str) -> Result<Self, String> {
-        let digits = text.strip_prefix(['Q', 'q']).unwrap_or(text);
-        if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
-            return match digits.parse::<u64>() {
-                Ok(n) if n > 0 => Ok(Self::Number(n)),
-                _ => Err(format!(
-                    "{text:?} is not a question number (they start at 1)"
-                )),
-            };
-        }
-        QuestionId::parse(text)
-            .map(Self::Id)
-            .map_err(|_| format!("{text:?} is neither a question number nor a q_… id"))
-    }
-}
-
-/// The answer text to send: a bare number picks that option when the
-/// question offered options; anything else is sent as typed.
-pub fn expand_option(question: &Question, text: &str) -> String {
-    let text = text.trim();
-    let picked = text
-        .parse::<usize>()
-        .ok()
-        .and_then(|n| n.checked_sub(1))
-        .and_then(|i| question.options.get(i));
-    picked.cloned().unwrap_or_else(|| text.to_owned())
-}
 
 /// The open question `reference` names, if it is still open. A number
 /// matches only the question archond gave it, so a question that closed
@@ -157,6 +121,8 @@ impl QuestionBook {
 
 #[cfg(test)]
 mod tests {
+    use archon_core::id::QuestionId;
+    use archon_core::notify::AnswerVia;
     use chrono::Duration;
 
     use super::*;
@@ -173,28 +139,6 @@ mod tests {
             answer: None,
             answered_at: None,
         }
-    }
-
-    #[test]
-    fn references_parse_numbers_q_numbers_and_ids() {
-        assert_eq!(QuestionRef::parse("3"), Ok(QuestionRef::Number(3)));
-        assert_eq!(QuestionRef::parse("Q12"), Ok(QuestionRef::Number(12)));
-        let id = QuestionId::new();
-        assert_eq!(QuestionRef::parse(id.as_str()), Ok(QuestionRef::Id(id)));
-        assert!(QuestionRef::parse("0").is_err());
-        assert!(QuestionRef::parse("qi_01").is_err());
-    }
-
-    #[test]
-    fn a_bare_number_picks_an_option() {
-        let q = question(1, "which?", 0, &["rebase", "merge"]);
-        assert_eq!(expand_option(&q, "2"), "merge");
-        assert_eq!(expand_option(&q, " 1 "), "rebase");
-        assert_eq!(expand_option(&q, "3"), "3");
-        assert_eq!(expand_option(&q, "0"), "0");
-        assert_eq!(expand_option(&q, "merge please"), "merge please");
-        let free = question(2, "how many?", 0, &[]);
-        assert_eq!(expand_option(&free, "2"), "2");
     }
 
     #[test]
@@ -226,6 +170,7 @@ mod tests {
         book.observe(&FeedEntry::Answer {
             question: new.id.clone(),
             text: "ok".into(),
+            via: AnswerVia::Archon,
         });
         assert_eq!(book.newest_open().unwrap().number, 4);
         let later = question(10, "later", 0, &[]);

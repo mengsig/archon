@@ -471,7 +471,7 @@ Every `aether` process of the instance gets these three variables, plus
 
 | File | Treatment | Why |
 | --- | --- | --- |
-| `config.toml` | Copied from the operator's, then changed: `[listen]` and `[serve]` are dropped, any `archon` MCP server is dropped, and Archon's server is added. It is parsed and validated before an atomic write; a config that does not parse is refused and nothing is written. | It must differ (the MCP server). `[listen]` would fight over the operator's TCP port, and `[serve]` webhooks address the operator's agents. Engines, models, routing, network, approval and scheduler settings carry over. |
+| `config.toml` | Copied from the operator's, then changed: `[listen]` and `[serve]` are dropped, any `archon` MCP server is dropped, and Archon's server is added. It is parsed and validated before an atomic write; a config that does not parse is refused and nothing is written. | It must differ (the MCP server). `[listen]` would fight over the operator's TCP port, and `[serve]` webhooks address the operator's agents. Engines, models, routing, network, approval and scheduler settings carry over. So does a `[remote]` section, in Aether builds that have one: that listener is off until it is enabled on the instance, which then needs an address of its own ([guide](guide.md#using-archon-from-aethers-remote-app)). |
 | `providers.toml` | Symlink. | Aether only reads it, so both instances share one set of provider settings. |
 | `ui.toml`, `themes/`, `voice/` | Symlinks. | TUI preferences, optional custom themes and installed voice backends. The TUI saves `ui.toml` by rename, so a change made in `archon tui` replaces the link with the instance's own copy, which is harmless. Aether's `/voice setup` resolves the instance directory and creates each install in a new directory under `voice/`, through the link, so both instances use the same installs. |
 | `voice.toml` | Copied once, as the instance's own regular file (mode 0600, staged in a private temporary directory beside it and published without replacing anything). Never a link. | Aether's `/voice setup` refuses a `voice.toml` that is a link or a directory before it writes anything. The copy is correct because the file holds absolute paths. A later change to the operator's file does not reach the instance, and `/voice setup` in `archon tui` writes the instance's file, not the operator's. |
@@ -554,6 +554,7 @@ Aether's own resolution, §4.1). `archon setup` appends the block below to
 the operator's `$AETHER_CONFIG_DIR|~/.config/aether/config.toml` if no server
 named `archon` exists yet, then asks the operator to restart `aetherd`. The
 bench's private `archond` uses shared mode, pointed at the Aether under test.
+Shared mode refuses the operator's `/answer` chat command (§5.2).
 
 ```toml
 # Added by `archon setup`. Remove this block to unregister Archon.
@@ -663,6 +664,53 @@ withdrawal does nothing. A losing answer is refused with the reason (for
 example, that its report's gate closed), and nothing reaches the
 orchestrator.
 
+**Answers from the orchestrator's Aether chat.** The operator can be in the
+orchestrator's chat with neither the `archon` CLI nor the localhost Lavish
+page at hand (Aether's remote app is that case), so `archond` takes an
+answer from there too. There is one answer path, `handlers::answer_question`;
+`archon answer` and the chat command both end in it and differ only in the
+`AnswerVia` recorded on the `Answer` feed entry (§12).
+
+- The orchestrator pump (§4.6) already classifies each `inbox.delivered` on
+  the orchestrator's stream for reply detection (§12):
+  `from_operator = kind == "message" && actor == "user"`. The chat command
+  reuses that one check. When it holds and the message's whole text, trimmed,
+  is `/answer <number, Q<number> or q_… id> <answer>`, `archond` applies it.
+  An agent's message (`actor = agent`), a relay or any other Archon news, and
+  a GitHub request (all `external_trigger` items) never match, and a
+  `/answer` embedded or quoted in a longer message is not the whole text.
+- The orchestrator still receives the message. Its instructions say that the
+  daemon applied it: it acknowledges in one line and neither answers the
+  question again nor treats the text as a request.
+- The outcome is never silent. `archond` pushes a `chat_answer` event (§5.4)
+  saying what was applied, or why not: a malformed command, an unknown
+  number, a closed question, or a refusal of the answer path. The
+  orchestrator restates it in the same chat. A refusal is also a `System`
+  feed entry. Only a store failure is returned to the pump (§16).
+- The command is applied at most once: the pump marks the event seen before
+  applying it, as it does for reply detection, so a replay cannot answer
+  twice. A crash between the two drops the command; the question stays open.
+- **Dedicated mode only.** In Aether, a connection that authenticates with
+  the `[listen]` token is recorded as the same `user` actor as the operator
+  at the Unix socket (`aether-daemon` `authz`: `AuthContext::Token` becomes
+  `Actor::connected_user`); only a paired device with the observer role is
+  a different actor (`client`). Archon's own instance has no `[listen]`
+  (§4.7), so there `user` is the Unix socket, which the same OS user as
+  `archond`'s own socket guards, or a device the operator paired with the
+  operator role. In `mode = "shared"` the token would widen who can pass a
+  gate, so the command is refused there with that reason, and `gate_opened`
+  names `archon answer` instead. No setting changes this.
+
+`record_chat_answer` (MCP, the orchestrator only) closes a question the
+orchestrator asked with `ask_operator` once the operator's plain chat reply
+answered it, with the operator's words and `AnswerVia::ChatReply`. Nothing is
+routed and no `operator_answer` follows, since the orchestrator read the
+reply itself. The caller must be the current orchestrator, by Aether's
+out-of-band caller identity (§5.5). A question anyone else waits on is
+`forbidden`: an Aether `ask_user` question, an operator gate's question, and
+a report's "Reopen it?" question, the three cases the answer path routes
+elsewhere. The orchestrator therefore has no way to answer a gate.
+
 ### 5.3 Spend
 
 `agent.usage_updated` carries **absolute** totals per agent. The ledger stores
@@ -769,9 +817,11 @@ was created is news to it and is compacted only as usual. Adopting
 Aether's successor or waking the agent in place keeps its context, so
 neither forces compaction. Compaction:
 
-- always keeps every `operator_answer` and `agent_message`, every `lavish_feedback` whose
-  report is still `open` in Lavish, and every current `item_finished` with
-  an `origin`, whose GitHub thread awaits the outcome;
+- always keeps every `operator_answer`, `agent_message` and `chat_answer`,
+  every `lavish_feedback` whose report is still `open` in Lavish, every
+  `gate_opened` whose question is still open, and every current
+  `item_finished` with an `origin`, whose GitHub thread awaits the outcome;
+- drops a `gate_opened` whose question was answered or withdrawn;
 - drops an `item_finished` when a later one exists for the item, or the
   item no longer sits in the state it reports (it was retried or is gone),
   and an `item_blocked` when the item is no longer blocked;
@@ -796,6 +846,12 @@ into its own, so one batch never carries two digests.
    "origin": {"repository": "owner/name", "number": 7}},
   {"type": "item_blocked", "item": "qi_…", "reason": "dependency qi_… failed"},
   {"type": "operator_answer", "question": "q_…", "text": "…"},
+  {"type": "gate_opened", "question": "q_…", "number": 7, "item": "qi_…", "title": "…",
+   "subject": "proposal", "asks": "Approve the direction proposed for this item?",
+   "summary": "…the stage's summary, at most 600 characters…",
+   "page": "http://127.0.0.1:4455/session/…",
+   "reply": "`/answer 7 approve` (a note may follow), `/answer 7 reject` to cancel the item, or …"},
+  {"type": "chat_answer", "number": 7, "applied": true, "text": "approve"},
   {"type": "lavish_feedback", "report": "rpt_…", "item": "qi_…",
    "prompts": ["…"], "text": "…the poll output without its dom_snapshot…"},
   {"type": "budget", "scope": "daily", "spent_usd": 51.0, "limit_usd": 50.0},
@@ -815,6 +871,18 @@ bodies and directives remain authoritative and are retained unchanged.
 
 Every payload restates the operator directives in force (§18.5), so they
 survive an orchestrator restart or a compacted context.
+
+`gate_opened` is pushed when an operator gate's question is recorded
+(§18.3), under the same store lock, so the orchestrator can restate the gate
+in its chat as text: `number` is the question's `Q<n>`, `subject` is
+`proposal` or `report`, `page` is the Lavish URL or file path on `archond`'s
+machine, and `reply` spells the answers out in the vocabulary of
+`GateDecision::from_answer`, as `/answer <n> …` in dedicated mode and
+`archon answer <n> …` in shared mode (§5.2). `title` is clipped to 200
+characters, `summary` to 600 and `page` to 300. `chat_answer` reports what
+`archond` did with an operator `/answer` (§5.2): `number` is absent when the
+command named no recorded question, and `text` is the answer applied or the
+reason it was not, at most 500 characters.
 
 Stage-level progress never triggers the orchestrator. It stays in the store
 and is visible with `get_item` and `get_stage`.
@@ -1532,7 +1600,8 @@ defined in `archon_core::protocol` and served by `archon-daemon`.
   security boundary. `ClientKind` guards against mistakes, not attacks.
   Every `Request::is_operator_only()` request (`Say`, `Answer`,
   `RepoUpdate`, a `RepoAdd` with `auto_merge`, a hard pause, ...) is refused
-  for `archon-mcp`.
+  for `archon-mcp`. `RecordChatAnswer` is not one of them: it is the
+  orchestrator's, checked by caller identity, and cannot answer a gate (§5.2).
 - The CLI takes an item id or its start. A whole id is sent as it is; a
   start goes to `ResolveItem {prefix}` first, which `archond` answers from
   one indexed range query: the one item, `not_found`, or `invalid_argument`
@@ -1599,6 +1668,7 @@ id.
 | `pause` / `resume` | `{scope: "global"\|"repo"\|"pipeline", name?}` | `Pause` / `Resume` |
 | `notify` | `{kind: question\|decision\|blocker\|outcome\|progress, text, item?}` | `Notify` |
 | `ask_operator` | `{text, item?, options?}` | `AskOperator` |
+| `record_chat_answer` | `{question, answer}` | `RecordChatAnswer` (the orchestrator only, and only its own `ask_operator` questions; §5.2) |
 | `publish_report` | `{title, path (.html or .htm), item?}` | `PublishReport` |
 | `autonomy_policy` | `{repo?}` | `Autonomy` |
 | `set_directive` | `{text, expires_in_hours?}` | `SetDirective` |
@@ -1666,7 +1736,7 @@ A `FeedEntry` is created only by:
 | Final assistant text of an orchestrator turn that consumed an operator message | `Orchestrator` | yes |
 | `notify(kind)` | `Notification` | yes except `progress` |
 | `ask_operator`, `question.asked` (orchestrator or stage agent) | `Question` | yes |
-| An answer | `Answer` | yes |
+| An answer | `Answer`, with `via` when it did not come through Archon's own surfaces: `chat_command` (the operator's `/answer` in the orchestrator's Aether chat) or `chat_reply` (recorded by the orchestrator with `record_chat_answer`); §5.2 | yes |
 | Item terminal state | `Notification{Blocker}` if operator action is needed, otherwise `Notification{Outcome}` | yes |
 | Blocked item, budget hit, policy violation, `BLOCKED:` stage | `Notification{Blocker}` | yes |
 | Daemon lifecycle (orchestrator restarted, Aether reconnected) | `System` | yes |
@@ -2599,7 +2669,10 @@ the passed change-report stage of an item with `report = before-pr`.
    works the same, because `3` is the question's permanent number (§5.2).
    If the gate was decided elsewhere in the meantime (step 4), `archon
    answer 3` is refused and never decides a different gate. It prints the
-   number, id and first line of the question it answered.
+   number, id and first line of the question it answered. With the question,
+   `archond` pushes a `gate_opened` event (§5.4), from which the orchestrator
+   restates the gate in its Aether chat, where the operator can answer with
+   a message that is exactly `/answer 3 …` (§5.2, dedicated mode).
 3. `GateDecision::from_answer` reads the answer. `yes`, `y`, `approve`,
    `ok` or `lgtm` approves, and any text after the word is a note.
    `reject`, `cancel` or a bare `no` rejects, and text after `reject` is the

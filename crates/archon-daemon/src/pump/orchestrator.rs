@@ -3,7 +3,7 @@
 //! the agent Aether restarted it into.
 
 use archon_aether::AetherEvent;
-use archon_aether::events::EventKind;
+use archon_aether::events::{EventKind, InboxMessage};
 use archon_core::aether_ids::{AetherAgentId, AetherQuestionRef};
 use archon_core::error::ArchonError;
 use archon_core::notify::FeedEntry;
@@ -11,7 +11,7 @@ use archon_core::notify::FeedEntry;
 use super::fleet;
 use crate::context::DaemonContext;
 use crate::feed::{self, REPLY_STATE_KEY, ReplyTracker};
-use crate::supervisor;
+use crate::{chat_answer, supervisor};
 
 pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(), ArchonError> {
     let Some(agent) = &event.agent else {
@@ -23,20 +23,21 @@ pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(
     }
     match &event.kind {
         EventKind::InboxDelivered {
-            seq, from_operator, ..
-        } => {
-            track_once(ctx, event, |replies| {
-                replies.delivered(*seq, *from_operator);
-            })
-            .await
-        }
+            seq,
+            from_operator,
+            message,
+        } => delivered(ctx, event, *seq, *from_operator, message.as_ref()).await,
         EventKind::InboxConsumed { up_to } => {
-            track_once(ctx, event, |replies| replies.consumed(*up_to)).await
+            track_once(ctx, event, |replies| replies.consumed(*up_to))
+                .await
+                .map(drop)
         }
         EventKind::AgentMessage {
             assistant: true,
             text,
-        } => track_once(ctx, event, |replies| replies.assistant_text(text)).await,
+        } => track_once(ctx, event, |replies| replies.assistant_text(text))
+            .await
+            .map(drop),
         EventKind::AgentTurnCompleted { next, .. } => {
             turn_completed(ctx, event.seq, next.as_deref()).await?;
             supervisor::turn_ended(ctx, next.as_deref()).await
@@ -63,16 +64,39 @@ pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(
     }
 }
 
+/// Track one delivery to the orchestrator's inbox and, the first time an
+/// operator's message is seen, apply the `/answer` command it may be.
+async fn delivered(
+    ctx: &DaemonContext,
+    event: &AetherEvent,
+    seq: u64,
+    from_operator: bool,
+    message: Option<&InboxMessage>,
+) -> Result<(), ArchonError> {
+    let fresh = track_once(ctx, event, |replies| {
+        replies.delivered(seq, from_operator);
+    })
+    .await?;
+    // Marked seen first: a crash here drops the command, never repeats it.
+    match message {
+        Some(message) if fresh && from_operator => chat_answer::handle(ctx, &message.text).await,
+        _ => Ok(()),
+    }
+}
+
 /// Apply one stream event to the reply tracker, unless it is a replay.
+/// `true` when the event was new.
 async fn track_once(
     ctx: &DaemonContext,
     event: &AetherEvent,
     change: impl FnOnce(&mut ReplyTracker),
-) -> Result<(), ArchonError> {
+) -> Result<bool, ArchonError> {
     feed::track(ctx, |replies| {
-        if replies.first_sight(event.seq) {
+        let fresh = replies.first_sight(event.seq);
+        if fresh {
             change(replies);
         }
+        fresh
     })
     .await
 }

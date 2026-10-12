@@ -201,7 +201,9 @@ The standard transcript includes tools and trigger turns. Direct TUI messages
 live in Aether's history; they do not add an Archon user-feed entry. Archon's
 pipeline gates and notifications remain in Lavish / `archon questions` /
 `archon answer` and the quiet chat; they are separate from native Aether
-approval cards. Existing orchestrators receive updated built-in instructions
+approval cards. A gate or question can also be answered from this chat with
+`/answer <n> …` (see [Answering in the orchestrator's chat](#answering-in-the-orchestrators-chat)).
+Existing orchestrators receive updated built-in instructions
 on their next recreation (`archon orchestrator restart`); opening the TUI
 does not force a restart.
 
@@ -217,22 +219,60 @@ Archon's feed. They overlap, but they are not the same list.
   `Trigger from archon · item finished: qi_… succeeded — <title>`.
 - **Shown because the orchestrator restates them** (its instructions say so;
   the tool calls themselves are hidden in calm): the text of each `notify`
-  and `ask_operator`, a published report's title and location, and an item's
-  outcome with its pull request URL. Ctrl+T shows the calls and payloads.
-- **Not shown:** what archond posts to the feed itself. That is pipeline gate
-  questions (proposal and report approval, "reopen the review window?"),
-  reports published by stages, progress notices, system notices, and the
-  chat's "open questions" header. A gate opens in Lavish when it is
-  installed; otherwise `archon status` and `archon questions` show what
-  waits, and you can ask the orchestrator.
+  and `ask_operator`, a published report's title and location, an item's
+  outcome with its pull request URL, and each proposal or report gate when
+  it opens: what is asked, a short summary, its number and the
+  `/answer <n> …` line that answers it. Ctrl+T shows the calls and payloads.
+- **Not shown:** the rest of what archond posts to the feed itself. That is
+  "reopen the review window?" questions, reports published by stages,
+  progress notices, system notices, and the chat's "open questions" header.
+  A gate also opens in Lavish when it is installed; `archon status` and
+  `archon questions` always show what waits.
+
+### Answering in the orchestrator's chat
+
+A message to the orchestrator that is exactly
+
+```text
+/answer <question number or q_… id> <answer>
+```
+
+is applied by archond itself, through the same path as `archon answer`: the
+same validation, the same effect, and the same feed record, marked
+`answered from operator chat`. Leading and trailing whitespace is allowed;
+anything else in the message makes it ordinary text. For a proposal or
+report gate the answer is `approve` (a note may follow; `yes`, `ok` and
+`lgtm` approve too), `reject` to cancel the item, or any other text, which is
+feedback that sends the work back. For a question with options, a bare option
+number picks that option.
+
+- The orchestrator still receives the message. It acknowledges in one line
+  and then restates what archond did. A malformed command, an unknown or
+  already answered number, or an answer that was refused comes back with the
+  reason, in the same chat and as a system notice in `archon log`.
+- Only your own message counts: one Aether authenticated as the `user`
+  actor. An agent's message, a relay, a GitHub request, and a `/answer`
+  quoted inside other text answer nothing. The orchestrator has no tool that
+  answers a gate.
+- A plain reply to a question the orchestrator asked itself (`ask_operator`)
+  works as before, and the orchestrator now records it, so the question
+  leaves `archon questions`, marked
+  `answered in chat, recorded by the orchestrator`. It can do that only for
+  its own questions, never for a gate. This depends on the orchestrator
+  following its instructions; `archon answer <n> …` always closes it.
+- With `[aether] mode = "shared"` chat answers are **off**: in a shared
+  Aether instance a client that connects with the `[listen]` token is the
+  same `user` actor as you, so a chat command would widen who can pass a
+  gate. `/answer` is then refused with that reason; use `archon answer`.
 
 Known limitations:
 
-- A gate cannot be answered in the terminal UI. Use Lavish or
-  `archon answer <n> …`.
-- A reply you type to one of the orchestrator's own questions reaches it as a
-  message and it acts on it, but the question stays listed in
-  `archon questions` until `archon answer <n> …` closes it.
+- A command is applied at most once. If archond stops in the instant between
+  reading the message and applying it, nothing is answered and nothing is
+  reported; the question stays in `archon questions`, so send it again.
+- A running orchestrator learns about `/answer` and gate news from its
+  instructions, which it gets on its next recreation
+  (`archon orchestrator restart`). The daemon applies `/answer` either way.
 - A question asked before you opened the terminal UI is in the transcript
   above, as long as the orchestrator that asked is still the one running; an
   orchestrator created since starts an empty transcript. `archon questions`
@@ -362,6 +402,43 @@ target contains the full URL or encoded absolute file path. Pipes, unknown
 or dumb terminals, and `NO_COLOR` use the full location as plain text;
 `archon reports` and JSON retain the full location in all cases.
 
+## Using Archon from Aether's remote app
+
+This depends on an Aether build that has the remote app (a web app
+`aetherd` serves to a paired phone or browser). It has not been tested
+against one: what follows is what Archon's side provides.
+
+The remote app shows an Aether instance's agents and their chats. Archon's
+orchestrator is an agent of **Archon's own** Aether instance, so the app has
+to be served by that instance, not by your everyday Aether:
+
+- Enable and pair the remote listener on Archon's instance, with
+  `archon aether remote …` in place of `aether remote …`.
+- Give that instance its own `[remote] address` in
+  `~/.config/archon/aether/config.toml`. The default, `127.0.0.1:8377`, is
+  the one your own Aether uses, and two daemons cannot bind it. Restart
+  Archon's aetherd afterwards (`archon daemon stop --aether`, then `archon`).
+  `archon setup --resync` rebuilds that file from your own Aether config, so
+  set the address again after a resync.
+
+What works from the app, because it is all text in the orchestrator's chat:
+
+- Talking to the orchestrator, and reading its replies, item outcomes and
+  the stage messages it echoes.
+- Seeing a gate: when a proposal or report gate opens, the orchestrator
+  restates it with its number and a summary.
+- Answering a gate or question: send `/answer <n> approve`,
+  `/answer <n> reject` or `/answer <n> <feedback>` as the whole message.
+
+What does not: the Lavish page of a gate is a link to `127.0.0.1` on
+Archon's machine and does not open on a phone; the `archon` CLI, its line
+chat and `archon questions` are not in the app; there are no Archon views
+and no push notifications for gates. Chat answers need the default
+dedicated mode (see
+[Answering in the orchestrator's chat](#answering-in-the-orchestrators-chat)).
+A device paired as an observer cannot answer: Aether does not treat it as
+you.
+
 ## Autonomy levels
 
 Each item carries five knobs. The orchestrator sets them from the change's
@@ -376,8 +453,10 @@ risk and from what you told it, within a ceiling that only you can raise.
 | `tools` | `guarded`, `yolo` | `yolo`: the item's agents may delegate, and nothing waits for approval |
 
 Answer a waiting proposal or report in chat with `/a <n> yes`,
-`/a <n> <feedback>` or `/a <n> reject`, with `archon answer <n> …`, or on
-its Lavish page. A question keeps its number for good: if it was answered
+`/a <n> <feedback>` or `/a <n> reject`, with `archon answer <n> …`, on
+its Lavish page, or with `/answer <n> …` in the terminal UI (see
+[Answering in the orchestrator's chat](#answering-in-the-orchestrators-chat)).
+A question keeps its number for good: if it was answered
 elsewhere in the meantime, the answer is refused instead of reaching another
 question.
 

@@ -397,6 +397,55 @@ fn triggers_reach_only(harness: &Harness, live: &'static str) -> Arc<AtomicUsize
     taken
 }
 
+/// The operator's `/answer`, read off the orchestrator's stream by the
+/// pump, is applied once; the same text from an agent is only text.
+#[tokio::test]
+async fn an_operator_chat_command_is_applied_once_through_the_pump() {
+    let harness = Harness::new().await;
+    let (_agents, pump) = running_pump(&harness).await;
+    let ask = Request::AskOperator {
+        text: "Ship to prod?".into(),
+        item: None,
+        options: vec![],
+    };
+    let reply = handlers::handle(&harness.ctx, ClientKind::ArchonCli, ask).await;
+    let Ok(Reply::Question(asked)) = reply else {
+        panic!("asked: {reply:?}")
+    };
+    let command = format!("/answer {} yes", asked.number);
+    let from = |actor: Value| {
+        json!({"kind": "message", "message_id": "msg_1", "from": actor,
+               "content": [{"type": "text", "text": command}]})
+    };
+    let open = || async { harness.ctx.store.lock().await.question(&asked.id).unwrap() };
+    let peer = json!({"actor": "agent", "id": STAGE});
+    orch(&harness, delivered(1, from(peer))).await;
+    assert!(open().await.is_open(), "an agent's message answers nothing");
+    assert!(triggers::held(&harness.ctx).await.unwrap().is_empty());
+
+    let seq = orch(&harness, delivered(2, from(json!({"actor": "user"})))).await;
+    assert_eq!(open().await.answer.as_deref(), Some("yes"));
+    hangup_and_replay(&harness, keys::CURSOR_ORCHESTRATOR).await;
+    harness
+        .eventually("the replay was handled", || async {
+            harness.kv(keys::CURSOR_ORCHESTRATOR).await.as_deref() == Some(&*seq.to_string())
+        })
+        .await;
+    pump.abort();
+    let expected = vec![
+        TriggerEvent::OperatorAnswer {
+            question: asked.id.clone(),
+            text: "yes".into(),
+        },
+        TriggerEvent::ChatAnswer {
+            number: Some(asked.number),
+            applied: true,
+            text: "yes".into(),
+        },
+    ];
+    assert_eq!(triggers::held(&harness.ctx).await.unwrap(), expected);
+}
+
 fn item_finished(title: &str) -> TriggerEvent {
     TriggerEvent::ItemFinished {
         item: QueueItemId::new(),

@@ -12,7 +12,7 @@ use archon_aether::fake::{self, Scripted};
 use archon_core::aether_ids::AetherQuestionRef;
 use archon_core::error::ArchonError;
 use archon_core::id::{FeedItemId, QuestionId};
-use archon_core::notify::{FeedEntry, NotificationKind, Question};
+use archon_core::notify::{AnswerVia, FeedEntry, NotificationKind, Question};
 use archon_core::protocol::{ClientKind, Reply, Request};
 use archon_daemon::triggers::TriggerEvent;
 use archon_daemon::{handlers, supervisor};
@@ -566,10 +566,10 @@ async fn answers_go_to_aether_or_to_the_orchestrator_by_question_origin() {
         "reply_to_question",
         Scripted::reply("message_sent", json!({})),
     );
-    supervisor::route_answer(&harness.ctx, &from_aether, "the first")
+    supervisor::route_answer(&harness.ctx, &from_aether, "the first", AnswerVia::Archon)
         .await
         .unwrap();
-    supervisor::route_answer(&harness.ctx, &from_archon, "yes")
+    supervisor::route_answer(&harness.ctx, &from_archon, "yes", AnswerVia::Archon)
         .await
         .unwrap();
     let replied = &harness.fake.received_named("reply_to_question")[0];

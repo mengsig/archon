@@ -9,6 +9,7 @@
 
 mod finish;
 pub(crate) mod frozen;
+mod gate_news;
 mod gates;
 mod naming;
 mod pages;

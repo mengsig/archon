@@ -265,7 +265,7 @@ async fn follow_feed(
 #[cfg(test)]
 mod tests {
     use archon_core::id::{FeedItemId, NotificationId, ReportId};
-    use archon_core::notify::{Notification, Question};
+    use archon_core::notify::{AnswerVia, Notification, Question};
 
     use super::*;
 
@@ -307,6 +307,7 @@ mod tests {
         FeedEntry::Answer {
             question: question.id.clone(),
             text: "yes".into(),
+            via: AnswerVia::Archon,
         }
     }
 

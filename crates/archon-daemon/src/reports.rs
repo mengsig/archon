@@ -20,7 +20,7 @@ use std::time::Duration;
 
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, ReportId};
-use archon_core::notify::{FeedEntry, NotificationKind};
+use archon_core::notify::{AnswerVia, FeedEntry, NotificationKind};
 use archon_core::protocol::{ReportPublished, ReportState, ReportSummary};
 use archon_core::run::GateDecision;
 use archon_lavish::{Lavish, LavishFeedback};
@@ -32,7 +32,7 @@ use crate::context::DaemonContext;
 use crate::feed;
 use crate::triggers::TriggerEvent;
 
-pub use self::questions::{already_closed, answer_reopen, close_stale_questions};
+pub use self::questions::{already_closed, answer_reopen, asks_to_reopen, close_stale_questions};
 pub(crate) use self::records::is_open;
 pub use self::records::{KEY_PREFIX, LEGACY_KEY, prune};
 
@@ -570,6 +570,7 @@ async fn decide_gate(
     let entry = FeedEntry::Answer {
         question: question.clone(),
         text,
+        via: AnswerVia::Archon,
     };
     feed::append(ctx, entry).await?;
     Ok(true)

@@ -75,6 +75,19 @@ fn label(event: &TriggerEvent) -> String {
             format!("stage {kind} from {source} ({})", message.item)
         }
         TriggerEvent::OperatorAnswer { question, .. } => format!("operator answered {question}"),
+        TriggerEvent::GateOpened {
+            number,
+            item,
+            subject,
+            ..
+        } => format!("gate opened: Q{number} {} ({item})", subject.noun()),
+        TriggerEvent::ChatAnswer {
+            number, applied, ..
+        } => {
+            let question = number.map_or_else(|| "/answer".to_owned(), |n| format!("Q{n}"));
+            let verdict = if *applied { "applied" } else { "refused" };
+            format!("chat answer {verdict}: {question}")
+        }
         TriggerEvent::LavishFeedback { report, item, .. } => match item {
             Some(item) => format!("report feedback: {report} ({item})"),
             None => format!("report feedback: {report}"),

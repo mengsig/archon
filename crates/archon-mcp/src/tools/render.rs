@@ -12,6 +12,7 @@ use archon_core::catalog::{CatalogListing, Gate, PipelineSummary, StageSummary};
 use archon_core::github::GithubWatch;
 use archon_core::id::{PipelineRunId, QueueItemId};
 use archon_core::model::{ModelPlan, ModelReasons};
+use archon_core::notify::Question;
 use archon_core::policy::ModelPolicy;
 use archon_core::protocol::{
     AetherLinkStatus, DaemonStatus, DiskStatus, ItemDetail, Reply, ReportPublished, gib,
@@ -56,11 +57,7 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         Reply::StageDetail(detail) => stages::detail(detail),
         Reply::Catalog(catalog) => catalog_text(catalog),
         Reply::ModelPolicy(policy) => policy_text(policy),
-        Reply::Question(question) => format!(
-            "Asked {}. The answer will arrive as an operator_answer trigger with this id; keep \
-             working meanwhile.",
-            question.id
-        ),
+        Reply::Question(question) => question_text(tool, question),
         Reply::Report(report) => report_text(report),
         Reply::Autonomy(view) => autonomy_text(view),
         Reply::Directive(directive) => format!(
@@ -83,6 +80,20 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         | Reply::Gc(_) => serde_json::to_string(reply)
             .unwrap_or_else(|e| format!("(reply could not be encoded: {e})")),
     }
+}
+
+fn question_text(tool: &str, question: &Question) -> String {
+    if tool == "record_chat_answer" {
+        return format!(
+            "Recorded the operator's chat answer to Q{} ({}); it is no longer an open question.",
+            question.number, question.id
+        );
+    }
+    format!(
+        "Asked {}. The answer will arrive as an operator_answer trigger with this id; keep \
+         working meanwhile.",
+        question.id
+    )
 }
 
 fn ok(tool: &str) -> &'static str {

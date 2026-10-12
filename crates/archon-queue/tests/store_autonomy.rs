@@ -5,7 +5,7 @@ mod common;
 use archon_core::autonomy::{Directive, DirectiveSource, MAX_DIRECTIVES};
 use archon_core::error::ArchonError;
 use archon_core::id::{QuestionId, ReportId};
-use archon_core::notify::{FeedEntry, Question};
+use archon_core::notify::{AnswerVia, FeedEntry, Question};
 use archon_core::queue::QueueState;
 use archon_core::run::{GateDecision, GateSubject, OperatorGate, PipelineRun, RunState};
 use archon_queue::Store;
@@ -224,7 +224,7 @@ fn answers(store: &Store) -> Vec<(QuestionId, String)> {
     let feed = store.feed_after(0, usize::MAX).unwrap();
     feed.into_iter()
         .filter_map(|f| match f.entry {
-            FeedEntry::Answer { question, text } => Some((question, text)),
+            FeedEntry::Answer { question, text, .. } => Some((question, text)),
             _ => None,
         })
         .collect()
@@ -255,6 +255,7 @@ fn finishing_a_run_closes_its_gate_questions_in_the_same_commit() {
     let expected = FeedEntry::Answer {
         question: open.id.clone(),
         text: text.clone(),
+        via: AnswerVia::Archon,
     };
     assert_eq!(published, vec![&expected], "only the open question closes");
     drop(store);

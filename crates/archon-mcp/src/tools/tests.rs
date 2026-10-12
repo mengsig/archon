@@ -8,7 +8,7 @@ use archon_core::catalog::{
     CatalogListing, Gate, Nudges, PipelineProblem, PipelineSource, PipelineSummary, StageKind,
     StageSummary, WorkspaceMode,
 };
-use archon_core::id::{DirectiveId, PipelineRunId, QueueItemId};
+use archon_core::id::{DirectiveId, PipelineRunId, QuestionId, QueueItemId};
 use archon_core::mcp_tools::TOOLS;
 use archon_core::model::Effort;
 use archon_core::protocol::{PauseTarget, Request};
@@ -92,6 +92,10 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
         (
             "ask_operator",
             json!({"text": "Ship to prod?", "item": qi(), "options": ["yes", "no"]}),
+        ),
+        (
+            "record_chat_answer",
+            json!({"question": QuestionId::new().to_string(), "answer": "Yes, ship it."}),
         ),
         (
             "publish_report",

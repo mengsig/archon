@@ -74,6 +74,12 @@ For an existing shared registration, add that field to the `archon` MCP server's
 also add `message_orchestrator = "mutation"` to its `classes` table.
 Calls without caller identity are refused. Setup preserves existing entries.
 
+A registration written before `record_chat_answer` existed does not list
+that tool, and Aether then classes it as `external`. Run
+`archon setup --resync` in dedicated mode, or add
+`record_chat_answer = "mutation"` to the shared registration's `classes`
+table. The `/answer` chat command does not depend on it.
+
 ## Pipelines
 
 Each pipeline is a directory with a `pipeline.toml` and one Markdown prompt

@@ -117,8 +117,8 @@ impl Catalog {
         self.pipelines.insert(name, spec);
     }
 
-    /// Record a broken pipeline and drop any lower-precedence one of the
-    /// same name: a broken override never falls back.
+    /// Record a broken pipeline and drop any lower-precedence one of its name:
+    /// a broken override never falls back. The catalog's reader reports it.
     fn record_problem(
         &mut self,
         name: &str,
@@ -126,7 +126,7 @@ impl Catalog {
         path: Option<PathBuf>,
         error: &ArchonError,
     ) {
-        tracing::warn!(pipeline = name, ?source, ?path, %error, "pipeline excluded from catalog");
+        tracing::debug!(pipeline = name, ?source, ?path, %error, "pipeline excluded from catalog");
         self.pipelines.remove(name);
         self.problems.push(PipelineProblem {
             name: name.to_owned(),

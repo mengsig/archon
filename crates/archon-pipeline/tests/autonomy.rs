@@ -346,7 +346,9 @@ fn decisions_are_refused_for_stages_that_are_not_gates_or_already_decided() {
 /// A lead of `adaptive` finishing with its review on record.
 fn reviewed(summary: &'static str) -> Agent {
     let review = serde_json::json!({"verdict": "pass", "reviewer_model": "codex/astra"});
-    Agent::DoneStructured(summary, serde_json::json!({ "review": review }))
+    let mut result = serde_json::json!({ "review": review });
+    archon_pipeline::review::record_check(&mut result, Some(Ok("agt_reviewer".into())));
+    Agent::DoneStructured(summary, result)
 }
 
 #[test]

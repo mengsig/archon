@@ -156,6 +156,7 @@ fn median_averages_middle_values_p90_uses_nearest_rank_and_costs_use_the_ledger(
                 item: Some(item.id.clone()),
                 cost_usd: f64::from(n + 1),
                 cost_basis: archon_core::cost::CostBasis::ProviderReported,
+                cost_complete: None,
                 estimated_cost_usd: 1.,
                 input_tokens: 1,
                 output_tokens: 1,
@@ -181,6 +182,114 @@ fn median_averages_middle_values_p90_uses_nearest_rank_and_costs_use_the_ledger(
     );
     assert_eq!(with.rows[0].median_minutes, Some(5.5));
     assert!(!with.text().contains("small sample"));
+}
+
+fn spend(store: &mut Store, item: &archon_core::id::QueueItemId, n: u32, cost: f64, estimate: f64) {
+    let row = SpendRow {
+        agent: common::agent(n),
+        item: Some(item.clone()),
+        cost_usd: cost,
+        cost_basis: archon_core::cost::CostBasis::ProviderReported,
+        cost_complete: None,
+        estimated_cost_usd: estimate,
+        input_tokens: 1,
+        output_tokens: 1,
+        at: t(200),
+    };
+    store.record_spend(&row).unwrap();
+}
+
+/// A lead that delegates is not a cheap lead: its stage costs what it and
+/// every agent beneath it were charged, each counted for one stage only.
+#[test]
+fn a_stage_cost_includes_what_the_agents_it_delegated_to_were_charged() {
+    let mut store = store();
+    let item = store.insert_item(&item(None, "fixture"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    let model = "codex/helper".parse().unwrap();
+    for n in [0, 1] {
+        let (state, verdict) = (StageState::Completed, Some(Verdict::Pass));
+        attempt(&mut store, &run, n, "build", 999., verdict, state);
+    }
+    // Stage agent 0 delegated to 10, which delegated to 11; agent 1 to nobody.
+    let (lead, helper, below) = (common::agent(0), common::agent(10), common::agent(11));
+    store
+        .record_delegated(&helper, &lead, &model, None)
+        .unwrap();
+    store
+        .record_delegated(&below, &helper, &model, Some(Effort::Low))
+        .unwrap();
+    // As the watchdog does for a child of an agent it knows.
+    store.link_agent_run(&helper, &run.id).unwrap();
+    store.link_agent_run(&below, &run.id).unwrap();
+    for (n, cost, estimate) in [(0, 2., 0.5), (10, 3., 0.25), (11, 4., 0.25), (1, 1., 0.)] {
+        spend(&mut store, &item.id, n, cost, estimate);
+    }
+
+    let query = ModelEvidenceQuery::default();
+    let with = report(&store, query.clone(), range(0, 0));
+    assert_eq!(with.rows.len(), 1, "{with:?}");
+    // 2 + 3 + 4 + 0.5 + 0.25 + 0.25 = 10 for the lead, 1 for the other.
+    assert_eq!(with.rows[0].median_cost_usd, Some(5.5));
+    assert_eq!(with.rows[0].p90_cost_usd, Some(10.));
+    let billed = store
+        .model_evidence(&query, &range(0, 0), false, |_, _| Ok(true))
+        .unwrap();
+    assert_eq!(billed.rows[0].p90_cost_usd, Some(9.));
+
+    let beneath = store.delegated_beneath(&lead, true).unwrap();
+    let seen: Vec<_> = beneath
+        .iter()
+        .map(|d| (d.agent.clone(), d.parent.clone(), d.effort, d.cost_usd))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            (helper.clone(), lead.clone(), None, 3.25),
+            (below.clone(), helper.clone(), Some(Effort::Low), 4.25),
+        ]
+    );
+    assert_eq!(store.delegated_beneath(&helper, false).unwrap().len(), 1);
+    assert!(
+        store
+            .delegated_beneath(&common::agent(1), true)
+            .unwrap()
+            .is_empty()
+    );
+    let run_total = store.spend_for_run(&run.id, true).unwrap();
+    assert_eq!(run_total, 11., "the run counts each agent once");
+}
+
+/// An effort read later completes the record; one already known is kept, and
+/// an agent keeps the parent it was first given.
+#[test]
+fn a_delegated_agent_keeps_its_parent_and_gains_its_effort() {
+    let mut store = store();
+    let (lead, helper) = (common::agent(0), common::agent(10));
+    let model = "codex/helper".parse().unwrap();
+    store
+        .record_delegated(&helper, &lead, &model, None)
+        .unwrap();
+    store
+        .record_delegated(&helper, &lead, &model, Some(Effort::High))
+        .unwrap();
+    store
+        .record_delegated(&helper, &lead, &model, None)
+        .unwrap();
+    let beneath = store.delegated_beneath(&lead, true).unwrap();
+    assert_eq!(beneath.len(), 1);
+    assert_eq!(beneath[0].effort, Some(Effort::High));
+    assert_eq!(beneath[0].cost_usd, 0., "no usage yet");
+
+    let other = common::agent(1);
+    let refused = store
+        .record_delegated(&helper, &other, &model, None)
+        .unwrap_err();
+    assert!(
+        refused.to_string().contains("already delegated to by"),
+        "{refused}"
+    );
+    assert!(store.delegated_beneath(&other, true).unwrap().is_empty());
 }
 
 #[test]

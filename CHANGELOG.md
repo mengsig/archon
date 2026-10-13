@@ -22,13 +22,16 @@ itself, and a pipeline stage can delegate again.
   Helpers count toward the daily and total budgets. `max_parallel_agents`
   and the other caps do not count them: the orchestrator is told to stay
   within them.
-- A GitHub request without operator standing is never delegated.
+- The orchestrator is told never to delegate for a GitHub request without
+  operator standing. Only its prompt holds this.
 - A helper gets only the instructions the orchestrator writes for it; none
   of the orchestrator's own rules are copied. Its prompt now has it state
   them for every helper: read only, stay in the workspace given, open no
   repository, no git identity overrides, no questions to the operator.
-- An answer the orchestrator finishes after waiting for a helper is shown
-  in `archon chat` as one reply, not cut off at the wait.
+- An answer the orchestrator finishes after waiting for a helper is no
+  longer cut off at the wait. `archon chat` shows two lines for it: what the
+  orchestrator said before it waited (Aether has it say something first),
+  and the answer once the helper is done.
 - Only the current orchestrator may call the Archon tools that change
   something. `archond` decides this itself for every call, from the calling
   agent that Aether names. A replaced orchestrator, a helper and a stage
@@ -40,6 +43,15 @@ itself, and a pipeline stage can delegate again.
 - Every change to a repository is still an item, so the pipeline's gates,
   the ship mode, the caps and the autonomy ceiling apply. The orchestrator
   cannot integrate a helper's edits.
+- For a change the orchestrator takes the cheapest pipeline that fits and
+  says what it expects the choice to save: `quick-pr` for a small, low-risk
+  change with an obvious regression test and no need of review,
+  `default-pr-review` for bounded work by one author that needs one
+  independent review, `adaptive` where one lead that keeps its context
+  through fixes or integrates independent parts saves restarts. It never
+  bundles unrelated changes to use `adaptive`. It plans `x_high` or `max`
+  only for a reasoning problem it can name that inspecting the work left
+  unresolved: that you prefer strong models is not one.
 - The orchestrator may write a pipeline for work you keep asking for. It
   saves one to the user pipelines directory after `archon pipelines check`
   passes, and only proposes a pipeline inside a repository.
@@ -66,16 +78,29 @@ itself, and a pipeline stage can delegate again.
   `list_schedules`: a schedule would outlive the stage. In a `repo-readonly`
   workspace `integrate_workspace` is hidden as well.
 - When a stage agent that could delegate completes, fails or is replaced,
-  Archon cancels whatever it left running before the next stage or the
-  replacement starts. The stop is stored first, so it survives a daemon
-  restart, and it is retried while Aether is unreachable.
+  Archon cancels whatever it left running and starts the next stage or the
+  replacement only once Aether holds none of those agents as running:
+  Aether stops agents cooperatively, so its answer to the cancel is not
+  taken for the stop. The stop is stored first, so it survives a daemon
+  restart, and it stays owed while Aether is unreachable. Agents still
+  running two minutes after the cancel are named in a blocker; the item
+  waits for them and goes on by itself.
 - A pipeline can declare the review one of its stages holds:
   `[pipeline.review] level = "standard"`, `stage = "<a delegating work
   stage>"`. It then runs at `review = standard`, and Archon fails the run
   at that stage unless its agent completes with the review on record: a
   pass naming the reviewer's model, or a skip with its reason.
-- New built-in pipeline `adaptive` (`build` → `ship`), for ordinary
-  repository changes. One lead sizes the work, delegates the parts worth
+- A recorded pass is checked, not believed. As the stage ends Archon asks
+  Aether which agents its lead delegated to, and the pass counts only when
+  one of them completed on the model it names; a cancelled or failed
+  reviewer does not count. The run fails at that stage otherwise, saying
+  what the lead did delegate to. The reviewer's agent id is stored with the
+  evidence and shown in the `REVIEW:` line. This proves a reviewer on that
+  model ran to completion, not what it concluded. A skipped review is shown
+  with its reason in `archon queue show` and `get_item`.
+- New built-in pipeline `adaptive` (`build` → `ship`), for a change where
+  one lead that keeps its context through fixes, or integrates independent
+  parts, saves restarts. One lead sizes the work, delegates the parts worth
   splitting, integrates and verifies them, and has the integrated diff
   reviewed once by a fresh reviewer, at a depth matching the risk. It
   declares that review, so it runs at `review = standard`: name it with
@@ -83,6 +108,55 @@ itself, and a pipeline stage can delegate again.
   `review = strict` or `none` with it is refused, and so is a ceiling that
   demands `strict`. `ship` ships only a build whose review passed or was
   skipped with a reason. There are now 17 built-in pipelines.
+- `adaptive` spends less for the same checks. Its lead delegates a worker
+  only when the parallel saving exceeds the briefing, the integration and
+  the repeated reading; commits before the review; runs the full suite once,
+  while the reviewer reads; hands the reviewer the exact commits, changed
+  paths, check results and known risks instead of the conversation; and has
+  a fix reviewed again, as a delta by a new reviewer, only after a failed
+  verdict or when the fix changes production behaviour, security or an
+  invariant, or adds scope. Its `build` nudge asks for high effort, medium
+  for a bounded familiar change, and `x_high` or `max` only for a named
+  reasoning problem. Only an unresolved blocking finding fails the stage;
+  the prompt used to say any open finding does.
+- A ship stage never amends, rebases, squashes or resets the commits it is
+  given. It may reword a commit message that breaks a repository rule, and
+  then shows that the tree hash did not change. `adaptive`'s lead is told
+  the commit rules (the repository's own, else Conventional Commits with a
+  lowercase imperative subject; its configured Git identity; no model or
+  tool attribution), and its `ship` commits nothing and fails on a tree
+  other than the one the lead verified. A live run had `ship` amend a
+  reviewed commit to drop an attribution line the lead had added.
+- Every delegating stage agent is now told to hand a child what it already
+  holds rather than have it read again, and what a reviewer's hand-off
+  contains.
+- The agents of an item queued after others (`depends_on`) are told where
+  each dependency left its work: its item id, branch and pull request, in
+  a `## Dependencies` section of their contract. A dependent item's branch
+  still forks from the repository's base, so a change the brief stacks on a
+  dependency's branch used to be reviewed as a diff from the base, the
+  dependency's change included. The section defines the base of such a
+  change, and the reviewer is handed it. Archon still does not stack items
+  itself: the branch and the pull request of a dependent item start from
+  the base.
+
+### Cost
+
+- A stage's cost now includes the agents it delegated to. `archon queue
+  show`, `get_item` and `get_stage` show the split for a stage that
+  delegated: its own agent's cost, the delegated agents' cost, and each
+  delegated agent with its model, effort and cost (`delegations` and
+  `delegation` in the JSON). Run and item totals still count every agent
+  once. `model_evidence` compares the complete stage cost, so a lead that
+  delegates no longer looks cheaper than it was.
+- While a turn runs, Aether prices it at list price, and when the turn ends
+  it reports what the provider billed. Archon kept the higher of the two
+  and logged a warning on every turn. It now charges the provider's
+  complete figure, counts all of it as billed, and takes the difference
+  back from that agent's own days only. A total that goes down any other
+  way still keeps what was charged, and a provider-reported total never
+  lowers a charge below an earlier one, so reporting less cannot evade a
+  budget.
 
 ### Setup and upgrades
 
@@ -91,6 +165,12 @@ itself, and a pipeline stage can delegate again.
   Aether instance (the default) nothing is asked of you: the first `archon`
   command after the update adds the line to the instance's config and
   restarts Archon's `aetherd` once, since Aether reads it only at start.
+  It says so before the restart, which takes some seconds, and runs once
+  `archond` has reconnected, so it no longer reports `aether:
+  disconnected` for a restart it made itself. `archond` now looks for an
+  `aetherd` that is not running every second instead of at a growing
+  interval of up to 30 seconds, so any restart of Aether is picked up at
+  once.
   In shared mode Archon never edits your Aether config: `archon doctor`
   fails with the line to add, and your `aetherd` needs a restart after it.
 - Until Aether names the callers, `archond` posts one blocker saying so,
@@ -99,7 +179,10 @@ itself, and a pipeline stage can delegate again.
   an earlier release cannot delegate, so it keeps working. One that was
   started with `delegate` before `archond` saw an unnamed call has that
   call refused, with the fix and the `archon orchestrator restart` that
-  replaces it.
+  replaces it. After the fix, the orchestrator's next named call of any
+  kind ends this: it used to take a call that changed Archon, so an
+  orchestrator that only read for a while kept `archond` starting its
+  successors without `delegate`.
 - `archon daemon stop --aether` now waits until Archon's `aetherd` is gone,
   and a start that still finds the old one holding its database retries
   for up to 15 seconds instead of failing with "another aether daemon is

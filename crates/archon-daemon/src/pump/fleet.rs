@@ -333,6 +333,7 @@ pub(super) async fn record_spend(
         item,
         cost_usd: usage.cost_usd,
         cost_basis: usage.cost_basis,
+        cost_complete: usage.cost_complete,
         estimated_cost_usd: estimate,
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,

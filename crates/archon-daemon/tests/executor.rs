@@ -16,7 +16,7 @@ use archon_core::config::Config;
 use archon_core::error::ArchonError;
 use archon_core::model::Effort;
 use archon_core::notify::NotificationKind;
-use archon_core::ports::NetworkPolicy;
+use archon_core::ports::{DescendantState, NetworkPolicy};
 use archon_core::protocol::{PauseTarget, Request};
 use archon_core::queue::QueueState;
 use archon_core::run::{PipelineRun, RunState, StageOutcome, StageRun, StageState};
@@ -1438,6 +1438,7 @@ async fn subcent_item_overshoot_is_visible_once_when_the_next_stage_is_refused()
             cost_usd: 0.000002,
             estimated_cost_usd: 0.0,
             cost_basis: archon_core::cost::CostBasis::ProviderReported,
+            cost_complete: None,
             input_tokens: 1,
             output_tokens: 1,
             at: archon_core::now(),
@@ -1475,6 +1476,7 @@ async fn subcent_daily_cap_and_spend_stay_visible_in_the_hold() {
             cost_usd: 0.002,
             estimated_cost_usd: 0.0,
             cost_basis: archon_core::cost::CostBasis::ProviderReported,
+            cost_complete: None,
             input_tokens: 1,
             output_tokens: 1,
             at: archon_core::now(),
@@ -1992,6 +1994,24 @@ fn reviewed(summary: &str) -> StageOutcome {
     }
 }
 
+/// The lead's reviewer completed, and the lead settles with its pass on record.
+async fn settle_reviewed(h: &Harness, summary: &str) -> Vec<StageRun> {
+    delegated_by_the_lead(h, REVIEW_MODEL, DescendantState::Completed).await;
+    h.settle_running(|_| reviewed(summary)).await
+}
+
+/// The running lead delegated to an agent on `model`, which ended as `ended`.
+async fn delegated_by_the_lead(
+    h: &Harness,
+    model: &str,
+    ended: DescendantState,
+) -> archon_core::aether_ids::AetherAgentId {
+    let lead = h.running().await[0].aether_agent.clone().unwrap();
+    let child = h.backend.delegate(&lead, model);
+    h.backend.end_delegated(&child, ended);
+    child
+}
+
 /// The stage flag makes a guarded agent a delegating one: it is told how,
 /// within which models, and to put its review on record. `ship` is not.
 #[tokio::test]
@@ -2014,6 +2034,7 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_ship_is_a
     assert!(rules.contains("pass `workspace_mode: \"isolated\"`"));
     assert!(build.instructions.contains("\n## Review on record\n"));
 
+    let reviewer = delegated_by_the_lead(&h, REVIEW_MODEL, DescendantState::Completed).await;
     h.settle_running(|_| reviewed("Verified; one reviewer passed it"))
         .await;
     h.dispatch().await;
@@ -2024,8 +2045,88 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_ship_is_a
     assert!(ship.leaf);
     assert_eq!(ship.hidden_tools, build.hidden_tools);
     assert_eq!(ship.instructions.matches("## Delegation").count(), 0);
-    let report = format!("Verified; one reviewer passed it\n\nREVIEW: pass, by {REVIEW_MODEL}\n");
+    let report = format!(
+        "Verified; one reviewer passed it\n\nREVIEW: pass, by {REVIEW_MODEL} (agent {reviewer})\n"
+    );
     assert!(ship.objective.contains(&report), "{}", ship.objective);
+}
+
+/// A pass is the lead's word until Aether shows the reviewer: without a
+/// completed child on the named model, nothing ships.
+#[tokio::test]
+async fn adaptive_refuses_a_pass_whose_reviewer_aether_does_not_show() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    delegated_by_the_lead(&h, MODEL, DescendantState::Completed).await;
+    let cancelled = delegated_by_the_lead(&h, REVIEW_MODEL, DescendantState::Stopped).await;
+    let build = h
+        .settle_running(|_| reviewed("Verified; one reviewer passed it"))
+        .await;
+    h.dispatch().await;
+    assert_eq!(h.backend.requests().len(), 1, "no ship agent is created");
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!("the item fails: {:?}", h.state(&item.id).await);
+    };
+    assert!(error.contains("is not on record"), "{error}");
+    assert!(error.contains("no agent the lead delegated to completed on"));
+    assert!(
+        error.contains(&format!(
+            "{cancelled} on {REVIEW_MODEL} ended without completing"
+        )),
+        "{error}"
+    );
+    let stored = h.ctx.store.lock().await.stage_run(&build[0].id).unwrap();
+    let review = &stored.structured.as_ref().unwrap()["review"];
+    assert_eq!(review.get("reviewer_agent"), None);
+    assert!(review["unverified"].as_str().is_some());
+}
+
+/// The reviewer's agent is Archon's finding: one the lead wrote itself is
+/// replaced, and the stored evidence names the agent Aether shows.
+#[tokio::test]
+async fn adaptive_records_the_reviewer_it_found_not_the_one_the_lead_names() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let reviewer = delegated_by_the_lead(&h, REVIEW_MODEL, DescendantState::Completed).await;
+    let forged = serde_json::json!({"review": {"verdict": "pass",
+        "reviewer_model": REVIEW_MODEL, "reviewer_agent": "agt_forged"}});
+    let build = h
+        .settle_running(|_| StageOutcome::Completed {
+            summary: "Verified".into(),
+            structured: Some(forged.clone()),
+        })
+        .await;
+    let stored = h.ctx.store.lock().await.stage_run(&build[0].id).unwrap();
+    let review = &stored.structured.as_ref().unwrap()["review"];
+    assert_eq!(review["reviewer_agent"], reviewer.as_str());
+    assert_eq!(review.get("unverified"), None);
+}
+
+/// While Aether cannot be asked, the stage is not settled on a guess: it
+/// stays live and the same outcome settles it once Aether answers.
+#[tokio::test]
+async fn adaptive_leaves_the_build_live_while_aether_cannot_show_the_reviewer() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    delegated_by_the_lead(&h, REVIEW_MODEL, DescendantState::Completed).await;
+    let lead = h.running().await[0].aether_agent.clone().unwrap();
+    h.backend
+        .fail_next_descendants(ArchonError::Unavailable("aether: disconnected".into()));
+    let refused = executor::stage_settled(&h.ctx, &lead, reviewed("Verified")).await;
+    assert!(
+        matches!(refused, Err(ArchonError::Unavailable(_))),
+        "{refused:?}"
+    );
+    assert_eq!(h.running().await.len(), 1, "the build is still live");
+
+    h.settle_running(|_| reviewed("Verified")).await;
+    assert!(h.running().await.is_empty());
+    h.dispatch().await;
+    assert_eq!(
+        h.backend.requests().len(),
+        2,
+        "ship follows the checked pass"
+    );
 }
 
 /// A lead that says it reviewed, without the record, ends the item at
@@ -2106,7 +2207,7 @@ async fn a_completed_leads_helpers_are_stopped_before_the_next_stage_starts() {
     // The stop fails at the settle and at the first sweep.
     h.backend.fail_next_cancel(unreachable_aether());
     h.backend.fail_next_cancel(unreachable_aether());
-    h.settle_running(|_| reviewed("Built; reviewed")).await;
+    settle_reviewed(&h, "Built; reviewed").await;
     h.dispatch().await;
     assert_eq!(stage_labels(&h), ["build"], "ship waits for the stop");
     assert!(h.backend.cancelled().is_empty());
@@ -2131,7 +2232,7 @@ async fn an_owed_stop_survives_a_restart_and_still_goes_first() {
     let lead = h.running().await.remove(0).aether_agent.unwrap();
     h.backend.fail_next_cancel(unreachable_aether());
     h.backend.fail_next_cancel(unreachable_aether());
-    h.settle_running(|_| reviewed("Built; reviewed")).await;
+    settle_reviewed(&h, "Built; reviewed").await;
     h.dispatch().await;
     assert_eq!(stage_labels(&h), ["build"]);
 
@@ -2194,7 +2295,7 @@ async fn the_stop_waits_for_the_lead_to_end_its_turn() {
     adaptive_item(&h).await;
     let lead = h.running().await.remove(0).aether_agent.unwrap();
     h.backend.hold_turn(&lead);
-    h.settle_running(|_| reviewed("Built; reviewed")).await;
+    settle_reviewed(&h, "Built; reviewed").await;
     h.dispatch().await;
     assert!(
         h.backend.cancelled().is_empty(),
@@ -2206,6 +2307,112 @@ async fn the_stop_waits_for_the_lead_to_end_its_turn() {
     h.dispatch().await;
     assert_eq!(h.backend.cancelled(), [lead]);
     assert_eq!(stage_labels(&h), ["build", "ship"]);
+}
+
+/// `ship` shares the worktree with what the lead delegated: it is not created while
+/// Aether holds one of them live, however deep, and the cancel is not repeated.
+#[tokio::test]
+async fn the_next_stage_waits_until_every_helper_of_the_lead_has_ended() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0).aether_agent.unwrap();
+    let helper = h.backend.delegate(&lead, MODEL);
+    let below = h.backend.delegate(&helper, MODEL);
+    h.backend.end_delegated(&helper, DescendantState::Completed);
+    settle_reviewed(&h, "Built; reviewed").await;
+    h.dispatch().await;
+    assert_eq!(h.backend.cancelled(), std::slice::from_ref(&lead));
+    assert_eq!(stage_labels(&h), ["build"], "accepted is not ended");
+
+    h.dispatch().await;
+    assert_eq!(stage_labels(&h), ["build"], "a helper's helper still runs");
+    assert_eq!(h.backend.cancelled(), std::slice::from_ref(&lead));
+    assert!(h.notices(NotificationKind::Blocker).await.is_empty());
+
+    h.backend.end_delegated(&below, DescendantState::Stopped);
+    h.dispatch().await;
+    assert_eq!(stage_labels(&h), ["build", "ship"]);
+    assert_eq!(h.backend.cancelled(), std::slice::from_ref(&lead));
+
+    // What the lead delegated to is on record as Aether held it at the end.
+    let recorded = h.ctx.store.lock().await.delegated_beneath(&lead, true);
+    let recorded: Vec<_> = recorded
+        .unwrap()
+        .into_iter()
+        .map(|d| (d.agent, d.parent, d.effort))
+        .collect();
+    let medium = Some(Effort::Medium);
+    assert_eq!(recorded.len(), 3, "helper, its helper, the reviewer");
+    assert!(recorded.contains(&(helper.clone(), lead.clone(), medium)));
+    assert!(recorded.contains(&(below, helper, medium)), "{recorded:?}");
+}
+
+/// A dead lead's replacement would work beside what the dead one delegated:
+/// it waits for those agents to end too, across a restart of archond.
+#[tokio::test]
+async fn a_replacement_lead_waits_for_the_dead_leads_helpers_across_a_restart() {
+    let mut h = Harness::new().await;
+    adaptive_item(&h).await;
+    let dead = h.running().await.remove(0).aether_agent.unwrap();
+    let helper = h.backend.delegate(&dead, MODEL);
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "engine crashed".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    assert_eq!(h.backend.created(), 1, "the replacement waits");
+
+    h.restart();
+    executor::recover(&h.ctx).await.unwrap();
+    h.backend.fail_next_descendants(unreachable_aether());
+    h.dispatch().await;
+    assert_eq!(h.backend.created(), 1, "no answer confirms nothing");
+    h.dispatch().await;
+    assert_eq!(h.backend.created(), 1, "the helper still runs");
+    assert_eq!(h.backend.cancelled(), std::slice::from_ref(&dead));
+
+    h.backend.end_delegated(&helper, DescendantState::Stopped);
+    h.dispatch().await;
+    assert_eq!(stage_labels(&h), ["build", "build"]);
+    assert_eq!(h.backend.cancelled(), [dead], "the stored cancel is kept");
+}
+
+/// A stop Aether takes long over holds the item visibly: the operator is told
+/// once which agents it waits for, and again when they have ended.
+#[tokio::test]
+async fn a_stop_that_stays_unconfirmed_is_reported_once_and_stays_owed() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let stage = h.running().await.remove(0);
+    let helper = h
+        .backend
+        .delegate(stage.aether_agent.as_ref().unwrap(), MODEL);
+    settle_reviewed(&h, "Built; reviewed").await;
+    h.dispatch().await;
+    let key = format!("descendant_stop:{}", stage.id);
+    let mut owed: serde_json::Value = serde_json::from_str(&h.kv(&key).await.unwrap()).unwrap();
+    let long_ago = archon_core::now() - chrono::Duration::minutes(10);
+    owed["cancelled_at"] = serde_json::json!(long_ago);
+    let aged = owed.to_string();
+    h.ctx.store.lock().await.kv_set(&key, &aged).unwrap();
+
+    h.dispatch().await;
+    h.dispatch().await;
+    let blockers = h.notices(NotificationKind::Blocker).await;
+    assert_eq!(blockers.len(), 1, "said once: {blockers:?}");
+    assert!(blockers[0].contains("Stage `build` ended"), "{blockers:?}");
+    assert!(blockers[0].contains(helper.as_str()), "{blockers:?}");
+    assert_eq!(stage_labels(&h), ["build"], "still owed");
+    assert!(matches!(
+        h.state(&item.id).await,
+        QueueState::Running { .. }
+    ));
+
+    h.backend.end_delegated(&helper, DescendantState::Stopped);
+    h.dispatch().await;
+    assert_eq!(stage_labels(&h), ["build", "ship"]);
+    assert!(h.kv(&key).await.is_none());
 }
 
 /// A stage agent that could not delegate left nothing running: it is not

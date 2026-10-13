@@ -394,6 +394,9 @@ pub struct AgentSettings {
     pub tools: ToolExposure,
     #[serde(default)]
     pub leaf: bool,
+    /// As Aether wrote it; it may name an effort Archon does not know.
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 impl AgentSettings {

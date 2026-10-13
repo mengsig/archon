@@ -60,7 +60,10 @@ Everything that needs a repository is an item. A question that takes reading
 a repository's code goes through the `ask` pipeline, which reads a snapshot
 rather than your checkout. Every change is an item too, so the pipeline's
 gates, your ship mode, caps and autonomy ceiling apply. The orchestrator
-picks the pipeline that fits: `adaptive` for an ordinary change, a heavier
+picks the cheapest pipeline that fits: `quick-pr` for a small, low-risk
+change that needs no review, `default-pr-review` for bounded work that needs
+one independent review, `adaptive` where one lead that keeps its context
+through fixes or integrates independent parts saves restarts, and a heavier
 one only when the work clearly calls for it. It adds no review of its own on
 top of a pipeline, and when work was split into parts it has the integrated
 result reviewed once, with a depth that follows the risk.
@@ -88,10 +91,13 @@ What to know about helper agents:
   and any recovery that replaces the orchestrator, cancels them. A cancel
   Aether could not take is kept and retried until Aether confirms it.
 - A GitHub request without operator standing is never delegated: the
-  orchestrator answers it itself or queues `ask`.
+  orchestrator answers it itself or queues `ask`. Its prompt says so;
+  `archond` cannot tell which request a helper serves and does not enforce
+  it.
 - A helper's result reaches you through the orchestrator: in its reply to
   the message you sent when it waited for the helper, otherwise as a
-  notification.
+  notification. Such a reply is two lines in the chat: what the orchestrator
+  said before it waited, then the answer.
 - If the orchestrator has no `delegate`, or Aether refuses a delegation, it
   says why and uses the `ask` or `errand` pipeline instead.
 
@@ -136,8 +142,9 @@ delegation, and refuses every other unnamed call. An orchestrator from
 before the upgrade cannot delegate and keeps working. One started with
 `delegate` before `archond` saw the first unnamed call has that call
 refused: `archon orchestrator restart` replaces it with one that works
-until you have made the fix above. Once a named call arrives `archond`
-says so and the next orchestrator delegates again.
+until you have made the fix above. Once the orchestrator makes a named
+call, a read included, `archond` says so and the next orchestrator
+delegates again.
 
 ## Agents talking to the orchestrator
 
@@ -187,7 +194,7 @@ per stage. Add your own under `~/.config/archon/pipelines/` or
 
 | Pipeline | Stages | Leans toward |
 | --- | --- | --- |
-| `adaptive` | build (delegation enabled, holds the review) → ship | balanced models; the orchestrator's choice for an ordinary change. One lead builds it, delegates the parts worth splitting and has the integrated diff reviewed once; Archon ships only a build with that review on record. Chosen by name or as a repository's `default_pipeline`, at `review = standard`; see [`docs/PIPELINES.md`](PIPELINES.md#adaptive) |
+| `adaptive` | build (delegation enabled, holds the review) → ship | balanced models; the orchestrator's choice where one lead that keeps its context through fixes, or integrates independent parts, saves restarts. One lead builds it, delegates the parts worth splitting and has the integrated diff reviewed once; Archon ships only a build with that review on record. Chosen by name or as a repository's `default_pipeline`, at `review = standard`; see [`docs/PIPELINES.md`](PIPELINES.md#adaptive) |
 | `quick-pr` | implement → ship | fast models |
 | `default-pr-review` | implement → review (gate, fix loop) → ship | balanced models |
 | `bugfix` | reproduce (failing test) → fix → review (`all_pass`, back to fix ×2) → ship | balanced models, independent reviewer; describable bugs (`quick-pr` for trivial one-liners, `strict-pr-review` for security/concurrency) |
@@ -420,7 +427,7 @@ progress too; also `/verbose`), `/pause` and `/resume` (optionally `hard`,
 | `archon queue add --title … --brief-file <path\|-> --model-plan-file <json\|toml>` | enqueue scripted work through the daemon's MCP-equivalent policy checks; prints the id or the item with `--json` |
 | `archon queue wait <id>… [--timeout 30m]` | wait for every item to become terminal, bounded to 30m by default; exit 0 all succeeded, 3 failed/cancelled, 4 timeout, 5 failed/cancelled dependency |
 | `archon queue list` | one line per item: state, current stage, age, cost, title, PR URL and derived waiting reason with one next action |
-| `archon queue show <id> [--full]` | an item's runs and each stage's attempt, slot, state, verdict, model, agent, cost and summary (first lines; `--full` for all), with the PR URL, recorded plan reasons and full waiting explanation when present |
+| `archon queue show <id> [--full]` | an item's runs and each stage's attempt, slot, state, verdict, model, agent, cost and summary (first lines; `--full` for all), with the PR URL, recorded plan reasons and full waiting explanation when present. A stage that delegated shows how its cost splits (its own agent, then each delegated agent with model, effort and cost), and a stage holding a declared review shows the review on record |
 | `archon queue cancel <id>` / `archon queue caps` | cancel an item, or show and change runtime caps |
 | `archon queue retry <id> [--fresh] [--append "…"]` | queue a failed or cancelled item again in its worktree and branch; `--fresh` starts over from the base branch on a new branch and sets the old worktree aside, which worktree gc deletes, uncommitted work included, `worktrees.gc_after` (7 days) after the item's last run; `--append` adds guidance to the brief |
 | `archon log` | the complete feed; `--item <id>` keeps one item's entries, `--kind <kind>` (repeatable) some kinds, and `--follow` keeps printing new ones |
@@ -439,7 +446,11 @@ unclassified legacy or mixed-basis amounts. The counted total follows budgets:
 Aether's reported cost always counts, including list-price amounts; only its
 separate API-equivalent estimate depends on `limits.count_estimated_cost`.
 Finished run costs in `queue show` sum their own stages' current ledger costs,
-so late usage stays with the correct run after a retry or restart.
+so late usage stays with the correct run after a retry or restart. A stage's
+cost includes the agents it delegated to; a run's and an item's totals count
+each agent once. While a turn runs, Aether prices it at list price, and when
+it ends the provider's own figure replaces that: a running total can come
+down a little then, and budgets count the corrected figure.
 
 Wherever a command takes a `qi_…` item id, the start of it is enough, with
 or without `qi_` and in any case (`archon queue show 01k2`), as long as it

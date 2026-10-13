@@ -29,6 +29,7 @@ fn view(slot: u32, output: Option<TextPage>) -> StageRunView {
         state: StageState::Completed,
         verdict: Some(Verdict::Fail),
         cost_usd: 0.25,
+        delegation: None,
         aether_agent: None,
         output,
     }
@@ -187,6 +188,42 @@ fn the_listing_names_each_stage_run_and_how_to_read_one() {
     assert!(empty.ends_with(": no stage has run yet."), "{empty}");
 }
 
+/// A stage that delegated says how its cost splits, in the listing and in
+/// the item, so the orchestrator compares what a stage cost in all.
+#[test]
+fn a_delegating_stage_shows_its_cost_split_in_the_listing_and_the_item() {
+    use archon_core::protocol::{DelegatedAgent, StageDelegation};
+    let lead = archon_core::aether_ids::AetherAgentId::parse("agt_lead").unwrap();
+    let helper = DelegatedAgent {
+        agent: archon_core::aether_ids::AetherAgentId::parse("agt_helper").unwrap(),
+        parent: lead.clone(),
+        model: "codex/astra".parse().unwrap(),
+        effort: Some(Effort::Medium),
+        cost_usd: 0.75,
+    };
+    let split = StageDelegation::of(0.25, vec![helper]);
+    let expected = "cost split: $0.25 own + $0.75 for 1 delegated agent(s): \
+                    agt_helper codex/astra (medium) $0.75";
+    let delegating = StageRunView {
+        cost_usd: split.total_usd(),
+        delegation: Some(split.clone()),
+        aether_agent: Some(lead),
+        ..view(0, None)
+    };
+    let listing = Reply::StageDetail(Box::new(detail(None, vec![delegating])));
+    let text = render("get_stage", &listing);
+    let line = format!("cost $1.00, agent agt_lead; {expected}");
+    assert!(text.contains(&line), "{text}");
+
+    let mut stage = long_review(PipelineRunId::new());
+    stage.cost_usd = split.total_usd();
+    let mut item = item_detail(stage);
+    item.delegations.insert(item.stages[0].id.clone(), split);
+    let text = render("get_item", &Reply::ItemDetail(Box::new(item)));
+    assert!(text.contains("cost $1.00"), "{text}");
+    assert!(text.contains(&format!("\n    {expected}")), "{text}");
+}
+
 fn item_detail(stage: StageRun) -> ItemDetail {
     let run = PipelineRun {
         id: stage.run.clone(),
@@ -217,6 +254,7 @@ fn item_detail(stage: StageRun) -> ItemDetail {
         stages: vec![stage],
         spent_usd: 0.0,
         gates: vec![],
+        delegations: Default::default(),
     }
 }
 

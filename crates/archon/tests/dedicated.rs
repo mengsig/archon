@@ -347,7 +347,13 @@ fn an_upgrade_repairs_the_old_registration_and_restarts_archons_aetherd() {
 
     let status = env.run(&["status"]);
     let told = String::from_utf8_lossy(&status.stderr);
-    assert!(told.contains("restarted to load it"), "{told}");
+    assert!(told.contains("restarting Archon's own aetherd"), "{told}");
+    assert!(
+        told.contains("goes on once archond has reconnected"),
+        "{told}"
+    );
+    // The stand-in aetherd never answers archond, so the wait runs out.
+    assert!(told.contains("has not connected"), "{told}");
     let repaired = std::fs::read_to_string(&config).unwrap();
     assert!(repaired.contains("send_caller_meta = true"), "{repaired}");
     assert_eq!(registration_check(&env)["level"], "ok");

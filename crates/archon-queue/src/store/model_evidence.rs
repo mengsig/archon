@@ -13,6 +13,7 @@ use archon_core::run::{StageRun, StageState, Verdict};
 use rusqlite::{Connection, params};
 
 use super::codec::{SqlContext, from_json};
+use super::delegated::BENEATH;
 
 #[derive(Default)]
 struct Samples {
@@ -38,6 +39,9 @@ struct Attempt {
     pipeline: String,
     billed: Option<f64>,
     estimated: Option<f64>,
+    /// What the agents the stage agent delegated to were charged.
+    delegated_billed: f64,
+    delegated_estimated: f64,
 }
 
 pub(super) fn read(
@@ -56,16 +60,24 @@ pub(super) fn read(
         .as_ref()
         .map(|r| super::repos::find(conn, r))
         .transpose()?;
-    let mut statement = conn
-        .prepare(
-            "SELECT st.data, i.data, s.cost_usd, s.estimated_cost_usd, r.pipeline
+    // A stage cost is complete: its agent's spend and that of every agent
+    // beneath it, so a lead that delegates is not compared as a cheap one.
+    let sql = format!(
+        "WITH RECURSIVE {BENEATH},
+         delegated(root, cost_usd, estimated_cost_usd) AS (
+             SELECT b.root, SUM(s.cost_usd), SUM(s.estimated_cost_usd)
+             FROM beneath b JOIN spend s ON s.agent = b.agent GROUP BY b.root
+         )
+         SELECT st.data, i.data, s.cost_usd, s.estimated_cost_usd, r.pipeline,
+                COALESCE(d.cost_usd, 0), COALESCE(d.estimated_cost_usd, 0)
          FROM stage_runs st JOIN runs r ON r.id = st.run JOIN items i ON i.id = r.item
          LEFT JOIN spend s ON s.agent = st.aether_agent
+         LEFT JOIN delegated d ON d.root = st.aether_agent
          WHERE (?1 IS NULL OR i.repo = ?1) AND (?2 IS NULL OR r.pipeline = ?2)
            AND (?3 IS NULL OR st.stage_id = ?3)
-           AND date(st.started_at, 'localtime') BETWEEN ?4 AND ?5",
-        )
-        .ctx("prepare model evidence")?;
+           AND date(st.started_at, 'localtime') BETWEEN ?4 AND ?5"
+    );
+    let mut statement = conn.prepare(&sql).ctx("prepare model evidence")?;
     let mut rows = statement
         .query(params![
             repo.as_ref().map(|r| r.id.as_str()),
@@ -77,25 +89,27 @@ pub(super) fn read(
         .ctx("query model evidence")?;
     let mut attempts = Vec::new();
     while let Some(row) = rows.next().ctx("read model evidence")? {
-        let stage = from_json(
-            &row.get::<_, String>(0).ctx("read evidence stage")?,
-            "evidence stage",
-        )?;
-        attempts.push(Attempt {
-            stage,
-            item: from_json(
-                &row.get::<_, String>(1).ctx("read evidence item")?,
-                "evidence item",
-            )?,
-            pipeline: row.get(4).ctx("read evidence pipeline")?,
-            billed: row.get(2).ctx("read evidence cost")?,
-            estimated: row.get(3).ctx("read evidence estimate")?,
-        });
+        attempts.push(attempt(row)?);
     }
     Ok(ModelEvidenceSnapshot {
         attempts,
         range: *range,
         estimates,
+    })
+}
+
+/// One row of `read`: a stage run, its item, and the charges on both sides.
+fn attempt(row: &rusqlite::Row<'_>) -> Result<Attempt, ArchonError> {
+    let stage = row.get::<_, String>(0).ctx("read evidence stage")?;
+    let item = row.get::<_, String>(1).ctx("read evidence item")?;
+    Ok(Attempt {
+        stage: from_json(&stage, "evidence stage")?,
+        item: from_json(&item, "evidence item")?,
+        pipeline: row.get(4).ctx("read evidence pipeline")?,
+        billed: row.get(2).ctx("read evidence cost")?,
+        estimated: row.get(3).ctx("read evidence estimate")?,
+        delegated_billed: row.get(5).ctx("read delegated evidence cost")?,
+        delegated_estimated: row.get(6).ctx("read delegated evidence estimate")?,
     })
 }
 
@@ -123,8 +137,9 @@ impl ModelEvidenceSnapshot {
                 continue;
             }
             let cost = attempt.billed.unwrap_or(stage.cost_usd)
+                + attempt.delegated_billed
                 + if self.estimates {
-                    attempt.estimated.unwrap_or(0.0)
+                    attempt.estimated.unwrap_or(0.0) + attempt.delegated_estimated
                 } else {
                     0.0
                 };

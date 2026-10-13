@@ -296,7 +296,9 @@ fn get_item() -> ToolDefinition {
         "get_item",
         "Get queue item",
         "Show one queue item in detail: state, brief, model plan, every pipeline run (branch, \
-         worktree, state) and every stage attempt (model, state, verdict, summary, cost), plus \
+         worktree, state) and every stage attempt (model, state, verdict, summary, cost; a stage \
+         that delegated adds a cost split: its own agent, and each delegated agent's model, \
+         effort and cost, all already inside the stage's cost), plus \
          total spend and derived waiting_reason (code, message, next_action). Use it to explain an outcome, find the PR or commit, or decide on a retry. \
          Long summaries are clipped here; get_stage reads them in full.",
         object(json!({"item": item_id("The item to show.")}), &["item"]),
@@ -310,7 +312,7 @@ fn get_stage() -> ToolDefinition {
         "Get stage output",
         "Read what the stages of an item's pipeline run reported, unclipped: its latest run \
          unless `run` is given. Without `stage`, list every stage run: stage, attempt, slot, \
-         state, verdict and cost. With \
+         state, verdict and cost, with the cost split of a stage that delegated. With \
          `stage`, show each matching stage run's error, whole summary and structured result \
          (a reviewer's findings with paths and lines) as pretty-printed JSON: the latest attempt \
          unless `attempt` is given, every fan-out slot unless `slot` is given. Use it to read \
@@ -373,7 +375,7 @@ fn model_evidence() -> ToolDefinition {
     define(
         "model_evidence",
         "Model evidence",
-        "Observe stored stage attempts, grouped by stage, model and effort, sorted by stage then median completed cost. Shows n, completed n, median/p90 cost, median minutes and review/test verdict pass share. Completed n < 5 is a small sample. At most 60 groups. Costs follow the budget estimate setting; each fan-out slot counts separately. No recommendations. Review/test kinds use the run's frozen pipeline spec when available, otherwise the current catalog; unknown kinds retain attempts, cost and minutes but exclude verdicts.",
+        "Observe stored stage attempts, grouped by stage, model and effort, sorted by stage then median completed cost. Shows n, completed n, median/p90 cost, median minutes and review/test verdict pass share. Completed n < 5 is a small sample. At most 60 groups. Costs follow the budget estimate setting and include what the agents a stage delegated to cost; each fan-out slot counts separately. No recommendations. Review/test kinds use the run's frozen pipeline spec when available, otherwise the current catalog; unknown kinds retain attempts, cost and minutes but exclude verdicts.",
         object(
             json!({
                 "repo": repo_ref("Only this repository."),
@@ -429,7 +431,7 @@ fn enqueue() -> ToolDefinition {
                 "title": {"type": "string", "description": "One line naming the work; shown in listings and used in the branch name."},
                 "brief": {"type": "string", "description": "Complete, self-contained instructions for the stage agents: goal, relevant context, constraints and acceptance criteria. They see only this brief and the repository, not your conversation."},
                 "priority": priority(),
-                "depends_on": string_list("Items (`qi_…`) that must succeed before this one starts. If one fails or is cancelled, this item becomes blocked."),
+                "depends_on": string_list("Items (`qi_…`) that must succeed before this one starts. If one fails or is cancelled, this item becomes blocked. This only orders them: the item's branch still forks from the repository's base, so it holds a dependency's work only once that is merged there. Its agents are told each dependency's branch and pull request."),
                 "tags": string_list("Free-form labels for filtering with list_queue."),
                 "model_reasons": model_reasons(),
                 "model_plan": model_plan("Model and effort for every stage."),

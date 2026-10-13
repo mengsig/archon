@@ -347,6 +347,12 @@ impl RunDriver {
         Some(&stage.roles)
     }
 
+    /// Whether stage `stage_id` holds the review this run's pipeline declares.
+    pub fn holds_review(&self, stage_id: &str) -> bool {
+        let stage = self.spec.stage(stage_id);
+        stage.is_some_and(|stage| self.spec.holds_review(stage))
+    }
+
     /// Whether this instance cancelled `stage_run` as the live sibling of
     /// a team role that failed, rather than because the run finished.
     pub fn cancels_sibling(&self, stage_run: &StageRunId) -> bool {

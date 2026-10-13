@@ -26,7 +26,9 @@ use archon_pipeline::spec::MAX_TIMEOUT_MINUTES;
 use archon_queue::Store;
 use serde::{Deserialize, Serialize};
 
-use super::{FollowUp, RunTable, descendants, finish, naming, run_node, settle, team};
+use super::{
+    FollowUp, RunTable, dependencies, descendants, finish, naming, run_node, settle, team,
+};
 use crate::context::DaemonContext;
 use crate::disk::{self, FullDisk};
 use crate::resolve::{self, RepoEnv};
@@ -266,6 +268,7 @@ fn reserve_plans(
         let stage = plans[0].stage_id.clone();
         return Ok(Err(Exhausted { stage, error }));
     }
+    let dependencies = dependencies::section(store, &run, &item, plans[0].workspace)?;
     let existing = store.stage_runs(run_id)?;
     let mut ids = Vec::new();
     for plan in plans {
@@ -279,6 +282,7 @@ fn reserve_plans(
             item: &item,
             repo: repo.as_ref(),
             config: &ctx.config,
+            dependencies: &dependencies,
         };
         let share = slot_budget(budget, &plan);
         ids.push(reserve_one(
@@ -313,6 +317,8 @@ struct Target<'a> {
     repo: Option<&'a Repo>,
     /// The global `[models]` policy, which the repository's narrows.
     config: &'a Config,
+    /// The contract's section on the item's dependencies; empty without any.
+    dependencies: &'a str,
 }
 
 impl Target<'_> {
@@ -322,12 +328,13 @@ impl Target<'_> {
         plan.allow_delegation || self.item.autonomy.tools == ToolsMode::Yolo
     }
 
-    /// The stage contract, with the delegation rules when the agent can
-    /// delegate. They state the model policy its children are held to.
+    /// The stage contract, with where the item's dependencies left their work
+    /// and, when the agent can delegate, the rules and model policy for that.
     fn instructions(&self, plan: &SpawnPlan) -> String {
         assert!(!plan.instructions.is_empty(), "every stage has a contract");
+        let contract = format!("{}{}", plan.instructions, self.dependencies);
         if !self.delegates(plan) {
-            return plan.instructions.clone();
+            return contract;
         }
         // An unreadable policy refuses this spawn when it is issued (`claim`).
         let models = match RepoEnv::new(self.repo.cloned()) {
@@ -335,7 +342,7 @@ impl Target<'_> {
             Err(error) => format!("none: the repository's model policy cannot be read ({error})"),
         };
         let rules = contract::delegation_rules(plan.workspace, &models);
-        format!("{}{rules}", plan.instructions)
+        format!("{contract}{rules}")
     }
 }
 
@@ -509,11 +516,13 @@ pub(super) fn reserve_replacement(
         .as_ref()
         .map(|id| store.repo(&resolve::repo_ref(id)))
         .transpose()?;
+    let dependencies = dependencies::section(store, &run, &item, plan.workspace)?;
     let target = Target {
         run: &run,
         item: &item,
         repo: repo.as_ref(),
         config: &ctx.config,
+        dependencies: &dependencies,
     };
     let Some(budget) = replacement_budget(store, failed, plan, budget, estimates)? else {
         return Ok(None);

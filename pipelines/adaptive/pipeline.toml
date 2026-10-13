@@ -13,7 +13,7 @@ stage = "build"
 [nudges]
 tier = "balanced"
 independent_reviewers = true
-notes = "For ordinary repository changes: keep one lead's context, split only useful work, and review the integrated result once at a depth matching risk."
+notes = "For a repository change where one lead that keeps its context through fixes, or integrates parts that split, saves restarts. A small low-risk change belongs in quick-pr, and unrelated changes are never bundled to fit here."
 
 [[stage]]
 id = "build"
@@ -21,7 +21,7 @@ kind = "work"
 prompt = "build.md"
 allow_delegation = true
 timeout_minutes = 180
-nudge = "A strong coding model; choose effort for complexity. The lead chooses worker count and an independent reviewer at runtime within model policy."
+nudge = "A strong coding model at high effort; medium for a bounded change in familiar code. x_high or max only for a reasoning problem you can name that inspecting the code left unresolved: that the operator prefers strong models is not one. The lead chooses its workers and its reviewer, and their models and efforts, at runtime within model policy."
 
 [[stage]]
 id = "ship"

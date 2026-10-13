@@ -21,7 +21,8 @@ use archon_core::id::{PipelineRunId, QueueItemId};
 use archon_core::model::{Effort, ModelChoice, ModelPlan};
 use archon_core::notify::{FeedEntry, NotificationKind};
 use archon_core::ports::{
-    AgentBackend, CreatedNode, NetworkPolicy, RunNodeRequest, SpawnRequest, SpawnedAgent,
+    AgentBackend, CreatedNode, Descendant, DescendantState, NetworkPolicy, RunNodeRequest,
+    SpawnRequest, SpawnedAgent,
 };
 use archon_core::protocol::{ClientKind, EnqueueRequest, Reply, RepoAdd, RepoRef, Request};
 use archon_core::queue::{QueueItem, QueueState};
@@ -595,6 +596,11 @@ struct FakeState {
     /// Every `send_message` call's key, including repeats and refused ones.
     message_calls: Vec<String>,
     message_failures: VecDeque<ArchonError>,
+    /// Agents a stage agent delegated to, as Aether holds them.
+    delegated: Vec<Descendant>,
+    descendant_failures: VecDeque<ArchonError>,
+    /// Every `descendants` call, in order.
+    descendant_checks: Vec<AetherAgentId>,
 }
 
 impl FakeState {
@@ -787,6 +793,42 @@ impl FakeBackend {
         let held = self.state().in_turn.remove(agent);
         assert!(held, "end_turn ends a held turn: {agent}");
     }
+
+    /// `parent` delegated to a new agent running `model`, live until
+    /// `end_delegated`: like Aether, a cancel of its parent only asks it to end.
+    pub fn delegate(&self, parent: &AetherAgentId, model: &str) -> AetherAgentId {
+        let mut state = self.state();
+        let known = state.knows(parent) || state.delegated.iter().any(|d| d.agent == *parent);
+        assert!(known, "only a created agent delegates: {parent}");
+        let agent = AetherAgentId::parse(&format!("agt_child{:04}", state.delegated.len() + 1));
+        let agent = agent.expect("agent id");
+        state.delegated.push(Descendant {
+            agent: agent.clone(),
+            parent: parent.clone(),
+            model: model.parse().expect("model"),
+            effort: Some(Effort::Medium),
+            state: DescendantState::Live,
+        });
+        agent
+    }
+
+    /// The delegated agent ended as `ended`.
+    pub fn end_delegated(&self, agent: &AetherAgentId, ended: DescendantState) {
+        assert_ne!(ended, DescendantState::Live, "an ended agent is not live");
+        let mut state = self.state();
+        let delegated = state.delegated.iter_mut().find(|d| d.agent == *agent);
+        delegated.expect("a delegated agent").state = ended;
+    }
+
+    /// The next `descendants` calls fail with these errors, in order.
+    pub fn fail_next_descendants(&self, error: ArchonError) {
+        self.state().descendant_failures.push_back(error);
+    }
+
+    /// Every agent `descendants` was asked about, in order.
+    pub fn descendant_checks(&self) -> Vec<AetherAgentId> {
+        self.state().descendant_checks.clone()
+    }
 }
 
 #[async_trait]
@@ -892,6 +934,23 @@ impl AgentBackend for FakeBackend {
         state.dead.insert(agent.clone());
         state.in_turn.remove(agent);
         Ok(())
+    }
+
+    async fn descendants(&self, agent: &AetherAgentId) -> Result<Vec<Descendant>, ArchonError> {
+        let mut state = self.state();
+        state.descendant_checks.push(agent.clone());
+        if let Some(error) = state.descendant_failures.pop_front() {
+            return Err(error);
+        }
+        let mut found: Vec<Descendant> = Vec::new();
+        let mut parents = vec![agent.clone()];
+        while let Some(parent) = parents.pop() {
+            for child in state.delegated.iter().filter(|d| d.parent == parent) {
+                parents.push(child.agent.clone());
+                found.push(child.clone());
+            }
+        }
+        Ok(found)
     }
 
     async fn task_outcome(&self, task: &AetherTaskId) -> Result<Option<StageOutcome>, ArchonError> {

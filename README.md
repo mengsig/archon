@@ -112,7 +112,7 @@ seeded from your Aether configuration by `archon setup`.
 
 | Pipeline | When to use it |
 | --- | --- |
-| `adaptive` | Ordinary repository changes: one lead sizes the work, delegates useful parts, and has the integrated result reviewed once (`review = standard`; chosen by name or as a repository's `default_pipeline`) |
+| `adaptive` | Changes where one lead keeping its context saves restarts: it sizes the work, delegates useful parts, and has the integrated result reviewed once (`review = standard`; chosen by name or as a repository's `default_pipeline`) |
 | `quick-pr` | Small changes that do not need an independent review stage |
 | `default-pr-review` | Implementation with review and a fix loop |
 | `strict-pr-review` | Higher-risk changes needing tests and three independent reviews |

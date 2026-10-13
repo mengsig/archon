@@ -5,7 +5,9 @@
 use std::collections::BTreeSet;
 
 use archon_core::error::ArchonError;
-use archon_core::protocol::{Reply, StageDetail, StageQuery, StageRunView, TextPage};
+use archon_core::protocol::{
+    Reply, StageDelegation, StageDetail, StageQuery, StageRunView, TextPage,
+};
 use archon_core::queue::QueueItem;
 use archon_core::run::{PipelineRun, StageRun, StageState};
 use archon_queue::Store;
@@ -20,25 +22,25 @@ pub(super) async fn get(ctx: &DaemonContext, query: &StageQuery) -> Result<Reply
     let run = chosen_run(&store, &item, query)?;
     assert_eq!(run.item, item.id, "a run belongs to its item");
     let all = store.stage_runs(&run.id)?;
-    let mut picked = match &query.stage {
+    let picked = match &query.stage {
         None => all,
         Some(stage) => pick(all, stage, &run, query)?,
     };
     // Stage costs come from the spend ledger, as in `GetItem`.
-    for stage in &mut picked {
-        if let Some(agent) = &stage.aether_agent {
-            stage.cost_usd = store.spend_for_agent(agent, estimates)?;
-        }
+    let mut costed = Vec::with_capacity(picked.len());
+    for mut stage in picked {
+        let delegation = charge(&store, &mut stage, estimates)?;
+        costed.push((stage, delegation));
     }
     drop(store);
     assert!(
-        picked.iter().all(|s| s.run == run.id),
+        costed.iter().all(|(s, _)| s.run == run.id),
         "stage runs belong to their run"
     );
     let page = query.stage.as_ref().map(|_| query.page_chars());
-    let stages = picked
+    let stages = costed
         .into_iter()
-        .map(|stage| view(stage, query.offset, page))
+        .map(|(stage, delegation)| view(stage, delegation, query.offset, page))
         .collect();
     Ok(Reply::StageDetail(Box::new(StageDetail {
         item: item.id,
@@ -128,9 +130,39 @@ fn pick(
     Ok(picked)
 }
 
+/// Set `stage`'s cost to what the ledger charged its agent and every agent beneath
+/// it; the split, when it delegated. No agent is beneath two stages' agents.
+pub(super) fn charge(
+    store: &Store,
+    stage: &mut StageRun,
+    estimates: bool,
+) -> Result<Option<StageDelegation>, ArchonError> {
+    let Some(agent) = &stage.aether_agent else {
+        return Ok(None);
+    };
+    let direct_usd = store.spend_for_agent(agent, estimates)?;
+    let agents = store.delegated_beneath(agent, estimates)?;
+    assert!(
+        agents.iter().all(|delegated| delegated.agent != *agent),
+        "a stage agent is not beneath itself"
+    );
+    if agents.is_empty() {
+        stage.cost_usd = direct_usd;
+        return Ok(None);
+    }
+    let delegation = StageDelegation::of(direct_usd, agents);
+    stage.cost_usd = delegation.total_usd();
+    Ok(Some(delegation))
+}
+
 /// A stage run for the reply; `page` characters of its output when a stage
 /// was asked for.
-fn view(stage: StageRun, offset: usize, page: Option<usize>) -> StageRunView {
+fn view(
+    stage: StageRun,
+    delegation: Option<StageDelegation>,
+    offset: usize,
+    page: Option<usize>,
+) -> StageRunView {
     let output = page.map(|limit| TextPage::of(&output_text(&stage), offset, limit));
     StageRunView {
         stage_id: stage.stage_id,
@@ -140,6 +172,7 @@ fn view(stage: StageRun, offset: usize, page: Option<usize>) -> StageRunView {
         state: stage.state,
         verdict: stage.verdict,
         cost_usd: stage.cost_usd,
+        delegation,
         aether_agent: stage.aether_agent,
         output,
     }

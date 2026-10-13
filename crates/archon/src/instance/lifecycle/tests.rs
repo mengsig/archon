@@ -126,6 +126,9 @@ fn concurrent_starts_launch_one_daemon() {
     assert_eq!(shim.calls().len(), 1, "the lock let one start through");
     let started = results.iter().filter(|r| **r == Start::Started).count();
     assert_eq!(started, 1, "{results:?}");
+    // The ones that waited their turn know the daemon is new to archond.
+    assert!(results.iter().all(|r| r.is_fresh()), "{results:?}");
+    assert!(!Start::AlreadyRunning.is_fresh());
     stop(&shim.instance, &shim.program).unwrap();
     daemon.join().unwrap();
 }

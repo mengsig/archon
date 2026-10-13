@@ -53,6 +53,7 @@ async fn spend(h: &Harness, item: &QueueItemId, stage: &StageRun, cost_usd: f64)
         item: Some(item.clone()),
         cost_usd,
         cost_basis: archon_core::cost::CostBasis::ProviderReported,
+        cost_complete: None,
         estimated_cost_usd: 0.0,
         input_tokens: 1,
         output_tokens: 1,
@@ -724,6 +725,67 @@ async fn child_usage(h: &Harness, agent: &archon_core::aether_ids::AetherAgentId
     archon_daemon::pump::handle_fleet_event(&h.ctx, &event)
         .await
         .unwrap();
+}
+
+/// A stage that delegated costs what its own agent and the agents beneath it
+/// were charged. Both views split it, and the stages add up to the run.
+#[tokio::test]
+async fn a_stage_cost_includes_its_delegated_agents_and_counts_each_once() {
+    let h = Harness::new().await;
+    let item = h.enqueue("delegating stage").await;
+    h.dispatch().await;
+    let lead = h.running().await.remove(0);
+    let lead_agent = lead.aether_agent.clone().unwrap();
+    let child = delegate(&h, &lead_agent, "agt_split_child").await;
+    let grandchild = delegate(&h, &child, "agt_split_grandchild").await;
+    usage(&h, &lead, "provider_reported", 0.25, None).await;
+    child_usage(&h, &child, 0.5).await;
+    child_usage(&h, &grandchild, 1.0).await;
+
+    let shown = detail(&h, &item.id).await;
+    assert_eq!(shown.stages.len(), 1);
+    assert_eq!(shown.stages[0].cost_usd, 1.75);
+    let split = &shown.delegations[&lead.id];
+    assert_eq!((split.direct_usd, split.delegated_usd), (0.25, 1.5));
+    let agents: Vec<_> = split
+        .agents
+        .iter()
+        .map(|a| (a.agent.clone(), a.parent.clone(), a.cost_usd))
+        .collect();
+    assert_eq!(
+        agents,
+        [
+            (child.clone(), lead_agent.clone(), 0.5),
+            (grandchild.clone(), child.clone(), 1.0)
+        ]
+    );
+    assert!(
+        split
+            .agents
+            .iter()
+            .all(|a| a.model.to_string() == common::MODEL)
+    );
+    let stage_sum: f64 = shown.stages.iter().map(|s| s.cost_usd).sum();
+    assert_eq!(
+        stage_sum, shown.runs[0].cost_usd,
+        "the stages add up to the run"
+    );
+    assert_eq!(shown.spent_usd, 1.75, "the item counts each agent once");
+
+    let query = archon_core::protocol::StageQuery {
+        item: item.id.clone(),
+        run: None,
+        stage: None,
+        attempt: None,
+        slot: None,
+        offset: 0,
+        limit: None,
+    };
+    let Reply::StageDetail(listing) = h.cli(Request::GetStage(query)).await.unwrap() else {
+        panic!("a stage listing");
+    };
+    assert_eq!(listing.stages[0].cost_usd, 1.75);
+    assert_eq!(listing.stages[0].delegation.as_ref(), Some(split));
 }
 
 #[tokio::test]

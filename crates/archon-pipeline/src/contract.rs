@@ -4,6 +4,7 @@
 
 use archon_core::catalog::{Gate, StageKind, WorkspaceMode};
 use archon_core::run::StageOutcome;
+use serde::Serialize;
 
 use crate::spec::StageSpec;
 use crate::team::TeamSlot;
@@ -67,8 +68,55 @@ pub fn delegation_rules(mode: WorkspaceMode, models: &str) -> String {
          is lost.\n\
          - A child that finished cannot be asked again. For a second look after a change, \
          delegate a new child.\n\
+         {DELEGATE_HAND_OFF}\
          {DELEGATE_CHILD_RULES}"
     )
+}
+
+/// An item the stage's item was queued after, as Archon's store has it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Dependency {
+    pub item: String,
+    /// Its branch in the repository of the stage's item, if it has one there.
+    pub branch: Option<String>,
+    pub pull_request: Option<String>,
+}
+
+/// The contract's section for an item queued after `dependencies`, whose own
+/// branch was forked from `base`: where their work is. Empty when there are none.
+pub fn dependency_rules(base: &str, dependencies: &[Dependency]) -> String {
+    if dependencies.is_empty() {
+        return String::new();
+    }
+    assert!(!base.trim().is_empty(), "a worktree is forked from a base");
+    let facts: String = dependencies.iter().map(dependency_fact).collect();
+    assert_eq!(
+        facts.lines().count(),
+        dependencies.len(),
+        "one line of facts per dependency"
+    );
+    format!(
+        "\n## Dependencies\n\n\
+         Archon started this item after the items below succeeded. Its branch was forked \
+         from `{base}`, not from theirs: your workspace holds their work only where that \
+         was merged into `{base}` or you bring it in. One JSON object per item; a `branch` \
+         is a branch of this repository.\n\n\
+         {facts}\n\
+         - A change built on one of these branches is stacked on it. For each `branch`, \
+         take `git merge-base <branch> HEAD`: when `git merge-base --is-ancestor <that \
+         commit> {base}` fails, that commit is the base of this change, not `{base}`. With \
+         several such commits, the base is the one that contains the others.\n\
+         - Diff, review and report a stacked change from its base. Name that commit \
+         wherever a base commit is asked for, and give it to every reviewer you delegate \
+         to: a diff from `{base}` would include the dependency's change.\n"
+    )
+}
+
+fn dependency_fact(dependency: &Dependency) -> String {
+    assert!(!dependency.item.is_empty(), "a dependency is a queued item");
+    let fact = serde_json::to_string(dependency).expect("a record of strings serializes");
+    assert!(!fact.contains('\n'), "compact JSON is one line");
+    format!("- {fact}\n")
 }
 
 const DELEGATE_WRITABLE: &str = "\
@@ -76,6 +124,15 @@ const DELEGATE_WRITABLE: &str = "\
 Read its result, then bring only the changes you accept into your workspace with \
 `integrate_workspace`; nothing integrates by itself. A child that only reads (a \
 reviewer, a researcher) shares your workspace, so it sees the change as it stands.\n";
+
+const DELEGATE_HAND_OFF: &str = "\
+- A child starts cold and pays to read whatever you do not tell it. Hand it what you \
+already hold, in a few lines: what done means, the paths that matter and what you \
+found there. Never your conversation or the project's history. Read a bounded local \
+question yourself instead of delegating it.\n\
+- A reviewer's hand-off is the exact base and head commits, the changed paths, the \
+checks you ran with their results and the commit they ran on, the risks you know of, \
+and the repository guidance it must apply.\n";
 
 const DELEGATE_READ_ONLY: &str = "\
 - Your workspace is READ-ONLY, and so is every child's: each one shares it and only \
@@ -260,7 +317,8 @@ always, and for every child when your own workspace is READ-ONLY.\n";
 const REVIEW_EVIDENCE_RULES: &str = "\n## Review on record\n\n\
 - This pipeline counts your stage as its review, so the change is reviewed before \
 you finish: by an agent you delegate to that wrote none of it, on the change as it \
-finally stands.\n\
+finally stands. Only a later change the stage prompt says needs no second look may \
+follow the pass.\n\
 - `complete_task` must include `structured` data saying how that went (other keys \
 may sit beside it):\n\n\
 ```json\n\
@@ -271,9 +329,11 @@ or, only where the stage prompt lets a change go without review:\n\n\
 {\"review\": {\"verdict\": \"skipped\", \"reason\": \"<why this change needed none>\"}}\n\
 ```\n\n\
 - Archon fails the run here, and nothing is shipped, when the object is missing, the \
-verdict is anything else, or a pass names no reviewer. Never report `pass` for a \
-review that did not run or did not pass: if findings stay open, call `fail_task` and \
-say which.\n\
+verdict is anything else, or a pass names no reviewer. It checks a pass against \
+Aether: `reviewer_model` must be the model of an agent you delegated to yourself that \
+completed, not one you cancelled or that failed. Never report `pass` for a review \
+that did not run or did not pass: if a blocking finding stays open, call `fail_task` \
+and say which.\n\
 - Archon adds the review as the last line of your summary for the later stages. Do \
 not write a `REVIEW:` line yourself.\n";
 
@@ -320,6 +380,12 @@ const SHIP_RULES: &str = "\n## Ship stage\n\n\
 - Deliver exactly as the stage prompt's ship mode says. Never force-push, never \
 rewrite history that already left this machine, and never merge unless the prompt \
 says auto-merge is enabled.\n\
+- The commits you are given were verified and reviewed as they are: never amend, \
+rebase, squash or reset them. Only a commit message that breaks a rule of the \
+repository, so that the work cannot ship with it, may be reworded, and nothing but the \
+message: `git rev-parse HEAD^{tree}` must print the same tree before and after. Say \
+in your summary what you reworded and name that tree. If the tree changed, put the \
+original commits back and call `fail_task`.\n\
 - `complete_task` must include `structured` data naming what was delivered: \
 `{\"pr_url\": \"https://…\"}` when a pull request exists, otherwise \
 `{\"commit\": \"<full sha>\"}` for the commit on the run branch. Include both when \
@@ -460,6 +526,26 @@ mod tests {
         assert!(text.contains("\"commit\""));
     }
 
+    /// What a ship stage delivers is what was reviewed: at most a message
+    /// differs, and the tree proves it.
+    #[test]
+    fn ship_contract_forbids_changing_the_commits_it_was_given() {
+        let of = |kind| {
+            let stage = stage(kind, Gate::None, 1);
+            instructions(&stage, WorkspaceMode::Worktree, "/w", TeamPart::Solo, false)
+        };
+        let ship = of(StageKind::Ship);
+        for said in [
+            "never amend, rebase, squash or reset them",
+            "may be reworded, and nothing but the message",
+            "`git rev-parse HEAD^{tree}` must print the same tree before and after",
+            "put the original commits back and call `fail_task`",
+        ] {
+            assert!(ship.contains(said), "missing {said:?} in {ship}");
+        }
+        assert!(!of(StageKind::Work).contains("HEAD^{tree}"));
+    }
+
     #[test]
     fn propose_contract_forbids_edits_and_names_the_page() {
         let text = instructions(
@@ -598,6 +684,73 @@ mod tests {
             "{read_only}"
         );
         assert!(read_only.contains("policy for this item: a/one. Archon cancels"));
+    }
+
+    /// A child rereads what it is not told, and a reviewer without the exact
+    /// commits reviews the wrong diff: every delegating agent is told both.
+    #[test]
+    fn delegation_rules_say_what_a_child_and_a_reviewer_are_handed() {
+        for mode in [WorkspaceMode::Worktree, WorkspaceMode::RepoReadonly] {
+            let rules = delegation_rules(mode, "a/one");
+            for said in [
+                "A child starts cold and pays to read whatever you do not tell it",
+                "Never your conversation or the project's history",
+                "Read a bounded local question yourself instead of delegating it",
+                "A reviewer's hand-off is the exact base and head commits, the changed paths",
+                "the checks you ran with their results and the commit they ran on",
+            ] {
+                assert!(
+                    rules.contains(said),
+                    "{mode:?}: missing {said:?} in {rules}"
+                );
+            }
+            let hand_off = rules.find("A child starts cold").expect("asserted above");
+            let passed_on = rules
+                .find("A child inherits none")
+                .expect("the child rules");
+            assert!(
+                hand_off < passed_on,
+                "the list of child rules ends the section"
+            );
+        }
+    }
+
+    /// A dependent item's branch still forks from the base, so a diff from
+    /// the base holds the dependency's change once the lead builds on it.
+    #[test]
+    fn dependency_rules_name_each_branch_and_the_base_of_a_stacked_change() {
+        assert_eq!(dependency_rules("main", &[]), "");
+        let stacked = Dependency {
+            item: "qi_01".into(),
+            branch: Some("archon/first-01".into()),
+            pull_request: Some("https://github.com/o/r/pull/1".into()),
+        };
+        let elsewhere = Dependency {
+            item: "qi_02".into(),
+            branch: None,
+            pull_request: None,
+        };
+        let rules = dependency_rules("main", &[stacked, elsewhere]);
+        assert!(rules.starts_with("\n## Dependencies\n\n"), "{rules}");
+        let facts: Vec<serde_json::Value> = rules
+            .lines()
+            .filter_map(|line| line.strip_prefix("- ").filter(|fact| fact.starts_with('{')))
+            .map(|fact| serde_json::from_str(fact).expect("each fact is JSON"))
+            .collect();
+        let pull_request = "https://github.com/o/r/pull/1";
+        let expected = [
+            serde_json::json!({"item": "qi_01", "branch": "archon/first-01", "pull_request": pull_request}),
+            serde_json::json!({"item": "qi_02", "branch": null, "pull_request": null}),
+        ];
+        assert_eq!(facts, expected);
+        for said in [
+            "Its branch was forked from `main`, not from theirs",
+            "take `git merge-base <branch> HEAD`: when `git merge-base --is-ancestor <that \
+             commit> main` fails, that commit is the base of this change, not `main`",
+            "give it to every reviewer you delegate to",
+        ] {
+            assert!(rules.contains(said), "missing {said:?} in {rules}");
+        }
     }
 
     /// Aether gives a child only the instructions `delegate` was passed, so

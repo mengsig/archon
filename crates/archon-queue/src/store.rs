@@ -11,6 +11,7 @@
 
 mod codec;
 mod cost;
+mod delegated;
 mod directives;
 mod feed;
 mod gates;
@@ -60,6 +61,9 @@ pub struct SpendRow {
     /// Raw Aether amounts retained for budget accounting, independent of basis.
     pub cost_usd: f64,
     pub cost_basis: archon_core::cost::CostBasis,
+    /// Aether's word that no invocation is missing from `cost_usd`; `None`
+    /// when it did not say.
+    pub cost_complete: Option<bool>,
     pub estimated_cost_usd: f64,
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -438,9 +442,8 @@ impl Store {
     }
 
     // ----- spend ---------------------------------------------------------------
-    /// Charge the agent's growth: usage events carry absolute totals. A row
-    /// older than the stored one (a replayed event) is ignored, and a lower
-    /// total (a correction) keeps the amounts already charged.
+    /// Charge the agent's growth: usage events carry absolute totals. A replayed
+    /// (older) row is ignored, and only a provider-settled total lowers a charge.
     pub fn record_spend(&mut self, row: &SpendRow) -> Result<(), ArchonError> {
         spend::record(&mut self.conn, row)
     }
@@ -468,6 +471,24 @@ impl Store {
         estimates: bool,
     ) -> Result<f64, ArchonError> {
         spend::for_agent(&self.conn, agent, estimates)
+    }
+    /// `parent` delegated to `agent`, on `model`; `effort` once it is known.
+    pub fn record_delegated(
+        &mut self,
+        agent: &AetherAgentId,
+        parent: &AetherAgentId,
+        model: &archon_core::model::ModelRef,
+        effort: Option<archon_core::model::Effort>,
+    ) -> Result<(), ArchonError> {
+        delegated::record(&self.conn, agent, parent, model, effort)
+    }
+    /// Every agent beneath `agent`, at any depth, with what each was charged.
+    pub fn delegated_beneath(
+        &self,
+        agent: &AetherAgentId,
+        estimates: bool,
+    ) -> Result<Vec<archon_core::protocol::DelegatedAgent>, ArchonError> {
+        delegated::beneath(&self.conn, agent, estimates)
     }
     /// `(today, total)`; "today" is the local calendar day of `now`.
     pub fn spend_totals(&self, now: Timestamp, estimates: bool) -> Result<(f64, f64), ArchonError> {

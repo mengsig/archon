@@ -230,6 +230,9 @@ fn item_detail(detail: &ItemDetail) -> String {
         let older = (Some(&run.id) != latest).then_some(&run.id);
         for stage in detail.stages.iter().filter(|s| s.run == run.id) {
             let _ = write!(text, "\n  - {}", stage_line(&item.id, older, stage));
+            if let Some(delegation) = detail.delegations.get(&stage.id) {
+                let _ = write!(text, "\n    cost split: {}", delegation.line());
+            }
         }
     }
     if detail.runs.is_empty() {

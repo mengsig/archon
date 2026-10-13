@@ -191,6 +191,10 @@ by either route. It says to:
 - wait for every child or cancel it before finishing;
 - delegate a new child for a second look, because a finished one cannot
   be asked again;
+- hand a child what the stage agent already holds instead of having it read
+  again, never the conversation, and hand a reviewer the exact base and head
+  commits, the changed paths, the checks run with their results and the
+  commit they ran on, the known risks and the repository guidance;
 - state, in every child's `instructions`, the rules for its role: stay in
   the workspace it is given and keep off other worktrees and the
   operator's checkout, do not push, never override the git identity, ask
@@ -203,11 +207,14 @@ children must be given, as `adaptive`'s `build.md` does.
 **When the stage ends.** Aether does not stop an agent's children when
 the agent completes or fails its task. Archon does: once a stage agent
 that could delegate has settled and its own turn has ended (or 60 seconds
-have passed), Archon cancels it, which ends every agent still running
-beneath it. The run's next stage, or the replacement of a failed agent,
-starts only after that. The stop is stored before the stage settles, so
-it survives a daemon restart, and it is retried while Aether is
-unreachable.
+have passed), Archon cancels it, which asks every agent still running
+beneath it to stop. Aether stops them cooperatively, so Archon then waits
+until Aether holds none of them as running. The run's next stage, or the
+replacement of a failed agent, starts only after that. The stop is stored
+before the stage settles, so it survives a daemon restart, and it stays
+owed while Aether is unreachable. If the agents have not ended two
+minutes after the cancel, a blocker names them; the item keeps waiting
+and goes on by itself once they end.
 
 Aether's isolated workspaces are Git worktrees sharing the repository's
 object store. Their snapshot includes tracked and non-ignored untracked
@@ -245,12 +252,22 @@ Archon holds the stage to it. The contract of that stage gains a
 ```
 
 When the object is missing, the verdict is anything else, or a pass names
-no reviewer, Archon fails the run at that stage and nothing ships. On a
-pass or a justified skip it appends `REVIEW: pass, by <model>` or
-`REVIEW: skipped: <reason>` as the last line of the stage summary, which
-the later stages receive. The evidence is the stage agent's own
-statement: Archon checks that it is there and well formed, not that the
-reviewer ran.
+no reviewer, Archon fails the run at that stage and nothing ships.
+
+A pass is not taken on the agent's word. As the stage ends, Archon asks
+Aether which agents that agent delegated to. The pass counts only when one
+of its direct children completed, neither cancelled nor failed, on the
+model `reviewer_model` names; otherwise the run fails at that stage and the
+error lists what the agent did delegate to. Archon records that child's
+agent id with the evidence. This shows that such a reviewer ran to
+completion, not what it read or concluded. A skip has no reviewer to
+check: its reason is shown with the stage in `archon queue show` and the
+orchestrator's `get_item`, and `ship` in `adaptive` reads the diff before
+shipping one.
+
+On a pass or a justified skip Archon appends
+`REVIEW: pass, by <model> (agent <id>)` or `REVIEW: skipped: <reason>` as
+the last line of the stage summary, which the later stages receive.
 
 ## How a run moves
 
@@ -505,6 +522,10 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   `VERDICT: FAIL`. Archon reads the structured verdict first, then the last
   `VERDICT:` line.
 - **Ship stages.** `structured` includes `{"pr_url": …}` or `{"commit": …}`.
+  The commits a ship stage is given are delivered as they are: it does not
+  amend, rebase, squash or reset them. It may reword a commit message that
+  breaks a repository rule, and then shows that `git rev-parse HEAD^{tree}`
+  did not change.
 - **Propose stages.** Read, but change nothing. The proposal goes to
   `<workspace>/.archon/reports/proposal/index.html`, `structured.reports`
   lists it, and the summary states the approach on its own, because the
@@ -527,6 +548,14 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
 - **An agent that can delegate** gets the `## Delegation` section (see
   "Delegation"), and **the stage a declared review names** gets
   `## Review on record` (see "A declared review").
+- **Every agent of a worktree item queued after others** (`depends_on`)
+  gets a `## Dependencies` section: one JSON object per dependency,
+  `{"item":"qi_…","branch":"…","pull_request":"…"}`, and the rule for a
+  change built on one of those branches. The item's own branch still forks
+  from `{{base_branch}}`; a change stacked on a dependency's branch has
+  `git merge-base <branch> HEAD` as its base where `{{base_branch}}` does
+  not contain that commit, and is diffed, reviewed and reported from there.
+  The contract overrides a prompt that says to diff from `{{base_branch}}`.
 
 Your prompt therefore says *what* to do. It does not need to repeat how to
 finish.
@@ -728,21 +757,49 @@ copies together.
 
 ### `adaptive`
 
-Use `adaptive` for ordinary repository changes. One lead keeps the context
-while it sizes, implements, integrates, verifies and fixes the change. It
-hands separable parts to leaf children with disjoint paths, each in an
-isolated workspace, and waits for every one of them. It then delegates
-one independent, read-only review of the integrated diff to a fresh
-child, preferably on a different allowed model. Review depth follows
-risk; only a trivial or mechanical change skips it, with the reason on
-record. Two fix and re-review rounds are allowed, each with a new
-reviewer, before the lead must fail visibly.
+Use `adaptive` for a repository change where one lead that keeps its
+context through fixes, or integrates parts that split, saves restarts. A
+small low-risk change is cheaper in `quick-pr`, and a bounded change by
+one author with one review in `default-pr-review`. The lead sizes,
+implements, integrates, verifies and fixes the change. Its prompt has it
+spend where spending pays:
+
+- **Workers.** A leaf child in an isolated workspace gets an independent
+  deliverable with its own paths, and only when running it in parallel
+  saves more than briefing it, integrating it and the reading it repeats.
+  Often that is no worker at all, and a bounded local read is never
+  delegated.
+- **Commits first.** The lead commits the settled change under the
+  repository's commit rules (Conventional Commits with a lowercase
+  imperative subject where the repository states none), with the configured
+  Git identity and no model or tool attribution. `ship` delivers those
+  commits as they are.
+- **One review, beside the checks.** It delegates one independent,
+  read-only review of the committed change to a fresh child, preferably on
+  a different allowed model, and runs the full build, lint and test suite
+  once while the reviewer reads. The reviewer is handed the acceptance
+  criteria, the exact base and head commits, the changed paths, the checks
+  with their results and the known risks, not the conversation. Its effort
+  is the lead's choice: medium for ordinary risk, high where security or an
+  invariant is at stake. Only a trivial or mechanical change skips review,
+  with the reason on record.
+- **Fixes.** Blocking findings are fixed in new commits and the affected
+  checks rerun; the full suite runs again only for a fix with broad impact
+  or where the project's policy demands it. A second look, by a new child
+  that reads the delta and the callers it affects, is owed after a failed
+  verdict, and after a pass only when a later commit changes production
+  behaviour, security or an invariant, or adds scope. Advisory findings
+  are listed and left. Two fix and re-review rounds are allowed before the
+  lead must fail visibly; only an unresolved blocking finding, a failed
+  check or a review that did not run fails the stage.
 
 That review is the pipeline's: `adaptive` declares
 `[pipeline.review] level = "standard"` on `build` (see "A declared
 review"), so Archon fails an item whose `build` put no passed or
 justified skipped review on record, and `ship` refuses to ship without
-the `REVIEW:` line Archon writes. `ship` supports both `pr` and `local`.
+the `REVIEW:` line Archon writes. `ship` commits nothing: an uncommitted
+change that belongs to the task fails it, and so does a head tree other
+than the one the lead reported. `ship` supports both `pr` and `local`.
 
 Select it with `pipeline = "adaptive"` or as a repository's
 `default_pipeline`. The `review` knob alone never selects it: without a

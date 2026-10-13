@@ -406,6 +406,7 @@ fn the_snapshot_counts_live_agents_runs_pause_and_spend() {
         item: Some(items[0].id.clone()),
         cost_usd: 1.0,
         cost_basis: archon_core::cost::CostBasis::ProviderReported,
+        cost_complete: None,
         estimated_cost_usd: 2.0,
         input_tokens: 1,
         output_tokens: 1,

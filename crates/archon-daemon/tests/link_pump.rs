@@ -869,10 +869,10 @@ async fn the_watchdog_cancels_an_off_policy_child_once_and_tracks_allowed_ones()
     assert_eq!(cancels.len(), 1, "{cancels:?}");
     assert_eq!(cancels[0]["agent"], CHILD);
     let blockers = harness.notifications(NotificationKind::Blocker).await;
-    assert!(
-        blockers.len() == 1 && blockers[0].contains(CHILD),
-        "{blockers:?}"
-    );
+    assert_eq!(blockers.len(), 1, "{blockers:?}");
+    let refused = format!("Cancelled agent {CHILD}: model policy: model ");
+    assert!(blockers[0].starts_with(&refused), "{blockers:?}");
+    assert!(blockers[0].contains("not allowed"), "{blockers:?}");
     let violation = TriggerEvent::PolicyViolation {
         agent: CHILD.into(),
         model: format!("{}/{}", DENIED.0, DENIED.1),
@@ -1021,9 +1021,19 @@ async fn a_helper_placed_in_a_repository_is_cancelled_wherever_the_path_leads_fr
     for cancel in &cancels {
         let reason = cancel["reason"].as_str().unwrap();
         assert!(reason.contains("inside repository `alpha`"), "{reason}");
+        assert!(
+            reason.starts_with("archon policy: it was given "),
+            "{reason}"
+        );
     }
     let blockers = harness.notifications(NotificationKind::Blocker).await;
     assert_eq!(blockers.len(), 2, "{blockers:?}");
+    let wording = format!("Cancelled agent {CHILD}: it was given ");
+    assert!(blockers[0].starts_with(&wording), "{blockers:?}");
+    assert!(
+        blockers.iter().all(|text| !text.contains("model policy")),
+        "its model was allowed: {blockers:?}"
+    );
     let kept = harness.kv(&format!("link_unchecked_{GRANDCHILD}")).await;
     assert_eq!(
         kept, None,
@@ -1538,4 +1548,29 @@ async fn a_check_cut_short_by_a_lost_connection_is_retried() {
     assert_eq!(cancels.len(), 1, "{cancels:?}");
     assert_eq!(cancels[0]["agent"], CHILD);
     assert_eq!(harness.kv(&format!("link_unchecked_{CHILD}")).await, None);
+}
+
+/// An aetherd that is not running is asked for every second, not at a growing
+/// interval: one that Archon restarts is found before a command shows the gap.
+#[tokio::test]
+async fn an_aetherd_that_starts_late_is_found_within_a_second_or_so() {
+    use archon_aether::client::Endpoint;
+    let harness = Harness::new().await;
+    let socket = harness.dir.path().join("late.sock");
+    let pump = tokio::spawn(pump::run(
+        harness.ctx.clone(),
+        Endpoint::Unix(socket.clone()),
+    ));
+    // A doubling interval would have its attempts 1, 3, 7 and 15 s in.
+    tokio::time::sleep(Duration::from_secs(8)).await;
+    assert!(!pump.is_finished(), "an absent aetherd is not fatal");
+    assert!(!harness.ctx.aether.is_connected());
+
+    let late = fake::FakeAether::start(&socket).await.unwrap();
+    let found = tokio::time::Instant::now() + Duration::from_secs(3);
+    while late.connections_accepted() == 0 {
+        assert!(tokio::time::Instant::now() < found, "not found in 3 s");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    pump.abort();
 }

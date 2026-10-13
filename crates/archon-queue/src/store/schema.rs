@@ -234,7 +234,27 @@ ALTER TABLE spend_daily ADD COLUMN unclassified_cost_usd REAL NOT NULL DEFAULT 0
 UPDATE spend_daily SET unclassified_cost_usd = cost_usd;
 "#;
 
-pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7];
+/// Version 8: who delegated to whom, so a stage's cost includes the agents
+/// beneath its own. Earlier agents have no row: their stages show no split.
+const V8: &str = r#"
+CREATE TABLE delegated_agents (
+    agent TEXT PRIMARY KEY,
+    parent TEXT NOT NULL CHECK (parent <> agent),
+    model TEXT NOT NULL,
+    effort TEXT
+);
+CREATE INDEX delegated_agents_by_parent ON delegated_agents(parent);
+"#;
+
+/// Version 9: the highest total the provider reported for each agent. A
+/// charge may fall back to it when an interim estimate is corrected, never below.
+const V9: &str = r#"
+ALTER TABLE spend ADD COLUMN settled_cost_usd REAL NOT NULL DEFAULT 0
+    CHECK (settled_cost_usd >= 0);
+UPDATE spend SET settled_cost_usd = cost_usd WHERE cost_basis = 'provider_reported';
+"#;
+
+pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9];
 
 /// Pragmas every connection needs. `on_disk` connections must end up in
 /// WAL mode; in-memory databases report `memory` and stay that way.

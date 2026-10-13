@@ -1919,9 +1919,11 @@ fn design_doc_exhausted_or_missing_critique_verdict_never_publishes_a_report() {
     }
 }
 
-/// What the lead puts on record once its reviewer passed the change.
+/// A lead's passed review as stored once Archon found its reviewer in Aether.
 fn reviewed_by(model: &str) -> serde_json::Value {
-    serde_json::json!({"review": {"verdict": "pass", "reviewer_model": model}})
+    let mut result = serde_json::json!({"review": {"verdict": "pass", "reviewer_model": model}});
+    archon_pipeline::review::record_check(&mut result, Some(Ok("agt_reviewer".into())));
+    result
 }
 
 #[test]
@@ -1954,8 +1956,9 @@ fn adaptive_keeps_one_build_lead_and_hands_its_reviewed_report_to_ship() {
     assert!(!ship.allow_delegation);
     assert!(!ship.instructions.contains("## Review on record"));
     assert!(
-        ship.prompt
-            .contains("Integrated; checks pass.\n\nREVIEW: pass, by codex/astra\n"),
+        ship.prompt.contains(
+            "Integrated; checks pass.\n\nREVIEW: pass, by codex/astra (agent agt_reviewer)\n"
+        ),
         "{}",
         ship.prompt
     );
@@ -1986,6 +1989,13 @@ fn adaptive_fails_a_build_that_completed_without_a_review_on_record() {
                 serde_json::json!({"review": {"verdict": "skipped"}}),
             ),
             "`review.reason`",
+        ),
+        (
+            Agent::DoneStructured(
+                "Done.",
+                serde_json::json!({"review": {"verdict": "pass", "reviewer_model": "a/1"}}),
+            ),
+            "not checked its reviewer",
         ),
     ];
     for (outcome, why) in unreviewed {

@@ -26,19 +26,22 @@ pub(super) async fn settle(
         let mut table = ctx.runs.lock().await;
         return settle_locked(ctx, &mut table, id, outcome).await;
     }
-    let (stage, run) = {
-        let _table = ctx.runs.lock().await;
+    let (stage, run, holds_review) = {
+        let table = ctx.runs.lock().await;
         let store = ctx.store.lock().await;
         let stage = store.stage_run(id)?;
         if stage.state.is_terminal() {
             return Ok(FollowUp::default());
         }
         let run = store.run(&stage.run)?;
-        (stage, run)
+        let driver = table.drivers.get(&run.id);
+        let holds_review = driver.is_some_and(|d| d.holds_review(&stage.stage_id));
+        (stage, run, holds_review)
     };
     // Leave the stage live until verification is persisted. If interrupted,
     // reconnect reconciliation reads the task outcome and verifies it again.
     let outcome = super::ship::verify(ctx, &run, &stage, outcome).await?;
+    let outcome = super::review::verify(ctx, &stage, holds_review, outcome).await?;
     let mut table = ctx.runs.lock().await;
     let (stage, run, all) = {
         let store = ctx.store.lock().await;

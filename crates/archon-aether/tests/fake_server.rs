@@ -14,7 +14,9 @@ use archon_core::config::ModelsConfig;
 use archon_core::error::ArchonError;
 use archon_core::model::{Effort, ModelChoice};
 use archon_core::policy::ModelPolicy;
-use archon_core::ports::{AgentBackend, NetworkPolicy, RunNodeRequest, SpawnRequest};
+use archon_core::ports::{
+    AgentBackend, DescendantState, NetworkPolicy, RunNodeRequest, SpawnRequest,
+};
 use archon_core::run::StageOutcome;
 use common::{AGENT, RUN, TASK, WAIT, completed, connect};
 
@@ -441,6 +443,49 @@ async fn is_live_reads_the_agent_state_and_treats_unknown_as_dead() {
     assert!(!backend.is_live(&node).await.unwrap(), "unknown is dead");
     let error = backend.is_live(&node).await.unwrap_err();
     assert!(!matches!(error, ArchonError::NotFound(_)), "{error}");
+}
+
+/// The stop of a lead's helpers waits on this: the whole run is read once,
+/// archived agents included, and only what sits beneath the agent is returned.
+#[tokio::test]
+async fn descendants_lists_the_agents_run_once_and_keeps_only_its_subtree() {
+    let (_dir, fake) = fake_aether().await;
+    let held = |id: &str, parent: &str, state: &str| {
+        let mut agent = fake::agent(id, None);
+        agent["parent"] = json!(parent);
+        agent["status"] = json!({"state": state});
+        agent["config"] = json!({"effort": "x_high"});
+        agent
+    };
+    let listed = json!([
+        fake::agent(NODE, None),
+        held(AGENT, NODE, "completed"),
+        held("agt_helper", AGENT, "running"),
+        held("agt_other_stage", NODE, "running"),
+    ]);
+    fake.script(
+        "get_agent",
+        Scripted::reply("agent", fake::agent(AGENT, None)),
+    );
+    fake.script("list_agents", Scripted::reply("agents", listed));
+    fake.script("get_agent", Scripted::refuse("not_found", "no such agent"));
+    let backend = backend(&fake, any_model()).await;
+    let lead = AetherAgentId::parse(AGENT).unwrap();
+
+    let found = backend.descendants(&lead).await.unwrap();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].agent.as_str(), "agt_helper");
+    assert_eq!(found[0].parent, lead);
+    assert_eq!(found[0].state, DescendantState::Live);
+    assert_eq!(found[0].effort, Some(Effort::XHigh));
+    let query = &fake.received_named("list_agents")[0]["query"];
+    assert_eq!(query["run"], fake::FAKE_RUN);
+    assert_eq!(query["include_archived"], true);
+    assert!(query.get("parent").is_none(), "one read, not one per agent");
+
+    let forgotten = backend.descendants(&lead).await.unwrap();
+    assert!(forgotten.is_empty(), "a forgotten agent left nothing");
+    assert_eq!(fake.received_named("list_agents").len(), 1);
 }
 
 #[tokio::test]

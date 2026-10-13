@@ -1,5 +1,7 @@
 //! Queue items: enqueue, inspect, update, cancel and retry (§6.1, §7.4).
 
+use std::collections::BTreeMap;
+
 use archon_core::catalog::{StageKind, WorkspaceMode};
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
@@ -87,11 +89,12 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
     let item = store.item(id)?;
     let mut runs = store.runs_for_item(id)?;
     let mut stages = Vec::new();
+    let mut delegations = BTreeMap::new();
     for run in &mut runs {
         let mut run_stages = store.stage_runs(&run.id)?;
         for stage in &mut run_stages {
-            if let Some(agent) = &stage.aether_agent {
-                stage.cost_usd = store.spend_for_agent(agent, estimates)?;
+            if let Some(delegation) = super::stages::charge(&store, stage, estimates)? {
+                delegations.insert(stage.id.clone(), delegation);
             }
         }
         run.cost_usd = store.spend_for_run(&run.id, estimates)?;
@@ -117,6 +120,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
         stages,
         spent_usd,
         gates,
+        delegations,
     })))
 }
 

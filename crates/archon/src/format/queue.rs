@@ -176,6 +176,15 @@ fn run_lines(out: &mut String, detail: &ItemDetail, run: &PipelineRun, full: boo
     }
     for stage in stages {
         let _ = writeln!(out, "  {}", stage_line(stage));
+        if let Some(delegation) = detail.delegations.get(&stage.id) {
+            let _ = writeln!(out, "    cost: {}", delegation.split());
+            for agent in &delegation.agents {
+                let _ = writeln!(out, "      {}", sanitize_line(&agent.line()));
+            }
+        }
+        if let Some(review) = archon_pipeline::review::on_record(stage.structured.as_ref()) {
+            let _ = writeln!(out, "    {}", sanitize_line(&review));
+        }
         let summary = stage.summary.as_deref().unwrap_or_default();
         for line in summary_lines(summary, full) {
             let _ = writeln!(out, "    {line}");
@@ -506,6 +515,7 @@ mod tests {
             item,
             spent_usd: 1.0,
             gates: vec![],
+            delegations: Default::default(),
         }
     }
 
@@ -537,6 +547,54 @@ mod tests {
             "{full}"
         );
         assert!(!full.contains("--full"), "{full}");
+    }
+
+    /// A stage that delegated shows how its cost splits and to which agents it
+    /// went; a declared review shows as Archon holds it, a skip with its reason.
+    #[test]
+    fn item_detail_shows_a_stages_delegated_cost_and_the_review_on_record() {
+        use archon_core::protocol::{DelegatedAgent, StageDelegation};
+        let mut detail = detail_with_stages();
+        let lead = detail.stages[0].aether_agent.clone().unwrap();
+        let helper = |id: &str, effort, cost_usd| DelegatedAgent {
+            agent: AetherAgentId::parse(id).unwrap(),
+            parent: lead.clone(),
+            model: "codex/astra".parse().unwrap(),
+            effort,
+            cost_usd,
+        };
+        let agents = vec![
+            helper("agt_two", Some(Effort::Medium), 0.3),
+            helper("agt_three", None, 0.2),
+        ];
+        let split = StageDelegation::of(0.5, agents);
+        detail.stages[0].cost_usd = split.total_usd();
+        detail.stages[0].structured = Some(serde_json::json!({"review": {
+            "verdict": "pass", "reviewer_model": "codex/astra", "reviewer_agent": "agt_two"}}));
+        detail
+            .delegations
+            .insert(detail.stages[0].id.clone(), split);
+        let text = item_detail(&detail, &RepoNames::new(), false);
+        let expected = "\x20 review attempt 1 slot 1: completed, verdict pass, $1.00, \
+             claude-code/opus (high), agent agt_one\n\
+             \x20   cost: $0.50 own + $0.50 for 2 delegated agent(s)\n\
+             \x20     agt_two codex/astra (medium) $0.30\n\
+             \x20     agt_three codex/astra (effort unknown) $0.20\n\
+             \x20   REVIEW: pass, by codex/astra (agent agt_two)\n\
+             \x20   finding 1\n";
+        assert!(text.contains(expected), "{text}");
+
+        let skipped = serde_json::json!({"review": {"verdict": "skipped", "reason": "a typo"}});
+        detail.stages[0].structured = Some(skipped);
+        let text = item_detail(&detail, &RepoNames::new(), false);
+        assert!(text.contains("\n    REVIEW: skipped: a typo\n"), "{text}");
+        let unchecked = serde_json::json!({"review": {"verdict": "pass", "reviewer_model": "a/b"}});
+        detail.stages[0].structured = Some(unchecked);
+        let text = item_detail(&detail, &RepoNames::new(), false);
+        assert!(
+            !text.contains("REVIEW:"),
+            "an unchecked pass is none: {text}"
+        );
     }
 
     #[test]
@@ -614,6 +672,7 @@ mod tests {
             stages: vec![stage],
             spent_usd: 0.0,
             gates: vec![gate],
+            delegations: Default::default(),
         };
         let text = item_detail(&detail, &RepoNames::new(), true);
         assert_inert(&text);

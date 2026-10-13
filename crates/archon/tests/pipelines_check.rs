@@ -11,6 +11,7 @@ fn archon(home: &Path, args: &[&str]) -> Output {
         // Nothing listens here, so nothing can reach a real daemon.
         .env("ARCHON_SOCKET", home.join("archond.sock"))
         .env("NO_COLOR", "1")
+        .env_remove("RUST_LOG")
         .output()
         .expect("running the archon binary")
 }
@@ -43,6 +44,23 @@ fn a_broken_user_pipeline_fails_the_check() {
         !home.path().join("archond.sock").exists(),
         "no daemon was started"
     );
+}
+
+/// The problem is said once, as a line of the command's own output: no log
+/// line of the loader's is printed beside it.
+#[test]
+fn a_broken_pipeline_is_reported_in_the_output_and_not_as_a_log_line() {
+    let home = tempfile::tempdir().unwrap();
+    let broken = home.path().join("config/pipelines/broken");
+    write(&broken.join("pipeline.toml"), "this is = not [valid toml");
+    let reported = format!("broken broken (user) at {}: ", broken.display());
+    for command in ["check", "list"] {
+        let out = archon(home.path(), &["pipelines", command]);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(stdout.matches(&reported).count(), 1, "{command}: {stdout}");
+        assert_eq!(stderr, "", "{command} logged beside its output");
+    }
 }
 
 #[test]

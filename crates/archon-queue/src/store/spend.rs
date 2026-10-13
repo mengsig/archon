@@ -4,11 +4,8 @@
 //! which it grew, which is what the daily budget needs: an agent that spent
 //! $40 yesterday and $1 today counts $1 today.
 //!
-//! A charge never goes down. A lower total (a usage correction) keeps the
-//! amounts already charged, cost and estimate separately, so no day gets a
-//! credit that would cancel other agents' spend under the daily budget.
-//! Each growth amount retains its observed basis, even if later totals have
-//! different provenance. Mixed totals provide no split for their growth.
+//! A turn's list-price estimate gives way to the provider's figure when it ends:
+//! only such a settled total lowers a charge, and never below an earlier settled one.
 
 use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
@@ -19,6 +16,9 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 use super::SpendRow;
 use super::codec::{SqlContext, to_i64, ts, write_tx};
+
+/// A day may hold this much less than a correction takes: float rounding.
+const ROUNDING_USD: f64 = 1e-9;
 
 /// The local calendar day of `at`, as `YYYY-MM-DD`.
 pub(super) fn local_day(at: &Timestamp) -> String {
@@ -43,29 +43,45 @@ fn check_row(row: &SpendRow) -> Result<(), ArchonError> {
     Ok(())
 }
 
-/// Raw charged amounts, event time and provenance of the agent's current row.
-fn current(
-    conn: &Connection,
-    row: &SpendRow,
-) -> Result<Option<(f64, f64, String, String)>, ArchonError> {
+/// What an agent's row holds: its charge, when and on what basis, and the
+/// highest settled total, which the charge never falls below.
+struct Charged {
+    cost: f64,
+    estimate: f64,
+    at: String,
+    basis: String,
+    settled: f64,
+}
+
+fn current(conn: &Connection, row: &SpendRow) -> Result<Option<Charged>, ArchonError> {
     conn.query_row(
-        "SELECT cost_usd, estimated_cost_usd, at, cost_basis FROM spend WHERE agent = ?1",
+        "SELECT cost_usd, estimated_cost_usd, at, cost_basis, settled_cost_usd
+         FROM spend WHERE agent = ?1",
         [row.agent.as_str()],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        |r| {
+            Ok(Charged {
+                cost: r.get(0)?,
+                estimate: r.get(1)?,
+                at: r.get(2)?,
+                basis: r.get(3)?,
+                settled: r.get(4)?,
+            })
+        },
     )
     .optional()
     .ctx("read spend row")
 }
 
-fn upsert_latest(conn: &Connection, row: &SpendRow) -> Result<(), ArchonError> {
+fn upsert_latest(conn: &Connection, row: &SpendRow, settled: f64) -> Result<(), ArchonError> {
     conn.execute(
         "INSERT INTO spend (agent, item, cost_usd, estimated_cost_usd, input_tokens,
-                            output_tokens, at, cost_basis)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                            output_tokens, at, cost_basis, settled_cost_usd)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT (agent) DO UPDATE SET item = excluded.item,
              cost_usd = excluded.cost_usd, estimated_cost_usd = excluded.estimated_cost_usd,
              input_tokens = excluded.input_tokens, output_tokens = excluded.output_tokens,
-             at = excluded.at, cost_basis = excluded.cost_basis",
+             at = excluded.at, cost_basis = excluded.cost_basis,
+             settled_cost_usd = excluded.settled_cost_usd",
         params![
             row.agent.as_str(),
             row.item.as_ref().map(QueueItemId::as_str),
@@ -75,6 +91,7 @@ fn upsert_latest(conn: &Connection, row: &SpendRow) -> Result<(), ArchonError> {
             to_i64(row.output_tokens, "output tokens")?,
             ts(&row.at),
             row.cost_basis.name(),
+            settled,
         ],
     )
     .ctx("write spend row")?;
@@ -116,13 +133,79 @@ fn add_to_day(
     Ok(())
 }
 
-/// `row` with each amount raised to what `charged` already holds, and the
-/// growth `(cost, estimate)` that still needs charging.
-fn clamp_to_charged(row: &SpendRow, charged: (f64, f64)) -> (SpendRow, f64, f64) {
-    let (old_cost, old_estimate) = charged;
-    let kept = SpendRow {
-        cost_usd: row.cost_usd.max(old_cost),
-        estimated_cost_usd: row.estimated_cost_usd.max(old_estimate),
+/// Takes `amount` of cost back from the agent's own days, newest first, so
+/// a correction never credits a day with what another agent spent in it.
+fn take_from_days(
+    conn: &Connection,
+    agent: &AetherAgentId,
+    amount: f64,
+) -> Result<(), ArchonError> {
+    assert!(amount.is_finite() && amount > 0.0, "nothing to take back");
+    let days: Vec<(String, f64)> = conn
+        .prepare_cached("SELECT day, cost_usd FROM spend_daily WHERE agent = ?1 ORDER BY day DESC")
+        .ctx("prepare the agent's days")?
+        .query_map([agent.as_str()], |r| Ok((r.get(0)?, r.get(1)?)))
+        .ctx("read the agent's days")?
+        .collect::<Result<_, _>>()
+        .ctx("read a day of the agent")?;
+    let mut left = amount;
+    for (day, cost) in days {
+        if left <= 0.0 {
+            break;
+        }
+        let taken = left.min(cost);
+        conn.execute(
+            "UPDATE spend_daily SET cost_usd = ?3 WHERE agent = ?1 AND day = ?2",
+            params![agent.as_str(), day, cost - taken],
+        )
+        .ctx("correct daily spend")?;
+        left -= taken;
+    }
+    if left > ROUNDING_USD {
+        return Err(ArchonError::Store(format!(
+            "the days of agent {agent} hold ${left} less than it was charged"
+        )));
+    }
+    Ok(())
+}
+
+/// Every dollar of a settled total was reported by the provider, so each day
+/// the agent was charged in is billed in full.
+fn bill_days(conn: &Connection, agent: &AetherAgentId) -> Result<(), ArchonError> {
+    conn.execute(
+        "UPDATE spend_daily SET billed_cost_usd = cost_usd, list_price_cost_usd = 0,
+                                unclassified_cost_usd = 0
+         WHERE agent = ?1",
+        [agent.as_str()],
+    )
+    .ctx("bill the agent's days")?;
+    Ok(())
+}
+
+/// Whether `row` is Aether's settled figure: every dollar in it reported by
+/// the provider, and no invocation left out.
+fn settles(row: &SpendRow) -> bool {
+    row.cost_basis == CostBasis::ProviderReported && row.cost_complete == Some(true)
+}
+
+/// What a new total does to an agent's charge: the row to store, the settled
+/// floor after it, the change in cost and the growth in estimate.
+struct Charge {
+    kept: SpendRow,
+    settled: f64,
+    cost: f64,
+    estimate: f64,
+}
+
+/// A settled total replaces the charge down to the settled floor; any other
+/// total only raises it. The estimate is never settled, so it only grows.
+fn charge(row: &SpendRow, held: &Charged) -> Charge {
+    assert!(held.settled <= held.cost, "a charge is at least its floor");
+    let settles = settles(row);
+    let floor = if settles { held.settled } else { held.cost };
+    let mut kept = SpendRow {
+        cost_usd: row.cost_usd.max(floor),
+        estimated_cost_usd: row.estimated_cost_usd.max(held.estimate),
         ..row.clone()
     };
     if kept != *row {
@@ -132,40 +215,67 @@ fn clamp_to_charged(row: &SpendRow, charged: (f64, f64)) -> (SpendRow, f64, f64)
             estimate = row.estimated_cost_usd,
             "usage total went down; keeping what was already charged"
         );
+    } else if kept.cost_usd < held.cost {
+        tracing::debug!(
+            agent = %row.agent,
+            cost = row.cost_usd,
+            "the provider's total replaces a higher estimate"
+        );
     }
-    let growth = (
-        kept.cost_usd - old_cost,
-        kept.estimated_cost_usd - old_estimate,
+    if !settles && row.cost_usd < held.cost && row.cost_basis.name() != held.basis {
+        // The new provenance describes a smaller amount, not the charge retained
+        // by the budget. Its entire split can no longer be established.
+        kept.cost_basis = CostBasis::Unknown;
+    }
+    let settled = if settles { kept.cost_usd } else { held.settled };
+    let (cost, estimate) = (
+        kept.cost_usd - held.cost,
+        kept.estimated_cost_usd - held.estimate,
     );
-    debug_assert!(growth.0 >= 0.0 && growth.1 >= 0.0, "a charge never shrinks");
-    (kept, growth.0, growth.1)
+    assert!(settled <= kept.cost_usd && estimate >= 0.0);
+    assert!(
+        cost >= 0.0 || settles,
+        "only a settled total lowers a charge"
+    );
+    Charge {
+        kept,
+        settled,
+        cost,
+        estimate,
+    }
 }
 
-/// Charges the agent's growth since its last row. A row older than the
-/// stored one is a replayed event and changes nothing; a replay of the same
-/// row adds nothing, and a lower total keeps what was already charged.
+/// Charges the agent's growth since its last row. An older row is a replayed event
+/// and changes nothing, as does the same row again; only a settled total lowers it.
 pub(super) fn record(conn: &mut Connection, row: &SpendRow) -> Result<(), ArchonError> {
     check_row(row)?;
     let tx = write_tx(conn)?;
     if let Some(item) = &row.item {
         super::items::load(&tx, item)?;
     }
-    let (old_cost, old_estimate, old_basis) = match current(&tx, row)? {
-        Some((_, _, at, _)) if at > ts(&row.at) => {
+    let held = match current(&tx, row)? {
+        Some(held) if held.at > ts(&row.at) => {
             tracing::debug!(agent = %row.agent, "ignoring an older usage total");
             return Ok(());
         }
-        Some((cost, estimate, _, basis)) => (cost, estimate, basis),
-        None => (0.0, 0.0, row.cost_basis.name().to_owned()),
+        Some(held) => held,
+        None => Charged {
+            cost: 0.0,
+            estimate: 0.0,
+            at: ts(&row.at),
+            basis: row.cost_basis.name().to_owned(),
+            settled: 0.0,
+        },
     };
-    let (mut kept, cost, estimate) = clamp_to_charged(row, (old_cost, old_estimate));
-    if row.cost_usd < old_cost && row.cost_basis.name() != old_basis {
-        // The new provenance describes a smaller amount, not the charge retained
-        // by the budget. Its entire split can no longer be established.
-        kept.cost_basis = archon_core::cost::CostBasis::Unknown;
+    let charge = charge(row, &held);
+    upsert_latest(&tx, &charge.kept, charge.settled)?;
+    add_to_day(&tx, &charge.kept, charge.cost.max(0.0), charge.estimate)?;
+    if charge.cost < 0.0 {
+        take_from_days(&tx, &row.agent, -charge.cost)?;
     }
-    upsert_latest(&tx, &kept)?;
-    add_to_day(&tx, &kept, cost, estimate)?;
+    if settles(row) {
+        bill_days(&tx, &row.agent)?;
+    }
     tx.commit().ctx("commit spend")
 }
 

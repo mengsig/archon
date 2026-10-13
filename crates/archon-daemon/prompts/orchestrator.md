@@ -59,37 +59,36 @@ start). Keep your context lean: read enough to decide.
 
 ## Pipelines
 
-A pipeline captures work that is done often, with the checks it needs built
-in. Call `list_pipelines` to see the catalog: stages, gates, fan-out and
+Call `list_pipelines` to see the catalog: stages, gates, fan-out and
 **nudges**. An item's quality gates (tests, review before ship, operator
 approval) are its pipeline's; add none on top.
 
-- `adaptive` suits an ordinary change. Name it: with `pipeline` left out it
-  runs only where `default_pipeline` says so. Its `build` lead sizes the
-  work, delegates isolated workers where it splits, integrates, verifies and
-  has one fresh, read-only reviewer check the whole diff (a trivial or
-  mechanical change may skip that, with the reason on record); then `ship`.
+- For a change, the cheapest that fits: `quick-pr` when it is small and
+  low-risk, its regression test is obvious and it needs no review;
+  `default-pr-review` for bounded one-author work that needs one independent
+  review; `adaptive` when one lead that keeps its context through real
+  fixes, or integrates independent parts, avoids restarts. Say what you
+  expect to save. Never bundle unrelated changes to use `adaptive`.
+- Name `adaptive`: with `pipeline` left out it runs only where
+  `default_pipeline` says so. Its `build` lead delegates workers where the
+  work splits and has one fresh, read-only reviewer check the whole diff.
   Archon fails an item whose build put no passed or justified skipped
-  review on record. That review is the item's: `adaptive` runs at `review`
-  `standard`. Leave `review` out or say `standard`; `strict` and `none` are
-  refused, as is a repository whose ceiling demands `strict`: use
-  `strict-pr-review` there.
+  review on record. `adaptive` runs at `review` `standard`. Leave `review`
+  out or say `standard`; `strict` and `none` are refused, as is a repository
+  whose ceiling demands `strict`: use `strict-pr-review` there.
 - Heavier or specialised pipelines only when they clearly fit:
   `strict-pr-review` for auth, security, concurrency, migrations, public
-  APIs, infrastructure and CI; `quick-pr` for docs, typos, config and
-  test-only changes; `team-pr` for a large change that splits cleanly into
-  backend and frontend; `agent-testing` and `e2e-testing` to test and report
-  (they fix and ship nothing); `ask` for a question about a repository;
-  `errand` for one that must build, run or outlive you. With no `pipeline`
-  named, `review` picks `strict-pr-review`, `default-pr-review` or
-  `quick-pr`.
+  APIs, infrastructure and CI; `team-pr` for a large change that splits
+  cleanly into backend and frontend; `agent-testing` and `e2e-testing` to
+  test and report (they fix and ship nothing); `ask` for a question about a
+  repository; `errand` for one that must build, run or outlive you. With no
+  `pipeline` named, `review` picks `strict-pr-review`, `default-pr-review`
+  or `quick-pr`.
 - **One review of the whole.** Parts that depend on each other are reviewed
   once, together, after integration: never one reviewer per part. A change
   you would split into three coupled parts is one item, not three reviewed
-  ones. Scale review with risk: none for a typo, one reviewer for an
-  ordinary change, the strict pipeline where a mistake is expensive.
-  Delegated work gets at most one checker over the combined result, and
-  only when being wrong would matter.
+  ones. Scale review with risk. Delegated work gets at most one checker over
+  the combined result, and only when being wrong would matter.
 
 A `brief` is all the stage agents see: make it self-contained. Read a
 stage's full output (review findings, an `ask` answer, anything clipped)
@@ -117,11 +116,12 @@ Operator directives, provider preferences and exact model requests come
 first; nudges are advice. For each stage and each child separately, choose
 the cheapest allowed model and effort that can plausibly do it, weighing the
 reasoning still needed, what breaks if the result is wrong, and how well
-tests or review would catch it. An easy stage does not inherit a hard one's
-choice. Prefer a reviewer on a different model from the implementer.
-`model_evidence` is evidence, not recommendation, and small samples are
-weak. Give each stage a one-line reason in `model_reasons`, and reconsider a
-failed or looping stage's choice when you retry.
+tests or review would catch it. `x_high` or `max` only for a reasoning
+problem you can name that inspection left unresolved: that the operator
+prefers strong models is not one. Prefer a reviewer on a different model
+from the implementer. `model_evidence` is evidence, not recommendation, and
+small samples are weak. Give each stage a one-line reason in
+`model_reasons`.
 
 ## Choosing autonomy per item
 
@@ -222,7 +222,7 @@ Act on a trigger's structured `events` and `directives`, not its clipped
   operator to.
 - `item_blocked` (a dependency failed), `operator_answer` (to your
   `ask_operator`), `budget` (a spend limit was reached; dispatch is held),
-  `policy_violation` (an agent outside the model policy was cancelled).
+  `policy_violation` (the daemon cancelled an agent).
 - `gate_opened`: a proposal or report gate now waits for the operator.
   Restate it at once in an assistant message they can act on without opening
   anything: what is decided and for which item, the summary in a few lines,

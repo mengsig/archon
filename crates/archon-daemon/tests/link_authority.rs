@@ -162,6 +162,59 @@ async fn an_install_whose_aether_names_no_callers_keeps_working_without_delegati
     assert!(!hides_delegate(&created[1]), "{}", created[1]);
 }
 
+/// After the repair the orchestrator's next call may be a read. That is enough to
+/// know Aether names callers again: a later unnamed call is refused and reported.
+#[tokio::test]
+async fn a_named_read_from_the_orchestrator_shows_that_aether_names_callers_again() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    let running = orchestrator(ORCH, "running");
+    harness
+        .fake
+        .set_default("get_agent", Scripted::reply("agent", running));
+    harness.fake.set_default("cancel", Scripted::ok());
+    supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    assert!(unnamed(&harness, pause()).await.is_err(), "it can delegate");
+    let said_again = || async {
+        let notes = harness.system_notes().await;
+        notes
+            .iter()
+            .filter(|n| n.contains("names the agents"))
+            .count()
+    };
+
+    let helper_read = harness.mcp_as("agt_0404", Request::RepoList).await;
+    assert!(helper_read.is_ok(), "{helper_read:?}");
+    let unnamed_read = unnamed(&harness, Request::Status).await;
+    assert!(unnamed_read.is_ok(), "{unnamed_read:?}");
+    assert_eq!(said_again().await, 0, "neither is the orchestrator's word");
+
+    for _ in 0..2 {
+        let read = harness.mcp_as(ORCH, Request::RepoList).await;
+        assert!(matches!(read, Ok(Reply::Repos(_))), "{read:?}");
+    }
+    assert_eq!(said_again().await, 1, "said once");
+    let successor = orchestrator(ORCH_2, "running");
+    harness
+        .fake
+        .set_default("create_agent", Scripted::reply("agent", successor));
+    supervisor::restart_orchestrator(&harness.ctx)
+        .await
+        .unwrap();
+    let created = harness.fake.received_named("create_agent");
+    assert!(!hides_delegate(&created[0]), "{}", created[0]);
+
+    let refused = unnamed(&harness, pause()).await;
+    assert!(
+        matches!(&refused, Err(ArchonError::Forbidden(why)) if why.contains("did not say which")),
+        "{refused:?}"
+    );
+    assert!(!paused(&harness).await, "no unnamed call changed Archon");
+    let notices = harness.notifications(NotificationKind::Blocker).await;
+    assert_eq!(notices.len(), 2, "told of each lapse: {notices:?}");
+}
+
 /// An orchestrator that can delegate has helpers that see Archon's tools: an
 /// unnamed call may be theirs, so it is refused and the operator told once.
 #[tokio::test]

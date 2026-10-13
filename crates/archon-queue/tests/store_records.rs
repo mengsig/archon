@@ -575,6 +575,7 @@ fn spend_row(
         item: item.map(|i| i.id.clone()),
         cost_usd: cost,
         cost_basis: archon_core::cost::CostBasis::ProviderReported,
+        cost_complete: None,
         estimated_cost_usd: est,
         input_tokens: 1000,
         output_tokens: 200,

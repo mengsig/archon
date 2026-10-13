@@ -7,6 +7,7 @@
 //! across an Aether call. Work that needs Aether or git after a state change
 //! is returned as a `FollowUp` and run once the run table is released.
 
+mod dependencies;
 mod descendants;
 mod finish;
 pub(crate) mod frozen;
@@ -15,6 +16,7 @@ mod gates;
 mod naming;
 mod pages;
 mod recover;
+mod review;
 mod roster;
 mod run_node;
 mod settle;

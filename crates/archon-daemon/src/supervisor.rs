@@ -36,7 +36,7 @@ use crate::triggers::TriggerEvent;
 use lineage::newest_incarnation;
 use retired::{Sweep, cancel_orphans};
 
-pub(crate) use authority::authorize;
+pub(crate) use authority::{authorize, saw_call};
 pub use mcp::{
     HEALS_BEFORE_BLOCKER, MCP_CHECK_INTERVAL, check_mcp, check_mcp_soon, mcp_status, watch_mcp,
 };
@@ -1181,7 +1181,7 @@ mod tests {
         }
         assert!(
             prompt.contains("`adaptive`"),
-            "the pipeline for an ordinary change is named"
+            "the pipeline whose lead delegates is named"
         );
         for pipeline in archon_pipeline::builtin::BUILTINS {
             if pending_catalog_guidance.contains(&pipeline.name) {
@@ -1211,8 +1211,8 @@ mod tests {
             "Never change a repository yourself or through a child.",
             "Fan out as the work divides, never by habit",
             "`ask` for a question that takes reading its code",
-            "`adaptive` suits an ordinary change. Name it: with `pipeline` left out it runs only \
-             where `default_pipeline` says so.",
+            "Name `adaptive`: with `pipeline` left out it runs only where `default_pipeline` \
+             says so.",
             "Heavier or specialised pipelines only when they clearly fit",
         ] {
             assert!(prompt.contains(said), "missing {said:?}");
@@ -1220,6 +1220,40 @@ mod tests {
         assert!(
             !prompt.contains("is the default"),
             "no pipeline is selected by leaving `pipeline` out but by `review`"
+        );
+    }
+
+    /// A lead at the highest effort and a second whole-diff review were most
+    /// of what a small change cost: neither is chosen without a named reason.
+    #[test]
+    fn builtin_prompt_picks_the_cheapest_pipeline_and_effort_that_fit() {
+        let prompt = unwrapped(&prompt());
+        let choice = [
+            "For a change, the cheapest that fits",
+            "`quick-pr` when it is small and low-risk, its regression test is obvious and it \
+             needs no review",
+            "`default-pr-review` for bounded one-author work that needs one independent review",
+            "`adaptive` when one lead that keeps its context through real fixes, or integrates \
+             independent parts, avoids restarts",
+            "Say what you expect to save.",
+            "Never bundle unrelated changes to use `adaptive`.",
+        ];
+        let at: Vec<usize> = choice.iter().map(|s| prompt.find(s).unwrap()).collect();
+        assert!(at.is_sorted(), "cheapest pipeline first: {at:?}");
+        assert!(
+            !prompt.contains("suits an ordinary change"),
+            "`adaptive` is no default for a change a cheaper pipeline fits"
+        );
+        let effort = "`x_high` or `max` only for a reasoning problem you can name that inspection \
+                      left unresolved: that the operator prefers strong models is not one.";
+        let models = prompt.find("## Choosing models and effort").unwrap();
+        let autonomy = prompt.find("## Choosing autonomy per item").unwrap();
+        let said = prompt
+            .find(effort)
+            .expect("the rule for the highest efforts");
+        assert!(
+            models < said && said < autonomy,
+            "it sits with model choice"
         );
     }
 

@@ -20,7 +20,7 @@ use crate::connection::{BoxRead, BoxWrite, EventSink, Router, Shared, WRITE_QUEU
 use crate::events::AetherEvent;
 use crate::github::{WatcherConfig, WatcherStatus};
 use crate::wire::{
-    ALLOWLIST_PROTOCOL_VERSION, Agent, AgentPatch, CLIENT_NAME, Command, CreateAgent,
+    ALLOWLIST_PROTOCOL_VERSION, Agent, AgentPatch, AgentQuery, CLIENT_NAME, Command, CreateAgent,
     DaemonDefaults, ErrorReply, EventQuery, Hello, MIN_PROTOCOL_VERSION, ModelInfo,
     OPERATOR_LOGINS_PROTOCOL_VERSION, PROTOCOL_VERSION, ProviderInfo, RawReply, Subscribed, Task,
     Welcome,
@@ -364,6 +364,11 @@ impl AetherClient {
             .await?;
         ensure_same(id.as_str(), agent.id.as_str(), "get_agent")?;
         Ok(agent)
+    }
+
+    /// The agents `query` selects, as Aether holds them now.
+    pub async fn list_agents(&self, query: AgentQuery) -> Result<Vec<Agent>, ArchonError> {
+        self.typed(Command::ListAgents { query }, "agents").await
     }
 
     pub async fn get_task(&self, id: &AetherTaskId) -> Result<Task, ArchonError> {

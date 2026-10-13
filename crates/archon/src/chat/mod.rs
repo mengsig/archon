@@ -14,11 +14,11 @@ use std::process::ExitCode;
 use archon_client::{ArchonClient, FeedSubscription};
 use archon_core::config::Config;
 use archon_core::notify::{FeedEntry, FeedItem};
-use archon_core::protocol::{AetherLinkStatus, ClientKind, Reply, Request};
+use archon_core::protocol::{AetherLinkStatus, Reply, Request};
 
 use crate::chat::input::{Ack, Incoming, Input, InputEvent, Output};
 use crate::chat::link::{Link, LinkEvent};
-use crate::connect::{archon_bin, unexpected};
+use crate::connect::unexpected;
 use crate::questions::QuestionBook;
 use crate::render::Renderer;
 use crate::style::{Palette, Style, terminal_width};
@@ -49,10 +49,8 @@ struct Chat {
 
 pub async fn run(progress: bool) -> anyhow::Result<ExitCode> {
     let config = Config::load_default()?;
-    crate::connect::ensure_aether().await?;
+    let client = crate::connect::connect().await?;
     let socket = archon_client::default_socket();
-    let client =
-        ArchonClient::connect_or_start(&socket, ClientKind::ArchonCli, &archon_bin()?).await?;
     let history = archon_core::paths::data_dir().join(HISTORY_FILE);
     let history = std::path::absolute(&history)?;
     // Plain stdout until the editor runs: an editor blocked in a read
@@ -307,7 +305,7 @@ mod tests {
             let line = format!("{}\n", serde_json::to_string(&frame).unwrap());
             write.write_all(line.as_bytes()).await.unwrap();
         });
-        let client = ArchonClient::connect(socket, ClientKind::ArchonCli)
+        let client = ArchonClient::connect(socket, archon_core::protocol::ClientKind::ArchonCli)
             .await
             .unwrap();
         server.await.unwrap();

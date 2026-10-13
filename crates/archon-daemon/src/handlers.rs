@@ -53,6 +53,7 @@ pub async fn handle(
     let _authority = if orchestrators_alone(client, caller.as_ref(), &request) {
         Some(supervisor::authorize(ctx, caller.as_ref()).await?)
     } else {
+        supervisor::saw_call(ctx, caller.as_ref()).await?;
         None
     };
     route(ctx, client, request).await

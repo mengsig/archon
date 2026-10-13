@@ -569,6 +569,7 @@ async fn a_replaced_role_keeps_what_is_left_of_its_share() {
             item: Some(item.id.clone()),
             cost_usd,
             cost_basis: archon_core::cost::CostBasis::ProviderReported,
+            cost_complete: None,
             estimated_cost_usd: 0.25,
             input_tokens: 10,
             output_tokens: 5,

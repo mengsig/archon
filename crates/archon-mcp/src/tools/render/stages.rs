@@ -74,6 +74,9 @@ fn view_line(view: &StageRunView) -> String {
     if let Some(agent) = &view.aether_agent {
         let _ = write!(line, ", agent {agent}");
     }
+    if let Some(delegation) = &view.delegation {
+        let _ = write!(line, "; cost split: {}", delegation.line());
+    }
     line
 }
 

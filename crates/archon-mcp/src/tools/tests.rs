@@ -588,6 +588,7 @@ fn get_item_shows_recorded_reasons_next_to_choices_and_omits_missing_reasons() {
         stages: vec![],
         spent_usd: 0.0,
         gates: vec![],
+        delegations: Default::default(),
     };
     let text = render("get_item", &Reply::ItemDetail(Box::new(detail.clone())));
     assert!(
@@ -636,6 +637,7 @@ fn list_queue_and_get_item_expose_stable_waiting_reasons_in_text_and_json() {
                 stages: vec![],
                 spent_usd: 0.0,
                 gates: vec![],
+                delegations: Default::default(),
                 waiting_on: None,
                 waiting_reason: Some(wait.clone()),
             })),
@@ -687,6 +689,7 @@ fn dependency_titles_are_escaped_in_waiting_text() {
                 stages: vec![],
                 spent_usd: 0.0,
                 gates: vec![],
+                delegations: Default::default(),
                 waiting_on: None,
                 waiting_reason: Some(wait),
             })),

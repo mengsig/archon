@@ -4,7 +4,7 @@
 mod common;
 
 use archon_core::aether_ids::AetherAgentId;
-use archon_core::cost::{CostGroup, CostReport, DayRange};
+use archon_core::cost::{CostBasis, CostGroup, CostReport, DayRange};
 use archon_core::error::ArchonError;
 use archon_core::model::ModelChoice;
 use archon_core::queue::QueueItem;
@@ -39,6 +39,7 @@ fn charge(
         item: item.map(|i| i.id.clone()),
         cost_usd: usd.0,
         cost_basis: archon_core::cost::CostBasis::ProviderReported,
+        cost_complete: None,
         estimated_cost_usd: usd.1,
         input_tokens: 1,
         output_tokens: 1,
@@ -244,6 +245,7 @@ fn provenance_classifies_reports_but_never_changes_charges() {
             item: Some(owner.id.clone()),
             cost_usd: 2.0,
             cost_basis: basis,
+            cost_complete: None,
             estimated_cost_usd: 0.5,
             input_tokens: 1,
             output_tokens: 1,
@@ -294,6 +296,7 @@ fn cumulative_basis_changes_preserve_history_without_recharging_it() {
         item: None,
         cost_usd: 2.0,
         cost_basis: CostBasis::ListPrice,
+        cost_complete: None,
         estimated_cost_usd: 0.0,
         input_tokens: 1,
         output_tokens: 1,
@@ -331,6 +334,7 @@ fn a_lower_correction_cannot_relabel_retained_list_price_as_billing() {
         item: None,
         cost_usd: 2.0,
         cost_basis: CostBasis::ListPrice,
+        cost_complete: None,
         estimated_cost_usd: 0.0,
         input_tokens: 1,
         output_tokens: 1,
@@ -364,6 +368,7 @@ fn basis_changes_within_one_day_preserve_each_charged_component() {
         item: None,
         cost_usd: 0.0,
         cost_basis: CostBasis::Unknown,
+        cost_complete: None,
         estimated_cost_usd: 0.5,
         input_tokens: 1,
         output_tokens: 1,
@@ -407,4 +412,121 @@ fn basis_changes_within_one_day_preserve_each_charged_component() {
         expected
     );
     assert_eq!(store.spend_totals(t(0), true).unwrap(), (4.5, 4.5));
+}
+
+/// One usage total of agent `n`, as Aether reports it at `at`.
+fn total(n: u32, cost: f64, basis: CostBasis, complete: bool, at: i64) -> SpendRow {
+    SpendRow {
+        agent: agent(n),
+        item: None,
+        cost_usd: cost,
+        cost_basis: basis,
+        cost_complete: Some(complete),
+        estimated_cost_usd: 0.0,
+        input_tokens: 1,
+        output_tokens: 1,
+        at: t(at),
+    }
+}
+
+/// Aether prices a turn at list price while it streams, then reports what the
+/// provider billed: that figure is the charge, and all of it is billed.
+#[test]
+fn a_settled_total_replaces_the_interim_estimate_it_corrects() {
+    use CostBasis::{ListPrice, Mixed, ProviderReported};
+    let mut store = store();
+    let turns = [
+        (0.125, ListPrice),
+        (0.25, ProviderReported),
+        (0.375, Mixed),
+        (0.5, Mixed),
+        (0.4375, ProviderReported),
+    ];
+    for (at, (cost, basis)) in turns.into_iter().enumerate() {
+        let row = total(1, cost, basis, true, at as i64);
+        store.record_spend(&row).unwrap();
+        store.record_spend(&row).unwrap();
+    }
+    assert_eq!(store.spend_for_agent(&agent(1), false).unwrap(), 0.4375);
+    assert_eq!(store.spend_totals(t(9), false).unwrap(), (0.4375, 0.4375));
+    let report = store
+        .cost_report(&range(0, 0), CostGroup::Day, false)
+        .unwrap();
+    assert_eq!(report.total.counted_usd, 0.4375);
+    assert_eq!(report.total.cost_usd, 0.4375, "all of it was billed");
+    assert_eq!(report.total.estimated_cost_usd, 0.0);
+    assert_eq!(report.total.unclassified_cost_usd, 0.0);
+
+    // The next turn's estimate is charged on top of the settled total.
+    store
+        .record_spend(&total(1, 0.5625, Mixed, true, 9))
+        .unwrap();
+    let report = store
+        .cost_report(&range(0, 0), CostGroup::Day, false)
+        .unwrap();
+    assert_eq!(report.total.cost_usd, 0.4375);
+    assert_eq!(report.total.unclassified_cost_usd, 0.125);
+}
+
+/// A counter that goes down lowers a charge only as the provider's settled
+/// figure, and never below an earlier one: no budget is evaded by reporting less.
+#[test]
+fn only_a_settled_total_lowers_a_charge_and_never_below_an_earlier_one() {
+    use CostBasis::{ListPrice, Mixed, ProviderReported};
+    let mut store = store();
+    store
+        .record_spend(&total(1, 2.0, ProviderReported, true, 0))
+        .unwrap();
+    store.record_spend(&total(1, 3.0, Mixed, true, 1)).unwrap();
+    let unsettled = [
+        total(1, 1.0, Mixed, true, 2),
+        total(1, 1.0, ListPrice, true, 3),
+        total(1, 2.5, ProviderReported, false, 4),
+        SpendRow {
+            cost_complete: None,
+            ..total(1, 2.5, ProviderReported, true, 5)
+        },
+    ];
+    for row in unsettled {
+        store.record_spend(&row).unwrap();
+        assert_eq!(store.spend_for_agent(&agent(1), false).unwrap(), 3.0);
+    }
+    assert_eq!(store.spend_totals(t(5), false).unwrap(), (3.0, 3.0));
+
+    // Below the $2 the provider already reported: that earlier figure stands.
+    store
+        .record_spend(&total(1, 0.5, ProviderReported, true, 6))
+        .unwrap();
+    assert_eq!(store.spend_for_agent(&agent(1), false).unwrap(), 2.0);
+    assert_eq!(store.spend_totals(t(6), false).unwrap(), (2.0, 2.0));
+    store.record_spend(&total(1, 2.25, Mixed, true, 7)).unwrap();
+    assert_eq!(store.spend_totals(t(7), false).unwrap(), (2.25, 2.25));
+}
+
+/// What a correction takes back comes out of that agent's own days, newest
+/// first: another agent's spend on the same day still counts in full.
+#[test]
+fn a_correction_takes_back_only_what_that_agent_was_charged() {
+    use CostBasis::{Mixed, ProviderReported};
+    let mut store = store();
+    store.record_spend(&total(1, 1.0, Mixed, true, 0)).unwrap();
+    store
+        .record_spend(&total(1, 1.5, Mixed, true, DAY))
+        .unwrap();
+    store
+        .record_spend(&total(2, 3.0, ProviderReported, true, DAY))
+        .unwrap();
+    store
+        .record_spend(&total(1, 0.25, ProviderReported, true, DAY + 1))
+        .unwrap();
+
+    assert_eq!(store.spend_for_agent(&agent(1), false).unwrap(), 0.25);
+    assert_eq!(store.spend_totals(t(DAY), false).unwrap(), (3.0, 3.25));
+    let days = store
+        .cost_report(&range(0, DAY), CostGroup::Day, false)
+        .unwrap();
+    let counted: Vec<f64> = days.rows.iter().map(|r| r.amounts.counted_usd).collect();
+    assert_eq!(counted, vec![0.25, 3.0], "day 0, then day 1");
+    assert_eq!(days.total.cost_usd, 3.25);
+    assert_eq!(days.total.unclassified_cost_usd, 0.0);
 }

@@ -82,6 +82,8 @@ pub(super) async fn agent_created(
         let mut store = ctx.store.lock().await;
         if let Some(run) = store.agent_run(parent)? {
             store.link_agent_run(agent, &run)?;
+            // Its stage's cost includes it; the effort is read when the stage ends.
+            store.record_delegated(agent, parent, model, None)?;
         }
     }
     if already_checked(ctx, agent).await? {
@@ -193,16 +195,17 @@ async fn violation(
     model: &ModelRef,
     policy: &ModelPolicy,
     item: Option<&QueueItemId>,
-) -> Result<Option<ArchonError>, ArchonError> {
+) -> Result<Option<String>, ArchonError> {
     let helper = item.is_none();
+    let of_model = || model_refusal(policy, model).map(|refusal| refusal.to_string());
     if policy.max_effort.is_none() && !helper {
-        return Ok(model_refusal(policy, model));
+        return Ok(of_model());
     }
     let Some(held) = held_by_aether(ctx, agent).await? else {
-        return Ok(model_refusal(policy, model));
+        return Ok(of_model());
     };
     if let Some(refusal) = policy_refusal(policy, model, &held) {
-        return Ok(Some(refusal));
+        return Ok(Some(refusal.to_string()));
     }
     if !helper {
         return Ok(None);
@@ -281,11 +284,11 @@ fn child_effort(held: &Value) -> ChildEffort {
 }
 
 /// The refusal of an orchestrator's helper (§4.4) whose workspace or allowed
-/// paths lead into a repository or worktree, where only an item's agents work.
+/// paths lead into a repository or worktree: about its place, not its model.
 async fn placed_in_a_repository(
     ctx: &DaemonContext,
     held: &Value,
-) -> Result<Option<ArchonError>, ArchonError> {
+) -> Result<Option<String>, ArchonError> {
     let roots = scope_roots(held);
     if roots.is_empty() {
         return Ok(None);
@@ -302,10 +305,10 @@ async fn placed_in_a_repository(
         .await
         .map_err(|e| ArchonError::io("the workspace check", std::io::Error::other(e)))?;
     Ok(found.map(|(root, place)| {
-        ArchonError::Policy(format!(
+        format!(
             "it was given {}, which is inside {place}; only a queued item's agents work there",
             root.display()
-        ))
+        )
     }))
 }
 
@@ -347,7 +350,7 @@ async fn cancel_child(
     agent: &AetherAgentId,
     model: &ModelRef,
     item: Option<QueueItemId>,
-    refusal: &ArchonError,
+    refusal: &str,
 ) -> Result<(), ArchonError> {
     let client = ctx.aether.client()?;
     match client

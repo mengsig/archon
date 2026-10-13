@@ -769,6 +769,39 @@ async fn a_budgeted_codex_stage_is_refused_when_estimates_are_disabled() {
     assert!(aether.received_named("create_agent").is_empty());
 }
 
+/// Aether prices a turn at list price while it streams and reports the
+/// provider's figure when it ends: the item is charged that, not the peak.
+#[tokio::test]
+async fn the_providers_turn_end_total_corrects_the_interim_charge() {
+    let dir = tempfile::tempdir().unwrap();
+    let aether = start_aether(dir.path()).await;
+    script_fleet(&aether);
+    script_budget_models(&aether);
+    let h = harness_with_config(&aether, ClientOptions::default(), Config::default()).await;
+    let item = h.enqueue_with("corrected", common::plan()).await.unwrap();
+    h.dispatch().await;
+    let stage = h.running().await.remove(0);
+    let totals = [
+        (0.5, "mixed", true, 0.5),
+        (0.375, "provider_reported", true, 0.375),
+        (0.625, "mixed", true, 0.625),
+        // Not the provider's complete figure: the charge stays.
+        (0.25, "provider_reported", false, 0.625),
+    ];
+    for (cost, basis, complete, charged) in totals {
+        let total = json!({"cost_usd": cost, "cost_basis": basis, "cost_complete": complete});
+        usage_event(&h, &stage, total).await;
+        let store = h.ctx.store.lock().await;
+        assert_eq!(store.spend_for_item(&item.id, false).unwrap(), charged);
+        let today = store.spend_totals(archon_core::now(), false).unwrap();
+        assert_eq!(
+            today,
+            (charged, charged),
+            "the daily budget counts the same"
+        );
+    }
+}
+
 #[tokio::test]
 async fn missing_subscription_estimates_fail_visibly_only_when_budgeted() {
     for budget in [0.0, 2.0] {

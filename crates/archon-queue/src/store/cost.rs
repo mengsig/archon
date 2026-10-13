@@ -21,7 +21,7 @@ const FROM_OWNED: &str = "FROM spend_daily d
     LEFT JOIN stage_runs st ON st.aether_agent = d.agent
     WHERE d.day BETWEEN ?1 AND ?2";
 
-/// Ledger days carry their own immutable charged provenance.
+/// Ledger days carry the provenance each charge was observed or settled with.
 const FROM_DAYS: &str = "FROM spend_daily d
     WHERE d.day BETWEEN ?1 AND ?2";
 

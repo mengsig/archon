@@ -693,12 +693,12 @@ pub fn problems(listing: &CatalogListing) -> Vec<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use archon_core::autonomy::{AutonomyConfig, AutonomyPolicy};
 
     use super::*;
 
-    fn status_with(aether: AetherLinkStatus) -> DaemonStatus {
+    pub(crate) fn status_with(aether: AetherLinkStatus) -> DaemonStatus {
         DaemonStatus {
             waiting_items: vec![],
             daemon_version: "0.1.0".into(),

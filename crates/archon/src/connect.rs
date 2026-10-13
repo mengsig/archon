@@ -2,15 +2,21 @@
 //! connect-only where starting a daemon would be surprising.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use archon_client::ArchonClient;
 use archon_core::config::{AetherMode, Config};
 use archon_core::error::ArchonError;
-use archon_core::protocol::{ClientKind, Reply};
+use archon_core::protocol::{AetherLinkStatus, ClientKind, Reply, Request};
 
-use crate::instance::lifecycle::{self, Start};
+use crate::instance::lifecycle;
 use crate::instance::{AETHER_PROGRAM, Instance};
+
+/// How long a command waits for archond to connect to an aetherd that was
+/// just started. archond asks for an absent one every second.
+const LINK_WAIT: Duration = Duration::from_secs(5);
+const LINK_POLL: Duration = Duration::from_millis(100);
 
 /// This executable, as `archon daemon run --detach` and Aether's MCP
 /// registration need it.
@@ -23,45 +29,69 @@ pub fn archon_bin() -> anyhow::Result<PathBuf> {
     Ok(bin)
 }
 
-/// Connect, starting the daemon (and in dedicated mode Archon's own
-/// aetherd first) when nothing listens.
+/// Connect, starting the daemon (and in dedicated mode Archon's own aetherd first)
+/// when nothing listens; after starting that aetherd, wait for archond's link to it.
 pub async fn connect() -> anyhow::Result<ArchonClient> {
-    ensure_aether().await?;
+    let fresh_aether = ensure_aether().await?;
     let socket = archon_client::default_socket();
     let bin = archon_bin()?;
-    ArchonClient::connect_or_start(&socket, ClientKind::ArchonCli, &bin)
-        .await
-        .map_err(anyhow::Error::from)
+    let client = ArchonClient::connect_or_start(&socket, ClientKind::ArchonCli, &bin).await?;
+    if fresh_aether {
+        await_link(&client, LINK_WAIT).await?;
+    }
+    Ok(client)
 }
 
-/// In dedicated mode, start Archon's own aetherd unless it answers, so the
-/// archond started next finds it. Shared mode never starts Aether.
-pub async fn ensure_aether() -> anyhow::Result<()> {
+/// In dedicated mode, start Archon's own aetherd unless it answers, so the archond
+/// started next finds it; `true` when it was (re)started. Shared mode never starts Aether.
+async fn ensure_aether() -> anyhow::Result<bool> {
     let config = Config::load_default()?;
     if config.aether.mode != AetherMode::Dedicated {
-        return Ok(());
+        return Ok(false);
     }
     let instance = Instance::resolve()?;
-    let socket = instance.socket.clone();
+    // Said before the restart, which takes seconds: the command is not stuck.
+    if lifecycle::restart_is_due(&instance)? {
+        eprintln!(
+            "archon: an older `archon setup` registered Archon's tools without \
+             `send_caller_meta = true`, which archond now needs to tell its orchestrator \
+             from other agents. Updating the registration and restarting Archon's own \
+             aetherd (socket {}) to load it; this command goes on once archond has \
+             reconnected, in a few seconds.",
+            instance.socket.display()
+        );
+    }
     let start = tokio::task::spawn_blocking(move || {
         lifecycle::ensure_running(&instance, Path::new(AETHER_PROGRAM))
     })
     .await
     .context("starting Archon's own aetherd")??;
-    match start {
-        Start::AlreadyRunning => {}
-        Start::Started => {
-            tracing::info!(socket = %socket.display(), "started Archon's own aetherd");
+    tracing::debug!(?start, "Archon's own aetherd answers");
+    Ok(start.is_fresh())
+}
+
+/// Wait, for `limit` at most, until archond is connected to the aetherd just
+/// started. A command that needs no Aether still runs and says what it did not wait out.
+async fn await_link(client: &ArchonClient, limit: Duration) -> anyhow::Result<()> {
+    assert!(LINK_POLL < LINK_WAIT, "the wait allows a second look");
+    let deadline = Instant::now() + limit;
+    loop {
+        let status = match client.request(Request::Status).await? {
+            Reply::Status(status) => status,
+            other => return Err(unexpected(&other, "status")),
+        };
+        if matches!(status.aether, AetherLinkStatus::Connected { .. }) {
+            return Ok(());
         }
-        Start::Restarted => eprintln!(
-            "archon: an older `archon setup` registered Archon's tools without \
-             `send_caller_meta = true`, which archond now needs to tell its orchestrator \
-             from other agents. The registration was updated and Archon's own aetherd \
-             (socket {}) restarted to load it.",
-            socket.display()
-        ),
+        if Instant::now() >= deadline {
+            eprintln!(
+                "archon: archond has not connected to Archon's restarted aetherd after \
+                 {limit:?}; it keeps trying, and `archon status` shows when it has."
+            );
+            return Ok(());
+        }
+        tokio::time::sleep(LINK_POLL).await;
     }
-    Ok(())
 }
 
 /// Connect to a running daemon; `None` when none is listening.
@@ -108,7 +138,93 @@ pub fn print_json(value: &serde_json::Value) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use archon_core::protocol::{ClientFrame, PROTOCOL_VERSION, ServerFrame, Welcome};
+    use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+    use tokio::net::UnixListener;
+    use tokio::task::JoinHandle;
+
     use super::*;
+
+    fn link(connected: bool) -> AetherLinkStatus {
+        match connected {
+            true => AetherLinkStatus::Connected {
+                daemon_version: "1.0.3".into(),
+                protocol_version: 17,
+                instance_id: "01TEST".into(),
+            },
+            false => AetherLinkStatus::Disconnected {
+                error: "unavailable: not connected to aetherd".into(),
+                retry_at: None,
+            },
+        }
+    }
+
+    /// A daemon whose link to Aether is down for its first `gaps` status
+    /// replies. The task ends with the number of requests it answered.
+    fn daemon_linking_after(listener: UnixListener, gaps: usize) -> JoinHandle<usize> {
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (read, mut write) = stream.into_split();
+            let mut lines = BufReader::new(read).lines();
+            let mut answered = 0;
+            while let Some(line) = lines.next_line().await.unwrap() {
+                let frame: ClientFrame = serde_json::from_str(&line).unwrap();
+                let reply = match frame.request {
+                    Request::Hello { .. } => Reply::Welcome(Welcome {
+                        protocol_version: PROTOCOL_VERSION,
+                        daemon_version: "test".into(),
+                        pid: 1,
+                    }),
+                    Request::Status => {
+                        answered += 1;
+                        let status = crate::format::tests::status_with(link(answered > gaps));
+                        Reply::Status(Box::new(status))
+                    }
+                    other => panic!("unexpected request {other:?}"),
+                };
+                let reply = ServerFrame::Reply {
+                    id: frame.id,
+                    result: Ok(reply),
+                };
+                let line = format!("{}\n", serde_json::to_string(&reply).unwrap());
+                write.write_all(line.as_bytes()).await.unwrap();
+            }
+            answered
+        })
+    }
+
+    /// After a restart of Archon's aetherd the command goes on only once
+    /// archond is connected to it, so it does not report the gap.
+    #[tokio::test]
+    async fn a_command_waits_until_archond_is_connected_to_the_new_aetherd() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("archond.sock");
+        let daemon = daemon_linking_after(UnixListener::bind(&socket).unwrap(), 3);
+        let client = ArchonClient::connect(&socket, ClientKind::ArchonCli)
+            .await
+            .unwrap();
+        await_link(&client, LINK_WAIT).await.unwrap();
+        drop(client);
+        assert_eq!(daemon.await.unwrap(), 4, "three gaps, then connected");
+    }
+
+    /// An archond that never connects holds no command for longer than the limit.
+    #[tokio::test]
+    async fn the_wait_for_archonds_link_is_bounded() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("archond.sock");
+        let daemon = daemon_linking_after(UnixListener::bind(&socket).unwrap(), usize::MAX);
+        let client = ArchonClient::connect(&socket, ClientKind::ArchonCli)
+            .await
+            .unwrap();
+        let limit = LINK_POLL * 3;
+        let began = Instant::now();
+        await_link(&client, limit).await.unwrap();
+        assert!(began.elapsed() >= limit, "it waited the limit out");
+        assert!(began.elapsed() < LINK_WAIT, "and no longer");
+        drop(client);
+        assert!(daemon.await.unwrap() >= 2, "it looked more than once");
+    }
 
     #[test]
     fn reply_kinds_and_data_follow_the_wire_shape() {

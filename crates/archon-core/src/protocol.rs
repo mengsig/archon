@@ -3,6 +3,8 @@
 //! client `{"req":N,"cmd":"...",...}`, daemon `{"frame":"reply","id":N,
 //! "result":{"Ok":{"reply":"...","data":...}}}` or `{"frame":"feed",...}`.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::Timestamp;
@@ -12,7 +14,7 @@ use crate::catalog::CatalogListing;
 use crate::cost::{CostQuery, CostReport};
 use crate::error::ArchonError;
 use crate::github::{GithubThread, GithubWatch, GithubWatcherView, WatcherChange};
-use crate::id::{DirectiveId, PipelineRunId, QuestionId, QueueItemId, ReportId};
+use crate::id::{DirectiveId, PipelineRunId, QuestionId, QueueItemId, ReportId, StageRunId};
 use crate::model::{Effort, ModelChoice, ModelPlan, ModelReasons, ModelRef};
 use crate::model_evidence::{ModelEvidenceQuery, ModelEvidenceReport};
 use crate::notify::{FeedItem, NotificationKind, Question};
@@ -723,10 +725,85 @@ pub struct ItemDetail {
     /// Operator gates of every run, oldest first.
     #[serde(default)]
     pub gates: Vec<OperatorGate>,
+    /// How the cost of each stage run that delegated splits.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub delegations: BTreeMap<StageRunId, StageDelegation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting_on: Option<WaitingOn>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting_reason: Option<WaitingReason>,
+}
+
+/// An agent a stage agent delegated to, itself or through another.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DelegatedAgent {
+    pub agent: AetherAgentId,
+    /// The stage agent, or the delegated agent that delegated further.
+    pub parent: AetherAgentId,
+    pub model: ModelRef,
+    /// `None` until Archon reads it from Aether, which it does when the
+    /// stage has ended.
+    pub effort: Option<Effort>,
+    pub cost_usd: f64,
+}
+
+impl DelegatedAgent {
+    /// `agt_… codex/astra (medium) $0.40`.
+    pub fn line(&self) -> String {
+        let effort = self
+            .effort
+            .map_or("effort unknown".to_owned(), |e| e.to_string());
+        let cost = crate::cost::format_usd(self.cost_usd);
+        format!("{} {} ({effort}) {cost}", self.agent, self.model)
+    }
+}
+
+/// How the cost of a stage run that delegated splits; the two amounts add up
+/// to the stage run's `cost_usd`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StageDelegation {
+    /// What the stage agent itself was charged.
+    pub direct_usd: f64,
+    /// What the agents beneath it were charged, at any depth.
+    pub delegated_usd: f64,
+    pub agents: Vec<DelegatedAgent>,
+}
+
+impl StageDelegation {
+    /// The split of `direct_usd` and what `agents` were charged.
+    pub fn of(direct_usd: f64, agents: Vec<DelegatedAgent>) -> Self {
+        assert!(!agents.is_empty(), "a split is of a stage that delegated");
+        let delegated_usd: f64 = agents.iter().map(|agent| agent.cost_usd).sum();
+        assert!(
+            direct_usd >= 0.0 && delegated_usd >= 0.0,
+            "the ledger holds no negative charge"
+        );
+        Self {
+            direct_usd,
+            delegated_usd,
+            agents,
+        }
+    }
+
+    pub fn total_usd(&self) -> f64 {
+        self.direct_usd + self.delegated_usd
+    }
+
+    /// `$1.20 own + $0.80 for 2 delegated agent(s)`.
+    pub fn split(&self) -> String {
+        format!(
+            "{} own + {} for {} delegated agent(s)",
+            crate::cost::format_usd(self.direct_usd),
+            crate::cost::format_usd(self.delegated_usd),
+            self.agents.len()
+        )
+    }
+
+    /// The split and every delegated agent on one line.
+    pub fn line(&self) -> String {
+        let agents: Vec<String> = self.agents.iter().map(DelegatedAgent::line).collect();
+        format!("{}: {}", self.split(), agents.join("; "))
+    }
 }
 
 /// Characters of a stage's output one `GetStage` page holds by default.
@@ -806,7 +883,11 @@ pub struct StageRunView {
     pub choice: ModelChoice,
     pub state: StageState,
     pub verdict: Option<Verdict>,
+    /// What its agent and every agent that one delegated to were charged.
     pub cost_usd: f64,
+    /// How `cost_usd` splits, when the stage run delegated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegation: Option<StageDelegation>,
     pub aether_agent: Option<AetherAgentId>,
     /// The stage's output, only when a stage was asked for.
     pub output: Option<TextPage>,
@@ -1212,6 +1293,7 @@ mod tests {
             state: StageState::Completed,
             verdict: Some(Verdict::Fail),
             cost_usd: 0.5,
+            delegation: None,
             aether_agent: None,
             output: Some(TextPage::of("summary: findings", 9, 500)),
         };

@@ -546,6 +546,45 @@ fn adaptive_declares_the_review_its_lead_holds_and_round_trips() {
     }
 }
 
+/// What `adaptive` tells its agents decides what a run costs and what is
+/// delivered: the lead prices each child, and ship adds nothing to the review.
+#[test]
+fn adaptive_prices_what_it_delegates_and_ships_only_the_reviewed_commits() {
+    let catalog = Catalog::builtin();
+    let spec = catalog.get("adaptive").unwrap();
+    let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let build = flat(&spec.prompts["build.md"]);
+    for said in [
+        "saves more than briefing it, integrating it and the reading it repeats",
+        "Do a bounded local read yourself",
+        "no `Co-Authored-By` or \"Generated with\" line",
+        "delegate ONE fresh reviewer of the committed change with `wait: false`",
+        "full test suite once, and edit nothing until both are back",
+        "the exact base and head commits (`git merge-base {{base_branch}} HEAD`",
+        "medium for ordinary risk, high where security or an invariant is at stake",
+        "never because a tree that passed was committed",
+        "after a pass only when a later commit changes production behaviour",
+        "It reads that delta and the callers it affects",
+        "An unresolved blocking finding, a failed check",
+        "Advice left open fails nothing",
+        "(`git rev-parse HEAD HEAD^{tree}`)",
+    ] {
+        assert!(build.contains(said), "build.md lacks {said:?}");
+    }
+    assert!(!build.contains("Open findings"), "only blocking ones fail");
+    let ship = flat(&spec.prompts["ship.md"]);
+    for said in [
+        "commit nothing in this stage",
+        "`git rev-parse HEAD^{tree}` must print that tree before anything is pushed",
+        "`fail_task` with `not the reviewed tree:` and both hashes",
+    ] {
+        assert!(ship.contains(said), "ship.md lacks {said:?}");
+    }
+    let nudge = spec.stage("build").unwrap().nudge.as_deref().unwrap();
+    assert!(nudge.contains("at high effort; medium for a bounded change"));
+    assert!(nudge.contains("x_high or max only for a reasoning problem you can name"));
+}
+
 /// A declared review is a claim Archon enforces at one agent's result, so
 /// only a single delegating work stage can hold it, at `standard`.
 #[test]

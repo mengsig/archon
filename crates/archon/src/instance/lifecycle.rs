@@ -30,6 +30,15 @@ pub enum Start {
     /// It ran with a registration Archon has since replaced, and was
     /// restarted to load the current one.
     Restarted,
+    /// Another archon started or restarted it while this one waited its turn.
+    StartedMeanwhile,
+}
+
+impl Start {
+    /// Whether archond, if it runs, has to connect to this aetherd anew.
+    pub fn is_fresh(self) -> bool {
+        self != Self::AlreadyRunning
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,7 +74,7 @@ pub fn ensure_running(instance: &Instance, aether: &Path) -> anyhow::Result<Star
     }
     seed::reload_settled(instance)?;
     if is_listening(&instance.socket) {
-        return Ok(Start::AlreadyRunning);
+        return Ok(Start::StartedMeanwhile);
     }
     start_daemon(instance, aether)?;
     anyhow::ensure!(
@@ -77,6 +86,11 @@ pub fn ensure_running(instance: &Instance, aether: &Path) -> anyhow::Result<Star
         true => Start::Restarted,
         false => Start::Started,
     })
+}
+
+/// Whether [`ensure_running`] is about to restart an aetherd that answers.
+pub fn restart_is_due(instance: &Instance) -> anyhow::Result<bool> {
+    Ok(is_listening(&instance.socket) && must_reload(instance)?)
 }
 
 /// Whether the aetherd that answers has a registration to reload.

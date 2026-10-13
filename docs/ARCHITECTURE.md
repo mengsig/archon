@@ -255,7 +255,11 @@ the daemon stands behind it:
 - *No delegation for an external request.* The prompt forbids `delegate` for
   a GitHub request without operator standing; such a request is answered
   directly or researched with `ask`. Only the prompt holds this: the daemon
-  cannot tell which request a helper serves. The rule sits in the prompt's
+  cannot tell which request a helper serves. It reads a trigger, and the
+  turn that takes it, on the orchestrator's event stream, and a helper's
+  creation on the fleet's, which has its own cursor; and one turn may take
+  an external request together with an operator message or a helper's
+  result. The rule sits in the prompt's
   delegation section, and its `## GitHub requests` section is unchanged, so
   an orchestrator started by an earlier release, which has no `delegate`,
   still passes the GitHub policy check (`has_github_policy`).
@@ -834,12 +838,28 @@ gate, and the operator's `/answer` or `archon answer` closes what it cannot.
 `agent.usage_updated` carries **absolute** totals per agent. The ledger stores
 one `(agent, cost_usd, cost_basis, estimated_cost_usd, tokens)` row per agent
 with what has been charged for it, and splits each charge into the local days
-in which it grew. A charge never goes down: a lower total (a usage correction)
-keeps the cost and estimate already charged, so it cannot credit a day and
-undercut the daily budget. `GetItem` reports each
-stage's cost from its agent's ledger row and derives each run's `cost_usd`
+in which it grew. Aether prices a turn at list price while it streams and
+replaces that with the provider's figure when the turn ends, so a total may
+come down. A *settled* total (`cost_basis = provider_reported` with
+`cost_complete = true`) is the agent's charge, and all of it is billed. It
+never goes below the highest settled total before it (`spend.settled_cost_usd`,
+schema V9), so reporting less cannot evade a budget. What it takes back comes
+out of that agent's own days, newest first, so no day is credited with what
+another agent spent in it. Any other lower total keeps the cost already
+charged and is logged as a warning; the estimate is never settled and only
+grows. `GetItem` reports each
+stage's cost from its agent's ledger row plus the rows of the agents it
+delegated to, and derives each run's `cost_usd`
 from that run's stages and delegated descendants on every read, including terminal runs. Late usage
 therefore remains with its own stage and run across retries and restarts.
+A stage that delegated also reports the split (`delegations` in `GetItem`,
+`delegation` in `GetStage`): its own agent's cost, the delegated agents'
+cost, and each delegated agent with its parent, model, effort and cost.
+Schema V8 (`delegated_agents`) records who delegated to whom as the watcher
+links each child, and the child's effort when the stage's owed stop is
+confirmed (§6.3); until then the effort reads as unknown. A run's and an
+item's totals sum each agent once, so the split adds nothing to them. Model
+evidence compares the same complete stage cost.
 The persisted finish-time run cost is retained for compatibility, but is not
 authoritative for item detail. Delegated children count toward item/global
 budgets and their own run totals, but have no stage rows. Schema V6 records
@@ -889,8 +909,10 @@ is billing, `list_price` is an estimate, and `unknown` or `mixed` is
 unclassified because no trustworthy split is supplied. Separate raw
 `estimated_cost_usd` always contributes to the estimate column. Schema V5
 labels existing agent rows `unknown`. Schema V7 records billed, list-price and
-unclassified growth separately in each daily row. Later usage, including a
-lower correction or a changed basis, cannot relabel amounts already charged.
+unclassified growth separately in each daily row. Later usage with a changed
+basis cannot relabel amounts already charged, with one exception: a settled
+total says every dollar of the agent's cost was provider-reported, so it
+moves that agent's days to billed.
 Mixed growth stays unclassified because Aether supplies no component amounts.
 Daily rows predating V7 migrate as unclassified: the mutable cumulative basis
 cannot recover their historical provenance. Raw costs and separate estimates
@@ -1164,15 +1186,25 @@ in a new worktree off the base branch (§13).
   lock as the settle and before it, and before a replacement is reserved: a
   crash in between leaves a stop too many, never one too few. While a run
   has one, none of its `spawning` stages is issued.
-  The dispatcher pays it: once the agent's own turn has ended (it is left
-  up to 60 s to end it, as a retiring run node leaves it, §4.5), Archon
-  sends `cancel` for the agent. Aether applies a `cancel` of an agent that
-  already ended to every live agent beneath it, at any depth. Aether's
-  answer (or `not_found`) deletes the record and issues the stages that
-  waited. No answer or a transport error leaves it owed, for the next
-  dispatcher pass or the next `archond`; any other refusal fails the run
-  with a `Blocker`, and the run node's retirement then cancels the whole
-  subtree. A leaf stage agent owes nothing.
+  The dispatcher pays it in two steps. Once the agent's own turn has ended
+  (it is left up to 60 s to end it, as a retiring run node leaves it,
+  §4.5), Archon sends `cancel` for the agent, once: Aether applies a
+  `cancel` of an agent that already ended to every live agent beneath it,
+  at any depth, and keeps it pending until they have ended. Aether's
+  answer (or `not_found`) is stored in the record as `cancelled_at`. The
+  cancel is cooperative, so the answer does not mean anything has stopped:
+  each later dispatcher pass lists the agent's Aether run once and keeps
+  the record while any agent beneath it is in a non-terminal state. An
+  agent's end wakes the dispatcher (§4.6), so the wait ends with the last
+  of them rather than with the next tick. Only then is the record deleted
+  and the stages that waited issued. No answer or a transport error, to
+  the `cancel` or to the listing, leaves it owed, for the next dispatcher
+  pass or the next `archond`. A stop still unconfirmed 120 s after the
+  cancel posts one `Blocker` naming the agents that still run; the run
+  keeps waiting and a `System` entry says when it goes on. Any other
+  refusal of the `cancel` fails the run with a `Blocker`, and the run
+  node's retirement then cancels the whole subtree. A leaf stage agent
+  owes nothing.
 
 ### 6.4 RunDriver (pipeline engine)
 
@@ -1412,11 +1444,12 @@ The orchestrator chooses independently for each stage, following operator
 provider preferences and exact model requests first. Pipeline nudges are
 advice, not routing rules. Its prompt asks what reasoning and ambiguity remain,
 what a wrong result would break and how tests or review would catch it, and
-which available model and effort are the cheapest plausible choices. An easy
-stage does not inherit another stage's difficulty. Reviewers preferably use a
-different model from the implementer. Failures and loops prompt reconsideration
-through `retry_item`'s `model_plan`. The daemon validates policy; it never ranks
-or substitutes models or effort.
+which available model and effort are the cheapest plausible choices. The
+highest efforts (`x_high`, `max`) are for a reasoning problem it can name that
+inspecting the work left unresolved; that the operator prefers strong models is
+not one. Reviewers preferably use a different model from the implementer. A
+failed stage prompts reconsideration through `retry_item`'s `model_plan`. The
+daemon validates policy; it never ranks or substitutes models or effort.
 
 `model_evidence` (`archon model-evidence`) computes observations on demand from
 existing stage runs and the spend ledger, with optional repo, pipeline, stage
@@ -1558,11 +1591,29 @@ The declaration binds the named stage. Its agent's contract gains a
 one or the other, in `structured`. A completion without it, with any other
 verdict, with a pass that names no reviewer or a skip that gives no reason,
 fails the run at that stage with what is missing: nothing loops, and no
-later stage starts. Otherwise Archon appends `REVIEW: pass, by <model>` or
+later stage starts.
+
+A pass is checked against Aether, not taken from the lead. When the stage
+settles, `archond` lists the lead's descendants once (`list_agents`, the
+call the owed stop of §6.3 makes) and looks for a direct child that
+completed on the model `reviewer_model` names; a cancelled, failed or still
+running child does not count, nor does a grandchild. The latest such child
+is the reviewer, and its agent id is stored in the stage's structured
+result as `review.reviewer_agent`. Without one `archond` stores
+`review.unverified` with what the lead did delegate to, and the engine
+fails the run at that stage with it. Both keys are Archon's: whatever an
+agent wrote under them is removed from every stage's result before it is
+stored, so a lead cannot supply its own finding. While Aether cannot be
+asked the stage stays live and the pump's reconciliation settles it later,
+as for a PR that cannot be verified. The check shows that a reviewer on
+that model ran to completion beneath the lead; what it read and what it
+concluded remain the lead's report. A skip has no reviewer: its reason is
+shown with the stage in the item views.
+
+Archon then appends `REVIEW: pass, by <model> (agent <id>)` or
 `REVIEW: skipped: <reason>` as the last line of the stage's summary, from
 the structured data, so a later stage reads the record rather than the
-lead's prose. The evidence is the lead's own statement: Archon checks that
-it is there and what it says, not that the reviewer ran (§17).
+lead's prose.
 
 ### 8.3 Stage prompt files
 
@@ -1593,7 +1644,7 @@ literal `{{`.
 
 | Name | Stages | Nudges |
 | --- | --- | --- |
-| `adaptive` | build (work, `allow_delegation`, holds the declared review) → ship | tier = balanced, independent_reviewers. For ordinary repository changes: one lead sizes the work, delegates the parts worth splitting, integrates them and has the integrated diff reviewed once, at a depth matching the risk. `review = standard`, declared (§8.2). |
+| `adaptive` | build (work, `allow_delegation`, holds the declared review) → ship | tier = balanced, independent_reviewers. For a change where one lead that keeps its context through fixes, or integrates independent parts, saves restarts: it sizes the work, delegates the parts worth splitting, integrates them and has the integrated diff reviewed once, at a depth matching the risk. `review = standard`, declared (§8.2). |
 | `quick-pr` | implement → ship | tier = fast |
 | `default-pr-review` | implement → review (1, all_pass, goto implement ×2) → ship | tier = balanced |
 | `bugfix` | reproduce (failing test) → fix → review (1, all_pass, goto fix ×2) → ship | tier = balanced, independent_reviewers. For describable bugs; quick-pr for trivial one-liners, strict-pr-review for security/concurrency bugs. |
@@ -1632,13 +1683,34 @@ without either never reaches it.
 > `summary`. Review and test stages must include structured
 > `{"verdict":"pass"|"fail","findings":[{"severity":"…","title":"…","detail":"…","path":"…"}]}`
 > and must end the summary with `VERDICT: PASS` or `VERDICT: FAIL`. Ship
-> stages include `{"pr_url":"…"}` or `{"commit":"…"}` in structured data.
+> stages include `{"pr_url":"…"}` or `{"commit":"…"}` in structured data, and
+> never amend, rebase, squash or reset the commits they are given: only a
+> message that breaks a repository rule may be reworded, with
+> `git rev-parse HEAD^{tree}` unchanged and named in the summary.
 > Propose stages change nothing, write only
 > `.archon/reports/proposal/index.html`, and list it in `structured.reports`.
 
 A team stage's contract names the agent's role and the other roles, keeps
 it to its own worktree and role, and asks it to commit on its branch
 without pushing: only commits are merged.
+
+An item queued after others (`depends_on`) is only ordered behind them: its
+branch still forks from the repository's base, never from a dependency's
+branch, and its pull request is opened against the base. For such an item
+in a worktree the daemon therefore appends a `## Dependencies` section to
+every stage agent's contract. It lists each dependency as one JSON object,
+`{"item":"qi_…","branch":"…","pull_request":"…"}`, read from the store for
+the dependency's newest run: `branch` is `null` when it left none in this
+repository (another repository, a scratch or read-only pipeline), and
+`pull_request` when it opened none or reported something that is not a
+plain `https` URL (outside `pr` ship mode the URL is the agent's own
+report). It also defines the base of a change
+the agent built on one of those branches: `git merge-base <branch> HEAD`,
+where the base branch does not contain that commit. Such a stacked change
+is diffed, reviewed and reported from that commit, which is also what a
+delegated reviewer is handed, because a diff from the base branch would
+include the dependency's change. Archon does not stack for the agent:
+bringing a dependency's branch in is the brief's decision.
 
 A stage agent that can delegate also gets a `## Delegation` section. The
 daemon writes it when it builds the spawn request, from what the agent can
@@ -1660,6 +1732,11 @@ states:
   because Archon cancels whatever still runs when the stage ends (§6.3),
   and that a child that finished cannot be asked again, so a second look
   after a change takes a new child;
+- what a child is handed: what the delegating agent already holds, in a
+  few lines, and never its conversation, because a child starts cold and
+  pays to read whatever it is not told; and for a reviewer the exact base
+  and head commits, the changed paths, the checks run with their results
+  and the commit they ran on, the known risks and the repository guidance;
 - the rules each child's `instructions` must carry. Aether copies nothing of
   a parent's instructions to a delegated child (§17), so the contract does
   not reach one: work only in the workspace it is given and never touch
@@ -1920,8 +1997,12 @@ callers are named, as before this check existed. Otherwise the call is
 refused with the fix. The first unnamed call
 sets `kv.mcp_callers_unnamed` and posts one `Blocker`; while it is set,
 every new orchestrator generation is created without `delegate`, with a
-note in its instructions saying why. A named call from the orchestrator
-clears it, says so in the feed, and the next generation delegates again.
+note in its instructions saying why. A named call from the orchestrator,
+a read as much as a change, clears it, says so in the feed, and the next
+generation delegates again: only a registration that names callers sends
+one, so the key follows the registration in force and not the last change
+the orchestrator happened to make. An unnamed call after that is judged as
+the first was and sets the key again.
 An orchestrator created by a release before delegation has no `delegate`
 either, so an upgraded install keeps working before anything is repaired.
 
@@ -2698,15 +2779,15 @@ rubric), and a review task (seeded bug must be reported).
 | Stage agent still ending its turn when its run finishes | `get_agent` at retirement reports it live. | The node is left for the next sweep, up to 60 s after that stage settled; then it is cancelled regardless (§4.5). Only agents settled within the last 60 s are asked, newest first. |
 | Aether's `[network] default` changes mid-run | `status.network_default`, read each time a stage is bound to its node. | A stage bound afterwards states the narrower of its node's network and the new default: a tightened default is honoured at once, and a loosened one never widens the node, which Aether would refuse. A stage bound before the change is replayed exactly as stored (§4.5). |
 | Archon's own `aetherd` cannot start (dedicated mode) | `aether daemon` exits non-zero, or nothing listens within 10 s. | The command fails with Aether's own stderr. `archond` is not started by that command. `archon doctor` shows the instance's state. |
-| Aether unreachable at start | Connect error. | Serve the Archon socket anyway. `Status` shows `aether: disconnected`. Reconnect with backoff from 1s to 30s. No dispatch while disconnected. |
+| Aether unreachable at start | Connect error. | Serve the Archon socket anyway. `Status` shows `aether: disconnected`. Reconnect with backoff from 1s to 30s; while nothing listens on a local socket (it is missing, or refuses) every second instead, logged once, so an aetherd that starts is found at once. No dispatch while disconnected. An `archon` command that started or restarted Archon's own aetherd, or waited while another did, waits up to 5 s for `archond` to report the link before it runs, and says so when that runs out. |
 | Aether connection drops | Reader EOF or id-0 notice. | Same backoff. On reconnect, a changed `instance_id` means Aether restarted: run reconciliation (`get_agent` and `get_task` for every live stage agent and the orchestrator). |
 | Aether restart kills native processes | `agent.failed` or an interrupted task. | Stage: infra retry (§6.3). Orchestrator: the supervisor path below. |
 | Orchestrator failed or cancelled | Orchestrator subscription, or `get_agent` at start. | `wake` in place. If refused, `restart` (new agent from checkpoint), store the new id, and write a `System` feed entry. The first revival of a streak runs at once; each later one waits 10s, 30s, 2m, 5m, then every 10m (`supervisor::REVIVAL_BACKOFF`). A turn that ends `ready` or `waiting` closes the streak. After 3 revivals in a row, post one `Blocker`; revival never stops for good, and `archon orchestrator restart` starts a fresh agent at once. Dispatch continues, because the queue does not depend on the orchestrator. |
 | Orchestrator restarted in Aether (`aether restart`) | `agent.restarted` on the orchestrator's subscription, or `restarted_as` at start and on reconnect. | Adopt the successor if its role is `archon-orchestrator`: store its id, close the failure streak, move the subscription to it, and write a `System` feed entry. Its held news follows (§5.4). A successor with another role is not adopted. A chain of restarts is followed to its newest orchestrator, and every agent left behind on the way is retired (next row). |
 | `archon` MCP server died in Aether (after a redeploy, say) | `mcp_servers` reports it `failed`: at every connect to Aether and every 60 s (`supervisor::MCP_CHECK_INTERVAL`). | `refresh` it, then restart the orchestrator so it gets the tools back. Both back off like revivals, and 3 failures in a row post one `Blocker` (below). |
 | Orchestrator replaced while its delegated children run | Any path above that puts a new agent in charge. | The children end. Aether's `cancel` takes an agent's live descendants along; a failure does not, and neither does Aether's `restart`. So every agent that stops being the orchestrator is written to `kv.orchestrator_retired`, with the sweep it is owed, before its successor is stored, and Archon sends `cancel` for it, which Aether applies to the subtree of an agent already stopped. An adoption retires every agent between the stored orchestrator and the adopted one, each with children of its own; a manual restart and a relink follow the same chain first, so they act on the agent in charge rather than on one Aether already replaced. A background task makes the owed sweeps from `archond`'s start on: at once when one becomes owed or Aether reconnects, then with the revival backoff while it fails. A sweep is done only when Aether answers its `cancel`, no longer knows the agent, or reports it ended. Its first failure and its later success are each a `System` entry. A sweep holds no lifecycle lock, so it never delays the orchestrator in charge, which is never swept. A record that cannot be read is reset with a `Blocker` that quotes it, rather than stopping the orchestrator. Records stay through the 7-day event retention, so a retired agent's late events and its children's spend are still Archon's, and are then pruned unless a sweep is still owed. The new agent does not know what was delegated. A `wake` in place keeps the children. |
-| A delegating stage agent settles while its children run | The stage's settle: its stored request has `leaf: false`. | `kv.descendant_stop:<stage run>` is written with the settle. No agent of that run is created (next stage or replacement) until Archon has cancelled the settled agent, which ends every live agent beneath it; the agent is first left to end its own turn, up to 60 s. Retried each dispatcher pass and after a restart; a refusal fails the run with a `Blocker` (§6.3). |
-| Aether names no caller on Archon's tools | An unnamed call that changes Archon reaches `archond`. | One `Blocker` with the fix; such calls are accepted only from an orchestrator that cannot delegate, and new generations start without `delegate`, until a named call arrives (§11). In dedicated mode the registration is repaired and Archon's `aetherd` restarted by the next command (§4.7). |
+| A delegating stage agent settles while its children run | The stage's settle: its stored request has `leaf: false`. | `kv.descendant_stop:<stage run>` is written with the settle. No agent of that run is created (next stage or replacement) until Archon has cancelled the settled agent and Aether holds no agent beneath it in a non-terminal state; the agent is first left to end its own turn, up to 60 s. The cancel is sent once; the check is repeated each dispatcher pass and after a restart. Agents still running 120 s after the cancel are named in one `Blocker` and the run keeps waiting; a refused cancel fails the run with a `Blocker` (§6.3). |
+| Aether names no caller on Archon's tools | An unnamed call that changes Archon reaches `archond`. | One `Blocker` with the fix; such calls are accepted only from an orchestrator that cannot delegate, and new generations start without `delegate`, until the orchestrator makes a named call of any kind (§11). In dedicated mode the registration is repaired and Archon's `aetherd` restarted by the next command (§4.7). |
 | Orchestrator missing (first start) | No `kv.orchestrator_agent`. | Create it (§4.4). |
 | `archon mcp` cannot reach `archond` | Connect error in the proxy. | `connect_or_start` autostarts `archond` (`archon daemon run --detach`, which waits until the daemon listens and fails as soon as it exits). If that fails, return a tool error with the launcher's stderr and the startup log. |
 | Stage exceeds deadline | Timer. | `cancel` the agent, mark the stage `timed_out`, and let the driver treat it as a failed verdict or failed work. |
@@ -2850,9 +2931,10 @@ delivered is never pruned, nor is a report whose reopen question waits.
    repositories by its placement and its instructions, not by a sandbox.
    The same holds for a stage agent's delegated children: an editing child
    gets an isolated worktree of its own, a reading child shares the lead's
-   worktree and is read-only by instruction only. A pipeline's declared
-   review (§8.2) is likewise the lead's statement that a reviewer passed the
-   change: Archon checks the record, not that the reviewer ran.
+   worktree and is read-only by instruction only. For a pipeline's declared
+   review (§8.2) Archon checks that a child of the lead completed on the
+   reviewer's model, which Aether records. What that child read and what
+   it found are not in that record: they remain the lead's report.
 5. **`delegate` takes no tool exposure or approval policy for the child,
    and copies none of its parent's instructions.** A child inherits its
    parent's `config`, so the orchestrator's children see what it sees, but
@@ -2905,11 +2987,23 @@ delivered is never pruned, nor is a report whose reopen question waits.
     completes or fails.** A stage agent that settles while a child still
     runs would leave the child working beside the next stage. Archon owes a
     `cancel` of every settled stage agent that could delegate and starts
-    nothing else in that run before Aether has taken it (§6.3). It relies on
+    nothing else in that run before Aether holds no agent beneath it in a
+    non-terminal state (§6.3). Aether's `cancel` is cooperative: its answer
+    means the request was taken, not that an agent has stopped, so Archon
+    reads the subtree back instead of trusting the answer. It relies on
     Aether applying a `cancel` of an already ended agent to its live
     descendants. Aether's cancellation is written to do so, but its protocol
     does not state it as a contract; if a later Aether refuses such a
-    `cancel`, the run fails with a `Blocker` rather than going on.
+    `cancel`, the run fails with a `Blocker` rather than going on, and if it
+    takes the `cancel` without stopping them, the run waits and a `Blocker`
+    names them.
+    A replaced orchestrator's children are cancelled the same way (§16) but
+    its successor does not wait for them to end. They hold no repository or
+    worktree (item 4), `archond` refuses them every tool that changes Archon
+    (§11), and their results go to the retired agent's inbox, so the worst
+    overlap is a cancelled helper finishing a write in the orchestrator's
+    scratch workspace. Holding the operator's only interface on a helper
+    that does not end would cost more than that.
 14. **Aether's own limits apply to the orchestrator's children.**
     `[scheduler] max_concurrent_turns` is shared with stage agents, so many
     children slow stages down. `[scheduler] run_budget_usd`, if set in the

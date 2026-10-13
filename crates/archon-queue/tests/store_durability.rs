@@ -80,6 +80,7 @@ fn populate(store: &mut Store) -> (Vec<QueueItem>, archon_core::run::PipelineRun
         item: Some(a.id.clone()),
         cost_usd: 1.25,
         cost_basis: archon_core::cost::CostBasis::ProviderReported,
+        cost_complete: None,
         estimated_cost_usd: 0.5,
         input_tokens: 10,
         output_tokens: 5,
@@ -228,7 +229,7 @@ fn migrations_apply_once_and_a_newer_store_is_refused() {
     let path = db_path(&dir);
     drop(Store::open(&path).unwrap());
     drop(Store::open(&path).unwrap());
-    assert_eq!(schema_versions(&path), vec![1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(schema_versions(&path), vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
     let conn = rusqlite::Connection::open(&path).unwrap();
     let mode: String = conn
         .query_row("PRAGMA journal_mode", [], |r| r.get(0))
@@ -295,7 +296,7 @@ fn concurrent_first_opens_migrate_once() {
     for handle in handles {
         handle.join().unwrap().unwrap();
     }
-    assert_eq!(schema_versions(&path), vec![1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(schema_versions(&path), vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
 }
 
 /// Appends `entry`, trying again while another writer holds the write
@@ -442,6 +443,7 @@ fn drive_item(shared: &Mutex<Store>, it: &QueueItem, n: u32) {
         item: Some(it.id.clone()),
         cost_usd: 1.0,
         cost_basis: archon_core::cost::CostBasis::ProviderReported,
+        cost_complete: None,
         estimated_cost_usd: 0.0,
         input_tokens: 1,
         output_tokens: 1,
@@ -480,6 +482,7 @@ fn daily_spend_counts_only_growth_within_the_local_day() {
         item: None,
         cost_usd: cost,
         cost_basis: archon_core::cost::CostBasis::ProviderReported,
+        cost_complete: None,
         estimated_cost_usd: est,
         input_tokens: 0,
         output_tokens: 0,
@@ -533,11 +536,51 @@ fn usage(n: u32, cost: f64, estimate: f64, at: Timestamp) -> SpendRow {
         item: None,
         cost_usd: cost,
         cost_basis: archon_core::cost::CostBasis::ProviderReported,
+        cost_complete: None,
         estimated_cost_usd: estimate,
         input_tokens: 0,
         output_tokens: 0,
         at,
     }
+}
+
+/// A total the provider reported before the upgrade is a floor after it;
+/// a charge of unknown source is corrected by the first settled total.
+#[test]
+fn v9_keeps_an_earlier_provider_reported_total_as_the_floor() {
+    use archon_core::cost::CostBasis;
+    let dir = tempfile::tempdir().unwrap();
+    let path = db_path(&dir);
+    let mut store = Store::open(&path).unwrap();
+    store
+        .record_spend(&usage(1, 2.0, 0.0, local(8, 12)))
+        .unwrap();
+    let unknown = SpendRow {
+        cost_basis: CostBasis::Unknown,
+        ..usage(2, 2.0, 0.0, local(8, 12))
+    };
+    store.record_spend(&unknown).unwrap();
+    drop(store);
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "ALTER TABLE spend DROP COLUMN settled_cost_usd;
+         DELETE FROM schema_migrations WHERE version = 9;",
+    )
+    .unwrap();
+    drop(conn);
+
+    let mut store = Store::open(&path).unwrap();
+    assert_eq!(schema_versions(&path).last(), Some(&9));
+    for n in [1, 2] {
+        let settled = SpendRow {
+            cost_complete: Some(true),
+            ..usage(n, 0.5, 0.0, local(8, 13))
+        };
+        store.record_spend(&settled).unwrap();
+    }
+    assert_eq!(store.spend_for_agent(&agent(1), false).unwrap(), 2.0);
+    assert_eq!(store.spend_for_agent(&agent(2), false).unwrap(), 0.5);
+    assert_eq!(store.spend_totals(local(8, 14), false).unwrap(), (2.5, 2.5));
 }
 
 #[test]
@@ -561,7 +604,9 @@ fn v7_does_not_infer_history_from_the_latest_cumulative_basis() {
         "ALTER TABLE spend_daily DROP COLUMN billed_cost_usd;
          ALTER TABLE spend_daily DROP COLUMN list_price_cost_usd;
          ALTER TABLE spend_daily DROP COLUMN unclassified_cost_usd;
-         DELETE FROM schema_migrations WHERE version = 7;",
+         DROP TABLE delegated_agents;
+         ALTER TABLE spend DROP COLUMN settled_cost_usd;
+         DELETE FROM schema_migrations WHERE version >= 7;",
     )
     .unwrap();
     drop(conn);
@@ -628,6 +673,8 @@ fn migrated_unknown_charges_keep_their_basis_after_new_usage() {
              CREATE INDEX spend_daily_by_day ON spend_daily(day);
              ALTER TABLE spend DROP COLUMN cost_basis;
              DROP TABLE agent_runs;
+             DROP TABLE delegated_agents;
+             ALTER TABLE spend DROP COLUMN settled_cost_usd;
              DELETE FROM schema_migrations WHERE version >= 5;",
         )
         .unwrap();
@@ -944,6 +991,7 @@ fn v6_backfills_only_unambiguous_run_ownership_and_preserves_it() {
                 item: Some(item.id.clone()),
                 cost_usd: 0.5,
                 cost_basis: archon_core::cost::CostBasis::Unknown,
+                cost_complete: None,
                 estimated_cost_usd: 0.125,
                 input_tokens: 1,
                 output_tokens: 1,
@@ -963,6 +1011,8 @@ fn v6_backfills_only_unambiguous_run_ownership_and_preserves_it() {
          ALTER TABLE spend_daily DROP COLUMN billed_cost_usd;
          ALTER TABLE spend_daily DROP COLUMN list_price_cost_usd;
          ALTER TABLE spend_daily DROP COLUMN unclassified_cost_usd;
+         DROP TABLE delegated_agents;
+         ALTER TABLE spend DROP COLUMN settled_cost_usd;
          DELETE FROM schema_migrations WHERE version >= 6;",
     )
     .unwrap();

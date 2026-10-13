@@ -19,9 +19,10 @@ the ship mode says, and to report where they landed.
 
 ## Review on record (every mode)
 
-The report above ends with a line Archon wrote from the lead's review record:
-`REVIEW: pass, by <model>` or `REVIEW: skipped: <reason>`. Check it before
-anything is pushed.
+The report above ends with a line Archon wrote from the lead's review record,
+after finding the reviewer among the agents the lead delegated to:
+`REVIEW: pass, by <model> (agent <id>)` or `REVIEW: skipped: <reason>`. Check
+it before anything is pushed.
 
 - If the last line is neither, call `fail_task` with `no review on record for
   {{branch}}`. Ship nothing.
@@ -33,15 +34,22 @@ anything is pushed.
 
 ## Preconditions (every mode)
 
-1. Run `git status`. If there are uncommitted changes that clearly belong to
-   the task, commit them with a conventional message. If they look unrelated
-   or accidental (build outputs, scratch files), do not commit them. Mention
-   them in your summary.
+1. You deliver the commits the lead verified and had reviewed, and nothing
+   else: commit nothing in this stage. Run `git status`. If an uncommitted
+   change clearly belongs to the task, the commits are not the reviewed
+   change: call `fail_task` with `uncommitted work on {{branch}}:` and the
+   paths. Leave what looks unrelated or accidental (build outputs, scratch
+   files) alone and mention it in your summary.
 2. Run `git log --oneline {{base_branch}}..HEAD`. If it prints nothing, there
    is nothing to ship: call `fail_task` with `nothing to ship: {{branch}} has
    no commits beyond {{base_branch}}`.
 3. Confirm you are on `{{branch}}` (`git branch --show-current`). Never ship
    from any other branch.
+4. The report above names the head commit and the tree the lead verified.
+   `git rev-parse HEAD^{tree}` must print that tree before anything is
+   pushed, also after a reword your contract allows: if it does not, call
+   `fail_task` with `not the reviewed tree:` and both hashes. If the report
+   names no tree, say so in your summary.
 
 ## Mode `pr`
 

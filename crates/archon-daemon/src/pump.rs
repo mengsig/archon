@@ -137,13 +137,31 @@ async fn link_loop(ctx: Arc<DaemonContext>, endpoint: Endpoint) -> Result<(), Ar
                 outage = Outage::started();
             }
             Err(error) => {
-                tracing::warn!(%error, ?backoff, "cannot reach aetherd");
+                let absent = nothing_listens(&endpoint, &error);
+                outage.log(&error, absent, backoff);
                 outage.note(&ctx, &error).await?;
+                // No daemon is burdened by being asked again soon, and one
+                // that starts is found within a second.
+                if absent {
+                    backoff = BACKOFF_MIN;
+                    tokio::time::sleep(backoff).await;
+                    continue;
+                }
             }
         }
         tokio::time::sleep(backoff).await;
         backoff = (backoff * 2).min(BACKOFF_MAX);
     }
+}
+
+/// Whether `error` says no daemon holds the local socket at `endpoint`: it
+/// is missing, or left behind by an aetherd that has exited.
+fn nothing_listens(endpoint: &Endpoint, error: &ArchonError) -> bool {
+    use std::io::ErrorKind::{ConnectionRefused, NotFound};
+    let ArchonError::Io { cause, .. } = error else {
+        return false;
+    };
+    matches!(endpoint, Endpoint::Unix(_)) && matches!(cause.kind(), NotFound | ConnectionRefused)
 }
 
 /// Tracks one stretch without Aether so the operator hears about it once,
@@ -152,6 +170,8 @@ async fn link_loop(ctx: Arc<DaemonContext>, endpoint: Endpoint) -> Result<(), Ar
 struct Outage {
     since: Instant,
     announced: bool,
+    /// The log already says that nothing listens.
+    absence_logged: bool,
 }
 
 impl Outage {
@@ -159,7 +179,20 @@ impl Outage {
         Self {
             since: Instant::now(),
             announced: false,
+            absence_logged: false,
         }
+    }
+
+    /// Logs a failed connection. `absent` attempts repeat every second, so
+    /// only the first of a stretch is a warning.
+    fn log(&mut self, error: &ArchonError, absent: bool, backoff: Duration) {
+        if absent && self.absence_logged {
+            tracing::debug!(%error, "still nothing listens for aetherd");
+            return;
+        }
+        self.absence_logged = absent;
+        let retry = if absent { BACKOFF_MIN } else { backoff };
+        tracing::warn!(%error, ?retry, "cannot reach aetherd");
     }
 
     async fn note(&mut self, ctx: &DaemonContext, error: &ArchonError) -> Result<(), ArchonError> {

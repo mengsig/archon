@@ -227,6 +227,7 @@ impl Canned {
                 stages: vec![],
                 spent_usd: 0.0,
                 gates: vec![],
+                delegations: Default::default(),
             })),
             Request::CancelItem { .. } | Request::RetryItem { .. } => {
                 Reply::Item(self.item.clone())

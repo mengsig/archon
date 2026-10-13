@@ -103,6 +103,7 @@ fn wait_with_reason(
                         stages: vec![],
                         spent_usd: 0.0,
                         gates: vec![],
+                        delegations: Default::default(),
                         waiting_on: None,
                         waiting_reason: waiting_reason.clone(),
                     }))

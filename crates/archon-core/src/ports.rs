@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::Timestamp;
 use crate::aether_ids::{AetherAgentId, AetherRunId, AetherTaskId};
 use crate::error::ArchonError;
-use crate::model::{ModelChoice, ModelRef};
+use crate::model::{Effort, ModelChoice, ModelRef};
 use crate::run::StageOutcome;
 
 /// Aether's scope network knob. An explicit scope is `denied` unless it
@@ -116,6 +116,28 @@ pub struct CreatedNode {
     pub run: AetherRunId,
 }
 
+/// Whether Aether still runs an agent beneath another, and how it ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DescendantState {
+    /// Not ended, or in a state Archon does not know: it may still act.
+    Live,
+    Completed,
+    /// Failed, cancelled or imported: it ended without completing.
+    Stopped,
+}
+
+/// An agent beneath another in Aether's tree, as Aether holds it now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Descendant {
+    pub agent: AetherAgentId,
+    /// The agent asked about for a direct child, a descendant otherwise.
+    pub parent: AetherAgentId,
+    pub model: ModelRef,
+    /// `None` when its config states none Archon can read.
+    pub effort: Option<Effort>,
+    pub state: DescendantState,
+}
+
 #[async_trait]
 pub trait AgentBackend: Send + Sync {
     /// Create and start a stage agent. Safe to retry with the same
@@ -144,8 +166,13 @@ pub trait AgentBackend: Send + Sync {
     /// Aether no longer knows is `false`, not an error.
     async fn is_live(&self, agent: &AetherAgentId) -> Result<bool, ArchonError>;
 
-    /// Cancel an agent and its live descendants.
+    /// Ask Aether to cancel an agent and its live descendants. Aether cancels
+    /// cooperatively: `Ok` means accepted, not that any of them has ended.
     async fn cancel(&self, agent: &AetherAgentId, reason: &str) -> Result<(), ArchonError>;
+
+    /// Every agent beneath `agent` at any depth, ended ones included; none
+    /// when Aether no longer knows `agent`.
+    async fn descendants(&self, agent: &AetherAgentId) -> Result<Vec<Descendant>, ArchonError>;
 
     /// `None` while the task is still open; the settled outcome otherwise.
     async fn task_outcome(&self, task: &AetherTaskId) -> Result<Option<StageOutcome>, ArchonError>;

@@ -36,6 +36,25 @@ pub(crate) async fn authorize<'a>(
     )))
 }
 
+/// A call that needs no authority, such as a read. Named and from the
+/// orchestrator, it shows as well as any other that Aether names callers.
+pub(crate) async fn saw_call(
+    ctx: &DaemonContext,
+    caller: Option<&AetherAgentId>,
+) -> Result<(), ArchonError> {
+    let Some(caller) = caller else {
+        return Ok(());
+    };
+    if callers::are_named(ctx).await? {
+        return Ok(());
+    }
+    let orchestrator = super::current_orchestrator(ctx).await?;
+    if orchestrator.as_ref() == Some(caller) {
+        callers::named(ctx, caller).await?;
+    }
+    Ok(())
+}
+
 /// Aether named no caller, and the orchestrator in charge can delegate (or
 /// there is none): the call may be a helper's, so it is not made.
 fn unnamed_refusal(ctx: &DaemonContext) -> ArchonError {

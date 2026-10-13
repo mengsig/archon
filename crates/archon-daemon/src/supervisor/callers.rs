@@ -10,8 +10,8 @@ use archon_core::notify::NotificationKind;
 use crate::context::DaemonContext;
 use crate::feed;
 
-/// Set from the first unnamed call that changes Archon until the
-/// orchestrator makes a named one. Sticky, so the operator is told once.
+/// Set by an unnamed call that changes Archon, cleared by the orchestrator's
+/// next named call of any kind. Kept between them: the operator is told once.
 const UNNAMED_KEY: &str = "mcp_callers_unnamed";
 /// The orchestrator archond has seen to be unable to delegate natively.
 const SOLE_CALLER_KEY: &str = "orchestrator_sole_caller";
@@ -62,7 +62,8 @@ pub(super) async fn unnamed_is_from(
     Ok(sole.is_some() && sole.as_deref() == orchestrator.map(AetherAgentId::as_str))
 }
 
-/// The orchestrator made a named call: Aether names callers (again).
+/// The orchestrator made a named call, a read included: Aether names callers
+/// (again), which only the registration that sends them can do.
 pub(super) async fn named(
     ctx: &DaemonContext,
     orchestrator: &AetherAgentId,

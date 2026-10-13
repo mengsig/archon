@@ -12,6 +12,7 @@ mod repos;
 mod stages;
 mod waiting;
 
+use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::id::QuestionId;
 use archon_core::notify::{AnswerVia, Question};
@@ -21,15 +22,23 @@ use crate::context::DaemonContext;
 use crate::{github, reports, standby, supervisor};
 
 /// Validate and execute one request. `ClientKind::ArchonMcp` is refused
-/// operator-only requests with `ErrorCode::Forbidden`. Enqueue validates
-/// the pipeline exists for the repo, `requires_repo`, the model plan covers
-/// every stage within the effective model policy, dependencies exist, and
-/// then pokes the dispatcher. In standby only reads are served.
+/// operator-only requests with `ErrorCode::Forbidden`, and a request that
+/// changes Archon for an agent is made only for the orchestrator archond
+/// has now (ARCHITECTURE §11). In standby only reads are served.
 pub async fn handle(
     ctx: &DaemonContext,
     client: ClientKind,
     request: Request,
 ) -> Result<Reply, ArchonError> {
+    let (caller, request) = match request {
+        Request::ForAgent { caller, request } => (Some(caller), *request),
+        request => (None, request),
+    };
+    if matches!(request, Request::ForAgent { .. }) {
+        return Err(ArchonError::Invalid(
+            "for_agent carries one request, not another for_agent".into(),
+        ));
+    }
     if client == ClientKind::ArchonMcp && request.is_operator_only() {
         return Err(ArchonError::Forbidden(format!(
             "{} is reserved for the operator's archon CLI",
@@ -39,6 +48,55 @@ pub async fn handle(
     if let Some(refusal) = standby::refusal(ctx, &request) {
         return Err(refusal);
     }
+    check_named_caller(caller.as_ref(), &request)?;
+    // Held to the end of the call: the orchestrator is not replaced under it.
+    let _authority = if orchestrators_alone(client, caller.as_ref(), &request) {
+        Some(supervisor::authorize(ctx, caller.as_ref()).await?)
+    } else {
+        None
+    };
+    route(ctx, client, request).await
+}
+
+/// Whether only the orchestrator may make this call: any change to Archon for
+/// an agent but a stage agent's message, which checks its own caller (§5.5).
+fn orchestrators_alone(
+    client: ClientKind,
+    caller: Option<&AetherAgentId>,
+    request: &Request,
+) -> bool {
+    let for_an_agent = client == ClientKind::ArchonMcp || caller.is_some();
+    let stage_message = matches!(request, Request::MessageOrchestrator { .. });
+    for_an_agent && !request.is_read_only() && !stage_message
+}
+
+/// A request that names its caller itself names the agent it is forwarded for.
+fn check_named_caller(
+    forwarded_for: Option<&AetherAgentId>,
+    request: &Request,
+) -> Result<(), ArchonError> {
+    let named = match request {
+        Request::MessageOrchestrator { caller, .. }
+        | Request::AskOperator { caller, .. }
+        | Request::RecordChatAnswer { caller, .. } => caller.as_ref(),
+        _ => None,
+    };
+    match (forwarded_for, named) {
+        (Some(outer), Some(inner)) if outer != inner => Err(ArchonError::Invalid(format!(
+            "{} names caller {inner} but was forwarded for {outer}",
+            command_name(request)
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// One function per request. Enqueue validates the pipeline, the model plan in
+/// the effective policy and the dependencies, then pokes the dispatcher.
+async fn route(
+    ctx: &DaemonContext,
+    client: ClientKind,
+    request: Request,
+) -> Result<Reply, ArchonError> {
     match request {
         Request::MessageOrchestrator { text, kind, caller } => {
             crate::agent_messages::send(ctx, caller.as_ref(), kind, text).await

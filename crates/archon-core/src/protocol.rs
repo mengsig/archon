@@ -26,7 +26,9 @@ use crate::run::{OperatorGate, PipelineRun, StageRun, StageState, Verdict};
 /// 4: `retry_item` may ask for a fresh retry and both it and `update_item`
 /// may carry `brief_append`; an older archond would silently drop them.
 /// 5: operator-only orchestrator attachment for the native TUI.
-pub const PROTOCOL_VERSION: u32 = 5;
+/// 6: `archon mcp` names the calling agent on every call that changes Archon
+/// (`for_agent`), and archond refuses such a call that names none.
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// Longest accepted frame in either direction.
 pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
@@ -73,6 +75,13 @@ pub enum ServerFrame {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum Request {
+    /// A tool call `archon mcp` forwards for the Aether agent that made it:
+    /// only the orchestrator of now may change Archon (ARCHITECTURE §11).
+    ForAgent {
+        /// Aether's out-of-band MCP caller identity, never a tool argument.
+        caller: AetherAgentId,
+        request: Box<Request>,
+    },
     MessageOrchestrator {
         text: String,
         #[serde(default)]
@@ -279,6 +288,35 @@ impl Request {
             Self::Pause(target) | Self::Resume(target) => {
                 matches!(target, PauseTarget::Global { hard: true })
             }
+            Self::ForAgent { request, .. } => request.is_operator_only(),
+            _ => false,
+        }
+    }
+
+    /// Whether the request only reads Archon. Anything not listed here
+    /// counts as a change, so a new request is guarded until it is listed.
+    pub fn is_read_only(&self) -> bool {
+        match self {
+            Self::Hello { .. }
+            | Self::Status
+            | Self::RepoList
+            | Self::ListItems(_)
+            | Self::ListItemSummaries(_)
+            | Self::GetItem { .. }
+            | Self::GetStage(_)
+            | Self::ResolveItem { .. }
+            | Self::ListPipelines { .. }
+            | Self::ModelPolicy { .. }
+            | Self::ListQuestions { .. }
+            | Self::SubscribeFeed { .. }
+            | Self::FeedHistory { .. }
+            | Self::ListReports
+            | Self::OrchestratorStatus
+            | Self::CostReport(_)
+            | Self::ModelEvidence(_)
+            | Self::Autonomy { .. }
+            | Self::GithubWatcher => true,
+            Self::ForAgent { request, .. } => request.is_read_only(),
             _ => false,
         }
     }
@@ -1076,6 +1114,31 @@ mod tests {
         assert_eq!(gib(0), "0.0 GiB");
         assert_eq!(gib(10 << 30), "10.0 GiB");
         assert_eq!(gib((3 << 30) / 2), "1.5 GiB");
+    }
+
+    #[test]
+    fn a_call_forwarded_for_an_agent_keeps_its_requests_class_and_shape() {
+        let caller = AetherAgentId::parse("agt_0001").unwrap();
+        let wrap = |request: Request| Request::ForAgent {
+            caller: caller.clone(),
+            request: Box::new(request),
+        };
+        assert!(wrap(Request::Status).is_read_only());
+        assert!(!wrap(Request::Say { text: "hi".into() }).is_read_only());
+        assert!(wrap(Request::Say { text: "hi".into() }).is_operator_only());
+        let pause = wrap(Request::Pause(PauseTarget::Global { hard: false }));
+        assert!(!pause.is_read_only() && !pause.is_operator_only());
+
+        let frame = ClientFrame {
+            id: 3,
+            request: pause.clone(),
+        };
+        let value = serde_json::to_value(&frame).unwrap();
+        assert_eq!(value["cmd"], "for_agent");
+        assert_eq!(value["caller"], "agt_0001");
+        assert_eq!(value["request"]["cmd"], "pause");
+        let back: ClientFrame = serde_json::from_value(value).unwrap();
+        assert_eq!(back.request, pause);
     }
 
     #[test]

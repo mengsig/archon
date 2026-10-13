@@ -2,7 +2,7 @@
 
 Archon runs coding tasks through queues and review pipelines, using agents on the Aether daemon.
 
-![Illustrated Archon overview: one orchestrator directs mascot agents through a persistent backlog and sixteen built-in default pipelines or your own TOML pipelines with stage prompts, with daemon guardrails, two ship modes and optional Lavish review pages, all running on Aether.](docs/assets/archon_graphic.svg)
+![Illustrated Archon overview: one orchestrator directs mascot agents through a persistent backlog and seventeen built-in default pipelines or your own TOML pipelines with stage prompts, with daemon guardrails, two ship modes and optional Lavish review pages, all running on Aether.](docs/assets/archon_graphic.svg)
 
 ## Install
 
@@ -106,12 +106,13 @@ seeded from your Aether configuration by `archon setup`.
 - **Model plan:** the model and reasoning effort selected for each stage, checked against your model policy.
 - **Autonomy:** five knobs for review, proposal, report, merge, and tool access, bounded by your ceiling.
 - **Ship mode:** `pr` opens a PR, `local` keeps commits on the run branch.
-- **Orchestrator:** the agent you chat with; it plans items and follows their progress.
+- **Orchestrator:** the agent you chat with; it answers directly, delegates work that needs no repository, and queues everything that does as an item.
 
 ## Built-in pipelines
 
 | Pipeline | When to use it |
 | --- | --- |
+| `adaptive` | Ordinary repository changes: one lead sizes the work, delegates useful parts, and has the integrated result reviewed once (`review = standard`; chosen by name or as a repository's `default_pipeline`) |
 | `quick-pr` | Small changes that do not need an independent review stage |
 | `default-pr-review` | Implementation with review and a fix loop |
 | `strict-pr-review` | Higher-risk changes needing tests and three independent reviews |
@@ -178,7 +179,7 @@ The file is `~/.config/archon/config.toml` on Linux; macOS uses
 overrides the directory. Common settings are:
 
 - `[orchestrator] model`: the agent you talk to.
-- `[models] allow`, `deny`, `max_effort`: permitted models and reasoning effort.
+- `[models] allow`, `deny`, `max_effort`: an optional narrowing. Without it Archon may use every model Aether reports ready, and the orchestrator picks one per stage.
 - `[limits]`: concurrent agents, per-repository caps, budgets, and minimum free disk.
 - `[autonomy]`: default knobs and their maximum permitted values.
 - `[worktrees]`: location and cleanup timing for run worktrees and build caches.

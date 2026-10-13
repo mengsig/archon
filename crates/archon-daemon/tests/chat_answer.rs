@@ -110,26 +110,59 @@ async fn question(h: &Harness, id: &QuestionId) -> Question {
     h.ctx.store.lock().await.question(id).expect("question")
 }
 
-/// The orchestrator's `ask_operator`, as Aether's caller metadata vouches.
-async fn ask(h: &Harness, text: &str, options: &[&str]) -> Question {
-    ask_as(h, Some(ORCH), text, options).await
+/// `request` as `archon mcp` forwards it for `caller`, the agent Aether names.
+fn for_agent(caller: &str, request: Request) -> Request {
+    Request::ForAgent {
+        caller: AetherAgentId::parse(caller).unwrap(),
+        request: Box::new(request),
+    }
 }
 
-/// An `ask_operator` over MCP that Aether attributes to `caller`, if anyone.
-async fn ask_as(h: &Harness, caller: Option<&str>, text: &str, options: &[&str]) -> Question {
+/// The orchestrator's `ask_operator`, as Aether's caller metadata vouches.
+async fn ask(h: &Harness, text: &str, options: &[&str]) -> Question {
+    ask_as(h, ORCH, text, options).await
+}
+
+/// An `ask_operator` over MCP by `caller`, which must be the orchestrator
+/// when it asks: no other agent may.
+async fn ask_as(h: &Harness, caller: &str, text: &str, options: &[&str]) -> Question {
     let request = Request::AskOperator {
         text: text.into(),
         item: None,
         options: options.iter().map(|o| (*o).to_owned()).collect(),
-        caller: caller.map(|id| AetherAgentId::parse(id).unwrap()),
+        caller: Some(AetherAgentId::parse(caller).unwrap()),
     };
+    let request = for_agent(caller, request);
     let reply = handlers::handle(&h.ctx, ClientKind::ArchonMcp, request).await;
     let Ok(Reply::Question(asked)) = reply else {
         panic!("ask replied {reply:?}")
     };
-    assert_eq!(asked.asked_by.as_ref().map(AetherAgentId::as_str), caller);
+    let asker = asked.asked_by.as_ref().map(AetherAgentId::as_str);
+    assert_eq!(asker, Some(caller));
     assert_eq!(question(h, &asked.id).await, asked, "stored as replied");
     asked
+}
+
+/// An open question with no recorded asker, as a store written before
+/// questions recorded one still holds it.
+async fn unvouched(h: &Harness) -> Question {
+    let mut legacy = serde_json::to_value(ask(h, "Which branch?", &[]).await).unwrap();
+    let fields = legacy.as_object_mut().expect("a question is an object");
+    assert!(
+        fields.remove("asked_by").is_some(),
+        "the asker was recorded"
+    );
+    legacy["id"] = json!(QuestionId::new());
+    legacy["number"] = json!(0);
+    let legacy: Question = serde_json::from_value(legacy).unwrap();
+    let legacy = h.ctx.store.lock().await.insert_question(&legacy).unwrap();
+    assert_eq!(legacy.asked_by, None);
+    legacy
+}
+
+async fn set_orchestrator(h: &Harness, agent: &str) {
+    let mut store = h.ctx.store.lock().await;
+    store.kv_set(keys::ORCHESTRATOR_AGENT, agent).expect("kv");
 }
 
 async fn enqueue(h: &Harness, title: &str, autonomy: AutonomyPatch) -> QueueItem {
@@ -666,6 +699,11 @@ async fn record(
         answer: "Yes, ship it on Monday.".into(),
         caller: caller.map(|id| AetherAgentId::parse(id).unwrap()),
     };
+    // Only `archon mcp` forwards a call for the agent Aether names.
+    let request = match caller.filter(|_| client == ClientKind::ArchonMcp) {
+        Some(caller) => for_agent(caller, request),
+        None => request,
+    };
     handlers::handle(&h.ctx, client, request).await
 }
 
@@ -755,9 +793,12 @@ async fn assert_only_the_operator_answers(h: &Harness, asked: &Question, asker: 
 #[tokio::test]
 async fn the_orchestrator_cannot_close_a_question_another_agent_asked() {
     let h = harness(AetherMode::Dedicated).await;
-    let theirs = ask_as(&h, Some("agt_stage"), "Which branch?", &[]).await;
-    assert_only_the_operator_answers(&h, &theirs, "was asked by another agent (agt_stage)").await;
-    let asker = record(&h, ClientKind::ArchonMcp, &theirs.id, Some("agt_stage")).await;
+    // The only other agent that can have asked: an orchestrator since replaced.
+    set_orchestrator(&h, "agt_earlier").await;
+    let theirs = ask_as(&h, "agt_earlier", "Which branch?", &[]).await;
+    set_orchestrator(&h, ORCH).await;
+    assert_only_the_operator_answers(&h, &theirs, "was asked by another agent (agt_earlier)").await;
+    let asker = record(&h, ClientKind::ArchonMcp, &theirs.id, Some("agt_earlier")).await;
     assert!(
         matches!(asker, Err(ArchonError::Forbidden(_))),
         "not the orchestrator: {asker:?}"
@@ -768,18 +809,35 @@ async fn the_orchestrator_cannot_close_a_question_another_agent_asked() {
 #[tokio::test]
 async fn a_question_with_no_recorded_asker_is_never_the_orchestrators() {
     let h = harness(AetherMode::Dedicated).await;
-    let unvouched = ask_as(&h, None, "Which branch?", &[]).await;
-    assert_only_the_operator_answers(&h, &unvouched, "has no recorded asker").await;
-
-    // A row written before questions recorded their asker has no such key.
-    let mut legacy = serde_json::to_value(&unvouched).unwrap();
-    assert!(legacy.get("asked_by").is_none(), "{legacy}");
-    legacy["id"] = json!(QuestionId::new());
-    legacy["number"] = json!(0);
-    let legacy: Question = serde_json::from_value(legacy).unwrap();
-    let legacy = h.ctx.store.lock().await.insert_question(&legacy).unwrap();
-    assert_eq!(legacy.asked_by, None);
+    let legacy = unvouched(&h).await;
     assert_only_the_operator_answers(&h, &legacy, "has no recorded asker").await;
+}
+
+/// Asking is the orchestrator's alone: a call from another agent, or one
+/// that names none while the orchestrator can delegate, asks nothing.
+#[tokio::test]
+async fn ask_operator_is_refused_from_an_unnamed_caller_and_from_any_other_agent() {
+    let h = harness(AetherMode::Dedicated).await;
+    let ask = |caller: Option<&str>| Request::AskOperator {
+        text: "Which branch?".into(),
+        item: None,
+        options: vec![],
+        caller: caller.map(|id| AetherAgentId::parse(id).unwrap()),
+    };
+    let unnamed = handlers::handle(&h.ctx, ClientKind::ArchonMcp, ask(None)).await;
+    let Err(ArchonError::Forbidden(why)) = unnamed else {
+        panic!("an unnamed caller asked: {unnamed:?}")
+    };
+    assert!(
+        why.contains("Aether did not say which agent makes it"),
+        "{why}"
+    );
+    assert!(why.contains("`archon daemon stop --aether`"), "{why}");
+    let other = for_agent("agt_stage", ask(Some("agt_stage")));
+    let other = handlers::handle(&h.ctx, ClientKind::ArchonMcp, other).await;
+    assert!(matches!(other, Err(ArchonError::Forbidden(_))), "{other:?}");
+    let open = h.ctx.store.lock().await.questions(true).unwrap();
+    assert!(open.is_empty(), "nothing was asked: {open:?}");
 }
 
 /// The reviewer's case: a question asked before this orchestrator existed.
@@ -787,11 +845,9 @@ async fn a_question_with_no_recorded_asker_is_never_the_orchestrators() {
 async fn a_new_orchestrator_cannot_close_what_was_asked_before_it() {
     const NEXT: &str = "agt_new_orchestrator";
     let h = harness(AetherMode::Dedicated).await;
-    let unvouched = ask_as(&h, None, "Which branch?", &[]).await;
+    let unvouched = unvouched(&h).await;
     let predecessors = ask(&h, "Ship to prod?", &[]).await;
-    let mut store = h.ctx.store.lock().await;
-    store.kv_set(keys::ORCHESTRATOR_AGENT, NEXT).expect("kv");
-    drop(store);
+    set_orchestrator(&h, NEXT).await;
 
     for (asked, asker) in [
         (&unvouched, "has no recorded asker"),
@@ -811,7 +867,7 @@ async fn a_new_orchestrator_cannot_close_what_was_asked_before_it() {
     );
     assert!(answers(&h, &predecessors.id).await.is_empty());
 
-    let own = ask_as(&h, Some(NEXT), "And the changelog?", &[]).await;
+    let own = ask_as(&h, NEXT, "And the changelog?", &[]).await;
     let recorded = record(&h, ClientKind::ArchonMcp, &own.id, Some(NEXT)).await;
     assert!(matches!(recorded, Ok(Reply::Question(_))), "{recorded:?}");
     assert!(!question(&h, &own.id).await.is_open());

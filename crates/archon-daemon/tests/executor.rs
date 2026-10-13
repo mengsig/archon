@@ -1945,3 +1945,280 @@ async fn late_completion_of_a_cancelled_run_strips_unverified_pr_urls() {
         None
     );
 }
+
+/// Aether's scheduling tools: the orchestrator's, hidden from every stage agent.
+const SCHEDULE_TOOLS: [&str; 3] = ["create_schedule", "update_schedule", "list_schedules"];
+
+/// What a guarded stage agent does not see, in a workspace it may write.
+fn guarded_hidden() -> Vec<String> {
+    let messaging = archon_core::mcp_tools::qualified("message_orchestrator");
+    archon_core::mcp_tools::qualified_names()
+        .into_iter()
+        .filter(|name| name != &messaging)
+        .chain(SCHEDULE_TOOLS.map(str::to_owned))
+        .collect()
+}
+
+/// An `adaptive` item whose plan gives every stage `MODEL`, dispatched.
+async fn adaptive_item(h: &Harness) -> archon_core::queue::QueueItem {
+    let spec = archon_pipeline::Catalog::builtin()
+        .get("adaptive")
+        .unwrap()
+        .clone();
+    let plan = archon_core::model::ModelPlan(
+        spec.file
+            .stages
+            .iter()
+            .map(|stage| (stage.id.clone(), vec![choice(MODEL, Effort::High)]))
+            .collect(),
+    );
+    let item = h
+        .enqueue_in("adaptive", "adaptive change", plan)
+        .await
+        .unwrap();
+    assert_eq!(
+        item.autonomy.tools,
+        archon_core::autonomy::ToolsMode::Guarded
+    );
+    h.dispatch().await;
+    item
+}
+
+fn reviewed(summary: &str) -> StageOutcome {
+    let review = serde_json::json!({"verdict": "pass", "reviewer_model": REVIEW_MODEL});
+    StageOutcome::Completed {
+        summary: summary.into(),
+        structured: Some(serde_json::json!({ "review": review })),
+    }
+}
+
+/// The stage flag makes a guarded agent a delegating one: it is told how,
+/// within which models, and to put its review on record. `ship` is not.
+#[tokio::test]
+async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_ship_is_a_leaf() {
+    let mut config = Config::default();
+    config.models.allow = vec![MODEL.parse().unwrap(), REVIEW_MODEL.parse().unwrap()];
+    config.models.max_effort = Some(Effort::High);
+    let h = Harness::with_config(config).await;
+    // Aether may list the review model as ready; this repository denies it.
+    h.repo_config(&format!("[models]\ndeny = [\"{REVIEW_MODEL}\"]\n"));
+    adaptive_item(&h).await;
+    let build = h.backend.requests()[0].clone();
+    assert_eq!(build.labels["archon.stage"], "build");
+    assert!(!build.leaf);
+    assert_eq!(build.hidden_tools, guarded_hidden());
+    let rules = &build.instructions[build.instructions.find("## Delegation").unwrap()..];
+    let policy = format!("policy for this item: {MODEL}; effort at most high. Archon cancels");
+    assert!(rules.contains(&policy), "{rules}");
+    assert_eq!(rules.matches(REVIEW_MODEL).count(), 0, "{rules}");
+    assert!(rules.contains("pass `workspace_mode: \"isolated\"`"));
+    assert!(build.instructions.contains("\n## Review on record\n"));
+
+    h.settle_running(|_| reviewed("Verified; one reviewer passed it"))
+        .await;
+    h.dispatch().await;
+    let requests = h.backend.requests();
+    assert_eq!(requests.len(), 2);
+    let ship = &requests[1];
+    assert_eq!(ship.labels["archon.stage"], "ship");
+    assert!(ship.leaf);
+    assert_eq!(ship.hidden_tools, build.hidden_tools);
+    assert_eq!(ship.instructions.matches("## Delegation").count(), 0);
+    let report = format!("Verified; one reviewer passed it\n\nREVIEW: pass, by {REVIEW_MODEL}\n");
+    assert!(ship.objective.contains(&report), "{}", ship.objective);
+}
+
+/// A lead that says it reviewed, without the record, ends the item at
+/// `build`: no ship agent is created for an unreviewed change.
+#[tokio::test]
+async fn adaptive_never_ships_a_build_that_completed_without_its_review() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    h.settle_running(|_| completed("Verified; independent review passed"))
+        .await;
+    h.dispatch().await;
+    let requests = h.backend.requests();
+    assert_eq!(requests.len(), 1, "only build ever ran: {requests:?}");
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!("the item fails: {:?}", h.state(&item.id).await);
+    };
+    assert!(error.contains("is not on record"), "{error}");
+    assert!(h.live_stages().await.is_empty());
+}
+
+const READ_ONLY_DELEGATING: &str = r#"[pipeline]
+name = "survey"
+description = "reads the repository with helpers"
+version = 1
+workspace = "repo-readonly"
+requires_repo = true
+
+[[stage]]
+id = "implement"
+kind = "work"
+prompt = "implement.md"
+allow_delegation = true
+"#;
+
+/// A delegating agent of a read-only pipeline cannot integrate a child's
+/// work, by its tools and by its contract.
+#[tokio::test]
+async fn a_read_only_delegating_stage_has_nothing_to_integrate() {
+    let h = Harness::new().await;
+    h.add_pipeline("survey", READ_ONLY_DELEGATING);
+    let plan = archon_core::model::ModelPlan(
+        [("implement".to_owned(), vec![choice(MODEL, Effort::High)])].into(),
+    );
+    h.enqueue_in("survey", "survey the code", plan)
+        .await
+        .unwrap();
+    h.dispatch().await;
+    let request = h.backend.requests()[0].clone();
+    assert!(!request.leaf);
+    let mut hidden = guarded_hidden();
+    hidden.push("integrate_workspace".to_owned());
+    assert_eq!(request.hidden_tools, hidden);
+    let rules = &request.instructions[request.instructions.find("## Delegation").unwrap()..];
+    assert!(rules.contains("Your workspace is READ-ONLY, and so is every child's"));
+    assert_eq!(rules.matches("integrate_workspace").count(), 0, "{rules}");
+    assert!(rules.contains("policy for this item: any model Aether lists. Archon cancels"));
+}
+
+fn unreachable_aether() -> ArchonError {
+    ArchonError::Unavailable("aether is restarting".into())
+}
+
+fn stage_labels(h: &Harness) -> Vec<String> {
+    let requests = h.backend.requests();
+    requests
+        .iter()
+        .map(|r| r.labels["archon.stage"].clone())
+        .collect()
+}
+
+/// Aether ends an agent's children only on its cancel, not its completion. So
+/// the ended lead is cancelled, and `ship` is not created before that.
+#[tokio::test]
+async fn a_completed_leads_helpers_are_stopped_before_the_next_stage_starts() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0).aether_agent.unwrap();
+    // The stop fails at the settle and at the first sweep.
+    h.backend.fail_next_cancel(unreachable_aether());
+    h.backend.fail_next_cancel(unreachable_aether());
+    h.settle_running(|_| reviewed("Built; reviewed")).await;
+    h.dispatch().await;
+    assert_eq!(stage_labels(&h), ["build"], "ship waits for the stop");
+    assert!(h.backend.cancelled().is_empty());
+    let waiting = h.live_stages().await;
+    assert_eq!(waiting.len(), 1);
+    assert_eq!(
+        (waiting[0].stage_id.as_str(), &waiting[0].state),
+        ("ship", &StageState::Spawning)
+    );
+
+    h.dispatch().await;
+    assert_eq!(h.backend.cancelled(), [lead]);
+    assert_eq!(stage_labels(&h), ["build", "ship"]);
+}
+
+/// The stop is in the store: an archond that restarts before Aether took
+/// it still cancels the lead before it creates the next stage's agent.
+#[tokio::test]
+async fn an_owed_stop_survives_a_restart_and_still_goes_first() {
+    let mut h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0).aether_agent.unwrap();
+    h.backend.fail_next_cancel(unreachable_aether());
+    h.backend.fail_next_cancel(unreachable_aether());
+    h.settle_running(|_| reviewed("Built; reviewed")).await;
+    h.dispatch().await;
+    assert_eq!(stage_labels(&h), ["build"]);
+
+    h.restart();
+    executor::recover(&h.ctx).await.unwrap();
+    h.backend.fail_next_cancel(unreachable_aether());
+    h.dispatch().await;
+    assert_eq!(stage_labels(&h), ["build"], "still owed after the restart");
+    assert!(h.backend.cancelled().is_empty());
+    h.dispatch().await;
+    assert_eq!(h.backend.cancelled(), [lead]);
+    assert_eq!(stage_labels(&h), ["build", "ship"]);
+}
+
+/// A lead that died is replaced, and the replacement would share the
+/// worktree with whatever the dead one delegated: that is stopped first.
+#[tokio::test]
+async fn a_failed_leads_helpers_are_stopped_before_its_replacement_starts() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let dead = h.running().await.remove(0).aether_agent.unwrap();
+    h.backend.fail_next_cancel(unreachable_aether());
+    h.backend.fail_next_cancel(unreachable_aether());
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "engine crashed".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    assert_eq!(h.backend.created(), 1, "the replacement waits");
+    assert!(h.backend.cancelled().is_empty());
+
+    h.dispatch().await;
+    assert_eq!(h.backend.cancelled(), std::slice::from_ref(&dead));
+    assert_eq!(stage_labels(&h), ["build", "build"]);
+    let replacement = h.running().await.remove(0);
+    assert_ne!(replacement.aether_agent.as_ref(), Some(&dead));
+
+    // A lead that gives up ends the run; its helpers are stopped all the same.
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "the brief contradicts itself".into(),
+        infra: false,
+    })
+    .await;
+    h.dispatch().await;
+    assert!(matches!(h.state(&item.id).await, QueueState::Failed { .. }));
+    let cancelled = h.backend.cancelled();
+    assert!(
+        cancelled.contains(replacement.aether_agent.as_ref().unwrap()),
+        "{cancelled:?}"
+    );
+    assert_eq!(stage_labels(&h), ["build", "build"], "nothing ships");
+}
+
+/// The lead is left to end the turn it completed in, as a run node leaves
+/// it: only then is it cancelled, and only then does `ship` start.
+#[tokio::test]
+async fn the_stop_waits_for_the_lead_to_end_its_turn() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = h.running().await.remove(0).aether_agent.unwrap();
+    h.backend.hold_turn(&lead);
+    h.settle_running(|_| reviewed("Built; reviewed")).await;
+    h.dispatch().await;
+    assert!(
+        h.backend.cancelled().is_empty(),
+        "its turn is not cut short"
+    );
+    assert_eq!(stage_labels(&h), ["build"]);
+
+    h.backend.end_turn(&lead);
+    h.dispatch().await;
+    assert_eq!(h.backend.cancelled(), [lead]);
+    assert_eq!(stage_labels(&h), ["build", "ship"]);
+}
+
+/// A stage agent that could not delegate left nothing running: it is not
+/// cancelled, and the next stage does not wait.
+#[tokio::test]
+async fn a_leaf_stage_owes_no_stop() {
+    let h = Harness::new().await;
+    h.enqueue("an ordinary change").await;
+    h.dispatch().await;
+    assert!(h.backend.requests()[0].leaf);
+    h.backend.fail_next_cancel(unreachable_aether());
+    h.settle_running(passing).await;
+    h.dispatch().await;
+    assert!(h.backend.cancelled().is_empty());
+    assert_eq!(stage_labels(&h), ["implement", "review", "review"]);
+}

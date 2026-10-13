@@ -1,5 +1,127 @@
 # Changelog
 
+## Unreleased
+
+The orchestrator answers and delegates work that needs no repository
+itself, and a pipeline stage can delegate again.
+
+### Orchestrator
+
+- The orchestrator decides how a request is done, taking the first of these
+  that fits: answer it, delegate it, queue it through a pipeline, or queue a
+  backlog. Work that needs no repository (research, a comparison, a summary
+  or draft, a second look at a result it holds) goes to a helper agent
+  through Aether's `delegate`. A question that takes reading a repository's
+  code is queued as `ask`, which reads a snapshot, not your checkout.
+- A helper holds no repository. It works in the orchestrator's own
+  workspace, and `archond` cancels one that Aether placed in a registered
+  repository or among the items' worktrees, also through a symlink, with a
+  blocker and a `policy_violation` for the orchestrator.
+- A helper must use a model and effort that `[models]` allows and that no
+  registered repository's own `[models]` refuses; one outside is cancelled.
+  Helpers count toward the daily and total budgets. `max_parallel_agents`
+  and the other caps do not count them: the orchestrator is told to stay
+  within them.
+- A GitHub request without operator standing is never delegated.
+- A helper gets only the instructions the orchestrator writes for it; none
+  of the orchestrator's own rules are copied. Its prompt now has it state
+  them for every helper: read only, stay in the workspace given, open no
+  repository, no git identity overrides, no questions to the operator.
+- An answer the orchestrator finishes after waiting for a helper is shown
+  in `archon chat` as one reply, not cut off at the wait.
+- Only the current orchestrator may call the Archon tools that change
+  something. `archond` decides this itself for every call, from the calling
+  agent that Aether names. A replaced orchestrator, a helper and a stage
+  agent are refused, and the refusal says which of them the caller is.
+- When the orchestrator is replaced, the helpers of every agent left
+  behind are cancelled, also when Aether restarted it several times in a
+  row. A cancel that fails is kept on record and retried in the background
+  until Aether confirms it, across daemon restarts.
+- Every change to a repository is still an item, so the pipeline's gates,
+  the ship mode, the caps and the autonomy ceiling apply. The orchestrator
+  cannot integrate a helper's edits.
+- The orchestrator may write a pipeline for work you keep asking for. It
+  saves one to the user pipelines directory after `archon pipelines check`
+  passes, and only proposes a pipeline inside a repository.
+
+### Pipelines
+
+- `allow_delegation = true` on a stage grants delegation again: its agent
+  may delegate under `tools = guarded` too. Without the flag a guarded stage
+  agent stays a leaf, and `tools = yolo` still lets every stage agent
+  delegate. Which Archon tools a stage agent sees still follows `tools`.
+  Delegated children work in Aether's managed Git worktrees, which share
+  the repository's Git objects and leave out ignored caches; what a child
+  builds still costs disk.
+- A delegated child inherits none of its parent's instructions. Every stage
+  agent that can delegate, by the flag or by `tools = yolo`, now gets a
+  `## Delegation` section in its contract: leaf children only, an isolated
+  workspace for a child that edits, the model policy its children are held
+  to, to wait for every child, and the rules to state in each child's
+  instructions (stay in the given workspace, keep off the operator's
+  checkout, no push, no git identity overrides, no operator questions, read
+  only for reviewers). A pipeline of your own that delegates should name
+  any further constraint its children must be given.
+- No stage agent sees Aether's `create_schedule`, `update_schedule` or
+  `list_schedules`: a schedule would outlive the stage. In a `repo-readonly`
+  workspace `integrate_workspace` is hidden as well.
+- When a stage agent that could delegate completes, fails or is replaced,
+  Archon cancels whatever it left running before the next stage or the
+  replacement starts. The stop is stored first, so it survives a daemon
+  restart, and it is retried while Aether is unreachable.
+- A pipeline can declare the review one of its stages holds:
+  `[pipeline.review] level = "standard"`, `stage = "<a delegating work
+  stage>"`. It then runs at `review = standard`, and Archon fails the run
+  at that stage unless its agent completes with the review on record: a
+  pass naming the reviewer's model, or a skip with its reason.
+- New built-in pipeline `adaptive` (`build` → `ship`), for ordinary
+  repository changes. One lead sizes the work, delegates the parts worth
+  splitting, integrates and verifies them, and has the integrated diff
+  reviewed once by a fresh reviewer, at a depth matching the risk. It
+  declares that review, so it runs at `review = standard`: name it with
+  `pipeline = "adaptive"` and leave `review` out or say `standard`.
+  `review = strict` or `none` with it is refused, and so is a ceiling that
+  demands `strict`. `ship` ships only a build whose review passed or was
+  skipped with a reason. There are now 17 built-in pipelines.
+
+### Setup and upgrades
+
+- Archon's tools need Aether to name the agent behind each call:
+  `send_caller_meta = true` on the `archon` MCP server. With Archon's own
+  Aether instance (the default) nothing is asked of you: the first `archon`
+  command after the update adds the line to the instance's config and
+  restarts Archon's `aetherd` once, since Aether reads it only at start.
+  In shared mode Archon never edits your Aether config: `archon doctor`
+  fails with the line to add, and your `aetherd` needs a restart after it.
+- Until Aether names the callers, `archond` posts one blocker saying so,
+  takes those tools only from an orchestrator that cannot delegate, and
+  starts new orchestrators without `delegate`. An orchestrator started by
+  an earlier release cannot delegate, so it keeps working. One that was
+  started with `delegate` before `archond` saw an unnamed call has that
+  call refused, with the fix and the `archon orchestrator restart` that
+  replaces it.
+- `archon daemon stop --aether` now waits until Archon's `aetherd` is gone,
+  and a start that still finds the old one holding its database retries
+  for up to 15 seconds instead of failing with "another aether daemon is
+  already running".
+- `archon` and `archond` speak protocol 6: restart `archond` after
+  updating, as `archon update` says.
+- `archon setup` writes a `config.toml` with every key commented out when
+  there is none, and never touches one that exists.
+- An `archon.toml` from before 1.0 is still not read. `archon doctor` now
+  warns about it and `archond` posts one notice as it starts, both naming
+  the `config.toml` that is read.
+- The documentation says plainly that no models or tiers are predefined:
+  without `[models]` every model Aether reports ready may be used, and the
+  orchestrator picks one per stage. Examples name current models.
+
+After updating: run the commands `archon update` prints. The last one,
+`archon orchestrator restart`, matters here: a running orchestrator keeps
+the prompt, tools and workspace it was created with, so it neither
+delegates nor knows `adaptive` until a new one starts. In shared mode, add
+`send_caller_meta = true` to the `archon` server in your Aether config and
+restart your `aetherd` before that restart; `archon doctor` checks it.
+
 ## 1.0.1
 
 Gates and questions can now be answered in the orchestrator's chat, so

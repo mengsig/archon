@@ -238,28 +238,48 @@ impl Server {
     }
 }
 
+/// The request for one tool call, forwarded for the agent Aether says made
+/// it: archond decides at the change itself whether that agent may (§18.4).
 fn request_with_caller(
     name: &str,
     arguments: Value,
     params: &Value,
 ) -> Result<Request, tools::ToolError> {
     let mut request = tools::to_request(name, arguments)?;
-    let (caller, required) = match &mut request {
+    let caller = caller_identity(params)?;
+    name_caller(name, &mut request, caller.as_ref())?;
+    let Some(caller) = caller else {
+        return Ok(request);
+    };
+    Ok(Request::ForAgent {
+        caller,
+        request: Box::new(request),
+    })
+}
+
+/// Record the caller in the requests that keep it, refusing the ones that
+/// cannot work without one.
+fn name_caller(
+    name: &str,
+    request: &mut Request,
+    caller: Option<&AetherAgentId>,
+) -> Result<(), tools::ToolError> {
+    let (named, required) = match request {
         Request::MessageOrchestrator { caller, .. } | Request::RecordChatAnswer { caller, .. } => {
             (caller, true)
         }
         // Without it the question is still asked, with no recorded asker.
         Request::AskOperator { caller, .. } => (caller, false),
-        _ => return Ok(request),
+        _ => return Ok(()),
     };
-    assert!(caller.is_none(), "a tool argument never names the caller");
-    *caller = caller_identity(params)?;
+    assert!(named.is_none(), "a tool argument never names the caller");
     if required && caller.is_none() {
         return Err(tools::ToolError(format!(
             "{name} requires Aether caller metadata; set send_caller_meta = true on the archon MCP server and restart the relevant Aether daemon"
         )));
     }
-    Ok(request)
+    *named = caller.cloned();
+    Ok(())
 }
 
 /// The agent Aether says made this call, when it sent caller metadata.
@@ -382,6 +402,7 @@ fn timed_out(tool: &str, check: Option<&str>) -> String {
 /// How to learn whether a change whose answer never came took effect.
 fn how_to_check(request: &Request) -> String {
     match request {
+        Request::ForAgent { request, .. } => how_to_check(request),
         Request::MessageOrchestrator { .. } => "the message may already be recorded; check the item's archon log before repeating it, and keep working on your stage".into(),
         Request::GithubReply { thread, .. } => thread.check_before_retry(),
         Request::RecordChatAnswer { .. } => "the answer may already be recorded; a repeat is then refused as already answered, which is the confirmation".into(),
@@ -396,6 +417,15 @@ fn how_to_check(request: &Request) -> String {
 mod tests {
     use super::*;
 
+    /// The request archond is asked to run for `agt_1`.
+    fn for_agent_1(request: Request) -> Request {
+        let Request::ForAgent { caller, request } = request else {
+            panic!("a named caller travels with the request, got {request:?}");
+        };
+        assert_eq!(caller.as_str(), "agt_1");
+        *request
+    }
+
     #[test]
     fn messaging_uses_only_out_of_band_caller_identity() {
         let args = json!({"text": "hello", "kind": "relay"});
@@ -403,7 +433,7 @@ mod tests {
         let params = json!({"_meta": {"aether/agent_id": "agt_1"}});
         let request = request_with_caller("message_orchestrator", args, &params).unwrap();
         assert!(
-            matches!(request, Request::MessageOrchestrator { caller: Some(id), .. } if id.as_str() == "agt_1")
+            matches!(for_agent_1(request), Request::MessageOrchestrator { caller: Some(id), .. } if id.as_str() == "agt_1")
         );
         let spoof = json!({"text": "hello", "_meta": {"aether/agent_id": "agt_2"}});
         assert!(request_with_caller("message_orchestrator", spoof, &params).is_err());
@@ -423,7 +453,7 @@ mod tests {
         let params = json!({"_meta": {"aether/agent_id": "agt_1"}});
         let request = request_with_caller("record_chat_answer", args, &params).unwrap();
         assert!(
-            matches!(request, Request::RecordChatAnswer { caller: Some(id), .. } if id.as_str() == "agt_1")
+            matches!(for_agent_1(request), Request::RecordChatAnswer { caller: Some(id), .. } if id.as_str() == "agt_1")
         );
         let spoof = json!({"question": question, "answer": "yes", "caller": "agt_2"});
         assert!(request_with_caller("record_chat_answer", spoof, &params).is_err());
@@ -440,13 +470,43 @@ mod tests {
         let params = json!({"_meta": {"aether/agent_id": "agt_1"}});
         let request = request_with_caller("ask_operator", args.clone(), &params).unwrap();
         assert!(
-            matches!(request, Request::AskOperator { caller: Some(id), .. } if id.as_str() == "agt_1")
+            matches!(for_agent_1(request), Request::AskOperator { caller: Some(id), .. } if id.as_str() == "agt_1")
         );
         let spoof = json!({"text": "Ship to prod?", "caller": "agt_2"});
         assert!(request_with_caller("ask_operator", spoof, &json!({})).is_err());
         let malformed = json!({"_meta": {"aether/agent_id": 7}});
         let refused = request_with_caller("ask_operator", args, &malformed).unwrap_err();
         assert!(refused.0.contains("invalid Aether caller identity"));
+    }
+
+    /// archond decides who may change Archon, so every call must reach it
+    /// naming its caller, and unnamed exactly when Aether named nobody.
+    #[test]
+    fn every_call_names_the_agent_aether_vouches_for_and_no_other() {
+        let params = json!({"_meta": {"aether/agent_id": "agt_1"}});
+        let pause = json!({"scope": "global"});
+        let named = request_with_caller("pause", pause.clone(), &params).unwrap();
+        assert!(matches!(for_agent_1(named), Request::Pause(_)));
+        let read = request_with_caller("list_repos", json!({}), &params).unwrap();
+        assert_eq!(for_agent_1(read), Request::RepoList);
+
+        let unnamed = request_with_caller("pause", pause.clone(), &json!({})).unwrap();
+        assert!(matches!(unnamed, Request::Pause(_)), "{unnamed:?}");
+        let malformed = json!({"_meta": {"aether/agent_id": 7}});
+        let refused = request_with_caller("pause", pause, &malformed).unwrap_err();
+        assert!(refused.0.contains("invalid Aether caller identity"));
+    }
+
+    #[test]
+    fn a_forwarded_change_keeps_its_own_advice_on_checking_it() {
+        let question = archon_core::id::QuestionId::new().to_string();
+        let args = json!({"question": question, "answer": "yes"});
+        let params = json!({"_meta": {"aether/agent_id": "agt_1"}});
+        let request = request_with_caller("record_chat_answer", args, &params).unwrap();
+        assert!(matches!(request, Request::ForAgent { .. }));
+        let check = how_to_check(&request);
+        assert!(check.contains("refused as already answered"), "{check}");
+        assert_eq!(check, how_to_check(&for_agent_1(request)));
     }
 
     fn oversized_error(tool: &str) -> String {

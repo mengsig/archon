@@ -38,6 +38,11 @@ pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(
         } => track_once(ctx, event, |replies| replies.assistant_text(text))
             .await
             .map(drop),
+        EventKind::AgentWaiting { idle } => {
+            track_once(ctx, event, |replies| replies.waiting(*idle))
+                .await
+                .map(drop)
+        }
         EventKind::AgentTurnCompleted { next, .. } => {
             turn_completed(ctx, event.seq, next.as_deref()).await?;
             supervisor::turn_ended(ctx, next.as_deref()).await

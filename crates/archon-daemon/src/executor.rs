@@ -7,6 +7,7 @@
 //! across an Aether call. Work that needs Aether or git after a state change
 //! is returned as a `FollowUp` and run once the run table is released.
 
+mod descendants;
 mod finish;
 pub(crate) mod frozen;
 mod gate_news;
@@ -104,6 +105,8 @@ pub(crate) struct FollowUp {
     pub cancel_agents: Vec<(AetherAgentId, String)>,
     /// Team roles cancelled for a failed sibling whose agent stop is owed.
     pub sibling_stops: Vec<StageRunId>,
+    /// Settled stage runs of delegating agents whose descendants to stop.
+    pub descendant_stops: Vec<StageRunId>,
     /// Runs whose team roster may be owed to their running roles.
     pub roster: Vec<PipelineRunId>,
     pub cleanup: Vec<Cleanup>,
@@ -133,6 +136,7 @@ impl FollowUp {
         self.retire.extend(other.retire);
         self.cancel_agents.extend(other.cancel_agents);
         self.sibling_stops.extend(other.sibling_stops);
+        self.descendant_stops.extend(other.descendant_stops);
         self.roster.extend(other.roster);
         self.cleanup.extend(other.cleanup);
         self.gates.extend(other.gates);
@@ -149,6 +153,7 @@ impl FollowUp {
             && self.retire.is_empty()
             && self.cancel_agents.is_empty()
             && self.sibling_stops.is_empty()
+            && self.descendant_stops.is_empty()
             && self.roster.is_empty()
             && self.cleanup.is_empty()
             && self.gates.is_empty()
@@ -347,6 +352,10 @@ async fn follow_up_round(ctx: &DaemonContext, follow: FollowUp) -> (FollowUp, Op
         Err(error) if first_error.is_none() => first_error = Some(error),
         Err(error) => tracing::error!(%error, "follow-up failed"),
     };
+    // First: a spawn of the same run waits for these.
+    for stage in dedup(follow.descendant_stops) {
+        record(descendants::stop(ctx, &stage).await);
+    }
     match issuable(ctx, follow.issue).await {
         Ok(issue) => {
             for id in issue {
@@ -390,17 +399,22 @@ async fn follow_up_round(ctx: &DaemonContext, follow: FollowUp) -> (FollowUp, Op
         record(team::merge(ctx, &run).await);
     }
     for cleanup in follow.cleanup {
-        let when = match cleanup.snapshot {
-            true => "after its run ended",
-            false => "after its run succeeded",
-        };
-        record(
-            finish::remove_worktree(ctx, cleanup, when)
-                .await
-                .map(|()| FollowUp::default()),
-        );
+        record(remove_ended_worktree(ctx, cleanup).await);
     }
     (next, first_error)
+}
+
+/// Remove the worktree a run left behind; nothing follows from it.
+async fn remove_ended_worktree(
+    ctx: &DaemonContext,
+    cleanup: Cleanup,
+) -> Result<FollowUp, ArchonError> {
+    let when = match cleanup.snapshot {
+        true => "after its run ended",
+        false => "after its run succeeded",
+    };
+    finish::remove_worktree(ctx, cleanup, when).await?;
+    Ok(FollowUp::default())
 }
 
 /// The spawns to issue now. While dispatch is held for disk space only those

@@ -101,6 +101,8 @@ mod tests {
             prompt: "do it".into(),
             instructions: "contract".into(),
             timeout_minutes: 30,
+            allow_delegation: false,
+            workspace: archon_core::catalog::WorkspaceMode::Worktree,
             team: None,
         }
     }

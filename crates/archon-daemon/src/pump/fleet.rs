@@ -55,12 +55,24 @@ pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(
         | EventKind::TaskFailed { .. }
         | EventKind::TaskCancelled { .. } => task_settled(ctx, event, agent).await,
         EventKind::AgentFailed { .. } | EventKind::AgentCancelled { .. } => {
-            agent_died(ctx, event, agent).await
+            agent_died(ctx, event, agent).await?;
+            turn_ended(ctx);
+            Ok(())
+        }
+        EventKind::AgentCompleted => {
+            turn_ended(ctx);
+            Ok(())
         }
         EventKind::AgentUsageUpdated { usage } => record_usage(ctx, event, agent, usage).await,
         EventKind::QuestionAsked { question } => question_asked(ctx, event, agent, question).await,
         _ => Ok(()),
     }
+}
+
+/// An agent ended for good: the stop of what it delegated, which waited for
+/// its turn to end, and the spawns behind it need not wait for the next tick.
+fn turn_ended(ctx: &DaemonContext) {
+    ctx.dispatch.notify_one();
 }
 
 /// The owner of an agent Archon manages; `None` for anyone else's agent
@@ -263,7 +275,7 @@ async fn record_usage(
     usage: &UsageTotals,
 ) -> Result<(), ArchonError> {
     let Some(owner) = owner(ctx, agent).await? else {
-        return Ok(());
+        return retired_orchestrator_usage(ctx, event, agent, usage).await;
     };
     let item = item_of(ctx, &owner).await?;
     record_spend(ctx, event, agent, item.clone(), usage).await?;
@@ -281,6 +293,22 @@ async fn record_usage(
             .await?;
     }
     // Spend can cross a budget cap; let the dispatcher re-check.
+    ctx.dispatch.notify_one();
+    Ok(())
+}
+
+/// The orchestrator's own stream follows only the agent in charge, so the
+/// last spend of one it replaced is counted from the fleet's.
+async fn retired_orchestrator_usage(
+    ctx: &DaemonContext,
+    event: &AetherEvent,
+    agent: &AetherAgentId,
+    usage: &UsageTotals,
+) -> Result<(), ArchonError> {
+    if !crate::supervisor::is_retired_orchestrator(ctx, agent).await? {
+        return Ok(());
+    }
+    record_spend(ctx, event, agent, None, usage).await?;
     ctx.dispatch.notify_one();
     Ok(())
 }

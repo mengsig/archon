@@ -10,13 +10,14 @@ use std::process::{Command, ExitCode, Stdio};
 use anyhow::Context as _;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::config::{AetherMode, Config};
+use archon_core::config_files;
 use archon_core::error::ArchonError;
 use archon_core::protocol::{Reply, Request};
 
 use super::doctor;
 use crate::cli::TuiArgs;
 use crate::connect::{archon_bin, print_json};
-use crate::instance::lifecycle::{self, Stop};
+use crate::instance::lifecycle::{self, Start, Stop};
 use crate::instance::seed::voice::{self, VoiceFile, VoiceOutcome};
 use crate::instance::seed::{self, ConfigOutcome, LinkState, Seeding, calm};
 use crate::instance::{AETHER_PROGRAM, Instance, effective_aether, operator_config_dir};
@@ -36,6 +37,7 @@ pub async fn setup(print_only: bool, resync: bool, json: bool) -> anyhow::Result
         }
         return Ok(ExitCode::SUCCESS);
     }
+    note_config_files(&archon_core::paths::config_dir())?;
     let config = Config::load_default()?;
     match config.aether.mode {
         AetherMode::Shared => {
@@ -51,6 +53,22 @@ pub async fn setup(print_only: bool, resync: bool, json: bool) -> anyhow::Result
     }
 }
 
+/// Give an install without a `config.toml` a commented one to edit, and
+/// say so on stderr, as for an `archon.toml` that Archon no longer reads.
+fn note_config_files(config_dir: &Path) -> anyhow::Result<()> {
+    if let Some(written) = config_files::write_starter(config_dir)? {
+        eprintln!(
+            "archon: wrote {}. Every key in it is commented out, so nothing changes until \
+             you edit it.",
+            written.display()
+        );
+    }
+    if let Some(notice) = config_files::legacy_config_notice(config_dir) {
+        eprintln!("archon: {notice}");
+    }
+    Ok(())
+}
+
 /// Seed the instance, then say whether its running aetherd (if any) has
 /// loaded the archon server.
 async fn setup_dedicated(config: &Config, resync: bool, json: bool) -> anyhow::Result<ExitCode> {
@@ -59,6 +77,7 @@ async fn setup_dedicated(config: &Config, resync: bool, json: bool) -> anyhow::R
     let seeding = seed::seed(&instance, &operator, &archon_bin()?, resync)?;
     assert!(instance.config_path().is_file(), "setup leaves a config");
     let running = lifecycle::is_listening(&instance.socket);
+    let reloaded = running && reload_if_owed(&instance).await?;
     let aether = doctor::connect_aether(&effective_aether(&config.aether, &instance)).await;
     let health = doctor::check_mcp_health(aether.as_ref().ok()).await;
     if json {
@@ -76,6 +95,7 @@ async fn setup_dedicated(config: &Config, resync: bool, json: bool) -> anyhow::R
             "voice_toml": voice_json(&seeding.voice),
             "calm_mode": seeding.calm,
             "running": running,
+            "reloaded": reloaded,
             "mcp_health": doctor::check_json(&health),
         }))
         .map(|()| ExitCode::SUCCESS);
@@ -83,7 +103,12 @@ async fn setup_dedicated(config: &Config, resync: bool, json: bool) -> anyhow::R
     print_seeding(&instance, &operator, &seeding);
     doctor::report(std::slice::from_ref(&health), false)?;
     let changed = seeding.config != ConfigOutcome::Unchanged;
-    if running && changed {
+    if reloaded {
+        println!(
+            "Archon's aetherd was restarted to load the updated archon server: \
+             Aether reads it only as it starts."
+        );
+    } else if running && changed {
         println!(
             "Archon's aetherd is running with the old config: `archon daemon stop --aether`, \
              then any archon command starts it again."
@@ -97,6 +122,21 @@ async fn setup_dedicated(config: &Config, resync: bool, json: bool) -> anyhow::R
     Ok(ExitCode::SUCCESS)
 }
 
+/// Restart a running aetherd whose archon server setup just replaced with
+/// one Archon needs. `false` when it had the current one loaded.
+async fn reload_if_owed(instance: &Instance) -> anyhow::Result<bool> {
+    if !seed::reload_is_owed(instance)? {
+        return Ok(false);
+    }
+    let instance = instance.clone();
+    let start = tokio::task::spawn_blocking(move || {
+        lifecycle::ensure_running(&instance, Path::new(AETHER_PROGRAM))
+    })
+    .await
+    .context("restarting Archon's own aetherd")??;
+    Ok(start == Start::Restarted)
+}
+
 fn print_seeding(instance: &Instance, operator: &Path, seeding: &Seeding) {
     let source = operator.join(archon_core::config::CONFIG_FILE_NAME);
     let config = match seeding.config {
@@ -104,6 +144,9 @@ fn print_seeding(instance: &Instance, operator: &Path, seeding: &Seeding) {
         ConfigOutcome::Resynced => format!("re-seeded from {}", source.display()),
         ConfigOutcome::Unchanged => "already set up; unchanged (`--resync` re-seeds it)".to_owned(),
         ConfigOutcome::BlockAdded => "added the archon MCP server".to_owned(),
+        ConfigOutcome::Repaired => {
+            "brought its archon MCP server up to date (`send_caller_meta = true`)".to_owned()
+        }
     };
     println!("Archon's own Aether: {}", instance.config_dir.display());
     println!("  config.toml     {config}");
@@ -123,6 +166,7 @@ fn outcome_name(outcome: ConfigOutcome) -> &'static str {
         ConfigOutcome::Resynced => "resynced",
         ConfigOutcome::Unchanged => "unchanged",
         ConfigOutcome::BlockAdded => "block_added",
+        ConfigOutcome::Repaired => "repaired",
     }
 }
 

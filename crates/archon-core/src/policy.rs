@@ -96,12 +96,30 @@ impl ModelPolicy {
             Some(set) if set.is_empty() => return "none (allowlists do not overlap)".to_owned(),
             Some(set) => set,
         };
-        listed
+        let permitted: Vec<String> = listed
             .iter()
             .filter(|m| !self.deny.contains(m))
             .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", ")
+            .collect();
+        if permitted.is_empty() {
+            return "none (every allowed model is denied)".to_owned();
+        }
+        permitted.join(", ")
+    }
+
+    /// The whole policy in a phrase, for an agent that must choose within
+    /// it: the models, the denied ones an open allowlist hides, the effort cap.
+    pub fn describe(&self) -> String {
+        let mut text = self.describe_allowed();
+        if self.allow.is_none() && !self.deny.is_empty() {
+            let denied: Vec<String> = self.deny.iter().map(ToString::to_string).collect();
+            text.push_str(&format!(" except {}", denied.join(", ")));
+        }
+        if let Some(cap) = self.max_effort {
+            text.push_str(&format!("; effort at most {cap}"));
+        }
+        assert!(!text.is_empty(), "a policy always says what it allows");
+        text
     }
 }
 
@@ -160,5 +178,21 @@ mod tests {
         let policy = ModelPolicy::from_lists(&[], &[], Some(Effort::High));
         assert!(policy.check(&choice("a/1", Effort::High)).is_ok());
         assert!(policy.check(&choice("a/1", Effort::Max)).is_err());
+    }
+
+    #[test]
+    fn a_description_names_every_limit_an_agent_must_choose_within() {
+        let open = ModelPolicy::from_lists(&[], &[], None);
+        assert_eq!(open.describe(), "any model Aether lists");
+        let denied = ModelPolicy::from_lists(&[], &[m("codex/x")], Some(Effort::High));
+        assert_eq!(
+            denied.describe(),
+            "any model Aether lists except codex/x; effort at most high"
+        );
+        let listed = ModelPolicy::from_lists(&[m("a/1"), m("b/2")], &[m("b/2")], None);
+        assert_eq!(listed.describe(), "a/1");
+        let none = ModelPolicy::from_lists(&[m("b/2")], &[m("b/2")], None);
+        assert_eq!(none.describe(), "none (every allowed model is denied)");
+        assert_eq!(none.describe_allowed(), none.describe());
     }
 }

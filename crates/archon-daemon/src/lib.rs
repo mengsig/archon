@@ -30,6 +30,7 @@ use archon_aether::backend::AetherBackend;
 use archon_aether::client::Endpoint;
 use archon_core::config::Config;
 use archon_core::error::ArchonError;
+use archon_core::notify::NotificationKind;
 use archon_lavish::Lavish;
 use archon_queue::Store;
 use tokio::signal::unix::{SignalKind, signal};
@@ -85,7 +86,33 @@ pub async fn run(options: DaemonOptions) -> Result<(), ArchonError> {
 /// spawns recovery would issue.
 async fn recover(ctx: &DaemonContext) -> Result<(), ArchonError> {
     dispatcher::check_disk(ctx).await?;
+    note_legacy_config(ctx, &archon_core::paths::config_dir()).await?;
     executor::recover(ctx).await
+}
+
+/// `kv`: set while the operator has been told of an ignored `archon.toml`.
+const LEGACY_CONFIG_TOLD_KEY: &str = "legacy_config_told";
+
+/// Tell the operator, once, that the `archon.toml` in `config_dir` is not
+/// read: they may believe it sets the limits Archon runs with.
+pub async fn note_legacy_config(ctx: &DaemonContext, config_dir: &Path) -> Result<(), ArchonError> {
+    let notice = archon_core::config_files::legacy_config_notice(config_dir);
+    let told = {
+        let mut store = ctx.store.lock().await;
+        let told = store.kv_get(LEGACY_CONFIG_TOLD_KEY)?.is_some();
+        match (notice.is_some(), told) {
+            // The file is gone: one that appears later is news again.
+            (false, true) => store.kv_delete(LEGACY_CONFIG_TOLD_KEY)?,
+            (true, false) => store.kv_set(LEGACY_CONFIG_TOLD_KEY, "1")?,
+            _ => {}
+        }
+        told
+    };
+    let Some(text) = notice.filter(|_| !told) else {
+        return Ok(());
+    };
+    feed::notify(ctx, NotificationKind::Blocker, text, None, None).await?;
+    Ok(())
 }
 
 /// SIGTERM and SIGINT, which stop the daemon cleanly.

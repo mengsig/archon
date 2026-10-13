@@ -350,3 +350,112 @@ classes = { enqueue = "custom", extra_tool = "read", message_orchestrator = "rea
         previous = Some(text);
     }
 }
+
+/// What `archon setup` wrote before archond needed its callers named.
+const OLD_INSTANCE_CONFIG: &str = r#"# Archon's own Aether.
+# Seeded by an older archon.
+
+[approval]
+default = "ask"
+
+[[mcp.servers]]
+name = "files"
+command = "npx"
+
+[[mcp.servers]]
+name = "archon"
+command = "/opt/archon"
+args = ["mcp"]
+env = { ARCHON_LOG = "debug" }
+classes = { queue_status = "read", message_orchestrator = "read" }
+"#;
+
+fn old_instance() -> Dirs {
+    let dirs = dirs();
+    std::fs::create_dir_all(&dirs.instance.config_dir).unwrap();
+    std::fs::write(dirs.instance.config_path(), OLD_INSTANCE_CONFIG).unwrap();
+    dirs
+}
+
+#[test]
+fn a_registration_without_caller_naming_is_repaired_keeping_what_the_operator_set() {
+    let dirs = old_instance();
+    assert!(registration_is_stale(&dirs.instance).unwrap());
+    assert!(!reload_is_owed(&dirs.instance).unwrap());
+
+    assert!(repair_registration(&dirs.instance).unwrap(), "rewritten");
+    let text = std::fs::read_to_string(dirs.instance.config_path()).unwrap();
+    let server = find_archon_server(&text).unwrap().unwrap();
+    assert!(server.names_callers, "{text}");
+    assert_eq!(server.command.as_deref(), Some("/opt/archon"));
+    assert!(text.starts_with("# Archon's own Aether.\n# Seeded by an older archon.\n"));
+    let table: Table = toml::from_str(&text).unwrap();
+    assert_eq!(table["approval"]["default"].as_str(), Some("ask"));
+    assert_eq!(setup::mcp_servers(&table).len(), 2, "{text}");
+    let archon = setup::archon_server(&table).unwrap();
+    assert_eq!(archon["env"]["ARCHON_LOG"].as_str(), Some("debug"));
+    let classes = archon["classes"].as_table().unwrap();
+    assert_eq!(classes["message_orchestrator"].as_str(), Some("mutation"));
+    assert_eq!(classes.len(), archon_core::mcp_tools::TOOLS.len());
+
+    assert!(
+        reload_is_owed(&dirs.instance).unwrap(),
+        "aetherd must load it"
+    );
+    assert!(!registration_is_stale(&dirs.instance).unwrap());
+    assert!(!repair_registration(&dirs.instance).unwrap(), "once");
+    assert_eq!(
+        std::fs::read_to_string(dirs.instance.config_path()).unwrap(),
+        text
+    );
+    reload_settled(&dirs.instance).unwrap();
+    reload_settled(&dirs.instance).unwrap();
+    assert!(!reload_is_owed(&dirs.instance).unwrap());
+}
+
+#[test]
+fn a_current_or_unreadable_config_is_never_rewritten() {
+    let dirs = dirs();
+    std::fs::write(dirs.operator.join("config.toml"), OPERATOR_CONFIG).unwrap();
+    seed(
+        &dirs.instance,
+        &dirs.operator,
+        Path::new("/opt/archon"),
+        false,
+    )
+    .unwrap();
+    for text in [
+        std::fs::read_to_string(dirs.instance.config_path()).unwrap(),
+        "[[mcp.servers]\nname = \"archon\"\n".to_owned(),
+        "[approval]\ndefault = \"ask\"\n".to_owned(),
+    ] {
+        std::fs::write(dirs.instance.config_path(), &text).unwrap();
+        assert!(!registration_is_stale(&dirs.instance).unwrap(), "{text}");
+        assert!(!repair_registration(&dirs.instance).unwrap(), "{text}");
+        let after = std::fs::read_to_string(dirs.instance.config_path()).unwrap();
+        assert_eq!(after, text);
+        assert!(!reload_is_owed(&dirs.instance).unwrap(), "{text}");
+    }
+}
+
+#[test]
+fn setup_repairs_an_old_registration_with_or_without_resync() {
+    for resync in [false, true] {
+        let dirs = old_instance();
+        std::fs::write(dirs.operator.join("config.toml"), OPERATOR_CONFIG).unwrap();
+        let seeding = seed(
+            &dirs.instance,
+            &dirs.operator,
+            Path::new("/opt/archon"),
+            resync,
+        );
+        let expected = match resync {
+            true => ConfigOutcome::Resynced,
+            false => ConfigOutcome::Repaired,
+        };
+        assert_eq!(seeding.unwrap().config, expected);
+        let text = std::fs::read_to_string(dirs.instance.config_path()).unwrap();
+        assert!(find_archon_server(&text).unwrap().unwrap().names_callers);
+        assert!(reload_is_owed(&dirs.instance).unwrap(), "resync={resync}");
+    }
+}

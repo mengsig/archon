@@ -20,6 +20,8 @@ pub const AETHER_PROGRAM: &str = "aether";
 const SOCKET_NAME: &str = "aetherd.sock";
 /// Serializes `aether daemon` starts across concurrent archon processes.
 const START_LOCK_NAME: &str = "aetherd-start.lock";
+/// Present while a running aetherd may hold a registration Archon replaced.
+const RELOAD_MARKER_NAME: &str = "aetherd-reload-owed";
 
 /// Where the dedicated instance lives, and the Archon paths its `archon mcp`
 /// must reach. Every path is absolute.
@@ -77,6 +79,10 @@ impl Instance {
 
     pub fn start_lock_path(&self) -> PathBuf {
         self.archon_data_dir.join(START_LOCK_NAME)
+    }
+
+    pub fn reload_marker_path(&self) -> PathBuf {
+        self.archon_data_dir.join(RELOAD_MARKER_NAME)
     }
 
     /// What every `aether` process of this instance gets: Aether's three

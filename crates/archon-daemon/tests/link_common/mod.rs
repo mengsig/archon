@@ -11,10 +11,12 @@ use archon_aether::fake::FakeAether;
 use archon_aether::{AetherBackend, AetherClient, AetherLink};
 use archon_core::aether_ids::{AetherAgentId, AetherRunId, AetherTaskId};
 use archon_core::config::Config;
+use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, RepoId, StageRunId};
 use archon_core::model::{Effort, ModelChoice, ModelPlan};
 use archon_core::notify::{FeedEntry, NotificationKind};
 use archon_core::ports::{NetworkPolicy, SpawnRequest};
+use archon_core::protocol::{ClientKind, Reply, Request};
 use archon_core::queue::{Priority, QueueItem, QueueState};
 use archon_core::repo::{Repo, ShipMode};
 use archon_core::run::{PipelineRun, RunState, StageRun, StageState};
@@ -22,6 +24,7 @@ use archon_daemon::context::{DaemonContext, DaemonPaths};
 use archon_daemon::disk::DiskWatch;
 use archon_daemon::executor::RunTable;
 use archon_daemon::feed::ReplyTracker;
+use archon_daemon::handlers;
 use archon_daemon::supervisor::{Backoff, Supervisor};
 use archon_daemon::triggers::{self, TriggerEvent, TriggerQueue};
 use archon_lavish::Lavish;
@@ -137,6 +140,16 @@ impl Harness {
 
     pub async fn set_kv(&self, key: &str, value: &str) {
         self.ctx.store.lock().await.kv_set(key, value).unwrap();
+    }
+
+    /// `request` as `archon mcp` forwards it for `caller`, the agent Aether
+    /// names as the one making the call.
+    pub async fn mcp_as(&self, caller: &str, request: Request) -> Result<Reply, ArchonError> {
+        let request = Request::ForAgent {
+            caller: agent_id(caller),
+            request: Box::new(request),
+        };
+        handlers::handle(&self.ctx, ClientKind::ArchonMcp, request).await
     }
 
     /// Move the orchestrator's last revival `secs` into the past, as if that

@@ -1918,3 +1918,129 @@ fn design_doc_exhausted_or_missing_critique_verdict_never_publishes_a_report() {
         }
     }
 }
+
+/// What the lead puts on record once its reviewer passed the change.
+fn reviewed_by(model: &str) -> serde_json::Value {
+    serde_json::json!({"review": {"verdict": "pass", "reviewer_model": model}})
+}
+
+#[test]
+fn adaptive_keeps_one_build_lead_and_hands_its_reviewed_report_to_ship() {
+    let mut sim = sim("adaptive");
+    let first = sim.start();
+    assert_eq!(spawned(&first), slots(&[("build", 1, 0)]));
+    let lead = spawn_plans(&first)[0];
+    assert!(lead.allow_delegation);
+    assert_eq!(lead.workspace, WorkspaceMode::Worktree);
+    assert!(!lead.prompt.contains("{{"));
+    // Archon adds the rules for children where it decides who delegates.
+    assert!(
+        lead.prompt
+            .contains("Delegation section of your stage contract")
+    );
+    assert!(
+        lead.prompt
+            .contains("never to touch the operator's checkout at `")
+    );
+    assert!(lead.instructions.contains("## Review on record"));
+    assert!(lead.instructions.contains("\"reviewer_model\""));
+    let ship = sim.settle(
+        "build",
+        0,
+        Agent::DoneStructured("Integrated; checks pass.", reviewed_by("codex/astra")),
+    );
+    assert_eq!(spawned(&ship), slots(&[("ship", 1, 0)]));
+    let ship = spawn_plans(&ship)[0];
+    assert!(!ship.allow_delegation);
+    assert!(!ship.instructions.contains("## Review on record"));
+    assert!(
+        ship.prompt
+            .contains("Integrated; checks pass.\n\nREVIEW: pass, by codex/astra\n"),
+        "{}",
+        ship.prompt
+    );
+    let done = sim.settle("ship", 0, Agent::Done("Shipped"));
+    assert_eq!(succeeded(&done), "Shipped");
+}
+
+/// A lead that only says it reviewed has put nothing on record: the run
+/// ends at `build`, and no ship agent is ever created.
+#[test]
+fn adaptive_fails_a_build_that_completed_without_a_review_on_record() {
+    let unreviewed = [
+        (
+            Agent::Done("Integrated; checks pass; review PASS."),
+            "no `review` object",
+        ),
+        (
+            Agent::DoneStructured("Done.", serde_json::json!({"review": {"verdict": "fail"}})),
+            "verdict is `fail`",
+        ),
+        (
+            Agent::DoneStructured("Done.", serde_json::json!({"review": {"verdict": "pass"}})),
+            "reviewer_model",
+        ),
+        (
+            Agent::DoneStructured(
+                "Done.",
+                serde_json::json!({"review": {"verdict": "skipped"}}),
+            ),
+            "`review.reason`",
+        ),
+    ];
+    for (outcome, why) in unreviewed {
+        let mut sim = sim("adaptive");
+        sim.start();
+        let done = sim.settle("build", 0, outcome.clone());
+        assert!(spawned(&done).is_empty(), "{outcome:?} reached ship");
+        let (stage, error) = failed(&done);
+        assert_eq!(stage, "build");
+        assert!(error.contains("is not on record"), "{error}");
+        assert!(error.contains(why), "{outcome:?}: {error}");
+    }
+}
+
+#[test]
+fn adaptive_ships_a_change_whose_skipped_review_gives_its_reason() {
+    let mut sim = sim("adaptive");
+    sim.start();
+    let skipped =
+        serde_json::json!({"review": {"verdict": "skipped", "reason": "a typo in a comment"}});
+    let ship = sim.settle(
+        "build",
+        0,
+        Agent::DoneStructured("Fixed the typo.", skipped),
+    );
+    assert_eq!(spawned(&ship), slots(&[("ship", 1, 0)]));
+    let prompt = &spawn_plans(&ship)[0].prompt;
+    assert!(
+        prompt.contains("REVIEW: skipped: a typo in a comment\n"),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("## Review on record (every mode)"),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("call `fail_task` with `unreviewed change:`"),
+        "{prompt}"
+    );
+}
+
+#[test]
+fn adaptive_never_ships_a_failed_or_blocked_build() {
+    for outcome in [
+        Agent::Error("review failed after two rounds"),
+        Agent::Blocked("review unavailable"),
+    ] {
+        let mut sim = sim("adaptive");
+        sim.start();
+        let done = sim.settle("build", 0, outcome);
+        assert!(spawned(&done).is_empty());
+        assert!(sim.finished().is_some());
+        assert!(!matches!(
+            finish_state(&done),
+            Some(RunState::Succeeded { .. })
+        ));
+    }
+}

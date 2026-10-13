@@ -174,6 +174,14 @@ impl Mcp {
         response["result"].clone()
     }
 
+    /// A call Aether vouches came from `caller` (`send_caller_meta = true`).
+    async fn call_as(&mut self, id: u64, caller: &str, tool: &str, arguments: Value) -> Value {
+        let meta = json!({"aether/agent_id": caller});
+        let params = json!({"name": tool, "arguments": arguments, "_meta": meta});
+        let response = self.request(id, "tools/call", params).await;
+        response["result"].clone()
+    }
+
     async fn send_call(&mut self, id: impl Into<Value>, tool: &str) {
         let params = json!({"name": tool, "arguments": {}});
         self.send(
@@ -256,6 +264,70 @@ async fn a_session_initializes_lists_tools_and_relays_a_daemon_refusal() {
     );
     assert!(matches!(&requests[0], Request::Enqueue(e) if e.title == "Fix login"));
     assert_eq!(requests[1], Request::RepoList);
+    mcp.close().await;
+}
+
+/// A fake archond for which `agt_orchestrator` is the orchestrator: who may
+/// change Archon is archond's to decide, where the change is made (§18.4).
+fn answer_only_the_orchestrator(request: &Request) -> Result<Reply, ErrorReply> {
+    let (caller, request) = match request {
+        Request::ForAgent { caller, request } => (Some(caller.as_str()), request.as_ref()),
+        bare => (None, bare),
+    };
+    if request.is_read_only() {
+        return answer_everything(request);
+    }
+    if caller != Some("agt_orchestrator") {
+        return Err(ErrorReply {
+            code: ErrorCode::Forbidden,
+            message: format!("only the orchestrator may, not {caller:?}. Nothing was changed."),
+        });
+    }
+    assert!(matches!(request, Request::Pause(_)), "{request:?}");
+    Ok(Reply::Ok)
+}
+
+/// The server never decides who the orchestrator is, so no caller can slip
+/// between a check here and the change there: each call is one request.
+#[tokio::test]
+async fn a_tool_call_reaches_archond_once_naming_its_caller_and_relays_the_verdict() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("archond.sock");
+    let daemon = FakeDaemon::start(&socket, answer_only_the_orchestrator);
+    let mut mcp = Mcp::start(&socket, &dir.path().join("archon"));
+    let global = json!({"scope": "global"});
+
+    let refused = mcp.call_as(1, "agt_child", "pause", global.clone()).await;
+    assert_eq!(refused["isError"], true);
+    let why = text(&refused);
+    assert!(why.contains("not Some(\"agt_child\")"), "{why}");
+    assert_eq!(refused["structuredContent"]["code"], "forbidden");
+
+    let read = mcp.call_as(2, "agt_child", "list_repos", json!({})).await;
+    assert_eq!(read["isError"], false, "reading is open to a child: {read}");
+    let paused = mcp
+        .call_as(3, "agt_orchestrator", "pause", global.clone())
+        .await;
+    assert_eq!(paused["isError"], false, "{paused}");
+    let unnamed = mcp.call(4, "pause", global).await;
+    assert_eq!(unnamed["isError"], true, "{unnamed}");
+    assert!(text(&unnamed).contains("not None"), "{unnamed}");
+
+    let requests = daemon.requests();
+    assert_eq!(requests.len(), 4, "one request for each call: {requests:?}");
+    let callers: Vec<Option<&str>> = requests
+        .iter()
+        .map(|request| match request {
+            Request::ForAgent { caller, .. } => Some(caller.as_str()),
+            _bare => None,
+        })
+        .collect();
+    let orchestrator = Some("agt_orchestrator");
+    assert_eq!(
+        callers,
+        [Some("agt_child"), Some("agt_child"), orchestrator, None]
+    );
+    assert!(matches!(requests[3], Request::Pause(_)), "{requests:?}");
     mcp.close().await;
 }
 

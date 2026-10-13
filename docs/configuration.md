@@ -3,11 +3,20 @@
 `~/.config/archon/config.toml` on Linux (or `$XDG_CONFIG_HOME/archon/config.toml`),
 `~/Library/Application Support/archon/config.toml` on macOS.
 `ARCHON_CONFIG_DIR` overrides the directory on either platform. Every field
-is optional. Unknown keys are an error, so a typo cannot silently disable a limit.
+is optional, and so is the file: `archon setup` writes one with every key
+commented out when there is none. Unknown keys are an error, so a typo
+cannot silently disable a limit. Only `config.toml` is read. An
+`archon.toml` from before 1.0 lying beside it is ignored: `archon doctor`
+warns about it, and `archond` says so once in the feed when it starts.
+
+You do not list models or model tiers anywhere. With no `[models]` section
+Archon may use every model Aether reports ready (`archon aether models`),
+and the orchestrator picks a model and effort for each stage of each item.
+`[models]` only narrows that choice.
 
 ```toml
-[models]
-allow = ["claude-code/claude-opus-5-5", "codex/your-available-model"]
+[models]                       # optional: leave it out to allow every ready model
+allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-sol"]
 max_effort = "high"
 
 [limits]
@@ -28,9 +37,15 @@ cache_dirs = ["target"]        # only these caches; unset = everything git ignor
 To run Archon on your own `aetherd` instead, set `[aether] mode = "shared"`.
 In shared mode, `archon setup` adds the `archon` MCP server to your
 `~/.config/aether/config.toml`, and every agent of that daemon then sees
-Archon's tools. Answering a gate or question with `/answer <n> …` in the
-orchestrator's chat is off in shared mode, because a client holding that
-daemon's `[listen]` token is the same `user` actor as you; see the
+Archon's tools. The ones that change Archon answer only the current
+orchestrator, which needs `send_caller_meta = true` on that registration
+so that Aether names the calling agent. `archon setup` writes the line,
+and never edits a registration that is already there: if yours lacks it,
+`archon doctor` fails and says so, and the
+[guide](guide.md#after-upgrading) has the fix. Answering a gate or
+question with `/answer <n> …` in the orchestrator's chat is off in shared
+mode, because a client holding that daemon's `[listen]` token is the same
+`user` actor as you; see the
 [guide](guide.md#answering-in-the-orchestrators-chat).
 
 A relative path in the config, such as `[worktrees] root`, is relative to
@@ -40,6 +55,16 @@ on where you started it.
 
 Each repository can lower these limits in `<repo>/.archon/config.toml`. The
 full reference is in [`docs/ARCHITECTURE.md` §9](ARCHITECTURE.md#9-configuration).
+
+The helper agents the orchestrator delegates to
+([guide](guide.md#what-the-orchestrator-does-without-queueing)) work in no
+repository. They are held to `[models]` narrowed by every registered
+repository's own `[models]`, and their spend counts toward the daily and
+total budgets. `max_parallel_agents` and the other caps count stage agents
+only, so the orchestrator is told to keep its helpers within them. If your
+Aether config sets `[scheduler] run_budget_usd`, Archon's instance inherits
+it, and it is cumulative: once the orchestrator's run has spent it, Aether
+refuses every delegation until `archon orchestrator restart`.
 
 ## Disk use
 
@@ -122,13 +147,18 @@ If the disk still fills:
 The default orchestrator uses `claude-code/claude-opus-5-5` at `high` effort.
 If you are already signed in to Claude Code or Codex, neither Archon nor Aether needs a separate login for that engine.
 After setup, `archon aether models` lists the models your Aether installation
-actually exposes. To use Codex alone, set `[orchestrator] model` to an
-available `codex/…` entry before starting Archon. If you set `[models] allow`,
-include the orchestrator as well as every model the stages may use.
+actually exposes: for example `claude-code/claude-opus-5-5`,
+`claude-code/claude-sonnet-5-5`, `claude-code/claude-haiku-5-5`,
+`claude-code/claude-fable-5-1`, `codex/gpt-6-astra`, `codex/gpt-6.1-sol`
+and `codex/gpt-6-luna`. The orchestrator's own model is the one model you
+set, because it must be known before any agent runs. To use Codex alone,
+set `[orchestrator] model` to an available `codex/…` entry before starting
+Archon. If you do set `[models] allow`, include the orchestrator's model as
+well as every model the stages may use.
 
 ```toml
 [orchestrator]
-model = "codex/your-available-model" # replace with an entry from the model list
+model = "codex/gpt-6.1-sol"    # any entry from `archon aether models`
 effort = "high"
 ```
 

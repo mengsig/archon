@@ -38,6 +38,12 @@ pub enum EventKind {
         /// `None` from a daemon that does not report it.
         next: Option<String>,
     },
+    /// The turn about to complete leaves the agent waiting.
+    AgentWaiting {
+        /// For its inbox alone: it is done until somebody writes to it. Any
+        /// other wait (a delegated task, a deadline) ends by itself.
+        idle: bool,
+    },
     /// Text blocks of one transcript entry, concatenated.
     AgentMessage {
         assistant: bool,
@@ -127,6 +133,12 @@ struct Envelope {
     kind: Value,
 }
 
+/// Aether's wait expression, of which Archon reads only the outermost kind.
+#[derive(Deserialize)]
+struct WaitCondition {
+    on: String,
+}
+
 #[derive(Deserialize)]
 struct TextBlock {
     #[serde(rename = "type")]
@@ -168,6 +180,7 @@ fn parse_kind(kind: Value) -> Result<EventKind, serde_json::Error> {
             turn: serde_json::from_value(field("turn"))?,
             next: serde_json::from_value(field("next"))?,
         },
+        "agent.waiting" => agent_waiting(field("condition"))?,
         "agent.message" => EventKind::AgentMessage {
             assistant: field("role") == "assistant",
             text: text_of(serde_json::from_value(field("content"))?),
@@ -212,6 +225,13 @@ fn parse_kind(kind: Value) -> Result<EventKind, serde_json::Error> {
 struct InboxItem {
     seq: u64,
     kind: Value,
+}
+
+fn agent_waiting(condition: Value) -> Result<EventKind, serde_json::Error> {
+    let condition: WaitCondition = serde_json::from_value(condition)?;
+    Ok(EventKind::AgentWaiting {
+        idle: condition.on == "inbox",
+    })
 }
 
 fn inbox_delivered(item: Value) -> Result<EventKind, serde_json::Error> {
@@ -370,6 +390,31 @@ mod tests {
                 next: Some("failed".into())
             }
         );
+    }
+
+    /// Only a wait for the inbox alone leaves the agent idle: one that names
+    /// anything else, with the inbox or bounded by a deadline, ends by itself.
+    #[test]
+    fn a_wait_is_idle_only_when_it_is_for_the_inbox_alone() {
+        let waiting = |condition: Value| {
+            let kind = serde_json::json!({"type": "agent.waiting", "condition": condition});
+            parse_event(event(kind)).map(|parsed| parsed.kind)
+        };
+        let idle = waiting(serde_json::json!({"on": "inbox"})).unwrap();
+        assert_eq!(idle, EventKind::AgentWaiting { idle: true });
+        let task = serde_json::json!({"on": "task", "id": "tsk_1"});
+        let bounded = serde_json::json!({"on": "any", "of": [
+            task, {"on": "deadline", "at": "2026-09-26T10:30:00Z"}]});
+        let with_inbox = serde_json::json!({"on": "all", "of": [{"on": "inbox"}, task]});
+        for resuming in [task.clone(), bounded, with_inbox] {
+            let parsed = waiting(resuming.clone()).unwrap();
+            assert_eq!(
+                parsed,
+                EventKind::AgentWaiting { idle: false },
+                "{resuming}"
+            );
+        }
+        assert!(waiting(Value::Null).is_err(), "a wait names its condition");
     }
 
     #[test]

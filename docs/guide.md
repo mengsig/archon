@@ -13,8 +13,10 @@ If you are already signed in to Claude Code or Codex, neither Archon nor Aether 
 The orchestrator chooses a model and effort for every stage, taking account
 of complexity, risk, operator instructions and recorded cost evidence.
 Pipeline nudges are advice, not enforced model choices. It records a short
-`model_reasons` explanation and can query `model_evidence`. The daemon
-checks choices against your allowlist, caps and budgets.
+`model_reasons` explanation and can query `model_evidence`. You predefine
+no models or tiers: every model Aether reports ready may be chosen unless
+`[models]` in the config narrows that. The daemon checks each choice
+against that policy, the caps and the budgets.
 
 The SQLite store preserves the queue and run state. Work-creating Aether
 requests use idempotency keys so replay after a restart does not create a
@@ -35,13 +37,107 @@ you ─ archon chat ─▶ archond ──▶ Aether ──▶ orchestrator agent
 
 1. You tell the orchestrator what you want: in the terminal UI (`archon`),
    in the line chat (`archon chat`) or with `archon say`.
-2. The orchestrator plans the work and calls `enqueue` once per unit of work,
-   choosing a repository, a pipeline and a model and effort for each stage.
-3. `archond` dispatches items as capacity allows. It creates a git worktree
+2. The orchestrator decides how the request is done, taking the first of
+   these that fits: answer it directly, hand it to a helper agent, queue it
+   through a pipeline, or queue a backlog of items.
+3. For queued work it calls `enqueue` once per unit of work, choosing a
+   repository, the pipeline that fits and a model and effort for each stage.
+4. `archond` dispatches items as capacity allows. It creates a git worktree
    for each item and runs the pipeline's stages as Aether agents.
-4. The pipeline enforces review and test gates and fix loops. Outcomes and
-   blockers come back to the orchestrator, and it tells you only what
-   matters.
+5. The pipeline enforces its own review and test gates and fix loops.
+   Outcomes and blockers come back to the orchestrator, and it tells you
+   only what matters.
+
+### What the orchestrator does without queueing
+
+Work that needs no repository needs no item. The orchestrator answers what
+it already knows, and for research on the web or in documents, a
+comparison, a summary, a draft or a second look at a result it delegates to
+a helper agent (Aether's `delegate`) and answers in the same conversation.
+No worktree is made and nothing is shipped.
+
+Everything that needs a repository is an item. A question that takes reading
+a repository's code goes through the `ask` pipeline, which reads a snapshot
+rather than your checkout. Every change is an item too, so the pipeline's
+gates, your ship mode, caps and autonomy ceiling apply. The orchestrator
+picks the pipeline that fits: `adaptive` for an ordinary change, a heavier
+one only when the work clearly calls for it. It adds no review of its own on
+top of a pipeline, and when work was split into parts it has the integrated
+result reviewed once, with a depth that follows the risk.
+
+What to know about helper agents:
+
+- A helper is given no repository. It works in the orchestrator's own
+  workspace (`~/.local/share/archon/orchestrator`), which holds none.
+  `archond` cancels a helper that Aether placed in a registered repository
+  or among the items' worktrees, also when the path only leads there
+  through a symlink, and posts a blocker. This checks where the helper was
+  placed; what a native agent's tools can reach beyond that is up to Aether
+  ([`docs/ARCHITECTURE.md` §17](ARCHITECTURE.md#17-aether-limitations-and-how-archon-handles-them)).
+- A helper must use a model and effort that `[models]` allows and that no
+  registered repository's own `[models]` refuses: Archon cannot tell which
+  repository a helper's answer is about, so the narrowest policy holds. One
+  outside it is cancelled. Its spend counts toward your daily and total
+  budgets. Helpers are not counted by `max_parallel_agents`; the
+  orchestrator is told to stay within that cap, and the daemon does not
+  enforce it.
+- Helpers cannot queue, cancel or change anything in Archon: those tools
+  answer only the current orchestrator (see
+  [After upgrading](#after-upgrading) for what that depends on).
+- Helpers belong to the orchestrator agent. `archon orchestrator restart`,
+  and any recovery that replaces the orchestrator, cancels them. A cancel
+  Aether could not take is kept and retried until Aether confirms it.
+- A GitHub request without operator standing is never delegated: the
+  orchestrator answers it itself or queues `ask`.
+- A helper's result reaches you through the orchestrator: in its reply to
+  the message you sent when it waited for the helper, otherwise as a
+  notification.
+- If the orchestrator has no `delegate`, or Aether refuses a delegation, it
+  says why and uses the `ask` or `errand` pipeline instead.
+
+### Pipelines the orchestrator writes
+
+When you keep asking for the same shape of work and no pipeline captures it,
+the orchestrator writes one into your user pipelines directory
+(`~/.config/archon/pipelines/`), checks it with `archon pipelines check` and
+tells you its name. It never overwrites a pipeline it did not write. A
+pipeline inside a repository (`<repo>/.archon/pipelines/`) is committed with
+the repository, so there it only proposes the pipeline and waits for you.
+
+Preferences that should outlast a conversation are kept in two places: a
+standing instruction becomes a directive (`archon autonomy` lists them),
+which every future orchestrator reads, and what it learned about how you
+work goes to Aether's memory.
+
+### After upgrading
+
+A running orchestrator keeps the prompt, tools and workspace it was created
+with, also across Aether's `restart`. Run `archon orchestrator restart` once
+after upgrading so that a new orchestrator starts with the current ones.
+
+Archon's tools that change something answer only the current orchestrator,
+and `archond` knows who is calling only when Aether names the agent behind
+each call: `send_caller_meta = true` on the `archon` MCP server in Aether's
+config. Aether reads that setting only as its daemon starts.
+
+- **Dedicated instance (the default).** Nothing to do. The config is
+  Archon's own: the next `archon` command that needs Aether brings the
+  registration up to date and restarts Archon's `aetherd` so that it takes
+  effect. That restart happens once, and interrupts the agents then running
+  in that instance as any Aether restart does; Archon recovers its items.
+- **`--shared`.** Archon never edits your Aether config. `archon doctor`
+  fails with the line to add; add it and restart your `aetherd`, then run
+  `archon orchestrator restart`.
+
+Until Aether names the callers, `archond` posts one blocker saying so,
+accepts those tools only from an orchestrator that cannot delegate (so the
+caller can be nobody else), starts new orchestrators without native
+delegation, and refuses every other unnamed call. An orchestrator from
+before the upgrade cannot delegate and keeps working. One started with
+`delegate` before `archond` saw the first unnamed call has that call
+refused: `archon orchestrator restart` replaces it with one that works
+until you have made the fix above. Once a named call arrives `archond`
+says so and the next orchestrator delegates again.
 
 ## Agents talking to the orchestrator
 
@@ -67,12 +163,15 @@ stage quotes exactly the latest operator message Archon observed in its
 inbox. Other relays retain agent provenance. The orchestrator can answer
 using Aether `send_message`, a retry with `brief_append`, or new items.
 
-New `archon setup` registrations enable Aether's `send_caller_meta = true`.
-In dedicated mode, `archon setup --resync` also migrates that registration.
-For an existing shared registration, add that field to the `archon` MCP server's
-`[[mcp.servers]]` entry in the active Aether config and restart that Aether daemon;
-also add `message_orchestrator = "mutation"` to its `classes` table.
-Calls without caller identity are refused. Setup preserves existing entries.
+`message_orchestrator` needs Aether to name its caller
+(`send_caller_meta = true`, see [After upgrading](#after-upgrading)): a call
+without caller identity is refused. In dedicated mode Archon keeps its
+registration current by itself. For an existing shared registration, add
+that field to the `archon` MCP server's `[[mcp.servers]]` entry in the
+active Aether config, add `message_orchestrator = "mutation"` to its
+`classes` table, and restart that Aether daemon. `archon doctor` reports a
+registration that lacks the field in both modes. Setup preserves existing
+entries.
 
 A registration written before `record_chat_answer` existed does not list
 that tool, and Aether then classes it as `external`. Run
@@ -88,6 +187,7 @@ per stage. Add your own under `~/.config/archon/pipelines/` or
 
 | Pipeline | Stages | Leans toward |
 | --- | --- | --- |
+| `adaptive` | build (delegation enabled, holds the review) → ship | balanced models; the orchestrator's choice for an ordinary change. One lead builds it, delegates the parts worth splitting and has the integrated diff reviewed once; Archon ships only a build with that review on record. Chosen by name or as a repository's `default_pipeline`, at `review = standard`; see [`docs/PIPELINES.md`](PIPELINES.md#adaptive) |
 | `quick-pr` | implement → ship | fast models |
 | `default-pr-review` | implement → review (gate, fix loop) → ship | balanced models |
 | `bugfix` | reproduce (failing test) → fix → review (`all_pass`, back to fix ×2) → ship | balanced models, independent reviewer; describable bugs (`quick-pr` for trivial one-liners, `strict-pr-review` for security/concurrency) |
@@ -460,7 +560,7 @@ risk and from what you told it, within a ceiling that only you can raise.
 | `proposal` | `off`, `lavish` | `lavish`: a proposal page first, and nothing is built until you approve it |
 | `report` | `off`, `with-pr`, `before-pr` | a change report in the PR; `before-pr` waits for your approval before the PR |
 | `merge` | `manual`, `auto` | `auto`: the ship stage merges its own PR |
-| `tools` | `guarded`, `yolo` | `yolo`: the item's agents may delegate, and nothing waits for approval |
+| `tools` | `guarded`, `yolo` | `guarded`: a stage agent delegates only when its stage sets `allow_delegation`. `yolo`: every stage agent may delegate, and nothing waits for approval |
 
 Answer a waiting proposal or report in chat with `/a <n> yes`,
 `/a <n> <feedback>` or `/a <n> reject`, with `archon answer <n> …`, on

@@ -194,15 +194,16 @@ or schedules, and never touches the GitHub watcher of an Aether it shares.
  "config":{"instructions":"<built-in orchestrator prompt + [orchestrator].instructions_file>",
            "effort":"high",
            "long_lived":true,
-           "tools":{"mode":"except","names":["delegate","integrate_workspace"]}},
+           "tools":{"mode":"except","names":["integrate_workspace"]}},
  "idempotency_key":"archon-orchestrator-<generation>",
  "start":true}
 ```
 
 - It is a **root** agent. Archon stores its id in `kv.orchestrator_agent`.
-  Stage work does not hang under it (§4.5): Aether's `cancel` and `restart`
-  cascade to live descendants, so recreating the orchestrator (a new
-  generation, §16) would cancel every in-flight stage; a child's scope must
+  Stage work does not hang under it (§4.5): Aether's `cancel` cascades to
+  live descendants, and Archon cancels what a replaced orchestrator left
+  running (§16), so replacing the orchestrator would cancel every in-flight
+  stage; a child's scope must
   sit inside its parent's, and the orchestrator's is a scratch directory; and
   a child may not gate less than its parent, while stage agents gate nothing.
 - An explicit `scope` gets `network: denied` unless it says otherwise. Aether
@@ -214,15 +215,85 @@ or schedules, and never touches the GitHub watcher of an Aether it shares.
   `"approval":{"require_for":[]}` instead, from the next generation on
   (`archon orchestrator restart` applies it at once; §18.4).
 - It keeps Bash, file tools, web tools and Aether's `ask_user`, `wait_for`,
-  `remember`, `send_message`, `list_agents`, `read_task` and `read_artifact`.
-  It loses Aether's `delegate`: all worker creation goes through Archon so caps
-  and the model allowlist apply. Ad-hoc questions use the `ask` pipeline.
+  `remember`, `send_message`, `list_agents`, `read_task`, `read_artifact` and
+  `delegate`. It loses `integrate_workspace` (§18.4), and `delegate` too
+  while Aether does not name the agents that call Archon's tools (§11).
 - Its workspace is a scratch directory. It reads repositories by absolute path;
   its native tools are not confined (an Aether limitation, §17).
-- `archon-daemon/prompts/orchestrator.md` is the built-in prompt. It explains
-  the MCP tools, the notify vocabulary, model selection within the allowlist
-  weighing pipeline nudges as advice, and quiet-chat rules ("final replies to
-  operator messages are shown; everything else must go through `notify`").
+- `archon-daemon/prompts/orchestrator.md` is the built-in prompt. It gives the
+  order in which to decide how a request is done (answer, delegate, enqueue
+  the pipeline that fits, queue a backlog), the MCP tools, the notify
+  vocabulary, model selection within the allowlist weighing pipeline nudges
+  as advice, and quiet-chat rules ("final replies to operator messages are
+  shown; everything else must go through `notify`"). Archon appends
+  `## This installation` to it: the orchestrator's workspace and the user
+  pipelines directory, resolved for this machine.
+
+**What the orchestrator delegates.** Work that needs no repository: research
+on the web or in documents, a comparison, a summary or draft, a second look
+at a result it holds. It answers such work in one turn, with no item, no
+worktree and no ship stage. Whatever needs a repository is an item
+(`enqueue`): a question that takes reading its code is `ask`, which reads a
+snapshot, and every change goes through a pipeline, so that Archon's
+worktrees, ship modes, gates, caps and budgets apply. The prompt says so, and
+the daemon stands behind it:
+
+- *A helper holds no repository.* The orchestrator's workspace is a scratch
+  directory, and Aether accepts a child's `workspace_root` only under its
+  parent's, so a helper works there by default. Archon keeps no link from
+  that workspace to a repository: an earlier design did, and a helper placed
+  through one ran in the operator's live checkout with nothing but its
+  instructions against writing there. The watchdog (§7.4) reads each
+  helper's scope from Aether and cancels one whose `workspace_root` or
+  `allowed_paths` lead into a registered repository or the worktrees root,
+  resolving symlinks, since Aether compares scope paths as written
+  (`Scope::is_narrowing_of`). What stays inside the orchestrator's own
+  workspace passes. The check covers where a helper was placed, not what a
+  native engine's tools can open beyond it (§17).
+- *No integration.* `integrate_workspace`, which copies an isolated child's
+  worktree back, stays hidden: the orchestrator ships nothing.
+- *No delegation for an external request.* The prompt forbids `delegate` for
+  a GitHub request without operator standing; such a request is answered
+  directly or researched with `ask`. Only the prompt holds this: the daemon
+  cannot tell which request a helper serves. The rule sits in the prompt's
+  delegation section, and its `## GitHub requests` section is unchanged, so
+  an orchestrator started by an earlier release, which has no `delegate`,
+  still passes the GitHub policy check (`has_github_policy`).
+
+**What a delegated child is.** It inherits the orchestrator's `config`:
+its tool exposure and approval policy, though not its instructions. Aether
+gives a child only the `instructions` its parent passes to `delegate`, or
+none, so no rule of the prompt reaches a child by itself: the prompt has
+the orchestrator state in each child's `instructions` that it reads only,
+stays in the workspace given and opens no repository, does not push,
+overrides no git identity, asks the operator nothing, and passes the same
+rules to any agent it starts. So:
+
+- It sees Archon's MCP tools. `archond` lets a mutating one through only
+  for the current orchestrator, by the caller Aether names on the call
+  (§11), so a child reads the queue but cannot change it.
+- The stage-agent watchdog adopts it (§7.4). Archon cannot tell which
+  repository a helper's work is about, so a helper is held to the global
+  `[models]` policy narrowed by every registered repository's: a model or an
+  effort any of them refuses gets the helper cancelled, and the orchestrator
+  hears `policy_violation`. Its spend counts toward the daily and total
+  budgets.
+- It is outside `max_parallel_agents` and `max_stage_agents_per_item`, which
+  count stage agents (§7.1). The prompt holds the orchestrator to the
+  parallel-agent cap, counting its own children with Aether's `list_agents`,
+  and to no children while a budget holds dispatch; the daemon does not
+  enforce either.
+- Its result reaches the operator through the orchestrator. A turn that
+  ends waiting for a child leaves the operator's message open, so the reply
+  the orchestrator gives when the child reports is the one `archon chat`
+  shows (§12).
+- It is the orchestrator's child in Aether, so it ends when the orchestrator
+  is replaced. Aether's `cancel` takes an agent's live descendants along. A
+  failed orchestrator leaves them running, so when a new agent takes over
+  from one, Archon cancels the old agent's subtree, whose results would
+  otherwise reach nobody. Each retired generation is recorded before the new
+  one starts and swept in the background until Aether confirms, across
+  restarts of `archond` and along Aether's own restart chain (§16).
 
 ### 4.5 Stage agents and run nodes
 
@@ -349,10 +420,11 @@ carries each agent's `parent`.
  "approval":{"require_for":[]},                       // headless: gate nothing
  "config":{"instructions":"<stage contract, §8.6>",
            "effort":"<effort>",
-           "leaf":true,                                // false only when tools = yolo
+           "leaf":true,                                // false when stage.allow_delegation or tools = yolo
            "cost_budget":<remaining item budget, a team slot's share of it (§13.1), or omitted>,
            "deadline":"<now + stage.timeout_minutes>",
-           "tools":{"mode":"except","names":["mcp__archon__enqueue", "…every archon tool…"]}},  // yolo: only the mutating ones (§18.4)
+           "tools":{"mode":"except","names":["mcp__archon__enqueue", "…every archon tool…",  // yolo: only the mutating ones
+                                             "create_schedule", "update_schedule", "list_schedules"]}},  // §18.4
  "run":"<the run's Aether run id (its node's), if known when reserved>",
  "idempotency_key":"<stage run id>",
  "start":true}
@@ -408,8 +480,8 @@ at-least-once, so every handler is idempotent.
 
 | Subscription | Query | Handles |
 | --- | --- | --- |
-| `orchestrator` | `{agent: <orchestrator>, types:["agent.message","agent.turn_completed","agent.started","question.asked","agent.failed","agent.cancelled","agent.completed","agent.restarted","agent.usage_updated","inbox.delivered","inbox.consumed"]}` | Chat replies (§12), questions, supervisor, adopting an Aether restart (§16), orchestrator spend. |
-| `fleet` | `{types:["agent.created","task.completed","task.failed","task.cancelled","agent.failed","agent.cancelled","agent.usage_updated","question.asked","inbox.delivered"]}` | Stage completion, spend ledger, stage questions, model-policy watchdog, run-node inbox forwarding and authenticated relay provenance. |
+| `orchestrator` | `{agent: <orchestrator>, types:["agent.message","agent.turn_completed","agent.waiting","agent.started","question.asked","agent.failed","agent.cancelled","agent.completed","agent.restarted","agent.usage_updated","inbox.delivered","inbox.consumed"]}` | Chat replies (§12), questions, supervisor, adopting an Aether restart (§16), orchestrator spend. |
+| `fleet` | `{types:["agent.created","task.completed","task.failed","task.cancelled","agent.failed","agent.cancelled","agent.completed","agent.usage_updated","question.asked","inbox.delivered"]}` | Stage completion, spend ledger, stage questions, model-policy watchdog, run-node inbox forwarding and authenticated relay provenance. An agent's end (`agent.completed`, `agent.failed`, `agent.cancelled`) also wakes the dispatcher, which stops what a settled stage agent delegated (§6.3). |
 
 The `fleet` subscription also forwards message inbox entries addressed to
 run nodes (§5.5). `agent.created` events whose `parent_agent_id` is
@@ -546,7 +618,43 @@ validation refuses `[aether] socket` or `address`.
   into the empty directory.
 
 Because the instance's config always declares the server before its daemon
-first starts, no restart is ever needed.
+first starts, a new install never needs a restart.
+
+**Keeping the registration current.** An upgrade can need something of the
+registration that an older `archon setup` did not write; today that is
+`send_caller_meta = true` (§11). The instance's config is Archon's own file,
+so Archon repairs it without the operator, on every path an upgrade takes
+(the installer, `archon update`, a source install): the repair is part of
+the start check every command runs, not of a migration step.
+
+- The check also asks whether the `archon` server entry lacks what this
+  binary needs. If so the command takes the start lock, writes
+  `<archon data>/aetherd-reload-owed`, and rewrites the entry in place
+  (`migrate_archon_server`: the field is set and missing tool classes are
+  added; the entry's other settings and every other section are kept, the
+  file's leading comment block too; other comments are lost, in a file
+  Archon generated). The result is parsed and checked before an atomic
+  write. A config that does not parse is left alone and reported by `archon
+  doctor`.
+- Aether reads MCP settings only as it starts, so an `aetherd` that already
+  answers still has the old registration. While the marker exists, a
+  listening `aetherd` is stopped (`aether stop`, waiting up to 15 s for the
+  socket to go quiet) and started again; the marker is removed once no
+  `aetherd` runs with the old registration. The marker is written before
+  the file changes, so a crash in between costs one restart too many, never
+  one too few. `archon setup` and `archon setup --resync` do the same.
+- An `aetherd` that has just stopped answering may hold its store a moment
+  longer, and the `aether daemon` that follows then exits with `another
+  aether daemon is already running`. On that one error the start is retried
+  every 250 ms for up to 15 s; any other failure is returned at once. This
+  also covers `archon daemon stop --aether` followed directly by a command
+  that starts it again.
+
+Not covered: a config that was brought up to date by hand or by an older
+binary's `--resync` while `aetherd` kept running leaves no marker, so
+nothing tells Archon the daemon is stale. `archond` notices the unnamed
+calls (§11) and its notice names the restart: `archon daemon stop --aether`,
+after which any command starts it again.
 
 **Shared mode.** `[aether] mode = "shared"` keeps the earlier behaviour.
 Archon uses the operator's `aetherd` (`[aether] socket`/`address`, else
@@ -573,21 +681,24 @@ classes = { list_pipelines = "read_only", list_repos = "read_only", model_policy
             set_directive = "mutation", clear_directive = "mutation" }
 ```
 
-Within one daemon, MCP servers are global, and Aether passes no caller
-identity to them, so every agent of the daemon that runs `archon mcp` can see
-`mcp__archon__*`. In dedicated mode those agents are all Archon's. Archon
+Within one daemon, MCP servers are global, so every agent of the daemon that
+runs `archon mcp` can see `mcp__archon__*`. In dedicated mode those agents are all Archon's. Archon
 narrows this in three ways:
 
 1. Stage agents get `tools: except [mcp__archon__…]`: every Archon tool, or
    only the mutating ones for an item with `tools = yolo` (§18.4).
 2. Tool calls are treated as orchestrator calls, except `message_orchestrator`,
-   which requires stage-agent caller metadata (§5.5).
+   which requires stage-agent caller metadata (§5.5). `archond` lets a
+   mutating tool through only for the current orchestrator, by the caller
+   Aether names (§11).
 3. Operator-only actions (raising an autonomy ceiling, caps, repo removal,
    chat messages, answers to questions, hard pause) are not exposed over MCP
    at all.
 
-In shared mode, a non-Archon Aether agent that calls these tools acts as the
-orchestrator (§17).
+In shared mode, a non-Archon Aether agent can read with these tools. Through
+a registration without `send_caller_meta`, which cannot tell callers apart,
+it can change Archon only while the orchestrator in charge cannot delegate
+(§11, §17).
 
 On the `claude-code` engine Aether serves its harness tools and every MCP
 server's tools through one `aether` MCP bridge, so claude names Archon's tools
@@ -1042,6 +1153,26 @@ in a new worktree off the base branch (§13).
   engages the disk hold (§7.3), and the replacement is reserved at once but
   issued only when the hold ends. Each slot counts its infra and its
   disk-full retries apart, by the error of each run it replaced.
+- **What a delegating stage agent left running is stopped before the run
+  goes on.** Aether cancels an agent's children with the agent, but not
+  when its task completes or fails, so a lead that settled while a child
+  still ran would leave it writing beside the next stage, or beside its own
+  replacement. A stage run whose agent could delegate (its stored request
+  has `leaf: false`, or the request is gone) therefore owes a stop when it
+  settles, whatever the outcome: `kv.descendant_stop:<stage run id>`, with
+  the run, the agent and the settle time, is written under the same store
+  lock as the settle and before it, and before a replacement is reserved: a
+  crash in between leaves a stop too many, never one too few. While a run
+  has one, none of its `spawning` stages is issued.
+  The dispatcher pays it: once the agent's own turn has ended (it is left
+  up to 60 s to end it, as a retiring run node leaves it, §4.5), Archon
+  sends `cancel` for the agent. Aether applies a `cancel` of an agent that
+  already ended to every live agent beneath it, at any depth. Aether's
+  answer (or `not_found`) deletes the record and issues the stages that
+  waited. No answer or a transport error leaves it owed, for the next
+  dispatcher pass or the next `archond`; any other refusal fails the run
+  with a `Blocker`, and the run node's retirement then cancels the whole
+  subtree. A leaf stage agent owes nothing.
 
 ### 6.4 RunDriver (pipeline engine)
 
@@ -1116,7 +1247,8 @@ transaction. The newest stage run of a slot supersedes older ones.
 
 The unit is **concurrently running stage agents**. A fan-out stage with 3
 reviewers occupies 3 slots. A pipeline run between stages occupies 0 slots.
-The orchestrator is not counted.
+The orchestrator is not counted, and neither are the agents it delegates to
+(§4.4): no cap bounds them, though their spend counts toward the budgets.
 
 ### 7.2 Caps (`Caps`)
 
@@ -1265,8 +1397,14 @@ four places:
 3. At startup the orchestrator's own model must pass the policy, or `archond`
    refuses to start the orchestrator and reports why.
 4. Watchdog: an `agent.created` event under any Archon-owned agent (at any
-   depth below a stage agent, §4.6) whose model or effort violates the
-   policy gets `cancel` plus a `Blocker` and a `policy_violation` trigger.
+   depth below a stage agent or the orchestrator, §4.6) whose model or effort
+   violates the policy gets `cancel` plus a `Blocker` and a
+   `policy_violation` trigger. Below a stage agent the policy is the item's
+   repository's effective one. Below the orchestrator it is the global one
+   narrowed by every registered repository's, since Archon cannot tell which
+   repository a helper's work is about, and a helper whose scope leads into a
+   registered repository or the worktrees root is cancelled the same way
+   (§4.4).
 
 Effort is not restricted by default. `[models] max_effort` optionally caps it.
 
@@ -1335,6 +1473,10 @@ version = 1                          # schema version; only 1 exists
 workspace = "worktree"               # worktree | repo-readonly | scratch
 requires_repo = true                 # false: repo optional (e.g. ask)
 
+# [pipeline.review]                  # optional: one work stage holds the review (below)
+# level = "standard"                 # only "standard"
+# stage = "build"                    # a work stage with allow_delegation = true
+
 [nudges]                             # advice to the orchestrator; never enforced
 tier = "strongest"                   # fast | balanced | strongest
 independent_reviewers = true         # prefer distinct models/vendors for fan-out
@@ -1347,7 +1489,7 @@ prompt = "implement.md"              # file in this directory
 fan_out = 1                          # >1 only for review/test/report kinds; a team's is len(roles)
 gate = "none"                        # none | all_pass | majority | any
 timeout_minutes = 120
-allow_delegation = false             # grants nothing; only tools = yolo delegates (§18.4)
+allow_delegation = false             # true lets the stage agent delegate under tools = guarded too (§18.4)
 nudge = "Needs strong coding ability."
 
 [[stage]]
@@ -1392,6 +1534,35 @@ Validation rules (load-time errors):
   kinds.
 - Every template placeholder in a prompt is known (§8.4), and `team.*`
   appears only in a team stage's prompt.
+- `[pipeline.review]`, when present, has `level = "standard"` and names a
+  `work` stage with `allow_delegation = true`; unknown keys are refused.
+
+**A declared review.** A pipeline's review level is otherwise derived from
+its gates: three reviewers are `strict`, a gated review `standard`, none
+`none` (§18.1). A pipeline whose review happens inside a work stage, by an
+agent that stage's lead delegates to, has no gate to derive it from, so it
+declares it. The declared level is the pipeline's for every purpose: the
+`review` knob an enqueue may name with it, the autonomy ceiling (§18.2) and
+the autonomy stored with the item. Only `standard` can be declared: `none`
+needs no declaration, and `strict` means three independent verdicts, which
+one lead's word cannot stand for.
+
+The declaration binds the named stage. Its agent's contract gains a
+`## Review on record` section (§8.6), and its `complete_task` must carry
+
+```json
+{"review": {"verdict": "pass", "reviewer_model": "<provider>/<model>"}}
+{"review": {"verdict": "skipped", "reason": "<why this change needed none>"}}
+```
+
+one or the other, in `structured`. A completion without it, with any other
+verdict, with a pass that names no reviewer or a skip that gives no reason,
+fails the run at that stage with what is missing: nothing loops, and no
+later stage starts. Otherwise Archon appends `REVIEW: pass, by <model>` or
+`REVIEW: skipped: <reason>` as the last line of the stage's summary, from
+the structured data, so a later stage reads the record rather than the
+lead's prose. The evidence is the lead's own statement: Archon checks that
+it is there and what it says, not that the reviewer ran (§17).
 
 ### 8.3 Stage prompt files
 
@@ -1422,6 +1593,7 @@ literal `{{`.
 
 | Name | Stages | Nudges |
 | --- | --- | --- |
+| `adaptive` | build (work, `allow_delegation`, holds the declared review) → ship | tier = balanced, independent_reviewers. For ordinary repository changes: one lead sizes the work, delegates the parts worth splitting, integrates them and has the integrated diff reviewed once, at a depth matching the risk. `review = standard`, declared (§8.2). |
 | `quick-pr` | implement → ship | tier = fast |
 | `default-pr-review` | implement → review (1, all_pass, goto implement ×2) → ship | tier = balanced |
 | `bugfix` | reproduce (failing test) → fix → review (1, all_pass, goto fix ×2) → ship | tier = balanced, independent_reviewers. For describable bugs; quick-pr for trivial one-liners, strict-pr-review for security/concurrency bugs. |
@@ -1442,6 +1614,16 @@ literal `{{`.
 The `propose` and change-report stages the autonomy knobs insert (§18.1) use
 the shared prompts in `pipelines/_shared/`.
 
+`adaptive` has no review stage: its lead delegates the review inside `build`,
+and the pipeline declares that review as `standard` (§8.2). It is chosen by
+naming it (`pipeline = "adaptive"`, or a `default_pipeline`), never by the
+`review` knob, which selects `default-pr-review`, `strict-pr-review` or
+`quick-pr` when no pipeline is named. An enqueue that names it with
+`review = strict` or `none` is refused, and so is one in a repository whose
+ceiling allows only `strict` (§18.2). `ship` reads the `REVIEW:` line Archon
+wrote and refuses to ship without a pass or a reasoned skip, though a build
+without either never reaches it.
+
 ### 8.6 Stage contract (appended as instructions)
 
 > You are one stage of an Archon pipeline. Work only in `{{workspace}}`. Do
@@ -1457,6 +1639,39 @@ the shared prompts in `pipelines/_shared/`.
 A team stage's contract names the agent's role and the other roles, keeps
 it to its own worktree and role, and asks it to commit on its branch
 without pushing: only commits are merged.
+
+A stage agent that can delegate also gets a `## Delegation` section. The
+daemon writes it when it builds the spawn request, from what the agent can
+actually do (`allow_delegation` on its stage, or the item's `tools = yolo`),
+so both routes carry the same rules, and appends it after the contract. It
+states:
+
+- every child is a leaf (`leaf: true`);
+- how the workspace is shared: in a writable workspace a child that edits
+  gets `workspace_mode: "isolated"` and the lead brings accepted changes in
+  with `integrate_workspace`, while a child that only reads shares the
+  lead's workspace; in a `repo-readonly` workspace every child is read-only
+  and isolation and integration are not offered;
+- the item's effective model policy, in words: the allowed models (or "any
+  model Aether lists"), the denied ones and the effort cap. Aether's
+  `list_models` shows what is connected, not what is allowed, and the
+  watchdog cancels a child outside the policy (§7.4);
+- that every child is waited for or cancelled before the stage finishes,
+  because Archon cancels whatever still runs when the stage ends (§6.3),
+  and that a child that finished cannot be asked again, so a second look
+  after a change takes a new child;
+- the rules each child's `instructions` must carry. Aether copies nothing of
+  a parent's instructions to a delegated child (§17), so the contract does
+  not reach one: work only in the workspace it is given and never touch
+  other worktrees, other branches or the operator's checkout; do not push;
+  never override the git identity; ask the operator nothing; and read only,
+  for a reviewer always and for every child of a read-only stage.
+
+The stage a pipeline's declared review names (§8.2) gets a
+`## Review on record` section in its contract: the two `structured.review`
+forms, that Archon fails the run without one, and that Archon writes the
+`REVIEW:` line itself. Like the contract, all of this binds by instruction
+only; what Archon enforces is named where it is enforced.
 
 `Verdict::extract` reads the structured `verdict` field first, then the last
 `VERDICT:` line. The `BLOCKED:` prefix is turned into an item-level `Blocker`
@@ -1475,7 +1690,12 @@ does not push.
 
 `$ARCHON_CONFIG_DIR|~/.config/archon/config.toml`. Every field is optional,
 and the example below shows the defaults. Unknown keys are an error, so typos
-cannot silently disable limits.
+cannot silently disable limits. `archon setup` writes the file with every
+key commented out when there is none, and never touches one that exists.
+No other file in that directory configures Archon: an `archon.toml` from
+before 1.0 is not read, `archon doctor` warns about it, and `archond` posts
+one notice for it as it starts (`kv.legacy_config_told`), naming the file
+that is read.
 
 ```toml
 [aether]
@@ -1600,7 +1820,7 @@ defined in `archon_core::protocol` and served by `archon-daemon`.
 
 - Unix socket at mode 0600, NDJSON, 16 MiB frame cap.
 - Client frame: `{"req":N, "cmd":"<snake_case>", ...}`. The first frame must
-  be `hello {protocol_version: 5, client: "archon-cli"|"archon-mcp"|"archon-bench"}`.
+  be `hello {protocol_version: 6, client: "archon-cli"|"archon-mcp"|"archon-bench"}`.
 - Server frames: `{"frame":"reply","id":N,"result":{"Ok":{"reply":…,"data":…}}|{"Err":{"code":…,"message":…}}}`
   and `{"frame":"feed","sub":S,"item":FeedItem}`.
 - `ClientKind` is recorded per connection. The socket's file mode is the
@@ -1609,6 +1829,11 @@ defined in `archon_core::protocol` and served by `archon-daemon`.
   `RepoUpdate`, a `RepoAdd` with `auto_merge`, a hard pause, ...) is refused
   for `archon-mcp`. `RecordChatAnswer` is not one of them: it is the
   orchestrator's, checked by caller identity, and cannot answer a gate (§5.2).
+- `ForAgent {caller, request}` carries a tool call `archon mcp` forwards
+  for the agent Aether named as making it. `archond` authorizes the caller
+  and applies the inner request as one step (§11). A request from
+  `archon-mcp` that changes Archon and comes without this wrapper is an
+  unnamed call. It wraps no operator-only request and no second `ForAgent`.
 - The CLI takes an item id or its start. A whole id is sent as it is; a
   start goes to `ResolveItem {prefix}` first, which `archond` answers from
   one indexed range query: the one item, `not_found`, or `invalid_argument`
@@ -1655,6 +1880,59 @@ error message is cut at 4 KiB and a tool error's text at 16 KiB, ending in
 tool result that would not fit becomes a tool error suggesting `limit`, and
 any other response that would not fit becomes error `-32603` under the same
 id.
+
+Every tool that changes Archon acts for the orchestrator, and the agents it
+delegates to inherit its tool exposure (§4.4). So a mutating tool other than
+`message_orchestrator` answers only the current orchestrator, and `archond`
+is the one that decides:
+
+- `archon mcp` wraps such a call as `ForAgent { caller, request }` (§10),
+  with the agent Aether named on the call (`send_caller_meta = true`, §5.5),
+  and sends it bare when Aether named none. It asks nobody first: there is
+  one request, inside the call's 15 s.
+- `archond` compares the caller with `kv.orchestrator_agent` while it holds
+  the supervisor's authority lock for reading, and keeps holding it until
+  the request has been applied. Every path that puts another agent in charge
+  takes that lock for writing, so the orchestrator is not replaced between
+  the check and the change, and a call does not land for an agent that has
+  just stopped being the orchestrator. The answer comes from the store; no
+  Aether round trip is made.
+- Anyone else is refused with what Archon's records say it is and what to
+  do instead: a replaced orchestrator (stop), a stage agent
+  (`message_orchestrator`), a delegated agent of an item or of the
+  orchestrator (finish and report to its parent), or an agent Archon does
+  not know. That last one covers the moment after Aether restarted the
+  orchestrator into a new agent and before `archond` adopted it: the text
+  says to call once more in a few seconds.
+- Read-only tools answer any caller.
+
+**When Aether names no caller.** A registration written before Archon
+required `send_caller_meta`, or an `aetherd` that started before the line
+was added, sends calls without it. Refusing them all would lock an operator
+out of an orchestrator that an upgrade had just broken; forwarding them all
+would let a delegated agent change Archon. So `archond` forwards an unnamed
+mutating call only when the orchestrator in charge is one it has seen to be
+unable to delegate natively (`kv.orchestrator_sole_caller`, recorded from the
+agent's own config when it takes charge): then no agent of Archon's can
+be the caller but that orchestrator. In shared mode another agent of the
+operator's own daemon also sees these tools and is not told apart until
+callers are named, as before this check existed. Otherwise the call is
+refused with the fix. The first unnamed call
+sets `kv.mcp_callers_unnamed` and posts one `Blocker`; while it is set,
+every new orchestrator generation is created without `delegate`, with a
+note in its instructions saying why. A named call from the orchestrator
+clears it, says so in the feed, and the next generation delegates again.
+An orchestrator created by a release before delegation has no `delegate`
+either, so an upgraded install keeps working before anything is repaired.
+
+In dedicated mode the registration is Archon's own file and is repaired
+without the operator (§4.7). In shared mode Archon never edits the
+operator's Aether config: `archon doctor` fails the registration check with
+the line to add, and the notice above says to restart that `aetherd`.
+
+This guards against an agent queueing or cancelling work it was not asked
+to; it is not a security boundary, since any process of the operator's user
+can reach the socket (§5.5).
 
 | Tool | Arguments | Request |
 | --- | --- | --- |
@@ -1753,10 +2031,17 @@ it cannot race `Say` or a lagging pump. An `inbox.delivered` message from the
 `user` actor is pending until an `inbox.consumed` (at turn start or steered
 mid-turn) covers its inbox seq. From then on `archond` keeps the last
 assistant text, and on `agent.turn_completed` it emits that text. A turn that
-ends `failed` or `cancelled` emits nothing; the revived agent answers. The
+ends `failed` or `cancelled` emits nothing; the revived agent answers. A
+turn that ends waiting for something other than its inbox (`agent.waiting`
+with a condition, as when the orchestrator waits for an agent it delegated
+to) emits what it said and leaves the answer open: the last text of the
+turn that the wait's end wakes is emitted too, so a delegated result is
+shown as the reply. The answer closes at the first turn that ends any other
+way. While it is open, a turn woken by Archon news is shown as well, which
+is the price of not dropping the answer. The
 tracker is persisted in kv `chat_reply_state` with the last event seq it
 applied, so neither a restart nor a replay loses or repeats a reply.
-Assistant text from trigger-woken turns is never shown. Tool calls, thinking
+Assistant text from other trigger-woken turns is never shown. Tool calls, thinking
 and intermediate text are never shown. `archon log` and Aether's TUI show
 everything. `archon log --item <id>` keeps the entries about one item (its
 notices, questions and their answers, reports), `--kind` keeps some kinds
@@ -2417,8 +2702,11 @@ rubric), and a review task (seeded bug must be reported).
 | Aether connection drops | Reader EOF or id-0 notice. | Same backoff. On reconnect, a changed `instance_id` means Aether restarted: run reconciliation (`get_agent` and `get_task` for every live stage agent and the orchestrator). |
 | Aether restart kills native processes | `agent.failed` or an interrupted task. | Stage: infra retry (§6.3). Orchestrator: the supervisor path below. |
 | Orchestrator failed or cancelled | Orchestrator subscription, or `get_agent` at start. | `wake` in place. If refused, `restart` (new agent from checkpoint), store the new id, and write a `System` feed entry. The first revival of a streak runs at once; each later one waits 10s, 30s, 2m, 5m, then every 10m (`supervisor::REVIVAL_BACKOFF`). A turn that ends `ready` or `waiting` closes the streak. After 3 revivals in a row, post one `Blocker`; revival never stops for good, and `archon orchestrator restart` starts a fresh agent at once. Dispatch continues, because the queue does not depend on the orchestrator. |
-| Orchestrator restarted in Aether (`aether restart`) | `agent.restarted` on the orchestrator's subscription, or `restarted_as` at start and on reconnect. | Adopt the successor if its role is `archon-orchestrator`: store its id, close the failure streak, move the subscription to it, and write a `System` feed entry. Its held news follows (§5.4). A successor with another role is not adopted. |
+| Orchestrator restarted in Aether (`aether restart`) | `agent.restarted` on the orchestrator's subscription, or `restarted_as` at start and on reconnect. | Adopt the successor if its role is `archon-orchestrator`: store its id, close the failure streak, move the subscription to it, and write a `System` feed entry. Its held news follows (§5.4). A successor with another role is not adopted. A chain of restarts is followed to its newest orchestrator, and every agent left behind on the way is retired (next row). |
 | `archon` MCP server died in Aether (after a redeploy, say) | `mcp_servers` reports it `failed`: at every connect to Aether and every 60 s (`supervisor::MCP_CHECK_INTERVAL`). | `refresh` it, then restart the orchestrator so it gets the tools back. Both back off like revivals, and 3 failures in a row post one `Blocker` (below). |
+| Orchestrator replaced while its delegated children run | Any path above that puts a new agent in charge. | The children end. Aether's `cancel` takes an agent's live descendants along; a failure does not, and neither does Aether's `restart`. So every agent that stops being the orchestrator is written to `kv.orchestrator_retired`, with the sweep it is owed, before its successor is stored, and Archon sends `cancel` for it, which Aether applies to the subtree of an agent already stopped. An adoption retires every agent between the stored orchestrator and the adopted one, each with children of its own; a manual restart and a relink follow the same chain first, so they act on the agent in charge rather than on one Aether already replaced. A background task makes the owed sweeps from `archond`'s start on: at once when one becomes owed or Aether reconnects, then with the revival backoff while it fails. A sweep is done only when Aether answers its `cancel`, no longer knows the agent, or reports it ended. Its first failure and its later success are each a `System` entry. A sweep holds no lifecycle lock, so it never delays the orchestrator in charge, which is never swept. A record that cannot be read is reset with a `Blocker` that quotes it, rather than stopping the orchestrator. Records stay through the 7-day event retention, so a retired agent's late events and its children's spend are still Archon's, and are then pruned unless a sweep is still owed. The new agent does not know what was delegated. A `wake` in place keeps the children. |
+| A delegating stage agent settles while its children run | The stage's settle: its stored request has `leaf: false`. | `kv.descendant_stop:<stage run>` is written with the settle. No agent of that run is created (next stage or replacement) until Archon has cancelled the settled agent, which ends every live agent beneath it; the agent is first left to end its own turn, up to 60 s. Retried each dispatcher pass and after a restart; a refusal fails the run with a `Blocker` (§6.3). |
+| Aether names no caller on Archon's tools | An unnamed call that changes Archon reaches `archond`. | One `Blocker` with the fix; such calls are accepted only from an orchestrator that cannot delegate, and new generations start without `delegate`, until a named call arrives (§11). In dedicated mode the registration is repaired and Archon's `aetherd` restarted by the next command (§4.7). |
 | Orchestrator missing (first start) | No `kv.orchestrator_agent`. | Create it (§4.4). |
 | `archon mcp` cannot reach `archond` | Connect error in the proxy. | `connect_or_start` autostarts `archond` (`archon daemon run --detach`, which waits until the daemon listens and fails as soon as it exits). If that fails, return a tool error with the launcher's stderr and the startup log. |
 | Stage exceeds deadline | Timer. | `cancel` the agent, mark the stage `timed_out`, and let the driver treat it as a failed verdict or failed work. |
@@ -2498,6 +2786,8 @@ so a pass costs what is still stored.
 | `link_child_<agent>`, `link_unchecked_<agent>`, `link_cancelled_<agent>` | The child's item is terminal and last changed more than 7 days ago. For the orchestrator's children, which have no item, the pass asks `get_agent` (at most 32 a pass). The first pass that finds the child ended records when, in `link_ended_<agent>`, and all its entries go 7 days after that. |
 | `link_stage_agent_<agent>` | Its item is terminal and last changed more than 7 days ago (or is gone). A recorded stage agent is also found through its stage run (§4.6). |
 | `report:<id>` | The report is settled and last changed more than 7 days ago (§14). An ended or disconnected report is kept while its HTML file exists. |
+| An entry of `orchestrator_retired` | The orchestrator was replaced more than 7 days ago and the sweep of what it left running is no longer owed (§16). |
+| `descendant_stop:<stage run>` | Not by this pass: the dispatcher deletes it once Aether has confirmed the stop (§6.3). |
 | `orchestrator_gave_up`, `orchestrator_failures` | At once: the give-up rule that wrote them was replaced by the revival backoff, and nothing reads them. |
 
 The retention keeps what late events still need: a watched child's entry
@@ -2506,9 +2796,11 @@ and a pending `link_unchecked_` marker makes a replayed `agent.created`
 check the child again. Entries that live state needs are never pruned:
 `run_node:<run>` (deleted when the node is retired, §4.5), the held news in
 `trigger_outbox` and its key counter `trigger_seq` (§5.4), the revival
-streak in `orchestrator_backoff`, and the other single keys (cursors, the
-orchestrator's id and generation, the hard pause, the budget and disk holds), which do
-not grow with work. Questions are rows, not `kv`, so an answer not yet
+streak in `orchestrator_backoff`, a replaced orchestrator whose sweep is
+still owed in `orchestrator_retired`, an owed `descendant_stop:`, and the
+other single keys (cursors, the orchestrator's id and
+generation, the hard pause, the budget and disk holds), which do not grow
+with work. Questions are rows, not `kv`, so an answer not yet
 delivered is never pruned, nor is a report whose reopen question waits.
 
 ## 17. Aether limitations and how Archon handles them
@@ -2517,16 +2809,22 @@ delivered is never pruned, nor is a report whose reopen question waits.
    Aether can supply caller identity when a server opts into
    `send_caller_meta`; Archon requires it for stage messaging (§5.5).
    `ToolExposure::Except` hides orchestrator mutations from stage agents;
-   the other exposed calls are still treated as the orchestrator's.
+   the other exposed calls are still treated as the orchestrator's, and
+   `archond` lets a mutating one through only for the current orchestrator,
+   by the caller Aether names (§11).
    In the default dedicated mode, the only daemon that loads `archon mcp` is
    Archon's own (§4.7), so the operator's plain Aether agents never see
    `mcp__archon__*`. Only in shared mode can any other Aether agent that the
-   operator runs see and call them.
+   operator runs see them; it can read, and change Archon only through a
+   registration that sends no caller identity, while the orchestrator in
+   charge cannot delegate (§11).
 2. **MCP servers load at Aether start.** Aether reads `[[mcp.servers]]` only
    when `aetherd` starts, and no command reloads them. In dedicated mode,
    `archon setup` writes the instance's config before its daemon first
-   starts, so no restart is needed. After `archon setup --resync`, restart
-   the instance with `archon daemon stop --aether`. In shared mode, the
+   starts, so no restart is needed. When Archon changes the instance's
+   registration later (a repair after an upgrade, or `archon setup
+   --resync` replacing the entry), it restarts the instance's `aetherd`
+   itself (§4.7). In shared mode, the
    operator must restart their own `aetherd` after the first `archon setup`,
    and `archon doctor` reports "aetherd has not loaded the archon server"
    until then. `archond` calls `mcp_servers{refresh:true}` to reconnect a
@@ -2544,9 +2842,31 @@ delivered is never pruned, nor is a report whose reopen question waits.
    (§13), so a build or test they run writes there rather than into the
    operator's checkout, and cannot see or disturb its uncommitted work,
    but nothing stops an agent from writing outside its workspace.
-5. **Hiding `delegate` relies on `ToolExposure` covering harness tools on the
-   native MCP bridge** (Aether documents that tool exposure applies to native
-   agents). The §7.4 watchdog is the backstop.
+   An agent the orchestrator delegates to is given no repository at all: it
+   works in the orchestrator's scratch workspace, and one whose scope leads
+   into a registered repository or the worktrees root is cancelled (§4.4).
+   That check reads the scope Aether holds for the agent; it cannot see a
+   path a native tool opens outside that scope, so a helper stays out of
+   repositories by its placement and its instructions, not by a sandbox.
+   The same holds for a stage agent's delegated children: an editing child
+   gets an isolated worktree of its own, a reading child shares the lead's
+   worktree and is read-only by instruction only. A pipeline's declared
+   review (§8.2) is likewise the lead's statement that a reviewer passed the
+   change: Archon checks the record, not that the reviewer ran.
+5. **`delegate` takes no tool exposure or approval policy for the child,
+   and copies none of its parent's instructions.** A child inherits its
+   parent's `config`, so the orchestrator's children see what it sees, but
+   its instructions are replaced by the ones `delegate` was passed, or by
+   none. A rule therefore reaches a child only when its parent writes it
+   there: the orchestrator's prompt (§4.4), the stage contract (§8.6) and
+   the `adaptive` build prompt each require that, by instruction only.
+   Hiding `integrate_workspace` relies on
+   `ToolExposure` covering harness tools on the native MCP bridge (Aether
+   documents that it does), Archon's mutating tools are refused to children
+   by `archond` (§11), and the §7.4 watchdog is the backstop for models.
+   Under the operator's `[approval] default`, a child's gated call waits for
+   an approval in Aether like the orchestrator's own (item 9). A child also
+   inherits the orchestrator's memory scope, not its repository's.
 6. **Costs are reported or estimated, not billed**, and unknown cost is not
    zero. Budgets are best-effort floors, and Aether's `cost_budget` does not
    stop a turn already running.
@@ -2573,6 +2893,31 @@ delivered is never pruned, nor is a report whose reopen question waits.
 11. **Pausing an agent in Aether stops it at a turn boundary.** A turn that
     is already running completes, so `archon pause --hard` does not stop a
     stage mid-turn.
+12. **A delegated child's workspace must lie under its parent's.** Aether
+    compares the two paths as written for a shared workspace, and resolves
+    links only for an isolated one. A symlink inside the parent's workspace
+    therefore passes Aether's check for a shared child while leading
+    anywhere on disk. Archon keeps no such link and resolves the paths
+    itself: the watchdog cancels a helper of the orchestrator whose scope
+    leads into a registered repository or the worktrees root (§4.4).
+    Repository work goes through the `ask` and `errand` pipelines and items.
+13. **Aether cancels an agent's children with it, but not when its task
+    completes or fails.** A stage agent that settles while a child still
+    runs would leave the child working beside the next stage. Archon owes a
+    `cancel` of every settled stage agent that could delegate and starts
+    nothing else in that run before Aether has taken it (§6.3). It relies on
+    Aether applying a `cancel` of an already ended agent to its live
+    descendants. Aether's cancellation is written to do so, but its protocol
+    does not state it as a contract; if a later Aether refuses such a
+    `cancel`, the run fails with a `Blocker` rather than going on.
+14. **Aether's own limits apply to the orchestrator's children.**
+    `[scheduler] max_concurrent_turns` is shared with stage agents, so many
+    children slow stages down. `[scheduler] run_budget_usd`, if set in the
+    Aether config Archon uses, is cumulative for a run and never ages out:
+    the long-lived orchestrator's run eventually crosses it, and every
+    `delegate` is then refused until `archon orchestrator restart` starts a
+    new run. The dedicated instance's config is seeded from the operator's
+    (§4.7), so the budget is set there whenever the operator set one.
 
 ## 18. Autonomy
 
@@ -2711,9 +3056,10 @@ closes with the gate, right after the decision or the finish (§14).
 
 | Agent | `tools = guarded` | `tools = yolo` |
 | --- | --- | --- |
-| Orchestrator | The operator's `[approval] default`. Hides `delegate` and `integrate_workspace`. | `approval: {"require_for": []}`. Hides the same two tools. |
-| Stage agents | Approval gates nothing (they are headless, §4.5). Always a leaf, whatever the stage's `allow_delegation`. Exposes `message_orchestrator`, hides the other Archon tools. | Approval gates nothing. May delegate (`leaf = false`). Exposes `message_orchestrator` and Archon's read-only tools. |
-| Their subagents | Inherit their parent's approval policy. | The same, so nothing waits. |
+| Orchestrator | The operator's `[approval] default`. Hides `integrate_workspace`, and `delegate` while Aether names no callers (§11). | `approval: {"require_for": []}`. Hides the same tools. |
+| Its delegated children | Inherit its approval policy and tool exposure. `archond` refuses them Archon's mutating tools (§11). | The same, so nothing waits. |
+| Stage agents | Approval gates nothing (they are headless, §4.5). A leaf, unless the stage sets `allow_delegation` (`leaf = false`). Exposes `message_orchestrator`, hides the other Archon tools and Aether's schedule tools. | Approval gates nothing. May delegate (`leaf = false`). Exposes `message_orchestrator` and Archon's read-only tools; hides Aether's schedule tools. |
+| Their subagents | Inherit their parent's approval policy and tool exposure. | The same, so nothing waits. |
 
 A stage agent's `tools` knob is the item's. The orchestrator serves every
 item, so its knob is the global `[autonomy] default` `tools`. A change
@@ -2722,23 +3068,54 @@ applies from the orchestrator's next generation, and
 
 What stays hidden, and why:
 
-- **`delegate` and `integrate_workspace`, from the orchestrator.** Every
-  worker goes through Archon so that caps, budgets, the model allowlist and
-  the autonomy ceiling apply. An Aether `delegate` would bypass all four.
-  `integrate_workspace` only merges `delegate`'s isolated worktrees.
+- **`integrate_workspace`, from the orchestrator.** It copies a delegated
+  child's edits into the parent's workspace. A change to a repository must
+  be an item, so that the worktree, the pipeline's gates, the ship mode, the
+  caps and the autonomy ceiling apply; a child's edits would bypass all of
+  them.
+  `delegate` itself is exposed: the orchestrator uses it for work that
+  needs no repository (§4.4). Of the limits an item has, the model policy
+  and the daily and total budgets reach such a child; the caps and the
+  autonomy knobs do not.
 - **Archon's mutating tools, from stage agents.** `enqueue`, `cancel_item`,
   `pause`, `notify`, `set_directive` and the rest act for the orchestrator.
   A stage could otherwise queue work, cancel its own item or change
   directives outside the orchestrator's decisions and the operator's chat.
+  The orchestrator's children are not hidden from them, because `delegate`
+  cannot narrow tools; `archond` refuses their calls instead (§11).
   Under `yolo`, the read-only tools (`get_item`, `list_queue`,
   `list_pipelines`, …) are exposed. `message_orchestrator` is the mutation
   exception in every mode: it records attributed news without changing
   queue decisions (§5.5).
-- **Aether's `delegate`, from `guarded` stage agents.** They are created as
-  leaves. Each delegate works in its own copy of the workspace, and one
-  such fan-out once used about 77 GB of disk. Only `tools = yolo` lets
-  a stage agent delegate. A stage's `allow_delegation` no longer grants it,
-  and is kept only so pipelines that set it still load.
+- **Aether's `delegate`, from `guarded` stage agents whose stage does not
+  set `allow_delegation`.** They are created as leaves. A stage that sets
+  `allow_delegation = true` gets `leaf = false` under `guarded` too, and
+  `tools = yolo` lets every stage agent delegate. The flag changes nothing
+  else: which Archon tools the agent sees still follows the item's `tools`.
+  Aether's isolated delegated workspaces are managed Git worktrees that
+  share the repository's Git objects. They materialise the tracked files
+  and the untracked files that are not ignored; ignored caches and build
+  outputs are left out. What a child builds in its worktree still costs
+  disk.
+- **Aether's own tools, from a stage agent that can delegate.** `leaf =
+  false` also brings Aether's orchestration tools, to guarded stage agents
+  for the first time. The same list applies under `guarded` and `yolo`, and
+  a child inherits it:
+  - Hidden: `create_schedule`, `update_schedule` and `list_schedules`. A
+    stage is bounded work that Archon settles and stops; a schedule would
+    wake an agent after its stage ended, outside every cap and budget of
+    the item.
+  - Hidden where the pipeline's workspace is `repo-readonly`:
+    `integrate_workspace`. Nothing is integrated into a read-only workspace,
+    and its delegation rules offer no isolated children (§8.6).
+  - Kept: `delegate`; `integrate_workspace` in a writable workspace, which
+    is how an isolated child's accepted edits reach the lead's worktree;
+    `list_agents`, `list_tasks`, `read_task` and `cancel_agent`, with which
+    a lead follows, reads and stops its own children; and `list_models`,
+    which shows what is connected, while the delegation rules state what is
+    allowed and the watchdog enforces it (§7.4). Aether lets `cancel_agent`
+    act only on the caller's own delegated descendants; the read tools are
+    Aether's listings, which Archon does not narrow.
 
 ### 18.5 Operator directives
 

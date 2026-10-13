@@ -12,17 +12,21 @@ use archon_aether::wire;
 use archon_core::Timestamp;
 use archon_core::aether_ids::AetherRunId;
 use archon_core::autonomy::ToolsMode;
+use archon_core::catalog::WorkspaceMode;
+use archon_core::config::Config;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
 use archon_core::ports::{SpawnRequest, SpawnedAgent};
 use archon_core::queue::QueueItem;
+use archon_core::repo::Repo;
 use archon_core::run::{PipelineRun, StageOutcome, StageRun, StageState};
 use archon_pipeline::SpawnPlan;
+use archon_pipeline::contract;
 use archon_pipeline::spec::MAX_TIMEOUT_MINUTES;
 use archon_queue::Store;
 use serde::{Deserialize, Serialize};
 
-use super::{FollowUp, RunTable, finish, naming, run_node, settle, team};
+use super::{FollowUp, RunTable, descendants, finish, naming, run_node, settle, team};
 use crate::context::DaemonContext;
 use crate::disk::{self, FullDisk};
 use crate::resolve::{self, RepoEnv};
@@ -273,7 +277,8 @@ fn reserve_plans(
         let target = Target {
             run: &run,
             item: &item,
-            repo_name: repo.as_ref().map(|r| r.name.as_str()),
+            repo: repo.as_ref(),
+            config: &ctx.config,
         };
         let share = slot_budget(budget, &plan);
         ids.push(reserve_one(
@@ -305,7 +310,33 @@ pub(super) fn same_slot_as(a: &StageRun, b: &StageRun) -> bool {
 struct Target<'a> {
     run: &'a PipelineRun,
     item: &'a QueueItem,
-    repo_name: Option<&'a str>,
+    repo: Option<&'a Repo>,
+    /// The global `[models]` policy, which the repository's narrows.
+    config: &'a Config,
+}
+
+impl Target<'_> {
+    /// Whether the agent of `plan` gets Aether's `delegate`: its stage
+    /// allows it, or the item's `tools = yolo` withholds nothing.
+    fn delegates(&self, plan: &SpawnPlan) -> bool {
+        plan.allow_delegation || self.item.autonomy.tools == ToolsMode::Yolo
+    }
+
+    /// The stage contract, with the delegation rules when the agent can
+    /// delegate. They state the model policy its children are held to.
+    fn instructions(&self, plan: &SpawnPlan) -> String {
+        assert!(!plan.instructions.is_empty(), "every stage has a contract");
+        if !self.delegates(plan) {
+            return plan.instructions.clone();
+        }
+        // An unreadable policy refuses this spawn when it is issued (`claim`).
+        let models = match RepoEnv::new(self.repo.cloned()) {
+            Ok(env) => env.policy(self.config).describe(),
+            Err(error) => format!("none: the repository's model policy cannot be read ({error})"),
+        };
+        let rules = contract::delegation_rules(plan.workspace, &models);
+        format!("{}{rules}", plan.instructions)
+    }
 }
 
 /// Persist the exact request, then the `spawning` stage run that owns it,
@@ -366,9 +397,8 @@ fn slot_budget(budget: Option<f64>, plan: &SpawnPlan) -> Option<f64> {
     }
 }
 
-/// Stage agents are headless, so the backend creates them with an approval
-/// policy that gates nothing (`stage_create_agent`); `yolo` also lets them
-/// delegate. The name is for people; the labels carry the exact identity.
+/// Headless stage agents use ungated approvals; delegation follows the stage
+/// flag or yolo tools. Labels carry identity independently of the display name.
 fn build_request(
     target: &Target<'_>,
     plan: &SpawnPlan,
@@ -389,31 +419,18 @@ fn build_request(
             .is_none_or(|root| workspace.starts_with(root)),
         "a team run's agents work under its team directory"
     );
-    let labels: BTreeMap<String, String> = [
-        ("archon.item", item.id.to_string()),
-        ("archon.run", run.id.to_string()),
-        ("archon.stage", plan.stage_id.clone()),
-        ("archon.stage_run", id.to_string()),
-        ("archon.attempt", plan.attempt.to_string()),
-        ("archon.fan", plan.fan_index.to_string()),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.to_owned(), v))
-    .collect();
     SpawnRequest {
         idempotency_key: id.as_str().to_owned(),
         role: format!("archon-stage:{}/{}", run.pipeline, plan.stage_id),
         name: naming::stage_agent_name(&item.id, plan, retry, &item.title),
         objective: plan.prompt.clone(),
-        instructions: plan.instructions.clone(),
+        instructions: target.instructions(plan),
         choice: plan.choice.clone(),
         workspace,
-        repository: target.repo_name.map(str::to_owned),
-        labels,
-        hidden_tools: hidden_tools(item.autonomy.tools),
-        // Delegated workspaces are full copies (77 GB seen once), so the
-        // item's `tools`, not the pipeline, decides; see `StageSpec::allow_delegation`.
-        leaf: item.autonomy.tools != ToolsMode::Yolo,
+        repository: target.repo.map(|repo| repo.name.clone()),
+        labels: labels(target, plan, id),
+        hidden_tools: hidden_tools(item.autonomy.tools, plan.workspace),
+        leaf: !target.delegates(plan),
         cost_budget_usd: budget,
         aether_cost_budget: None,
         deadline: Some(deadline(now, plan.timeout_minutes)),
@@ -423,8 +440,30 @@ fn build_request(
     }
 }
 
-/// Messaging stays available in every mode; other mutations are hidden.
-fn hidden_tools(tools: ToolsMode) -> Vec<String> {
+/// What ties the agent, and through Aether its children, to this stage run.
+fn labels(target: &Target<'_>, plan: &SpawnPlan, id: &StageRunId) -> BTreeMap<String, String> {
+    [
+        ("archon.item", target.item.id.to_string()),
+        ("archon.run", target.run.id.to_string()),
+        ("archon.stage", plan.stage_id.clone()),
+        ("archon.stage_run", id.to_string()),
+        ("archon.attempt", plan.attempt.to_string()),
+        ("archon.fan", plan.fan_index.to_string()),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_owned(), v))
+    .collect()
+}
+
+/// Aether tools no stage agent gets: a stage is bounded work, and a
+/// schedule would outlive it (ARCHITECTURE §18.4).
+const HIDDEN_NATIVE_TOOLS: [&str; 3] = ["create_schedule", "update_schedule", "list_schedules"];
+/// Hidden too where the workspace is read-only: nothing is integrated into it.
+const INTEGRATE_TOOL: &str = "integrate_workspace";
+
+/// What a stage agent does not see: Archon's tools that act for the
+/// orchestrator, and the Aether tools above. A child inherits the list.
+fn hidden_tools(tools: ToolsMode, workspace: WorkspaceMode) -> Vec<String> {
     let hidden = match tools {
         ToolsMode::Guarded => archon_core::mcp_tools::qualified_names(),
         ToolsMode::Yolo => archon_core::mcp_tools::mutating_names(),
@@ -433,16 +472,17 @@ fn hidden_tools(tools: ToolsMode) -> Vec<String> {
         !hidden.is_empty(),
         "stage agents never act for the orchestrator"
     );
+    let read_only = workspace == WorkspaceMode::RepoReadonly;
+    let native = HIDDEN_NATIVE_TOOLS
+        .into_iter()
+        .chain(read_only.then_some(INTEGRATE_TOOL));
     hidden
         .into_iter()
         .filter(|name| name != &archon_core::mcp_tools::qualified("message_orchestrator"))
+        .chain(native.map(str::to_owned))
         .collect()
 }
 
-/// A replacement for a stage run lost to an infrastructure failure: the
-/// slot's plan under a fresh key, deadline and budget, started strictly
-/// after `failed` so it supersedes it. `None` when the budget, or a team
-/// slot's share of it, is used up.
 pub(super) fn reserve_replacement(
     ctx: &DaemonContext,
     store: &mut Store,
@@ -472,7 +512,8 @@ pub(super) fn reserve_replacement(
     let target = Target {
         run: &run,
         item: &item,
-        repo_name: repo.as_ref().map(|r| r.name.as_str()),
+        repo: repo.as_ref(),
+        config: &ctx.config,
     };
     let Some(budget) = replacement_budget(store, failed, plan, budget, estimates)? else {
         return Ok(None);
@@ -658,6 +699,10 @@ async fn claim(ctx: &DaemonContext, id: &StageRunId) -> Result<Claimed, ArchonEr
             return Ok(Claimed::Skip);
         }
         let run = store.run(&stage.run)?;
+        // What an earlier stage agent of the run delegated is stopped first.
+        if !run.state.is_terminal() && descendants::holds(&store, &run.id)? {
+            return Ok(Claimed::Skip);
+        }
         let item = store.item(&run.item)?;
         let repo = item
             .repo

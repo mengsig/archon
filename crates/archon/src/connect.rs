@@ -48,8 +48,18 @@ pub async fn ensure_aether() -> anyhow::Result<()> {
     })
     .await
     .context("starting Archon's own aetherd")??;
-    if start == Start::Started {
-        tracing::info!(socket = %socket.display(), "started Archon's own aetherd");
+    match start {
+        Start::AlreadyRunning => {}
+        Start::Started => {
+            tracing::info!(socket = %socket.display(), "started Archon's own aetherd");
+        }
+        Start::Restarted => eprintln!(
+            "archon: an older `archon setup` registered Archon's tools without \
+             `send_caller_meta = true`, which archond now needs to tell its orchestrator \
+             from other agents. The registration was updated and Archon's own aetherd \
+             (socket {}) restarted to load it.",
+            socket.display()
+        ),
     }
     Ok(())
 }

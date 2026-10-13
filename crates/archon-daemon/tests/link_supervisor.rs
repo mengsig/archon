@@ -22,6 +22,29 @@ use serde_json::{Value, json};
 
 const ORCH: &str = "agt_0001";
 const ORCH_2: &str = "agt_0002";
+const ORCH_3: &str = "agt_0003";
+/// `kv`: the orchestrators Archon replaced, and whether their sweep is owed.
+const RETIRED_KEY: &str = "orchestrator_retired";
+
+/// The replaced orchestrators on record, each with whether what it left
+/// running is still to be cancelled.
+async fn retired(harness: &Harness) -> Vec<(String, bool)> {
+    let raw = harness.kv(RETIRED_KEY).await.unwrap_or_else(|| "[]".into());
+    let record: Vec<Value> = serde_json::from_str(&raw).expect("the record is a list");
+    let entry = |retired: &Value| {
+        let agent = retired["agent"].as_str().expect("an agent id").to_owned();
+        (agent, retired["owed"].as_bool().expect("owed or not"))
+    };
+    record.iter().map(entry).collect()
+}
+
+fn owed(agent: &str) -> (String, bool) {
+    (agent.to_owned(), true)
+}
+
+fn swept_already(agent: &str) -> (String, bool) {
+    (agent.to_owned(), false)
+}
 
 fn agent_in(id: &str, state: &str) -> Value {
     let mut agent = fake::agent(id, None);
@@ -174,6 +197,7 @@ async fn a_refused_wake_falls_back_to_restart() {
         "wake",
         Scripted::refuse("invalid_transition", "not wakeable"),
     );
+    harness.fake.script("cancel", Scripted::ok());
     harness.fake.script(
         "restart",
         Scripted::reply("agent", agent_in(ORCH_2, "ready")),
@@ -181,6 +205,332 @@ async fn a_refused_wake_falls_back_to_restart() {
     let id = supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
     assert_eq!(id, agent_id(ORCH_2));
     assert_eq!(harness.fake.received_named("restart").len(), 1);
+    // A failed agent's children outlive it, and would report to nobody.
+    let received = harness.fake.received();
+    let sent = |cmd: &str| received.iter().position(|c| c["cmd"] == cmd).unwrap();
+    assert_eq!(received[sent("cancel")]["agent"], ORCH);
+    assert!(
+        sent("cancel") < sent("restart"),
+        "swept before it is replaced"
+    );
+    // On record all the same: its children's last events are still Archon's.
+    assert_eq!(retired(&harness).await, [swept_already(ORCH)]);
+}
+
+/// The replacement is not made while the old agent's children may still
+/// run: the revival fails, and is tried again at the streak's pace.
+#[tokio::test]
+async fn a_failed_sweep_of_the_old_orchestrators_children_defers_the_revival() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    agent_table(&harness, &[(ORCH, "failed")]);
+    harness.fake.script(
+        "wake",
+        Scripted::refuse("invalid_transition", "not wakeable"),
+    );
+    harness
+        .fake
+        .script("cancel", Scripted::refuse("internal", "store busy"));
+    let refused = supervisor::ensure_orchestrator(&harness.ctx).await;
+    assert!(
+        matches!(&refused, Err(ArchonError::Aether(why)) if why.contains("store busy")),
+        "{refused:?}"
+    );
+    assert!(harness.fake.received_named("restart").is_empty());
+    assert_eq!(
+        harness.kv(keys::ORCHESTRATOR_AGENT).await.as_deref(),
+        Some(ORCH)
+    );
+    assert!(next_revival_in(&harness) <= supervisor::REVIVAL_BACKOFF[0]);
+    let paced = deferred(&harness).await;
+    assert!(paced.contains("failed"), "the next try waits: {paced}");
+    assert_eq!(harness.fake.received_named("wake").len(), 1);
+}
+
+/// A restart Aether fails without refusing says nothing about whether the
+/// agent can be restarted: a fresh generation would lose its conversation.
+#[tokio::test]
+async fn a_restart_that_merely_fails_is_retried_and_never_replaced_by_a_new_generation() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    agent_table(&harness, &[(ORCH, "cancelled")]);
+    harness
+        .fake
+        .script("restart", Scripted::refuse("internal", "store busy"));
+    let failed = supervisor::ensure_orchestrator(&harness.ctx).await;
+    assert!(
+        matches!(&failed, Err(ArchonError::Aether(why)) if why.contains("store busy")),
+        "{failed:?}"
+    );
+    assert!(harness.fake.received_named("create_agent").is_empty());
+    assert_eq!(
+        harness.kv(keys::ORCHESTRATOR_AGENT).await.as_deref(),
+        Some(ORCH)
+    );
+
+    let pause = supervisor::REVIVAL_BACKOFF[0].as_secs_f64();
+    harness.rewind_backoff(pause).await;
+    harness.fake.script(
+        "restart",
+        Scripted::reply("agent", agent_in(ORCH_2, "ready")),
+    );
+    let id = supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    assert_eq!(id, agent_id(ORCH_2), "the same conversation, restarted");
+    assert!(harness.fake.received_named("create_agent").is_empty());
+}
+
+/// `get_agent` answers a restart chain: each agent's state and successor.
+fn restart_chain(harness: &Harness, chain: &[(&str, &str, &str, Option<&str>)]) {
+    let agents: HashMap<String, Value> = chain
+        .iter()
+        .map(|(id, role, state, successor)| {
+            let mut agent = agent_in(id, state);
+            agent["role"] = json!(role);
+            agent["restarted_as"] = json!(successor);
+            ((*id).to_owned(), agent)
+        })
+        .collect();
+    harness.fake.set_responder(
+        "get_agent",
+        Arc::new(move |cmd| {
+            let id = cmd["id"].as_str().unwrap_or_default();
+            match agents.get(id) {
+                Some(agent) => Scripted::reply("agent", agent.clone()),
+                None => Scripted::refuse("not_found", "no such agent"),
+            }
+        }),
+    );
+}
+
+fn swept(harness: &Harness) -> Vec<Value> {
+    let cancels = harness.fake.received_named("cancel");
+    cancels.iter().map(|cmd| cmd["agent"].clone()).collect()
+}
+
+/// A sweep Aether refuses is owed and retried, said once, and neither holds
+/// the successor up nor undoes its adoption.
+#[tokio::test]
+async fn a_refused_sweep_is_owed_and_said_once_while_the_successor_serves() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    let role = supervisor::ORCHESTRATOR_ROLE;
+    restart_chain(
+        &harness,
+        &[
+            (ORCH, role, "failed", Some(ORCH_2)),
+            (ORCH_2, role, "running", None),
+        ],
+    );
+    let mut watch = harness.ctx.supervisor.watch();
+    let id = supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    assert_eq!(id, agent_id(ORCH_2));
+    assert_eq!(*watch.borrow_and_update(), Some(agent_id(ORCH_2)));
+    assert!(swept(&harness).is_empty(), "adoption waits for no sweep");
+    assert_eq!(retired(&harness).await, [owed(ORCH)]);
+
+    for _ in 0..2 {
+        harness
+            .fake
+            .script("cancel", Scripted::refuse("internal", "store busy"));
+        let done = supervisor::sweep_retired(&harness.ctx).await.unwrap();
+        assert!(!done, "Aether has not acknowledged the sweep");
+        assert_eq!(retired(&harness).await, [owed(ORCH)], "kept in the store");
+        let serving = supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+        assert_eq!(serving, agent_id(ORCH_2), "an owed sweep stops nothing");
+    }
+    let notes = harness.system_notes().await;
+    let said: Vec<&String> = notes.iter().filter(|n| n.contains("store busy")).collect();
+    assert_eq!(said.len(), 1, "a failing sweep is said once: {notes:?}");
+    assert!(
+        said[0].contains(ORCH) && said[0].contains("keeps retrying"),
+        "{said:?}"
+    );
+
+    harness.fake.script("cancel", Scripted::ok());
+    assert!(supervisor::sweep_retired(&harness.ctx).await.unwrap());
+    assert_eq!(swept(&harness), [ORCH, ORCH, ORCH], "retried, then done");
+    assert_eq!(retired(&harness).await, [swept_already(ORCH)]);
+    let notes = harness.system_notes().await;
+    assert!(
+        notes.last().unwrap().contains("Cancelled what"),
+        "{notes:?}"
+    );
+
+    // Nothing is owed any more: an unscripted `cancel` would be refused.
+    assert!(supervisor::sweep_retired(&harness.ctx).await.unwrap());
+    assert_eq!(swept(&harness).len(), 3);
+    let adopted = notes
+        .iter()
+        .filter(|n| n.contains("was restarted in Aether"));
+    assert_eq!(adopted.count(), 1, "adopted once: {notes:?}");
+}
+
+/// Aether restarted the orchestrator more than once while Archon was away:
+/// each generation left behind has children that would report to nobody.
+#[tokio::test]
+async fn every_retired_generation_of_a_restart_chain_is_swept() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    let role = supervisor::ORCHESTRATOR_ROLE;
+    restart_chain(
+        &harness,
+        &[
+            (ORCH, role, "failed", Some(ORCH_2)),
+            (ORCH_2, role, "failed", Some(ORCH_3)),
+            (ORCH_3, role, "running", None),
+        ],
+    );
+    let id = supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    assert_eq!(id, agent_id(ORCH_3));
+    assert_eq!(
+        harness.kv(keys::ORCHESTRATOR_AGENT).await.as_deref(),
+        Some(ORCH_3)
+    );
+    assert_eq!(retired(&harness).await, [owed(ORCH), owed(ORCH_2)]);
+
+    // The first sweep fails; the second generation's is made all the same.
+    harness
+        .fake
+        .script("cancel", Scripted::refuse("internal", "store busy"));
+    harness.fake.script("cancel", Scripted::ok());
+    assert!(!supervisor::sweep_retired(&harness.ctx).await.unwrap());
+    assert_eq!(swept(&harness), [ORCH, ORCH_2]);
+    assert_eq!(retired(&harness).await, [owed(ORCH), swept_already(ORCH_2)]);
+
+    harness.fake.script("cancel", Scripted::ok());
+    assert!(supervisor::sweep_retired(&harness.ctx).await.unwrap());
+    assert_eq!(swept(&harness), [ORCH, ORCH_2, ORCH], "never the successor");
+    assert_eq!(
+        retired(&harness).await,
+        [swept_already(ORCH), swept_already(ORCH_2)]
+    );
+}
+
+/// A successor that is no orchestrator ends the chain before it, and the
+/// agent that stays in charge keeps its children.
+#[tokio::test]
+async fn the_orchestrator_left_in_charge_of_a_restart_chain_is_never_swept() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    let role = supervisor::ORCHESTRATOR_ROLE;
+    restart_chain(
+        &harness,
+        &[
+            (ORCH, role, "cancelled", Some(ORCH_2)),
+            (ORCH_2, role, "running", Some(ORCH_3)),
+            (ORCH_3, "worker", "running", None),
+        ],
+    );
+    let id = supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    assert_eq!(id, agent_id(ORCH_2));
+    harness.fake.script("cancel", Scripted::ok());
+    assert!(supervisor::sweep_retired(&harness.ctx).await.unwrap());
+    assert_eq!(swept(&harness), [ORCH]);
+    assert_eq!(retired(&harness).await, [swept_already(ORCH)]);
+}
+
+/// An adoption that stopped before the stored id changed leaves the old
+/// agent both in charge and on record: its sweep waits for the switch.
+#[tokio::test]
+async fn an_owed_sweep_never_cancels_the_orchestrator_still_in_charge() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    let record = json!([{"agent": ORCH, "at": archon_core::now(), "owed": true}]);
+    harness.set_kv(RETIRED_KEY, &record.to_string()).await;
+
+    let done = supervisor::sweep_retired(&harness.ctx).await.unwrap();
+    assert!(!done, "still owed once the switch is made");
+    assert!(swept(&harness).is_empty());
+    assert_eq!(retired(&harness).await, [owed(ORCH)]);
+}
+
+/// Aether restarts an agent as often as it is asked to: no length of chain
+/// leaves Archon without its orchestrator.
+#[tokio::test]
+async fn a_long_restart_chain_is_followed_to_its_end() {
+    const RESTARTS: usize = 40;
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let ids: Vec<String> = (1..=RESTARTS + 1).map(|n| format!("agt_{n:04}")).collect();
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, &ids[0]).await;
+    let role = supervisor::ORCHESTRATOR_ROLE;
+    let chain: Vec<(&str, &str, &str, Option<&str>)> = ids
+        .iter()
+        .enumerate()
+        .map(|(at, id)| match ids.get(at + 1) {
+            Some(next) => (id.as_str(), role, "cancelled", Some(next.as_str())),
+            None => (id.as_str(), role, "running", None),
+        })
+        .collect();
+    restart_chain(&harness, &chain);
+
+    let id = supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    assert_eq!(id, agent_id(&ids[RESTARTS]));
+    let record = retired(&harness).await;
+    assert_eq!(record.len(), RESTARTS, "every generation left behind");
+    assert!(record.iter().all(|(_, owed)| *owed), "{record:?}");
+    assert_eq!(record[0].0, ids[0]);
+}
+
+/// Aether forgot the end of the chain only: the orchestrator is the last
+/// agent it still knows, and what the earlier ones left running is owed.
+#[tokio::test]
+async fn a_successor_aether_forgot_ends_the_chain_without_losing_its_sweeps() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    harness.set_kv(keys::ORCHESTRATOR_GENERATION, "1").await;
+    let role = supervisor::ORCHESTRATOR_ROLE;
+    restart_chain(
+        &harness,
+        &[
+            (ORCH, role, "cancelled", Some(ORCH_2)),
+            (ORCH_2, role, "running", Some(ORCH_3)),
+        ],
+    );
+    let id = supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    assert_eq!(id, agent_id(ORCH_2));
+    assert_eq!(retired(&harness).await, [owed(ORCH)]);
+    assert!(harness.fake.received_named("create_agent").is_empty());
+    assert_eq!(
+        harness.kv(keys::ORCHESTRATOR_GENERATION).await.as_deref(),
+        Some("1"),
+        "no fresh generation"
+    );
+}
+
+/// A restart never leads back to an agent, so a chain that does is Aether
+/// answering wrongly: nothing is adopted and nothing is cancelled.
+#[tokio::test]
+async fn a_restart_chain_that_loops_is_refused_and_changes_nothing() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    let role = supervisor::ORCHESTRATOR_ROLE;
+    restart_chain(
+        &harness,
+        &[
+            (ORCH, role, "cancelled", Some(ORCH_2)),
+            (ORCH_2, role, "cancelled", Some(ORCH)),
+        ],
+    );
+    let refused = supervisor::ensure_orchestrator(&harness.ctx).await;
+    assert!(
+        matches!(&refused, Err(ArchonError::Protocol(why)) if why.contains("lead back")),
+        "{refused:?}"
+    );
+    assert_eq!(
+        harness.kv(keys::ORCHESTRATOR_AGENT).await.as_deref(),
+        Some(ORCH)
+    );
+    assert_eq!(harness.kv(RETIRED_KEY).await, None);
+    assert!(swept(&harness).is_empty());
 }
 
 #[tokio::test]
@@ -204,6 +554,40 @@ async fn a_successor_left_by_restart_is_followed_not_restarted_again() {
         harness.kv(keys::ORCHESTRATOR_AGENT).await.as_deref(),
         Some(ORCH_2)
     );
+    harness.fake.script("cancel", Scripted::ok());
+    assert!(supervisor::sweep_retired(&harness.ctx).await.unwrap());
+    assert_eq!(swept(&harness), [ORCH], "the old agent's children only");
+}
+
+/// A record no version of Archon can read must not cost the orchestrator:
+/// it is reset, and the operator is told what the reset loses.
+#[tokio::test]
+async fn an_unreadable_record_of_replaced_orchestrators_is_reset_and_reported() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    harness.set_kv(RETIRED_KEY, "{not a list").await;
+    let role = supervisor::ORCHESTRATOR_ROLE;
+    restart_chain(
+        &harness,
+        &[
+            (ORCH, role, "failed", Some(ORCH_2)),
+            (ORCH_2, role, "running", None),
+        ],
+    );
+    let id = supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    assert_eq!(id, agent_id(ORCH_2));
+    assert_eq!(retired(&harness).await, [owed(ORCH)], "readable again");
+    let blockers = harness.notifications(NotificationKind::Blocker).await;
+    assert_eq!(blockers.len(), 1, "{blockers:?}");
+    assert!(
+        blockers[0].contains("was reset") && blockers[0].contains("{not a list"),
+        "{blockers:?}"
+    );
+
+    supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    let blockers = harness.notifications(NotificationKind::Blocker).await;
+    assert_eq!(blockers.len(), 1, "said once: {blockers:?}");
 }
 
 #[tokio::test]
@@ -405,6 +789,58 @@ async fn an_operator_restart_overrides_the_backoff() {
     );
 }
 
+/// The stored id may be generations behind what Aether runs: the restart
+/// cancels the agent that is running, and owes the ones in between.
+#[tokio::test]
+async fn an_operator_restart_cancels_the_newest_incarnation_and_owes_the_chain() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    let role = supervisor::ORCHESTRATOR_ROLE;
+    restart_chain(
+        &harness,
+        &[
+            (ORCH, role, "failed", Some(ORCH_2)),
+            (ORCH_2, role, "running", None),
+            (ORCH_3, role, "ready", None),
+        ],
+    );
+    harness.fake.script("cancel", Scripted::ok());
+    harness.fake.script(
+        "create_agent",
+        Scripted::reply("agent", agent_in(ORCH_3, "ready")),
+    );
+    let fresh = supervisor::restart_orchestrator(&harness.ctx)
+        .await
+        .unwrap();
+    assert_eq!(fresh, agent_id(ORCH_3));
+    assert_eq!(swept(&harness), [ORCH_2], "the one still running");
+    assert_eq!(retired(&harness).await, [owed(ORCH), swept_already(ORCH_2)]);
+}
+
+/// The operator's restart is the way out of a record that cannot be read.
+#[tokio::test]
+async fn an_operator_restart_works_over_an_unreadable_record() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    harness.set_kv(RETIRED_KEY, "[{\"agent\": 7}]").await;
+    agent_table(&harness, &[(ORCH, "running"), (ORCH_2, "ready")]);
+    harness.fake.script("cancel", Scripted::ok());
+    harness.fake.script(
+        "create_agent",
+        Scripted::reply("agent", agent_in(ORCH_2, "ready")),
+    );
+    let fresh = supervisor::restart_orchestrator(&harness.ctx)
+        .await
+        .unwrap();
+    assert_eq!(fresh, agent_id(ORCH_2));
+    assert_eq!(retired(&harness).await, [swept_already(ORCH)]);
+    let blockers = harness.notifications(NotificationKind::Blocker).await;
+    assert_eq!(blockers.len(), 1, "{blockers:?}");
+    assert!(blockers[0].contains("was reset"), "{blockers:?}");
+}
+
 #[tokio::test]
 async fn a_restart_made_in_aether_while_archond_was_down_is_adopted() {
     let harness = Harness::new().await;
@@ -429,6 +865,7 @@ async fn a_restart_made_in_aether_while_archond_was_down_is_adopted() {
     let id = supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
     assert_eq!(id, agent_id(ORCH_2));
     assert_eq!(*watch.borrow_and_update(), Some(agent_id(ORCH_2)));
+    assert_eq!(retired(&harness).await, [owed(ORCH)]);
     assert_eq!(
         harness.kv(keys::ORCHESTRATOR_AGENT).await.as_deref(),
         Some(ORCH_2)
@@ -726,9 +1163,11 @@ async fn tui_attachment_selects_the_successor_without_restarting_it() {
     };
     assert_eq!(info.agent, agent_id(ORCH_2));
     assert_eq!(info.status, "running");
-    for cmd in ["restart", "create_agent", "send_message"] {
+    // Attaching waits for nothing: the old agent's sweep is owed, not made.
+    for cmd in ["restart", "create_agent", "send_message", "cancel"] {
         assert!(harness.fake.received_named(cmd).is_empty(), "{cmd}");
     }
+    assert_eq!(retired(&harness).await, [owed(ORCH)]);
 }
 
 #[tokio::test]

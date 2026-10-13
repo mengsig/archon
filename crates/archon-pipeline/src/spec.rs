@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use archon_core::autonomy::ReviewLevel;
 use archon_core::catalog::{
     Gate, Nudges, PipelineSource, PipelineSummary, StageKind, StageSummary, WorkspaceMode,
 };
@@ -49,10 +50,23 @@ pub struct PipelineHeader {
     pub workspace: WorkspaceMode,
     #[serde(default = "default_true")]
     pub requires_repo: bool,
+    /// The review one of the pipeline's own stages holds, when its gates
+    /// do not show it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<InStageReview>,
 }
 
 fn default_true() -> bool {
     true
+}
+
+/// `[pipeline.review]`: the pipeline runs at `level` because `stage` has its
+/// change reviewed, and passes only with that on record (ARCHITECTURE §8.2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InStageReview {
+    pub level: ReviewLevel,
+    pub stage: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -64,8 +78,8 @@ pub struct StageSpec {
     pub fan_out: u32,
     pub gate: Gate,
     pub timeout_minutes: u32,
-    /// Grants nothing: only an item with `tools = yolo` delegates. Kept so
-    /// pipelines that set it still load.
+    /// Allows child delegation even with guarded tools; Archon tool exposure
+    /// still follows the item’s tools mode.
     pub allow_delegation: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nudge: Option<String>,
@@ -188,7 +202,49 @@ impl PipelineSpec {
         }
         validate_propose_placement(stages)?;
         validate_ship_placement(stages, self.file.pipeline.workspace)?;
-        validate_team_names(stages)
+        validate_team_names(stages)?;
+        self.validate_review()
+    }
+
+    /// Whether `stage` holds the review the pipeline declares.
+    pub fn holds_review(&self, stage: &StageSpec) -> bool {
+        let review = self.file.pipeline.review.as_ref();
+        review.is_some_and(|review| review.stage == stage.id)
+    }
+
+    /// A declared review is `standard`, and held by one delegating work
+    /// stage that runs before anything ships.
+    fn validate_review(&self) -> Result<(), ArchonError> {
+        let Some(review) = &self.file.pipeline.review else {
+            return Ok(());
+        };
+        let refuse = |why: &str| Err(invalid(format!("[pipeline.review] {why}")));
+        match review.level {
+            ReviewLevel::Standard => {}
+            ReviewLevel::Strict => {
+                return refuse(
+                    "level = \"strict\" cannot be declared: strict is gated review and test stages",
+                );
+            }
+            ReviewLevel::None => {
+                return refuse("level = \"none\" declares no review: leave the table out");
+            }
+        }
+        let Some(index) = self.stage_index(&review.stage) else {
+            return refuse(&format!("stage {:?} names no stage", review.stage));
+        };
+        let stage = &self.file.stages[index];
+        // A work stage is one agent: `validate_stage` refuses its fan-out.
+        if stage.kind != StageKind::Work {
+            return refuse(&format!("stage {:?} must be a work stage", stage.id));
+        }
+        if !stage.allow_delegation {
+            return refuse(&format!(
+                "stage {:?} needs allow_delegation = true: its reviewer is an agent it delegates to",
+                stage.id
+            ));
+        }
+        Ok(())
     }
 
     fn validate_header(&self, dir_name: &str) -> Result<(), ArchonError> {

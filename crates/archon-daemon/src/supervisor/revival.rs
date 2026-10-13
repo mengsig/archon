@@ -155,6 +155,29 @@ pub(super) async fn keeps_failing(
     Ok(())
 }
 
+/// A revival Aether answered with an error, returned for the caller to report.
+/// One that says Aether itself is in trouble counts in the paced streak.
+pub(super) async fn failed(
+    ctx: &DaemonContext,
+    backoff: Backoff,
+    now: Timestamp,
+    error: ArchonError,
+) -> Result<ArchonError, ArchonError> {
+    if !matches!(error, ArchonError::Aether(_) | ArchonError::Protocol(_)) {
+        return Ok(error);
+    }
+    let backoff = backoff.revived(now);
+    save(ctx, &backoff).await?;
+    let due = backoff
+        .deferred_until(now)
+        .expect("a revival that just ran is followed by a pause");
+    schedule(ctx, due);
+    if backoff.revivals == REVIVALS_BEFORE_BLOCKER {
+        keeps_failing(ctx, &backoff, Some(&error.to_string())).await?;
+    }
+    Ok(error)
+}
+
 /// An orchestrator turn ended with Aether status `next`. One that ended
 /// well closes the failure streak.
 pub async fn turn_ended(ctx: &DaemonContext, next: Option<&str>) -> Result<(), ArchonError> {

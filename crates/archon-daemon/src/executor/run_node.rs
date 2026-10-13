@@ -37,7 +37,7 @@ const MESSAGE_NODE_KEY_PREFIX: &str = "message_run_node:";
 /// How long after its stage settled an agent may still be ending its turn
 /// before the node is retired regardless. Aether settles a task mid-turn
 /// and the agent completes when the turn ends.
-const TURN_END_GRACE_SECS: i64 = 60;
+pub(super) const TURN_END_GRACE_SECS: i64 = 60;
 
 /// The live node a stage agent is bound to.
 #[derive(Debug, Clone, PartialEq, Eq)]

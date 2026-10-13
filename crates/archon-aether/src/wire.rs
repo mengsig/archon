@@ -279,6 +279,17 @@ pub enum ToolExposure {
     },
 }
 
+impl ToolExposure {
+    /// Whether an agent with this exposure sees the tool `name`.
+    pub fn allows(&self, name: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::Only { names } => names.contains(name),
+            Self::Except { names } => !names.contains(name),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize)]
 pub struct AgentPatch {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -379,6 +390,17 @@ pub struct AgentScope {
 pub struct AgentSettings {
     #[serde(default)]
     pub instructions: Option<String>,
+    #[serde(default)]
+    pub tools: ToolExposure,
+    #[serde(default)]
+    pub leaf: bool,
+}
+
+impl AgentSettings {
+    /// Whether the agent can create child agents with Aether's `delegate`.
+    pub fn can_delegate(&self) -> bool {
+        !self.leaf && self.tools.allows("delegate")
+    }
 }
 
 /// The fields of Aether's `Task` Archon reads.

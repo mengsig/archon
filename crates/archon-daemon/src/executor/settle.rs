@@ -10,7 +10,9 @@ use archon_core::notify::{FeedEntry, Notification, NotificationKind};
 use archon_core::run::{PipelineRun, RunState, StageOutcome, StageRun, StageState, Verdict};
 use archon_pipeline::{EngineAction, SpawnPlan};
 
-use super::{FollowUp, RunTable, finish, gates, pages, recover, siblings, spawn, team};
+use super::{
+    FollowUp, RunTable, descendants, finish, gates, pages, recover, siblings, spawn, team,
+};
 use crate::context::DaemonContext;
 use crate::disk::{self, FullDisk};
 use crate::resolve;
@@ -95,16 +97,37 @@ async fn persist(
     outcome: StageOutcome,
 ) -> Result<FollowUp, ArchonError> {
     let settled = settled_stage(stage, outcome, archon_core::now());
-    ctx.store.lock().await.upsert_stage_run(&settled)?;
+    let owes_stop = {
+        let mut store = ctx.store.lock().await;
+        let owes_stop = descendants::owe(&mut store, &settled)?;
+        store.upsert_stage_run(&settled)?;
+        owes_stop
+    };
     table.spawn_errors.remove(&settled.id);
+    let mut follow = decide(ctx, table, run, &settled, all).await?;
+    if owes_stop {
+        follow.descendant_stops.push(settled.id);
+    }
+    Ok(follow)
+}
+
+/// Feed a stored settle to the run's driver and apply what it decides.
+async fn decide(
+    ctx: &DaemonContext,
+    table: &mut RunTable,
+    run: PipelineRun,
+    settled: &StageRun,
+    all: &[StageRun],
+) -> Result<FollowUp, ArchonError> {
+    assert!(settled.state.is_terminal(), "the driver hears of settles");
     if run.state.is_terminal() {
         return Ok(FollowUp::poke());
     }
     let (actions, publish) = match table.drivers.get_mut(&run.id) {
         // A gate stage's page is published when its question is asked.
         Some(driver) => (
-            driver.on_stage_settled(&settled, all),
-            pages::lists_pages(&settled) && driver.gates().subject(&settled.stage_id).is_none(),
+            driver.on_stage_settled(settled, all),
+            pages::lists_pages(settled) && driver.gates().subject(&settled.stage_id).is_none(),
         ),
         None => {
             // A driver is missing only if an earlier rebuild failed; retry it
@@ -115,7 +138,7 @@ async fn persist(
     };
     let mut follow = apply(ctx, table, run, actions).await?;
     if publish {
-        follow.publish.push(settled.id);
+        follow.publish.push(settled.id.clone());
     }
     Ok(follow)
 }
@@ -247,9 +270,11 @@ async fn infra_retry(
         stage.stage_id, run.id,
     );
     progress(ctx, run, text).await?;
-    // Issued at once, or by the sweep once a disk hold ends.
+    // Issued at once, or by the sweep once a disk hold ends; in either
+    // case after what the failed agent delegated is stopped.
     Ok(Some(FollowUp {
         issue: vec![replacement],
+        descendant_stops: vec![stage.id.clone()],
         poke: kind == RetryKind::DiskFull,
         ..FollowUp::default()
     }))
@@ -293,6 +318,8 @@ async fn replace(
     };
     let per_item_cap = resolve::caps(ctx).await.budget_usd_per_item;
     let mut store = ctx.store.lock().await;
+    // Owed before the replacement exists, so it never starts beside them.
+    descendants::owe(&mut store, failed)?;
     let Some(id) = spawn::reserve_replacement(ctx, &mut store, failed, &plan, nth, per_item_cap)?
     else {
         return Ok(None);

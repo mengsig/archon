@@ -37,6 +37,8 @@ pub fn mcp_block(archon_bin: &Path) -> String {
 pub struct ArchonServer {
     /// `None` when the entry has no `command` (e.g. a `url` server).
     pub command: Option<String>,
+    /// Aether names the agent behind each call (`send_caller_meta = true`).
+    pub names_callers: bool,
 }
 
 /// What [`register`] found or did.
@@ -54,7 +56,14 @@ pub fn find_archon_server(config_text: &str) -> Result<Option<ArchonServer>, tom
             .get("command")
             .and_then(Value::as_str)
             .map(str::to_owned),
+        names_callers: names_callers(server),
     }))
+}
+
+/// Whether an `archon` server entry has Aether name the agent behind each
+/// call. archond lets a call change Archon only for a caller it can name.
+pub fn names_callers(server: &Value) -> bool {
+    server.get("send_caller_meta").and_then(Value::as_bool) == Some(true)
 }
 
 /// The `[[mcp.servers]]` entries of a parsed Aether config; none when it
@@ -196,7 +205,8 @@ mod tests {
         assert_eq!(
             again,
             Registration::AlreadyPresent(ArchonServer {
-                command: Some("/opt/archon".into())
+                command: Some("/opt/archon".into()),
+                names_callers: true,
             })
         );
         let text = std::fs::read_to_string(&path).unwrap();

@@ -32,6 +32,7 @@ pub struct Pruned {
     pub stage_agents: usize,
     pub reports: usize,
     pub retired_keys: usize,
+    pub retired_orchestrators: usize,
 }
 
 impl Pruned {
@@ -45,6 +46,7 @@ impl Pruned {
             + self.stage_agents
             + self.reports
             + self.retired_keys
+            + self.retired_orchestrators
     }
 }
 
@@ -64,8 +66,8 @@ pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
 
 /// One pass as of `now`. Entries of settled stages and finished runs, and
 /// keys no version reads any more, go at once; node agents, watched
-/// children, stage agents and settled reports go once they are older than
-/// [`retention`]. The store is locked per kind, not for the
+/// children, stage agents, replaced orchestrators and settled reports go
+/// once older than [`retention`]. The store is locked per kind, not for the
 /// whole pass.
 pub async fn prune_once(ctx: &DaemonContext, now: Timestamp) -> Result<Pruned, ArchonError> {
     let cutoff = now - retention();
@@ -83,6 +85,7 @@ pub async fn prune_once(ctx: &DaemonContext, now: Timestamp) -> Result<Pruned, A
     let retired_keys = supervisor::prune_retired_keys(&mut *ctx.store.lock().await)?;
     let children = pump::prune_children(ctx, now, cutoff).await?;
     let stage_agents = pump::prune_stage_agents(ctx, cutoff).await?;
+    let retired_orchestrators = supervisor::prune_retired_orchestrators(ctx, cutoff).await?;
     Ok(Pruned {
         spawn_requests,
         run_vars,
@@ -93,5 +96,6 @@ pub async fn prune_once(ctx: &DaemonContext, now: Timestamp) -> Result<Pruned, A
         stage_agents,
         reports,
         retired_keys,
+        retired_orchestrators,
     })
 }

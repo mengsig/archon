@@ -2,7 +2,7 @@
 //! `proposal` and `report` insert when the pipeline declares none, and the
 //! stages whose output waits for the operator.
 
-use archon_core::autonomy::{Autonomy, ProposalMode, ReportMode, ReviewLevel};
+use archon_core::autonomy::{Autonomy, Knob, ProposalMode, ReportMode, ReviewLevel};
 use archon_core::catalog::{Gate, StageKind};
 use archon_core::error::ArchonError;
 use archon_core::run::GateSubject;
@@ -30,8 +30,8 @@ fn ship_index(spec: &PipelineSpec) -> Option<usize> {
         .position(|s| s.kind == StageKind::Ship)
 }
 
-/// The review level a pipeline's gates amount to: gated tests and gated
-/// reviews are strict, either one alone standard, neither none.
+/// A pipeline's review level: the stricter of what it declares and its gates'
+/// (gated tests and gated reviews: strict; either alone: standard; else none).
 pub fn review_level(spec: &PipelineSpec) -> ReviewLevel {
     let gated = |kind: StageKind| {
         spec.file
@@ -39,10 +39,14 @@ pub fn review_level(spec: &PipelineSpec) -> ReviewLevel {
             .iter()
             .any(|s| s.kind == kind && s.gate != Gate::None)
     };
-    match (gated(StageKind::Review), gated(StageKind::Test)) {
+    let by_gates = match (gated(StageKind::Review), gated(StageKind::Test)) {
         (true, true) => ReviewLevel::Strict,
         (true, false) | (false, true) => ReviewLevel::Standard,
         (false, false) => ReviewLevel::None,
+    };
+    match &spec.file.pipeline.review {
+        Some(declared) => declared.level.lower(by_gates),
+        None => by_gates,
     }
 }
 

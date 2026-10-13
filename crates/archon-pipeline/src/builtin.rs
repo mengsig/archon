@@ -31,6 +31,7 @@ macro_rules! builtin {
 }
 
 pub const BUILTINS: &[BuiltinPipeline] = &[
+    builtin!("adaptive", ["build.md", "ship.md"]),
     builtin!("quick-pr", ["implement.md", "ship.md"]),
     builtin!(
         "default-pr-review",

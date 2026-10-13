@@ -115,6 +115,7 @@ fn builtins_load_without_problems() {
     assert_eq!(
         names,
         [
+            "adaptive",
             "agent-testing",
             "ask",
             "bugfix",

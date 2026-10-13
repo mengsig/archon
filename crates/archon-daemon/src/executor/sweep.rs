@@ -9,7 +9,7 @@ use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
 use archon_core::run::{StageOutcome, StageRun, StageState};
 
-use super::{FollowUp, load_spawn, run_follow_up, run_node, settle, siblings, team};
+use super::{FollowUp, descendants, load_spawn, run_follow_up, run_node, settle, siblings, team};
 use crate::context::DaemonContext;
 
 /// Aether settles a timed-out agent itself; the daemon steps in after this.
@@ -64,6 +64,7 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
         }
         follow.retire = run_node::runs_to_retire(&store)?;
         follow.sibling_stops = siblings::owed(&store)?;
+        follow.descendant_stops = descendants::owed(&store)?;
     }
     run_follow_up(ctx, follow).await
 }

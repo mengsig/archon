@@ -29,6 +29,8 @@ pub enum ConfigOutcome {
     Resynced,
     /// Seeded before and declares the archon server: left as it is.
     Unchanged,
+    /// Seeded by an older Archon: its archon server was brought up to date.
+    Repaired,
     /// Seeded before but without the archon server, which was appended.
     BlockAdded,
 }
@@ -101,8 +103,14 @@ fn seed_config(
     if exists && !resync {
         return Ok(match setup::register(&target, archon_bin)? {
             Registration::Added => ConfigOutcome::BlockAdded,
+            Registration::AlreadyPresent(_) if repair_registration(instance)? => {
+                ConfigOutcome::Repaired
+            }
             Registration::AlreadyPresent(_) => ConfigOutcome::Unchanged,
         });
+    }
+    if exists && registration_is_stale(instance)? {
+        owe_reload(instance)?;
     }
     let operator_text = read_optional(&source)?;
     let mut server = match existing_archon_server(&target)? {
@@ -117,6 +125,82 @@ fn seed_config(
     } else {
         ConfigOutcome::Seeded
     })
+}
+
+/// Whether the instance config's `archon` server lacks caller naming, as an
+/// older setup wrote it. `false` for one that does not parse: doctor reports.
+pub fn registration_is_stale(instance: &Instance) -> anyhow::Result<bool> {
+    let path = instance.config_path();
+    let table: Table = match toml::from_str(&read_optional(&path)?) {
+        Ok(table) => table,
+        Err(error) => {
+            tracing::warn!(path = %path.display(), %error, "instance config unreadable; not repaired");
+            return Ok(false);
+        }
+    };
+    Ok(setup::archon_server(&table).is_some_and(|server| !setup::names_callers(server)))
+}
+
+/// Bring a stale `archon` server entry up to date, keeping its other
+/// settings. `true` when the file was rewritten: a reload is then owed.
+pub fn repair_registration(instance: &Instance) -> anyhow::Result<bool> {
+    if !registration_is_stale(instance)? {
+        return Ok(false);
+    }
+    owe_reload(instance)?;
+    let path = instance.config_path();
+    let text = read_optional(&path)?;
+    let mut table: Table = toml::from_str(&text)
+        .with_context(|| format!("{} stopped parsing while it was repaired", path.display()))?;
+    let server = mcp_servers_mut(&mut table)?
+        .iter_mut()
+        .find(|server| setup::is_archon_server(server))
+        .context("the stale archon server is gone")?;
+    setup::migrate_archon_server(server)?;
+    let body = toml::to_string(&table).context("serializing the repaired Aether config")?;
+    let repaired = format!("{}{body}", leading_comments(&text));
+    let reparsed: Table =
+        toml::from_str(&repaired).context("the repaired Aether config does not parse")?;
+    anyhow::ensure!(
+        setup::archon_server(&reparsed).is_some_and(setup::names_callers),
+        "the repaired Aether config must name the archon server's callers"
+    );
+    write_atomically(&path, &repaired)?;
+    Ok(true)
+}
+
+/// Record, before the registration on disk changes, that an aetherd which
+/// answers has the old one loaded: `lifecycle::ensure_running` restarts it.
+fn owe_reload(instance: &Instance) -> anyhow::Result<()> {
+    let marker = instance.reload_marker_path();
+    create_private_dir(&instance.archon_data_dir)?;
+    std::fs::write(&marker, b"").with_context(|| format!("writing {}", marker.display()))
+}
+
+/// Whether the registration changed since Archon's aetherd last started.
+pub fn reload_is_owed(instance: &Instance) -> anyhow::Result<bool> {
+    let marker = instance.reload_marker_path();
+    marker
+        .try_exists()
+        .with_context(|| format!("checking {}", marker.display()))
+}
+
+/// No aetherd runs with the old registration any more.
+pub fn reload_settled(instance: &Instance) -> anyhow::Result<()> {
+    let marker = instance.reload_marker_path();
+    match std::fs::remove_file(&marker) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(anyhow::Error::new(e).context(format!("removing {}", marker.display()))),
+    }
+}
+
+/// The comment block a config starts with, which serializing its table drops.
+fn leading_comments(text: &str) -> String {
+    text.lines()
+        .take_while(|line| line.starts_with('#') || line.trim().is_empty())
+        .map(|line| format!("{line}\n"))
+        .collect()
 }
 
 /// The operator's config with the archon server as its only `archon`

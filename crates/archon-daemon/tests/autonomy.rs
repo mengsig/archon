@@ -553,6 +553,20 @@ async fn the_ceiling_refuses_until_the_operator_raises_it() {
     assert!(matches!(lowered, ArchonError::Forbidden(_)), "{lowered:?}");
 }
 
+/// `archon` tool names as a stage agent has them hidden: all but the one
+/// that reaches the orchestrator, and Aether's scheduling tools.
+fn stage_hidden(archon: Vec<String>) -> Vec<String> {
+    let messaging = archon_core::mcp_tools::qualified("message_orchestrator");
+    let schedules = ["create_schedule", "update_schedule", "list_schedules"];
+    archon
+        .into_iter()
+        .filter(|name| name != &messaging)
+        .chain(schedules.map(str::to_owned))
+        .collect()
+}
+
+const DELEGATION_HEADING: &str = "\n## Delegation\n";
+
 #[tokio::test]
 async fn yolo_stage_agents_may_delegate_and_read_archon() {
     let h = Harness::new().await;
@@ -569,39 +583,39 @@ async fn yolo_stage_agents_may_delegate_and_read_archon() {
         (ToolsMode::Guarded, ToolsMode::Yolo)
     );
     h.dispatch().await;
+    let requests = h.backend.requests();
     let spawned = |title: &str| {
-        let requests = h.backend.requests();
-        let request = requests
-            .iter()
-            .find(|r| r.objective.contains(title))
-            .expect("spawned");
-        (request.hidden_tools.clone(), request.leaf)
+        let request = requests.iter().find(|r| r.objective.contains(title));
+        request.expect("spawned")
     };
-    let (hidden, leaf) = spawned("brief for Guarded");
-    let messaging = archon_core::mcp_tools::qualified("message_orchestrator");
-    let other_tools = |names: Vec<String>| {
-        names
-            .into_iter()
-            .filter(|n| n != &messaging)
-            .collect::<Vec<_>>()
-    };
+    let guarded = spawned("brief for Guarded");
     assert_eq!(
-        hidden,
-        other_tools(archon_core::mcp_tools::qualified_names())
+        guarded.hidden_tools,
+        stage_hidden(archon_core::mcp_tools::qualified_names())
     );
-    assert!(!hidden.contains(&messaging));
-    assert!(leaf, "the built-in implement stage does not delegate");
-    let (exposed, leaf) = spawned("brief for Yolo");
-    assert_eq!(
-        exposed,
-        other_tools(archon_core::mcp_tools::mutating_names())
-    );
-    assert!(!exposed.contains(&messaging));
     assert!(
-        !exposed.iter().any(|name| name.ends_with("get_item")),
+        guarded.leaf,
+        "the built-in implement stage does not delegate"
+    );
+    assert_eq!(guarded.instructions.matches(DELEGATION_HEADING).count(), 0);
+
+    let yolo = spawned("brief for Yolo");
+    assert_eq!(
+        yolo.hidden_tools,
+        stage_hidden(archon_core::mcp_tools::mutating_names())
+    );
+    assert!(
+        !yolo.hidden_tools.iter().any(|n| n.ends_with("get_item")),
         "reads are exposed"
     );
-    assert!(!leaf, "yolo stage agents may delegate");
+    assert!(!yolo.leaf, "yolo stage agents may delegate");
+    // The stage does not set `allow_delegation`: yolo alone brings the rules.
+    let rules = &yolo.instructions[yolo.instructions.find(DELEGATION_HEADING).unwrap()..];
+    assert!(
+        rules.contains("Pass `leaf: true` for every child"),
+        "{rules}"
+    );
+    assert!(rules.contains("policy for this item: any model Aether lists. Archon cancels"));
 }
 
 /// The test pipeline's stages, each allowing delegation.
@@ -633,10 +647,9 @@ prompt = "ship.md"
 allow_delegation = true
 "#;
 
-/// A stage's `allow_delegation` does not let a `guarded` agent create
-/// subagents; only `tools = yolo` does.
+/// Stage delegation and yolo each grant children without changing tool exposure.
 #[tokio::test]
-async fn only_yolo_stage_agents_delegate_whatever_the_stage_allows() {
+async fn stage_delegation_allows_guarded_and_yolo_children() {
     let h = Harness::new().await;
     h.add_pipeline("delegating", DELEGATING_PIPELINE);
     let yolo = AutonomyPatch {
@@ -650,16 +663,28 @@ async fn only_yolo_stage_agents_delegate_whatever_the_stage_allows() {
     }
     h.dispatch().await;
     let requests = h.backend.requests();
-    let leaf = |title: &str| {
+    let spawned = |title: &str| {
         let brief = format!("brief for {title}");
         let request = requests.iter().find(|r| r.objective.contains(&brief));
-        request.expect("spawned").leaf
+        request.expect("spawned")
     };
+    let (guarded, yolo) = (spawned("Guarded"), spawned("Yolo"));
     assert!(
-        leaf("Guarded"),
-        "a guarded agent is a leaf even where delegation is allowed"
+        !guarded.leaf,
+        "the stage explicitly permits guarded delegation"
     );
-    assert!(!leaf("Yolo"), "a yolo agent may delegate");
+    assert!(!yolo.leaf, "a yolo agent may delegate");
+    for request in [guarded, yolo] {
+        assert_eq!(request.instructions.matches(DELEGATION_HEADING).count(), 1);
+    }
+    assert_eq!(
+        guarded.hidden_tools,
+        stage_hidden(archon_core::mcp_tools::qualified_names())
+    );
+    assert_eq!(
+        yolo.hidden_tools,
+        stage_hidden(archon_core::mcp_tools::mutating_names())
+    );
 }
 
 const LAVISH_URL: &str = "http://127.0.0.1:4455/session/gate";
@@ -1117,4 +1142,90 @@ async fn an_answered_gate_does_not_request_another_approval_while_the_run_advanc
         h.run(&item.id).await.state,
         RunState::AwaitingOperator { .. }
     ));
+}
+
+/// Enqueue into `adaptive`, with a model for each of its two stages.
+async fn enqueue_adaptive(
+    h: &Harness,
+    title: &str,
+    autonomy: AutonomyPatch,
+) -> Result<QueueItem, ArchonError> {
+    let stages = ["build", "ship"].map(|stage| (stage.to_owned(), plan().0["implement"].clone()));
+    let request = EnqueueRequest {
+        repo: Some(RepoRef(REPO_NAME.into())),
+        pipeline: Some("adaptive".into()),
+        title: title.into(),
+        brief: format!("brief for {title}"),
+        priority: Default::default(),
+        depends_on: Vec::new(),
+        tags: Vec::new(),
+        model_plan: archon_core::model::ModelPlan(stages.into()),
+        model_reasons: None,
+        budget_usd: None,
+        idempotency_key: None,
+        autonomy,
+        origin: None,
+    };
+    match h.cli(Request::Enqueue(request)).await? {
+        Reply::Item(item) => Ok(item),
+        other => panic!("enqueue replied {other:?}"),
+    }
+}
+
+/// `adaptive` declares the review its lead holds, so it runs at
+/// `standard`: the knob, the stored item and the ceiling all see that.
+#[tokio::test]
+async fn adaptive_runs_at_the_standard_review_it_declares() {
+    use archon_core::autonomy::ReviewLevel;
+
+    let h = Harness::new().await;
+    let asking = |review| AutonomyPatch {
+        review: Some(review),
+        ..AutonomyPatch::default()
+    };
+    for other in [ReviewLevel::Strict, ReviewLevel::None] {
+        let error = enqueue_adaptive(&h, "another review", asking(other))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("runs review=standard"), "{error}");
+        assert!(error.contains(other.pipeline()), "{error}");
+    }
+    assert!(h.backend.requests().is_empty());
+
+    for patch in [AutonomyPatch::default(), asking(ReviewLevel::Standard)] {
+        let item = enqueue_adaptive(&h, "an ordinary change", patch)
+            .await
+            .expect("standard is what adaptive runs");
+        assert_eq!(item.pipeline, "adaptive");
+        assert_eq!(item.autonomy.review, ReviewLevel::Standard);
+    }
+}
+
+/// A ceiling that demands gated review refuses `adaptive`, whose review is
+/// its lead's own; one that allows `standard` lets it through.
+#[tokio::test]
+async fn a_ceiling_stricter_than_standard_refuses_adaptive() {
+    let h = Harness::new().await;
+    h.repo_config("[autonomy.max]\nreview = \"strict\"\n");
+    let refused = enqueue_adaptive(&h, "under strict", AutonomyPatch::default())
+        .await
+        .expect_err("standard is above a strict ceiling");
+    let ArchonError::Forbidden(message) = &refused else {
+        panic!("a ceiling refusal is Forbidden: {refused:?}");
+    };
+    assert!(
+        message.contains("review=standard (allowed: strict)"),
+        "{message}"
+    );
+    assert!(h.backend.requests().is_empty());
+
+    h.repo_config("[autonomy.max]\nreview = \"standard\"\n");
+    let allowed = enqueue_adaptive(&h, "under standard", AutonomyPatch::default())
+        .await
+        .expect("a standard ceiling allows the review adaptive declares");
+    assert_eq!(
+        allowed.autonomy.review,
+        archon_core::autonomy::ReviewLevel::Standard
+    );
 }

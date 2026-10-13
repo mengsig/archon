@@ -171,6 +171,9 @@ fn samples_map_every_declared_argument_and_never_operator_only_requests() {
             .map_or(vec![], |o| o.keys().cloned().collect());
         let request = to_request(tool, arguments).unwrap_or_else(|e| panic!("{tool}: {e}"));
         assert!(!request.is_operator_only(), "{tool} built {request:?}");
+        // archond opens a call to every agent by this class, the tool list by that one.
+        let declared = definition(tool).expect("defined").read_only;
+        assert_eq!(request.is_read_only(), declared, "{tool} built {request:?}");
         exercised.extend(keys.into_iter().map(|k| (tool, k)));
     }
     for definition in definitions() {

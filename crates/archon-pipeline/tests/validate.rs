@@ -521,3 +521,67 @@ fn shipping_builtins_share_one_set_of_delivery_rules() {
         );
     }
 }
+
+#[test]
+fn adaptive_declares_the_review_its_lead_holds_and_round_trips() {
+    use archon_core::autonomy::ReviewLevel;
+
+    let catalog = Catalog::builtin();
+    let spec = catalog.get("adaptive").unwrap();
+    assert_eq!(spec.file.stages.len(), 2);
+    let build = spec.stage("build").unwrap();
+    assert_eq!(build.kind, StageKind::Work);
+    assert!(build.allow_delegation);
+    assert_eq!(build.fan_out, 1);
+    assert!(!spec.stage("ship").unwrap().allow_delegation);
+    assert!(spec.holds_review(build));
+    assert!(!spec.holds_review(spec.stage("ship").unwrap()));
+    assert_eq!(autonomy::review_level(spec), ReviewLevel::Standard);
+    let text = toml::to_string(&spec.file).unwrap();
+    let back: archon_pipeline::spec::PipelineFile = toml::from_str(&text).unwrap();
+    assert_eq!(back, spec.file);
+    for name in catalog.names().filter(|name| *name != "adaptive") {
+        let other = catalog.get(name).unwrap();
+        assert_eq!(other.file.pipeline.review, None, "{name}");
+    }
+}
+
+/// A declared review is a claim Archon enforces at one agent's result, so
+/// only a single delegating work stage can hold it, at `standard`.
+#[test]
+fn a_declared_review_names_one_delegating_work_stage_at_standard() {
+    let adaptive = include_str!("../../../pipelines/adaptive/pipeline.toml");
+    let check = |text: &str| -> Result<(), String> {
+        toml::from_str::<archon_pipeline::spec::PipelineFile>(text).map_err(|e| e.to_string())?;
+        let spec = support::spec_from(text, &[]);
+        spec.validate("adaptive").map_err(|e| e.to_string())
+    };
+    check(adaptive).expect("the built-in declaration is valid");
+    let level = "level = \"standard\"";
+    let stage = "stage = \"build\"";
+    for (from, to, why) in [
+        (
+            level,
+            "level = \"strict\"",
+            "strict is gated review and test stages",
+        ),
+        (level, "level = \"none\"", "leave the table out"),
+        (level, "level = \"thorough\"", "thorough"),
+        (stage, "stage = \"review\"", "names no stage"),
+        (stage, "stage = \"ship\"", "must be a work stage"),
+        (
+            "allow_delegation = true",
+            "allow_delegation = false",
+            "needs allow_delegation = true",
+        ),
+        (
+            stage,
+            "stage = \"build\"\nreviewer = \"x\"",
+            "unknown field",
+        ),
+    ] {
+        assert!(adaptive.contains(from), "{from:?} is in the built-in");
+        let refused = check(&adaptive.replace(from, to)).unwrap_err();
+        assert!(refused.contains(why), "{to:?}: {refused}");
+    }
+}

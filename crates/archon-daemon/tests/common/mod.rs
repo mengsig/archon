@@ -35,6 +35,7 @@ use archon_daemon::triggers::TriggerQueue;
 use archon_daemon::{dispatcher, executor, handlers};
 use archon_lavish::Lavish;
 use archon_queue::Store;
+use archon_queue::store::keys;
 use async_trait::async_trait;
 use tokio::sync::{Mutex, Notify, broadcast};
 
@@ -42,6 +43,8 @@ use tokio::sync::{Mutex, Notify, broadcast};
 /// `implement` → `review` (two agents, all must pass, loops once) → `ship`.
 pub const PIPELINE: &str = "wp5-review";
 pub const REPO_NAME: &str = "demo";
+/// The orchestrator [`Harness::orchestrator`] makes its calls as.
+pub const ORCHESTRATOR: &str = "agt_orchestrator";
 pub const MODEL: &str = "claude-code/claude-sonnet-5";
 pub const REVIEW_MODEL: &str = "codex/gpt-5";
 
@@ -188,6 +191,25 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
 
     pub async fn cli(&self, request: Request) -> Result<Reply, ArchonError> {
         handlers::handle(&self.ctx, ClientKind::ArchonCli, request).await
+    }
+
+    /// `request` as `archon mcp` forwards it for the orchestrator, which is
+    /// [`ORCHESTRATOR`] unless the store already names another.
+    pub async fn orchestrator(&self, request: Request) -> Result<Reply, ArchonError> {
+        let caller = {
+            let mut store = self.ctx.store.lock().await;
+            if store.kv_get(keys::ORCHESTRATOR_AGENT)?.is_none() {
+                store.kv_set(keys::ORCHESTRATOR_AGENT, ORCHESTRATOR)?;
+            }
+            store
+                .kv_get(keys::ORCHESTRATOR_AGENT)?
+                .expect("just stored")
+        };
+        let request = Request::ForAgent {
+            caller: AetherAgentId::parse(&caller)?,
+            request: Box::new(request),
+        };
+        handlers::handle(&self.ctx, ClientKind::ArchonMcp, request).await
     }
 
     /// Enqueue `title` on the test pipeline with [`plan`].

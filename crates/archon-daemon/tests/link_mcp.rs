@@ -5,6 +5,7 @@
 
 mod link_common;
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use archon_aether::fake::{self, Scripted};
@@ -63,21 +64,38 @@ fn orchestrator(id: &str, state: &str) -> Value {
 /// A running orchestrator `ORCH` that Aether restarts into `ORCH_2`.
 async fn running_orchestrator(harness: &Harness) {
     harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
-    harness.fake.set_responder(
-        "get_agent",
-        Arc::new(|cmd| {
-            let id = cmd["id"].as_str().unwrap_or_default();
-            match id {
-                ORCH | ORCH_2 => Scripted::reply("agent", orchestrator(id, "running")),
-                _ => Scripted::refuse("not_found", "no such agent"),
-            }
-        }),
-    );
-    harness.fake.set_default("cancel", Scripted::ok());
+    cancels_stop_orchestrators(harness);
     let successor = orchestrator(ORCH_2, "ready");
     harness
         .fake
         .set_default("restart", Scripted::reply("agent", successor));
+}
+
+/// Aether accepts a cancel of `ORCH` or `ORCH_2`, running until then, and
+/// `get_agent` reports the cancelled one stopped: only that one restarts.
+fn cancels_stop_orchestrators(harness: &Harness) {
+    let stopped: Arc<Mutex<HashSet<String>>> = Arc::default();
+    let known = stopped.clone();
+    harness.fake.set_responder(
+        "get_agent",
+        Arc::new(move |cmd| {
+            let id = cmd["id"].as_str().unwrap_or_default();
+            if !matches!(id, ORCH | ORCH_2) {
+                return Scripted::refuse("not_found", "no such agent");
+            }
+            let cancelled = known.lock().unwrap().contains(id);
+            let state = if cancelled { "cancelled" } else { "running" };
+            Scripted::reply("agent", orchestrator(id, state))
+        }),
+    );
+    harness.fake.set_responder(
+        "cancel",
+        Arc::new(move |cmd| {
+            let id = cmd["agent"].as_str().unwrap_or_default();
+            stopped.lock().unwrap().insert(id.to_owned());
+            Scripted::ok()
+        }),
+    );
 }
 
 fn refreshes(harness: &Harness) -> usize {
@@ -130,6 +148,164 @@ async fn a_failed_server_is_refreshed_and_the_orchestrator_restarted() {
         .unwrap();
     assert_eq!(refreshes(&harness), 1);
     assert_eq!(harness.fake.received_named("restart").len(), 1);
+}
+
+/// `ORCH` is mid-turn: Aether accepts its cancel, reports it running for
+/// `polls` more looks, and refuses to restart it until it has stopped.
+fn orchestrator_that_stops_after(harness: &Harness, polls: usize) {
+    // `None` until the cancel; then how many looks still find it running.
+    let stopping: Arc<Mutex<Option<usize>>> = Arc::default();
+    let (looked, cancelled) = (stopping.clone(), stopping.clone());
+    harness.fake.set_responder(
+        "get_agent",
+        Arc::new(move |cmd| {
+            let id = cmd["id"].as_str().unwrap_or_default();
+            let mut stopping = looked.lock().unwrap();
+            let state = match stopping.as_mut().filter(|_| id == ORCH) {
+                Some(0) => "cancelled",
+                Some(left) => {
+                    *left -= 1;
+                    "running"
+                }
+                None => "running",
+            };
+            Scripted::reply("agent", orchestrator(id, state))
+        }),
+    );
+    harness.fake.set_responder(
+        "cancel",
+        Arc::new(move |_| {
+            cancelled.lock().unwrap().get_or_insert(polls);
+            Scripted::ok()
+        }),
+    );
+    harness.fake.set_responder(
+        "restart",
+        Arc::new(move |_| match *stopping.lock().unwrap() {
+            Some(0) => Scripted::reply("agent", orchestrator(ORCH_2, "ready")),
+            _ => Scripted::refuse("invalid_argument", "agent is running"),
+        }),
+    );
+}
+
+/// Aether ends a running turn cooperatively and restarts only a stopped
+/// agent: asked too early it refuses, which must not cost the conversation.
+#[tokio::test]
+async fn a_mid_turn_orchestrator_is_restarted_once_its_cancelled_turn_has_stopped() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    orchestrator_that_stops_after(&harness, 2);
+    install_server(&harness, failed("Broken pipe"), ready());
+
+    supervisor::check_mcp(&harness.ctx, archon_core::now())
+        .await
+        .unwrap();
+
+    let restarts = harness.fake.received_named("restart");
+    assert_eq!(restarts.len(), 1, "asked once it had stopped: {restarts:?}");
+    assert_eq!(restarts[0]["agent"], ORCH);
+    assert!(harness.fake.received_named("create_agent").is_empty());
+    assert_eq!(
+        harness.kv(keys::ORCHESTRATOR_AGENT).await.as_deref(),
+        Some(ORCH_2),
+        "the same conversation, restarted from its checkpoint"
+    );
+    assert_eq!(failed_relinks(&harness).await, 0);
+}
+
+/// A turn that outlasts the wait leaves the restart owed: it is neither
+/// asked for early nor swapped for a fresh generation.
+#[tokio::test]
+async fn an_orchestrator_that_has_not_stopped_yet_keeps_its_restart_owed() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    orchestrator_that_stops_after(&harness, usize::MAX);
+    install_server(&harness, failed("Broken pipe"), ready());
+
+    supervisor::check_mcp(&harness.ctx, archon_core::now())
+        .await
+        .unwrap();
+
+    assert!(harness.fake.received_named("restart").is_empty());
+    assert!(harness.fake.received_named("create_agent").is_empty());
+    assert_eq!(
+        harness.kv(keys::ORCHESTRATOR_AGENT).await.as_deref(),
+        Some(ORCH)
+    );
+    assert_eq!(failed_relinks(&harness).await, 1, "tried again later");
+    let notes = harness.system_notes().await;
+    assert!(
+        notes.iter().any(|n| n.contains("is still running")),
+        "{notes:?}"
+    );
+}
+
+/// The stored orchestrator may be generations behind the one that runs:
+/// the tools go back to the running one, and the ones between are owed.
+#[tokio::test]
+async fn the_restart_for_the_tools_follows_the_restart_chain_to_its_newest_agent() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    let stopped: Arc<Mutex<bool>> = Arc::default();
+    let cancelled = stopped.clone();
+    harness.fake.set_responder(
+        "get_agent",
+        Arc::new(move |cmd| {
+            let id = cmd["id"].as_str().unwrap_or_default();
+            let mut agent = match id {
+                ORCH => orchestrator(ORCH, "failed"),
+                ORCH_2 if *stopped.lock().unwrap() => orchestrator(ORCH_2, "cancelled"),
+                _ => orchestrator(id, "running"),
+            };
+            if id == ORCH {
+                agent["restarted_as"] = json!(ORCH_2);
+            }
+            Scripted::reply("agent", agent)
+        }),
+    );
+    harness.fake.set_responder(
+        "cancel",
+        Arc::new(move |_| {
+            *cancelled.lock().unwrap() = true;
+            Scripted::ok()
+        }),
+    );
+    let successor = orchestrator(ORCH_3, "ready");
+    harness
+        .fake
+        .set_default("restart", Scripted::reply("agent", successor));
+    install_server(&harness, failed("Broken pipe"), ready());
+
+    supervisor::check_mcp(&harness.ctx, archon_core::now())
+        .await
+        .unwrap();
+
+    let cancels = harness.fake.received_named("cancel");
+    assert_eq!(cancels.len(), 1, "{cancels:?}");
+    assert_eq!(cancels[0]["agent"], ORCH_2, "the agent that runs");
+    assert_eq!(harness.fake.received_named("restart")[0]["agent"], ORCH_2);
+    assert_eq!(
+        harness.kv(keys::ORCHESTRATOR_AGENT).await.as_deref(),
+        Some(ORCH_3)
+    );
+    let record = harness.kv("orchestrator_retired").await.expect("a record");
+    let record: Value = serde_json::from_str(&record).unwrap();
+    let owed: Vec<(&Value, &Value)> = record
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|retired| (&retired["agent"], &retired["owed"]))
+        .collect();
+    assert_eq!(
+        owed,
+        [
+            (&json!(ORCH), &json!(true)),
+            (&json!(ORCH_2), &json!(false))
+        ]
+    );
 }
 
 #[tokio::test]
@@ -274,7 +450,7 @@ async fn a_restart_that_works_resets_the_backoff_and_the_blocker() {
         1
     );
 
-    harness.fake.set_default("cancel", Scripted::ok());
+    cancels_stop_orchestrators(&harness);
     check(40 + 120).await.unwrap();
     assert_eq!(harness.fake.received_named("restart").len(), 1);
     assert_eq!(failed_relinks(&harness).await, 0);

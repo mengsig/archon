@@ -5,6 +5,7 @@
 //! never depends on the check succeeding. A watched child is forgotten once
 //! none of its events can still arrive.
 
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use archon_aether::AetherEvent;
@@ -18,6 +19,7 @@ use archon_core::model::{Effort, ModelChoice, ModelRef};
 use archon_core::notify::NotificationKind;
 use archon_core::policy::ModelPolicy;
 use archon_core::protocol::RepoRef;
+use serde_json::Value;
 
 use super::fleet;
 use crate::context::DaemonContext;
@@ -87,7 +89,7 @@ pub(super) async fn agent_created(
     }
     adopt(ctx, agent, item.as_ref()).await?;
     let policy = effective_policy(ctx, item.as_ref()).await?;
-    match violation(ctx, agent, model, &policy).await? {
+    match violation(ctx, agent, model, &policy, item.as_ref()).await? {
         Some(refusal) => cancel_child(ctx, agent, model, item, &refusal).await,
         None => ctx.store.lock().await.kv_delete(&unchecked_key(agent)),
     }
@@ -112,8 +114,8 @@ async fn record_stage_agent(
     store.kv_set(&key, item.as_str())
 }
 
-/// The item a new child works for, when its parent is Archon's: the
-/// orchestrator (no item), a stage agent, or a watched child.
+/// The item a new child works for, when its parent is Archon's: a stage agent,
+/// a watched child, or an orchestrator (no item), also one since replaced.
 async fn parent_item(
     ctx: &DaemonContext,
     parent: &AetherAgentId,
@@ -121,8 +123,8 @@ async fn parent_item(
     if let Some(owner) = fleet::owner(ctx, parent).await? {
         return Ok(Some(fleet::item_of(ctx, &owner).await?));
     }
-    let orchestrator = crate::supervisor::current_orchestrator(ctx).await?;
-    Ok((orchestrator.as_ref() == Some(parent)).then_some(None))
+    let orchestrator = crate::supervisor::is_own_orchestrator(ctx, parent).await?;
+    Ok(orchestrator.then_some(None))
 }
 
 /// Stage agents were checked when Archon spawned them; a replayed
@@ -153,63 +155,82 @@ async fn adopt(
     store.kv_set(&unchecked_key(agent), "1")
 }
 
-/// Global policy narrowed by the item's repository, as for its stages.
+/// Global policy narrowed by the item's repository, as for its stages. A helper
+/// of the orchestrator has no item: every registered repository narrows its.
 async fn effective_policy(
     ctx: &DaemonContext,
     item: Option<&QueueItemId>,
 ) -> Result<ModelPolicy, ArchonError> {
-    let global = ctx.config.models.policy();
-    let Some(item) = item else {
-        return Ok(global);
-    };
-    let repo = {
+    let repos = {
         let store = ctx.store.lock().await;
-        match store.item(item)?.repo {
-            Some(id) => Some(store.repo(&RepoRef(id.as_str().to_owned()))?),
-            None => None,
+        match item {
+            None => store.repos()?,
+            Some(item) => match store.item(item)?.repo {
+                Some(id) => vec![store.repo(&RepoRef(id.as_str().to_owned()))?],
+                None => Vec::new(),
+            },
         }
     };
-    let Some(repo) = repo else {
-        return Ok(global);
-    };
-    match RepoConfig::load(&repo.path) {
-        Ok(config) => Ok(global.narrowed_by(&config.models.policy())),
-        // The dispatcher refuses such a repo's new work; keep watching with
-        // the global policy rather than stop watching.
-        Err(error) => {
-            tracing::warn!(repo = %repo.name, %error, "repo config unreadable; using global policy");
-            Ok(global)
+    let mut policy = ctx.config.models.policy();
+    for repo in repos {
+        match RepoConfig::load(&repo.path) {
+            Ok(config) => policy = policy.narrowed_by(&config.models.policy()),
+            // The dispatcher refuses such a repo's new work; keep watching
+            // without its narrowing rather than stop watching.
+            Err(error) => {
+                tracing::warn!(repo = %repo.name, %error, "repo config unreadable; its policy is not applied");
+            }
         }
     }
+    Ok(policy)
 }
 
-/// Why the child breaks `policy`, if it does. Effort is only in the
-/// agent's config, so it is fetched only when a cap exists.
+/// Why the child may not run, if it may not: it breaks `policy`, or it is a
+/// helper of the orchestrator (no `item`) placed inside a repository.
 async fn violation(
     ctx: &DaemonContext,
     agent: &AetherAgentId,
     model: &ModelRef,
     policy: &ModelPolicy,
+    item: Option<&QueueItemId>,
 ) -> Result<Option<ArchonError>, ArchonError> {
-    let Some(cap) = policy.max_effort else {
+    let helper = item.is_none();
+    if policy.max_effort.is_none() && !helper {
+        return Ok(model_refusal(policy, model));
+    }
+    let Some(held) = held_by_aether(ctx, agent).await? else {
         return Ok(model_refusal(policy, model));
     };
-    let effort = match child_effort(ctx, agent).await? {
+    if let Some(refusal) = policy_refusal(policy, model, &held) {
+        return Ok(Some(refusal));
+    }
+    if !helper {
+        return Ok(None);
+    }
+    placed_in_a_repository(ctx, &held).await
+}
+
+/// Why the child's model or effort breaks `policy`, if either does.
+fn policy_refusal(policy: &ModelPolicy, model: &ModelRef, held: &Value) -> Option<ArchonError> {
+    let Some(cap) = policy.max_effort else {
+        return model_refusal(policy, model);
+    };
+    let effort = match child_effort(held) {
         ChildEffort::Known(effort) => effort,
-        ChildEffort::Unknown => return Ok(model_refusal(policy, model)),
+        ChildEffort::Unknown => return model_refusal(policy, model),
         // A cap the effort cannot be compared with is not met.
         ChildEffort::Unrecognised(raw) => {
             let refusal = ArchonError::Policy(format!(
                 "effort {raw:?} is not one Archon can compare with the configured maximum {cap}"
             ));
-            return Ok(model_refusal(policy, model).or(Some(refusal)));
+            return model_refusal(policy, model).or(Some(refusal));
         }
     };
     let choice = ModelChoice {
         model: model.clone(),
         effort,
     };
-    Ok(policy.check(&choice).err())
+    policy.check(&choice).err()
 }
 
 fn model_refusal(policy: &ModelPolicy, model: &ModelRef) -> Option<ArchonError> {
@@ -226,33 +247,99 @@ fn model_refusal(policy: &ModelPolicy, model: &ModelRef) -> Option<ArchonError> 
 #[derive(Debug, PartialEq)]
 enum ChildEffort {
     Known(Effort),
-    /// No effort in its config, or the agent is gone already (it ended, or
-    /// this is a replay after it was reaped): only its model is checked.
+    /// No effort in its config: only its model is checked.
     Unknown,
     Unrecognised(String),
 }
 
-async fn child_effort(
+/// The agent as Aether holds it. `None` when it is gone already (it ended,
+/// or this is a replay after it was reaped): only its model is checked.
+async fn held_by_aether(
     ctx: &DaemonContext,
     agent: &AetherAgentId,
-) -> Result<ChildEffort, ArchonError> {
+) -> Result<Option<Value>, ArchonError> {
     let client = ctx.aether.client()?;
     let command = Command::GetAgent { id: agent.clone() };
-    let data = match client.request(command, "agent").await {
-        Ok(data) => data,
+    match client.request(command, "agent").await {
+        Ok(held) => Ok(Some(held)),
         Err(ArchonError::NotFound(why)) => {
-            tracing::info!(%agent, %why, "child gone before its effort was read; checking its model only");
-            return Ok(ChildEffort::Unknown);
+            tracing::info!(%agent, %why, "child gone before Aether was asked about it; checking its model only");
+            Ok(None)
         }
-        Err(error) => return Err(error),
+        Err(error) => Err(error),
+    }
+}
+
+fn child_effort(held: &Value) -> ChildEffort {
+    let Some(raw) = held.pointer("/config/effort").and_then(Value::as_str) else {
+        return ChildEffort::Unknown;
     };
-    let Some(raw) = data.pointer("/config/effort").and_then(|v| v.as_str()) else {
-        return Ok(ChildEffort::Unknown);
-    };
-    Ok(match Effort::from_str(raw) {
+    match Effort::from_str(raw) {
         Ok(effort) => ChildEffort::Known(effort),
         Err(_) => ChildEffort::Unrecognised(raw.to_owned()),
-    })
+    }
+}
+
+/// The refusal of an orchestrator's helper (§4.4) whose workspace or allowed
+/// paths lead into a repository or worktree, where only an item's agents work.
+async fn placed_in_a_repository(
+    ctx: &DaemonContext,
+    held: &Value,
+) -> Result<Option<ArchonError>, ArchonError> {
+    let roots = scope_roots(held);
+    if roots.is_empty() {
+        return Ok(None);
+    }
+    let mut closed = vec![(
+        "the items' worktrees".to_owned(),
+        ctx.paths.worktrees.clone(),
+    )];
+    for repo in ctx.store.lock().await.repos()? {
+        closed.push((format!("repository `{}`", repo.name), repo.path));
+    }
+    let own = ctx.paths.orchestrator_workspace.clone();
+    let found = tokio::task::spawn_blocking(move || closed_place_holding(&roots, &own, &closed))
+        .await
+        .map_err(|e| ArchonError::io("the workspace check", std::io::Error::other(e)))?;
+    Ok(found.map(|(root, place)| {
+        ArchonError::Policy(format!(
+            "it was given {}, which is inside {place}; only a queued item's agents work there",
+            root.display()
+        ))
+    }))
+}
+
+/// Every directory the agent's scope lets its tools act in.
+fn scope_roots(held: &Value) -> Vec<PathBuf> {
+    let path = |value: &Value| value.as_str().map(PathBuf::from);
+    let root = held.pointer("/scope/workspace_root").and_then(path);
+    let allowed = held.pointer("/scope/allowed_paths");
+    let allowed = allowed.and_then(Value::as_array).into_iter().flatten();
+    root.into_iter().chain(allowed.filter_map(path)).collect()
+}
+
+/// The first of `roots` that leads into a `closed` place, with its name. Links
+/// are followed; what stays inside `own`, the orchestrator's workspace, is its.
+fn closed_place_holding(
+    roots: &[PathBuf],
+    own: &Path,
+    closed: &[(String, PathBuf)],
+) -> Option<(PathBuf, String)> {
+    // A path that does not exist leads nowhere else: compared as written.
+    let resolved = |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+    let own = resolved(own);
+    let closed: Vec<(&String, PathBuf)> = closed.iter().map(|(n, p)| (n, resolved(p))).collect();
+    for root in roots {
+        assert!(root.is_absolute(), "Aether scopes are absolute: {root:?}");
+        let at = resolved(root);
+        if at.starts_with(&own) {
+            continue;
+        }
+        if let Some((name, _)) = closed.iter().find(|(_, place)| at.starts_with(place)) {
+            return Some((root.clone(), (*name).clone()));
+        }
+    }
+    None
 }
 
 async fn cancel_child(

@@ -129,20 +129,25 @@ fn contents(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
         .collect()
 }
 
-/// Listens where the instance's aetherd would once the shim was asked to
-/// start it, and stops listening once it was asked to stop.
-fn fake_aetherd(log: PathBuf, socket: PathBuf) -> JoinHandle<()> {
+/// Listens where the instance's aetherd would while the shim was asked to
+/// start it more often than to stop it, and ends after `lives` stops.
+fn fake_aetherd(log: PathBuf, socket: PathBuf, lives: usize) -> JoinHandle<()> {
+    assert!(lives > 0, "a daemon that is never stopped never ends");
     std::thread::spawn(move || {
         let deadline = Instant::now() + Duration::from_secs(60);
         let mut listener = None;
         while Instant::now() < deadline {
             let text = std::fs::read_to_string(&log).unwrap_or_default();
-            if listener.is_none() && text.lines().any(|l| l.starts_with("daemon|")) {
+            let count = |verb: &str| text.lines().filter(|l| l.starts_with(verb)).count();
+            let (starts, stops) = (count("daemon|"), count("stop|"));
+            if listener.is_none() && starts > stops {
                 listener = Some(UnixListener::bind(&socket).unwrap());
             }
-            if text.lines().any(|l| l.starts_with("stop|")) {
-                drop(listener);
+            if listener.is_some() && stops >= starts {
+                listener = None;
                 std::fs::remove_file(&socket).unwrap();
+            }
+            if stops >= lives {
                 return;
             }
             std::thread::sleep(Duration::from_millis(10));
@@ -177,7 +182,7 @@ fn setup_seeds_and_the_lifecycle_drives_archons_own_aether() {
     assert_eq!(json["calm_mode"], "installed");
 
     let socket = env.path("run/aetherd.sock");
-    let daemon = fake_aetherd(env.path("aether-calls.log"), socket.clone());
+    let daemon = fake_aetherd(env.path("aether-calls.log"), socket.clone(), 1);
     let mut archond = env.start_archond();
     let started = String::from_utf8(env.run(&["daemon", "start"]).stdout).unwrap();
     assert!(started.contains("archond"), "{started}");
@@ -215,6 +220,41 @@ fn setup_seeds_and_the_lifecycle_drives_archons_own_aether() {
         assert_eq!(got, expected, "the environment of `aether {}`", call[0]);
     }
     assert_eq!(contents(&env.path("operator-aether")), operator_before);
+}
+
+/// An upgrade from before 1.0 leaves `archon.toml` and no `config.toml`: setup
+/// says so, writes a config that changes nothing, and never touches one after.
+#[test]
+fn setup_writes_a_commented_config_once_and_reports_a_legacy_one() {
+    let env = Env::new();
+    let config_dir = env.path("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(config_dir.join("archon.toml"), "[steward]\n").unwrap();
+
+    let first = String::from_utf8(env.run(&["setup"]).stderr).unwrap();
+    let config = config_dir.join("config.toml");
+    assert!(
+        first.contains(&format!("wrote {}", config.display())),
+        "{first}"
+    );
+    assert!(first.contains("archon.toml is ignored"), "{first}");
+    let written = std::fs::read_to_string(&config).unwrap();
+    let settings = written
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'));
+    assert_eq!(settings.count(), 0, "every key is commented out: {written}");
+
+    let mine = "[limits]\nmax_parallel_agents = 2\n";
+    std::fs::write(&config, mine).unwrap();
+    let again = String::from_utf8(env.run(&["setup"]).stderr).unwrap();
+    assert!(!again.contains("wrote"), "{again}");
+    assert!(again.contains("archon.toml is ignored"), "{again}");
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), mine);
+
+    let doctor = env.command(&["doctor"]).output().unwrap();
+    let report = String::from_utf8(doctor.stdout).unwrap();
+    assert!(report.contains("legacy config"), "{report}");
+    assert!(report.contains("archon.toml is ignored"), "{report}");
 }
 
 /// Aether's `/voice setup` refuses a linked `voice.toml`: setup copies it, and
@@ -266,6 +306,64 @@ fn tui_start_gives_the_instance_its_own_voice_toml() {
     );
     assert_eq!(server.join().unwrap().len(), 4);
     assert_eq!(contents(&env.path("operator-aether")), operator_before);
+}
+
+/// The registered `archon` server as a setup that predates caller naming
+/// left it, written over the instance config.
+fn downgrade_registration(env: &Env) {
+    let config = env.path("config/aether/config.toml");
+    let current = std::fs::read_to_string(&config).unwrap();
+    let old = current.replace("send_caller_meta = true\n", "");
+    assert_ne!(old, current, "the current setup names callers: {current}");
+    std::fs::write(&config, old).unwrap();
+}
+
+fn registration_check(env: &Env) -> serde_json::Value {
+    let out = env.command(&["--json", "doctor"]).output().unwrap();
+    let checks: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+    let found = checks.into_iter().find(|c| c["check"] == "mcp registered");
+    found.expect("doctor checks the registration")
+}
+
+/// An install set up before archond needed its callers named, upgraded
+/// while its aetherd runs: nothing is asked of the operator.
+#[test]
+fn an_upgrade_repairs_the_old_registration_and_restarts_archons_aetherd() {
+    let env = Env::new();
+    env.run(&["setup"]);
+    let config = env.path("config/aether/config.toml");
+    let daemon = fake_aetherd(
+        env.path("aether-calls.log"),
+        env.path("run/aetherd.sock"),
+        3,
+    );
+    let mut archond = env.start_archond();
+    env.run(&["daemon", "start"]);
+    downgrade_registration(&env);
+    let found = registration_check(&env);
+    assert_eq!(found["level"], "fail", "{found}");
+    let detail = found["detail"].as_str().unwrap();
+    assert!(detail.contains("send_caller_meta = true"), "{detail}");
+
+    let status = env.run(&["status"]);
+    let told = String::from_utf8_lossy(&status.stderr);
+    assert!(told.contains("restarted to load it"), "{told}");
+    let repaired = std::fs::read_to_string(&config).unwrap();
+    assert!(repaired.contains("send_caller_meta = true"), "{repaired}");
+    assert_eq!(registration_check(&env)["level"], "ok");
+    let quiet = env.run(&["status"]);
+    assert!(quiet.stderr.is_empty(), "once: {quiet:?}");
+
+    downgrade_registration(&env);
+    let setup = String::from_utf8(env.run(&["setup"]).stdout).unwrap();
+    assert!(setup.contains("up to date"), "{setup}");
+    assert!(setup.contains("aetherd was restarted"), "{setup}");
+    let verbs: Vec<_> = env.calls().into_iter().map(|c| c[0].clone()).collect();
+    assert_eq!(verbs, ["daemon", "stop", "daemon", "stop", "daemon"]);
+
+    env.run(&["daemon", "stop", "--aether"]);
+    daemon.join().unwrap();
+    assert!(archond.0.wait().unwrap().success());
 }
 
 #[test]

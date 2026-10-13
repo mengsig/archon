@@ -342,3 +342,66 @@ fn decisions_are_refused_for_stages_that_are_not_gates_or_already_decided() {
         .unwrap_err();
     assert!(err.to_string().contains("already approved"), "{err}");
 }
+
+/// A lead of `adaptive` finishing with its review on record.
+fn reviewed(summary: &'static str) -> Agent {
+    let review = serde_json::json!({"verdict": "pass", "reviewer_model": "codex/astra"});
+    Agent::DoneStructured(summary, serde_json::json!({ "review": review }))
+}
+
+#[test]
+fn adaptive_proposal_and_report_gates_preserve_delegation_and_context() {
+    let mut sim = gated_sim("adaptive", ProposalMode::Lavish, ReportMode::BeforePr);
+    let first = sim.start();
+    assert_eq!(spawned(&first), slots(&[("propose", 1, 0)]));
+    assert!(!spawn_plans(&first)[0].allow_delegation);
+    propose(&mut sim, 1);
+    let build = sim.decide(approve(Some("Preserve the old API")));
+    assert_eq!(spawned(&build), slots(&[("build", 1, 0)]));
+    assert!(spawn_plans(&build)[0].allow_delegation);
+    assert!(
+        spawn_plans(&build)[0]
+            .prompt
+            .contains("Preserve the old API")
+    );
+    let report = sim.settle("build", 0, reviewed("Built and reviewed"));
+    assert_eq!(spawned(&report), slots(&[("report", 1, 0)]));
+    assert!(!spawn_plans(&report)[0].allow_delegation);
+    let gate = sim.settle("report", 0, Agent::Done("Report v1"));
+    assert_eq!(awaited(&gate)[0].subject, GateSubject::Report);
+    let revised = sim.decide(revise("Handle empty input"));
+    assert_eq!(spawned(&revised), slots(&[("build", 2, 0)]));
+    assert!(spawn_plans(&revised)[0].allow_delegation);
+    assert!(
+        spawn_plans(&revised)[0]
+            .prompt
+            .contains("Handle empty input")
+    );
+    sim.settle("build", 0, reviewed("Fixed, verified and re-reviewed"));
+    sim.settle("report", 0, Agent::Done("Report v2"));
+    let ship = sim.decide(approve(None));
+    assert_eq!(spawned(&ship), slots(&[("ship", 1, 0)]));
+    assert!(
+        spawn_plans(&ship)[0]
+            .prompt
+            .contains("Fixed, verified and re-reviewed")
+    );
+    assert!(spawn_plans(&ship)[0].prompt.contains("Report v2"));
+    let done = sim.settle("ship", 0, Agent::Done("Delivered"));
+    assert!(matches!(
+        finish_state(&done),
+        Some(RunState::Succeeded { .. })
+    ));
+}
+
+#[test]
+fn adaptive_with_pr_report_does_not_wait_for_approval() {
+    let mut sim = gated_sim("adaptive", ProposalMode::Off, ReportMode::WithPr);
+    let first = sim.start();
+    assert_eq!(spawned(&first), slots(&[("build", 1, 0)]));
+    sim.settle("build", 0, reviewed("Verified and reviewed"));
+    let ship = sim.settle("report", 0, Agent::Done("Change report"));
+    assert_eq!(spawned(&ship), slots(&[("ship", 1, 0)]));
+    assert!(awaited(&ship).is_empty());
+    assert!(spawn_plans(&ship)[0].prompt.contains("Change report"));
+}

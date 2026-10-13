@@ -10,6 +10,7 @@ use std::process::{Child, ChildStdout, Command, Stdio};
 use std::time::Duration;
 
 use archon_client::framing::{read_frame, write_frame};
+use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::notify::{FeedEntry, FeedItem, NotificationKind};
 use archon_core::protocol::{
@@ -18,6 +19,7 @@ use archon_core::protocol::{
 };
 use archon_core::repo::{Repo, ShipMode};
 use archon_daemon::server;
+use archon_queue::store::keys;
 use common::{Harness, PIPELINE, REPO_NAME};
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
@@ -149,15 +151,44 @@ async fn hello_requests_feed_and_shutdown_over_a_socket() {
         other => panic!("subscribe: {other:?}"),
     }
     let mut watcher = Client::hello(&socket, ClientKind::ArchonMcp).await;
+    let unnamed = watcher
+        .call(notify("from nobody"), &mut Vec::new())
+        .await
+        .expect_err("a change for an agent names the agent");
+    assert_eq!(unnamed.code, ErrorCode::Forbidden);
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(keys::ORCHESTRATOR_AGENT, common::ORCHESTRATOR)
+        .expect("kv");
+    let forwarded = Request::ForAgent {
+        caller: AetherAgentId::parse(common::ORCHESTRATOR).expect("an agent id"),
+        request: Box::new(notify("while subscribed")),
+    };
     watcher
-        .call(notify("while subscribed"), &mut Vec::new())
+        .call(forwarded, &mut Vec::new())
         .await
         .expect("notify");
-    cli.feed_until(2, &mut feed).await;
+    cli.feed_until(4, &mut feed).await;
     let seqs: Vec<u64> = feed.iter().map(|item| item.seq).collect();
-    assert_eq!(seqs, [1, 2], "catch-up then live, in order, once each");
+    assert_eq!(
+        seqs,
+        [1, 2, 3, 4],
+        "catch-up then live, in order, once each"
+    );
     assert_eq!(text_of(&feed[0]), "before subscribing");
-    assert_eq!(text_of(&feed[1]), "while subscribed");
+    let unnamed_notice = text_of(&feed[1]);
+    assert!(
+        unnamed_notice.starts_with("Aether is not naming the agents"),
+        "the operator is told of the unnamed call: {unnamed_notice}"
+    );
+    assert!(
+        matches!(&feed[2].entry, FeedEntry::System { text } if text.contains("again")),
+        "and of the named one that follows: {:?}",
+        feed[2].entry
+    );
+    assert_eq!(text_of(&feed[3]), "while subscribed");
 
     let refused = watcher
         .call(Request::Shutdown, &mut Vec::new())

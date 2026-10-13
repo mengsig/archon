@@ -373,23 +373,25 @@ async fn mcp_clients_cannot_lift_the_operators_hard_pause() {
         .await
         .expect("no running agent to pause in Aether");
     let resume = Request::Resume(PauseTarget::Global { hard: false });
-    let refused = handlers::handle(&h.ctx, ClientKind::ArchonMcp, resume.clone())
+    let refused = h
+        .orchestrator(resume.clone())
         .await
-        .expect_err("MCP cannot lift a hard pause");
-    assert!(matches!(refused, ArchonError::Forbidden(_)), "{refused:?}");
+        .expect_err("the orchestrator cannot lift a hard pause");
+    assert!(
+        matches!(&refused, ArchonError::Forbidden(why) if why.contains("hard")),
+        "{refused:?}"
+    );
     let Ok(Reply::Status(status)) = h.cli(Request::Status).await else {
         panic!("status");
     };
     assert!(status.pause.global, "the hard pause holds");
     h.cli(resume).await.expect("the operator lifts it");
     let soft = Request::Pause(PauseTarget::Global { hard: false });
-    handlers::handle(&h.ctx, ClientKind::ArchonMcp, soft)
-        .await
-        .expect("soft pause");
+    h.orchestrator(soft).await.expect("soft pause");
     let resume = Request::Resume(PauseTarget::Global { hard: false });
-    handlers::handle(&h.ctx, ClientKind::ArchonMcp, resume)
+    h.orchestrator(resume)
         .await
-        .expect("MCP lifts a soft pause");
+        .expect("the orchestrator lifts a soft pause");
 }
 
 #[tokio::test]
@@ -506,7 +508,7 @@ async fn an_item_asked_for_on_github_reports_back_to_its_thread() {
         autonomy: Default::default(),
         origin: Some(origin.clone()),
     };
-    let reply = handlers::handle(&h.ctx, ClientKind::ArchonMcp, Request::Enqueue(request)).await;
+    let reply = h.orchestrator(Request::Enqueue(request)).await;
     let Ok(Reply::Item(item)) = reply else {
         panic!("enqueue replied {reply:?}");
     };
@@ -698,9 +700,7 @@ async fn mcp_enqueue_and_updates_refuse_invalid_queue_inputs() {
         });
     }
     for request in invalid {
-        let error = handlers::handle(&h.ctx, ClientKind::ArchonMcp, Request::Enqueue(request))
-            .await
-            .unwrap_err();
+        let error = h.orchestrator(Request::Enqueue(request)).await.unwrap_err();
         assert!(matches!(error, ArchonError::Invalid(_)), "{error}");
     }
     assert_eq!(item_count(&h).await, 0);

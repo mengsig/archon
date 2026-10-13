@@ -13,6 +13,7 @@ use archon_queue::Store;
 use serde::{Deserialize, Serialize};
 
 use crate::context::DaemonContext;
+use crate::pump::FleetRole;
 use crate::{executor, feed, triggers};
 
 #[derive(Serialize, Deserialize)]
@@ -76,11 +77,10 @@ pub(crate) async fn send(
     })?;
     let receipt = {
         let mut store = ctx.store.lock().await;
-        let stage = store.stage_run_by_agent(agent)?.ok_or_else(|| {
-            ArchonError::Forbidden(format!(
-                "message_orchestrator is for recorded stage agents; {agent} is not one. If your stage just started, retry shortly while continuing your work"
-            ))
-        })?;
+        let Some(stage) = store.stage_run_by_agent(agent)? else {
+            drop(store);
+            return Err(not_a_stage_agent(ctx, agent).await?);
+        };
         if stage.state.is_terminal() {
             return Err(ArchonError::Forbidden(
                 "this stage has already settled".into(),
@@ -116,6 +116,31 @@ pub(crate) async fn send(
     Ok(Reply::MessageReceipt {
         receipt: receipt.id,
     })
+}
+
+/// Why `agent` may not message the orchestrator, said so that only an agent
+/// whose stage is still being recorded tries again.
+async fn not_a_stage_agent(
+    ctx: &DaemonContext,
+    agent: &AetherAgentId,
+) -> Result<ArchonError, ArchonError> {
+    let why = match crate::pump::fleet_role(ctx, agent).await? {
+        Some(FleetRole::Stage(_)) => format!(
+            "the stage of {agent} is still being recorded. Try once more in a few seconds,              and keep working meanwhile"
+        ),
+        Some(FleetRole::StageChild(item)) => format!(
+            "{agent} was delegated part of item {item} by one. Do not retry: report to the              agent that delegated to you, which can send the message"
+        ),
+        Some(FleetRole::OrchestratorChild) => format!(
+            "{agent} was delegated to by the orchestrator. Do not retry: put what it should              know in your result"
+        ),
+        None => format!(
+            "Archon has no stage on record for {agent}. If your stage started moments ago,              try once more in a few seconds; otherwise do not retry"
+        ),
+    };
+    Ok(ArchonError::Forbidden(format!(
+        "message_orchestrator is for stage agents, and {why}. Nothing was sent."
+    )))
 }
 
 fn publish(ctx: &DaemonContext, receipt: &FeedItem) {

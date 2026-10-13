@@ -14,6 +14,7 @@ pub mod agent_message;
 pub mod autonomy;
 pub mod catalog;
 pub mod config;
+pub mod config_files;
 pub mod cost;
 pub mod error;
 pub mod github;

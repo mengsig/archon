@@ -291,6 +291,41 @@ async fn keys_of_the_retired_give_up_rule_go_and_live_supervisor_state_stays() {
     assert_eq!(prune_at(&h, after_retention()).await.retired_keys, 0);
 }
 
+/// A replaced orchestrator stays on record while its late events can still
+/// arrive, and for as long as the sweep of what it left running is owed.
+#[tokio::test]
+async fn replaced_orchestrators_go_after_the_retention_unless_their_sweep_is_owed() {
+    let h = Harness::new().await;
+    let now = archon_core::now();
+    let long_ago = now - prune::retention() - chrono::Duration::hours(1);
+    let record = json!([
+        {"agent": "agt_0901", "at": long_ago, "owed": false},
+        {"agent": "agt_0902", "at": long_ago, "owed": true},
+        {"agent": "agt_0903", "at": now, "owed": false},
+    ]);
+    let stored = record.to_string();
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set("orchestrator_retired", &stored)
+        .unwrap();
+
+    let pruned = prune_at(&h, now).await;
+    assert_eq!(pruned.retired_orchestrators, 1, "{pruned:?}");
+    let kept = h.kv("orchestrator_retired").await.expect("still a record");
+    assert!(
+        !kept.contains("agt_0901"),
+        "swept and past retention: {kept}"
+    );
+    assert!(kept.contains("agt_0902"), "its sweep is owed: {kept}");
+    assert!(
+        kept.contains("agt_0903"),
+        "its events may still come: {kept}"
+    );
+    assert_eq!(prune_at(&h, now).await.retired_orchestrators, 0);
+}
+
 #[tokio::test]
 async fn settled_reports_go_after_the_retention_and_the_legacy_blob_is_split() {
     let h = Harness::new().await;

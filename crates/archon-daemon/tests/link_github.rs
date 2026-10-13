@@ -809,7 +809,8 @@ async fn reply(harness: &Harness, thread: GithubThread) -> Result<Reply, ArchonE
         thread,
         body: "Queued as qi_1; I will post the outcome here.".into(),
     };
-    handlers::handle(&harness.ctx, ClientKind::ArchonMcp, request).await
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, "agt_0001").await;
+    harness.mcp_as("agt_0001", request).await
 }
 
 #[tokio::test]

@@ -163,7 +163,8 @@ pub fn restore_replies(raw: Option<&str>) -> Result<ReplyTracker, ArchonError> {
 
 /// Decides which orchestrator assistant text becomes an `Orchestrator` feed
 /// entry (ARCHITECTURE §12): the last non-empty text of a turn that consumed
-/// an operator message, written after it consumed it. Trigger-woken turns,
+/// an operator message, written after it consumed it, and of each turn that
+/// continues it after a wait that ends by itself. Trigger-woken turns,
 /// tool calls, thinking and earlier text never show. Pure; driven only by
 /// the orchestrator's ordered event stream, so it cannot race `Say` or a
 /// lagging pump, and it is persisted so a restart resumes it exactly.
@@ -171,13 +172,17 @@ pub fn restore_replies(raw: Option<&str>) -> Result<ReplyTracker, ArchonError> {
 pub struct ReplyTracker {
     /// Inbox seqs of operator messages no turn has consumed yet, ascending.
     pending: Vec<u64>,
-    /// A consumed operator message awaits this turn's (or, after an
-    /// interruption, the revived agent's next turn's) final text.
+    /// A consumed operator message awaits this turn's (or, after a wait or
+    /// an interruption, the next turn's) final text.
     answering: bool,
     /// The last non-empty text written since the message was consumed.
     text: Option<String>,
     /// Seq of the last Aether event applied, so a replay changes nothing.
     seen: u64,
+    /// The running turn ends in a wait that ends by itself (a delegated
+    /// task, a deadline): the turn after it continues the same answer.
+    #[serde(default)]
+    resumes: bool,
 }
 
 impl ReplyTracker {
@@ -226,10 +231,17 @@ impl ReplyTracker {
         }
     }
 
+    /// `agent.waiting`, sent before the `agent.turn_completed` of the turn
+    /// it ends. `idle`: the agent waits for its inbox alone.
+    pub fn waiting(&mut self, idle: bool) {
+        self.resumes = !idle;
+    }
+
     /// `agent.turn_completed`: the reply to show, if this turn answered the
-    /// operator and said something. A turn that ended `failed` or
-    /// `cancelled` answered nothing: the revived agent answers instead.
+    /// operator and said something. A `failed` or `cancelled` turn answered
+    /// nothing; one that waits for a helper is still answering.
     pub fn turn_completed(&mut self, next: Option<&str>) -> Option<String> {
+        let resumes = std::mem::take(&mut self.resumes) && next == Some("waiting");
         if !self.answering {
             return None;
         }
@@ -237,7 +249,7 @@ impl ReplyTracker {
             self.interrupted();
             return None;
         }
-        self.answering = false;
+        self.answering = resumes;
         self.text.take()
     }
 
@@ -253,6 +265,7 @@ impl ReplyTracker {
     pub fn agent_replaced(&mut self, kept_conversation: bool) {
         self.pending.clear();
         self.text = None;
+        self.resumes = false;
         self.answering &= kept_conversation;
     }
 
@@ -286,6 +299,79 @@ mod tests {
             turn(&mut tracker, 1, &["Queued it."]).as_deref(),
             Some("Queued it.")
         );
+        assert!(!tracker.awaiting_reply());
+    }
+
+    /// A turn that ends waiting; `idle` as `agent.waiting` reports it.
+    fn waits(tracker: &mut ReplyTracker, idle: bool) -> Option<String> {
+        tracker.waiting(idle);
+        tracker.turn_completed(Some("waiting"))
+    }
+
+    #[test]
+    fn an_answer_that_waits_for_a_helper_is_finished_by_the_turn_its_result_wakes() {
+        let mut tracker = ReplyTracker::default();
+        tracker.delivered(1, OPERATOR);
+        tracker.consumed(1);
+        tracker.assistant_text("A helper is looking into it.");
+        let before = waits(&mut tracker, false);
+        assert_eq!(before.as_deref(), Some("A helper is looking into it."));
+        assert!(tracker.awaiting_reply(), "the answer is still to come");
+
+        tracker.delivered(2, !OPERATOR);
+        tracker.consumed(2);
+        tracker.assistant_text("It found three flaky tests.");
+        let answer = waits(&mut tracker, true);
+        assert_eq!(answer.as_deref(), Some("It found three flaky tests."));
+        assert!(!tracker.awaiting_reply());
+        tracker.delivered(3, !OPERATOR);
+        assert_eq!(turn(&mut tracker, 3, &["a later trigger"]), None);
+    }
+
+    #[test]
+    fn a_turn_silent_before_its_wait_is_still_answered_after_it() {
+        let mut tracker = ReplyTracker::default();
+        tracker.delivered(1, OPERATOR);
+        tracker.consumed(1);
+        assert_eq!(waits(&mut tracker, false), None);
+        assert!(tracker.awaiting_reply());
+        tracker.assistant_text("Nothing is broken.");
+        let answer = waits(&mut tracker, true);
+        assert_eq!(answer.as_deref(), Some("Nothing is broken."));
+        assert!(!tracker.awaiting_reply());
+    }
+
+    #[test]
+    fn only_a_wait_that_ends_by_itself_keeps_the_answer_open() {
+        let mut idle = ReplyTracker::default();
+        idle.delivered(1, OPERATOR);
+        idle.consumed(1);
+        idle.assistant_text("Done.");
+        assert_eq!(waits(&mut idle, true).as_deref(), Some("Done."));
+        assert!(!idle.awaiting_reply(), "idle: nothing follows by itself");
+
+        // The wait a failed turn announced is not the next turn's.
+        let mut failed = ReplyTracker::default();
+        failed.delivered(1, OPERATOR);
+        failed.consumed(1);
+        failed.waiting(false);
+        assert_eq!(failed.turn_completed(Some("failed")), None);
+        failed.assistant_text("Recovered: done.");
+        let answer = failed.turn_completed(Some("waiting"));
+        assert_eq!(answer.as_deref(), Some("Recovered: done."));
+        assert!(!failed.awaiting_reply());
+    }
+
+    #[test]
+    fn a_tracker_saved_before_waits_were_tracked_is_restored() {
+        let saved = r#"{"pending":[4],"answering":true,"text":"Checking.","seen":9}"#;
+        let mut tracker = restore_replies(Some(saved)).unwrap();
+        assert!(tracker.awaiting_reply());
+        let shown = tracker.turn_completed(Some("waiting"));
+        assert_eq!(shown.as_deref(), Some("Checking."));
+        assert!(tracker.awaiting_reply(), "message 4 is still unread");
+        tracker.consumed(4);
+        assert_eq!(waits(&mut tracker, true), None);
         assert!(!tracker.awaiting_reply());
     }
 

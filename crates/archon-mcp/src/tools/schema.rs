@@ -163,7 +163,7 @@ fn model_plan(what: &str) -> Value {
              stage; for a fan-out stage one per parallel agent (up to its fan_out; fewer are \
              cycled across the slots). Example: {{\"implement\": [{{\"model\": \
              \"claude-code/claude-opus-5-5\", \"effort\": \"high\"}}], \"ship\": [{{\"model\": \
-             \"claude-code/claude-sonnet-5\", \"effort\": \"medium\"}}]}}."
+             \"claude-code/claude-sonnet-5-5\", \"effort\": \"medium\"}}]}}."
         ),
         "minProperties": 1,
         "additionalProperties": {"type": "array", "minItems": 1, "items": choice},

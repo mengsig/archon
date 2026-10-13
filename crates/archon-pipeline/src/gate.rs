@@ -4,6 +4,7 @@
 use archon_core::catalog::{Gate, StageKind};
 use archon_core::run::{StageRun, StageState, Verdict};
 
+use crate::review::Evidence;
 use crate::spec::StageSpec;
 
 /// Feedback handed to a looped-to stage is capped so a verbose reviewer
@@ -19,8 +20,13 @@ pub(crate) enum GroupResult {
 }
 
 /// Evaluate a stage group whose every slot is terminal. `members` holds the
-/// latest stage run per slot, ordered by fan index.
-pub(crate) fn evaluate(stage: &StageSpec, attempt: u32, members: &[&StageRun]) -> GroupResult {
+/// latest stage run per slot, by fan index; `holds_review` as for `reviewed`.
+pub(crate) fn evaluate(
+    stage: &StageSpec,
+    attempt: u32,
+    members: &[&StageRun],
+    holds_review: bool,
+) -> GroupResult {
     assert_eq!(members.len(), stage.fan_out as usize, "one member per slot");
     assert!(
         members.iter().all(|m| m.state.is_terminal()),
@@ -33,6 +39,9 @@ pub(crate) fn evaluate(stage: &StageSpec, attempt: u32, members: &[&StageRun]) -
         Gate::Majority => passes * 2 > total,
         Gate::Any => passes >= 1,
     };
+    if ok && holds_review {
+        return reviewed(stage, attempt, members);
+    }
     if ok {
         return GroupResult::Pass {
             summary: joined_summary(stage, members),
@@ -55,6 +64,32 @@ pub(crate) fn evaluate(stage: &StageSpec, attempt: u32, members: &[&StageRun]) -
     GroupResult::Fail {
         headline,
         report: clip(&report, MAX_FEEDBACK_CHARS),
+    }
+}
+
+/// A completed stage that holds its pipeline's review passes only with the
+/// review on record; its summary then ends with Archon's line saying so.
+fn reviewed(stage: &StageSpec, attempt: u32, members: &[&StageRun]) -> GroupResult {
+    let [member] = members else {
+        panic!("validated: one agent holds a pipeline's review")
+    };
+    assert_eq!(member.state, StageState::Completed, "it passed its gate");
+    let summary = joined_summary(stage, members);
+    match Evidence::read(member.structured.as_ref()) {
+        Ok(evidence) => GroupResult::Pass {
+            summary: format!("{summary}\n\n{}", evidence.line()),
+        },
+        Err(why) => {
+            let headline = format!("the review this pipeline declares is not on record: {why}");
+            let report = format!(
+                "**Stage `{}` attempt {attempt}: {headline}**\n\n{summary}\n",
+                stage.id
+            );
+            GroupResult::Fail {
+                headline,
+                report: clip(&report, MAX_FEEDBACK_CHARS),
+            }
+        }
     }
 }
 

@@ -48,21 +48,26 @@ impl Shim {
     }
 }
 
-/// Stands in for the daemon the shim "starts": listens once the log shows
-/// `daemon`, and goes away once it shows `stop`.
-fn fake_aetherd(log: PathBuf, socket: PathBuf) -> JoinHandle<()> {
+/// Stands in for the daemon the shim "starts": listens while the log shows
+/// more `daemon` than `stop` calls, and ends after `lives` stops.
+fn fake_aetherd(log: PathBuf, socket: PathBuf, lives: usize) -> JoinHandle<()> {
+    assert!(lives > 0, "a daemon that is never stopped never ends");
     std::thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(20);
+        let deadline = Instant::now() + Duration::from_secs(30);
         let mut listener = None;
         while Instant::now() < deadline {
             let text = std::fs::read_to_string(&log).unwrap_or_default();
-            if listener.is_none() && text.lines().any(|l| l.starts_with("daemon|")) {
+            let count = |verb: &str| text.lines().filter(|l| l.starts_with(verb)).count();
+            let (starts, stops) = (count("daemon|"), count("stop|"));
+            if listener.is_none() && starts > stops {
                 std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
                 listener = Some(UnixListener::bind(&socket).unwrap());
             }
-            if text.lines().any(|l| l.starts_with("stop|")) {
-                drop(listener);
+            if listener.is_some() && stops >= starts {
+                listener = None;
                 std::fs::remove_file(&socket).unwrap();
+            }
+            if stops >= lives {
                 return;
             }
             std::thread::sleep(Duration::from_millis(10));
@@ -73,7 +78,7 @@ fn fake_aetherd(log: PathBuf, socket: PathBuf) -> JoinHandle<()> {
 #[test]
 fn start_and_stop_call_aether_with_the_instance_environment() {
     let shim = shim("sleep 0.2");
-    let daemon = fake_aetherd(shim.log.clone(), shim.instance.socket.clone());
+    let daemon = fake_aetherd(shim.log.clone(), shim.instance.socket.clone(), 1);
     let started = ensure_running(&shim.instance, &shim.program).unwrap();
     assert_eq!(started, Start::Started);
     assert!(is_listening(&shim.instance.socket));
@@ -111,7 +116,7 @@ fn start_and_stop_call_aether_with_the_instance_environment() {
 #[test]
 fn concurrent_starts_launch_one_daemon() {
     let shim = shim("sleep 0.3");
-    let daemon = fake_aetherd(shim.log.clone(), shim.instance.socket.clone());
+    let daemon = fake_aetherd(shim.log.clone(), shim.instance.socket.clone(), 1);
     let results: Vec<Start> = std::thread::scope(|scope| {
         let starts: Vec<_> = (0..4)
             .map(|_| scope.spawn(|| ensure_running(&shim.instance, &shim.program).unwrap()))
@@ -133,6 +138,7 @@ fn a_failed_start_carries_aethers_words() {
     assert!(text.contains("no providers configured"), "{text}");
     assert!(text.contains("exit status: 2"), "{text}");
     assert!(!is_listening(&shim.instance.socket));
+    assert_eq!(shim.calls().len(), 1, "only a held store is retried");
 }
 
 #[test]
@@ -142,4 +148,92 @@ fn an_instance_without_setup_is_never_started() {
     let error = ensure_running(&shim.instance, &shim.program).unwrap_err();
     assert!(error.to_string().contains("archon setup"), "{error}");
     assert!(shim.calls().is_empty(), "aether was not run");
+}
+
+/// The registration an `archon setup` wrote before archond needed callers named.
+const OLD_REGISTRATION: &str =
+    "[[mcp.servers]]\nname = \"archon\"\ncommand = \"/opt/archon\"\nargs = [\"mcp\"]\n";
+
+fn names_callers(instance: &Instance) -> bool {
+    let text = std::fs::read_to_string(instance.config_path()).unwrap();
+    let server = crate::setup::find_archon_server(&text).unwrap();
+    server.is_some_and(|server| server.names_callers)
+}
+
+#[test]
+fn an_old_registration_is_repaired_before_the_first_start() {
+    let shim = shim("exit 0");
+    std::fs::write(shim.instance.config_path(), OLD_REGISTRATION).unwrap();
+    let daemon = fake_aetherd(shim.log.clone(), shim.instance.socket.clone(), 1);
+    let started = ensure_running(&shim.instance, &shim.program).unwrap();
+    assert_eq!(started, Start::Started, "nothing ran with the old one");
+    assert!(names_callers(&shim.instance));
+    assert!(!seed::reload_is_owed(&shim.instance).unwrap());
+    stop(&shim.instance, &shim.program).unwrap();
+    daemon.join().unwrap();
+    let verbs: Vec<_> = shim.calls().into_iter().map(|c| c[0].clone()).collect();
+    assert_eq!(verbs, ["daemon", "stop"]);
+}
+
+/// The upgrade: aetherd runs with what an older setup registered. The next
+/// archon command repairs the file and restarts aetherd, which alone loads it.
+#[test]
+fn a_running_aetherd_with_an_old_registration_is_restarted_once() {
+    let shim = shim("exit 0");
+    let daemon = fake_aetherd(shim.log.clone(), shim.instance.socket.clone(), 2);
+    assert_eq!(
+        ensure_running(&shim.instance, &shim.program).unwrap(),
+        Start::Started
+    );
+    std::fs::write(shim.instance.config_path(), OLD_REGISTRATION).unwrap();
+
+    let restarted = ensure_running(&shim.instance, &shim.program).unwrap();
+    assert_eq!(restarted, Start::Restarted);
+    assert!(names_callers(&shim.instance));
+    assert!(is_listening(&shim.instance.socket));
+    assert_eq!(
+        ensure_running(&shim.instance, &shim.program).unwrap(),
+        Start::AlreadyRunning,
+        "the restart loaded it"
+    );
+    stop(&shim.instance, &shim.program).unwrap();
+    daemon.join().unwrap();
+    let verbs: Vec<_> = shim.calls().into_iter().map(|c| c[0].clone()).collect();
+    assert_eq!(verbs, ["daemon", "stop", "daemon", "stop"]);
+}
+
+/// `archon setup` already rewrote the file (or a repair was cut short
+/// before its restart): the file is current, the daemon is not.
+#[test]
+fn a_reload_owed_from_an_earlier_command_restarts_the_running_aetherd() {
+    let shim = shim("exit 0");
+    let daemon = fake_aetherd(shim.log.clone(), shim.instance.socket.clone(), 2);
+    ensure_running(&shim.instance, &shim.program).unwrap();
+    std::fs::write(shim.instance.config_path(), OLD_REGISTRATION).unwrap();
+    assert!(seed::repair_registration(&shim.instance).unwrap());
+    assert!(seed::reload_is_owed(&shim.instance).unwrap());
+
+    let restarted = ensure_running(&shim.instance, &shim.program).unwrap();
+    assert_eq!(restarted, Start::Restarted);
+    assert!(!seed::reload_is_owed(&shim.instance).unwrap());
+    stop(&shim.instance, &shim.program).unwrap();
+    daemon.join().unwrap();
+}
+
+/// `aether stop` returns once the socket is closed; the old aetherd lets go
+/// of its store a moment later, and a start in between is refused.
+#[test]
+fn a_start_that_races_the_stopped_aetherd_is_retried_until_the_store_is_free() {
+    let shim = shim(
+        "if [ \"$(grep -c '^daemon|' \"$(dirname \"$0\")/calls.log\")\" -le 2 ]; then\n\
+         echo 'aetherd exited (exit status: 1) before it listened: Error: another aether \
+         daemon is already running for /data/aether/aether.db' >&2\nexit 1\nfi",
+    );
+    let daemon = fake_aetherd(shim.log.clone(), shim.instance.socket.clone(), 1);
+    let started = ensure_running(&shim.instance, &shim.program).unwrap();
+    assert_eq!(started, Start::Started);
+    let verbs: Vec<_> = shim.calls().into_iter().map(|c| c[0].clone()).collect();
+    assert_eq!(verbs, ["daemon", "daemon", "daemon"], "two refusals");
+    stop(&shim.instance, &shim.program).unwrap();
+    daemon.join().unwrap();
 }

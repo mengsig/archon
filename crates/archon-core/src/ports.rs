@@ -51,9 +51,11 @@ pub struct SpawnRequest {
     pub workspace: PathBuf,
     pub repository: Option<String>,
     pub labels: BTreeMap<String, String>,
-    /// Tool names hidden from the agent (`mcp__archon__*`).
+    /// Tool names hidden from the agent: Archon's (`mcp__archon__*`) and
+    /// Aether's own that no stage agent gets.
     pub hidden_tools: Vec<String>,
-    /// `true` unless the item's `tools` is `yolo`.
+    /// `false` when the agent may delegate: by its stage's
+    /// `allow_delegation` or the item's `tools = yolo`.
     pub leaf: bool,
     /// Archon's grant, retained even when Aether cannot enforce a hard cap.
     pub cost_budget_usd: Option<f64>,

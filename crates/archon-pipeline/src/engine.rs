@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use archon_core::catalog::StageKind;
+use archon_core::catalog::{StageKind, WorkspaceMode};
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
 use archon_core::model::{ModelChoice, ModelPlan};
@@ -64,6 +64,9 @@ pub struct SpawnPlan {
     /// Stage contract (ARCHITECTURE §8.6) for `config.instructions`.
     pub instructions: String,
     pub timeout_minutes: u32,
+    pub allow_delegation: bool,
+    /// The pipeline's workspace mode: what a delegating agent's children may do.
+    pub workspace: WorkspaceMode,
     /// The slot's role, branch and worktree on a team stage; `None` for
     /// every other kind, whose agents work in the run's workspace.
     pub team: Option<TeamSlot>,
@@ -648,7 +651,8 @@ impl RunDriver {
         members: &[&StageRun],
     ) -> Option<Replay> {
         let stage = &self.spec.file.stages[at.stage];
-        let (headline, report) = match gate::evaluate(stage, at.attempt, members) {
+        let holds_review = self.spec.holds_review(stage);
+        let (headline, report) = match gate::evaluate(stage, at.attempt, members, holds_review) {
             GroupResult::Fail { headline, report } => (headline, report),
             GroupResult::Pass { summary } if stage.kind != StageKind::Team => {
                 return self.after_pass(at, counts, summary);
@@ -836,7 +840,10 @@ impl RunDriver {
                     prompt.push_str(&format!("\n\n## Your role\n\n{}\n", extra.trim()));
                 }
                 let part = self.team_part(team.as_ref());
-                let instructions = contract::instructions(stage, mode, &vars["workspace"], part);
+                let holds_review = self.spec.holds_review(stage);
+                let workspace = &vars["workspace"];
+                let instructions =
+                    contract::instructions(stage, mode, workspace, part, holds_review);
                 EngineAction::Spawn(SpawnPlan {
                     stage_id: stage.id.clone(),
                     attempt: at.attempt,
@@ -846,6 +853,8 @@ impl RunDriver {
                     prompt,
                     instructions,
                     timeout_minutes: stage.timeout_minutes,
+                    allow_delegation: stage.allow_delegation,
+                    workspace: mode,
                     team,
                 })
             })

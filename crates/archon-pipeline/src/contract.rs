@@ -9,6 +9,12 @@ use serde::Serialize;
 use crate::spec::StageSpec;
 use crate::team::TeamSlot;
 
+mod initiative;
+mod lessons;
+
+pub use initiative::initiative_rules;
+pub use lessons::lesson_rules;
+
 /// Where a stage stands towards its pipeline's team stage.
 #[derive(Debug, Clone, Copy)]
 pub enum TeamPart<'a> {

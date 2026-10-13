@@ -15,7 +15,7 @@ use archon_core::error::ArchonError;
 use archon_core::model::{Effort, ModelChoice};
 use archon_core::policy::ModelPolicy;
 use archon_core::ports::{
-    AgentBackend, DescendantState, NetworkPolicy, RunNodeRequest, SpawnRequest,
+    AgentBackend, AgentUpdate, DescendantState, NetworkPolicy, RunNodeRequest, SpawnRequest,
 };
 use archon_core::run::StageOutcome;
 use common::{AGENT, RUN, TASK, WAIT, completed, connect};
@@ -443,6 +443,78 @@ async fn is_live_reads_the_agent_state_and_treats_unknown_as_dead() {
     assert!(!backend.is_live(&node).await.unwrap(), "unknown is dead");
     let error = backend.is_live(&node).await.unwrap_err();
     assert!(!matches!(error, ArchonError::NotFound(_)), "{error}");
+}
+
+#[tokio::test]
+async fn update_agent_patches_only_what_the_update_names() {
+    let (_dir, fake) = fake_aether().await;
+    fake.set_default(
+        "update_agent",
+        Scripted::reply("agent", fake::agent(AGENT, None)),
+    );
+    let backend = backend(&fake, any_model()).await;
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    let deadline = archon_core::now();
+    let update = AgentUpdate {
+        choice: Some(ModelChoice {
+            model: "claude-code/claude-opus-5-5".parse().unwrap(),
+            effort: Effort::High,
+        }),
+        cost_budget_usd: Some(7.5),
+        deadline: Some(deadline),
+    };
+    backend.update_agent(&agent, update).await.unwrap();
+    let longer = AgentUpdate {
+        deadline: Some(deadline),
+        ..AgentUpdate::default()
+    };
+    backend.update_agent(&agent, longer).await.unwrap();
+
+    let sent = fake.received_named("update_agent");
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[0]["id"], AGENT);
+    let patch = json!({
+        "model": {"provider": "claude-code", "model": "claude-opus-5-5"},
+        "effort": "high",
+        "cost_budget": 7.5,
+        "deadline": {"set": deadline},
+    });
+    assert_eq!(sent[0]["patch"], patch);
+    assert_eq!(sent[1]["patch"], json!({"deadline": {"set": deadline}}));
+}
+
+#[tokio::test]
+async fn update_agent_refuses_a_disallowed_model_without_calling_aether() {
+    let (_dir, fake) = fake_aether().await;
+    let only_codex = ModelPolicy::from_lists(&["codex/astra".parse().unwrap()], &[], None);
+    let backend = backend(&fake, only_codex).await;
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    let update = AgentUpdate {
+        choice: Some(spawn_request().choice),
+        ..AgentUpdate::default()
+    };
+    let error = backend.update_agent(&agent, update).await.unwrap_err();
+    assert!(matches!(error, ArchonError::Policy(_)), "{error}");
+    assert!(fake.received_named("update_agent").is_empty());
+}
+
+#[tokio::test]
+async fn interrupt_reports_whether_a_turn_was_running() {
+    let (_dir, fake) = fake_aether().await;
+    let interrupted =
+        |was_running: bool| Scripted::reply("interrupted", json!({"was_running": was_running}));
+    fake.script("interrupt", interrupted(true));
+    fake.script("interrupt", interrupted(false));
+    fake.script("interrupt", Scripted::refuse("not_found", "no such agent"));
+    let backend = backend(&fake, any_model()).await;
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    assert!(backend.interrupt(&agent).await.unwrap());
+    assert!(!backend.interrupt(&agent).await.unwrap());
+    let error = backend.interrupt(&agent).await.unwrap_err();
+    assert!(matches!(error, ArchonError::NotFound(_)), "{error}");
+    let sent = fake.received_named("interrupt");
+    assert_eq!(sent.len(), 3);
+    assert!(sent.iter().all(|command| command["agent"] == AGENT));
 }
 
 /// The stop of a lead's helpers waits on this: the whole run is read once,

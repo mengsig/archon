@@ -372,6 +372,7 @@ fn queue_item(repo: &Repo) -> QueueItem {
         autonomy: Default::default(),
         origin: None,
         fresh_retries: 0,
+        initiative: None,
         state: QueueState::Queued,
         created_at: archon_core::now(),
         updated_at: archon_core::now(),

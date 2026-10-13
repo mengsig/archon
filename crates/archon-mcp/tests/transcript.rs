@@ -503,6 +503,7 @@ fn queued_item(title: String, brief: String) -> QueueItem {
         autonomy: Default::default(),
         origin: None,
         fresh_retries: 0,
+        initiative: None,
         state: QueueState::Queued,
         created_at: archon_core::now(),
         updated_at: archon_core::now(),

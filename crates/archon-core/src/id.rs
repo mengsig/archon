@@ -91,6 +91,8 @@ prefixed_id!(QuestionId, "q");
 prefixed_id!(FeedItemId, "feed");
 prefixed_id!(ReportId, "rpt");
 prefixed_id!(DirectiveId, "dir");
+prefixed_id!(InitiativeId, "ini");
+prefixed_id!(LessonId, "lsn");
 // One Archon store's identity. Keeps Archon's idempotency keys distinct
 // across stores, since a fresh store restarts its counters.
 prefixed_id!(StoreId, "store");

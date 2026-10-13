@@ -54,6 +54,14 @@ pub const ORCHESTRATOR_ROLE: &str = "archon-orchestrator";
 /// Aether tools the orchestrator does not get. It delegates, but a change to a
 /// repository is an item, never a child's edits (ARCHITECTURE §4.4, §18.4).
 pub const ORCHESTRATOR_HIDDEN_TOOLS: &[&str] = &["integrate_workspace"];
+/// Archon tools the orchestrator does not get yet: archond does not carry
+/// them out and the prompt does not teach them. Each leaves with its paragraph.
+const ORCHESTRATOR_PENDING_TOOLS: &[&str] = &[
+    "enqueue_initiative",
+    "update_initiative",
+    "steer_item",
+    "record_lesson",
+];
 /// Hidden as well while Aether does not name callers (see `callers`).
 const DELEGATE_TOOL: &str = "delegate";
 
@@ -208,6 +216,9 @@ pub fn orchestrator_create_agent(
     assert!(generation > 0, "generations start at 1");
     let also_hidden = (!delegation).then_some(DELEGATE_TOOL);
     let hidden = ORCHESTRATOR_HIDDEN_TOOLS.iter().copied().chain(also_hidden);
+    let pending = ORCHESTRATOR_PENDING_TOOLS
+        .iter()
+        .map(|tool| archon_core::mcp_tools::qualified(tool));
     CreateAgent {
         role: ORCHESTRATOR_ROLE.into(),
         name: Some(config.orchestrator.name.clone()),
@@ -226,7 +237,7 @@ pub fn orchestrator_create_agent(
             cost_budget: None,
             deadline: None,
             tools: ToolExposure::Except {
-                names: hidden.map(str::to_owned).collect(),
+                names: hidden.map(str::to_owned).chain(pending).collect(),
             },
             long_lived: true,
             leaf: false,
@@ -981,11 +992,21 @@ mod tests {
         let ToolExposure::Except { names } = agent_config.tools else {
             panic!("the orchestrator hides a fixed set");
         };
-        let hidden: Vec<&str> = names.iter().map(String::as_str).collect();
+        let (pending, hidden): (Vec<&str>, Vec<&str>) = names
+            .iter()
+            .map(String::as_str)
+            .partition(|name| name.starts_with("mcp__archon__"));
         assert_eq!(
             hidden, ORCHESTRATOR_HIDDEN_TOOLS,
             "yolo keeps only the justified hides"
         );
+        // The exposure holds its names as a set, which iterates in order.
+        let mut unbuilt: Vec<String> = ORCHESTRATOR_PENDING_TOOLS
+            .iter()
+            .map(|tool| archon_core::mcp_tools::qualified(tool))
+            .collect();
+        unbuilt.sort();
+        assert_eq!(pending, unbuilt, "and the tools archond cannot carry out");
     }
 
     #[test]
@@ -1146,11 +1167,24 @@ mod tests {
     #[test]
     fn builtin_prompt_mentions_every_archon_tool() {
         let prompt = prompt();
-        for tool in archon_core::mcp_tools::TOOLS {
+        let taught = archon_core::mcp_tools::TOOLS
+            .iter()
+            .filter(|tool| !ORCHESTRATOR_PENDING_TOOLS.contains(&tool.name));
+        for tool in taught {
             assert!(
                 prompt.contains(tool.name),
                 "prompt never mentions {}",
                 tool.name
+            );
+        }
+        for pending in ORCHESTRATOR_PENDING_TOOLS {
+            let known = archon_core::mcp_tools::TOOLS
+                .iter()
+                .any(|t| t.name == *pending);
+            assert!(known, "{pending} is not an Archon tool");
+            assert!(
+                !prompt.contains(pending),
+                "{pending} is taught, so unhide it"
             );
         }
     }

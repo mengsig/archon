@@ -16,6 +16,7 @@ use archon_core::catalog::WorkspaceMode;
 use archon_core::config::Config;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
+use archon_core::lesson::CONTRACT_LESSONS;
 use archon_core::ports::{SpawnRequest, SpawnedAgent};
 use archon_core::queue::QueueItem;
 use archon_core::repo::Repo;
@@ -31,6 +32,7 @@ use super::{
 };
 use crate::context::DaemonContext;
 use crate::disk::{self, FullDisk};
+use crate::learned;
 use crate::resolve::{self, RepoEnv};
 
 const REQUEST_KEY_PREFIX: &str = "spawn_request:";
@@ -268,7 +270,7 @@ fn reserve_plans(
         let stage = plans[0].stage_id.clone();
         return Ok(Err(Exhausted { stage, error }));
     }
-    let dependencies = dependencies::section(store, &run, &item, plans[0].workspace)?;
+    let sections = run_sections(store, &run, &item, plans[0].workspace)?;
     let existing = store.stage_runs(run_id)?;
     let mut ids = Vec::new();
     for plan in plans {
@@ -282,7 +284,7 @@ fn reserve_plans(
             item: &item,
             repo: repo.as_ref(),
             config: &ctx.config,
-            dependencies: &dependencies,
+            sections: &sections,
         };
         let share = slot_budget(budget, &plan);
         ids.push(reserve_one(
@@ -295,6 +297,27 @@ fn reserve_plans(
         )?);
     }
     Ok(Ok(ids))
+}
+
+/// What the store adds to the contract of every agent of `run`: where the
+/// item's dependencies left their work, its initiative, and the run's lessons.
+fn run_sections(
+    store: &Store,
+    run: &PipelineRun,
+    item: &QueueItem,
+    mode: WorkspaceMode,
+) -> Result<String, ArchonError> {
+    assert_eq!(run.item, item.id, "the run is the item's");
+    let dependencies = dependencies::section(store, run, item, mode)?;
+    let initiative = dependencies::initiative_brief(store, item)?;
+    let lessons = learned::lessons_for_run(store, run, item)?;
+    assert!(
+        lessons.len() <= CONTRACT_LESSONS,
+        "a contract carries at most {CONTRACT_LESSONS} lessons"
+    );
+    let initiative = contract::initiative_rules(initiative.as_ref());
+    let lessons = contract::lesson_rules(&lessons);
+    Ok([dependencies, initiative, lessons].concat())
 }
 
 fn same_slot(stage: &StageRun, plan: &SpawnPlan) -> bool {
@@ -317,8 +340,8 @@ struct Target<'a> {
     repo: Option<&'a Repo>,
     /// The global `[models]` policy, which the repository's narrows.
     config: &'a Config,
-    /// The contract's section on the item's dependencies; empty without any.
-    dependencies: &'a str,
+    /// The contract's sections on the run itself ([`run_sections`]).
+    sections: &'a str,
 }
 
 impl Target<'_> {
@@ -328,11 +351,11 @@ impl Target<'_> {
         plan.allow_delegation || self.item.autonomy.tools == ToolsMode::Yolo
     }
 
-    /// The stage contract, with where the item's dependencies left their work
-    /// and, when the agent can delegate, the rules and model policy for that.
+    /// The stage contract, with the run's own sections and, when the agent
+    /// can delegate, the rules and model policy for that.
     fn instructions(&self, plan: &SpawnPlan) -> String {
         assert!(!plan.instructions.is_empty(), "every stage has a contract");
-        let contract = format!("{}{}", plan.instructions, self.dependencies);
+        let contract = format!("{}{}", plan.instructions, self.sections);
         if !self.delegates(plan) {
             return contract;
         }
@@ -516,13 +539,13 @@ pub(super) fn reserve_replacement(
         .as_ref()
         .map(|id| store.repo(&resolve::repo_ref(id)))
         .transpose()?;
-    let dependencies = dependencies::section(store, &run, &item, plan.workspace)?;
+    let sections = run_sections(store, &run, &item, plan.workspace)?;
     let target = Target {
         run: &run,
         item: &item,
         repo: repo.as_ref(),
         config: &ctx.config,
-        dependencies: &dependencies,
+        sections: &sections,
     };
     let Some(budget) = replacement_budget(store, failed, plan, budget, estimates)? else {
         return Ok(None);

@@ -254,7 +254,109 @@ ALTER TABLE spend ADD COLUMN settled_cost_usd REAL NOT NULL DEFAULT 0
 UPDATE spend SET settled_cost_usd = cost_usd WHERE cost_basis = 'provider_reported';
 "#;
 
-pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9];
+/// Version 10: initiatives, stacked branches, run edits, outcomes and lessons.
+/// Every addition is a new table or a nullable column, so nothing is backfilled.
+const V10: &str = r#"
+CREATE TABLE initiatives (
+    id              TEXT PRIMARY KEY,
+    state           TEXT NOT NULL,
+    idempotency_key TEXT UNIQUE,
+    request         TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    data            TEXT NOT NULL
+);
+CREATE INDEX initiatives_by_state ON initiatives (state, created_at);
+
+ALTER TABLE items ADD COLUMN initiative_id TEXT REFERENCES initiatives (id);
+CREATE INDEX items_by_initiative ON items (initiative_id) WHERE initiative_id IS NOT NULL;
+
+CREATE TABLE stacks (
+    item          TEXT NOT NULL REFERENCES items (id),
+    parent_item   TEXT NOT NULL REFERENCES items (id),
+    position      INTEGER NOT NULL CHECK (position >= 0),
+    run           TEXT REFERENCES runs (id),
+    parent_branch TEXT NOT NULL,
+    parent_sha    TEXT NOT NULL,
+    state         TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    data          TEXT,
+    PRIMARY KEY (item, parent_item),
+    UNIQUE (item, position),
+    CHECK (item <> parent_item)
+) WITHOUT ROWID;
+CREATE INDEX stacks_by_parent ON stacks (parent_item, state);
+
+CREATE TABLE run_edits (
+    run  TEXT NOT NULL REFERENCES runs (id),
+    seq  INTEGER NOT NULL CHECK (seq >= 1),
+    at   TEXT NOT NULL,
+    edit TEXT NOT NULL CHECK (json_valid(edit)),
+    PRIMARY KEY (run, seq)
+) WITHOUT ROWID;
+
+CREATE TABLE outcomes (
+    run           TEXT PRIMARY KEY REFERENCES runs (id),
+    item          TEXT NOT NULL REFERENCES items (id),
+    repo          TEXT,
+    pipeline      TEXT NOT NULL,
+    size          TEXT,
+    result        TEXT NOT NULL,
+    failure_class TEXT,
+    corrected     INTEGER NOT NULL CHECK (corrected IN (0, 1)),
+    merged        INTEGER CHECK (merged IN (0, 1)),
+    cost_usd      REAL NOT NULL CHECK (cost_usd >= 0),
+    finished_at   TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    data          TEXT NOT NULL
+);
+CREATE INDEX outcomes_by_route ON outcomes (repo, pipeline, finished_at);
+CREATE INDEX outcomes_by_item ON outcomes (item);
+
+CREATE TABLE outcome_stages (
+    run       TEXT NOT NULL REFERENCES outcomes (run),
+    ordinal   INTEGER NOT NULL CHECK (ordinal >= 0),
+    stage_id  TEXT NOT NULL,
+    model     TEXT NOT NULL,
+    effort    TEXT NOT NULL,
+    cost_usd  REAL NOT NULL CHECK (cost_usd >= 0),
+    wall_secs INTEGER NOT NULL CHECK (wall_secs >= 0),
+    attempts  INTEGER NOT NULL CHECK (attempts >= 0),
+    passed    INTEGER CHECK (passed IN (0, 1)),
+    PRIMARY KEY (run, ordinal)
+) WITHOUT ROWID;
+CREATE INDEX outcome_stages_by_choice ON outcome_stages (stage_id, model, effort);
+
+CREATE TABLE lessons (
+    id            TEXT PRIMARY KEY,
+    repo          TEXT,
+    pipeline      TEXT,
+    kind          TEXT NOT NULL,
+    state         TEXT NOT NULL,
+    pinned        INTEGER NOT NULL CHECK (pinned IN (0, 1)),
+    uses          INTEGER NOT NULL CHECK (uses >= 0),
+    wins          INTEGER NOT NULL CHECK (wins >= 0 AND wins <= uses),
+    confidence    REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+    source        TEXT NOT NULL,
+    superseded_by TEXT REFERENCES lessons (id),
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    confirmed_at  TEXT,
+    data          TEXT NOT NULL
+);
+CREATE INDEX lessons_by_scope ON lessons (state, repo, confidence DESC);
+
+CREATE TABLE lesson_uses (
+    lesson  TEXT NOT NULL REFERENCES lessons (id),
+    run     TEXT NOT NULL REFERENCES runs (id),
+    used_at TEXT NOT NULL,
+    won     INTEGER CHECK (won IN (0, 1)),
+    PRIMARY KEY (lesson, run)
+) WITHOUT ROWID;
+CREATE INDEX lesson_uses_by_run ON lesson_uses (run);
+"#;
+
+pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10];
 
 /// Pragmas every connection needs. `on_disk` connections must end up in
 /// WAL mode; in-memory databases report `memory` and stay that way.
@@ -622,5 +724,103 @@ mod tests {
         assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
         assert_eq!(applied_versions(&conn), applied, "a reopen applies nothing");
         assert_eq!(question_number(&conn, "q_open"), 2);
+    }
+
+    fn insert_run(conn: &Connection, run: &str, item: &str) {
+        conn.execute(
+            "INSERT INTO runs (id, item, pipeline, terminal, started_at, data)
+             VALUES (?1, ?2, 'ask', 1, 't', '{}')",
+            [run, item],
+        )
+        .unwrap();
+    }
+
+    /// Statements V10's tables must take, in dependency order.
+    const V10_ROWS: &str = "
+        INSERT INTO initiatives (id, state, created_at, updated_at, data)
+            VALUES ('ini_a', 'open', 't', 't', '{}');
+        UPDATE items SET initiative_id = 'ini_a' WHERE id = 'qi_new';
+        INSERT INTO stacks (item, parent_item, position, run, parent_branch, parent_sha, state,
+                            updated_at)
+            VALUES ('qi_new', 'qi_old', 0, 'prun_new', 'archon/old', 'abc123', 'stacked', 't');
+        INSERT INTO run_edits (run, seq, at, edit) VALUES ('prun_new', 1, 't', '{}');
+        INSERT INTO outcomes (run, item, repo, pipeline, result, corrected, cost_usd, finished_at,
+                              updated_at, data)
+            VALUES ('prun_new', 'qi_new', 'repo_a', 'ask', 'succeeded', 0, 0.5, 't', 't', '{}');
+        INSERT INTO outcome_stages (run, ordinal, stage_id, model, effort, cost_usd, wall_secs,
+                                    attempts)
+            VALUES ('prun_new', 0, 'answer', 'codex/astra', 'high', 0.5, 90, 1);
+        INSERT INTO lessons (id, kind, state, pinned, uses, wins, confidence, source, created_at,
+                             updated_at, data)
+            VALUES ('lsn_a', 'pitfall', 'active', 0, 2, 1, 0.4, 'operator', 't', 't', '{}');
+        INSERT INTO lesson_uses (lesson, run, used_at) VALUES ('lsn_a', 'prun_new', 't');";
+
+    /// Rows V10 must refuse, each for the reason named.
+    const V10_REFUSED: [(&str, &str); 8] = [
+        (
+            "an item in no recorded initiative",
+            "UPDATE items SET initiative_id = 'ini_none' WHERE id = 'qi_old'",
+        ),
+        (
+            "an item stacked on itself",
+            "INSERT INTO stacks VALUES ('qi_old', 'qi_old', 0, NULL, 'b', 's', 'stacked', 't', NULL)",
+        ),
+        (
+            "two parents in one position",
+            "INSERT INTO stacks VALUES ('qi_new', 'qi_new2', 0, NULL, 'b', 's', 'stacked', 't', NULL)",
+        ),
+        (
+            "an edit that is not JSON",
+            "INSERT INTO run_edits VALUES ('prun_new', 2, 't', 'not json')",
+        ),
+        (
+            "a second edit with one sequence number",
+            "INSERT INTO run_edits VALUES ('prun_new', 1, 't', '{}')",
+        ),
+        (
+            "a second outcome for one run",
+            "INSERT INTO outcomes (run, item, pipeline, result, corrected, cost_usd, finished_at,
+                                   updated_at, data)
+             VALUES ('prun_new', 'qi_new', 'ask', 'failed', 1, 0, 't', 't', '{}')",
+        ),
+        (
+            "more wins than uses",
+            "UPDATE lessons SET wins = 3 WHERE id = 'lsn_a'",
+        ),
+        (
+            "a use by an unrecorded run",
+            "INSERT INTO lesson_uses (lesson, run, used_at) VALUES ('lsn_a', 'prun_none', 't')",
+        ),
+    ];
+
+    #[test]
+    fn v10_adds_the_adaptive_tables_and_leaves_earlier_items_outside_initiatives() {
+        let mut conn = v2_store();
+        insert_v2_item(&conn, "qi_new");
+        insert_v2_item(&conn, "qi_new2");
+        assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+        let unassigned: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM items WHERE initiative_id IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(unassigned, 3, "no earlier item joins an initiative");
+
+        insert_run(&conn, "prun_new", "qi_new");
+        conn.execute_batch(V10_ROWS).unwrap();
+        for (why, sql) in V10_REFUSED {
+            assert!(conn.execute_batch(sql).is_err(), "V10 must refuse {why}");
+        }
+        let members: Vec<String> = conn
+            .prepare("SELECT id FROM items WHERE initiative_id = 'ini_a'")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(members, ["qi_new"]);
+        assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
     }
 }

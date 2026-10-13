@@ -77,6 +77,10 @@ pub enum Command {
         agent: AetherAgentId,
         reason: Option<String>,
     },
+    /// Stops the running turn only; the agent waits for its next message.
+    Interrupt {
+        agent: AetherAgentId,
+    },
     Wake {
         agent: AetherAgentId,
     },
@@ -292,6 +296,10 @@ impl ToolExposure {
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize)]
 pub struct AgentPatch {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<Effort>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cost_budget: Option<f64>,
     /// `{"set": <rfc3339>}` or `"clear"`.

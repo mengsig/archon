@@ -126,7 +126,7 @@ fn write_columns(conn: &Connection, item: &QueueItem) -> Result<(), ArchonError>
     let changed = conn
         .execute(
             "UPDATE items SET repo = ?2, pipeline = ?3, priority = ?4, state = ?5, tags = ?6,
-                              created_at = ?7, updated_at = ?8, data = ?9
+                              created_at = ?7, updated_at = ?8, data = ?9, initiative_id = ?10
              WHERE id = ?1",
             params![
                 item.id.as_str(),
@@ -138,6 +138,7 @@ fn write_columns(conn: &Connection, item: &QueueItem) -> Result<(), ArchonError>
                 ts(&item.created_at),
                 ts(&item.updated_at),
                 to_json(item, "queue item")?,
+                item.initiative.as_ref().map(|i| i.as_str()),
             ],
         )
         .ctx("write item")?;
@@ -248,8 +249,8 @@ pub(super) fn insert(
     check_dependencies(&tx, &item.id, &item.dependencies)?;
     tx.execute(
         "INSERT INTO items (id, repo, pipeline, priority, state, tags, idempotency_key,
-                            request, created_at, updated_at, data)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                            request, created_at, updated_at, data, initiative_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             item.id.as_str(),
             item.repo.as_ref().map(|r| r.as_str()),
@@ -262,6 +263,7 @@ pub(super) fn insert(
             ts(&item.created_at),
             ts(&item.updated_at),
             to_json(item, "queue item")?,
+            item.initiative.as_ref().map(|i| i.as_str()),
         ],
     )
     .ctx("insert item")?;

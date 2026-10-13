@@ -63,6 +63,10 @@ pub const TOOLS: &[ToolName] = &[
     tool("clear_directive", ToolClass::Mutation),
     tool("github_reply", ToolClass::External),
     tool("message_orchestrator", ToolClass::Mutation),
+    tool("enqueue_initiative", ToolClass::Mutation),
+    tool("update_initiative", ToolClass::Mutation),
+    tool("steer_item", ToolClass::Mutation),
+    tool("record_lesson", ToolClass::Mutation),
 ];
 
 const fn tool(name: &'static str, class: ToolClass) -> ToolName {

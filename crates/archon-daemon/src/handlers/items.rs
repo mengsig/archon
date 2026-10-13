@@ -36,7 +36,7 @@ pub(super) async fn enqueue(
     }
     let resolved = knobs::resolve(&ctx.config, &env, req.pipeline.clone(), &req.autonomy)?;
     check_runs_here(ctx, &env, &resolved.spec).await?;
-    let plan = knobs::fill_plan(&resolved.base, &resolved.spec, req.model_plan);
+    let plan = filled_plan(ctx, &env, &resolved.base, &resolved.spec, req.model_plan).await?;
     check_plan(ctx, &env, &resolved.spec, &plan)?;
     check_reasons(&resolved.spec, req.model_reasons.as_ref())?;
     let now = archon_core::now();
@@ -55,6 +55,7 @@ pub(super) async fn enqueue(
         autonomy: resolved.autonomy,
         origin: req.origin.clone(),
         fresh_retries: 0,
+        initiative: None,
         state: QueueState::Queued,
         created_at: now,
         updated_at: now,
@@ -139,7 +140,7 @@ pub(super) async fn update(
     if patch.model_plan.is_some() || patch.model_reasons.is_some() {
         let (env, base, spec) = item_pipeline(ctx, &current).await?;
         if let Some(plan) = patch.model_plan.take() {
-            let plan = knobs::fill_plan(&base, &spec, plan);
+            let plan = filled_plan(ctx, &env, &base, &spec, plan).await?;
             check_plan(ctx, &env, &spec, &plan)?;
             patch.model_plan = Some(plan);
         }
@@ -253,7 +254,7 @@ pub(super) async fn retry(
         .model_plan
         .unwrap_or_else(|| current.model_plan.clone());
     let (env, base, spec) = item_pipeline(ctx, &current).await?;
-    let plan = knobs::fill_plan(&base, &spec, plan);
+    let plan = filled_plan(ctx, &env, &base, &spec, plan).await?;
     check_plan(ctx, &env, &spec, &plan)?;
     check_reasons(&spec, retry.model_reasons.as_ref())?;
     check_runs_here(ctx, &env, &spec).await?;
@@ -463,6 +464,19 @@ async fn item_pipeline(
     let env = RepoEnv::load(ctx, item.repo.as_ref()).await?;
     let (base, spec) = knobs::item_specs(&env, item)?;
     Ok((env, base, spec))
+}
+
+/// `plan` with what it leaves out filled for `env`'s repository.
+async fn filled_plan(
+    ctx: &DaemonContext,
+    env: &RepoEnv,
+    base: &PipelineSpec,
+    spec: &PipelineSpec,
+    plan: ModelPlan,
+) -> Result<ModelPlan, ArchonError> {
+    let store = ctx.store.lock().await;
+    let repo = env.repo.as_ref().map(|repo| &repo.id);
+    knobs::fill_plan(&store, repo, base, spec, plan)
 }
 
 /// Every stage has 1 to `fan_out` choices, no unknown stage is named, and

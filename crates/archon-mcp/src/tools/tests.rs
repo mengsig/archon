@@ -8,7 +8,7 @@ use archon_core::catalog::{
     CatalogListing, Gate, Nudges, PipelineProblem, PipelineSource, PipelineSummary, StageKind,
     StageSummary, WorkspaceMode,
 };
-use archon_core::id::{DirectiveId, PipelineRunId, QuestionId, QueueItemId};
+use archon_core::id::{DirectiveId, InitiativeId, PipelineRunId, QuestionId, QueueItemId};
 use archon_core::mcp_tools::TOOLS;
 use archon_core::model::Effort;
 use archon_core::protocol::{PauseTarget, Request};
@@ -33,7 +33,7 @@ pub(super) fn plan() -> Value {
 
 /// Valid arguments for each tool that together use every declared property.
 pub(super) fn samples() -> Vec<(&'static str, Value)> {
-    vec![
+    let mut samples = vec![
         (
             "message_orchestrator",
             json!({"text": "a blocker", "kind": "escalation"}),
@@ -114,6 +114,37 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
         (
             "github_reply",
             json!({"repository": "Acme/Web", "number": 42, "body": "Queued as qi_1."}),
+        ),
+    ];
+    samples.extend(adaptive_samples());
+    samples
+}
+
+/// The same for the initiative, steering and lesson tools.
+fn adaptive_samples() -> Vec<(&'static str, Value)> {
+    vec![
+        (
+            "enqueue_initiative",
+            json!({"title": "Rename the account field", "contract": "The field is `account_id`.", "atomic": true, "idempotency_key": "rename-1", "members": [
+                {"repo": "api", "brief": "Rename it in the API."},
+                {"repo": "web", "brief": "Follow the API.", "title": "Web rename", "pipeline": "quick-pr", "after": [0], "model_plan": {"implement": [{"model": "codex/astra", "effort": "high"}]}}
+            ]}),
+        ),
+        (
+            "update_initiative",
+            json!({"initiative": InitiativeId::new().to_string(), "contract_append": "Also rename the column."}),
+        ),
+        (
+            "steer_item",
+            json!({"item": qi(), "note": "Use the v2 client.", "stage": "implement", "model": "codex/astra", "effort": "high", "budget_usd": 12.5, "extend_minutes": 30, "abort_stage": true, "then": "goto", "goto": "review", "insert_stage": {"stage": "review", "from": "default-pr-review", "after": "implement"}}),
+        ),
+        (
+            "steer_item",
+            json!({"item": qi(), "switch_pipeline": "default-pr-review"}),
+        ),
+        (
+            "record_lesson",
+            json!({"kind": "pitfall", "text": "Run `make lint` before shipping.", "repo": "web", "pipeline": "quick-pr", "item": qi()}),
         ),
     ]
 }
@@ -442,6 +473,7 @@ pub(super) fn item(state: QueueState) -> QueueItem {
         autonomy: Default::default(),
         origin: None,
         fresh_retries: 0,
+        initiative: None,
         state,
         created_at: archon_core::now(),
         updated_at: archon_core::now(),

@@ -30,6 +30,7 @@ fn item(state: QueueState) -> QueueItem {
         autonomy: Default::default(),
         origin: None,
         fresh_retries: 0,
+        initiative: None,
         state,
         created_at: archon_core::now(),
         updated_at: archon_core::now(),

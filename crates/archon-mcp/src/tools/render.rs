@@ -3,6 +3,8 @@
 //! acts on is written out; only long free text is clipped, and says so.
 
 mod cost;
+mod initiatives;
+mod lessons;
 mod stages;
 
 use std::fmt::Write as _;
@@ -70,7 +72,12 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         Reply::GithubComment { url } => format!("Posted {url}"),
         Reply::CostReport(report) => cost::report(report),
         Reply::ModelEvidence(report) => report.text(),
+        Reply::Initiative(detail) => initiatives::detail(tool, detail),
+        Reply::Lesson(lesson) => lessons::recorded(lesson),
         Reply::Questions(_)
+        | Reply::Lessons(_)
+        | Reply::LessonsWhy(_)
+        | Reply::LessonStats(_)
         | Reply::Reports(_)
         | Reply::Welcome(_)
         | Reply::Subscribed { .. }

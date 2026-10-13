@@ -457,6 +457,19 @@ impl AetherClient {
         self.request(command, "ok").await.map(drop)
     }
 
+    /// Stop the turn `agent` is in. `false` when it was in none.
+    pub async fn interrupt(&self, agent: &AetherAgentId) -> Result<bool, ArchonError> {
+        #[derive(serde::Deserialize)]
+        struct Interrupted {
+            was_running: bool,
+        }
+        let command = Command::Interrupt {
+            agent: agent.clone(),
+        };
+        let reply: Interrupted = self.typed(command, "interrupted").await?;
+        Ok(reply.was_running)
+    }
+
     /// Revive a failed agent in place; `Err` when Aether refuses.
     pub async fn wake(&self, agent: &AetherAgentId) -> Result<Agent, ArchonError> {
         let woken: Agent = self

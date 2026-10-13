@@ -505,6 +505,7 @@ fn item_in(state: QueueState, updated_secs_ago: i64) -> QueueItem {
         autonomy: archon_core::autonomy::Autonomy::default(),
         origin: None,
         fresh_retries: 0,
+        initiative: None,
         state,
         created_at: at,
         updated_at: at,

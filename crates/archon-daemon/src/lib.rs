@@ -20,6 +20,7 @@ pub mod triggers;
 pub mod worktree;
 
 mod knobs;
+mod learned;
 mod resolve;
 
 use std::path::{Path, PathBuf};

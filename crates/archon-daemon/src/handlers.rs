@@ -4,12 +4,15 @@
 mod autonomy;
 mod control;
 mod cost;
+mod initiatives;
 mod item_views;
 mod items;
+mod lessons;
 mod model_evidence;
 mod operator;
 mod repos;
 mod stages;
+mod steer;
 mod waiting;
 
 use archon_core::aether_ids::AetherAgentId;
@@ -124,8 +127,37 @@ async fn route(
         Request::ClearDirective { directive } => {
             autonomy::clear_directive(ctx, directive.as_ref()).await
         }
+        request => handle_adaptive(ctx, client, request).await,
+    }
+}
+
+/// Initiatives, steering and lessons.
+async fn handle_adaptive(
+    ctx: &DaemonContext,
+    client: ClientKind,
+    request: Request,
+) -> Result<Reply, ArchonError> {
+    match request {
+        Request::EnqueueInitiative(enqueue) => initiatives::enqueue(ctx, enqueue).await,
+        Request::GetInitiative { initiative } => initiatives::get(ctx, &initiative).await,
+        Request::UpdateInitiative {
+            initiative,
+            contract_append,
+        } => initiatives::update(ctx, &initiative, &contract_append).await,
+        Request::SteerItem { item, steer } => steer::steer(ctx, &item, steer).await,
+        Request::RecordLesson(draft) => lessons::record(ctx, client, draft).await,
+        Request::Lessons(query) => lessons::list(ctx, &query).await,
+        Request::UpdateLesson { lesson, patch } => lessons::update(ctx, &lesson, patch).await,
+        Request::LessonsWhy { item } => lessons::why(ctx, &item).await,
+        Request::LessonStats { repo } => lessons::stats(ctx, repo.as_ref()).await,
         request => handle_queue(ctx, request).await,
     }
+}
+
+/// What a request answers until archond carries it out.
+fn not_implemented(command: &str) -> ArchonError {
+    assert!(!command.is_empty(), "the refusal names the command");
+    ArchonError::Unavailable(format!("{command} is not implemented yet"))
 }
 
 /// The one answer path: `archon answer` and the operator's `/answer` chat

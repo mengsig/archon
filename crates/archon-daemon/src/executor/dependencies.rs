@@ -4,6 +4,7 @@
 use archon_core::catalog::WorkspaceMode;
 use archon_core::error::ArchonError;
 use archon_core::id::{QueueItemId, RepoId};
+use archon_core::initiative::InitiativeBrief;
 use archon_core::queue::QueueItem;
 use archon_core::run::PipelineRun;
 use archon_pipeline::contract::{self, Dependency};
@@ -37,6 +38,21 @@ pub(super) fn section(
         found.push(dependency(store, id, item.repo.as_ref())?);
     }
     Ok(contract::dependency_rules(base, &found))
+}
+
+/// What the agents of `item` are told about its initiative: the shared
+/// contract and where each sibling's work is. `None` outside an initiative.
+pub(super) fn initiative_brief(
+    _store: &Store,
+    item: &QueueItem,
+) -> Result<Option<InitiativeBrief>, ArchonError> {
+    let Some(initiative) = &item.initiative else {
+        return Ok(None);
+    };
+    Err(ArchonError::Unavailable(format!(
+        "item {} is in initiative {initiative}: initiatives are not implemented yet",
+        item.id
+    )))
 }
 
 /// Where the newest run of `id` left its work. Its branch is named only when

@@ -11,6 +11,10 @@ use serde_json::{Value, json};
 
 use super::ToolDefinition;
 
+mod initiatives;
+mod lessons;
+mod steer;
+
 /// Every tool, in `TOOLS` order.
 pub(super) fn all() -> Vec<ToolDefinition> {
     vec![
@@ -39,6 +43,10 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         clear_directive(),
         github_reply(),
         message_orchestrator(),
+        initiatives::enqueue_initiative(),
+        initiatives::update_initiative(),
+        steer::steer_item(),
+        lessons::record_lesson(),
     ]
 }
 

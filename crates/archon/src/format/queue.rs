@@ -345,6 +345,7 @@ mod tests {
             autonomy: Autonomy::default(),
             origin: None,
             fresh_retries: 0,
+            initiative: None,
             created_at: archon_core::now(),
             updated_at: archon_core::now(),
         }

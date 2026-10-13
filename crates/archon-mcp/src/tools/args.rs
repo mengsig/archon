@@ -21,6 +21,10 @@ use serde_json::{Map, Value};
 
 use super::{ToolDefinition, ToolError, definition};
 
+mod initiatives;
+mod lessons;
+mod steer;
+
 pub(super) fn to_request(tool: &str, arguments: Value) -> Result<Request, ToolError> {
     let Some(definition) = definition(tool) else {
         return Err(ToolError(format!("unknown tool `{tool}`")));
@@ -90,6 +94,10 @@ pub(super) fn to_request(tool: &str, arguments: Value) -> Result<Request, ToolEr
         "set_directive" => set_directive(&mut args)?,
         "clear_directive" => clear_directive(&mut args)?,
         "github_reply" => github_reply(&mut args)?,
+        "enqueue_initiative" => initiatives::enqueue_initiative(&mut args)?,
+        "update_initiative" => initiatives::update_initiative(&mut args)?,
+        "steer_item" => steer::steer_item(&mut args)?,
+        "record_lesson" => lessons::record_lesson(&mut args)?,
         other => unreachable!("`{other}` has a definition but no mapping"),
     };
     args.finish()?;
@@ -148,6 +156,11 @@ impl Args {
 
     fn error(&self, key: &str, why: impl std::fmt::Display) -> ToolError {
         ToolError(format!("{}: `{key}` {why}", self.tool))
+    }
+
+    /// A refusal of the arguments together, not of one of them.
+    fn refusal(&self, why: impl std::fmt::Display) -> ToolError {
+        ToolError(format!("{}: {why}", self.tool))
     }
 
     /// Absent and `null` are both "not given".

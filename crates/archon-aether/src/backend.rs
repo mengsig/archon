@@ -7,8 +7,8 @@ use archon_core::aether_ids::{AetherAgentId, AetherTaskId};
 use archon_core::error::ArchonError;
 use archon_core::policy::ModelPolicy;
 use archon_core::ports::{
-    AgentBackend, CreatedNode, Descendant, DescendantState, RunNodeRequest, SpawnRequest,
-    SpawnedAgent,
+    AgentBackend, AgentUpdate, CreatedNode, Descendant, DescendantState, RunNodeRequest,
+    SpawnRequest, SpawnedAgent,
 };
 use archon_core::run::StageOutcome;
 use async_trait::async_trait;
@@ -16,8 +16,8 @@ use async_trait::async_trait;
 use crate::client::AetherClient;
 use crate::link::AetherLink;
 use crate::wire::{
-    Agent, AgentConfig, AgentQuery, ApprovalPolicy, CreateAgent, NetworkPolicy, Scope, Task,
-    TaskStatus, ToolExposure,
+    Agent, AgentConfig, AgentPatch, AgentQuery, ApprovalPolicy, CreateAgent, NetworkPolicy, Scope,
+    Task, TaskStatus, ToolExposure,
 };
 
 /// Aether agent states in which an agent can still act or take children.
@@ -252,6 +252,25 @@ async fn spawned_from(
     })
 }
 
+/// `update` as Aether's patch, which leaves alone what it does not name.
+fn agent_patch(update: AgentUpdate) -> AgentPatch {
+    let budget = update.cost_budget_usd;
+    assert!(
+        budget.is_none_or(|usd| usd.is_finite() && usd > 0.0),
+        "a hard cap is a positive dollar amount, not {budget:?}"
+    );
+    let (model, effort) = match update.choice {
+        Some(choice) => (Some(choice.model), Some(choice.effort)),
+        None => (None, None),
+    };
+    AgentPatch {
+        model,
+        effort,
+        cost_budget: budget,
+        deadline: update.deadline.map(|at| serde_json::json!({"set": at})),
+    }
+}
+
 #[async_trait]
 impl AgentBackend for AetherBackend {
     async fn spawn(&self, mut request: SpawnRequest) -> Result<SpawnedAgent, ArchonError> {
@@ -355,6 +374,24 @@ impl AgentBackend for AetherBackend {
 
     async fn cancel(&self, agent: &AetherAgentId, reason: &str) -> Result<(), ArchonError> {
         self.link.client()?.cancel(agent, reason).await
+    }
+
+    async fn update_agent(
+        &self,
+        agent: &AetherAgentId,
+        update: AgentUpdate,
+    ) -> Result<(), ArchonError> {
+        assert!(!update.is_empty(), "an update changes something");
+        if let Some(choice) = &update.choice {
+            self.policy.check(choice)?;
+        }
+        let patch = agent_patch(update);
+        self.link.client()?.update_agent(agent, patch).await?;
+        Ok(())
+    }
+
+    async fn interrupt(&self, agent: &AetherAgentId) -> Result<bool, ArchonError> {
+        self.link.client()?.interrupt(agent).await
     }
 
     /// Two reads however deep the tree: the agent's run, then that run's agents.
@@ -575,6 +612,33 @@ mod tests {
         );
         assert!(found.iter().all(|d| d.effort == Some(Effort::Medium)));
         assert!(subtree(&id("agt_grandchild"), &agents).is_empty());
+    }
+
+    #[test]
+    fn an_agent_patch_names_only_what_the_update_changes() {
+        let budget = AgentUpdate {
+            cost_budget_usd: Some(4.0),
+            ..AgentUpdate::default()
+        };
+        let patch = serde_json::to_value(agent_patch(budget)).unwrap();
+        assert_eq!(patch, serde_json::json!({"cost_budget": 4.0}));
+        let choice = AgentUpdate {
+            choice: Some(request().choice),
+            ..AgentUpdate::default()
+        };
+        let patch = agent_patch(choice);
+        assert_eq!(patch.model, Some(request().choice.model));
+        assert_eq!(patch.effort, Some(Effort::High));
+        assert!(patch.cost_budget.is_none() && patch.deadline.is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "hard cap")]
+    fn a_non_positive_hard_cap_is_a_bug() {
+        agent_patch(AgentUpdate {
+            cost_budget_usd: Some(0.0),
+            ..AgentUpdate::default()
+        });
     }
 
     #[test]

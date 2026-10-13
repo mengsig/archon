@@ -53,6 +53,7 @@ fn item(id: &str, title: &str) -> QueueItem {
         autonomy: archon_core::autonomy::Autonomy::default(),
         origin: None,
         fresh_retries: 0,
+        initiative: None,
         state: QueueState::Queued,
         created_at: now,
         updated_at: now,

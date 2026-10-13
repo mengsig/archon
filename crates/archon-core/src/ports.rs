@@ -138,6 +138,23 @@ pub struct Descendant {
     pub state: DescendantState,
 }
 
+/// A change to a live agent; `None` leaves that part as it is.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AgentUpdate {
+    /// Model and effort together: the policy judges the pair that will run.
+    pub choice: Option<ModelChoice>,
+    /// Aether's hard cap in dollars, for an agent whose spawn sent one
+    /// (`SpawnRequest::aether_cost_budget`).
+    pub cost_budget_usd: Option<f64>,
+    pub deadline: Option<Timestamp>,
+}
+
+impl AgentUpdate {
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
 #[async_trait]
 pub trait AgentBackend: Send + Sync {
     /// Create and start a stage agent. Safe to retry with the same
@@ -169,6 +186,18 @@ pub trait AgentBackend: Send + Sync {
     /// Ask Aether to cancel an agent and its live descendants. Aether cancels
     /// cooperatively: `Ok` means accepted, not that any of them has ended.
     async fn cancel(&self, agent: &AetherAgentId, reason: &str) -> Result<(), ArchonError>;
+
+    /// Change a live agent in place; it keeps its transcript. Implementations
+    /// re-check the model policy. Aether decides when a new model takes over.
+    async fn update_agent(
+        &self,
+        agent: &AetherAgentId,
+        update: AgentUpdate,
+    ) -> Result<(), ArchonError>;
+
+    /// Stop the turn `agent` is in; it then waits for its next message.
+    /// `false` when it was in no turn.
+    async fn interrupt(&self, agent: &AetherAgentId) -> Result<bool, ArchonError>;
 
     /// Every agent beneath `agent` at any depth, ended ones included; none
     /// when Aether no longer knows `agent`.

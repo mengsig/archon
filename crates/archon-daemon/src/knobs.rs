@@ -7,11 +7,14 @@ use archon_core::autonomy::{
 };
 use archon_core::config::Config;
 use archon_core::error::ArchonError;
+use archon_core::id::RepoId;
 use archon_core::model::ModelPlan;
 use archon_core::queue::QueueItem;
 use archon_pipeline::PipelineSpec;
 use archon_pipeline::autonomy::{augment, review_level, ships};
+use archon_queue::Store;
 
+use crate::learned;
 use crate::resolve::RepoEnv;
 
 /// What an enqueue resolved to.
@@ -151,20 +154,31 @@ pub(crate) fn item_specs(
     Ok((base, spec))
 }
 
-/// `plan` with every stage the knobs inserted and the plan leaves out
-/// given the first choice of the pipeline's first stage.
+/// `plan` with the stages it leaves out: first what was learned for `repo`,
+/// then the first choice of the pipeline's first stage for those the knobs inserted.
 pub(crate) fn fill_plan(
+    store: &Store,
+    repo: Option<&RepoId>,
     base: &PipelineSpec,
     spec: &PipelineSpec,
     mut plan: ModelPlan,
-) -> ModelPlan {
+) -> Result<ModelPlan, ArchonError> {
+    let learned = learned::default_plan(store, repo, spec)?.unwrap_or_default();
+    for (stage, choices) in learned.0 {
+        assert!(
+            spec.stage(&stage).is_some(),
+            "{stage:?} is no stage of the pipeline"
+        );
+        assert!(!choices.is_empty(), "a learned default names a choice");
+        plan.0.entry(stage).or_insert(choices);
+    }
     let first = base
         .file
         .stages
         .first()
         .expect("validated pipelines have stages");
     let Some(choice) = plan.choices_for(&first.id).and_then(|c| c.first()).cloned() else {
-        return plan;
+        return Ok(plan);
     };
     for stage in &spec.file.stages {
         if base.stage(&stage.id).is_none() && plan.choices_for(&stage.id).is_none() {
@@ -172,7 +186,7 @@ pub(crate) fn fill_plan(
         }
     }
     debug_assert!(plan.0.len() <= spec.file.stages.len() + base.file.stages.len());
-    plan
+    Ok(plan)
 }
 
 #[cfg(test)]
@@ -236,7 +250,8 @@ mod tests {
         for stage in &base.file.stages {
             plan.0.insert(stage.id.clone(), vec![choice.clone()]);
         }
-        let filled = fill_plan(&base, &spec, plan.clone());
+        let store = Store::open_in_memory().unwrap();
+        let filled = fill_plan(&store, None, &base, &spec, plan.clone()).unwrap();
         assert_eq!(filled.choices_for("propose"), Some(&[choice.clone()][..]));
         assert_eq!(filled.choices_for("report"), Some(&[choice][..]));
         assert_eq!(filled.0.len(), plan.0.len() + 2);

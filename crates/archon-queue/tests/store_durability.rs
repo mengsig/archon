@@ -212,6 +212,12 @@ fn recovery_after_a_crash_mid_dispatch() {
     assert_eq!(running.state.kind(), "running");
 }
 
+/// Takes a store back to before V10, for tests that replay earlier migrations.
+const UNDO_V10: &str = "
+    DROP TABLE lesson_uses; DROP TABLE lessons; DROP TABLE outcome_stages; DROP TABLE outcomes;
+    DROP TABLE run_edits; DROP TABLE stacks; DROP INDEX items_by_initiative;
+    ALTER TABLE items DROP COLUMN initiative_id; DROP TABLE initiatives;";
+
 fn schema_versions(path: &Path) -> Vec<i64> {
     let conn = rusqlite::Connection::open(path).unwrap();
     let mut stmt = conn
@@ -229,7 +235,7 @@ fn migrations_apply_once_and_a_newer_store_is_refused() {
     let path = db_path(&dir);
     drop(Store::open(&path).unwrap());
     drop(Store::open(&path).unwrap());
-    assert_eq!(schema_versions(&path), vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert_eq!(schema_versions(&path), vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     let conn = rusqlite::Connection::open(&path).unwrap();
     let mode: String = conn
         .query_row("PRAGMA journal_mode", [], |r| r.get(0))
@@ -296,7 +302,7 @@ fn concurrent_first_opens_migrate_once() {
     for handle in handles {
         handle.join().unwrap().unwrap();
     }
-    assert_eq!(schema_versions(&path), vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    assert_eq!(schema_versions(&path), vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 }
 
 /// Appends `entry`, trying again while another writer holds the write
@@ -562,15 +568,16 @@ fn v9_keeps_an_earlier_provider_reported_total_as_the_floor() {
     store.record_spend(&unknown).unwrap();
     drop(store);
     let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(UNDO_V10).unwrap();
     conn.execute_batch(
         "ALTER TABLE spend DROP COLUMN settled_cost_usd;
-         DELETE FROM schema_migrations WHERE version = 9;",
+         DELETE FROM schema_migrations WHERE version >= 9;",
     )
     .unwrap();
     drop(conn);
 
     let mut store = Store::open(&path).unwrap();
-    assert_eq!(schema_versions(&path).last(), Some(&9));
+    assert_eq!(schema_versions(&path).last(), Some(&10));
     for n in [1, 2] {
         let settled = SpendRow {
             cost_complete: Some(true),
@@ -600,6 +607,7 @@ fn v7_does_not_infer_history_from_the_latest_cumulative_basis() {
         .unwrap();
     drop(store);
     let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(UNDO_V10).unwrap();
     conn.execute_batch(
         "ALTER TABLE spend_daily DROP COLUMN billed_cost_usd;
          ALTER TABLE spend_daily DROP COLUMN list_price_cost_usd;
@@ -660,6 +668,7 @@ fn migrated_unknown_charges_keep_their_basis_after_new_usage() {
 
         // Recreate the pre-provenance ledger; every other record is unchanged.
         let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(UNDO_V10).unwrap();
         conn.execute_batch(
             "CREATE TABLE legacy_days AS SELECT agent, day, cost_usd, estimated_cost_usd FROM spend_daily;
              DROP TABLE spend_daily;
@@ -1006,6 +1015,7 @@ fn v6_backfills_only_unambiguous_run_ownership_and_preserves_it() {
     drop(store);
     // Recreate a pre-V6 store using its unchanged public records.
     let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(UNDO_V10).unwrap();
     conn.execute_batch(
         "DROP TABLE agent_runs;
          ALTER TABLE spend_daily DROP COLUMN billed_cost_usd;

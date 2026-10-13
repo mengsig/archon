@@ -21,8 +21,8 @@ use archon_core::id::{PipelineRunId, QueueItemId};
 use archon_core::model::{Effort, ModelChoice, ModelPlan};
 use archon_core::notify::{FeedEntry, NotificationKind};
 use archon_core::ports::{
-    AgentBackend, CreatedNode, Descendant, DescendantState, NetworkPolicy, RunNodeRequest,
-    SpawnRequest, SpawnedAgent,
+    AgentBackend, AgentUpdate, CreatedNode, Descendant, DescendantState, NetworkPolicy,
+    RunNodeRequest, SpawnRequest, SpawnedAgent,
 };
 use archon_core::protocol::{ClientKind, EnqueueRequest, Reply, RepoAdd, RepoRef, Request};
 use archon_core::queue::{QueueItem, QueueState};
@@ -577,6 +577,11 @@ struct FakeState {
     lost_replies: u32,
     outcomes: BTreeMap<AetherTaskId, StageOutcome>,
     cancelled: Vec<AetherAgentId>,
+    /// Every accepted `update_agent`, in order.
+    updates: Vec<(AetherAgentId, AgentUpdate)>,
+    update_failures: VecDeque<ArchonError>,
+    /// Every `interrupt` call, in order.
+    interrupts: Vec<AetherAgentId>,
     next: u32,
     /// The request each key was created with; a replay must repeat it.
     recorded: BTreeMap<String, SpawnRequest>,
@@ -688,6 +693,21 @@ impl FakeBackend {
 
     pub fn cancelled(&self) -> Vec<AetherAgentId> {
         self.state().cancelled.clone()
+    }
+
+    /// The next `update_agent` calls fail with these errors, in order.
+    pub fn fail_next_update(&self, error: ArchonError) {
+        self.state().update_failures.push_back(error);
+    }
+
+    /// Every update a live agent took, oldest first.
+    pub fn updates(&self) -> Vec<(AetherAgentId, AgentUpdate)> {
+        self.state().updates.clone()
+    }
+
+    /// Every agent `interrupt` was asked to stop, in order.
+    pub fn interrupts(&self) -> Vec<AetherAgentId> {
+        self.state().interrupts.clone()
     }
 
     /// `task_outcome` reports this for `task` from now on.
@@ -934,6 +954,35 @@ impl AgentBackend for FakeBackend {
         state.dead.insert(agent.clone());
         state.in_turn.remove(agent);
         Ok(())
+    }
+
+    async fn update_agent(
+        &self,
+        agent: &AetherAgentId,
+        update: AgentUpdate,
+    ) -> Result<(), ArchonError> {
+        assert!(!update.is_empty(), "an update changes something");
+        let mut state = self.state();
+        if let Some(error) = state.update_failures.pop_front() {
+            return Err(error);
+        }
+        if !state.knows(agent) || state.dead.contains(agent) {
+            return Err(ArchonError::NotFound(format!(
+                "aether: no live agent {agent}"
+            )));
+        }
+        state.updates.push((agent.clone(), update));
+        Ok(())
+    }
+
+    /// Ends a held turn, as Aether's interrupt does.
+    async fn interrupt(&self, agent: &AetherAgentId) -> Result<bool, ArchonError> {
+        let mut state = self.state();
+        state.interrupts.push(agent.clone());
+        if !state.knows(agent) {
+            return Err(ArchonError::NotFound(format!("aether: no agent {agent}")));
+        }
+        Ok(state.in_turn.remove(agent))
     }
 
     async fn descendants(&self, agent: &AetherAgentId) -> Result<Vec<Descendant>, ArchonError> {

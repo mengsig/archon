@@ -14,7 +14,12 @@ use crate::catalog::CatalogListing;
 use crate::cost::{CostQuery, CostReport};
 use crate::error::ArchonError;
 use crate::github::{GithubThread, GithubWatch, GithubWatcherView, WatcherChange};
-use crate::id::{DirectiveId, PipelineRunId, QuestionId, QueueItemId, ReportId, StageRunId};
+use crate::id::{
+    DirectiveId, InitiativeId, LessonId, PipelineRunId, QuestionId, QueueItemId, ReportId,
+    StageRunId,
+};
+use crate::initiative::{EnqueueInitiative, InitiativeDetail};
+use crate::lesson::{Lesson, LessonDraft, LessonPatch, LessonQuery, LessonStats, LessonWhy};
 use crate::model::{Effort, ModelChoice, ModelPlan, ModelReasons, ModelRef};
 use crate::model_evidence::{ModelEvidenceQuery, ModelEvidenceReport};
 use crate::notify::{FeedItem, NotificationKind, Question};
@@ -22,6 +27,7 @@ use crate::policy::ModelPolicy;
 use crate::queue::{Caps, PauseState, Priority, QueueItem};
 use crate::repo::{Repo, ShipMode};
 use crate::run::{OperatorGate, PipelineRun, StageRun, StageState, Verdict};
+use crate::steer::Steer;
 
 /// 3: a GitHub watcher `add` may carry an allowlist; an older archond
 /// would drop it and widen who may dispatch, so it is refused at hello.
@@ -30,7 +36,9 @@ use crate::run::{OperatorGate, PipelineRun, StageRun, StageState, Verdict};
 /// 5: operator-only orchestrator attachment for the native TUI.
 /// 6: `archon mcp` names the calling agent on every call that changes Archon
 /// (`for_agent`), and archond refuses such a call that names none.
-pub const PROTOCOL_VERSION: u32 = 6;
+/// 7: initiatives, `steer_item` and lessons; an older archond knows none of
+/// their requests.
+pub const PROTOCOL_VERSION: u32 = 7;
 
 /// Longest accepted frame in either direction.
 pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
@@ -270,6 +278,39 @@ pub enum Request {
         thread: GithubThread,
         body: String,
     },
+
+    /// Several items, usually in several repositories, built against one
+    /// shared contract.
+    EnqueueInitiative(EnqueueInitiative),
+    GetInitiative {
+        initiative: InitiativeId,
+    },
+    /// Append to the shared contract; live members are told.
+    UpdateInitiative {
+        initiative: InitiativeId,
+        contract_append: String,
+    },
+    /// Change a queued or running item without cancelling it.
+    SteerItem {
+        item: QueueItemId,
+        steer: Steer,
+    },
+
+    RecordLesson(LessonDraft),
+    Lessons(LessonQuery),
+    /// CLI only: the operator edits, pins, accepts or retracts a lesson,
+    /// and that always wins over what was learned.
+    UpdateLesson {
+        lesson: LessonId,
+        patch: LessonPatch,
+    },
+    /// The lessons and learned defaults that shaped an item.
+    LessonsWhy {
+        item: QueueItemId,
+    },
+    LessonStats {
+        repo: Option<RepoRef>,
+    },
 }
 
 impl Request {
@@ -285,6 +326,7 @@ impl Request {
             | Self::OrchestratorAttach
             | Self::Gc { .. }
             | Self::ConfigureGithubWatcher { .. }
+            | Self::UpdateLesson { .. }
             | Self::Answer { .. } => true,
             Self::RepoAdd(add) => add.auto_merge,
             Self::Pause(target) | Self::Resume(target) => {
@@ -317,7 +359,11 @@ impl Request {
             | Self::CostReport(_)
             | Self::ModelEvidence(_)
             | Self::Autonomy { .. }
-            | Self::GithubWatcher => true,
+            | Self::GithubWatcher
+            | Self::GetInitiative { .. }
+            | Self::Lessons(_)
+            | Self::LessonsWhy { .. }
+            | Self::LessonStats { .. } => true,
             Self::ForAgent { request, .. } => request.is_read_only(),
             _ => false,
         }
@@ -485,6 +531,11 @@ pub enum Reply {
     Gc(Box<GcReport>),
     CostReport(Box<CostReport>),
     ModelEvidence(Box<ModelEvidenceReport>),
+    Initiative(Box<InitiativeDetail>),
+    Lesson(Lesson),
+    Lessons(Vec<Lesson>),
+    LessonsWhy(Box<LessonWhy>),
+    LessonStats(Box<LessonStats>),
 }
 
 /// What one gc pass did (ARCHITECTURE §13.2). Paths are real paths.
@@ -1160,6 +1211,7 @@ mod tests {
             autonomy: Default::default(),
             origin: None,
             fresh_retries: 0,
+            initiative: None,
             state: crate::queue::QueueState::Queued,
             created_at: crate::now(),
             updated_at: crate::now(),
@@ -1226,6 +1278,11 @@ mod tests {
     fn operator_only_requests_are_flagged() {
         assert!(Request::Say { text: "hi".into() }.is_operator_only());
         assert!(!Request::Status.is_operator_only());
+        let edit = Request::UpdateLesson {
+            lesson: LessonId::new(),
+            patch: LessonPatch::default(),
+        };
+        assert!(edit.is_operator_only() && !edit.is_read_only());
         let merge = RepoAdd {
             path: "/r".into(),
             name: None,
@@ -1239,6 +1296,51 @@ mod tests {
             let change = WatcherChange::Operators { operator_users };
             let request = Request::ConfigureGithubWatcher { change };
             assert!(request.is_operator_only(), "{request:?}");
+        }
+    }
+
+    #[test]
+    fn adaptive_requests_keep_their_names_and_only_the_lookups_read() {
+        let item = QueueItemId::new();
+        let steer = Request::SteerItem {
+            item: item.clone(),
+            steer: Steer {
+                note: Some("Use the v2 client.".into()),
+                ..Steer::default()
+            },
+        };
+        let wire = serde_json::to_value(&steer).unwrap();
+        assert_eq!(wire["cmd"], "steer_item");
+        assert_eq!(wire["steer"]["note"], "Use the v2 client.");
+        assert_eq!(serde_json::from_value::<Request>(wire).unwrap(), steer);
+        let lookups = [
+            Request::Lessons(LessonQuery::default()),
+            Request::LessonsWhy { item },
+            Request::LessonStats { repo: None },
+            Request::GetInitiative {
+                initiative: InitiativeId::new(),
+            },
+        ];
+        for request in lookups {
+            assert!(request.is_read_only() && !request.is_operator_only());
+        }
+        let append = Request::UpdateInitiative {
+            initiative: InitiativeId::new(),
+            contract_append: "Also rename the column.".into(),
+        };
+        let draft = Request::RecordLesson(LessonDraft {
+            kind: crate::lesson::LessonKind::Pitfall,
+            text: "CI needs `make lint`.".into(),
+            repo: None,
+            pipeline: None,
+            item: None,
+        });
+        assert_eq!(
+            serde_json::to_value(&draft).unwrap()["cmd"],
+            "record_lesson"
+        );
+        for request in [steer, append, draft] {
+            assert!(!request.is_read_only() && !request.is_operator_only());
         }
     }
 

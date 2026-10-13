@@ -64,6 +64,7 @@ pub fn item(repo: Option<&Repo>, title: &str) -> QueueItem {
         autonomy: Autonomy::default(),
         origin: None,
         fresh_retries: 0,
+        initiative: None,
         state: QueueState::Queued,
         created_at: t(1),
         updated_at: t(1),

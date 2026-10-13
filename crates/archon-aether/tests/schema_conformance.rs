@@ -54,6 +54,7 @@ fn variant_name(command: &Command) -> &'static str {
         Command::ReplyToQuestion { .. } => "reply_to_question",
         Command::Trigger { .. } => "trigger",
         Command::Cancel { .. } => "cancel",
+        Command::Interrupt { .. } => "interrupt",
         Command::Wake { .. } => "wake",
         Command::Restart { .. } => "restart",
         Command::Pause { .. } => "pause",
@@ -173,6 +174,8 @@ fn samples() -> Vec<Command> {
         Command::UpdateAgent {
             id: agent(),
             patch: AgentPatch {
+                model: Some("claude-code/claude-opus-5-5".parse().unwrap()),
+                effort: Some(Effort::High),
                 cost_budget: Some(3.0),
                 deadline: Some(json!({"set": "2026-09-26T12:00:00Z"})),
             },
@@ -221,6 +224,7 @@ fn message_samples() -> Vec<Command> {
             agent: agent(),
             reason: None,
         },
+        Command::Interrupt { agent: agent() },
     ]
 }
 
@@ -406,7 +410,7 @@ fn every_command_archon_emits_matches_both_schemas() {
         );
         assert_eq!(
             seen.len(),
-            24,
+            25,
             "every Command variant has a sample: {seen:?}"
         );
     }

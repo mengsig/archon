@@ -55,6 +55,7 @@ fn an_item_keeps_the_github_thread_that_asked_for_it() {
     let first = QueueItem {
         origin: Some(thread()),
         fresh_retries: 0,
+        initiative: None,
         ..item(Some(&repo), "fix")
     };
     store.insert_item(&first, Some("gh-1")).unwrap();
@@ -72,6 +73,7 @@ fn an_item_keeps_the_github_thread_that_asked_for_it() {
         id: QueueItemId::new(),
         origin: None,
         fresh_retries: 0,
+        initiative: None,
         ..first
     };
     let err = store.insert_item(&unasked, Some("gh-1")).unwrap_err();
@@ -109,6 +111,7 @@ fn request_variants(first: &QueueItem) -> Vec<QueueItem> {
         QueueItem {
             origin: Some(thread()),
             fresh_retries: 0,
+            initiative: None,
             ..base.clone()
         },
         QueueItem {

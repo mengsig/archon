@@ -9,7 +9,7 @@ use crate::Timestamp;
 use crate::autonomy::Autonomy;
 use crate::error::ArchonError;
 use crate::github::GithubThread;
-use crate::id::{PipelineRunId, QueueItemId, RepoId};
+use crate::id::{InitiativeId, PipelineRunId, QueueItemId, RepoId};
 use crate::model::{ModelPlan, ModelReasons};
 
 /// Input checks shared by the CLI and daemon enqueue boundaries.
@@ -183,6 +183,9 @@ pub struct QueueItem {
     /// branch, on a branch of its own (ARCHITECTURE §13).
     #[serde(default)]
     pub fresh_retries: u32,
+    /// The initiative it is a member of.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initiative: Option<InitiativeId>,
     pub state: QueueState,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -288,6 +291,7 @@ mod tests {
             autonomy: Autonomy::default(),
             origin: None,
             fresh_retries: 0,
+            initiative: None,
             state: QueueState::Queued,
             created_at: crate::now(),
             updated_at: crate::now(),

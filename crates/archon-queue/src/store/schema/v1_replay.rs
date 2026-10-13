@@ -50,6 +50,7 @@ fn item(repo: &Repo, pipeline: &str) -> QueueItem {
         autonomy: Autonomy::default(),
         origin: None,
         fresh_retries: 0,
+        initiative: None,
         state: QueueState::Queued,
         created_at: v1_time(),
         updated_at: v1_time(),

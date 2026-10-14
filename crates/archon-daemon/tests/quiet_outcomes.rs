@@ -233,11 +233,13 @@ async fn by_default_a_success_wakes_the_orchestrator_so_the_chat_shows_it() {
     );
 }
 
-#[tokio::test]
-async fn quiet_completion_news_uses_the_later_settled_cost() {
-    let h = Harness::new().await;
-    let item = enqueued(&h, request("late cost")).await;
-    succeed(&h, &item).await;
+/// The cost the orchestrator is told for `item` once its provider settled
+/// $4.25 after the run finished: `pick` reads it from the batch Archon keys.
+async fn told_after_settlement(
+    h: &Harness,
+    item: &QueueItem,
+    pick: impl Fn(&TriggerEvent) -> Option<f64>,
+) -> f64 {
     let stage = h.stages(&item.id).await.remove(0);
     h.ctx
         .store
@@ -256,30 +258,61 @@ async fn quiet_completion_news_uses_the_later_settled_cost() {
         })
         .unwrap();
     triggers::flush_quiet(&h.ctx).await.unwrap();
+    // No Aether is connected, so the keyed batch stays in flight to be read.
     let delivery = tokio::spawn(triggers::deliver_loop(h.ctx.clone()));
-    let held = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    let told = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
-            let held = triggers::held(&h.ctx).await.unwrap();
-            if held
-                .iter()
-                .any(|e| matches!(e, TriggerEvent::ItemsFinished { .. }))
-            {
-                break held;
+            if !batch_keyed(h).await {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                continue;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            let held = triggers::held(&h.ctx).await.unwrap();
+            let costs: Vec<f64> = held.iter().filter_map(&pick).collect();
+            assert_eq!(costs.len(), 1, "one outcome of the item is told: {held:?}");
+            break costs[0];
         }
     })
     .await
-    .unwrap();
+    .expect("the batch is keyed");
     delivery.abort();
-    let costs: Vec<_> = held
-        .iter()
-        .filter_map(|event| match event {
-            TriggerEvent::ItemsFinished { items, .. } => {
-                items.iter().find(|i| i.item == item.id).map(|i| i.cost_usd)
-            }
-            _ => None,
-        })
-        .collect();
-    assert_eq!(costs, vec![4.25]);
+    told
+}
+
+/// Whether held news was keyed into a batch for the orchestrator.
+async fn batch_keyed(h: &Harness) -> bool {
+    let raw = h.kv("trigger_outbox").await.unwrap_or_default();
+    let outbox: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
+    !outbox["in_flight"].is_null()
+}
+
+#[tokio::test]
+async fn quiet_completion_news_uses_the_later_settled_cost() {
+    let h = Harness::with_config(quiet()).await;
+    let item = enqueued(&h, request("late cost")).await;
+    succeed(&h, &item).await;
+    let told = told_after_settlement(&h, &item, |event| match event {
+        TriggerEvent::ItemsFinished { items, .. } => {
+            items.iter().find(|i| i.item == item.id).map(|i| i.cost_usd)
+        }
+        _ => None,
+    })
+    .await;
+    assert_eq!(told, 4.25);
+}
+
+/// A success wakes the orchestrator by default; what it is told it cost is
+/// the settled figure, as in the quiet list.
+#[tokio::test]
+async fn a_waking_success_tells_the_later_settled_cost() {
+    let h = Harness::new().await;
+    let item = enqueued(&h, request("late cost, woken")).await;
+    succeed(&h, &item).await;
+    let told = told_after_settlement(&h, &item, |event| match event {
+        TriggerEvent::ItemFinished {
+            item: id, cost_usd, ..
+        } if *id == item.id => Some(*cost_usd),
+        _ => None,
+    })
+    .await;
+    assert_eq!(told, 4.25);
 }

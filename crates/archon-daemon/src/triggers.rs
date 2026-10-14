@@ -619,7 +619,10 @@ fn batch_events(
     if compacting {
         tracing::info!(before, after = kept.len(), collapse, "compacted held news");
     }
-    let mut events: Vec<TriggerEvent> = kept.into_iter().map(|news| news.event).collect();
+    let mut events: Vec<TriggerEvent> = kept
+        .into_iter()
+        .map(|news| facts.with_settled_cost(news.event))
+        .collect();
     events.extend(finished);
     Ok(events)
 }

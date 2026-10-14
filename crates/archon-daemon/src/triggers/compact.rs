@@ -51,6 +51,7 @@ impl Held {
 pub(super) struct Facts {
     /// Current state by item; an item missing here was pruned.
     pub items: HashMap<QueueItemId, QueueState>,
+    /// What each item's last run cost by now, settlements included.
     pub costs: HashMap<QueueItemId, f64>,
     /// Reports whose Lavish session is still open.
     pub open_reports: HashSet<ReportId>,
@@ -79,6 +80,18 @@ impl Facts {
             }
         }
         Ok(facts)
+    }
+
+    /// `event` telling the cost its item's run settled at since it finished:
+    /// a provider bills the last turns shortly after the run ends.
+    pub fn with_settled_cost(&self, mut event: TriggerEvent) -> TriggerEvent {
+        if let TriggerEvent::ItemFinished { item, cost_usd, .. } = &mut event
+            && let Some(settled) = self.costs.get(item)
+        {
+            assert!(settled.is_finite() && *settled >= 0.0, "a recorded cost");
+            *cost_usd = *settled;
+        }
+        event
     }
 
     fn learn_item(&mut self, store: &Store, item: &QueueItemId) -> Result<(), ArchonError> {

@@ -155,6 +155,9 @@ pub(super) fn settled(store: &Store, before: Timestamp) -> Result<Vec<Settled>, 
 /// Whether the item is still settled as it was when `plan` was made; an
 /// item retried since may be using its worktree again.
 pub(super) fn still_settled(store: &Store, plan: &ItemPlan) -> Result<bool, ArchonError> {
+    if store.has_pending_stack_fix(&plan.item)? {
+        return Ok(false);
+    }
     let item = match store.item(&plan.item) {
         Ok(item) => item,
         Err(ArchonError::NotFound(_)) => return Ok(false),

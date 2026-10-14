@@ -162,6 +162,8 @@ async fn supervise(
     let c = ctx.clone();
     workers.spawn(async move { ("dispatcher", dispatcher::run(c).await) });
     let c = ctx.clone();
+    workers.spawn(async move { ("coordination", executor::coordination::run(c).await) });
+    let c = ctx.clone();
     workers.spawn(async move { ("trigger delivery", triggers::deliver_loop(c).await) });
     let c = ctx.clone();
     workers.spawn(async move { ("store pruning", prune::run(c).await) });
@@ -250,6 +252,7 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
         backend,
         feed,
         dispatch: dispatch.clone(),
+        coordination: Default::default(),
         runs: Mutex::new(executor::RunTable::default()),
         replies: Mutex::new(feed::ReplyTracker::default()),
         answering: Mutex::new(()),

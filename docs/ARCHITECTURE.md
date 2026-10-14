@@ -2044,23 +2044,56 @@ A team stage's contract names the agent's role and the other roles, keeps
 it to its own worktree and role, and asks it to commit on its branch
 without pushing: only commits are merged.
 
-An item queued after others (`depends_on`) is only ordered behind them: its
-branch still forks from the repository's base, never from a dependency's
-branch, and its pull request is opened against the base. For such an item
-in a worktree the daemon therefore appends a `## Dependencies` section to
-every stage agent's contract. It lists each dependency as one JSON object,
-`{"item":"qi_…","branch":"…","pull_request":"…"}`, read from the store for
-the dependency's newest run: `branch` is `null` when it left none in this
-repository (another repository, a scratch or read-only pipeline), and
-`pull_request` when it opened none or reported something that is not a
-plain `https` URL (outside `pr` ship mode the URL is the agent's own
-report). It also defines the base of a change
-the agent built on one of those branches: `git merge-base <branch> HEAD`,
-where the base branch does not contain that commit. Such a stacked change
-is diffed, reviewed and reported from that commit, which is also what a
-delegated reviewer is handed, because a diff from the base branch would
-include the dependency's change. Archon does not stack for the agent:
-bringing a dependency's branch in is the brief's decision.
+An item queued after others (`depends_on`) starts after their successful
+pipeline runs, including opening their PRs; it does not wait for merging.
+`executor/start.rs` forks from the first unmerged same-repository parent's
+branch and merges the other parents. `stacks` persists the parent item,
+branch, SHA and order. `Store::stack_base(item)` returns the first unmerged
+parent's branch and SHA, or `None`; shipping uses this as the PR base.
+The stack also retains the repository base (its original HEAD branch when
+unconfigured), exposed by `Store::stack_repository_base` for retargeting.
+The dependency contract states the actual base and bounded JSON facts.
+Cross-repository and scratch dependencies do not become stack parents.
+
+`executor/restack.rs` reconciles persisted stacks in a supervised coordination
+worker, woken on item finish with a 60-second external-change fallback. GitHub
+and merge maintenance never delay unrelated queue admission. A merged
+parent causes `gh pr edit --base` to retarget the child to the next unmerged
+parent, or the repository base. A moved parent is merged into a registered
+worktree on the child's branch and pushed, never rebased or force-pushed.
+A conflict retains the merge and atomically queues one fix item, with the
+conflicting paths as its brief, that reuses the child branch and worktree.
+The fix uses the child's validated pipeline and policy. Git never runs a
+merge in the operator checkout and inherits the repository's Git identity.
+
+Initiatives group 1–16 items under a shared contract of at most 2 KiB.
+`enqueue_initiative` validates every member before a single transaction
+inserts the initiative and all member items. A repeated idempotency key
+returns the original initiative; different input under that key is refused.
+`after` holds indices of earlier members, making the dependency graph
+acyclic. The member agents see sibling repo, branch, PR and state as JSON;
+branch names and PR URLs are filtered before entering another contract.
+`update_initiative` persists the amended contract and sends it to live
+member leads using durable message keys; coordination retries pending delivery.
+
+Initiatives move `open → shipping → done`, or to `failed`/`cancelled`.
+The first shipped PR starts shipping; all members passing completes it.
+Member failure or cancellation fails the initiative and holds queued members.
+Cancellation stops unfinished members but preserves successful work and PRs.
+Retry requires a failed/cancelled initiative with no active members, requeues
+failed/cancelled/blocked members together, and keeps successful members.
+Retry retains branches and starts a new notification cycle. Ordinary member
+retries are held while their initiative is failed or cancelled; retry the
+initiative to resume coordinated admission.
+
+`executor/initiative_ship.rs::record` is the ship integration point. It saves
+verified PR URLs and replaces a marked section in each PR body with sibling
+links. Atomic initiatives disable auto-merge and keep PRs draft until all
+members pass, then reconcile each PR to ready. External writes are idempotent
+and replay from persisted state after restart. A terminal initiative emits
+one `InitiativeFinished` trigger per cycle, with its durable receipt committed
+in the same transaction as the trigger outbox; member finishes retain their
+feed outcomes without generating individual finish triggers.
 
 A stage agent that can delegate also gets a `## Delegation` section. The
 daemon writes it when it builds the spawn request, from what the agent can

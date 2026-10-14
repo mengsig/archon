@@ -172,7 +172,10 @@ async fn mark_dispatching(
     let now = archon_core::now();
     let mut moved = Vec::with_capacity(items.len());
     for id in items {
-        if ctx.collecting.contains(id) {
+        let owner = store.stack_fix(id)?.map(|t| t.owner);
+        if ctx.collecting.contains(id)
+            || owner.as_ref().is_some_and(|id| ctx.collecting.contains(id))
+        {
             tracing::info!(item = %id, "admitted item waits for worktree gc to finish");
             continue;
         }

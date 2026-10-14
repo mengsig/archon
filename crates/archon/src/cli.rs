@@ -128,6 +128,11 @@ pub enum Command {
     /// Inspect and change queue items and runtime caps.
     #[command(subcommand)]
     Queue(QueueCommand),
+    /// Coordinated requests across repositories.
+    Initiatives {
+        #[command(subcommand)]
+        command: Option<InitiativeCommand>,
+    },
     /// List and validate pipelines.
     #[command(subcommand)]
     Pipelines(PipelineCommand),
@@ -708,6 +713,27 @@ pub enum OrchestratorCommand {
     Status,
     /// Cancel and recreate the orchestrator agent.
     Restart,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum InitiativeCommand {
+    /// List coordinated initiatives.
+    List,
+    /// Show the shared contract and member states.
+    Show {
+        /// Initiative id (ini_…).
+        initiative: String,
+    },
+    /// Stop unfinished members, preserving successful work and PRs.
+    Cancel {
+        /// Initiative id (ini_…).
+        initiative: String,
+    },
+    /// Requeue unsuccessful members on their existing branches.
+    Retry {
+        /// Initiative id (ini_…).
+        initiative: String,
+    },
 }
 
 #[cfg(test)]

@@ -49,6 +49,7 @@ pub(super) async fn verify(
         }),
         Err(error) if error.is_store() => Err(error),
         Ok(Some(url)) => {
+            super::initiative_ship::record(ctx, run, &url).await?;
             let mut data = structured
                 .and_then(|s| s.as_object().cloned())
                 .unwrap_or_default();

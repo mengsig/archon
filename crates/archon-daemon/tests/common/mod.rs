@@ -6,6 +6,8 @@ pub mod delivery;
 pub mod team;
 pub mod team_worktree;
 
+pub mod initiative;
+
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -148,6 +150,11 @@ impl Harness {
             std::fs::write(
                 &config.github.binary,
                 r#"#!/bin/sh
+if [ "$1 $2" = "pr view" ]; then
+  printf '{"url":"https://github.com/o/r/pull/1","headRefName":"%s","baseRefName":"main","state":"OPEN","body":"","isDraft":false}' "$3"
+  exit 0
+fi
+if [ "$1 $2" = "pr edit" ]; then exit 0; fi
 [ "$1 $2 $3 $5 $6 $7 $8 $9" = "pr list --head --state open --limit 2 --json" ] || exit 2
 [ "$4" = "$(git branch --show-current)" ] || exit 3
 printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","state":"OPEN"}]' "$4"
@@ -315,6 +322,9 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
     }
 
     pub async fn dispatch(&self) {
+        executor::coordination::reconcile(&self.ctx)
+            .await
+            .expect("coordination pass");
         dispatcher::dispatch_once(&self.ctx)
             .await
             .expect("dispatch pass");
@@ -435,6 +445,7 @@ pub fn context(
         backend,
         feed,
         dispatch: dispatch.clone(),
+        coordination: Default::default(),
         runs: Mutex::new(RunTable::default()),
         replies: Mutex::new(ReplyTracker::default()),
         answering: Mutex::new(()),

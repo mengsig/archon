@@ -164,6 +164,12 @@ async fn cleanup_for(
         return Ok(None);
     }
     Ok(Some(Cleanup {
+        item: ctx
+            .store
+            .lock()
+            .await
+            .stack_fix(&item.id)?
+            .map_or_else(|| item.id.clone(), |fix| fix.owner),
         repo_path: repo.path,
         worktree: run.workspace.clone(),
         snapshot,
@@ -179,6 +185,7 @@ pub(super) async fn remove_worktree(
     ctx: &DaemonContext,
     cleanup: Cleanup,
     when: &str,
+    mark: Option<crate::gc::Mark>,
 ) -> Result<(), ArchonError> {
     let manager = WorktreeManager::new(
         ctx.paths.worktrees.clone(),
@@ -187,6 +194,7 @@ pub(super) async fn remove_worktree(
     let cache_dirs = ctx.config.worktrees.cache_dirs.clone();
     let target = cleanup.worktree.clone();
     let (reclaimed, removed) = tokio::task::spawn_blocking(move || {
+        let _mark = mark;
         // A snapshot goes whole with `--force`, so its caches need no cleaning.
         if cleanup.snapshot {
             let removed = manager.remove_snapshot(&cleanup.repo_path, &cleanup.worktree);
@@ -253,6 +261,11 @@ pub(super) async fn announce(
         NotificationKind::Outcome
     };
     notify(ctx, kind, &notice, Some(&item.id), run).await?;
+    ctx.coordination.changed.notify_one();
+    if item.initiative.is_some() {
+        ctx.dispatch.notify_one();
+        return Ok(());
+    }
     let cost_usd = ctx
         .store
         .lock()

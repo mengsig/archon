@@ -20,7 +20,9 @@ const MAX_TITLE_CHARS: usize = 200;
 pub enum InitiativeState {
     /// At least one member has not finished.
     Open,
-    Succeeded,
+    Shipping,
+    #[serde(alias = "succeeded")]
+    Done,
     Failed,
     Cancelled,
 }
@@ -29,14 +31,15 @@ impl InitiativeState {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Open => "open",
-            Self::Succeeded => "succeeded",
+            Self::Shipping => "shipping",
+            Self::Done => "done",
             Self::Failed => "failed",
             Self::Cancelled => "cancelled",
         }
     }
 
     pub fn is_terminal(self) -> bool {
-        self != Self::Open
+        matches!(self, Self::Done | Self::Failed | Self::Cancelled)
     }
 }
 
@@ -174,6 +177,7 @@ pub struct Sibling {
     /// The repository's registry name.
     pub repo: String,
     pub title: String,
+    pub state: String,
     pub branch: Option<String>,
     pub pr_url: Option<String>,
 }

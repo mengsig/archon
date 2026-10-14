@@ -110,19 +110,7 @@ pub fn dependency_rules(base: &str, dependencies: &[Dependency]) -> String {
         "one line of facts per dependency"
     );
     format!(
-        "\n## Dependencies\n\n\
-         Archon started this item after the items below succeeded. Its branch was forked \
-         from `{base}`, not from theirs: your workspace holds their work only where that \
-         was merged into `{base}` or you bring it in. One JSON object per item; a `branch` \
-         is a branch of this repository.\n\n\
-         {facts}\n\
-         - A change built on one of these branches is stacked on it. For each `branch`, \
-         take `git merge-base <branch> HEAD`: when `git merge-base --is-ancestor <that \
-         commit> {base}` fails, that commit is the base of this change, not `{base}`. With \
-         several such commits, the base is the one that contains the others.\n\
-         - Diff, review and report a stacked change from its base. Name that commit \
-         wherever a base commit is asked for, and give it to every reviewer you delegate \
-         to: a diff from `{base}` would include the dependency's change.\n"
+        "\n## Dependencies\n\nArchon prepared this branch from `{base}`; the daemon prepares other same-repository parents by merging. Diff, review and target the PR against `{base}`, overriding an older prompt base; pass this base to reviewers.\n\n{facts}"
     )
 }
 
@@ -827,8 +815,7 @@ mod tests {
         }
     }
 
-    /// A dependent item's branch still forks from the base, so a diff from
-    /// the base holds the dependency's change once the lead builds on it.
+    /// Dependency facts accompany the actual base prepared by the daemon.
     #[test]
     fn dependency_rules_name_each_branch_and_the_base_of_a_stacked_change() {
         assert_eq!(dependency_rules("main", &[]), "");
@@ -855,14 +842,8 @@ mod tests {
             serde_json::json!({"item": "qi_02", "branch": null, "pull_request": null}),
         ];
         assert_eq!(facts, expected);
-        for said in [
-            "Its branch was forked from `main`, not from theirs",
-            "take `git merge-base <branch> HEAD`: when `git merge-base --is-ancestor <that \
-             commit> main` fails, that commit is the base of this change, not `main`",
-            "give it to every reviewer you delegate to",
-        ] {
-            assert!(rules.contains(said), "missing {said:?} in {rules}");
-        }
+        assert!(rules.contains("prepared this branch from `main`"));
+        assert!(rules.contains("pass this base to reviewers"));
     }
 
     /// Aether gives a child only the instructions `delegate` was passed, so

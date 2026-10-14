@@ -3,6 +3,7 @@
 //! out to `git`; every failure carries git's stderr.
 
 pub mod snapshot;
+pub(crate) mod stack;
 pub mod team;
 
 use std::path::{Path, PathBuf};

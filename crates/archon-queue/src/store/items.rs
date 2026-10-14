@@ -225,28 +225,44 @@ pub(super) fn insert(
     key: Option<&str>,
     asked: &AutonomyPatch,
 ) -> Result<QueueItem, ArchonError> {
-    validate_new(item, key)?;
-    let request = request_value(item);
     let tx = write_tx(conn)?;
+    let stored = insert_in(&tx, item, key, asked)?;
+    tx.commit().ctx("commit item")?;
+    Ok(stored)
+}
+
+pub(super) fn insert_in(
+    tx: &Connection,
+    item: &QueueItem,
+    key: Option<&str>,
+    asked: &AutonomyPatch,
+) -> Result<QueueItem, ArchonError> {
+    validate_new(item, key)?;
+    assert_eq!(item.state, QueueState::Queued);
+    assert!(
+        !tx.is_autocommit(),
+        "item insertion belongs to a transaction"
+    );
+    let request = request_value(item);
     if let Some(key) = key
-        && let Some((first, stored)) = find_by_key(&tx, key)?
+        && let Some((first, stored)) = find_by_key(tx, key)?
     {
         let stored: serde_json::Value = from_json(&stored, "enqueue request")?;
         check_replay(key, &first, &stored, request, asked)?;
-        return load(&tx, &first);
+        return load(tx, &first);
     }
-    if exists(&tx, &item.id)? {
+    if exists(tx, &item.id)? {
         return Err(ArchonError::Invalid(format!(
             "queue item {} already exists",
             item.id
         )));
     }
     if let Some(repo) = &item.repo
-        && !repos::exists(&tx, repo)?
+        && !repos::exists(tx, repo)?
     {
         return Err(ArchonError::NotFound(format!("repository {repo}")));
     }
-    check_dependencies(&tx, &item.id, &item.dependencies)?;
+    check_dependencies(tx, &item.id, &item.dependencies)?;
     tx.execute(
         "INSERT INTO items (id, repo, pipeline, priority, state, tags, idempotency_key,
                             request, created_at, updated_at, data, initiative_id)
@@ -267,8 +283,7 @@ pub(super) fn insert(
         ],
     )
     .ctx("insert item")?;
-    replace_deps(&tx, item)?;
-    tx.commit().ctx("commit item")?;
+    replace_deps(tx, item)?;
     Ok(item.clone())
 }
 
@@ -374,7 +389,8 @@ pub(super) fn update(conn: &mut Connection, item: &QueueItem) -> Result<(), Arch
             item.state.kind()
         )));
     }
-    if stored.repo != item.repo
+    if stored.initiative != item.initiative
+        || stored.repo != item.repo
         || stored.pipeline != item.pipeline
         || stored.created_at != item.created_at
     {

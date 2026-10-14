@@ -116,6 +116,12 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
         sanitize_line(&item.pipeline),
         item.priority
     );
+    if let Some(initiative) = &item.initiative {
+        let _ = writeln!(
+            out,
+            "initiative: {initiative} (archon initiatives show {initiative})"
+        );
+    }
     if !item.dependencies.is_empty() {
         let deps: Vec<String> = item.dependencies.iter().map(ToString::to_string).collect();
         let _ = writeln!(out, "depends on: {}", deps.join(", "));

@@ -133,14 +133,27 @@ async fn a_dependent_items_agents_are_told_where_each_dependency_left_its_work()
     let implement = requests_of(&h, &second).remove(0);
     assert_eq!(implement.labels["archon.stage"], "implement");
     assert_eq!(facts(&implement.instructions), expected);
-    for said in [
-        "Its branch was forked from `main`, not from theirs",
-        "`git merge-base --is-ancestor <that commit> main` fails, that commit is the base of \
-         this change, not `main`",
-        "give it to every reviewer you delegate to",
-    ] {
-        assert!(implement.instructions.contains(said), "missing {said:?}");
-    }
+    assert!(
+        implement
+            .instructions
+            .contains(&format!("prepared this branch from `{}`", shipped.branch))
+    );
+    assert!(
+        implement
+            .instructions
+            .contains("pass this base to reviewers")
+    );
+    assert_eq!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .stack_base(&second.id)
+            .unwrap()
+            .unwrap()
+            .0,
+        shipped.branch
+    );
     assert_ne!(h.run(&second.id).await.branch, shipped.branch);
 
     h.settle_running(passing).await;

@@ -71,7 +71,9 @@ async fn claim_item(
     let _table = ctx.runs.lock().await;
     let mut store = ctx.store.lock().await;
     let item = store.item(id)?;
-    let collecting = ctx.collecting.contains(id);
+    let owner = store.stack_fix(id)?.map(|t| t.owner);
+    let collecting =
+        ctx.collecting.contains(id) || owner.as_ref().is_some_and(|id| ctx.collecting.contains(id));
     match item.state {
         QueueState::Queued if collecting => Ok(None),
         QueueState::Queued => {
@@ -230,8 +232,28 @@ async fn add_worktree(
         ctx.paths.worktrees.clone(),
         ctx.config.worktrees.branch_prefix.clone(),
     );
-    let branch = manager.branch_name(&item.id, &item.title, item.fresh_retries);
-    let (repo, item_id) = (repo.clone(), item.id.clone());
+    let target = ctx.store.lock().await.stack_fix(&item.id)?;
+    let parents = match &target {
+        Some(target) => ctx.store.lock().await.stack_parents(&target.owner)?,
+        None => super::restack::parents(ctx, item, repo, base.as_deref()).await?,
+    };
+    let base = parents
+        .iter()
+        .find(|p| !p.merged)
+        .map(|p| p.parent_branch.clone())
+        .or(base);
+    let branch = target
+        .as_ref()
+        .map(|t| t.branch.clone())
+        .unwrap_or_else(|| manager.branch_name(&item.id, &item.title, item.fresh_retries));
+    let item_id = target
+        .as_ref()
+        .map(|t| t.owner.clone())
+        .unwrap_or_else(|| item.id.clone());
+    let team = target.as_ref().map_or(team, |t| t.team);
+    let cleanup_owner = item_id.clone();
+    let source_repo = repo.clone();
+    let repo = repo.clone();
     let repo_path = repo.path.clone();
     let tree = tokio::task::spawn_blocking(move || match team {
         true => manager.create_team_run(&repo.path, &repo.name, &item_id, &branch, base.as_deref()),
@@ -243,7 +265,43 @@ async fn add_worktree(
         tree.path.starts_with(&ctx.paths.worktrees),
         "worktrees are added under the worktree root"
     );
+    let workspace = worktree_workspace(tree, repo_path, cleanup_owner, team);
+    if target.is_none() {
+        merge_stack(ctx, &source_repo, &workspace, &parents).await?;
+    }
+    Ok(workspace)
+}
+
+async fn merge_stack(
+    ctx: &DaemonContext,
+    repo: &Repo,
+    workspace: &Workspace,
+    parents: &[archon_queue::store::stacks::StackParent],
+) -> Result<(), ArchonError> {
+    assert!(workspace.path.starts_with(&ctx.paths.worktrees));
+    assert!(!workspace.branch.is_empty());
+    let result =
+        super::restack::merge_others(ctx, repo, &workspace.path, &workspace.branch, parents).await;
+    if let Err(error) = result {
+        let error = match abandon_worktree(ctx, workspace.added.clone()).await {
+            Ok(()) => error,
+            Err(cleanup) => error.with_detail(&format!("worktree cleanup also failed: {cleanup}")),
+        };
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn worktree_workspace(
+    tree: crate::worktree::Worktree,
+    repo_path: PathBuf,
+    item: QueueItemId,
+    team: bool,
+) -> Workspace {
+    assert!(tree.path.is_absolute());
+    assert!(!tree.branch.is_empty());
     let added = tree.added.then(|| Cleanup {
+        item,
         repo_path,
         worktree: tree.path.clone(),
         snapshot: false,
@@ -252,13 +310,13 @@ async fn add_worktree(
         let root = archon_pipeline::team::team_root(&tree.path);
         root.expect("create_team_run adds <item>/main").to_owned()
     });
-    Ok(Workspace {
+    Workspace {
         path: tree.path,
         team_root,
         branch: tree.branch,
         base: tree.base,
         added,
-    })
+    }
 }
 
 /// A detached snapshot of the repository's `HEAD` commit for a
@@ -297,6 +355,7 @@ async fn add_snapshot(
     );
     tracing::info!(item = %item.id, snapshot = %snapshot.path.display(), commit = %snapshot.commit, "added a snapshot");
     let added = Cleanup {
+        item: item.id.clone(),
         repo_path: repo.path.clone(),
         worktree: snapshot.path.clone(),
         snapshot: true,
@@ -376,7 +435,7 @@ async fn abandon_worktree(ctx: &DaemonContext, added: Option<Cleanup>) -> Result
         "only Archon's own worktrees are abandoned"
     );
     tracing::info!(worktree = %tree.worktree.display(), "removing the worktree of an abandoned start");
-    finish::remove_worktree(ctx, tree, ABANDONED).await
+    finish::remove_worktree(ctx, tree, ABANDONED, None).await
 }
 
 fn first_stage(run: &PipelineRun) -> String {

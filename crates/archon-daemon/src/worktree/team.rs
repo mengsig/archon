@@ -13,7 +13,7 @@
 
 mod aside;
 mod git_dirs;
-mod identity;
+pub(crate) mod identity;
 mod leftovers;
 mod orphan;
 mod submodules;

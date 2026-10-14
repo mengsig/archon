@@ -1,0 +1,37 @@
+{
+  "stamp": "20261014T073720Z",
+  "started_at": "2026-10-14T07:37:20.505781423Z",
+  "finished_at": "2026-10-14T07:54:53.573696618Z",
+  "archon_commit": "9b5ddbc8e0eb37925582a6b765c3717269361a67",
+  "versions": {
+    "aetherd": "1.0.3",
+    "archon": "archon 1.1.0"
+  },
+  "models": {
+    "aether": "claude-code/claude-opus-5-5",
+    "archon": "claude-code/claude-opus-5-5"
+  },
+  "effort": "high",
+  "arms": [
+    "archon",
+    "aether"
+  ],
+  "tasks": [
+    "feature-token-bucket",
+    "fix-off-by-one",
+    "long-backlog",
+    "multi-repo-pagination",
+    "refactor-order-status"
+  ],
+  "trials": 1,
+  "parallel": 2,
+  "timeout_factor": 1.0,
+  "max_usd": 20.0,
+  "max_trials": 100,
+  "planned": 10,
+  "completed": 10,
+  "skipped": 0,
+  "spent_usd": 11.667986800000001,
+  "unpriced_trials": 0,
+  "stopped_reason": null
+}

@@ -1,0 +1,26 @@
+[pipeline]
+name = "direct"
+description = "One agent implements a small, low-risk change, checks and commits it; Archon ships it"
+version = 1
+workspace = "worktree"
+requires_repo = true
+
+# The item's review level decides how many reviewers the agent delegates to.
+[pipeline.review]
+level = "none"
+stage = "implement"
+
+# Archon ships the commits this stage records; no agent does.
+[pipeline.ship]
+stage = "implement"
+
+[nudges]
+tier = "fast"
+notes = "The cheapest path to a shipped change: one agent, and no review unless the item's review level asks for one. For small, low-risk changes with an obvious check: a typo, docs, a config value, a contained fix. Raise the review level, or use adaptive, when it is less trivial than it looks."
+
+[[stage]]
+id = "implement"
+kind = "work"
+prompt = "implement.md"
+timeout_minutes = 60
+nudge = "A fast coding model at low or medium effort; the agent escalates a change that turns out large or risky."

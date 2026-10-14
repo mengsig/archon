@@ -487,39 +487,59 @@ fn every_builtin_validates_and_keeps_its_promises() {
     }
 }
 
-/// Where the delivery rules every shipping built-in shares begin.
-const SHARED_SHIP_RULES: &str = "## Mode `pr`";
-
+/// archond ships what one agent recorded, so `[pipeline.ship]` names a
+/// single-agent stage of a worktree pipeline after which nothing commits.
 #[test]
-fn shipping_builtins_share_one_set_of_delivery_rules() {
-    let catalog = Catalog::builtin();
-    let mut copies: Vec<(&str, &str)> = Vec::new();
-    for builtin in BUILTINS {
-        let spec = catalog.get(builtin.name).expect("built-in loads");
-        let Some(ship) = spec.file.stages.iter().find(|s| s.kind == StageKind::Ship) else {
-            continue;
-        };
-        let text = &spec.prompts[&ship.prompt];
-        let start = text
-            .find(SHARED_SHIP_RULES)
-            .unwrap_or_else(|| panic!("{}: ship prompt lacks {SHARED_SHIP_RULES:?}", builtin.name));
-        copies.push((builtin.name, &text[start..]));
+fn a_daemon_ship_names_the_last_stage_that_can_commit() {
+    let direct = include_str!("../../../pipelines/direct/pipeline.toml");
+    let check = |text: &str| -> Result<(), String> {
+        let spec = support::spec_from(text, &[]);
+        spec.validate("direct").map_err(|e| e.to_string())
+    };
+    check(direct).expect("the built-in declaration is valid");
+    let ship_agent = "\n[[stage]]\nid = \"deliver\"\nkind = \"ship\"\nprompt = \"implement.md\"\n\
+                      timeout_minutes = 5\n";
+    let later_work = "\n[[stage]]\nid = \"polish\"\nkind = \"work\"\nprompt = \"implement.md\"\n\
+                      timeout_minutes = 5\n";
+    let fanned = direct.replace(
+        "kind = \"work\"",
+        "kind = \"review\"\nfan_out = 2\ngate = \"all_pass\"",
+    );
+    for (text, why) in [
+        (
+            direct.replace(
+                "[pipeline.ship]\nstage = \"implement\"",
+                "[pipeline.ship]\nstage = \"nowhere\"",
+            ),
+            "[pipeline.ship] stage \"nowhere\" names no stage",
+        ),
+        (
+            format!("{direct}{ship_agent}"),
+            "cannot be combined with ship stage \"deliver\"",
+        ),
+        (
+            format!("{direct}{later_work}"),
+            "must come after stage \"polish\", which can still commit",
+        ),
+        (
+            fanned.replace(
+                "[pipeline.review]\nlevel = \"none\"\nstage = \"implement\"\n",
+                "",
+            ),
+            "must be a work, review or test stage with one agent",
+        ),
+    ] {
+        let refused = check(&text).unwrap_err();
+        assert!(refused.contains(why), "{why:?}: {refused}");
     }
-    assert!(copies.len() >= 3, "{copies:?}");
-    let (first, rules) = copies[0];
-    assert!(rules.contains("## Mode `local`") && rules.contains("## Report"));
-    for (name, other) in &copies[1..] {
-        let drift = rules
-            .lines()
-            .zip(other.lines())
-            .enumerate()
-            .find(|(_, (a, b))| a != b);
-        assert!(
-            rules == *other,
-            "the ship prompts of {first} and {name} differ after {SHARED_SHIP_RULES:?}; \
-             keep the delivery rules identical. First difference: {drift:?}"
-        );
-    }
+    let scratch = direct
+        .replace("workspace = \"worktree\"", "workspace = \"scratch\"")
+        .replace("requires_repo = true", "requires_repo = false");
+    let refused = check(&scratch).unwrap_err();
+    assert!(
+        refused.contains("needs workspace = \"worktree\""),
+        "{refused}"
+    );
 }
 
 #[test]
@@ -528,28 +548,36 @@ fn adaptive_declares_the_review_its_lead_holds_and_round_trips() {
 
     let catalog = Catalog::builtin();
     let spec = catalog.get("adaptive").unwrap();
-    assert_eq!(spec.file.stages.len(), 2);
+    assert_eq!(spec.file.stages.len(), 1, "the lead, and archond ships");
     let build = spec.stage("build").unwrap();
     assert_eq!(build.kind, StageKind::Work);
     assert!(build.allow_delegation);
     assert_eq!(build.fan_out, 1);
-    assert!(!spec.stage("ship").unwrap().allow_delegation);
     assert!(spec.holds_review(build));
-    assert!(!spec.holds_review(spec.stage("ship").unwrap()));
+    assert_eq!(
+        spec.ship_record_stage().map(|s| s.id.as_str()),
+        Some("build")
+    );
     assert_eq!(autonomy::review_level(spec), ReviewLevel::Standard);
+    assert!(autonomy::review_is_chosen(spec), "an item picks its level");
     let text = toml::to_string(&spec.file).unwrap();
     let back: archon_pipeline::spec::PipelineFile = toml::from_str(&text).unwrap();
     assert_eq!(back, spec.file);
-    for name in catalog.names().filter(|name| *name != "adaptive") {
-        let other = catalog.get(name).unwrap();
-        assert_eq!(other.file.pipeline.review, None, "{name}");
-    }
+    let holders: Vec<&str> = catalog
+        .names()
+        .filter(|name| catalog.get(name).unwrap().file.pipeline.review.is_some())
+        .collect();
+    assert_eq!(
+        holders,
+        ["adaptive", "direct"],
+        "the rest gate their review"
+    );
 }
 
-/// What `adaptive` tells its agents decides what a run costs and what is
-/// delivered: the lead prices each child, and ship adds nothing to the review.
+/// What `adaptive` tells its lead decides what a run costs and what is
+/// delivered: the lead prices each child and records what archond ships.
 #[test]
-fn adaptive_prices_what_it_delegates_and_ships_only_the_reviewed_commits() {
+fn adaptive_prices_what_it_delegates_and_records_what_ships() {
     let catalog = Catalog::builtin();
     let spec = catalog.get("adaptive").unwrap();
     let flat = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -558,8 +586,10 @@ fn adaptive_prices_what_it_delegates_and_ships_only_the_reviewed_commits() {
         "saves more than briefing it, integrating it and the reading it repeats",
         "Do a bounded local read yourself",
         "no `Co-Authored-By` or \"Generated with\" line",
-        "delegate ONE fresh reviewer of the committed change with `wait: false`",
-        "full test suite once, and edit nothing until both are back",
+        "Delegate the reviewers your contract asks for on the committed change with `wait: false`",
+        "never see each other's findings",
+        "full test suite once, and edit nothing until all are back",
+        "With no reviewer asked for, that run is the whole of this step",
         "the exact base and head commits (`git merge-base {{base_branch}} HEAD`",
         "medium for ordinary risk, high where security or an invariant is at stake",
         "never because a tree that passed was committed",
@@ -567,28 +597,22 @@ fn adaptive_prices_what_it_delegates_and_ships_only_the_reviewed_commits() {
         "It reads that delta and the callers it affects",
         "An unresolved blocking finding, a failed check",
         "Advice left open fails nothing",
-        "(`git rev-parse HEAD HEAD^{tree}`)",
+        "Archon delivers your commits as they are. Do not push.",
+        "the ship record and, where reviewers were asked for, the review record",
     ] {
         assert!(build.contains(said), "build.md lacks {said:?}");
     }
     assert!(!build.contains("Open findings"), "only blocking ones fail");
-    let ship = flat(&spec.prompts["ship.md"]);
-    for said in [
-        "commit nothing in this stage",
-        "`git rev-parse HEAD^{tree}` must print that tree before anything is pushed",
-        "`fail_task` with `not the reviewed tree:` and both hashes",
-    ] {
-        assert!(ship.contains(said), "ship.md lacks {said:?}");
-    }
+    assert!(!spec.prompts.contains_key("ship.md"), "no agent ships");
     let nudge = spec.stage("build").unwrap().nudge.as_deref().unwrap();
     assert!(nudge.contains("at high effort; medium for a bounded change"));
     assert!(nudge.contains("x_high or max only for a reasoning problem you can name"));
 }
 
 /// A declared review is a claim Archon enforces at one agent's result, so
-/// only a single delegating work stage can hold it, at `standard`.
+/// only a work stage can hold it; the level is the default an item overrides.
 #[test]
-fn a_declared_review_names_one_delegating_work_stage_at_standard() {
+fn a_declared_review_names_one_work_stage_at_any_level() {
     let adaptive = include_str!("../../../pipelines/adaptive/pipeline.toml");
     let check = |text: &str| -> Result<(), String> {
         toml::from_str::<archon_pipeline::spec::PipelineFile>(text).map_err(|e| e.to_string())?;
@@ -597,30 +621,44 @@ fn a_declared_review_names_one_delegating_work_stage_at_standard() {
     };
     check(adaptive).expect("the built-in declaration is valid");
     let level = "level = \"standard\"";
-    let stage = "stage = \"build\"";
-    for (from, to, why) in [
+    let stage = "[pipeline.review]\nlevel = \"standard\"\nstage = \"build\"";
+    assert!(
+        adaptive.contains(stage),
+        "the declaration is in the built-in"
+    );
+    for chosen in ["none", "strict"] {
+        let text = adaptive.replace(level, &format!("level = \"{chosen}\""));
+        check(&text).unwrap_or_else(|why| panic!("{chosen} is a level: {why}"));
+    }
+    check(&adaptive.replace("allow_delegation = true", "allow_delegation = false"))
+        .expect("the holder is granted delegation for its reviewers");
+    let gated = "\n[[stage]]\nid = \"check\"\nkind = \"test\"\nprompt = \"build.md\"\n\
+                 gate = \"all_pass\"\ntimeout_minutes = 5\n";
+    for (text, why) in [
+        (adaptive.replace(level, "level = \"thorough\""), "thorough"),
         (
-            level,
-            "level = \"strict\"",
-            "strict is gated review and test stages",
+            adaptive.replace(
+                stage,
+                "[pipeline.review]\nlevel = \"standard\"\nstage = \"review\"",
+            ),
+            "[pipeline.review] stage \"review\" names no stage",
         ),
-        (level, "level = \"none\"", "leave the table out"),
-        (level, "level = \"thorough\"", "thorough"),
-        (stage, "stage = \"review\"", "names no stage"),
-        (stage, "stage = \"ship\"", "must be a work stage"),
         (
-            "allow_delegation = true",
-            "allow_delegation = false",
-            "needs allow_delegation = true",
+            format!(
+                "{}{gated}",
+                adaptive.replace(
+                    stage,
+                    "[pipeline.review]\nlevel = \"standard\"\nstage = \"check\""
+                )
+            ),
+            "[pipeline.review] stage \"check\" must be a work stage",
         ),
         (
-            stage,
-            "stage = \"build\"\nreviewer = \"x\"",
+            adaptive.replace(stage, &format!("{stage}\nreviewer = \"x\"")),
             "unknown field",
         ),
     ] {
-        assert!(adaptive.contains(from), "{from:?} is in the built-in");
-        let refused = check(&adaptive.replace(from, to)).unwrap_err();
-        assert!(refused.contains(why), "{to:?}: {refused}");
+        let refused = check(&text).unwrap_err();
+        assert!(refused.contains(why), "{why:?}: {refused}");
     }
 }

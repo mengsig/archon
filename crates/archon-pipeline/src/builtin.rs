@@ -31,50 +31,27 @@ macro_rules! builtin {
 }
 
 pub const BUILTINS: &[BuiltinPipeline] = &[
-    builtin!("adaptive", ["build.md", "ship.md"]),
-    builtin!("quick-pr", ["implement.md", "ship.md"]),
-    builtin!(
-        "default-pr-review",
-        ["implement.md", "review.md", "ship.md"]
-    ),
-    builtin!("bugfix", ["reproduce.md", "fix.md", "review.md", "ship.md"]),
-    builtin!("docs", ["write.md", "verify.md", "ship.md"]),
+    builtin!("adaptive", ["build.md"]),
+    builtin!("direct", ["implement.md"]),
+    builtin!("quick-pr", ["implement.md"]),
+    builtin!("default-pr-review", ["implement.md", "review.md"]),
+    builtin!("bugfix", ["reproduce.md", "fix.md", "review.md"]),
+    builtin!("docs", ["write.md", "verify.md"]),
     builtin!(
         "dependency-upgrade",
-        ["survey.md", "upgrade.md", "verify.md", "ship.md"]
+        ["survey.md", "upgrade.md", "verify.md"]
     ),
     builtin!(
         "refactor",
-        [
-            "baseline.md",
-            "refactor.md",
-            "verify.md",
-            "review.md",
-            "ship.md"
-        ]
+        ["baseline.md", "refactor.md", "verify.md", "review.md"]
     ),
-    builtin!(
-        "strict-pr-review",
-        ["implement.md", "test.md", "review.md", "ship.md"]
-    ),
-    builtin!(
-        "team-pr",
-        ["plan.md", "build.md", "e2e.md", "review.md", "ship.md"]
-    ),
+    builtin!("strict-pr-review", ["implement.md", "test.md", "review.md"]),
+    builtin!("team-pr", ["plan.md", "build.md", "e2e.md", "review.md"]),
     builtin!(
         "performance",
-        [
-            "measure.md",
-            "optimize.md",
-            "verify.md",
-            "review.md",
-            "ship.md"
-        ]
+        ["measure.md", "optimize.md", "verify.md", "review.md"]
     ),
-    builtin!(
-        "test-coverage",
-        ["analyze.md", "write.md", "verify.md", "ship.md"]
-    ),
+    builtin!("test-coverage", ["analyze.md", "write.md", "verify.md"]),
     builtin!("agent-testing", ["plan.md", "exercise.md", "report.md"]),
     builtin!("code-audit", ["scope.md", "audit.md", "report.md"]),
     builtin!("e2e-testing", ["setup.md", "e2e.md", "report.md"]),

@@ -9,6 +9,10 @@ version = 1
 workspace = "worktree"
 requires_repo = true
 
+# Archon ships the commits the last `fix` records; no agent does.
+[pipeline.ship]
+stage = "fix"
+
 [nudges]
 tier = "balanced"
 independent_reviewers = true
@@ -37,10 +41,3 @@ gate = "all_pass"
 timeout_minutes = 60
 nudge = "Two reviewers on different models when the allowlist permits."
 on_fail = { goto = "fix", max_loops = 2 }
-
-[[stage]]
-id = "ship"
-kind = "ship"
-prompt = "ship.md"
-timeout_minutes = 90
-nudge = "A fast model at low effort."

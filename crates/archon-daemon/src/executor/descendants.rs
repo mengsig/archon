@@ -253,7 +253,7 @@ fn agents(count: usize) -> String {
     }
 }
 
-/// Aether holds nothing live beneath the agent: the run's spawns go on. What
+/// Aether holds nothing live beneath the agent: the run's spawns and its delivery go on. What
 /// it delegated to is recorded as Aether holds it, for the stage's cost.
 async fn stopped(
     ctx: &DaemonContext,
@@ -289,6 +289,8 @@ async fn stopped(
             .filter(|s| s.state == StageState::Spawning)
             .map(|s| s.id)
             .collect(),
+        // A delivery archond makes itself waited for the stop as well.
+        ship: vec![owed.run.clone()],
         poke: true,
         ..FollowUp::default()
     })

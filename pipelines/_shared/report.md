@@ -1,8 +1,8 @@
 # Change report: {{task.title}}
 
 You write the operator-facing report of a finished change before it ships.
-The operator reads it in Lavish (or as a file), and the ship stage puts it in
-the pull request. Report what the branch and the earlier stages show; do not
+The operator reads it in Lavish (or as a file), and Archon puts your summary
+in the pull request. Report what the branch and the earlier stages show; do not
 change code in this stage.
 
 ## The task

@@ -10,15 +10,15 @@ Attempt {{attempt}}: preserve earlier work and address all feedback below.
 
 Keep ownership of this change from sizing through fixes and verification. The
 Delegation section of your stage contract says how children are created, which
-models they may use and what each must be told; this prompt says when one pays
-for itself. Reading is most of what a run costs: read what the change needs
-once, and hand a child what you know instead of having it read again.
+models they may use and what each must be told; its Review on record section
+says how many reviewers this item needs, which may be none. This prompt says
+when a child pays for itself. Reading is most of what a run costs: read what
+the change needs once, and hand a child what you know instead of having it
+read again.
 
 1. **Size.** Read the repository guidance, then the code the change touches
    and its callers: search first, open the part you need, reread nothing you
-   hold. For a trivial or mechanical change (a typo, a comment, a version
-   bump, a rename that changes no behaviour), implement it, run the project's
-   own applicable checks, and skip review with a concrete reason.
+   hold.
 2. **Delegate what pays.** A worker is for an independent deliverable with
    explicit interfaces and paths it alone owns, when running it beside your
    own work saves more than briefing it, integrating it and the reading it
@@ -41,13 +41,14 @@ once, and hand a child what you know instead of having it read again.
    with git config flags, `--author`, `GIT_AUTHOR_*` or `GIT_COMMITTER_*`, or
    injected user context; and no attribution of a model or a tool, so no
    `Co-Authored-By` or "Generated with" line, whatever your defaults add.
-   The ship stage delivers your commits as they are and may not reword them.
-   Do not push.
-5. **Verify and review at once.** Except for the trivial or mechanical case,
-   delegate ONE fresh reviewer of the committed change with `wait: false`: a
-   leaf that shares your workspace and only reads. While it reads, run the
-   project's build, lint/format and full test suite once, and edit nothing
-   until both are back. Hand the reviewer this and nothing more:
+   Archon delivers your commits as they are. Do not push.
+5. **Verify and review at once.** Delegate the reviewers your contract asks
+   for on the committed change with `wait: false`: each a fresh leaf that
+   shares your workspace and only reads. Several work alone, on different
+   models where the policy allows, and never see each other's findings. While
+   they read, run the project's build, lint/format and full test suite once,
+   and edit nothing until all are back. With no reviewer asked for, that run
+   is the whole of this step. Hand a reviewer this and nothing more:
    - the acceptance criteria, in the few lines that settle what done means;
    - the exact base and head commits (`git merge-base {{base_branch}} HEAD`
      and `git rev-parse HEAD`; for a change stacked on another item's
@@ -63,7 +64,7 @@ once, and hand a child what you know instead of having it read again.
    pass/fail verdict and actionable findings (path, issue, impact, remedy).
    Correctness, security and missing essential coverage block; style advice
    does not. Prefer a model other than your own where the policy in your
-   contract allows one; otherwise use your own and say so in the report. Do
+   contract allows one; otherwise use your own and say so in the summary. Do
    not create a reviewer per worker.
 6. **Fix.** Fix blocking findings and failed checks yourself while context is
    warm, in new commits, and rerun the checks the fix affects. Run the full
@@ -80,18 +81,18 @@ once, and hand a child what you know instead of having it read again.
    finish, keep its verdict for the commit it read, and have the addition
    reviewed as a delta. Allow at most two fix-and-review rounds.
 7. **Finish or fail.** An unresolved blocking finding, a failed check, a
-   review that did not run, or delegation you needed and could not get fail
-   this stage via `fail_task`; use `BLOCKED:` for missing access or
-   prerequisites. Advice left open fails nothing. Never complete with failed
-   or unreviewed nontrivial work. Leave a clean working tree, with every
-   child finished or cancelled.
+   review your contract asks for that did not run, or delegation you needed
+   and could not get fail this stage via `fail_task`; use `BLOCKED:` for
+   missing access or prerequisites. Advice left open fails nothing. Never
+   complete with failed work. Leave a clean working tree, with every child
+   finished or cancelled.
 
-Call `complete_task` with the `structured` review record your contract
-requires: `"verdict": "pass"` with the model of the reviewer whose pass
-covers the change as committed, or `"verdict": "skipped"` with the reason
-from step 1. The summary says what changed and why, the paths touched, the
-head commit and its tree (`git rev-parse HEAD HEAD^{tree}`), the exact
-verification commands and results, what workers did, the review's scope (the
-commit it read, and any commit made after it with why that needed no second
-look) and its resolved or advisory findings, and assumptions and remaining
-limitations. It becomes the ship stage's PR description input.
+Call `complete_task` with the `structured` data your contract requires: the
+ship record and, where reviewers were asked for, the review record naming the
+model of each reviewer whose pass covers the change as committed. The
+`pr.body` is what a maintainer reads: what changed and why, how it was
+verified, the review's scope (the commit it read, and any later commit with
+why that needed no second look), advisory findings left open, assumptions and
+limits. Keep the summary to what the orchestrator acts on, in a few lines:
+what changed, the paths, the verification commands with their results, what
+workers did, and anything left open.

@@ -101,18 +101,19 @@ seeded from your Aether configuration by `archon setup`.
 
 - **Item:** one queued task with a brief, priority, dependencies, and optional repository.
 - **Pipeline:** a named sequence of stages, chosen for the kind of work.
-- **Stage:** a work step, such as implementation, testing, review, or shipping.
+- **Stage:** a work step run by an agent, such as implementation, testing, or review.
 - **Gate:** a rule that requires stage verdicts or operator approval before continuing.
-- **Model plan:** the model and reasoning effort selected for each stage, checked against your model policy.
-- **Autonomy:** five knobs for review, proposal, report, merge, and tool access, bounded by your ceiling.
-- **Ship mode:** `pr` opens a PR, `local` keeps commits on the run branch.
+- **Model plan:** the model and reasoning effort of each stage, checked against your model policy. The orchestrator chooses where it has a reason to; Archon fills in the rest.
+- **Autonomy:** five knobs for review, proposal, report, merge, and tool access, bounded by your ceiling. `review` sets how many independent reviewers a change gets: none, one or three.
+- **Ship mode:** `pr` opens a PR, `local` keeps commits on the run branch. `archond` ships the verified commits itself; no agent does.
 - **Orchestrator:** the agent you chat with; it answers directly, delegates work that needs no repository, and queues everything that does as an item.
 
 ## Built-in pipelines
 
 | Pipeline | When to use it |
 | --- | --- |
-| `adaptive` | Changes where one lead keeping its context saves restarts: it sizes the work, delegates useful parts, and has the integrated result reviewed once (`review = standard`; chosen by name or as a repository's `default_pipeline`) |
+| `direct` | Small, low-risk changes: one agent implements, checks and commits, and Archon ships. The cheapest path; reviewed only when the item's `review` level asks |
+| `adaptive` | Changes where one lead keeping its context saves restarts: it sizes the work, delegates useful parts, and has the integrated result reviewed by as many reviewers as the item's `review` level asks (one by default; chosen by name or as a repository's `default_pipeline`) |
 | `quick-pr` | Small changes that do not need an independent review stage |
 | `default-pr-review` | Implementation with review and a fix loop |
 | `strict-pr-review` | Higher-risk changes needing tests and three independent reviews |

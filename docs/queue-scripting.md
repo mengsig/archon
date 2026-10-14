@@ -5,8 +5,16 @@ resolves the repository and pipeline defaults and checks stage ids, model
 choices, model policy, autonomy ceilings, dependencies, budgets and idempotency.
 No orchestrator or MCP stdio harness is needed to submit work.
 
-For a repository-free question, save a brief in `brief.md` and a model plan
-in `plan.json`:
+The smallest enqueue names a title and a brief; Archon chooses the model
+of every stage from your policy:
+
+```sh
+item=$(archon queue add --title 'Explain the cache design' \
+  --pipeline ask --brief-file brief.md)
+```
+
+To choose the models yourself, for a repository-free question, save a brief
+in `brief.md` and a model plan in `plan.json`:
 
 ```json
 {"answer": [{"model": "codex/gpt-6.1-sol", "effort": "high"}]}
@@ -21,7 +29,9 @@ archon queue wait "$item" --timeout 30m
 
 `--brief-file -` reads UTF-8 text from stdin. The model plan is a JSON or TOML
 file with the same stage-to-choice-array shape as MCP `model_plan`. The file
-extension must be `.json` or `.toml`. The equivalent TOML plan is:
+extension must be `.json` or `.toml`. It may name only some stages: a stage
+it leaves out gets the orchestrator's model where your policy allows it,
+else the first allowed model, at the effort the pipeline's tier suggests. The equivalent TOML plan is:
 
 ```toml
 [[answer]]

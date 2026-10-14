@@ -11,7 +11,7 @@ use archon_core::run::{PipelineRun, RunState, StageOutcome, StageRun, StageState
 use archon_pipeline::{EngineAction, SpawnPlan};
 
 use super::{
-    FollowUp, RunTable, descendants, finish, gates, pages, recover, siblings, spawn, team,
+    FollowUp, RunTable, descendants, finish, gates, pages, recover, ship, siblings, spawn, team,
 };
 use crate::context::DaemonContext;
 use crate::disk::{self, FullDisk};
@@ -26,7 +26,7 @@ pub(super) async fn settle(
         let mut table = ctx.runs.lock().await;
         return settle_locked(ctx, &mut table, id, outcome).await;
     }
-    let (stage, run, holds_review) = {
+    let (stage, run, reviewers_owed, daemon_ships) = {
         let table = ctx.runs.lock().await;
         let store = ctx.store.lock().await;
         let stage = store.stage_run(id)?;
@@ -35,13 +35,14 @@ pub(super) async fn settle(
         }
         let run = store.run(&stage.run)?;
         let driver = table.drivers.get(&run.id);
-        let holds_review = driver.is_some_and(|d| d.holds_review(&stage.stage_id));
-        (stage, run, holds_review)
+        let reviewers_owed = driver.map_or(0, |d| d.reviewers_owed(&stage.stage_id));
+        let daemon_ships = driver.is_some_and(|d| d.ships_by_daemon());
+        (stage, run, reviewers_owed, daemon_ships)
     };
     // Leave the stage live until verification is persisted. If interrupted,
     // reconnect reconciliation reads the task outcome and verifies it again.
-    let outcome = super::ship::verify(ctx, &run, &stage, outcome).await?;
-    let outcome = super::review::verify(ctx, &stage, holds_review, outcome).await?;
+    let outcome = ship::verify(ctx, &run, &stage, daemon_ships, outcome).await?;
+    let outcome = super::review::verify(ctx, &stage, reviewers_owed, outcome).await?;
     let mut table = ctx.runs.lock().await;
     let (stage, run, all) = {
         let store = ctx.store.lock().await;
@@ -507,6 +508,7 @@ async fn apply_decision(
                 wait = Some(awaited);
             }
             EngineAction::MergeTeam(plan) => return Ok(team::queue(table, &run, plan)),
+            EngineAction::Ship(plan) => return Ok(ship::queue(table, &run, plan)),
         }
     }
     if let Some(wait) = wait {
@@ -526,7 +528,8 @@ async fn apply_decision(
     Ok(FollowUp::poke())
 }
 
-/// A finish comes at most once, cancels never with a gate, a merge alone.
+/// A finish comes at most once, cancels never with a gate, and a team merge
+/// or a delivery alone.
 fn check_actions(actions: &[EngineAction]) {
     let finishes = actions
         .iter()
@@ -535,10 +538,6 @@ fn check_actions(actions: &[EngineAction]) {
     let cancels = actions
         .iter()
         .any(|a| matches!(a, EngineAction::CancelStage { .. }));
-    let merges = actions
-        .iter()
-        .filter(|a| matches!(a, EngineAction::MergeTeam(_)))
-        .count();
     let waits = actions
         .iter()
         .any(|a| matches!(a, EngineAction::AwaitOperator(_)));
@@ -547,9 +546,10 @@ fn check_actions(actions: &[EngineAction]) {
         !cancels || !waits,
         "stage cancels come with a finish or a team's next spawns"
     );
+    let alone = |a: &EngineAction| matches!(a, EngineAction::MergeTeam(_) | EngineAction::Ship(_));
     assert!(
-        merges == 0 || actions.len() == 1,
-        "a team merge comes alone"
+        !actions.iter().any(alone) || actions.len() == 1,
+        "a team merge or a delivery comes alone"
     );
 }
 

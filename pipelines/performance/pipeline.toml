@@ -5,6 +5,10 @@ version = 1
 workspace = "worktree"
 requires_repo = true
 
+# Archon ships the commits this stage records; no agent does.
+[pipeline.ship]
+stage = "optimize"
+
 [nudges]
 tier = "strongest"
 independent_reviewers = true
@@ -41,10 +45,3 @@ gate = "all_pass"
 timeout_minutes = 90
 nudge = "Strongest tier; prefer a reviewer independent of the optimizer when the allowlist permits."
 on_fail = { goto = "optimize", max_loops = 2 }
-
-[[stage]]
-id = "ship"
-kind = "ship"
-prompt = "ship.md"
-timeout_minutes = 90
-nudge = "A fast model at low effort is enough for both ship modes."

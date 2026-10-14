@@ -12,7 +12,7 @@ use archon_pipeline::RunDriver;
 use archon_pipeline::autonomy::OperatorGates;
 use archon_queue::Store;
 
-use super::{FollowUp, RunTable, finish, frozen, settle, team};
+use super::{FollowUp, RunTable, finish, frozen, settle, ship, team};
 use crate::context::DaemonContext;
 
 const RUN_VARS_KEY_PREFIX: &str = "run_vars:";
@@ -155,12 +155,13 @@ pub(super) async fn resume_run(
     let actions = driver.resume(&run, stages);
     table.pending.remove(&run.id);
     table.merges.remove(&run.id);
+    table.ships.remove(&run.id);
     table.drivers.insert(run.id.clone(), driver);
     settle::apply(ctx, table, run, actions).await
 }
 
 /// The driver as it was: the frozen pipeline, the item's gates, and every
-/// operator decision and team merge outcome recorded so far.
+/// operator decision, team merge outcome and delivery recorded so far.
 async fn build_driver(ctx: &DaemonContext, run: &PipelineRun) -> Result<RunDriver, ArchonError> {
     let (item, vars, gates) = {
         let store = ctx.store.lock().await;
@@ -181,6 +182,10 @@ async fn build_driver(ctx: &DaemonContext, run: &PipelineRun) -> Result<RunDrive
             driver.record_decision(&gate.stage_id, gate.attempt, decision)?;
         }
     }
-    team::replay_merges(&*ctx.store.lock().await, &run.id, &mut driver)?;
+    let store = ctx.store.lock().await;
+    team::replay_merges(&store, &run.id, &mut driver)?;
+    if driver.ships_by_daemon() {
+        ship::replay(&store, &run.id, &mut driver)?;
+    }
     Ok(driver)
 }

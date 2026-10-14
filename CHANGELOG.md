@@ -86,28 +86,26 @@ itself, and a pipeline stage can delegate again.
   running two minutes after the cancel are named in a blocker; the item
   waits for them and goes on by itself.
 - A pipeline can declare the review one of its stages holds:
-  `[pipeline.review] level = "standard"`, `stage = "<a delegating work
-  stage>"`. It then runs at `review = standard`, and Archon fails the run
-  at that stage unless its agent completes with the review on record: a
-  pass naming the reviewer's model, or a skip with its reason.
+  `[pipeline.review] level = "standard"`, `stage = "<a work stage>"`.
+  Archon fails the run at that stage unless its agent completes with the
+  review on record: a pass naming each reviewer's model. How many reviewers
+  that is follows the item's review level (see "Shipping, review levels and
+  model plans" below).
 - A recorded pass is checked, not believed. As the stage ends Archon asks
   Aether which agents its lead delegated to, and the pass counts only when
-  one of them completed on the model it names; a cancelled or failed
+  one of them completed on each model it names; a cancelled or failed
   reviewer does not count. The run fails at that stage otherwise, saying
-  what the lead did delegate to. The reviewer's agent id is stored with the
-  evidence and shown in the `REVIEW:` line. This proves a reviewer on that
-  model ran to completion, not what it concluded. A skipped review is shown
-  with its reason in `archon queue show` and `get_item`.
-- New built-in pipeline `adaptive` (`build` → `ship`), for a change where
+  what the lead did delegate to. The reviewers' agent ids are stored with
+  the evidence and shown in the `REVIEW:` line. This proves reviewers on
+  those models ran to completion, not what they concluded.
+- New built-in pipeline `adaptive` (one stage, `build`), for a change where
   one lead that keeps its context through fixes, or integrates independent
   parts, saves restarts. One lead sizes the work, delegates the parts worth
   splitting, integrates and verifies them, and has the integrated diff
-  reviewed once by a fresh reviewer, at a depth matching the risk. It
-  declares that review, so it runs at `review = standard`: name it with
-  `pipeline = "adaptive"` and leave `review` out or say `standard`.
-  `review = strict` or `none` with it is refused, and so is a ceiling that
-  demands `strict`. `ship` ships only a build whose review passed or was
-  skipped with a reason. There are now 17 built-in pipelines.
+  reviewed by fresh reviewers, at a depth matching the risk. Name it with
+  `pipeline = "adaptive"`; it runs at `review = standard`, one reviewer,
+  unless the item asks for another level. Archon ships only a build whose
+  reviewers it verified.
 - `adaptive` spends less for the same checks. Its lead delegates a worker
   only when the parallel saving exceeds the briefing, the integration and
   the repeated reading; commits before the review; runs the full suite once,
@@ -124,8 +122,8 @@ itself, and a pipeline stage can delegate again.
   then shows that the tree hash did not change. `adaptive`'s lead is told
   the commit rules (the repository's own, else Conventional Commits with a
   lowercase imperative subject; its configured Git identity; no model or
-  tool attribution), and its `ship` commits nothing and fails on a tree
-  other than the one the lead verified. A live run had `ship` amend a
+  tool attribution), and nothing is committed after it: a tree other than
+  the one the lead verified does not ship. A live run had `ship` amend a
   reviewed commit to drop an attribution line the lead had added.
 - Every delegating stage agent is now told to hand a child what it already
   holds rather than have it read again, and what a reviewer's hand-off
@@ -139,6 +137,71 @@ itself, and a pipeline stage can delegate again.
   change, and the reviewer is handed it. Archon still does not stack items
   itself: the branch and the pull request of a dependent item start from
   the base.
+
+### Shipping, review levels and model plans
+
+Pipelines got faster: the stage that only pushed and opened the pull
+request is gone, a small change takes one agent, and an item carries only
+the choices someone had a reason to make.
+
+- **`archond` ships; no agent does.** Every built-in pipeline that changes
+  a repository used to end in a `ship` stage: an agent that read the run
+  again to push a branch and open a pull request, about 40 seconds and
+  166,000 input tokens per item. That stage is gone from all of them. One
+  stage, usually the last that commits, returns a ship record (`commit`,
+  `tree`, `checks` and the pull request's `title` and `body`), and once
+  every stage has passed `archond` delivers it: it checks that the run worktree is the
+  run's own, on the run branch, without uncommitted changes, holding
+  exactly the recorded tree, ahead of its base, with every new commit under
+  the repository's git identity; pushes without ever forcing and with no
+  repository hook; and opens the pull request with `gh`, or reuses the one
+  already open for the branch. `local` ship mode runs the same checks and
+  pushes nothing. `merge = auto` has `archond` ask GitHub to merge once the
+  checks allow.
+- A refused delivery fails the item as `stage ship: <what to change>`:
+  the dirty paths, the commits under another identity, the remote branch
+  that holds other commits. What only you can fix (no `origin`, a lapsed
+  `gh` login, a branch rule) is a blocker. A network or GitHub failure is
+  retried five times, from 15 seconds apart and doubling.
+- Delivery survives a daemon restart, and a retried item, without a second
+  pull request: the outcome is stored before the run finishes, an
+  interrupted delivery pushes nothing `origin` already has, and a pull
+  request whose creation reply was lost is found on GitHub, not opened
+  again.
+- A pipeline of your own opts in with `[pipeline.ship] stage = "<id>"`
+  and drops its `ship` stage; `docs/examples/pipelines/bugfix-tdd` shows
+  it. A pipeline that still ends in a `kind = "ship"` stage keeps working
+  unchanged.
+- **New built-in pipeline `direct`**, the cheapest path to a shipped
+  change: one agent implements a small, low-risk change, runs the checks it
+  affects, commits and returns the ship record. It has the shortest
+  contract and prompt of any pipeline that ships, and no review unless the
+  item asks for one. There are now 18 built-in pipelines.
+- **The review level belongs to the item, not the pipeline.** `adaptive`
+  and `direct` hold their own review, and an item's `review` knob now sets
+  how much of it there is: `none`, `standard` or `strict` is no, one or
+  three independent reviewers, which the stage agent delegates and Archon
+  verifies against Aether one by one. `adaptive` no longer refuses `strict`
+  and `none`, and a pipeline may declare any level as its default. Your
+  autonomy ceiling still bounds the choice, and raises an item that names
+  no level. Pipelines with review stages of their own run the level those
+  stages give, as before.
+- **A model plan is optional.** `enqueue` and `archon queue add` no longer
+  need `model_plan` or `--model-plan-file`, whole or per stage. A stage left
+  out gets the orchestrator's model where your policy allows it, else the
+  first allowed model, at the effort the pipeline's tier suggests and never
+  above `max_effort`. A chosen model is checked against the policy as
+  before, and the item shows the filled plan.
+- **A stage can hand a task back.** An agent that finds its task too large
+  or too risky for its pipeline fails with `ESCALATE:` and what it
+  recommends, instead of stretching the pipeline or failing without a
+  reason. The run ends at once, nothing ships, and the orchestrator gets
+  the recommendation with the item's failure. `direct` and `quick-pr` use
+  it for work that is not small.
+- Stage contracts are shorter. With the ship stages gone and the repeated
+  rules cut, the instructions and delegation sections Archon generates for
+  all built-in stages together went from 139,966 to 116,170 bytes (17 %
+  less, with `direct` added), with every safety rule kept.
 
 ### Cost
 

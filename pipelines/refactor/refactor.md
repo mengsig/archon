@@ -55,4 +55,8 @@ and commits changed, exact check commands and results, the unchanged
 baseline/characterization references, public-surface comparison and any
 brief-authorized exception, every modified pre-existing test with its
 justification, feedback addressed, and remaining limitations. This summary
-is the verifier's input and the basis of the shipping PR description.
+is the verifier's input.
+
+Include the ship record your contract requires in `structured`. Its `pr.body`
+is the pull request description a maintainer reads: what changed and why,
+how it was verified, and what is left open.

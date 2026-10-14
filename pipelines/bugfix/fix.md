@@ -60,4 +60,8 @@ Call `complete_task`. The summary explains the root cause, why the fix is
 complete, other callers or paths checked, files changed, regression and full
 suite commands with their actual results, and any known limitations. Include
 the reproduction and fix commit SHAs and one line per feedback finding on
-later attempts so the reviewer and ship stage can verify and describe it.
+later attempts so the reviewer can verify it.
+
+Include the ship record your contract requires in `structured`. Its `pr.body`
+is the pull request description a maintainer reads: what changed and why,
+how it was verified, and what is left open.

@@ -95,7 +95,6 @@ fn enqueue_files_policy_idempotency_and_dependencies() {
     assert_eq!(parsed(&dependent)["dependencies"], json!([id]));
 
     for (bad, code) in [
-        (json!({}), "invalid_argument"),
         (
             json!({"wrong": [{"model": "codex/test", "effort": "high"}]}),
             "invalid_argument",
@@ -139,6 +138,34 @@ fn enqueue_files_policy_idempotency_and_dependencies() {
     let out = output(&env, &[]);
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(parsed(&out)["error"]["code"], "invalid_argument");
+    stop_daemon(&env, daemon);
+}
+
+/// A plan names the stages whose model the caller chooses; the rest, or all
+/// of them without a plan file, get the orchestrator's model.
+#[test]
+fn a_stage_without_a_model_choice_gets_the_orchestrators_model() {
+    let env = Env::with_config(
+        "[aether]\nmode = 'shared'\n[orchestrator]\nmodel = 'codex/test'\n[models]\nallow = ['codex/test']\n",
+    );
+    let daemon = start_daemon(&env);
+    env.run(&["pause"]);
+    std::fs::write(env.path("brief.md"), "Read the cache design.").unwrap();
+    let orchestrators = json!({"provider": "codex", "model": "test"});
+    let defaulted = json!([{"model": orchestrators, "effort": "medium"}]);
+
+    plan(&env, json!({}));
+    let empty = output(&env, &[]);
+    assert!(empty.status.success(), "{empty:?}");
+    assert_eq!(parsed(&empty)["model_plan"]["answer"], defaulted);
+
+    let brief = env.path("brief.md");
+    let brief = brief.to_str().unwrap();
+    let args = ["--json", "queue", "add", "--title", "unplanned"];
+    let args = [&args[..], &["--pipeline", "ask", "--brief-file", brief]].concat();
+    let unplanned = env.command(&args).output().unwrap();
+    assert!(unplanned.status.success(), "{unplanned:?}");
+    assert_eq!(parsed(&unplanned)["model_plan"]["answer"], defaulted);
     stop_daemon(&env, daemon);
 }
 

@@ -18,36 +18,64 @@ const PROPOSE_TEMPLATE: &str = include_str!("../../../pipelines/_shared/propose.
 const REPORT_TEMPLATE: &str = include_str!("../../../pipelines/_shared/report.md");
 const INSERTED_TIMEOUT_MINUTES: u32 = 45;
 
-/// Whether the pipeline delivers a change: it has a ship stage.
+/// Whether the pipeline delivers a change: archond ships it, or it has a
+/// ship stage.
 pub fn ships(spec: &PipelineSpec) -> bool {
     ship_index(spec).is_some()
 }
 
+/// Where shipping happens among the stages: at the ship stage, or after the
+/// last stage when archond ships.
 fn ship_index(spec: &PipelineSpec) -> Option<usize> {
-    spec.file
-        .stages
-        .iter()
-        .position(|s| s.kind == StageKind::Ship)
+    let stages = &spec.file.stages;
+    if spec.file.pipeline.ship.is_some() {
+        return Some(stages.len());
+    }
+    stages.iter().position(|s| s.kind == StageKind::Ship)
 }
 
 /// A pipeline's review level: the stricter of what it declares and its gates'
 /// (gated tests and gated reviews: strict; either alone: standard; else none).
 pub fn review_level(spec: &PipelineSpec) -> ReviewLevel {
+    let by_gates = gated_review_level(spec);
+    match &spec.file.pipeline.review {
+        Some(declared) => declared.level.lower(by_gates),
+        None => by_gates,
+    }
+}
+
+/// The review a pipeline's gated stages run whatever an item asks for.
+fn gated_review_level(spec: &PipelineSpec) -> ReviewLevel {
     let gated = |kind: StageKind| {
         spec.file
             .stages
             .iter()
             .any(|s| s.kind == kind && s.gate != Gate::None)
     };
-    let by_gates = match (gated(StageKind::Review), gated(StageKind::Test)) {
+    match (gated(StageKind::Review), gated(StageKind::Test)) {
         (true, true) => ReviewLevel::Strict,
         (true, false) | (false, true) => ReviewLevel::Standard,
         (false, false) => ReviewLevel::None,
-    };
-    match &spec.file.pipeline.review {
-        Some(declared) => declared.level.lower(by_gates),
-        None => by_gates,
     }
+}
+
+/// Whether an item chooses the pipeline's review level: one of its stages
+/// holds the review and delegates as many reviewers as the level needs.
+pub fn review_is_chosen(spec: &PipelineSpec) -> bool {
+    spec.file.pipeline.review.is_some()
+}
+
+/// The review level an item gets on `spec`: what it `asked` for, else the
+/// pipeline's own raised to `floor`; never below what its gated stages run.
+pub fn chosen_review(
+    spec: &PipelineSpec,
+    asked: Option<ReviewLevel>,
+    floor: ReviewLevel,
+) -> ReviewLevel {
+    let declared = spec.file.pipeline.review.as_ref();
+    let declared = declared.expect("only a pipeline that declares its review lets an item choose");
+    let level = asked.unwrap_or_else(|| declared.level.lower(floor));
+    level.lower(gated_review_level(spec))
 }
 
 /// The pipeline's propose stage, which is always first when present.
@@ -65,10 +93,14 @@ pub fn change_report_stage(spec: &PipelineSpec) -> Option<&StageSpec> {
         .find(|s| s.kind == StageKind::Report)
 }
 
-/// `spec` with the stages `autonomy` needs and the pipeline does not
-/// declare: `propose` first, and `report` right before ship.
+/// `spec` as an item with `autonomy` runs it: the stages its knobs need and
+/// the pipeline does not declare (`propose` first, `report` right before
+/// ship), and its review level where a stage of the pipeline holds the review.
 pub fn augment(spec: &PipelineSpec, autonomy: &Autonomy) -> Result<PipelineSpec, ArchonError> {
     let mut out = spec.clone();
+    if let Some(review) = &mut out.file.pipeline.review {
+        review.level = autonomy.review;
+    }
     let wants_proposal = autonomy.proposal == ProposalMode::Lavish;
     if wants_proposal && propose_stage(spec).is_none() {
         require_ship(spec, "proposal")?;
@@ -91,7 +123,7 @@ fn require_ship(spec: &PipelineSpec, knob: &str) -> Result<(), ArchonError> {
         return Ok(());
     }
     Err(ArchonError::Invalid(format!(
-        "{knob} applies only to pipelines that ship; {:?} has no ship stage",
+        "{knob} applies only to pipelines that ship; {:?} ships nothing",
         spec.name()
     )))
 }
@@ -213,7 +245,8 @@ mod tests {
         let spec = builtin_spec("default-pr-review");
         let both = augment(&spec, &knobs(ProposalMode::Lavish, ReportMode::BeforePr)).unwrap();
         let ids: Vec<&str> = both.file.stages.iter().map(|s| s.id.as_str()).collect();
-        assert_eq!(ids, ["propose", "implement", "review", "report", "ship"]);
+        assert_eq!(ids, ["propose", "implement", "review", "report"]);
+        assert_eq!(ship_index(&both), Some(4), "archond ships after the report");
         assert!(both.prompts.contains_key(PROPOSE_PROMPT));
         let gates =
             OperatorGates::for_run(&both, &knobs(ProposalMode::Lavish, ReportMode::BeforePr));
@@ -221,7 +254,7 @@ mod tests {
         assert_eq!(gates.subject("report"), Some(GateSubject::Report));
         let with_pr = knobs(ProposalMode::Off, ReportMode::WithPr);
         let plain = augment(&spec, &with_pr).unwrap();
-        assert_eq!(plain.file.stages.len(), 4);
+        assert_eq!(plain.file.stages.len(), 3);
         assert!(
             OperatorGates::for_run(&plain, &with_pr).is_empty(),
             "with-pr never waits"

@@ -8,13 +8,18 @@ mod support;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use archon_core::autonomy::{Autonomy, ReviewLevel};
 use archon_core::catalog::{Gate, StageKind, Tier, WorkspaceMode};
 use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::model::ModelPlan;
 use archon_core::run::{RunState, StageRun, StageState};
+use archon_pipeline::autonomy::augment;
 use archon_pipeline::team::{MergeOutcome, worker_branch};
-use archon_pipeline::{EngineAction, RunDriver};
-use sim::{Agent, Sim, cancelled, finish_state, slots, spawn_plans, spawned};
+use archon_pipeline::{EngineAction, RunDriver, ShipOutcome, ShipPlan};
+use sim::{Agent, Sim, cancelled, finish_state, ship_plans, slots, spawn_plans, spawned};
+
+/// The pull request every simulated delivery opens.
+const PR: &str = "https://github.com/o/r/pull/7";
 
 fn sim(name: &str) -> Sim {
     let spec = support::builtin(name);
@@ -27,6 +32,14 @@ fn succeeded(actions: &[EngineAction]) -> String {
         Some(RunState::Succeeded { summary }) => summary.clone(),
         other => panic!("expected success, got {other:?} from {actions:#?}"),
     }
+}
+
+/// The delivery `actions` ask of archond; no agent ships a built-in.
+fn shipping(actions: &[EngineAction]) -> &ShipPlan {
+    assert!(spawned(actions).is_empty(), "no agent ships: {actions:#?}");
+    let plans = ship_plans(actions);
+    assert_eq!(plans.len(), 1, "one delivery: {actions:#?}");
+    plans[0]
 }
 
 fn failed(actions: &[EngineAction]) -> (String, String) {
@@ -62,19 +75,23 @@ fn linear_pipeline_runs_each_stage_once_and_succeeds() {
         0,
         Agent::Done("Changed parse() to accept empty input."),
     );
-    assert_eq!(spawned(&next), slots(&[("ship", 1, 0)]));
-    let ship_prompt = &spawn_plans(&next)[0].prompt;
-    assert!(
-        ship_prompt.contains("Changed parse() to accept empty input."),
-        "previous.implement.summary"
-    );
-    assert!(ship_prompt.contains("**`pr`**"), "ship mode rendered");
+    let plan = shipping(&next);
+    assert_eq!(plan.record_stage, "implement");
+    assert_eq!(plan.record.commit, sim::COMMIT);
+    assert_eq!(plan.record.tree, sim::TREE);
+    assert_eq!(plan.summary, "Changed parse() to accept empty input.");
+    let item = format!("Archon item: {}\n", sim.run.item);
+    assert_eq!(plan.body, format!("What changed and why.\n\n{item}"));
+    assert!(sim.finished().is_none(), "the run waits for its delivery");
 
-    let done = sim.settle("ship", 0, Agent::Done("Opened https://example.test/pr/1"));
+    let done = sim.ship_pr(PR);
     assert_eq!(
         succeeded(&done),
-        "Opened https://example.test/pr/1",
-        "summary is the last stage's"
+        format!(
+            "Changed parse() to accept empty input.\n\nSHIPPED: {PR} (commit {})",
+            sim::COMMIT
+        ),
+        "the last stage's summary, then where it shipped"
     );
     assert!(sim.finished().is_some());
 }
@@ -103,17 +120,13 @@ fn failed_review_loops_to_implement_with_feedback_then_passes() {
     );
 
     let ship = sim.settle("review", 0, Agent::Pass);
-    assert_eq!(spawned(&ship), slots(&[("ship", 1, 0)]));
-    let ship_prompt = &spawn_plans(&ship)[0].prompt;
+    let body = &shipping(&ship).body;
     assert!(
-        ship_prompt.contains("fixed the window end"),
-        "latest implement summary"
+        body.contains("## Review and verification\n\n### `review`\n\nLooks correct"),
+        "the review that passed is in the body: {body}"
     );
-    assert!(
-        !ship_prompt.contains("first try"),
-        "older attempts are superseded"
-    );
-    succeeded(&sim.settle("ship", 0, Agent::Done("shipped")));
+    assert!(!body.contains("first try"), "older attempts are superseded");
+    succeeded(&sim.ship_pr(PR));
 }
 
 #[test]
@@ -364,10 +377,11 @@ fn strict_pipeline_counts_loops_per_gate_and_cycles_reviewer_choices() {
     for fan in 0..3 {
         let actions = sim.settle("review", fan, Agent::Pass);
         if fan == 2 {
-            assert_eq!(spawned(&actions), slots(&[("ship", 1, 0)]));
+            let body = &shipping(&actions).body;
+            assert!(body.contains("### `test`") && body.contains("### `review`"));
         }
     }
-    succeeded(&sim.settle("ship", 0, Agent::Done("PR opened")));
+    succeeded(&sim.ship_pr(PR));
 }
 
 #[test]
@@ -581,7 +595,7 @@ fn an_infra_respawn_supersedes_the_failed_stage_run() {
         "the retry is live; nothing is owed"
     );
     let next = sim.settle("implement", 0, Agent::Done("done on retry"));
-    assert_eq!(spawned(&next), slots(&[("ship", 1, 0)]));
+    assert_eq!(shipping(&next).summary, "done on retry");
 }
 
 fn fan_sim(fan_out: u32) -> Sim {
@@ -688,10 +702,10 @@ fn resume_decides_a_group_that_settled_before_the_crash() {
     let stage = sim.stages.last_mut().expect("implement");
     stage.state = archon_core::run::StageState::Completed;
     stage.summary = Some("done before crash".into());
+    stage.structured = Some(sim::ship_record());
     stage.finished_at = Some(at);
     let owed = sim.resume_fresh();
-    assert_eq!(spawned(&owed), slots(&[("ship", 1, 0)]));
-    assert!(spawn_plans(&owed)[0].prompt.contains("done before crash"));
+    assert_eq!(shipping(&owed).summary, "done before crash");
 }
 
 fn driver_error(pipeline: &str, plan: ModelPlan, vars: BTreeMap<String, String>) -> String {
@@ -714,8 +728,8 @@ fn new_refuses_incomplete_or_mismatched_plans() {
     assert!(driver_error("strict-pr-review", missing, vars()).contains("\"test\""));
 
     let mut empty = full.clone();
-    empty.0.insert("ship".into(), Vec::new());
-    assert!(driver_error("strict-pr-review", empty, vars()).contains("\"ship\""));
+    empty.0.insert("review".into(), Vec::new());
+    assert!(driver_error("strict-pr-review", empty, vars()).contains("\"review\""));
 
     let mut extra = full.clone();
     extra
@@ -723,7 +737,7 @@ fn new_refuses_incomplete_or_mismatched_plans() {
         .insert("reviews".into(), vec![support::choice("claude-code/opus")]);
     let error = driver_error("strict-pr-review", extra, vars());
     assert!(
-        error.contains("\"reviews\"") && error.contains("implement, test, review, ship"),
+        error.contains("\"reviews\"") && error.contains("(stages: implement, test, review)"),
         "{error}"
     );
 
@@ -1214,16 +1228,11 @@ fn bugfix_loops_only_the_fix_and_ships_the_latest_summary() {
     assert!(!prompt.contains("first fix"));
 
     let ship = sim.settle("review", 0, Agent::Pass);
-    assert_eq!(spawned(&ship), slots(&[("ship", 1, 0)]));
-    let prompt = &spawn_plans(&ship)[0].prompt;
-    assert!(prompt.contains("test_empty_input fails at the boundary"));
-    assert!(prompt.contains("fixed all affected callers"));
-    assert!(prompt.contains("Looks correct"));
-    assert!(!prompt.contains("first fix"));
-    assert_eq!(
-        succeeded(&sim.settle("ship", 0, Agent::Done("shipped bugfix"))),
-        "shipped bugfix"
-    );
+    let plan = shipping(&ship);
+    assert_eq!(plan.record_stage, "fix", "the fix names what ships");
+    assert!(plan.body.contains("### `review`\n\nLooks correct"));
+    assert!(!plan.body.contains("first fix"));
+    assert!(succeeded(&sim.ship_pr(PR)).starts_with("Looks correct"));
 }
 
 #[test]
@@ -1282,8 +1291,8 @@ fn docs_verified_on_first_attempt_ships() {
             .contains("documented the widget")
     );
     let ship = sim.settle("verify", 0, Agent::Pass);
-    assert_eq!(spawned(&ship), slots(&[("ship", 1, 0)]));
-    succeeded(&sim.settle("ship", 0, Agent::Done("shipped documentation")));
+    assert_eq!(shipping(&ship).record_stage, "write");
+    succeeded(&sim.ship_pr(PR));
 }
 
 #[test]
@@ -1309,14 +1318,13 @@ fn docs_failed_verification_rewrites_with_feedback_then_ships_latest_summaries()
     assert!(!prompt.contains("first documentation draft"));
 
     let ship = sim.settle("verify", 0, Agent::Pass);
-    assert_eq!(spawned(&ship), slots(&[("ship", 1, 0)]));
-    let prompt = &spawn_plans(&ship)[0].prompt;
-    assert!(prompt.contains("corrected documentation"));
-    assert!(prompt.contains("VERDICT: PASS"), "verifier summary wired");
-    assert!(!prompt.contains("first documentation draft"));
-    assert!(!prompt.contains("{{"), "ship placeholders rendered");
-    assert!(prompt.contains("**`pr`**"), "ship mode rendered");
-    succeeded(&sim.settle("ship", 0, Agent::Done("shipped documentation")));
+    let body = &shipping(&ship).body;
+    assert!(body.contains("### `verify`") && body.contains("VERDICT: PASS"));
+    assert!(
+        !body.contains("nonexistent configuration key"),
+        "only the pass"
+    );
+    succeeded(&sim.ship_pr(PR));
 }
 
 #[test]
@@ -1474,11 +1482,8 @@ fn performance_gate_retries_preserve_baseline_and_reverify_before_shipping() {
     assert_eq!(spawned(&sim.start()), slots(&[("measure", 1, 0)]));
     let optimize = sim.settle("measure", 0, Agent::Done("baseline: 100 ms, target: 80 ms"));
     assert_eq!(spawned(&optimize), slots(&[("optimize", 1, 0)]));
-    assert!(
-        spawn_plans(&optimize)[0]
-            .prompt
-            .contains("baseline: 100 ms")
-    );
+    let prompt = &spawn_plans(&optimize)[0].prompt;
+    assert!(prompt.contains("baseline: 100 ms"));
 
     let verify = sim.settle("optimize", 0, Agent::Done("first optimization"));
     assert_eq!(spawned(&verify), slots(&[("verify", 1, 0)]));
@@ -1523,15 +1528,13 @@ fn performance_gate_retries_preserve_baseline_and_reverify_before_shipping() {
     assert!(!prompt.contains("measured: 75 ms"));
 
     let ship = sim.settle("review", 0, Agent::Pass);
-    assert_eq!(spawned(&ship), slots(&[("ship", 1, 0)]));
-    let prompt = &spawn_plans(&ship)[0].prompt;
-    for report in ["baseline: 100 ms", "final optimization", "measured: 78 ms"] {
-        assert!(prompt.contains(report), "ship receives {report}");
-    }
-    assert!(!prompt.contains("second optimization"));
-    assert!(!prompt.contains("measured: 75 ms"));
-    assert!(!prompt.contains("{{"), "all stage inputs render");
-    succeeded(&sim.settle("ship", 0, Agent::Done("shipped measured gain")));
+    let plan = shipping(&ship);
+    assert_eq!(plan.record_stage, "optimize");
+    let body = &plan.body;
+    assert!(body.contains("### `verify`\n\nmeasured: 78 ms"), "{body}");
+    assert!(body.contains("### `review`"));
+    assert!(!body.contains("measured: 75 ms"), "only the passes");
+    succeeded(&sim.ship_pr(PR));
 }
 
 #[test]
@@ -1589,16 +1592,10 @@ fn dependency_upgrade_ships_after_verification_passes() {
     assert!(prompt.contains("planned compatible upgrades"));
     assert!(prompt.contains("committed upgraded lockfile"));
     let ship = sim.settle("verify", 0, Agent::Pass);
-    assert_eq!(spawned(&ship), slots(&[("ship", 1, 0)]));
-    let prompt = &spawn_plans(&ship)[0].prompt;
-    assert!(prompt.contains("planned compatible upgrades"));
-    assert!(prompt.contains("committed upgraded lockfile"));
-    assert!(prompt.contains("Looks correct"));
-    assert!(!prompt.contains("{{"), "all ship inputs are rendered");
-    assert_eq!(
-        succeeded(&sim.settle("ship", 0, Agent::Done("shipped"))),
-        "shipped"
-    );
+    let plan = shipping(&ship);
+    assert_eq!(plan.record_stage, "upgrade");
+    assert!(plan.body.contains("### `verify`\n\nLooks correct"));
+    assert!(succeeded(&sim.ship_pr(PR)).contains(&format!("SHIPPED: {PR}")));
 }
 
 #[test]
@@ -1626,11 +1623,8 @@ fn dependency_upgrade_verification_loops_with_feedback_and_latest_summary() {
     assert!(prompt.contains("fixed dependency advisory"));
     assert!(!prompt.contains("first dependency bump"));
     let ship = sim.settle("verify", 0, Agent::Pass);
-    assert_eq!(spawned(&ship), slots(&[("ship", 1, 0)]));
-    let prompt = &spawn_plans(&ship)[0].prompt;
-    assert!(prompt.contains("fixed dependency advisory"));
-    assert!(!prompt.contains("first dependency bump"));
-    succeeded(&sim.settle("ship", 0, Agent::Done("shipped fixed upgrade")));
+    assert!(!shipping(&ship).body.contains("first dependency bump"));
+    succeeded(&sim.ship_pr(PR));
 }
 
 #[test]
@@ -1719,23 +1713,13 @@ fn refactor_loops_preserve_baseline_and_reverify_before_shipping() {
     let review = sim.settle("verify", 0, Agent::Pass);
     assert_eq!(spawned(&review), slots(&[("review", 2, 0)]));
     let ship = sim.settle("review", 0, Agent::Pass);
-    assert_eq!(spawned(&ship), slots(&[("ship", 1, 0)]));
-    let prompt = &spawn_plans(&ship)[0].prompt;
-    assert!(prompt.contains("baseline reference: abc123") && prompt.contains("simpler structure"));
-    assert!(prompt.contains("VERDICT: PASS") && !prompt.contains("preserved output"));
-    assert!(!prompt.contains("{{"), "all stage inputs rendered");
-    assert_eq!(
-        succeeded(&sim.settle("ship", 0, Agent::Done("refactor shipped"))),
-        "refactor shipped"
-    );
-    assert_eq!(
-        sim.stages
-            .iter()
-            .filter(|s| s.stage_id == "baseline")
-            .count(),
-        1,
-        "gate retries must not rebaseline changed behaviour"
-    );
+    let plan = shipping(&ship);
+    assert_eq!(plan.record_stage, "refactor");
+    assert!(plan.body.contains("### `verify`") && plan.body.contains("### `review`"));
+    assert!(plan.body.contains("VERDICT: PASS"));
+    succeeded(&sim.ship_pr(PR));
+    let baselines = sim.stages.iter().filter(|s| s.stage_id == "baseline");
+    assert_eq!(baselines.count(), 1, "gate retries must not rebaseline");
 }
 
 #[test]
@@ -1796,13 +1780,10 @@ fn test_coverage_failed_verify_returns_to_write_then_ships_latest_results() {
 
     sim.settle("write", 0, Agent::Done("Added a boundary assertion."));
     let ship = sim.settle("verify", 0, Agent::Pass);
-    assert_eq!(spawned(&ship), slots(&[("ship", 1, 0)]));
-    let prompt = &spawn_plans(&ship)[0].prompt;
-    assert!(prompt.contains("Added a boundary assertion."));
-    assert!(prompt.contains("VERDICT: PASS"));
-    assert!(!prompt.contains("First tests."));
-    assert!(!prompt.contains("{{"));
-    succeeded(&sim.settle("ship", 0, Agent::Done("shipped tests")));
+    let plan = shipping(&ship);
+    assert_eq!(plan.record_stage, "write");
+    assert!(plan.body.contains("VERDICT: PASS") && !plan.body.contains("First tests."));
+    succeeded(&sim.ship_pr(PR));
     assert_eq!(
         sim.stages
             .iter()
@@ -1922,12 +1903,12 @@ fn design_doc_exhausted_or_missing_critique_verdict_never_publishes_a_report() {
 /// A lead's passed review as stored once Archon found its reviewer in Aether.
 fn reviewed_by(model: &str) -> serde_json::Value {
     let mut result = serde_json::json!({"review": {"verdict": "pass", "reviewer_model": model}});
-    archon_pipeline::review::record_check(&mut result, Some(Ok("agt_reviewer".into())));
+    archon_pipeline::review::record_check(&mut result, Some(Ok(vec!["agt_reviewer".into()])));
     result
 }
 
 #[test]
-fn adaptive_keeps_one_build_lead_and_hands_its_reviewed_report_to_ship() {
+fn adaptive_keeps_one_build_lead_and_archond_ships_its_reviewed_change() {
     let mut sim = sim("adaptive");
     let first = sim.start();
     assert_eq!(spawned(&first), slots(&[("build", 1, 0)]));
@@ -1946,24 +1927,27 @@ fn adaptive_keeps_one_build_lead_and_hands_its_reviewed_report_to_ship() {
     );
     assert!(lead.instructions.contains("## Review on record"));
     assert!(lead.instructions.contains("\"reviewer_model\""));
+    assert!(lead.instructions.contains("## Ship record"));
     let ship = sim.settle(
         "build",
         0,
         Agent::DoneStructured("Integrated; checks pass.", reviewed_by("codex/astra")),
     );
-    assert_eq!(spawned(&ship), slots(&[("ship", 1, 0)]));
-    let ship = spawn_plans(&ship)[0];
-    assert!(!ship.allow_delegation);
-    assert!(!ship.instructions.contains("## Review on record"));
-    assert!(
-        ship.prompt.contains(
-            "Integrated; checks pass.\n\nREVIEW: pass, by codex/astra (agent agt_reviewer)\n"
-        ),
-        "{}",
-        ship.prompt
+    let plan = shipping(&ship);
+    assert_eq!(plan.record_stage, "build");
+    let review = "REVIEW: pass, by codex/astra (agent agt_reviewer)";
+    assert_eq!(
+        plan.summary,
+        format!("Integrated; checks pass.\n\n{review}")
     );
-    let done = sim.settle("ship", 0, Agent::Done("Shipped"));
-    assert_eq!(succeeded(&done), "Shipped");
+    assert!(
+        plan.body
+            .starts_with(&format!("What changed and why.\n\n{review}\n\n")),
+        "{}",
+        plan.body
+    );
+    let done = sim.ship_pr(PR);
+    assert!(succeeded(&done).ends_with(&format!("SHIPPED: {PR} (commit {})", sim::COMMIT)));
 }
 
 /// A lead that only says it reviewed has put nothing on record: the run
@@ -2010,31 +1994,211 @@ fn adaptive_fails_a_build_that_completed_without_a_review_on_record() {
     }
 }
 
+/// Only a ship agent could judge whether a skip was warranted; archond
+/// cannot, so the change is reviewed or the item asks for no review at all.
 #[test]
-fn adaptive_ships_a_change_whose_skipped_review_gives_its_reason() {
+fn adaptive_refuses_a_skipped_review_now_that_archond_ships() {
     let mut sim = sim("adaptive");
     sim.start();
     let skipped =
         serde_json::json!({"review": {"verdict": "skipped", "reason": "a typo in a comment"}});
-    let ship = sim.settle(
+    let done = sim.settle(
         "build",
         0,
         Agent::DoneStructured("Fixed the typo.", skipped),
     );
-    assert_eq!(spawned(&ship), slots(&[("ship", 1, 0)]));
-    let prompt = &spawn_plans(&ship)[0].prompt;
+    assert!(ship_plans(&done).is_empty(), "nothing ships unreviewed");
+    let (stage, error) = failed(&done);
+    assert_eq!(stage, "build");
+    assert!(error.contains("needs 1 independent reviewer(s)"), "{error}");
+}
+
+/// A lead of `pipeline` at review `level`, as the daemon builds its run.
+fn sim_reviewed(pipeline: &str, level: ReviewLevel) -> Sim {
+    let knobs = Autonomy {
+        review: level,
+        ..Autonomy::default()
+    };
+    let spec = Arc::new(augment(&support::builtin(pipeline), &knobs).expect("knobs apply"));
+    let plan = support::plan_for(&spec, &["claude-code/opus"]);
+    Sim::new(spec, plan)
+}
+
+/// A passed review naming `models`, checked against the `found` agents.
+fn reviewed_by_all(models: &[&str], found: &[&str]) -> serde_json::Value {
+    let mut result = serde_json::json!({"review": {"verdict": "pass", "reviewer_models": models}});
+    let agents = found.iter().map(|agent| (*agent).to_owned()).collect();
+    archon_pipeline::review::record_check(&mut result, Some(Ok(agents)));
+    result
+}
+
+/// The item's review level, not the pipeline, says how many independent
+/// reviewers the lead owes: none, one, or three working alone.
+#[test]
+fn a_run_s_review_level_sets_how_many_reviewers_its_lead_owes() {
+    for (level, owed) in [
+        (ReviewLevel::None, 0),
+        (ReviewLevel::Standard, 1),
+        (ReviewLevel::Strict, 3),
+    ] {
+        let mut sim = sim_reviewed("adaptive", level);
+        let first = sim.start();
+        assert_eq!(sim.driver.reviewers_owed("build"), owed, "{level:?}");
+        let contract = &spawn_plans(&first)[0].instructions;
+        let said = match owed {
+            0 => "review level is `none`: delegate no reviewer".to_owned(),
+            1 => "reviewed by an agent you delegate to".to_owned(),
+            n => format!("reviewed by {n} agents you delegate to, each working alone"),
+        };
+        assert!(contract.contains(&said), "{level:?}: {contract}");
+        let models = ["a/1", "b/2", "c/3"];
+        let agents = ["agt_1", "agt_2", "agt_3"];
+        let result = reviewed_by_all(&models[..owed as usize], &agents[..owed as usize]);
+        let done = sim.settle("build", 0, Agent::DoneStructured("Built.", result));
+        let line = match owed {
+            0 => "REVIEW: none, as this item's review level asks".to_owned(),
+            1 => "REVIEW: pass, by a/1 (agent agt_1)".to_owned(),
+            _ => "REVIEW: pass, by a/1 (agent agt_1), b/2 (agent agt_2), c/3 (agent agt_3)"
+                .to_owned(),
+        };
+        assert_eq!(
+            shipping(&done).summary,
+            format!("Built.\n\n{line}"),
+            "{level:?}"
+        );
+    }
+}
+
+/// A strict review that names fewer reviewers than Archon found for it, or
+/// fewer than three, is not the review the item asked for.
+#[test]
+fn a_strict_review_with_too_few_reviewers_fails_the_run() {
+    let mut sim = sim_reviewed("adaptive", ReviewLevel::Strict);
+    sim.start();
+    let two = reviewed_by_all(&["a/1", "b/2"], &["agt_1", "agt_2"]);
+    let done = sim.settle("build", 0, Agent::DoneStructured("Built.", two));
+    let (stage, error) = failed(&done);
+    assert_eq!(stage, "build");
+    assert!(error.contains("needs 3 independent reviewers"), "{error}");
+    assert!(error.contains("the record names 2"), "{error}");
+}
+
+/// `direct` is one agent from start to shipped: no delegation, no review
+/// section and no later stage, unless the item's review level asks for one.
+#[test]
+fn direct_runs_one_agent_and_archond_ships_what_it_recorded() {
+    let mut sim = sim_reviewed("direct", ReviewLevel::None);
+    let first = sim.start();
+    assert_eq!(spawned(&first), slots(&[("implement", 1, 0)]));
+    let agent = spawn_plans(&first)[0];
+    assert!(!agent.allow_delegation, "a leaf at review level none");
+    assert!(!agent.instructions.contains("## Review on record"));
+    assert!(agent.instructions.contains("## Ship record"));
+    assert!(!agent.prompt.contains("{{"));
+    let done = sim.settle("implement", 0, Agent::Done("Fixed the typo; tests pass."));
+    let plan = shipping(&done);
+    assert_eq!(plan.record_stage, "implement");
     assert!(
-        prompt.contains("REVIEW: skipped: a typo in a comment\n"),
-        "{prompt}"
+        plan.summary
+            .ends_with("REVIEW: none, as this item's review level asks")
     );
+    assert!(succeeded(&sim.ship_pr(PR)).contains("Fixed the typo; tests pass."));
+    assert_eq!(sim.stages.len(), 1, "one agent ran, end to end");
+
+    let mut reviewed = sim_reviewed("direct", ReviewLevel::Standard);
+    let first = reviewed.start();
+    let agent = spawn_plans(&first)[0];
+    assert!(agent.allow_delegation, "it delegates its one reviewer");
+    assert!(agent.instructions.contains("## Review on record"));
+    let unreviewed = reviewed.settle("implement", 0, Agent::Done("Fixed."));
+    assert!(failed(&unreviewed).1.contains("no `review` object"));
+}
+
+/// The record names what ships, so a record stage that leaves none has
+/// delivered nothing archond could check.
+#[test]
+fn a_record_stage_without_its_ship_record_fails_the_run() {
+    let mut sim = sim("quick-pr");
+    sim.writes_record = false;
+    sim.start();
+    let done = sim.settle("implement", 0, Agent::Done("Fixed it."));
+    assert!(ship_plans(&done).is_empty());
+    let (stage, error) = failed(&done);
+    assert_eq!(stage, "implement");
     assert!(
-        prompt.contains("## Review on record (every mode)"),
-        "{prompt}"
+        error.contains("the ship record archond delivers is not on record"),
+        "{error}"
     );
-    assert!(
-        prompt.contains("call `fail_task` with `unreviewed change:`"),
-        "{prompt}"
+    assert!(error.contains("no `structured` object"), "{error}");
+}
+
+/// A delivery archond refused ends the run at the ship step, with its
+/// reason as the failure the orchestrator reads.
+#[test]
+fn a_failed_delivery_fails_the_run_at_the_ship_step() {
+    let mut sim = sim("quick-pr");
+    sim.start();
+    sim.settle("implement", 0, Agent::Done("Fixed it."));
+    let refused = ShipOutcome::Failed {
+        error: "the worktree's tree is not the recorded one".into(),
+    };
+    let done = sim.ship(refused);
+    let (stage, error) = failed(&done);
+    assert_eq!(stage, "ship", "no agent ran it: archond did");
+    assert_eq!(error, "the worktree's tree is not the recorded one");
+}
+
+/// A recorded delivery survives a restart and is never replaced: the run
+/// is delivered once, whatever a second attempt would say.
+#[test]
+fn a_delivery_is_recorded_once_and_replays_after_a_restart() {
+    let mut answering = sim("ask");
+    let mut sim = sim("quick-pr");
+    sim.start();
+    sim.settle("implement", 0, Agent::Done("Fixed it."));
+    let waiting = sim.resume_fresh();
+    assert_eq!(
+        ship_plans(&waiting).len(),
+        1,
+        "a restart re-asks for delivery"
     );
+    let shipped = ShipOutcome::Shipped {
+        commit: sim::COMMIT.into(),
+        pr_url: Some(PR.into()),
+    };
+    let mut driver = sim.resumed_driver();
+    driver.record_ship(shipped.clone()).expect("recorded once");
+    driver
+        .record_ship(shipped.clone())
+        .expect("the same again is a no-op");
+    let other = ShipOutcome::Failed { error: "e".into() };
+    let refused = driver.record_ship(other).unwrap_err().to_string();
+    assert!(refused.contains("already recorded"), "{refused}");
+    succeeded(&driver.resume(&sim.run, &sim.stages));
+
+    answering.start();
+    let refused = answering
+        .driver
+        .record_ship(shipped)
+        .unwrap_err()
+        .to_string();
+    assert!(refused.contains("is not shipped by archond"), "{refused}");
+}
+
+/// A task that does not fit its pipeline goes back to the orchestrator at
+/// once: no fix loop, no retry, and the stage's recommendation as the error.
+#[test]
+fn an_escalation_ends_the_run_without_a_fix_loop() {
+    let mut sim = sim("default-pr-review");
+    sim.start();
+    sim.settle("implement", 0, Agent::Done("first try"));
+    sim.settle("review", 0, Agent::Fail("off by one"));
+    let escalate = "ESCALATE: this needs a schema migration; use adaptive";
+    let done = sim.settle("implement", 0, Agent::Error(escalate));
+    assert!(spawned(&done).is_empty(), "nothing is retried");
+    let (stage, error) = failed(&done);
+    assert_eq!(stage, "implement");
+    assert!(error.contains(escalate), "{error}");
 }
 
 #[test]

@@ -474,9 +474,10 @@ async fn filled_plan(
     spec: &PipelineSpec,
     plan: ModelPlan,
 ) -> Result<ModelPlan, ArchonError> {
+    let fallback = knobs::default_choice(&ctx.config, &env.policy(&ctx.config), spec);
     let store = ctx.store.lock().await;
     let repo = env.repo.as_ref().map(|repo| &repo.id);
-    knobs::fill_plan(&store, repo, base, spec, plan)
+    knobs::fill_plan(&store, repo, base, spec, plan, fallback.as_ref())
 }
 
 /// Every stage has 1 to `fan_out` choices, no unknown stage is named, and

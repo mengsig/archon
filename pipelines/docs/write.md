@@ -66,3 +66,7 @@ Call `complete_task` with a summary containing:
   skipped execution with its reason and supporting evidence.
 - How each feedback finding was addressed, and any remaining uncertainty
   or limitation. Never claim an unrun check passed.
+
+Include the ship record your contract requires in `structured`. Its `pr.body`
+is the pull request description a maintainer reads: what changed and why,
+how it was verified, and what is left open.

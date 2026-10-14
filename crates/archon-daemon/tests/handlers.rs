@@ -8,7 +8,7 @@ use archon_core::config::Config;
 use archon_core::cost::{CostGroup, CostQuery, CostReport, DayBound};
 use archon_core::error::ArchonError;
 use archon_core::github::{GithubThread, OperatorUsers, WatcherChange};
-use archon_core::model::{Effort, ModelPlan};
+use archon_core::model::{Effort, ModelChoice, ModelPlan};
 use archon_core::protocol::{
     ClientKind, EnqueueRequest, ErrorCode, ErrorReply, ItemPatch, ItemQuery, PauseTarget, Reply,
     RepoAdd, RepoPatch, RepoRef, Request,
@@ -132,8 +132,6 @@ async fn enqueue_refuses_models_outside_the_global_allowlist() {
 #[tokio::test]
 async fn enqueue_validates_the_plan_against_the_pipeline() {
     let h = Harness::new().await;
-    let mut missing = plan();
-    missing.0.remove("ship");
     let mut too_many = plan();
     too_many
         .0
@@ -142,11 +140,7 @@ async fn enqueue_validates_the_plan_against_the_pipeline() {
     unknown
         .0
         .insert("deploy".into(), vec![choice(MODEL, Effort::Low)]);
-    for (why, bad) in [
-        ("missing", missing),
-        ("too many", too_many),
-        ("unknown", unknown),
-    ] {
+    for (why, bad) in [("too many", too_many), ("unknown", unknown)] {
         let refused = h.enqueue_with(why, bad).await.expect_err(why);
         assert!(
             matches!(refused, ArchonError::Invalid(_)),
@@ -158,12 +152,61 @@ async fn enqueue_validates_the_plan_against_the_pipeline() {
         .await
         .expect_err("empty title");
     assert!(matches!(refused, ArchonError::Invalid(_)));
-    let refused = h
-        .enqueue_with("no plan", ModelPlan::default())
-        .await
-        .expect_err("empty plan");
-    assert!(matches!(refused, ArchonError::Invalid(_)));
     assert_eq!(item_count(&h).await, 0);
+}
+
+/// A plan names the stages whose model the caller chooses: the others get
+/// the orchestrator's model at the effort the pipeline's tier suggests.
+#[tokio::test]
+async fn enqueue_fills_the_stages_a_plan_leaves_out() {
+    let h = Harness::new().await;
+    let default = vec![ModelChoice {
+        model: h.ctx.config.orchestrator.model.clone(),
+        effort: Effort::Medium,
+    }];
+    let mut partial = plan();
+    partial.0.remove("ship");
+    let item = h.enqueue_with("a partial plan", partial).await.unwrap();
+    assert_eq!(item.model_plan.0["implement"], plan().0["implement"]);
+    assert_eq!(item.model_plan.0["review"], plan().0["review"]);
+    assert_eq!(item.model_plan.0["ship"], default);
+
+    let unplanned = h
+        .enqueue_with("no plan at all", ModelPlan::default())
+        .await
+        .unwrap();
+    let stages: Vec<&str> = unplanned.model_plan.0.keys().map(String::as_str).collect();
+    assert_eq!(stages, ["implement", "review", "ship"]);
+    assert!(unplanned.model_plan.0.values().all(|c| *c == default));
+    // `direct` asks for a fast model: its one stage runs at low effort.
+    let direct = h
+        .enqueue_in("direct", "a small change", ModelPlan::default())
+        .await
+        .unwrap();
+    assert_eq!(direct.model_plan.0["implement"][0].effort, Effort::Low);
+}
+
+/// A default is a choice like any other: the model policy still decides.
+#[tokio::test]
+async fn a_filled_plan_stays_within_the_model_policy() {
+    let mut config = Config::default();
+    config.models.allow = vec![REVIEW_MODEL.parse().unwrap()];
+    config.models.max_effort = Some(Effort::Low);
+    let h = Harness::with_config(config).await;
+    let item = h
+        .enqueue_with("no plan at all", ModelPlan::default())
+        .await
+        .expect("the one allowed model fills the plan");
+    for choices in item.model_plan.0.values() {
+        assert_eq!(choices.len(), 1);
+        assert_eq!(choices[0].model.to_string(), REVIEW_MODEL);
+        assert_eq!(choices[0].effort, Effort::Low, "capped by the policy");
+    }
+    let mut over = ModelPlan::default();
+    over.0
+        .insert("implement".into(), vec![choice(MODEL, Effort::Low)]);
+    let refused = h.enqueue_with("a denied model", over).await.unwrap_err();
+    assert!(matches!(refused, ArchonError::Policy(_)), "{refused:?}");
 }
 
 #[tokio::test]

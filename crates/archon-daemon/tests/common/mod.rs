@@ -2,6 +2,7 @@
 //! agent backend, and a temp git repository carrying a test pipeline.
 #![allow(dead_code)]
 
+pub mod delivery;
 pub mod team;
 pub mod team_worktree;
 
@@ -89,7 +90,8 @@ const PROMPTS: [(&str, &str); 3] = [
     ),
     (
         "ship.md",
-        include_str!("../../../../pipelines/default-pr-review/ship.md"),
+        // A pipeline of the user's own may still end in a ship agent.
+        include_str!("ship.md"),
     ),
 ];
 

@@ -1144,18 +1144,18 @@ async fn an_answered_gate_does_not_request_another_approval_while_the_run_advanc
     ));
 }
 
-/// Enqueue into `adaptive`, with a model for each of its two stages.
-async fn enqueue_adaptive(
+/// Enqueue into `pipeline`, one whose single stage `stage` holds its review.
+async fn enqueue_reviewing(
     h: &Harness,
-    title: &str,
+    (pipeline, stage): (&str, &str),
     autonomy: AutonomyPatch,
 ) -> Result<QueueItem, ArchonError> {
-    let stages = ["build", "ship"].map(|stage| (stage.to_owned(), plan().0["implement"].clone()));
+    let stages = [(stage.to_owned(), plan().0["implement"].clone())];
     let request = EnqueueRequest {
         repo: Some(RepoRef(REPO_NAME.into())),
-        pipeline: Some("adaptive".into()),
-        title: title.into(),
-        brief: format!("brief for {title}"),
+        pipeline: Some(pipeline.into()),
+        title: format!("a change for {pipeline}"),
+        brief: "brief".into(),
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
@@ -1172,60 +1172,110 @@ async fn enqueue_adaptive(
     }
 }
 
-/// `adaptive` declares the review its lead holds, so it runs at
-/// `standard`: the knob, the stored item and the ceiling all see that.
-#[tokio::test]
-async fn adaptive_runs_at_the_standard_review_it_declares() {
-    use archon_core::autonomy::ReviewLevel;
+const ADAPTIVE: (&str, &str) = ("adaptive", "build");
+const DIRECT: (&str, &str) = ("direct", "implement");
 
-    let h = Harness::new().await;
-    let asking = |review| AutonomyPatch {
+fn asking(review: archon_core::autonomy::ReviewLevel) -> AutonomyPatch {
+    AutonomyPatch {
         review: Some(review),
         ..AutonomyPatch::default()
-    };
-    for other in [ReviewLevel::Strict, ReviewLevel::None] {
-        let error = enqueue_adaptive(&h, "another review", asking(other))
-            .await
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("runs review=standard"), "{error}");
-        assert!(error.contains(other.pipeline()), "{error}");
-    }
-    assert!(h.backend.requests().is_empty());
-
-    for patch in [AutonomyPatch::default(), asking(ReviewLevel::Standard)] {
-        let item = enqueue_adaptive(&h, "an ordinary change", patch)
-            .await
-            .expect("standard is what adaptive runs");
-        assert_eq!(item.pipeline, "adaptive");
-        assert_eq!(item.autonomy.review, ReviewLevel::Standard);
     }
 }
 
-/// A ceiling that demands gated review refuses `adaptive`, whose review is
-/// its lead's own; one that allows `standard` lets it through.
+/// A pipeline whose own stage holds the review takes the level an item asks
+/// for, and stays the pipeline that was named; unasked, it runs its own.
 #[tokio::test]
-async fn a_ceiling_stricter_than_standard_refuses_adaptive() {
+async fn a_pipeline_that_holds_its_review_runs_at_the_level_an_item_asks_for() {
+    use archon_core::autonomy::ReviewLevel;
+
+    let h = Harness::new().await;
+    for pipeline in [ADAPTIVE, DIRECT] {
+        for level in [
+            ReviewLevel::None,
+            ReviewLevel::Standard,
+            ReviewLevel::Strict,
+        ] {
+            let item = enqueue_reviewing(&h, pipeline, asking(level))
+                .await
+                .expect("any level may be asked of it");
+            assert_eq!(item.pipeline, pipeline.0, "the level reroutes nothing");
+            assert_eq!(item.autonomy.review, level);
+        }
+    }
+    let unasked = |pipeline| enqueue_reviewing(&h, pipeline, AutonomyPatch::default());
+    let adaptive = unasked(ADAPTIVE).await.unwrap();
+    assert_eq!(adaptive.autonomy.review, ReviewLevel::Standard);
+    let direct = unasked(DIRECT).await.unwrap();
+    assert_eq!(direct.autonomy.review, ReviewLevel::None);
+}
+
+/// A pipeline that reviews in stages of its own keeps the level those run:
+/// asking it for another names the pipelines that take one.
+#[tokio::test]
+async fn a_pipeline_with_review_stages_refuses_another_level() {
+    use archon_core::autonomy::ReviewLevel;
+
+    let h = Harness::new().await;
+    let stages = ["implement", "review"].map(|s| (s.to_owned(), plan().0["implement"].clone()));
+    let request = |review| EnqueueRequest {
+        repo: Some(RepoRef(REPO_NAME.into())),
+        pipeline: Some("default-pr-review".into()),
+        title: "a change".into(),
+        brief: "brief".into(),
+        priority: Default::default(),
+        depends_on: Vec::new(),
+        tags: Vec::new(),
+        model_plan: archon_core::model::ModelPlan(stages.clone().into()),
+        model_reasons: None,
+        budget_usd: None,
+        idempotency_key: None,
+        autonomy: asking(review),
+        origin: None,
+    };
+    let refused = h
+        .cli(Request::Enqueue(request(ReviewLevel::None)))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refused.contains("runs review=standard in its own stages"),
+        "{refused}"
+    );
+    assert!(refused.contains("(`adaptive`, `direct`)"), "{refused}");
+    h.cli(Request::Enqueue(request(ReviewLevel::Standard)))
+        .await
+        .expect("the level its stages run may be named");
+}
+
+/// The ceiling bounds the level: unasked, a pipeline that holds its review
+/// is raised to it, and an item may not ask for less.
+#[tokio::test]
+async fn a_review_ceiling_raises_a_pipeline_that_holds_its_review() {
+    use archon_core::autonomy::ReviewLevel;
+
     let h = Harness::new().await;
     h.repo_config("[autonomy.max]\nreview = \"strict\"\n");
-    let refused = enqueue_adaptive(&h, "under strict", AutonomyPatch::default())
-        .await
-        .expect_err("standard is above a strict ceiling");
-    let ArchonError::Forbidden(message) = &refused else {
-        panic!("a ceiling refusal is Forbidden: {refused:?}");
-    };
-    assert!(
-        message.contains("review=standard (allowed: strict)"),
-        "{message}"
-    );
+    for pipeline in [ADAPTIVE, DIRECT] {
+        let raised = enqueue_reviewing(&h, pipeline, AutonomyPatch::default())
+            .await
+            .expect("the ceiling's level is run, not refused");
+        assert_eq!(raised.autonomy.review, ReviewLevel::Strict);
+        let refused = enqueue_reviewing(&h, pipeline, asking(ReviewLevel::Standard))
+            .await
+            .expect_err("standard is above a strict ceiling");
+        let ArchonError::Forbidden(message) = &refused else {
+            panic!("a ceiling refusal is Forbidden: {refused:?}");
+        };
+        assert!(
+            message.contains("review=standard (allowed: strict)"),
+            "{message}"
+        );
+    }
     assert!(h.backend.requests().is_empty());
 
     h.repo_config("[autonomy.max]\nreview = \"standard\"\n");
-    let allowed = enqueue_adaptive(&h, "under standard", AutonomyPatch::default())
+    let direct = enqueue_reviewing(&h, DIRECT, AutonomyPatch::default())
         .await
-        .expect("a standard ceiling allows the review adaptive declares");
-    assert_eq!(
-        allowed.autonomy.review,
-        archon_core::autonomy::ReviewLevel::Standard
-    );
+        .unwrap();
+    assert_eq!(direct.autonomy.review, ReviewLevel::Standard);
 }

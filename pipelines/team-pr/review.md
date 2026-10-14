@@ -71,3 +71,7 @@ Call `complete_task` with the structured verdict and findings the stage
 contract describes. The `summary` gives your overall assessment in a few
 sentences, then the findings most severe first, and ends with
 `VERDICT: PASS` or `VERDICT: FAIL`.
+
+On a pass, include the ship record your contract requires in `structured`:
+the commit and tree you reviewed, and a `pr` title and body describing the
+whole change for a maintainer, from the diff and the stages before you.

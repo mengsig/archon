@@ -89,7 +89,9 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
 - Untracked caches (`__pycache__`, `*.pyc`, `.pytest_cache`, `.mypy_cache`,
   `.ruff_cache`, `node_modules`, a top-level `target`, and
   `worktrees.cache_dirs`) no longer keep a finished worktree from being
-  removed. Untracked source still does.
+  removed. Untracked source still does. A work stage is told to commit no
+  build cache either: parallel branches that each committed `__pycache__`
+  conflicted.
 - The push sends the commit the checks proved
   (`<commit>:refs/heads/<branch>`), not whatever the branch holds by then,
   and a stacked run missing its parent's commit is refused before anything

@@ -417,9 +417,9 @@ yourself.\n";
 fn ship_record_rules(kind: StageKind) -> String {
     let leave = match kind {
         StageKind::Work => {
-            "Commit all that should ship on the run branch: Archon refuses uncommitted \
-             changes to tracked files and delivers no untracked file, so the change must \
-             not need one."
+            "Commit all that should ship on the run branch and no build cache such as \
+             `__pycache__`: Archon refuses uncommitted changes to tracked files and \
+             delivers no untracked file."
         }
         StageKind::Review | StageKind::Test => {
             "You commit nothing: the record names the commit you judged, as it stands on \
@@ -1028,7 +1028,8 @@ mod tests {
         );
         for said in [
             "do not push and do not open a pull request",
-            "delivers no untracked file, so the change must not need one",
+            "and no build cache such as `__pycache__`: Archon refuses",
+            "delivers no untracked file.",
             "verifies the recorded tree against the current branch head and delivers that head",
             "\"commit\": \"<git rev-parse HEAD>\", \"tree\": \"<git rev-parse HEAD^{tree}>\"",
             "\"pr\": {\"title\":",

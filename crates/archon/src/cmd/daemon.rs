@@ -38,7 +38,10 @@ pub async fn run(command: DaemonCommand, json: bool) -> anyhow::Result<ExitCode>
             report_running(&client, json)?;
             Ok(ExitCode::SUCCESS)
         }
-        DaemonCommand::Stop { aether } => stop(json, aether).await,
+        DaemonCommand::Stop {
+            aether,
+            keep_aether,
+        } => stop(json, aether, keep_aether).await,
         DaemonCommand::Status => status(json).await,
     }
 }
@@ -209,28 +212,34 @@ async fn await_listening(child: &mut Child, socket: &Path, log: &Path) -> anyhow
     }
 }
 
-/// Stop archond, then with `aether` Archon's own aetherd; shared mode owns
-/// no aetherd, so `--aether` is refused there before anything stops.
-async fn stop(json: bool, aether: bool) -> anyhow::Result<ExitCode> {
-    if aether {
-        let mode = Config::load_default()?.aether.mode;
-        if mode != AetherMode::Dedicated {
-            return Err(archon_core::ArchonError::Invalid(
-                "--aether stops Archon's own aetherd, and [aether] mode is \"shared\": \
+/// Stop archond, then in dedicated mode Archon's own aetherd unless `keep_aether`.
+/// Shared mode owns no aetherd, so `--aether` is refused there before anything stops.
+async fn stop(json: bool, aether: bool, keep_aether: bool) -> anyhow::Result<ExitCode> {
+    assert!(!(aether && keep_aether), "clap refuses both");
+    if aether && Config::load_default()?.aether.mode != AetherMode::Dedicated {
+        return Err(archon_core::ArchonError::Invalid(
+            "--aether stops Archon's own aetherd, and [aether] mode is \"shared\": \
              the operator's aetherd is theirs to stop"
-                    .into(),
-            )
-            .into());
-        }
+                .into(),
+        )
+        .into());
     }
     let (mut value, mut text) = stop_archond().await?;
-    if aether {
+    if !keep_aether && owns_aetherd()? {
         let (aether_value, aether_text) = instance::stop_aether().await?;
         value["aether"] = aether_value;
         text = format!("{text}\n{aether_text}");
     }
     emit(json, || Ok(value), &text)?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// Whether Archon runs its own aetherd ([aether] mode "dedicated"), asked once
+/// archond is stopped: a config that no longer loads never keeps archond up.
+fn owns_aetherd() -> anyhow::Result<bool> {
+    let config = Config::load_default()
+        .context("archond stopped, but the config naming Archon's aetherd did not load")?;
+    Ok(config.aether.mode == AetherMode::Dedicated)
 }
 
 async fn stop_archond() -> anyhow::Result<(serde_json::Value, String)> {

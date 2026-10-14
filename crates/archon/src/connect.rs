@@ -116,7 +116,7 @@ pub fn reply_kind(reply: &Reply) -> String {
 pub fn unexpected(reply: &Reply, wanted: &str) -> anyhow::Error {
     anyhow::anyhow!(
         "archond answered with `{}` where `{wanted}` was expected; is it from another build? \
-         Try `archon daemon stop`",
+         Try `archon daemon stop --keep-aether`",
         reply_kind(reply)
     )
 }

@@ -352,7 +352,7 @@ async fn aether_report(
 /// Whether an archond is running, and what to do about it after an update.
 /// Never fails: what cannot be asked stops no update.
 async fn archond_report(new: &Version) -> (Option<bool>, String) {
-    const RESTART: &str = "run `archon daemon stop`, then `archon aether mcp refresh archon` \
+    const RESTART: &str = "run `archon daemon stop --keep-aether`, then `archon aether mcp refresh archon` \
                            and `archon orchestrator restart`";
     match connect_existing().await {
         Ok(Some(client)) => {

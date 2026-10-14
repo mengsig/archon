@@ -311,8 +311,8 @@ fn a_running_archond_and_an_old_aether_are_named_with_what_to_run() {
     assert!(
         stdout.contains(&format!(
             "archond (pid {pid}) still runs test, and the update itself interrupts no running \
-             item; to switch it to 9.9.9, run `archon daemon stop`, then `archon aether mcp \
-             refresh archon` and `archon orchestrator restart`."
+             item; to switch it to 9.9.9, run `archon daemon stop --keep-aether`, then `archon \
+             aether mcp refresh archon` and `archon orchestrator restart`."
         )),
         "{stdout}"
     );

@@ -154,7 +154,7 @@ fn replan(change: &mut Change, asked: &Asked<'_>, at: &At<'_>) {
             continue;
         };
         let choice = &choices[stage.fan_index as usize % choices.len()];
-        if *choice != stage.choice {
+        if choice != stage.current_choice() {
             change.live.entry(stage.id.clone()).or_default().choice = Some(choice.clone());
         }
     }
@@ -277,8 +277,8 @@ fn retune(
     let now = choices[0].clone();
     asked.env.policy(&ctx.config).check_plan(plan)?;
     for stage in at.live().filter(|stage| stage.stage_id == at.target) {
-        let choice = retuned(&stage.choice, steer);
-        if choice != stage.choice {
+        let choice = retuned(stage.current_choice(), steer);
+        if &choice != stage.current_choice() {
             change.live.entry(stage.id.clone()).or_default().choice = Some(choice);
         }
     }

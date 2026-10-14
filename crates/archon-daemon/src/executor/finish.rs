@@ -55,7 +55,7 @@ pub(super) async fn finish_run(
         run.finish(state, now)?;
         store.finish_run(&run, item_state(&run), now)?
     };
-    crate::learned::finished(ctx, &run).await?;
+    crate::learned::finished(ctx, &run).await;
     let item = finished.item;
     assert!(item.state.is_terminal(), "finish_run settles the item");
     frozen::discard(&ctx.paths.data_dir, &run.id);

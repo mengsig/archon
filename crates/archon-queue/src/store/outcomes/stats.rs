@@ -11,6 +11,7 @@ impl Store {
         let outcomes = self.outcomes(repo)?;
         let mut stats = LessonStats {
             outcomes: outcomes.len() as u64,
+            repo_names: self.repos()?.into_iter().map(|r| (r.id, r.name)).collect(),
             ..Default::default()
         };
         let mut groups = BTreeMap::new();

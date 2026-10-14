@@ -607,11 +607,11 @@ async fn an_escalated_item_switched_to_another_pipeline_ships_from_its_branch() 
     let store = h.ctx.store.lock().await;
     let escalated = store.outcome(&first.id).unwrap().expect("captured");
     assert_eq!(escalated.failure, Some(FailureClass::Escalated));
-    assert_eq!(escalated.corrections, [Correction::Steered]);
+    assert!(escalated.corrections.is_empty());
     // The item keeps its pipeline's name, so the run is no evidence for it.
     let delivered = store.outcome(&second.id).unwrap().expect("captured");
     assert_eq!(delivered.pipeline, "quick-pr");
-    assert_eq!(delivered.corrections, [Correction::Steered]);
+    assert!(delivered.corrections.is_empty());
 }
 
 /// A shipped item retried goes on from its branch into the pull request it

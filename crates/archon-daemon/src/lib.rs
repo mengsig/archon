@@ -237,8 +237,11 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
         std::fs::create_dir_all(dir)
             .map_err(|e| ArchonError::io(format!("creating {}", dir.display()), e))?;
     }
-    let store = Store::open(&paths.store)?;
+    let mut store = Store::open(&paths.store)?;
     store.configure_learning(&config.learning)?;
+    if !config.learning.enabled {
+        store.cancel_queued_distillations()?;
+    }
     let lavish = Lavish::detect(&config.lavish)?;
     let aether = Arc::new(AetherLink::new());
     let backend = Arc::new(AetherBackend::new(aether.clone(), config.models.policy()));

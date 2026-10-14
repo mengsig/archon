@@ -751,6 +751,8 @@ mod tests {
             stage_id: stage.to_owned(),
             attempt: 1,
             fan_index: 0,
+            model_segments: Vec::new(),
+            infrastructure_failure: false,
             choice: archon_core::model::ModelChoice {
                 model: "claude-code/claude-sonnet-5".parse().unwrap(),
                 effort: archon_core::model::Effort::Medium,

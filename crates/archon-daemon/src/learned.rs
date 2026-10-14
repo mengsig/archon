@@ -1,10 +1,13 @@
 //! Token-free routing, bounded lesson contracts and background distillation.
+mod candidates;
 mod distill;
 mod routing;
+mod routing_context;
+pub(crate) use routing_context::{freeze_context, prepare_routing};
 
 pub use distill::maintenance;
 pub(crate) use distill::{finished, run};
-pub(crate) use routing::{default_plan, hint_size, item_size, plan_for_item};
+pub(crate) use routing::{default_plan, plan_for_item};
 
 use archon_core::error::ArchonError;
 use archon_core::lesson::{Lesson, ORCHESTRATOR_LESSONS};
@@ -50,14 +53,13 @@ pub fn lessons_for_orchestrator(store: &Store) -> Result<String, ArchonError> {
     if let Some(saved) = store.kv_get(&key)? {
         return Ok(saved);
     }
-    store.refresh_lessons(archon_core::now())?;
     let lessons = store.orchestrator_lessons()?;
     assert!(lessons.len() <= ORCHESTRATOR_LESSONS);
     let mut text = String::new();
     if !lessons.is_empty() {
         text.push_str(ORCHESTRATOR_LESSONS_HEADING);
         for lesson in lessons {
-            let line = lesson.quoted_observation();
+            let line = lesson.quoted_observation()?;
             if text.len() + line.len() <= 4096 {
                 text.push_str(&line);
             }
@@ -108,40 +110,19 @@ pub(crate) async fn operator_message(
     if !ctx.config.learning.enabled {
         return Ok(());
     }
-    let lower = text.to_lowercase();
-    if ![
-        "wrong",
-        "incorrect",
-        "not fixed",
-        "still fails",
-        "regression",
-    ]
-    .iter()
-    .any(|word| lower.contains(word))
-    {
+    let Some(raw) = text.strip_prefix("correction ") else {
         return Ok(());
-    }
+    };
+    let event: archon_core::outcome::CorrectionEvent = serde_json::from_str(raw).map_err(|e| {
+        ArchonError::Invalid(format!(
+            "correction requires JSON with item, stage, cause and reason: {e}"
+        ))
+    })?;
     let store = ctx.store.lock().await;
-    for word in text.split(|c: char| !c.is_ascii_alphanumeric() && c != '_') {
-        if !word.starts_with("qi_") {
-            continue;
-        }
-        let Ok(id) = archon_core::id::QueueItemId::parse(word) else {
-            continue;
-        };
-        let runs = match store.runs_for_item(&id) {
-            Ok(runs) => runs,
-            Err(ArchonError::NotFound(_)) => continue,
-            Err(e) => return Err(e),
-        };
-        if let Some(run) = runs.last().filter(|r| r.state.is_terminal()) {
-            assert_eq!(run.item, id);
-            assert!(run.finished_at.is_some());
-            store.record_correction(
-                &run.id,
-                archon_core::outcome::Correction::OperatorContradiction,
-            )?;
-        }
-    }
-    Ok(())
+    let runs = store.runs_for_item(&event.item)?;
+    let run = runs
+        .last()
+        .ok_or_else(|| ArchonError::Invalid("correction item has no run".into()))?;
+    assert_eq!(run.item, event.item);
+    store.record_feedback(&run.id, event)
 }

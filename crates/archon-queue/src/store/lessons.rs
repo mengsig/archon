@@ -41,33 +41,12 @@ impl Store {
             .collect()
     }
 
-    pub fn record_lesson(&self, mut lesson: Lesson) -> Result<Lesson, ArchonError> {
+    pub fn record_lesson(&self, lesson: Lesson) -> Result<Lesson, ArchonError> {
         require_enabled(self)?;
-        lesson.text = archon_core::lesson::sanitized_text(&lesson.text)?;
         let tx = self.conn.unchecked_transaction().ctx("begin lesson")?;
-        let existing = scoped(&tx, lesson.scope.repo.as_ref())?;
-        if let Some(known) = existing
-            .iter()
-            .find(|l| l.scope == lesson.scope && normalized(&l.text) == normalized(&lesson.text))
-        {
-            assert_eq!(known.scope, lesson.scope);
-            if known.source == LessonSource::Operator || lesson.source != LessonSource::Operator {
-                return Ok(known.clone());
-            }
-            lesson.id = known.id.clone();
-            lesson.created_at = known.created_at;
-            lesson.uses = known.uses;
-            lesson.wins = known.wins;
-            lesson.confidence = known.confidence;
-        } else if existing.len() >= MAX_SCOPE_LESSONS {
-            return Err(ArchonError::Invalid(format!(
-                "lesson scope limit is {MAX_SCOPE_LESSONS}; edit existing lessons"
-            )));
-        }
-        assert!(lesson.wins <= lesson.uses);
-        write(&tx, &lesson)?;
+        let recorded = record_on(&tx, lesson)?;
         tx.commit().ctx("commit lesson")?;
-        Ok(lesson)
+        Ok(recorded)
     }
 
     pub fn update_lesson(&self, id: &LessonId, patch: LessonPatch) -> Result<Lesson, ArchonError> {
@@ -123,8 +102,11 @@ impl Store {
             .unchecked_transaction()
             .ctx("begin lesson decay")?;
         for mut lesson in scoped_all(&tx)? {
+            let previous = lesson.clone();
             scoring::refresh(&mut lesson, at);
-            write(&tx, &lesson)?;
+            if lesson != previous {
+                write(&tx, &lesson)?;
+            }
         }
         tx.commit().ctx("commit lesson decay")
     }
@@ -259,4 +241,120 @@ fn accept_rewrite(conn: &Connection, lesson: &Lesson) -> Result<(), ArchonError>
     old.state = LessonState::Retracted;
     old.superseded_by = Some(lesson.id.clone());
     write(conn, &old)
+}
+
+fn record_on(conn: &Connection, mut lesson: Lesson) -> Result<Lesson, ArchonError> {
+    lesson.text = archon_core::lesson::sanitized_text(&lesson.text)?;
+    let at = lesson.created_at;
+    scoring::refresh(&mut lesson, at);
+    let existing = scoped(conn, lesson.scope.repo.as_ref())?;
+    if let Some(known) = existing
+        .iter()
+        .find(|l| l.scope == lesson.scope && normalized(&l.text) == normalized(&lesson.text))
+    {
+        assert_eq!(known.scope, lesson.scope);
+        if known.source == LessonSource::Operator || lesson.source != LessonSource::Operator {
+            return Ok(known.clone());
+        }
+        lesson.id = known.id.clone();
+        lesson.created_at = known.created_at;
+        lesson.uses = known.uses;
+        lesson.wins = known.wins;
+        lesson.confidence = known.confidence;
+    } else if existing.len() >= MAX_SCOPE_LESSONS {
+        return Err(ArchonError::Invalid(format!(
+            "lesson scope limit is {MAX_SCOPE_LESSONS}; edit existing lessons"
+        )));
+    }
+    assert!(lesson.wins <= lesson.uses);
+    write(conn, &lesson)?;
+    Ok(lesson)
+}
+
+impl Store {
+    /// Lessons, rewrites and the proposal outbox become visible in one commit.
+    pub fn apply_distillation(
+        &self,
+        run: &archon_core::id::PipelineRunId,
+        lessons: Vec<(Lesson, Option<LessonId>)>,
+        proposal: Option<&serde_json::Value>,
+    ) -> Result<(), ArchonError> {
+        require_enabled(self)?;
+        let key = format!("learning/applied/{run}");
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .ctx("begin distillation")?;
+        if super::settings::kv_get(&tx, &key)?.is_some() {
+            return Ok(());
+        }
+        assert!(lessons.len() <= 10);
+        for (lesson, replaces) in lessons {
+            assert_eq!(lesson.state, LessonState::Proposed);
+            assert_eq!(lesson.source, LessonSource::Distilled);
+            if let Some(id) = &replaces {
+                let prior = load(&tx, id)?;
+                if prior.scope.repo != lesson.scope.repo {
+                    return Err(ArchonError::Invalid(
+                        "a rewrite keeps its repository scope".into(),
+                    ));
+                }
+                if prior.source == LessonSource::Operator || prior.pinned {
+                    continue;
+                }
+            }
+            let recorded = record_on(&tx, lesson)?;
+            if let Some(id) = replaces.filter(|id| *id != recorded.id) {
+                super::settings::kv_set(
+                    &tx,
+                    &format!("learning/rewrite/{}", recorded.id),
+                    id.as_str(),
+                )?;
+            }
+        }
+        if let Some(proposal) = proposal {
+            super::settings::kv_set(
+                &tx,
+                &format!("learning/proposal-pending/{run}"),
+                &to_json(proposal, "proposal outbox")?,
+            )?;
+        }
+        super::settings::kv_set(&tx, &key, "1")?;
+        tx.commit().ctx("commit distillation")
+    }
+}
+
+impl Store {
+    pub fn lesson_why(
+        &self,
+        item: &archon_core::id::QueueItemId,
+    ) -> Result<archon_core::lesson::LessonWhy, ArchonError> {
+        let store = self;
+        let runs = store.runs_for_item(item)?;
+        let run = runs.last();
+        let lessons = run
+            .map(|r| store.used_lessons(&r.id))
+            .transpose()?
+            .unwrap_or_default();
+        let frozen = run
+            .map(|r| store.kv_get(&format!("learning/routing-run/{}", r.id)))
+            .transpose()?
+            .flatten();
+        let routing = frozen
+            .or(store.kv_get(&format!("learning/routing/{item}"))?)
+            .map(|raw| {
+                serde_json::from_str(&raw)
+                    .map_err(|e| ArchonError::Store(format!("routing evidence: {e}")))
+            })
+            .transpose()?
+            .unwrap_or_default();
+        assert!(lessons.len() <= archon_core::lesson::CONTRACT_LESSONS);
+        assert!(run.is_none_or(|r| r.item == *item));
+        Ok(archon_core::lesson::LessonWhy {
+            item: item.clone(),
+            run: run.map(|r| r.id.clone()),
+            lessons,
+            routing,
+        })
+    }
 }

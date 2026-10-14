@@ -302,8 +302,8 @@ fn stage_line(stage: &StageRun) -> String {
         stage.attempt,
         stage.fan_index,
         archon_core::cost::format_usd(stage.cost_usd),
-        stage.choice.model,
-        stage.choice.effort,
+        stage.current_choice().model,
+        stage.current_choice().effort,
     )
 }
 
@@ -422,6 +422,8 @@ mod tests {
             stage_id: stage_id.into(),
             attempt: 1,
             fan_index: 0,
+            model_segments: Vec::new(),
+            infrastructure_failure: false,
             choice: ModelChoice {
                 model: "claude-code/opus".parse().unwrap(),
                 effort: Effort::High,

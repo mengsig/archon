@@ -15,6 +15,9 @@ use crate::format;
 use crate::views;
 
 pub async fn run(command: PipelineCommand, json: bool) -> anyhow::Result<ExitCode> {
+    if let PipelineCommand::Proposals { name } = &command {
+        return proposals(name.as_deref(), json);
+    }
     if let PipelineCommand::Accept { name } = &command {
         let path = archon_pipeline::proposals::accept(
             &archon_core::paths::config_dir().join("pipelines"),
@@ -28,7 +31,9 @@ pub async fn run(command: PipelineCommand, json: bool) -> anyhow::Result<ExitCod
         return Ok(ExitCode::SUCCESS);
     }
     let (repo, check) = match command {
-        PipelineCommand::Accept { .. } => unreachable!("accept handled above"),
+        PipelineCommand::Proposals { .. } | PipelineCommand::Accept { .. } => {
+            unreachable!("accept handled above")
+        }
         PipelineCommand::List { repo } => (repo, false),
         PipelineCommand::Check { repo } => (repo, true),
     };
@@ -97,4 +102,57 @@ async fn resolve_repo(repo: &str) -> anyhow::Result<PathBuf> {
         "the registry stores canonical paths"
     );
     Ok(found.path)
+}
+
+fn proposals(name: Option<&str>, json: bool) -> anyhow::Result<ExitCode> {
+    let root = archon_core::paths::config_dir().join("pipelines");
+    if let Some(name) = name {
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
+            return Err(
+                archon_core::ArchonError::Invalid("invalid proposed pipeline name".into()).into(),
+            );
+        }
+        let path = root.join(format!("{name}.proposed"));
+        let files = archon_pipeline::proposals::read(&path)?;
+        archon_pipeline::proposals::validate(name, &files)?;
+        let text = files
+            .iter()
+            .map(|(file, text)| format!("{file}\n{text}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        emit(
+            json,
+            || Ok(serde_json::json!({"name":name,"path":path,"files":files})),
+            &text,
+        )?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    let mut names = Vec::new();
+    if root.exists() {
+        for entry in std::fs::read_dir(&root)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            if let Some(name) = entry
+                .file_name()
+                .to_str()
+                .and_then(|s| s.strip_suffix(".proposed"))
+            {
+                names.push(name.to_owned());
+            }
+        }
+    }
+    names.sort();
+    let text = if names.is_empty() {
+        "No pipeline proposals.".into()
+    } else {
+        names.join("\n")
+    };
+    emit(json, || to_json(&names), &text)?;
+    Ok(ExitCode::SUCCESS)
 }

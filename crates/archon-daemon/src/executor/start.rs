@@ -106,6 +106,7 @@ async fn prepare(
     // The ceiling may have been lowered since the item was enqueued.
     knobs::check_ceiling(&env.autonomy(&ctx.config), &env, &base, item.autonomy)?;
     let spec = Arc::new(frozen::freeze(&ctx.paths.data_dir, &run_id, &current).await?);
+    crate::learned::freeze_context(ctx, &run_id, item, &spec).await?;
     let header = &spec.file.pipeline;
     if header.requires_repo && env.repo.is_none() {
         return Err(ArchonError::Invalid(format!(

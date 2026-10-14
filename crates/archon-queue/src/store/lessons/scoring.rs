@@ -40,6 +40,12 @@ pub(in crate::store) fn score_run(conn: &Connection, outcome: &Outcome) -> Resul
         {
             lesson.confirmed_at = Some(outcome.finished_at);
         }
+        if outcome.is_win()
+            && lesson.state == LessonState::Proposed
+            && lesson.source == archon_core::lesson::LessonSource::Orchestrator
+        {
+            lesson.state = LessonState::Active;
+        }
         refresh(&mut lesson, archon_core::now());
         super::write(conn, &lesson)?;
     }
@@ -49,21 +55,32 @@ pub(in crate::store) fn score_run(conn: &Connection, outcome: &Outcome) -> Resul
 pub(super) fn refresh(lesson: &mut Lesson, at: archon_core::Timestamp) {
     assert!(lesson.wins <= lesson.uses);
     let base = if lesson.uses == 0 {
-        0.5
+        match lesson.source {
+            archon_core::lesson::LessonSource::Operator => 1.0,
+            archon_core::lesson::LessonSource::Orchestrator
+                if lesson.state == LessonState::Proposed =>
+            {
+                0.15
+            }
+            _ => 0.5,
+        }
     } else {
         wilson(lesson.wins, lesson.uses)
     };
-    let days = (at - lesson.confirmed_at.unwrap_or(lesson.created_at))
-        .num_seconds()
-        .max(0) as f64
-        / 86400.0;
+    let days = (at
+        - lesson
+            .last_used_at
+            .or(lesson.confirmed_at)
+            .unwrap_or(lesson.created_at))
+    .num_days()
+    .max(0) as f64;
     lesson.confidence = base
         * if lesson.pinned {
             1.0
         } else {
             2.0_f64.powf(-days / 30.0)
         };
-    if !lesson.pinned && lesson.uses >= 5 && lesson.confidence < 0.3 {
+    if !lesson.pinned && lesson.uses >= 5 && wilson(lesson.wins, lesson.uses) < 0.3 {
         lesson.state = LessonState::Retracted;
     }
     assert!((0.0..=1.0).contains(&lesson.confidence));

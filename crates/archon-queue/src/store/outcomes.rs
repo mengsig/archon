@@ -1,6 +1,11 @@
 //! Durable run observations and corrections; all derived columns share the JSON write.
 
 mod capture;
+mod costs;
+mod distillation;
+mod feedback;
+mod reconcile;
+mod segments;
 pub(super) mod stats;
 
 use archon_core::Timestamp;
@@ -16,23 +21,27 @@ use super::settings;
 
 impl Store {
     pub fn learning_config(&self) -> Result<LearningConfig, ArchonError> {
-        self.kv_get("learning/config")?.map_or_else(
-            || Ok(LearningConfig::default()),
-            |raw| from_json(&raw, "learning config"),
-        )
+        Ok(self.learning.borrow().clone())
     }
 
     pub fn configure_learning(&self, config: &LearningConfig) -> Result<(), ArchonError> {
         config.validate()?;
-        settings::kv_set(
-            &self.conn,
-            "learning/config",
-            &to_json(config, "learning config")?,
-        )
+        if !self.learning_config_loaded.get() {
+            if self.kv_get("learning/live-since")?.is_none() {
+                self.save_learning_value("learning/live-since", &ts(&archon_core::now()))?;
+            }
+            self.learning_config_loaded.set(true);
+        }
+        if *self.learning.borrow() != *config {
+            *self.learning.borrow_mut() = config.clone();
+        }
+        Ok(())
     }
 
     pub fn outcome(&self, run: &PipelineRunId) -> Result<Option<Outcome>, ArchonError> {
-        load(&self.conn, run)
+        load(&self.conn, run)?
+            .map(|o| self.settled_outcome(o))
+            .transpose()
     }
 
     pub fn outcomes(&self, repo: Option<&RepoId>) -> Result<Vec<Outcome>, ArchonError> {
@@ -42,7 +51,7 @@ impl Store {
         let rows = stmt
             .query_map([repo.map(RepoId::as_str)], |r| r.get::<_, String>(0))
             .ctx("query outcomes")?;
-        rows.map(|row| from_json(&row.ctx("read outcome")?, "outcome"))
+        rows.map(|row| self.settled_outcome(from_json(&row.ctx("read outcome")?, "outcome")?))
             .collect()
     }
 
@@ -82,6 +91,15 @@ impl Store {
         let tx = self.conn.unchecked_transaction().ctx("begin outcome")?;
         check_run(&tx, outcome)?;
         let mut value = outcome.clone();
+        if value.context.is_none() {
+            value.context = settings::kv_get(&tx, &format!("learning/run-context/{}", value.run))?
+                .or(settings::kv_get(
+                    &tx,
+                    &format!("learning/context/{}", value.item),
+                )?)
+                .map(|raw| from_json(&raw, "routing context"))
+                .transpose()?;
+        }
         if let Some(previous) = load(&tx, &value.run)? {
             assert_eq!(previous.item, value.item, "an outcome keeps its item");
             for correction in previous.corrections {
@@ -89,7 +107,9 @@ impl Store {
                     value.corrections.push(correction);
                 }
             }
+            value.diff = value.diff.or(previous.diff);
             value.merged = previous.merged;
+            value.feedback = previous.feedback;
         }
         for correction in corrections(&tx, &value.run)? {
             if !value.corrections.contains(&correction) {
@@ -98,6 +118,9 @@ impl Store {
         }
         if let Some(raw) = settings::kv_get(&tx, &format!("learning/merged/{}", value.run))? {
             value.merged = Some(from_json(&raw, "merge observation")?);
+        }
+        if let Some(raw) = settings::kv_get(&tx, &format!("learning/feedback/{}", value.run))? {
+            value.feedback = from_json(&raw, "attributed corrections")?;
         }
         write(&tx, &value)?;
         super::lessons::score_run(&tx, &value)?;
@@ -113,6 +136,9 @@ impl Store {
         run: &PipelineRunId,
         correction: Correction,
     ) -> Result<(), ArchonError> {
+        if !self.learning_config()?.enabled {
+            return Ok(());
+        }
         let tx = self.conn.unchecked_transaction().ctx("begin correction")?;
         correct(&tx, run, correction)?;
         tx.commit().ctx("commit correction")
@@ -168,13 +194,6 @@ pub(super) fn correct(
     run: &PipelineRunId,
     correction: Correction,
 ) -> Result<(), ArchonError> {
-    let config: LearningConfig = settings::kv_get(conn, "learning/config")?.map_or_else(
-        || Ok(LearningConfig::default()),
-        |raw| from_json(&raw, "learning config"),
-    )?;
-    if !config.enabled {
-        return Ok(());
-    }
     super::runs::load(conn, run)?;
     let mut values = corrections(conn, run)?;
     let previous = load(conn, run)?;
@@ -272,7 +291,7 @@ impl Store {
         }
         let offset = i64::try_from(offset)
             .map_err(|_| ArchonError::Invalid("outcome offset is too large".into()))?;
-        let mut stmt=self.conn.prepare("SELECT data FROM outcomes WHERE repo=?1 ORDER BY finished_at,run LIMIT ?2 OFFSET ?3")
+        let mut stmt=self.conn.prepare("SELECT data FROM outcomes WHERE repo=?1 AND finished_at>=COALESCE((SELECT value FROM kv WHERE key='learning/live-since'),'') AND NOT EXISTS (SELECT 1 FROM kv WHERE key='learning/imported/'||run) ORDER BY finished_at,run LIMIT ?2 OFFSET ?3")
             .ctx("prepare outcome window")?;
         let rows = stmt
             .query_map(params![repo.as_str(), limit, offset], |r| {
@@ -280,7 +299,7 @@ impl Store {
             })
             .ctx("query outcome window")?;
         let values: Vec<Outcome> = rows
-            .map(|r| from_json(&r.ctx("read outcome window")?, "outcome"))
+            .map(|r| self.settled_outcome(from_json(&r.ctx("read outcome window")?, "outcome")?))
             .collect::<Result<_, _>>()?;
         assert!(values.len() <= limit as usize);
         assert!(values.iter().all(|o| o.repo.as_ref() == Some(repo)));
@@ -292,13 +311,24 @@ impl Store {
         repo: &RepoId,
         since: &str,
     ) -> Result<Vec<Outcome>, ArchonError> {
-        let mut stmt=self.conn.prepare("SELECT data FROM outcomes WHERE repo=?1 AND corrected=1 AND updated_at>?2 ORDER BY updated_at,run")
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT data FROM outcomes WHERE repo=?1 AND corrected=1 AND updated_at>?2
+            AND finished_at>=COALESCE((SELECT value FROM kv WHERE key='learning/live-since'),'')
+            AND NOT EXISTS (SELECT 1 FROM kv WHERE key='learning/imported/'||run)
+            ORDER BY updated_at DESC,run DESC LIMIT 100",
+            )
             .ctx("prepare new corrections")?;
         let rows = stmt
             .query_map(params![repo.as_str(), since], |r| r.get::<_, String>(0))
             .ctx("query new corrections")?;
-        rows.map(|r| from_json(&r.ctx("read new corrections")?, "outcome"))
-            .collect()
+        let values: Vec<Outcome> = rows
+            .map(|r| from_json(&r.ctx("read new corrections")?, "outcome"))
+            .collect::<Result<_, _>>()?;
+        assert!(values.len() <= 100);
+        assert!(values.iter().all(|o| o.repo.as_ref() == Some(repo)));
+        Ok(values)
     }
 }
 
@@ -326,4 +356,84 @@ fn check_run(conn: &Connection, outcome: &Outcome) -> Result<(), ArchonError> {
         ));
     }
     Ok(())
+}
+
+impl Store {
+    pub(super) fn route_outcomes(
+        &self,
+        repo: Option<&RepoId>,
+        pipeline: &str,
+        stage: &str,
+        size: Option<archon_core::outcome::DiffSize>,
+        context: Option<&archon_core::outcome::RouteContext>,
+    ) -> Result<Vec<Outcome>, ArchonError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT o.data FROM outcomes o WHERE NOT EXISTS (SELECT 1 FROM run_edits WHERE run=o.run)
+             AND NOT EXISTS (SELECT 1 FROM kv WHERE key='learning/reshaped/'||o.run) AND (?1 IS NULL OR o.repo=?1) AND o.pipeline=?2
+             AND (?3 IS NULL OR o.size=?3) AND EXISTS
+             (SELECT 1 FROM outcome_stages s WHERE s.run=o.run AND s.stage_id=?4)
+             AND (?5 IS NULL OR (json_extract(o.data,'$.context.revision')=?5
+                 AND json_extract(o.data,'$.context.review')=?6 AND json_extract(o.data,'$.context.task_class')=?7))
+             ORDER BY o.finished_at DESC, o.run DESC LIMIT 500"
+        ).ctx("prepare contextual routes")?;
+        let rows = stmt
+            .query_map(
+                params![
+                    repo.map(RepoId::as_str),
+                    pipeline,
+                    size.map(|s| s.as_str()),
+                    stage,
+                    context.map(|c| &c.revision),
+                    context.map(|c| &c.review),
+                    context.map(|c| &c.task_class)
+                ],
+                |r| r.get::<_, String>(0),
+            )
+            .ctx("query contextual routes")?;
+        rows.map(|raw| {
+            self.settled_outcome(from_json(&raw.ctx("read contextual outcome")?, "outcome")?)
+        })
+        .collect()
+    }
+}
+
+impl Store {
+    pub fn learning_models_stale(&self) -> bool {
+        self.learning_models_at
+            .get()
+            .is_none_or(|at| archon_core::now() - at >= chrono::Duration::minutes(5))
+    }
+
+    pub fn set_learning_models(&self, mut models: Vec<archon_core::model::ModelRef>) {
+        models.sort();
+        models.dedup();
+        assert!(
+            models
+                .iter()
+                .all(|m| !m.provider.is_empty() && !m.model.is_empty())
+        );
+        *self.learning_models.borrow_mut() = models;
+        self.learning_models_at.set(Some(archon_core::now()));
+    }
+
+    pub fn learning_models(&self) -> Vec<archon_core::model::ModelRef> {
+        self.learning_models.borrow().clone()
+    }
+}
+
+impl Store {
+    pub fn prune_learning_snapshots(&self) -> Result<usize, ArchonError> {
+        let generation = self
+            .kv_get(super::keys::ORCHESTRATOR_GENERATION)?
+            .unwrap_or_default();
+        let current = format!("learning/orchestrator/{generation}");
+        self.conn
+            .execute(
+                "DELETE FROM kv WHERE key LIKE 'learning/orchestrator/%' AND key<>?1
+             AND rowid NOT IN (SELECT rowid FROM kv WHERE key LIKE 'learning/orchestrator/%'
+                              ORDER BY rowid DESC LIMIT 9)",
+                [current],
+            )
+            .ctx("prune old orchestrator lesson snapshots")
+    }
 }

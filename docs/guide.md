@@ -183,6 +183,8 @@ archon lessons retract lsn_ID
 archon lessons accept lsn_ID
 archon lessons why qi_ID
 archon lessons stats --repo my-repo --json
+archon pipelines proposals
+archon pipelines proposals learned-check
 archon pipelines accept learned-check
 ```
 
@@ -191,23 +193,32 @@ A run uses at most six lessons, with a 1,200-byte rendered section, preferring
 its repository and pipeline. Lessons are untrusted advice and cannot expand
 permissions. Duplicate text is merged; operator edits take precedence. Wins
 are successful runs without corrections. Five or more scored uses can retract
-a lesson whose decayed Wilson confidence drops below 0.3. Pinning prevents
+a lesson whose raw Wilson lower bound drops below 0.3. Confidence decays since
+last use; age alone never retracts a winning lesson. Pinning prevents
 automatic retraction and decay; `pin --unpin` releases the pin.
 
-Retrying a finished item, rejecting a gate and steering are corrections.
-An operator message naming a full `qi_…` ID and saying “wrong”, “incorrect”,
-“not fixed”, “still fails”, or “regression” also records a contradiction.
-For 14 days after `archond` delivers a pull request it asks GitHub every 10
-minutes what became of it: a merge is recorded, and a review requesting
-changes or a close without a merge is a correction of the run that shipped it.
-Late corrections revoke lesson wins. Historical evidence and explicit plans
-remain available when learning is disabled; see [configuration](configuration.md#learning).
+Ordinary chat and scope or effort steers never count as model failures. To record
+an explicit correction, send a structured operator message:
+`correction {"item":"qi_ID","stage":"implement","cause":"quality","reason":"The result missed the invariant"}`.
+Causes can also be `scope`, `infrastructure` or `budget`; only quality feedback
+penalizes the named stage. A reviewer that correctly finds a builder's error is not
+penalized. Run-level retry, gate and GitHub observations remain visible as audit
+history and can revoke lesson wins.
 
-The orchestrator starts with the lessons chosen for it, under a heading of
-their own that calls them advice, and keeps them until it is replaced. When
-an item fails it is woken with a hint to `record_lesson` what the failure
-teaches. A lesson it records is used at once, and `archon lessons retract`
-takes it back; one a distillation proposes waits for `archon lessons accept`.
+The orchestrator's lessons require a source item and stay scoped to its repository.
+They begin Proposed with low weight until a confirming win or your acceptance.
+Distilled proposals wait for `archon lessons accept`. Lessons are one plain sentence
+without markup, links, external paths or instruction overrides. Use `lessons --all`
+to inspect proposed advice. Read-only lessons commands also work with the daemon
+stopped and do not start Aether.
+
+Routing explores ready, permitted models on at most ten percent of item IDs,
+including models with no history. `why` shows Wilson quality intervals, cost and the
+pipeline revision, review level, task class and diff-size bucket. You can tag an item
+`task:maintenance` or `diff:small` to keep evidence relevant. Costs may settle after
+completion; statistics and pending completion news use the current ledger figure.
+Distillation has one errand per repository at a time and a global default $3 daily
+reservation. Imported history is not distilled. See [configuration](configuration.md#learning).
 
 ## Agents talking to the orchestrator
 

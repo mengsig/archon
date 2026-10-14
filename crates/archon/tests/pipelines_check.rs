@@ -95,3 +95,32 @@ fn a_broken_repo_pipeline_fails_the_check_for_that_repo() {
     let listing: serde_json::Value = serde_json::from_slice(&list.stdout).unwrap();
     assert_eq!(listing["problems"].as_array().unwrap().len(), 1);
 }
+
+#[test]
+fn missing_proposal_is_not_found_and_names_its_path() {
+    let home = tempfile::tempdir().unwrap();
+    let out = archon(home.path(), &["--json", "pipelines", "accept", "missing"]);
+    assert!(!out.status.success());
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(text.contains("not_found"), "{text}");
+    assert!(text.contains("missing.proposed"), "{text}");
+}
+
+#[test]
+fn learning_empty_states_and_proposals_do_not_start_a_daemon() {
+    let home = tempfile::tempdir().unwrap();
+    for (args, expected) in [
+        (vec!["lessons"], "No lessons match this selection."),
+        (vec!["pipelines", "proposals"], "No pipeline proposals."),
+    ] {
+        let out = archon(home.path(), &args);
+        assert!(out.status.success(), "{out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), expected);
+        assert!(!home.path().join("archond.sock").exists());
+        assert!(!home.path().join("data").exists());
+    }
+}

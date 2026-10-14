@@ -121,6 +121,10 @@ pub struct StageRun {
     /// 0-based slot within a fan-out stage; 0 for single-agent stages.
     pub fan_index: u32,
     pub choice: ModelChoice,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub model_segments: Vec<ModelSegment>,
+    #[serde(default)]
+    pub infrastructure_failure: bool,
     /// Aether identifiers, present once Aether acknowledged creation.
     pub aether_agent: Option<AetherAgentId>,
     pub aether_task: Option<AetherTaskId>,
@@ -131,6 +135,22 @@ pub struct StageRun {
     pub cost_usd: f64,
     pub started_at: Timestamp,
     pub finished_at: Option<Timestamp>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelSegment {
+    pub delivery: String,
+    pub choice: ModelChoice,
+    pub started_at: Timestamp,
+    pub cost_before_usd: f64,
+}
+
+impl StageRun {
+    pub fn current_choice(&self) -> &ModelChoice {
+        self.model_segments
+            .last()
+            .map_or(&self.choice, |s| &s.choice)
+    }
 }
 
 /// The newest `pr_url` a completed stage reported (the ship stage's), from
@@ -425,6 +445,8 @@ mod tests {
             stage_id: "ship".into(),
             attempt: 1,
             fan_index: 0,
+            model_segments: Vec::new(),
+            infrastructure_failure: false,
             choice: ModelChoice {
                 model: "claude-code/opus".parse().unwrap(),
                 effort: crate::model::Effort::Low,

@@ -1,10 +1,10 @@
 //! Bounded historical import and finish-time capture from the existing ledger.
 
 use super::super::Store;
-use super::super::codec::{SqlContext, from_json};
+use super::super::codec::SqlContext;
 use archon_core::error::ArchonError;
 use archon_core::outcome::{DiffStat, FailureClass, Outcome, OutcomeResult, OutcomeStage};
-use archon_core::run::{PipelineRun, RunState, StageOutcome, StageRun, StageState, Verdict};
+use archon_core::run::{PipelineRun, RunState, StageOutcome, StageRun, Verdict};
 use rusqlite::OptionalExtension;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -19,9 +19,10 @@ impl Store {
             return Ok(());
         }
         let item = self.item(&run.item)?;
-        if self
-            .kv_get(&format!("learning/distillation/{}", item.id))?
-            .is_some()
+        if item.tags.iter().any(|t| t == "archon:distillation")
+            || self
+                .kv_get(&format!("learning/distillation/{}", item.id))?
+                .is_some()
         {
             return Ok(());
         }
@@ -42,7 +43,7 @@ impl Store {
             item: run.item.clone(),
             repo: item.repo,
             pipeline: run.pipeline.clone(),
-            diff: diff.or(reported_diff(&stages)?),
+            diff: diff.or_else(|| reported_diff(&stages)),
             review_rounds: stages
                 .iter()
                 .filter(|s| matches!(s.verdict, Some(Verdict::Pass | Verdict::Fail)))
@@ -53,52 +54,20 @@ impl Store {
             result,
             failure,
             corrections: historical_corrections(self, run)?,
+            feedback: Vec::new(),
+            context: None,
             merged: None,
             cost_usd: total,
+            cost_provisional: true,
+            count_estimates: estimates,
             wall_secs: elapsed(run.started_at, finished)?,
             finished_at: finished,
         };
         self.record_outcome(&outcome)
     }
-
-    /// Keyset scan: at most `limit` existing runs per background turn, never in migrations.
-    pub fn backfill_outcomes(&self, limit: usize, estimates: bool) -> Result<bool, ArchonError> {
-        if !self.learning_config()?.enabled || self.kv_get("learning/backfill/done")?.is_some() {
-            return Ok(true);
-        }
-        if !(1..=100).contains(&limit) {
-            return Err(ArchonError::Invalid("backfill batch must be 1..100".into()));
-        }
-        let cursor = self.kv_get("learning/backfill/cursor")?.unwrap_or_default();
-        let mut stmt = self
-            .conn
-            .prepare("SELECT id,data FROM runs WHERE id>?1 ORDER BY id LIMIT ?2")
-            .ctx("prepare outcome backfill")?;
-        let rows = stmt
-            .query_map(rusqlite::params![cursor, limit as i64], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-            })
-            .ctx("query outcome backfill")?;
-        let mut count = 0;
-        for row in rows {
-            let (id, raw) = row.ctx("read backfill run")?;
-            let run: PipelineRun = from_json(&raw, "backfill run")?;
-            assert_eq!(run.id.as_str(), id);
-            if run.state.is_terminal() && self.outcome(&run.id)?.is_none() {
-                self.capture_outcome(&run, None, estimates)?;
-            }
-            super::super::settings::kv_set(&self.conn, "learning/backfill/cursor", &id)?;
-            count += 1;
-        }
-        assert!(count <= limit);
-        if count < limit {
-            super::super::settings::kv_set(&self.conn, "learning/backfill/done", "1")?;
-        }
-        Ok(count < limit)
-    }
 }
 
-fn stage_observations(
+pub(super) fn stage_observations(
     store: &Store,
     stages: &[StageRun],
     estimates: bool,
@@ -116,45 +85,46 @@ fn stage_observations(
         } else {
             0.0
         };
-        let key = (
-            stage.stage_id.clone(),
-            stage.choice.model.to_string(),
-            stage.choice.effort.to_string(),
-        );
-        let (observation, last_attempt) = grouped.entry(key).or_insert_with(|| {
-            (
-                OutcomeStage {
-                    stage: stage.stage_id.clone(),
-                    choice: stage.choice.clone(),
-                    cost_usd: 0.0,
-                    wall_secs: 0,
-                    attempts: 0,
-                    passed: Some(true),
-                },
-                0,
-            )
-        });
-        observation.cost_usd += cost;
-        observation.wall_secs += stage
-            .finished_at
-            .map(|end| elapsed(stage.started_at, end))
-            .transpose()?
-            .unwrap_or(0);
-        observation.attempts += 1;
-        if stage.attempt > *last_attempt {
-            observation.passed = Some(true);
-            *last_attempt = stage.attempt;
-        }
-        if stage.attempt == *last_attempt {
-            observation.passed = Some(
-                observation.passed == Some(true)
-                    && stage.state == StageState::Completed
-                    && stage.verdict != Some(Verdict::Fail),
-            );
+        for observed in super::segments::observations(stage, cost)? {
+            merge_observation(&mut grouped, observed, stage.attempt);
         }
     }
-    assert!(grouped.len() <= stages.len());
+    assert!(grouped.len() <= stages.iter().map(|s| 1 + s.model_segments.len()).sum());
     Ok(grouped.into_values().map(|(stage, _)| stage).collect())
+}
+
+fn merge_observation(
+    grouped: &mut BTreeMap<(String, String, String), (OutcomeStage, u32)>,
+    incoming: OutcomeStage,
+    attempt: u32,
+) {
+    assert!(attempt > 0);
+    assert!(incoming.cost_usd.is_finite() && incoming.cost_usd >= 0.0);
+    let key = (
+        incoming.stage.clone(),
+        incoming.choice.model.to_string(),
+        incoming.choice.effort.to_string(),
+    );
+    let (observed, last_attempt) = grouped.entry(key).or_insert_with(|| {
+        (
+            OutcomeStage {
+                cost_usd: 0.0,
+                wall_secs: 0,
+                attempts: 0,
+                ..incoming.clone()
+            },
+            attempt,
+        )
+    });
+    observed.cost_usd += incoming.cost_usd;
+    observed.wall_secs += incoming.wall_secs;
+    observed.attempts += 1;
+    if attempt > *last_attempt {
+        observed.passed = incoming.passed;
+        *last_attempt = attempt;
+    } else if incoming.passed.is_some() {
+        observed.passed = Some(observed.passed != Some(false) && incoming.passed == Some(true));
+    }
 }
 
 fn elapsed(start: archon_core::Timestamp, end: archon_core::Timestamp) -> Result<u64, ArchonError> {
@@ -200,20 +170,25 @@ fn failure_class(stage_id: &str, error: &str) -> FailureClass {
     }
 }
 
-fn reported_diff(stages: &[StageRun]) -> Result<Option<DiffStat>, ArchonError> {
-    let value = stages
+fn reported_diff(stages: &[StageRun]) -> Option<DiffStat> {
+    for value in stages
         .iter()
         .rev()
-        .find_map(|s| s.structured.as_ref()?.get("diff_stat"));
-    value
-        .map(|v| {
-            serde_json::from_value(v.clone())
-                .map_err(|e| ArchonError::Invalid(format!("reported diff_stat: {e}")))
-        })
-        .transpose()
+        .filter_map(|s| s.structured.as_ref()?.get("diff_stat"))
+    {
+        match serde_json::from_value(value.clone()) {
+            Ok(diff) => return Some(diff),
+            Err(error) => tracing::debug!(%error, "ignoring unstructured reported diff_stat"),
+        }
+    }
+    None
 }
 
-fn stage_charge(store: &Store, stage: &StageRun, estimates: bool) -> Result<f64, ArchonError> {
+pub(super) fn stage_charge(
+    store: &Store,
+    stage: &StageRun,
+    estimates: bool,
+) -> Result<f64, ArchonError> {
     let Some(agent) = &stage.aether_agent else {
         return Ok(stage.cost_usd);
     };

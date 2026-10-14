@@ -26,9 +26,7 @@ pub(super) async fn enqueue(
     check_enqueue(&req.title, &req.brief, &req.tags, req.budget_usd)?;
     let (env, resolved) = enqueue_context(ctx, &req).await?;
     let id = QueueItemId::new();
-    if ctx.config.learning.enabled {
-        crate::learned::hint_size(&*ctx.store.lock().await, &id, &req.tags)?;
-    }
+    crate::learned::prepare_routing(ctx, &id, &resolved, &req.tags).await?;
     let plan = filled_plan(
         ctx,
         &id,
@@ -503,11 +501,7 @@ pub(super) async fn filled_plan(
     let learned = learned::plan_for_item(&store, id, repo, spec, &policy, &plan)?;
     let mut plan = plan;
     plan.0.extend(learned.0);
-    // A known diff size is routed on its own evidence: pooled evidence must not refill it.
-    match learned::item_size(&store, id)? {
-        Some(_) => knobs::fill_static_stages(base, spec, plan, fallback.as_ref()),
-        None => knobs::fill_plan(&store, repo, (base, spec), plan, &policy, fallback.as_ref()),
-    }
+    knobs::fill_static_stages(base, spec, plan, fallback.as_ref())
 }
 
 /// Every stage has 1 to `fan_out` choices, no unknown stage is named, and

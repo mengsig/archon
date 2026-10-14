@@ -113,12 +113,13 @@ async fn steering_is_the_orchestrators_and_the_operators() {
 #[tokio::test]
 async fn lessons_are_read_by_anyone_and_edited_by_the_operator() {
     let h = Harness::new().await;
+    let item = h.enqueue("lesson source").await;
     let record = Request::RecordLesson(LessonDraft {
         kind: LessonKind::Pitfall,
         text: "Run make lint before shipping.".into(),
-        repo: None,
+        repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: None,
-        item: None,
+        item: Some(item.id),
     });
     assert_orchestrators_alone(as_helper(&h, record.clone()).await);
     let Reply::Lesson(lesson) = h.orchestrator(record.clone()).await.unwrap() else {

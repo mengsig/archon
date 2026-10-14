@@ -46,11 +46,11 @@ pub(super) fn fold(held: Vec<Held>, facts: &Facts) -> (Option<TriggerEvent>, Vec
                     },
                 ..
             } => outcomes.push(FinishedItem {
+                cost_usd: facts.costs.get(&item).copied().unwrap_or(cost_usd),
                 item,
                 title,
                 state,
                 pr_url,
-                cost_usd,
             }),
             other => rest.push(other),
         }

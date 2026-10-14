@@ -96,8 +96,12 @@ fn sample_outcome(
         result: OutcomeResult::Succeeded,
         failure: None,
         corrections: Vec::new(),
+        feedback: Vec::new(),
+        context: None,
         merged: None,
         cost_usd: cost,
+        cost_provisional: true,
+        count_estimates: true,
         wall_secs: 30,
         finished_at: now,
     }
@@ -285,7 +289,7 @@ async fn escaped_lesson_text_fits_the_rendered_contract_and_orchestrator_limits(
     for n in 0..10 {
         h.cli(Request::RecordLesson(LessonDraft {
             kind: LessonKind::Practice,
-            text: format!("{n} {}", "\\\"".repeat(140)),
+            text: format!("Observation {n} {}.", "a".repeat(270)),
             repo: None,
             pipeline: None,
             item: None,
@@ -298,7 +302,7 @@ async fn escaped_lesson_text_fits_the_rendered_contract_and_orchestrator_limits(
     assert!(!advice.is_empty() && advice.len() <= 4096);
     let lessons = store.select_lessons(None, Some(PIPELINE), 6, 1200).unwrap();
     assert!(!lessons.is_empty());
-    let contract = archon_pipeline::contract::lesson_rules(&lessons);
+    let contract = archon_pipeline::contract::lesson_rules(&lessons).unwrap();
     assert!(contract.len() <= 1200);
     assert!(contract.contains("never widen permissions"));
 }
@@ -399,4 +403,293 @@ async fn a_known_diff_size_never_pools_evidence_from_another_size() {
         medium.model_plan.0["implement"][0].model, h.ctx.config.orchestrator.model,
         "a bucket with no evidence takes the default, not another size's choice"
     );
+}
+
+#[tokio::test]
+async fn distillation_null_proposal_is_no_proposal() {
+    let mut config = archon_core::config::Config::default();
+    config.learning.distill_every = 1;
+    let h = Harness::with_config(config).await;
+    samples(&h, "codex/cheap", 0.2, 1).await;
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    h.dispatch().await;
+    h.settle_running(|_| archon_core::run::StageOutcome::Completed {
+        summary: "Distilled".into(),
+        structured: Some(serde_json::json!({"lessons":[{"kind":"practice","text":"Migration checks catch schema drift."}],"pipeline_proposal":null})),
+    }).await;
+    let store = h.ctx.store.lock().await;
+    let errands = store.items(&Default::default()).unwrap();
+    let errand = errands.iter().find(|i| i.pipeline == "errand").unwrap();
+    let run = store.runs_for_item(&errand.id).unwrap().pop().unwrap();
+    assert_eq!(
+        store
+            .kv_get(&format!("learning/applied/{}", run.id))
+            .unwrap()
+            .as_deref(),
+        Some("1")
+    );
+    assert_eq!(store.lessons(&Default::default()).unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn rejected_distillation_never_partially_records_lessons() {
+    let mut config = archon_core::config::Config::default();
+    config.learning.distill_every = 1;
+    let h = Harness::with_config(config).await;
+    samples(&h, "codex/cheap", 0.2, 1).await;
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    h.dispatch().await;
+    h.settle_running(|_| archon_core::run::StageOutcome::Completed {
+        summary: "Distilled".into(),
+        structured: Some(serde_json::json!({"lessons":[{"kind":"practice","text":"Migration checks catch schema drift."}],"pipeline_proposal":{"name":"../escape","files":{}}})),
+    }).await;
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .lessons(&Default::default())
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn distillation_has_only_one_in_flight_per_repository() {
+    let mut config = archon_core::config::Config::default();
+    config.learning.distill_every = 1;
+    let h = Harness::with_config(config).await;
+    samples(&h, "codex/cheap", 0.2, 4).await;
+    for _ in 0..4 {
+        archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    }
+    let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
+    assert_eq!(items.iter().filter(|i| i.pipeline == "errand").count(), 1);
+}
+
+#[tokio::test]
+async fn cold_start_explores_ready_models_within_policy_and_keeps_explanations() {
+    let h = Harness::new().await;
+    let own = h.ctx.config.orchestrator.model.clone();
+    h.ctx.store.lock().await.set_learning_models(vec![
+        own.clone(),
+        "codex/unseen".parse().unwrap(),
+        "codex/denied".parse().unwrap(),
+    ]);
+    h.repo_config("[models]\ndeny = [\"codex/denied\"]\n");
+    let mut unseen = 0;
+    for n in 0..200 {
+        let item = h
+            .enqueue_with(&format!("cold {n}"), Default::default())
+            .await
+            .unwrap();
+        let chosen = &item.model_plan.0["implement"][0];
+        assert_ne!(chosen.model.to_string(), "codex/denied");
+        if chosen.model.to_string() == "codex/unseen" {
+            unseen += 1;
+            let why = h.ctx.store.lock().await.lesson_why(&item.id).unwrap();
+            assert!(why.routing["implement"].contains("Wilson"));
+            assert!(why.routing["implement"].contains("revision="));
+        }
+    }
+    assert!(
+        (1..=40).contains(&unseen),
+        "{unseen} cold-start explorations"
+    );
+}
+
+#[tokio::test]
+async fn orchestrator_lessons_require_an_item_and_start_scoped_and_proposed() {
+    use archon_core::lesson::{LessonDraft, LessonKind, LessonState};
+    let h = Harness::new().await;
+    let mut draft = LessonDraft {
+        kind: LessonKind::Practice,
+        text: "Migration checks catch schema drift.".into(),
+        repo: None,
+        pipeline: None,
+        item: None,
+    };
+    assert!(
+        h.orchestrator(Request::RecordLesson(draft.clone()))
+            .await
+            .is_err()
+    );
+    let item = h.enqueue("lesson source").await;
+    draft.item = Some(item.id.clone());
+    let Reply::Lesson(lesson) = h.orchestrator(Request::RecordLesson(draft)).await.unwrap() else {
+        panic!("lesson");
+    };
+    assert_eq!(lesson.scope.repo, item.repo);
+    assert_eq!(lesson.state, LessonState::Proposed);
+    assert!(lesson.confidence <= 0.15);
+    let selected = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .select_lessons(item.repo.as_ref(), Some(PIPELINE), 6, 1200)
+        .unwrap();
+    assert_eq!(selected.len(), 1);
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .select_lessons(None, Some(PIPELINE), 6, 1200)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn a_capture_error_after_commit_does_not_abort_cancellation_or_agent_cleanup() {
+    let h = Harness::new().await;
+    let item = h.enqueue("finish despite learning").await;
+    h.dispatch().await;
+    let stage = h.running().await.pop().unwrap();
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&format!("run_vars:{}", stage.run), "malformed")
+        .unwrap();
+    h.cli(Request::CancelItem {
+        item: item.id.clone(),
+        reason: Some("stop".into()),
+    })
+    .await
+    .unwrap();
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .item(&item.id)
+            .unwrap()
+            .state
+            .is_terminal()
+    );
+    assert!(
+        h.backend
+            .cancelled()
+            .contains(stage.aether_agent.as_ref().unwrap())
+    );
+    let notices = h
+        .notices(archon_core::notify::NotificationKind::Outcome)
+        .await;
+    assert_eq!(
+        notices
+            .iter()
+            .filter(|n| n.contains("Learning could not"))
+            .count(),
+        1
+    );
+    assert!(notices.iter().any(|n| n.contains("Cancelled")));
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .outcome(&stage.run)
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn distillation_reserves_a_global_daily_budget_and_disabling_cancels_queued_work() {
+    let mut config = archon_core::config::Config::default();
+    config.learning.distill_every = 1;
+    config.learning.distill_daily_budget_usd = 1.0;
+    let mut h = Harness::with_config(config).await;
+    samples(&h, "codex/cheap", 0.2, 3).await;
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    assert!(
+        !h.ctx
+            .store
+            .lock()
+            .await
+            .distillation_available(&archon_core::id::RepoId::new(), 1.0)
+            .unwrap()
+    );
+    std::sync::Arc::get_mut(&mut h.ctx)
+        .unwrap()
+        .config
+        .learning
+        .enabled = false;
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
+    let errands: Vec<_> = items.iter().filter(|i| i.pipeline == "errand").collect();
+    assert_eq!(errands.len(), 1);
+    assert!(matches!(errands[0].state, QueueState::Cancelled { .. }));
+}
+
+#[tokio::test]
+async fn imported_history_never_queues_paid_distillation() {
+    let mut config = archon_core::config::Config::default();
+    config.learning.distill_every = 1;
+    let h = Harness::with_config(config).await;
+    samples(&h, "codex/cheap", 0.2, 5).await;
+    let store = h.ctx.store.lock().await;
+    for outcome in store.outcomes(None).unwrap() {
+        store
+            .save_learning_value(&format!("learning/imported/{}", outcome.run), "1")
+            .unwrap();
+    }
+    drop(store);
+    for _ in 0..3 {
+        archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    }
+    let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
+    assert!(!items.iter().any(|i| i.pipeline == "errand"));
+}
+
+#[tokio::test]
+async fn ordinary_operator_chat_is_not_a_correction_but_structured_feedback_is() {
+    let h = Harness::new().await;
+    let item = h.enqueue("operator feedback").await;
+    h.dispatch().await;
+    let stage = h.running().await.pop().unwrap();
+    let sent = h
+        .cli(Request::Say {
+            text: "Actually add another test for the typo".into(),
+        })
+        .await;
+    assert!(matches!(
+        sent,
+        Err(archon_core::ArchonError::Unavailable(_))
+    ));
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .kv_get(&format!("learning/corrections/{}", stage.run))
+            .unwrap()
+            .is_none()
+    );
+    let event = serde_json::json!({"item":item.id,"stage":stage.stage_id,"cause":"quality","reason":"The result regresses parsing"});
+    let sent = h
+        .cli(Request::Say {
+            text: format!("correction {event}"),
+        })
+        .await;
+    assert!(matches!(
+        sent,
+        Err(archon_core::ArchonError::Unavailable(_))
+    ));
+    let feedback = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .kv_get(&format!("learning/feedback/{}", stage.run))
+        .unwrap()
+        .unwrap();
+    let events: Vec<archon_core::outcome::CorrectionEvent> =
+        serde_json::from_str(&feedback).unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].item, item.id);
+    assert_eq!(events[0].stage, stage.stage_id);
 }

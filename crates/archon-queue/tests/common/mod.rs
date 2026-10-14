@@ -161,6 +161,8 @@ pub fn stage(run: &PipelineRun, fan_index: u32) -> StageRun {
         stage_id: "implement".into(),
         attempt: 1,
         fan_index,
+        model_segments: Vec::new(),
+        infrastructure_failure: false,
         choice: choice(),
         aether_agent: None,
         aether_task: None,

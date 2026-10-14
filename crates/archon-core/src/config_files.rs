@@ -36,6 +36,7 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 
 # [learning]
 # enabled = true            # outcomes, learned defaults, lessons and distillation
+# distill_daily_budget_usd = 3.0 # global UTC daily reservation for distillation
 # distill_every = 20        # new outcomes per repository before a budgeted errand
 # explore_rate = 0.1        # deterministic cheaper-choice exploration; 0..0.1
 

@@ -55,6 +55,8 @@ struct At<'a> {
     stages: &'a [StageRun],
     /// The stage `model`, `effort` and `abort` are about.
     target: &'a str,
+    /// A delivery of the run is queued, running or recorded.
+    delivering: bool,
 }
 
 impl At<'_> {
@@ -84,13 +86,14 @@ fn not_runnable(error: ArchonError) -> ArchonError {
 }
 
 /// Work out `asked` for `run`, whose stage runs are `stages`, and check it
-/// by building the driver it would leave.
+/// by building the driver it would leave. `delivering`: see [`At`].
 pub(super) async fn plan(
     ctx: &DaemonContext,
     asked: &Asked<'_>,
     run: &PipelineRun,
     stages: &[StageRun],
     per_item_cap: f64,
+    delivering: bool,
 ) -> Result<Change, ArchonError> {
     assert!(stages.iter().all(|stage| stage.run == run.id));
     let live_stage = run.state.live_stage().expect("a live run is at a stage");
@@ -99,6 +102,7 @@ pub(super) async fn plan(
         run,
         stages,
         target,
+        delivering,
     };
     let mut change = Change {
         blueprint: recover::blueprint(ctx, run).await?,
@@ -210,6 +214,12 @@ async fn reshape_run(
         same_start(&blueprint.spec, &reshaped.spec, prefix),
         "the stages that started keep their place"
     );
+    refuse_while_delivering(at)?;
+    let gone = match reshaped.edit {
+        RunEdit::SwitchPipeline { .. } => BTreeSet::new(),
+        _ => removed(blueprint),
+    };
+    refuse_unshipped(&blueprint.spec, &reshaped.spec, &gone)?;
     let planned = |stage: &StageSpec| reshaped.plan.choices_for(&stage.id).is_some();
     assert!(
         reshaped.spec.file.stages.iter().all(planned),
@@ -237,6 +247,58 @@ async fn reshape_run(
     change.what.push(reshaped.what);
     change.rebuild = true;
     Ok(())
+}
+
+/// Refuse to change the stages of a run whose delivery is queued, running or
+/// recorded: it would ship the commit the stages it replaces left.
+fn refuse_while_delivering(at: &At<'_>) -> Result<(), ArchonError> {
+    if !at.delivering {
+        return Ok(());
+    }
+    assert!(!at.run.state.is_terminal(), "only a live run is steered");
+    Err(ArchonError::InvalidTransition(format!(
+        "run {} is delivering its change already, so its stages can no longer change; steer it \
+         with a note, or retry the item with the new stages once it finished",
+        at.run.id
+    )))
+}
+
+/// Refuse a steer that leaves a run of `had`, which archond delivers, with
+/// no stage that ships in `left` but those in `gone`: it would ship nothing.
+fn refuse_unshipped(
+    had: &PipelineSpec,
+    left: &PipelineSpec,
+    gone: &BTreeSet<String>,
+) -> Result<(), ArchonError> {
+    let Some(record) = had.ship_record_stage() else {
+        return Ok(());
+    };
+    assert!(
+        had.stage_index(&record.id).is_some(),
+        "validated: a stage of the run"
+    );
+    assert!(
+        !left.file.stages.is_empty(),
+        "a run keeps at least one stage"
+    );
+    let stays = |id: &str| left.stage_index(id).is_some() && !gone.contains(id);
+    let recorded = left
+        .ship_record_stage()
+        .is_some_and(|stage| stays(&stage.id));
+    let mut shippers = left
+        .file
+        .stages
+        .iter()
+        .filter(|s| s.kind == StageKind::Ship);
+    if recorded || shippers.any(|stage| stays(&stage.id)) {
+        return Ok(());
+    }
+    Err(ArchonError::Invalid(format!(
+        "stage `{0}` writes the ship record this run is delivered from, and the steer leaves \
+         no stage that writes one or ships, so the run would deliver nothing; keep `{0}`, or \
+         bring a stage that writes a ship record",
+        record.id
+    )))
 }
 
 /// `choice` with the model and the effort the steer names.
@@ -394,6 +456,7 @@ fn abort(
         return Ok(());
     };
     assert!(change.cancel.is_empty(), "a steer aborts one group");
+    refuse_while_delivering(at)?;
     let blueprint = &mut change.blueprint;
     let Some(index) = blueprint.spec.stage_index(at.target) else {
         return Err(no_stage(&blueprint.spec, at.target));
@@ -408,6 +471,7 @@ fn abort(
     }
     let mut gone = removed(blueprint);
     gone.extend(passed_over(&blueprint.spec, index, &then));
+    refuse_unshipped(&blueprint.spec, &blueprint.spec, &gone)?;
     let knobs = blueprint.item.autonomy;
     blueprint.item.autonomy =
         shape::within_ceiling(ctx, asked.env, &blueprint.spec, &gone, knobs, knobs)?;
@@ -427,18 +491,20 @@ fn abort(
         attempt > 0 || change.cancel.is_empty(),
         "a stage that never started has no agents to stop"
     );
-    let next = match &then {
+    change.what.push(aborted(at.target, attempt, &then));
+    change.rebuild = true;
+    Ok(())
+}
+
+/// What aborting attempt `attempt` of `stage`, then doing `then`, changed.
+fn aborted(stage: &str, attempt: u32, then: &Then) -> String {
+    let next = match then {
         Then::Retry => "retries it".to_owned(),
         Then::Skip => "skips it".to_owned(),
         Then::Goto { to } => format!("goes to stage `{to}`"),
     };
-    change.what.push(match attempt {
-        0 => format!("removed stage `{}`", at.target),
-        _ => format!(
-            "aborted stage `{}` (attempt {attempt}); the run {next}",
-            at.target
-        ),
-    });
-    change.rebuild = true;
-    Ok(())
+    match attempt {
+        0 => format!("removed stage `{stage}`"),
+        _ => format!("aborted stage `{stage}` (attempt {attempt}); the run {next}"),
+    }
 }

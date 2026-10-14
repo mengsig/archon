@@ -294,12 +294,12 @@ fn an_item_holding_only_worktrees_set_aside_is_a_team_run() {
     let api = r.worker("api");
     plant_filter(&api, "evil", &r.marker);
     r.set_aside("api", 2);
-    let manager = &r.manager;
+    let (manager, data) = (&r.manager, r.dir.path().join("data"));
     manager
-        .remove(&r.repo, &api)
+        .remove(&data, &r.repo, &api)
         .expect("remove the role's worktree");
     manager
-        .remove(&r.repo, &r.run.path)
+        .remove(&data, &r.repo, &r.run.path)
         .expect("remove the run worktree");
     let refused = manager
         .create(

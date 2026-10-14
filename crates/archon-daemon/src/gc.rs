@@ -98,6 +98,8 @@ impl Policy {
 pub struct Roots {
     pub worktrees: PathBuf,
     pub scratch: PathBuf,
+    /// Where the shadows that check a worktree is clean live.
+    pub data_dir: PathBuf,
 }
 
 impl Roots {
@@ -105,8 +107,13 @@ impl Roots {
         let roots = Self {
             worktrees: canonical_root(&paths.worktrees)?,
             scratch: canonical_root(&paths.scratch)?,
+            data_dir: canonical_root(&paths.data_dir)?,
         };
         assert!(roots.worktrees.is_absolute() && roots.scratch.is_absolute());
+        assert!(
+            roots.data_dir.is_absolute(),
+            "the data directory is absolute"
+        );
         Ok(roots)
     }
 }

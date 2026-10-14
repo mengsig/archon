@@ -24,19 +24,32 @@ fi
 slot() { printf '%s/pr-%s' "$state" "$(printf '%s' "$1" | tr '/' '_')"; }
 case "$1 $2" in
 "pr list")
-    [ "$3 $5 $6 $7 $8 $9" = "--head --state open --limit 2 --json" ] || exit 2
+    if [ "$3 $4 $5 $6 $7" = "--state open --limit 1000 --json" ]; then
+        sep=''
+        printf '['
+        for pr in "$state"/pr-*; do
+            [ -f "$pr" ] || continue
+            read -r number base head < "$pr"
+            printf '%s{"url":"https://github.com/o/r/pull/%s","number":%s,"headRefName":"%s","state":"OPEN","baseRefName":"%s"}' \
+                "$sep" "$number" "$number" "$head" "$base"
+            sep=','
+        done
+        printf ']'
+        exit 0
+    fi
+    [ "$3 $5 $7 $8 $9" = "--head --state --limit 20 --json" ] || exit 2
     pr="$(slot "$4")"
     [ -f "$pr" ] || { printf '[]'; exit 0; }
-    read -r number base < "$pr"
+    read -r number base head < "$pr"
     printf '[{"url":"https://github.com/o/r/pull/%s","number":%s,"headRefName":"%s","state":"OPEN","baseRefName":"%s"}]' \
-        "$number" "$number" "$4" "$base"
+        "$number" "$number" "$head" "$base"
     ;;
 "pr create")
     [ "$3 $5 $7 $9 ${10}" = "--base --head --title --body-file -" ] || exit 2
     pr="$(slot "$6")"
     [ -f "$pr" ] && { echo "a pull request for branch \"$6\" already exists" >&2; exit 1; }
     number=$(($(ls "$state" | grep -c '^pr-') + 1))
-    printf '%s %s\n' "$number" "$4" > "$pr"
+    printf '%s %s %s\n' "$number" "$4" "$6" > "$pr"
     printf '%s' "$8" > "$state/title"
     cat > "$state/body"
     if [ -f "$state/lose-create-reply" ]; then
@@ -49,8 +62,8 @@ case "$1 $2" in
 "pr edit")
     [ "$4" = "--base" ] || exit 2
     for pr in "$state"/pr-*; do
-        read -r number base < "$pr"
-        [ "https://github.com/o/r/pull/$number" = "$3" ] && printf '%s %s\n' "$number" "$5" > "$pr"
+        read -r number base head < "$pr"
+        [ "https://github.com/o/r/pull/$number" = "$3" ] && printf '%s %s %s\n' "$number" "$5" "$head" > "$pr"
     done
     ;;
 "repo view")
@@ -108,7 +121,8 @@ impl FakeGh {
     /// A pull request open already for `branch`, onto `base`.
     pub fn open(&self, branch: &str, base: &str) {
         let file = format!("pr-{}", branch.replace('/', "_"));
-        std::fs::write(self.state.join(file), format!("7 {base}\n")).expect("pull request");
+        std::fs::write(self.state.join(file), format!("7 {base} {branch}\n"))
+            .expect("pull request");
     }
 
     /// The title and body of the pull request last created.
@@ -198,5 +212,46 @@ pub async fn shipped_by(
     StageOutcome::Completed {
         summary: summary.into(),
         structured: Some(structured),
+    }
+}
+
+/// A planted program that leaves `marker` when anything runs it.
+fn planted(dir: &Path, marker: &Path) -> PathBuf {
+    let script = dir.join("planted.sh");
+    let body = format!("#!/bin/sh\necho \"$0 $*\" >> '{}'\ncat\n", marker.display());
+    std::fs::write(&script, body).unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    script
+}
+
+/// Hooks, a filter, a merge driver and fsmonitor in the repository's config,
+/// and hooks in `origin`: what an agent with the worktree could plant.
+pub fn plant_everywhere(repo: &Path, origin: &Path, marker: &Path) {
+    let program = planted(repo.parent().unwrap(), marker);
+    let program = program.to_str().unwrap();
+    let hooks = repo.parent().unwrap().join("planted-hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    for hook in [
+        "pre-push",
+        "post-checkout",
+        "post-merge",
+        "reference-transaction",
+    ] {
+        std::fs::copy(program, hooks.join(hook)).unwrap();
+    }
+    for hook in ["pre-receive", "update", "post-receive"] {
+        std::fs::copy(program, origin.join("hooks").join(hook)).unwrap();
+    }
+    for (key, value) in [
+        ("core.hooksPath", hooks.to_str().unwrap()),
+        ("core.fsmonitor", program),
+        ("filter.planted.clean", program),
+        ("filter.planted.smudge", program),
+        ("filter.planted.required", "true"),
+        ("merge.planted.driver", program),
+        ("core.sshCommand", program),
+        ("credential.helper", program),
+    ] {
+        git(repo, &["config", key, value]);
     }
 }

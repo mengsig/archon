@@ -63,6 +63,7 @@ fn roots_in(base: &Path) -> Roots {
     Roots {
         worktrees: base.join("trees"),
         scratch: base.join("scratch"),
+        data_dir: base.join("data"),
     }
 }
 
@@ -140,6 +141,7 @@ fn a_worktree_reached_through_a_symlinked_root_is_removed() {
     let roots = Roots {
         worktrees: canonical_root(&base.join("link/trees")).unwrap(),
         scratch: canonical_root(&base.join("link/scratch")).unwrap(),
+        data_dir: base.join("data"),
     };
     assert_eq!(roots.worktrees, base.join("real/trees"));
     let found = vec![candidate(&tree, Some(&repo), Action::Remove)];
@@ -403,6 +405,7 @@ fn a_removed_team_root_is_reported_by_its_real_path() {
     let roots = Roots {
         worktrees: canonical_root(&base.join("link/trees")).unwrap(),
         scratch: canonical_root(&base.join("link/scratch")).unwrap(),
+        data_dir: base.join("data"),
     };
     let found = team_run(&root, Some(&repo), Action::Remove);
     let report = sweep::sweep(found, &roots, &policy(false));

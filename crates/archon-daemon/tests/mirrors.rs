@@ -20,6 +20,23 @@ fn mirror_of(h: &Harness) -> PathBuf {
     mirror::mirrors_root(&h.ctx.paths.orchestrator_workspace).join(REPO_NAME)
 }
 
+fn git_dir_of(h: &Harness) -> PathBuf {
+    mirror::git_dirs_root(&h.ctx.paths.data_dir).join(REPO_NAME)
+}
+
+fn files_under(dir: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            found.extend(files_under(&path));
+        } else {
+            found.push(path);
+        }
+    }
+    found
+}
+
 async fn synced() -> Harness {
     let h = Harness::new().await;
     mirror::sync_all(&h.ctx).await.expect("mirror pass");
@@ -128,13 +145,15 @@ async fn a_registered_repository_is_mirrored_at_its_base_with_no_remote() {
     assert!(refs.contains("refs/mirror/main"), "{refs}");
     assert!(!refs.contains("refs/heads/"), "no branch to push: {refs}");
 
-    let commit = head(&mirror);
-    let object = mirror
-        .join(".git/objects")
-        .join(&commit[..2])
-        .join(&commit[2..]);
-    let links = std::fs::metadata(&object).expect("a loose object").nlink();
-    assert!(links >= 2, "objects are hard links, not copies: {links}");
+    let git_dir = git_dir_of(&h);
+    let gitfile = std::fs::read_to_string(mirror.join(".git")).expect("`.git` is a file");
+    assert_eq!(gitfile, format!("gitdir: {}\n", git_dir.display()));
+    let objects = files_under(&git_dir.join("objects"));
+    assert!(!objects.is_empty(), "the mirror holds objects");
+    for object in objects {
+        let links = std::fs::metadata(&object).unwrap().nlink();
+        assert_eq!(links, 1, "{object:?} is a hard link into the repository");
+    }
     assert!(
         h.ctx
             .paths
@@ -223,10 +242,66 @@ async fn the_repositorys_hooks_neither_copy_nor_run() {
     mirror::sync_all(&h.ctx).await.unwrap();
     let mirror = mirror_of(&h);
     assert!(mirror.join("README.md").exists(), "the mirror was made");
-    assert!(!mirror.join(".git/hooks").exists(), "no hook was copied");
+    assert!(!git_dir_of(&h).join("hooks").exists(), "no hook was copied");
     let checkout = agent_git(&mirror, &["checkout", "--quiet", "--detach", "HEAD"]);
     assert!(checkout.status.success(), "{checkout:?}");
     assert!(!ran.exists(), "a hook of the repository ran for its mirror");
+}
+
+#[tokio::test]
+async fn nothing_a_helper_writes_in_the_mirrors_git_directory_runs_as_the_daemon() {
+    let h = synced().await;
+    let mirror = mirror_of(&h);
+    let git_dir = git_dir_of(&h);
+    let ran = h.dir.path().join("planted-ran");
+    let planted = format!("touch {}", ran.display());
+    let source = h.repo.to_str().unwrap().to_owned();
+    let hooks = h.dir.path().join("planted-hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    let hook = hooks.join("post-checkout");
+    std::fs::write(&hook, format!("#!/bin/sh\n{planted}\n")).unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for (key, value) in [
+        ("filter.x.smudge", planted.clone()),
+        ("filter.x.process", planted.clone()),
+        ("core.fsmonitor", planted.clone()),
+        ("core.hooksPath", hooks.display().to_string()),
+        ("protocol.ext.allow", "always".to_owned()),
+        (
+            &format!("url.ext::sh -c '{planted}'.insteadOf"),
+            source.clone(),
+        ),
+    ] {
+        let set = agent_git(&mirror, &["config", key, &value]);
+        assert!(set.status.success(), "{set:?}");
+    }
+    std::fs::create_dir_all(git_dir.join("info")).unwrap();
+    std::fs::write(git_dir.join("info/attributes"), "* filter=x\n").unwrap();
+    std::fs::write(
+        git_dir.join("objects/info/alternates"),
+        format!("{source}/.git/objects\n"),
+    )
+    .unwrap();
+
+    let moved = commit(&h.repo, "README.md", "demo, second edition\n");
+    mirror::sync_all(&h.ctx).await.unwrap();
+    assert_eq!(head(&mirror), moved, "the refresh went ahead");
+    assert_eq!(
+        std::fs::read_to_string(mirror.join("README.md")).unwrap(),
+        "demo, second edition\n"
+    );
+    assert!(!ran.exists(), "a command the helper planted ran");
+    let config = std::fs::read_to_string(git_dir.join("config")).unwrap();
+    assert!(
+        !config.contains("touch"),
+        "the config was rewritten: {config}"
+    );
+    assert!(!git_dir.join("info/attributes").exists());
+    assert!(!git_dir.join("objects/info/alternates").exists());
+    assert!(
+        system_notes(&h).await.is_empty(),
+        "a good refresh is silent"
+    );
 }
 
 #[tokio::test]
@@ -250,6 +325,18 @@ async fn a_push_from_a_mirror_or_its_worktree_is_refused() {
         ],
     );
     assert!(added.status.success(), "{added:?}");
+    let top = stdout(&agent_git(&mirror, &["rev-parse", "--show-toplevel"]));
+    assert_eq!(Path::new(&top), mirror.canonicalize().unwrap());
+    let moved = commit(&h.repo, "README.md", "demo, second edition\n");
+    mirror::sync_all(&h.ctx).await.unwrap();
+    assert_eq!(head(&mirror), moved);
+    let listed = stdout(&agent_git(&mirror, &["worktree", "list", "--porcelain"]));
+    assert!(
+        listed.contains(child.to_str().unwrap()),
+        "a refresh keeps worktrees: {listed}"
+    );
+    let status = agent_git(&child, &["status", "--porcelain"]);
+    assert!(status.status.success(), "{status:?}");
 
     assert!(
         !agent_git(&mirror, &["push"]).status.success(),
@@ -294,16 +381,17 @@ async fn a_link_where_a_mirror_belongs_is_replaced_and_never_followed() {
         "a real mirror took the link's place"
     );
 
-    // A mirror whose `.git` points at the repository is no mirror either.
-    std::fs::remove_dir_all(mirror.join(".git")).unwrap();
+    // A `.git` naming the repository, or a git directory of the old layout,
+    // is replaced by one naming the mirror's own.
+    let own = format!("gitdir: {}\n", git_dir_of(&h).display());
     let real = format!("gitdir: {}\n", h.repo.join(".git").display());
     std::fs::write(mirror.join(".git"), real).unwrap();
     mirror::sync_all(&h.ctx).await.unwrap();
-    assert!(
-        std::fs::symlink_metadata(mirror.join(".git"))
-            .unwrap()
-            .is_dir()
-    );
+    assert_eq!(std::fs::read_to_string(mirror.join(".git")).unwrap(), own);
+    std::fs::remove_file(mirror.join(".git")).unwrap();
+    git(&mirror, &["init", "--quiet"]);
+    mirror::sync_all(&h.ctx).await.unwrap();
+    assert_eq!(std::fs::read_to_string(mirror.join(".git")).unwrap(), own);
 
     assert_eq!(stdout(&agent_git(&mirror, &["remote"])), "");
     assert_eq!(
@@ -407,6 +495,7 @@ async fn unregistering_removes_the_mirror_and_whatever_else_lies_there() {
     mirror::sync_all(&h.ctx).await.unwrap();
     let left: Vec<_> = std::fs::read_dir(&root).unwrap().collect();
     assert!(left.is_empty(), "{left:?}");
+    assert!(!git_dir_of(&h).exists(), "its git directory went too");
     assert_eq!(h.kv(&state_key).await, None);
     assert!(
         h.repo.join("README.md").exists(),

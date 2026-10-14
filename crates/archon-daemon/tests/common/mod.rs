@@ -150,14 +150,12 @@ impl Harness {
             std::fs::write(
                 &config.github.binary,
                 r#"#!/bin/sh
-if [ "$1 $2" = "pr view" ]; then
-  printf '{"url":"https://github.com/o/r/pull/1","headRefName":"%s","baseRefName":"main","state":"OPEN","body":"","isDraft":false}' "$3"
-  exit 0
-fi
 if [ "$1 $2" = "pr edit" ]; then exit 0; fi
-[ "$1 $2 $3 $5 $6 $7 $8 $9" = "pr list --head --state open --limit 2 --json" ] || exit 2
-[ "$4" = "$(git branch --show-current)" ] || exit 3
-printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","state":"OPEN"}]' "$4"
+[ "$1 $2" = "pr list" ] || exit 2
+# GitHub lists a repository's open pull requests as none, a branch's as one.
+if [ "$3 $4 $5 $6 $7" = "--state open --limit 1000 --json" ]; then printf '[]'; exit 0; fi
+[ "$3 $5 $7 $8 $9" = "--head --state --limit 20 --json" ] || exit 2
+printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","state":"OPEN","baseRefName":"main"}]' "$4"
 "#,
             )
             .unwrap();

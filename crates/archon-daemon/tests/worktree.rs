@@ -14,6 +14,7 @@ use common::{committed, git, init_repo};
 struct Fixture {
     _dir: tempfile::TempDir,
     repo: std::path::PathBuf,
+    data: std::path::PathBuf,
     manager: WorktreeManager,
 }
 
@@ -25,6 +26,7 @@ fn fixture() -> Fixture {
     Fixture {
         _dir: dir,
         repo,
+        data: root.join("data"),
         manager,
     }
 }
@@ -39,16 +41,9 @@ fn create_reuse_and_remove() {
     let f = fixture();
     let item = QueueItemId::new();
     let head = git(&f.repo, &["rev-parse", "HEAD"]);
-    let created = f
-        .manager
-        .create(
-            &f.repo,
-            "demo",
-            &item,
-            &f.manager.branch_name(&item, "Add a greeting!", 0),
-            None,
-        )
-        .expect("create");
+    let branch = f.manager.branch_name(&item, "Add a greeting!", 0);
+    let create = |base| f.manager.create(&f.repo, "demo", &item, &branch, base);
+    let created = create(None).expect("create");
     assert_eq!(created.path, f.manager.path_for("demo", &item));
     assert!(created.branch.starts_with("archon/") && created.branch.ends_with("-add-a-greeting"));
     assert_eq!(created.base, head);
@@ -59,16 +54,7 @@ fn create_reuse_and_remove() {
     assert!(created.path.join("README.md").exists());
     assert!(created.added, "a new worktree was added");
 
-    let reused = f
-        .manager
-        .create(
-            &f.repo,
-            "demo",
-            &item,
-            &f.manager.branch_name(&item, "Add a greeting!", 0),
-            Some("main"),
-        )
-        .expect("reuse");
+    let reused = create(Some("main")).expect("reuse");
     assert_eq!(
         (reused.path.as_path(), reused.branch.as_str()),
         (created.path.as_path(), created.branch.as_str())
@@ -78,27 +64,20 @@ fn create_reuse_and_remove() {
 
     // Uncommitted work is never discarded: removal needs a clean tree.
     std::fs::write(created.path.join("scratch.txt"), "wip").expect("write");
-    let dirty = f.manager.remove(&f.repo, &created.path);
+    let dirty = f.manager.remove(&f.data, &f.repo, &created.path);
     assert!(dirty.is_err(), "a dirty worktree is not removed");
     assert!(created.path.exists());
     std::fs::remove_file(created.path.join("scratch.txt")).expect("clean");
-    f.manager.remove(&f.repo, &created.path).expect("remove");
+    f.manager
+        .remove(&f.data, &f.repo, &created.path)
+        .expect("remove");
     assert!(!created.path.exists());
     assert!(
         branch_exists(&f.repo, &created.branch),
         "the branch is kept"
     );
 
-    let again = f
-        .manager
-        .create(
-            &f.repo,
-            "demo",
-            &item,
-            &f.manager.branch_name(&item, "Add a greeting!", 0),
-            None,
-        )
-        .expect("recreate from the kept branch");
+    let again = create(None).expect("recreate from the kept branch");
     assert_eq!(again.branch, created.branch);
     assert_eq!(
         git(&again.path, &["rev-parse", "--abbrev-ref", "HEAD"]),
@@ -1146,7 +1125,7 @@ fn a_single_worktree_run_refuses_an_item_with_role_worktrees_left() {
     let branch = worker_branch(&run.branch, &run_id(), "api", 1);
     ensure_worker(&f.repo, &run.path, &path, &branch, &run.branch).expect("worker");
     f.manager
-        .remove(&f.repo, &run.path)
+        .remove(&f.data, &f.repo, &run.path)
         .expect("remove the run worktree");
 
     let refused = f

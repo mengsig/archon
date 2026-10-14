@@ -5,28 +5,32 @@
 //! Git and `gh` run without any lock. The outcome is persisted in `kv`
 //! before the driver acts on it, so a rebuilt driver replays it; a crash
 //! before that repeats the delivery, which pushes nothing twice and reuses
-//! the pull request GitHub lists.
+//! the pull request GitHub lists. An auto-merge it owes is recorded first.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use archon_core::error::ArchonError;
 use archon_core::id::PipelineRunId;
-use archon_core::notify::NotificationKind;
+use archon_core::repo::Repo;
 use archon_core::run::{PipelineRun, StageState};
 use archon_pipeline::{RunDriver, ShipOutcome, ShipPlan};
 use archon_queue::Store;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 use super::super::{
-    FollowUp, RunTable, ShipRetry, descendants, finish, initiative_ship, recover, restack, settle,
+    FollowUp, RunTable, ShipRetry, descendants, initiative_ship, recover, repo_identity, restack,
+    settle,
 };
-use super::{checks, remote};
+use super::{auto_merge, checks, remote};
 use crate::context::DaemonContext;
 use crate::resolve;
 
 /// `kv`: `ship:<run>` → the JSON [`ShipOutcome`].
 const SHIP_KEY_PREFIX: &str = "ship:";
+/// `kv`: `ship_retry:<run>` → the JSON [`PersistedRetry`] of a failing delivery.
+const RETRY_KEY_PREFIX: &str = "ship_retry:";
 /// Deliveries tried before a failure another try might pass fails the run.
 const MAX_ATTEMPTS: u32 = 5;
 /// The wait before the second try; each later one waits twice as long.
@@ -34,6 +38,17 @@ const FIRST_RETRY_WAIT: Duration = Duration::from_secs(15);
 
 fn ship_key(run: &PipelineRunId) -> String {
     format!("{SHIP_KEY_PREFIX}{run}")
+}
+
+fn retry_key(run: &PipelineRunId) -> String {
+    format!("{RETRY_KEY_PREFIX}{run}")
+}
+
+/// A [`ShipRetry`] as it outlives a restart: the wait is a time of day.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct PersistedRetry {
+    failures: u32,
+    next_at: DateTime<Utc>,
 }
 
 /// A driver asked for `plan`: remember it until it was delivered.
@@ -56,7 +71,7 @@ struct Claimed {
     plan: ShipPlan,
     run: PipelineRun,
     /// `None` when the item's repository is no longer registered.
-    repo_path: Option<PathBuf>,
+    repo: Option<Repo>,
     vars: BTreeMap<String, String>,
     /// The outcome persisted already, if any.
     recorded: Option<ShipOutcome>,
@@ -104,10 +119,15 @@ async fn claim(
     let Some(plan) = table.ships.get(run_id).cloned() else {
         return Ok(None);
     };
+    let store = ctx.store.lock().await;
+    if !table.ship_retries.contains_key(run_id)
+        && let Some(retry) = load_retry(&store, run_id)?
+    {
+        table.ship_retries.insert(run_id.clone(), retry);
+    }
     if table.shipping.contains(run_id) || !due(&table, run_id, Instant::now()) {
         return Ok(None);
     }
-    let store = ctx.store.lock().await;
     let run = store.run(run_id)?;
     if run.state.is_terminal() {
         table.ships.remove(run_id);
@@ -124,7 +144,7 @@ async fn claim(
         .map_err(|e| ArchonError::Store(format!("delivery outcome of run {run_id}: {e}")))?;
     let claimed = Claimed {
         plan,
-        repo_path: repo_path(&store, &run)?,
+        repo: repo_of(&store, &run)?,
         vars: recover::load_run_vars(&store, run_id)?,
         recorded,
         run,
@@ -138,15 +158,15 @@ async fn claim(
     Ok(Some(claimed))
 }
 
-/// Where the repository of `run`'s item is; `None` once it is unregistered.
-fn repo_path(store: &Store, run: &PipelineRun) -> Result<Option<PathBuf>, ArchonError> {
+/// The repository of `run`'s item; `None` once it is unregistered.
+fn repo_of(store: &Store, run: &PipelineRun) -> Result<Option<Repo>, ArchonError> {
     let Some(repo) = store.item(&run.item)?.repo else {
         return Ok(None);
     };
     match store.repo(&resolve::repo_ref(&repo)) {
         Ok(found) => {
             assert!(found.path.is_absolute(), "repository paths are canonical");
-            Ok(Some(found.path))
+            Ok(Some(found))
         }
         Err(ArchonError::NotFound(_)) => Ok(None),
         Err(error) => Err(error),
@@ -162,35 +182,49 @@ async fn fresh(ctx: &DaemonContext, claimed: &Claimed) -> Result<ShipOutcome, Ar
     );
     let outcome = carry_out(ctx, claimed).await?;
     let (run, plan) = (&claimed.run, &claimed.plan);
-    persist(&mut *ctx.store.lock().await, run, plan, &outcome)?;
-    if let ShipOutcome::Shipped {
-        pr_url: Some(url), ..
-    } = &outcome
+    let mut store = ctx.store.lock().await;
+    let owes_merge = claimed.vars.get("ship.auto_merge").map(String::as_str) == Some("true");
+    if let (
+        ShipOutcome::Shipped {
+            pr_url: Some(url), ..
+        },
+        true,
+    ) = (&outcome, owes_merge)
     {
-        merge_when_ready(ctx, claimed, url).await;
+        let repo = claimed
+            .repo
+            .as_ref()
+            .expect("a pull request is of a registered repository");
+        auto_merge::owe(&mut store, &run.id, &run.item, &repo.id, url)?;
+        ctx.coordination.changed.notify_one();
     }
+    persist(&mut store, run, plan, &outcome)?;
+    store.kv_delete(&retry_key(&run.id))?;
     Ok(outcome)
 }
 
-/// Prove the worktree, then in `pr` mode push the branch and find or open
-/// its pull request. A refusal is the `Failed` outcome, never an `Err`.
+/// Prove the worktree, then in `pr` mode push the checked commit and find
+/// or open its pull request. A refusal is the `Failed` outcome, never an `Err`.
 async fn carry_out(ctx: &DaemonContext, claimed: &Claimed) -> Result<ShipOutcome, ArchonError> {
     let refused = |error: String| Ok(ShipOutcome::Failed { error });
     let (run, plan) = (&claimed.run, &claimed.plan);
-    let Some(repo_path) = claimed.repo_path.clone() else {
+    let Some(repo) = claimed.repo.clone() else {
         return refused("the item's repository is no longer registered with Archon".into());
     };
     let pushes = pushes(&claimed.vars)?;
+    let identity = repo_identity::of(ctx, &repo).await?;
     let (base, draft) = {
         let store = ctx.store.lock().await;
         let base = base_of(&store, run, &claimed.vars)?;
         (base, initiative_ship::opens_as_draft(&store, &run.item)?)
     };
     let target = checks::Target {
-        repo_path,
+        data_dir: ctx.paths.data_dir.clone(),
+        repo_path: repo.path.clone(),
         workspace: run.workspace.clone(),
         branch: run.branch.clone(),
         base: base.clone(),
+        allowed: repo_identity::RepoIdentity::allowed(identity.as_ref()),
     };
     let record = plan.record.clone();
     let checked = tokio::task::spawn_blocking(move || checks::check(&target, &record))
@@ -206,9 +240,6 @@ async fn carry_out(ctx: &DaemonContext, claimed: &Claimed) -> Result<ShipOutcome
             pr_url: None,
         });
     }
-    if let Err(refusal) = remote::push(&run.workspace, &run.branch).await? {
-        return refused(refusal);
-    }
     let request = remote::Request {
         branch: &run.branch,
         base: &base,
@@ -216,18 +247,46 @@ async fn carry_out(ctx: &DaemonContext, claimed: &Claimed) -> Result<ShipOutcome
         body: &plan.body,
         draft,
     };
-    let gh = &ctx.config.github.binary;
-    let url = match remote::pull_request(gh, &run.workspace, request).await? {
-        Ok(url) => url,
-        Err(refusal) => return refused(refusal),
-    };
-    // The stack and the initiative the change belongs to are settled before it counts.
-    match initiative_ship::record(ctx, run, &url).await {
-        Ok(()) => Ok(ShipOutcome::Shipped {
+    match deliver_pr(ctx, run, &repo, &commit, request).await? {
+        Ok(url) => Ok(ShipOutcome::Shipped {
             commit,
             pr_url: Some(url),
         }),
-        Err(ArchonError::Invalid(why)) => refused(why),
+        Err(refusal) => refused(refusal),
+    }
+}
+
+/// Push `commit` once it holds the stack it is on, then find or open its
+/// pull request and settle the stack and initiative it belongs to.
+async fn deliver_pr(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+    repo: &Repo,
+    commit: &str,
+    request: remote::Request<'_>,
+) -> Result<Result<String, String>, ArchonError> {
+    assert_eq!(request.branch, run.branch, "the run branch is delivered");
+    assert!(
+        crate::worktree::stack::is_commit_id(commit),
+        "the checked commit"
+    );
+    match initiative_ship::verify_stack(ctx, run, commit).await {
+        Ok(()) => {}
+        Err(ArchonError::Invalid(why)) => return Ok(Err(why)),
+        Err(error) => return Err(error),
+    }
+    let data_dir = &ctx.paths.data_dir;
+    if let Err(refusal) = remote::push(data_dir, &repo.path, &run.branch, commit).await? {
+        return Ok(Err(refusal));
+    }
+    let gh = &ctx.config.github.binary;
+    let url = match remote::pull_request(gh, &repo.path, request).await? {
+        Ok(url) => url,
+        Err(refusal) => return Ok(Err(refusal)),
+    };
+    match initiative_ship::record(ctx, run, &url).await {
+        Ok(()) => Ok(Ok(url)),
+        Err(ArchonError::Invalid(why)) => Ok(Err(why)),
         Err(error) => Err(error),
     }
 }
@@ -261,28 +320,6 @@ fn base_of(
         None => Err(ArchonError::Protocol(
             "the run's variables name no base branch".into(),
         )),
-    }
-}
-
-/// Enable auto-merge where the repository asks for it. The change is
-/// delivered either way, so a refusal goes to the run's progress.
-async fn merge_when_ready(ctx: &DaemonContext, claimed: &Claimed, url: &str) {
-    if claimed.vars.get("ship.auto_merge").map(String::as_str) != Some("true") {
-        return;
-    }
-    let run = &claimed.run;
-    let gh = &ctx.config.github.binary;
-    let Err(why) = remote::auto_merge(gh, &run.workspace, url).await else {
-        return;
-    };
-    let text = format!(
-        "Run {}: {url} is open, but auto-merge could not be enabled: {why}",
-        run.id
-    );
-    let kind = NotificationKind::Progress;
-    let posted = finish::notify(ctx, kind, &text, Some(&run.item), Some(&run.id)).await;
-    if let Err(error) = posted {
-        tracing::error!(run = %run.id, %error, notice = %text, "auto-merge notice not posted");
     }
 }
 
@@ -368,6 +405,7 @@ async fn retry_or_fail(
             failures,
             not_before,
         };
+        save_retry(&mut *ctx.store.lock().await, &run.id, retry)?;
         table.ship_retries.insert(run.id.clone(), retry);
         table.ships.insert(run.id.clone(), plan.clone());
         return Ok(FollowUp::default());
@@ -377,6 +415,45 @@ async fn retry_or_fail(
     };
     persist(&mut *ctx.store.lock().await, &run, plan, &outcome)?;
     apply(ctx, table, run, outcome).await
+}
+
+/// Persist `retry`, so a restart neither forgets the failed tries nor the wait.
+fn save_retry(store: &mut Store, run: &PipelineRunId, retry: ShipRetry) -> Result<(), ArchonError> {
+    assert!(
+        retry.failures > 0 && retry.failures < MAX_ATTEMPTS,
+        "a retry is owed"
+    );
+    let wait = retry.not_before.saturating_duration_since(Instant::now());
+    let wait = chrono::Duration::from_std(wait)
+        .map_err(|e| ArchonError::Invalid(format!("delivery retry wait {wait:?}: {e}")))?;
+    let persisted = PersistedRetry {
+        failures: retry.failures,
+        next_at: archon_core::now() + wait,
+    };
+    store.kv_set(&retry_key(run), &serde_json::to_string(&persisted)?)
+}
+
+/// The persisted retry of `run`'s delivery, its wait counted from now.
+fn load_retry(store: &Store, run: &PipelineRunId) -> Result<Option<ShipRetry>, ArchonError> {
+    let key = retry_key(run);
+    let Some(raw) = store.kv_get(&key)? else {
+        return Ok(None);
+    };
+    let persisted: PersistedRetry =
+        serde_json::from_str(&raw).map_err(|e| ArchonError::Store(format!("kv {key}: {e}")))?;
+    if persisted.failures == 0 || persisted.failures >= MAX_ATTEMPTS {
+        return Err(ArchonError::Store(format!(
+            "kv {key}: {} failures",
+            persisted.failures
+        )));
+    }
+    let left = (persisted.next_at - archon_core::now())
+        .to_std()
+        .unwrap_or_default();
+    Ok(Some(ShipRetry {
+        failures: persisted.failures,
+        not_before: Instant::now() + left,
+    }))
 }
 
 /// Queue a delivery whose outcome was half acted on again, dropping the
@@ -390,6 +467,21 @@ fn requeue(table: &mut RunTable, run_id: &PipelineRunId, plan: ShipPlan) {
     table.drivers.remove(run_id);
     table.ships.entry(run_id.clone()).or_insert(plan);
     debug_assert!(table.ships.contains_key(run_id), "the sweep retries it");
+}
+
+/// Whether `run` has a delivery queued, running or recorded: its stages may
+/// no longer change, or it would ship what they replaced.
+pub(in crate::executor) fn delivering(
+    table: &RunTable,
+    store: &Store,
+    run: &PipelineRunId,
+) -> Result<bool, ArchonError> {
+    let live = table.ships.contains_key(run) || table.shipping.contains(run);
+    assert!(
+        !table.shipping.contains(run) || table.ships.contains_key(run),
+        "in flight is queued"
+    );
+    Ok(live || store.kv_get(&ship_key(run))?.is_some())
 }
 
 /// Feed `driver` the delivery outcome persisted for `run`, if any.
@@ -411,8 +503,16 @@ pub(in crate::executor) fn replay(
 /// run's driver, and of runs that no longer exist. Returns how many went.
 pub(crate) fn prune_finished_ships(store: &mut Store) -> Result<usize, ArchonError> {
     let mut pruned = 0;
-    for (key, _) in store.kv_prefix(SHIP_KEY_PREFIX)? {
-        let raw_run = key.strip_prefix(SHIP_KEY_PREFIX).expect("ranged by prefix");
+    for prefix in [SHIP_KEY_PREFIX, RETRY_KEY_PREFIX] {
+        pruned += prune_finished(store, prefix)?;
+    }
+    Ok(pruned)
+}
+
+fn prune_finished(store: &mut Store, prefix: &str) -> Result<usize, ArchonError> {
+    let mut pruned = 0;
+    for (key, _) in store.kv_prefix(prefix)? {
+        let raw_run = key.strip_prefix(prefix).expect("ranged by prefix");
         let run = PipelineRunId::parse(raw_run)
             .map_err(|e| ArchonError::Store(format!("delivery key {key}: {e}")))?;
         let finished = match store.run(&run) {

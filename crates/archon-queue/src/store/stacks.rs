@@ -135,10 +135,12 @@ impl Store {
         fix.id = QueueItemId::new();
         fix.title = format!("Restack {}", child.id);
         fix.brief = format!(
-            "Resolve the pending merge of {} ({sha}) into {}. Conflicting paths:\n{conflict}\n\
-             Commit the merge on the existing branch and validate the resolution. It ships as \
-             this run's pipeline ships, into the pull request the branch already has: never \
-             open a second one, and never rebase or force-push.",
+            "Merge {sha}, the head of `{}`, into `{}` with `git merge {sha}`: Archon's own \
+             merge of it conflicted, so nothing of it is on the branch yet. Conflicting \
+             paths:\n{conflict}\nResolve them, commit the merge on the existing branch and \
+             validate the resolution. It ships as this run's pipeline ships, into the pull \
+             request the branch already has: never open a second one, and never rebase or \
+             force-push.",
             parent.parent_branch, run.branch
         );
         fix.dependencies.clear();

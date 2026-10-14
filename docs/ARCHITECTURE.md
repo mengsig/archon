@@ -2158,21 +2158,30 @@ table and delivers it off every lock:
    is on the run branch; no tracked file is modified or staged; `HEAD^{tree}`
    equals the record's `tree`; the branch is ahead of its base; and every
    commit that neither the base nor a remote holds has an author and a
-   committer e-mail that the worktree's own git configuration yields
-   (`git var`, read with `GIT_*` identity variables removed) or
-   `archon@localhost`, under which archond's team merges are made. Any
-   miss is a refusal that names the paths or commits. The base is what
+   committer e-mail of the repository's recorded identity or
+   `archon@localhost`, under which archond's team merges are made. The
+   identity is what `git var` yields in the repository under the
+   operator's config (`GIT_*` identity variables removed), recorded in
+   `kv` `repo_identity:<repo>` at `archon repo add` and again at `archon
+   repo set`, which posts a feed line when it changed; a repository
+   registered before this record existed has it taken at its first
+   delivery. A `user.email` an agent writes into the repository later
+   changes nothing. Any miss is a refusal that names the paths or commits.
+   A stacked run's branch must also hold every parent commit its stack
+   recorded and has not seen merged (§8.8), checked here so that a missing
+   parent pushes nothing and opens no pull request. The base is what
    `restack::target_base` reads from the stack (§8.8): the branch of the
    item's first unmerged parent, the repository's base once every parent
    merged, and the run variable `base_branch` for an item that is not stacked.
-3. **Push**, `pr` mode only: `git push --porcelain --set-upstream origin
-   refs/heads/<branch>:refs/heads/<branch>` with `core.hooksPath=/dev/null`
-   and no terminal prompt, so nothing a run configured runs as the daemon.
-   It is never forced. A branch `origin` holds with other commits is a
-   refusal that says so; a rule or missing access on the remote is
-   `BLOCKED:`. Pushing what `origin` has already succeeds.
+3. **Push**, `pr` mode only: `git push --porcelain <origin url>
+   <commit>:refs/heads/<branch>` of the checked commit, not the branch tip,
+   run from the repository's shadow (§13.4), so no hook, filter or ssh
+   command a run configured runs as the daemon. It is never forced. A
+   branch `origin` holds with other commits is a refusal that says so; a
+   rule or missing access on the remote is `BLOCKED:`. Pushing what
+   `origin` has already succeeds.
 4. **Find or open the pull request**: `gh pr list --head <branch> --state
-   open`. One open pull request is reused, and moved onto the base with
+   open --limit 20`. One open pull request is reused, and moved onto the base with
    `gh pr edit --base` when it is for another branch; none makes
    `gh pr create`; several are a refusal. After creating, the list is read
    again and only what GitHub lists counts, so a creation whose reply was
@@ -2183,15 +2192,30 @@ table and delivers it off every lock:
    run: `succeeded` with a last summary line `SHIPPED: <url> (commit <sha>)`
    or `SHIPPED: commit <sha> on the run branch`, or
    `failed{stage_id: "ship", error}`.
-6. **Auto-merge**, when asked: `gh pr merge --auto` with the first method
-   `gh repo view` says the repository allows. The change is delivered
-   either way; a refusal is a progress entry.
+6. **Auto-merge**, when asked: it is owed, in `kv`
+   `ship_automerge:<run>` (item, repository, pull request, tries, next
+   try), written before the outcome. The coordination pass pays it with
+   `gh pr merge --auto` and the first method `gh repo view` says the
+   repository allows. A failure another try may pass waits 60 s, doubling
+   up to an hour, eight tries in all; a refusal, or the last failure, is
+   one blocker saying the pull request is delivered but will not merge by
+   itself. Success is an outcome saying auto-merge is on and the pull
+   request is not merged yet: delivered is never reported as merged.
 
 A refusal is exact and final: the orchestrator reads what to change in the
 item's failure and retries. A failure another try may pass (the network,
 GitHub, a timeout: 180 s for the push, 60 s per `gh` call) leaves the plan
 queued, and the sweep tries again after 15 s, doubling, five times in all
-before the run fails with the last error.
+before the run fails with the last error. The failures so far and the next
+try's time are kept in `kv` `ship_retry:<run>`, so a restart neither
+retries at once nor grants five more tries.
+
+While a run is delivering (its plan queued, a delivery in flight, or
+`ship:<run>` recorded) a steer that would change its stages (`--abort`,
+`--remove`, `--insert`, `--switch`) is refused; a note is not. A steer
+that removes or passes over the record stage is refused unless another
+stage that writes a ship record, or a `kind = "ship"` stage, remains:
+otherwise the run would deliver nothing.
 
 Delivery is safe to repeat. A daemon that restarts finds the run `running`
 at its last stage; the resumed driver emits the same `Ship`, or, when
@@ -2199,7 +2223,8 @@ at its last stage; the resumed driver emits the same `Ship`, or, when
 nothing. Recovery only queues the plan and the sweep delivers it, so
 startup never waits on the network. A crash between the push and the
 record repeats steps 2 to 4, which push nothing new and find the pull
-request GitHub lists. `prune` deletes `ship:<run>` once its run is terminal.
+request GitHub lists. `prune` deletes `ship:<run>` and `ship_retry:<run>`
+once their run is terminal.
 
 **A ship stage.** A pipeline may instead end in one `kind = "ship"` stage,
 as every built-in did before archond shipped. Its agent delivers with git
@@ -2228,17 +2253,41 @@ merged. Delivery (§8.7) proves the run against it and opens or moves the
 pull request onto it, so a child ships onto its parent's branch.
 
 `executor/restack.rs` reconciles persisted stacks in the coordination worker
-(`executor/coordination.rs`), woken when an item finishes and every 60
-seconds for changes made outside Archon. GitHub and merge maintenance never
-delay the admission of unrelated items. A merged parent has the child's
-pull request moved with `gh pr edit --base` to the next unmerged parent or
-the repository's base. Commits a parent gains later are merged into the
-child's branch, in its registered worktree, and pushed: never rebased or
-force-pushed. A conflict keeps the merge and atomically queues one fix item
-on the child's branch and worktree, with the conflicting paths as its
-brief, under the child's validated pipeline and policy. Git never merges in
-the operator's checkout, and every merge commit is made under the
-repository's Git identity.
+(`executor/coordination.rs`), woken when an item finishes or an initiative
+changes, and every 5 minutes for changes made outside Archon. GitHub and
+merge maintenance never delay the admission of unrelated items. Only a
+dependency that shipped is a stack parent: an `ask` or errand, or a run
+whose record stage a steer removed, has no branch to stack on.
+
+A pass asks GitHub once per repository, `gh pr list --state open --limit
+1000`, and looks up with `gh pr list --head <branch> --state all` only a
+branch the listing lacks. A pull request found merged or closed is kept in
+`kv` `pr_settled:<repo>:<branch>` and never asked about again, so a pass
+over settled stacks makes no GitHub call. The pull requests of finished
+runs, which learning watches, are read the same way every 10 minutes.
+
+A merged parent has the child's pull request moved with `gh pr edit
+--base` to the next unmerged parent or the repository's base. Commits a
+parent gains later are merged into the child's branch and pushed: never
+rebased or force-pushed. The merge is `git merge-tree --write-tree` and
+`commit-tree` in the repository's shadow (§13.4), made by the repository's
+recorded identity or `Archon <archon@localhost>`; the branch then moves
+with `update-ref`, and a worktree it is checked out in, which must be
+archond's and clean, moves with it (`read-tree -m -u`, undone if the
+branch moved meanwhile). A parent head another checkout pushed is fetched
+into the shadow, not the operator's repository. A conflict writes nothing
+and atomically queues one fix item on the child's branch and worktree,
+whose brief names the parent commit to `git merge` and the conflicting
+paths, under the child's validated pipeline and policy. The fix and its
+item never run at once: the fix waits while the item runs, the item is not
+started or retried while its fix is unfinished, and a dependency section
+asks an agent to merge only a parent commit its branch lacks.
+
+Each stack and each initiative is maintained on its own: one whose pass
+fails is recorded in `kv` `coordination_blocker:<stack|initiative>:<id>`
+and the pass goes on to the next. A failure is one blocker, told once; a
+GitHub or network failure only after three passes in a row. The record
+goes once the subject passes again.
 
 ### 8.9 Initiatives
 
@@ -2859,10 +2908,12 @@ a tag or another ref counts as a branch not the role's. Roles fork from
 `refs/heads/<run branch>`, never from a tag of that name.
 
 Every git the daemon runs has
-`core.fsmonitor=false`, and in a team's worktrees also
-`core.hooksPath=/dev/null`: `worktree add`, `switch`, `update-ref`, the
-`--quit`s and the daemon's commits and merges run no repository hook,
-which a role could have committed where `core.hooksPath` looks. Paths are
+`core.fsmonitor=false`, `core.hooksPath=/dev/null` and every
+`hook.<event>.enabled=false` (§13.4): `worktree add`, `switch`,
+`update-ref`, the `--quit`s and the daemon's commits and merges run no
+repository hook, which a role could have committed where `core.hooksPath`
+looks. A team's merges and status still read the repository's config, so
+a filter or merge driver it names runs there (§13.4). Paths are
 read NUL-terminated (`-z`), so names with spaces at either end or a
 newline are listed exactly; a name that is not UTF-8 is shown lossily
 and never fails the merge.
@@ -2950,9 +3001,8 @@ and never fails the merge.
   `Refused` too. Then it runs
   `git merge --no-ff` of each role's branch in `roles` order, skipping any branch already an ancestor of `HEAD`
   (`merge-base --is-ancestor`). The daemon commits these merges itself:
-  with `core.hooksPath=/dev/null`, so no repository hook runs in the
-  daemon, and as `Archon <archon@localhost>` only when git has no identity
-  configured.
+  with no hook enabled, so no repository hook runs in the daemon, and as
+  `Archon <archon@localhost>` only when git has no identity configured.
 - **Conflict.** A conflicting merge is aborted with `git merge --abort` and
   recorded as `Conflict { role, files }`; the driver fails the stage with
   the files as `{{feedback}}` for its `on_fail` target, or fails the run.
@@ -3096,22 +3146,27 @@ them for its own passes, which a store error stops like any worker (§16).
 The orchestrator answers a question about code by reading the code, so it
 needs every registered repository at hand, and it must not hold the
 operator's checkout. `archon_daemon::mirror` keeps
-`<data>/orchestrator/repos/<name>` for each registered repository: a
-`git clone --local --no-checkout` of the repository's path, checked out
-detached at the base branch (`repo.base_branch`, else the repository's
-`HEAD` commit, as for a worktree). Like a worktree it holds committed work
-only.
+`<data>/orchestrator/repos/<name>` for each registered repository: a work
+tree checked out detached at the base branch (`repo.base_branch`, else the
+repository's `HEAD` commit, as for a worktree), whose git directory is
+`<data>/mirror-git/<name>`, outside the orchestrator's workspace. The
+mirror's `.git` is a file naming that directory. Like a worktree it holds
+committed work only.
 
 **What a mirror cannot do.**
 
-- It has no remote. `origin` is removed after the clone and the daemon
-  fetches by path, so `git push`, `git pull` and `git fetch` have nowhere
-  to go, and the repository's own remotes and credentials are not in its
-  config.
-- It has no branch of the repository's. The clone's `refs/heads/*` are
-  deleted; the repository's branches are fetched to `refs/mirror/*`, a
-  namespace no push or checkout names by default, and a base that is not a
-  branch to `refs/archon/base`.
+- It has no remote. The daemon fetches by path, so `git push`, `git pull`
+  and `git fetch` have nowhere to go, and the repository's own remotes and
+  credentials are not in its config.
+- It has no branch of the repository's. The repository's branches are
+  fetched to `refs/mirror/*`, a namespace no push or checkout names by
+  default, and a base that is not a branch to `refs/archon/base`.
+- Nothing a helper writes runs as the daemon. The git directory is made by
+  `git init --bare --template=`, and before every command the daemon
+  rewrites its `config` to exactly its own and removes `config.worktree`,
+  `info/attributes`, `commondir`, `objects/info/alternates` and
+  `info/grafts`. Each refresh rewrites the `.git` file, which the daemon's
+  git never reads: it names the git directory and work tree itself.
 - A push is refused anyway. Every mirror's `core.hooksPath` is
   `<data>/mirror-hooks`, outside the orchestrator's workspace, whose
   `pre-push` hook exits 1, so a helper that adds a remote still cannot push
@@ -3120,23 +3175,19 @@ only.
   agent runs as the operator's user, and what its tools can reach beyond
   its workspace is Aether's limit (§17). What a mirror guarantees is that
   nothing in it points at the repository or its remotes.
-- No hook of the repository runs. `--template=` copies none, a
-  repository's `.git/hooks` is never cloned, and the daemon's own git in a
-  mirror runs with `core.hooksPath=/dev/null`, without the operator's
-  global and system config, and with `--git-dir` and `--work-tree` naming
-  the mirror itself, so a `core.worktree` written into its config cannot
-  aim a checkout elsewhere.
-- A symbolic link is never followed. A link where the mirrors directory or
-  a mirror belongs, or a `.git` that is a file or a link, is removed and
-  the mirror cloned again. A link inside a mirror is a file of the
-  repository like any other.
+- No hook of the repository runs. `--template=` copies none, the
+  repository's hooks are never fetched, and the daemon's own git in a
+  mirror runs as §13.4 describes, without the operator's global and system
+  config, and with `--git-dir` and `--work-tree` naming the mirror itself,
+  so a `core.worktree` written anywhere cannot aim a checkout elsewhere.
+- A symbolic link is never followed. A link where the mirrors directory, a
+  mirror or its git directory belongs, or a `.git` that is a directory or
+  a link, is removed and made again. A link inside a mirror is a file of
+  the repository like any other.
 
-Objects are shared with the repository by hard links where the filesystem
-allows, so a large repository costs its checkout and no second object
-store, and a mirror on another filesystem costs a copy. A linked object is
-one read-only file under two names: git never rewrites one, and nothing git
-does in a mirror writes to the repository. Only a process that set out to
-overwrite an object file in place would damage both.
+The mirror's objects are its own, fetched from the repository, so a mirror
+costs about one more copy of the repository; nothing git does in a mirror
+writes to the repository.
 
 **Refresh.** One worker (`mirror::run`) brings every mirror up to date at
 start and whenever one is asked for: when a repository is registered,
@@ -3145,10 +3196,10 @@ moved the base), and when the operator sends a message. A request never
 waits for the refresh. A pass resolves the base in the repository, skips
 the fetch when the mirror is already there, fetches only what it lacks
 otherwise, and checks out with `--force --detach`: tracked files a helper
-changed are reset, untracked ones are left. A clone is made beside its
-place and renamed, so a crash leaves no half-made mirror, and the pass
-removes whatever else lies in the mirrors directory, an unregistered
-repository's mirror included.
+changed are reset, untracked ones are left. A git directory is made beside
+its place and renamed, so a crash leaves no half-made one, and the pass
+removes whatever else lies in the mirrors directory and under
+`<data>/mirror-git`, an unregistered repository's mirror included.
 
 **A refresh that fails** leaves the mirror where it was and is never
 silent: one `System` feed entry names the repository and git's error, and
@@ -3167,6 +3218,61 @@ a git worktree of the mirror on a new branch of the mirror
 still no remote, still the push guard. The watchdog allows a helper there,
 holds it to that repository's model policy, and cancels one placed in the
 registered repository itself or under the worktrees root (§7.4).
+
+### 13.4 The daemon's own git
+
+An agent can write a repository's `.git/config`, its worktree's files and
+often its local `origin`; git runs programs those name. Every git command
+`archond` runs therefore goes through `worktree::daemon_git::DaemonGit`:
+
+- No `GIT_*` variable or `EMAIL` of the daemon's environment is passed on.
+  `GIT_TERMINAL_PROMPT=0`, an empty askpass, `GIT_ATTR_NOSYSTEM`,
+  `GIT_NO_REPLACE_OBJECTS` and `GIT_NO_LAZY_FETCH` are set.
+- `-c` settings outrank every config file: `core.hooksPath=/dev/null`,
+  `hook.<event>.enabled=false` for every event (recent git also runs hooks
+  named in config), `core.fsmonitor=false`, `core.attributesFile=/dev/null`,
+  no signing or signature check, no auto gc, no submodule recursion, and
+  every transport but `file` refused.
+- A command is killed with all it started after 120 s, a fetch or push
+  after 180 s, and fails as unavailable.
+- `Sealed` git, on a repository or worktree an agent may write, reads no
+  system or global config and has no credential helper. It runs only
+  commands that read refs and config as data: `rev-parse`, `for-each-ref`,
+  `update-ref`, `worktree list`, `worktree remove --force`, `ls-files`.
+
+What reads file contents (a merge, a checkout, a clean check, a push or a
+fetch) runs in the repository's **shadow**: `<data>/daemon-git/<sha1 or
+sha256>`, a bare git directory `archond` made with `--template=`, whose
+config it rewrites before every command and from which it removes
+`config.worktree`, `info/attributes`, `commondir`, `objects/info/alternates`
+and `info/grafts`. It reads and writes the repository's objects through
+`GIT_OBJECT_DIRECTORY`, and a worktree's files with `--work-tree` and
+`GIT_INDEX_FILE`. The repository's config is never read there, so no
+filter, merge driver, `core.sshCommand` or `credential.helper` it names
+runs, and a `.gitattributes` naming one is inert. The shadow holds no refs:
+a merge is `merge-tree --write-tree` (git 2.38 or later) and `commit-tree`,
+and the branch moves with a `Sealed` `update-ref`.
+
+Shadow git reads the operator's system and global config, which an agent
+does not write: a filter such as Git LFS installed there, `url.<base>.
+insteadOf`, `http.*` and `credential.helper` apply, and a push or fetch
+keeps `GIT_SSH_COMMAND`, `GIT_SSH` and `GIT_SSH_VARIANT` from the daemon's
+environment. Only https, ssh and local `origin` URLs are used; a local
+remote's `receive-pack` and `upload-pack` run with no hook. A fetch writes
+no ref and no `FETCH_HEAD` in the repository, only the objects it lacks.
+
+Removing a worktree asks the shadow what `git worktree remove` would: a
+populated submodule or the worktree's own `modules`, a tracked change
+(`update-index --refresh`, `diff-files`, `diff-index --cached`), or an
+untracked file not ignored by the tree's `.gitignore`, the repository's
+`info/exclude` or the operator's. Any of them keeps the worktree; else it
+goes with `worktree remove --force`, so git's own `status`, which reads the
+repository's filters, never runs. A repository-only `core.excludesFile` or
+`core.autocrlf` is not read, which can only keep a worktree that was clean.
+
+Not yet through the shadow: `worktree add` and a team's merges and status
+(§13.1) check files out and read them under the repository's config, with
+no hook, but with its filters.
 
 ## 14. Lavish plugin
 

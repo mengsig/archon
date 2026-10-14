@@ -49,9 +49,13 @@ if args[1] == 'create':
         flag('--title'))
     print(pr['url'])
 elif args[1] == 'list':
-    known = flag('--head') in state or not explicit
-    pr = named(flag('--head')) if known else None
-    print(json.dumps([pr] if pr and pr['state'] == 'OPEN' else []))
+    wanted = flag('--state')
+    if '--head' in args:
+        known = flag('--head') in state or not explicit
+        prs = [named(flag('--head'))] if known else []
+    else:
+        prs = list(state.values())
+    print(json.dumps([pr for pr in prs if wanted == 'all' or pr['state'] == 'OPEN']))
 elif args[1] == 'view':
     print(json.dumps(named(args[2])))
 elif args[1] == 'edit':

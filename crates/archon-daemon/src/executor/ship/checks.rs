@@ -2,38 +2,34 @@
 //! (ARCHITECTURE §8.7): it is the run's own worktree, on the run branch,
 //! with no uncommitted change, holding the tree the pipeline verified, ahead
 //! of its base, and every commit it adds carries the repository's identity.
-//! Blocking git: callers run it off the async runtime.
+//! Blocking git, none of it running a program the worktree's config names:
+//! callers run it off the async runtime.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use archon_core::error::ArchonError;
 use archon_pipeline::ShipRecord;
 
+use crate::worktree::daemon_git::{Config, DaemonGit};
+use crate::worktree::head;
+use crate::worktree::shadow::Shadow;
 use crate::worktree::team::{check_worktree, common_dir};
-use crate::worktree::{git, head};
 
-/// The identity of the commits archond makes itself when git has none.
-const DAEMON_EMAIL: &str = "archon@localhost";
 /// Paths or commits named in one refusal.
 const MAX_LISTED: usize = 5;
-/// Set by a caller's shell, these would stand in for the repository's identity.
-const IDENTITY_ENV: [&str; 5] = [
-    "GIT_AUTHOR_NAME",
-    "GIT_AUTHOR_EMAIL",
-    "GIT_COMMITTER_NAME",
-    "GIT_COMMITTER_EMAIL",
-    "EMAIL",
-];
 
 /// The worktree a run ships from and what it must hold.
 #[derive(Debug, Clone)]
 pub(super) struct Target {
+    /// Where the shadow the clean check reads through lives.
+    pub data_dir: PathBuf,
     pub repo_path: PathBuf,
     pub workspace: PathBuf,
     pub branch: String,
     /// The branch the change is for: the stack parent's, else the repository's.
     pub base: String,
+    /// The addresses a commit the run adds may carry, recorded at registration.
+    pub allowed: Vec<String>,
 }
 
 /// A worktree that may be delivered.
@@ -62,14 +58,14 @@ pub(super) fn check(
             target.branch
         )));
     }
-    let dirty = git(tree, &["status", "--porcelain", "--untracked-files=no"])?;
+    let commit = git(tree, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    let dirty = changed_files(target, &commit)?;
     if !dirty.is_empty() {
         return Ok(Err(format!(
             "the run worktree has uncommitted changes, which would not ship: {}",
             listed(dirty.lines())
         )));
     }
-    let commit = git(tree, &["rev-parse", "--verify", "HEAD^{commit}"])?;
     let found = git(tree, &["rev-parse", "--verify", "HEAD^{tree}"])?;
     if found != record.tree {
         return Ok(Err(format!(
@@ -91,7 +87,52 @@ pub(super) fn check(
             target.branch, target.base
         )));
     }
-    Ok(foreign_commits(tree, &base)?.map(|()| Checked { commit }))
+    Ok(foreign_commits(tree, &base, &target.allowed)?.map(|()| Checked { commit }))
+}
+
+/// Git in the run worktree under the repository's config, running none of
+/// the programs it names; its stdout.
+fn git(tree: &Path, args: &[&str]) -> Result<String, ArchonError> {
+    DaemonGit::sealed_in(tree).args(args.iter().copied()).text()
+}
+
+/// The tracked files of the run worktree that differ from `commit`, compared
+/// through the shadow in an index of its own: no filter the worktree's config
+/// names runs, and nothing in the worktree is written.
+fn changed_files(target: &Target, commit: &str) -> Result<String, ArchonError> {
+    assert!(crate::worktree::stack::is_commit_id(commit), "a commit id");
+    let shadow = Shadow::of(&target.data_dir, &target.repo_path)?;
+    let index = shadow.scratch_index();
+    let compared = compare(&shadow, &target.workspace, &index, commit);
+    match std::fs::remove_file(&index) {
+        Ok(()) => compared,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => compared,
+        Err(e) => compared.and(Err(ArchonError::io(
+            format!("removing {}", index.display()),
+            e,
+        ))),
+    }
+}
+
+fn compare(
+    shadow: &Shadow,
+    tree: &Path,
+    index: &Path,
+    commit: &str,
+) -> Result<String, ArchonError> {
+    let index = index
+        .to_str()
+        .ok_or_else(|| ArchonError::Invalid(format!("{} is not UTF-8", index.display())))?;
+    let git = || -> Result<DaemonGit, ArchonError> {
+        Ok(shadow
+            .git(Some(tree), Config::Operator)?
+            .env("GIT_INDEX_FILE", index))
+    };
+    git()?.args(["read-tree", commit]).text()?;
+    git()?.args(["update-index", "-q", "--refresh"]).text()?;
+    let changed = git()?.args(["diff-files", "--name-only"]).text()?;
+    assert!(!changed.contains('\0'), "one path per line");
+    Ok(changed)
 }
 
 /// Refuse a workspace that is not the worktree git registered for the run:
@@ -131,9 +172,16 @@ fn base_ref(tree: &Path, base: &str) -> Result<Option<String>, ArchonError> {
 
 /// Refuse a commit the run adds, one neither `base` nor a remote holds, that
 /// was not made under the repository's git identity or the daemon's own.
-fn foreign_commits(tree: &Path, base: &str) -> Result<Result<(), String>, ArchonError> {
-    let allowed = allowed_emails(tree)?;
-    assert!(allowed.iter().any(|email| email == DAEMON_EMAIL));
+fn foreign_commits(
+    tree: &Path,
+    base: &str,
+    allowed: &[String],
+) -> Result<Result<(), String>, ArchonError> {
+    assert!(
+        !allowed.is_empty(),
+        "the daemon's own address is always allowed"
+    );
+    assert!(base.starts_with("refs/"), "a full ref name");
     let format = "--format=%H%x09%ae%x09%ce";
     let log = git(tree, &["log", format, "HEAD", "--not", base, "--remotes"])?;
     let mut foreign = Vec::new();
@@ -157,48 +205,12 @@ fn foreign_commits(tree: &Path, base: &str) -> Result<Result<(), String>, Archon
     }
     Ok(Err(format!(
         "{} commit(s) on the run branch were not made under this repository's git identity \
-         (<{}>): {}. Commits must inherit the local git configuration",
+         (<{}>): {}. Commits must inherit the local git configuration; Archon records it at \
+         `archon repo add`, and again at `archon repo set` after a deliberate change",
         foreign.len(),
         allowed[0],
         listed(foreign.iter().map(String::as_str))
     )))
-}
-
-/// The e-mail addresses a commit made in `tree` under its git configuration
-/// carries, then the daemon's fallback.
-fn allowed_emails(tree: &Path) -> Result<Vec<String>, ArchonError> {
-    let mut allowed = Vec::new();
-    for ident in ["GIT_AUTHOR_IDENT", "GIT_COMMITTER_IDENT"] {
-        let mut command = Command::new("git");
-        command.arg("-C").arg(tree).args(["var", ident]);
-        for name in IDENTITY_ENV {
-            command.env_remove(name);
-        }
-        let output = command
-            .output()
-            .map_err(|e| ArchonError::io(format!("running git in {}", tree.display()), e))?;
-        // `git var` fails exactly when git has no identity to commit under.
-        if !output.status.success() {
-            continue;
-        }
-        let printed = String::from_utf8_lossy(&output.stdout);
-        let email = printed
-            .split_once('<')
-            .and_then(|(_, rest)| rest.split_once('>'))
-            .map(|(email, _)| email.to_owned());
-        let Some(email) = email else {
-            return Err(ArchonError::Protocol(format!(
-                "git var {ident} printed no e-mail address: {printed:?}"
-            )));
-        };
-        if !allowed.contains(&email) {
-            allowed.push(email);
-        }
-    }
-    if !allowed.iter().any(|email| email == DAEMON_EMAIL) {
-        allowed.push(DAEMON_EMAIL.to_owned());
-    }
-    Ok(allowed)
 }
 
 /// The first few of `items` on one line, saying how many more there are.

@@ -1526,8 +1526,8 @@ above. While an item is dispatching both are refused.
 **Audit.** Every steer is a `SteerRecord {at, by, what, note}` kept with
 the item (`kv.steers:<item>`, the newest 100), a progress entry in the
 feed (`Steered <item> (<by>): <what>.`), and a line in `archon queue show`
-and `get_item`. A steer of a running run, and the start of a run whose
-shape a steer set, record a `steered` correction of that run (§19).
+and `get_item`. A steer is no correction: learning blames no model for it
+(§19).
 
 ### 6.7 One agent through a fix loop
 
@@ -2219,11 +2219,12 @@ table and delivers it off every lock:
    equals the record's `tree`; the branch is ahead of its base; and every
    commit that neither the base nor a remote holds has an author and a
    committer e-mail of the repository's recorded identity or
-   `archon@localhost`, under which archond's team merges are made. The
+   `archon@localhost`, which archond's own merges use when git has none. The
    identity is what `git var` yields in the repository under the
    operator's config (`GIT_*` identity variables removed), recorded in
    `kv` `repo_identity:<repo>` at `archon repo add` and again at `archon
-   repo set`, which posts a feed line when it changed; a repository
+   repo set` (with no option, only that), which posts a feed line when it
+   changed; a repository
    registered before this record existed has it taken at its first
    delivery. A `user.email` an agent writes into the repository later
    changes nothing. Any miss is a refusal that names the paths or commits.

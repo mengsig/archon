@@ -77,8 +77,9 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
   (`<commit>:refs/heads/<branch>`), not whatever the branch holds by then,
   and a stacked run missing its parent's commit is refused before anything
   leaves. The git identity commits must carry is recorded at `archon repo
-  add` and `archon repo set`; a `user.email` an agent sets later does not
-  count.
+  add`, and again by `archon repo set <repo>`, which with no option
+  records only that; a repository added before 1.1.0 has it recorded at
+  its first delivery. A `user.email` an agent sets later does not count.
 - A refused delivery fails the item as `stage ship: <what to change>`.
   What only you can fix (no `origin`, a lapsed `gh` login, a branch rule)
   is a blocker. Network and GitHub failures are retried five times, and the
@@ -101,11 +102,13 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
   within your autonomy ceiling. A pipeline whose review stages are its own
   refuses another level.
 - **A review pass is checked, not believed.** The lead names each
-  reviewer's agent id, and each reviewer returns a structured verdict on the
-  commit it read. Archon accepts only completed direct children, and every
-  commit it delivers must have been read by enough passing reviewers. A
-  failed verdict stands until a later pass reads past it, and a fix can be
-  reviewed as a delta.
+  reviewer's agent id, and each reviewer returns a structured verdict on
+  the commit it read. Archon accepts only completed direct children, and
+  every commit it delivers must have been read by enough passing
+  reviewers. When the reviewed stage also writes the ship record, the
+  commit they passed must hold the tree that ships. A failed verdict
+  stands until a later pass reads past it, and a fix can be reviewed as a
+  delta.
 - **A model plan is optional.** A stage left out gets the learned choice,
   else the orchestrator's model where your policy allows it, else the first
   allowed model. The item shows the filled plan.
@@ -205,7 +208,8 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
   `correction {"item":"qi_…","stage":"…","cause":"quality","reason":"…"}`
   and, for 14 days, a pull request review that requests changes or a close
   without merge. Only a `quality` correction counts against the stage it
-  names: steers, scope, effort, infrastructure and budget do not.
+  names: steers, scope, effort, infrastructure and budget do not. A stage
+  whose review Archon refused counts as no pass.
 - Learning never holds up a run. It happens after the run finished; a gap
   is filled by a recurring reconciliation, and a run whose record cannot be
   read is skipped with a marker. Costs come from the spend ledger, so they

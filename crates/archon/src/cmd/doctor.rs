@@ -1,6 +1,7 @@
 //! `archon doctor` checks the pieces Archon depends on; in shared mode
 //! `archon setup` registers the MCP server and then runs the MCP checks.
 
+mod mcp_tools;
 mod registry;
 
 use std::path::{Path, PathBuf};
@@ -90,6 +91,7 @@ pub async fn run(json: bool) -> anyhow::Result<ExitCode> {
         checks.push(check_calm(&instance));
     }
     checks.push(check_mcp_health(aether.as_ref().ok()).await);
+    checks.extend(mcp_tools::check_mcp_tools(aether.as_ref().ok(), config.aether.mode).await);
     let archond = connect_existing().await;
     checks.push(check_archond(&archond));
     let registry = Registry::read(&archond, config.aether.mode).await;

@@ -5,7 +5,9 @@ use archon_daemon::triggers::TriggerPayload;
 use serde_json::{Value, json};
 
 fn serialize(events: Vec<Value>) -> Value {
-    let original = json!({"archon": 1, "events": events, "directives": []});
+    let original = json!({
+        "archon": 1, "events": events, "directives": [], "directives_in_force": 0
+    });
     let payload: TriggerPayload = serde_json::from_value(original.clone()).unwrap();
     let mut output = serde_json::to_value(payload).unwrap();
     let summary = output.as_object_mut().unwrap().remove("summary").unwrap();

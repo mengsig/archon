@@ -440,6 +440,8 @@ pub fn context(
         answering: Mutex::new(()),
         report_files: Arc::new(Mutex::new(())),
         triggers: TriggerQueue::default(),
+        mirrors: archon_daemon::mirror::MirrorQueue::default(),
+        spawn_recorded: Notify::new(),
         caps_override: Mutex::new(None),
         lavish,
         supervisor: archon_daemon::supervisor::Supervisor::default(),

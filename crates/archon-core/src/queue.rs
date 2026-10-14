@@ -36,6 +36,11 @@ pub fn check_enqueue(
     check_item_budget(budget)
 }
 
+/// The tag that has the orchestrator woken when the item finishes, however
+/// it ends; an untagged item's routine success is only listed in its next
+/// trigger (ARCHITECTURE §5.4).
+pub const NOTIFY_TAG: &str = "notify";
+
 pub fn check_tags(tags: &[String]) -> Result<(), ArchonError> {
     if tags.iter().any(|tag| tag.trim().is_empty()) {
         return Err(ArchonError::Invalid(
@@ -192,6 +197,11 @@ pub struct QueueItem {
 }
 
 impl QueueItem {
+    /// Whether whoever queued it asked to be told when it finishes.
+    pub fn wants_notice(&self) -> bool {
+        self.tags.iter().any(|tag| tag == NOTIFY_TAG)
+    }
+
     /// Apply a transition, refusing illegal edges.
     pub fn transition(&mut self, next: QueueState, at: Timestamp) -> Result<(), ArchonError> {
         if !self.state.can_transition_to(&next) {
@@ -251,7 +261,7 @@ pub struct Caps {
 impl Default for Caps {
     fn default() -> Self {
         Self {
-            max_parallel_agents: 3,
+            max_parallel_agents: 8,
             max_per_repo: 0,
             max_per_pipeline: BTreeMap::new(),
             max_active_runs: 0,

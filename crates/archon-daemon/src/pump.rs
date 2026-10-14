@@ -48,6 +48,8 @@ pub const ORCHESTRATOR_EVENT_TYPES: &[&str] = &[
     "inbox.consumed",
     // Aether restarted the orchestrator into a new agent (`aether restart`).
     "agent.restarted",
+    // Its older context became a summary: the directives are stated again.
+    "compaction.completed",
 ];
 
 pub const FLEET_EVENT_TYPES: &[&str] = &[

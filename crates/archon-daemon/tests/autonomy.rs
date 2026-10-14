@@ -612,7 +612,7 @@ async fn yolo_stage_agents_may_delegate_and_read_archon() {
     // The stage does not set `allow_delegation`: yolo alone brings the rules.
     let rules = &yolo.instructions[yolo.instructions.find(DELEGATION_HEADING).unwrap()..];
     assert!(
-        rules.contains("Pass `leaf: true` for every child"),
+        rules.contains("A child may delegate once more when its part splits further"),
         "{rules}"
     );
     assert!(rules.contains("policy for this item: any model Aether lists. Archon cancels"));

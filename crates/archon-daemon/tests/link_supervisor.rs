@@ -5,17 +5,20 @@
 mod link_common;
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use archon_aether::fake::{self, Scripted};
 use archon_core::aether_ids::AetherQuestionRef;
+use archon_core::autonomy::{Directive, DirectiveSource};
+use archon_core::config::Config;
 use archon_core::error::ArchonError;
 use archon_core::id::{FeedItemId, QuestionId};
 use archon_core::notify::{AnswerVia, FeedEntry, NotificationKind, Question};
 use archon_core::protocol::{ClientKind, Reply, Request};
-use archon_daemon::triggers::TriggerEvent;
-use archon_daemon::{handlers, supervisor};
+use archon_daemon::triggers::{self, TriggerEvent};
+use archon_daemon::{handlers, mirror, supervisor};
 use archon_queue::store::keys;
 use link_common::{Harness, WAIT, agent_id};
 use serde_json::{Value, json};
@@ -185,6 +188,41 @@ async fn a_failed_orchestrator_is_woken_and_a_cancelled_one_restarted() {
         notes[1].contains("restarted") && notes[1].contains(ORCH_2),
         "{notes:?}"
     );
+}
+
+/// Aether restarts from a checkpoint and the tail of the transcript, which
+/// may not hold what an earlier trigger stated.
+#[tokio::test]
+async fn a_restarted_orchestrator_is_told_its_directives_again() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    let directive = Directive::new(
+        "no yolo today",
+        DirectiveSource::Operator,
+        None,
+        archon_core::now(),
+    )
+    .unwrap();
+    {
+        let mut store = harness.ctx.store.lock().await;
+        store.insert_directive(&directive).unwrap();
+    }
+    agent_table(&harness, &[(ORCH, "cancelled")]);
+    harness.fake.script(
+        "restart",
+        Scripted::reply("agent", agent_in(ORCH_2, "ready")),
+    );
+    assert!(triggers::held(&harness.ctx).await.unwrap().is_empty());
+    let id = supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    assert_eq!(id, agent_id(ORCH_2));
+
+    let held = triggers::held(&harness.ctx).await.unwrap();
+    let [TriggerEvent::DirectivesRestated { reason }] = held.as_slice() else {
+        panic!("held {held:?}");
+    };
+    assert!(reason.contains("restarted"), "{reason}");
+    assert!(triggers::due(&harness.ctx).await.unwrap());
 }
 
 #[tokio::test]
@@ -1230,4 +1268,91 @@ async fn tui_attachment_does_not_return_an_unknown_or_stopped_snapshot() {
         );
     }
     assert!(harness.fake.received_named("create_agent").is_empty());
+}
+
+/// `git` in `dir` with a throwaway identity; returns its trimmed stdout.
+fn git(dir: &Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "user.name=Archon Test"])
+        .args(["-c", "user.email=test@archon.invalid"])
+        .args(["-c", "commit.gpgsign=false"])
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .expect("git runs");
+    assert!(output.status.success(), "git {args:?}: {output:?}");
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+fn commit(repo: &Path, text: &str) -> String {
+    std::fs::write(repo.join("README.md"), text).unwrap();
+    git(repo, &["add", "README.md"]);
+    git(repo, &["commit", "--quiet", "-m", text]);
+    git(repo, &["rev-parse", "HEAD"])
+}
+
+/// The turn an operator message starts reads the routine news held for the
+/// orchestrator, in mirrors refreshed for the question: neither waits for
+/// the next trigger that would wake it.
+#[tokio::test]
+async fn an_operator_message_brings_the_quiet_news_and_a_current_mirror() {
+    let mut config = Config::default();
+    config.orchestrator.trigger_coalesce_ms = 60_000;
+    let harness = Harness::with(config, None).await;
+    harness.connect().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    agent_table(&harness, &[(ORCH, "running")]);
+    let sent = Scripted::reply("message_sent", json!({}));
+    harness.fake.set_default("send_message", sent);
+    harness.fake.set_default("trigger", Scripted::ok());
+    let repo = tempfile::tempdir().unwrap();
+    let repo = repo.path().canonicalize().unwrap();
+    git(&repo, &["init", "--quiet", "--initial-branch=main"]);
+    let first = commit(&repo, "first");
+    let item = link_common::cancelled_item(&harness.ctx, &repo).await;
+    let mirror = mirror::mirrors_root(&harness.ctx.paths.orchestrator_workspace).join("alpha");
+    let delivery = tokio::spawn(triggers::deliver_loop(harness.ctx.clone()));
+    let mirrors = tokio::spawn(mirror::run(harness.ctx.clone()));
+    let at = |commit: String| {
+        let checked_out = mirror.join(".git/HEAD");
+        move || {
+            // A detached checkout: `HEAD` holds the commit itself.
+            let head = std::fs::read_to_string(&checked_out).unwrap_or_default();
+            std::future::ready(head.trim() == commit)
+        }
+    };
+    harness
+        .eventually("the mirror is made at start", at(first))
+        .await;
+
+    let second = commit(&repo, "second");
+    let routine = TriggerEvent::ItemFinished {
+        item,
+        title: "bump a dependency".into(),
+        state: "cancelled".into(),
+        summary: "cancelled".into(),
+        pr_url: None,
+        cost_usd: 0.0,
+        origin: None,
+    };
+    triggers::push_quiet(&harness.ctx, routine).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(harness.fake.received_named("trigger").is_empty());
+
+    supervisor::deliver_operator_message(&harness.ctx, &FeedItemId::new(), "what changed?")
+        .await
+        .unwrap();
+    let triggers = harness.fake.wait_for("trigger", 1, WAIT).await;
+    let events = &triggers[0]["payload"]["events"];
+    assert_eq!(events.as_array().map(Vec::len), Some(1), "{events}");
+    assert_eq!(events[0]["type"], "items_finished");
+    assert_eq!(harness.fake.received_named("send_message").len(), 1);
+    harness
+        .eventually("the mirror follows the base", at(second))
+        .await;
+    delivery.abort();
+    mirrors.abort();
 }

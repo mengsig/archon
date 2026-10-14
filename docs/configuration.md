@@ -20,7 +20,7 @@ allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-sol"]
 max_effort = "high"
 
 [limits]
-max_parallel_agents = 3        # the hard cap on running stage agents
+max_parallel_agents = 8        # the hard cap on running stage agents (the default)
 max_per_repo = 2
 budget_usd_daily = 50.0
 min_free_gb = 10               # nothing new starts below this much free disk; 0 = off
@@ -56,11 +56,28 @@ on where you started it.
 Each repository can lower these limits in `<repo>/.archon/config.toml`. The
 full reference is in [`docs/ARCHITECTURE.md` §9](ARCHITECTURE.md#9-configuration).
 
+The orchestrator reads your code in mirrors: for every registered
+repository, `archond` keeps a clone at `<data>/orchestrator/repos/<name>`,
+checked out at the base branch, with no remote, and refreshes it when an
+item finishes and when you write. A mirror shares the repository's objects
+through hard links when both are on one filesystem, so it costs about one
+more checkout; on another filesystem it is a full copy. A repository whose
+own `[models]` refuses the orchestrator's model gets no mirror.
+
+`archond` posts every finished item to your feed itself and wakes the
+orchestrator only for a failure, a blocker, an item tagged `notify` or one
+a GitHub thread asked for; every wake is a whole orchestrator turn that
+you pay for. The rest reach it with its next turn. Set `wake_on_success =
+true` under `[orchestrator]` to have it woken for every finished item
+([guide](guide.md#when-the-orchestrator-is-woken)).
+
 The helper agents the orchestrator delegates to
-([guide](guide.md#what-the-orchestrator-does-without-queueing)) work in no
-repository. They are held to `[models]` narrowed by every registered
-repository's own `[models]`, and their spend counts toward the daily and
-total budgets. `max_parallel_agents` and the other caps count stage agents
+([guide](guide.md#what-the-orchestrator-does-without-queueing)) work in a
+mirror or in a scratch directory, never in your checkout. A helper is held
+to `[models]` narrowed by the `[models]` of the repository whose mirror it
+reads, and to `[models]` alone when it reads none. It may delegate once
+more, and no deeper. Helpers' spend counts toward the daily and total
+budgets. `max_parallel_agents` and the other caps count stage agents
 only, so the orchestrator is told to keep its helpers within them. If your
 Aether config sets `[scheduler] run_budget_usd`, Archon's instance inherits
 it, and it is cumulative: once the orchestrator's run has spent it, Aether
@@ -133,7 +150,7 @@ keep from a directory that was set aside. The rules in full are in
 
 If the disk still fills:
 
-- Run fewer agents at once: lower `[limits] max_parallel_agents` (3 by
+- Run fewer agents at once: lower `[limits] max_parallel_agents` (8 by
   default) or `max_per_repo`, or until the next restart
   `archon queue caps --max-parallel-agents 2`.
 - Shorten `cache_after`, for example to `"15m"`, so finished items give

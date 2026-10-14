@@ -11,7 +11,10 @@ use archon_core::notify::FeedEntry;
 use super::fleet;
 use crate::context::DaemonContext;
 use crate::feed::{self, REPLY_STATE_KEY, ReplyTracker};
-use crate::{chat_answer, supervisor};
+use crate::{chat_answer, supervisor, triggers};
+
+/// Aether's event type for an agent whose older context became a summary.
+const COMPACTION_COMPLETED: &str = "compaction.completed";
 
 pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(), ArchonError> {
     let Some(agent) = &event.agent else {
@@ -64,6 +67,10 @@ pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(
         }
         EventKind::AgentUsageUpdated { usage } => {
             fleet::record_spend(ctx, event, agent, None, usage).await
+        }
+        // What it was told of the directives may not be in its summary.
+        EventKind::Other { type_name } if type_name == COMPACTION_COMPLETED => {
+            triggers::restate_directives(ctx, "your context was compacted").await
         }
         _ => Ok(()),
     }

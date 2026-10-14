@@ -6,7 +6,9 @@ mod link_common;
 use std::time::Duration;
 
 use archon_aether::fake::{self, Scripted};
+use archon_core::autonomy::{Directive, DirectiveSource};
 use archon_core::config::Config;
+use archon_core::error::ArchonError;
 use archon_core::id::{QuestionId, QueueItemId};
 use archon_daemon::supervisor;
 use archon_daemon::triggers::{self, TriggerEvent};
@@ -539,4 +541,250 @@ async fn news_held_behind_a_stuck_batch_stays_bounded() {
     assert_eq!(digest["dropped"], json!({ "budget": pushed - 9 }));
     let newest = &sent[0]["payload"]["events"][10]["scope"];
     assert_eq!(newest, &json!((pushed - 1).to_string()));
+}
+
+/// The quiet `item_finished` news of the cancelled `item`.
+fn routine(item: &QueueItemId) -> TriggerEvent {
+    TriggerEvent::ItemFinished {
+        item: item.clone(),
+        title: "bump a dependency".into(),
+        state: "cancelled".into(),
+        summary: "a long account the list leaves out".into(),
+        pr_url: None,
+        cost_usd: 0.25,
+        origin: None,
+    }
+}
+
+async fn delivering(harness: &Harness) -> tokio::task::JoinHandle<Result<(), ArchonError>> {
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    harness.set_kv(keys::ORCHESTRATOR_GENERATION, "1").await;
+    // As the supervisor does for a generation it creates.
+    triggers::collapse_for_new_orchestrator(&harness.ctx)
+        .await
+        .unwrap();
+    live_orchestrator(harness);
+    harness.fake.set_default("trigger", Scripted::ok());
+    tokio::spawn(triggers::deliver_loop(harness.ctx.clone()))
+}
+
+#[tokio::test]
+async fn quiet_news_sends_no_trigger_and_rides_with_the_next_one() {
+    let harness = harness().await;
+    let delivery = delivering(&harness).await;
+    let item = cancelled_item(&harness.ctx, harness.dir.path()).await;
+    triggers::push_quiet(&harness.ctx, routine(&item))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        harness.fake.received_named("trigger").is_empty(),
+        "six coalesce windows passed and a routine outcome woke the orchestrator"
+    );
+    assert_eq!(triggers::held_news(&harness.ctx).await.unwrap(), 1);
+
+    triggers::push(&harness.ctx, blocked("needs a decision"))
+        .await
+        .unwrap();
+    let sent = harness.fake.wait_for("trigger", 1, WAIT).await;
+    delivered(&harness).await;
+    delivery.abort();
+    assert_eq!(types(&sent[0]), ["item_blocked", "items_finished"]);
+    let listed = &sent[0]["payload"]["events"][1]["items"];
+    assert_eq!(listed.as_array().map(Vec::len), Some(1), "{listed}");
+    assert_eq!(listed[0]["item"], item.as_str());
+    assert_eq!(listed[0]["state"], "cancelled");
+    assert_eq!(listed[0]["cost_usd"], 0.25);
+    assert_eq!(listed[0].get("summary"), None, "the list is compact");
+}
+
+#[tokio::test]
+async fn a_flush_delivers_quiet_news_at_once_and_only_when_there_is_some() {
+    let mut config = Config::default();
+    config.orchestrator.trigger_coalesce_ms = 60_000;
+    let harness = Harness::with(config, None).await;
+    harness.connect().await;
+    let delivery = delivering(&harness).await;
+    triggers::flush_quiet(&harness.ctx).await.unwrap();
+    let item = cancelled_item(&harness.ctx, harness.dir.path()).await;
+    triggers::push_quiet(&harness.ctx, routine(&item))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        harness.fake.received_named("trigger").is_empty(),
+        "a flush of nothing sends nothing, and does not flush what comes later"
+    );
+
+    triggers::flush_quiet(&harness.ctx).await.unwrap();
+    let sent = harness.fake.wait_for("trigger", 1, WAIT).await;
+    delivery.abort();
+    assert_eq!(
+        types(&sent[0]),
+        ["items_finished"],
+        "sent without the minute-long coalesce window"
+    );
+}
+
+async fn set_directive(harness: &Harness, text: &str) -> Directive {
+    let directive =
+        Directive::new(text, DirectiveSource::Operator, None, archon_core::now()).unwrap();
+    let mut store = harness.ctx.store.lock().await;
+    store.insert_directive(&directive).unwrap();
+    directive
+}
+
+/// Wait until the orchestrator has every batch: none is in flight or held.
+async fn delivered(harness: &Harness) {
+    let all_sent = || async { triggers::held_news(&harness.ctx).await.unwrap() == 0 };
+    harness
+        .eventually("every batch is delivered", all_sent)
+        .await;
+}
+
+/// Push waking news and return the payload of the trigger it leaves in.
+async fn next_payload(harness: &Harness, sent_before: usize, reason: &str) -> Value {
+    triggers::push(&harness.ctx, blocked(reason)).await.unwrap();
+    let sent = harness
+        .fake
+        .wait_for("trigger", sent_before + 1, WAIT)
+        .await;
+    assert_eq!(sent.len(), sent_before + 1, "one trigger per push here");
+    delivered(harness).await;
+    sent[sent_before]["payload"].clone()
+}
+
+#[tokio::test]
+async fn directives_are_stated_in_full_once_and_then_only_as_changes() {
+    let harness = harness().await;
+    let delivery = delivering(&harness).await;
+    let first = set_directive(&harness, "no yolo today").await;
+
+    let full = next_payload(&harness, 0, "one").await;
+    assert_eq!(full["directives"][0]["text"], "no yolo today");
+    assert_eq!(full["directives_in_force"], 1);
+    assert_eq!(full.get("directive_changes"), None);
+
+    let unchanged = next_payload(&harness, 1, "two").await;
+    assert_eq!(unchanged.get("directives"), None, "told once: {unchanged}");
+    assert_eq!(unchanged.get("directive_changes"), None);
+    assert_eq!(
+        unchanged["directives_in_force"], 1,
+        "the count is always there"
+    );
+
+    set_directive(&harness, "merge docs fixes yourself").await;
+    let added = next_payload(&harness, 2, "three").await;
+    assert_eq!(added.get("directives"), None);
+    let set = &added["directive_changes"]["set"];
+    assert_eq!(set.as_array().map(Vec::len), Some(1), "{added}");
+    assert_eq!(set[0]["text"], "merge docs fixes yourself");
+    assert_eq!(added["directives_in_force"], 2);
+
+    let cleared = {
+        let mut store = harness.ctx.store.lock().await;
+        store.clear_directives(Some(&first.id)).unwrap()
+    };
+    assert_eq!(cleared, 1);
+    let removed = next_payload(&harness, 3, "four").await;
+    assert_eq!(
+        removed["directive_changes"]["cleared"][0]["text"],
+        "no yolo today"
+    );
+    assert_eq!(removed["directive_changes"].get("set"), None);
+    assert_eq!(removed["directives_in_force"], 1);
+    delivery.abort();
+}
+
+#[tokio::test]
+async fn a_new_generation_and_a_compacted_context_are_told_every_directive_again() {
+    let harness = harness().await;
+    let delivery = delivering(&harness).await;
+    set_directive(&harness, "no yolo today").await;
+    let full = next_payload(&harness, 0, "one").await;
+    assert_eq!(full["directives_in_force"], 1);
+
+    harness.set_kv(keys::ORCHESTRATOR_GENERATION, "2").await;
+    triggers::collapse_for_new_orchestrator(&harness.ctx)
+        .await
+        .unwrap();
+    let sent = harness.fake.wait_for("trigger", 2, WAIT).await;
+    delivered(&harness).await;
+    assert_eq!(types(&sent[1]), ["directives_restated"]);
+    assert_eq!(sent[1]["payload"]["directives"][0]["text"], "no yolo today");
+    let reason = sent[1]["payload"]["events"][0]["reason"].as_str().unwrap();
+    assert!(reason.contains("new orchestrator generation"), "{reason}");
+
+    let unchanged = next_payload(&harness, 2, "two").await;
+    assert_eq!(unchanged.get("directives"), None, "generation 2 was told");
+
+    triggers::restate_directives(&harness.ctx, "your context was compacted")
+        .await
+        .unwrap();
+    let sent = harness.fake.wait_for("trigger", 4, WAIT).await;
+    assert_eq!(types(&sent[3]), ["directives_restated"]);
+    assert_eq!(sent[3]["payload"]["directives"][0]["text"], "no yolo today");
+    assert_eq!(
+        sent[3]["payload"]["events"][0]["reason"],
+        "your context was compacted"
+    );
+    delivery.abort();
+}
+
+/// Its prompt says every trigger carries the directives in force.
+#[tokio::test]
+async fn an_orchestrator_an_earlier_archon_started_gets_every_directive_each_time() {
+    let harness = harness().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    harness.set_kv(keys::ORCHESTRATOR_GENERATION, "3").await;
+    live_orchestrator(&harness);
+    harness.fake.set_default("trigger", Scripted::ok());
+    let delivery = tokio::spawn(triggers::deliver_loop(harness.ctx.clone()));
+    set_directive(&harness, "no yolo today").await;
+    for (sent_before, reason) in [(0, "one"), (1, "two")] {
+        let payload = next_payload(&harness, sent_before, reason).await;
+        assert_eq!(payload["directives"][0]["text"], "no yolo today");
+        assert_eq!(payload.get("directive_changes"), None, "{payload}");
+    }
+    delivery.abort();
+}
+
+#[tokio::test]
+async fn directives_lost_twice_before_a_trigger_leaves_are_restated_once() {
+    let harness = harness().await;
+    set_directive(&harness, "no yolo today").await;
+    for reason in ["your context was compacted", "you were restarted"] {
+        triggers::restate_directives(&harness.ctx, reason)
+            .await
+            .unwrap();
+    }
+    let held = triggers::held(&harness.ctx).await.unwrap();
+    assert_eq!(held.len(), 1, "{held:?}");
+    let TriggerEvent::DirectivesRestated { reason } = &held[0] else {
+        panic!("held {held:?}");
+    };
+    assert_eq!(reason, "your context was compacted");
+    assert!(triggers::due(&harness.ctx).await.unwrap(), "it wakes");
+}
+
+#[tokio::test]
+async fn nothing_is_restated_when_no_directive_is_in_force() {
+    let harness = harness().await;
+    let delivery = delivering(&harness).await;
+    triggers::restate_directives(&harness.ctx, "your context was compacted")
+        .await
+        .unwrap();
+    triggers::collapse_for_new_orchestrator(&harness.ctx)
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(harness.fake.received_named("trigger").is_empty());
+    let payload = next_payload(&harness, 0, "one").await;
+    assert_eq!(
+        payload["directives"],
+        json!([]),
+        "a first trigger says there are none"
+    );
+    assert_eq!(payload["directives_in_force"], 0);
+    delivery.abort();
 }

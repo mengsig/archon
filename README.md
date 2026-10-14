@@ -106,7 +106,7 @@ seeded from your Aether configuration by `archon setup`.
 - **Model plan:** the model and reasoning effort of each stage, checked against your model policy. The orchestrator chooses where it has a reason to; Archon fills in the rest.
 - **Autonomy:** five knobs for review, proposal, report, merge, and tool access, bounded by your ceiling. `review` sets how many independent reviewers a change gets: none, one or three.
 - **Ship mode:** `pr` opens a PR, `local` keeps commits on the run branch. `archond` ships the verified commits itself; no agent does.
-- **Orchestrator:** the agent you chat with; it answers directly, delegates work that needs no repository, and queues everything that does as an item.
+- **Orchestrator:** the agent you chat with; it answers directly, reads your code in mirrors `archond` keeps for it, delegates wide reads and research to helpers, and queues every change as an item.
 
 ## Built-in pipelines
 

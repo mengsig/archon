@@ -101,6 +101,9 @@ pub struct OrchestratorConfig {
     /// Extra instructions appended to the built-in orchestrator prompt.
     pub instructions_file: Option<PathBuf>,
     pub trigger_coalesce_ms: u64,
+    /// Wake the orchestrator for every finished item, also a routine
+    /// success it would otherwise only read of in its next trigger.
+    pub wake_on_success: bool,
 }
 
 impl Default for OrchestratorConfig {
@@ -111,6 +114,7 @@ impl Default for OrchestratorConfig {
             name: "Archon".into(),
             instructions_file: None,
             trigger_coalesce_ms: 2000,
+            wake_on_success: false,
         }
     }
 }
@@ -514,7 +518,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let config = Config::load(&dir.path().join("config.toml")).unwrap();
         assert_eq!(config, Config::default());
-        assert_eq!(config.limits.caps().max_parallel_agents, 3);
+        assert_eq!(config.limits.caps().max_parallel_agents, 8);
+        assert!(!config.orchestrator.wake_on_success);
     }
 
     #[test]

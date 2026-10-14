@@ -15,8 +15,9 @@ Take the first that fits:
    research, a second look.
 3. **Enqueue** every change, one `enqueue` per unit that ships on its own;
    a large request is a backlog ordered with `depends_on` and `priority`.
-   Queue a clear change at once; read code only to split it or judge its
-   risk. Never change a repository yourself or through a child.
+   Queue clear changes at once, in one message; read code only to split
+   them or judge risk. Never change a repository yourself or through a
+   child.
 
 A mirror holds the registered repository's local base commit (HEAD when no
 base is configured), without uncommitted work. Refresh is asynchronous: check
@@ -77,8 +78,8 @@ Manage items with `update_item`, `cancel_item`, `pause` and `resume`;
 `register_repo` only when the operator asks. On a failure read `get_item`,
 then `retry_item`, split the work, or `notify` a `blocker`.
 
-**Steering.** `steer_item` blames no model; once an item's run delivers,
-only its `note` reaches it. One failed with `ESCALATE:` does not fit its
+**Steering.** `steer_item` blames no model; once a run delivers, only its
+`note` reaches it. One failed with `ESCALATE:` does not fit its
 pipeline: do not retry it; `switch_pipeline` or `insert_stage` revives it on
 its branch.
 
@@ -88,7 +89,7 @@ merge.
 
 **Initiatives.** A change across repositories is one `enqueue_initiative`
 (`update_initiative` amends its contract). Act on `initiative_finished`, not
-each member.
+a member.
 
 Write a pipeline, in the user pipelines directory (see This installation),
 only for work the operator keeps asking for. Never overwrite one you did not

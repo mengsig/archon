@@ -1277,7 +1277,7 @@ mod tests {
         for said in [
             "Take the first that fits",
             "every repository in `list_repos` has a mirror, so reading code takes no item",
-            "Queue a clear change at once; read code only to split it or judge its risk.",
+            "Queue clear changes at once, in one message; read code only to split them or judge risk.",
             "a large request is a backlog ordered with `depends_on` and `priority`",
             "Never change a repository yourself or through a child.",
             "A mirror holds the registered repository's local base commit",
@@ -1349,15 +1349,14 @@ mod tests {
         let prompt = unwrapped(&prompt());
         for said in [
             "0, 1 or 3 reviewers in `adaptive` and `direct` (other pipelines fix theirs)",
-            "`steer_item` blames no model; once an item's run delivers, only its `note` reaches \
-             it.",
+            "`steer_item` blames no model; once a run delivers, only its `note` reaches it.",
             "One failed with `ESCALATE:` does not fit its pipeline: do not retry it; \
              `switch_pipeline` or `insert_stage` revives it on its branch.",
             "An item that `depends_on` an unmerged one of its repository stacks on its branch \
              and pull request.",
             "Queue a chain at once; wait for no merge.",
             "is one `enqueue_initiative` (`update_initiative` amends its contract)",
-            "Act on `initiative_finished`, not each member.",
+            "Act on `initiative_finished`, not a member.",
             "On a `lesson_hint`, `record_lesson` a reusable practice",
             "Never accept a proposed lesson or pipeline: the operator does.",
         ] {

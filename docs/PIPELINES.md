@@ -362,7 +362,8 @@ the delivery when any of this does not hold:
 - `HEAD^{tree}` is the recorded `tree`, so nothing changed after the stage
   verified it and its reviewers read it;
 - the branch has a commit beyond its base;
-- every commit the run adds was made under the repository's git identity.
+- every commit the run adds was made under the repository's git identity,
+  as `archon repo add` or `archon repo set` last recorded it.
 
 The base is the repository's base branch, or the branch of the item this
 one is stacked on when its start recorded one. In `pr` mode archond then

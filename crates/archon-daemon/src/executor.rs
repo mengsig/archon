@@ -575,8 +575,8 @@ async fn issue_by_run(ctx: &DaemonContext, round: &mut Round, spawns: BTreeSet<S
     }
 }
 
-/// `runs` in lanes by repository: a delivery pushes with `--set-upstream`,
-/// which writes the repository's shared git config.
+/// `runs` in lanes by repository: one repository's deliveries go one at a
+/// time, so its remote and GitHub see one push or pull request at once.
 async fn runs_by_repository(
     ctx: &DaemonContext,
     round: &mut Round,

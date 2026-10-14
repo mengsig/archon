@@ -1643,9 +1643,11 @@ repo and pipeline, pause state, spend) plus `Caps`, and returns a
 
 **Carrying out a plan.** Independent work runs in parallel lanes
 (`executor::lanes`, at most 8 at once), and each lane runs its work in
-order. Starts and ships are laned by repository, because git writes a
-repository's shared state (its worktree list, `.git/config` on
-`push --set-upstream`). Spawns are laned by pipeline run, because a run's
+order. Starts are laned by repository, because `git worktree add` writes
+the repository's worktree list, and so are ships, so that one repository's
+remote and GitHub see one push or pull request at a time. Ships of different
+repositories share archond's shadow git directory (§13.4), whose making and
+sealing are serialised. Spawns are laned by pipeline run, because a run's
 first spawn creates its Aether run node. So one slow Aether call or
 `git push` holds back only its own lane.
 

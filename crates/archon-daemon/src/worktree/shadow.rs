@@ -7,6 +7,7 @@
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use archon_core::error::ArchonError;
 
@@ -24,6 +25,16 @@ const FOREIGN: [&str; 5] = [
     "objects/info/alternates",
     "info/grafts",
 ];
+
+/// Held while a daemon-owned git directory is made or sealed: deliveries in
+/// different repositories run at once and share the shadow of their format.
+static SEALING: Mutex<()> = Mutex::new(());
+
+/// [`SEALING`], held. A panic while it was held left at worst a stale config
+/// or a half-made directory, which the next holder replaces.
+fn sealing() -> MutexGuard<'static, ()> {
+    SEALING.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// A repository's object store seen through the shadow of its format.
 #[derive(Debug, Clone)]
@@ -120,6 +131,7 @@ pub(crate) fn sealed_config(format: &str, bare: bool, hooks: Option<&Path>) -> S
 /// Make the git directory `git_dir` of object `format` if it is missing,
 /// whole: made beside its place and renamed in.
 pub(crate) fn make(git_dir: &Path, format: &str) -> Result<(), ArchonError> {
+    let _sealing = sealing();
     if is_real_dir(git_dir)? {
         return Ok(());
     }
@@ -153,6 +165,7 @@ pub(crate) fn make(git_dir: &Path, format: &str) -> Result<(), ArchonError> {
 /// Make `git_dir`'s config exactly `config` and remove every other file git
 /// would read there, before a command runs in it.
 pub(crate) fn seal(git_dir: &Path, config: &str) -> Result<(), ArchonError> {
+    let _sealing = sealing();
     if !is_real_dir(git_dir)? {
         return Err(ArchonError::Invalid(format!(
             "{} is not the git directory archond made",
@@ -224,5 +237,42 @@ mod tests {
             seal(&link, &config).is_err(),
             "a link is no git directory of ours"
         );
+    }
+
+    /// Deliveries in different repositories run at once and share the shadow
+    /// of their object format, also on its very first use.
+    #[test]
+    fn many_first_uses_at_once_make_and_seal_one_shadow() {
+        const AT_ONCE: usize = 8;
+        for _ in 0..4 {
+            let dir = tempfile::tempdir().unwrap();
+            let git_dir = dir.path().canonicalize().unwrap().join("sha1");
+            let config = sealed_config("sha1", true, None);
+            let start = std::sync::Barrier::new(AT_ONCE);
+            let results: Vec<Result<(), ArchonError>> = std::thread::scope(|scope| {
+                let workers: Vec<_> = (0..AT_ONCE)
+                    .map(|_| {
+                        scope.spawn(|| {
+                            start.wait();
+                            make(&git_dir, "sha1")?;
+                            seal(&git_dir, &config)
+                        })
+                    })
+                    .collect();
+                workers.into_iter().map(|w| w.join().unwrap()).collect()
+            });
+            for result in results {
+                result.expect("every first use succeeds");
+            }
+            assert_eq!(
+                std::fs::read_to_string(git_dir.join("config")).unwrap(),
+                config
+            );
+            let names: Vec<String> = std::fs::read_dir(dir.path())
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            assert_eq!(names, ["sha1"], "no half-made directory is left");
+        }
     }
 }

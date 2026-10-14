@@ -234,7 +234,7 @@ async fn stop(json: bool, aether: bool, keep_aether: bool) -> anyhow::Result<Exi
     Ok(ExitCode::SUCCESS)
 }
 
-/// Whether Archon runs its own aetherd ([aether] mode "dedicated"), asked once
+/// Whether Archon runs its own aetherd (`[aether] mode = "dedicated"`), asked once
 /// archond is stopped: a config that no longer loads never keeps archond up.
 fn owns_aetherd() -> anyhow::Result<bool> {
     let config = Config::load_default()

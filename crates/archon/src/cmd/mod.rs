@@ -8,6 +8,7 @@ mod daemon;
 mod doctor;
 mod gc;
 mod github_watcher;
+mod initiatives;
 mod instance;
 mod log;
 mod pipelines;
@@ -60,6 +61,7 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::Resume(args) => control::pause(args, false, json).await,
         Command::Orchestrator(command) => control::orchestrator(command, json).await,
         Command::Repo(command) => repo::run(command, json).await,
+        Command::Initiatives { command } => initiatives::run(command, json).await,
         Command::Queue(command) => queue::run(command, json).await,
         Command::Pipelines(command) => pipelines::run(command, json).await,
         Command::Reports { command } => reports::run(command, json).await,
@@ -111,6 +113,7 @@ fn json_refusal(command: Option<&Command>) -> Option<&'static str> {
         | Command::ModelEvidence { .. }
         | Command::Log { .. }
         | Command::Repo(_)
+        | Command::Initiatives { .. }
         | Command::Queue(_)
         | Command::Pipelines(_)
         | Command::Reports { .. }

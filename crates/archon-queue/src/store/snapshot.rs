@@ -73,7 +73,10 @@ fn queued(conn: &Connection) -> Result<Vec<QueuedCandidate>, ArchonError> {
                   WHERE d.item = i.id AND x.state IN ('failed', 'cancelled')),
                  (SELECT COUNT(*) FROM item_deps d JOIN items x ON x.id = d.depends_on
                   WHERE d.item = i.id AND x.state <> 'succeeded')
-             FROM items i WHERE i.state = 'queued' ORDER BY i.priority DESC, i.seq",
+             FROM items i WHERE i.state = 'queued' AND NOT EXISTS
+                (SELECT 1 FROM initiatives n WHERE n.id=i.initiative_id AND n.state IN ('cancelled','failed'))
+             AND NOT EXISTS (SELECT 1 FROM items sibling WHERE sibling.initiative_id=i.initiative_id
+                AND sibling.state IN ('failed','cancelled')) ORDER BY i.priority DESC, i.seq",
         )
         .ctx("list queued items")?;
     let rows = stmt

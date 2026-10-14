@@ -7,15 +7,18 @@
 //! across an Aether call. Work that needs Aether or git after a state change
 //! is returned as a `FollowUp` and run once the run table is released.
 
+pub mod coordination;
 mod dependencies;
 mod descendants;
 mod finish;
 pub(crate) mod frozen;
 mod gate_news;
 mod gates;
+pub(crate) mod initiative_ship;
 mod naming;
 mod pages;
 mod recover;
+pub(crate) mod restack;
 mod review;
 mod roster;
 mod run_node;
@@ -80,6 +83,7 @@ pub struct SpawnErrors {
 /// a snapshot, whose run ended however it did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Cleanup {
+    pub item: QueueItemId,
     pub repo_path: PathBuf,
     pub worktree: PathBuf,
     /// A `repo-readonly` run's snapshot, removed with `--force`.
@@ -411,11 +415,26 @@ async fn remove_ended_worktree(
     ctx: &DaemonContext,
     cleanup: Cleanup,
 ) -> Result<FollowUp, ArchonError> {
+    let mark = {
+        let _table = ctx.runs.lock().await;
+        let store = ctx.store.lock().await;
+        if !store.item(&cleanup.item)?.state.is_terminal()
+            || store.has_pending_stack_fix(&cleanup.item)?
+        {
+            return Ok(FollowUp::default());
+        }
+        let Some(mark) = ctx.collecting.mark(cleanup.item.clone()) else {
+            return Ok(FollowUp::default());
+        };
+        mark
+    };
+    assert!(ctx.collecting.contains(&cleanup.item));
+    assert!(cleanup.worktree.starts_with(&ctx.paths.worktrees));
     let when = match cleanup.snapshot {
         true => "after its run ended",
         false => "after its run succeeded",
     };
-    finish::remove_worktree(ctx, cleanup, when).await?;
+    finish::remove_worktree(ctx, cleanup, when, Some(mark)).await?;
     Ok(FollowUp::default())
 }
 

@@ -549,13 +549,16 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   "Delegation"), and **the stage a declared review names** gets
   `## Review on record` (see "A declared review").
 - **Every agent of a worktree item queued after others** (`depends_on`)
-  gets a `## Dependencies` section: one JSON object per dependency,
-  `{"item":"qi_…","branch":"…","pull_request":"…"}`, and the rule for a
-  change built on one of those branches. The item's own branch still forks
-  from `{{base_branch}}`; a change stacked on a dependency's branch has
-  `git merge-base <branch> HEAD` as its base where `{{base_branch}}` does
-  not contain that commit, and is diffed, reviewed and reported from there.
-  The contract overrides a prompt that says to diff from `{{base_branch}}`.
+  gets a `## Dependencies` section with each dependency's branch and PR.
+  An unmerged dependency in the same repository becomes the real
+  `{{base_branch}}`: Archon forks from the first parent's branch, merges
+  other parents, and targets the parent branch when opening the PR.
+  Review and diff against this base. Dependencies in other repositories
+  give context without contributing a Git branch.
+- **Initiative members** get the shared contract (at most 2 KiB) and every
+  sibling's repository, branch, PR and state. For `atomic=true`, the ship
+  stage keeps its PR a draft and does not enable auto-merge. The daemon
+  links sibling PRs and marks them ready after every member passes.
 
 Your prompt therefore says *what* to do. It does not need to repeat how to
 finish.

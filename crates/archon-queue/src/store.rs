@@ -15,6 +15,7 @@ mod delegated;
 mod directives;
 mod feed;
 mod gates;
+pub mod initiatives;
 mod items;
 mod model_evidence;
 mod repos;
@@ -23,6 +24,7 @@ mod schema;
 mod settings;
 mod snapshot;
 mod spend;
+pub mod stacks;
 
 use std::path::Path;
 

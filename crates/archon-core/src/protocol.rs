@@ -18,7 +18,7 @@ use crate::id::{
     DirectiveId, InitiativeId, LessonId, PipelineRunId, QuestionId, QueueItemId, ReportId,
     StageRunId,
 };
-use crate::initiative::{EnqueueInitiative, InitiativeDetail};
+use crate::initiative::{EnqueueInitiative, Initiative, InitiativeDetail};
 use crate::lesson::{Lesson, LessonDraft, LessonPatch, LessonQuery, LessonStats, LessonWhy};
 use crate::model::{Effort, ModelChoice, ModelPlan, ModelReasons, ModelRef};
 use crate::model_evidence::{ModelEvidenceQuery, ModelEvidenceReport};
@@ -282,6 +282,13 @@ pub enum Request {
     /// Several items, usually in several repositories, built against one
     /// shared contract.
     EnqueueInitiative(EnqueueInitiative),
+    ListInitiatives,
+    CancelInitiative {
+        initiative: InitiativeId,
+    },
+    RetryInitiative {
+        initiative: InitiativeId,
+    },
     GetInitiative {
         initiative: InitiativeId,
     },
@@ -360,6 +367,7 @@ impl Request {
             | Self::ModelEvidence(_)
             | Self::Autonomy { .. }
             | Self::GithubWatcher
+            | Self::ListInitiatives
             | Self::GetInitiative { .. }
             | Self::Lessons(_)
             | Self::LessonsWhy { .. }
@@ -532,6 +540,7 @@ pub enum Reply {
     CostReport(Box<CostReport>),
     ModelEvidence(Box<ModelEvidenceReport>),
     Initiative(Box<InitiativeDetail>),
+    Initiatives(Vec<Initiative>),
     Lesson(Lesson),
     Lessons(Vec<Lesson>),
     LessonsWhy(Box<LessonWhy>),

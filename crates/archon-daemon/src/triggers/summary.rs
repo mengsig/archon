@@ -64,6 +64,9 @@ fn label(event: &TriggerEvent) -> String {
         TriggerEvent::ItemFinished { item, state, .. } => {
             format!("item finished: {item} {state}")
         }
+        TriggerEvent::InitiativeFinished {
+            initiative, state, ..
+        } => format!("initiative finished: {initiative} {state}"),
         TriggerEvent::ItemBlocked { item, .. } => format!("item blocked: {item}"),
         TriggerEvent::AgentMessage { message } => {
             let kind = match message.kind {

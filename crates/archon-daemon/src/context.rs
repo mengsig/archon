@@ -69,6 +69,7 @@ pub struct DaemonContext {
     /// Poked on enqueue, settle, caps or pause change, and when a gc mark
     /// goes.
     pub dispatch: Arc<Notify>,
+    pub coordination: crate::executor::coordination::Coordination,
     /// Active run drivers and their pending spawns.
     pub runs: Mutex<RunTable>,
     /// Orchestrator chat reply detection.

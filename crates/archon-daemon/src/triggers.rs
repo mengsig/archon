@@ -62,6 +62,12 @@ pub enum TriggerEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         origin: Option<GithubThread>,
     },
+    InitiativeFinished {
+        initiative: archon_core::id::InitiativeId,
+        title: String,
+        state: String,
+        members: Vec<QueueItemId>,
+    },
     ItemBlocked {
         item: QueueItemId,
         reason: String,
@@ -146,6 +152,7 @@ impl TriggerEvent {
         match self {
             Self::AgentMessage { .. } => "agent_message",
             Self::ItemFinished { .. } => "item_finished",
+            Self::InitiativeFinished { .. } => "initiative_finished",
             Self::ItemBlocked { .. } => "item_blocked",
             Self::OperatorAnswer { .. } => "operator_answer",
             Self::GateOpened { .. } => "gate_opened",
@@ -262,6 +269,41 @@ pub async fn push(ctx: &DaemonContext, event: TriggerEvent) -> Result<(), Archon
     hold(&mut *ctx.store.lock().await, event)?;
     // Stores a permit when delivery is busy, so no wake-up is lost.
     ctx.triggers.news.notify_one();
+    Ok(())
+}
+
+/// Enqueue a durable event and its receipt in one store transaction.
+pub(crate) async fn push_once(
+    ctx: &DaemonContext,
+    event: TriggerEvent,
+    key: &str,
+) -> Result<(), ArchonError> {
+    let mut store = ctx.store.lock().await;
+    if store.kv_get(key)?.is_some() {
+        return Ok(());
+    }
+    assert!(!key.is_empty());
+    assert!(matches!(event, TriggerEvent::InitiativeFinished { .. }));
+    let mut outbox = read_outbox(&store)?;
+    outbox.pending.push(Held {
+        event,
+        pushed_at: Some(archon_core::now()),
+    });
+    if outbox.pending.len() > MAX_PENDING {
+        compact_pending(&mut store, &mut outbox)?;
+    }
+    let raw = serde_json::to_string(&outbox)?;
+    let entry = archon_core::notify::FeedEntry::System {
+        text: "Initiative finished; coordinated result queued.".into(),
+    };
+    let saved = store.append_feed_with_kv(
+        entry,
+        archon_core::now(),
+        &[(OUTBOX_KEY, &raw), (key, "queued")],
+    )?;
+    drop(store);
+    crate::feed::publish(ctx, vec![saved]);
+    wake(ctx);
     Ok(())
 }
 

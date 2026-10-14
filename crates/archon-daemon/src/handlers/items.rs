@@ -467,7 +467,7 @@ async fn item_pipeline(
 }
 
 /// `plan` with what it leaves out filled for `env`'s repository.
-async fn filled_plan(
+pub(super) async fn filled_plan(
     ctx: &DaemonContext,
     env: &RepoEnv,
     base: &PipelineSpec,
@@ -481,7 +481,7 @@ async fn filled_plan(
 
 /// Every stage has 1 to `fan_out` choices, no unknown stage is named, and
 /// every choice passes the effective model policy.
-fn check_plan(
+pub(super) fn check_plan(
     ctx: &DaemonContext,
     env: &RepoEnv,
     spec: &PipelineSpec,
@@ -528,7 +528,7 @@ fn check_reasons(spec: &PipelineSpec, reasons: Option<&ModelReasons>) -> Result<
 /// The pipeline can run in `env`: on a repository when it needs one, and
 /// with every team stage within the agent caps. A team stage is admitted
 /// whole (ARCHITECTURE §7.3), so a bigger one would wait forever.
-async fn check_runs_here(
+pub(super) async fn check_runs_here(
     ctx: &DaemonContext,
     env: &RepoEnv,
     spec: &PipelineSpec,

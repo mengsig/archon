@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Stacking and initiatives
+
+- Dependent changes now fork from their first unmerged same-repository parent,
+  target its PR branch, and merge additional parents. Parent merges retarget
+  children; moved parents merge forward without rebasing or force-pushing.
+  Conflicts queue a durable fix item on the existing child branch.
+- Multi-repository initiatives create all members transactionally, share a
+  bounded contract, deliver live amendments, and cross-link PRs. Atomic
+  initiatives retain drafts until every member passes. Restart resumes
+  delivery and reconciliation, with one coordinated finish notification.
+- Added `archon initiatives` list/show/cancel/retry and initiative membership
+  to queue details. Retry preserves successful members and existing branches.
+
 The orchestrator answers and delegates work that needs no repository
 itself, and a pipeline stage can delegate again.
 

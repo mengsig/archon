@@ -1,21 +1,33 @@
-//! The contract's Initiative section: what a member's stage agents are told
-//! about the initiative their item belongs to.
+//! Shared contract and sibling locations for each initiative member.
 
-use archon_core::initiative::InitiativeBrief;
+use archon_core::initiative::{InitiativeBrief, MAX_CONTRACT_BYTES};
 
-/// The shared contract and where every sibling's work is; empty outside an
-/// initiative. Not written yet: no item is a member until one can be enqueued.
 pub fn initiative_rules(initiative: Option<&InitiativeBrief>) -> String {
-    assert!(initiative.is_none(), "initiatives cannot be enqueued yet");
-    String::new()
+    let Some(initiative) = initiative else {
+        return String::new();
+    };
+    assert!(!initiative.contract.trim().is_empty());
+    assert!(initiative.contract.len() <= MAX_CONTRACT_BYTES);
+    let mut out = format!(
+        "\n## Initiative\n\n{}\n\nShared contract:\n{}\n\nSibling facts (JSON):\n",
+        initiative.title, initiative.contract
+    );
+    for sibling in &initiative.siblings {
+        let fact = serde_json::to_string(sibling).expect("string facts serialize");
+        assert!(!fact.contains('\n'));
+        out.push_str(&format!("- {fact}\n"));
+    }
+    if initiative.atomic {
+        out.push_str("Keep this PR a draft; Archon marks all member PRs ready after every member passes. Do not merge or enable auto-merge.\n");
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
-    fn an_item_outside_an_initiative_is_told_nothing() {
-        assert_eq!(initiative_rules(None), "");
+    fn outside_an_initiative_there_are_no_rules() {
+        assert!(initiative_rules(None).is_empty());
     }
 }

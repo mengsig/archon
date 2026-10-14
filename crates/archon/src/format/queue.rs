@@ -115,6 +115,12 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
         sanitize_line(&item.pipeline),
         item.priority
     );
+    if let Some(initiative) = &item.initiative {
+        let _ = writeln!(
+            out,
+            "initiative: {initiative} (archon initiatives show {initiative})"
+        );
+    }
     if !item.dependencies.is_empty() {
         let deps: Vec<String> = item.dependencies.iter().map(ToString::to_string).collect();
         let _ = writeln!(out, "depends on: {}", deps.join(", "));
@@ -131,6 +137,15 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
         archon_core::cost::format_usd(detail.spent_usd)
     );
     let _ = writeln!(out, "autonomy: {}", item.autonomy.describe());
+    plan_lines(&mut out, item);
+    for run in &detail.runs {
+        run_lines(&mut out, detail, run, full);
+    }
+    let _ = write!(out, "\n{}", sanitize(item.brief.trim_end()));
+    out
+}
+
+fn plan_lines(out: &mut String, item: &archon_core::queue::QueueItem) {
     if let Some(reasons) = &item.model_reasons {
         for (stage, choices) in &item.model_plan.0 {
             let picks: Vec<_> = choices
@@ -148,11 +163,6 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
             );
         }
     }
-    for run in &detail.runs {
-        run_lines(&mut out, detail, run, full);
-    }
-    let _ = write!(out, "\n{}", sanitize(item.brief.trim_end()));
-    out
 }
 
 /// `run …: state on branch in workspace`, its pull request, then its stages

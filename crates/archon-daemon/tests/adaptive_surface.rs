@@ -5,7 +5,7 @@ mod common;
 
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
-use archon_core::id::{InitiativeId, LessonId, QueueItemId};
+use archon_core::id::{LessonId, QueueItemId};
 use archon_core::initiative::{EnqueueInitiative, InitiativeMember};
 use archon_core::lesson::{LessonDraft, LessonKind, LessonPatch, LessonQuery};
 use archon_core::protocol::{ClientKind, ErrorCode, ErrorReply, Reply, RepoRef, Request};
@@ -60,22 +60,45 @@ fn enqueue_initiative() -> Request {
 }
 
 #[tokio::test]
-async fn initiatives_are_the_orchestrators_to_change_and_not_built_yet() {
+async fn initiatives_are_the_orchestrators_to_change_and_anyones_to_read() {
     let h = Harness::new().await;
-    let initiative = InitiativeId::new();
+    assert_orchestrators_alone(as_helper(&h, enqueue_initiative()).await);
+    let Reply::Initiative(created) = h.orchestrator(enqueue_initiative()).await.unwrap() else {
+        panic!("initiative reply");
+    };
+    let initiative = created.initiative.id;
     let update = Request::UpdateInitiative {
         initiative: initiative.clone(),
         contract_append: "Also rename the column.".into(),
     };
-    assert_orchestrators_alone(as_helper(&h, enqueue_initiative()).await);
     assert_orchestrators_alone(as_helper(&h, update.clone()).await);
-    assert_not_implemented(
-        h.orchestrator(enqueue_initiative()).await,
-        "enqueue_initiative",
+    let Reply::Initiative(updated) = h.orchestrator(update).await.unwrap() else {
+        panic!("initiative reply");
+    };
+    assert!(
+        updated
+            .initiative
+            .contract
+            .ends_with("Also rename the column.")
     );
-    assert_not_implemented(h.orchestrator(update).await, "update_initiative");
-    let get = Request::GetInitiative { initiative };
-    assert_not_implemented(as_helper(&h, get).await, "get_initiative");
+    assert_eq!(updated.members.len(), 1);
+    let get = Request::GetInitiative {
+        initiative: initiative.clone(),
+    };
+    assert_eq!(
+        as_helper(&h, get).await.unwrap(),
+        Reply::Initiative(updated)
+    );
+    assert_orchestrators_alone(
+        as_helper(
+            &h,
+            Request::CancelInitiative {
+                initiative: initiative.clone(),
+            },
+        )
+        .await,
+    );
+    assert_orchestrators_alone(as_helper(&h, Request::RetryInitiative { initiative }).await);
 }
 
 #[tokio::test]

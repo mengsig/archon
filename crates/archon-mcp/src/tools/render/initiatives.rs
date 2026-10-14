@@ -28,6 +28,13 @@ pub(super) fn detail(tool: &str, detail: &InitiativeDetail) -> String {
     text
 }
 
+pub(super) fn list(all: &[archon_core::initiative::Initiative]) -> String {
+    all.iter()
+        .map(|i| format!("{} [{}] {}", i.id, i.state.as_str(), i.title))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use archon_core::initiative::Initiative;

@@ -40,22 +40,7 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         Reply::Item(item) => format!("{}{}", verb(tool), item_line(item, CLIP_CHARS)),
         Reply::Items(items) => listing("items", items.iter().map(|i| item_line(i, LINE_CHARS))),
         Reply::ItemDetail(detail) => item_detail(detail),
-        Reply::ItemSummaries(rows) => listing(
-            "items",
-            rows.iter().map(|row| {
-                let mut line = item_line(&row.item, LINE_CHARS);
-                if let Some(reason) = &row.waiting_reason {
-                    let _ = write!(
-                        line,
-                        "; waiting {}: {:?}; next: {:?}",
-                        snake(&reason.code),
-                        reason.message,
-                        reason.next_action
-                    );
-                }
-                line
-            }),
-        ),
+        Reply::ItemSummaries(rows) => item_summaries(rows),
         Reply::StageDetail(detail) => stages::detail(detail),
         Reply::Catalog(catalog) => catalog_text(catalog),
         Reply::ModelPolicy(policy) => policy_text(policy),
@@ -72,6 +57,7 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         Reply::GithubComment { url } => format!("Posted {url}"),
         Reply::CostReport(report) => cost::report(report),
         Reply::ModelEvidence(report) => report.text(),
+        Reply::Initiatives(all) => initiatives::list(all),
         Reply::Initiative(detail) => initiatives::detail(tool, detail),
         Reply::Lesson(lesson) => lessons::recorded(lesson),
         Reply::Questions(_)
@@ -87,6 +73,25 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         | Reply::Gc(_) => serde_json::to_string(reply)
             .unwrap_or_else(|e| format!("(reply could not be encoded: {e})")),
     }
+}
+
+fn item_summaries(rows: &[archon_core::protocol::ItemSummary]) -> String {
+    listing(
+        "items",
+        rows.iter().map(|row| {
+            let mut line = item_line(&row.item, LINE_CHARS);
+            if let Some(reason) = &row.waiting_reason {
+                let _ = write!(
+                    line,
+                    "; waiting {}: {:?}; next: {:?}",
+                    snake(&reason.code),
+                    reason.message,
+                    reason.next_action
+                );
+            }
+            line
+        }),
+    )
 }
 
 fn question_text(tool: &str, question: &Question) -> String {

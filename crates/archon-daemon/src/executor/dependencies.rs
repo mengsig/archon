@@ -1,5 +1,5 @@
 //! What a stage agent is told about the items its item was queued after
-//! (ARCHITECTURE §8.6): a dependent item's branch still forks from the base.
+//! (ARCHITECTURE §8.6).
 
 use archon_core::catalog::WorkspaceMode;
 use archon_core::error::ArchonError;
@@ -37,22 +37,65 @@ pub(super) fn section(
     for id in &item.dependencies {
         found.push(dependency(store, id, item.repo.as_ref())?);
     }
-    Ok(contract::dependency_rules(base, &found))
+    let parents = store.stack_parents(&item.id)?;
+    let current_base = if parents.is_empty() {
+        None
+    } else {
+        store
+            .stack_base(&item.id)?
+            .map(|p| p.0)
+            .or(store
+                .repo(&crate::resolve::repo_ref(
+                    item.repo.as_ref().expect("stack repository"),
+                ))?
+                .base_branch)
+            .or(store.stack_repository_base(&item.id)?)
+    };
+    let mut rules = contract::dependency_rules(current_base.as_ref().unwrap_or(base), &found);
+    if parents.iter().any(|p| p.conflict.is_some()) {
+        rules.push_str("Resolve and commit the pending parent merge, then merge every remaining parent SHA below before starting the requested change (never rebase):\n");
+        for parent in parents.iter().filter(|p| !p.merged) {
+            rules.push_str(&format!("- {}\n", parent.parent_sha));
+        }
+    }
+    Ok(rules)
 }
 
 /// What the agents of `item` are told about its initiative: the shared
 /// contract and where each sibling's work is. `None` outside an initiative.
 pub(super) fn initiative_brief(
-    _store: &Store,
+    store: &Store,
     item: &QueueItem,
 ) -> Result<Option<InitiativeBrief>, ArchonError> {
     let Some(initiative) = &item.initiative else {
         return Ok(None);
     };
-    Err(ArchonError::Unavailable(format!(
-        "item {} is in initiative {initiative}: initiatives are not implemented yet",
-        item.id
-    )))
+    let detail = store.initiative(initiative)?;
+    assert!(detail.members.iter().any(|m| m.id == item.id));
+    let mut siblings = Vec::new();
+    for member in detail.members.iter().filter(|m| m.id != item.id) {
+        let repo = member
+            .repo
+            .as_ref()
+            .expect("initiative members have repositories");
+        let name = store.repo(&crate::resolve::repo_ref(repo))?.name;
+        let fact = dependency(store, &member.id, member.repo.as_ref())?;
+        siblings.push(archon_core::initiative::Sibling {
+            item: member.id.clone(),
+            repo: name,
+            title: member.title.clone(),
+            state: member.state.kind().into(),
+            branch: fact.branch,
+            pr_url: fact.pull_request,
+        });
+    }
+    assert_eq!(siblings.len() + 1, detail.members.len());
+    Ok(Some(InitiativeBrief {
+        title: detail.initiative.title,
+        contract: detail.initiative.contract,
+        atomic: detail.initiative.atomic,
+        siblings,
+    }))
 }
 
 /// Where the newest run of `id` left its work. Its branch is named only when
@@ -75,7 +118,7 @@ fn dependency(
     let stages = store.stage_runs(&run.id)?;
     let reported = archon_core::run::pr_url(stages.iter());
     let pull_request = reported.filter(|url| is_plain_url(url)).map(str::to_owned);
-    let branch = (same_repo && !run.branch.is_empty()).then(|| run.branch.clone());
+    let branch = (same_repo && is_plain_branch(&run.branch)).then(|| run.branch.clone());
     Ok(Dependency {
         item: id.to_string(),
         branch,
@@ -85,9 +128,18 @@ fn dependency(
 
 /// Outside `pr` ship mode a pull request URL is the agent's own report, and
 /// it enters another agent's contract: only what reads as a URL is passed on.
-fn is_plain_url(url: &str) -> bool {
+pub(super) fn is_plain_url(url: &str) -> bool {
     let of_a_url = |c: char| c.is_ascii_alphanumeric() || "-._~:/?#@%=&+".contains(c);
     url.len() <= MAX_URL_CHARS && url.starts_with("https://") && url.chars().all(of_a_url)
+}
+
+pub(super) fn is_plain_branch(branch: &str) -> bool {
+    !branch.is_empty()
+        && !branch.starts_with('-')
+        && branch.len() <= 200
+        && branch
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-._/".contains(&b))
 }
 
 #[cfg(test)]

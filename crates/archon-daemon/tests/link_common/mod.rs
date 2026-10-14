@@ -64,6 +64,7 @@ impl Harness {
             backend,
             feed: broadcast::channel(256).0,
             dispatch: dispatch.clone(),
+            coordination: Default::default(),
             runs: Mutex::new(RunTable::default()),
             replies: Mutex::new(ReplyTracker::default()),
             answering: Mutex::new(()),

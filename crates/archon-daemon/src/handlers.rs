@@ -139,6 +139,9 @@ async fn handle_adaptive(
 ) -> Result<Reply, ArchonError> {
     match request {
         Request::EnqueueInitiative(enqueue) => initiatives::enqueue(ctx, enqueue).await,
+        Request::ListInitiatives => initiatives::list(ctx).await,
+        Request::CancelInitiative { initiative } => initiatives::cancel(ctx, &initiative).await,
+        Request::RetryInitiative { initiative } => initiatives::retry(ctx, &initiative).await,
         Request::GetInitiative { initiative } => initiatives::get(ctx, &initiative).await,
         Request::UpdateInitiative {
             initiative,

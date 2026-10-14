@@ -626,3 +626,29 @@ enter its queue; a fresh Aether run does not itself become an Archon item.
 See [Aether's documentation](https://github.com/mengsig/aether).
 
 For benchmark results and the crate layout, see [development and benchmarks](development.md).
+
+### Coordinated changes across repositories
+
+Ask for one initiative when a request spans repositories. Its shared contract
+states the API names, formats and rollout rules each member must follow.
+`enqueue_initiative` accepts a title, contract (up to 2 KiB), and members with
+`repo`, `brief`, optional `pipeline` and `model_plan`, and `after: [0, ...]`
+indices of earlier members. Supply an `idempotency_key` when retrying a request.
+Set `atomic: true` to keep all PRs draft until every member passes. The daemon
+adds a “Part of …” section with sibling PR links and reports one group outcome.
+
+`archon initiatives` lists groups; `archon initiatives show ini_…` shows the
+shared contract and members. `archon queue show qi_…` names its initiative.
+`update_initiative` appends to the shared contract and tells live member leads.
+
+`archon initiatives cancel ini_…` stops unfinished members and leaves successful
+branches and PRs in place. `archon initiatives retry ini_…` resumes failed,
+cancelled and blocked members on their existing branches once no member is
+active. Successful members are preserved. A member failure holds queued siblings;
+retry the initiative to resume them. Retrying individual members does not reopen
+a failed or cancelled group.
+
+Same-repository dependencies stack automatically: the child branches from the
+first unmerged parent and its PR targets that branch. Other parents are merged
+in. A parent's merge retargets the child PR; later parent commits are merged
+forward. Conflicts create a fix item on the child branch, visible in the queue.

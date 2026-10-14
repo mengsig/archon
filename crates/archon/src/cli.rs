@@ -726,19 +726,34 @@ pub enum OrchestratorCommand {
 pub enum InitiativeCommand {
     /// List coordinated initiatives.
     List,
+    /// Start one from a .json or .toml file holding what `enqueue_initiative`
+    /// takes: title, contract, atomic, members and idempotency_key.
+    #[command(after_help = "Example: archon initiatives create rename-account.json")]
+    Create {
+        /// The initiative's request file.
+        file: PathBuf,
+    },
     /// Show the shared contract and member states.
     Show {
-        /// Initiative id (ini_…).
+        /// Initiative id (ini_…) or its start.
         initiative: String,
+    },
+    /// Append to the shared contract; running members are told.
+    Update {
+        /// Initiative id (ini_…) or its start.
+        initiative: String,
+        /// File with the text to append (`-` reads stdin).
+        #[arg(long, value_name = "FILE")]
+        append_file: PathBuf,
     },
     /// Stop unfinished members, preserving successful work and PRs.
     Cancel {
-        /// Initiative id (ini_…).
+        /// Initiative id (ini_…) or its start.
         initiative: String,
     },
     /// Requeue unsuccessful members on their existing branches.
     Retry {
-        /// Initiative id (ini_…).
+        /// Initiative id (ini_…) or its start.
         initiative: String,
     },
 }

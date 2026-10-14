@@ -703,6 +703,10 @@ adds a “Part of …” section with sibling PR links and reports one group out
 `archon initiatives` lists groups; `archon initiatives show ini_…` shows the
 shared contract and members. `archon queue show qi_…` names its initiative.
 `update_initiative` appends to the shared contract and tells live member leads.
+From the CLI, `archon initiatives create request.json` sends the same request
+from a JSON or TOML file, and `archon initiatives update ini_… --append-file
+more.md` appends (`-` reads stdin). Like an item, an initiative can be named
+by the start of its id: `archon initiatives show 01k2`.
 
 `archon initiatives cancel ini_…` stops unfinished members and leaves successful
 branches and PRs in place. `archon initiatives retry ini_…` resumes failed,

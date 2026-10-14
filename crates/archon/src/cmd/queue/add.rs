@@ -1,21 +1,16 @@
 //! Decode files and send the same enqueue request as MCP.
 
-use std::io::Read as _;
-use std::path::Path;
-
-use anyhow::Context as _;
 use archon_core::ArchonError;
 use archon_core::autonomy::AutonomyPatch;
 use archon_core::protocol::{EnqueueRequest, Reply, RepoRef, Request};
-use serde::de::DeserializeOwned;
 
 use crate::cli::QueueAddArgs;
-use crate::cmd::emit;
+use crate::cmd::{emit, read_map, read_text};
 use crate::connect::{connect, reply_data, unexpected};
 use crate::views;
 
 pub async fn run(args: QueueAddArgs, json: bool) -> anyhow::Result<()> {
-    let brief = read_brief(&args.brief_file)?;
+    let brief = read_text(&args.brief_file, "brief")?;
     let model_plan = args.model_plan_file.as_deref().map(read_map).transpose()?;
     let model_plan = model_plan.unwrap_or_default();
     let model_reasons = args
@@ -57,31 +52,4 @@ pub async fn run(args: QueueAddArgs, json: bool) -> anyhow::Result<()> {
         return Err(unexpected(&reply, "item"));
     };
     emit(json, || reply_data(&reply), &item.id.to_string())
-}
-
-fn read_brief(path: &Path) -> anyhow::Result<String> {
-    if path == Path::new("-") {
-        let mut brief = String::new();
-        std::io::stdin()
-            .read_to_string(&mut brief)
-            .context("reading brief from stdin")?;
-        return Ok(brief);
-    }
-    std::fs::read_to_string(path).with_context(|| format!("reading brief {}", path.display()))
-}
-
-fn read_map<T: DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
-    let text =
-        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    match path.extension().and_then(|s| s.to_str()) {
-        Some("json") => serde_json::from_str(&text)
-            .map_err(|e| ArchonError::Invalid(format!("{}: {e}", path.display())).into()),
-        Some("toml") => toml::from_str(&text)
-            .map_err(|e| ArchonError::Invalid(format!("{}: {e}", path.display())).into()),
-        _ => Err(ArchonError::Invalid(format!(
-            "{} must have a .json or .toml extension",
-            path.display()
-        ))
-        .into()),
-    }
 }

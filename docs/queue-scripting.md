@@ -79,6 +79,8 @@ Exit statuses:
 - **0:** every item succeeded.
 - **3:** every item is terminal and at least one failed or was cancelled.
 - **4:** the timeout expired, even if some items already failed.
+- **5:** an item waits on a dependency that failed, so it cannot finish by
+  itself; `blocked_dependencies` names it.
 - **1:** a command or daemon error; **2:** a clap argument parsing error.
 
 Text output lists the last observed item ids and states and adds a timeout
@@ -88,3 +90,11 @@ in argument order. At timeout, the array may be partial or empty if connection
 or an initial request has not completed; later refreshes preserve earlier
 observations. Command errors use the usual `{"error":{"code":...,"message":...}}`
 envelope instead. Waiting never cancels an item.
+
+## Errors
+
+Under `--json` an error prints one `{"error":{"code":...,"message":...}}`
+object on stdout and nothing on stderr, and exits 1. A command line that
+does not parse (an unknown flag, a missing argument) prints the same
+envelope with the code `invalid_argument` and exits 2, as it does without
+`--json`. `queue wait` reports what it waited for with the statuses above.

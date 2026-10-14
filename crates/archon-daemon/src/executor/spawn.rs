@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use archon_aether::wire;
 use archon_core::Timestamp;
-use archon_core::aether_ids::AetherRunId;
+use archon_core::aether_ids::{AetherAgentId, AetherRunId};
 use archon_core::autonomy::ToolsMode;
 use archon_core::catalog::WorkspaceMode;
 use archon_core::config::Config;
@@ -27,8 +27,9 @@ use archon_pipeline::spec::MAX_TIMEOUT_MINUTES;
 use archon_queue::Store;
 use serde::{Deserialize, Serialize};
 
+use super::resume::Takeover;
 use super::{
-    FollowUp, RunTable, dependencies, descendants, finish, naming, run_node, settle, team,
+    FollowUp, RunTable, dependencies, descendants, finish, naming, resume, run_node, settle, team,
 };
 use crate::context::DaemonContext;
 use crate::disk::{self, FullDisk};
@@ -54,6 +55,22 @@ pub(crate) struct StoredSpawn {
     /// A team slot's worker; its worktree is `request.workspace`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub team: Option<StoredWorker>,
+    /// The agent to resume instead of sending `request`; cleared once only
+    /// a fresh agent will do (§6.7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<KeptAgent>,
+    /// The slot's kept agent that cannot take this stage run: stopped before
+    /// `request` is sent, then cleared (§6.7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replaces: Option<AetherAgentId>,
+}
+
+/// The agent kept from the slot's previous attempt, and what it is told to
+/// make it fix its own work.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct KeptAgent {
+    pub agent: AetherAgentId,
+    pub message: String,
 }
 
 /// The branch a team slot's worker worktree must have checked out.
@@ -96,14 +113,17 @@ pub(crate) fn load_spawn(store: &Store, id: &StageRunId) -> Result<StoredSpawn, 
     Ok(stored)
 }
 
-fn save_spawn(store: &mut Store, id: &StageRunId, spawn: &StoredSpawn) -> Result<(), ArchonError> {
+pub(super) fn save_spawn(
+    store: &mut Store,
+    id: &StageRunId,
+    spawn: &StoredSpawn,
+) -> Result<(), ArchonError> {
     assert_eq!(spawn.request.idempotency_key, id.as_str());
     store.kv_set(&request_key(id), &serde_json::to_string(spawn)?)
 }
 
-/// Delete the stored requests of stage runs that settled, since nothing
-/// reads a request once its stage is terminal, and of stage runs never
-/// recorded (a crash inside `reserve_one`). Returns how many went.
+/// Delete the stored requests nothing reads any more: of settled stage runs
+/// (a kept agent's once its run's node retired) and of ones never recorded.
 pub(crate) fn prune_settled_requests(store: &mut Store) -> Result<usize, ArchonError> {
     let mut pruned = 0;
     for (key, _) in store.kv_prefix(REQUEST_KEY_PREFIX)? {
@@ -113,7 +133,7 @@ pub(crate) fn prune_settled_requests(store: &mut Store) -> Result<usize, ArchonE
         let id = StageRunId::parse(raw)
             .map_err(|e| ArchonError::Store(format!("spawn request key {key}: {e}")))?;
         let settled = match store.stage_run(&id) {
-            Ok(stage) => stage.state.is_terminal(),
+            Ok(stage) => stage.state.is_terminal() && !resume::request_in_use(store, &stage)?,
             Err(ArchonError::NotFound(_)) => true,
             Err(error) => return Err(error),
         };
@@ -382,6 +402,12 @@ fn reserve_one(
 ) -> Result<StageRunId, ArchonError> {
     let id = StageRunId::new();
     let request = build_request(target, plan, &id, budget, now, retry);
+    // An infrastructure replacement is a fresh agent: the kept one was lost.
+    let (resume, replaces) = match resume::takeover(store, &target.run.id, plan, retry.is_some())? {
+        Takeover::Fresh => (None, None),
+        Takeover::Resume(kept) => (Some(kept), None),
+        Takeover::Replace(agent) => (None, Some(agent)),
+    };
     let spawn = StoredSpawn {
         request,
         timeout_minutes: plan.timeout_minutes,
@@ -390,6 +416,8 @@ fn reserve_one(
             role: slot.role.clone(),
             branch: slot.branch.clone(),
         }),
+        resume,
+        replaces,
     };
     save_spawn(store, &id, &spawn)?;
     let stage = StageRun {
@@ -467,6 +495,7 @@ fn build_request(
         attach_run: run.aether_run.clone(),
         parent: None,
         network: None,
+        keep: plan.keep,
     }
 }
 
@@ -647,7 +676,7 @@ pub(super) async fn issue(ctx: &DaemonContext, id: &StageRunId) -> Result<Follow
     }
     let result = match allowed {
         Ok(()) if unsent => None,
-        Ok(()) => Some(spawn_bound(ctx, &stage, spawn).await),
+        Ok(()) => Some(resume_or_spawn(ctx, &stage, spawn).await),
         Err(refusal) => Some(Err(refusal)),
     };
     let mut table = ctx.runs.lock().await;
@@ -657,6 +686,38 @@ pub(super) async fn issue(ctx: &DaemonContext, id: &StageRunId) -> Result<Follow
         Some(result) => record(ctx, &mut table, &stage, result).await,
         None => cancel_unsent(ctx, &mut table, &stage).await,
     }
+}
+
+/// What issuing a stage run gave it: a new agent with its task, or the
+/// agent kept from the slot's previous attempt, which has no new task.
+pub(super) enum Issued {
+    Spawned(SpawnedAgent),
+    Resumed(AetherAgentId),
+}
+
+/// Resume the slot's kept agent when there is one and it takes the message;
+/// otherwise the stored request creates a fresh agent, and stays that way.
+async fn resume_or_spawn(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    mut spawn: StoredSpawn,
+) -> Result<Issued, ArchonError> {
+    if let Some(kept) = spawn.resume.take() {
+        assert_eq!(
+            spawn.parent,
+            ParentBinding::Pending,
+            "a resume sends no create"
+        );
+        if resume::hand_over(ctx, stage, &kept, spawn.request.deadline).await? {
+            return Ok(Issued::Resumed(kept.agent));
+        }
+        save_spawn(&mut *ctx.store.lock().await, &stage.id, &spawn)?;
+    }
+    if let Some(agent) = spawn.replaces.take() {
+        resume::replace(ctx, &agent).await?;
+        save_spawn(&mut *ctx.store.lock().await, &stage.id, &spawn)?;
+    }
+    spawn_bound(ctx, stage, spawn).await.map(Issued::Spawned)
 }
 
 /// Every new stage agent is a child of its run's node (§4.5). The node is
@@ -782,13 +843,17 @@ async fn record(
     ctx: &DaemonContext,
     table: &mut RunTable,
     stage: &StageRun,
-    result: Result<SpawnedAgent, ArchonError>,
+    result: Result<Issued, ArchonError>,
 ) -> Result<FollowUp, ArchonError> {
     let error = match result {
-        Ok(spawned) => {
+        Ok(Issued::Spawned(spawned)) => {
             table.spawn_errors.remove(&stage.id);
             ctx.disk.agent_created();
             return spawned_ok(ctx, stage, spawned).await;
+        }
+        Ok(Issued::Resumed(agent)) => {
+            table.spawn_errors.remove(&stage.id);
+            return resume::resumed_ok(ctx, stage, agent).await;
         }
         Err(error) => error,
     };

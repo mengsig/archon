@@ -24,7 +24,7 @@ use archon_core::run::StageRun;
 use archon_queue::Store;
 use serde::{Deserialize, Serialize};
 
-use super::naming;
+use super::{naming, resume};
 use crate::context::DaemonContext;
 use crate::resolve;
 
@@ -106,6 +106,12 @@ fn node_key(run: &PipelineRunId) -> String {
 
 fn node_agent_key(agent: &AetherAgentId) -> String {
     format!("{NODE_AGENT_KEY_PREFIX}{agent}")
+}
+
+/// Whether `run` still has its node entry: live, or finished and not yet
+/// retired.
+pub(super) fn has_node(store: &Store, run: &PipelineRunId) -> Result<bool, ArchonError> {
+    Ok(store.kv_get(&node_key(run))?.is_some())
 }
 
 /// Whether `agent` is, or was, the node of a pipeline run.
@@ -567,12 +573,21 @@ async fn turn_still_ending(
     run: &PipelineRunId,
     now: Timestamp,
 ) -> Result<bool, ArchonError> {
-    let stages = ctx.store.lock().await.stage_runs(run)?;
+    let (stages, parked) = {
+        let store = ctx.store.lock().await;
+        let stages = store.stage_runs(run)?;
+        let parked = resume::parked(&store, &stages)?;
+        (stages, parked)
+    };
     assert!(
         stages.iter().all(|s| s.state.is_terminal()),
         "only a run with no live stage retires its node"
     );
-    for (stage, agent) in agents_within_grace(&stages, now) {
+    // A kept agent waits on its inbox until the node's cancel ends it (§6.7).
+    let ending = agents_within_grace(&stages, now)
+        .into_iter()
+        .filter(|(_, agent)| !parked.contains(*agent));
+    for (stage, agent) in ending {
         match ctx.backend.is_live(agent).await {
             Ok(false) => continue,
             Ok(true) => {

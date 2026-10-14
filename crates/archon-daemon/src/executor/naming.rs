@@ -104,6 +104,8 @@ mod tests {
             allow_delegation: false,
             workspace: archon_core::catalog::WorkspaceMode::Worktree,
             team: None,
+            keep: false,
+            resume: None,
         }
     }
 

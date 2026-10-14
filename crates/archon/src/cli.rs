@@ -504,6 +504,12 @@ pub enum QueueCommand {
         #[arg(long, value_name = "TEXT")]
         append: Option<String>,
     },
+    /// Change an item without cancelling it: its brief, a stage's model, its
+    /// budget or deadline, or the stages that have not started.
+    #[command(
+        after_help = "Examples:\n  archon queue steer qi_… --note 'Use the v2 client'\n  archon queue steer qi_… --stage implement --model claude-code/claude-opus-5-5 --effort high\n  archon queue steer qi_… --abort --goto implement\n  archon queue steer qi_… --insert test --from strict-pr-review --after implement"
+    )]
+    Steer(Box<QueueSteerArgs>),
     /// Show the runtime caps, or change them until archond restarts (the
     /// config's `[limits]` apply again then).
     Caps {
@@ -520,6 +526,65 @@ pub enum QueueCommand {
         #[arg(long)]
         budget_total: Option<f64>,
     },
+}
+
+/// What a run does once `--abort` stopped its stage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum AfterAbort {
+    /// Start the stage again with a new agent.
+    Retry,
+    /// Pass the stage over and go on with the next one.
+    Skip,
+}
+
+/// One steer; archond checks it against the item, its run and the catalog.
+#[derive(Debug, Args)]
+pub struct QueueSteerArgs {
+    /// The item's qi_… id, or enough of its start to name one item.
+    pub item: String,
+    /// Guidance added to the brief and sent to the agents working now.
+    #[arg(long, value_name = "TEXT")]
+    pub note: Option<String>,
+    /// The stage --model, --effort and --abort are about; the running one
+    /// when omitted.
+    #[arg(long)]
+    pub stage: Option<String>,
+    /// The stage's model, from its agents' next turn on.
+    #[arg(long, value_name = "PROVIDER/MODEL")]
+    pub model: Option<archon_core::model::ModelRef>,
+    /// The stage's effort: low, medium, high, x_high or max.
+    #[arg(long)]
+    pub effort: Option<archon_core::model::Effort>,
+    /// The item's new budget in USD.
+    #[arg(long, value_name = "USD")]
+    pub budget_usd: Option<f64>,
+    /// Minutes added to the deadline of the stage running now.
+    #[arg(long, value_name = "MINUTES")]
+    pub extend: Option<u32>,
+    /// Stop the stage's agents now, then retry it (or --then, --goto).
+    #[arg(long)]
+    pub abort: bool,
+    /// After --abort: retry the stage or skip it.
+    #[arg(long, value_enum, requires = "abort", conflicts_with = "goto")]
+    pub then: Option<AfterAbort>,
+    /// After --abort: continue at this stage.
+    #[arg(long, value_name = "STAGE", requires = "abort")]
+    pub goto: Option<String>,
+    /// Remove a stage that has not started.
+    #[arg(long, value_name = "STAGE", conflicts_with_all = ["stage", "abort", "model", "effort"])]
+    pub remove: Option<String>,
+    /// Add this stage among those not started.
+    #[arg(long, value_name = "STAGE", conflicts_with = "switch")]
+    pub insert: Option<String>,
+    /// The pipeline --insert copies the stage from; the item's own when omitted.
+    #[arg(long, value_name = "PIPELINE", requires = "insert")]
+    pub from: Option<String>,
+    /// The stage --insert follows; before the next unstarted one when omitted.
+    #[arg(long, value_name = "STAGE", requires = "insert")]
+    pub after: Option<String>,
+    /// Replace the stages not started with those this pipeline runs next.
+    #[arg(long, value_name = "PIPELINE")]
+    pub switch: Option<String>,
 }
 
 /// File inputs are decoded here; policy and pipeline validation belong to archond.
@@ -1024,6 +1089,35 @@ mod tests {
             Command::Queue(QueueCommand::Show { full: true, .. })
         ));
         assert!(Cli::try_parse_from(["archon", "repo", "add", ".", "--ship", "yolo"]).is_err());
+    }
+
+    #[test]
+    fn queue_steer_takes_one_abort_decision_and_one_shape_change() {
+        let Command::Queue(QueueCommand::Steer(args)) =
+            parse(&["queue", "steer", "qi_1", "--abort", "--goto", "implement"])
+        else {
+            panic!()
+        };
+        assert!(args.abort && args.then.is_none());
+        assert_eq!(args.goto.as_deref(), Some("implement"));
+        let refused: [&[&str]; 6] = [
+            &["--then", "skip"],
+            &["--goto", "review"],
+            &["--abort", "--then", "skip", "--goto", "review"],
+            &["--remove", "review", "--abort"],
+            &["--insert", "verify", "--switch", "quick"],
+            &["--from", "deep-review"],
+        ];
+        for flags in refused {
+            let line = [&["archon", "queue", "steer", "qi_1"], flags].concat();
+            assert!(Cli::try_parse_from(line).is_err(), "{flags:?}");
+        }
+        let model = ["--model", "claude-opus-5-5"];
+        let line = [&["archon", "queue", "steer", "qi_1"], &model[..]].concat();
+        assert!(
+            Cli::try_parse_from(line).is_err(),
+            "a model names its provider"
+        );
     }
 
     #[test]

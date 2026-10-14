@@ -245,6 +245,13 @@ fn item_detail(detail: &ItemDetail) -> String {
     if detail.runs.is_empty() {
         text.push_str("\nNo pipeline run yet.");
     }
+    for steer in &detail.steers {
+        let at = steer.at.to_rfc3339();
+        let _ = write!(text, "\nSteered {at} by {}: {}", steer.by, steer.what);
+        if let Some(note) = &steer.note {
+            let _ = write!(text, " Note: {}", clip(note, CLIP_CHARS));
+        }
+    }
     text
 }
 

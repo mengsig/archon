@@ -3,11 +3,43 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::Timestamp;
 use crate::error::ArchonError;
 use crate::model::{Effort, ModelRef};
 use crate::queue::check_item_budget;
 
 pub const MAX_EXTEND_MINUTES: u32 = 24 * 60;
+/// How many steers an item's history keeps; the oldest go first.
+pub const MAX_STEER_RECORDS: usize = 100;
+
+/// Who may steer an item (ARCHITECTURE §6.6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SteeredBy {
+    Operator,
+    Orchestrator,
+}
+
+impl std::fmt::Display for SteeredBy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Operator => "operator",
+            Self::Orchestrator => "orchestrator",
+        })
+    }
+}
+
+/// One steer in an item's history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SteerRecord {
+    pub at: Timestamp,
+    pub by: SteeredBy,
+    /// One line naming everything the steer changed.
+    pub what: String,
+    /// The note it amended the brief with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
 
 /// What the run does once a stage was aborted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

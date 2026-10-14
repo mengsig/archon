@@ -613,6 +613,7 @@ fn get_item_shows_recorded_reasons_next_to_choices_and_omits_missing_reasons() {
     item.model_plan = serde_json::from_value(plan()).unwrap();
     item.model_reasons = Some([("implement".into(), "Apply supplied fix".into())].into());
     let mut detail = ItemDetail {
+        steers: Vec::new(),
         waiting_on: None,
         waiting_reason: None,
         item,
@@ -634,6 +635,39 @@ fn get_item_shows_recorded_reasons_next_to_choices_and_omits_missing_reasons() {
     detail.item.model_reasons = None;
     let text = render("get_item", &Reply::ItemDetail(Box::new(detail)));
     assert!(!text.contains("Apply supplied fix"));
+}
+
+#[test]
+fn get_item_lists_the_steers_made_to_the_item() {
+    use archon_core::protocol::{ItemDetail, Reply};
+    use archon_core::steer::{SteerRecord, SteeredBy};
+    let at = archon_core::now();
+    let mut detail = ItemDetail {
+        steers: vec![SteerRecord {
+            at,
+            by: SteeredBy::Operator,
+            what: "amended the brief; set the budget to $40.00".into(),
+            note: Some("Use the v2 client.".into()),
+        }],
+        waiting_on: None,
+        waiting_reason: None,
+        item: item(QueueState::Queued),
+        runs: vec![],
+        stages: vec![],
+        spent_usd: 0.0,
+        gates: vec![],
+        delegations: Default::default(),
+    };
+    let text = render("get_item", &Reply::ItemDetail(Box::new(detail.clone())));
+    let expected = format!(
+        "\nSteered {} by operator: amended the brief; set the budget to $40.00 \
+         Note: Use the v2 client.",
+        at.to_rfc3339()
+    );
+    assert!(text.ends_with(&expected), "{text}");
+    detail.steers.clear();
+    let text = render("get_item", &Reply::ItemDetail(Box::new(detail)));
+    assert!(!text.contains("Steered"), "{text}");
 }
 
 #[test]
@@ -664,6 +698,7 @@ fn list_queue_and_get_item_expose_stable_waiting_reasons_in_text_and_json() {
         (
             "get_item",
             Reply::ItemDetail(Box::new(ItemDetail {
+                steers: Vec::new(),
                 item,
                 runs: vec![],
                 stages: vec![],
@@ -716,6 +751,7 @@ fn dependency_titles_are_escaped_in_waiting_text() {
         (
             "get_item",
             Reply::ItemDetail(Box::new(ItemDetail {
+                steers: Vec::new(),
                 item,
                 runs: vec![],
                 stages: vec![],

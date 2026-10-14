@@ -3,6 +3,9 @@
 //! built from the copy, so editing or breaking a pipeline mid-run cannot
 //! change a resumed run. Each file is written durably and swapped in by
 //! rename, so a crash or power loss never leaves a half-written snapshot.
+//!
+//! A steer changes a run's stages through recorded edits (§6.6), which are
+//! applied to the snapshot every time it is read; the files never change.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -10,8 +13,12 @@ use std::path::{Path, PathBuf};
 use archon_core::catalog::PipelineSource;
 use archon_core::error::ArchonError;
 use archon_core::id::PipelineRunId;
+use archon_core::steer::RunEdit;
 use archon_pipeline::PipelineSpec;
 use archon_pipeline::catalog::load_dir;
+use archon_pipeline::reshape;
+
+use crate::context::DaemonContext;
 
 const MANIFEST: &str = "pipeline.toml";
 
@@ -47,18 +54,37 @@ pub(super) async fn freeze(
     Ok(frozen)
 }
 
-/// The run's snapshot, as frozen at its start.
+/// The pipeline the run has now: its snapshot with every edit a steer
+/// recorded for it, in the order they were recorded.
 pub(crate) async fn thaw(
+    ctx: &DaemonContext,
+    run: &PipelineRunId,
+    pipeline: &str,
+) -> Result<PipelineSpec, ArchonError> {
+    let recorded = ctx.store.lock().await.run_edits(run)?;
+    let edits: Vec<RunEdit> = recorded.into_iter().map(|r| r.edit).collect();
+    thaw_edited(&ctx.paths.data_dir, run, pipeline, &edits).await
+}
+
+/// The run's snapshot, as frozen at its start, after `edits`.
+pub(super) async fn thaw_edited(
     data_dir: &Path,
     run: &PipelineRunId,
     pipeline: &str,
+    edits: &[RunEdit],
 ) -> Result<PipelineSpec, ArchonError> {
     let dir = run_dir(data_dir, run).join(pipeline);
     let spec = tokio::task::spawn_blocking(move || load_frozen(&dir, PipelineSource::User))
         .await
         .map_err(|e| ArchonError::io("pipeline snapshot task", std::io::Error::other(e)))??;
     assert_eq!(spec.name(), pipeline, "a snapshot is filed under its name");
-    Ok(spec)
+    let edited = reshape::apply_all(spec, edits)
+        .map_err(|e| ArchonError::Pipeline(format!("recorded edits of run {run}: {e}")))?;
+    assert!(
+        !edited.file.stages.is_empty(),
+        "an edited run keeps a stage"
+    );
+    Ok(edited)
 }
 
 /// Drop a finished run's snapshot. Failing leaves only a stale copy.

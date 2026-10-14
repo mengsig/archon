@@ -9,7 +9,9 @@ use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
 use archon_core::run::{StageOutcome, StageRun, StageState};
 
-use super::{FollowUp, descendants, load_spawn, run_follow_up, run_node, settle, siblings, team};
+use super::{
+    FollowUp, descendants, load_spawn, resume, run_follow_up, run_node, settle, siblings, team,
+};
 use crate::context::DaemonContext;
 
 /// Aether settles a timed-out agent itself; the daemon steps in after this.
@@ -50,6 +52,9 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
                 continue;
             }
             follow.roster.push(stage.run.clone());
+            if stage.aether_agent.is_some() && stage.aether_task.is_none() {
+                follow.resumed.push(stage.id.clone());
+            }
             let deadline = match load_spawn(&store, &stage.id) {
                 Ok(spawn) => spawn.request.deadline,
                 Err(ArchonError::NotFound(what)) => {
@@ -64,6 +69,7 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
         }
         follow.retire = run_node::runs_to_retire(&store)?;
         follow.sibling_stops = siblings::owed(&store)?;
+        follow.steers = super::steer::owed(&store)?;
         follow.descendant_stops = descendants::owed(&store)?;
     }
     run_follow_up(ctx, follow).await
@@ -107,6 +113,13 @@ pub(super) async fn stop_run(
                     cancel_and_settle(ctx, &stage.id, agent, task, &reason, cancelled).await?,
                 );
             }
+            // Resumed on a kept agent: it has no task to ask about (§6.7).
+            (Some(agent), None) if stage.state == StageState::Running => {
+                let cancelled = StageOutcome::Cancelled {
+                    reason: Some(reason.clone()),
+                };
+                follow.merge(resume::stop(ctx, &stage.id, agent, &reason, cancelled).await?);
+            }
             // Its create_agent may have reached Aether: issue it under the same
             // key, and the finished run then cancels the agent it gets back.
             _ => follow.issue.push(stage.id),
@@ -140,14 +153,17 @@ pub(super) async fn time_out(
     id: &StageRunId,
 ) -> Result<FollowUp, ArchonError> {
     let stage = ctx.store.lock().await.stage_run(id)?;
-    let (Some(agent), Some(task)) = (&stage.aether_agent, &stage.aether_task) else {
-        return Ok(FollowUp::default());
-    };
     if stage.state != StageState::Running {
         return Ok(FollowUp::default());
     }
     let reason = "stage deadline passed";
-    cancel_and_settle(ctx, id, agent, task, reason, StageOutcome::TimedOut).await
+    match (&stage.aether_agent, &stage.aether_task) {
+        (Some(agent), Some(task)) => {
+            cancel_and_settle(ctx, id, agent, task, reason, StageOutcome::TimedOut).await
+        }
+        (Some(agent), None) => resume::stop(ctx, id, agent, reason, StageOutcome::TimedOut).await,
+        (None, _) => Ok(FollowUp::default()),
+    }
 }
 
 /// Settle with `outcome` once Aether confirms the cancel. A refused cancel

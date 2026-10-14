@@ -467,8 +467,8 @@ pub struct ItemPatch {
     #[serde(default)]
     pub add_depends_on: Vec<QueueItemId>,
     pub budget_usd: Option<f64>,
-    /// Appended to the brief under a dated "Amendment" heading; refused
-    /// while the item is dispatching or running.
+    /// Appended to the brief under a dated "Amendment" heading; a running
+    /// item's live agents are sent it (ARCHITECTURE §6.6).
     #[serde(default)]
     pub brief_append: Option<String>,
 }
@@ -779,6 +779,9 @@ pub struct ItemDetail {
     /// How the cost of each stage run that delegated splits.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub delegations: BTreeMap<StageRunId, StageDelegation>,
+    /// Every steer of the item, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steers: Vec<crate::steer::SteerRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting_on: Option<WaitingOn>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -427,9 +427,10 @@ progress too; also `/verbose`), `/pause` and `/resume` (optionally `hard`,
 | `archon queue add --title … --brief-file <path\|-> --model-plan-file <json\|toml>` | enqueue scripted work through the daemon's MCP-equivalent policy checks; prints the id or the item with `--json` |
 | `archon queue wait <id>… [--timeout 30m]` | wait for every item to become terminal, bounded to 30m by default; exit 0 all succeeded, 3 failed/cancelled, 4 timeout, 5 failed/cancelled dependency |
 | `archon queue list` | one line per item: state, current stage, age, cost, title, PR URL and derived waiting reason with one next action |
-| `archon queue show <id> [--full]` | an item's runs and each stage's attempt, slot, state, verdict, model, agent, cost and summary (first lines; `--full` for all), with the PR URL, recorded plan reasons and full waiting explanation when present. A stage that delegated shows how its cost splits (its own agent, then each delegated agent with model, effort and cost), and a stage holding a declared review shows the review on record |
+| `archon queue show <id> [--full]` | an item's runs and each stage's attempt, slot, state, verdict, model, agent, cost and summary (first lines; `--full` for all), with the PR URL, recorded plan reasons and full waiting explanation when present. A stage that delegated shows how its cost splits (its own agent, then each delegated agent with model, effort and cost), and a stage holding a declared review shows the review on record. Steers made to the item are listed with who made them |
 | `archon queue cancel <id>` / `archon queue caps` | cancel an item, or show and change runtime caps |
 | `archon queue retry <id> [--fresh] [--append "…"]` | queue a failed or cancelled item again in its worktree and branch; `--fresh` starts over from the base branch on a new branch and sets the old worktree aside, which worktree gc deletes, uncommitted work included, `worktrees.gc_after` (7 days) after the item's last run; `--append` adds guidance to the brief |
+| `archon queue steer <id> [--note "…"] [--stage <stage>] [--model <provider/model>] [--effort <effort>] [--budget-usd <usd>] [--extend <minutes>] [--abort [--then retry\|skip] [--goto <stage>]] [--remove <stage>] [--insert <stage> [--from <pipeline>] [--after <stage>]] [--switch <pipeline>]` | change an item without cancelling it; see [steering an item](#steering-an-item) |
 | `archon log` | the complete feed; `--item <id>` keeps one item's entries, `--kind <kind>` (repeatable) some kinds, and `--follow` keeps printing new ones |
 | `archon reports` / `archon reports reopen <rpt_…>` | list published reports with their state and URL, or show a closed one again |
 | `archon github-watcher …` | route `@archon` on GitHub issues and PRs to the orchestrator. `operators <LOGIN>...` lets the GitHub accounts you list instruct it with your authority (off by default); see [`docs/github-watcher.md`](github-watcher.md) |
@@ -522,6 +523,52 @@ Terminal and modern VTE), chat reports show an `open report` hyperlink. Its
 target contains the full URL or encoded absolute file path. Pipes, unknown
 or dumb terminals, and `NO_COLOR` use the full location as plain text;
 `archon reports` and JSON retain the full location in all cases.
+
+### Steering an item
+
+`archon queue steer <id> …` changes an item while it runs, and the
+orchestrator does the same with `steer_item`. Nothing is cancelled and
+queued again: the agents at work keep their context and their worktree.
+Give at least one change; several in one command are applied together.
+
+| Flag | What it does |
+| --- | --- |
+| `--note "…"` | Adds the text to the brief under a dated `## Amendment` heading and sends it to every agent working on the item now, helpers included. Later stages read it in the brief. |
+| `--model <provider/model>`, `--effort <effort>` | Changes the model or effort of `--stage` (the running stage when omitted), within the model policy. A running agent ends its turn and goes on with its work on the new model; later attempts and retries use it too. |
+| `--budget-usd <usd>` | Sets the item's budget. Running agents that carry their own cap get the difference. |
+| `--extend <minutes>` | Gives the stage running now more time, up to 1440 minutes a steer. |
+| `--abort` | Stops the agents of `--stage` now. The stage is then started again with a new agent, or passed over with `--then skip`, or the run continues at another stage with `--goto <stage>`. |
+| `--remove <stage>` | Takes out a stage that has not started, for this run. |
+| `--insert <stage> [--from <pipeline>] [--after <stage>]` | Adds a copy of a stage, from the item's own pipeline or another, among the stages that have not started. |
+| `--switch <pipeline>` | Replaces the stages that have not started with what that pipeline runs after the stages both share. |
+
+```console
+$ archon queue steer 01k2 --note "Use the v2 client, not the legacy one."
+Steered qi_01K2…: amended the brief.
+$ archon queue steer 01k2 --stage implement --model claude-code/claude-opus-5-5 --effort high
+$ archon queue steer 01k2 --abort --goto implement
+$ archon queue steer 01k2 --insert test --from strict-pr-review --after implement
+```
+
+A stage that already started keeps its shape: an insert lands after it, a
+switch keeps it, and a stage that ran and is not running now cannot be
+removed. To run such a stage again, abort the running one with `--goto`.
+The model policy, the budgets and the review your autonomy settings require
+hold for a steer as they do for an enqueue, and a refusal says which rule
+it met. Steers survive a daemon restart: the run goes on with the stages
+and decisions they left.
+
+An item that is not running takes what it runs next: a note, a budget, a
+stage's model (name the stage), and an insert or a switch. `--abort`,
+`--extend` and `--remove` need a running item. A failed item given
+`--insert` or `--switch` is queued again on the same branch and worktree,
+with what its failed run committed; this is how an item whose stage gave
+up with `escalate` continues on a stronger pipeline instead of starting
+over. A cancelled item is retried first, and a succeeded one is done.
+
+Every steer is recorded with who made it (`operator` or `orchestrator`) and
+what it changed. `archon queue show <id>` lists them, and the feed has a
+`Steered …` entry for each.
 
 ## Using Archon from Aether's remote app
 

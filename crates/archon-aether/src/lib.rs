@@ -17,6 +17,7 @@ pub mod fake;
 pub mod github;
 pub mod link;
 pub mod mcp;
+mod resumed;
 pub mod wire;
 
 pub use backend::AetherBackend;

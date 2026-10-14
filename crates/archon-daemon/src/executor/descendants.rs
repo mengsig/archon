@@ -35,6 +35,10 @@ struct OwedStop {
     /// The operator was told that the subtree is slow to end.
     #[serde(default)]
     reported: bool,
+    /// The agent is kept for its stage's next attempt (§6.7): what it
+    /// delegated is stopped from its children down, not through it.
+    #[serde(default)]
+    keep: bool,
 }
 
 /// What asking Aether for the cancel came to.
@@ -63,10 +67,10 @@ pub(super) fn owe(store: &mut Store, settled: &StageRun) -> Result<bool, ArchonE
     let Some(agent) = &settled.aether_agent else {
         return Ok(false);
     };
-    let leaf = match load_spawn(store, &settled.id) {
-        Ok(spawn) => spawn.request.leaf,
+    let (leaf, kept) = match load_spawn(store, &settled.id) {
+        Ok(spawn) => (spawn.request.leaf, spawn.request.keep),
         // Without its request, nothing says it could not delegate.
-        Err(ArchonError::NotFound(_)) => false,
+        Err(ArchonError::NotFound(_)) => (false, false),
         Err(error) => return Err(error),
     };
     if leaf {
@@ -78,6 +82,7 @@ pub(super) fn owe(store: &mut Store, settled: &StageRun) -> Result<bool, ArchonE
         settled_at: settled.finished_at.expect("a settled stage has finished"),
         cancelled_at: None,
         reported: false,
+        keep: kept && settled.state == StageState::Completed,
     };
     store.kv_set(&stop_key(&settled.id), &serde_json::to_string(&owed)?)?;
     Ok(true)
@@ -149,10 +154,15 @@ async fn request_cancel(
         owed.cancelled_at.is_none(),
         "an accepted cancel is not repeated"
     );
-    if turn_still_ending(ctx, &owed, now).await? {
+    // A kept agent's turn never ends it, and it is not the one cancelled.
+    if !owed.keep && turn_still_ending(ctx, &owed, now).await? {
         return Ok(Requested::Later);
     }
-    match ctx.backend.cancel(&owed.agent, REASON).await {
+    let cancelled = match owed.keep {
+        true => cancel_children(ctx, &owed.agent).await,
+        false => ctx.backend.cancel(&owed.agent, REASON).await,
+    };
+    match cancelled {
         Ok(()) => {}
         Err(ArchonError::NotFound(why)) => {
             tracing::info!(agent = %owed.agent, %why, "settled stage agent already gone");
@@ -174,6 +184,23 @@ async fn request_cancel(
         store.kv_set(key, &serde_json::to_string(&owed)?)?;
     }
     Ok(Requested::Accepted(owed))
+}
+
+/// Cancel what `agent` delegated and leave it alive: each of its live
+/// children, which takes that child's own subtree with it.
+async fn cancel_children(ctx: &DaemonContext, agent: &AetherAgentId) -> Result<(), ArchonError> {
+    let beneath = ctx.backend.descendants(agent).await?;
+    let children = beneath
+        .iter()
+        .filter(|d| d.parent == *agent && d.state == DescendantState::Live);
+    for child in children {
+        assert_ne!(child.agent, *agent, "an agent is not its own child");
+        match ctx.backend.cancel(&child.agent, REASON).await {
+            Ok(()) | Err(ArchonError::NotFound(_)) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 /// Every agent beneath `agent` as Aether holds it; `None` when Aether did

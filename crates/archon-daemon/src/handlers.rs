@@ -144,7 +144,8 @@ async fn handle_adaptive(
             initiative,
             contract_append,
         } => initiatives::update(ctx, &initiative, &contract_append).await,
-        Request::SteerItem { item, steer } => steer::steer(ctx, &item, steer).await,
+        Request::SteerItem { item, steer } => steer::steer(ctx, client, &item, steer).await,
+        Request::UpdateItem { item, patch } => steer::update(ctx, client, &item, patch).await,
         Request::RecordLesson(draft) => lessons::record(ctx, client, draft).await,
         Request::Lessons(query) => lessons::list(ctx, &query).await,
         Request::UpdateLesson { lesson, patch } => lessons::update(ctx, &lesson, patch).await,
@@ -179,7 +180,6 @@ async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, Ar
         Request::GetStage(query) => stages::get(ctx, &query).await,
         Request::ListItemSummaries(query) => item_views::summaries(ctx, &query).await,
         Request::ResolveItem { prefix } => item_views::resolve(ctx, &prefix).await,
-        Request::UpdateItem { item, patch } => items::update(ctx, &item, patch).await,
         Request::CancelItem { item, reason } => items::cancel(ctx, &item, reason).await,
         Request::RetryItem {
             item,

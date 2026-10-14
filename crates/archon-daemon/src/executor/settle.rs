@@ -11,7 +11,7 @@ use archon_core::run::{PipelineRun, RunState, StageOutcome, StageRun, StageState
 use archon_pipeline::{EngineAction, SpawnPlan};
 
 use super::{
-    FollowUp, RunTable, descendants, finish, gates, pages, recover, siblings, spawn, team,
+    FollowUp, RunTable, descendants, finish, gates, pages, recover, resume, siblings, spawn, team,
 };
 use crate::context::DaemonContext;
 use crate::disk::{self, FullDisk};
@@ -100,14 +100,16 @@ async fn persist(
     outcome: StageOutcome,
 ) -> Result<FollowUp, ArchonError> {
     let settled = settled_stage(stage, outcome, archon_core::now());
-    let owes_stop = {
+    let (owes_stop, kept) = {
         let mut store = ctx.store.lock().await;
+        let kept = resume::after_settle(&store, &settled)?;
         let owes_stop = descendants::owe(&mut store, &settled)?;
         store.upsert_stage_run(&settled)?;
-        owes_stop
+        (owes_stop, kept)
     };
     table.spawn_errors.remove(&settled.id);
     let mut follow = decide(ctx, table, run, &settled, all).await?;
+    follow.kept.extend(kept);
     if owes_stop {
         follow.descendant_stops.push(settled.id);
     }
@@ -147,7 +149,11 @@ async fn decide(
 }
 
 /// The terminal stage run for `outcome`.
-fn settled_stage(mut stage: StageRun, outcome: StageOutcome, now: Timestamp) -> StageRun {
+pub(super) fn settled_stage(
+    mut stage: StageRun,
+    outcome: StageOutcome,
+    now: Timestamp,
+) -> StageRun {
     assert!(
         !stage.state.is_terminal(),
         "stage {} settled twice",

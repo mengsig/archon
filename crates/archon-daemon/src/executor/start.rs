@@ -99,6 +99,8 @@ async fn prepare(
     assert_eq!(item.state, QueueState::Dispatching, "prepare follows claim");
     let env = RepoEnv::load(ctx, item.repo.as_ref()).await?;
     let (base, current) = knobs::item_specs(&env, item)?;
+    // A steer may have given the item a stage list of its own (§6.6).
+    let current = super::steer::shaped(ctx, item, current).await?;
     // The ceiling may have been lowered since the item was enqueued.
     knobs::check_ceiling(&env.autonomy(&ctx.config), &env, &base, item.autonomy)?;
     let spec = Arc::new(frozen::freeze(&ctx.paths.data_dir, &run_id, &current).await?);

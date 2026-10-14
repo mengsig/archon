@@ -36,7 +36,7 @@ pub(super) async fn finish_run(
 ) -> Result<FollowUp, ArchonError> {
     assert!(state.is_terminal(), "finish_run needs a terminal state");
     let ship_stage = if matches!(state, RunState::Succeeded { .. }) {
-        match frozen::thaw(&ctx.paths.data_dir, &run.id, &run.pipeline).await {
+        match frozen::thaw(ctx, &run.id, &run.pipeline).await {
             Ok(spec) => spec
                 .file
                 .stages

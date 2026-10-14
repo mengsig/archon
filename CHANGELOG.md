@@ -140,6 +140,47 @@ itself, and a pipeline stage can delegate again.
   itself: the branch and the pull request of a dependent item start from
   the base.
 
+### Steering and the fix loop
+
+- `archon queue steer <id>` and the orchestrator's `steer_item` change an
+  item without cancelling it. `--note` amends the brief and is sent to
+  every agent working on the item, helpers included. `--model` and
+  `--effort` change a stage within the model policy: a running agent ends
+  its turn and goes on with its work on the new model, since Aether applies
+  a model change at an agent's next turn. `--budget-usd` and `--extend`
+  move the budget and the running stage's deadline. Nothing is restarted,
+  and later attempts, later stages and retries use what was steered.
+- `--abort` stops the running stage and retries it, skips it
+  (`--then skip`) or continues at another stage (`--goto`). `--remove`
+  takes out a stage that has not started, `--insert` adds one from any
+  pipeline, and `--switch` replaces the stages that have not started with
+  another pipeline's. A stage that already started keeps its shape, and
+  the refusal says so. The model policy, the budgets and the review the
+  autonomy ceiling requires hold for a steer as for an enqueue.
+- Steers are recorded as run edits and applied before a run is resumed, so
+  a steered run goes on unchanged after a daemon restart. What a steer owes
+  the running agents is stored with it and repeated until Aether takes it.
+- A failed item given `--insert` or `--switch` is queued again on the same
+  branch and worktree with what its failed run committed, so an item whose
+  stage gave up continues on a stronger pipeline instead of starting over.
+- `update_item` no longer refuses `brief_append` and `model_plan` on a
+  running item: both are steered into its run. Only an item that is just
+  starting its run still refuses them.
+- Every steer is kept with the item: who made it, when and what it changed.
+  `archon queue show`, `get_item` and the feed show them.
+- The implementing agent is kept through its fix loop. Where a gate sends
+  work back (`on_fail.goto`) to a `work` stage with one agent, that agent is
+  no longer replaced by a cold one for every fix: it waits while the review
+  runs and is then sent the findings, with what it learned still in its
+  context. Reviewers stay fresh and independent on every attempt. A fresh
+  agent takes the fix, with the findings and a digest of the last attempt,
+  only when the kept one cannot go on: it is gone, Aether refuses it, or a
+  steer changed the stage's model.
+- A stage's prompt now carries `## Handoff from earlier stages`: what each
+  earlier stage, and this stage's own last attempt, reported, at most 1,200
+  characters per stage and 4,000 in all, so it need not rediscover it. A stage the prompt already shows
+  through `{{previous.<id>.summary}}` is not repeated.
+
 ### Cost
 
 - A stage's cost now includes the agents it delegated to. `archon queue

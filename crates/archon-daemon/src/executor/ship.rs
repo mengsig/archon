@@ -50,7 +50,7 @@ pub(super) async fn verify(
                 )));
             }
         }
-        let spec = frozen::thaw(&ctx.paths.data_dir, &run.id, &run.pipeline).await?;
+        let spec = frozen::thaw(ctx, &run.id, &run.pipeline).await?;
         if !spec
             .file
             .stages

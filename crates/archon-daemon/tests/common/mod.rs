@@ -606,6 +606,8 @@ struct FakeState {
     descendant_failures: VecDeque<ArchonError>,
     /// Every `descendants` call, in order.
     descendant_checks: Vec<AetherAgentId>,
+    /// What a kept agent said to end the turn it was resumed in.
+    answers: BTreeMap<AetherAgentId, StageOutcome>,
 }
 
 impl FakeState {
@@ -626,6 +628,14 @@ impl FakeState {
 
     fn is_node(&self, agent: &AetherAgentId) -> bool {
         self.node_by_key.values().any(|n| n.agent == *agent)
+    }
+
+    /// Created long-lived: it outlives its task until it is cancelled.
+    fn is_kept(&self, agent: &AetherAgentId) -> bool {
+        let kept = |key: &String| self.recorded[key].keep;
+        self.by_key
+            .iter()
+            .any(|(key, s)| s.agent == *agent && kept(key))
     }
 
     /// The network a node's request stated.
@@ -715,6 +725,12 @@ impl FakeBackend {
         self.state().outcomes.insert(task.clone(), outcome);
     }
 
+    /// The kept `agent` ended the turn it was resumed in with `outcome`;
+    /// `resumed_outcome` reports it until the agent is resumed again.
+    pub fn answer(&self, agent: &AetherAgentId, outcome: StageOutcome) {
+        self.state().answers.insert(agent.clone(), outcome);
+    }
+
     /// The next `create_run_node` calls fail with these errors, in order.
     pub fn fail_next_node(&self, error: ArchonError) {
         self.state().node_failures.push_back(error);
@@ -801,6 +817,15 @@ impl FakeBackend {
             .iter()
             .map(|(_, to, content)| (to.clone(), content.clone()))
             .collect()
+    }
+
+    /// What the kept agent of stage run `stage` was resumed with.
+    pub fn resumed_with(&self, stage: &StageRun) -> String {
+        let state = self.state();
+        let told = |(key, _, _): &&(String, AetherAgentId, String)| key == stage.id.as_str();
+        let (_, to, content) = state.delivered.iter().find(told).expect("a resume message");
+        assert_eq!(Some(to), stage.aether_agent.as_ref(), "sent to its agent");
+        content.clone()
     }
 
     /// Every `send_message` call's idempotency key, including repeats.
@@ -942,7 +967,7 @@ impl AgentBackend for FakeBackend {
         if state.dead.contains(agent) {
             return Ok(false);
         }
-        Ok(state.is_node(agent) || state.in_turn.contains(agent))
+        Ok(state.is_node(agent) || state.in_turn.contains(agent) || state.is_kept(agent))
     }
 
     async fn cancel(&self, agent: &AetherAgentId, _reason: &str) -> Result<(), ArchonError> {
@@ -1010,6 +1035,31 @@ impl AgentBackend for FakeBackend {
         Ok(state.outcomes.get(task).cloned())
     }
 
+    async fn resumed_outcome(
+        &self,
+        agent: &AetherAgentId,
+        message: &str,
+    ) -> Result<Option<StageOutcome>, ArchonError> {
+        let mut state = self.state();
+        if let Some(error) = state.outcome_failures.pop_front() {
+            return Err(error);
+        }
+        let told = |(_, to, text): &(String, AetherAgentId, String)| to == agent && text == message;
+        assert!(
+            state.delivered.iter().any(told),
+            "asked about a message never sent"
+        );
+        if state.dead.contains(agent) {
+            return Ok(Some(StageOutcome::Failed {
+                error:
+                    "the agent kept for this stage could not answer: Aether holds it as cancelled"
+                        .into(),
+                infra: true,
+            }));
+        }
+        Ok(state.answers.get(agent).cloned())
+    }
+
     async fn send_message(
         &self,
         to: &AetherAgentId,
@@ -1021,7 +1071,8 @@ impl AgentBackend for FakeBackend {
         if let Some(error) = state.message_failures.pop_front() {
             return Err(error);
         }
-        if !state.knows(to) {
+        let delegated = state.delegated.iter().any(|d| d.agent == *to);
+        if !state.knows(to) && !delegated {
             return Err(ArchonError::NotFound(format!("aether: no agent {to}")));
         }
         let seen = state
@@ -1036,6 +1087,8 @@ impl AgentBackend for FakeBackend {
             None => {
                 let delivery = (idempotency_key.to_owned(), to.clone(), content.to_owned());
                 state.delivered.push(delivery);
+                // A new message starts a new turn: the last answer is history.
+                state.answers.remove(to);
                 Ok(())
             }
         }

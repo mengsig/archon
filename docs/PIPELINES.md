@@ -319,6 +319,62 @@ the review stage's second.
 Every decision is derived from the stage runs Archon has persisted, so a
 daemon restart resumes a run exactly where it was.
 
+### One agent through the fix loop
+
+A fix attempt by a new agent starts cold: it reads the task, the
+repository and its own earlier work again before it changes a line. So
+Archon keeps the agent of a stage that a later stage can send back, and
+resumes it.
+
+A stage's agent is kept when the stage is `kind = "work"` with one agent
+(`fan_out = 1`), some stage names it in `on_fail.goto`, and it does not
+hold a [declared review](#a-declared-review). In `default-pr-review` that
+is `implement`. You declare nothing for it.
+
+When a gate loops back (step 5), the same agent gets a message with the
+findings and fixes its own work, with everything it learned still in its
+context. Reviewers are never kept: each review attempt is a fresh,
+independent agent. `archon queue show` shows the same agent id on every
+attempt of the stage.
+
+A resumed agent's task is already recorded, so it does not call
+`complete_task` again: it ends its turn with its summary, or with a
+message that starts `FAILED:` or `BLOCKED:`. Your stage prompt is not
+rendered again for a resumed attempt, so the agent is told only the
+findings and how to hand in. `{{attempt}}` and `{{feedback}}` in the
+prompt matter for the fallback below.
+
+A fresh agent takes the attempt instead, with the rendered prompt, the
+findings as `{{feedback}}` and a digest of the last attempt, when the kept
+one cannot go on: it is gone or Aether refuses it the message, a steer
+changed the stage's model or effort, or the stage is re-entered without
+findings. The kept agent is stopped first, so two agents never share the
+worktree.
+
+### Steering a run
+
+The operator (`archon queue steer`) and the orchestrator (`steer_item`) can
+change an item while it runs, without cancelling it: add a note to the
+brief, change a stage's model, effort, budget or deadline, abort the
+running stage and retry it, skip it or go to another stage, and change the
+stages that have not started by inserting one from any pipeline, removing
+one, or switching to another pipeline's remaining stages. A stage that
+started keeps its shape. The [user guide](guide.md#steering-an-item) lists
+every option.
+
+What this means for a pipeline you write:
+
+- An aborted stage is not judged, so its `gate` and `on_fail` do not apply
+  to that attempt. `goto` back gives the stages it re-runs their full
+  `max_loops` again.
+- A later stage whose prompt reads `{{previous.<id>.summary}}` of a skipped
+  or removed stage gets a line saying the stage was skipped by a steer.
+- An inserted stage keeps its own `kind`, `gate`, `fan_out` and `on_fail`;
+  when its id is taken in the run, it gets a numbered one (`test-2`). Its
+  `on_fail.goto` must name a stage of the run.
+- A switch needs the same `workspace`, and a team stage needs a run that
+  was started with team worktrees.
+
 ## Team stages
 
 A `team` stage runs one agent per role, in parallel. Each role writes in a
@@ -507,6 +563,16 @@ Values are inserted as-is and never scanned again, so a brief that contains
 
 An unknown placeholder, a `previous.*` reference to the same or a later
 stage, and an unterminated `{{` are all load-time errors.
+
+Every stage also gets a **hand-off**: Archon appends
+`## Handoff from earlier stages` to the rendered prompt, with what each
+earlier stage reported and, on a later attempt, what this stage's own last
+attempt reported. It is a digest of at most 1,200 characters per stage and
+4,000 in all, nearest stages first when that runs out. A stage your prompt
+already shows through `{{previous.<id>.summary}}` is not repeated there.
+So a prompt needs `{{previous.*}}` only where the full summary matters;
+the next stage is not left to rediscover what changed, where, how it was
+verified and what is still open. That is what a stage summary should say.
 
 ### The stage contract
 

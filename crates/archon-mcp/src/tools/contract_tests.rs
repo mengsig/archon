@@ -358,8 +358,17 @@ fn descriptions_promise_only_what_the_daemon_does() {
     assert!(path.as_str().is_some_and(|p| p.contains(".html")), "{path}");
     let update = definition("update_item").expect("defined").description;
     assert!(
-        update.contains("the call is refused") && update.contains("retry_item"),
+        update.contains("steered into its run without") && update.contains("just starting"),
         "{update}"
     );
     assert!(!update.contains("keep their models"), "{update}");
+    assert!(
+        !update.contains("cancel_item"),
+        "a running item needs no cancel: {update}"
+    );
+    let steer = definition("steer_item").expect("defined").description;
+    assert!(
+        steer.contains("without cancelling it") && steer.contains("queued again on its branch"),
+        "{steer}"
+    );
 }

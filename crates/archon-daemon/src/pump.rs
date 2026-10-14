@@ -60,6 +60,8 @@ pub const FLEET_EVENT_TYPES: &[&str] = &[
     "agent.cancelled",
     // A settled stage agent ended its turn: what it delegated is stopped (§6.3).
     "agent.completed",
+    // A kept agent resumed for a fix answers by ending its turn (§6.7).
+    "agent.turn_completed",
     "agent.usage_updated",
     "question.asked",
 ];

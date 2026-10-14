@@ -98,7 +98,7 @@ fn define(
 
 /// The `brief_append` property shared by `update_item` and `retry_item`.
 fn brief_append() -> Value {
-    json!({"type": "string", "description": "Guidance to add to the brief, such as \"the reviewer found X; do Y\". It is appended under a dated \"Amendment\" heading, recorded in the item's history, and read by every stage of the item's next run."})
+    json!({"type": "string", "description": "Guidance to add to the brief, such as \"the reviewer found X; do Y\". It is appended under a dated \"Amendment\" heading, recorded in the item's history, and read by every stage that starts after it."})
 }
 
 /// An object schema that refuses undeclared fields.
@@ -469,9 +469,10 @@ fn update_item() -> ToolDefinition {
         "Update queue item",
         "Change a queue item that has not succeeded. Pass `item` and at least one change. \
          `model_plan` and `tags` replace the current values; `add_depends_on` adds dependencies. \
-         `model_plan` and `brief_append` can change only while no run is dispatching or \
-         running: for an active item the call is refused, so cancel_item it and retry_item \
-         with the new plan or amendment.",
+         On a running item `brief_append` and `model_plan` are steered into its run without \
+         cancelling it: its live agents are sent the amendment and take the new plan from \
+         their next turn, and every later stage uses both. While an item is just starting \
+         its run the two are refused; send them again in a moment.",
         object(
             json!({
                 "item": item_id("The item to change."),

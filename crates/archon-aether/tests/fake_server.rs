@@ -46,6 +46,7 @@ fn spawn_request() -> SpawnRequest {
         attach_run: None,
         parent: Some(AetherAgentId::parse(NODE).unwrap()),
         network: Some(NetworkPolicy::Denied),
+        keep: false,
     }
 }
 
@@ -515,6 +516,161 @@ async fn interrupt_reports_whether_a_turn_was_running() {
     let sent = fake.received_named("interrupt");
     assert_eq!(sent.len(), 3);
     assert!(sent.iter().all(|command| command["agent"] == AGENT));
+}
+
+/// An agent kept for its stage's fix loop outlives its task; any other ends
+/// with it (ARCHITECTURE §6.7).
+#[tokio::test]
+async fn only_a_kept_agent_is_created_long_lived() {
+    let (_dir, fake) = fake_aether().await;
+    fake.set_default(
+        "create_agent",
+        Scripted::reply("agent", fake::agent(AGENT, Some(TASK))),
+    );
+    let task = fake::task(TASK, Some(AGENT), RUN, json!({"state": "assigned"}));
+    fake.set_default("get_task", Scripted::reply("task", task));
+    let backend = backend(&fake, any_model()).await;
+    backend.spawn(spawn_request()).await.unwrap();
+    let kept = SpawnRequest {
+        keep: true,
+        ..spawn_request()
+    };
+    backend.spawn(kept).await.unwrap();
+    let creates = fake.received_named("create_agent");
+    assert_eq!(creates.len(), 2);
+    assert_eq!(creates[0]["config"]["long_lived"], false);
+    assert_eq!(creates[1]["config"]["long_lived"], true);
+}
+
+/// One event of agent `AGENT`, as `get_events` lists it.
+fn agent_event(seq: u64, kind: Value) -> Value {
+    json!({
+        "id": format!("evt_{seq}"), "seq": seq, "at": "2026-10-14T10:00:00Z",
+        "actor": {"type": "system"}, "agent_id": AGENT, "run": RUN, "kind": kind,
+    })
+}
+
+/// The delivery of `text` to the agent's inbox as item `item`.
+fn delivered(seq: u64, item: u64, text: &str) -> Value {
+    let kind = json!({
+        "kind": "message", "message_id": "msg_1", "from": {"actor": "system"},
+        "content": [{"type": "text", "text": text}],
+    });
+    let item = json!({
+        "id": "inb_1", "agent_id": AGENT, "seq": item,
+        "delivered_at": "2026-10-14T10:00:00Z", "kind": kind,
+    });
+    agent_event(seq, json!({"type": "inbox.delivered", "item": item}))
+}
+
+fn said(seq: u64, text: &str) -> Value {
+    let content = json!([{"type": "text", "text": text}]);
+    let kind = json!({"type": "agent.message", "role": "assistant", "content": content});
+    agent_event(seq, kind)
+}
+
+fn idle_agent() -> Value {
+    let mut agent = fake::agent(AGENT, None);
+    agent["status"] = json!({"state": "waiting", "condition": {"on": "inbox"}});
+    agent
+}
+
+/// A resumed agent has no task: its answer is the last thing it said in the
+/// turn that took the message, once it waits for its inbox again.
+#[tokio::test]
+async fn a_resumed_agents_answer_is_read_once_its_turn_ended() {
+    const FINDINGS: &str = "Fix the two findings.";
+    let (_dir, fake) = fake_aether().await;
+    let backend = backend(&fake, any_model()).await;
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    let events = |events: Vec<Value>| Scripted::reply("events", json!(events));
+    let consumed = agent_event(
+        11,
+        json!({"type": "inbox.consumed", "up_to": 4, "items": []}),
+    );
+
+    // Still in its turn: nothing is read.
+    fake.script(
+        "get_agent",
+        Scripted::reply("agent", fake::agent(AGENT, None)),
+    );
+    assert_eq!(
+        backend.resumed_outcome(&agent, FINDINGS).await.unwrap(),
+        None
+    );
+    assert!(fake.received_named("get_events").is_empty());
+
+    // Idle, but no turn took the message yet.
+    fake.script("get_agent", Scripted::reply("agent", idle_agent()));
+    fake.script("get_events", events(vec![delivered(10, 4, FINDINGS)]));
+    fake.script("get_events", events(vec![]));
+    assert_eq!(
+        backend.resumed_outcome(&agent, FINDINGS).await.unwrap(),
+        None
+    );
+
+    // Idle after the turn that took it: its last word is the outcome.
+    fake.script("get_agent", Scripted::reply("agent", idle_agent()));
+    fake.script("get_events", events(vec![delivered(10, 4, FINDINGS)]));
+    let turn = vec![
+        consumed,
+        said(12, "On it."),
+        said(13, "Fixed both in src/a.rs."),
+    ];
+    fake.script("get_events", events(turn));
+    let outcome = backend.resumed_outcome(&agent, FINDINGS).await.unwrap();
+    assert_eq!(outcome, Some(completed_outcome("Fixed both in src/a.rs.")));
+    let reads = fake.received_named("get_events");
+    assert_eq!(reads.len(), 4);
+    assert_eq!(reads[3]["after"], 10, "read forward from the delivery");
+    let own = reads.iter().all(|read| read["query"]["agent"] == AGENT);
+    assert!(own, "only the agent's own events are asked for: {reads:?}");
+}
+
+fn completed_outcome(summary: &str) -> StageOutcome {
+    StageOutcome::Completed {
+        summary: summary.into(),
+        structured: None,
+    }
+}
+
+/// A kept agent that cannot answer fails its attempt as infrastructure, so
+/// a fresh agent replaces it.
+#[tokio::test]
+async fn a_resumed_agent_that_cannot_answer_is_lost() {
+    let (_dir, fake) = fake_aether().await;
+    let backend = backend(&fake, any_model()).await;
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    let mut cancelled = fake::agent(AGENT, None);
+    cancelled["status"] = json!({"state": "cancelled", "reason": "gone"});
+    fake.script("get_agent", Scripted::reply("agent", cancelled));
+    fake.script("get_agent", Scripted::refuse("not_found", "no such agent"));
+    // Idle, and Aether never recorded the message it was resumed with.
+    fake.script("get_agent", Scripted::reply("agent", idle_agent()));
+    fake.script("get_events", Scripted::reply("events", json!([])));
+    // Idle after a turn that took the message and said nothing.
+    fake.script("get_agent", Scripted::reply("agent", idle_agent()));
+    let found = vec![delivered(10, 4, "Fix it.")];
+    fake.script("get_events", Scripted::reply("events", json!(found)));
+    let silent = vec![agent_event(
+        11,
+        json!({"type": "inbox.consumed", "up_to": 4, "items": []}),
+    )];
+    fake.script("get_events", Scripted::reply("events", json!(silent)));
+    for case in ["cancelled", "unknown", "no delivery", "silent turn"] {
+        let outcome = backend.resumed_outcome(&agent, "Fix it.").await.unwrap();
+        assert!(
+            matches!(&outcome, Some(StageOutcome::Failed { infra: true, error })
+                if error.starts_with("the agent kept for this stage could not answer: ")),
+            "{case}: {outcome:?}"
+        );
+    }
+    fake.script("get_agent", Scripted::refuse("internal", "store is busy"));
+    let error = backend
+        .resumed_outcome(&agent, "Fix it.")
+        .await
+        .unwrap_err();
+    assert!(!matches!(error, ArchonError::NotFound(_)), "{error}");
 }
 
 /// The stop of a lead's helpers waits on this: the whole run is read once,

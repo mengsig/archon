@@ -63,6 +63,7 @@ pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(
             turn_ended(ctx);
             Ok(())
         }
+        EventKind::AgentTurnCompleted { .. } => executor::turn_ended(ctx, agent).await,
         EventKind::AgentUsageUpdated { usage } => record_usage(ctx, event, agent, usage).await,
         EventKind::QuestionAsked { question } => question_asked(ctx, event, agent, question).await,
         _ => Ok(()),
@@ -125,7 +126,9 @@ async fn task_settled(
     };
     let same_task = match (&stage.aether_task, &event.task) {
         (Some(ours), Some(theirs)) => ours == theirs,
-        (None, _) => true,
+        // Resumed on a kept agent, whose task settled with an earlier
+        // attempt: a replayed event of that task is not this one's (§6.7).
+        (None, _) => false,
         (Some(_), None) => false,
     };
     if !same_task || stage.state.is_terminal() {

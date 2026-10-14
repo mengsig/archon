@@ -15,6 +15,7 @@ use archon_core::protocol::{
     Request, ServerFrame, Welcome,
 };
 use archon_core::queue::{QueueItem, QueueState};
+use archon_core::steer::{SteerRecord, SteeredBy};
 use common::{Env, git_repo, start_daemon, wait_for_exit};
 use serde_json::Value;
 
@@ -221,6 +222,12 @@ impl Canned {
             Request::Say { .. } | Request::Answer { .. } => Reply::Ok,
             Request::ListQuestions { .. } => Reply::Questions(vec![self.question.clone()]),
             Request::GetItem { .. } => Reply::ItemDetail(Box::new(ItemDetail {
+                steers: vec![SteerRecord {
+                    at: self.item.created_at,
+                    by: SteeredBy::Operator,
+                    what: "amended the brief".into(),
+                    note: Some("Use the v2 client.".into()),
+                }],
                 waiting_on: self.waiting_on.clone(),
                 waiting_reason: self.waiting_reason.clone(),
                 item: self.item.clone(),
@@ -230,7 +237,7 @@ impl Canned {
                 gates: vec![],
                 delegations: Default::default(),
             })),
-            Request::CancelItem { .. } | Request::RetryItem { .. } => {
+            Request::CancelItem { .. } | Request::RetryItem { .. } | Request::SteerItem { .. } => {
                 Reply::Item(self.item.clone())
             }
             Request::OrchestratorRestart => Reply::Orchestrator(OrchestratorInfo {
@@ -289,6 +296,17 @@ fn orchestrator_and_item_commands_print_json() {
     for verb in ["cancel", "retry"] {
         assert_eq!(json(&env, &["queue", verb, &item])["id"], item, "{verb}");
     }
+    let steer = ["queue", "steer", &item, "--note", "Use the v2 client."];
+    assert_eq!(json(&env, &steer)["id"], item);
+    let said = String::from_utf8(env.run(&steer).stdout).unwrap();
+    assert_eq!(said, format!("Steered {item}: amended the brief.\n"));
+    let shown = String::from_utf8(env.run(&["queue", "show", &item]).stdout).unwrap();
+    assert!(
+        shown.contains(" by operator: amended the brief\n  note: Use the v2 client.\n"),
+        "{shown}"
+    );
+    let empty = env.command(&["queue", "steer", &item]).output().unwrap();
+    assert_eq!(empty.status.code(), Some(1), "a steer changes something");
     let restarted = json(&env, &["orchestrator", "restart"]);
     assert_eq!(restarted["agent"], "agt_fake", "{restarted}");
 }

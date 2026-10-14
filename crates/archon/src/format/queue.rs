@@ -5,10 +5,11 @@ use std::fmt::Write as _;
 
 use archon_core::Timestamp;
 use archon_core::protocol::{ItemDetail, ItemSummary};
-use archon_core::queue::QueueState;
+use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::{
     self, GateDecision, OperatorGate, PipelineRun, RunState, StageRun, StageState,
 };
+use archon_core::steer::SteerRecord;
 
 use super::{RepoNames, duration, repo_label, table};
 use crate::wrap::{sanitize, sanitize_line};
@@ -131,28 +132,57 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
         archon_core::cost::format_usd(detail.spent_usd)
     );
     let _ = writeln!(out, "autonomy: {}", item.autonomy.describe());
-    if let Some(reasons) = &item.model_reasons {
-        for (stage, choices) in &item.model_plan.0 {
-            let picks: Vec<_> = choices
-                .iter()
-                .map(|c| format!("{} {}", c.model, c.effort))
-                .collect();
-            let reason = reasons
-                .get(stage)
-                .map_or(String::new(), |r| format!(" ({})", sanitize_line(r)));
-            let _ = writeln!(
-                out,
-                "plan {}: {}{reason}",
-                sanitize_line(stage),
-                picks.join(" + ")
-            );
-        }
-    }
+    plan_lines(&mut out, item);
     for run in &detail.runs {
         run_lines(&mut out, detail, run, full);
     }
+    steer_lines(&mut out, &detail.steers);
     let _ = write!(out, "\n{}", sanitize(item.brief.trim_end()));
     out
+}
+
+/// `plan implement: model effort (reason)` per stage, for an item whose
+/// plan was recorded with reasons.
+fn plan_lines(out: &mut String, item: &QueueItem) {
+    let Some(reasons) = &item.model_reasons else {
+        return;
+    };
+    for (stage, choices) in &item.model_plan.0 {
+        let picks: Vec<_> = choices
+            .iter()
+            .map(|c| format!("{} {}", c.model, c.effort))
+            .collect();
+        let reason = reasons
+            .get(stage)
+            .map_or(String::new(), |r| format!(" ({})", sanitize_line(r)));
+        let _ = writeln!(
+            out,
+            "plan {}: {}{reason}",
+            sanitize_line(stage),
+            picks.join(" + ")
+        );
+    }
+}
+
+/// `steered 2026-10-14 09:30 UTC by operator: what changed`, oldest first,
+/// each with the note it amended the brief with under it.
+fn steer_lines(out: &mut String, steers: &[SteerRecord]) {
+    debug_assert!(
+        steers.is_sorted_by_key(|steer| steer.at),
+        "archond lists steers oldest first"
+    );
+    for steer in steers {
+        let _ = writeln!(
+            out,
+            "steered {} by {}: {}",
+            steer.at.format("%Y-%m-%d %H:%M UTC"),
+            steer.by,
+            sanitize_line(&steer.what)
+        );
+        if let Some(note) = &steer.note {
+            let _ = writeln!(out, "  note: {}", sanitize_line(note));
+        }
+    }
 }
 
 /// `run …: state on branch in workspace`, its pull request, then its stages
@@ -509,6 +539,7 @@ mod tests {
         ship.aether_agent = None;
         ship.structured = Some(serde_json::json!({"pr_url": "https://github.com/o/r/pull/12"}));
         ItemDetail {
+            steers: Vec::new(),
             waiting_on: None,
             waiting_reason: None,
             stages: vec![review, ship],
@@ -548,6 +579,38 @@ mod tests {
             "{full}"
         );
         assert!(!full.contains("--full"), "{full}");
+    }
+
+    #[test]
+    fn item_detail_lists_every_steer_with_who_made_it_and_its_note() {
+        use archon_core::steer::{SteerRecord, SteeredBy};
+        let at = chrono::Utc
+            .with_ymd_and_hms(2026, 10, 14, 9, 30, 0)
+            .unwrap();
+        let mut detail = detail_with_stages();
+        detail.steers = vec![
+            SteerRecord {
+                at,
+                by: SteeredBy::Orchestrator,
+                what: "amended the brief".into(),
+                note: Some("Use the v2 client.\n\x1b[2Kqi_FAKE".into()),
+            },
+            SteerRecord {
+                at: at + chrono::Duration::minutes(5),
+                by: SteeredBy::Operator,
+                what: "removed stage `review`".into(),
+                note: None,
+            },
+        ];
+        let text = item_detail(&detail, &RepoNames::new(), false);
+        let expected = "steered 2026-10-14 09:30 UTC by orchestrator: amended the brief\n\
+                        \x20 note: Use the v2 client. [2Kqi_FAKE\n\
+                        steered 2026-10-14 09:35 UTC by operator: removed stage `review`\n";
+        assert!(text.contains(expected), "{text}");
+        assert_inert(&text);
+        detail.steers.clear();
+        let plain = item_detail(&detail, &RepoNames::new(), false);
+        assert!(!plain.contains("steered"), "{plain}");
     }
 
     /// A stage that delegated shows how its cost splits and to which agents it
@@ -666,6 +729,7 @@ mod tests {
             decided_at: None,
         };
         let detail = ItemDetail {
+            steers: Vec::new(),
             waiting_on: None,
             waiting_reason: None,
             item,

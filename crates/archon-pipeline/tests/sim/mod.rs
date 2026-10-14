@@ -11,6 +11,7 @@ use archon_core::Timestamp;
 use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::model::ModelPlan;
 use archon_core::run::{GateDecision, PipelineRun, RunState, StageRun, StageState, Verdict};
+use archon_core::steer::Then;
 use archon_pipeline::autonomy::OperatorGates;
 use archon_pipeline::spec::PipelineSpec;
 use archon_pipeline::team::{MergeOutcome, MergePlan};
@@ -62,6 +63,8 @@ pub struct Sim {
     pub merges: Vec<(String, u32, MergeOutcome)>,
     /// The team merge the run waits on, as the daemon's table holds it.
     pub open_merge: Option<MergePlan>,
+    /// Persisted steered aborts, oldest first.
+    pub aborts: Vec<(String, u32, Then)>,
     clock: Timestamp,
 }
 
@@ -109,6 +112,7 @@ impl Sim {
             open_gate: None,
             merges: Vec::new(),
             open_merge: None,
+            aborts: Vec::new(),
             clock,
         }
     }
@@ -229,6 +233,51 @@ impl Sim {
         actions
     }
 
+    /// Abort `attempt` of `stage` as the daemon does for a steer: persist it,
+    /// stop the group's agents, act on what follows. Attempt 0 removes it.
+    pub fn abort(&mut self, stage: &str, attempt: u32, then: Then) -> Vec<EngineAction> {
+        self.driver
+            .record_abort(stage, attempt, then.clone())
+            .expect("the pipeline allows the abort");
+        self.aborts.push((stage.to_owned(), attempt, then));
+        self.pending
+            .retain(|p| p.stage_id != stage || p.attempt != attempt);
+        let at = self.tick();
+        let mut actions = Vec::new();
+        for index in 0..self.stages.len() {
+            let member = &mut self.stages[index];
+            let aborted = member.stage_id == stage && member.attempt == attempt;
+            if !aborted || member.state.is_terminal() {
+                continue;
+            }
+            apply_agent(member, &Agent::Cancelled, at);
+            let settled = member.clone();
+            actions.extend(self.driver.on_stage_settled(&settled, &self.stages));
+        }
+        actions.extend(self.driver.reconsider(&self.stages));
+        assert_eq!(
+            self.resume_fresh(),
+            self.expected_owed(&actions),
+            "resumed driver disagrees after aborting {stage} attempt {attempt}"
+        );
+        assert!(self.driver.reconsider(&self.stages).is_empty());
+        self.apply(&actions, usize::MAX);
+        actions
+    }
+
+    /// Continue on a reshaped pipeline the way the daemon does: a driver
+    /// rebuilt from persisted state takes over.
+    pub fn reshape(&mut self, spec: PipelineSpec, plan: ModelPlan) -> Vec<EngineAction> {
+        assert_eq!(spec.name(), self.spec.name(), "a run keeps its snapshot");
+        self.spec = Arc::new(spec);
+        self.plan = plan;
+        self.pending.clear();
+        self.driver = self.new_driver();
+        let actions = self.driver.resume(&self.run, &self.stages);
+        self.apply(&actions, usize::MAX);
+        actions
+    }
+
     /// Admit up to `count` pending spawns (the dispatcher found capacity);
     /// a team group's spawns all at once or none, like the dispatcher.
     pub fn admit(&mut self, count: usize) {
@@ -264,6 +313,11 @@ impl Sim {
             driver
                 .record_merge(stage, *attempt, outcome.clone())
                 .expect("persisted merge outcomes replay");
+        }
+        for (stage, attempt, then) in &self.aborts {
+            driver
+                .record_abort(stage, *attempt, then.clone())
+                .expect("persisted aborts replay");
         }
         driver
     }

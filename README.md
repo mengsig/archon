@@ -158,6 +158,7 @@ Replace `<id>` with an item ID from the queue; a unique prefix also works.
 | `archon status` | Show health, capacity, spending, and waiting work |
 | `archon queue list` / `archon queue show <id> --full` | Inspect items and stage results |
 | `archon queue retry <id>` / `archon queue cancel <id>` | Retry a failed item or cancel work |
+| `archon queue steer <id> --note "…"` | Change a running item without cancelling it: its brief, model, budget, deadline or stages |
 | `archon queue caps` | Inspect or change runtime limits |
 | `archon pause` / `archon resume` | Hold or resume dispatch; add `--hard` for running agents |
 | `archon questions` / `archon answer <number> "…"` | Read and answer operator questions |

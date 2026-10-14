@@ -1,6 +1,7 @@
-//! Sections the autonomy knobs append to a rendered stage prompt
-//! (ARCHITECTURE §18.1, §18.3). They are appended after rendering, so a stage
-//! summary is never parsed as a template.
+//! Sections appended to a rendered stage prompt: what the autonomy knobs add
+//! (ARCHITECTURE §18.1, §18.3) and the hand-off from earlier stages (§6.5).
+//! They are appended after rendering, so a stage summary is never parsed as
+//! a template.
 
 use std::collections::BTreeMap;
 
@@ -8,8 +9,38 @@ use archon_core::catalog::StageKind;
 use archon_core::run::GateSubject;
 
 use crate::autonomy;
+use crate::gate;
 use crate::spec::{PipelineSpec, StageSpec};
 use crate::template;
+
+/// What stands in for the summary of a stage a steer passed over.
+pub(crate) const SKIPPED_SUMMARY: &str = "(This stage was skipped by a steer and left no result.)";
+
+/// One stage's share of a hand-off, and the whole of it, in characters.
+pub(crate) const HANDOFF_STAGE_CHARS: usize = 1_200;
+pub(crate) const HANDOFF_TOTAL_CHARS: usize = 4_000;
+
+/// What a kept agent is told to make it fix its own work: the findings and
+/// how to hand in, since its task is already settled.
+pub(crate) fn resume_message(stage: &StageSpec, attempt: u32, feedback: &str) -> String {
+    let feedback = feedback.trim();
+    assert!(!feedback.is_empty(), "an agent is resumed with findings");
+    assert!(attempt > 1, "the first attempt has nothing to resume");
+    format!(
+        "Archon stage `{id}`, attempt {attempt}: your work on this task did not pass. Fix it in \
+         the same workspace and on the same branch; what you already learned still holds, so \
+         do not start over.\n\n\
+         ## Feedback to address\n\n{feedback}\n\n\
+         ## Finishing\n\n\
+         Your task is already recorded, so do not call `complete_task` or `fail_task` again. \
+         When the fix is committed and verified, end your turn with a final message that is \
+         your summary: what you changed and where, how you verified it, and what is left. If \
+         you cannot fix it, start that message with `FAILED:` and say what stops you, or with \
+         `{blocked}` when only the operator can unblock it. Do not wait for a reply.\n",
+        id = stage.id,
+        blocked = archon_core::run::StageOutcome::BLOCKED_PREFIX,
+    )
+}
 
 /// The `{{feedback}}` a stage re-entered from an operator gate receives.
 pub(crate) fn operator_feedback(subject: GateSubject, feedback: &str) -> String {
@@ -33,6 +64,7 @@ pub(crate) fn context(
 ) -> String {
     let summary_of = |id: &str| previous.get(&template::previous_variable(id));
     let mut out = unshown_feedback(&spec.prompts[&stage.prompt], feedback);
+    out.push_str(&handoff(spec, stage, previous));
     if let Some(propose) = autonomy::propose_stage(spec).filter(|p| p.id != stage.id)
         && let Some(summary) = summary_of(&propose.id)
     {
@@ -48,6 +80,58 @@ pub(crate) fn context(
         out.push_str(&change_report(summary));
     }
     out
+}
+
+/// The stages whose summary `stage` gets no other way: not the proposal
+/// (it has its own section), nor one its template or the change report shows.
+fn handed_off<'a>(spec: &'a PipelineSpec, stage: &StageSpec) -> Vec<&'a StageSpec> {
+    let index = spec.stage_index(&stage.id).expect("stage of this pipeline");
+    let template = &spec.prompts[&stage.prompt];
+    let shown = template::placeholders(template).expect("validated prompts parse");
+    let lists_all = stage.prompt == autonomy::REPORT_PROMPT;
+    let reported = autonomy::change_report_stage(spec).filter(|_| stage.kind == StageKind::Ship);
+    spec.file.stages[..=index]
+        .iter()
+        .filter(|s| s.kind != StageKind::Propose && !lists_all)
+        .filter(|s| reported.is_none_or(|report| report.id != s.id))
+        .filter(|s| !shown.contains(&template::previous_variable(&s.id)))
+        .collect()
+}
+
+/// A bounded digest of what the earlier stages, and this stage's own last
+/// attempt, reported: the nearest stage first when the budget runs out.
+fn handoff(spec: &PipelineSpec, stage: &StageSpec, previous: &BTreeMap<String, String>) -> String {
+    let mut left = HANDOFF_TOTAL_CHARS;
+    let mut parts: Vec<String> = Vec::new();
+    for earlier in handed_off(spec, stage).into_iter().rev() {
+        let Some(summary) = previous.get(&template::previous_variable(&earlier.id)) else {
+            continue;
+        };
+        let summary = summary.trim();
+        let share = HANDOFF_STAGE_CHARS.min(left);
+        if summary.is_empty() || summary == SKIPPED_SUMMARY || share == 0 {
+            continue;
+        }
+        let title = match earlier.id == stage.id {
+            true => format!("`{}`, your stage's last attempt", earlier.id),
+            false => format!("`{}`", earlier.id),
+        };
+        left -= summary.chars().count().min(share);
+        parts.push(format!("\n### {title}\n\n{}\n", gate::clip(summary, share)));
+    }
+    if parts.is_empty() {
+        return String::new();
+    }
+    assert!(
+        left <= HANDOFF_TOTAL_CHARS,
+        "the digest stays within its budget"
+    );
+    parts.reverse();
+    format!(
+        "\n\n## Handoff from earlier stages\n\nWhat they reported, so that you need not \
+         rediscover it. The workspace is the truth where they differ.\n{}",
+        parts.concat()
+    )
 }
 
 /// A loop or a revision must never lose its feedback: a template without

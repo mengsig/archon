@@ -384,7 +384,8 @@ impl Target<'_> {
             Ok(env) => env.policy(self.config).describe(),
             Err(error) => format!("none: the repository's model policy cannot be read ({error})"),
         };
-        let rules = contract::delegation_rules(plan.workspace, &models);
+        let depth = self.config.limits.max_delegation_depth;
+        let rules = contract::delegation_rules(plan.workspace, &models, depth);
         format!("{contract}{rules}")
     }
 }

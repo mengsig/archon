@@ -86,7 +86,7 @@ async fn a_run_node_pruned_by_an_older_daemon_is_recovered_from_validated_aether
 
 #[tokio::test]
 async fn stage_messages_survive_compaction_and_are_delivered_with_attribution() {
-    use archon_core::agent_message::{MAX_AGENT_MESSAGES, MessageKind};
+    use archon_core::agent_message::{DEFAULT_AGENT_MESSAGES, MessageKind};
     use archon_core::protocol::{ClientKind, Request};
     let harness = harness().await;
     harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
@@ -95,7 +95,7 @@ async fn stage_messages_survive_compaction_and_are_delivered_with_attribution() 
     let stage =
         link_common::running_stage(&harness.ctx, harness.dir.path(), "agt_stage", "tsk_stage")
             .await;
-    for index in 0..MAX_AGENT_MESSAGES {
+    for index in 0..DEFAULT_AGENT_MESSAGES {
         archon_daemon::handlers::handle(
             &harness.ctx,
             ClientKind::ArchonMcp,
@@ -120,7 +120,7 @@ async fn stage_messages_survive_compaction_and_are_delivered_with_attribution() 
     assert_eq!(sent[0]["payload"], sent[1]["payload"]);
     assert_eq!(sent[0]["idempotency_key"], sent[1]["idempotency_key"]);
     let events = sent[1]["payload"]["events"].as_array().unwrap();
-    assert_eq!(events.len(), MAX_AGENT_MESSAGES as usize);
+    assert_eq!(events.len(), DEFAULT_AGENT_MESSAGES as usize);
     let item = harness.ctx.store.lock().await.run(&stage.run).unwrap().item;
     for (index, message) in events.iter().enumerate() {
         assert_eq!(message["type"], "agent_message");

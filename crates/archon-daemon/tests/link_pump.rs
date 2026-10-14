@@ -1535,7 +1535,9 @@ async fn children_delegated_before_their_stage_is_recorded_are_policed_at_every_
     assert!(model.contains("is not allowed"), "{model}");
     let depth = cancels[1]["reason"].as_str().unwrap();
     assert!(
-        depth.contains("3 delegations below its stage agent; at most 2 are allowed"),
+        depth.contains(
+            "3 delegations below its stage agent; `[limits] max_delegation_depth` allows 2"
+        ),
         "{depth}"
     );
     let owned = Some(format!("\"{item}\""));
@@ -1891,7 +1893,9 @@ async fn the_orchestrators_helpers_delegate_one_level_deeper_and_no_further() {
     assert_eq!(cancels[0].0, GREAT_GRANDCHILD);
     let reason = &cancels[0].1;
     assert!(
-        reason.contains("3 delegations below the orchestrator; at most 2 are allowed"),
+        reason.contains(
+            "3 delegations below the orchestrator; `[limits] max_delegation_depth` allows 2"
+        ),
         "{reason}"
     );
     for kept in [CHILD, GRANDCHILD] {
@@ -1905,6 +1909,34 @@ async fn the_orchestrators_helpers_delegate_one_level_deeper_and_no_further() {
     let blockers = harness.notifications(NotificationKind::Blocker).await;
     assert_eq!(blockers.len(), 1, "{blockers:?}");
     assert!(blockers[0].contains("3 delegations below the orchestrator"));
+}
+
+/// `[limits] max_delegation_depth` moves where a helper's descendants are
+/// cancelled: at 1, already the helper's own child.
+#[tokio::test]
+async fn the_configured_delegation_depth_decides_how_deep_helpers_go() {
+    let mut config = Config::default();
+    config.limits.max_delegation_depth = 1;
+    let harness = Harness::with(config, None).await;
+    let (_agents, pump) = running_pump(&harness).await;
+    harness.fake.set_default("cancel", Scripted::ok());
+    let fleet = keys::CURSOR_FLEET;
+    push(&harness, created(CHILD, ORCH, ALLOWED), fleet).await;
+    push(&harness, created(GRANDCHILD, CHILD, ALLOWED), fleet).await;
+    pump.abort();
+
+    let cancels = cancelled(&harness);
+    assert_eq!(cancels.len(), 1, "{cancels:?}");
+    assert_eq!(cancels[0].0, GRANDCHILD);
+    assert!(
+        cancels[0].1.contains(
+            "2 delegations below the orchestrator; `[limits] max_delegation_depth` allows 1"
+        ),
+        "{}",
+        cancels[0].1
+    );
+    let tracked = harness.kv(&format!("link_child_{CHILD}")).await;
+    assert_eq!(tracked.as_deref(), Some("null"), "the helper itself runs");
 }
 
 /// Aether folded the orchestrator's context: what it was told of the

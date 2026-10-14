@@ -11,10 +11,70 @@ use crate::model::ModelPlan;
 use crate::protocol::RepoRef;
 use crate::queue::QueueItem;
 
-/// The shared contract is in every member's stage contract, so it stays small.
-pub const MAX_CONTRACT_BYTES: usize = 2 * 1024;
-pub const MAX_MEMBERS: usize = 16;
 const MAX_TITLE_CHARS: usize = 200;
+
+/// How large an initiative may be: `[limits] initiative_members` and
+/// `initiative_contract_bytes`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InitiativeLimits {
+    pub members: usize,
+    pub contract_bytes: usize,
+}
+
+impl InitiativeLimits {
+    pub const DEFAULT: Self = Self {
+        members: 16,
+        contract_bytes: 2 * 1024,
+    };
+    /// The most `[limits]` may raise them to: the contract is in every member's
+    /// stage contract, and a set's members merge together.
+    pub const CEILING: Self = Self {
+        members: 64,
+        contract_bytes: 16 * 1024,
+    };
+
+    pub fn within(&self, other: &Self) -> bool {
+        self.members <= other.members && self.contract_bytes <= other.contract_bytes
+    }
+}
+
+/// How `update_initiative` changes the shared contract; the field named is
+/// the variant (`contract_append` or `contract`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ContractChange {
+    /// Text added after the contract, separated by a blank line.
+    #[serde(rename = "contract_append")]
+    Append(String),
+    /// A whole new contract in place of the old one.
+    #[serde(rename = "contract")]
+    Replace(String),
+}
+
+impl ContractChange {
+    pub fn text(&self) -> &str {
+        match self {
+            Self::Append(text) | Self::Replace(text) => text,
+        }
+    }
+
+    /// `current` after this change, within `limits`.
+    pub fn apply(&self, current: &str, limits: &InitiativeLimits) -> Result<String, ArchonError> {
+        let text = self.text().trim();
+        if text.is_empty() {
+            return Err(ArchonError::Invalid(
+                "the contract change must not be empty".into(),
+            ));
+        }
+        let changed = match self {
+            Self::Append(_) => format!("{current}\n\n{text}"),
+            Self::Replace(_) => text.to_owned(),
+        };
+        check_contract(&changed, limits)?;
+        assert!(changed.ends_with(text), "the change is the contract's end");
+        assert!(matches!(self, Self::Replace(_)) || changed.starts_with(current));
+        Ok(changed)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -66,7 +126,7 @@ impl Initiative {
         at: Timestamp,
     ) -> Result<Self, ArchonError> {
         check_title(title)?;
-        check_contract(contract)?;
+        check_contract(contract, &InitiativeLimits::CEILING)?;
         Ok(Self {
             id: InitiativeId::new(),
             title: title.trim().to_owned(),
@@ -89,12 +149,14 @@ fn check_title(title: &str) -> Result<(), ArchonError> {
     Ok(())
 }
 
-/// The whole contract, also after an append.
-pub fn check_contract(contract: &str) -> Result<(), ArchonError> {
+/// The whole contract, also after a change.
+pub fn check_contract(contract: &str, limits: &InitiativeLimits) -> Result<(), ArchonError> {
     let bytes = contract.trim().len();
-    if bytes == 0 || bytes > MAX_CONTRACT_BYTES {
+    let most = limits.contract_bytes;
+    if bytes == 0 || bytes > most {
         return Err(ArchonError::Invalid(format!(
-            "an initiative contract is 1 to {MAX_CONTRACT_BYTES} bytes, not {bytes}"
+            "an initiative contract is 1 to {most} bytes \
+             (`[limits] initiative_contract_bytes`), not {bytes}"
         )));
     }
     Ok(())
@@ -135,12 +197,13 @@ pub struct EnqueueInitiative {
 
 impl EnqueueInitiative {
     /// Everything that can be refused without the store or the catalog.
-    pub fn check(&self) -> Result<(), ArchonError> {
+    pub fn check(&self, limits: &InitiativeLimits) -> Result<(), ArchonError> {
         check_title(&self.title)?;
-        check_contract(&self.contract)?;
-        if self.members.is_empty() || self.members.len() > MAX_MEMBERS {
+        check_contract(&self.contract, limits)?;
+        if self.members.is_empty() || self.members.len() > limits.members {
             return Err(ArchonError::Invalid(format!(
-                "an initiative has 1 to {MAX_MEMBERS} members, not {}",
+                "an initiative has 1 to {} members (`[limits] initiative_members`), not {}",
+                limits.members,
                 self.members.len()
             )));
         }
@@ -234,28 +297,67 @@ mod tests {
         assert!(Initiative::new(" ", "c", false, at).is_err());
         assert!(Initiative::new("two\nlines", "c", false, at).is_err());
         assert!(Initiative::new("t", "  ", false, at).is_err());
-        assert!(check_contract(&"x".repeat(MAX_CONTRACT_BYTES)).is_ok());
-        assert!(check_contract(&"x".repeat(MAX_CONTRACT_BYTES + 1)).is_err());
+        let limits = InitiativeLimits::DEFAULT;
+        assert!(check_contract(&"x".repeat(2048), &limits).is_ok());
+        assert!(check_contract(&"x".repeat(2049), &limits).is_err());
+        let raised = InitiativeLimits {
+            contract_bytes: 4096,
+            ..limits
+        };
+        assert!(check_contract(&"x".repeat(2049), &raised).is_ok());
+        assert!(Initiative::new("t", &"x".repeat(16 * 1024 + 1), false, at).is_err());
+    }
+
+    #[test]
+    fn a_contract_is_appended_to_or_replaced_within_its_limit() {
+        let limits = InitiativeLimits::DEFAULT;
+        let append = ContractChange::Append(" Old names stay. ".into());
+        assert_eq!(
+            append.apply("Use account_id.", &limits).unwrap(),
+            "Use account_id.\n\nOld names stay."
+        );
+        let replace = ContractChange::Replace("Use customer_id.\n".into());
+        assert_eq!(
+            replace.apply("Use account_id.", &limits).unwrap(),
+            "Use customer_id."
+        );
+        assert!(
+            ContractChange::Replace(" ".into())
+                .apply("c", &limits)
+                .is_err()
+        );
+        let full = "x".repeat(2040);
+        assert!(append.apply(&full, &limits).is_err());
+        assert!(replace.apply(&full, &limits).is_ok());
+        let json = |change: &ContractChange| serde_json::to_value(change).unwrap();
+        assert_eq!(
+            json(&append),
+            serde_json::json!({"contract_append": " Old names stay. "})
+        );
+        assert_eq!(
+            json(&replace),
+            serde_json::json!({"contract": "Use customer_id.\n"})
+        );
     }
 
     #[test]
     fn members_wait_only_for_earlier_members() {
-        assert!(
-            request(vec![member(&[]), member(&[0]), member(&[0, 1])])
-                .check()
-                .is_ok()
-        );
-        assert!(request(vec![]).check().is_err());
-        assert!(request(vec![member(&[0])]).check().is_err());
-        assert!(
-            request(vec![member(&[]), member(&[2]), member(&[])])
-                .check()
-                .is_err()
-        );
-        assert!(request(vec![member(&[]); MAX_MEMBERS + 1]).check().is_err());
+        let limits = InitiativeLimits::DEFAULT;
+        let check = |members| request(members).check(&limits);
+        assert!(check(vec![member(&[]), member(&[0]), member(&[0, 1])]).is_ok());
+        assert!(check(vec![]).is_err());
+        assert!(check(vec![member(&[0])]).is_err());
+        assert!(check(vec![member(&[]), member(&[2]), member(&[])]).is_err());
+        assert!(check(vec![member(&[]); 17]).is_err());
         let mut blank = member(&[]);
         blank.brief = " ".into();
-        assert!(request(vec![blank]).check().is_err());
+        assert!(check(vec![blank]).is_err());
+        let three = InitiativeLimits {
+            members: 3,
+            ..limits
+        };
+        assert!(request(vec![member(&[]); 4]).check(&three).is_err());
+        assert!(request(vec![member(&[]); 3]).check(&three).is_ok());
     }
 
     #[test]

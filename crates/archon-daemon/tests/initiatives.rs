@@ -4,7 +4,7 @@ mod common;
 use archon_core::autonomy::{MergeMode, ReviewLevel};
 use archon_core::error::ArchonError;
 use archon_core::initiative::{
-    EnqueueInitiative, InitiativeDetail, InitiativeMember, InitiativeState,
+    ContractChange, EnqueueInitiative, InitiativeDetail, InitiativeMember, InitiativeState,
 };
 use archon_core::protocol::{Reply, RepoAdd, RepoRef, Request};
 use archon_core::queue::QueueState;
@@ -126,7 +126,7 @@ async fn enqueue_is_atomic_and_idempotent_and_live_contract_delivery_recovers() 
     assert!(
         h.cli(Request::UpdateInitiative {
             initiative: detail.initiative.id.clone(),
-            contract_append: "Clients accept old names during rollout.".into()
+            change: ContractChange::Append("Clients accept old names during rollout.".into()),
         })
         .await
         .is_err()
@@ -147,11 +147,67 @@ async fn enqueue_is_atomic_and_idempotent_and_live_contract_delivery_recovers() 
     assert!(
         h.cli(Request::UpdateInitiative {
             initiative: detail.initiative.id,
-            contract_append: too_big
+            change: ContractChange::Append(too_big),
         })
         .await
         .is_err()
     );
+}
+
+/// A replaced contract reaches the members still running whole, and
+/// `[limits]` sets how many members and contract bytes are allowed.
+#[tokio::test]
+async fn a_contract_is_revised_within_the_configured_limits() {
+    let mut config = archon_core::config::Config::default();
+    config.limits.initiative_members = 2;
+    config.limits.initiative_contract_bytes = 4096;
+    let h = Harness::with_config(config).await;
+    install_gh(&h);
+    let path = common::init_repo(&h.dir.path().join("client"));
+    h.cli(Request::RepoAdd(RepoAdd {
+        path,
+        name: Some("client".into()),
+        ship: Some(ShipMode::Pr),
+        base_branch: Some("main".into()),
+        default_pipeline: Some(PIPELINE.into()),
+        auto_merge: false,
+    }))
+    .await
+    .unwrap();
+    let error = h
+        .cli(Request::EnqueueInitiative(request()))
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("`[limits] initiative_members`"),
+        "{error}"
+    );
+    let mut two = request();
+    two.members.truncate(2);
+    let detail = enqueue(&h, two).await;
+    h.dispatch().await;
+    let revise = |change| Request::UpdateInitiative {
+        initiative: detail.initiative.id.clone(),
+        change,
+    };
+    let longer = format!("Use customer_id. {}", "x".repeat(3000));
+    let Reply::Initiative(revised) = h
+        .cli(revise(ContractChange::Replace(longer.clone())))
+        .await
+        .unwrap()
+    else {
+        panic!("an initiative");
+    };
+    assert_eq!(revised.initiative.contract, longer);
+    let delivered: Vec<String> = h.backend.messages().into_iter().map(|(_, m)| m).collect();
+    assert!(!delivered.is_empty(), "the running members are told");
+    assert!(delivered.iter().all(|m| m.contains("Use customer_id.")));
+    assert!(
+        delivered.iter().all(|m| !m.contains("account_id")),
+        "{delivered:?}"
+    );
+    let over = ContractChange::Append("y".repeat(1100));
+    assert!(h.cli(revise(over)).await.is_err(), "4096 bytes at most");
 }
 
 #[tokio::test]

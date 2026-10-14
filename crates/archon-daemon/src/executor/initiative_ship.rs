@@ -206,7 +206,8 @@ pub(crate) async fn deliver_contract(
     detail: &InitiativeDetail,
 ) -> Result<(), ArchonError> {
     assert!(!detail.members.is_empty());
-    assert!(detail.initiative.contract.len() <= archon_core::initiative::MAX_CONTRACT_BYTES);
+    let ceiling = archon_core::initiative::InitiativeLimits::CEILING;
+    assert!(detail.initiative.contract.len() <= ceiling.contract_bytes);
     for item in &detail.members {
         let stages = {
             let store = ctx.store.lock().await;

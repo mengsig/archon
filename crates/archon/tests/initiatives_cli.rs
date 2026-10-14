@@ -10,7 +10,7 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 
 use archon_core::id::InitiativeId;
-use archon_core::initiative::{Initiative, InitiativeDetail, InitiativeState};
+use archon_core::initiative::{ContractChange, Initiative, InitiativeDetail, InitiativeState};
 use archon_core::protocol::{
     ClientFrame, ErrorCode, ErrorReply, PROTOCOL_VERSION, Reply, Request, ServerFrame, Welcome,
 };
@@ -172,7 +172,7 @@ fn create_reads_its_request_from_a_file() {
 }
 
 #[test]
-fn ids_may_be_given_by_their_start_and_update_reads_stdin() {
+fn ids_may_be_given_by_their_start_and_update_appends_or_replaces() {
     let env = Env::new();
     let fake = Fake::start(
         &env,
@@ -194,15 +194,46 @@ fn ids_may_be_given_by_their_start_and_update_reads_stdin() {
     stdin.write_all(b"Also rename the CLI flag.").unwrap();
     drop(stdin);
     assert!(update.wait_with_output().unwrap().status.success());
-    let Request::UpdateInitiative {
-        initiative,
-        contract_append,
-    } = fake.last_change()
-    else {
+    let Request::UpdateInitiative { initiative, change } = fake.last_change() else {
         panic!("expected an update");
     };
     assert_eq!(initiative.as_str(), SECOND);
-    assert_eq!(contract_append, "Also rename the CLI flag.");
+    assert_eq!(
+        change,
+        ContractChange::Append("Also rename the CLI flag.".into())
+    );
+
+    let revised = env.path("revised.md");
+    std::fs::write(&revised, "Every API uses customer_id.").unwrap();
+    let argv = ["initiatives", "update", FIRST, "--contract-file"];
+    env.run(&[&argv[..], &[revised.to_str().unwrap()]].concat());
+    let Request::UpdateInitiative { change, .. } = fake.last_change() else {
+        panic!("expected an update");
+    };
+    assert_eq!(
+        change,
+        ContractChange::Replace("Every API uses customer_id.".into())
+    );
+    for (argv, says) in [
+        (&["initiatives", "update", FIRST][..], "--append-file"),
+        (
+            &[
+                "initiatives",
+                "update",
+                FIRST,
+                "--append-file",
+                "-",
+                "--contract-file",
+                "-",
+            ][..],
+            "cannot be used with",
+        ),
+    ] {
+        let out = env.command(argv).output().unwrap();
+        assert_eq!(out.status.code(), Some(2), "{out:?}");
+        let error = String::from_utf8_lossy(&out.stderr);
+        assert!(error.contains(says), "{error}");
+    }
 
     for (start, code, says) in [
         ("01", "invalid_argument", "ambiguous"),

@@ -135,6 +135,10 @@ fn adaptive_samples() -> Vec<(&'static str, Value)> {
             json!({"initiative": InitiativeId::new().to_string(), "contract_append": "Also rename the column."}),
         ),
         (
+            "update_initiative",
+            json!({"initiative": InitiativeId::new().to_string(), "contract": "The field is `customer_id`."}),
+        ),
+        (
             "steer_item",
             json!({"item": qi(), "note": "Use the v2 client.", "stage": "implement", "model": "codex/astra", "effort": "high", "budget_usd": 12.5, "extend_minutes": 30, "abort_stage": true, "then": "goto", "goto": "review", "insert_stage": {"stage": "review", "from": "default-pr-review", "after": "implement"}}),
         ),
@@ -432,6 +436,14 @@ fn semantic_checks_refuse_what_the_schema_cannot_express() {
     assert!(not_bool.contains("`fresh`"), "{not_bool}");
     let blank = refusal("notify", json!({"kind": "decision", "text": "  "}));
     assert!(blank.contains("`text`"), "{blank}");
+    let initiative = InitiativeId::new().to_string();
+    for both_or_neither in [
+        json!({"initiative": initiative, "contract_append": "a", "contract": "b"}),
+        json!({"initiative": initiative}),
+    ] {
+        let refused = refusal("update_initiative", both_or_neither);
+        assert!(refused.contains("exactly one of"), "{refused}");
+    }
     let global = to_request("pause", json!({"scope": "global"})).unwrap();
     assert_eq!(global, Request::Pause(PauseTarget::Global { hard: false }));
     let resume = to_request("resume", json!({"scope": "global"})).unwrap();

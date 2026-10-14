@@ -34,8 +34,8 @@ it, and:
   git identity overrides; no questions to the operator; the same rules for
   any agent it starts.
 
-It may delegate once more. The daemon cancels, and reports as
-`policy_violation`, an agent a third level below you, one placed in a
+It may delegate to the depth in This installation. The daemon cancels,
+and reports as `policy_violation`, an agent deeper, one placed in a
 registered repository or an item's worktree, and one whose model or effort
 `model_policy` refuses, globally or for a repository whose mirror it reads.
 

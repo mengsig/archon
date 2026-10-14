@@ -154,12 +154,14 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
   force-pushing. A conflict queues a fix item.
 - A change across repositories is one **initiative**: `enqueue_initiative`
   creates all its members or none, with a shared contract of up to 2 KiB,
-  and `update_initiative` amends it. An atomic initiative opens draft pull
+  and `update_initiative` appends to the contract or replaces it; running
+  members get the whole new text. An atomic initiative opens draft pull
   requests and readies them together once every member passed. It never
   merges them: you merge the set. A failed member fails the initiative and
   holds its queued members.
 - `archon initiatives` lists them, `create <file>` starts one from a JSON or
-  TOML file, and `update <id> --append-file` extends its contract. `show`,
+  TOML file, and `update <id> --append-file` or `--contract-file` extends
+  or replaces its contract. `show`,
   `update`, `cancel` and `retry` take an `ini_…` id or its start, as item
   commands do.
 
@@ -208,6 +210,10 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
 - `archon daemon stop --aether` waits until Archon's `aetherd` is gone.
 - Under `--json`, a command line that does not parse prints the JSON error
   envelope (`invalid_argument`, exit 2) instead of clap's text.
+- Limits that were fixed are now `[limits]` keys with the old values as
+  defaults: `max_delegation_depth` (2), `max_agent_messages` (20),
+  `initiative_members` (16) and `initiative_contract_bytes` (2048). Each
+  refusal names its key.
 
 ## 1.0.1
 

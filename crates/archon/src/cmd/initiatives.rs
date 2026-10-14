@@ -6,8 +6,9 @@ use crate::connect::{connect, reply_data, unexpected};
 use archon_client::ArchonClient;
 use archon_core::error::ArchonError;
 use archon_core::id::{InitiativeId, id_prefix};
-use archon_core::initiative::{Initiative, InitiativeDetail};
+use archon_core::initiative::{ContractChange, Initiative, InitiativeDetail};
 use archon_core::protocol::{Reply, Request};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 pub async fn run(command: Option<InitiativeCommand>, json: bool) -> anyhow::Result<ExitCode> {
@@ -38,14 +39,11 @@ async fn prepare(command: InitiativeCommand) -> anyhow::Result<(ArchonClient, Re
         InitiativeCommand::Update {
             initiative,
             append_file,
+            contract_file,
         } => {
-            let contract_append = read_text(&append_file, "contract addition")?;
+            let change = contract_change(append_file, contract_file)?;
             let (client, initiative) = connect_for(&initiative).await?;
-            let request = Request::UpdateInitiative {
-                initiative,
-                contract_append,
-            };
-            (client, request)
+            (client, Request::UpdateInitiative { initiative, change })
         }
         InitiativeCommand::Cancel { initiative } => {
             let (client, initiative) = connect_for(&initiative).await?;
@@ -55,6 +53,18 @@ async fn prepare(command: InitiativeCommand) -> anyhow::Result<(ArchonClient, Re
             let (client, initiative) = connect_for(&initiative).await?;
             (client, Request::RetryInitiative { initiative })
         }
+    })
+}
+
+/// The change one of the two files holds; clap requires exactly one.
+fn contract_change(
+    append_file: Option<PathBuf>,
+    contract_file: Option<PathBuf>,
+) -> anyhow::Result<ContractChange> {
+    Ok(match (append_file, contract_file) {
+        (Some(path), None) => ContractChange::Append(read_text(&path, "contract addition")?),
+        (None, Some(path)) => ContractChange::Replace(read_text(&path, "contract")?),
+        both => unreachable!("clap requires exactly one file, not {both:?}"),
     })
 }
 

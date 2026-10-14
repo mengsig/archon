@@ -18,7 +18,7 @@ use crate::id::{
     DirectiveId, InitiativeId, LessonId, PipelineRunId, QuestionId, QueueItemId, ReportId,
     StageRunId,
 };
-use crate::initiative::{EnqueueInitiative, Initiative, InitiativeDetail};
+use crate::initiative::{ContractChange, EnqueueInitiative, Initiative, InitiativeDetail};
 use crate::lesson::{Lesson, LessonDraft, LessonPatch, LessonQuery, LessonStats, LessonWhy};
 use crate::model::{Effort, ModelChoice, ModelPlan, ModelReasons, ModelRef};
 use crate::model_evidence::{ModelEvidenceQuery, ModelEvidenceReport};
@@ -292,10 +292,11 @@ pub enum Request {
     GetInitiative {
         initiative: InitiativeId,
     },
-    /// Append to the shared contract; live members are told.
+    /// Append to the shared contract or replace it; live members are told.
     UpdateInitiative {
         initiative: InitiativeId,
-        contract_append: String,
+        #[serde(flatten)]
+        change: ContractChange,
     },
     /// Change a queued or running item without cancelling it.
     SteerItem {
@@ -1340,8 +1341,19 @@ mod tests {
         }
         let append = Request::UpdateInitiative {
             initiative: InitiativeId::new(),
-            contract_append: "Also rename the column.".into(),
+            change: ContractChange::Append("Also rename the column.".into()),
         };
+        let wire = serde_json::to_value(&append).unwrap();
+        assert_eq!(wire["contract_append"], "Also rename the column.");
+        assert_eq!(serde_json::from_value::<Request>(wire).unwrap(), append);
+        let replace = serde_json::json!({
+            "cmd": "update_initiative", "initiative": InitiativeId::new(), "contract": "New."
+        });
+        let Request::UpdateInitiative { change, .. } = serde_json::from_value(replace).unwrap()
+        else {
+            panic!("an update");
+        };
+        assert_eq!(change, ContractChange::Replace("New.".into()));
         let draft = Request::RecordLesson(LessonDraft {
             kind: crate::lesson::LessonKind::Pitfall,
             text: "CI needs `make lint`.".into(),

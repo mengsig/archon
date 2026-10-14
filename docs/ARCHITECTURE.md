@@ -299,7 +299,9 @@ starts. So:
   cancelled, and the orchestrator hears `policy_violation`. Its spend counts
   toward the daily and total budgets.
 - It may delegate once more. An agent a third delegation below the
-  orchestrator is cancelled for its depth (§7.4), whatever its model.
+  orchestrator is cancelled for its depth (§7.4), whatever its model. That
+  is `[limits] max_delegation_depth = 2`, which the "This installation"
+  section of its prompt states.
 - It is outside `max_parallel_agents` and `max_stage_agents_per_item`, which
   count stage agents (§7.1). The prompt holds the orchestrator to the
   parallel-agent cap, counting its own children with Aether's `list_agents`,
@@ -1154,7 +1156,9 @@ never repeats a message to the operator; it acts on it. The news event
 carries item, pipeline run, stage run, stage, attempt, agent, kind, text and
 original sender. One SQLite transaction commits the feed entry, the
 sender's count and the `agent_message` news event in the durable outbox.
-The receipt is the feed entry id. The tool does no Aether
+A sender's count is capped at `[limits] max_agent_messages` (20 by
+default), and so is each run node's count of external messages; the
+refusal names the key. The receipt is the feed entry id. The tool does no Aether
 I/O and does not settle the stage. Stage instructions and the receipt say
 to continue working: ending a turn would complete the stage, and sending
 a message is never a reason to wait or end it.
@@ -1767,9 +1771,10 @@ five places:
    helper whose scope leads into a registered repository or the worktrees
    root is cancelled the same way (§4.4).
 5. Depth: the watchdog records how many delegations each child is below
-   its stage agent or the orchestrator, and cancels one more than two down
-   with the same `Blocker` and trigger. A delegating stage agent's
-   contract tells it so (§8.6): its child may delegate once more.
+   its stage agent or the orchestrator, and cancels one deeper than
+   `[limits] max_delegation_depth` (2: two down) with the same `Blocker`
+   and trigger. A delegating stage agent's contract states the configured
+   depth (§8.6); at 2, its child may delegate once more.
 
 Effort is not restricted by default. `[models] max_effort` optionally caps it.
 
@@ -2099,7 +2104,9 @@ states:
 
 - a child may delegate once more, passing `leaf: true` for its own
   children: two levels below the stage agent is the limit, and the watchdog
-  cancels an agent a third level down (§7.4);
+  cancels an agent a third level down (§7.4). That is the default
+  `[limits] max_delegation_depth`; at 1 every child is a leaf, and deeper
+  limits tell each child its level;
 - how the workspace is shared: in a writable workspace a child that edits
   gets `workspace_mode: "isolated"` and the lead brings accepted changes in
   with `integrate_workspace`, while a child that only reads shares the
@@ -2276,7 +2283,10 @@ repository's Git identity.
 ### 8.9 Initiatives
 
 An initiative groups 1 to 16 member items, one per change in a repository,
-under a shared contract of at most 2 KiB. `enqueue_initiative` validates
+under a shared contract of at most 2 KiB. `[limits] initiative_members`
+(up to 64) and `initiative_contract_bytes` (up to 16 KiB) raise these;
+`archon mcp` refuses only what exceeds those ceilings, and `archond` the
+configured limits. `enqueue_initiative` validates
 every member as an enqueue (`handlers/initiatives.rs::prepare_member`: its
 pipeline, model plan and `autonomy` knobs under the repository's ceiling)
 before one transaction inserts the initiative and all its items. A repeated
@@ -2285,9 +2295,11 @@ that key is refused. `after` holds indices of earlier members, so the
 dependency graph is acyclic; members in one repository stack (§8.8). The
 member agents see each sibling's repository, branch, pull request and state
 as JSON, with branch names and URLs filtered before they enter another
-contract. `update_initiative` stores the amended contract and sends it to
-the members' running leads under durable message keys; the coordination
-worker retries what is undelivered.
+contract. `update_initiative` appends to the contract (`contract_append`)
+or replaces it (`contract`), stores the result and sends the whole new
+contract to the members' running leads under durable message keys; the
+coordination worker retries what is undelivered. A replacement with the
+same text changes nothing.
 
 An initiative moves `open → shipping → done`, or to `failed` or
 `cancelled`. The first delivered pull request starts `shipping`, and every
@@ -2356,6 +2368,10 @@ budget_usd_total = 0.0
 count_estimated_cost = true
 infra_retries = 1
 min_free_gb = 10               # hold dispatch below this much free disk; 0 = off
+max_delegation_depth = 2       # delegations below a stage agent or the orchestrator; 1..=4
+max_agent_messages = 20        # message_orchestrator calls per agent, lifetime; 1..=200
+initiative_members = 16        # 1..=64
+initiative_contract_bytes = 2048  # 1..=16384
 [limits.per_pipeline]          # name = max running stage agents
 # strict-pr-review = 3
 
@@ -2585,7 +2601,7 @@ can reach the socket (§5.5).
 | `update_item` | `{item, priority?, model_plan?, model_reasons?, tags?, add_depends_on?, budget_usd?, brief_append?}` | `UpdateItem` (not after success; on a running item `model_plan` and `brief_append` are steered into its run, §6.6; neither while dispatching) |
 | `steer_item` | `{item, note?, stage?, model?, effort?, budget_usd?, extend_minutes?, abort_stage?, then?: retry\|skip\|goto, goto?, insert_stage?: {stage, from?, after?}, switch_pipeline?}` | `SteerItem` (§6.6; at least one change) |
 | `enqueue_initiative` | `{title, contract, atomic?, members: [{repo, brief, title?, pipeline?, model_plan?, autonomy?, after?}], idempotency_key?}` | `EnqueueInitiative` (§8.9; members validated as enqueues, created together) |
-| `update_initiative` | `{initiative, contract_append}` | `UpdateInitiative` (§8.9) |
+| `update_initiative` | `{initiative, contract_append \| contract}` | `UpdateInitiative` (§8.9) |
 | `cancel_item` | `{item, reason?}` | `CancelItem` |
 | `retry_item` | `{item, model_plan?, model_reasons?, fresh?, brief_append?}` | `RetryItem` (§13: `fresh` starts again from the base branch) |
 | `queue_status` | `{}` | `Status` |

@@ -143,10 +143,9 @@ async fn handle_adaptive(
         Request::CancelInitiative { initiative } => initiatives::cancel(ctx, &initiative).await,
         Request::RetryInitiative { initiative } => initiatives::retry(ctx, &initiative).await,
         Request::GetInitiative { initiative } => initiatives::get(ctx, &initiative).await,
-        Request::UpdateInitiative {
-            initiative,
-            contract_append,
-        } => initiatives::update(ctx, &initiative, &contract_append).await,
+        Request::UpdateInitiative { initiative, change } => {
+            initiatives::update(ctx, &initiative, &change).await
+        }
         Request::SteerItem { item, steer } => steer::steer(ctx, client, &item, steer).await,
         Request::UpdateItem { item, patch } => steer::update(ctx, client, &item, patch).await,
         Request::RecordLesson(draft) => lessons::record(ctx, client, draft).await,

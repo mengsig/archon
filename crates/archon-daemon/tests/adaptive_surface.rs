@@ -5,7 +5,7 @@ mod common;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
-use archon_core::initiative::{EnqueueInitiative, InitiativeMember};
+use archon_core::initiative::{ContractChange, EnqueueInitiative, InitiativeMember};
 use archon_core::lesson::{LessonDraft, LessonKind, LessonPatch, LessonQuery};
 use archon_core::protocol::{ClientKind, Reply, RepoRef, Request};
 use archon_core::steer::Steer;
@@ -59,7 +59,7 @@ async fn initiatives_are_the_orchestrators_to_change_and_anyones_to_read() {
     let initiative = created.initiative.id;
     let update = Request::UpdateInitiative {
         initiative: initiative.clone(),
-        contract_append: "Also rename the column.".into(),
+        change: ContractChange::Append("Also rename the column.".into()),
     };
     assert_orchestrators_alone(as_helper(&h, update.clone()).await);
     let Reply::Initiative(updated) = h.orchestrator(update).await.unwrap() else {

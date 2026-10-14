@@ -3,7 +3,9 @@
 use archon_core::autonomy::MergeMode;
 use archon_core::error::ArchonError;
 use archon_core::id::{InitiativeId, QueueItemId};
-use archon_core::initiative::{EnqueueInitiative, Initiative, InitiativeMember, InitiativeState};
+use archon_core::initiative::{
+    ContractChange, EnqueueInitiative, Initiative, InitiativeMember, InitiativeState,
+};
 use archon_core::protocol::Reply;
 use archon_core::queue::{QueueItem, QueueState, check_enqueue};
 
@@ -17,7 +19,7 @@ pub(super) async fn enqueue(
     ctx: &DaemonContext,
     request: EnqueueInitiative,
 ) -> Result<Reply, ArchonError> {
-    request.check()?;
+    request.check(&ctx.config.limits.initiatives())?;
     if let Some(existing) = ctx.store.lock().await.replay_initiative(&request)? {
         return Ok(Reply::Initiative(Box::new(existing)));
     }
@@ -116,15 +118,16 @@ pub(super) async fn list(ctx: &DaemonContext) -> Result<Reply, ArchonError> {
 pub(super) async fn update(
     ctx: &DaemonContext,
     id: &InitiativeId,
-    append: &str,
+    change: &ContractChange,
 ) -> Result<Reply, ArchonError> {
+    let limits = ctx.config.limits.initiatives();
     let updated = ctx
         .store
         .lock()
         .await
-        .append_initiative_contract(id, append)?;
+        .change_initiative_contract(id, change, &limits)?;
     assert_eq!(&updated.initiative.id, id);
-    assert!(updated.initiative.contract.ends_with(append.trim()));
+    assert!(updated.initiative.contract.ends_with(change.text().trim()));
     ctx.coordination.changed.notify_one();
     initiative_ship::deliver_contract(ctx, &updated).await?;
     Ok(Reply::Initiative(Box::new(updated)))

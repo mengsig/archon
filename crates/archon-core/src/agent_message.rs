@@ -7,7 +7,10 @@ use crate::error::ArchonError;
 use crate::id::{PipelineRunId, QueueItemId, StageRunId};
 
 pub const MAX_MESSAGE_CHARS: usize = 4096;
-pub const MAX_AGENT_MESSAGES: u32 = 20;
+/// `[limits] max_agent_messages` by default, and the most it may be: every
+/// message is an orchestrator turn.
+pub const DEFAULT_AGENT_MESSAGES: u32 = 20;
+pub const AGENT_MESSAGES_CEILING: u32 = 200;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

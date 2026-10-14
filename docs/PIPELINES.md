@@ -151,6 +151,13 @@ the field:
   or `any`): their agents return a verdict, and `gate = "none"` would ignore
   it.
 - `on_fail.goto` names an **earlier** stage, and `max_loops` is at most 10.
+
+These bounds (32 stages, `fan_out` 16, `max_loops` 10) belong to the file
+format and are the same on every installation, unlike `[limits]`: a
+pipeline that loads on one machine loads on every other, and a run's frozen
+copy loads again after any configuration change. How many agents run at
+once is set by `[limits]` instead.
+
 - There is at most one `ship` stage, it is the last stage, and the pipeline
   uses `workspace = "worktree"`.
 - `[pipeline.ship]`, when present, needs `workspace = "worktree"` and no
@@ -192,7 +199,9 @@ by either route. It says to:
 
 - let a child delegate once more when its part splits further, telling it
   to pass `leaf: true` for its own children, and pass `leaf: true` for a
-  child that should not. The watchdog cancels an agent a third level down;
+  child that should not. The watchdog cancels an agent a third level down.
+  That is the default depth of 2; `[limits] max_delegation_depth` (1 to 4)
+  changes it, and the section says what the configured depth allows;
 - give a child that edits its own copy (`workspace_mode: "isolated"`) and
   bring back only accepted changes with `integrate_workspace`, while a
   child that only reads shares the stage's workspace. In a read-only
@@ -754,7 +763,8 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   other parents, and targets the parent branch when opening the PR.
   Review and diff against this base. Dependencies in other repositories
   give context without contributing a Git branch.
-- **Initiative members** get the shared contract (at most 2 KiB) and every
+- **Initiative members** get the shared contract (2 KiB at most by default,
+  `[limits] initiative_contract_bytes`) and every
   sibling's repository, branch, PR and state. For `atomic=true`, the ship
   stage keeps its PR a draft and does not enable auto-merge. The daemon
   links sibling PRs and marks them ready after every member passes.

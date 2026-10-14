@@ -121,7 +121,8 @@ pub fn orchestrator_instructions(config: &Config, workspace: &Path) -> Result<St
     );
     let user_pipelines = archon_core::paths::config_dir().join("pipelines");
     let mut text = BUILTIN_PROMPT.to_owned();
-    text.push_str(&installation_paths(workspace, &user_pipelines));
+    let depth = config.limits.max_delegation_depth;
+    text.push_str(&installation(workspace, &user_pipelines, depth));
     if let Some(path) = &config.orchestrator.instructions_file {
         let extra = std::fs::read_to_string(path)
             .map_err(|e| ArchonError::io(format!("reading {}", path.display()), e))?;
@@ -131,13 +132,24 @@ pub fn orchestrator_instructions(config: &Config, workspace: &Path) -> Result<St
     Ok(text)
 }
 
-/// The paths the built-in prompt refers to but cannot know.
-fn installation_paths(workspace: &Path, user_pipelines: &Path) -> String {
+/// What the built-in prompt refers to but cannot know: paths, and how deep
+/// below the orchestrator agents may be (`[limits] max_delegation_depth`).
+fn installation(workspace: &Path, user_pipelines: &Path, depth: u32) -> String {
+    assert!(depth >= 1, "validated with the config");
+    let leaf = match depth {
+        1 => "delegate every helper with `leaf: true`".to_owned(),
+        n => format!(
+            "your helper is 1 below you, its child 2; have the agents {} below you \
+             delegate with `leaf: true`",
+            n - 1
+        ),
+    };
     format!(
         "\n## This installation\n\n\
          - Your workspace: `{}`. A repository's mirror is `{}/<name>` in it; `{}/` is for a \
          helper that reads no code.\n\
-         - User pipelines directory: `{}`.\n",
+         - User pipelines directory: `{}`.\n\
+         - Delegation depth: {depth}. To keep within it, {leaf}.\n",
         workspace.display(),
         crate::mirror::MIRRORS_DIR,
         crate::mirror::SCRATCH_DIR,
@@ -1377,8 +1389,8 @@ mod tests {
         for said in [
             "`workspace_root`: one mirror, or `scratch/` when it reads no code",
             "`workspace_mode: isolated` for its own copy of the mirror to build in",
-            "It may delegate once more.",
-            "an agent a third level below you, one placed in a registered repository or an \
+            "It may delegate to the depth in This installation.",
+            "an agent deeper, one placed in a registered repository or an \
              item's worktree, and one whose model or effort `model_policy` refuses, globally or \
              for a repository whose mirror it reads",
             "reports as `policy_violation`",
@@ -1430,6 +1442,27 @@ mod tests {
             wrapped.find("## This installation").unwrap() > wrapped.find(github_policy()).unwrap(),
             "the resolved paths follow the built-in prompt"
         );
+    }
+
+    /// `[limits] max_delegation_depth` reaches the orchestrator with the
+    /// paths, so the built-in prompt states no number of its own.
+    #[test]
+    fn the_prompt_gives_the_configured_delegation_depth() {
+        let said = |depth| {
+            let mut config = Config::default();
+            config.limits.max_delegation_depth = depth;
+            let text = orchestrator_instructions(&config, Path::new("/data/orchestrator"));
+            unwrapped(&text.unwrap())
+        };
+        assert!(said(2).contains(
+            "- Delegation depth: 2. To keep within it, your helper is 1 below you, its child 2; \
+             have the agents 1 below you delegate with `leaf: true`."
+        ));
+        assert!(said(3).contains("have the agents 2 below you delegate with `leaf: true`."));
+        assert!(said(1).contains(
+            "- Delegation depth: 1. To keep within it, delegate every helper with `leaf: true`."
+        ));
+        assert!(!BUILTIN_PROMPT.contains("third level"));
     }
 
     #[test]

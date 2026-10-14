@@ -59,7 +59,7 @@ fn costs() -> Vec<Cost> {
                     .review_duty(stage)
                     .is_some_and(|duty| duty.reviewers > 0);
             let delegation = match delegates {
-                true => contract::delegation_rules(mode, POLICY).len(),
+                true => contract::delegation_rules(mode, POLICY, 2).len(),
                 false => 0,
             };
             out.push(Cost {

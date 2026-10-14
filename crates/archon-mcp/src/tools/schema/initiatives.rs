@@ -1,11 +1,12 @@
 //! Initiative tools: several items built against one shared contract.
 
-use archon_core::initiative::{MAX_CONTRACT_BYTES, MAX_MEMBERS};
+use archon_core::initiative::InitiativeLimits;
 use serde_json::json;
 
 use super::{ToolDefinition, define, object, repo_ref};
 
 pub(super) fn enqueue_initiative() -> ToolDefinition {
+    let limits = InitiativeLimits::DEFAULT;
     let member = object(
         json!({
             "repo": repo_ref("Where this member's change is made."),
@@ -25,9 +26,9 @@ pub(super) fn enqueue_initiative() -> ToolDefinition {
         object(
             json!({
                 "title": {"type": "string", "minLength": 1, "description": "One line."},
-                "contract": {"type": "string", "minLength": 1, "maxLength": MAX_CONTRACT_BYTES, "description": "What every member must agree on: names, formats, rollout order."},
+                "contract": {"type": "string", "minLength": 1, "description": format!("What every member must agree on: names, formats, rollout order. At most {} bytes unless the operator raised it.", limits.contract_bytes)},
                 "atomic": {"type": "boolean", "description": "Keep every pull request a draft until all members pass."},
-                "members": {"type": "array", "minItems": 1, "items": member, "description": format!("At most {MAX_MEMBERS}.")},
+                "members": {"type": "array", "minItems": 1, "items": member, "description": format!("At most {} unless the operator raised it.", limits.members)},
                 "idempotency_key": {"type": "string", "minLength": 1},
             }),
             &["title", "contract", "members"],
@@ -40,13 +41,14 @@ pub(super) fn update_initiative() -> ToolDefinition {
     define(
         "update_initiative",
         "Update initiative",
-        "Add to an initiative's shared contract. Members still running are told; later ones read it from the start.",
+        "Add to an initiative's shared contract, or replace it. Give exactly one of `contract_append` and `contract`. Members still running are told the whole new contract; later ones read it from the start.",
         object(
             json!({
                 "initiative": {"type": "string", "description": "Initiative id (`ini_…`) from enqueue_initiative."},
                 "contract_append": {"type": "string", "minLength": 1, "description": "Text to add; the whole contract stays within its size limit."},
+                "contract": {"type": "string", "minLength": 1, "description": "The whole new contract, for a revision that changes what was agreed."},
             }),
-            &["initiative", "contract_append"],
+            &["initiative"],
         ),
         false,
     )

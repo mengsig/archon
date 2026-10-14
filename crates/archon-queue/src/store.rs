@@ -49,7 +49,7 @@ use archon_core::steer::RunEdit;
 use crate::dispatch::DispatchSnapshot;
 
 pub use model_evidence::ModelEvidenceSnapshot;
-pub use model_evidence::RouteEvidence;
+pub use model_evidence::{RouteEvidence, preferred_route};
 pub use run_edits::RecordedEdit;
 
 /// Well-known `kv` keys.
@@ -89,6 +89,10 @@ pub struct FinishedRun {
 #[derive(Debug)]
 pub struct Store {
     conn: rusqlite::Connection,
+    learning: std::cell::RefCell<archon_core::config::LearningConfig>,
+    learning_config_loaded: std::cell::Cell<bool>,
+    learning_models: std::cell::RefCell<Vec<archon_core::model::ModelRef>>,
+    learning_models_at: std::cell::Cell<Option<archon_core::Timestamp>>,
 }
 
 impl Store {
@@ -127,7 +131,13 @@ impl Store {
         };
         let conn = conn.map_err(|e| opening(&e))?;
         schema::check_read_only(&conn)?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            learning: Default::default(),
+            learning_config_loaded: Default::default(),
+            learning_models: Default::default(),
+            learning_models_at: Default::default(),
+        })
     }
 
     pub fn open_in_memory() -> Result<Self, ArchonError> {
@@ -140,7 +150,13 @@ impl Store {
         schema::configure(&conn, on_disk)?;
         let version = schema::migrate(&mut conn)?;
         debug_assert_eq!(version, schema::MIGRATIONS.len());
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            learning: Default::default(),
+            learning_config_loaded: Default::default(),
+            learning_models: Default::default(),
+            learning_models_at: Default::default(),
+        })
     }
 
     // ----- repositories ----------------------------------------------------

@@ -650,6 +650,11 @@ pub struct QueueAddArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum PipelineCommand {
+    /// List proposed pipelines, or show one proposal and its files.
+    Proposals {
+        /// Proposal name to inspect; omit to list.
+        name: Option<String>,
+    },
     /// Activate a validated proposed user pipeline.
     Accept {
         /// Name of the proposed pipeline, without .proposed.

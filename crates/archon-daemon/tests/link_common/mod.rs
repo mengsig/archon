@@ -338,6 +338,8 @@ fn stage_run(run: &PipelineRunId, state: StageState) -> StageRun {
         stage_id: "implement".into(),
         attempt: 1,
         fan_index: 0,
+        model_segments: Vec::new(),
+        infrastructure_failure: false,
         choice: choice(),
         aether_agent: None,
         aether_task: None,

@@ -126,6 +126,31 @@ impl Correction {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CorrectionCause {
+    Quality,
+    Scope,
+    Infrastructure,
+    Budget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CorrectionEvent {
+    pub item: QueueItemId,
+    pub stage: String,
+    pub cause: CorrectionCause,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteContext {
+    pub revision: String,
+    pub review: String,
+    pub task_class: String,
+}
+
 /// One stage of the run under one model choice.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OutcomeStage {
@@ -134,7 +159,7 @@ pub struct OutcomeStage {
     pub cost_usd: f64,
     pub wall_secs: u64,
     pub attempts: u32,
-    /// Its last verdict, for stages that give one.
+    /// Completed attributable work; None for interrupted or infrastructure segments.
     pub passed: Option<bool>,
 }
 
@@ -152,11 +177,23 @@ pub struct Outcome {
     /// Appended as they happen, also after the run finished.
     #[serde(default)]
     pub corrections: Vec<Correction>,
+    #[serde(default)]
+    pub feedback: Vec<CorrectionEvent>,
+    #[serde(default)]
+    pub context: Option<RouteContext>,
     /// `None` until the pull request is merged or closed.
     pub merged: Option<bool>,
     pub cost_usd: f64,
+    #[serde(default = "provisional")]
+    pub cost_provisional: bool,
+    #[serde(default = "provisional")]
+    pub count_estimates: bool,
     pub wall_secs: u64,
     pub finished_at: Timestamp,
+}
+
+fn provisional() -> bool {
+    true
 }
 
 impl Outcome {
@@ -251,8 +288,12 @@ mod tests {
             result: OutcomeResult::Succeeded,
             failure: None,
             corrections: Vec::new(),
+            feedback: Vec::new(),
+            context: None,
             merged: None,
             cost_usd: 0.4,
+            cost_provisional: true,
+            count_estimates: true,
             wall_secs: 95,
             finished_at: crate::now(),
         }

@@ -336,7 +336,7 @@ fn run_sections(
         "a contract carries at most {CONTRACT_LESSONS} lessons"
     );
     let initiative = contract::initiative_rules(initiative.as_ref());
-    let lessons = contract::lesson_rules(&lessons);
+    let lessons = contract::lesson_rules(&lessons)?;
     Ok([dependencies, initiative, lessons].concat())
 }
 
@@ -426,6 +426,8 @@ fn reserve_one(
         stage_id: plan.stage_id.clone(),
         attempt: plan.attempt,
         fan_index: plan.fan_index,
+        model_segments: Vec::new(),
+        infrastructure_failure: false,
         choice: plan.choice.clone(),
         aether_agent: None,
         aether_task: None,

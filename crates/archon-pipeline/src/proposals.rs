@@ -110,9 +110,14 @@ pub fn accept(root: &Path, name: &str) -> Result<PathBuf, ArchonError> {
     Ok(destination)
 }
 
-fn read(dir: &Path) -> Result<BTreeMap<String, String>, ArchonError> {
-    let metadata = std::fs::symlink_metadata(dir)
-        .map_err(|e| ArchonError::io("inspect proposed pipeline", e))?;
+pub fn read(dir: &Path) -> Result<BTreeMap<String, String>, ArchonError> {
+    let metadata = std::fs::symlink_metadata(dir).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            ArchonError::NotFound(format!("pipeline proposal {}", dir.display()))
+        } else {
+            ArchonError::io(format!("inspect proposed pipeline {}", dir.display()), e)
+        }
+    })?;
     if !metadata.is_dir() {
         return Err(ArchonError::Invalid(
             "proposal must be a real directory".into(),

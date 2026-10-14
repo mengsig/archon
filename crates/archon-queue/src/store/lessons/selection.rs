@@ -23,7 +23,6 @@ impl Store {
         let stored = self.run(run)?;
         assert_eq!(stored.pipeline, pipeline);
         assert_eq!(self.item(&stored.item)?.repo.as_ref(), repo);
-        self.refresh_lessons(archon_core::now())?;
         let lessons = self.select_lessons(
             repo,
             Some(pipeline),
@@ -35,6 +34,9 @@ impl Store {
             .unchecked_transaction()
             .ctx("begin lesson snapshot")?;
         for lesson in &lessons {
+            let mut updated = lesson.clone();
+            updated.last_used_at = Some(archon_core::now());
+            super::write(&tx, &updated)?;
             tx.execute(
                 "INSERT OR IGNORE INTO lesson_uses (lesson,run,used_at) VALUES (?1,?2,?3)",
                 params![lesson.id.as_str(), run.as_str(), ts(&archon_core::now())],
@@ -68,7 +70,10 @@ impl Store {
             candidates.extend(super::scoped(&self.conn, None)?);
         }
         candidates.retain(|l| {
-            l.state == LessonState::Active
+            (l.state == LessonState::Active
+                || (l.state == LessonState::Proposed
+                    && l.source == archon_core::lesson::LessonSource::Orchestrator
+                    && l.scope.repo.is_some()))
                 && l.scope
                     .pipeline
                     .as_deref()
@@ -89,7 +94,7 @@ impl Store {
             if chosen.len() == count {
                 break;
             }
-            let rendered_bytes = lesson.quoted_observation().len();
+            let rendered_bytes = lesson.quoted_observation()?.len();
             if total + rendered_bytes > bytes {
                 continue;
             }

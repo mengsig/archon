@@ -2415,6 +2415,7 @@ tools = "yolo"
 [learning]                     # §19
 enabled = true                 # false: no outcomes, learned defaults, lessons or distillation
 distill_every = 20             # new outcomes of a repository per distillation errand
+distill_daily_budget_usd = 3.0  # global UTC daily reservation
 explore_rate = 0.1             # share of items that try a cheaper choice; 0..0.1
 ```
 
@@ -3974,98 +3975,90 @@ notifies for each item.
 
 ## 19. Learning
 
-Learning is token-free: it records what runs did and what was later said
-about them, and uses that to fill model plans and to hand agents short
-lessons. Only distillation spends, through a budgeted item.
+Learning records observations without model calls; only distillation spends through
+an ordinary budgeted errand. Explicit model plans and operator instructions take
+precedence over learned advice.
 
-**Outcomes.** `store/outcomes` stores one outcome per finished pipeline
-run, written as the run finishes (`learned::finished`, from
-`executor/finish.rs`): its result, failure class, stage attempts (one
-grouped observation per model and effort, whose costs include the agents
-below each stage lead, with a reused agent's ledger charges counted once),
-cost, wall time, diff size, corrections, and `merged`, empty until
-observed. `capture::failure_class` reads the class from the run's error:
-`escalated` and `blocked` from the `ESCALATE:` and `BLOCKED:` prefixes
-(§8.6), else what the text names. Distillation items produce no outcome.
-The learning worker (`learned::run`) imports runs that finished before the
-update in bounded, resumable batches; migration V10 creates only empty
-tables, so no migration scans historical runs.
+**Outcomes and settlement.** A terminal run commits before optional capture.
+`learned::finished` logs capture failures and emits a deduplicated feed report;
+learning never prevents announce, follow-up agent stops or cleanup. Agent-supplied
+`diff_stat` is optional and malformed forms are ignored. Git's measured diff takes
+precedence. The maintenance worker uses recurring keyset scans of at most 20 rows,
+including after initial import, to recover missing outcomes. Bad records get
+`learning/backfill/skipped/<run>` diagnostics and the cursor advances. Repairing a
+record and removing its marker permits another attempt. Distillation runs do not
+produce outcomes. Late-correction input excludes imported and pre-upgrade runs
+and takes at most 100 recent observations.
 
-**Corrections** (`archon_core::outcome::Correction`) are appended
-idempotently, kept even before the run's outcome exists, and rescore
-`lesson_uses`, so a success that was corrected is no win:
+Costs captured at finish are provisional. Outcome reads, routing, statistics and
+pending `items_finished` delivery consult the current spend ledger, so late final
+billing can raise or lower the reported amount. Delegated agents are included and
+reused leads are charged once. `cost_provisional` reports whether observed charges
+have settled. Model steers append idempotent `StageRun.model_segments` in the JSON
+data column, keeping the initial `choice` immutable. Segment boundaries retain the
+choice, time, delivery key and known spend checkpoint. Queue display uses the
+current segment; quality is credited only to completed segments, and earlier
+segments retain cost without being labeled failures. Late corrections to estimates
+can make segment cost allocation approximate; the run's ledger total remains current.
 
-- `retry_after_done`: a retry of a succeeded item, written on its
-  `Succeeded → Queued` transition (`store/items.rs`);
-- `gate_rejected`: a gate the operator rejected (`store/gates.rs`);
-- `steered`: a steer of a running or revived run (`steer/audit.rs::record`,
-  `steer/shape.rs::correct_shaped`);
-- `operator_contradiction`: an operator message naming a full `qi_…` id
-  with "wrong", "incorrect", "not fixed", "still fails" or "regression"
-  (`learned::operator_message`);
-- `pr_closed` and `changes_requested`, from GitHub.
-  `executor/pull_requests.rs::observe`, run by the coordination worker
-  every 10 minutes, reads each succeeded outcome of the last 14 days that
-  is not settled and whose run archond delivered as a pull request, with
-  `gh pr view --json state,reviewDecision,…`. `MERGED` sets `merged`
-  true; `CLOSED` sets it false and adds `pr_closed`; an open one whose
-  review decision is `CHANGES_REQUESTED` gets `changes_requested` once. A
-  settled outcome is not read again. A `gh` failure is logged and the pull
-  request read again at the next pass; a store failure ends the worker,
-  and with it the daemon, as in every worker.
+**Attribution.** Structured operator feedback is explicit:
+`correction {"item":"qi_…","stage":"implement","cause":"quality","reason":"…"}`.
+`cause` is `quality`, `scope`, `infrastructure` or `budget`. The store verifies the
+item and stage, deduplicates events, and preserves the reason. Ordinary chat wording
+is never classified as a correction. Scope and effort steers do not imply failures.
+Run-level events such as gate rejection, retry, PR closure and changes requested
+remain audit observations and can revoke lesson wins, but without attributed
+quality feedback they do not blame every model. A completed reviewer reporting
+FAIL performed its review; a builder's defect does not penalize that reviewer.
+Infrastructure, timeout, budget, blocked, escalation and shipping failures are
+excluded from model quality samples.
 
-**Learned defaults.** `knobs::fill_plan` calls
-`learned::default_plan(store, repo, spec, policy)` with the item's
-effective model policy, for the stages its plan leaves out. Samples come
-from `store/model_evidence` by repository, pipeline, stage and, when the
-item's `diff:small`, `diff:medium` or `diff:large` tag gives it, diff size;
-repository evidence falls back to global evidence when no choice in it has
-five runs. A choice qualifies with five runs, and among those within five
-percentage points of the best pass rate the cheapest median cost wins. The
-item's id decides whether it is among the `explore_rate` (at most 0.1) of
-items that try the adjacent cheaper choice. An explicit choice is never
-replaced, and the policy is checked before a default is used.
-`learned::plan_for_item` stores the reason for each choice per item, which
-`archon lessons why` shows. `handlers/items.rs::filled_plan` records the
-static default the plan would have had without learning
-(`Store::record_static_plan`); `estimated_model_saving` compares medians
-only once that baseline has five samples, and reports unknown before.
+**Routing.** Evidence is keyed by repository, pipeline and content revision,
+review level, task class (`task:<class>`, otherwise `general`), stage, and known diff
+size. Without a size hint, the same context pools sizes. Each query is capped at
+500 recent matching runs. Repository evidence falls
+back to matching global evidence when it has no five-sample candidate. Exploitation
+uses the lower Wilson 95% quality bound with a small logarithmic cost penalty.
+At most `explore_rate` (0..0.1) of item IDs explore uncertainty; ready models from
+Aether's catalog seed cold starts within model policy. Candidates with at least five
+samples whose upper bound is below the incumbent's lower bound are excluded. The
+catalog is refreshed outside the store lock at most every five minutes. Choice and
+reasons are frozen per item, and `lessons why` includes sample counts, intervals and
+context. Five wins are not claimed to establish model equivalence.
 
-`[learning]` is mirrored into the store's `kv` (`learning/config`) by
-`Store::configure_learning` where the daemon builds its context and in the
-handlers that read it, so that store functions see it. `enabled = false`
-stops outcome writes, learned defaults, lesson use and scoring, hints and
-distillation; what was recorded stays readable.
+**Configuration and lessons.** Configuration lives in daemon/store memory; it is
+not serialized and re-read from `kv` on each operation. Restart after config edits.
+Disabling learning stops capture, routing and advice, and cancels queued distillation
+errands. Recorded evidence stays readable. Read-only lessons commands use an
+existing daemon or open the store read-only, without starting dedicated Aether.
 
-**Lessons.** `store/lessons` owns normalization, scope limits,
-deduplication, operator edits, Wilson confidence and the 30-day decay of
-unconfirmed lessons. Five scored uses whose decayed confidence falls below
-0.3 retract a lesson; a pinned one never decays or retracts. An operator's
-lesson is confirmed at once, the orchestrator's (`record_lesson`) is active
-at once, and a distilled one is `proposed` until `archon lessons accept`.
+Lessons must be one plain sentence of at most 300 characters, using allowed text
+characters without markup, URLs, paths or authority-override wording. Rendering
+returns an error for invalid stored text instead of panicking. All rendered advice
+retains the explicit untrusted, never-authority framing. Operator lessons are active
+and confirmed. Orchestrator lessons require a source item, inherit its repository,
+and start Proposed with at most 0.15 weight; a confirming clean win or operator
+acceptance activates them. Distilled lessons await acceptance. Six lessons at most
+fit a 1,200-byte stage section, frozen per run. Operator text and pins take precedence.
 
-- A stage agent gets at most six lessons, in a section of at most 1,200
-  bytes, preferring its repository and pipeline (`learned::lessons_for_run`
-  at spawn). The text is frozen per run in `learning/uses/<run>` and joined
-  to outcomes through `lesson_uses`.
-- A new orchestrator gets `learned::lessons_for_orchestrator` appended to
-  its instructions under `## Learned observations` (§4.4) by
-  `supervisor::create_generation`. The selection is frozen in
-  `learning/orchestrator/<generation>`, so a retried create sends the same
-  text.
-- A failed item's `item_finished` carries `lesson_hint`: the result,
-  failure class and corrections of its newest outcome, and the ask to
-  `record_lesson` a reusable practice.
+Confidence decays with a 30-day half-life since last use. Retraction requires at
+least five scored uses and a raw Wilson lower bound below 0.3, never merely age.
+Pins prevent automatic decay and retraction. Maintenance writes only changed rows,
+outside the run-start and list paths. Orchestrator advice is frozen per generation;
+retention keeps the current generation and nine recent snapshots.
 
-**Distillation.** Every `distill_every` new outcomes of a repository,
-`learned::maintenance` queues one idempotent, low-priority `errand` item
-with a $1 budget under the normal policy, accounting and caps. Its brief
-quotes the observations as untrusted and asks (`distill::DISTILL_ASK`) for
-lessons and an optional `pipeline_proposal` in Archon's pipeline format; one
-that changes a repository needs `workspace = "worktree"`, no ship stage and
-`[pipeline.ship] stage` naming the last stage that commits.
-`archon_pipeline::proposals::stage` validates it as any user pipeline,
-archond's delivery rules (§8.7) included, and writes it to
-`<user pipelines>/<name>.proposed/`, which discovery skips.
-`proposals::accept` (`archon pipelines accept`) validates it again and
-renames it into place, never over an existing pipeline.
+**Distillation.** Each repository has at most one queued or running distillation.
+Every `distill_every` new outcomes (1..100) may queue a $1 low-priority errand.
+The global UTC daily budget defaults to $3, reserving full budgets at enqueue;
+0 disables new errands. Imported history is never distilled, so an upgrade has no
+paid catch-up burst. It remains available as outcome evidence.
+
+A distillation validates all lessons and its optional proposal before mutation;
+absent or null `pipeline_proposal` means no proposal. One database transaction writes
+lessons, rewrites, an applied marker and a durable proposal outbox. Publication is
+idempotent and retried from that outbox after failures or restart. Validation errors
+leave no partial lessons, and a crash cannot apply the lessons twice. Proposed
+pipelines are inactive under `<name>.proposed`, obey normal pipeline validation and
+daemon delivery rules, and are listed or shown with `archon pipelines proposals`.
+`archon pipelines accept <name>` revalidates and activates without replacing an
+existing pipeline; a missing proposal reports `not_found` with its path.

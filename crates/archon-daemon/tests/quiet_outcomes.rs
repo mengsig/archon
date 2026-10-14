@@ -223,3 +223,54 @@ async fn wake_on_success_restores_a_trigger_per_outcome() {
     succeed(&h, &item).await;
     assert!(triggers::due(&h.ctx).await.unwrap());
 }
+
+#[tokio::test]
+async fn quiet_completion_news_uses_the_later_settled_cost() {
+    let h = Harness::new().await;
+    let item = enqueued(&h, request("late cost")).await;
+    succeed(&h, &item).await;
+    let stage = h.stages(&item.id).await.remove(0);
+    h.ctx
+        .store
+        .lock()
+        .await
+        .record_spend(&archon_queue::store::SpendRow {
+            agent: stage.aether_agent.unwrap(),
+            item: Some(item.id.clone()),
+            cost_usd: 4.25,
+            cost_basis: archon_core::cost::CostBasis::ProviderReported,
+            cost_complete: Some(true),
+            estimated_cost_usd: 0.0,
+            input_tokens: 1,
+            output_tokens: 1,
+            at: archon_core::now(),
+        })
+        .unwrap();
+    triggers::flush_quiet(&h.ctx).await.unwrap();
+    let delivery = tokio::spawn(triggers::deliver_loop(h.ctx.clone()));
+    let held = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let held = triggers::held(&h.ctx).await.unwrap();
+            if held
+                .iter()
+                .any(|e| matches!(e, TriggerEvent::ItemsFinished { .. }))
+            {
+                break held;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    delivery.abort();
+    let costs: Vec<_> = held
+        .iter()
+        .filter_map(|event| match event {
+            TriggerEvent::ItemsFinished { items, .. } => {
+                items.iter().find(|i| i.item == item.id).map(|i| i.cost_usd)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(costs, vec![4.25]);
+}

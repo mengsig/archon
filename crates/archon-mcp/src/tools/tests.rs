@@ -144,7 +144,7 @@ fn adaptive_samples() -> Vec<(&'static str, Value)> {
         ),
         (
             "record_lesson",
-            json!({"kind": "pitfall", "text": "Run `make lint` before shipping.", "repo": "web", "pipeline": "quick-pr", "item": qi()}),
+            json!({"kind": "pitfall", "text": "Run make lint before shipping.", "repo": "web", "pipeline": "quick-pr", "item": qi()}),
         ),
     ]
 }

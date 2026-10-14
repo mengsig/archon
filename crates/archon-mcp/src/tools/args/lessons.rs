@@ -13,6 +13,6 @@ pub(super) fn record_lesson(args: &mut Args) -> Result<Request, ToolError> {
         text,
         repo: args.optional("repo")?,
         pipeline: args.optional_text("pipeline")?,
-        item: args.optional("item")?,
+        item: Some(args.required("item")?),
     }))
 }

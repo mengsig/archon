@@ -89,6 +89,7 @@ refuses every delegation until `archon orchestrator restart`.
 [learning]
 enabled = true
 distill_every = 20
+distill_daily_budget_usd = 3.0
 explore_rate = 0.1
 ```
 
@@ -99,27 +100,31 @@ later, among them what GitHub says of the pull request `archond` delivered
 days). Runs that finished before you updated are imported in small batches
 in the background; their diff sizes stay unknown.
 
-A stage an item's model plan leaves out gets a learned default once a choice
-has at least five runs of that pipeline's stage: the cheapest choice your
-policy allows within five percentage points of the best pass rate, from the
-repository's runs, else from all. A plan you or the orchestrator wrote is
-never changed. When the size of a change is known before it starts, tag the
-item `diff:small` (at most 50 changed lines), `diff:medium` (at most 400) or
-`diff:large` to use only that size's evidence; otherwise every size is
-pooled. `explore_rate`, from 0 to 0.1, is the share of items that try the
-next cheaper choice instead; the item's id decides, so the same item always
-decides alike, and 0 turns exploration off.
+Omitted stages use conservative Wilson quality bounds, with a small cost penalty,
+within the model policy. Evidence is grouped by repository, pipeline content revision,
+review level, stage, task class (`task:<class>`, otherwise `general`) and known diff
+size (`diff:small`, `diff:medium`, `diff:large`). Explicit choices stay explicit.
+`explore_rate`, from 0 to 0.1, bounds experiments with ready, allowed models from
+Aether's catalog, including models with no history. The item ID makes the choice
+replayable. Choices with at least five samples whose upper quality bound falls below
+the incumbent's lower bound are excluded from exploration. `lessons why` explains
+the bounds, sample size and context; five wins are not proof of equivalence.
 
-`distill_every` (at least 1) is how many new outcomes of a repository queue
-one low-priority `errand` item, limited to $1 and to your model policy and
-budgets, that distils lessons and may propose a pipeline. Its own run
-produces no outcome. What it proposes waits for you: `archon lessons accept`
-for a lesson, `archon pipelines accept <name>` for a pipeline
-([guide](guide.md#what-archon-learns)).
+`distill_every` (1..100) counts new outcomes per repository before a $1 errand.
+At most one distillation is queued or running per repository. Across repositories,
+`distill_daily_budget_usd` reserves the full errand budgets per UTC creation day;
+the default is $3, and 0 disables new distillations. Imported history informs routing
+and statistics but is never distilled, avoiding upgrade spending bursts.
+Proposed lessons and pipelines wait for operator acceptance; inspect pipelines with
+`archon pipelines proposals [name]` before `archon pipelines accept <name>`.
 
-`enabled = false` stops recording outcomes, learned defaults, lessons given
-to agents and their scoring, the orchestrator's lesson hints, and
-distillation. What was recorded stays readable.
+`enabled = false` stops new learning and cancels queued distillation errands on the
+next maintenance pass. Recorded evidence stays readable, including offline lessons
+commands. Config is loaded into daemon memory; restart after editing it.
+Outcome costs are provisional at finish and read from the current spend ledger,
+including later provider settlement. Missing outcomes are reconciled in recurring
+bounded scans; malformed history gets a diagnostic skip marker instead of blocking
+later runs.
 
 ## Disk use
 

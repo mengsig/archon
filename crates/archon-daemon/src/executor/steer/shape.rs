@@ -9,7 +9,6 @@ use archon_core::autonomy::{Autonomy, MergeMode, ProposalMode, ReportMode, Revie
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::model::ModelPlan;
-use archon_core::outcome::Correction;
 use archon_core::policy::ModelPolicy;
 use archon_core::queue::QueueItem;
 use archon_core::run::PipelineRun;
@@ -272,14 +271,14 @@ pub(crate) fn forget(store: &mut Store, item: &QueueItemId) -> Result<(), Archon
     store.kv_delete(&key(item))
 }
 
-/// Count `run` as steered when it starts with a steered stage list: it is
+/// Mark a run that starts with an edited shape: it is
 /// no evidence for the pipeline it is named after (ARCHITECTURE §19).
 pub(crate) fn correct_shaped(store: &Store, run: &PipelineRun) -> Result<(), ArchonError> {
     assert!(!run.state.is_terminal(), "counted as the run starts");
     if store.kv_get(&key(&run.item))?.is_none() {
         return Ok(());
     }
-    store.record_correction(&run.id, Correction::Steered)
+    store.save_learning_value(&format!("learning/reshaped/{}", run.id), "1")
 }
 
 /// `spec`, the item's pipeline as the catalog has it with its knobs' stages,

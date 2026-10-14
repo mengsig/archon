@@ -20,6 +20,7 @@ archon-core = { workspace = true }
 archon-daemon = { workspace = true }
 archon-mcp = { workspace = true }
 archon-pipeline = { workspace = true }
+archon-queue = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
 dirs = { workspace = true }

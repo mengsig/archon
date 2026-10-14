@@ -123,72 +123,171 @@ fn select_plan(
     if !config.enabled {
         return Ok((plan, reasons));
     }
+    let context = route_context(store, item)?;
     for stage in &spec.file.stages {
-        let mut evidence = store.route_evidence(repo, spec.name(), &stage.id, size)?;
-        evidence.retain(|e| policy.check(&e.route.choice).is_ok());
-        if !evidence.iter().any(|e| e.route.runs >= 5) && repo.is_some() {
-            evidence = store.route_evidence(None, spec.name(), &stage.id, size)?;
-            evidence.retain(|e| policy.check(&e.route.choice).is_ok());
+        let mut evidence =
+            stage_evidence(store, repo, spec, policy, &stage.id, size, context.as_ref())?;
+        if let Some(item) = item {
+            evidence.sort_by_key(|e| {
+                super::routing_context::fingerprint(&format!(
+                    "{item}/{}/{}",
+                    stage.id, e.route.choice.model
+                ))
+            });
         }
         let exploring = item.is_some_and(|id| exploration(id, config.explore_rate));
         let Some((chosen, explored)) = choose(&evidence, exploring) else {
             continue;
         };
-        let route = &chosen.route;
-        policy.check(&route.choice)?;
-        assert!(route.passed <= route.runs);
+        policy.check(&chosen.route.choice)?;
+        assert!(chosen.route.passed <= chosen.route.runs);
         reasons.insert(
             stage.id.clone(),
-            format!(
-                "{} {}: {}/{} passed (n={}), median ${:.4}; {} evidence{}; diff-size={}",
-                route.choice.model,
-                route.choice.effort,
-                route.passed,
-                route.runs,
-                route.runs,
-                chosen.median_cost_usd,
-                if route.repo.is_some() {
-                    "repository"
-                } else {
-                    "global"
-                },
-                if explored {
-                    "; cheaper-neighbour exploration"
-                } else {
-                    "; within 5 points of best"
-                },
-                size.map_or("unknown", |s| s.as_str())
-            ),
+            explanation(chosen, explored, size, context.as_ref()),
         );
-        plan.0.insert(stage.id.clone(), vec![route.choice.clone()]);
+        plan.0
+            .insert(stage.id.clone(), vec![chosen.route.choice.clone()]);
     }
     Ok((plan, reasons))
 }
 
-fn choose(evidence: &[RouteEvidence], explore: bool) -> Option<(&RouteEvidence, bool)> {
-    let best = evidence
-        .iter()
-        .filter(|e| e.route.runs >= 5)
-        .map(pass_rate)
-        .max_by(f64::total_cmp)?;
-    let selected = evidence
-        .iter()
-        .position(|e| e.route.runs >= 5 && pass_rate(e) + 0.05 + f64::EPSILON >= best)?;
-    let cheaper = evidence[..selected]
-        .iter()
-        .rposition(|e| e.median_cost_usd < evidence[selected].median_cost_usd);
-    let index = if explore {
-        cheaper.unwrap_or(selected)
-    } else {
-        selected
-    };
-    assert!(evidence[index].median_cost_usd <= evidence[selected].median_cost_usd);
-    assert!(evidence[index].route.runs > 0);
-    Some((&evidence[index], index != selected))
+fn route_context(
+    store: &Store,
+    item: Option<&QueueItemId>,
+) -> Result<Option<archon_core::outcome::RouteContext>, ArchonError> {
+    item.map(|id| store.kv_get(&format!("learning/context/{id}")))
+        .transpose()?
+        .flatten()
+        .map(|raw| serde_json::from_str(&raw))
+        .transpose()
+        .map_err(|e| ArchonError::Store(format!("routing context: {e}")))
 }
 
-fn pass_rate(e: &RouteEvidence) -> f64 {
-    f64::from(e.route.passed) / f64::from(e.route.runs)
+fn stage_evidence(
+    store: &Store,
+    repo: Option<&RepoId>,
+    spec: &PipelineSpec,
+    policy: &ModelPolicy,
+    stage: &str,
+    size: Option<DiffSize>,
+    context: Option<&archon_core::outcome::RouteContext>,
+) -> Result<Vec<RouteEvidence>, ArchonError> {
+    let mut evidence = store.contextual_route_evidence(repo, spec.name(), stage, size, context)?;
+    if !evidence.iter().any(|e| e.route.runs >= 5) && repo.is_some() {
+        evidence = store.contextual_route_evidence(None, spec.name(), stage, size, context)?;
+    }
+    seed(store, &mut evidence, repo, spec.name(), stage, size, policy);
+    evidence.retain(|e| policy.check(&e.route.choice).is_ok());
+    assert!(evidence.iter().all(|e| e.route.stage == stage));
+    assert!(evidence.iter().all(|e| e.route.passed <= e.route.runs));
+    Ok(evidence)
+}
+
+fn seed(
+    store: &Store,
+    evidence: &mut Vec<RouteEvidence>,
+    repo: Option<&RepoId>,
+    pipeline: &str,
+    stage: &str,
+    size: Option<DiffSize>,
+    policy: &ModelPolicy,
+) {
+    use archon_core::{
+        model::{Effort, ModelChoice},
+        outcome::LearnedRoute,
+    };
+    let ready = store.learning_models();
+    if !ready.is_empty() {
+        evidence.retain(|e| ready.contains(&e.route.choice.model));
+    }
+    for model in ready {
+        let choice = ModelChoice {
+            model,
+            effort: policy
+                .max_effort
+                .unwrap_or(Effort::Medium)
+                .min(Effort::Medium),
+        };
+        if policy.check(&choice).is_err()
+            || evidence
+                .iter()
+                .any(|e| e.route.choice.model == choice.model)
+        {
+            continue;
+        }
+        evidence.push(RouteEvidence {
+            median_cost_usd: 0.0,
+            route: LearnedRoute {
+                repo: repo.cloned(),
+                pipeline: pipeline.into(),
+                stage: stage.into(),
+                size,
+                choice,
+                runs: 0,
+                passed: 0,
+            },
+        });
+    }
+}
+
+fn explanation(
+    e: &RouteEvidence,
+    explored: bool,
+    size: Option<DiffSize>,
+    context: Option<&archon_core::outcome::RouteContext>,
+) -> String {
+    let (lower, upper) = wilson(e);
+    format!(
+        "{} {}: {}/{} passed (n={}), Wilson 95% [{lower:.2}, {upper:.2}], median ${:.4}; {} evidence; {}; diff-size={}; review={}; revision={}; task={}",
+        e.route.choice.model,
+        e.route.choice.effort,
+        e.route.passed,
+        e.route.runs,
+        e.route.runs,
+        e.median_cost_usd,
+        if e.route.repo.is_some() {
+            "repository"
+        } else {
+            "global"
+        },
+        if explored {
+            "bounded uncertainty exploration"
+        } else {
+            "conservative quality bound with cost"
+        },
+        size.map_or("unknown (pooled)", |s| s.as_str()),
+        context.map_or("unknown", |c| &c.review),
+        context.map_or("unknown", |c| &c.revision),
+        context.map_or("general", |c| &c.task_class)
+    )
+}
+
+fn choose(evidence: &[RouteEvidence], explore: bool) -> Option<(&RouteEvidence, bool)> {
+    let selected = archon_queue::store::preferred_route(evidence);
+    if !explore {
+        return selected.map(|e| (e, false));
+    }
+    let floor = selected.map_or(0.3, |e| wilson(e).0.max(0.3));
+    let trial = evidence
+        .iter()
+        .filter(|e| e.route.runs < 5 || wilson(e).1 >= floor)
+        .max_by(|a, b| exploration_value(a).total_cmp(&exploration_value(b)));
+    let chosen = trial.or(selected)?;
+    assert!(chosen.route.passed <= chosen.route.runs);
+    assert!(chosen.route.runs < 5 || wilson(chosen).1 >= floor || selected.is_some());
+    Some((
+        chosen,
+        selected.is_none_or(|s| s.route.choice != chosen.route.choice),
+    ))
+}
+
+fn exploration_value(e: &RouteEvidence) -> f64 {
+    let (_, upper) = wilson(e);
+    upper + 1.0 / f64::from(e.route.runs + 1) - 0.01 * e.median_cost_usd.ln_1p()
+}
+
+fn wilson(e: &RouteEvidence) -> (f64, f64) {
+    e.quality_interval()
 }
 
 fn exploration(item: &QueueItemId, rate: f64) -> bool {
@@ -239,7 +338,7 @@ mod tests {
     use super::*;
     use archon_core::model::{Effort, ModelChoice};
     use archon_core::outcome::LearnedRoute;
-    fn evidence(name: &str, cost: f64, runs: u32, passed: u32) -> RouteEvidence {
+    pub(super) fn evidence(name: &str, cost: f64, runs: u32, passed: u32) -> RouteEvidence {
         RouteEvidence {
             route: LearnedRoute {
                 repo: None,
@@ -257,7 +356,7 @@ mod tests {
         }
     }
     #[test]
-    fn routing_needs_five_runs_and_explores_only_the_nearest_cheaper_choice() {
+    fn routing_uses_quality_bounds_and_explores_uncertain_candidates() {
         let options = vec![
             evidence("tiny", 0.01, 4, 4),
             evidence("cheaper", 0.1, 5, 3),
@@ -265,10 +364,10 @@ mod tests {
             evidence("best", 1.0, 20, 20),
         ];
         let (normal, explored) = choose(&options, false).unwrap();
-        assert_eq!(normal.route.choice.model.model, "balanced");
+        assert_eq!(normal.route.choice.model.model, "best");
         assert!(!explored);
         let (trial, explored) = choose(&options, true).unwrap();
-        assert_eq!(trial.route.choice.model.model, "cheaper");
+        assert_eq!(trial.route.choice.model.model, "tiny");
         assert!(explored);
         assert!(choose(&options[..1], false).is_none());
     }
@@ -290,6 +389,22 @@ mod tests {
             }
             .validate()
             .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod regression_tests {
+    use super::*;
+    #[test]
+    fn an_observed_zero_for_hundred_is_never_explored_again() {
+        let options = vec![
+            super::tests::evidence("failed", 0.01, 100, 0),
+            super::tests::evidence("reliable", 1.0, 100, 100),
+        ];
+        assert_eq!(
+            choose(&options, true).unwrap().0.route.choice.model.model,
+            "reliable"
         );
     }
 }

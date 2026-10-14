@@ -550,6 +550,8 @@ impl Sim {
             stage_id: plan.stage_id.clone(),
             attempt: plan.attempt,
             fan_index: plan.fan_index,
+            model_segments: Vec::new(),
+            infrastructure_failure: false,
             choice: plan.choice.clone(),
             aether_agent: None,
             aether_task: None,

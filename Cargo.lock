@@ -87,6 +87,7 @@ dependencies = [
  "archon-daemon",
  "archon-mcp",
  "archon-pipeline",
+ "archon-queue",
  "chrono",
  "clap",
  "dirs",

@@ -171,7 +171,10 @@ pub(super) fn settled_stage(
             stage.structured = structured;
             StageState::Completed
         }
-        StageOutcome::Failed { error, .. } => StageState::Failed { error },
+        StageOutcome::Failed { error, infra } => {
+            stage.infrastructure_failure = infra;
+            StageState::Failed { error }
+        }
         StageOutcome::Cancelled { reason } => {
             stage.summary = reason;
             StageState::Cancelled

@@ -26,20 +26,39 @@ pub(crate) async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
 
 pub async fn maintenance(ctx: &DaemonContext) -> Result<(), ArchonError> {
     if !ctx.config.learning.enabled {
+        ctx.store.lock().await.cancel_queued_distillations()?;
         return Ok(());
+    }
+    if let Err(error) = super::candidates::refresh(ctx).await {
+        if error.is_store() {
+            return Err(error);
+        }
+        tracing::warn!(%error, "model catalog refresh deferred; reconciliation continues");
+        report_error(ctx, &error).await?;
+    }
+    proposals::reconcile(ctx).await?;
+    let pending = ctx.store.lock().await.unapplied_distillations()?;
+    for run in pending {
+        finished(ctx, &run).await;
     }
     let complete = {
         let store = ctx.store.lock().await;
-        store.configure_learning(&ctx.config.learning)?;
+        store.prune_learning_snapshots()?;
         store.refresh_lessons(archon_core::now())?;
-        store.backfill_outcomes(20, ctx.config.limits.count_estimated_cost)?
+        let imported = store.kv_get("learning/backfill/done")?.is_some();
+        store.backfill_outcomes(20, ctx.config.limits.count_estimated_cost)? || imported
     };
     if !complete {
         return Ok(());
     }
     let repos = ctx.store.lock().await.repos()?;
     for repo in repos {
-        queue(ctx, &repo.id).await?;
+        if let Err(error) = queue(ctx, &repo.id).await {
+            if error.is_store() {
+                return Err(error);
+            }
+            report_error(ctx, &error).await?;
+        }
     }
     Ok(())
 }
@@ -47,8 +66,11 @@ pub async fn maintenance(ctx: &DaemonContext) -> Result<(), ArchonError> {
 async fn queue(ctx: &DaemonContext, repo: &RepoId) -> Result<(), ArchonError> {
     let env = crate::resolve::RepoEnv::load(ctx, Some(repo)).await?;
     let policy = env.policy(&ctx.config);
-    let key = format!("learning/distilled/{repo}");
+    let key = format!("learning/distilled-v2/{repo}");
     let mut store = ctx.store.lock().await;
+    if !store.distillation_available(repo, ctx.config.learning.distill_daily_budget_usd)? {
+        return Ok(());
+    }
     let consumed = store
         .kv_get(&key)?
         .map(|s| {
@@ -188,27 +210,39 @@ fn errand(
     })
 }
 
-pub(crate) async fn finished(ctx: &DaemonContext, run: &PipelineRun) -> Result<(), ArchonError> {
+pub(crate) async fn finished(ctx: &DaemonContext, run: &PipelineRun) {
+    if let Err(error) = capture_finished(ctx, run).await {
+        tracing::warn!(run = %run.id, %error, "learning capture deferred; run is already finished");
+        if let Err(report) = report_error(ctx, &error).await {
+            tracing::error!(run = %run.id, %report, "could not report deferred learning capture");
+        }
+    }
+}
+
+async fn capture_finished(ctx: &DaemonContext, run: &PipelineRun) -> Result<(), ArchonError> {
     if !ctx.config.learning.enabled {
         return Ok(());
     }
     let item = ctx.store.lock().await.item(&run.item)?;
-    if ctx
-        .store
-        .lock()
-        .await
-        .kv_get(&format!("learning/distillation/{}", item.id))?
-        .is_some()
+    if item.tags.iter().any(|t| t == "archon:distillation")
+        || ctx
+            .store
+            .lock()
+            .await
+            .kv_get(&format!("learning/distillation/{}", item.id))?
+            .is_some()
     {
         return match apply(ctx, run, &item).await {
             Ok(()) => Ok(()),
             Err(error) if error.is_store() => Err(error),
             Err(error) => {
                 report_error(ctx, &error).await?;
-                ctx.store
-                    .lock()
-                    .await
-                    .save_learning_value(&format!("learning/applied/{}", run.id), "rejected")
+                let store = ctx.store.lock().await;
+                let key = format!("learning/applied/{}", run.id);
+                if store.kv_get(&key)?.is_none() {
+                    store.save_learning_value(&key, "rejected")?;
+                }
+                Ok(())
             }
         };
     }
@@ -290,7 +324,11 @@ async fn apply(
     item: &QueueItem,
 ) -> Result<(), ArchonError> {
     if !matches!(run.state, RunState::Succeeded { .. }) {
-        return Ok(());
+        return ctx
+            .store
+            .lock()
+            .await
+            .save_learning_value(&format!("learning/applied/{}", run.id), "failed");
     }
     let key = format!("learning/applied/{}", run.id);
     let store = ctx.store.lock().await;
@@ -303,6 +341,24 @@ async fn apply(
             "distillation returned no structured lessons".into(),
         ));
     };
+    let lessons = proposed_lessons(value, item)?;
+    let proposal = value
+        .get("pipeline_proposal")
+        .filter(|v| !v.is_null())
+        .cloned();
+    if let Some(value) = &proposal {
+        proposals::validate(value)?;
+    }
+    store.apply_distillation(&run.id, lessons, proposal.as_ref())?;
+    drop(store);
+    proposals::reconcile(ctx).await?;
+    Ok(())
+}
+
+fn proposed_lessons(
+    value: &serde_json::Value,
+    item: &QueueItem,
+) -> Result<Vec<(Lesson, Option<archon_core::id::LessonId>)>, ArchonError> {
     let advice: Vec<Advice> = serde_json::from_value(
         value
             .get("lessons")
@@ -315,6 +371,7 @@ async fn apply(
             "distillation returned more than ten lessons".into(),
         ));
     }
+    let mut lessons = Vec::new();
     for advice in advice {
         let text = archon_core::lesson::sanitized_text(&advice.text)?;
         let lesson = Lesson::new(
@@ -328,41 +385,42 @@ async fn apply(
             LessonState::Proposed,
             archon_core::now(),
         )?;
-        store.record_distilled_lesson(lesson, advice.replaces.as_ref())?;
+        lessons.push((lesson, advice.replaces));
     }
-    let proposal = value.get("pipeline_proposal").cloned();
-    drop(store);
-    if let Some(proposal) = proposal {
-        proposals::stage(ctx, proposal).await?;
-    }
-    ctx.store.lock().await.save_learning_value(&key, "1")?;
-    Ok(())
+    assert!(lessons.len() <= 10);
+    assert!(lessons.iter().all(|(l, _)| l.scope.repo == item.repo));
+    Ok(lessons)
 }
 
 async fn report_error(ctx: &DaemonContext, error: &ArchonError) -> Result<(), ArchonError> {
+    use archon_core::{
+        id::NotificationId,
+        notify::{FeedEntry, Notification, NotificationKind},
+    };
     let text = format!(
-        "Learning could not complete this step: {error}. Existing advice and pipelines remain in force."
+        "Learning could not complete this step: {error}. Run finishing continues; recorded details remain available."
     );
-    if ctx
-        .store
-        .lock()
-        .await
-        .kv_get("learning/last-error")?
-        .as_deref()
-        == Some(&text)
-    {
-        return Ok(());
-    }
-    crate::executor::notify(
-        ctx,
-        archon_core::notify::NotificationKind::Outcome,
-        &text,
-        None,
-        None,
-    )
-    .await?;
-    ctx.store
-        .lock()
-        .await
-        .save_learning_value("learning/last-error", &text)
+    let key = format!(
+        "learning/error/{:016x}",
+        super::routing_context::fingerprint(&text)
+    );
+    let item = {
+        let mut store = ctx.store.lock().await;
+        if store.kv_get(&key)?.is_some() {
+            return Ok(());
+        }
+        let at = archon_core::now();
+        let entry = FeedEntry::Notification(Notification {
+            id: NotificationId::new(),
+            kind: NotificationKind::Outcome,
+            text: crate::executor::clip(&text, 2000),
+            item: None,
+            run: None,
+            at,
+        });
+        store.append_feed_with_kv(entry, at, &[(&key, "1")])?
+    };
+    assert!(item.seq > 0);
+    crate::feed::publish(ctx, vec![item]);
+    Ok(())
 }

@@ -130,7 +130,7 @@ impl ModelEvidenceSnapshot {
         for attempt in self.attempts {
             let stage = attempt.stage;
             let samples = groups
-                .entry((stage.stage_id.clone(), stage.choice.clone()))
+                .entry((stage.stage_id.clone(), stage.current_choice().clone()))
                 .or_default();
             samples.attempts += 1;
             if stage.state != StageState::Completed {
@@ -149,7 +149,11 @@ impl ModelEvidenceSnapshot {
                     stage.id
                 )));
             }
-            samples.costs.push(cost);
+            let boundary = stage
+                .model_segments
+                .last()
+                .map_or(0.0, |s| s.cost_before_usd.min(cost));
+            samples.costs.push(cost - boundary);
             if let Some(end) = stage.finished_at {
                 let elapsed = end.signed_duration_since(stage.started_at);
                 if elapsed < chrono::Duration::zero() {
@@ -244,6 +248,40 @@ pub struct RouteEvidence {
     pub median_cost_usd: f64,
 }
 
+impl RouteEvidence {
+    pub fn quality_interval(&self) -> (f64, f64) {
+        assert!(self.route.passed <= self.route.runs);
+        assert!(self.median_cost_usd.is_finite() && self.median_cost_usd >= 0.0);
+        if self.route.runs == 0 {
+            return (0.0, 1.0);
+        }
+        let n = f64::from(self.route.runs);
+        let p = f64::from(self.route.passed) / n;
+        let z2 = 1.96_f64.powi(2);
+        let center = p + z2 / (2.0 * n);
+        let radius = 1.96 * ((p * (1.0 - p) + z2 / (4.0 * n)) / n).sqrt();
+        (
+            (center - radius).max(0.0) / (1.0 + z2 / n),
+            (center + radius) / (1.0 + z2 / n),
+        )
+    }
+
+    fn quality_cost_score(&self) -> f64 {
+        self.quality_interval().0 / (1.0 + 0.05 * self.median_cost_usd.ln_1p())
+    }
+}
+
+pub fn preferred_route(evidence: &[RouteEvidence]) -> Option<&RouteEvidence> {
+    evidence
+        .iter()
+        .filter(|e| e.route.runs >= 5 && e.quality_interval().1 >= 0.3)
+        .max_by(|a, b| {
+            a.quality_cost_score()
+                .total_cmp(&b.quality_cost_score())
+                .then_with(|| b.median_cost_usd.total_cmp(&a.median_cost_usd))
+        })
+}
+
 impl super::Store {
     pub fn route_evidence(
         &self,
@@ -252,45 +290,61 @@ impl super::Store {
         stage: &str,
         size: Option<archon_core::outcome::DiffSize>,
     ) -> Result<Vec<RouteEvidence>, ArchonError> {
+        self.contextual_route_evidence(repo, pipeline, stage, size, None)
+    }
+
+    pub fn contextual_route_evidence(
+        &self,
+        repo: Option<&archon_core::id::RepoId>,
+        pipeline: &str,
+        stage: &str,
+        size: Option<archon_core::outcome::DiffSize>,
+        context: Option<&archon_core::outcome::RouteContext>,
+    ) -> Result<Vec<RouteEvidence>, ArchonError> {
         if pipeline.is_empty() || stage.is_empty() {
             return Err(ArchonError::Invalid(
                 "route needs pipeline and stage".into(),
             ));
         }
-        let mut stmt = self
-            .conn
-            .prepare(
-                "SELECT s.model,s.effort,s.cost_usd,
-            s.passed=1 AND o.result='succeeded' AND o.corrected=0
-            FROM outcome_stages s JOIN outcomes o ON o.run=s.run
-            WHERE (?1 IS NULL OR o.repo=?1) AND o.pipeline=?2 AND s.stage_id=?3
-            AND (?4 IS NULL OR o.size=?4) ORDER BY s.model,s.effort,o.run",
-            )
-            .ctx("prepare learned routes")?;
-        let rows = stmt
-            .query_map(
-                params![
-                    repo.map(|r| r.as_str()),
-                    pipeline,
-                    stage,
-                    size.map(|s| s.as_str())
-                ],
-                |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, f64>(2)?,
-                        r.get::<_, Option<bool>>(3)?,
-                    ))
-                },
-            )
-            .ctx("query learned routes")?;
         let mut groups = std::collections::BTreeMap::new();
-        for row in rows {
-            let (model, effort, cost, passed) = row.ctx("read learned route")?;
-            let (costs, wins) = groups.entry((model, effort)).or_insert((Vec::new(), 0u32));
-            costs.push(cost);
-            *wins += u32::from(passed == Some(true));
+        for outcome in self.route_outcomes(repo, pipeline, stage, size, context)? {
+            if outcome.pipeline != pipeline || size.is_some_and(|s| outcome.size() != Some(s)) {
+                continue;
+            }
+            use archon_core::outcome::{CorrectionCause, FailureClass, OutcomeResult};
+            if outcome.result == OutcomeResult::Cancelled
+                || matches!(
+                    outcome.failure,
+                    Some(
+                        FailureClass::Infrastructure
+                            | FailureClass::Budget
+                            | FailureClass::Timeout
+                            | FailureClass::Blocked
+                            | FailureClass::Escalated
+                            | FailureClass::Ship
+                    )
+                )
+            {
+                continue;
+            }
+            for observed in outcome
+                .stages
+                .iter()
+                .filter(|s| s.stage == stage && s.passed.is_some())
+            {
+                let (costs, wins) = groups
+                    .entry((
+                        observed.choice.model.to_string(),
+                        observed.choice.effort.to_string(),
+                    ))
+                    .or_insert((Vec::new(), 0u32));
+                costs.push(observed.cost_usd);
+                let corrected = outcome
+                    .feedback
+                    .iter()
+                    .any(|e| e.stage == observed.stage && e.cause == CorrectionCause::Quality);
+                *wins += u32::from(observed.passed == Some(true) && !corrected);
+            }
         }
         finish_routes(groups, repo, pipeline, stage, size)
     }
@@ -380,21 +434,9 @@ impl super::Store {
         for (stage, choices) in plan.0 {
             let mut evidence = self.route_evidence(repo, pipeline, &stage, None)?;
             evidence.retain(|e| policy.check(&e.route.choice).is_ok());
-            let best = evidence
-                .iter()
-                .filter(|e| e.route.runs >= 5)
-                .map(|e| f64::from(e.route.passed) / f64::from(e.route.runs))
-                .max_by(f64::total_cmp);
-            let Some(best) = best else {
+            let Some(selected) = preferred_route(&evidence) else {
                 continue;
             };
-            let selected = evidence
-                .iter()
-                .find(|e| {
-                    e.route.runs >= 5
-                        && f64::from(e.route.passed) / f64::from(e.route.runs) + 0.05 >= best
-                })
-                .expect("best route is within its own band");
             for choice in choices {
                 let Some(baseline) = evidence
                     .iter()

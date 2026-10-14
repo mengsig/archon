@@ -434,8 +434,12 @@ fn claim_agent(conn: &Connection, stage: &StageRun) -> Result<bool, ArchonError>
 pub(super) fn upsert_stage(conn: &mut Connection, stage: &StageRun) -> Result<(), ArchonError> {
     check_stage_shape(stage)?;
     let tx = write_tx(conn)?;
+    let mut stage = stage.clone();
     match load_stage(&tx, &stage.id)? {
-        Some(stored) => check_stage_change(&stored, stage)?,
+        Some(stored) => {
+            stage.model_segments = stored.model_segments.clone();
+            check_stage_change(&stored, &stage)?;
+        }
         None => {
             if load(&tx, &stage.run)?.state.is_terminal() {
                 return Err(ArchonError::InvalidTransition(format!(
@@ -445,8 +449,8 @@ pub(super) fn upsert_stage(conn: &mut Connection, stage: &StageRun) -> Result<()
             }
         }
     }
-    let holds_agent = claim_agent(&tx, stage)?;
-    write_stage(&tx, stage, holds_agent)?;
+    let holds_agent = claim_agent(&tx, &stage)?;
+    write_stage(&tx, &stage, holds_agent)?;
     tx.commit().ctx("commit stage run")
 }
 

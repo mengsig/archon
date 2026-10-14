@@ -4,7 +4,6 @@ use archon_core::error::ArchonError;
 use archon_core::id::{LessonId, QueueItemId};
 use archon_core::lesson::{
     Lesson, LessonDraft, LessonPatch, LessonQuery, LessonScope, LessonSource, LessonState,
-    LessonWhy,
 };
 use archon_core::protocol::{ClientKind, Reply, RepoRef};
 
@@ -14,21 +13,7 @@ pub(super) async fn record(
     draft: LessonDraft,
 ) -> Result<Reply, ArchonError> {
     let store = ctx.store.lock().await;
-    store.configure_learning(&ctx.config.learning)?;
-    let repo = draft
-        .repo
-        .as_ref()
-        .map(|r| store.repo(r))
-        .transpose()?
-        .map(|r| r.id);
-    if let Some(item) = &draft.item {
-        let item = store.item(item)?;
-        if repo.is_some() && item.repo != repo {
-            return Err(ArchonError::Invalid(
-                "lesson item belongs to another repository".into(),
-            ));
-        }
-    }
+    let repo = source_repository(&store, client, &draft)?;
     let source = if client == ClientKind::ArchonCli {
         LessonSource::Operator
     } else {
@@ -43,7 +28,11 @@ pub(super) async fn record(
         draft.kind,
         &text,
         source,
-        LessonState::Active,
+        if source == LessonSource::Operator {
+            LessonState::Active
+        } else {
+            LessonState::Proposed
+        },
         archon_core::now(),
     )?;
     lesson.item = draft.item;
@@ -56,10 +45,42 @@ pub(super) async fn record(
     Ok(Reply::Lesson(store.record_lesson(lesson)?))
 }
 
+fn source_repository(
+    store: &archon_queue::Store,
+    client: ClientKind,
+    draft: &LessonDraft,
+) -> Result<Option<archon_core::id::RepoId>, ArchonError> {
+    let mut repo = draft
+        .repo
+        .as_ref()
+        .map(|r| store.repo(r))
+        .transpose()?
+        .map(|r| r.id);
+    if client != ClientKind::ArchonCli && draft.item.is_none() {
+        return Err(ArchonError::Invalid(
+            "orchestrator lessons require their source item".into(),
+        ));
+    }
+    if let Some(item) = &draft.item {
+        let item = store.item(item)?;
+        if repo.is_some() && item.repo != repo {
+            return Err(ArchonError::Invalid(
+                "lesson item belongs to another repository".into(),
+            ));
+        }
+        if client != ClientKind::ArchonCli {
+            repo = Some(item.repo.ok_or_else(|| {
+                ArchonError::Invalid("orchestrator lessons require a repository item".into())
+            })?);
+        }
+    }
+    assert!(client == ClientKind::ArchonCli || repo.is_some());
+    assert!(client == ClientKind::ArchonCli || draft.item.is_some());
+    Ok(repo)
+}
+
 pub(super) async fn list(ctx: &DaemonContext, query: &LessonQuery) -> Result<Reply, ArchonError> {
     let store = ctx.store.lock().await;
-    store.configure_learning(&ctx.config.learning)?;
-    store.refresh_lessons(archon_core::now())?;
     Ok(Reply::Lessons(store.lessons(query)?))
 }
 
@@ -69,38 +90,13 @@ pub(super) async fn update(
     patch: LessonPatch,
 ) -> Result<Reply, ArchonError> {
     let store = ctx.store.lock().await;
-    store.configure_learning(&ctx.config.learning)?;
     Ok(Reply::Lesson(store.update_lesson(lesson, patch)?))
 }
 
 pub(super) async fn why(ctx: &DaemonContext, item: &QueueItemId) -> Result<Reply, ArchonError> {
-    let store = ctx.store.lock().await;
-    let runs = store.runs_for_item(item)?;
-    let run = runs.last();
-    let lessons = run
-        .map(|r| store.used_lessons(&r.id))
-        .transpose()?
-        .unwrap_or_default();
-    let frozen = run
-        .map(|r| store.kv_get(&format!("learning/routing-run/{}", r.id)))
-        .transpose()?
-        .flatten();
-    let routing = frozen
-        .or(store.kv_get(&format!("learning/routing/{item}"))?)
-        .map(|raw| {
-            serde_json::from_str(&raw)
-                .map_err(|e| ArchonError::Store(format!("routing evidence: {e}")))
-        })
-        .transpose()?
-        .unwrap_or_default();
-    assert!(lessons.len() <= archon_core::lesson::CONTRACT_LESSONS);
-    assert!(run.is_none_or(|r| r.item == *item));
-    Ok(Reply::LessonsWhy(Box::new(LessonWhy {
-        item: item.clone(),
-        run: run.map(|r| r.id.clone()),
-        lessons,
-        routing,
-    })))
+    Ok(Reply::LessonsWhy(Box::new(
+        ctx.store.lock().await.lesson_why(item)?,
+    )))
 }
 
 pub(super) async fn stats(
@@ -134,18 +130,8 @@ pub(super) async fn stats(
             let mut choices =
                 store.route_evidence(pipeline.repo.as_ref(), &pipeline.pipeline, &stage, None)?;
             choices.retain(|choice| policy.check(&choice.route.choice).is_ok());
-            let best = choices
-                .iter()
-                .filter(|e| e.route.runs >= 5)
-                .map(|e| f64::from(e.route.passed) / f64::from(e.route.runs))
-                .max_by(f64::total_cmp);
-            if let Some(best) = best
-                && let Some(chosen) = choices.into_iter().find(|e| {
-                    e.route.runs >= 5
-                        && f64::from(e.route.passed) / f64::from(e.route.runs) + 0.05 >= best
-                })
-            {
-                stats.routes.push(chosen.route);
+            if let Some(chosen) = archon_queue::store::preferred_route(&choices) {
+                stats.routes.push(chosen.route.clone());
             }
         }
     }

@@ -51,6 +51,7 @@ impl Held {
 pub(super) struct Facts {
     /// Current state by item; an item missing here was pruned.
     pub items: HashMap<QueueItemId, QueueState>,
+    pub costs: HashMap<QueueItemId, f64>,
     /// Reports whose Lavish session is still open.
     pub open_reports: HashSet<ReportId>,
     /// Gate questions the operator has not answered yet.
@@ -87,6 +88,13 @@ impl Facts {
         match store.item(item) {
             Ok(found) => {
                 assert_eq!(&found.id, item, "the store returns the item asked for");
+                if let Some(run) = store.runs_for_item(item)?.last() {
+                    let cost = match store.outcome(&run.id)? {
+                        Some(outcome) => outcome.cost_usd,
+                        None => store.spend_for_run(&run.id, true)?,
+                    };
+                    self.costs.insert(item.clone(), cost);
+                }
                 self.items.insert(found.id, found.state);
                 Ok(())
             }

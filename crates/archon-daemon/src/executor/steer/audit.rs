@@ -4,7 +4,6 @@
 use archon_core::Timestamp;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId};
-use archon_core::outcome::Correction;
 use archon_core::steer::{MAX_STEER_RECORDS, SteerRecord};
 use archon_queue::Store;
 
@@ -30,8 +29,8 @@ pub(crate) fn records(store: &Store, item: &QueueItemId) -> Result<Vec<SteerReco
     Ok(records)
 }
 
-/// Add `record` to `item`'s history, dropping the oldest past the cap. The
-/// steer corrects `run`, the one it changed or revived (ARCHITECTURE §19).
+/// Keep steer history bounded. Scope and effort changes carry no quality judgment;
+/// explicit feedback records corrections separately.
 pub(crate) fn record(
     store: &mut Store,
     item: &QueueItemId,
@@ -43,9 +42,8 @@ pub(crate) fn record(
         assert_eq!(
             &store.run(run)?.item,
             item,
-            "a steer corrects its item's run"
+            "a steer belongs to its item's run"
         );
-        store.record_correction(run, Correction::Steered)?;
     }
     let mut all = records(store, item)?;
     // The wall clock may step back; the history stays in recorded order.

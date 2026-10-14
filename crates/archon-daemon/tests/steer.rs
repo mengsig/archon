@@ -231,6 +231,12 @@ async fn a_note_and_a_new_model_reach_the_running_agent_without_a_cancel() {
     let still = running(&h, "implement").await.remove(0);
     assert_eq!(still.id, working.id, "the same attempt goes on");
     assert_eq!(agent(&still), lead, "with the same agent");
+    assert_eq!(
+        still.choice, working.choice,
+        "the initial choice stays immutable"
+    );
+    assert_eq!(still.current_choice(), &choice(REVIEW_MODEL, Effort::Low));
+    assert_eq!(still.model_segments.len(), 1);
     h.settle_running(|_| completed("implemented")).await;
     h.dispatch().await;
     let reviewers = running(&h, "review").await;

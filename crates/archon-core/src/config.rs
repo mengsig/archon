@@ -49,6 +49,7 @@ pub struct Config {
 pub struct LearningConfig {
     pub enabled: bool,
     pub distill_every: u32,
+    pub distill_daily_budget_usd: f64,
     pub explore_rate: f64,
 }
 
@@ -57,6 +58,7 @@ impl Default for LearningConfig {
         Self {
             enabled: true,
             distill_every: 20,
+            distill_daily_budget_usd: 3.0,
             explore_rate: 0.1,
         }
     }
@@ -64,9 +66,14 @@ impl Default for LearningConfig {
 
 impl LearningConfig {
     pub fn validate(&self) -> Result<(), ArchonError> {
-        if self.distill_every == 0 {
+        if !self.distill_daily_budget_usd.is_finite() || self.distill_daily_budget_usd < 0.0 {
             return Err(ArchonError::Config(
-                "learning.distill_every must be positive".into(),
+                "learning.distill_daily_budget_usd must be finite and nonnegative".into(),
+            ));
+        }
+        if self.distill_every == 0 || self.distill_every > 100 {
+            return Err(ArchonError::Config(
+                "learning.distill_every must be 1..100".into(),
             ));
         }
         if !self.explore_rate.is_finite() || !(0.0..=0.1).contains(&self.explore_rate) {

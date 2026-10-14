@@ -166,10 +166,7 @@ async fn make(
     // A resumed attempt settles on its turn's last word, so the turn is left to end (§6.7).
     let resumed = stage.aether_task.is_none();
     let told = async {
-        let patch = delivery.patch();
-        if !patch.is_empty() {
-            ctx.backend.update_agent(agent, patch).await?;
-        }
+        update_choice(ctx, stage, agent, delivery).await?;
         if delivery.interrupt && !resumed {
             ctx.backend.interrupt(agent).await?;
         }
@@ -184,12 +181,37 @@ async fn make(
             tracing::info!(stage = %stage.id, %agent, %error, "steer not delivered; the next sweep retries");
             return Ok(false);
         }
+        Err(error) if error.is_store() => return Err(error),
         Err(refusal) => return refused(ctx, stage, &refusal).await.map(|()| true),
     }
     if let Some(text) = delivery.lead.as_deref().filter(|_| resumed) {
         resume::told(&mut *ctx.store.lock().await, &stage.id, text)?;
     }
     Ok(true)
+}
+
+async fn update_choice(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    agent: &AetherAgentId,
+    delivery: &Delivery,
+) -> Result<(), ArchonError> {
+    assert_eq!(stage.aether_agent.as_ref(), Some(agent));
+    assert!(!stage.state.is_terminal());
+    let patch = delivery.patch();
+    if !patch.is_empty() {
+        ctx.backend.update_agent(agent, patch).await?;
+        if let Some(choice) = &delivery.choice {
+            ctx.store.lock().await.record_model_segment(
+                &stage.id,
+                &delivery.key,
+                choice,
+                archon_core::now(),
+                ctx.config.limits.count_estimated_cost,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 /// Say on the item that Aether refused a steer for a running agent; what the

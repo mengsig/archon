@@ -290,12 +290,13 @@ pub(super) async fn announce(
     triggers::push_quiet(ctx, finished).await
 }
 
-/// Whether the finished `item` gives the orchestrator something to do: a
-/// failure, a GitHub thread to answer, or a `notify` tag; the rest waits.
+/// Whether the finished `item` wakes the orchestrator: a failure, a GitHub
+/// thread to answer, a `notify` tag, or a success with `wake_on_success`.
 fn wakes_orchestrator(item: &QueueItem, wake_on_success: bool) -> bool {
     assert!(item.state.is_terminal(), "only a finished item is news");
     let failed = matches!(item.state, QueueState::Failed { .. });
-    failed || wake_on_success || item.origin.is_some() || item.wants_notice()
+    let succeeded = matches!(item.state, QueueState::Succeeded { .. });
+    failed || (succeeded && wake_on_success) || item.origin.is_some() || item.wants_notice()
 }
 
 /// Keep the notification small; the queue, stages and orchestrator retain the

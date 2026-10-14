@@ -395,7 +395,7 @@ fn enqueue() -> ToolDefinition {
         "Enqueue work",
         "Queue one unit of work and return its item (`qi_…`) at once. The daemon runs it through \
          `pipeline` in a fresh worktree and branch when dependencies, caps and budgets allow. \
-         item_finished news follows: do not poll.",
+         item_finished, or a later items_finished, reports it: do not poll.",
         object(
             json!({
                 "repo": repo_ref("Left out only for a pipeline with requires_repo = false (`ask`)."),

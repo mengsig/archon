@@ -1104,11 +1104,16 @@ mod tests {
     }
 
     #[test]
-    fn builtin_prompt_requires_a_precise_terse_operator_voice() {
+    fn builtin_prompt_requires_a_concise_clear_operator_voice() {
         let prompt = unwrapped(&prompt());
-        assert!(prompt.contains("lead with status or decision needed"));
-        assert!(prompt.contains("Prefer clipped fragments over full sentences"));
-        assert!(prompt.contains("never precision"));
+        assert!(prompt.contains("Be concise and clear."));
+        assert!(prompt.contains(
+            "Lead with the outcome or decision needed, then give the evidence and next action."
+        ));
+        assert!(
+            !prompt.contains("sacrifice grammar"),
+            "clipped fragments cost the reader precision"
+        );
     }
 
     #[test]
@@ -1174,12 +1179,15 @@ mod tests {
         let prompt = unwrapped(&prompt());
         for said in [
             "Act on a trigger's `events`, not its clipped `summary`.",
-            "You are woken only for what needs you",
-            "`item_finished`: a failure, a blocker, an item tagged `notify`, or one with a \
-             GitHub `origin` to answer.",
+            "You are woken for:",
+            "`item_finished`: a failure, a blocker, an item tagged `notify`, one with a GitHub \
+             `origin` to answer, and a success unless the operator turned that off.",
             "A trigger states all `directives` once, then only `directive_changes`; if you hold \
              fewer than `directives_in_force`, read `autonomy_policy`.",
-            "a `mirror` event names one that is stale or withheld",
+            "A mirror holds the registered repository's local base commit (HEAD when no base \
+             is configured), without uncommitted work.",
+            "Refresh is asynchronous: check its HEAD for freshness-sensitive answers.",
+            "A `mirror` event reports stale or withheld access.",
         ] {
             assert!(prompt.contains(said), "missing {said:?}");
         }
@@ -1257,8 +1265,7 @@ mod tests {
              so reading code takes no item",
             "a large request is a backlog ordered with `depends_on` and `priority`",
             "Never change a repository yourself or through a child.",
-            "A mirror is a checkout of the base branch with no remote, which the daemon keeps \
-             current",
+            "A mirror holds the registered repository's local base commit",
         ] {
             assert!(prompt.contains(said), "missing {said:?}");
         }
@@ -1289,11 +1296,10 @@ mod tests {
         let at: Vec<usize> = choice.iter().map(|s| prompt.find(s).unwrap()).collect();
         assert!(at.is_sorted(), "cheapest pipeline first: {at:?}");
         for said in [
-            "Leave `model_plan` out to get the models learned for the repository",
-            "name a stage only on the operator's request or for a reason you put in \
-             `model_reasons`",
-            "`x_high` or `max` only for a reasoning problem you can name that inspection left \
-             unresolved",
+            "Omit `model_plan` to use learned choices or the configured fallback.",
+            "Override stages when task requirements or evidence (`model_evidence`) justify it; \
+             explain why in `model_reasons`.",
+            "`x_high` or `max` only for a named reasoning problem inspection left open.",
         ] {
             assert!(prompt.contains(said), "missing {said:?}");
         }
@@ -1328,7 +1334,6 @@ mod tests {
         let prompt = unwrapped(&prompt());
         for said in [
             "0, 1 or 3 reviewers in `adaptive` and `direct` (other pipelines fix theirs)",
-            "`model_evidence` how each model and pipeline fared",
             "`steer_item` changes an item without cancelling it",
             "One failed with `ESCALATE:` does not fit its pipeline: do not retry it; \
              `switch_pipeline` or `insert_stage` revives it on its branch.",

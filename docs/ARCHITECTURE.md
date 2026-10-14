@@ -979,7 +979,12 @@ operator from the daemon itself, as an `Outcome` or `Blocker` feed entry
 | Failed, or the operator must act (a `Blocker`, a `BLOCKED:` result) | wakes |
 | Succeeded with an `origin`: a GitHub thread is owed the result | wakes |
 | Succeeded and tagged `notify` by whoever queued it | wakes |
-| Succeeded otherwise, or cancelled | quiet |
+| Succeeded otherwise | wakes unless `wake_on_success = false` |
+| Cancelled | quiet |
+
+A success wakes by default because Aether's terminal UI shows only what the
+orchestrator says, and Aether 1.0 has no way to add an entry to an agent's
+chat without starting its turn.
 
 A waking failure also carries `lesson_hint` (§19). An initiative's member
 makes no `item_finished`: its initiative's `initiative_finished` wakes once
@@ -996,8 +1001,7 @@ turn that answers the operator has read it. When it is keyed, the quiet
 outcomes become one `items_finished` event at the end of the batch: item,
 title, state, pull request and cost of the newest outcome of each item, at
 most 20, with `more` counting the rest, and without an outcome the item no
-longer shows (it was retried since). `[orchestrator] wake_on_success = true`
-makes every outcome waking again.
+longer shows (it was retried since).
 
 An `agent_message` is one feed entry the daemon writes with the news, in
 the same transaction (§5.5), so the orchestrator does not echo it: an
@@ -2323,7 +2327,7 @@ effort = "high"
 name = "Archon"
 # instructions_file = "~/.config/archon/orchestrator.md"  # appended to the built-in prompt
 trigger_coalesce_ms = 2000
-wake_on_success = false        # true: every finished item wakes the orchestrator (§5.4)
+wake_on_success = true         # false: a routine success waits for its next turn (§5.4)
 
 [models]
 allow = []                     # e.g. ["claude-code/claude-opus-5-5"]; [] = any

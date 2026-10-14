@@ -405,8 +405,8 @@ Archon's feed. They overlap, but they are not the same list.
   Aether's native questions and approvals, delegations, stage messages,
   failures, and one row per Archon news trigger, such as
   `Trigger from archon · item finished: qi_… failed — <title>`.
-- **Shown later than in the line chat:** an item that simply succeeded. The
-  orchestrator is not woken for it (see
+- **Shown later than in the line chat, with `wake_on_success = false`:** an
+  item that simply succeeded. The orchestrator is then not woken for it (see
   [When the orchestrator is woken](#when-the-orchestrator-is-woken)), so the
   terminal UI shows it with the orchestrator's next turn, as a row
   `3 routine items finished`, while `archon chat`, `archon log` and
@@ -426,9 +426,12 @@ Archon's feed. They overlap, but they are not the same list.
 ### When the orchestrator is woken
 
 Every turn of the orchestrator reads its whole context again, so a wake
-costs money whether or not there is anything to decide. `archond` therefore
-posts every outcome to the feed itself and wakes the orchestrator only for:
+costs money whether or not there is anything to decide. `archond` posts
+every outcome to the feed itself and wakes the orchestrator for:
 
+- an item that succeeded, so the terminal UI shows it at once: Aether's
+  chat shows only what the orchestrator says, and Aether has no way to add
+  an entry to it without a turn;
 - an item that failed or is blocked, to diagnose it, retry it or tell you;
 - an item tagged `notify` (`archon queue add --tag notify`, or the
   orchestrator's own choice when it wants to act on the result);
@@ -436,15 +439,18 @@ posts every outcome to the feed itself and wakes the orchestrator only for:
 - a stage agent's message, a gate that opened, your answer to its question,
   feedback on a report, a budget that was reached, a cancelled helper.
 
-An item that succeeded or was cancelled without any of these waits. The
-orchestrator reads all such items as one short list at its next turn, and
-a message from you delivers that list first, so it never answers you
-without it. To have it woken for every finished item, as before, set
+A cancelled item waits. So does a routine success when you turn success
+wakes off, which saves a turn per item when you follow Archon in
+`archon chat` or `archon status` rather than in the terminal UI:
 
 ```toml
 [orchestrator]
-wake_on_success = true
+wake_on_success = false
 ```
+
+The orchestrator reads all waiting items as one short list at its next
+turn, and a message from you delivers that list first, so it never answers
+you without it.
 
 ### Answering in the orchestrator's chat
 

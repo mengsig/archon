@@ -65,10 +65,12 @@ more checkout; on another filesystem it is a full copy. A repository whose
 own `[models]` refuses the orchestrator's model gets no mirror.
 
 `archond` posts every finished item to your feed itself and wakes the
-orchestrator only for a failure, a blocker, an item tagged `notify` or one
-a GitHub thread asked for; every wake is a whole orchestrator turn that
-you pay for. The rest reach it with its next turn. Set `wake_on_success =
-true` under `[orchestrator]` to have it woken for every finished item
+orchestrator for a success, a failure, a blocker, an item tagged `notify`
+or one a GitHub thread asked for; every wake is a whole orchestrator turn
+that you pay for. The success wake is what shows a finished item in the
+terminal UI at once. If you follow Archon in `archon chat` instead, set
+`wake_on_success = false` under `[orchestrator]`: a routine success then
+reaches the orchestrator with its next turn
 ([guide](guide.md#when-the-orchestrator-is-woken)).
 
 The helper agents the orchestrator delegates to

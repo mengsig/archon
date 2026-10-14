@@ -142,7 +142,8 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
 - Every steer is kept with the item: who made it, when and what it
   changed. Learning counts a steer as a correction.
 - The implementer is kept through its fix loop: it waits while the review
-  runs and then gets the findings, with its context intact. Reviewers stay
+  runs and then gets the findings, with its context intact, and the fix
+  attempt's own budget on top of what it already spent. Reviewers stay
   fresh. A stage's prompt carries `## Handoff from earlier stages`.
 
 ### Stacked changes and initiatives

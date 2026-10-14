@@ -1542,7 +1542,9 @@ stage are created as before, a fresh agent per attempt.
   other way has its agent stopped.
 - **Resumed.** The next attempt of the slot, entered with feedback, takes
   the agent over (`resume::takeover`). `update_agent` gives it the stage's
-  deadline, and `send_message`, keyed by the stage run, gives it
+  deadline and, when its creation set a cost cap, a cap of what its earlier
+  attempts spent plus the new attempt's grant (`resume::regranted_cap`).
+  `send_message`, keyed by the stage run, gives it
   `sections::resume_message`: the findings, and how to hand in. The stage
   run is `running` with the same agent and no task. Notes steered in while
   the agent was parked are added to the message.

@@ -6,11 +6,10 @@
 
 use std::collections::BTreeSet;
 
-use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
-use archon_core::ports::AgentUpdate;
+use archon_core::ports::{AgentUpdate, SpawnRequest};
 use archon_core::run::{StageOutcome, StageRun, StageState};
 use archon_pipeline::SpawnPlan;
 use archon_queue::Store;
@@ -113,13 +112,14 @@ pub(super) fn told(store: &mut Store, stage: &StageRunId, text: &str) -> Result<
     spawn::save_spawn(store, stage, &stored)
 }
 
-/// Give the kept agent its stage deadline and the findings, keyed by the
-/// stage run. `false` when it cannot go on: a fresh agent takes the attempt.
+/// Give the kept agent its stage deadline, its new grant and the findings,
+/// keyed by the stage run. `false` when it cannot go on: a fresh agent takes
+/// the attempt. `request` is the attempt's own, never sent as a spawn.
 pub(super) async fn hand_over(
     ctx: &DaemonContext,
     stage: &StageRun,
     kept: &KeptAgent,
-    deadline: Option<Timestamp>,
+    request: &SpawnRequest,
 ) -> Result<bool, ArchonError> {
     assert_eq!(stage.state, StageState::Spawning, "a reserved attempt");
     assert!(!kept.message.trim().is_empty(), "resumed with findings");
@@ -128,8 +128,13 @@ pub(super) async fn hand_over(
         tracing::info!(stage = %stage.id, %agent, "kept agent is gone; spawning a fresh one");
         return Ok(false);
     }
+    let cost_budget_usd = {
+        let store = ctx.store.lock().await;
+        regranted_cap(&store, stage, agent, request.cost_budget_usd)?
+    };
     let update = AgentUpdate {
-        deadline,
+        deadline: request.deadline,
+        cost_budget_usd,
         ..AgentUpdate::default()
     };
     let key = stage.id.as_str();
@@ -145,6 +150,37 @@ pub(super) async fn hand_over(
     tracing::info!(stage = %stage.id, %agent, %refusal, "kept agent cannot be resumed; spawning a fresh one");
     replace(ctx, agent).await?;
     Ok(false)
+}
+
+/// Aether's new cap for `agent`, resumed on `stage` with `grant`. Aether's cap
+/// counts the agent's subtree over its whole life, so it is what the earlier
+/// attempts on the agent spent plus the grant. `None` when it has no cap.
+fn regranted_cap(
+    store: &Store,
+    stage: &StageRun,
+    agent: &AetherAgentId,
+    grant: Option<f64>,
+) -> Result<Option<f64>, ArchonError> {
+    let Some(grant) = grant else {
+        return Ok(None);
+    };
+    assert!(grant.is_finite(), "a grant is an amount, not {grant}");
+    let runs = store.stage_runs(&stage.run)?;
+    let earlier: Vec<&StageRun> = runs
+        .iter()
+        .filter(|s| s.id != stage.id && s.aether_agent.as_ref() == Some(agent))
+        .collect();
+    let Some(created) = earlier.iter().min_by_key(|s| s.attempt) else {
+        return Ok(None);
+    };
+    // The cap its create sent, as `stage_create_agent` decides it.
+    let spawned = load_spawn(store, &created.id)?.request;
+    if spawned.cost_budget_usd.is_none() || spawned.aether_cost_budget == Some(false) {
+        return Ok(None);
+    }
+    let spent: f64 = earlier.iter().map(|s| s.cost_usd).sum();
+    assert!(spent.is_finite() && spent >= 0.0, "spend is an amount");
+    Ok(Some((spent + grant).max(steer::MIN_GRANT_USD)))
 }
 
 /// Stop the kept agent a fresh one takes over from, so the fresh one has

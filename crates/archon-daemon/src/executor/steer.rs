@@ -32,7 +32,7 @@ use owed::Delivery;
 use plan::{Change, Tune};
 
 /// The least Aether is told an agent may still spend: zero would lift its cap.
-const MIN_GRANT_USD: f64 = 0.01;
+pub(super) const MIN_GRANT_USD: f64 = 0.01;
 /// How much of a note the item's feed repeats.
 const NOTE_PREVIEW_CHARS: usize = 240;
 

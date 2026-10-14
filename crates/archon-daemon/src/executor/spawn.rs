@@ -716,7 +716,7 @@ async fn resume_or_spawn(
             ParentBinding::Pending,
             "a resume sends no create"
         );
-        if resume::hand_over(ctx, stage, &kept, spawn.request.deadline).await? {
+        if resume::hand_over(ctx, stage, &kept, &spawn.request).await? {
             return Ok(Issued::Resumed(kept.agent));
         }
         save_spawn(&mut *ctx.store.lock().await, &stage.id, &spawn)?;

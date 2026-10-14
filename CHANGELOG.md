@@ -20,13 +20,17 @@ The store migration is one-way: once 1.1.0's `archond` has started, a 1.0
 1. `archon daemon stop`.
 2. Copy `archon.db` from the data directory (`~/.local/share/archon` by
    default) to a name of your own.
-3. `archon update`, then run what it prints: `archon aether mcp refresh
-   archon` and `archon orchestrator restart`. It also says when your Aether
-   is too old (`aether update`).
-4. Shared mode only: add `send_caller_meta = true` to the `archon` MCP
-   server in your Aether config and restart your `aetherd` before the
-   orchestrator restart. `archon doctor` checks it. With Archon's own Aether
-   instance, the first `archon` command adds the line and restarts it once.
+3. `archon update`. It also says when your Aether is too old (`aether
+   update`).
+4. `archon setup`. With Archon's own Aether instance, the first `archon`
+   command repairs the `archon` MCP server and restarts that `aetherd` once.
+   Shared mode: `archon setup` registers the server when it is missing and
+   says what an existing one lacks; add `send_caller_meta = true` to it in
+   your Aether config and restart your `aetherd`.
+5. `archon aether mcp refresh archon` (shared mode: `aether mcp refresh
+   archon`), so Aether lists 1.1.0's tools, then `archon orchestrator
+   restart`. `archon doctor` reports a registration that still lists other
+   tools than this `archon` serves, and the refresh that fixes it.
 
 To go back to 1.0.1, see "Back up before a release that migrates the store"
 in [docs/install.md](docs/install.md): stop `archond`, install 1.0.1 and put
@@ -50,9 +54,14 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
   doctor` checks it.
 - A cancelled item no longer wakes the orchestrator: it reads the
   cancellation at its next turn. Failures, blockers, successes, items
-  tagged `notify` and GitHub requests still wake it, as in 1.0.1. The new
-  `[orchestrator] wake_on_success = false` also leaves routine successes for
-  its next turn.
+  tagged `notify` and GitHub requests still wake it, as in 1.0.1, but a
+  routine success while other items are queued or running waits, up to 5
+  minutes, for the last of them, so one turn reports them together. The feed
+  shows each outcome at once. The new `[orchestrator] wake_on_success =
+  false` leaves routine successes for its next turn.
+- In dedicated mode `archon daemon stop` stops Archon's own `aetherd` after
+  `archond`; `--keep-aether` stops only `archond`. `--aether` and `--all`
+  still work, and are still refused in shared mode.
 
 ### Shipping and review
 
@@ -73,6 +82,14 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
   `core.sshCommand` or credential helper from the repository or a
   `.gitattributes`. Push and fetch use your global git config and
   `GIT_SSH_COMMAND`, and every git command has a time limit.
+- New worktrees and read-only snapshots are checked out through that same
+  git directory, so no hook and no filter that a repository or an agent
+  configures runs as `archond`. Your own global filters, such as Git LFS,
+  still apply.
+- Untracked caches (`__pycache__`, `*.pyc`, `.pytest_cache`, `.mypy_cache`,
+  `.ruff_cache`, `node_modules`, a top-level `target`, and
+  `worktrees.cache_dirs`) no longer keep a finished worktree from being
+  removed. Untracked source still does.
 - The push sends the commit the checks proved
   (`<commit>:refs/heads/<branch>`), not whatever the branch holds by then,
   and a stacked run missing its parent's commit is refused before anything
@@ -91,9 +108,9 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
   never that a delivered pull request merged.
 - Your own pipeline opts in with `[pipeline.ship] stage = "<id>"`;
   `docs/examples/pipelines/bugfix-tdd` shows how.
-- **New built-in `direct`**: one agent implements a small, low-risk change,
-  runs the checks it affects and commits. It is the cheapest pipeline that
-  ships. There are 18 built-ins.
+- **New built-in `direct`**: one agent implements a change one author can
+  make and check, whatever its size, runs the checks it affects and
+  commits. It is the cheapest pipeline that ships. There are 18 built-ins.
 - **New built-in `adaptive`**: one lead sizes the work, delegates the parts
   worth splitting, integrates them, and has the integrated diff reviewed by
   fresh reviewers at the item's review level.
@@ -108,7 +125,8 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
   reviewers. When the reviewed stage also writes the ship record, the
   commit they passed must hold the tree that ships. A failed verdict
   stands until a later pass reads past it, and a fix can be reviewed as a
-  delta.
+  delta. A review of an amended commit supersedes the verdict on the commit
+  it replaced, instead of failing the run.
 - **A model plan is optional.** A stage left out gets the learned choice,
   else the orchestrator's model where your policy allows it, else the first
   allowed model. The item shows the filled plan.
@@ -141,9 +159,19 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
   item, under the pipeline's gates, the caps and the autonomy ceiling.
 - It is woken for a failure, a blocker, a success, an item tagged
   `notify`, a GitHub request and a finished initiative. Other news comes
-  with its next turn. Urgent news (your answer, a blocker, an opened gate,
-  report feedback, an escalation, a budget hold) is delivered at once
-  instead of waiting out the coalescing window.
+  with its next turn, and a routine success waits for the work still
+  running. Urgent news (your answer, a blocker, an opened gate, report
+  feedback, an escalation, a budget hold) is delivered at once instead of
+  waiting out the coalescing window. A message of yours reaches it after
+  the news held for it: `archond` delivers that news first, waiting up to
+  10 seconds.
+- It sends any change one author can make and check to `direct`, whatever
+  its size, and sets the review level by risk: none when the change's own
+  tests prove it. It queues a clear change without reading the code first,
+  and relays a success in a line, without checking again what `archond`
+  checked.
+- `list_pipelines` shows a line per pipeline, and a pipeline named in the
+  call in full: a few hundred bytes instead of several kilobytes.
 - Its prompt is 12 KiB, down from 19, and its tool descriptions are 18.0 kB,
   down from 30.1: about 5,000 fewer tokens in every context. Directives are
   sent in full once, then only as changes.
@@ -255,14 +283,17 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
   stage event is settled when its spawn is recorded.
 - A stage's cost includes the agents it delegated to, shown per agent in
   `archon queue show`. A turn is charged what the provider billed instead
-  of the higher of that and the list price.
+  of the higher of that and the list price. A stage resumed on a kept agent
+  is charged only what that agent and its children spent during that
+  attempt, not their earlier attempts again.
 
 ### Setup
 
 - `archon setup` writes a `config.toml` with every key commented out when
   there is none.
 - `archon doctor` warns about a pre-1.0 `archon.toml`, which is still not
-  read.
+  read, and reports an `archon` MCP server whose tools differ from the ones
+  this `archon` serves, with the refresh that fixes it.
 - `archon daemon stop --aether` waits until Archon's `aetherd` is gone.
 - A detached start appends to the daemon log beside the socket
   (`archond.log`) instead of truncating it, after a line marking the start.

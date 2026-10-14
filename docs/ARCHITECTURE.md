@@ -988,12 +988,18 @@ operator from the daemon itself, as an `Outcome` or `Blocker` feed entry
 | Failed, or the operator must act (a `Blocker`, a `BLOCKED:` result) | wakes |
 | Succeeded with an `origin`: a GitHub thread is owed the result | wakes |
 | Succeeded and tagged `notify` by whoever queued it | wakes |
-| Succeeded otherwise | wakes unless `wake_on_success = false` |
+| Succeeded otherwise, with no other item queued, dispatching or running | wakes unless `wake_on_success = false` |
+| Succeeded otherwise, while other items are queued, dispatching or running | deferred, then wakes |
 | Cancelled | quiet |
 
 A success wakes by default because Aether's terminal UI shows only what the
 orchestrator says, and Aether 1.0 has no way to add an entry to an agent's
-chat without starting its turn.
+chat without starting its turn. A deferred success is held in the outbox
+with a `defer_until` at most five minutes ahead (`MAX_SUCCESS_DEFER`). It
+wakes nothing until that time, and it rides with any news that wakes before
+then, so the last item of a batch to finish reports all of them in one
+turn. The check for other unfinished items and the hold are made under one
+store lock, so the last success to finish always wakes.
 
 A waking failure also carries `lesson_hint` (§19). An initiative's member
 makes no `item_finished`: its initiative's `initiative_finished` wakes once
@@ -1005,8 +1011,10 @@ Every other event wakes: `agent_message`, `item_blocked`, `gate_opened`,
 (§13.3) is quiet. Quiet news is saved in the outbox like any other and makes
 no trigger by itself. It leaves with the next trigger there is, and an
 operator message sends it at once, without the coalescing window
-(`triggers::flush_quiet`, called before the message is delivered), so the
-turn that answers the operator has read it. When it is keyed, the quiet
+(`triggers::flush_quiet`, called before the message is delivered), deferred
+news too. `flush_quiet` returns once Aether has the batch in flight and the
+flushed one, or after 10 seconds while Aether is unreachable, so the turn
+that answers the operator has read it. When it is keyed, the quiet
 outcomes become one `items_finished` event at the end of the batch: item,
 title, state, pull request and cost of the newest outcome of each item, at
 most 20, with `more` counting the rest, and without an outcome the item no
@@ -2672,7 +2680,7 @@ can reach the socket (§5.5).
 
 | Tool | Arguments | Request |
 | --- | --- | --- |
-| `list_pipelines` | `{repo?}` | `ListPipelines` |
+| `list_pipelines` | `{repo?, pipeline?}`: a line per pipeline, or the one named in full | `ListPipelines` |
 | `list_repos` | `{}` | `RepoList` |
 | `model_policy` | `{repo?}` | `ModelPolicy` |
 | `register_repo` | `{path, name?, ship?, base_branch?, default_pipeline?}` | `RepoAdd` (never raises a ceiling) |

@@ -445,9 +445,11 @@ Every turn of the orchestrator reads its whole context again, so a wake
 costs money whether or not there is anything to decide. `archond` posts
 every outcome to the feed itself and wakes the orchestrator for:
 
-- an item that succeeded, so the terminal UI shows it at once: Aether's
-  chat shows only what the orchestrator says, and Aether has no way to add
-  an entry to it without a turn;
+- an item that succeeded, so the terminal UI shows it: Aether's chat shows
+  only what the orchestrator says, and Aether has no way to add an entry to
+  it without a turn. While other items are still queued or running, a
+  routine success waits for them, up to five minutes, so one turn reports
+  the batch;
 - an item that failed or is blocked, to diagnose it, retry it or tell you;
 - an item tagged `notify` (`archon queue add --tag notify`, or the
   orchestrator's own choice when it wants to act on the result);

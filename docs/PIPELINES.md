@@ -64,8 +64,8 @@ To make it available to a single repository only, copy it to
 `<repo>/.archon/pipelines/bugfix-tdd/` instead. That copy wins over a user
 pipeline of the same name.
 
-The orchestrator now sees `bugfix-tdd` in `list_pipelines`, with its stages,
-gates and nudges, and can enqueue items with it. A test in
+The orchestrator now sees `bugfix-tdd` in `list_pipelines`, and its stages,
+gates and nudges when it names it there, and can enqueue items with it. A test in
 `crates/archon-pipeline/tests/catalog.rs` copies this exact directory into a
 temporary user directory and runs it through the engine, so the example
 cannot rot.

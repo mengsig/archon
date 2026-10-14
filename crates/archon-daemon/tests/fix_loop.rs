@@ -575,6 +575,50 @@ fn retunes(h: &Harness) -> Vec<(AetherAgentId, archon_core::model::ModelChoice)>
         .collect()
 }
 
+/// Retuned while it ran, the kept agent runs on its new choice: the next
+/// fix resumes it when the plan asks for that choice, and not otherwise.
+#[tokio::test]
+async fn a_kept_agent_is_resumed_only_on_the_choice_it_runs_now() {
+    for (back_to_high, resumed) in [(false, true), (true, false)] {
+        let h = Harness::new().await;
+        let (item, first) = implemented(&h, "retuned mid-fix").await;
+        let implementer = agent(&first);
+        let fix = sent_back(&h).await;
+        let lower = Steer {
+            effort: Some(Effort::Low),
+            ..Steer::default()
+        };
+        steer(&h, &item, lower).await;
+        let low = choice(MODEL, Effort::Low);
+        assert_eq!(retunes(&h), [(implementer.clone(), low.clone())]);
+        answers(&h, &fix, "localised the greeting; tests pass").await;
+        running(&h, "review").await;
+        if back_to_high {
+            let higher = Steer {
+                stage: Some("implement".into()),
+                effort: Some(Effort::High),
+                ..Steer::default()
+            };
+            steer(&h, &item, higher).await;
+            assert_eq!(retunes(&h).len(), 1, "no agent of that stage works now");
+        }
+
+        let again = sent_back(&h).await;
+        let planned = if back_to_high {
+            choice(MODEL, Effort::High)
+        } else {
+            low
+        };
+        assert_eq!(again.choice, planned);
+        assert_eq!(
+            agent(&again) == implementer,
+            resumed,
+            "back to high: {back_to_high}"
+        );
+        assert_eq!(again.aether_task.is_none(), resumed, "resumed, not spawned");
+    }
+}
+
 /// A note steered in while the implementer waits parked is not sent to it
 /// then: it comes with the findings it is resumed with.
 #[tokio::test]

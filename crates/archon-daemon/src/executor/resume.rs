@@ -84,8 +84,9 @@ pub(super) fn takeover(
     if !is_kept(store, &last.id)? {
         return Ok(Takeover::Fresh);
     }
-    // A steer that changed the stage's model wants the new one from the start.
-    let same_model = last.choice == plan.choice;
+    // A steer that planned another model wants it from the start; a live retune
+    // already moved the agent to its current choice.
+    let same_model = *last.current_choice() == plan.choice;
     let (Some(message), Some(parked_at)) = (&plan.resume, last.finished_at) else {
         return Ok(Takeover::Replace(agent));
     };

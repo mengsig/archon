@@ -1576,9 +1576,10 @@ stage are created as before, a fresh agent per attempt.
 - **Replaced.** A fresh agent takes the attempt, with the findings under
   `## Feedback to address` and the digest of the last attempt (§6.5), when
   the kept one cannot go on: Aether no longer holds it live, Aether refuses
-  the deadline or the message, a steer gave the stage another model or
-  effort, the stage is re-entered without findings (a steer's `goto`), or
-  the resumed attempt was lost to an infrastructure failure. The kept agent
+  the deadline or the message, the attempt plans another model or effort
+  than the kept agent runs now (a live retune counts), the stage is
+  re-entered without findings (a steer's `goto`), or the resumed attempt
+  was lost to an infrastructure failure. The kept agent
   is stopped before the fresh one is created, so the fresh one has the
   worktree to itself: the agent to stop is stored with the reserved spawn
   (`StoredSpawn.replaces`), and stopping one that already ended is done.

@@ -75,7 +75,7 @@ async fn claim_item(
     let collecting =
         ctx.collecting.contains(id) || owner.as_ref().is_some_and(|id| ctx.collecting.contains(id));
     match item.state {
-        QueueState::Queued if collecting => Ok(None),
+        QueueState::Queued if collecting || held_by_stack(&store, id)?.is_some() => Ok(None),
         QueueState::Queued => {
             let item = store.transition_item(id, QueueState::Dispatching, archon_core::now())?;
             Ok(Some(item))
@@ -89,6 +89,34 @@ async fn claim_item(
         }
         _ => Ok(None),
     }
+}
+
+/// Why `id` may not start now: its restack fix is still to finish, or it is
+/// the fix of an item that is running, which would share its branch.
+pub(crate) fn held_by_stack(
+    store: &archon_queue::Store,
+    id: &QueueItemId,
+) -> Result<Option<String>, ArchonError> {
+    if store.has_pending_stack_fix(id)? {
+        return Ok(Some(format!(
+            "item {id} waits for its restack fix to finish"
+        )));
+    }
+    let Some(fix) = store.stack_fix(id)? else {
+        return Ok(None);
+    };
+    assert_ne!(&fix.owner, id, "a fix repairs another item");
+    let live = store.item(&fix.owner)?.state.is_active()
+        || store
+            .runs_for_item(&fix.owner)?
+            .iter()
+            .any(|r| !r.state.is_terminal());
+    Ok(live.then(|| {
+        format!(
+            "restack fix {id} waits for item {} to stop running",
+            fix.owner
+        )
+    }))
 }
 
 /// Everything that can fail before the run exists. Slow parts (git) run

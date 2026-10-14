@@ -280,7 +280,8 @@ async fn helper_violation(
 /// Aether names none) reads every mirror, as far as Archon can tell.
 async fn mirror_reach(ctx: &DaemonContext, roots: Vec<PathBuf>) -> Result<Reach, ArchonError> {
     let workspace = ctx.paths.orchestrator_workspace.clone();
-    tokio::task::spawn_blocking(move || mirror::reach(&workspace, &roots))
+    let git_dirs = mirror::git_dirs_root(&ctx.paths.data_dir);
+    tokio::task::spawn_blocking(move || mirror::reach(&workspace, &git_dirs, &roots))
         .await
         .map_err(|e| ArchonError::io("the mirror reach check", std::io::Error::other(e)))
 }

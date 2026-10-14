@@ -225,8 +225,13 @@ async fn what_became_of_a_delivered_pull_request_is_learned_from_github() {
     let dropped = enqueue(&h, "the change nobody wanted", &[]).await;
     let kept = ship(&h, &kept.id).await;
     let dropped = ship(&h, &dropped.id).await;
+    let calls = |h: &Harness| gh_calls(h).len();
+    let before = calls(&h);
     let seen = pull_requests::observe(&h.ctx).await.unwrap();
     assert_eq!(seen, pull_requests::Observed::default(), "open, unreviewed");
+    let listed = &gh_calls(&h)[before..];
+    assert_eq!(listed.len(), 1, "one listing answers for both: {listed:?}");
+    assert!(!listed[0].contains(&"--head".to_owned()), "{listed:?}");
     assert!(outcome(&h, &kept).await.is_win());
 
     let sent_back = json!("CHANGES_REQUESTED");
@@ -249,9 +254,8 @@ async fn what_became_of_a_delivered_pull_request_is_learned_from_github() {
     assert_eq!(closed.corrections, [Correction::PrClosed]);
     assert!(!closed.is_win(), "work nobody merged confirms no lesson");
 
-    let views = |h: &Harness| gh_calls(h).iter().filter(|c| c[1] == "view").count();
-    let before = views(&h);
+    let before = calls(&h);
     let settled = pull_requests::observe(&h.ctx).await.unwrap();
     assert_eq!(settled, pull_requests::Observed::default());
-    assert_eq!(views(&h), before, "neither is asked about again");
+    assert_eq!(calls(&h), before, "neither is asked about again");
 }

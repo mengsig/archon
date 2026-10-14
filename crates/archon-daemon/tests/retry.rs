@@ -190,7 +190,9 @@ async fn a_fresh_retry_needs_a_new_branch_but_no_worktree() {
         h.ctx.paths.worktrees.clone(),
         h.ctx.config.worktrees.branch_prefix.clone(),
     );
-    manager.remove(&h.repo, &first.workspace).expect("gc");
+    manager
+        .remove(&h.ctx.paths.data_dir, &h.repo, &first.workspace)
+        .expect("gc");
     h.cli(retry(&item, true, None)).await.expect("fresh retry");
     assert!(!set_aside_dir(&h).exists(), "nothing to set aside");
     let notes = h.notices(NotificationKind::Progress).await;

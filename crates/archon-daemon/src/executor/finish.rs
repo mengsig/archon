@@ -180,8 +180,8 @@ async fn cleanup_for(
 /// A failed removal is reported, not fatal: the run already succeeded (or,
 /// for a snapshot, ended), or its start was abandoned (`when` says which).
 /// The worktree's build caches go first, so a stray untracked file that
-/// keeps the worktree (`git worktree remove` is never forced) keeps only
-/// its source. A snapshot is removed with `--force` instead.
+/// keeps the worktree (a change is never discarded) keeps only its source.
+/// A snapshot is removed with `--force` instead.
 pub(super) async fn remove_worktree(
     ctx: &DaemonContext,
     cleanup: Cleanup,
@@ -193,6 +193,7 @@ pub(super) async fn remove_worktree(
         ctx.config.worktrees.branch_prefix.clone(),
     );
     let cache_dirs = ctx.config.worktrees.cache_dirs.clone();
+    let data_dir = ctx.paths.data_dir.clone();
     let target = cleanup.worktree.clone();
     let (reclaimed, removed) = tokio::task::spawn_blocking(move || {
         let _mark = mark;
@@ -204,7 +205,7 @@ pub(super) async fn remove_worktree(
         let reclaimed = crate::gc::cache::reclaim_worktree(&cleanup.worktree, &cache_dirs);
         (
             reclaimed,
-            manager.remove(&cleanup.repo_path, &cleanup.worktree),
+            manager.remove(&data_dir, &cleanup.repo_path, &cleanup.worktree),
         )
     })
     .await

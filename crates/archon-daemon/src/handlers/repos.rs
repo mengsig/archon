@@ -10,6 +10,7 @@ use archon_core::protocol::{Reply, RepoAdd, RepoPatch, RepoRef};
 use archon_core::repo::Repo;
 
 use crate::context::DaemonContext;
+use crate::executor::repo_identity;
 use crate::resolve::RepoEnv;
 use crate::worktree;
 
@@ -46,6 +47,7 @@ pub(super) async fn add(ctx: &DaemonContext, add: RepoAdd) -> Result<Reply, Arch
     };
     check_repo(&repo).await?;
     ctx.store.lock().await.insert_repo(&repo)?;
+    repo_identity::record(ctx, &repo).await?;
     // The orchestrator reads it in a mirror, made in the background.
     ctx.mirrors.request();
     tracing::info!(repo = %repo.name, path = %repo.path.display(), "repository registered");
@@ -77,6 +79,7 @@ pub(super) async fn remove(ctx: &DaemonContext, reference: &RepoRef) -> Result<R
     let mut store = ctx.store.lock().await;
     let repo = store.repo(reference)?;
     store.remove_repo(&repo.id)?;
+    repo_identity::forget(&mut store, &repo.id)?;
     ctx.mirrors.request();
     tracing::info!(repo = %repo.name, "repository removed");
     Ok(Reply::Ok)
@@ -103,6 +106,8 @@ pub(super) async fn update(
     assert_eq!(repo.id, before.id, "a patch never changes identity");
     assert_eq!(repo.path, before.path, "a patch never moves a repository");
     ctx.store.lock().await.update_repo(&repo)?;
+    // The operator's deliberate update is when a changed git identity is taken.
+    repo_identity::record(ctx, &repo).await?;
     // Its base branch may have changed.
     ctx.mirrors.request();
     Ok(Reply::Repo(repo))

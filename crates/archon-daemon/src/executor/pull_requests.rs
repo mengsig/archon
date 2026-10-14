@@ -1,14 +1,12 @@
 //! What became of the pull requests of finished runs: merged, closed, or sent
 //! back by a reviewer. Learning counts it for or against the run (§19).
 
-use std::path::PathBuf;
-
 use archon_core::error::ArchonError;
 use archon_core::outcome::{Correction, Outcome};
-use archon_core::repo::ShipMode;
+use archon_core::repo::{Repo, ShipMode};
 
 use super::dependencies::{is_plain_branch, is_plain_url};
-use super::initiative_ship::{self, PullRequest};
+use super::gh::{self, Pass, PullRequest};
 use crate::context::DaemonContext;
 
 /// How long after its run finished a pull request is still asked about.
@@ -25,13 +23,14 @@ pub struct Observed {
 }
 
 struct ShippedPr {
-    repo: PathBuf,
+    repo: Repo,
     branch: String,
     url: String,
 }
 
-/// Ask GitHub once about each watched pull request and record what changed.
-/// One that cannot be read is logged and asked about again in the next pass.
+/// Ask GitHub about the watched pull requests, with one listing of each
+/// repository's open ones, and record what changed. One that cannot be read
+/// is logged and asked about again in the next pass.
 pub async fn observe(ctx: &DaemonContext) -> Result<Observed, ArchonError> {
     let mut seen = Observed::default();
     if !ctx.config.learning.enabled {
@@ -39,13 +38,19 @@ pub async fn observe(ctx: &DaemonContext) -> Result<Observed, ArchonError> {
     }
     let since = archon_core::now() - chrono::Duration::days(WATCHED_DAYS);
     let waiting = ctx.store.lock().await.outcomes_awaiting_merge(&since)?;
+    let mut pass = Pass::default();
+    let binary = &ctx.config.github.binary;
     for outcome in &waiting {
         let Some(shipped) = shipped_pr(ctx, outcome).await? else {
             continue;
         };
-        match initiative_ship::view(ctx, &shipped.repo, &shipped.branch).await {
+        let (repo, branch) = (&shipped.repo, &shipped.branch);
+        match pass.pull_request(binary, &repo.path, branch).await {
             // The branch may carry a newer pull request than the run's.
-            Ok(pr) if pr.url == shipped.url => record(ctx, outcome, &pr, &mut seen).await?,
+            Ok(pr) if pr.url == shipped.url => {
+                gh::settle(&mut *ctx.store.lock().await, &repo.id, &pr)?;
+                record(ctx, outcome, &pr, &mut seen).await?;
+            }
             Ok(_) => {}
             Err(error) if error.is_store() => return Err(error),
             Err(error) => {
@@ -93,7 +98,7 @@ async fn shipped_pr(
     let stages = store.stage_runs(&run.id)?;
     let url = archon_core::run::pr_url(stages.iter()).filter(|url| is_plain_url(url));
     Ok(url.map(|url| ShippedPr {
-        repo: repo.path,
+        repo,
         branch: run.branch,
         url: url.to_owned(),
     }))
@@ -124,7 +129,7 @@ async fn record(
             store.record_correction(&outcome.run, Correction::ChangesRequested)?;
             seen.changes_requested += 1;
         }
-        state => assert_eq!(state, "OPEN", "`view` admits three states"),
+        state => assert_eq!(state, "OPEN", "`gh` admits three states"),
     }
     Ok(())
 }

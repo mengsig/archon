@@ -179,6 +179,10 @@ async fn mark_dispatching(
             tracing::info!(item = %id, "admitted item waits for worktree gc to finish");
             continue;
         }
+        if let Some(why) = executor::held_by_stack(&store, id)? {
+            tracing::info!(item = %id, %why, "admitted item waits for its stack");
+            continue;
+        }
         match store.transition_item(id, QueueState::Dispatching, now) {
             Ok(item) => {
                 assert_eq!(item.state, QueueState::Dispatching);

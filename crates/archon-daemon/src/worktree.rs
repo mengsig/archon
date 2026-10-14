@@ -2,6 +2,9 @@
 //! (`team`), and the snapshot a read-only run works in (`snapshot`). Shells
 //! out to `git`; every failure carries git's stderr.
 
+pub(crate) mod clean;
+pub(crate) mod daemon_git;
+pub(crate) mod shadow;
 pub mod snapshot;
 pub(crate) mod stack;
 pub mod team;
@@ -151,15 +154,33 @@ impl WorktreeManager {
         Ok(Some(aside))
     }
 
-    /// `git worktree remove` (never `--force`); the branch is kept.
-    pub fn remove(&self, repo_path: &Path, worktree: &Path) -> Result<(), ArchonError> {
+    /// Remove a worktree `git worktree remove` would remove without
+    /// `--force`, asking through the shadow under `data_dir` whether it is
+    /// clean, so no filter runs; the branch is kept.
+    pub fn remove(
+        &self,
+        data_dir: &Path,
+        repo_path: &Path,
+        worktree: &Path,
+    ) -> Result<(), ArchonError> {
         assert!(
             worktree.starts_with(&self.root),
             "refusing to remove {} outside the worktree root",
             worktree.display()
         );
         assert!(repo_path.is_absolute(), "repository paths are canonical");
-        git(repo_path, &["worktree", "remove", path_arg(worktree)?])?;
+        let shadow = shadow::Shadow::of(data_dir, repo_path)?;
+        if let Some(why) = clean::unremovable(&shadow, worktree)? {
+            return Err(ArchonError::Invalid(format!(
+                "{} is kept: {why}",
+                worktree.display()
+            )));
+        }
+        // A locked worktree is still refused: that takes `--force` twice.
+        let args = ["worktree", "remove", "--force", path_arg(worktree)?];
+        daemon_git::DaemonGit::sealed_in(repo_path)
+            .args(args)
+            .text()?;
         debug_assert!(!worktree.exists(), "git reported success but left the tree");
         Ok(())
     }
@@ -380,12 +401,12 @@ pub(crate) fn git(dir: &Path, args: &[&str]) -> Result<String, ArchonError> {
 
 fn git_output(dir: &Path, args: &[&str]) -> Result<std::process::Output, ArchonError> {
     assert!(!args.is_empty(), "a git command needs arguments");
-    // A role controls its worktree: no fsmonitor command it configured
-    // runs as the daemon.
+    // A role controls its worktree: no hook or fsmonitor command it
+    // configured runs as the daemon.
     Command::new("git")
         .arg("-C")
         .arg(dir)
-        .args(["-c", "core.fsmonitor=false"])
+        .args(daemon_git::no_programs())
         .args(args)
         .output()
         .map_err(|e| ArchonError::io(format!("running git in {}", dir.display()), e))

@@ -281,6 +281,12 @@ pub(super) async fn retry(
         let _table = ctx.runs.lock().await;
         let loaded = ctx.store.lock().await.item(id)?;
         check_retryable(&loaded)?;
+        if ctx.store.lock().await.has_pending_stack_fix(id)? {
+            return Err(ArchonError::InvalidTransition(format!(
+                "{id} has a restack fix still to finish, which works on its branch; retry it once \
+                 the fix is done, or cancel the fix first"
+            )));
+        }
         let mut item = loaded.clone();
         item.model_plan = plan;
         if replaces_plan || retry.model_reasons.is_some() {

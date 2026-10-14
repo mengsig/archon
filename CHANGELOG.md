@@ -16,15 +16,17 @@ stage can delegate again.
   the orchestrator reads the code and answers in the same turn. `ask` is
   still a pipeline, and nothing requires it any more.
 - It reads code in mirrors. For every registered repository `archond`
-  keeps `<data>/orchestrator/repos/<name>`: a local clone checked out at
-  the base branch, with no remote and none of the repository's branches or
-  hooks, and with a hook that refuses any push. It is made when the
-  repository is registered, refreshed when an item finishes and when you
-  write, and removed when the repository is unregistered. It shares the
-  repository's objects through hard links, so it costs about one more
-  checkout. A refresh that fails is said once in the feed and to the
-  orchestrator, and holds nothing up. A repository whose own `[models]`
-  refuses the orchestrator's model gets no mirror.
+  keeps `<data>/orchestrator/repos/<name>`: a copy checked out at the base
+  branch, with no remote and none of the repository's branches or hooks,
+  and with a hook that refuses any push. Its git directory is under
+  `<data>/mirror-git`, out of a helper's reach, and its config is rewritten
+  before every command, so nothing a helper writes runs as `archond`. It is
+  made when the repository is registered, refreshed when an item finishes
+  and when you write, and removed when the repository is unregistered. It
+  costs about one more copy of the repository. A refresh that fails is said
+  once in the feed and to the orchestrator, and holds nothing up. A
+  repository whose own `[models]` refuses the orchestrator's model gets no
+  mirror.
 - Work that would flood the orchestrator's context or splits into parts
   (research, a wide read of a subsystem, a comparison, a second look) goes
   to a helper agent through Aether's `delegate`. A helper works in one
@@ -144,6 +146,28 @@ the choices someone had a reason to make.
   interrupted delivery pushes nothing `origin` already has, and a pull
   request whose creation reply was lost is found on GitHub, not opened
   again. A succeeded item retried delivers into its open pull request.
+- **No program a repository or an agent configures runs as `archond`.**
+  Its delivery, restacking and worktree removal read file contents only
+  through a git directory of its own under `<data>/daemon-git`, over the
+  repository's objects, with no hook, filter, merge driver, fsmonitor,
+  `core.sshCommand` or credential helper from the repository's config, a
+  `.gitattributes` or a local `origin`. A push or fetch uses your global
+  git config (credential helpers, `insteadOf`) and `GIT_SSH_COMMAND`, and
+  every git command has a time limit. This needs git 2.38 or later.
+- The push sends the commit the checks proved, `<commit>:refs/heads/<branch>`,
+  not whatever the branch holds by then. A stacked run missing a parent
+  commit is refused before anything is pushed or a pull request opened.
+- The identity a ship admits commits under is recorded when you run
+  `archon repo add`, and again at `archon repo set`, which says in the feed
+  when it changed. A `user.email` an agent sets in the repository later no
+  longer counts. A repository registered earlier has it recorded at its
+  next delivery.
+- Auto-merge is owed until GitHub takes it: a failure is retried for up to
+  about two hours, and a refusal is one blocker saying the pull request is
+  delivered but will not merge by itself. The feed says "auto-merge is on,
+  not merged yet", never that a delivered pull request merged.
+- A delivery's retries survive a restart: it neither retries at once nor
+  gets five more tries.
 - A pipeline of your own opts in with `[pipeline.ship] stage = "<id>"`
   and drops its `ship` stage; `docs/examples/pipelines/bugfix-tdd` shows
   it. The record stage cannot come before a stage that commits. A pipeline
@@ -197,7 +221,9 @@ the choices someone had a reason to make.
   takes out a stage that has not started, `--insert` adds one from any
   pipeline, and `--switch` replaces the stages that have not started with
   another pipeline's. A stage that already started keeps its shape, and
-  the refusal says so. A stage that hands in its pipeline's ship record
+  the refusal says so. While a run is delivering its change, only a note
+  is taken; and no steer may leave a run without a stage that writes a
+  ship record or ships. A stage that hands in its pipeline's ship record
   keeps that role in the run it is carried into when it runs after the
   stage that shipped so far, and an insert that would commit after the ship
   record is refused. The model policy, the budgets and the review the
@@ -244,6 +270,18 @@ the choices someone had a reason to make.
   commits a parent gains later are merged forward, never rebased or
   force-pushed. A conflict queues a fix item on the child's branch, visible
   in the queue, instead of failing the child.
+- Restacking merges in `archond`'s own git directory, writes nothing on a
+  conflict, and moves a worktree only when it is archond's and clean. The
+  fix item is told the parent commit to `git merge`, and it never runs
+  while its item does: the fix waits, and the item is not retried until
+  the fix is done. Only a dependency that shipped is stacked on.
+- GitHub is asked once per repository per maintenance pass for its open
+  pull requests, and a merged or closed one is remembered and never asked
+  about again, instead of a `gh pr view` per item and parent every minute.
+  Maintenance runs when a run finishes or an initiative changes, and every
+  five minutes otherwise.
+- A stack or initiative whose maintenance fails is one blocker, told once
+  (a GitHub outage after three passes), and no longer stops the others.
 - A change across repositories is one initiative: `enqueue_initiative`
   takes a title, a shared contract of up to 2 KiB, and a member per
   repository with its brief and, as in an enqueue, an optional title,

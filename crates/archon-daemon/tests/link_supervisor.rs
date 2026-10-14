@@ -1363,6 +1363,15 @@ fn commit(repo: &Path, text: &str) -> String {
     git(repo, &["rev-parse", "HEAD"])
 }
 
+/// The commit a mirror has checked out: its `.git` is a file naming the
+/// daemon's git directory of it, whose detached `HEAD` holds the commit.
+fn mirror_head(mirror: &Path) -> String {
+    let gitfile = std::fs::read_to_string(mirror.join(".git")).unwrap_or_default();
+    let gitdir = gitfile.trim().strip_prefix("gitdir: ").unwrap_or_default();
+    let head = std::fs::read_to_string(Path::new(gitdir).join("HEAD"));
+    head.unwrap_or_default().trim().to_owned()
+}
+
 /// An operator's turn reads the held routine news, in mirrors refreshed for
 /// the question, without waiting for the next waking trigger.
 #[tokio::test]
@@ -1385,12 +1394,8 @@ async fn an_operator_message_brings_the_quiet_news_and_a_current_mirror() {
     let delivery = tokio::spawn(triggers::deliver_loop(harness.ctx.clone()));
     let mirrors = tokio::spawn(mirror::run(harness.ctx.clone()));
     let at = |commit: String| {
-        let checked_out = mirror.join(".git/HEAD");
-        move || {
-            // A detached checkout: `HEAD` holds the commit itself.
-            let head = std::fs::read_to_string(&checked_out).unwrap_or_default();
-            std::future::ready(head.trim() == commit)
-        }
+        let mirror = mirror.clone();
+        move || std::future::ready(mirror_head(&mirror) == commit)
     };
     harness
         .eventually("the mirror is made at start", at(first))

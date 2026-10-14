@@ -179,6 +179,10 @@ async fn a_restart_mid_delivery_resumes_without_a_second_pull_request() {
     h.dispatch().await;
     assert_eq!(gh.count("pr list"), lookups, "the next try waits its turn");
 
+    let retry_key = format!("ship_retry:{}", run.id);
+    let retry: Value = serde_json::from_str(&h.kv(&retry_key).await.expect("stored")).unwrap();
+    assert_eq!(retry["failures"], 1, "{retry}");
+
     h.restart();
     executor::recover(&h.ctx).await.unwrap();
     assert_eq!(
@@ -186,6 +190,26 @@ async fn a_restart_mid_delivery_resumes_without_a_second_pull_request() {
         lookups,
         "a start is not held up by GitHub"
     );
+    h.dispatch().await;
+    assert_eq!(
+        gh.count("pr list"),
+        lookups,
+        "the wait outlives the restart"
+    );
+    assert!(matches!(
+        h.state(&item.id).await,
+        QueueState::Running { .. }
+    ));
+
+    let due = json!({"failures": 1, "next_at": "2000-01-01T00:00:00Z"});
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&retry_key, &due.to_string())
+        .unwrap();
+    h.restart();
+    executor::recover(&h.ctx).await.unwrap();
     h.dispatch().await;
     let summary = succeeded(&h, &item).await;
     assert!(summary.contains(&format!("SHIPPED: {PR_ONE}")), "{summary}");
@@ -662,6 +686,20 @@ async fn update_repo(h: &Harness, patch: RepoPatch) {
     h.cli(request).await.expect("repo update");
 }
 
+/// Let the repository's runs merge by themselves; the autonomy asking for it.
+async fn allow_auto_merge(h: &Harness) -> AutonomyPatch {
+    let auto = AutonomyPatch {
+        merge: Some(MergeMode::Auto),
+        ..AutonomyPatch::default()
+    };
+    let ceiling = RepoPatch {
+        autonomy_max: Some(auto),
+        ..RepoPatch::default()
+    };
+    update_repo(h, ceiling).await;
+    auto
+}
+
 /// `local` ship mode proves the same worktree and stops there: nothing is
 /// pushed and GitHub is never asked.
 #[tokio::test]
@@ -723,31 +761,46 @@ async fn an_open_pull_request_is_reused_and_moved_onto_the_base() {
     assert!(gh.calls().contains(&moved), "{:?}", gh.calls());
 }
 
-/// An item that asks for it has auto-merge enabled once its pull request is
-/// open; GitHub refusing that leaves the change delivered and says so.
+/// An item that asks for it is owed auto-merge once its pull request is
+/// delivered: a maintenance pass enables it, a failure GitHub may not repeat
+/// is tried again later, and a refusal is the operator's blocker.
 #[tokio::test]
-async fn auto_merge_is_enabled_on_request_and_its_refusal_fails_nothing() {
+async fn auto_merge_is_owed_until_github_takes_it_and_its_refusal_fails_nothing() {
     let (h, gh) = delivering().await;
-    let auto = AutonomyPatch {
-        merge: Some(MergeMode::Auto),
-        ..AutonomyPatch::default()
-    };
-    let ceiling = RepoPatch {
-        autonomy_max: Some(auto),
-        ..RepoPatch::default()
-    };
-    update_repo(&h, ceiling).await;
+    let auto = allow_auto_merge(&h).await;
     let first = enqueue(&h, "quick-pr", auto).await.unwrap();
     h.dispatch().await;
+    gh.fail_next("pr merge", "HTTP 502: Bad Gateway");
     settle_changed(&h, json!({})).await;
     succeeded(&h, &first).await;
+    let run = h.run(&first.id).await;
+    let owed_key = format!("ship_automerge:{}", run.id);
+    assert!(h.kv(&owed_key).await.is_some(), "delivered is not merged");
+    executor::coordination::reconcile(&h.ctx).await.unwrap();
     let merge = format!("pr merge {PR_ONE} --auto --squash");
-    assert!(gh.calls().contains(&merge), "{:?}", gh.calls());
+    let tries = |gh: &FakeGh| gh.calls().iter().filter(|c| **c == merge).count();
+    assert_eq!(tries(&gh), 1, "{:?}", gh.calls());
+    let owed: Value = serde_json::from_str(&h.kv(&owed_key).await.unwrap()).unwrap();
+    assert_eq!(owed["tries"], 1, "{owed}");
+    executor::coordination::reconcile(&h.ctx).await.unwrap();
+    assert_eq!(tries(&gh), 1, "the next try waits its turn");
+
+    let mut due = owed;
+    due["next_at"] = json!("2000-01-01T00:00:00Z");
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&owed_key, &due.to_string())
+        .unwrap();
+    executor::coordination::reconcile(&h.ctx).await.unwrap();
+    assert_eq!(tries(&gh), 2);
+    assert_eq!(h.kv(&owed_key).await, None, "GitHub took it");
+    let outcomes = h.notices(NotificationKind::Outcome).await;
     assert!(
-        h.notices(NotificationKind::Progress)
-            .await
+        outcomes
             .iter()
-            .all(|n| !n.contains("auto-merge"))
+            .any(|n| n.contains("Auto-merge is on") && n.contains("not merged yet"))
     );
 
     let second = enqueue(&h, "quick-pr", auto).await.unwrap();
@@ -755,10 +808,17 @@ async fn auto_merge_is_enabled_on_request_and_its_refusal_fails_nothing() {
     gh.fail_next("pr merge", "Pull request is in clean status");
     settle_changed(&h, json!({})).await;
     succeeded(&h, &second).await;
-    let notices = h.notices(NotificationKind::Progress).await;
+    executor::coordination::reconcile(&h.ctx).await.unwrap();
+    let blockers = h.notices(NotificationKind::Blocker).await;
     let told =
-        |n: &&String| n.contains("auto-merge could not be enabled") && n.contains("clean status");
-    assert_eq!(notices.iter().filter(told).count(), 1, "{notices:?}");
+        |n: &&String| n.contains("Auto-merge could not be enabled") && n.contains("clean status");
+    assert_eq!(blockers.iter().filter(told).count(), 1, "{blockers:?}");
+    executor::coordination::reconcile(&h.ctx).await.unwrap();
+    assert_eq!(
+        h.notices(NotificationKind::Blocker).await.len(),
+        blockers.len(),
+        "told once"
+    );
 }
 
 /// A commit `origin` holds on the run branch and the run does not is never

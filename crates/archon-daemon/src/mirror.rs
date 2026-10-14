@@ -1,10 +1,11 @@
 //! The orchestrator's mirrors of the registered repositories (ARCHITECTURE
-//! §13.3): `<orchestrator workspace>/repos/<name>` is a `git clone --local`
-//! with no remote, checked out detached at the base branch. The orchestrator
-//! and its helpers read code there, so a code question needs no queue item,
-//! and nothing done in a mirror reaches the operator's checkout or its
-//! remotes. One worker keeps the mirrors current; a refresh that fails is
-//! posted to the feed and told to the orchestrator, and blocks neither.
+//! §13.3): `<orchestrator workspace>/repos/<name>` is a copy with no remote,
+//! checked out detached at the base branch, whose git directory is under the
+//! data directory. The orchestrator and its helpers read code there, so a
+//! code question needs no queue item, and nothing done in a mirror reaches
+//! the operator's checkout, its objects or its remotes. One worker keeps the
+//! mirrors current; a refresh that fails is posted to the feed and told to
+//! the orchestrator, and blocks neither.
 
 mod git;
 mod reach;
@@ -34,6 +35,8 @@ pub const SCRATCH_DIR: &str = "scratch";
 /// Under the data directory, outside the orchestrator's workspace: the hooks
 /// every mirror runs, which is the one that refuses a push.
 const HOOKS_DIR: &str = "mirror-hooks";
+/// Under the data directory: each mirror's git directory, by name.
+const GIT_DIRS: &str = "mirror-git";
 /// `kv`: the [`MirrorState`] of one repository, by id.
 const STATE_KEY_PREFIX: &str = "mirror_";
 const MAX_DETAIL_CHARS: usize = 400;
@@ -55,6 +58,11 @@ impl MirrorQueue {
 /// Where the mirrors of an orchestrator workspace live.
 pub fn mirrors_root(workspace: &Path) -> PathBuf {
     workspace.join(MIRRORS_DIR)
+}
+
+/// Where the mirrors' git directories live, one per repository name.
+pub fn git_dirs_root(data_dir: &Path) -> PathBuf {
+    data_dir.join(GIT_DIRS)
 }
 
 /// Bring the mirrors up to date at start and whenever one is asked for,
@@ -97,6 +105,7 @@ pub async fn sync_all(ctx: &DaemonContext) -> Result<(), ArchonError> {
 struct Layout {
     workspace: PathBuf,
     root: PathBuf,
+    git_dirs: PathBuf,
     hooks: PathBuf,
 }
 
@@ -106,6 +115,7 @@ impl Layout {
         assert!(workspace.is_absolute(), "daemon paths are absolute");
         Self {
             root: mirrors_root(&workspace),
+            git_dirs: git_dirs_root(&ctx.paths.data_dir),
             hooks: ctx.paths.data_dir.join(HOOKS_DIR),
             workspace,
         }
@@ -114,11 +124,12 @@ impl Layout {
     /// Create the mirrors and scratch directories and the push guard, first
     /// removing a symlink in the mirrors' place, where git would follow it.
     fn prepare(&self) -> Result<(), ArchonError> {
-        if git::is_symlink(&self.root)? {
+        if git::kind(&self.root)?.is_some_and(|kind| kind.is_symlink()) {
             std::fs::remove_file(&self.root)
                 .map_err(|e| ArchonError::io(format!("removing {}", self.root.display()), e))?;
         }
-        for dir in [&self.root, &self.workspace.join(SCRATCH_DIR), &self.hooks] {
+        let scratch = self.workspace.join(SCRATCH_DIR);
+        for dir in [&self.root, &scratch, &self.git_dirs, &self.hooks] {
             std::fs::create_dir_all(dir)
                 .map_err(|e| ArchonError::io(format!("creating {}", dir.display()), e))?;
         }
@@ -135,9 +146,7 @@ impl Layout {
 #[derive(Debug)]
 struct Plan {
     repo: Repo,
-    mirror: PathBuf,
-    root: PathBuf,
-    hooks: PathBuf,
+    mirror: git::Mirror,
     global: ModelPolicy,
     orchestrator: ModelChoice,
 }
@@ -158,9 +167,11 @@ impl Plan {
         assert!(Repo::valid_name(&repo.name), "registered names are valid");
         Self {
             repo: repo.clone(),
-            mirror: layout.root.join(&repo.name),
-            root: layout.root.clone(),
-            hooks: layout.hooks.clone(),
+            mirror: git::Mirror {
+                work: layout.root.join(&repo.name),
+                git_dir: layout.git_dirs.join(&repo.name),
+                hooks: layout.hooks.clone(),
+            },
             global: ctx.config.models.policy(),
             orchestrator: ModelChoice {
                 model: ctx.config.orchestrator.model.clone(),
@@ -176,7 +187,9 @@ impl Plan {
         };
         let policy = self.global.narrowed_by(&config.models.policy());
         if let Err(refusal) = policy.check(&self.orchestrator) {
-            return match git::remove_entry(&self.mirror) {
+            let removed = git::remove_entry(&self.mirror.work)
+                .and_then(|()| git::remove_entry(&self.mirror.git_dir));
+            return match removed {
                 Ok(()) => Outcome::Withheld(refusal.to_string()),
                 Err(error) => Outcome::Stale(error.to_string()),
             };
@@ -192,17 +205,18 @@ impl Plan {
     /// `base` (or the repository's `HEAD`) names now. Returns that commit.
     fn bring_to(&self, base: Option<&str>) -> Result<String, ArchonError> {
         let base = git::Base::resolve(&self.repo.path, base)?;
-        if !git::is_mirror(&self.mirror)? {
-            git::clone(&self.repo.path, &self.root, &self.mirror, &self.hooks)?;
-        }
-        assert!(git::is_mirror(&self.mirror)?, "a mirror was just made");
-        if git::head(&self.mirror)?.as_deref() != Some(base.commit.as_str()) {
-            git::fetch(&self.mirror, &self.repo.path, &base)?;
+        self.mirror.prepare(&base)?;
+        assert!(
+            git::is_real_dir(&self.mirror.git_dir)?,
+            "a mirror was just made"
+        );
+        if self.mirror.head(&base)?.as_deref() != Some(base.commit.as_str()) {
+            self.mirror.fetch(&self.repo.path, &base)?;
         }
         // Also when the base stood still: a tracked file a helper changed is reset.
-        git::checkout(&self.mirror, &base.commit)?;
+        self.mirror.checkout(&base)?;
         assert_eq!(
-            git::head(&self.mirror)?.as_deref(),
+            self.mirror.head(&base)?.as_deref(),
             Some(base.commit.as_str()),
             "the mirror is at the base commit"
         );
@@ -323,8 +337,13 @@ async fn forget_unregistered(
     repos: &[Repo],
 ) -> Result<(), ArchonError> {
     let names: BTreeSet<String> = repos.iter().map(|repo| repo.name.clone()).collect();
-    let root = layout.root.clone();
-    let removed = blocking(move || git::remove_all_but(&root, &names)).await;
+    let roots = [layout.root.clone(), layout.git_dirs.clone()];
+    let removed = blocking(move || {
+        roots
+            .iter()
+            .try_for_each(|root| git::remove_all_but(root, &names))
+    })
+    .await;
     if let Err(error) = removed {
         tracing::warn!(%error, "an unregistered mirror was not removed; retried next pass");
     }

@@ -3,6 +3,7 @@
 //! ends in a ship agent has that agent's claim checked here. Either way, PR
 //! evidence comes from GitHub, never from an agent's report.
 
+mod auto_merge;
 mod checks;
 mod deliver;
 mod remote;
@@ -15,8 +16,9 @@ use serde_json::Value;
 use super::{frozen, recover};
 use crate::context::DaemonContext;
 
+pub(crate) use auto_merge::pay as pay_owed_merges;
 pub(crate) use deliver::prune_finished_ships;
-pub(super) use deliver::{deliver, queue, replay, stalled};
+pub(super) use deliver::{deliver, delivering, queue, replay, stalled};
 
 /// `outcome` with the pull request GitHub lists for a ship agent's stage, or
 /// failed without one; nothing to check when archond ships (`daemon_ships`).
@@ -47,6 +49,8 @@ pub(super) async fn verify(
         }),
         Err(error) if error.is_store() => Err(error),
         Ok(Some(url)) => {
+            let pushed = format!("refs/heads/{}", run.branch);
+            super::initiative_ship::verify_stack(ctx, run, &pushed).await?;
             super::initiative_ship::record(ctx, run, &url).await?;
             let mut data = structured
                 .and_then(|s| s.as_object().cloned())
@@ -99,8 +103,13 @@ async fn agent_pr(
     if !spec.file.stages.iter().any(ships) {
         return Ok(None);
     }
+    let repo = {
+        let store = ctx.store.lock().await;
+        let Some(repo) = store.item(&run.item)?.repo else {
+            return Err(ArchonError::Invalid("the item has no repository".into()));
+        };
+        store.repo(&crate::resolve::repo_ref(&repo))?
+    };
     let gh = &ctx.config.github.binary;
-    remote::open_pr(gh, &run.workspace, &run.branch)
-        .await
-        .map(Some)
+    remote::open_pr(gh, &repo.path, &run.branch).await.map(Some)
 }

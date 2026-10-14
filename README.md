@@ -43,7 +43,7 @@ The table's `brew` commands work with [Homebrew](https://brew.sh) on either OS.
 | Program | Used for | Required? | Install |
 | --- | --- | --- | --- |
 | [Aether](https://github.com/mengsig/aether) | Runs the orchestrator and stage agents | Yes | The Archon installer offers installation; see Aether's installation instructions. |
-| [git](https://git-scm.com/install/) | Repository branches, worktrees, commits | Yes for repository work | `brew install git` |
+| [git](https://git-scm.com/install/) 2.38 or later | Repository branches, worktrees, commits | Yes for repository work | `brew install git` |
 | [Claude Code](https://code.claude.com/docs/en/quickstart) (`claude`) | Claude engine and its login | One engine required | `curl -fsSL https://claude.ai/install.sh \| bash` |
 | [Codex](https://github.com/openai/codex) (`codex`) | Codex engine and its login | Alternative engine | `npm install -g @openai/codex` |
 | [GitHub CLI](https://cli.github.com/) (`gh`) | PR shipping and watcher replies | Optional; local work works without it | `brew install gh`, then `gh auth login` |
@@ -196,6 +196,7 @@ overrides the directory. Common settings are:
 ## Safety model
 
 The daemon enforces the autonomy ceiling; agents cannot raise it through MCP. Worktrees are not sandboxes.
+The daemon's own git (delivery, restacking, worktree removal) runs no hook, filter, merge driver or fsmonitor that a repository or worktree configures; its push and fetch use your global git config and `GIT_SSH_COMMAND`.
 Merging is manual by default; automatic merging needs your permission in the ceiling and on the item.
 The watcher accepts human writers, maintainers, or admins, further restricted by any allowlist; only explicitly configured operator logins can carry your authority.
 Budgets hold or stop work based on recorded usage, which can arrive late; they are not prepaid spending guarantees.

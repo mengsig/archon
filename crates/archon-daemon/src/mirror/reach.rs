@@ -38,9 +38,11 @@ impl Reach {
 }
 
 /// The mirrors in `workspace` that an agent's `roots` reach: one a root is in
-/// or is a worktree of; all for a root above them, or for no root at all.
-pub fn reach(workspace: &Path, roots: &[PathBuf]) -> Reach {
+/// or is a worktree of, its git directory in `git_dirs`; all for a root above
+/// them, or for no root at all.
+pub fn reach(workspace: &Path, git_dirs: &Path, roots: &[PathBuf]) -> Reach {
     let mirrors = resolved(&workspace.join(MIRRORS_DIR));
+    let git_dirs = resolved(git_dirs);
     let mut found = Reach {
         all: roots.is_empty(),
         repos: BTreeSet::new(),
@@ -51,7 +53,7 @@ pub fn reach(workspace: &Path, roots: &[PathBuf]) -> Reach {
         if mirrors.starts_with(&at) {
             found.all = true;
         } else if let Some(name) =
-            mirror_holding(&at, &mirrors).or_else(|| worktree_of(&at, &mirrors))
+            mirror_holding(&at, &mirrors).or_else(|| worktree_of(&at, &[&mirrors, &git_dirs]))
         {
             found.repos.insert(name);
         }
@@ -72,8 +74,9 @@ fn mirror_holding(at: &Path, mirrors: &Path) -> Option<String> {
 }
 
 /// The mirror `at` is a git worktree of (an isolated child's workspace): the
-/// nearest `.git` above it is a file whose `gitdir:` leads into it.
-fn worktree_of(at: &Path, mirrors: &Path) -> Option<String> {
+/// nearest `.git` above it is a file whose `gitdir:` leads into one of
+/// `roots`, the mirrors or their git directories, named as the mirror is.
+fn worktree_of(at: &Path, roots: &[&Path]) -> Option<String> {
     let dot_git = at
         .ancestors()
         .map(|dir| dir.join(".git"))
@@ -84,16 +87,21 @@ fn worktree_of(at: &Path, mirrors: &Path) -> Option<String> {
     }
     let text = std::fs::read_to_string(&dot_git).ok()?;
     let git_dir = text.lines().find_map(|line| line.strip_prefix("gitdir:"))?;
-    let git_dir = dot_git.parent()?.join(git_dir.trim());
-    mirror_holding(&resolved(&git_dir), mirrors)
+    let git_dir = resolved(&dot_git.parent()?.join(git_dir.trim()));
+    roots.iter().find_map(|root| mirror_holding(&git_dir, root))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn git_dirs(dir: &tempfile::TempDir) -> PathBuf {
+        dir.path().join("data/mirror-git")
+    }
+
     fn layout() -> (tempfile::TempDir, PathBuf, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(git_dirs(&dir).join("alpha/worktrees/w2")).unwrap();
         let workspace = dir.path().join("orchestrator");
         let alpha = workspace.join(MIRRORS_DIR).join("alpha");
         std::fs::create_dir_all(alpha.join(".git/worktrees/w1")).unwrap();
@@ -104,9 +112,9 @@ mod tests {
 
     #[test]
     fn a_root_in_a_mirror_reaches_that_mirror_only() {
-        let (_dir, workspace, alpha) = layout();
+        let (dir, workspace, alpha) = layout();
         for root in [alpha.clone(), alpha.join("src")] {
-            let found = reach(&workspace, &[root]);
+            let found = reach(&workspace, &git_dirs(&dir), &[root]);
             assert!(found.includes("alpha") && !found.includes("beta"));
             assert_eq!(found.describe(), "the mirror of `alpha`");
         }
@@ -114,15 +122,15 @@ mod tests {
 
     #[test]
     fn scratch_reaches_no_mirror_and_the_workspace_reaches_all() {
-        let (_dir, workspace, _alpha) = layout();
-        let scratch = reach(&workspace, &[workspace.join("scratch")]);
+        let (dir, workspace, _alpha) = layout();
+        let scratch = reach(&workspace, &git_dirs(&dir), &[workspace.join("scratch")]);
         assert!(!scratch.includes("alpha"));
         assert_eq!(scratch.describe(), "no repository's mirror");
         for root in [workspace.clone(), workspace.join(MIRRORS_DIR)] {
-            let found = reach(&workspace, &[root]);
+            let found = reach(&workspace, &git_dirs(&dir), &[root]);
             assert!(found.includes("alpha") && found.includes("anything"));
         }
-        let unknown = reach(&workspace, &[]);
+        let unknown = reach(&workspace, &git_dirs(&dir), &[]);
         assert!(unknown.includes("alpha"), "an unknown scope reaches all");
     }
 
@@ -138,12 +146,23 @@ mod tests {
         )
         .unwrap();
         for root in [child.clone(), child.join("src")] {
-            let found = reach(&workspace, &[root]);
+            let found = reach(&workspace, &git_dirs(&dir), &[root]);
             assert!(found.includes("alpha") && !found.includes("beta"));
         }
+        let private = git_dirs(&dir).join("alpha/worktrees/w2");
+        std::fs::write(
+            child.join(".git"),
+            format!("gitdir: {}\n", private.display()),
+        )
+        .unwrap();
+        let found = reach(&workspace, &git_dirs(&dir), std::slice::from_ref(&child));
+        assert!(
+            found.includes("alpha") && !found.includes("beta"),
+            "{found:?}"
+        );
         let elsewhere = dir.path().join("aether/other");
         std::fs::create_dir_all(elsewhere.join(".git")).unwrap();
-        assert!(!reach(&workspace, &[elsewhere]).includes("alpha"));
+        assert!(!reach(&workspace, &git_dirs(&dir), &[elsewhere]).includes("alpha"));
     }
 
     #[test]
@@ -151,7 +170,11 @@ mod tests {
         let (dir, workspace, alpha) = layout();
         let link = dir.path().join("shortcut");
         std::os::unix::fs::symlink(&alpha, &link).unwrap();
-        let found = reach(&workspace, &[link, workspace.join("scratch")]);
+        let found = reach(
+            &workspace,
+            &git_dirs(&dir),
+            &[link, workspace.join("scratch")],
+        );
         assert!(found.includes("alpha") && !found.includes("beta"));
     }
 }

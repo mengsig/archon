@@ -75,7 +75,8 @@ pub(crate) async fn steer_run(
                 "the roles of {id} are being merged right now; steer it again in a moment"
             )));
         }
-        let change = plan::plan(ctx, asked, &run, &stages, per_item_cap).await?;
+        let delivering = super::ship::delivering(&table, &*ctx.store.lock().await, &run.id)?;
+        let change = plan::plan(ctx, asked, &run, &stages, per_item_cap, delivering).await?;
         let follow = apply(ctx, &mut table, run, change, asked.by).await?;
         (follow, ctx.store.lock().await.item(id)?)
     };

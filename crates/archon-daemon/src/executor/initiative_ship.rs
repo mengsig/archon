@@ -1,104 +1,15 @@
 //! Recoverable initiative delivery, shared-contract messages and PR links.
 
 use super::dependencies::{is_plain_branch, is_plain_url};
+use super::gh::{self, Pass};
 use crate::context::DaemonContext;
+use crate::worktree::stack;
 use archon_core::error::ArchonError;
 use archon_core::id::{InitiativeId, QueueItemId};
-use archon_core::initiative::{InitiativeDetail, InitiativeState};
+use archon_core::initiative::{Initiative, InitiativeDetail, InitiativeState};
 use archon_core::queue::QueueState;
+use archon_core::repo::Repo;
 use archon_core::run::PipelineRun;
-use serde::Deserialize;
-use std::path::Path;
-use std::process::Stdio;
-use std::time::Duration;
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct PullRequest {
-    pub url: String,
-    pub state: String,
-    pub head_ref_name: String,
-    #[serde(default)]
-    pub head_ref_oid: Option<String>,
-    pub base_ref_name: String,
-    pub body: String,
-    pub is_draft: bool,
-    /// `CHANGES_REQUESTED`, `APPROVED`, `REVIEW_REQUIRED`, or empty.
-    #[serde(default)]
-    pub review_decision: Option<String>,
-}
-
-pub(super) async fn gh(
-    ctx: &DaemonContext,
-    repo: &Path,
-    args: &[&str],
-) -> Result<String, ArchonError> {
-    assert!(repo.is_absolute());
-    assert!(!args.is_empty());
-    let mut command = tokio::process::Command::new(&ctx.config.github.binary);
-    command
-        .args(args)
-        .current_dir(repo)
-        .env("GH_PROMPT_DISABLED", "1")
-        .env_remove("GH_REPO")
-        .stdin(Stdio::null())
-        .kill_on_drop(true);
-    let output = tokio::time::timeout(Duration::from_secs(30), command.output())
-        .await
-        .map_err(|_| ArchonError::Unavailable("initiative GitHub command timed out".into()))?
-        .map_err(|e| ArchonError::io("initiative GitHub command", e))?;
-    if !output.status.success() {
-        return Err(ArchonError::Unavailable(format!(
-            "gh {}: {}: {}",
-            args.join(" "),
-            output.status,
-            super::clip(&String::from_utf8_lossy(&output.stderr), 2000)
-        )));
-    }
-    String::from_utf8(output.stdout)
-        .map_err(|e| ArchonError::Protocol(format!("GitHub output is not UTF-8: {e}")))
-}
-
-pub(super) async fn view(
-    ctx: &DaemonContext,
-    repo: &Path,
-    branch: &str,
-) -> Result<PullRequest, ArchonError> {
-    if !is_plain_branch(branch) {
-        return Err(ArchonError::Invalid("unsafe PR branch".into()));
-    }
-    let raw = gh(
-        ctx,
-        repo,
-        &[
-            "pr",
-            "view",
-            branch,
-            "--json",
-            "url,state,headRefName,headRefOid,baseRefName,body,isDraft,reviewDecision",
-        ],
-    )
-    .await?;
-    let pr: PullRequest = serde_json::from_str(&raw)
-        .map_err(|e| ArchonError::Protocol(format!("invalid PR response: {e}")))?;
-    if !is_plain_url(&pr.url)
-        || pr.head_ref_name != branch
-        || !is_plain_branch(&pr.base_ref_name)
-        || !matches!(pr.state.as_str(), "OPEN" | "CLOSED" | "MERGED")
-    {
-        return Err(ArchonError::Protocol(
-            "PR response does not match its branch, URL or state".into(),
-        ));
-    }
-    if pr.head_ref_oid.as_ref().is_some_and(|sha| {
-        !matches!(sha.len(), 40 | 64) || !sha.bytes().all(|b| b.is_ascii_hexdigit())
-    }) {
-        return Err(ArchonError::Protocol("invalid PR head commit".into()));
-    }
-    assert_eq!(pr.head_ref_name, branch);
-    assert!(pr.url.starts_with("https://"));
-    Ok(pr)
-}
 
 /// Whether the pull request of `item` opens as a draft: a member of an
 /// atomic initiative stays one until every member passed (§8.9).
@@ -136,15 +47,25 @@ pub(super) async fn record(
         .await
         .kv_set(&format!("initiative_pr:{}", item.id), url)?;
     let detail = ctx.store.lock().await.initiative(id)?;
-    sync_prs(
-        ctx,
-        &detail,
-        detail.initiative.state == InitiativeState::Done,
-    )
-    .await
-    .map(|_| ())
+    let done = detail.initiative.state == InitiativeState::Done;
+    sync_prs(ctx, &detail, done, &mut Pass::default())
+        .await
+        .map(|_| ())
 }
 
+/// The repository of the stacked item `owner`, as registered.
+fn stack_repo(store: &archon_queue::Store, owner: &QueueItemId) -> Result<Repo, ArchonError> {
+    let Some(repo) = store.item(owner)?.repo else {
+        return Err(ArchonError::Store(format!(
+            "stacked item {owner} has no repository"
+        )));
+    };
+    let repo = store.repo(&crate::resolve::repo_ref(&repo))?;
+    assert!(repo.path.is_absolute(), "registered paths are canonical");
+    Ok(repo)
+}
+
+/// Point the stacked run's pull request at the branch its change is for now.
 async fn check_stack_base(ctx: &DaemonContext, run: &PipelineRun) -> Result<(), ArchonError> {
     let (owner, base, repo) = {
         let store = ctx.store.lock().await;
@@ -153,23 +74,17 @@ async fn check_stack_base(ctx: &DaemonContext, run: &PipelineRun) -> Result<(), 
         };
         let fix = store.stack_fix(&run.item)?;
         let owner = fix.map_or_else(|| run.item.clone(), |fix| fix.owner);
-        let Some(repo) = store.item(&owner)?.repo else {
-            return Err(ArchonError::Store(format!(
-                "stacked item {owner} has no repository"
-            )));
-        };
-        let repo = store.repo(&crate::resolve::repo_ref(&repo))?;
+        let repo = stack_repo(&store, &owner)?;
         (owner, base, repo)
     };
-    assert!(!base.is_empty());
-    assert!(repo.path.is_absolute());
-    verify_ancestry(ctx, &owner, run).await?;
-    let pr = view(ctx, &repo.path, &run.branch).await?;
+    assert!(is_plain_branch(&base), "recorded at the fork");
+    let binary = &ctx.config.github.binary;
+    let pr = gh::view(binary, &repo.path, &run.branch).await?;
     if pr.base_ref_name != base {
-        gh(
-            ctx,
+        gh::text(
+            binary,
             &repo.path,
-            &["pr", "edit", &run.branch, "--base", &base],
+            &["pr", "edit", &pr.url, "--base", &base],
         )
         .await?;
     }
@@ -177,20 +92,30 @@ async fn check_stack_base(ctx: &DaemonContext, run: &PipelineRun) -> Result<(), 
     Ok(())
 }
 
-async fn verify_ancestry(
+/// Refuse to deliver `rev` of a stacked run, before anything is pushed,
+/// unless it holds every parent commit its stack has not seen merged (§8.8).
+pub(super) async fn verify_stack(
     ctx: &DaemonContext,
-    owner: &QueueItemId,
     run: &PipelineRun,
+    rev: &str,
 ) -> Result<(), ArchonError> {
-    let parents = ctx.store.lock().await.stack_parents(owner)?;
-    let tree = run.workspace.clone();
-    assert!(!parents.is_empty());
-    assert!(tree.starts_with(&ctx.paths.worktrees));
+    let (parents, repo) = {
+        let store = ctx.store.lock().await;
+        let fix = store.stack_fix(&run.item)?;
+        let owner = fix.map_or_else(|| run.item.clone(), |fix| fix.owner);
+        let parents = store.stack_parents(&owner)?;
+        if parents.is_empty() {
+            return Ok(());
+        }
+        (parents, stack_repo(&store, &owner)?)
+    };
+    assert!(parents.iter().all(|p| stack::is_commit_id(&p.parent_sha)));
+    let rev = rev.to_owned();
     tokio::task::spawn_blocking(move || {
         for parent in parents.iter().filter(|p| !p.merged) {
-            if !crate::worktree::stack::contains(&tree, &parent.parent_sha)? {
+            if !stack::contains(&repo.path, &parent.parent_sha, &rev)? {
                 return Err(ArchonError::Invalid(format!(
-                    "stack is missing parent {} at {}; finish its merge before shipping",
+                    "stack is missing parent {} at {}; merge it into the branch before shipping",
                     parent.parent_item, parent.parent_sha
                 )));
             }
@@ -260,24 +185,42 @@ pub(crate) async fn cancel_members(
     Ok(())
 }
 
-pub(crate) async fn reconcile(ctx: &DaemonContext) -> Result<(), ArchonError> {
+/// Maintain every initiative once; one that fails is its own blocker and
+/// the others, and the stacks after them, go on.
+pub(crate) async fn reconcile(ctx: &DaemonContext, pass: &mut Pass) -> Result<(), ArchonError> {
     let initiatives = ctx.store.lock().await.initiatives()?;
     for initiative in initiatives {
-        let id = &initiative.id;
-        if initiative.state == InitiativeState::Cancelled {
-            cancel_members(ctx, id).await?;
-        }
-        let detail = ctx.store.lock().await.initiative(id)?;
-        if !initiative.state.is_terminal() {
-            deliver_contract(ctx, &detail).await?;
-            advance(ctx, &detail).await?;
-        }
-        announce(ctx, id).await?;
+        let result = reconcile_one(ctx, &initiative, pass).await;
+        let subject = format!("initiative:{}", initiative.id);
+        let what = format!("Initiative `{}`", initiative.title);
+        super::coordination::isolate(ctx, &subject, None, &what, result).await?;
     }
     Ok(())
 }
 
-async fn advance(ctx: &DaemonContext, detail: &InitiativeDetail) -> Result<(), ArchonError> {
+async fn reconcile_one(
+    ctx: &DaemonContext,
+    initiative: &Initiative,
+    pass: &mut Pass,
+) -> Result<(), ArchonError> {
+    let id = &initiative.id;
+    if initiative.state == InitiativeState::Cancelled {
+        cancel_members(ctx, id).await?;
+    }
+    let detail = ctx.store.lock().await.initiative(id)?;
+    assert_eq!(&detail.initiative.id, id, "the initiative asked for");
+    if !initiative.state.is_terminal() {
+        deliver_contract(ctx, &detail).await?;
+        advance(ctx, &detail, pass).await?;
+    }
+    announce(ctx, id).await
+}
+
+async fn advance(
+    ctx: &DaemonContext,
+    detail: &InitiativeDetail,
+    pass: &mut Pass,
+) -> Result<(), ArchonError> {
     assert!(!detail.members.is_empty());
     assert!(!detail.initiative.state.is_terminal());
     let failed = detail.members.iter().any(|m| {
@@ -290,7 +233,7 @@ async fn advance(ctx: &DaemonContext, detail: &InitiativeDetail) -> Result<(), A
         .members
         .iter()
         .all(|m| matches!(m.state, QueueState::Succeeded { .. }));
-    let has_prs = sync_prs(ctx, detail, passed && !failed).await?;
+    let has_prs = sync_prs(ctx, detail, passed && !failed, pass).await?;
     let state = if failed {
         InitiativeState::Failed
     } else if passed {
@@ -309,7 +252,7 @@ async fn advance(ctx: &DaemonContext, detail: &InitiativeDetail) -> Result<(), A
 
 struct MemberPr {
     item: QueueItemId,
-    repo: std::path::PathBuf,
+    repo: Repo,
     branch: String,
     url: String,
 }
@@ -331,13 +274,21 @@ async fn member_prs(
         let Some(url) = url.filter(|u| is_plain_url(u)) else {
             continue;
         };
-        let repo = store.repo(&crate::resolve::repo_ref(
-            member.repo.as_ref().expect("member repo"),
-        ))?;
-        assert!(is_plain_branch(&run.branch));
+        let Some(repo) = &member.repo else {
+            return Err(ArchonError::Protocol(format!(
+                "initiative member {} has no repository",
+                member.id
+            )));
+        };
+        if !is_plain_branch(&run.branch) {
+            return Err(ArchonError::Protocol(format!(
+                "initiative member {} ran on {:?}, which is no plain branch name",
+                member.id, run.branch
+            )));
+        }
         prs.push(MemberPr {
             item: member.id.clone(),
-            repo: repo.path,
+            repo: store.repo(&crate::resolve::repo_ref(repo))?,
             branch: run.branch,
             url,
         });
@@ -350,6 +301,7 @@ async fn sync_prs(
     ctx: &DaemonContext,
     detail: &InitiativeDetail,
     ready: bool,
+    pass: &mut Pass,
 ) -> Result<bool, ArchonError> {
     let prs = member_prs(ctx, detail).await?;
     let passed = detail
@@ -369,40 +321,65 @@ async fn sync_prs(
         return Ok(!prs.is_empty());
     }
     for member in &prs {
-        let pr = view(ctx, &member.repo, &member.branch).await?;
-        if pr.url != member.url {
-            return Err(ArchonError::Protocol(
-                "initiative PR changed identity".into(),
-            ));
-        }
-        if pr.state != "OPEN" {
-            continue;
-        }
-        let links = prs
-            .iter()
-            .filter(|p| p.item != member.item)
-            .map(|p| p.url.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-        let body = linked_body(
-            &pr.body,
-            &detail.initiative.title,
-            &detail.initiative.id,
-            &links,
-        );
-        if body != pr.body {
-            edit_body(ctx, member, &body).await?;
-        }
-        if detail.initiative.atomic && pr.is_draft == ready {
-            let mut args = vec!["pr", "ready", &member.branch];
-            if !ready {
-                args.push("--undo");
-            }
-            gh(ctx, &member.repo, &args).await?;
-        }
+        sync_member(ctx, detail, &prs, member, ready, pass).await?;
     }
     ctx.store.lock().await.kv_set(&receipt, &desired)?;
     Ok(!prs.is_empty())
+}
+
+/// Link `member`'s open pull request to the other members' and, in an atomic
+/// initiative, mark it ready or draft; remember it once it is merged or closed.
+async fn sync_member(
+    ctx: &DaemonContext,
+    detail: &InitiativeDetail,
+    prs: &[MemberPr],
+    member: &MemberPr,
+    ready: bool,
+    pass: &mut Pass,
+) -> Result<(), ArchonError> {
+    assert!(
+        prs.iter().any(|p| p.item == member.item),
+        "one of the members"
+    );
+    let settled = gh::settled(&*ctx.store.lock().await, &member.repo.id, &member.branch)?;
+    if settled.is_some() {
+        return Ok(());
+    }
+    let binary = &ctx.config.github.binary;
+    let pr = pass
+        .pull_request(binary, &member.repo.path, &member.branch)
+        .await?;
+    if pr.url != member.url {
+        return Err(ArchonError::Protocol(
+            "initiative PR changed identity".into(),
+        ));
+    }
+    if !pr.is_open() {
+        return gh::settle(&mut *ctx.store.lock().await, &member.repo.id, &pr);
+    }
+    let links = prs
+        .iter()
+        .filter(|p| p.item != member.item)
+        .map(|p| p.url.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let body = linked_body(
+        &pr.body,
+        &detail.initiative.title,
+        &detail.initiative.id,
+        &links,
+    );
+    if body != pr.body {
+        edit_body(ctx, member, &body).await?;
+    }
+    if detail.initiative.atomic && pr.is_draft == ready {
+        let mut args = vec!["pr", "ready", &member.branch];
+        if !ready {
+            args.push("--undo");
+        }
+        gh::text(binary, &member.repo.path, &args).await?;
+    }
+    Ok(())
 }
 
 fn linked_body(body: &str, title: &str, id: &InitiativeId, links: &str) -> String {
@@ -433,12 +410,8 @@ async fn edit_body(ctx: &DaemonContext, member: &MemberPr, body: &str) -> Result
     let path = file
         .to_str()
         .ok_or_else(|| ArchonError::Invalid("PR body path is not UTF-8".into()))?;
-    gh(
-        ctx,
-        &member.repo,
-        &["pr", "edit", &member.branch, "--body-file", path],
-    )
-    .await?;
+    let args = ["pr", "edit", &member.branch, "--body-file", path];
+    gh::text(&ctx.config.github.binary, &member.repo.path, &args).await?;
     Ok(())
 }
 

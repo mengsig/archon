@@ -10,7 +10,8 @@ use archon_core::protocol::{GcReport, Reclaimed};
 
 use super::plan::{Action, Candidate, Found, Kind};
 use super::{Policy, Roots, cache, snapshot, team};
-use crate::worktree::git;
+use crate::worktree::shadow::Shadow;
+use crate::worktree::{clean, git};
 
 /// What became of one candidate.
 #[derive(Debug, PartialEq, Eq)]
@@ -170,7 +171,7 @@ fn collect_workspace(
         Err(e) => return Verdict::Failed(e.to_string()),
     }
     match action {
-        Action::Remove => remove_worktree(repo, path, policy),
+        Action::Remove => remove_worktree(repo, path, roots, policy),
         Action::Reclaim => reclaimed(cache::reclaim_worktree(path, &policy.cache_dirs)),
     }
 }
@@ -231,20 +232,17 @@ fn remove_dir(path: &Path) -> Verdict {
 
 /// `path` is canonical, inside the worktree root, and a worktree of
 /// `repo`. One with uncommitted changes stays, without its caches.
-fn remove_worktree(repo: &Path, path: &Path, policy: &Policy) -> Verdict {
+fn remove_worktree(repo: &Path, path: &Path, roots: &Roots, policy: &Policy) -> Verdict {
     if !policy.force {
-        match has_changes(path) {
-            Ok(false) => {}
-            Ok(true) => {
+        match unremovable(&roots.data_dir, repo, path) {
+            Ok(None) => {}
+            Ok(Some(why)) => {
                 let reclaimed = match cache::reclaim_worktree(path, &policy.cache_dirs) {
                     Ok(bytes) => bytes,
                     Err(e) => return Verdict::Failed(format!("deleting its caches: {e}")),
                 };
-                let why = "it has uncommitted changes; `archon gc --force` removes it anyway";
-                return Verdict::Kept {
-                    reclaimed,
-                    why: why.into(),
-                };
+                let why = format!("{why}; `archon gc --force` removes it anyway");
+                return Verdict::Kept { reclaimed, why };
             }
             Err(e) => return Verdict::Failed(e.to_string()),
         }
@@ -253,7 +251,9 @@ fn remove_worktree(repo: &Path, path: &Path, policy: &Policy) -> Verdict {
         Ok(bytes) => bytes,
         Err(e) => return Verdict::Failed(e.to_string()),
     };
-    match git_worktree_remove(repo, path, usize::from(policy.force)) {
+    // Git's own check, which runs the repository's filters, was asked above
+    // instead; a locked worktree is still refused.
+    match git_worktree_remove(repo, path, 1) {
         Ok(()) => Verdict::Removed { bytes },
         Err(e) => Verdict::Failed(e.to_string()),
     }
@@ -281,13 +281,15 @@ pub(super) fn is_listed_worktree(repo: &Path, path: &Path) -> Result<bool, Archo
     Ok(listed && path != repo)
 }
 
-/// What `git worktree remove` checks before it refuses without `--force`.
-fn has_changes(worktree: &Path) -> Result<bool, ArchonError> {
-    let status = git(
-        worktree,
-        &["status", "--porcelain", "--ignore-submodules=none"],
-    )?;
-    Ok(!status.is_empty())
+/// Why `git worktree remove` would refuse `worktree` without `--force`,
+/// asked through `repo`'s shadow under `data_dir` so no filter runs.
+fn unremovable(
+    data_dir: &Path,
+    repo: &Path,
+    worktree: &Path,
+) -> Result<Option<String>, ArchonError> {
+    let shadow = Shadow::of(data_dir, repo)?;
+    clean::unremovable(&shadow, worktree)
 }
 
 /// `git worktree remove` with `forces` times `--force`: once removes a

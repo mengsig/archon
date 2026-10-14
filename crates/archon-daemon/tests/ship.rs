@@ -553,6 +553,54 @@ async fn a_review_of_another_tree_than_the_ship_record_fails_the_item() {
     assert_eq!(pushed(&origin_of(&h), &run.branch), None);
 }
 
+/// A lead that amends a reviewed commit and has the amend reviewed in full
+/// ships: the verdict on the replaced commit is superseded, pass or fail.
+#[tokio::test]
+async fn a_verdict_on_an_amended_commit_is_superseded_by_a_review_of_the_amend() {
+    for first_verdict in ["pass", "fail"] {
+        let (h, gh) = delivering().await;
+        let item = enqueue(&h, "adaptive", asking(ReviewLevel::Standard))
+            .await
+            .unwrap();
+        h.dispatch().await;
+        let lead = h.running().await.remove(0);
+        let agent = lead.aether_agent.clone().unwrap();
+        let first = h.backend.delegate(&agent, REVIEW_MODEL);
+        let second = h.backend.delegate(&agent, REVIEW_MODEL);
+        let replaced = shipped_by(&h, &lead, "Built", json!({})).await;
+        h.backend
+            .complete_delegated(&first, verdict_on(&replaced, first_verdict));
+
+        let run = h.run(&item.id).await;
+        git(
+            &run.workspace,
+            &["commit", "--amend", "--quiet", "-m", "Amended"],
+        );
+        let mut amended = record(&run.workspace);
+        let named = pass_by(&[first.clone(), second.clone()]);
+        amended["review"] = named["review"].clone();
+        let amended = StageOutcome::Completed {
+            summary: "Built; amended; reviewed".into(),
+            structured: Some(amended),
+        };
+        h.backend
+            .complete_delegated(&second, verdict_on(&amended, "pass"));
+        h.settle_running(|_| amended.clone()).await;
+        h.dispatch().await;
+
+        let summary = succeeded(&h, &item).await;
+        assert!(summary.contains(&format!("SHIPPED: {PR_ONE}")), "{summary}");
+        let stored = h.ctx.store.lock().await.stage_run(&lead.id).unwrap();
+        let review = &stored.structured.as_ref().unwrap()["review"];
+        assert_eq!(
+            review["reviewer_agents"],
+            json!([second.to_string()]),
+            "{first_verdict}: only the review of the amend counts"
+        );
+        assert_eq!(gh.count("pr create"), 1);
+    }
+}
+
 /// A pass Archon refused is the lead's failure: learning does not count its
 /// stage as a pass for the lead's model.
 #[tokio::test]

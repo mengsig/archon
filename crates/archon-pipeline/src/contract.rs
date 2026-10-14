@@ -406,7 +406,8 @@ const REVIEW_CHECK_RULES: &str = "\
 different one you delegated to yourself that completed with that verdict, and as many \
 as the review asks must have passed the branch head, or an earlier head whose later \
 commits a passing reviewer read with `base` at or before it. A fail stands until such \
-a pass. Anything else fails the run here, and nothing ships. Never report `pass` for a \
+a pass, or after an amend or rebase until a pass of the whole change. Anything else \
+fails the run, and nothing ships. Never report `pass` for a \
 review that did not run or did not pass: with a blocking finding open, call \
 `fail_task` and say which.\n\
 - Archon adds the review as the last line of your summary: write no `REVIEW:` line \

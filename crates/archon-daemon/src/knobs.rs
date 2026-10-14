@@ -209,8 +209,7 @@ pub(crate) fn default_choice(
 }
 
 /// `plan` with the stages it leaves out: first what was learned for `repo`,
-/// then `fallback` for the pipeline's own stages, then the first choice of
-/// its first stage for those the knobs inserted.
+/// then the static choices of [`fill_static_stages`].
 pub(crate) fn fill_plan(
     store: &Store,
     repo: Option<&RepoId>,
@@ -228,6 +227,18 @@ pub(crate) fn fill_plan(
         assert!(!choices.is_empty(), "a learned default names a choice");
         plan.0.entry(stage).or_insert(choices);
     }
+    fill_static_stages(base, spec, plan, fallback)
+}
+
+/// `plan` with the stages it leaves out and nothing learned: `fallback` for
+/// the pipeline's own stages, then the first choice of its first stage for
+/// those the knobs inserted.
+pub(crate) fn fill_static_stages(
+    base: &PipelineSpec,
+    spec: &PipelineSpec,
+    mut plan: ModelPlan,
+    fallback: Option<&ModelChoice>,
+) -> Result<ModelPlan, ArchonError> {
     for stage in base
         .file
         .stages

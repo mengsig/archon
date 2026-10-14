@@ -104,7 +104,7 @@ fn every_illegal_edge_is_refused_with_nothing_written() {
 }
 
 #[test]
-fn succeeded_is_final() {
+fn succeeded_can_only_be_requeued_explicitly() {
     let (mut store, _repo, items) = seeded(1);
     let run = start(&mut store, &items[0].id);
     let done = QueueState::Succeeded {
@@ -112,13 +112,21 @@ fn succeeded_is_final() {
         summary: "ok".into(),
     };
     let after = settle_run(&mut store, &run, done, t(20));
-    for next in all_states(&run.id) {
+    for next in all_states(&run.id)
+        .into_iter()
+        .filter(|state| *state != QueueState::Queued)
+    {
         let err = store
             .transition_item(&items[0].id, next, t(21))
             .unwrap_err();
         assert!(matches!(err, ArchonError::InvalidTransition(_)), "{err}");
     }
     assert_eq!(store.item(&items[0].id).unwrap(), after);
+    let retried = store
+        .transition_item(&items[0].id, QueueState::Queued, t(22))
+        .unwrap();
+    assert_eq!(retried.state, QueueState::Queued);
+    assert!(store.run(&run.id).unwrap().state.is_terminal());
 }
 
 #[test]

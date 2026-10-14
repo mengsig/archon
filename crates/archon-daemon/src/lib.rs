@@ -21,7 +21,7 @@ pub mod triggers;
 pub mod worktree;
 
 mod knobs;
-mod learned;
+pub mod learned;
 mod resolve;
 
 use std::path::{Path, PathBuf};
@@ -169,6 +169,8 @@ async fn supervise(
     workers.spawn(async move { ("store pruning", prune::run(c).await) });
     let c = ctx.clone();
     workers.spawn(async move { ("repository mirrors", mirror::run(c).await) });
+    let c = ctx.clone();
+    workers.spawn(async move { ("learning", learned::run(c).await) });
     let auto_gc = ctx.config.worktrees.auto_gc;
     if auto_gc {
         let c = ctx.clone();
@@ -239,6 +241,12 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
             .map_err(|e| ArchonError::io(format!("creating {}", dir.display()), e))?;
     }
     let store = Store::open(&paths.store)?;
+    store.configure_learning(&config.learning)?;
+    store.save_learning_value(
+        "learning/policy",
+        &serde_json::to_string(&config.models.policy())
+            .map_err(|e| ArchonError::Config(format!("serialize model policy: {e}")))?,
+    )?;
     let lavish = Lavish::detect(&config.lavish)?;
     let aether = Arc::new(AetherLink::new());
     let backend = Arc::new(AetherBackend::new(aether.clone(), config.models.policy()));

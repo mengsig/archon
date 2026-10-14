@@ -55,6 +55,7 @@ pub(super) async fn finish_run(
         run.finish(state, now)?;
         store.finish_run(&run, item_state(&run), now)?
     };
+    crate::learned::finished(ctx, &run).await?;
     let item = finished.item;
     assert!(item.state.is_terminal(), "finish_run settles the item");
     frozen::discard(&ctx.paths.data_dir, &run.id);
@@ -279,6 +280,7 @@ pub(super) async fn announce(
         pr_url,
         cost_usd,
         origin: item.origin.clone(),
+        lesson_hint: crate::learned::lesson_hint(&*ctx.store.lock().await, item)?,
     };
     // The base branch may have moved, and the operator may ask about it next.
     ctx.mirrors.request();

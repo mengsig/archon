@@ -179,7 +179,9 @@ fn pipeline_dirs(dir: &Path) -> Result<Vec<(DirName, PathBuf)>, ArchonError> {
             .file_name()
             .into_string()
             .map_err(|raw| raw.to_string_lossy().into_owned());
-        let hidden = name.as_ref().is_ok_and(|n| n.starts_with('.'));
+        let hidden = name
+            .as_ref()
+            .is_ok_and(|n| n.starts_with('.') || n.ends_with(".proposed"));
         if hidden || !has_manifest(&path) {
             continue;
         }

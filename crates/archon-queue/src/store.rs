@@ -17,7 +17,9 @@ mod feed;
 mod gates;
 pub mod initiatives;
 mod items;
+mod lessons;
 mod model_evidence;
+mod outcomes;
 mod repos;
 mod run_edits;
 mod runs;
@@ -47,6 +49,7 @@ use archon_core::steer::RunEdit;
 use crate::dispatch::DispatchSnapshot;
 
 pub use model_evidence::ModelEvidenceSnapshot;
+pub use model_evidence::RouteEvidence;
 pub use run_edits::RecordedEdit;
 
 /// Well-known `kv` keys.

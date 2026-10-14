@@ -10,6 +10,7 @@ mod gc;
 mod github_watcher;
 mod initiatives;
 mod instance;
+pub(crate) mod lessons;
 mod log;
 mod pipelines;
 mod queue;
@@ -63,6 +64,7 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::Repo(command) => repo::run(command, json).await,
         Command::Initiatives { command } => initiatives::run(command, json).await,
         Command::Queue(command) => queue::run(command, json).await,
+        Command::Lessons(args) => lessons::run(args, json).await,
         Command::Pipelines(command) => pipelines::run(command, json).await,
         Command::Reports { command } => reports::run(command, json).await,
         Command::Setup { print, resync } => instance::setup(print, resync, json).await,
@@ -115,6 +117,7 @@ fn json_refusal(command: Option<&Command>) -> Option<&'static str> {
         | Command::Repo(_)
         | Command::Initiatives { .. }
         | Command::Queue(_)
+        | Command::Lessons(_)
         | Command::Pipelines(_)
         | Command::Reports { .. }
         | Command::Autonomy(_)

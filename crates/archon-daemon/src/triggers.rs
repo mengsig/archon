@@ -63,6 +63,8 @@ pub enum TriggerEvent {
         summary: String,
         pr_url: Option<String>,
         cost_usd: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lesson_hint: Option<String>,
         /// The GitHub thread that asked for the item; the orchestrator
         /// reports the outcome there.
         #[serde(default, skip_serializing_if = "Option::is_none")]

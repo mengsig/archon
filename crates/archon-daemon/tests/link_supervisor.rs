@@ -1337,6 +1337,7 @@ async fn an_operator_message_brings_the_quiet_news_and_a_current_mirror() {
         pr_url: None,
         cost_usd: 0.0,
         origin: None,
+        lesson_hint: None,
     };
     triggers::push_quiet(&harness.ctx, routine).await.unwrap();
     tokio::time::sleep(Duration::from_millis(100)).await;

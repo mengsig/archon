@@ -130,9 +130,9 @@ async fn running_plan(
     let Some(plan) = patch.model_plan.take() else {
         return Ok(None);
     };
-    let pipeline = ctx.store.lock().await.run(run)?.pipeline;
-    let spec = frozen::thaw(ctx, run, &pipeline).await?;
-    let plan = items::filled_plan(ctx, env, &spec, &spec, plan).await?;
+    let run = ctx.store.lock().await.run(run)?;
+    let spec = frozen::thaw(ctx, &run.id, &run.pipeline).await?;
+    let plan = items::filled_plan(ctx, &run.item, env, &spec, &spec, plan).await?;
     items::check_plan(ctx, env, &spec, &plan)?;
     let reasons = patch.model_reasons.take();
     items::check_reasons(&spec, reasons.as_ref())?;

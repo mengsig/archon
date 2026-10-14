@@ -33,6 +33,11 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 # budget_usd_daily = 50.0   # 0 = no daily budget
 # min_free_gb = 10          # nothing new starts below this much free disk
 
+# [learning]
+# enabled = true            # outcomes, learned defaults, lessons and distillation
+# distill_every = 20         # new outcomes per repository before a budgeted errand
+# explore_rate = 0.1         # deterministic cheaper-choice exploration; 0..0.1
+
 # [worktrees]
 # auto_gc = true            # archond collects finished runs' worktrees itself
 # gc_after = "7d"

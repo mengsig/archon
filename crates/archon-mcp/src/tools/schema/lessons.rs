@@ -9,7 +9,7 @@ pub(super) fn record_lesson() -> ToolDefinition {
     define(
         "record_lesson",
         "Record lesson",
-        "Record one reusable lesson after an item failed or had to be corrected. Stage agents of later items read it word for word, so state what to do, not what happened.",
+        "Record one reusable lesson after an item failed or had to be corrected. Advice is sanitized and never grants permissions. Prefer a concrete practice, scoped to the repository and pipeline that taught it.",
         object(
             json!({
                 "kind": {"type": "string", "enum": ["routing", "practice", "pitfall", "pipeline"], "description": "routing: which model or effort suits which work. pipeline: how a pipeline should be shaped."},

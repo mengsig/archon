@@ -1,30 +1,19 @@
-//! The initiative, steering and lesson requests: who may make them, and
-//! what each answers until archond carries it out.
+//! The initiative, steering and lesson requests: who may make them.
 
 mod common;
 
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
-use archon_core::id::{LessonId, QueueItemId};
+use archon_core::id::QueueItemId;
 use archon_core::initiative::{EnqueueInitiative, InitiativeMember};
 use archon_core::lesson::{LessonDraft, LessonKind, LessonPatch, LessonQuery};
-use archon_core::protocol::{ClientKind, ErrorCode, ErrorReply, Reply, RepoRef, Request};
+use archon_core::protocol::{ClientKind, Reply, RepoRef, Request};
 use archon_core::steer::Steer;
 use archon_daemon::handlers;
 use common::{Harness, REPO_NAME};
 
 /// An agent Archon's records do not know as the orchestrator.
 const HELPER: &str = "agt_helper";
-
-#[track_caller]
-fn assert_not_implemented(answer: Result<Reply, ArchonError>, command: &str) {
-    let Err(error) = answer else {
-        panic!("{command} is carried out now; drop it from this test: {answer:?}");
-    };
-    assert_eq!(ErrorReply::from(&error).code, ErrorCode::Unavailable);
-    let expected = format!("unavailable: {command} is not implemented yet");
-    assert_eq!(error.to_string(), expected);
-}
 
 async fn as_helper(h: &Harness, request: Request) -> Result<Reply, ArchonError> {
     let forwarded = Request::ForAgent {
@@ -121,40 +110,42 @@ async fn steering_is_the_orchestrators_and_the_operators() {
 }
 
 #[tokio::test]
-async fn lessons_are_read_by_anyone_edited_by_the_operator_and_not_built_yet() {
+async fn lessons_are_read_by_anyone_and_edited_by_the_operator() {
     let h = Harness::new().await;
     let record = Request::RecordLesson(LessonDraft {
         kind: LessonKind::Pitfall,
-        text: "Run `make lint` before shipping.".into(),
+        text: "Run make lint before shipping.".into(),
         repo: None,
         pipeline: None,
         item: None,
     });
     assert_orchestrators_alone(as_helper(&h, record.clone()).await);
-    assert_not_implemented(h.orchestrator(record.clone()).await, "record_lesson");
-    assert_not_implemented(h.cli(record).await, "record_lesson");
-
+    let Reply::Lesson(lesson) = h.orchestrator(record.clone()).await.unwrap() else {
+        panic!("lesson");
+    };
+    let Reply::Lesson(operator) = h.cli(record).await.unwrap() else {
+        panic!("lesson");
+    };
+    assert_eq!(lesson.id, operator.id);
     let edit = Request::UpdateLesson {
-        lesson: LessonId::new(),
+        lesson: lesson.id,
         patch: LessonPatch {
             pinned: Some(true),
-            ..LessonPatch::default()
+            ..Default::default()
         },
     };
-    let refused = h
-        .orchestrator(edit.clone())
-        .await
-        .expect_err("operator only");
-    assert!(matches!(refused, ArchonError::Forbidden(_)), "{refused:?}");
-    assert_not_implemented(h.cli(edit).await, "update_lesson");
-
-    let item = QueueItemId::new();
-    let lookups = [
-        (Request::Lessons(LessonQuery::default()), "lessons"),
-        (Request::LessonsWhy { item }, "lessons_why"),
-        (Request::LessonStats { repo: None }, "lesson_stats"),
-    ];
-    for (request, command) in lookups {
-        assert_not_implemented(as_helper(&h, request).await, command);
-    }
+    assert!(matches!(
+        h.orchestrator(edit.clone()).await,
+        Err(ArchonError::Forbidden(_))
+    ));
+    assert!(matches!(h.cli(edit).await.unwrap(),Reply::Lesson(l) if l.pinned));
+    assert!(
+        matches!(as_helper(&h,Request::Lessons(LessonQuery::default())).await.unwrap(),Reply::Lessons(l) if l.len()==1)
+    );
+    assert!(matches!(
+        as_helper(&h, Request::LessonStats { repo: None })
+            .await
+            .unwrap(),
+        Reply::LessonStats(_)
+    ));
 }

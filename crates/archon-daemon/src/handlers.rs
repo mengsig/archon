@@ -158,12 +158,6 @@ async fn handle_adaptive(
     }
 }
 
-/// What a request answers until archond carries it out.
-fn not_implemented(command: &str) -> ArchonError {
-    assert!(!command.is_empty(), "the refusal names the command");
-    ArchonError::Unavailable(format!("{command} is not implemented yet"))
-}
-
 /// The one answer path: `archon answer` and the operator's `/answer` chat
 /// command both end here, differing only in the surface recorded.
 pub(crate) async fn answer_question(

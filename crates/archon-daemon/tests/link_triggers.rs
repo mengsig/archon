@@ -553,6 +553,7 @@ fn routine(item: &QueueItemId) -> TriggerEvent {
         pr_url: None,
         cost_usd: 0.25,
         origin: None,
+        lesson_hint: None,
     }
 }
 

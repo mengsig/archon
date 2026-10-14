@@ -109,6 +109,7 @@ mod tests {
                 pr_url: Some("https://github.com/o/r/pull/1".into()),
                 cost_usd: 1.5,
                 origin: None,
+                lesson_hint: None,
             },
             pushed_at: Some(archon_core::now()),
             quiet,

@@ -11,6 +11,7 @@ pub mod catalog;
 pub mod contract;
 pub mod engine;
 mod gate;
+pub mod proposals;
 pub mod reshape;
 pub mod review;
 mod sections;

@@ -524,6 +524,7 @@ fn item_finished(title: &str) -> TriggerEvent {
         summary: format!("Failed: {title}."),
         pr_url: None,
         cost_usd: 0.0,
+        lesson_hint: None,
         origin: None,
     }
 }

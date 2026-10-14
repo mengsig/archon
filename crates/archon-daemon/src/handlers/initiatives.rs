@@ -60,7 +60,9 @@ async fn prepare_member(
     };
     let resolved = knobs::resolve(&ctx.config, &env, member.pipeline.clone(), &patch)?;
     items::check_runs_here(ctx, &env, &resolved.spec).await?;
-    let plan = member_plan(ctx, &env, &resolved, member).await?;
+    let id = QueueItemId::new();
+    let given = member.model_plan.clone().unwrap_or_default();
+    let plan = items::filled_plan(ctx, &id, &env, &resolved.base, &resolved.spec, given).await?;
     items::check_plan(ctx, &env, &resolved.spec, &plan)?;
     let title = member
         .title
@@ -75,7 +77,7 @@ async fn prepare_member(
         .collect();
     assert!(!title.trim().is_empty());
     Ok(QueueItem {
-        id: QueueItemId::new(),
+        id,
         repo: env.repo.as_ref().map(|r| r.id.clone()),
         pipeline: resolved.pipeline,
         title: title.trim().into(),
@@ -157,57 +159,4 @@ fn member_title(brief: &str) -> String {
         .chars()
         .take(180)
         .collect()
-}
-
-async fn member_plan(
-    ctx: &DaemonContext,
-    env: &RepoEnv,
-    resolved: &knobs::Resolved,
-    member: &InitiativeMember,
-) -> Result<archon_core::model::ModelPlan, ArchonError> {
-    use archon_core::model::ModelChoice;
-    let mut plan = items::filled_plan(
-        ctx,
-        env,
-        &resolved.base,
-        &resolved.spec,
-        member.model_plan.clone().unwrap_or_default(),
-    )
-    .await?;
-    let stages = &resolved.spec.file.stages;
-    if stages.iter().all(|s| plan.choices_for(&s.id).is_some()) {
-        return Ok(plan);
-    }
-    let policy = env.policy(&ctx.config);
-    let configured = &ctx.config.orchestrator.model;
-    let model = if policy.permits_model(configured) {
-        configured.clone()
-    } else {
-        policy
-            .allow
-            .as_ref()
-            .and_then(|allowed| allowed.iter().find(|m| policy.permits_model(m)))
-            .cloned()
-            .ok_or_else(|| {
-                ArchonError::Policy(format!(
-                    "initiative needs a model_plan allowed by {}",
-                    policy.describe()
-                ))
-            })?
-    };
-    let effort = policy
-        .max_effort
-        .map_or(ctx.config.orchestrator.effort, |cap| {
-            cap.min(ctx.config.orchestrator.effort)
-        });
-    let choice = ModelChoice { model, effort };
-    policy.check(&choice)?;
-    assert!(!stages.is_empty());
-    for stage in stages {
-        plan.0
-            .entry(stage.id.clone())
-            .or_insert_with(|| vec![choice.clone()]);
-    }
-    assert!(stages.iter().all(|s| plan.choices_for(&s.id).is_some()));
-    Ok(plan)
 }

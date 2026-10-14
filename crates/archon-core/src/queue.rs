@@ -154,7 +154,7 @@ impl QueueState {
                     Succeeded { .. } | Failed { .. } | Cancelled { .. }
                 )
                 | (Blocked { .. }, Queued | Cancelled { .. })
-                | (Failed { .. } | Cancelled { .. }, Queued)
+                | (Succeeded { .. } | Failed { .. } | Cancelled { .. }, Queued)
         )
     }
 }

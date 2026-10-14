@@ -373,6 +373,11 @@ pub(super) fn transition_in(
     debug_assert!(before.can_transition_to(&item.state));
     check_run_refs(tx, id, &item.state)?;
     write_columns(tx, &item)?;
+    if let QueueState::Succeeded { run, .. } = &before
+        && item.state == QueueState::Queued
+    {
+        super::outcomes::correct(tx, run, archon_core::outcome::Correction::RetryAfterDone)?;
+    }
     Ok(item)
 }
 

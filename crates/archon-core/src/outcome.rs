@@ -104,6 +104,7 @@ pub enum Correction {
     Steered,
     PrClosed,
     ChangesRequested,
+    OperatorContradiction,
 }
 
 /// One stage of the run under one model choice.
@@ -164,6 +165,16 @@ impl Outcome {
                 "outcome of {}: the pipeline and every stage are named",
                 self.run
             )));
+        }
+        let mut choices = std::collections::HashSet::new();
+        if self
+            .stages
+            .iter()
+            .any(|s| s.attempts == 0 || !choices.insert((&s.stage, &s.choice)))
+        {
+            return Err(ArchonError::Invalid(
+                "outcome stages need positive attempts and distinct stage/model choices".into(),
+            ));
         }
         Ok(())
     }

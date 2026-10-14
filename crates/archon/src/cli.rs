@@ -44,6 +44,8 @@ pub struct TuiArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Inspect, record and manage learned advice.
+    Lessons(crate::cmd::lessons::LessonsArgs),
     /// Open the quiet line chat with the orchestrator.
     Chat {
         /// Also show progress notifications.
@@ -648,6 +650,11 @@ pub struct QueueAddArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum PipelineCommand {
+    /// Activate a validated proposed user pipeline.
+    Accept {
+        /// Name of the proposed pipeline, without .proposed.
+        name: String,
+    },
     /// The catalog, with problems.
     List {
         /// Include this repository's pipelines: its directory, or the name of

@@ -312,8 +312,9 @@ completed with a verdict; a builder or researcher that returned none is not
 a reviewer. Archon then holds the verdicts to the run branch: a pass counts
 when its reviewer read the branch head, or an earlier head whose later
 commits a passing reviewer read as a delta. A fail never counts, and it
-stands until such a pass read past it. With fewer counted passes than the
-level asks for, the run fails at that stage with each reason. Archon
+stands until such a pass read past it. When the stage also writes the ship
+record, the branch head must hold the record's `tree`. With fewer counted
+passes than the level asks for, the run fails at that stage with each reason. Archon
 records the counted reviewers as `review.reviewer_agents` and the models
 Aether ran them on as `review.reviewer_models`, replacing anything the
 agent wrote there.

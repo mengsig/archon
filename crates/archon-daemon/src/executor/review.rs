@@ -8,6 +8,7 @@ use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::ports::{Descendant, DescendantState};
 use archon_core::run::{PipelineRun, StageOutcome, StageRun};
+use archon_pipeline::ShipRecord;
 use archon_pipeline::review::{self, MAX_NAMED_REVIEWERS, Reviewer, Verdict};
 
 use super::recover;
@@ -20,13 +21,22 @@ const MAX_LISTED: usize = 6;
 /// What Archon puts on the record: the reviewers it found, or why not.
 type Finding = Result<Vec<Reviewer>, String>;
 
+/// What a settling stage's result owes besides its gate.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Owed {
+    /// Reviewers this item's review level asks of the stage; 0: none.
+    pub reviewers: u32,
+    /// Whether the result is also the ship record archond delivers.
+    pub records_ship: bool,
+}
+
 /// `outcome` with Archon's own finding on the review pass it claims, for a
-/// `stage` owing `owed` reviewers (0: none). `Err` while Aether cannot be asked.
+/// `stage` owing `owed`. `Err` while Aether cannot be asked.
 pub(super) async fn verify(
     ctx: &DaemonContext,
     run: &PipelineRun,
     stage: &StageRun,
-    owed: u32,
+    owed: Owed,
     outcome: StageOutcome,
 ) -> Result<StageOutcome, ArchonError> {
     let StageOutcome::Completed {
@@ -36,8 +46,16 @@ pub(super) async fn verify(
     else {
         return Ok(outcome);
     };
+    // A missing ship record binds nothing: the stage's gate refuses it.
+    let record = owed
+        .records_ship
+        .then(|| ShipRecord::read(Some(&structured)));
+    let shipped = record.and_then(Result::ok).map(|record| record.tree);
     let found = match review::claimed_reviewers(&structured) {
-        Some(named) if owed > 0 => Some(reviewers(ctx, run, stage, &named, owed).await?),
+        Some(named) if owed.reviewers > 0 => {
+            let owed = owed.reviewers;
+            Some(reviewers(ctx, run, stage, &named, owed, shipped).await?)
+        }
         _ => None,
     };
     review::record_check(&mut structured, found);
@@ -49,12 +67,14 @@ pub(super) async fn verify(
 
 /// The reviewers among the `named` agents that passed `stage`'s change as
 /// the run's branch holds it, or why they do not make the `owed` reviewers.
+/// A branch not holding the `shipped` tree, if given, is not what ships.
 async fn reviewers(
     ctx: &DaemonContext,
     run: &PipelineRun,
     stage: &StageRun,
     named: &[String],
     owed: u32,
+    shipped: Option<String>,
 ) -> Result<Finding, ArchonError> {
     let lead = stage.aether_agent.as_ref().ok_or_else(|| {
         ArchonError::Protocol(format!("completed stage {} has no agent", stage.id))
@@ -80,7 +100,7 @@ async fn reviewers(
             Err(why) => return Ok(Err(format!("reviewer {} {why}", child.agent))),
         }
     }
-    let counted = holding(ctx, run, verdicts, owed).await?;
+    let counted = holding(ctx, run, verdicts, owed, shipped).await?;
     Ok(counted.map(|passes| {
         let found = passes.into_iter().map(|i| picked[i]);
         found
@@ -159,12 +179,14 @@ async fn verdict_of(
     }
 }
 
-/// Indexes of the `verdicts` that hold for the run's branch as it stands.
+/// Indexes of the `verdicts` that hold for the run's branch as it stands,
+/// which must hold the `shipped` tree if one is given.
 async fn holding(
     ctx: &DaemonContext,
     run: &PipelineRun,
     verdicts: Vec<(String, Verdict)>,
     owed: u32,
+    shipped: Option<String>,
 ) -> Result<Result<Vec<usize>, String>, ArchonError> {
     assert!(!verdicts.is_empty(), "a named reviewer was read");
     let base_branch = {
@@ -183,6 +205,11 @@ async fn holding(
             Ok(placed) => placed,
             Err(why) => return Ok(Err(why)),
         };
+        if let Some(tree) = &shipped
+            && let Err(why) = coverage::holds_tree(&workspace, &head, tree)?
+        {
+            return Ok(Err(why));
+        }
         coverage::counted(&mut history, &placed, &head, owed)
     });
     let counted = checked

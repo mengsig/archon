@@ -518,6 +518,41 @@ async fn too_few_reviewers_for_the_level_fail_the_item() {
     }
 }
 
+/// A review vouches for what ships only if it passed the tree the ship record
+/// names, which is the tree archond checks the branch holds when it delivers.
+#[tokio::test]
+async fn a_review_of_another_tree_than_the_ship_record_fails_the_item() {
+    let (h, gh) = delivering().await;
+    let item = enqueue(&h, "adaptive", asking(ReviewLevel::Standard))
+        .await
+        .unwrap();
+    h.dispatch().await;
+    let lead = h.running().await.remove(0);
+    let reviewer = h
+        .backend
+        .delegate(lead.aether_agent.as_ref().unwrap(), REVIEW_MODEL);
+    let named = pass_by(std::slice::from_ref(&reviewer));
+    let recorded = shipped_by(&h, &lead, "Built; reviewed", named).await;
+    let run = h.run(&item.id).await;
+    let later = StageOutcome::Completed {
+        summary: "one more change".into(),
+        structured: Some(change(&run.workspace)),
+    };
+    h.backend
+        .complete_delegated(&reviewer, verdict_on(&later, "pass"));
+    h.settle_running(|_| recorded.clone()).await;
+    h.dispatch().await;
+
+    let error = failed(&h, &item).await;
+    assert!(
+        error.contains("the review this pipeline declares is not on record"),
+        "{error}"
+    );
+    assert!(error.contains("the ship record names"), "{error}");
+    assert!(gh.calls().is_empty(), "nothing is delivered");
+    assert_eq!(pushed(&origin_of(&h), &run.branch), None);
+}
+
 /// `direct` holds its review too: asked for one, its agent may delegate, is
 /// told to, and Archon checks the reviewer like any lead's.
 #[tokio::test]

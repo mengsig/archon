@@ -27,7 +27,7 @@ pub(super) async fn settle(
         let mut table = ctx.runs.lock().await;
         return settle_locked(ctx, &mut table, id, outcome).await;
     }
-    let (stage, run, reviewers_owed, daemon_ships) = {
+    let (stage, run, review, daemon_ships) = {
         let table = ctx.runs.lock().await;
         let store = ctx.store.lock().await;
         let stage = store.stage_run(id)?;
@@ -36,14 +36,17 @@ pub(super) async fn settle(
         }
         let run = store.run(&stage.run)?;
         let driver = table.drivers.get(&run.id);
-        let reviewers_owed = driver.map_or(0, |d| d.reviewers_owed(&stage.stage_id));
+        let review = super::review::Owed {
+            reviewers: driver.map_or(0, |d| d.reviewers_owed(&stage.stage_id)),
+            records_ship: driver.is_some_and(|d| d.records_ship(&stage.stage_id)),
+        };
         let daemon_ships = driver.is_some_and(|d| d.ships_by_daemon());
-        (stage, run, reviewers_owed, daemon_ships)
+        (stage, run, review, daemon_ships)
     };
     // Leave the stage live until verification is persisted. If interrupted,
     // reconnect reconciliation reads the task outcome and verifies it again.
     let outcome = ship::verify(ctx, &run, &stage, daemon_ships, outcome).await?;
-    let outcome = super::review::verify(ctx, &run, &stage, reviewers_owed, outcome).await?;
+    let outcome = super::review::verify(ctx, &run, &stage, review, outcome).await?;
     let mut table = ctx.runs.lock().await;
     let (stage, run, all) = {
         let store = ctx.store.lock().await;

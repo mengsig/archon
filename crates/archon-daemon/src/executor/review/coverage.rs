@@ -82,6 +82,35 @@ pub(super) fn place(
     Ok(Ok((head, placed)))
 }
 
+/// Whether the branch at `head`, which the verdicts are held to, holds the
+/// `tree` the ship record names: archond delivers only a branch holding it.
+pub(super) fn holds_tree(
+    dir: &Path,
+    head: &str,
+    tree: &str,
+) -> Result<Result<(), String>, ArchonError> {
+    assert!(
+        matches!(tree.len(), 40 | 64),
+        "a ship record names a full tree id"
+    );
+    let at = format!("{head}^{{tree}}");
+    let held = worktree::git(dir, &["rev-parse", "--verify", at.as_str()])?;
+    assert!(
+        matches!(held.len(), 40 | 64),
+        "rev-parse --verify prints a full id"
+    );
+    if held == tree {
+        return Ok(Ok(()));
+    }
+    Ok(Err(format!(
+        "the ship record names tree {}, but the reviewers are held to the branch head {}, \
+         which holds tree {}: record the commit the reviewers passed",
+        short(tree),
+        short(head),
+        short(&held)
+    )))
+}
+
 /// Where the run's branch left `base_branch`; `None` when that branch is
 /// gone, so only a review stating no base counts as reading the whole change.
 fn fork_point(dir: &Path, base_branch: &str, head: &str) -> Result<Option<String>, ArchonError> {

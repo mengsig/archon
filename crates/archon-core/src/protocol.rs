@@ -1169,7 +1169,7 @@ mod tests {
             },
             RepoPatch {
                 base_branch: Clearable::Set("main".into()),
-                default_pipeline: Clearable::Set("quick-pr".into()),
+                default_pipeline: Clearable::Set("direct".into()),
                 autonomy_max: Some(ceiling),
                 ..RepoPatch::default()
             },

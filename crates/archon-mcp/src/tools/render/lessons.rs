@@ -28,7 +28,7 @@ mod tests {
     fn a_recorded_lesson_names_its_id_state_and_scope() {
         let scope = LessonScope {
             repo: None,
-            pipeline: Some("quick-pr".into()),
+            pipeline: Some("direct".into()),
         };
         let (kind, source, state) = (
             LessonKind::Pitfall,
@@ -49,6 +49,6 @@ mod tests {
             "Recorded lesson {} [pitfall, proposed]",
             lesson.id
         )));
-        assert!(text.ends_with("for pipeline quick-pr: Run `make lint`."));
+        assert!(text.ends_with("for pipeline direct: Run `make lint`."));
     }
 }

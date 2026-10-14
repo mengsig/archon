@@ -1216,10 +1216,11 @@ async fn a_pipeline_with_review_stages_refuses_another_level() {
     use archon_core::autonomy::ReviewLevel;
 
     let h = Harness::new().await;
-    let stages = ["implement", "review"].map(|s| (s.to_owned(), plan().0["implement"].clone()));
+    let stages =
+        ["implement", "review", "ship"].map(|s| (s.to_owned(), plan().0["implement"].clone()));
     let request = |review| EnqueueRequest {
         repo: Some(RepoRef(REPO_NAME.into())),
-        pipeline: Some("default-pr-review".into()),
+        pipeline: Some(common::PIPELINE.into()),
         title: "a change".into(),
         brief: "brief".into(),
         priority: Default::default(),

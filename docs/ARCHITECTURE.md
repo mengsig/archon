@@ -329,11 +329,11 @@ In `archon tui` (Aether's TUI) an item therefore reads as
 
 ```
 Archon                                  archon-orchestrator
-add a greeting                          archon-run:default-pr-review
-  #q69g5fav implement · add a greeting            archon-stage:default-pr-review/implement
-  #q69g5fav review 1/2 · add a greeting           archon-stage:default-pr-review/review
-  #q69g5fav review 2/2 · add a greeting           archon-stage:default-pr-review/review
-  #q69g5fav ship · add a greeting                 archon-stage:default-pr-review/ship
+split the parser                        archon-run:refactor
+  #q69g5fav baseline · split the parser           archon-stage:refactor/baseline
+  #q69g5fav refactor · split the parser           archon-stage:refactor/refactor
+  #q69g5fav verify · split the parser             archon-stage:refactor/verify
+  #q69g5fav review · split the parser             archon-stage:refactor/review
 ```
 
 `archon aether agents` passes through to Aether's flat table, which shows
@@ -1460,9 +1460,11 @@ is a team stage for a run that was started without team worktrees. A stage
 an insert or a switch carries in that wrote its own pipeline's ship record
 writes the run's when it runs after the stage the run shipped from so far
 (`reshape::ship_after`), and an insert that would commit after the ship
-record is refused. The result must pass the model policy and
-the autonomy ceiling: a steer cannot take out the review an enqueue could
-not leave out (§18.2). The item's review level follows the stages it keeps,
+record is refused. A switch drops the review and ship record the old
+pipeline declared on a stage it does not keep, even where a new stage has
+that id, so the new pipeline's own declarations apply. The result must
+pass the model policy and the autonomy ceiling: a steer cannot take out the
+review an enqueue could not leave out (§18.2). The item's review level follows the stages it keeps,
 and a steer that moves it says so in its record ("raised the review level
 from none to standard"). An item that is dispatching is refused with "steer
 it again in a moment", a succeeded one always, and a cancelled one for a
@@ -1887,8 +1889,8 @@ matter of dropping in a directory. The catalog is re-read at every
 
 ```toml
 [pipeline]
-name = "strict-pr-review"            # must equal the directory name
-description = "Implement, test, three independent reviews, ship"
+name = "triple-review"               # must equal the directory name
+description = "Implement, test, three independent reviews; archond ships"
 version = 1                          # schema version; only 1 exists
 workspace = "worktree"               # worktree | repo-readonly | scratch
 requires_repo = true                 # false: repo optional (e.g. ask)
@@ -2077,18 +2079,10 @@ literal `{{`.
 
 | Name | Stages | Nudges |
 | --- | --- | --- |
-| `direct` | implement (work, holds the review) | tier = fast. One agent implements a change one author can make and check, whatever its size, runs the affected checks, commits and returns the ship record; the cheapest path to a shipped change. Review level `none` unless the item asks (§8.2); the agent escalates what turns out risky. |
+| `direct` | implement (work, holds the review) | tier = balanced. The pipeline an item that names none runs. One agent implements a change one author can make and check, whatever its size, runs the affected checks, commits and returns the ship record; the cheapest path to a shipped change. Review level `none` unless the item asks (§8.2); the agent escalates what turns out risky. |
 | `adaptive` | build (work, `allow_delegation`, holds the review) | tier = balanced, independent_reviewers. For a change where one lead that keeps its context through fixes, or integrates independent parts, saves restarts: it sizes the work, delegates the parts worth splitting, integrates them and has the integrated diff reviewed by as many reviewers as the item's review level asks. Review level `standard` unless the item asks (§8.2). |
-| `quick-pr` | implement | tier = fast |
-| `default-pr-review` | implement → review (1, all_pass, goto implement ×2) | tier = balanced |
-| `bugfix` | reproduce (failing test) → fix → review (1, all_pass, goto fix ×2) | tier = balanced, independent_reviewers. For describable bugs; direct or quick-pr for trivial one-liners, strict-pr-review for security/concurrency bugs. |
-| `docs` | write → verify (1, all_pass, goto write ×2) | tier = balanced, independent_reviewers. For documentation: every claim, command and internal link checked against the code. Use `direct` for a typo. |
-| `dependency-upgrade` | survey → upgrade → verify (test, all_pass, goto upgrade ×3) | tier = balanced. Version bumps with changelog research and build/tests/audit; use `default-pr-review` for features that add dependencies. |
-| `refactor` | baseline/characterize → refactor → verify (test, all_pass, goto refactor ×3) → review (1, all_pass, goto refactor ×2) | tier = balanced, independent_reviewers. Structure-only changes; use default-pr-review for behaviour changes. |
-| `strict-pr-review` | implement → test (gate) → review (3, all_pass, goto implement ×3) | tier = strongest, independent_reviewers |
-| `team-pr` | plan → build (team: backend, frontend) → e2e (test, all_pass, goto build ×2) → review (1, all_pass, goto build ×2) | tier = balanced, independent_reviewers. For changes that split cleanly into parts. |
-| `performance` | measure → optimize → verify (test, all_pass, goto optimize ×3) → review (1, all_pass, goto optimize ×2) | tier = strongest, independent_reviewers. For a specific slow path with a measurable goal; use `default-pr-review` for ordinary changes. |
-| `test-coverage` | analyze (work) → write (work) → verify (test, all_pass, goto write ×2) | tier = balanced. Risk-ranked coverage of existing code, at least three passing runs and per-test mutation checks. Bugs become follow-ups; use `bugfix` to fix one. |
+| `refactor` | baseline/characterize → refactor → verify (test, all_pass, goto refactor ×3) → review (1, all_pass, goto refactor ×2) | tier = balanced, independent_reviewers. Structure-only changes; use `direct` for behaviour changes. |
+| `performance` | measure → optimize → verify (test, all_pass, goto optimize ×3) → review (1, all_pass, goto optimize ×2) | tier = strongest, independent_reviewers. For a specific slow path with a measurable goal; use `direct` for ordinary changes. |
 | `agent-testing` | plan → exercise (fan_out 2, report) → report | Agents drive the product as a user would and report defects. workspace = worktree |
 | `code-audit` | scope (work) → audit (fan_out 3, report) → report | Security, reliability and maintainability lenses produce HTML with high/critical issue drafts. No code changes or ship. workspace = worktree, tier = strongest, independent_reviewers. Use `ask` for one question. |
 | `e2e-testing` | setup → e2e (test gate, goto setup ×1) → report | The report stage produces HTML and screenshots under `.archon/reports/` for Lavish. |
@@ -2096,18 +2090,25 @@ literal `{{`.
 | `errand` | errand (report) | workspace = scratch, requires_repo = false, tier = balanced. A small job answered in its summary and optionally as one self-contained Lavish page. No repository changes or outward side effects; read an attached checkout only, and run code on a throwaway copy in scratch. Other files are temporary and collected after `worktrees.gc_after` (default 7d; §13.2). |
 | `design-doc` | research → critique (1, all_pass, goto research ×2) → report (HTML design/RFC) | workspace = worktree, requires_repo = true, tier = strongest, independent_reviewers. Before a large or ambiguous change; no product-code changes or shipping. Use `proposal: lavish` for design and implementation in one item. |
 
-The first twelve change a repository. Each declares `[pipeline.ship]`, so
+The first four change a repository. Each declares `[pipeline.ship]`, so
 archond delivers its change once the last stage passed (§8.7) and none has
-a ship agent: `team-pr` takes the ship record from `review`, the rest from
-their last committing stage. The `propose` and change-report stages the
-autonomy knobs insert (§18.1) use the shared prompts in `pipelines/_shared/`.
+a ship agent: each takes the ship record from its last committing stage.
+The `propose` and change-report stages the autonomy knobs insert (§18.1)
+use the shared prompts in `pipelines/_shared/`.
+
+1.1.0 removed the built-ins `quick-pr`, `default-pr-review`,
+`strict-pr-review`, `team-pr`, `bugfix`, `docs`, `dependency-upgrade` and
+`test-coverage`: `direct` and `adaptive` at a review level cover them.
+Naming one fails with its replacement unless a user or repository pipeline
+of that name exists, and a run already going keeps its frozen pipeline
+(§6.6). `team-pr` lives on as `docs/examples/pipelines/team-pr/`.
 
 `direct` and `adaptive` have no review stage: the stage agent delegates the
 review, and the item's review level decides how many reviewers that is
-(§8.2). They are chosen by naming them (`pipeline = "adaptive"`, or a
-`default_pipeline`), never by the `review` knob, which selects
-`default-pr-review`, `strict-pr-review` or `quick-pr` when no pipeline is
-named. Named, they take any level the ceiling allows (§18.2). At `none`
+(§8.2). An item that names no pipeline runs `direct` if it asks a review
+level, else its repository's `default_pipeline`, else the configured one,
+else `direct`; `adaptive` runs only by name or as a default. Either takes
+any level the ceiling allows (§18.2). At `none`
 under `tools = guarded`, `direct`'s agent is a leaf: it cannot delegate, and
 its contract carries no delegation section.
 
@@ -2465,7 +2466,7 @@ max_agent_messages = 20        # message_orchestrator calls per agent, lifetime;
 initiative_members = 16        # 1..=64
 initiative_contract_bytes = 2048  # 1..=16384
 [limits.per_pipeline]          # name = max running stage agents
-# strict-pr-review = 3
+# adaptive = 3
 
 [dispatcher]
 tick_secs = 15
@@ -2517,7 +2518,7 @@ Per-repository `<repo>/.archon/config.toml`:
 [repo]
 ship = "pr"                    # default for `archon repo add` when --ship is omitted
 base_branch = "main"
-default_pipeline = "default-pr-review"
+default_pipeline = "adaptive"
 
 [limits]
 max_per_repo = 2               # may only lower the global value
@@ -2526,7 +2527,7 @@ max_per_repo = 2               # may only lower the global value
 allow = ["claude-code/claude-opus-5-5"]   # intersected with the global allowlist
 
 [pipelines]
-disabled = ["quick-pr"]
+disabled = ["performance"]
 
 [autonomy.max]                 # may only lower the ceiling; [autonomy.default] likewise
 tools = "guarded"
@@ -3855,7 +3856,7 @@ can raise. The types are in `archon_core::autonomy`.
 
 | Knob | Values, least to most autonomous | Effect |
 | --- | --- | --- |
-| `review` | `strict`, `standard`, `none` | With no pipeline named, picks `strict-pr-review`, `default-pr-review` or `quick-pr`. A named pipeline that holds its own review (`adaptive`, `direct`; §8.2) runs at the level asked: three, one or no independent reviewers, verified. One with gated review and test stages fixes the level from them, and a `review` that contradicts it is refused. |
+| `review` | `strict`, `standard`, `none` | With no pipeline named, the item runs `direct` at that level. A pipeline that holds its own review (`adaptive`, `direct`; §8.2) runs at the level asked: three, one or no independent reviewers, verified. One with gated review and test stages fixes the level from them, and a `review` that contradicts it is refused. |
 | `proposal` | `lavish`, `off` | `lavish`: a `propose` stage first writes `.archon/reports/proposal/index.html`, and the run waits for the operator (§18.3). The approved proposal, with the operator's note, goes into every later stage's prompt. |
 | `report` | `before-pr`, `with-pr`, `off` | `with-pr`: a report stage before shipping writes `.archon/reports/change/index.html`. The page is published, the report goes into the PR body, and nothing waits. `before-pr` also waits for the operator before shipping (§18.3). |
 | `merge` | `manual`, `auto` | `auto` sets `{{ship.auto_merge}}`: archond asks GitHub to merge the PR once its checks allow (§8.7), and a ship stage of a pipeline that has one merges its own. |

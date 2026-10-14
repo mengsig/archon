@@ -283,9 +283,22 @@ fn switched(
     stages: &[serde_json::Value],
     recorder: &mut Option<String>,
 ) -> Result<Vec<StageSpec>, ArchonError> {
-    let mut list = Vec::with_capacity(stages.len());
-    for entry in stages {
-        let stage = match from_value(entry, "stage list")? {
+    let entries: Vec<Entry> = stages
+        .iter()
+        .map(|entry| from_value(entry, "stage list"))
+        .collect::<Result<_, _>>()?;
+    // What the old pipeline declared goes with it unless the run keeps the
+    // stage, even where a new stage of that id comes in.
+    let keeps = |id: &str| {
+        let kept = |entry: &Entry| matches!(entry, Entry::Kept(k) if k.keep == id);
+        entries.iter().any(kept)
+    };
+    let declared = &mut spec.file.pipeline;
+    declared.review = declared.review.take().filter(|r| keeps(&r.stage));
+    declared.ship = declared.ship.take().filter(|s| keeps(&s.stage));
+    let mut list = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let stage = match entry {
             Entry::Kept(KeptStage { keep }) => match spec.stage(&keep) {
                 Some(stage) => stage.clone(),
                 None => return Err(missing(&keep)),
@@ -295,6 +308,11 @@ fn switched(
         list.push(stage);
     }
     assert_eq!(list.len(), stages.len(), "one stage per entry");
+    let held = spec.file.pipeline.review.as_ref();
+    assert!(
+        held.is_none_or(|r| list.iter().any(|s| s.id == r.stage)),
+        "a stage of the run holds the review"
+    );
     Ok(list)
 }
 

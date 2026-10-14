@@ -309,12 +309,12 @@ mod tests {
             "repository a and no repository"
         );
 
-        let spec = Catalog::builtin().get("default-pr-review").unwrap().clone();
+        let spec = Catalog::builtin().get("refactor").unwrap().clone();
         let fan_out = spec.file.stages[0].fan_out.max(1);
         for seq in 0..20 {
             let repo = (seq % 2 == 0).then_some(&queued);
             assert_eq!(
-                envs.first_stage(&candidate(repo, "default-pr-review", seq)),
+                envs.first_stage(&candidate(repo, "refactor", seq)),
                 (fan_out, false)
             );
             assert_eq!(

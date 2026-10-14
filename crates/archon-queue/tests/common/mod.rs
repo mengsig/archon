@@ -33,7 +33,7 @@ pub fn repo(name: &str) -> Repo {
         path: PathBuf::from(format!("/src/{name}")),
         ship: ShipMode::Local,
         base_branch: Some("main".into()),
-        default_pipeline: Some("quick-pr".into()),
+        default_pipeline: Some("direct".into()),
         autonomy_max: AutonomyPatch::default(),
         added_at: t(0),
     }
@@ -52,7 +52,7 @@ pub fn item(repo: Option<&Repo>, title: &str) -> QueueItem {
     QueueItem {
         id: QueueItemId::new(),
         repo: repo.map(|r| r.id.clone()),
-        pipeline: "quick-pr".into(),
+        pipeline: "direct".into(),
         title: title.into(),
         brief: format!("do {title}"),
         priority: Priority::Normal,

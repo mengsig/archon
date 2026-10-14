@@ -1,6 +1,6 @@
 [pipeline]
 name = "performance"
-description = "Measure and optimize a specific slow path with a measurable goal, verify the gain, review, then ship; use default-pr-review for ordinary changes, not speculative micro-optimization"
+description = "Measure and optimize a specific slow path with a measurable goal, verify the gain, review, then ship; use direct for ordinary changes, not speculative micro-optimization"
 version = 1
 workspace = "worktree"
 requires_repo = true
@@ -12,7 +12,7 @@ stage = "optimize"
 [nudges]
 tier = "strongest"
 independent_reviewers = true
-notes = "For a specific slow path with a measurable goal, not speculative micro-optimization. Prefer default-pr-review for ordinary features and fixes without a performance target."
+notes = "For a specific slow path with a measurable goal, not speculative micro-optimization. Prefer direct for ordinary features and fixes without a performance target."
 
 [[stage]]
 id = "measure"

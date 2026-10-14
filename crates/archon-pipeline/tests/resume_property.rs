@@ -249,8 +249,8 @@ fn resume_matches_the_live_driver_on_generated_runs() {
         .collect();
     specs.push((Arc::new(majority_spec()), OperatorGates::default()));
     specs.push((Arc::new(team_spec()), OperatorGates::default()));
-    specs.push(gated(&support::builtin("default-pr-review")));
-    specs.push(gated(&support::builtin("strict-pr-review")));
+    specs.push(gated(&support::builtin("reviewed")));
+    specs.push(gated(&support::builtin("strict-reviewed")));
     specs.push(gated(&team_spec()));
     let (mut total_steps, mut total_merges, mut deliveries) = (0, 0, 0);
     for (spec, gates) in &specs {

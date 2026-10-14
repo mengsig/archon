@@ -1,3 +1,7 @@
+# An example user pipeline with a team stage. Copy this directory to
+# ~/.config/archon/pipelines/team-pr/ (or <repo>/.archon/pipelines/team-pr/)
+# and it is available on the next enqueue. See docs/PIPELINES.md.
+
 [pipeline]
 name = "team-pr"
 description = "Plan a split, build it as a backend and frontend team, test end to end, one review, then ship"
@@ -12,7 +16,7 @@ stage = "review"
 [nudges]
 tier = "balanced"
 independent_reviewers = true
-notes = "For a change that spans cleanly separable parts, such as a backend and a frontend: the roles build in parallel on their own branches and are merged into one PR. Not for small or tightly coupled changes; use default-pr-review. To use other roles, override this pipeline in <repo>/.archon/pipelines/team-pr/."
+notes = "For a change that spans cleanly separable parts, such as a backend and a frontend: the roles build in parallel on their own branches and are merged into one PR. Not for small or tightly coupled changes; use direct or adaptive. For other roles, edit `roles` in your copy."
 
 [[stage]]
 id = "plan"

@@ -27,7 +27,7 @@ use serde_json::{Value, json};
 fn spawn_request() -> SpawnRequest {
     SpawnRequest {
         idempotency_key: "stg_01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
-        role: "archon-stage:quick-pr/implement".into(),
+        role: "archon-stage:direct/implement".into(),
         name: "implement · the thing".into(),
         objective: "implement the thing".into(),
         instructions: "stage contract".into(),
@@ -53,7 +53,7 @@ fn spawn_request() -> SpawnRequest {
 fn node_request() -> RunNodeRequest {
     RunNodeRequest {
         idempotency_key: "prun_01ARZ3NDEKTSV4RRFFQ69G5FAV:node:1".into(),
-        role: "archon-run:quick-pr".into(),
+        role: "archon-run:direct".into(),
         name: "the thing".into(),
         model: "claude-code/claude-opus-5-5".parse().unwrap(),
         workspace: "/work/tree".into(),
@@ -262,7 +262,7 @@ async fn network_default_reads_aethers_status() {
 }
 
 fn assert_create_shape(create: &Value) {
-    assert_eq!(create["role"], "archon-stage:quick-pr/implement");
+    assert_eq!(create["role"], "archon-stage:direct/implement");
     assert_eq!(create["objective"], "implement the thing");
     assert_eq!(create["start"], true);
     assert_eq!(
@@ -342,7 +342,7 @@ async fn run_nodes_are_created_passive_and_keyed() {
         create["idempotency_key"],
         "prun_01ARZ3NDEKTSV4RRFFQ69G5FAV:node:1"
     );
-    assert_eq!(create["role"], "archon-run:quick-pr");
+    assert_eq!(create["role"], "archon-run:direct");
     assert_eq!(create["name"], "the thing");
     assert_eq!(create["start"], false);
     assert!(create.get("objective").is_none() && create.get("parent").is_none());

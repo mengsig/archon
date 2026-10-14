@@ -178,12 +178,12 @@ async fn enqueue_fills_the_stages_a_plan_leaves_out() {
     let stages: Vec<&str> = unplanned.model_plan.0.keys().map(String::as_str).collect();
     assert_eq!(stages, ["implement", "review", "ship"]);
     assert!(unplanned.model_plan.0.values().all(|c| *c == default));
-    // `direct` asks for a fast model: its one stage runs at low effort.
-    let direct = h
-        .enqueue_in("direct", "a small change", ModelPlan::default())
+    // `performance` asks for the strongest model: its stages run at high effort.
+    let performance = h
+        .enqueue_in("performance", "a faster path", ModelPlan::default())
         .await
         .unwrap();
-    assert_eq!(direct.model_plan.0["implement"][0].effort, Effort::Low);
+    assert_eq!(performance.model_plan.0["measure"][0].effort, Effort::High);
 }
 
 /// A default is a choice like any other: the model policy still decides.
@@ -393,7 +393,7 @@ async fn pausing_an_unknown_pipeline_is_refused_with_the_known_ones() {
     assert!(matches!(error, ArchonError::Invalid(_)), "{error:?}");
     assert!(
         text.contains("\"no-such-pipeline\"")
-            && text.contains("quick-pr")
+            && text.contains("direct")
             && text.contains(common::PIPELINE),
         "{text}"
     );

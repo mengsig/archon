@@ -1,4 +1,5 @@
-//! The built-in `team-pr` pipeline against the scripted backend: a plan,
+//! The `team-pr` example pipeline, installed in the repository, against the
+//! scripted backend: a plan,
 //! a backend and frontend team, an end-to-end test that fails and sends
 //! its findings back to the team, a second build on top of the first, then
 //! a passing test and one review, all on one run branch, which archond
@@ -26,6 +27,27 @@ fn team_pr_plan() -> ModelPlan {
     }
     stages.insert("build".into(), vec![choice(MODEL, Effort::High); 2]);
     ModelPlan(stages)
+}
+
+/// Copy `docs/examples/pipelines/team-pr` into the repository's pipelines.
+fn install_team_pr(h: &Harness) {
+    let example =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/examples/pipelines/team-pr");
+    let installed = h.repo.join(".archon/pipelines/team-pr");
+    std::fs::create_dir_all(&installed).expect("pipeline dir");
+    for entry in std::fs::read_dir(&example).expect("the team-pr example") {
+        let path = entry.expect("an example file").path();
+        let name = path.file_name().expect("a file name");
+        std::fs::copy(&path, installed.join(name)).expect("copy the example");
+    }
+    assert!(
+        installed.join("pipeline.toml").is_file(),
+        "{example:?} is a pipeline"
+    );
+    assert!(
+        installed.join("build.md").is_file(),
+        "{example:?} has its prompts"
+    );
 }
 
 fn commit_file(tree: &Path, file: &str, text: &str) {
@@ -144,12 +166,13 @@ fn assert_both_rounds_on_the_run_branch(run: &PipelineRun) {
 #[tokio::test]
 async fn a_failed_end_to_end_test_loops_the_team_back_then_ships() {
     let h = Harness::new().await;
+    install_team_pr(&h);
     let origin = add_origin(&h);
     let gh = FakeGh::install(&h);
     let item = h
         .enqueue_in("team-pr", "sign in", team_pr_plan())
         .await
-        .expect("team-pr is a built-in");
+        .expect("the team-pr example loads");
     h.dispatch().await;
     let run = h.run(&item.id).await;
     running_one(&h, "plan", 1).await;

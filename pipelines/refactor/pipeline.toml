@@ -1,6 +1,6 @@
 [pipeline]
 name = "refactor"
-description = "Characterize, refactor structure without changing behaviour, verify, review, then ship; use default-pr-review for behaviour changes"
+description = "Characterize, refactor structure without changing behaviour, verify, review, then ship; use direct for behaviour changes"
 version = 1
 workspace = "worktree"
 requires_repo = true
@@ -12,7 +12,7 @@ stage = "refactor"
 [nudges]
 tier = "balanced"
 independent_reviewers = true
-notes = "Structure-only change (rename, extract, split module, replace pattern), with behaviour-preservation checks. Not for changes that also alter behaviour: use default-pr-review."
+notes = "Structure-only change (rename, extract, split module, replace pattern), with behaviour-preservation checks. Not for changes that also alter behaviour: use direct."
 
 [[stage]]
 id = "baseline"

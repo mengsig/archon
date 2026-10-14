@@ -515,7 +515,7 @@ pub enum QueueCommand {
     /// Change an item without cancelling it: its brief, a stage's model, its
     /// budget or deadline, or the stages that have not started.
     #[command(
-        after_help = "Examples:\n  archon queue steer qi_… --note 'Use the v2 client'\n  archon queue steer qi_… --stage implement --model claude-code/claude-opus-5-5 --effort high\n  archon queue steer qi_… --abort --goto implement\n  archon queue steer qi_… --insert test --from strict-pr-review --after implement"
+        after_help = "Examples:\n  archon queue steer qi_… --note 'Use the v2 client'\n  archon queue steer qi_… --stage implement --model claude-code/claude-opus-5-5 --effort high\n  archon queue steer qi_… --abort --goto implement\n  archon queue steer qi_… --insert verify --from refactor --after implement"
     )]
     Steer(Box<QueueSteerArgs>),
     /// Show the runtime caps, or change them until archond restarts (the

@@ -32,6 +32,11 @@ The store migration is one-way: once 1.1.0's `archond` has started, a 1.0
    restart`. `archon doctor` reports a registration that still lists other
    tools than this `archon` serves, and the refresh that fixes it.
 
+Eight built-in pipelines are gone (see "Breaking changes"). An item queued
+on one fails when it would start, naming the pipeline to use: let such items
+start before you update, or enqueue them again on `direct` or `adaptive`.
+Point a repository's `default_pipeline` that names one at its replacement.
+
 To go back to 1.0.1, see "Back up before a release that migrates the store"
 in [docs/install.md](docs/install.md): stop `archond`, install 1.0.1 and put
 the copy back. What 1.1.0 recorded since is lost. A running orchestrator
@@ -41,6 +46,17 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
 
 ### Breaking changes
 
+- **Eight built-in pipelines are folded into `direct` and `adaptive`.**
+  `quick-pr`, `default-pr-review` and `strict-pr-review` are `direct` at
+  review level `none`, `standard` or `strict`; `bugfix`, `docs`,
+  `test-coverage` and `dependency-upgrade` are `direct`; and `team-pr` is
+  an example to copy, `docs/examples/pipelines/team-pr`. Naming one is
+  refused with its replacement unless a pipeline of yours has that name. A
+  run already going finishes on the pipeline it started with. An item that
+  names no pipeline runs `direct`, at the level it asks or your default
+  review level, so with no knob set it is reviewed once, as on
+  `default-pr-review`; the review level no longer picks a pipeline.
+  `refactor`, `performance` and the pipelines that do not ship stay.
 - `archon` and `archond` speak protocol 7 (1.0.1 spoke 5), and a client and
   a daemon of different protocols refuse each other ("upgrade the older
   one"): restart `archond` after updating.
@@ -112,7 +128,8 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
   `docs/examples/pipelines/bugfix-tdd` shows how.
 - **New built-in `direct`**: one agent implements a change one author can
   make and check, whatever its size, runs the checks it affects and
-  commits. It is the cheapest pipeline that ships. There are 18 built-ins.
+  commits. It is the cheapest pipeline that ships, and the one an item that
+  names no pipeline runs. There are 10 built-ins.
 - **New built-in `adaptive`**: one lead sizes the work, delegates the parts
   worth splitting, integrates them, and has the integrated diff reviewed by
   fresh reviewers at the item's review level.
@@ -138,8 +155,7 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
   that fits.
 - Reviewers and verifiers rely on a full-suite result only when it names
   the tree they review (`git rev-parse HEAD^{tree}`), and otherwise run the
-  suite themselves. The `test-coverage` verifier repeats timing-sensitive
-  tests and fails a high-risk test without sensitivity evidence.
+  suite themselves.
 - The contracts of all built-in stages together are 15 % shorter, with
   every safety rule kept.
 

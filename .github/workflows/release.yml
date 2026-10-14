@@ -170,7 +170,7 @@ jobs:
             exit 1
           fi
           "$archon" pipelines list | tee pipelines.txt
-          grep -q default-pr-review pipelines.txt
+          grep -qw direct pipelines.txt
           "$archon" pipelines check
           "$archon" update --check
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

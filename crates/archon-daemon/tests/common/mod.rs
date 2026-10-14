@@ -81,15 +81,41 @@ prompt = "ship.md"
 timeout_minutes = 90
 "#;
 
+/// A repository pipeline shaped like 1.0's `default-pr-review`: one reviewer
+/// with up to two fix loops, then archond ships what `implement` records.
+pub const REVIEWED: &str = "reviewed";
+pub const REVIEWED_TOML: &str = r#"[pipeline]
+name = "reviewed"
+description = "implement, one review, then ship"
+version = 1
+workspace = "worktree"
+requires_repo = true
+
+[pipeline.ship]
+stage = "implement"
+
+[[stage]]
+id = "implement"
+kind = "work"
+prompt = "implement.md"
+timeout_minutes = 120
+
+[[stage]]
+id = "review"
+kind = "review"
+prompt = "review.md"
+gate = "all_pass"
+timeout_minutes = 60
+on_fail = { goto = "implement", max_loops = 2 }
+"#;
+
 const PROMPTS: [(&str, &str); 3] = [
     (
         "implement.md",
-        include_str!("../../../../pipelines/default-pr-review/implement.md"),
+        // 1.0's `default-pr-review` prompts, which these tests were written for.
+        include_str!("implement.md"),
     ),
-    (
-        "review.md",
-        include_str!("../../../../pipelines/default-pr-review/review.md"),
-    ),
+    ("review.md", include_str!("review.md")),
     (
         "ship.md",
         // A pipeline of the user's own may still end in a ship agent.

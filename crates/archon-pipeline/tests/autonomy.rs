@@ -8,7 +8,7 @@ mod support;
 
 use std::sync::Arc;
 
-use archon_core::autonomy::{Autonomy, ProposalMode, ReportMode};
+use archon_core::autonomy::{Autonomy, ProposalMode, ReportMode, ReviewLevel};
 use archon_core::run::{GateDecision, GateSubject, RunState};
 use archon_pipeline::autonomy::{OperatorGates, augment};
 use archon_pipeline::engine::MAX_REVISIONS;
@@ -17,11 +17,24 @@ use archon_pipeline::{EngineAction, RunDriver};
 use sim::{Agent, Sim, awaited, finish_state, ship_plans, slots, spawn_plans, spawned};
 
 fn gated_sim(name: &str, proposal: ProposalMode, report: ReportMode) -> Sim {
-    gated_spec_sim(&support::builtin(name), proposal, report)
+    let spec = support::builtin(name);
+    gated_spec_sim(&spec, ReviewLevel::Standard, proposal, report)
 }
 
-fn gated_spec_sim(spec: &PipelineSpec, proposal: ProposalMode, report: ReportMode) -> Sim {
+/// `direct` at review level none: its one agent, then archond ships.
+fn direct_sim(proposal: ProposalMode, report: ReportMode) -> Sim {
+    let spec = support::builtin("direct");
+    gated_spec_sim(&spec, ReviewLevel::None, proposal, report)
+}
+
+fn gated_spec_sim(
+    spec: &PipelineSpec,
+    review: ReviewLevel,
+    proposal: ProposalMode,
+    report: ReportMode,
+) -> Sim {
     let knobs = Autonomy {
+        review,
         proposal,
         report,
         ..Autonomy::default()
@@ -65,7 +78,7 @@ fn propose(sim: &mut Sim, attempt: u32) -> Vec<EngineAction> {
 
 #[test]
 fn an_approved_proposal_reaches_the_implementer_with_the_note() {
-    let mut sim = gated_sim("quick-pr", ProposalMode::Lavish, ReportMode::Off);
+    let mut sim = direct_sim(ProposalMode::Lavish, ReportMode::Off);
     let first = sim.start();
     assert_eq!(spawned(&first), slots(&[("propose", 1, 0)]));
     assert!(
@@ -89,7 +102,7 @@ fn an_approved_proposal_reaches_the_implementer_with_the_note() {
 
 #[test]
 fn a_revised_proposal_is_rewritten_with_the_feedback() {
-    let mut sim = gated_sim("quick-pr", ProposalMode::Lavish, ReportMode::Off);
+    let mut sim = direct_sim(ProposalMode::Lavish, ReportMode::Off);
     sim.start();
     propose(&mut sim, 1);
     let again = sim.decide(revise("Use a trait instead of a flag."));
@@ -105,7 +118,7 @@ fn a_revised_proposal_is_rewritten_with_the_feedback() {
 
 #[test]
 fn a_rejected_proposal_cancels_the_run() {
-    let mut sim = gated_sim("default-pr-review", ProposalMode::Lavish, ReportMode::Off);
+    let mut sim = gated_sim("reviewed", ProposalMode::Lavish, ReportMode::Off);
     sim.start();
     propose(&mut sim, 1);
     let done = sim.decide(GateDecision::Reject {
@@ -124,7 +137,7 @@ fn a_rejected_proposal_cancels_the_run() {
 
 #[test]
 fn revisions_past_the_limit_fail_the_run() {
-    let mut sim = gated_sim("quick-pr", ProposalMode::Lavish, ReportMode::Off);
+    let mut sim = direct_sim(ProposalMode::Lavish, ReportMode::Off);
     sim.start();
     for attempt in 1..=MAX_REVISIONS {
         propose(&mut sim, attempt);
@@ -141,7 +154,7 @@ fn revisions_past_the_limit_fail_the_run() {
     }
 }
 
-/// Run `default-pr-review` with a before-pr report up to its gate.
+/// Run `reviewed` with a before-pr report up to its gate.
 fn to_report_gate(sim: &mut Sim, attempt: u32) {
     sim.settle("implement", 0, Agent::Done("Fixed parse()."));
     let report = sim.settle("review", 0, Agent::Pass);
@@ -162,7 +175,7 @@ fn to_report_gate(sim: &mut Sim, attempt: u32) {
 
 #[test]
 fn an_approved_before_pr_report_ships_with_the_report() {
-    let mut sim = gated_sim("default-pr-review", ProposalMode::Off, ReportMode::BeforePr);
+    let mut sim = gated_sim("reviewed", ProposalMode::Off, ReportMode::BeforePr);
     sim.start();
     to_report_gate(&mut sim, 1);
     let ship = sim.decide(approve(None));
@@ -178,7 +191,7 @@ fn an_approved_before_pr_report_ships_with_the_report() {
 
 #[test]
 fn a_revised_before_pr_report_sends_the_work_back_to_implement() {
-    let mut sim = gated_sim("default-pr-review", ProposalMode::Off, ReportMode::BeforePr);
+    let mut sim = gated_sim("reviewed", ProposalMode::Off, ReportMode::BeforePr);
     sim.start();
     to_report_gate(&mut sim, 1);
     let back = sim.decide(revise("Also handle whitespace-only input."));
@@ -201,8 +214,8 @@ fn a_revised_before_pr_report_sends_the_work_back_to_implement() {
 }
 
 #[test]
-fn a_revised_quick_pr_report_reaches_the_implementer() {
-    let mut sim = gated_sim("quick-pr", ProposalMode::Off, ReportMode::BeforePr);
+fn a_revised_direct_report_reaches_the_implementer() {
+    let mut sim = direct_sim(ProposalMode::Off, ReportMode::BeforePr);
     sim.start();
     sim.settle("implement", 0, Agent::Done("Fixed parse()."));
     let gate = sim.settle("report", 0, Agent::Done("Report v1."));
@@ -234,7 +247,12 @@ fn a_revision_reaches_a_prompt_without_a_feedback_placeholder() {
         prompt = "ship.md"
     "#;
     let spec = support::spec_from(toml, &[("build.md", "Build {{task.title}}.")]);
-    let mut sim = gated_spec_sim(&spec, ProposalMode::Off, ReportMode::BeforePr);
+    let mut sim = gated_spec_sim(
+        &spec,
+        ReviewLevel::Standard,
+        ProposalMode::Off,
+        ReportMode::BeforePr,
+    );
     sim.start();
     sim.settle("build", 0, Agent::Done("Built it."));
     sim.settle("report", 0, Agent::Done("Report v1."));
@@ -247,7 +265,7 @@ fn a_revision_reaches_a_prompt_without_a_feedback_placeholder() {
     assert!(prompt.contains("Also handle whitespace-only input."));
 }
 
-/// Fail `default-pr-review`'s review `fails` times, then pass it.
+/// Fail `reviewed`'s review `fails` times, then pass it.
 fn review_after_failures(sim: &mut Sim, fails: u32) {
     for _ in 0..fails {
         sim.settle("implement", 0, Agent::Done("Fixed parse()."));
@@ -261,7 +279,7 @@ fn review_after_failures(sim: &mut Sim, fails: u32) {
 
 #[test]
 fn a_revised_report_starts_fresh_fix_loops() {
-    let mut sim = gated_sim("default-pr-review", ProposalMode::Off, ReportMode::BeforePr);
+    let mut sim = gated_sim("reviewed", ProposalMode::Off, ReportMode::BeforePr);
     sim.start();
     review_after_failures(&mut sim, 2);
     let gate = sim.settle("report", 0, Agent::Done("Report v1."));
@@ -290,7 +308,7 @@ fn a_revised_report_starts_fresh_fix_loops() {
 
 #[test]
 fn a_with_pr_report_never_waits() {
-    let mut sim = gated_sim("quick-pr", ProposalMode::Off, ReportMode::WithPr);
+    let mut sim = direct_sim(ProposalMode::Off, ReportMode::WithPr);
     assert!(sim.gates.is_empty());
     sim.start();
     let report = sim.settle("implement", 0, Agent::Done("Fixed parse()."));
@@ -348,7 +366,7 @@ fn merge_auto_reaches_a_ship_agent_s_template() {
 
 #[test]
 fn decisions_are_refused_for_stages_that_are_not_gates_or_already_decided() {
-    let mut sim = gated_sim("quick-pr", ProposalMode::Lavish, ReportMode::Off);
+    let mut sim = direct_sim(ProposalMode::Lavish, ReportMode::Off);
     sim.start();
     propose(&mut sim, 1);
     let mut driver = sim.resumed_driver();

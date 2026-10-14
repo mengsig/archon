@@ -46,7 +46,7 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
         ("model_policy", json!({"repo": "web"})),
         (
             "list_queue",
-            json!({"states": ["queued", "failed"], "repo": "web", "pipeline": "quick-pr", "tag": "auth", "limit": 20}),
+            json!({"states": ["queued", "failed"], "repo": "web", "pipeline": "direct", "tag": "auth", "limit": 20}),
         ),
         ("get_item", json!({"item": qi()})),
         (
@@ -57,7 +57,7 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
         ("queue_status", Value::Null),
         (
             "model_evidence",
-            json!({"repo": "web", "pipeline": "quick-pr", "stage": "implement", "since": "30d"}),
+            json!({"repo": "web", "pipeline": "direct", "stage": "implement", "since": "30d"}),
         ),
         (
             "cost_report",
@@ -65,12 +65,12 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
         ),
         (
             "register_repo",
-            json!({"path": "/srv/web", "name": "web", "ship": "local", "base_branch": "main", "default_pipeline": "quick-pr"}),
+            json!({"path": "/srv/web", "name": "web", "ship": "local", "base_branch": "main", "default_pipeline": "direct"}),
         ),
         (
             "enqueue",
             json!({
-                "repo": "web", "pipeline": "default-pr-review", "title": "Fix login redirect",
+                "repo": "web", "pipeline": "refactor", "title": "Fix login redirect",
                 "brief": "Users land on /404 after login.", "priority": "high", "depends_on": [qi()],
                 "tags": ["auth"], "model_plan": plan(), "model_reasons": {"implement": "Apply supplied fix"}, "budget_usd": 5.0, "idempotency_key": "fix-login-1",
                 "autonomy": {"review": "standard", "proposal": "lavish", "report": "with-pr", "merge": "manual", "tools": "guarded"},
@@ -87,7 +87,7 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
             json!({"item": qi(), "model_plan": plan(), "model_reasons": {"implement": "Retry with more reasoning"}, "fresh": true, "brief_append": "Do Y."}),
         ),
         ("pause", json!({"scope": "repo", "name": "web"})),
-        ("resume", json!({"scope": "pipeline", "name": "quick-pr"})),
+        ("resume", json!({"scope": "pipeline", "name": "direct"})),
         (
             "notify",
             json!({"kind": "decision", "text": "Split the work in two.", "item": qi()}),
@@ -130,7 +130,7 @@ fn adaptive_samples() -> Vec<(&'static str, Value)> {
             "enqueue_initiative",
             json!({"title": "Rename the account field", "contract": "The field is `account_id`.", "atomic": true, "idempotency_key": "rename-1", "members": [
                 {"repo": "api", "brief": "Rename it in the API."},
-                {"repo": "web", "brief": "Follow the API.", "title": "Web rename", "pipeline": "quick-pr", "after": [0], "model_plan": {"implement": [{"model": "codex/astra", "effort": "high"}]}}
+                {"repo": "web", "brief": "Follow the API.", "title": "Web rename", "pipeline": "direct", "after": [0], "model_plan": {"implement": [{"model": "codex/astra", "effort": "high"}]}}
             ]}),
         ),
         (
@@ -143,15 +143,15 @@ fn adaptive_samples() -> Vec<(&'static str, Value)> {
         ),
         (
             "steer_item",
-            json!({"item": qi(), "note": "Use the v2 client.", "stage": "implement", "model": "codex/astra", "effort": "high", "budget_usd": 12.5, "extend_minutes": 30, "abort_stage": true, "then": "goto", "goto": "review", "insert_stage": {"stage": "review", "from": "default-pr-review", "after": "implement"}}),
+            json!({"item": qi(), "note": "Use the v2 client.", "stage": "implement", "model": "codex/astra", "effort": "high", "budget_usd": 12.5, "extend_minutes": 30, "abort_stage": true, "then": "goto", "goto": "review", "insert_stage": {"stage": "review", "from": "refactor", "after": "implement"}}),
         ),
         (
             "steer_item",
-            json!({"item": qi(), "switch_pipeline": "default-pr-review"}),
+            json!({"item": qi(), "switch_pipeline": "adaptive"}),
         ),
         (
             "record_lesson",
-            json!({"kind": "pitfall", "text": "Run make lint before shipping.", "repo": "web", "pipeline": "quick-pr", "item": qi()}),
+            json!({"kind": "pitfall", "text": "Run make lint before shipping.", "repo": "web", "pipeline": "direct", "item": qi()}),
         ),
     ]
 }
@@ -282,7 +282,7 @@ fn enqueue_maps_its_fields_and_both_model_spellings() {
     let Ok(Request::Enqueue(request)) = to_request("enqueue", arguments) else {
         panic!("enqueue maps to Enqueue");
     };
-    assert_eq!(request.pipeline.as_deref(), Some("default-pr-review"));
+    assert_eq!(request.pipeline.as_deref(), Some("refactor"));
     assert_eq!(request.priority, Priority::High);
     let review = request
         .model_plan
@@ -380,7 +380,7 @@ fn clear_directive_needs_exactly_one_target() {
 
 #[test]
 fn argument_errors_name_the_argument_and_the_fix() {
-    let missing = refusal("enqueue", json!({"pipeline": "quick-pr"}));
+    let missing = refusal("enqueue", json!({"pipeline": "direct"}));
     assert!(missing.contains("`title`, `brief`"), "{missing}");
     assert!(
         !missing.contains("`model_plan`"),
@@ -546,7 +546,7 @@ fn rendered_catalog_shows_what_a_model_plan_needs() {
     };
     let catalog = CatalogListing {
         pipelines: vec![PipelineSummary {
-            name: "strict-pr-review".into(),
+            name: "triple-review".into(),
             description: "Three reviews.".into(),
             source: PipelineSource::Builtin,
             path: None,
@@ -622,19 +622,14 @@ fn a_rendered_catalog_lists_pipelines_in_a_line_each() {
     let catalog = CatalogListing {
         pipelines: vec![
             pipeline("direct", vec![stage("implement")]),
-            pipeline(
-                "default-pr-review",
-                vec![stage("implement"), stage("review")],
-            ),
+            pipeline("reviewed", vec![stage("implement"), stage("review")]),
         ],
         problems: Vec::new(),
     };
     let text = render("list_pipelines", &Reply::Catalog(catalog.clone()));
     assert!(text.starts_with("2 pipelines:"), "{text}");
     assert!(
-        text.contains(
-            "default-pr-review (builtin): The default-pr-review pipeline; stages implement, review."
-        ),
+        text.contains("reviewed (builtin): The reviewed pipeline; stages implement, review."),
         "{text}"
     );
     assert!(

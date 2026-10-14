@@ -46,12 +46,12 @@ impl Fx {
         }
     }
 
-    /// Queued item `i` in repo `r`, pipeline `quick-pr`, created at `seq`.
+    /// Queued item `i` in repo `r`, pipeline `direct`, created at `seq`.
     fn item(&self, i: usize, r: usize, priority: Priority, seq: u64) -> QueuedCandidate {
         QueuedCandidate {
             item: self.items[i].clone(),
             repo: Some(self.repos[r].clone()),
-            pipeline: "quick-pr".into(),
+            pipeline: "direct".into(),
             priority,
             created_seq: seq,
             deps: DependencyState::AllSucceeded,
@@ -74,7 +74,7 @@ impl Fx {
             run: self.runs[k].clone(),
             item: self.items[i].clone(),
             repo: Some(self.repos[r].clone()),
-            pipeline: "quick-pr".into(),
+            pipeline: "direct".into(),
             priority,
             item_created_seq: seq,
             wanted,
@@ -147,11 +147,11 @@ fn repo_pause(fx: &Fx) -> DispatchSnapshot {
 
 fn pipeline_pause(fx: &Fx) -> DispatchSnapshot {
     let mut s = fx.base();
-    s.pause.pipelines = vec!["strict-pr-review".into()];
+    s.pause.pipelines = vec!["adaptive".into()];
     let mut strict = fx.item(0, 0, Critical, 1);
-    strict.pipeline = "strict-pr-review".into();
+    strict.pipeline = "adaptive".into();
     let mut strict_spawn = fx.pending(0, 7, 0, Normal, 0, 1);
-    strict_spawn.pipeline = "strict-pr-review".into();
+    strict_spawn.pipeline = "adaptive".into();
     s.pending_spawns = vec![strict_spawn];
     s.queued = vec![strict, fx.item(1, 0, Low, 2)];
     s
@@ -277,7 +277,7 @@ fn repo_override_without_global(fx: &Fx) -> DispatchSnapshot {
 fn per_pipeline_cap(fx: &Fx) -> DispatchSnapshot {
     let mut s = fx.base();
     s.caps.max_per_pipeline.insert("strict".into(), 2);
-    s.caps.max_per_pipeline.insert("quick-pr".into(), 0);
+    s.caps.max_per_pipeline.insert("direct".into(), 0);
     s.running_by_pipeline.insert("strict".into(), 1);
     s.running_total = 1;
     let mut spawn = fx.pending(0, 7, 0, Normal, 0, 2);
@@ -397,7 +397,7 @@ fn gang_over_its_cap(fx: &Fx) -> DispatchSnapshot {
 /// A running team's stage over a per-pipeline cap lowered after enqueue.
 fn gang_spawn_over_its_cap(fx: &Fx) -> DispatchSnapshot {
     let mut s = fx.base();
-    s.caps.max_per_pipeline.insert("quick-pr".into(), 2);
+    s.caps.max_per_pipeline.insert("direct".into(), 2);
     let mut gang = fx.pending(0, 7, 0, High, 0, 3);
     gang.gang = true;
     s.pending_spawns = vec![gang, fx.pending(1, 6, 1, Normal, 1, 1)];
@@ -603,7 +603,7 @@ fn zero_caps_are_unlimited() {
         max_active_runs: 0,
         ..Caps::default()
     };
-    s.caps.max_per_pipeline.insert("quick-pr".into(), 0);
+    s.caps.max_per_pipeline.insert("direct".into(), 0);
     s.running_total = 1_000;
     s.active_runs = 1_000;
     s.queued = (0..200u64)
@@ -627,30 +627,30 @@ fn the_effective_agent_cap_is_the_smallest_set_cap() {
         max_per_repo: 0,
         ..Caps::default()
     };
-    assert_eq!(effective_agent_cap(&caps, None, "quick-pr"), 0, "uncapped");
-    assert_eq!(effective_agent_cap(&caps, Some(0), "quick-pr"), 0);
+    assert_eq!(effective_agent_cap(&caps, None, "direct"), 0, "uncapped");
+    assert_eq!(effective_agent_cap(&caps, Some(0), "direct"), 0);
     caps.max_parallel_agents = 8;
-    assert_eq!(effective_agent_cap(&caps, Some(0), "quick-pr"), 8);
+    assert_eq!(effective_agent_cap(&caps, Some(0), "direct"), 8);
     caps.max_per_repo = 5;
-    assert_eq!(effective_agent_cap(&caps, Some(0), "quick-pr"), 5);
+    assert_eq!(effective_agent_cap(&caps, Some(0), "direct"), 5);
     assert_eq!(
-        effective_agent_cap(&caps, None, "quick-pr"),
+        effective_agent_cap(&caps, None, "direct"),
         8,
         "no repository"
     );
     assert_eq!(
-        effective_agent_cap(&caps, Some(3), "quick-pr"),
+        effective_agent_cap(&caps, Some(3), "direct"),
         3,
         "the repo file lowers it"
     );
     assert_eq!(
-        effective_agent_cap(&caps, Some(9), "quick-pr"),
+        effective_agent_cap(&caps, Some(9), "direct"),
         5,
         "but never raises it"
     );
-    caps.max_per_pipeline.insert("team-pr".into(), 2);
-    assert_eq!(effective_agent_cap(&caps, Some(3), "team-pr"), 2);
-    assert_eq!(effective_agent_cap(&caps, Some(3), "quick-pr"), 3);
+    caps.max_per_pipeline.insert("refactor".into(), 2);
+    assert_eq!(effective_agent_cap(&caps, Some(3), "refactor"), 2);
+    assert_eq!(effective_agent_cap(&caps, Some(3), "direct"), 3);
 }
 
 fn waiting_case(
@@ -711,7 +711,7 @@ fn waiting_reason_repo_pause() {
 #[test]
 fn waiting_reason_pipeline_pause() {
     waiting_case(
-        |s| s.pause.pipelines.push("quick-pr".into()),
+        |s| s.pause.pipelines.push("direct".into()),
         archon_core::protocol::WaitingReasonCode::PipelinePause,
     );
 }
@@ -770,8 +770,8 @@ fn waiting_reason_repo_override_and_pipeline_capacity() {
     );
     waiting_case(
         |s| {
-            s.caps.max_per_pipeline.insert("quick-pr".into(), 1);
-            s.running_by_pipeline.insert("quick-pr".into(), 1);
+            s.caps.max_per_pipeline.insert("direct".into(), 1);
+            s.running_by_pipeline.insert("direct".into(), 1);
         },
         Capacity,
     );
@@ -793,7 +793,7 @@ fn waiting_reason_precedence_matches_admission_holds() {
     s.queued[0].deps = DependencyState::Broken;
     s.pause.global = true;
     s.pause.repos.push(fx.repos[0].clone());
-    s.pause.pipelines.push("quick-pr".into());
+    s.pause.pipelines.push("direct".into());
     s.low_disk = true;
     s.caps.budget_usd_total = 1.0;
     s.caps.budget_usd_daily = 1.0;

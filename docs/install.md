@@ -97,8 +97,6 @@ If you are already signed in to Claude Code or Codex, neither Archon nor Aether 
 | [lavish-axi](https://github.com/kunchenguid/lavish-axi) | Annotated HTML review pages | Optional | `npm install -g lavish-axi` |
 | [Rust / Cargo](https://rustup.rs/) | Builds Archon from source | Only for source builds | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
 | [Playwright](https://playwright.dev/docs/intro) | Browser journeys in the web testing pipelines | Optional | `npm init playwright@latest` in the tested project |
-| [cargo-audit](https://github.com/rustsec/rustsec/tree/main/cargo-audit) | Rust audit in the `dependency-upgrade` pipeline | Optional | `cargo install cargo-audit --locked` |
-| [pip-audit](https://pypi.org/project/pip-audit/) | Python audit in the `dependency-upgrade` pipeline | Optional | `python -m pip install pip-audit` in a virtual environment |
 
 ## Verifying a download by hand
 

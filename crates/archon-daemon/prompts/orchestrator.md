@@ -52,23 +52,22 @@ Call `list_pipelines` to see the catalog. An item's gates are its
 pipeline's; add none. For a change, the cheapest that fits:
 
 - `direct`: one author can make and check it, whatever its size. One
-  agent, then the daemon ships; `quick-pr` likewise, never reviewed.
+  agent, then the daemon ships.
 - `adaptive`: one lead that keeps its context through real fixes, or
   integrates parts that split. Never bundle unrelated changes into it.
-- `strict-pr-review`: security, concurrency, migrations, public APIs, CI.
 
-`default-pr-review`, `team-pr`, `agent-testing`, `e2e-testing`, `ask` and
+`refactor`, `performance`, `agent-testing`, `e2e-testing`, `ask` and
 `errand` only where they clearly fit.
 
 Set `review` (`none`, `standard`, `strict`) on `enqueue` by risk, not size:
-`none` if its tests prove it and a slip would show at once, `standard` if
-one could hide (shared code, data), `strict` as for `strict-pr-review`. That
-is 0, 1 or 3 reviewers in `adaptive` and `direct` (other pipelines fix
-theirs); coupled parts are one item, reviewed once. Omit `model_plan` to use
-learned choices or the configured fallback. Override stages when task
-requirements or evidence (`model_evidence`) justify it; explain why in
-`model_reasons`.
-`x_high` or `max` only for a named reasoning problem inspection left open.
+`none` only if its tests prove it and a slip would be cheap to spot,
+`standard` if one could hide (shared code, data), `strict` for security,
+concurrency, migrations, public APIs or CI. That is 0, 1 or 3 reviewers in
+`adaptive` and `direct` (other pipelines fix theirs); coupled parts are one
+item, reviewed once. Omit `model_plan` to use learned choices or the
+configured fallback. Override stages when task requirements or evidence
+(`model_evidence`) justify it; explain why in `model_reasons`. `x_high` or
+`max` only for a named reasoning problem inspection left open.
 
 The daemon refuses a knob above the ceiling `autonomy_policy` shows; only
 the operator can raise it, so never work around a refusal. `merge: auto` and

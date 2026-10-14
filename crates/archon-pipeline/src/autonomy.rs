@@ -225,27 +225,34 @@ mod tests {
         }
     }
 
+    /// An enqueue that names no pipeline may ask for any review level.
     #[test]
-    fn builtin_review_levels_match_their_family() {
+    fn the_default_pipeline_ships_at_every_review_level() {
+        let spec = builtin_spec(crate::builtin::DEFAULT_PIPELINE);
+        assert!(ships(&spec) && review_is_chosen(&spec));
         for level in [
             ReviewLevel::None,
             ReviewLevel::Standard,
             ReviewLevel::Strict,
         ] {
-            let spec = builtin_spec(level.pipeline());
-            assert_eq!(review_level(&spec), level, "{}", level.pipeline());
-            assert!(ships(&spec));
+            assert_eq!(chosen_review(&spec, Some(level), ReviewLevel::None), level);
         }
+        let refactor = builtin_spec("refactor");
+        assert!(!review_is_chosen(&refactor), "its gates fix its review");
+        assert_eq!(review_level(&refactor), ReviewLevel::Strict);
         assert!(!ships(&builtin_spec("ask")));
     }
 
     #[test]
     fn knobs_insert_propose_first_and_report_before_ship() {
-        let spec = builtin_spec("default-pr-review");
+        let spec = builtin_spec("refactor");
         let both = augment(&spec, &knobs(ProposalMode::Lavish, ReportMode::BeforePr)).unwrap();
         let ids: Vec<&str> = both.file.stages.iter().map(|s| s.id.as_str()).collect();
-        assert_eq!(ids, ["propose", "implement", "review", "report"]);
-        assert_eq!(ship_index(&both), Some(4), "archond ships after the report");
+        let stages = [
+            "propose", "baseline", "refactor", "verify", "review", "report",
+        ];
+        assert_eq!(ids, stages);
+        assert_eq!(ship_index(&both), Some(6), "archond ships after the report");
         assert!(both.prompts.contains_key(PROPOSE_PROMPT));
         let gates =
             OperatorGates::for_run(&both, &knobs(ProposalMode::Lavish, ReportMode::BeforePr));
@@ -253,7 +260,7 @@ mod tests {
         assert_eq!(gates.subject("report"), Some(GateSubject::Report));
         let with_pr = knobs(ProposalMode::Off, ReportMode::WithPr);
         let plain = augment(&spec, &with_pr).unwrap();
-        assert_eq!(plain.file.stages.len(), 3);
+        assert_eq!(plain.file.stages.len(), 5);
         assert!(
             OperatorGates::for_run(&plain, &with_pr).is_empty(),
             "with-pr never waits"
@@ -279,7 +286,7 @@ mod tests {
 
     #[test]
     fn an_augmented_manifest_round_trips_through_toml() {
-        let spec = builtin_spec("strict-pr-review");
+        let spec = builtin_spec("refactor");
         let both = augment(&spec, &knobs(ProposalMode::Lavish, ReportMode::BeforePr)).unwrap();
         let text = toml::to_string(&both.file).unwrap();
         let back: crate::spec::PipelineFile = toml::from_str(&text).unwrap();
@@ -289,7 +296,7 @@ mod tests {
 
     #[test]
     fn declared_stages_are_not_duplicated_and_non_shipping_pipelines_refuse() {
-        let spec = builtin_spec("default-pr-review");
+        let spec = builtin_spec("direct");
         let wanted = knobs(ProposalMode::Lavish, ReportMode::WithPr);
         let once = augment(&spec, &wanted).unwrap();
         let twice = augment(&once, &wanted).unwrap();

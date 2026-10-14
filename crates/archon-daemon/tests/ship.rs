@@ -24,7 +24,7 @@ use archon_daemon::triggers::{self, TriggerEvent};
 use common::delivery::{
     FakeGh, add_origin, change, origin_of, pass_by, pushed, record, shipped_by, verdict_on,
 };
-use common::{Harness, REPO_NAME, REVIEW_MODEL, git, verdict};
+use common::{Harness, REPO_NAME, REVIEW_MODEL, REVIEWED, REVIEWED_TOML, git, verdict};
 use serde_json::{Value, json};
 
 const PR_ONE: &str = "https://github.com/o/r/pull/1";
@@ -33,6 +33,7 @@ const PR_ONE: &str = "https://github.com/o/r/pull/1";
 /// requests archond opens.
 async fn delivering() -> (Harness, FakeGh) {
     let h = Harness::new().await;
+    h.add_pipeline(REVIEWED, REVIEWED_TOML);
     add_origin(&h);
     let gh = FakeGh::install(&h);
     (h, gh)
@@ -121,7 +122,7 @@ fn stage_labels(h: &Harness) -> Vec<String> {
 #[tokio::test]
 async fn archond_opens_the_pull_request_and_no_agent_ships() {
     let (h, gh) = delivering().await;
-    let (item, run) = started(&h, "quick-pr").await;
+    let (item, run) = started(&h, "direct").await;
     // Scratch files an agent leaves untracked are not part of the change.
     std::fs::write(run.workspace.join("notes.tmp"), "scratch").unwrap();
     let forged = json!({"pr_url": "https://github.com/evil/fork/pull/9"});
@@ -166,7 +167,7 @@ async fn archond_opens_the_pull_request_and_no_agent_ships() {
 #[tokio::test]
 async fn a_restart_mid_delivery_resumes_without_a_second_pull_request() {
     let (mut h, gh) = delivering().await;
-    let (item, run) = started(&h, "quick-pr").await;
+    let (item, run) = started(&h, "direct").await;
     gh.lose_next_create_reply();
     settle_changed(&h, json!({})).await;
     assert_eq!(gh.count("pr create"), 1);
@@ -226,7 +227,7 @@ async fn a_restart_mid_delivery_resumes_without_a_second_pull_request() {
 #[tokio::test]
 async fn a_recorded_delivery_is_replayed_after_a_restart_not_repeated() {
     let (mut h, gh) = delivering().await;
-    let (item, run) = started(&h, "quick-pr").await;
+    let (item, run) = started(&h, "direct").await;
     gh.fail_next("pr list", "HTTP 502: Bad Gateway");
     settle_changed(&h, json!({})).await;
     assert!(matches!(
@@ -262,7 +263,7 @@ async fn a_recorded_delivery_is_replayed_after_a_restart_not_repeated() {
 #[tokio::test]
 async fn a_tree_that_changed_after_the_ship_record_is_refused() {
     let (h, gh) = delivering().await;
-    let (item, run) = started(&h, "quick-pr").await;
+    let (item, run) = started(&h, "direct").await;
     let verified = change(&run.workspace);
     change(&run.workspace);
     settle_with(&h, verified.clone()).await;
@@ -294,7 +295,7 @@ async fn a_tree_that_changed_after_the_ship_record_is_refused() {
 #[tokio::test]
 async fn uncommitted_changes_refuse_the_delivery() {
     let (h, gh) = delivering().await;
-    let (item, run) = started(&h, "quick-pr").await;
+    let (item, run) = started(&h, "direct").await;
     let verified = change(&run.workspace);
     std::fs::write(run.workspace.join("README.md"), "edited, not committed\n").unwrap();
     settle_with(&h, verified).await;
@@ -314,7 +315,7 @@ async fn uncommitted_changes_refuse_the_delivery() {
 #[tokio::test]
 async fn a_commit_under_another_identity_refuses_the_delivery() {
     let (h, gh) = delivering().await;
-    let (item, run) = started(&h, "quick-pr").await;
+    let (item, run) = started(&h, "direct").await;
     std::fs::write(run.workspace.join("change.txt"), "a change\n").unwrap();
     git(&run.workspace, &["add", "change.txt"]);
     let committed = Command::new("git")
@@ -345,7 +346,7 @@ async fn a_commit_under_another_identity_refuses_the_delivery() {
 #[tokio::test]
 async fn a_branch_with_no_commit_of_its_own_has_nothing_to_ship() {
     let (h, gh) = delivering().await;
-    let (item, run) = started(&h, "quick-pr").await;
+    let (item, run) = started(&h, "direct").await;
     settle_with(&h, record(&run.workspace)).await;
     let error = failed(&h, &item).await;
     assert!(error.contains("nothing to ship"), "{error}");
@@ -358,7 +359,7 @@ async fn a_branch_with_no_commit_of_its_own_has_nothing_to_ship() {
 #[tokio::test]
 async fn a_missing_ship_record_fails_the_stage_that_owes_it() {
     let (h, gh) = delivering().await;
-    let (item, run) = started(&h, "quick-pr").await;
+    let (item, run) = started(&h, "direct").await;
     let mut partial = change(&run.workspace);
     partial.as_object_mut().unwrap().remove("pr");
     settle_with(&h, partial).await;
@@ -672,11 +673,11 @@ async fn direct_delegates_a_reviewer_when_the_item_asks_for_one() {
 #[tokio::test]
 async fn an_escalating_stage_fails_the_item_with_what_it_recommends() {
     let (h, gh) = delivering().await;
-    let (item, _) = started(&h, "default-pr-review").await;
+    let (item, _) = started(&h, REVIEWED).await;
     settle_changed(&h, json!({})).await;
     assert_eq!(stage_labels(&h), ["implement", "review"]);
     let advice = "ESCALATE: this rewrites the session token check; run it through \
-                  strict-pr-review";
+                  adaptive with review strict";
     h.settle_running(|_| StageOutcome::Failed {
         error: advice.into(),
         infra: false,
@@ -707,9 +708,9 @@ async fn an_escalating_stage_fails_the_item_with_what_it_recommends() {
 #[tokio::test]
 async fn an_escalated_item_switched_to_another_pipeline_ships_from_its_branch() {
     let (h, gh) = delivering().await;
-    let (item, first) = started(&h, "quick-pr").await;
+    let (item, first) = started(&h, "direct").await;
     let begun = change(&first.workspace);
-    let advice = "ESCALATE: this rewrites the session check; run it through default-pr-review";
+    let advice = "ESCALATE: this rewrites the session check; have it reviewed";
     h.settle_running(|_| StageOutcome::Failed {
         error: advice.into(),
         infra: false,
@@ -719,7 +720,7 @@ async fn an_escalated_item_switched_to_another_pipeline_ships_from_its_branch() 
     failed(&h, &item).await;
 
     let switch = Steer {
-        switch_pipeline: Some("default-pr-review".into()),
+        switch_pipeline: Some(REVIEWED.into()),
         ..Steer::default()
     };
     let steer = Request::SteerItem {
@@ -754,7 +755,7 @@ async fn an_escalated_item_switched_to_another_pipeline_ships_from_its_branch() 
     assert!(escalated.corrections.is_empty());
     // The item keeps its pipeline's name, so the run is no evidence for it.
     let delivered = store.outcome(&second.id).unwrap().expect("captured");
-    assert_eq!(delivered.pipeline, "quick-pr");
+    assert_eq!(delivered.pipeline, "direct");
     assert!(delivered.corrections.is_empty());
 }
 
@@ -763,7 +764,7 @@ async fn an_escalated_item_switched_to_another_pipeline_ships_from_its_branch() 
 #[tokio::test]
 async fn a_shipped_item_retried_delivers_into_its_pull_request_again() {
     let (h, gh) = delivering().await;
-    let (item, first) = started(&h, "quick-pr").await;
+    let (item, first) = started(&h, "direct").await;
     settle_changed(&h, json!({})).await;
     succeeded(&h, &item).await;
     let shipped = git(&h.repo, &["rev-parse", &first.branch]);
@@ -830,7 +831,7 @@ async fn local_mode_delivers_on_the_run_branch_and_nothing_leaves_the_machine() 
         ..RepoPatch::default()
     };
     update_repo(&h, local).await;
-    let (item, run) = started(&h, "quick-pr").await;
+    let (item, run) = started(&h, "direct").await;
     settle_changed(&h, json!({})).await;
 
     let head = git(&h.repo, &["rev-parse", &run.branch]);
@@ -853,7 +854,7 @@ async fn local_mode_refuses_a_tree_that_changed() {
         ..RepoPatch::default()
     };
     update_repo(&h, local).await;
-    let (item, run) = started(&h, "quick-pr").await;
+    let (item, run) = started(&h, "direct").await;
     let verified = change(&run.workspace);
     change(&run.workspace);
     settle_with(&h, verified).await;
@@ -869,7 +870,7 @@ async fn local_mode_refuses_a_tree_that_changed() {
 #[tokio::test]
 async fn an_open_pull_request_is_reused_and_moved_onto_the_base() {
     let (h, gh) = delivering().await;
-    let (item, run) = started(&h, "quick-pr").await;
+    let (item, run) = started(&h, "direct").await;
     gh.open(&run.branch, "some-old-base");
     settle_changed(&h, json!({})).await;
 
@@ -888,7 +889,7 @@ async fn an_open_pull_request_is_reused_and_moved_onto_the_base() {
 async fn auto_merge_is_owed_until_github_takes_it_and_its_refusal_fails_nothing() {
     let (h, gh) = delivering().await;
     let auto = allow_auto_merge(&h).await;
-    let first = enqueue(&h, "quick-pr", auto).await.unwrap();
+    let first = enqueue(&h, "direct", auto).await.unwrap();
     h.dispatch().await;
     gh.fail_next("pr merge", "HTTP 502: Bad Gateway");
     settle_changed(&h, json!({})).await;
@@ -923,7 +924,7 @@ async fn auto_merge_is_owed_until_github_takes_it_and_its_refusal_fails_nothing(
             .any(|n| n.contains("Auto-merge is on") && n.contains("not merged yet"))
     );
 
-    let second = enqueue(&h, "quick-pr", auto).await.unwrap();
+    let second = enqueue(&h, "direct", auto).await.unwrap();
     h.dispatch().await;
     gh.fail_next("pr merge", "Pull request is in clean status");
     settle_changed(&h, json!({})).await;
@@ -946,7 +947,7 @@ async fn auto_merge_is_owed_until_github_takes_it_and_its_refusal_fails_nothing(
 #[tokio::test]
 async fn a_remote_branch_holding_other_commits_is_never_forced() {
     let (h, gh) = delivering().await;
-    let (item, run) = started(&h, "quick-pr").await;
+    let (item, run) = started(&h, "direct").await;
     let tree = git(&h.repo, &["rev-parse", "main^{tree}"]);
     let theirs = git(
         &h.repo,
@@ -976,7 +977,7 @@ async fn a_remote_branch_holding_other_commits_is_never_forced() {
 async fn a_repository_without_an_origin_blocks_for_the_operator() {
     let h = Harness::new().await;
     let gh = FakeGh::install(&h);
-    let (item, _) = started(&h, "quick-pr").await;
+    let (item, _) = started(&h, "direct").await;
     settle_changed(&h, json!({})).await;
     let error = failed(&h, &item).await;
     assert!(
@@ -992,7 +993,7 @@ async fn a_repository_without_an_origin_blocks_for_the_operator() {
 #[tokio::test]
 async fn a_github_login_that_lapsed_blocks_for_the_operator() {
     let (h, gh) = delivering().await;
-    let (item, _) = started(&h, "quick-pr").await;
+    let (item, _) = started(&h, "direct").await;
     gh.fail_next(
         "pr list",
         "To get started with GitHub CLI, please run:  gh auth login",
@@ -1012,7 +1013,7 @@ async fn a_github_login_that_lapsed_blocks_for_the_operator() {
 #[tokio::test]
 async fn a_pipeline_with_review_stages_ships_what_its_reviewers_passed() {
     let (h, gh) = delivering().await;
-    let (item, run) = started(&h, "default-pr-review").await;
+    let (item, run) = started(&h, REVIEWED).await;
     settle_changed(&h, json!({})).await;
     assert!(gh.calls().is_empty(), "nothing ships before the review");
     assert_eq!(pushed(&origin_of(&h), &run.branch), None);
@@ -1032,7 +1033,7 @@ async fn a_pipeline_with_review_stages_ships_what_its_reviewers_passed() {
 #[tokio::test]
 async fn a_worktree_that_is_gone_refuses_the_delivery() {
     let (h, gh) = delivering().await;
-    let (item, run) = started(&h, "quick-pr").await;
+    let (item, run) = started(&h, "direct").await;
     let verified = change(&run.workspace);
     remove_worktree(&h.repo, &run.workspace);
     settle_with(&h, verified).await;
@@ -1069,5 +1070,8 @@ async fn every_builtin_runs_without_a_model_plan_or_a_ship_agent() {
         assert_eq!(by_daemon, archon_pipeline::autonomy::ships(spec), "{name}");
         shipping += usize::from(by_daemon);
     }
-    assert!(shipping >= 12, "the shipping built-ins: {shipping}");
+    assert_eq!(
+        shipping, 4,
+        "adaptive, direct, refactor and performance ship"
+    );
 }

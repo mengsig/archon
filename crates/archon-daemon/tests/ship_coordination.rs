@@ -23,7 +23,7 @@ use common::initiative::{gh_calls, install_explicit_gh, prs, set_pr};
 use common::{Harness, REPO_NAME, git};
 use serde_json::json;
 
-const PIPELINE: &str = "quick-pr";
+const PIPELINE: &str = "direct";
 
 /// A harness whose repository has an `origin` and whose GitHub holds only
 /// the pull requests archond opens.

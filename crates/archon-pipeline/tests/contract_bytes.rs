@@ -134,7 +134,7 @@ fn built_in_contracts_stay_within_their_byte_budgets() {
 }
 
 /// `direct` is the cheapest path to a shipped change: one leaf agent with
-/// no delegation rules, a prompt a third of quick-pr's, and no later stage.
+/// no delegation rules, a short prompt, and no later stage.
 #[test]
 fn direct_is_the_cheapest_shipping_pipeline() {
     let costs = costs();
@@ -145,13 +145,7 @@ fn direct_is_the_cheapest_shipping_pipeline() {
         let stages = costs.iter().filter(|c| c.pipeline == pipeline);
         stages.map(|c| c.contract + c.delegation + c.prompt).sum()
     };
-    let shipping = [
-        "quick-pr",
-        "adaptive",
-        "default-pr-review",
-        "bugfix",
-        "docs",
-    ];
+    let shipping = ["adaptive", "refactor", "performance"];
     for other in shipping {
         assert!(
             fixed("direct") < fixed(other),
@@ -188,5 +182,5 @@ fn no_built_in_declares_a_ship_stage() {
             record.id
         );
     }
-    assert_eq!(shipping, 12, "every repository-changing built-in ships");
+    assert_eq!(shipping, 4, "every repository-changing built-in ships");
 }

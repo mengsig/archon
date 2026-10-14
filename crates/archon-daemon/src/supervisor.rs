@@ -1234,18 +1234,8 @@ mod tests {
             prompt.contains("Call `list_pipelines` to see the catalog"),
             "new pipelines must be discoverable without static prompt guidance"
         );
-        // Static guidance for the new catalog is deferred to one follow-up.
-        // Keep checking every other built-in until that follow-up lands.
-        let pending_catalog_guidance = [
-            "bugfix",
-            "docs",
-            "code-audit",
-            "performance",
-            "dependency-upgrade",
-            "refactor",
-            "test-coverage",
-            "design-doc",
-        ];
+        // Reports the operator asks for by name need no routing guidance.
+        let pending_catalog_guidance = ["code-audit", "design-doc"];
         let catalog = archon_pipeline::Catalog::builtin();
         for name in pending_catalog_guidance {
             catalog.get(name).expect("pending pipeline is discoverable");
@@ -1300,11 +1290,10 @@ mod tests {
         let choice = [
             "For a change, the cheapest that fits",
             "`direct`: one author can make and check it, whatever its size. One agent, then the \
-             daemon ships; `quick-pr` likewise, never reviewed.",
+             daemon ships.",
             "`adaptive`: one lead that keeps its context through real fixes, or integrates parts \
              that split.",
             "Never bundle unrelated changes into it.",
-            "`strict-pr-review`: security, concurrency, migrations, public APIs, CI.",
             "only where they clearly fit",
         ];
         let at: Vec<usize> = choice.iter().map(|s| prompt.find(s).unwrap()).collect();
@@ -1326,7 +1315,9 @@ mod tests {
         let prompt = unwrapped(&prompt());
         for said in [
             "Set `review` (`none`, `standard`, `strict`) on `enqueue` by risk, not size: `none` \
-             if its tests prove it and a slip would show at once, `standard` if one could hide",
+             only if its tests prove it and a slip would be cheap to spot, `standard` if one \
+             could hide (shared code, data), `strict` for security, concurrency, migrations, \
+             public APIs or CI.",
             "coupled parts are one item, reviewed once",
             "An item's gates are its pipeline's; add none.",
             "On a failure read `get_item`, then `retry_item`, split the work, or `notify` a \

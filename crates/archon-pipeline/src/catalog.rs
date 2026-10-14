@@ -93,7 +93,12 @@ impl Catalog {
                 "pipeline {name:?} is broken: {}",
                 problem.error
             ))),
-            None => Err(ArchonError::NotFound(format!("pipeline {name:?}"))),
+            None => match crate::builtin::retired(name) {
+                Some(replacement) => Err(ArchonError::Pipeline(format!(
+                    "{name:?} was a built-in that Archon 1.1.0 removed; use {replacement}"
+                ))),
+                None => Err(ArchonError::NotFound(format!("pipeline {name:?}"))),
+            },
         }
     }
 

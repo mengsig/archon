@@ -25,7 +25,7 @@ max_per_repo = 2
 budget_usd_daily = 50.0
 min_free_gb = 10               # nothing new starts below this much free disk; 0 = off
 [limits.per_pipeline]
-strict-pr-review = 3
+adaptive = 3
 
 [worktrees]
 auto_gc = true                 # archond collects finished runs' worktrees itself

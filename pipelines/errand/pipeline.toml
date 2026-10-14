@@ -7,7 +7,7 @@ requires_repo = false
 
 [nudges]
 tier = "balanced"
-notes = "A small self-contained job: research, compare, summarize, check, draft or explain, answered in text or as an HTML page published in Lavish. No repository changes or outward side effects (pushes, PR or issue comments, merges, messages, purchases or paid API calls); those stay with the orchestrator. Use ask for a repository question answered in text, and quick-pr or another shipping pipeline for any change."
+notes = "A small self-contained job: research, compare, summarize, check, draft or explain, answered in text or as an HTML page published in Lavish. No repository changes or outward side effects (pushes, PR or issue comments, merges, messages, purchases or paid API calls); those stay with the orchestrator. Use ask for a repository question answered in text, and direct or another shipping pipeline for any change."
 
 [[stage]]
 id = "errand"

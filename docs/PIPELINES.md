@@ -248,9 +248,10 @@ source repository; Archon has no setting for it.
 
 ### A declared review
 
-The `review` autonomy knob normally follows a pipeline's gates: gated
-`review` or `test` stages make it `standard` or `strict`, and a pipeline
-without them runs at `none`. A pipeline whose review happens inside one
+The `review` autonomy knob normally follows a pipeline's gates, not its
+reviewer count: a gated `review` or `test` stage makes it `standard`, both
+make it `strict` (`refactor` is `strict` with one reviewer), and a pipeline
+with neither runs at `none`. A pipeline whose review happens inside one
 agent's stage has no such gate, so it declares the review instead:
 
 ```toml

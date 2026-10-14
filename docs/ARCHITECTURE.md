@@ -1948,8 +1948,9 @@ Validation rules (load-time errors):
   agent, and no `work` or `team` stage follows it; unknown keys are refused.
 
 **A declared review.** A pipeline's review level is otherwise derived from
-its gates: three reviewers are `strict`, a gated review `standard`, none
-`none` (§18.1). A pipeline whose review happens inside a work stage, by
+its gates, not its reviewer count: gated review and test stages are
+`strict`, either one alone `standard`, neither `none`
+(`archon_pipeline::autonomy::review_level`, §18.1). A pipeline whose review happens inside a work stage, by
 agents that stage's agent delegates to, has no gate to derive it from, so
 it declares the stage that holds the review.
 
@@ -2254,6 +2255,13 @@ nothing. Recovery only queues the plan and the sweep delivers it, so
 startup never waits on the network. A crash between the push and the
 record repeats steps 2 to 4, which push nothing new and find the pull
 request GitHub lists. `prune` deletes `ship:<run>` once its run is terminal.
+
+Delivered is not green. The item succeeds once its pull request is open;
+archond does not wait for the repository's CI and does not repair a failing
+check. `executor/pull_requests.rs` later reads only whether the pull request
+merged, closed or had changes requested, for learning (§19). A red check is
+the operator's to act on: a fix item, or `archon queue retry --append`,
+which delivers into the same pull request (§6.1).
 
 **A ship stage.** A pipeline may instead end in one `kind = "ship"` stage,
 as every built-in did before archond shipped. Its agent delivers with git

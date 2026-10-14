@@ -292,7 +292,10 @@ holds that tree and carries only commits under your repository's git
 identity, pushes without ever forcing, and opens the PR with `gh`, or
 reuses the one already open for the branch. A delivery that is refused
 fails the item with what to change, and a restart in the middle never
-opens a second PR. See [Shipping](PIPELINES.md#shipping).
+opens a second PR. The item succeeds once its PR is open: `archond` does
+not wait for your CI and does not repair a failing check. Ask for a fix, or
+run `archon queue retry <id> --append "…"`, which delivers into the same
+PR. See [Shipping](PIPELINES.md#shipping).
 
 ## Aether setup
 
@@ -770,7 +773,7 @@ risk and from what you told it, within a ceiling that only you can raise.
 
 | Knob | Values (default first) | What it changes |
 | --- | --- | --- |
-| `review` | `standard`, `strict`, `none` | how many independent reviewers the change gets: one, three or none. With no pipeline named it picks `default-pr-review`, `strict-pr-review` or `quick-pr`; with `adaptive` or `direct` named, the stage agent delegates that many reviewers and Archon verifies them |
+| `review` | `standard`, `strict`, `none` | how much independent checking the change gets. With no pipeline named it picks `default-pr-review` (one reviewer), `strict-pr-review` (a test gate and three reviewers) or `quick-pr` (none); with `adaptive` or `direct` named, the stage agent delegates one, three or no reviewers and Archon verifies them. Any other pipeline has the level its gated stages give it, whatever its reviewer count: a gated review or test stage makes it `standard` and both make it `strict`, so `refactor` is `strict` with one reviewer |
 | `proposal` | `off`, `lavish` | `lavish`: a proposal page first, and nothing is built until you approve it |
 | `report` | `off`, `with-pr`, `before-pr` | a change report in the PR; `before-pr` waits for your approval before the PR |
 | `merge` | `manual`, `auto` | `auto`: Archon asks GitHub to merge the PR once its checks allow |

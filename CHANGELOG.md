@@ -62,7 +62,8 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
   without forcing and without hooks, and opens or reuses the pull request
   with `gh`. That saves about 40 seconds and 166,000 input tokens per item.
   `local` mode runs the same checks and pushes nothing, and `merge = auto`
-  asks GitHub to merge once checks allow.
+  asks GitHub to merge once checks allow. An item succeeds once its pull
+  request is open: `archond` does not wait for CI or repair a failing check.
 - A refused delivery fails the item as `stage ship: <what to change>`.
   What only you can fix (no `origin`, a lapsed `gh` login, a branch rule)
   is a blocker. Network and GitHub failures are retried five times. Delivery

@@ -7,10 +7,13 @@ use archon_core::catalog::{StageKind, is_snapshot_of};
 use archon_core::error::ArchonError;
 use archon_core::id::{NotificationId, PipelineRunId, QueueItemId};
 use archon_core::notify::{FeedEntry, Notification, NotificationKind};
+use archon_core::protocol::ItemQuery;
 use archon_core::protocol::gib;
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::ShipMode;
 use archon_core::run::{PipelineRun, RunState, StageOutcome, StageRun, StageState, Verdict};
+use archon_queue::Store;
+use chrono::TimeDelta;
 
 use super::{Cleanup, FollowUp, RunTable, clip, frozen};
 use crate::context::DaemonContext;
@@ -23,6 +26,9 @@ const MAX_NOTICE_CHARS: usize = 2_000;
 /// An `item_finished` summary is clipped to this. A batch holds at most
 /// `compact::MAX_BATCH_EVENTS` news events, besides pinned ones.
 const MAX_FINISHED_CHARS: usize = 4_000;
+/// Longest a routine success waits for the rest of the work in flight before
+/// it wakes the orchestrator; the feed shows the outcome at once.
+const MAX_SUCCESS_DEFER: TimeDelta = TimeDelta::minutes(5);
 
 /// Finish a live run and settle its item in one store transaction, close
 /// the reopen questions of its withdrawn gates' pages, then announce it.
@@ -287,10 +293,66 @@ pub(super) async fn announce(
     if let Some(repo) = &item.repo {
         ctx.mirrors.request_repo(repo);
     }
-    if needs_operator || wakes_orchestrator(item, ctx.config.orchestrator.wake_on_success) {
+    tell_orchestrator(ctx, item, finished, needs_operator).await
+}
+
+/// Hand `finished` to the orchestrator: quiet when it need not wake, and a
+/// routine success while other work runs waits up to [`MAX_SUCCESS_DEFER`]
+/// for that work, so one turn reports them together.
+async fn tell_orchestrator(
+    ctx: &DaemonContext,
+    item: &QueueItem,
+    finished: TriggerEvent,
+    needs_operator: bool,
+) -> Result<(), ArchonError> {
+    assert!(
+        matches!(&finished, TriggerEvent::ItemFinished { item: id, .. } if *id == item.id),
+        "the news is of this item"
+    );
+    if !needs_operator && !wakes_orchestrator(item, ctx.config.orchestrator.wake_on_success) {
+        return triggers::push_quiet(ctx, finished).await;
+    }
+    if needs_operator || !is_routine_success(item) {
         return triggers::push(ctx, finished).await;
     }
-    triggers::push_quiet(ctx, finished).await
+    let mut store = ctx.store.lock().await;
+    // Checked under the lock that settles items, so the last to finish wakes it.
+    if others_unfinished(&store)? {
+        let until = archon_core::now() + MAX_SUCCESS_DEFER;
+        triggers::hold_deferred(&mut store, finished, until)?;
+    } else {
+        triggers::hold(&mut store, finished)?;
+    }
+    drop(store);
+    triggers::wake(ctx);
+    Ok(())
+}
+
+/// A success no one asked to hear of at once: no GitHub thread to answer and
+/// no `notify` tag.
+fn is_routine_success(item: &QueueItem) -> bool {
+    matches!(item.state, QueueState::Succeeded { .. })
+        && item.origin.is_none()
+        && !item.wants_notice()
+}
+
+/// Whether any item is still queued or running; blocked ones wait for the
+/// operator, not for this news.
+fn others_unfinished(store: &Store) -> Result<bool, ArchonError> {
+    let query = ItemQuery {
+        states: ["queued", "dispatching", "running"]
+            .map(String::from)
+            .to_vec(),
+        limit: Some(1),
+        ..ItemQuery::default()
+    };
+    let unfinished = store.items(&query)?;
+    assert!(unfinished.len() <= 1, "the query is limited to one");
+    assert!(
+        unfinished.iter().all(|item| !item.state.is_terminal()),
+        "a finished item is no other work"
+    );
+    Ok(!unfinished.is_empty())
 }
 
 /// Whether the finished `item` wakes the orchestrator: a failure, a GitHub

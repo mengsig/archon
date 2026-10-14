@@ -233,6 +233,34 @@ async fn by_default_a_success_wakes_the_orchestrator_so_the_chat_shows_it() {
     );
 }
 
+#[tokio::test]
+async fn a_routine_success_waits_for_the_work_still_queued_and_wakes_with_it() {
+    let h = Harness::new().await;
+    let first = enqueued(&h, request("the first change")).await;
+    let mut after = request("the change after it");
+    after.depends_on = vec![first.id.clone()];
+    let second = enqueued(&h, after).await;
+    succeed(&h, &first).await;
+    finished_news(&h, &first).await;
+    assert!(
+        !triggers::due(&h.ctx).await.unwrap(),
+        "one turn reports both: the second is still queued"
+    );
+    assert_eq!(h.notices(NotificationKind::Outcome).await.len(), 1);
+
+    succeed(&h, &second).await;
+    assert!(
+        triggers::due(&h.ctx).await.unwrap(),
+        "the last success wakes it"
+    );
+    for item in [&first, &second] {
+        let TriggerEvent::ItemFinished { summary, .. } = finished_news(&h, item).await else {
+            unreachable!("finished_news returns item_finished");
+        };
+        assert!(summary.contains("opened a pull request"), "{summary}");
+    }
+}
+
 /// The cost the orchestrator is told for `item` once its provider settled
 /// $4.25 after the run finished: `pick` reads it from the batch Archon keys.
 async fn told_after_settlement(

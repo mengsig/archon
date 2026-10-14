@@ -38,11 +38,30 @@ pub(super) struct Held {
     /// waking it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub quiet: bool,
+    /// News that wakes the orchestrator only from then on; anything waking
+    /// it sooner carries this along.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defer_until: Option<Timestamp>,
 }
 
 impl Held {
+    /// News pushed at `now` that wakes the orchestrator, or `quiet` news.
+    pub fn new(event: TriggerEvent, now: Timestamp, quiet: bool) -> Self {
+        Self {
+            event,
+            pushed_at: Some(now),
+            quiet,
+            defer_until: None,
+        }
+    }
+
     fn is_old(&self, now: Timestamp) -> bool {
         self.pushed_at.is_some_and(|at| now - at > MAX_NEWS_AGE)
+    }
+
+    /// Whether this news wakes the orchestrator at `now`.
+    pub fn wakes(&self, now: Timestamp) -> bool {
+        !self.quiet && self.defer_until.is_none_or(|at| at <= now)
     }
 }
 
@@ -151,7 +170,7 @@ pub(super) fn needs_compaction(held: &[Held], now: Timestamp) -> bool {
 pub(super) fn compact(held: Vec<Held>, facts: &Facts, now: Timestamp) -> Vec<Held> {
     assert!(!held.is_empty(), "only held news is compacted");
     // A digest of news that would have woken the orchestrator wakes it too.
-    let quiet = held.iter().all(|news| news.quiet);
+    let (quiet, defer_until) = digest_wake(&held);
     let relevance = classify(&held, facts, now);
     assert_eq!(relevance.len(), held.len(), "one verdict per event");
     let pinned = relevance
@@ -178,9 +197,25 @@ pub(super) fn compact(held: Vec<Held>, facts: &Facts, now: Timestamp) -> Vec<Hel
         event: digest(dropped),
         pushed_at: None,
         quiet,
+        defer_until,
     }];
     events.extend(kept);
     events
+}
+
+/// When a digest of `held` wakes the orchestrator: never if all of it is
+/// quiet, else when the first of it would have.
+fn digest_wake(held: &[Held]) -> (bool, Option<Timestamp>) {
+    let waking: Vec<&Held> = held.iter().filter(|news| !news.quiet).collect();
+    if waking.is_empty() {
+        return (true, None);
+    }
+    if waking.iter().any(|news| news.defer_until.is_none()) {
+        return (false, None);
+    }
+    let first = waking.iter().filter_map(|news| news.defer_until).min();
+    assert!(first.is_some(), "deferred news has a time to wake at");
+    (false, first)
 }
 
 /// The events of `held` marked in `keep`, and a count by type of the rest,
@@ -303,11 +338,7 @@ mod tests {
     use super::*;
 
     fn at(event: TriggerEvent, pushed_at: Timestamp) -> Held {
-        Held {
-            event,
-            pushed_at: Some(pushed_at),
-            quiet: false,
-        }
+        Held::new(event, pushed_at, false)
     }
 
     fn budget(scope: &str) -> TriggerEvent {
@@ -382,9 +413,8 @@ mod tests {
             .collect();
         assert!(!needs_compaction(&held, now));
         let legacy = Held {
-            event: budget("old"),
             pushed_at: None,
-            quiet: false,
+            ..Held::new(budget("old"), now, false)
         };
         assert!(!needs_compaction(&[legacy], now), "no push time is not old");
         let old = at(budget("old"), now - MAX_NEWS_AGE - TimeDelta::seconds(1));
@@ -614,6 +644,27 @@ mod tests {
         let held = compact(mixed, &Facts::default(), now);
         assert!(matches!(held[0].event, TriggerEvent::NewsDigest { .. }));
         assert!(!held[0].quiet, "the dropped waking event still wakes");
+    }
+
+    #[test]
+    fn a_digest_of_deferred_news_comes_due_with_the_first_of_it() {
+        let now = archon_core::now();
+        let count = MAX_BATCH_EVENTS + 2;
+        let minutes = |n: usize| TimeDelta::minutes(i64::try_from(n).unwrap());
+        // The newest news comes due first.
+        let deferred = |n: usize| Held {
+            defer_until: Some(now + minutes(count - n)),
+            ..at(budget(&n.to_string()), now)
+        };
+        let held: Vec<Held> = (0..count).map(deferred).collect();
+        let held = compact(held, &Facts::default(), now);
+        assert!(matches!(held[0].event, TriggerEvent::NewsDigest { .. }));
+        assert!(!held[0].quiet, "deferred news wakes the orchestrator later");
+        assert_eq!(held[0].defer_until, Some(now + minutes(1)));
+        assert!(
+            held.iter().all(|news| !news.wakes(now)),
+            "none of it is due yet"
+        );
     }
 
     #[test]

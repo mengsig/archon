@@ -50,7 +50,7 @@ async fn mark_flush(ctx: &DaemonContext) -> Result<Option<u64>, ArchonError> {
         write_outbox(&mut store, &outbox)?;
     }
     assert!(
-        outbox.pending.is_empty() || outbox.is_due(),
+        outbox.pending.is_empty() || outbox.is_due(archon_core::now()),
         "flushed news is due"
     );
     // Read under the store lock, which every settled batch is counted under.

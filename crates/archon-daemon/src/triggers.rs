@@ -13,6 +13,7 @@ mod summary;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::autonomy::Directive;
 use archon_core::error::ArchonError;
@@ -317,15 +318,22 @@ struct Outbox {
 }
 
 impl Outbox {
-    /// Whether `pending` makes a trigger now: some of it wakes the
+    /// Whether `pending` makes a trigger at `now`: some of it wakes the
     /// orchestrator, or a turn is starting that quiet news can join.
-    fn is_due(&self) -> bool {
-        !self.pending.is_empty() && (self.flush || self.pending.iter().any(|news| !news.quiet))
+    fn is_due(&self, now: Timestamp) -> bool {
+        !self.pending.is_empty() && (self.flush || self.pending.iter().any(|news| news.wakes(now)))
     }
 
     /// Whether `pending` should go out without waiting for more news.
-    fn is_now(&self) -> bool {
-        self.is_due() && (self.flush || self.pending.iter().any(|news| news.event.is_urgent()))
+    fn is_now(&self, now: Timestamp) -> bool {
+        self.is_due(now) && (self.flush || self.pending.iter().any(|news| news.event.is_urgent()))
+    }
+
+    /// When the first deferred news comes due, if nothing wakes the
+    /// orchestrator before.
+    fn next_due(&self) -> Option<Timestamp> {
+        let deferred = self.pending.iter().filter(|news| !news.quiet);
+        deferred.filter_map(|news| news.defer_until).min()
     }
 }
 
@@ -372,7 +380,8 @@ pub async fn push(ctx: &DaemonContext, event: TriggerEvent) -> Result<(), Archon
 /// Save routine `event`, durably, without waking the orchestrator: it joins the
 /// next trigger or operator turn ([`flush_quiet`]).
 pub async fn push_quiet(ctx: &DaemonContext, event: TriggerEvent) -> Result<(), ArchonError> {
-    hold_as(&mut *ctx.store.lock().await, event, true)
+    let news = Held::new(event, archon_core::now(), true);
+    hold_as(&mut *ctx.store.lock().await, news)
 }
 
 /// Enqueue a durable event and its receipt in one store transaction.
@@ -388,11 +397,9 @@ pub(crate) async fn push_once(
     assert!(!key.is_empty());
     assert!(matches!(event, TriggerEvent::InitiativeFinished { .. }));
     let mut outbox = read_outbox(&store)?;
-    outbox.pending.push(Held {
-        event,
-        pushed_at: Some(archon_core::now()),
-        quiet: false,
-    });
+    outbox
+        .pending
+        .push(Held::new(event, archon_core::now(), false));
     if outbox.pending.len() > MAX_PENDING {
         compact_pending(&mut store, &mut outbox)?;
     }
@@ -414,24 +421,40 @@ pub(crate) async fn push_once(
 /// Save `event` under the caller's store lock, beside the change it reports;
 /// the caller then calls [`wake`].
 pub(crate) fn hold(store: &mut Store, event: TriggerEvent) -> Result<(), ArchonError> {
-    hold_as(store, event, false)
+    hold_as(store, Held::new(event, archon_core::now(), false))
 }
 
-fn hold_as(store: &mut Store, event: TriggerEvent, quiet: bool) -> Result<(), ArchonError> {
+/// Save an item's success under the caller's store lock, to wake the
+/// orchestrator at `until` unless news wakes it before; the caller then calls [`wake`].
+pub(crate) fn hold_deferred(
+    store: &mut Store,
+    event: TriggerEvent,
+    until: Timestamp,
+) -> Result<(), ArchonError> {
+    let now = archon_core::now();
+    assert!(until > now, "deferred news comes due later");
+    assert!(
+        matches!(&event, TriggerEvent::ItemFinished { state, .. } if state == "succeeded"),
+        "only a routine success waits for company"
+    );
+    let news = Held {
+        defer_until: Some(until),
+        ..Held::new(event, now, false)
+    };
+    hold_as(store, news)
+}
+
+fn hold_as(store: &mut Store, news: Held) -> Result<(), ArchonError> {
     assert!(
         !matches!(
-            event,
+            news.event,
             TriggerEvent::NewsDigest { .. } | TriggerEvent::ItemsFinished { .. }
         ),
         "a digest is made when news is keyed, never pushed"
     );
     let mut outbox = read_outbox(store)?;
     let before = outbox.pending.len();
-    outbox.pending.push(Held {
-        event,
-        pushed_at: Some(archon_core::now()),
-        quiet,
-    });
+    outbox.pending.push(news);
     if outbox.pending.len() > MAX_PENDING {
         compact_pending(store, &mut outbox)?;
     }
@@ -465,13 +488,10 @@ pub(crate) fn record_message(
         at,
     });
     let mut outbox = read_outbox(store)?;
-    outbox.pending.push(Held {
-        event: TriggerEvent::AgentMessage {
-            message: Box::new(message),
-        },
-        pushed_at: Some(at),
-        quiet: false,
-    });
+    let event = TriggerEvent::AgentMessage {
+        message: Box::new(message),
+    };
+    outbox.pending.push(Held::new(event, at, false));
     if outbox.pending.len() > MAX_PENDING {
         compact_pending(store, &mut outbox)?;
     }
@@ -527,17 +547,7 @@ pub async fn deliver_loop(ctx: std::sync::Arc<DaemonContext>) -> Result<(), Arch
 /// yields a trigger per window. Quiet news alone is not waited on; a flush
 /// or urgent news ends the window, as the operator waits on that turn.
 async fn wait_for_news(ctx: &DaemonContext, coalesce: Duration) -> Result<(), ArchonError> {
-    loop {
-        let held = read_outbox(&*ctx.store.lock().await)?;
-        assert!(
-            held.in_flight.is_none(),
-            "news waits only when nothing is in flight"
-        );
-        if held.is_due() {
-            break;
-        }
-        ctx.triggers.news.notified().await;
-    }
+    wait_until_due(ctx).await?;
     let deadline = tokio::time::Instant::now() + coalesce;
     loop {
         // Enabled before the outbox is read, so a flush in between still ends the window.
@@ -546,13 +556,40 @@ async fn wait_for_news(ctx: &DaemonContext, coalesce: Duration) -> Result<(), Ar
         flushed.as_mut().enable();
         let held = read_outbox(&*ctx.store.lock().await)?;
         assert!(held.in_flight.is_none(), "only this task keys a batch");
+        let now = archon_core::now();
         // Compaction may have left nothing waking; keying then finds nothing due.
-        if !held.is_due() || held.is_now() {
+        if !held.is_due(now) || held.is_now(now) {
             return Ok(());
         }
         tokio::select! {
             () = tokio::time::sleep_until(deadline) => return Ok(()),
             () = flushed => return Ok(()),
+            () = ctx.triggers.news.notified() => {}
+        }
+    }
+}
+
+/// Wait until held news makes a trigger: news arrives, or deferred news
+/// comes due.
+async fn wait_until_due(ctx: &DaemonContext) -> Result<(), ArchonError> {
+    loop {
+        let held = read_outbox(&*ctx.store.lock().await)?;
+        assert!(
+            held.in_flight.is_none(),
+            "news waits only when nothing is in flight"
+        );
+        let now = archon_core::now();
+        if held.is_due(now) {
+            return Ok(());
+        }
+        let Some(due) = held.next_due() else {
+            ctx.triggers.news.notified().await;
+            continue;
+        };
+        let wait = (due - now).to_std();
+        assert!(wait.is_ok(), "news not due yet comes due later");
+        tokio::select! {
+            () = tokio::time::sleep(wait.unwrap_or_default()) => {}
             () = ctx.triggers.news.notified() => {}
         }
     }
@@ -570,7 +607,7 @@ async fn key_pending(ctx: &DaemonContext) -> Result<(), ArchonError> {
         outbox.in_flight.is_none(),
         "one batch is in flight at a time"
     );
-    if !outbox.is_due() {
+    if !outbox.is_due(archon_core::now()) {
         return Ok(());
     }
     let held = std::mem::take(&mut outbox.pending);
@@ -716,7 +753,7 @@ pub async fn held(ctx: &DaemonContext) -> Result<Vec<TriggerEvent>, ArchonError>
 /// or some of it wakes the orchestrator. Quiet news alone is not due.
 pub async fn due(ctx: &DaemonContext) -> Result<bool, ArchonError> {
     let outbox = read_outbox(&*ctx.store.lock().await)?;
-    Ok(outbox.in_flight.is_some() || outbox.is_due())
+    Ok(outbox.in_flight.is_some() || outbox.is_due(archon_core::now()))
 }
 
 /// How many news events wait for the orchestrator (see [`held`]).
@@ -823,6 +860,41 @@ async fn attempt(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn success() -> TriggerEvent {
+        TriggerEvent::ItemFinished {
+            item: QueueItemId::new(),
+            title: "a routine change".into(),
+            state: "succeeded".into(),
+            summary: "done".into(),
+            pr_url: None,
+            cost_usd: 0.0,
+            origin: None,
+            lesson_hint: None,
+        }
+    }
+
+    #[test]
+    fn deferred_news_comes_due_at_its_time_or_with_news_that_wakes_now() {
+        let now = archon_core::now();
+        let until = now + chrono::TimeDelta::minutes(5);
+        let deferred = Held {
+            defer_until: Some(until),
+            ..Held::new(success(), now, false)
+        };
+        let mut outbox = Outbox {
+            pending: vec![deferred, Held::new(success(), now, true)],
+            ..Outbox::default()
+        };
+        assert!(!outbox.is_due(now), "deferred and quiet news wait");
+        assert_eq!(outbox.next_due(), Some(until), "quiet news never comes due");
+        assert!(outbox.is_due(until), "deferred news wakes at its time");
+        outbox.pending.push(Held::new(success(), now, false));
+        assert!(outbox.is_due(now), "news waking now carries the rest along");
+        outbox.pending.truncate(2);
+        outbox.flush = true;
+        assert!(outbox.is_now(now), "a turn starting takes it at once");
+    }
 
     #[test]
     fn payload_matches_the_documented_shape() {

@@ -204,7 +204,7 @@ or schedules, and never touches the GitHub watcher of an Aether it shares.
   live descendants, and Archon cancels what a replaced orchestrator left
   running (§16), so replacing the orchestrator would cancel every in-flight
   stage; a child's scope must
-  sit inside its parent's, and the orchestrator's is a scratch directory; and
+  sit inside its parent's, and the orchestrator's holds no worktree; and
   a child may not gate less than its parent, while stage agents gate nothing.
 - An explicit `scope` gets `network: denied` unless it says otherwise. Aether
   applies its `[network] default` only to roots created without a scope, so
@@ -218,43 +218,58 @@ or schedules, and never touches the GitHub watcher of an Aether it shares.
   `remember`, `send_message`, `list_agents`, `read_task`, `read_artifact` and
   `delegate`. It loses `integrate_workspace` (§18.4), and `delegate` too
   while Aether does not name the agents that call Archon's tools (§11).
-- Its workspace is a scratch directory. It reads repositories by absolute path;
-  its native tools are not confined (an Aether limitation, §17).
-- `archon-daemon/prompts/orchestrator.md` is the built-in prompt. It gives the
-  order in which to decide how a request is done (answer, delegate, enqueue
-  the pipeline that fits, queue a backlog), the MCP tools, the notify
-  vocabulary, model selection within the allowlist weighing pipeline nudges
-  as advice, and quiet-chat rules ("final replies to operator messages are
-  shown; everything else must go through `notify`"). Archon appends
-  `## This installation` to it: the orchestrator's workspace and the user
-  pipelines directory, resolved for this machine.
+- Its workspace holds `repos/<name>`, a mirror of each registered repository
+  (§13.3), and `scratch/` for work in no repository. It reads code in the
+  mirrors. Its native tools are not confined to the workspace (an Aether
+  limitation, §17).
+- `archon-daemon/prompts/orchestrator.md` is the built-in prompt, held to
+  12 KiB by a test. It gives the order in which to decide how a request is
+  done (answer, read the mirror, delegate, enqueue the cheapest pipeline that
+  fits), the review level and model plan of an item, what a helper is given,
+  the two operator views, which news wakes it (§5.4) and the GitHub policy.
+  What one tool does is said once, in that tool's description (§11), and the
+  prompt does not repeat it. Archon appends `## This installation` to it:
+  the orchestrator's workspace, where its mirrors and scratch directory are,
+  and the user pipelines directory, resolved for this machine.
+- A paragraph of the prompt about tools not released yet stands between
+  `<!-- slot: tool_a, tool_b -->` and `<!-- /slot -->`. It is left out while
+  any tool it names is in `ORCHESTRATOR_PENDING_TOOLS` (§11) and joins the
+  prompt, without its markers, once none is: releasing a tool is deleting
+  its name from that list, with no edit of the prompt. Tests hold that every
+  tool the orchestrator is shown is taught, that no pending one is
+  mentioned, and that no slot reaches into `## GitHub requests`.
 
-**What the orchestrator delegates.** Work that needs no repository: research
-on the web or in documents, a comparison, a summary or draft, a second look
-at a result it holds. It answers such work in one turn, with no item, no
-worktree and no ship stage. Whatever needs a repository is an item
-(`enqueue`): a question that takes reading its code is `ask`, which reads a
-snapshot, and every change goes through a pipeline, so that Archon's
-worktrees, ship modes, gates, caps and budgets apply. The prompt says so, and
-the daemon stands behind it:
+**What the orchestrator does without an item.** It answers what it knows or
+can look up, reads code in a mirror, and delegates what would flood its
+context or splits into parts: research on the web or in documents, a wide
+read of a subsystem, a comparison, a draft, a second look at a result. A
+question about a repository's code is answered in the turn that asks it,
+with no item, no worktree and no ship stage. `ask` is still a pipeline, for
+a question worth a recorded run and for a repository whose mirror is
+withheld (§13.3), but nothing requires it. Every change to a repository is
+an item (`enqueue`), so that Archon's worktrees, ship modes, gates, caps and
+budgets apply. The prompt says so, and the daemon stands behind it:
 
-- *A helper holds no repository.* The orchestrator's workspace is a scratch
-  directory, and Aether accepts a child's `workspace_root` only under its
-  parent's, so a helper works there by default. Archon keeps no link from
-  that workspace to a repository: an earlier design did, and a helper placed
-  through one ran in the operator's live checkout with nothing but its
-  instructions against writing there. The watchdog (§7.4) reads each
-  helper's scope from Aether and cancels one whose `workspace_root` or
-  `allowed_paths` lead into a registered repository or the worktrees root,
-  resolving symlinks, since Aether compares scope paths as written
-  (`Scope::is_narrowing_of`). What stays inside the orchestrator's own
-  workspace passes. The check covers where a helper was placed, not what a
-  native engine's tools can open beyond it (§17).
+- *A helper works in a mirror or in scratch, never in a repository.* Aether
+  accepts a child's `workspace_root` only under its parent's, and the
+  mirrors are under the orchestrator's, so a helper is given one mirror:
+  shared, to read it, or `workspace_mode: "isolated"`, which Aether makes a
+  git worktree of that mirror on a branch of the mirror's own, to build or
+  try something. Neither reaches the operator's checkout (§13.3). The
+  watchdog (§7.4) reads each helper's scope from Aether and cancels one whose
+  `workspace_root` or `allowed_paths` lead into a registered repository or
+  the worktrees root, resolving symlinks, since Aether compares scope paths
+  as written (`Scope::is_narrowing_of`). What stays inside the orchestrator's
+  own workspace, its mirrors included, passes. The check covers where a
+  helper was placed, not what a native engine's tools can open beyond it
+  (§17).
 - *No integration.* `integrate_workspace`, which copies an isolated child's
-  worktree back, stays hidden: the orchestrator ships nothing.
+  worktree back, stays hidden: the orchestrator ships nothing, and what a
+  helper commits in a mirror stays in the mirror.
 - *No delegation for an external request.* The prompt forbids `delegate` for
   a GitHub request without operator standing; such a request is answered
-  directly or researched with `ask`. Only the prompt holds this: the daemon
+  directly, from that repository's mirror when it takes code. Only the
+  prompt holds this: the daemon
   cannot tell which request a helper serves. It reads a trigger, and the
   turn that takes it, on the orchestrator's event stream, and a helper's
   creation on the fleet's, which has its own cursor; and one turn may take
@@ -268,20 +283,23 @@ the daemon stands behind it:
 its tool exposure and approval policy, though not its instructions. Aether
 gives a child only the `instructions` its parent passes to `delegate`, or
 none, so no rule of the prompt reaches a child by itself: the prompt has
-the orchestrator state in each child's `instructions` that it reads only,
-stays in the workspace given and opens no repository, does not push,
-overrides no git identity, asks the operator nothing, and passes the same
-rules to any agent it starts. So:
+the orchestrator state in each child's `instructions` that it commits and
+pushes nothing, stays in the workspace given, overrides no git identity,
+asks the operator nothing, and passes the same rules to any agent it
+starts. So:
 
 - It sees Archon's MCP tools. `archond` lets a mutating one through only
   for the current orchestrator, by the caller Aether names on the call
   (§11), so a child reads the queue but cannot change it.
-- The stage-agent watchdog adopts it (§7.4). Archon cannot tell which
-  repository a helper's work is about, so a helper is held to the global
-  `[models]` policy narrowed by every registered repository's: a model or an
-  effort any of them refuses gets the helper cancelled, and the orchestrator
-  hears `policy_violation`. Its spend counts toward the daily and total
-  budgets.
+- The stage-agent watchdog adopts it (§7.4). A helper is held to the global
+  `[models]` policy narrowed by the policy of each repository whose mirror
+  its scope reads: one given the mirror of `api` answers to `api`'s policy
+  and to no other repository's, and one given `scratch/` to the global
+  policy alone. A model or an effort that policy refuses gets the helper
+  cancelled, and the orchestrator hears `policy_violation`. Its spend counts
+  toward the daily and total budgets.
+- It may delegate once more. An agent a third delegation below the
+  orchestrator is cancelled for its depth (§7.4), whatever its model.
 - It is outside `max_parallel_agents` and `max_stage_agents_per_item`, which
   count stage agents (§7.1). The prompt holds the orchestrator to the
   parallel-agent cap, counting its own children with Aether's `list_agents`,
@@ -484,7 +502,7 @@ at-least-once, so every handler is idempotent.
 
 | Subscription | Query | Handles |
 | --- | --- | --- |
-| `orchestrator` | `{agent: <orchestrator>, types:["agent.message","agent.turn_completed","agent.waiting","agent.started","question.asked","agent.failed","agent.cancelled","agent.completed","agent.restarted","agent.usage_updated","inbox.delivered","inbox.consumed"]}` | Chat replies (§12), questions, supervisor, adopting an Aether restart (§16), orchestrator spend. |
+| `orchestrator` | `{agent: <orchestrator>, types:["agent.message","agent.turn_completed","agent.waiting","agent.started","question.asked","agent.failed","agent.cancelled","agent.completed","agent.restarted","agent.usage_updated","inbox.delivered","inbox.consumed","compaction.completed"]}` | Chat replies (§12), questions, supervisor, adopting an Aether restart (§16), orchestrator spend, restating the directives after a compaction (§18.5). |
 | `fleet` | `{types:["agent.created","task.completed","task.failed","task.cancelled","agent.failed","agent.cancelled","agent.completed","agent.usage_updated","question.asked","inbox.delivered"]}` | Stage completion, spend ledger, stage questions, model-policy watchdog, run-node inbox forwarding and authenticated relay provenance. An agent's end (`agent.completed`, `agent.failed`, `agent.cancelled`) also wakes the dispatcher, which stops what a settled stage agent delegated (§6.3). |
 
 The `fleet` subscription also forwards message inbox entries addressed to
@@ -509,7 +527,11 @@ set, since it cannot be compared with the cap.
 A settling event (`task.*`, `agent.failed`, `agent.cancelled`) can arrive
 before the spawn reply that tells Archon the agent is a stage's. The stream
 is handled in order, so such an event waits (up to 5 s) only when it could
-be one: its agent is neither a stage agent, a run node
+be one. The wait is not a poll: the executor signals each spawn whose
+outcome it recorded (`DaemonContext::spawn_recorded`) and the waiting event
+looks again at once, with one more look a second as a net for a stage that
+stops spawning any other way. An event could be a spawning stage's when its
+agent is neither a stage agent, a run node
 (`kv.run_node_agent`, which covers every retired node's `agent.cancelled`
 for the 7-day retention of §16)
 nor a watched child, and some `spawning` stage whose request may have
@@ -942,6 +964,39 @@ After a quiet spell, delivery waits the window from the first event. News
 pushed while a batch is delivered has waited already and goes out right
 after it.
 
+**Which news wakes the orchestrator.** A wake is a whole turn of the
+orchestrator over its context, so the daemon spends one only on news the
+orchestrator has something to do about. Every finished item reaches the
+operator from the daemon itself, as an `Outcome` or `Blocker` feed entry
+(§5.1), and its `item_finished` news is then either *waking* or *quiet*
+(`executor::finish::announce`):
+
+| Outcome | News |
+| --- | --- |
+| Failed, or the operator must act (a `Blocker`, a `BLOCKED:` result) | wakes |
+| Succeeded with an `origin`: a GitHub thread is owed the result | wakes |
+| Succeeded and tagged `notify` by whoever queued it | wakes |
+| Succeeded otherwise, or cancelled | quiet |
+
+Every other event wakes: `agent_message`, `item_blocked`, `gate_opened`,
+`operator_answer`, `chat_answer`, `lavish_feedback`, `budget`,
+`policy_violation`, `directives_restated`. A mirror's change of state
+(§13.3) is quiet. Quiet news is saved in the outbox like any other and makes
+no trigger by itself. It leaves with the next trigger there is, and an
+operator message sends it at once, without the coalescing window
+(`triggers::flush_quiet`, called before the message is delivered), so the
+turn that answers the operator has read it. When it is keyed, the quiet
+outcomes become one `items_finished` event at the end of the batch: item,
+title, state, pull request and cost of the newest outcome of each item, at
+most 20, with `more` counting the rest, and without an outcome the item no
+longer shows (it was retried since). `[orchestrator] wake_on_success = true`
+makes every outcome waking again.
+
+An `agent_message` is one feed entry the daemon writes with the news, in
+the same transaction (§5.5), so the orchestrator does not echo it: an
+escalation shows in the quiet chat as a `Blocker`, a relay or info with
+progress.
+
 While the orchestrator is down this news is held. A new, revived or
 adopted orchestrator gets a retry at once, and the held batches reach it in
 order, each once under its key. `archon status` (and its `held_news` field)
@@ -967,6 +1022,9 @@ neither forces compaction. Compaction:
   and an `item_blocked` when the item is no longer blocked;
 - drops any other event older than an hour;
 - then keeps the newest of the rest, up to 10 events in all.
+
+Quiet outcomes are folded into their `items_finished` list before this and
+are not counted against the 10.
 
 What was dropped is counted by type in one `news_digest` event at the head
 of the batch, which points to `list_queue`, `get_item` and `archon log` for
@@ -996,21 +1054,53 @@ into its own, so one batch never carries two digests.
    "prompts": ["…"], "text": "…the poll output without its dom_snapshot…"},
   {"type": "budget", "scope": "daily", "spent_usd": 51.0, "limit_usd": 50.0},
   {"type": "policy_violation", "agent": "agt_…", "model": "…", "action": "cancelled"},
+  {"type": "mirror", "repo": "api", "state": "stale", "detail": "…git's error…"},
+  {"type": "directives_restated", "reason": "your context was compacted"},
   {"type": "news_digest", "dropped": {"item_finished": 12, "item_blocked": 3},
-   "note": "15 older or no longer actionable news events were left out. …"}
+   "note": "15 older or no longer actionable news events were left out. …"},
+  {"type": "items_finished", "more": 4, "items": [
+    {"item": "qi_…", "title": "…", "state": "succeeded", "pr_url": "…", "cost_usd": 0.41}]}
  ],
  "directives": [{"id": "dir_…", "text": "auto-merge docs fixes today", "source": "operator",
                  "set_at": "…", "expires_at": "…"}],
- "summary": "7 events: item finished: qi_… succeeded, item blocked: qi_…, …"}
+ "directive_changes": {"set": [{"id": "dir_…", "text": "…"}], "cleared": [{"id": "dir_…", "text": "…"}]},
+ "directives_in_force": 3,
+ "summary": "9 events: item finished: qi_… succeeded, item blocked: qi_…, …"}
 ```
+
+A payload carries `directives` or `directive_changes`, never both, and
+neither when nothing changed (below).
 
 The top-level `summary` is a derived display label, at most 160 characters,
 with whitespace collapsed and Unicode control/format characters removed.
 It names the single event or the count and labels of a batch. Full event
 bodies and directives remain authoritative and are retained unchanged.
 
-Every payload restates the operator directives in force (§18.5), so they
-survive an orchestrator restart or a compacted context.
+**Directives in a payload** (§18.5). Restating every directive in every
+trigger was most of a typical payload, so they are sent in full once per
+orchestrator generation and as changes after that. The first trigger of a
+generation carries `directives`, all in force. A later one carries
+`directive_changes` (`set`, `cleared`: withdrawn or expired) when something
+changed since the trigger before, and no directive field when nothing did.
+Every trigger carries `directives_in_force`, the count: an orchestrator
+that holds fewer reads them with `autonomy_policy`. What the current
+generation was told is kept in kv `trigger_directives_told` and decided when
+a batch is keyed, so a retry under the batch's key sends the same payload.
+
+Whenever the orchestrator may have lost them, the next trigger states them
+all again and says why in a `directives_restated` event, and when any
+directive is in force that trigger is sent at once, so no request is acted
+on without them:
+
+- a new generation (created, or replaced after a failure);
+- a revival of the same agent from its checkpoint, which may predate them;
+- Aether's `compaction.completed` on the orchestrator's stream: its older
+  context became a summary.
+
+An orchestrator an earlier Archon started has a prompt that expects every
+directive in every trigger, so it keeps getting them in full: kv
+`trigger_directive_changes_from` holds the first generation this build
+started, and only that one and later ones are sent changes.
 
 `gate_opened` is pushed when an operator gate's question is recorded
 (§18.3), under the same store lock, so the orchestrator can restate the gate
@@ -1042,11 +1132,15 @@ can supply caller identity; the daemon checks it against recorded stage ownershi
 Caller identity is not an argument the model can supply; missing metadata,
 unknown callers and settled stage callers are refused visibly.
 
-Archond resolves the caller's stage and records a progress notification in
-the item's log, carrying item, pipeline run, stage run, stage, attempt,
-agent, kind, text and original sender. One SQLite transaction commits that
-log entry, the sender's count and an `agent_message` news event in the
-durable outbox. The receipt is the feed entry id. The tool does no Aether
+Archond resolves the caller's stage and records the message in the feed
+for the operator to read as it is: `From <stage> (<sender>; <kind>): <text>`,
+the whole text, as a `Blocker` for an escalation, which the quiet chat
+shows, and as `Progress` for a relay or info. The orchestrator therefore
+never repeats a message to the operator; it acts on it. The news event
+carries item, pipeline run, stage run, stage, attempt, agent, kind, text and
+original sender. One SQLite transaction commits the feed entry, the
+sender's count and the `agent_message` news event in the durable outbox.
+The receipt is the feed entry id. The tool does no Aether
 I/O and does not settle the stage. Stage instructions and the receipt say
 to continue working: ending a turn would complete the stage, and sending
 a message is never a reason to wait or end it.
@@ -1400,8 +1494,21 @@ anything waits for it. The pass stops after 30 seconds so it does not hold
 the dispatch pass up; the worktree it was collecting is finished off the
 dispatcher, which that sweep pokes as it ends, and a later pass goes on.
 
-The daemon re-plans on: enqueue, stage settled, run finished, caps or pause
-changed, and a `dispatcher.tick_secs` (default 15) timer.
+The daemon re-plans on: enqueue, update, cancel and retry of an item, a
+stage settled, a gate answered, a run finished, an agent's turn or life
+ended (§6.3), caps or pause changed, a gc mark gone, a (re)connect to
+Aether, and new spend while a total or daily budget is set. Each of these
+pokes the dispatcher itself, so the `dispatcher.tick_secs` (default 15)
+timer is a net and not a clock: nothing in the path from enqueue to shipped
+waits for it. What it does carry is time-based: stage deadlines, the retry
+of a `create_agent` Aether refused as unavailable, and the grace periods of
+§6.3.
+
+Spend changes a plan only by reaching `budget_usd_total` or
+`budget_usd_daily` (`admission_hold`), so with neither set a usage update is
+recorded, checked against its item's budget at once in the fleet pump
+(§5.3), and wakes no pass: a pass per usage update of every running agent
+bought nothing.
 
 Enqueue and retry refuse an item whose pipeline has a team stage with more
 roles than `effective_agent_cap` allows for the item's repository and
@@ -1419,7 +1526,7 @@ workers, before it takes the run table. Candidates then share those reads.
 `[models] allow = ["claude-code/claude-opus-5-5"]` (empty means any model
 Aether lists) and `deny = [...]`. A repo config may only **narrow** the
 allowlist: the effective list is the intersection. The policy is enforced in
-four places:
+five places:
 
 1. `enqueue`, `update_item` and `retry_item` validate every `ModelChoice` in
    the plan. The error lists the allowed models.
@@ -1433,10 +1540,19 @@ four places:
    violates the policy gets `cancel` plus a `Blocker` and a
    `policy_violation` trigger. Below a stage agent the policy is the item's
    repository's effective one. Below the orchestrator it is the global one
-   narrowed by every registered repository's, since Archon cannot tell which
-   repository a helper's work is about, and a helper whose scope leads into a
-   registered repository or the worktrees root is cancelled the same way
-   (§4.4).
+   narrowed by each repository whose mirror the helper's scope reads
+   (`mirror::reach`): a `workspace_root` or allowed path inside
+   `repos/<name>`, or in a git worktree of it, which is what an isolated
+   child of a mirror gets, reads that mirror; one that holds the mirrors
+   directory reads them all, as does a scope that names no directory or an
+   agent Aether no longer knows. So a helper answers to the repository it
+   was pointed at, not to the intersection of every repository's policy. A
+   helper whose scope leads into a registered repository or the worktrees
+   root is cancelled the same way (§4.4).
+5. Depth: the watchdog records how many delegations each child is below
+   its stage agent or the orchestrator, and cancels one more than two down
+   with the same `Blocker` and trigger. A delegating stage agent's
+   contract tells it so (§8.6): its child may delegate once more.
 
 Effort is not restricted by default. `[models] max_effort` optionally caps it.
 
@@ -1718,7 +1834,9 @@ actually do (`allow_delegation` on its stage, or the item's `tools = yolo`),
 so both routes carry the same rules, and appends it after the contract. It
 states:
 
-- every child is a leaf (`leaf: true`);
+- a child may delegate once more, passing `leaf: true` for its own
+  children: two levels below the stage agent is the limit, and the watchdog
+  cancels an agent a third level down (§7.4);
 - how the workspace is shared: in a writable workspace a child that edits
   gets `workspace_mode: "isolated"` and the lead brings accepted changes in
   with `integrate_workspace`, while a child that only reads shares the
@@ -1788,6 +1906,7 @@ effort = "high"
 name = "Archon"
 # instructions_file = "~/.config/archon/orchestrator.md"  # appended to the built-in prompt
 trigger_coalesce_ms = 2000
+wake_on_success = false        # true: every finished item wakes the orchestrator (§5.4)
 
 [models]
 allow = []                     # e.g. ["claude-code/claude-opus-5-5"]; [] = any
@@ -1795,7 +1914,7 @@ deny = []
 # max_effort = "high"          # unset: no cap; else low|medium|high|x_high|max
 
 [limits]
-max_parallel_agents = 3
+max_parallel_agents = 8
 max_per_repo = 0
 max_active_runs = 0
 budget_usd_per_item = 0.0
@@ -2560,6 +2679,83 @@ set-aside directory), makes `archon gc` exit non-zero. Each is reported
 against its path while gc still collects everything else; `archond` logs
 them for its own passes, which a store error stops like any worker (§16).
 
+### 13.3 The orchestrator's mirrors
+
+The orchestrator answers a question about code by reading the code, so it
+needs every registered repository at hand, and it must not hold the
+operator's checkout. `archon_daemon::mirror` keeps
+`<data>/orchestrator/repos/<name>` for each registered repository: a
+`git clone --local --no-checkout` of the repository's path, checked out
+detached at the base branch (`repo.base_branch`, else the repository's
+`HEAD` commit, as for a worktree). Like a worktree it holds committed work
+only.
+
+**What a mirror cannot do.**
+
+- It has no remote. `origin` is removed after the clone and the daemon
+  fetches by path, so `git push`, `git pull` and `git fetch` have nowhere
+  to go, and the repository's own remotes and credentials are not in its
+  config.
+- It has no branch of the repository's. The clone's `refs/heads/*` are
+  deleted; the repository's branches are fetched to `refs/mirror/*`, a
+  namespace no push or checkout names by default, and a base that is not a
+  branch to `refs/archon/base`.
+- A push is refused anyway. Every mirror's `core.hooksPath` is
+  `<data>/mirror-hooks`, outside the orchestrator's workspace, whose
+  `pre-push` hook exits 1, so a helper that adds a remote still cannot push
+  through it. A worktree of the mirror shares that config. `--no-verify`
+  skips a hook, so this guards against a mistake and is no boundary: an
+  agent runs as the operator's user, and what its tools can reach beyond
+  its workspace is Aether's limit (§17). What a mirror guarantees is that
+  nothing in it points at the repository or its remotes.
+- No hook of the repository runs. `--template=` copies none, a
+  repository's `.git/hooks` is never cloned, and the daemon's own git in a
+  mirror runs with `core.hooksPath=/dev/null`, without the operator's
+  global and system config, and with `--git-dir` and `--work-tree` naming
+  the mirror itself, so a `core.worktree` written into its config cannot
+  aim a checkout elsewhere.
+- A symbolic link is never followed. A link where the mirrors directory or
+  a mirror belongs, or a `.git` that is a file or a link, is removed and
+  the mirror cloned again. A link inside a mirror is a file of the
+  repository like any other.
+
+Objects are shared with the repository by hard links where the filesystem
+allows, so a large repository costs its checkout and no second object
+store, and a mirror on another filesystem costs a copy. A linked object is
+one read-only file under two names: git never rewrites one, and nothing git
+does in a mirror writes to the repository. Only a process that set out to
+overwrite an object file in place would damage both.
+
+**Refresh.** One worker (`mirror::run`) brings every mirror up to date at
+start and whenever one is asked for: when a repository is registered,
+changed or unregistered, when an item finishes (its pull request may have
+moved the base), and when the operator sends a message. A request never
+waits for the refresh. A pass resolves the base in the repository, skips
+the fetch when the mirror is already there, fetches only what it lacks
+otherwise, and checks out with `--force --detach`: tracked files a helper
+changed are reset, untracked ones are left. A clone is made beside its
+place and renamed, so a crash leaves no half-made mirror, and the pass
+removes whatever else lies in the mirrors directory, an unregistered
+repository's mirror included.
+
+**A refresh that fails** leaves the mirror where it was and is never
+silent: one `System` feed entry names the repository and git's error, and
+a quiet `mirror` event with `state: "stale"` joins the orchestrator's next
+trigger (§5.4), so it knows the code it reads may be behind. The state is
+kept in kv `mirror_<repo id>`, so the problem is told once, and once more
+(`current`) when a later refresh succeeds. A repository whose `[models]`
+refuses the orchestrator's own model gets no mirror at all (`withheld`):
+the orchestrator may not read it, and a question about it is an `ask` item
+under that repository's policy.
+
+**Helpers.** A helper's `workspace_root` may be a mirror. Aether accepts it,
+since it is under the orchestrator's workspace, and an isolated child gets
+a git worktree of the mirror on a new branch of the mirror
+(`aether-runtime`'s `workspace.rs`), which shares the mirror's config:
+still no remote, still the push guard. The watchdog allows a helper there,
+holds it to that repository's model policy, and cancels one placed in the
+registered repository itself or under the worktrees root (§7.4).
+
 ## 14. Lavish plugin
 
 `archon-lavish` wraps the `lavish-axi` CLI. It is optional and degrades
@@ -2923,11 +3119,11 @@ delivered is never pruned, nor is a report whose reopen question waits.
    (§13), so a build or test they run writes there rather than into the
    operator's checkout, and cannot see or disturb its uncommitted work,
    but nothing stops an agent from writing outside its workspace.
-   An agent the orchestrator delegates to is given no repository at all: it
-   works in the orchestrator's scratch workspace, and one whose scope leads
-   into a registered repository or the worktrees root is cancelled (§4.4).
-   That check reads the scope Aether holds for the agent; it cannot see a
-   path a native tool opens outside that scope, so a helper stays out of
+   An agent the orchestrator delegates to is given a mirror (§13.3) or the
+   scratch directory, never a repository: one whose scope leads into a
+   registered repository or the worktrees root is cancelled (§4.4). That
+   check reads the scope Aether holds for the agent; it cannot see a path a
+   native tool opens outside that scope, so a helper stays out of
    repositories by its placement and its instructions, not by a sandbox.
    The same holds for a stage agent's delegated children: an editing child
    gets an isolated worktree of its own, a reading child shares the lead's
@@ -2981,8 +3177,10 @@ delivered is never pruned, nor is a report whose reopen question waits.
     therefore passes Aether's check for a shared child while leading
     anywhere on disk. Archon keeps no such link and resolves the paths
     itself: the watchdog cancels a helper of the orchestrator whose scope
-    leads into a registered repository or the worktrees root (§4.4).
-    Repository work goes through the `ask` and `errand` pipelines and items.
+    leads into a registered repository or the worktrees root (§4.4). A
+    mirror is a directory of real files under the orchestrator's workspace,
+    so a helper placed in one passes both checks; a change to a repository
+    is an item.
 13. **Aether cancels an agent's children with it, but not when its task
     completes or fails.** A stage agent that settles while a child still
     runs would leave the child working beside the next stage. Archon owes a
@@ -3001,9 +3199,10 @@ delivered is never pruned, nor is a report whose reopen question waits.
     its successor does not wait for them to end. They hold no repository or
     worktree (item 4), `archond` refuses them every tool that changes Archon
     (§11), and their results go to the retired agent's inbox, so the worst
-    overlap is a cancelled helper finishing a write in the orchestrator's
-    scratch workspace. Holding the operator's only interface on a helper
-    that does not end would cost more than that.
+    overlap is a cancelled helper finishing a write in the scratch directory
+    or in a mirror, which the next refresh checks out again (§13.3). Holding
+    the operator's only interface on a helper that does not end would cost
+    more than that.
 14. **Aether's own limits apply to the orchestrator's children.**
     `[scheduler] max_concurrent_turns` is shared with stage agents, so many
     children slow stages down. `[scheduler] run_budget_usd`, if set in the
@@ -3168,7 +3367,7 @@ What stays hidden, and why:
   caps and the autonomy ceiling apply; a child's edits would bypass all of
   them.
   `delegate` itself is exposed: the orchestrator uses it for work that
-  needs no repository (§4.4). Of the limits an item has, the model policy
+  changes no repository (§4.4). Of the limits an item has, the model policy
   and the daily and total budgets reach such a child; the caps and the
   autonomy knobs do not.
 - **Archon's mutating tools, from stage agents.** `enqueue`, `cancel_item`,
@@ -3223,8 +3422,11 @@ auth/".
   orchestrator records it with `set_directive`. Each directive gets a `dir_…` id and may expire after 1 to
   720 hours. A directive is at most 500 characters, and at most 20 are in
   force at once.
-- Every trigger payload carries the directives in force (§5.4), and
-  `autonomy_policy` lists them, so they survive an orchestrator restart.
+- The first trigger of an orchestrator generation carries the directives
+  in force, later ones what changed, and all of them again after a
+  restart, a revival or a compacted context (§5.4). `autonomy_policy`
+  lists them at any time, so they survive whatever the orchestrator's
+  context loses.
 - Directives steer the orchestrator's choice of knobs within the ceiling and
   never raise it. "Auto-merge everything" under a `merge = manual` ceiling
   gets the refusal, and the orchestrator tells the operator which setting to

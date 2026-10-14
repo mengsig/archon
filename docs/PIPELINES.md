@@ -179,8 +179,9 @@ contract nor your stage prompt reaches it. Archon therefore adds a
 `## Delegation` section to the contract of every agent that can delegate,
 by either route. It says to:
 
-- pass `leaf: true` for every child, so that a child does not delegate
-  further;
+- let a child delegate once more when its part splits further, telling it
+  to pass `leaf: true` for its own children, and pass `leaf: true` for a
+  child that should not. The watchdog cancels an agent a third level down;
 - give a child that edits its own copy (`workspace_mode: "isolated"`) and
   bring back only accepted changes with `integrate_workspace`, while a
   child that only reads shares the stage's workspace. In a read-only

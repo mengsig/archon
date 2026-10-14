@@ -370,8 +370,8 @@ repository, thread number, URL, requester, their text, whether it carries
 operator standing (`operator`) and the `trust` sentence Aether wrote. The
 orchestrator's prompt tells it, for every request, to:
 
-- answer on the thread with the `github_reply` tool, directly or after an
-  `ask` item;
+- answer on the thread with the `github_reply` tool, reading that
+  repository's mirror itself when the answer takes code;
 - queue work into the matching registered repository within the autonomy
   ceiling and directives, passing the thread as the item's `origin`, and
   `notify` you a `decision` with the thread link;

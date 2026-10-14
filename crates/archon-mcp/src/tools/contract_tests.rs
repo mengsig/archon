@@ -221,21 +221,28 @@ fn arguments_the_handler_accepts_satisfy_the_schema() {
     }
 }
 
-/// One choice for retry_item's `implement` stage.
-fn retry_with(choice: Value) -> (&'static str, Value) {
-    let plan = json!({"implement": [choice]});
-    ("retry_item", json!({"item": qi(), "model_plan": plan}))
-}
-
 fn enqueue_with(key: &str, value: Value) -> (&'static str, Value) {
     let mut arguments = json!({"title": "t", "brief": "b", "model_plan": plan()});
     arguments[key] = value;
     ("enqueue", arguments)
 }
 
+/// One choice for the `implement` stage of enqueue's plan, the only plan
+/// whose shape the schemas spell out.
+fn plan_with(choice: Value) -> (&'static str, Value) {
+    enqueue_with("model_plan", json!({"implement": [choice]}))
+}
+
 /// One violation of each keyword the schemas use, at the top level and in
 /// nested model choices and autonomy knobs.
 fn schema_violations() -> Vec<(&'static str, Value)> {
+    let mut violations = reading_tool_violations();
+    violations.extend(acting_tool_violations());
+    violations
+}
+
+/// Violations in the tools that read Archon or message the orchestrator.
+fn reading_tool_violations() -> Vec<(&'static str, Value)> {
     vec![
         ("message_orchestrator", json!({})),
         ("message_orchestrator", json!({"text": ""})),
@@ -278,15 +285,21 @@ fn schema_violations() -> Vec<(&'static str, Value)> {
         ("model_evidence", json!({"stage": 3})),
         ("model_evidence", json!({"since": ""})),
         ("model_evidence", json!({"repo": 7})),
+        ("cost_report", json!({"since": ""})),
+        ("list_queue", json!({"limit": 0})),
+        ("list_queue", json!({"limit": "5"})),
+    ]
+}
+
+/// Violations in the tools that change Archon or reach the operator.
+fn acting_tool_violations() -> Vec<(&'static str, Value)> {
+    vec![
         enqueue_with("model_reasons", json!({"implement": "a".repeat(301)})),
         (
             "retry_item",
             json!({"item": qi(), "model_reasons": {"review": 1}}),
         ),
         ("update_item", json!({"item": qi(), "model_reasons": []})),
-        ("cost_report", json!({"since": ""})),
-        ("list_queue", json!({"limit": 0})),
-        ("list_queue", json!({"limit": "5"})),
         (
             "set_directive",
             json!({"text": "t", "expires_in_hours": 721}),
@@ -311,20 +324,19 @@ fn schema_violations() -> Vec<(&'static str, Value)> {
         enqueue_with("model_plan", json!({})),
         enqueue_with("autonomy", json!({"merge": "always"})),
         enqueue_with("autonomy", json!({"speed": "fast"})),
-        (
-            "retry_item",
-            json!({"item": qi(), "model_plan": {"implement": []}}),
-        ),
-        retry_with(json!({"model": 7, "effort": "high"})),
-        retry_with(json!({"model": "ab", "effort": "high"})),
-        retry_with(json!({"model": {"provider": "codex"}, "effort": "high"})),
-        retry_with(json!({"model": {"provider": "", "model": "m"}, "effort": "high"})),
-        retry_with(
+        enqueue_with("model_plan", json!({"implement": []})),
+        ("retry_item", json!({"item": qi(), "model_plan": []})),
+        ("update_item", json!({"item": qi(), "model_plan": 7})),
+        plan_with(json!({"model": 7, "effort": "high"})),
+        plan_with(json!({"model": "ab", "effort": "high"})),
+        plan_with(json!({"model": {"provider": "codex"}, "effort": "high"})),
+        plan_with(json!({"model": {"provider": "", "model": "m"}, "effort": "high"})),
+        plan_with(
             json!({"model": {"provider": "codex", "model": "m", "region": "eu"}, "effort": "high"}),
         ),
-        retry_with(json!({"model": "codex/m", "effort": "high", "temperature": 1})),
-        retry_with(json!({"model": "codex/m", "effort": "extreme"})),
-        retry_with(json!({"model": "codex/m"})),
+        plan_with(json!({"model": "codex/m", "effort": "high", "temperature": 1})),
+        plan_with(json!({"model": "codex/m", "effort": "extreme"})),
+        plan_with(json!({"model": "codex/m"})),
     ]
 }
 

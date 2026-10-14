@@ -34,6 +34,10 @@ pub(super) struct Held {
     /// never too old.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pushed_at: Option<Timestamp>,
+    /// Routine news: it waits for the orchestrator's next turn instead of
+    /// waking it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub quiet: bool,
 }
 
 impl Held {
@@ -125,6 +129,8 @@ pub(super) fn needs_compaction(held: &[Held], now: Timestamp) -> bool {
 /// folded into that one, so compacting twice never loses a count.
 pub(super) fn compact(held: Vec<Held>, facts: &Facts, now: Timestamp) -> Vec<Held> {
     assert!(!held.is_empty(), "only held news is compacted");
+    // A digest of news that would have woken the orchestrator wakes it too.
+    let quiet = held.iter().all(|news| news.quiet);
     let relevance = classify(&held, facts, now);
     assert_eq!(relevance.len(), held.len(), "one verdict per event");
     let pinned = relevance
@@ -150,6 +156,7 @@ pub(super) fn compact(held: Vec<Held>, facts: &Facts, now: Timestamp) -> Vec<Hel
     let mut events = vec![Held {
         event: digest(dropped),
         pushed_at: None,
+        quiet,
     }];
     events.extend(kept);
     events
@@ -209,7 +216,8 @@ fn classify(held: &[Held], facts: &Facts, now: Timestamp) -> Vec<Relevance> {
 /// item still sits in the state it reports; a retry supersedes it. One
 /// asked for on GitHub is pinned then, as its thread awaits the outcome. An
 /// `item_blocked` stays current while the item is still blocked. An earlier
-/// digest is folded into the new one.
+/// digest is folded into the new one. A `mirror` change is rare and says what
+/// the orchestrator reads is stale, so it is always kept.
 fn relevance_of(
     event: &TriggerEvent,
     facts: &Facts,
@@ -218,7 +226,8 @@ fn relevance_of(
     match event {
         TriggerEvent::OperatorAnswer { .. }
         | TriggerEvent::AgentMessage { .. }
-        | TriggerEvent::ChatAnswer { .. } => Relevance::Pinned,
+        | TriggerEvent::ChatAnswer { .. }
+        | TriggerEvent::Mirror { .. } => Relevance::Pinned,
         TriggerEvent::GateOpened { question, .. } => {
             match facts.open_gate_questions.contains(question) {
                 true => Relevance::Pinned,
@@ -276,6 +285,7 @@ mod tests {
         Held {
             event,
             pushed_at: Some(pushed_at),
+            quiet: false,
         }
     }
 
@@ -352,6 +362,7 @@ mod tests {
         let legacy = Held {
             event: budget("old"),
             pushed_at: None,
+            quiet: false,
         };
         assert!(!needs_compaction(&[legacy], now), "no push time is not old");
         let old = at(budget("old"), now - MAX_NEWS_AGE - TimeDelta::seconds(1));
@@ -567,6 +578,23 @@ mod tests {
     }
 
     #[test]
+    fn a_digest_wakes_the_orchestrator_unless_all_its_news_was_quiet() {
+        let now = archon_core::now();
+        let routine = |n: usize| Held {
+            quiet: true,
+            ..at(budget(&n.to_string()), now)
+        };
+        let quiet: Vec<Held> = (0..MAX_BATCH_EVENTS + 2).map(routine).collect();
+        let held = compact(quiet.clone(), &Facts::default(), now);
+        assert!(held.iter().all(|news| news.quiet), "nothing here wakes");
+        let mut mixed = vec![at(budget("first"), now)];
+        mixed.extend(quiet);
+        let held = compact(mixed, &Facts::default(), now);
+        assert!(matches!(held[0].event, TriggerEvent::NewsDigest { .. }));
+        assert!(!held[0].quiet, "the dropped waking event still wakes");
+    }
+
+    #[test]
     fn nothing_dropped_means_no_digest() {
         let now = archon_core::now();
         let held = vec![at(budget("daily"), now), at(answer(), now)];
@@ -588,5 +616,13 @@ mod tests {
         let back: Held = serde_json::from_value(legacy).unwrap();
         assert_eq!(back.pushed_at, None);
         assert_eq!(back.event, budget("daily"));
+        assert!(!back.quiet, "news saved before quiet news existed wakes");
+        let routine = Held {
+            quiet: true,
+            ..at(budget("daily"), now)
+        };
+        let raw = serde_json::to_value(&routine).unwrap();
+        assert_eq!(raw["quiet"], true);
+        assert_eq!(serde_json::from_value::<Held>(raw).unwrap(), routine);
     }
 }

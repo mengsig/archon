@@ -753,6 +753,21 @@ async fn spawn_unavailable_retries_under_the_same_key() {
     assert_eq!(h.backend.created(), 1);
 }
 
+/// A fleet event of the new agent can be waiting for the spawn's record
+/// (`pump::fleet`): issuing the spawn signals it instead of leaving a poll.
+#[tokio::test]
+async fn an_issued_spawn_signals_whoever_waits_for_its_record() {
+    let h = Harness::new().await;
+    h.enqueue("signal the fleet").await;
+    let recorded = h.ctx.spawn_recorded.notified();
+    tokio::pin!(recorded);
+    recorded.as_mut().enable();
+    h.dispatch().await;
+    assert_eq!(h.running().await.len(), 1, "the spawn is recorded");
+    let signalled = tokio::time::timeout(Duration::ZERO, recorded).await;
+    assert!(signalled.is_ok(), "nothing signalled the record");
+}
+
 /// The operator's week-long e2e stages: the agent's deadline is a week
 /// after its start, not a day.
 #[tokio::test]

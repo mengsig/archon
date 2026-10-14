@@ -13,14 +13,20 @@ impl Serialize for TriggerPayload {
         struct Envelope<'a> {
             archon: u32,
             events: &'a [TriggerEvent],
-            directives: &'a [archon_core::autonomy::Directive],
+            #[serde(skip_serializing_if = "Option::is_none")]
+            directives: Option<&'a [archon_core::autonomy::Directive]>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            directive_changes: Option<&'a super::DirectiveChanges>,
+            directives_in_force: u32,
             summary: String,
         }
 
         Envelope {
             archon: self.archon,
             events: &self.events,
-            directives: &self.directives,
+            directives: self.directives.as_deref(),
+            directive_changes: self.directive_changes.as_ref(),
+            directives_in_force: self.directives_in_force,
             summary: summary(&self.events),
         }
         .serialize(serializer)
@@ -104,7 +110,33 @@ fn label(event: &TriggerEvent) -> String {
             let count: u64 = dropped.values().map(|count| u64::from(*count)).sum();
             format!("news digest: {count} older events omitted")
         }
+        TriggerEvent::ItemsFinished { items, more } => {
+            let count = items.len() as u64 + u64::from(*more);
+            let noun = if count == 1 { "item" } else { "items" };
+            format!("{count} routine {noun} finished")
+        }
+        TriggerEvent::Mirror { repo, state, .. } => format!("mirror of {repo}: {state}"),
+        TriggerEvent::DirectivesRestated { .. } => "directives restated".to_owned(),
     }
+}
+
+/// The feed entry of an agent message: who sent it, what kind it is, and its
+/// whole text, so the operator reads it without the orchestrator repeating it.
+pub(super) fn feed_line(message: &archon_core::agent_message::AgentMessage) -> String {
+    use archon_core::agent_message::MessageSender;
+    let kind = match message.kind {
+        MessageKind::Relay => "relay",
+        MessageKind::Escalation => "escalation",
+        MessageKind::Info => "info",
+    };
+    let source = message.stage.as_deref().unwrap_or("run node");
+    let sender = match &message.original_sender {
+        MessageSender::Operator => "the operator".to_owned(),
+        MessageSender::Agent { id } => id.to_string(),
+        MessageSender::System => "the system".to_owned(),
+    };
+    assert!(!message.text.trim().is_empty(), "a message says something");
+    format!("From {source} ({sender}; {kind}): {}", message.text)
 }
 
 // Unicode General_Category=Cf. Keep format controls out of display labels while

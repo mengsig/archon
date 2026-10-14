@@ -71,6 +71,8 @@ impl Harness {
             supervisor: Supervisor::default(),
             github: archon_daemon::github::GithubState::default(),
             triggers: TriggerQueue::default(),
+            mirrors: archon_daemon::mirror::MirrorQueue::default(),
+            spawn_recorded: Notify::new(),
             caps_override: Mutex::new(None),
             lavish,
             started_at: archon_core::now(),

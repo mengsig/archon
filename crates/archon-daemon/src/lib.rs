@@ -10,6 +10,7 @@ pub mod feed;
 pub mod gc;
 pub mod github;
 pub mod handlers;
+pub mod mirror;
 pub mod prune;
 pub mod pump;
 pub mod reports;
@@ -56,8 +57,9 @@ pub struct DaemonOptions {
 
 /// Run until `Shutdown` or SIGTERM/SIGINT: open the store, recover runs,
 /// bind the socket, then run the server, event pump, dispatcher, trigger
-/// delivery, store pruning and worktree gc concurrently. The socket serves even while
-/// Aether is down, and in standby after the store hit a full disk.
+/// delivery, mirror refresh, store pruning and worktree gc concurrently. The
+/// socket serves even while Aether is down, and in standby after the store
+/// hit a full disk.
 pub async fn run(options: DaemonOptions) -> Result<(), ArchonError> {
     let endpoint = Endpoint::from_config(&options.config.aether)?;
     let ctx = build_context(options)?;
@@ -163,6 +165,8 @@ async fn supervise(
     workers.spawn(async move { ("trigger delivery", triggers::deliver_loop(c).await) });
     let c = ctx.clone();
     workers.spawn(async move { ("store pruning", prune::run(c).await) });
+    let c = ctx.clone();
+    workers.spawn(async move { ("repository mirrors", mirror::run(c).await) });
     let auto_gc = ctx.config.worktrees.auto_gc;
     if auto_gc {
         let c = ctx.clone();
@@ -170,7 +174,7 @@ async fn supervise(
     }
     assert_eq!(
         workers.len(),
-        4 + usize::from(auto_gc),
+        5 + usize::from(auto_gc),
         "every daemon worker is supervised"
     );
     let result = tokio::select! {
@@ -251,6 +255,8 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
         answering: Mutex::new(()),
         report_files: Arc::new(Mutex::new(())),
         triggers: TriggerQueue::default(),
+        mirrors: mirror::MirrorQueue::default(),
+        spawn_recorded: Notify::new(),
         caps_override: Mutex::new(None),
         lavish,
         supervisor: Supervisor::default(),

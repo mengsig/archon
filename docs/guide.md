@@ -38,27 +38,37 @@ you ─ archon chat ─▶ archond ──▶ Aether ──▶ orchestrator agent
 1. You tell the orchestrator what you want: in the terminal UI (`archon`),
    in the line chat (`archon chat`) or with `archon say`.
 2. The orchestrator decides how the request is done, taking the first of
-   these that fits: answer it directly, hand it to a helper agent, queue it
-   through a pipeline, or queue a backlog of items.
+   these that fits: answer it directly, reading your code where that takes
+   it, hand it to a helper agent, or queue it through a pipeline, a large
+   request as a backlog of items.
 3. For queued work it calls `enqueue` once per unit of work, choosing a
    repository, the pipeline that fits and a model and effort for each stage.
 4. `archond` dispatches items as capacity allows. It creates a git worktree
    for each item and runs the pipeline's stages as Aether agents.
 5. The pipeline enforces its own review and test gates and fix loops.
-   Outcomes and blockers come back to the orchestrator, and it tells you
-   only what matters.
+   `archond` posts every outcome and blocker to your feed itself, and wakes
+   the orchestrator only for those it has something to do about.
 
 ### What the orchestrator does without queueing
 
-Work that needs no repository needs no item. The orchestrator answers what
-it already knows, and for research on the web or in documents, a
-comparison, a summary, a draft or a second look at a result it delegates to
-a helper agent (Aether's `delegate`) and answers in the same conversation.
-No worktree is made and nothing is shipped.
+Answering needs no item, and neither does reading your code. The
+orchestrator answers what it already knows. For a question about a
+repository it reads the code itself and answers in the same conversation.
+For research on the web or in documents, a wide read, a comparison, a
+draft or a second look at a result it delegates to a helper agent (Aether's
+`delegate`). No worktree is made and nothing is shipped.
 
-Everything that needs a repository is an item. A question that takes reading
-a repository's code goes through the `ask` pipeline, which reads a snapshot
-rather than your checkout. Every change is an item too, so the pipeline's
+It reads code in a mirror: for every registered repository `archond` keeps
+a clone at `~/.local/share/archon/orchestrator/repos/<name>`, checked out
+at the base branch. A mirror holds committed work only and has no remote,
+so nothing done in it reaches your checkout, your branches or GitHub.
+`archond` refreshes it when an item finishes and when you write to the
+orchestrator, and says so in the feed if a refresh fails; the orchestrator
+is told as well, so it knows when what it reads may be behind. The `ask`
+pipeline is still there for a question you want answered as a recorded
+item, but nothing needs it.
+
+Every change to a repository is an item, so the pipeline's
 gates, your ship mode, caps and autonomy ceiling apply. The orchestrator
 picks the cheapest pipeline that fits: `quick-pr` for a small, low-risk
 change that needs no review, `default-pr-review` for bounded work that needs
@@ -70,20 +80,23 @@ result reviewed once, with a depth that follows the risk.
 
 What to know about helper agents:
 
-- A helper is given no repository. It works in the orchestrator's own
-  workspace (`~/.local/share/archon/orchestrator`), which holds none.
-  `archond` cancels a helper that Aether placed in a registered repository
-  or among the items' worktrees, also when the path only leads there
-  through a symlink, and posts a blocker. This checks where the helper was
-  placed; what a native agent's tools can reach beyond that is up to Aether
+- A helper works in one mirror, or in the orchestrator's scratch directory
+  when it reads no code, and never in your checkout. To build or try
+  something it gets its own copy of the mirror (Aether's isolated
+  workspace). `archond` cancels a helper that Aether placed in a registered
+  repository or among the items' worktrees, also when the path only leads
+  there through a symlink, and posts a blocker. This checks where the
+  helper was placed; what a native agent's tools can reach beyond that is
+  up to Aether
   ([`docs/ARCHITECTURE.md` §17](ARCHITECTURE.md#17-aether-limitations-and-how-archon-handles-them)).
-- A helper must use a model and effort that `[models]` allows and that no
-  registered repository's own `[models]` refuses: Archon cannot tell which
-  repository a helper's answer is about, so the narrowest policy holds. One
-  outside it is cancelled. Its spend counts toward your daily and total
-  budgets. Helpers are not counted by `max_parallel_agents`; the
-  orchestrator is told to stay within that cap, and the daemon does not
-  enforce it.
+- A helper must use a model and effort that `[models]` allows and that the
+  repository whose mirror it reads does not refuse in its own `[models]`.
+  Another repository's policy does not apply to it. One outside is
+  cancelled. Its spend counts toward your daily and total budgets. Helpers
+  are not counted by `max_parallel_agents`; the orchestrator is told to
+  stay within that cap, and the daemon does not enforce it.
+- A helper may hand part of its work to a helper of its own, once.
+  `archond` cancels an agent a third delegation below the orchestrator.
 - Helpers cannot queue, cancel or change anything in Archon: those tools
   answer only the current orchestrator (see
   [After upgrading](#after-upgrading) for what that depends on).
@@ -91,9 +104,9 @@ What to know about helper agents:
   and any recovery that replaces the orchestrator, cancels them. A cancel
   Aether could not take is kept and retried until Aether confirms it.
 - A GitHub request without operator standing is never delegated: the
-  orchestrator answers it itself or queues `ask`. Its prompt says so;
-  `archond` cannot tell which request a helper serves and does not enforce
-  it.
+  orchestrator answers it itself, from that repository's mirror when it
+  takes code. Its prompt says so; `archond` cannot tell which request a
+  helper serves and does not enforce it.
 - A helper's result reaches you through the orchestrator: in its reply to
   the message you sent when it waited for the helper, otherwise as a
   notification. Such a reply is two lines in the chat: what the orchestrator
@@ -155,9 +168,11 @@ the wrong agent, `escalation` for a blocker outside the stage, or `info`
 tool returns a receipt immediately; the agent must continue its stage
 without waiting for a reply or ending its turn.
 
-Archon records item, run, stage, attempt and agent attribution in the
-item log (`archon log --item <id>`) and delivers an `agent_message`
-news event to the orchestrator. Delivery is durable and coalesced; each
+Archon writes the message to the feed itself, whole, with its stage, sender
+and kind (`archon log --item <id>`): an escalation shows in the chat as a
+blocker, a relay or info with progress. It also delivers an `agent_message`
+news event to the orchestrator, which acts on it and does not repeat it to
+you. Delivery is durable and coalesced; each
 agent can send at most 20 messages, with a clear refusal after that.
 Delivered messages to passive run nodes are forwarded through the same
 path, including late events for retired nodes whose normal index was pruned. External
@@ -329,7 +344,13 @@ Archon's feed. They overlap, but they are not the same list.
   by Archon news, which the line chat never shows), your own messages,
   Aether's native questions and approvals, delegations, stage messages,
   failures, and one row per Archon news trigger, such as
-  `Trigger from archon · item finished: qi_… succeeded — <title>`.
+  `Trigger from archon · item finished: qi_… failed — <title>`.
+- **Shown later than in the line chat:** an item that simply succeeded. The
+  orchestrator is not woken for it (see
+  [When the orchestrator is woken](#when-the-orchestrator-is-woken)), so the
+  terminal UI shows it with the orchestrator's next turn, as a row
+  `3 routine items finished`, while `archon chat`, `archon log` and
+  `archon status` show it as it happens.
 - **Shown because the orchestrator restates them** (its instructions say so;
   the tool calls themselves are hidden in calm): the text of each `notify`
   and `ask_operator`, a published report's title and location, an item's
@@ -341,6 +362,29 @@ Archon's feed. They overlap, but they are not the same list.
   progress notices, system notices, and the chat's "open questions" header.
   A gate also opens in Lavish when it is installed; `archon status` and
   `archon questions` always show what waits.
+
+### When the orchestrator is woken
+
+Every turn of the orchestrator reads its whole context again, so a wake
+costs money whether or not there is anything to decide. `archond` therefore
+posts every outcome to the feed itself and wakes the orchestrator only for:
+
+- an item that failed or is blocked, to diagnose it, retry it or tell you;
+- an item tagged `notify` (`archon queue add --tag notify`, or the
+  orchestrator's own choice when it wants to act on the result);
+- an item a GitHub thread asked for, to post the result there;
+- a stage agent's message, a gate that opened, your answer to its question,
+  feedback on a report, a budget that was reached, a cancelled helper.
+
+An item that succeeded or was cancelled without any of these waits. The
+orchestrator reads all such items as one short list at its next turn, and
+a message from you delivers that list first, so it never answers you
+without it. To have it woken for every finished item, as before, set
+
+```toml
+[orchestrator]
+wake_on_success = true
+```
 
 ### Answering in the orchestrator's chat
 

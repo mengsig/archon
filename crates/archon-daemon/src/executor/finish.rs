@@ -205,7 +205,8 @@ pub(super) async fn remove_worktree(
 }
 
 /// One `Blocker` when the operator must act, otherwise an `Outcome`, and the
-/// orchestrator's `item_finished` trigger.
+/// orchestrator's `item_finished` news: a trigger when it has something to
+/// do about it, otherwise a line of its next trigger (ARCHITECTURE §5.4).
 pub(super) async fn announce(
     ctx: &DaemonContext,
     item: &QueueItem,
@@ -249,7 +250,22 @@ pub(super) async fn announce(
         cost_usd,
         origin: item.origin.clone(),
     };
-    triggers::push(ctx, finished).await
+    // The base branch may have moved, and the operator may ask about it next.
+    ctx.mirrors.request();
+    if needs_operator || wakes_orchestrator(item, ctx.config.orchestrator.wake_on_success) {
+        return triggers::push(ctx, finished).await;
+    }
+    triggers::push_quiet(ctx, finished).await
+}
+
+/// Whether the orchestrator has something to do about the finished `item`
+/// besides knowing of it: a failure to diagnose, a GitHub thread to answer,
+/// or a result it asked to be told (`notify`). The operator already has the
+/// outcome in the feed, so a routine success or cancellation waits.
+fn wakes_orchestrator(item: &QueueItem, wake_on_success: bool) -> bool {
+    assert!(item.state.is_terminal(), "only a finished item is news");
+    let failed = matches!(item.state, QueueState::Failed { .. });
+    failed || wake_on_success || item.origin.is_some() || item.wants_notice()
 }
 
 /// Keep the notification small; the queue, stages and orchestrator retain the

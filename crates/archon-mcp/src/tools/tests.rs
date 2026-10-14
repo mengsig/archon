@@ -733,3 +733,83 @@ fn dependency_titles_are_escaped_in_waiting_text() {
         assert!(text.contains("legacy\\ntitle\\u{1b}[31m"), "{text:?}");
     }
 }
+
+/// What a model is shown of one tool: Aether lists the qualified name, the
+/// description and the schema.
+fn shown_bytes(definition: &ToolDefinition) -> usize {
+    let shown = json!({
+        "name": archon_core::mcp_tools::qualified(definition.name),
+        "description": definition.description,
+        "inputSchema": definition.input_schema,
+    });
+    shown.to_string().len()
+}
+
+/// Every orchestrator turn pays for the tool list. The 25 tools of 1.0 cost
+/// 30,071 bytes there; they stay within 60% of that.
+#[test]
+fn the_tool_list_stays_within_its_budget() {
+    const RELEASED: usize = 25;
+    const RELEASED_BUDGET_BYTES: usize = 18_042;
+    const CATALOG_BUDGET_BYTES: usize = 24 * 1024;
+    let definitions = definitions();
+    assert_eq!(definitions[RELEASED - 1].name, "message_orchestrator");
+    let released: usize = definitions[..RELEASED].iter().map(shown_bytes).sum();
+    assert!(
+        released <= RELEASED_BUDGET_BYTES,
+        "the released tools grew to {released} bytes"
+    );
+    let catalog: usize = definitions.iter().map(shown_bytes).sum();
+    assert!(
+        catalog <= CATALOG_BUDGET_BYTES,
+        "the tool list grew to {catalog} bytes"
+    );
+}
+
+/// The orchestrator's prompt leaves each tool's own rules to its description.
+#[test]
+fn descriptions_carry_the_rules_the_prompt_leaves_to_them() {
+    let shown = |tool: &str| definition(tool).expect("defined").to_mcp().to_string();
+    for (tool, rule) in [
+        (
+            "retry_item",
+            "continues in the item's worktree and branch unless `fresh`",
+        ),
+        (
+            "retry_item",
+            "when the earlier work is a dead end or the base moved on",
+        ),
+        ("retry_item", "the old one stays open: close it with a note"),
+        ("retry_item", "A succeeded item cannot be retried"),
+        ("update_item", "cancel_item, then retry_item with them"),
+        ("record_chat_answer", "Only your own question"),
+        (
+            "ask_operator",
+            "ask_user only when you cannot go on without the answer",
+        ),
+        ("enqueue", "`notify` wakes you when the item succeeds too"),
+        ("enqueue", "For an ambiguous direction or a requested plan."),
+        ("enqueue", "For a diff that is hard to review alone."),
+        ("enqueue", "item_finished names it for github_reply"),
+        ("github_reply", "any other is refused"),
+        ("github_reply", "does not trigger the watcher"),
+        (
+            "github_reply",
+            "no secrets, operator-only details or local paths",
+        ),
+        ("github_reply", "The operator's approvals may hold it."),
+        ("publish_report", "return where it is"),
+        ("set_directive", "never raises the autonomy ceiling"),
+        (
+            "list_pipelines",
+            "A broken pipeline file is listed as a problem",
+        ),
+        ("list_repos", "takes the name or the `repo_…` id"),
+    ] {
+        let shown = shown(tool);
+        assert!(
+            shown.contains(rule),
+            "{tool} no longer says {rule:?}: {shown}"
+        );
+    }
+}

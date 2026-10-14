@@ -2,32 +2,75 @@
 
 ## Unreleased
 
-The orchestrator answers and delegates work that needs no repository
-itself, and a pipeline stage can delegate again.
+The orchestrator answers, reads your code and delegates by itself, is
+woken only for what needs it, and a pipeline stage can delegate again.
 
 ### Orchestrator
 
 - The orchestrator decides how a request is done, taking the first of these
-  that fits: answer it, delegate it, queue it through a pipeline, or queue a
-  backlog. Work that needs no repository (research, a comparison, a summary
-  or draft, a second look at a result it holds) goes to a helper agent
-  through Aether's `delegate`. A question that takes reading a repository's
-  code is queued as `ask`, which reads a snapshot, not your checkout.
-- A helper holds no repository. It works in the orchestrator's own
-  workspace, and `archond` cancels one that Aether placed in a registered
-  repository or among the items' worktrees, also through a symlink, with a
-  blocker and a `policy_violation` for the orchestrator.
-- A helper must use a model and effort that `[models]` allows and that no
-  registered repository's own `[models]` refuses; one outside is cancelled.
-  Helpers count toward the daily and total budgets. `max_parallel_agents`
-  and the other caps do not count them: the orchestrator is told to stay
-  within them.
+  that fits: answer it, delegate it, or queue it through the cheapest
+  pipeline that fits. A question about your code no longer takes an item:
+  the orchestrator reads the code and answers in the same turn. `ask` is
+  still a pipeline, and nothing requires it any more.
+- It reads code in mirrors. For every registered repository `archond`
+  keeps `<data>/orchestrator/repos/<name>`: a local clone checked out at
+  the base branch, with no remote and none of the repository's branches or
+  hooks, and with a hook that refuses any push. It is made when the
+  repository is registered, refreshed when an item finishes and when you
+  write, and removed when the repository is unregistered. It shares the
+  repository's objects through hard links, so it costs about one more
+  checkout. A refresh that fails is said once in the feed and to the
+  orchestrator, and holds nothing up. A repository whose own `[models]`
+  refuses the orchestrator's model gets no mirror.
+- Work that would flood the orchestrator's context or splits into parts
+  (research, a wide read of a subsystem, a comparison, a second look) goes
+  to a helper agent through Aether's `delegate`. A helper works in one
+  mirror, shared to read it or as an isolated copy to build in, or in a
+  scratch directory. `archond` cancels one that Aether placed in a
+  registered repository or among the items' worktrees, also through a
+  symlink, with a blocker and a `policy_violation` for the orchestrator.
+- A helper must use a model and effort that `[models]` allows and that the
+  repository whose mirror it reads does not refuse; one outside is
+  cancelled. Other repositories' `[models]` no longer narrow it. Helpers
+  count toward the daily and total budgets. `max_parallel_agents` and the
+  other caps do not count them: the orchestrator is told to stay within
+  them.
+- A helper may delegate once more, and so may a child of a delegating stage
+  agent. `archond` cancels an agent a third delegation down.
 - The orchestrator is told never to delegate for a GitHub request without
   operator standing. Only its prompt holds this.
 - A helper gets only the instructions the orchestrator writes for it; none
   of the orchestrator's own rules are copied. Its prompt now has it state
-  them for every helper: read only, stay in the workspace given, open no
-  repository, no git identity overrides, no questions to the operator.
+  them for every helper: commit and push nothing, stay in the workspace
+  given, no git identity overrides, no questions to the operator.
+- A finished item no longer wakes the orchestrator unless it has something
+  to do about it. `archond` posts every outcome to your feed itself, as
+  before. The orchestrator is woken for a failure, a blocker, an item
+  tagged `notify` and an item a GitHub thread asked for, and reads the
+  other outcomes as one short list at its next turn; your next message
+  delivers that list first. One wake is a whole turn over the
+  orchestrator's context, and almost all of them were routine successes.
+  `[orchestrator] wake_on_success = true` restores a wake per outcome.
+  In `archon chat` nothing changes. The terminal UI shows only what the
+  orchestrator says, so there a routine success now appears with its next
+  turn, not as it happens.
+- A message a stage agent sends with `message_orchestrator` is written to
+  the feed by `archond`, whole: an escalation shows in `archon chat` as a
+  blocker. The orchestrator acts on it and no longer repeats it.
+- Operator directives are sent to the orchestrator in full once, and after
+  that only as what was set and cleared, with a count of how many are in
+  force. They are sent in full again after an orchestrator restart, a
+  revival and a compaction of its context. They were most of every trigger.
+- The orchestrator's prompt is 12 KiB, down from 19, and the descriptions
+  and schemas of its 25 Archon tools 17.7 kB, down from 30.1: roughly 5,000
+  fewer tokens in every orchestrator context. What a tool does is said in
+  the tool's description only.
+- `[limits] max_parallel_agents` defaults to 8, from 3. A config that sets
+  it keeps its value.
+- `archond` does less while agents work: a usage update no longer runs a
+  dispatch pass unless a total or daily budget is set, and a stage whose
+  first events arrive before its spawn is recorded is settled when the
+  record is written, not at the next 100 ms poll.
 - An answer the orchestrator finishes after waiting for a helper is no
   longer cut off at the wait. `archon chat` shows two lines for it: what the
   orchestrator said before it waited (Aether has it say something first),
@@ -201,7 +244,10 @@ itself, and a pipeline stage can delegate again.
 After updating: run the commands `archon update` prints. The last one,
 `archon orchestrator restart`, matters here: a running orchestrator keeps
 the prompt, tools and workspace it was created with, so it neither
-delegates nor knows `adaptive` until a new one starts. In shared mode, add
+delegates nor knows `adaptive` or its mirrors until a new one starts, and
+it still expects to be woken for every finished item. Until then it is
+sent every directive in every trigger, as its prompt expects. In shared
+mode, add
 `send_caller_meta = true` to the `archon` server in your Aether config and
 restart your `aetherd` before that restart; `archon doctor` checks it.
 

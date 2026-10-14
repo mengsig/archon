@@ -29,7 +29,7 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 # max_effort = "high"
 
 # [limits]
-# max_parallel_agents = 3   # the hard cap on running stage agents
+# max_parallel_agents = 8   # the hard cap on running stage agents
 # budget_usd_daily = 50.0   # 0 = no daily budget
 # min_free_gb = 10          # nothing new starts below this much free disk
 
@@ -110,7 +110,7 @@ mod tests {
         assert!(edited.contains("\n[models]\nallow = ["), "{edited}");
         std::fs::write(&written, edited).unwrap();
         let config = Config::load(&written).expect("every example is a valid key");
-        assert_eq!(config.limits.max_parallel_agents, 3);
+        assert_eq!(config.limits.max_parallel_agents, 8);
         assert_eq!(config.models.allow.len(), 2);
     }
 

@@ -126,12 +126,18 @@ async fn records_attribution_and_receipt_without_settling_or_calling_aether() {
     let FeedEntry::Notification(note) = recorded.entry else {
         panic!("expected item log");
     };
-    assert_eq!(note.kind, NotificationKind::Progress);
+    assert_eq!(
+        note.kind,
+        NotificationKind::Blocker,
+        "an escalation shows in the quiet chat"
+    );
     assert_eq!(note.item, Some(message.item.clone()));
     assert_eq!(note.run, Some(message.run.clone()));
+    let agent = message.agent.as_ref().unwrap();
     assert_eq!(
-        serde_json::from_str::<AgentMessage>(&note.text).unwrap(),
-        message
+        note.text,
+        format!("From implement ({agent}; escalation): cross-item blocker"),
+        "the operator reads it as it is; the orchestrator does not repeat it"
     );
 }
 

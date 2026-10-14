@@ -620,6 +620,13 @@ enum Claimed {
 /// Issue `create_agent` for one `spawning` stage run unless another task
 /// already is. Safe to repeat: the stage run id is the idempotency key.
 pub(super) async fn issue(ctx: &DaemonContext, id: &StageRunId) -> Result<FollowUp, ArchonError> {
+    let issued = issue_claimed(ctx, id).await;
+    // The new agent's first events can arrive before its record does.
+    ctx.spawn_recorded.notify_waiters();
+    issued
+}
+
+async fn issue_claimed(ctx: &DaemonContext, id: &StageRunId) -> Result<FollowUp, ArchonError> {
     let claim = match claim(ctx, id).await? {
         Claimed::Skip => return Ok(FollowUp::default()),
         Claimed::Settled(follow) => return Ok(*follow),

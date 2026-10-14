@@ -998,7 +998,7 @@ pub(crate) mod tests {
             "{text}"
         );
         assert!(text.contains("queue: 2 queued"));
-        assert!(text.contains("caps: 3 agents, unlimited per repo"));
+        assert!(text.contains("caps: 8 agents, unlimited per repo"));
         assert!(text.contains("pause: nothing paused"));
         assert!(text.contains("\nautonomy default: review=standard, proposal=off,"));
         assert!(text.contains("questions: 1 open, 2 gates waiting for approval"));

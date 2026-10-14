@@ -64,7 +64,9 @@ pub fn delegation_rules(mode: WorkspaceMode, models: &str) -> String {
     format!(
         "\n## Delegation\n\n\
          - You can hand scoped parts of this stage to child agents with Aether's \
-         `delegate`. Pass `leaf: true` for every child: a child does not delegate further.\n\
+         `delegate`. A child may delegate once more when its part splits further: tell \
+         it to pass `leaf: true` for its own children. Pass `leaf: true` yourself for a \
+         child that should not. Archon cancels an agent a third level down.\n\
          {workspaces}\
          - Choose each child's model and effort within Archon's policy for this item: \
          {models}. Archon cancels a child outside it. Aether's `list_models` lists what \
@@ -666,7 +668,9 @@ mod tests {
         let writable = delegation_rules(WorkspaceMode::Worktree, "a/one, b/two");
         assert!(writable.starts_with("\n## Delegation\n"), "{writable}");
         for said in [
-            "Pass `leaf: true` for every child",
+            "A child may delegate once more when its part splits further",
+            "tell it to pass `leaf: true` for its own children",
+            "Archon cancels an agent a third level down",
             "pass `workspace_mode: \"isolated\"`",
             "bring only the changes you accept into your workspace with `integrate_workspace`",
             "policy for this item: a/one, b/two. Archon cancels a child outside it.",

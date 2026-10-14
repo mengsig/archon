@@ -21,7 +21,10 @@ use crate::{executor, feed};
 /// waits for its spawn reply to be recorded (the reply and the first
 /// events can cross). The post-spawn `check_outcome` settles it otherwise.
 const SPAWN_GRACE: Duration = Duration::from_secs(5);
-const SPAWN_POLL: Duration = Duration::from_millis(100);
+/// The wait ends when a spawn is recorded. A stage that stops spawning any
+/// other way (a sweep, a store written elsewhere) is seen this often.
+const SPAWN_RECHECK: Duration = Duration::from_secs(1);
+const _: () = assert!(SPAWN_RECHECK.as_millis() <= SPAWN_GRACE.as_millis());
 
 /// Who an Archon-managed agent works for.
 #[derive(Debug)]
@@ -216,14 +219,24 @@ async fn stage_awaiting_spawn(
 ) -> Result<Option<StageRun>, ArchonError> {
     let deadline = tokio::time::Instant::now() + SPAWN_GRACE;
     loop {
+        // Listening before the store is read: a spawn recorded between the
+        // read and the wait still ends the wait.
+        let recorded = ctx.spawn_recorded.notified();
+        tokio::pin!(recorded);
+        recorded.as_mut().enable();
         match look_up(ctx, event, agent).await? {
             Lookup::Stage(stage) => return Ok(Some(*stage)),
             Lookup::NotStage => return Ok(None),
-            Lookup::MaybeSpawning if tokio::time::Instant::now() >= deadline => {
-                tracing::debug!(%agent, seq = event.seq, "no spawning stage claimed the agent");
-                return Ok(None);
-            }
-            Lookup::MaybeSpawning => tokio::time::sleep(SPAWN_POLL).await,
+            Lookup::MaybeSpawning => {}
+        }
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            tracing::debug!(%agent, seq = event.seq, "no spawning stage claimed the agent");
+            return Ok(None);
+        }
+        tokio::select! {
+            () = &mut recorded => {}
+            () = tokio::time::sleep_until(deadline.min(now + SPAWN_RECHECK)) => {}
         }
     }
 }
@@ -292,9 +305,17 @@ async fn record_usage(
         executor::check_item_budget(ctx, &item, has_usage && !has_cost && !has_estimate, stage)
             .await?;
     }
-    // Spend can cross a budget cap; let the dispatcher re-check.
-    ctx.dispatch.notify_one();
+    recheck_global_budgets(ctx).await;
     Ok(())
+}
+
+/// Spend changes what the dispatcher plans only by reaching the total or
+/// the daily budget (`plan_dispatch`), so only then does new spend wake it.
+async fn recheck_global_budgets(ctx: &DaemonContext) {
+    let caps = crate::resolve::caps(ctx).await;
+    if caps.budget_usd_total > 0.0 || caps.budget_usd_daily > 0.0 {
+        ctx.dispatch.notify_one();
+    }
 }
 
 /// The orchestrator's own stream follows only the agent in charge, so the
@@ -309,7 +330,7 @@ async fn retired_orchestrator_usage(
         return Ok(());
     }
     record_spend(ctx, event, agent, None, usage).await?;
-    ctx.dispatch.notify_one();
+    recheck_global_budgets(ctx).await;
     Ok(())
 }
 

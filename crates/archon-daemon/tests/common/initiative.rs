@@ -16,6 +16,23 @@ pub fn install_gh(h: &Harness) {
     .unwrap();
 }
 
+/// The same GitHub with no pull request until `gh pr create` opens one, as
+/// archond's own delivery needs it (ARCHITECTURE §8.7).
+pub fn install_explicit_gh(h: &Harness) {
+    install_gh(h);
+    let marker = h.ctx.config.github.binary.with_file_name("gh-explicit");
+    std::fs::write(marker, "").unwrap();
+}
+
+/// Every `gh` call so far, as its arguments.
+pub fn gh_calls(h: &Harness) -> Vec<Vec<String>> {
+    let log = h.ctx.config.github.binary.with_file_name("gh-calls.jsonl");
+    let raw = std::fs::read_to_string(log).unwrap_or_default();
+    raw.lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
 pub fn prs(h: &Harness) -> Value {
     let raw = std::fs::read_to_string(h.dir.path().join("prs.json")).unwrap();
     serde_json::from_str(&raw).unwrap()

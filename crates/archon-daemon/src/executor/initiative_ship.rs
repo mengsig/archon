@@ -23,6 +23,9 @@ pub(super) struct PullRequest {
     pub base_ref_name: String,
     pub body: String,
     pub is_draft: bool,
+    /// `CHANGES_REQUESTED`, `APPROVED`, `REVIEW_REQUIRED`, or empty.
+    #[serde(default)]
+    pub review_decision: Option<String>,
 }
 
 pub(super) async fn gh(
@@ -72,7 +75,7 @@ pub(super) async fn view(
             "view",
             branch,
             "--json",
-            "url,state,headRefName,headRefOid,baseRefName,body,isDraft",
+            "url,state,headRefName,headRefOid,baseRefName,body,isDraft,reviewDecision",
         ],
     )
     .await?;
@@ -95,6 +98,20 @@ pub(super) async fn view(
     assert_eq!(pr.head_ref_name, branch);
     assert!(pr.url.starts_with("https://"));
     Ok(pr)
+}
+
+/// Whether the pull request of `item` opens as a draft: a member of an
+/// atomic initiative stays one until every member passed (§8.9).
+pub(super) fn opens_as_draft(
+    store: &archon_queue::Store,
+    item: &QueueItemId,
+) -> Result<bool, ArchonError> {
+    let Some(id) = store.item(item)?.initiative else {
+        return Ok(false);
+    };
+    let initiative = store.initiative(&id)?.initiative;
+    assert_eq!(initiative.id, id, "the initiative the item names");
+    Ok(initiative.atomic && initiative.state != InitiativeState::Done)
 }
 
 /// Called once the ship path has verified this PR, before completing the stage.
@@ -131,23 +148,17 @@ pub(super) async fn record(
 async fn check_stack_base(ctx: &DaemonContext, run: &PipelineRun) -> Result<(), ArchonError> {
     let (owner, base, repo) = {
         let store = ctx.store.lock().await;
-        let owner = store
-            .stack_fix(&run.item)?
-            .map(|t| t.owner)
-            .unwrap_or_else(|| run.item.clone());
-        if store.stack_parents(&owner)?.is_empty() {
+        let Some(base) = super::restack::target_base(&store, &run.item)? else {
             return Ok(());
-        }
-        let item = store.item(&owner)?;
-        let repo = store.repo(&crate::resolve::repo_ref(
-            item.repo.as_ref().expect("stack repo"),
-        ))?;
-        let base = store
-            .stack_base(&owner)?
-            .map(|p| p.0)
-            .or_else(|| repo.base_branch.clone())
-            .or(store.stack_repository_base(&owner)?)
-            .ok_or_else(|| ArchonError::Invalid("stack repository needs a base branch".into()))?;
+        };
+        let fix = store.stack_fix(&run.item)?;
+        let owner = fix.map_or_else(|| run.item.clone(), |fix| fix.owner);
+        let Some(repo) = store.item(&owner)?.repo else {
+            return Err(ArchonError::Store(format!(
+                "stacked item {owner} has no repository"
+            )));
+        };
+        let repo = store.repo(&crate::resolve::repo_ref(&repo))?;
         (owner, base, repo)
     };
     assert!(!base.is_empty());

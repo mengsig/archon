@@ -139,10 +139,8 @@ pub(super) fn write_push_guard(hooks: &Path) -> Result<(), ArchonError> {
         .map_err(|e| ArchonError::io(format!("marking {} executable", hook.display()), e))
 }
 
-/// Clone `source` to `mirror` under `root`: objects shared by hard links
-/// where the filesystem allows, no remote, no branch, no hook of the
-/// repository's, and nothing checked out yet. Made beside its place and
-/// moved there whole, so a crash leaves no half-made mirror.
+/// Clone `source` to `mirror` under `root`, hard-linked, with no remote, branch,
+/// hook or checkout, and moved into place whole so a crash leaves no half.
 pub(super) fn clone(
     source: &Path,
     root: &Path,

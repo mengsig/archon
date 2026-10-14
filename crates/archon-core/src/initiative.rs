@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Timestamp;
+use crate::autonomy::AutonomyPatch;
 use crate::error::ArchonError;
 use crate::id::{InitiativeId, QueueItemId};
 use crate::model::ModelPlan;
@@ -111,6 +112,10 @@ pub struct InitiativeMember {
     pub pipeline: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_plan: Option<ModelPlan>,
+    /// Knobs for this member's item, as in an enqueue. An atomic
+    /// initiative's members merge by hand, together.
+    #[serde(default, skip_serializing_if = "AutonomyPatch::is_empty")]
+    pub autonomy: AutonomyPatch,
     /// Positions in the request's `members` this one depends on; each is
     /// earlier than its own, so the members cannot form a cycle.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -193,6 +198,7 @@ mod tests {
             title: None,
             pipeline: None,
             model_plan: None,
+            autonomy: AutonomyPatch::default(),
             after: after.to_vec(),
         }
     }

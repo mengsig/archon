@@ -234,9 +234,8 @@ impl Sim {
         actions
     }
 
-    /// Finish the open delivery the way the daemon does: persist the
-    /// outcome, feed the driver, and check the resume property and
-    /// idempotency.
+    /// Finish the open delivery as the daemon does: persist the outcome, feed
+    /// the driver, and check resume and idempotency.
     pub fn ship(&mut self, outcome: ShipOutcome) -> Vec<EngineAction> {
         let plan = self.open_ship.take().expect("a delivery is open");
         assert!(self.shipped.is_none(), "a run is delivered once");

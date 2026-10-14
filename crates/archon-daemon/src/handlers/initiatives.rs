@@ -1,6 +1,6 @@
 //! Initiative requests share item admission and policy validation.
 
-use archon_core::autonomy::{AutonomyPatch, MergeMode};
+use archon_core::autonomy::MergeMode;
 use archon_core::error::ArchonError;
 use archon_core::id::{InitiativeId, QueueItemId};
 use archon_core::initiative::{EnqueueInitiative, Initiative, InitiativeMember, InitiativeState};
@@ -54,10 +54,15 @@ async fn prepare_member(
 ) -> Result<QueueItem, ArchonError> {
     let repo = ctx.store.lock().await.repo(&member.repo)?;
     let env = RepoEnv::new(Some(repo))?;
-    let patch = AutonomyPatch {
-        merge: initiative.atomic.then_some(MergeMode::Manual),
-        ..Default::default()
-    };
+    let mut patch = member.autonomy;
+    if initiative.atomic {
+        if patch.merge == Some(MergeMode::Auto) {
+            return Err(ArchonError::Invalid(
+                "an atomic initiative's members are merged by hand, together".into(),
+            ));
+        }
+        patch.merge = Some(MergeMode::Manual);
+    }
     let resolved = knobs::resolve(&ctx.config, &env, member.pipeline.clone(), &patch)?;
     items::check_runs_here(ctx, &env, &resolved.spec).await?;
     let id = QueueItemId::new();

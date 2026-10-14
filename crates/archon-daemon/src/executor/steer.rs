@@ -26,7 +26,7 @@ use crate::resolve::RepoEnv;
 pub(crate) use audit::{notes_since, record, records};
 pub(crate) use owed::{deliver, owed};
 pub(crate) use shape::{Current, Sources, forget as forget_shape, keep as keep_shape};
-pub(crate) use shape::{reshape, shaped};
+pub(crate) use shape::{correct_shaped, reshape, shaped};
 
 use owed::Delivery;
 use plan::{Change, Tune};
@@ -130,7 +130,7 @@ async fn apply(
             what: what.clone(),
             note: change.note.clone(),
         };
-        audit::record(&mut store, &run.item, record)?;
+        audit::record(&mut store, &run.item, Some(&run.id), record)?;
     }
     let text = history_line(&run.item, by, &what, change.note.as_deref());
     let noted = run.clone();

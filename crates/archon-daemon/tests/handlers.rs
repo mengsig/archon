@@ -260,10 +260,7 @@ async fn a_retry_takes_a_new_plan_and_keeps_the_worktree() {
         fresh: false,
         brief_append: None,
     };
-    let refused = h
-        .cli(retry(None))
-        .await
-        .expect_err("only failed or cancelled");
+    let refused = h.cli(retry(None)).await.expect_err("only a finished item");
     assert!(matches!(refused, ArchonError::InvalidTransition(_)));
     let cancel = Request::CancelItem {
         item: item.id.clone(),

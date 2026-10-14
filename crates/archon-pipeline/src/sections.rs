@@ -6,11 +6,12 @@
 use std::collections::BTreeMap;
 
 use archon_core::catalog::StageKind;
-use archon_core::run::GateSubject;
+use archon_core::run::{GateSubject, StageOutcome};
 
 use crate::autonomy;
+use crate::contract::SHIP_RECORD_JSON;
 use crate::gate;
-use crate::spec::{PipelineSpec, StageSpec};
+use crate::spec::{Owed, PipelineSpec, StageSpec};
 use crate::template;
 
 /// What stands in for the summary of a stage a steer passed over.
@@ -20,12 +21,26 @@ pub(crate) const SKIPPED_SUMMARY: &str = "(This stage was skipped by a steer and
 pub(crate) const HANDOFF_STAGE_CHARS: usize = 1_200;
 pub(crate) const HANDOFF_TOTAL_CHARS: usize = 4_000;
 
-/// What a kept agent is told to make it fix its own work: the findings and
-/// how to hand in, since its task is already settled.
-pub(crate) fn resume_message(stage: &StageSpec, attempt: u32, feedback: &str) -> String {
+/// What a kept agent is told to fix its own work: the findings and how to hand
+/// in, a new ship record (§8.7) included when it owes one.
+pub(crate) fn resume_message(
+    stage: &StageSpec,
+    attempt: u32,
+    feedback: &str,
+    owed: Owed,
+) -> String {
     let feedback = feedback.trim();
     assert!(!feedback.is_empty(), "an agent is resumed with findings");
     assert!(attempt > 1, "the first attempt has nothing to resume");
+    assert!(owed.review.is_none(), "the review's holder is never kept");
+    let record = match owed.ship_record {
+        true => format!(
+            " End that message with the ship record of the commit you leave, read after \
+             your last commit, as its last fenced block; Archon ships exactly that commit \
+             and tree:\n\n{SHIP_RECORD_JSON}\n"
+        ),
+        false => " ".to_owned(),
+    };
     format!(
         "Archon stage `{id}`, attempt {attempt}: your work on this task did not pass. Fix it in \
          the same workspace and on the same branch; what you already learned still holds, so \
@@ -34,11 +49,13 @@ pub(crate) fn resume_message(stage: &StageSpec, attempt: u32, feedback: &str) ->
          ## Finishing\n\n\
          Your task is already recorded, so do not call `complete_task` or `fail_task` again. \
          When the fix is committed and verified, end your turn with a final message that is \
-         your summary: what you changed and where, how you verified it, and what is left. If \
-         you cannot fix it, start that message with `FAILED:` and say what stops you, or with \
-         `{blocked}` when only the operator can unblock it. Do not wait for a reply.\n",
+         your summary: what you changed and where, how you verified it, and what is left.\
+         {record}If you cannot fix it, start that message with `FAILED:` and say what stops \
+         you, with `{blocked}` when only the operator can unblock it, or with `{escalate}` \
+         when the task needs another pipeline. Do not wait for a reply.\n",
         id = stage.id,
-        blocked = archon_core::run::StageOutcome::BLOCKED_PREFIX,
+        blocked = StageOutcome::BLOCKED_PREFIX,
+        escalate = StageOutcome::ESCALATE_PREFIX,
     )
 }
 

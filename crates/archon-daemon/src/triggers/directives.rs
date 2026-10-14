@@ -137,9 +137,8 @@ fn read_told(store: &Store) -> Result<Option<Told>, ArchonError> {
         .map_err(|e| ArchonError::Store(format!("kv {TOLD_KEY} = {raw:?}: {e}")))
 }
 
-/// What differs between the directives `told` and those in force `now`;
-/// `None` when nothing does. A directive whose text or expiry changed under
-/// the same id is set again.
+/// What differs between the directives `told` and those in force `now`, a
+/// changed text or expiry counting as set again; `None` when nothing does.
 fn changes(told: &[Directive], now: &[Directive]) -> Option<DirectiveChanges> {
     let set: Vec<Directive> = now
         .iter()

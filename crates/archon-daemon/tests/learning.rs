@@ -7,8 +7,13 @@ use archon_core::run::{PipelineRun, RunState};
 use common::{Harness, PIPELINE, plan};
 
 async fn samples(h: &Harness, model: &str, cost: f64, count: usize) {
+    samples_of(h, &common::choice(model, Effort::Low), cost, count).await;
+}
+
+/// `count` finished runs of the test pipeline whose `implement` ran `choice`.
+async fn samples_of(h: &Harness, choice: &ModelChoice, cost: f64, count: usize) {
     for n in 0..count {
-        let item = h.enqueue(&format!("{model} {n}")).await;
+        let item = h.enqueue(&format!("{} {n}", choice.model)).await;
         let now = archon_core::now();
         let mut store = h.ctx.store.lock().await;
         store
@@ -59,7 +64,7 @@ async fn samples(h: &Harness, model: &str, cost: f64, count: usize) {
             )
             .unwrap();
         store
-            .record_outcome(&sample_outcome(&run, &item, model, cost, now))
+            .record_outcome(&sample_outcome(&run, &item, choice, cost, now))
             .unwrap();
     }
 }
@@ -67,7 +72,7 @@ async fn samples(h: &Harness, model: &str, cost: f64, count: usize) {
 fn sample_outcome(
     run: &PipelineRun,
     item: &archon_core::queue::QueueItem,
-    model: &str,
+    choice: &ModelChoice,
     cost: f64,
     now: archon_core::Timestamp,
 ) -> Outcome {
@@ -81,10 +86,7 @@ fn sample_outcome(
         diff: None,
         stages: vec![OutcomeStage {
             stage: "implement".into(),
-            choice: ModelChoice {
-                model: model.parse().unwrap(),
-                effort: Effort::Low,
-            },
+            choice: choice.clone(),
             cost_usd: cost,
             wall_secs: 30,
             attempts: 1,
@@ -158,7 +160,42 @@ async fn learned_default_respects_repository_policy_and_disabled_config() {
             .unwrap()
             .is_empty()
     );
-    assert!(disabled.enqueue_with("disabled", partial).await.is_err());
+    let item = disabled.enqueue_with("disabled", partial).await.unwrap();
+    let own = &disabled.ctx.config.orchestrator.model;
+    assert_eq!(&item.model_plan.0["implement"][0].model, own, "the default");
+}
+
+/// An enqueue naming no model takes the default, which is the baseline: then
+/// evidence picks a stage's model, and the saving is measured against it.
+#[tokio::test]
+async fn an_enqueue_naming_no_model_takes_the_default_until_evidence_picks_one() {
+    let h = Harness::new().await;
+    let own = h.ctx.config.orchestrator.model.clone();
+    let unnamed = archon_core::model::ModelPlan::default;
+    let plain = h.enqueue_with("nothing learned", unnamed()).await.unwrap();
+    assert_eq!(plain.model_plan.0.len(), 3, "{:?}", plain.model_plan);
+    let default = plain.model_plan.0["implement"][0].clone();
+    for choices in plain.model_plan.0.values() {
+        assert_eq!(
+            choices,
+            std::slice::from_ref(&default),
+            "one default for every stage"
+        );
+    }
+    assert_eq!(default.model, own);
+
+    samples_of(&h, &default, 2.0, 5).await;
+    samples(&h, "codex/cheap", 0.2, 5).await;
+    let learned = h.enqueue_with("learned", unnamed()).await.unwrap();
+    let implement = &learned.model_plan.0["implement"][0];
+    assert_eq!(implement.model.to_string(), "codex/cheap");
+    let review = &learned.model_plan.0["review"];
+    assert_eq!(review, std::slice::from_ref(&default), "no evidence");
+    let Reply::LessonStats(stats) = h.cli(Request::LessonStats { repo: None }).await.unwrap()
+    else {
+        panic!("stats");
+    };
+    assert_eq!(stats.pipelines[0].estimated_saving_usd, Some(1.8));
 }
 
 #[tokio::test]
@@ -355,8 +392,11 @@ async fn a_known_diff_size_never_pools_evidence_from_another_size() {
         item.model_plan.0["implement"][0].model.to_string(),
         "codex/large"
     );
-    assert!(
-        h.cli(request("medium")).await.is_err(),
-        "unknown-size defaults must not contaminate a known bucket"
+    let Reply::Item(medium) = h.cli(request("medium")).await.unwrap() else {
+        panic!("item");
+    };
+    assert_eq!(
+        medium.model_plan.0["implement"][0].model, h.ctx.config.orchestrator.model,
+        "a bucket with no evidence takes the default, not another size's choice"
     );
 }

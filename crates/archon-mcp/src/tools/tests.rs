@@ -797,67 +797,80 @@ fn shown_bytes(definition: &ToolDefinition) -> usize {
     shown.to_string().len()
 }
 
-/// Every orchestrator turn pays for the tool list. The 25 tools of 1.0 cost
-/// 30,071 bytes there; they stay within 60% of that.
+/// Every orchestrator turn pays for the tool list: 1.0's 25 tools (30,071 bytes
+/// then) stay within 60% of that, and all of them within 24 KiB.
 #[test]
 fn the_tool_list_stays_within_its_budget() {
-    const RELEASED: usize = 25;
-    const RELEASED_BUDGET_BYTES: usize = 18_042;
-    const CATALOG_BUDGET_BYTES: usize = 24 * 1024;
+    const FROM_1_0: usize = 25;
+    const FROM_1_0_BUDGET_BYTES: usize = 18_042;
+    const BUDGET_BYTES: usize = 24 * 1024;
     let definitions = definitions();
-    assert_eq!(definitions[RELEASED - 1].name, "message_orchestrator");
-    let released: usize = definitions[..RELEASED].iter().map(shown_bytes).sum();
+    assert_eq!(definitions[FROM_1_0 - 1].name, "message_orchestrator");
+    let carried: usize = definitions[..FROM_1_0].iter().map(shown_bytes).sum();
     assert!(
-        released <= RELEASED_BUDGET_BYTES,
-        "the released tools grew to {released} bytes"
+        carried <= FROM_1_0_BUDGET_BYTES,
+        "the tools of 1.0 grew to {carried} bytes"
     );
-    let catalog: usize = definitions.iter().map(shown_bytes).sum();
-    assert!(
-        catalog <= CATALOG_BUDGET_BYTES,
-        "the tool list grew to {catalog} bytes"
-    );
+    let all: usize = definitions.iter().map(shown_bytes).sum();
+    assert!(all <= BUDGET_BYTES, "the tool list grew to {all} bytes");
 }
+
+/// What a tool's description must say, since the prompt leaves it to the tool.
+const DESCRIBED_RULES: &[(&str, &str)] = &[
+    (
+        "retry_item",
+        "continues in the item's worktree and branch unless `fresh`",
+    ),
+    (
+        "retry_item",
+        "when the earlier work is a dead end or the base moved on",
+    ),
+    ("retry_item", "the old one stays open: close it with a note"),
+    (
+        "retry_item",
+        "counts against the run that passed: enqueue new work instead",
+    ),
+    ("update_item", "steered into its run without cancelling it"),
+    ("steer_item", "stages that already started keep their shape"),
+    (
+        "steer_item",
+        "given insert_stage or switch_pipeline is queued again on its branch and worktree",
+    ),
+    (
+        "enqueue_initiative",
+        "Keep every pull request a draft until all members pass",
+    ),
+    ("record_lesson", "never grants permissions"),
+    ("record_chat_answer", "Only your own question"),
+    (
+        "ask_operator",
+        "ask_user only when you cannot go on without the answer",
+    ),
+    ("enqueue", "`notify` wakes you when the item succeeds too"),
+    ("enqueue", "For an ambiguous direction or a requested plan."),
+    ("enqueue", "For a diff that is hard to review alone."),
+    ("enqueue", "item_finished names it for github_reply"),
+    ("github_reply", "any other is refused"),
+    ("github_reply", "does not trigger the watcher"),
+    (
+        "github_reply",
+        "no secrets, operator-only details or local paths",
+    ),
+    ("github_reply", "The operator's approvals may hold it."),
+    ("publish_report", "return where it is"),
+    ("set_directive", "never raises the autonomy ceiling"),
+    (
+        "list_pipelines",
+        "A broken pipeline file is listed as a problem",
+    ),
+    ("list_repos", "takes the name or the `repo_…` id"),
+];
 
 /// The orchestrator's prompt leaves each tool's own rules to its description.
 #[test]
 fn descriptions_carry_the_rules_the_prompt_leaves_to_them() {
     let shown = |tool: &str| definition(tool).expect("defined").to_mcp().to_string();
-    for (tool, rule) in [
-        (
-            "retry_item",
-            "continues in the item's worktree and branch unless `fresh`",
-        ),
-        (
-            "retry_item",
-            "when the earlier work is a dead end or the base moved on",
-        ),
-        ("retry_item", "the old one stays open: close it with a note"),
-        ("retry_item", "A succeeded item cannot be retried"),
-        ("update_item", "cancel_item, then retry_item with them"),
-        ("record_chat_answer", "Only your own question"),
-        (
-            "ask_operator",
-            "ask_user only when you cannot go on without the answer",
-        ),
-        ("enqueue", "`notify` wakes you when the item succeeds too"),
-        ("enqueue", "For an ambiguous direction or a requested plan."),
-        ("enqueue", "For a diff that is hard to review alone."),
-        ("enqueue", "item_finished names it for github_reply"),
-        ("github_reply", "any other is refused"),
-        ("github_reply", "does not trigger the watcher"),
-        (
-            "github_reply",
-            "no secrets, operator-only details or local paths",
-        ),
-        ("github_reply", "The operator's approvals may hold it."),
-        ("publish_report", "return where it is"),
-        ("set_directive", "never raises the autonomy ceiling"),
-        (
-            "list_pipelines",
-            "A broken pipeline file is listed as a problem",
-        ),
-        ("list_repos", "takes the name or the `repo_…` id"),
-    ] {
+    for &(tool, rule) in DESCRIBED_RULES {
         let shown = shown(tool);
         assert!(
             shown.contains(rule),

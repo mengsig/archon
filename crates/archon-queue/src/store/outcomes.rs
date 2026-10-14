@@ -3,6 +3,7 @@
 mod capture;
 pub(super) mod stats;
 
+use archon_core::Timestamp;
 use archon_core::config::LearningConfig;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, RepoId};
@@ -43,6 +44,34 @@ impl Store {
             .ctx("query outcomes")?;
         rows.map(|row| from_json(&row.ctx("read outcome")?, "outcome"))
             .collect()
+    }
+
+    /// Succeeded runs in a repository that finished since `since` and whose
+    /// pull request is not known to be merged or closed, newest first.
+    pub fn outcomes_awaiting_merge(&self, since: &Timestamp) -> Result<Vec<Outcome>, ArchonError> {
+        if !self.learning_config()?.enabled {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT data FROM outcomes WHERE merged IS NULL AND result = 'succeeded'
+                 AND repo IS NOT NULL AND finished_at >= ?1 ORDER BY finished_at DESC, run",
+            )
+            .ctx("prepare outcomes awaiting a merge")?;
+        let rows = stmt
+            .query_map([ts(since)], |r| r.get::<_, String>(0))
+            .ctx("query outcomes awaiting a merge")?;
+        let waiting: Vec<Outcome> = rows
+            .map(|row| from_json(&row.ctx("read outcome")?, "outcome"))
+            .collect::<Result<_, _>>()?;
+        assert!(
+            waiting
+                .iter()
+                .all(|o| o.merged.is_none() && o.repo.is_some()),
+            "the derived columns agree with the stored outcome"
+        );
+        Ok(waiting)
     }
 
     pub fn record_outcome(&self, outcome: &Outcome) -> Result<(), ArchonError> {

@@ -21,6 +21,7 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 # [orchestrator]
 # model = "claude-code/claude-opus-5-5"   # an entry of `archon aether models`
 # effort = "high"
+# wake_on_success = false   # true: every finished item wakes it, not only failures
 
 # Optional narrowing. Without [models] every model Aether reports ready may
 # be used; there are no tiers or presets to define.
@@ -35,8 +36,8 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 
 # [learning]
 # enabled = true            # outcomes, learned defaults, lessons and distillation
-# distill_every = 20         # new outcomes per repository before a budgeted errand
-# explore_rate = 0.1         # deterministic cheaper-choice exploration; 0..0.1
+# distill_every = 20        # new outcomes per repository before a budgeted errand
+# explore_rate = 0.1        # deterministic cheaper-choice exploration; 0..0.1
 
 # [worktrees]
 # auto_gc = true            # archond collects finished runs' worktrees itself

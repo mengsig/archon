@@ -21,31 +21,8 @@ pub async fn run(command: QueueCommand, json: bool) -> anyhow::Result<ExitCode> 
         QueueCommand::Add(args) => add::run(*args, json).await?,
         QueueCommand::Steer(args) => steer::run(*args, json).await?,
         QueueCommand::Wait { items, timeout } => return wait::run(items, &timeout, json).await,
-        QueueCommand::List { state, repo, limit } => {
-            let query = ItemQuery {
-                states: views::parse_states(&state)?,
-                repo: repo.map(RepoRef),
-                limit,
-                ..ItemQuery::default()
-            };
-            let client = connect().await?;
-            if json {
-                let rows = views::fetch_summaries(&client, query).await?;
-                emit(true, || to_json(&rows), "")?;
-            } else {
-                println!("{}", views::queue_text(&client, query).await?);
-            }
-        }
-        QueueCommand::Show { item, full } => {
-            let client = connect().await?;
-            let item = views::resolve_item(&client, &item).await?;
-            if json {
-                let reply = client.request(Request::GetItem { item }).await?;
-                emit(true, || reply_data(&reply), "")?;
-            } else {
-                println!("{}", views::item_text(&client, item, full).await?);
-            }
-        }
+        QueueCommand::List { state, repo, limit } => list(&state, repo, limit, json).await?,
+        QueueCommand::Show { item, full } => show(&item, full, json).await?,
         QueueCommand::Cancel { item, reason } => {
             let client = connect().await?;
             let item = views::resolve_item(&client, &item).await?;
@@ -56,22 +33,7 @@ pub async fn run(command: QueueCommand, json: bool) -> anyhow::Result<ExitCode> 
             item,
             fresh,
             append,
-        } => {
-            let client = connect().await?;
-            let item = views::resolve_item(&client, &item).await?;
-            let done = match fresh {
-                true => format!("Queued {item} again, fresh from the base branch."),
-                false => format!("Queued {item} again."),
-            };
-            let request = Request::RetryItem {
-                item,
-                model_plan: None,
-                model_reasons: None,
-                fresh,
-                brief_append: append,
-            };
-            change(&client, request, &done, json).await?;
-        }
+        } => retry(&item, fresh, append, json).await?,
         QueueCommand::Caps {
             max_parallel_agents,
             max_per_repo,
@@ -89,6 +51,55 @@ pub async fn run(command: QueueCommand, json: bool) -> anyhow::Result<ExitCode> 
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+async fn list(
+    state: &[String],
+    repo: Option<String>,
+    limit: Option<usize>,
+    json: bool,
+) -> anyhow::Result<()> {
+    let query = ItemQuery {
+        states: views::parse_states(state)?,
+        repo: repo.map(RepoRef),
+        limit,
+        ..ItemQuery::default()
+    };
+    let client = connect().await?;
+    if json {
+        let rows = views::fetch_summaries(&client, query).await?;
+        return emit(true, || to_json(&rows), "");
+    }
+    println!("{}", views::queue_text(&client, query).await?);
+    Ok(())
+}
+
+async fn show(item: &str, full: bool, json: bool) -> anyhow::Result<()> {
+    let client = connect().await?;
+    let item = views::resolve_item(&client, item).await?;
+    if json {
+        let reply = client.request(Request::GetItem { item }).await?;
+        return emit(true, || reply_data(&reply), "");
+    }
+    println!("{}", views::item_text(&client, item, full).await?);
+    Ok(())
+}
+
+async fn retry(item: &str, fresh: bool, append: Option<String>, json: bool) -> anyhow::Result<()> {
+    let client = connect().await?;
+    let item = views::resolve_item(&client, item).await?;
+    let done = match fresh {
+        true => format!("Queued {item} again, fresh from the base branch."),
+        false => format!("Queued {item} again."),
+    };
+    let request = Request::RetryItem {
+        item,
+        model_plan: None,
+        model_reasons: None,
+        fresh,
+        brief_append: append,
+    };
+    change(&client, request, &done, json).await
 }
 
 /// Send an item change that answers with the item (or `ok`).

@@ -12,11 +12,13 @@ use archon_core::autonomy::{AutonomyPatch, MergeMode, ReviewLevel};
 use archon_core::error::ArchonError;
 use archon_core::model::ModelPlan;
 use archon_core::notify::NotificationKind;
+use archon_core::outcome::{Correction, FailureClass};
 use archon_core::ports::DescendantState;
 use archon_core::protocol::{EnqueueRequest, Reply, RepoPatch, RepoRef, Request};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::ShipMode;
 use archon_core::run::{PipelineRun, StageOutcome, StageRun};
+use archon_core::steer::Steer;
 use archon_daemon::executor;
 use archon_daemon::triggers::{self, TriggerEvent};
 use common::delivery::{FakeGh, add_origin, change, origin_of, pushed, record, shipped_by};
@@ -556,6 +558,102 @@ async fn an_escalating_stage_fails_the_item_with_what_it_recommends() {
             if id == &item.id && state == "failed" && summary.contains(advice))));
 }
 
+/// An escalated item switched to the recommended pipeline continues on its
+/// branch and ships; learning keeps the escalation and the steer.
+#[tokio::test]
+async fn an_escalated_item_switched_to_another_pipeline_ships_from_its_branch() {
+    let (h, gh) = delivering().await;
+    let (item, first) = started(&h, "quick-pr").await;
+    let begun = change(&first.workspace);
+    let advice = "ESCALATE: this rewrites the session check; run it through default-pr-review";
+    h.settle_running(|_| StageOutcome::Failed {
+        error: advice.into(),
+        infra: false,
+    })
+    .await;
+    h.dispatch().await;
+    failed(&h, &item).await;
+
+    let switch = Steer {
+        switch_pipeline: Some("default-pr-review".into()),
+        ..Steer::default()
+    };
+    let steer = Request::SteerItem {
+        item: item.id.clone(),
+        steer: switch,
+    };
+    h.orchestrator(steer).await.expect("revived");
+    h.dispatch().await;
+    let runs = h.ctx.store.lock().await.runs_for_item(&item.id).unwrap();
+    let second = runs.last().expect("a second run").clone();
+    assert_eq!(runs.len(), 2, "a new run");
+    assert_eq!(
+        (&second.branch, &second.workspace),
+        (&first.branch, &first.workspace)
+    );
+    settle_changed(&h, json!({})).await;
+    h.settle_running(|_| verdict(true)).await;
+    h.dispatch().await;
+    let stages = ["implement", "implement", "review"];
+    assert_eq!(stage_labels(&h), stages, "the stages switched to");
+
+    let head = git(&h.repo, &["rev-parse", &first.branch]);
+    let summary = succeeded(&h, &item).await;
+    let shipped = format!("SHIPPED: {PR_ONE} (commit {head})");
+    assert!(summary.ends_with(&shipped), "{summary}");
+    let commit = begun["commit"].as_str().unwrap();
+    git(&h.repo, &["merge-base", "--is-ancestor", commit, &head]);
+    assert_eq!(gh.count("pr create"), 1, "{:?}", gh.calls());
+    let store = h.ctx.store.lock().await;
+    let escalated = store.outcome(&first.id).unwrap().expect("captured");
+    assert_eq!(escalated.failure, Some(FailureClass::Escalated));
+    assert_eq!(escalated.corrections, [Correction::Steered]);
+    // The item keeps its pipeline's name, so the run is no evidence for it.
+    let delivered = store.outcome(&second.id).unwrap().expect("captured");
+    assert_eq!(delivered.pipeline, "quick-pr");
+    assert_eq!(delivered.corrections, [Correction::Steered]);
+}
+
+/// A shipped item retried goes on from its branch into the pull request it
+/// opened, and the retry counts against the run that had passed.
+#[tokio::test]
+async fn a_shipped_item_retried_delivers_into_its_pull_request_again() {
+    let (h, gh) = delivering().await;
+    let (item, first) = started(&h, "quick-pr").await;
+    settle_changed(&h, json!({})).await;
+    succeeded(&h, &item).await;
+    let shipped = git(&h.repo, &["rev-parse", &first.branch]);
+
+    let retry = Request::RetryItem {
+        item: item.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        fresh: false,
+        brief_append: Some("The greeting is still wrong on an empty name.".into()),
+    };
+    h.orchestrator(retry).await.expect("queued again");
+    h.dispatch().await;
+    let runs = h.ctx.store.lock().await.runs_for_item(&item.id).unwrap();
+    assert_eq!(runs.len(), 2, "a new run");
+    assert_eq!(runs[1].branch, first.branch, "on the branch that shipped");
+    settle_changed(&h, json!({})).await;
+
+    let head = git(&h.repo, &["rev-parse", &first.branch]);
+    let summary = succeeded(&h, &item).await;
+    let again = format!("SHIPPED: {PR_ONE} (commit {head})");
+    assert!(summary.ends_with(&again), "{summary}");
+    git(&h.repo, &["merge-base", "--is-ancestor", &shipped, &head]);
+    assert_ne!(shipped, head, "the retry added to what shipped");
+    assert_eq!(pushed(&origin_of(&h), &first.branch), Some(head));
+    assert_eq!(gh.count("pr create"), 1, "{:?}", gh.calls());
+    let store = h.ctx.store.lock().await;
+    let passed = store.outcome(&first.id).unwrap().expect("captured");
+    assert_eq!(passed.corrections, [Correction::RetryAfterDone]);
+    assert!(!passed.is_win(), "{passed:?}");
+    let fixed = store.outcome(&runs[1].id).unwrap().expect("captured");
+    assert!(fixed.is_win(), "{fixed:?}");
+}
+
 async fn update_repo(h: &Harness, patch: RepoPatch) {
     let request = Request::RepoUpdate {
         repo: RepoRef(REPO_NAME.into()),
@@ -623,29 +721,6 @@ async fn an_open_pull_request_is_reused_and_moved_onto_the_base() {
     assert_eq!(gh.count("pr create"), 0, "never a second pull request");
     let moved = format!("pr edit {url} --base main");
     assert!(gh.calls().contains(&moved), "{:?}", gh.calls());
-}
-
-/// A run stacked on another item's branch delivers onto that branch: the
-/// base its start recorded, not the repository's.
-#[tokio::test]
-async fn a_stacked_run_delivers_onto_its_parent_s_branch() {
-    let (h, gh) = delivering().await;
-    git(&h.repo, &["branch", "archon/parent", "main"]);
-    let (item, run) = started(&h, "quick-pr").await;
-    let key = format!("run_vars:{}", run.id);
-    let mut vars: Value = serde_json::from_str(&h.kv(&key).await.unwrap()).unwrap();
-    vars["stack_parent"] = "archon/parent".into();
-    let stored = h.ctx.store.lock().await.kv_set(&key, &vars.to_string());
-    stored.unwrap();
-    settle_changed(&h, json!({})).await;
-
-    succeeded(&h, &item).await;
-    let create = format!("pr create --base archon/parent --head {}", run.branch);
-    assert!(
-        gh.calls().iter().any(|c| c.starts_with(&create)),
-        "{:?}",
-        gh.calls()
-    );
 }
 
 /// An item that asks for it has auto-merge enabled once its pull request is

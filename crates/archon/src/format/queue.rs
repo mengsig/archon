@@ -699,6 +699,27 @@ mod tests {
         assert_eq!(summary_lines("one\ntwo", false), ["one", "two"]);
     }
 
+    fn rejected_with_escapes(run: &PipelineRun) -> OperatorGate {
+        OperatorGate {
+            run: run.id.clone(),
+            item: run.item.clone(),
+            stage_id: "propose".into(),
+            attempt: 1,
+            subject: GateSubject::Proposal,
+            summary: String::new(),
+            page: None,
+            location: Some("http://lavish\x1b]8;;http://evil\x07/p/1".into()),
+            report: None,
+            question: None,
+            decision: Some(GateDecision::Reject {
+                reason: "no\nrun x: succeeded".into(),
+            }),
+            withdrawn: None,
+            opened_at: archon_core::now(),
+            decided_at: None,
+        }
+    }
+
     #[test]
     fn item_detail_strips_escapes_from_agent_text() {
         let mut item = queue_item(None, "title\x1b]52;c;cm0gLXJm\x07", "quick-pr");
@@ -716,24 +737,7 @@ mod tests {
         );
         let mut stage = stage_run(&run, "implement", "did it\x1b[2J\nrun x: succeeded\x07");
         stage.structured = Some(serde_json::json!({"pr_url": "https://x\x1b[2K\n/1"}));
-        let gate = OperatorGate {
-            run: run.id.clone(),
-            item: item.id.clone(),
-            stage_id: "propose".into(),
-            attempt: 1,
-            subject: GateSubject::Proposal,
-            summary: String::new(),
-            page: None,
-            location: Some("http://lavish\x1b]8;;http://evil\x07/p/1".into()),
-            report: None,
-            question: None,
-            decision: Some(GateDecision::Reject {
-                reason: "no\nrun x: succeeded".into(),
-            }),
-            withdrawn: None,
-            opened_at: archon_core::now(),
-            decided_at: None,
-        };
+        let gate = rejected_with_escapes(&run);
         let detail = ItemDetail {
             steers: Vec::new(),
             waiting_on: None,

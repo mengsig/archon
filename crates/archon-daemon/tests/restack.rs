@@ -328,7 +328,8 @@ async fn a_parent_merge_updates_the_base_while_the_child_is_still_working() {
             s.labels["archon.item"] == child.id.as_str() && s.labels["archon.stage"] == "ship"
         })
         .unwrap();
-    assert!(ship.instructions.contains("target the PR against `main`"));
+    let rule = "the change's pull request is for `main`";
+    assert!(ship.instructions.contains(rule), "{}", ship.instructions);
     assert_eq!(
         prs(&h)[h.run(&child.id).await.branch]["baseRefName"],
         "main"

@@ -410,7 +410,8 @@ async fn launch(
         let running = QueueState::Running {
             run: run.id.clone(),
         };
-        store.transition_item(&run.item, running, archon_core::now())
+        let started = store.transition_item(&run.item, running, archon_core::now());
+        started.and_then(|item| super::steer::correct_shaped(&store, &run).map(|()| item))
     };
     // The run exists now, so only finish_run can settle the item.
     if let Err(error) = inserted {

@@ -9,6 +9,36 @@ use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::{Repo, ShipMode};
 use archon_queue::store::stacks::StackParent;
 
+/// The base a stacked `item` (or the item a restack fix repairs) is for now:
+/// its first unmerged parent's branch, else the repository's (§8.8).
+pub(super) fn target_base(
+    store: &archon_queue::Store,
+    item: &QueueItemId,
+) -> Result<Option<String>, ArchonError> {
+    let owner = store
+        .stack_fix(item)?
+        .map_or_else(|| item.clone(), |fix| fix.owner);
+    let parents = store.stack_parents(&owner)?;
+    let Some(first) = parents.first() else {
+        return Ok(None);
+    };
+    assert_eq!(first.item, owner, "the parents are the stacked item's");
+    if let Some(open) = parents.iter().find(|p| !p.merged) {
+        assert!(is_plain_branch(&open.parent_branch), "recorded at the fork");
+        return Ok(Some(open.parent_branch.clone()));
+    }
+    let Some(repo) = store.item(&owner)?.repo else {
+        return Err(ArchonError::Store(format!(
+            "stacked item {owner} has no repository"
+        )));
+    };
+    let configured = store.repo(&crate::resolve::repo_ref(&repo))?.base_branch;
+    let base = configured.or_else(|| first.repository_base.clone());
+    base.map(Some).ok_or_else(|| {
+        ArchonError::Invalid(format!("stacked item {owner} records no repository base"))
+    })
+}
+
 pub(super) async fn parents(
     ctx: &DaemonContext,
     item: &QueueItem,
@@ -335,16 +365,10 @@ async fn retarget(
     if repo.ship != ShipMode::Pr {
         return Ok(());
     }
-    let store = ctx.store.lock().await;
-    let base = store
-        .stack_base(&run.item)?
-        .map(|p| p.0)
-        .or_else(|| repo.base_branch.clone())
-        .or(store.stack_repository_base(&run.item)?)
-        .ok_or_else(|| {
-            ArchonError::Invalid("restack requires the repository base branch".into())
-        })?;
-    drop(store);
+    let stacked = target_base(&*ctx.store.lock().await, &run.item)?;
+    let Some(base) = stacked else {
+        return Ok(());
+    };
     assert!(is_plain_branch(&base));
     assert_eq!(pr.head_ref_name, run.branch);
     if pr.state == "OPEN" && pr.base_ref_name != base {

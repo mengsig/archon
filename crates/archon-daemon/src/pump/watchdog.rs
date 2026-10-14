@@ -204,9 +204,8 @@ fn depth_refusal(depth: u32, helper: bool) -> Option<String> {
     ))
 }
 
-/// Why the child may not run, if it may not: it breaks the model policy it
-/// answers to, or it is a helper of the orchestrator (no `item`) placed
-/// inside a repository.
+/// Why the child may not run: it breaks its model policy, or it is the
+/// orchestrator's helper (no `item`) placed inside a repository.
 async fn violation(
     ctx: &DaemonContext,
     agent: &AetherAgentId,
@@ -251,9 +250,8 @@ async fn item_policy(ctx: &DaemonContext, item: &QueueItemId) -> Result<ModelPol
     }
 }
 
-/// Why a helper of the orchestrator may not run: its scope leads into a
-/// repository or worktree, or it breaks the global policy narrowed by each
-/// repository whose mirror its scope reads.
+/// Why an orchestrator's helper may not run: its scope leads into a repository
+/// or worktree, or it breaks the policy as the repositories it reads narrow it.
 async fn helper_violation(
     ctx: &DaemonContext,
     agent: &AetherAgentId,

@@ -10,10 +10,8 @@ use serde_json::{Value, json};
 
 use super::{Harness, git};
 
-/// A `gh` that keeps pull requests as files beside itself, one per head
-/// branch, and writes down every call. `fail-<command>` makes that command
-/// fail once with the file's text; `lose-create-reply` opens the pull
-/// request and then fails that call and the lookup after it.
+/// A `gh` keeping a file per head branch's pull request and logging calls;
+/// `fail-<command>` fails it once, `lose-create-reply` loses a create's reply.
 const STATEFUL_GH: &str = r#"#!/bin/sh
 state="$(dirname "$0")/gh-state"
 printf '%s\n' "$*" >> "$state/calls"

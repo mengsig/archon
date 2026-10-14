@@ -36,9 +36,8 @@ pub fn check_enqueue(
     check_item_budget(budget)
 }
 
-/// The tag that has the orchestrator woken when the item finishes, however
-/// it ends; an untagged item's routine success is only listed in its next
-/// trigger (ARCHITECTURE §5.4).
+/// The tag that wakes the orchestrator when the item finishes, however it
+/// ends; an untagged success only joins its next trigger (§5.4).
 pub const NOTIFY_TAG: &str = "notify";
 
 pub fn check_tags(tags: &[String]) -> Result<(), ArchonError> {

@@ -93,9 +93,8 @@ pub fn change_report_stage(spec: &PipelineSpec) -> Option<&StageSpec> {
         .find(|s| s.kind == StageKind::Report)
 }
 
-/// `spec` as an item with `autonomy` runs it: the stages its knobs need and
-/// the pipeline does not declare (`propose` first, `report` right before
-/// ship), and its review level where a stage of the pipeline holds the review.
+/// `spec` as run with `autonomy`: the stages its knobs add (`propose` first,
+/// `report` before ship), and its review level where a stage holds the review.
 pub fn augment(spec: &PipelineSpec, autonomy: &Autonomy) -> Result<PipelineSpec, ArchonError> {
     let mut out = spec.clone();
     if let Some(review) = &mut out.file.pipeline.review {

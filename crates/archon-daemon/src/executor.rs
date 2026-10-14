@@ -17,6 +17,7 @@ mod gates;
 pub(crate) mod initiative_ship;
 mod naming;
 mod pages;
+pub mod pull_requests;
 mod recover;
 pub(crate) mod restack;
 mod resume;

@@ -73,9 +73,8 @@ fn pipeline_name(
         .unwrap_or_else(|| policy.default.review.pipeline().to_owned())
 }
 
-/// The review level an item gets on `base`. A pipeline whose own stage
-/// holds the review takes the level asked for, else its own raised to the
-/// ceiling's; one that reviews in gated stages fixes it.
+/// An item's review level on `base`: where a stage holds the review, the one
+/// asked for, else `base`'s raised to the ceiling's; gated stages fix it.
 fn review_of(
     base: &PipelineSpec,
     patch: &AutonomyPatch,
@@ -172,10 +171,8 @@ pub(crate) fn item_specs(
     Ok((base, spec))
 }
 
-/// The choice a stage gets when neither the enqueue nor what was learned
-/// names one: the orchestrator's own model where `policy` permits it, else
-/// the first it allows, at the effort the pipeline's tier suggests within
-/// the policy's cap. `None` when the policy leaves no model to pick.
+/// A stage's choice when nothing names one: the orchestrator's model, else
+/// `policy`'s first, at the tier's effort within its cap; `None` if none.
 pub(crate) fn default_choice(
     config: &Config,
     policy: &ModelPolicy,
@@ -208,17 +205,17 @@ pub(crate) fn default_choice(
     Some(choice)
 }
 
-/// `plan` with the stages it leaves out: first what was learned for `repo`,
-/// then the static choices of [`fill_static_stages`].
+/// `plan` with the stages it leaves out: first what was learned for `repo`
+/// within `policy`, then the static choices of [`fill_static_stages`].
 pub(crate) fn fill_plan(
     store: &Store,
     repo: Option<&RepoId>,
-    base: &PipelineSpec,
-    spec: &PipelineSpec,
+    (base, spec): (&PipelineSpec, &PipelineSpec),
     mut plan: ModelPlan,
+    policy: &ModelPolicy,
     fallback: Option<&ModelChoice>,
 ) -> Result<ModelPlan, ArchonError> {
-    let learned = learned::default_plan(store, repo, spec)?.unwrap_or_default();
+    let learned = learned::default_plan(store, repo, spec, policy)?;
     for (stage, choices) in learned.0 {
         assert!(
             spec.stage(&stage).is_some(),
@@ -230,9 +227,8 @@ pub(crate) fn fill_plan(
     fill_static_stages(base, spec, plan, fallback)
 }
 
-/// `plan` with the stages it leaves out and nothing learned: `fallback` for
-/// the pipeline's own stages, then the first choice of its first stage for
-/// those the knobs inserted.
+/// `plan` completed without learning: `fallback` for the pipeline's own
+/// stages, its first stage's first choice for those the knobs inserted.
 pub(crate) fn fill_static_stages(
     base: &PipelineSpec,
     spec: &PipelineSpec,
@@ -328,7 +324,8 @@ mod tests {
             plan.0.insert(stage.id.clone(), vec![choice.clone()]);
         }
         let store = Store::open_in_memory().unwrap();
-        let filled = fill_plan(&store, None, &base, &spec, plan.clone(), None).unwrap();
+        let policy = ModelPolicy::default();
+        let filled = fill_plan(&store, None, (&base, &spec), plan.clone(), &policy, None).unwrap();
         assert_eq!(filled.choices_for("propose"), Some(&[choice.clone()][..]));
         assert_eq!(filled.choices_for("report"), Some(&[choice][..]));
         assert_eq!(filled.0.len(), plan.0.len() + 2);
@@ -353,7 +350,9 @@ mod tests {
         let mut plan = ModelPlan::default();
         plan.0.insert("review".into(), vec![named.clone()]);
         let store = Store::open_in_memory().unwrap();
-        let filled = fill_plan(&store, None, &base, &spec, plan, Some(&default)).unwrap();
+        let policy = ModelPolicy::default();
+        let filled =
+            fill_plan(&store, None, (&base, &spec), plan, &policy, Some(&default)).unwrap();
         assert_eq!(filled.choices_for("review"), Some(&[named][..]), "kept");
         for stage in ["implement", "report"] {
             assert_eq!(filled.choices_for(stage), Some(&[default.clone()][..]));

@@ -144,9 +144,8 @@ pub enum TriggerEvent {
         #[serde(default, skip_serializing_if = "is_zero")]
         more: u32,
     },
-    /// The orchestrator's mirror of a repository changed state: `stale` (a
-    /// refresh failed), `withheld` (its model policy refuses the
-    /// orchestrator) or `current` again.
+    /// A mirror changed state: `stale` (a refresh failed), `withheld` (its
+    /// model policy refuses the orchestrator) or `current` again.
     Mirror {
         repo: String,
         state: String,
@@ -258,10 +257,8 @@ fn excerpt(text: &str, limit: usize) -> String {
     )
 }
 
-/// The first trigger of an orchestrator generation states the operator
-/// directives in force; later ones only what changed (ARCHITECTURE §18.5).
-/// Serialization adds a one-line `summary` for the TUI, derived from
-/// `events` so restored batches and callers cannot carry stale labels.
+/// One trigger; a generation's first states every directive, later ones what
+/// changed (§18.5). Serializing adds a `summary` line derived from `events`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct TriggerPayload {
     pub archon: u32,
@@ -331,9 +328,8 @@ pub async fn push(ctx: &DaemonContext, event: TriggerEvent) -> Result<(), Archon
     Ok(())
 }
 
-/// Save routine `event` without waking the orchestrator: it joins the next
-/// trigger, or the next operator turn (see [`flush_quiet`]). It survives a
-/// daemon stop like any other news.
+/// Save routine `event`, durably, without waking the orchestrator: it joins the
+/// next trigger or operator turn ([`flush_quiet`]).
 pub async fn push_quiet(ctx: &DaemonContext, event: TriggerEvent) -> Result<(), ArchonError> {
     hold_as(&mut *ctx.store.lock().await, event, true)
 }
@@ -405,9 +401,8 @@ fn hold_as(store: &mut Store, event: TriggerEvent, quiet: bool) -> Result<(), Ar
     write_outbox(store, &outbox)
 }
 
-/// Record a stage's or run node's message: one feed entry the operator can
-/// read as it is, and the news for the orchestrator, written together. An
-/// escalation shows in the quiet chat; a relay or info only with progress.
+/// Record a stage's or run node's message as one feed entry and the
+/// orchestrator's news together; only an escalation shows in the quiet chat.
 pub(crate) fn record_message(
     store: &mut Store,
     message: archon_core::agent_message::AgentMessage,
@@ -592,11 +587,8 @@ fn batch_events(
     Ok(events)
 }
 
-/// A fresh orchestrator generation has none of its predecessor's context:
-/// compact the news it inherits, pending now, when it is next keyed,
-/// whatever its size, and state every directive to it. A batch already keyed
-/// goes out as it is, and news pushed after this is news to the new
-/// generation, compacted only as usual.
+/// A new generation lacks its predecessor's context: compact the pending news
+/// it inherits when next keyed, and state every directive to it.
 pub async fn collapse_for_new_orchestrator(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let generation = supervisor::generation(ctx).await?;
     {
@@ -619,9 +611,8 @@ pub async fn collapse_for_new_orchestrator(ctx: &DaemonContext) -> Result<(), Ar
     restate_directives(ctx, "a new orchestrator generation started").await
 }
 
-/// The orchestrator may no longer hold the directives (it is new, or its
-/// context was compacted): the next trigger states all in force. When any
-/// is, that trigger is sent now, so it never acts on a request without them.
+/// The orchestrator lost the directives (new, or compacted): the next trigger
+/// states all in force, and is sent now when any is.
 pub async fn restate_directives(ctx: &DaemonContext, reason: &str) -> Result<(), ArchonError> {
     assert!(!reason.is_empty(), "the orchestrator is told why");
     {

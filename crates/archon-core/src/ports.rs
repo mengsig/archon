@@ -82,8 +82,8 @@ pub struct SpawnRequest {
     pub keep: bool,
 }
 
-/// How a resumed agent's attempt ended, from its turn's final message
-/// (§6.7): a failure after `FAILED:` or `BLOCKED:`, else the summary.
+/// A resumed attempt's outcome from its final message (§6.7): failed after
+/// `FAILED:`, `BLOCKED:` or `ESCALATE:`, else its summary and `structured`.
 pub fn resumed_reply_outcome(reply: &str) -> StageOutcome {
     const FAILED_PREFIX: &str = "FAILED:";
     let reply = reply.trim();
@@ -98,16 +98,36 @@ pub fn resumed_reply_outcome(reply: &str) -> StageOutcome {
             infra: false,
         };
     }
-    if reply.starts_with(StageOutcome::BLOCKED_PREFIX) {
+    if StageOutcome::ends_run(reply) {
         return StageOutcome::Failed {
             error: reply.to_owned(),
             infra: false,
         };
     }
+    let (summary, structured) = handed_in(reply);
     StageOutcome::Completed {
-        summary: reply.to_owned(),
-        structured: None,
+        summary,
+        structured,
     }
+}
+
+/// The summary of `reply` and the object of its last fenced `json` block: a
+/// resumed agent's task is settled, so its message carries `structured`.
+fn handed_in(reply: &str) -> (String, Option<serde_json::Value>) {
+    const OPEN: &str = "```json";
+    assert_eq!(reply, reply.trim(), "the reply comes trimmed");
+    for (at, _) in reply.rmatch_indices(OPEN) {
+        // A stream reads one value and leaves the closing fence unread.
+        let block = &reply[at + OPEN.len()..];
+        let mut values = serde_json::Deserializer::from_str(block).into_iter();
+        let Some(Ok(data @ serde_json::Value::Object(_))) = values.next() else {
+            continue;
+        };
+        let said = reply[..at].trim();
+        let summary = if said.is_empty() { reply } else { said };
+        return (summary.to_owned(), Some(data));
+    }
+    (reply.to_owned(), None)
 }
 
 /// The passive Aether agent under which one pipeline run's stage agents
@@ -285,8 +305,50 @@ mod tests {
         );
         let blocked = resumed_reply_outcome("BLOCKED: needs a deploy key");
         assert!(blocked.is_operator_blocker(), "{blocked:?}");
+        let escalated = resumed_reply_outcome("ESCALATE: this needs a schema migration first");
+        assert!(
+            matches!(&escalated, StageOutcome::Failed { error, .. } if StageOutcome::ends_run(error)),
+            "{escalated:?}"
+        );
         let bare = resumed_reply_outcome("FAILED:");
         assert!(matches!(bare, StageOutcome::Failed { ref error, .. } if !error.is_empty()));
+    }
+
+    /// A resumed agent of the stage whose result archond ships hands the
+    /// ship record in with its message: its task took `structured` once.
+    #[test]
+    fn a_resumed_reply_hands_in_the_object_of_its_last_json_block() {
+        use super::resumed_reply_outcome;
+        use crate::run::StageOutcome;
+        let body = "Shown as:\n```json\n{\"a\": 1}\n```";
+        let record = serde_json::json!({"commit": "c0ffee", "pr": {"body": body}});
+        let reply = format!("Fixed the null check.\n\n```json\n{record}\n```\nThat is all.");
+        let StageOutcome::Completed {
+            summary,
+            structured,
+        } = resumed_reply_outcome(&reply)
+        else {
+            panic!("a reply with a record completes");
+        };
+        assert_eq!(summary, "Fixed the null check.");
+        assert_eq!(structured, Some(record), "fences inside a string are text");
+
+        for plain in [
+            "Fixed it.",
+            "Fixed it.\n```json\nnot json\n```",
+            "```json\n[1]\n```",
+        ] {
+            let StageOutcome::Completed {
+                summary,
+                structured,
+            } = resumed_reply_outcome(plain)
+            else {
+                panic!("{plain} completes");
+            };
+            assert_eq!((summary.as_str(), structured), (plain, None));
+        }
+        let only = resumed_reply_outcome("```json\n{\"a\": 1}\n```");
+        assert!(matches!(only, StageOutcome::Completed { ref summary, .. } if !summary.is_empty()));
     }
 
     #[test]

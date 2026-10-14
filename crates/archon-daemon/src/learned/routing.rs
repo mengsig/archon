@@ -7,32 +7,25 @@ use archon_pipeline::PipelineSpec;
 use archon_queue::{Store, store::RouteEvidence};
 use std::collections::BTreeMap;
 
+/// What the evidence of `repo` picks for the stages of `spec` within
+/// `policy`, pooled over every diff size; empty when nothing is learned.
 pub(crate) fn default_plan(
     store: &Store,
     repo: Option<&RepoId>,
     spec: &PipelineSpec,
-) -> Result<Option<ModelPlan>, ArchonError> {
-    let global = store
-        .kv_get("learning/policy")?
-        .map(|raw| {
-            serde_json::from_str::<ModelPolicy>(&raw)
-                .map_err(|e| ArchonError::Store(format!("read learning policy: {e}")))
-        })
-        .transpose()?
-        .unwrap_or_default();
-    let local = repo
-        .map(|id| store.repo(&crate::resolve::repo_ref(id)))
-        .transpose()?
-        .map(|repo| archon_core::config::RepoConfig::load(&repo.path))
-        .transpose()?
-        .unwrap_or_default();
-    let policy = global.narrowed_by(&local.models.policy());
-    let (plan, _) = select_plan(store, repo, spec, &policy, None, None)?;
-    assert!(plan.0.keys().all(|stage| spec.stage(stage).is_some()));
+    policy: &ModelPolicy,
+) -> Result<ModelPlan, ArchonError> {
+    let (plan, _) = select_plan(store, repo, spec, policy, None, None)?;
+    assert!(
+        plan.0.keys().all(|stage| spec.stage(stage).is_some()),
+        "evidence is read per stage of the pipeline"
+    );
     policy.check_plan(&plan)?;
-    Ok((!plan.0.is_empty()).then_some(plan))
+    Ok(plan)
 }
 
+/// The learned choices for the stages `explicit` leaves out, kept for the
+/// item with the evidence behind each so `lessons why` can show it.
 pub(crate) fn plan_for_item(
     store: &Store,
     item: &QueueItemId,

@@ -469,9 +469,9 @@ fn retry_item() -> ToolDefinition {
     define(
         "retry_item",
         "Retry queue item",
-        "Queue a failed or cancelled item again from its first stage. The run continues in the \
-         item's worktree and branch unless `fresh`. A succeeded item cannot be retried: enqueue \
-         a follow-up.",
+        "Queue a finished item again from its first stage. The run continues in the item's \
+         worktree and branch unless `fresh`. A succeeded item's retry delivers into its pull \
+         request again and counts against the run that passed: enqueue new work instead.",
         object(
             json!({
                 "item": item_id(""),

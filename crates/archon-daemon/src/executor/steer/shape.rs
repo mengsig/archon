@@ -9,7 +9,10 @@ use archon_core::autonomy::{Autonomy, MergeMode, ProposalMode, ReportMode, Revie
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::model::ModelPlan;
+use archon_core::outcome::Correction;
+use archon_core::policy::ModelPolicy;
 use archon_core::queue::QueueItem;
+use archon_core::run::PipelineRun;
 use archon_core::steer::RunEdit;
 use archon_pipeline::autonomy::{augment, review_level, ships};
 use archon_pipeline::{PipelineSpec, reshape};
@@ -150,8 +153,14 @@ pub(crate) fn reshape(
     };
     let autonomy = within_ceiling(ctx, env, &reshaped, &removed, item.autonomy, knobs)?;
     let repo = env.repo.as_ref().map(|repo| &repo.id);
-    let plan = projected_plan(store, repo, spec, &reshaped, &item.model_plan)?;
-    env.policy(&ctx.config).check_plan(&plan)?;
+    let policy = env.policy(&ctx.config);
+    let learning = Learning {
+        store,
+        repo,
+        policy: &policy,
+    };
+    let plan = projected_plan(&learning, spec, &reshaped, &item.model_plan)?;
+    policy.check_plan(&plan)?;
     Ok(Some(Reshaped {
         edit,
         spec: reshaped,
@@ -199,11 +208,17 @@ pub(crate) fn within_ceiling(
     Ok(autonomy)
 }
 
+/// Where the learned choices of a repository come from, and what may be picked.
+struct Learning<'a> {
+    store: &'a Store,
+    repo: Option<&'a archon_core::id::RepoId>,
+    policy: &'a ModelPolicy,
+}
+
 /// `plan` for the stages of `new`: the choices of the stages it keeps, then
 /// what was learned for the repository, then the first choice it had.
 fn projected_plan(
-    store: &Store,
-    repo: Option<&archon_core::id::RepoId>,
+    learning: &Learning<'_>,
     old: &PipelineSpec,
     new: &PipelineSpec,
     plan: &ModelPlan,
@@ -218,7 +233,12 @@ fn projected_plan(
         let stage = new.stage(id).expect("retained above");
         choices.truncate(stage.fan_out as usize);
     }
-    let filled = knobs::fill_plan(store, repo, new, new, kept, fallback.as_ref())?;
+    let Learning {
+        store,
+        repo,
+        policy,
+    } = *learning;
+    let filled = knobs::fill_plan(store, repo, (new, new), kept, policy, fallback.as_ref())?;
     let unfilled = new.file.stages.iter();
     if let Some(stage) = unfilled
         .into_iter()
@@ -250,6 +270,16 @@ pub(crate) fn keep(
 /// has it again.
 pub(crate) fn forget(store: &mut Store, item: &QueueItemId) -> Result<(), ArchonError> {
     store.kv_delete(&key(item))
+}
+
+/// Count `run` as steered when it starts with a steered stage list: it is
+/// no evidence for the pipeline it is named after (ARCHITECTURE §19).
+pub(crate) fn correct_shaped(store: &Store, run: &PipelineRun) -> Result<(), ArchonError> {
+    assert!(!run.state.is_terminal(), "counted as the run starts");
+    if store.kv_get(&key(&run.item))?.is_none() {
+        return Ok(());
+    }
+    store.record_correction(&run.id, Correction::Steered)
 }
 
 /// `spec`, the item's pipeline as the catalog has it with its knobs' stages,

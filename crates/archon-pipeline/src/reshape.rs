@@ -9,10 +9,10 @@ use archon_core::error::ArchonError;
 use archon_core::steer::RunEdit;
 use serde::{Deserialize, Serialize};
 
-use crate::spec::{InStageReview, PipelineSpec, StageSpec};
+use crate::spec::{DaemonShip, InStageReview, PipelineSpec, StageSpec};
 
-/// A stage with what a run needs to hold it: its prompt text, and the
-/// review its pipeline declared it holds.
+/// A stage with what a run needs to hold it: its prompt text, the review its
+/// pipeline declared it holds, and whether archond shipped what it recorded.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CarriedStage {
@@ -20,6 +20,9 @@ pub struct CarriedStage {
     pub prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub holds_review: Option<ReviewLevel>,
+    /// Its pipeline's `[pipeline.ship]` named it (§8.7).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub writes_ship_record: bool,
 }
 
 /// A stage the run already has and keeps where it is.
@@ -89,6 +92,7 @@ fn carried(
     };
     let review = source.file.pipeline.review.as_ref();
     let holds_review = review.filter(|r| r.stage == stage.id).map(|r| r.level);
+    let ship = source.file.pipeline.ship.as_ref();
     CarriedStage {
         stage: StageSpec {
             id,
@@ -97,6 +101,7 @@ fn carried(
         },
         prompt: text,
         holds_review,
+        writes_ship_record: ship.is_some_and(|ship| ship.stage == stage.id),
     }
 }
 
@@ -217,6 +222,8 @@ fn not_runnable(error: ArchonError) -> ArchonError {
 /// it is; the result of a shape edit is a valid pipeline of the same name.
 pub fn apply(spec: &PipelineSpec, edit: &RunEdit) -> Result<PipelineSpec, ArchonError> {
     let mut out = spec.clone();
+    // The last stage the edit brought that wrote its own pipeline's ship record.
+    let mut recorder = None;
     match edit {
         RunEdit::AbortStage { .. } => return Ok(out),
         RunEdit::InsertStage { after, spec: stage } => {
@@ -228,13 +235,16 @@ pub fn apply(spec: &PipelineSpec, edit: &RunEdit) -> Result<PipelineSpec, Archon
                     None => return Err(missing(after)),
                 },
             };
-            let stage = take_in(&mut out, stage)?;
+            let stage = take_in(&mut out, stage, &mut recorder)?;
             out.file.stages.insert(at, stage);
         }
-        RunEdit::SwitchPipeline { stages, .. } => out.file.stages = switched(&mut out, stages)?,
+        RunEdit::SwitchPipeline { stages, .. } => {
+            out.file.stages = switched(&mut out, stages, &mut recorder)?;
+        }
     }
     let review = out.file.pipeline.review.take();
     out.file.pipeline.review = review.filter(|r| out.stage(&r.stage).is_some());
+    out.file.pipeline.ship = ship_after(&out, recorder.as_deref());
     out.validate(spec.name())?;
     assert_eq!(out.name(), spec.name(), "a run keeps its snapshot's name");
     Ok(out)
@@ -246,11 +256,32 @@ fn missing(stage: &str) -> ArchonError {
     ))
 }
 
+/// What archond ships after an edit (§8.7): the record of `recorder`, a stage
+/// it brought, if that runs after the one named so far; else that one, if any.
+fn ship_after(spec: &PipelineSpec, recorder: Option<&str>) -> Option<DaemonShip> {
+    let named = spec.file.pipeline.ship.as_ref().map(|s| s.stage.as_str());
+    let named = named.filter(|id| spec.stage_index(id).is_some());
+    assert!(
+        recorder.is_none_or(|id| spec.stage_index(id).is_some()),
+        "the edit placed the stage it brought"
+    );
+    let later = |a: &str, b: &str| spec.stage_index(a) > spec.stage_index(b);
+    let stage = match (named, recorder) {
+        (Some(named), Some(recorder)) if later(named, recorder) => named,
+        (_, Some(recorder)) => recorder,
+        (named, None) => named?,
+    };
+    Some(DaemonShip {
+        stage: stage.to_owned(),
+    })
+}
+
 /// The stage list a switch recorded, with the texts it carries taken into
 /// `spec`.
 fn switched(
     spec: &mut PipelineSpec,
     stages: &[serde_json::Value],
+    recorder: &mut Option<String>,
 ) -> Result<Vec<StageSpec>, ArchonError> {
     let mut list = Vec::with_capacity(stages.len());
     for entry in stages {
@@ -259,7 +290,7 @@ fn switched(
                 Some(stage) => stage.clone(),
                 None => return Err(missing(&keep)),
             },
-            Entry::Carried(stage) => take_in(spec, *stage)?,
+            Entry::Carried(stage) => take_in(spec, *stage, recorder)?,
         };
         list.push(stage);
     }
@@ -267,14 +298,22 @@ fn switched(
     Ok(list)
 }
 
-/// Take a carried stage's prompt text and the review it holds into `spec`,
-/// and return the stage for the caller to place.
-fn take_in(spec: &mut PipelineSpec, carried: CarriedStage) -> Result<StageSpec, ArchonError> {
+/// Take a carried stage's prompt and review into `spec`, noting in `recorder`
+/// whether it writes a ship record, and return it for the caller to place.
+fn take_in(
+    spec: &mut PipelineSpec,
+    carried: CarriedStage,
+    recorder: &mut Option<String>,
+) -> Result<StageSpec, ArchonError> {
     let CarriedStage {
         stage,
         prompt,
         holds_review,
+        writes_ship_record,
     } = carried;
+    if writes_ship_record {
+        *recorder = Some(stage.id.clone());
+    }
     let clash = |have: &String| *have != prompt;
     if spec.prompts.get(&stage.prompt).is_some_and(clash) {
         return Err(ArchonError::Pipeline(format!(

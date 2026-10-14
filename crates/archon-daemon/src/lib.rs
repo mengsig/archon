@@ -55,11 +55,8 @@ pub struct DaemonOptions {
     pub archon_bin: PathBuf,
 }
 
-/// Run until `Shutdown` or SIGTERM/SIGINT: open the store, recover runs,
-/// bind the socket, then run the server, event pump, dispatcher, trigger
-/// delivery, mirror refresh, store pruning and worktree gc concurrently. The
-/// socket serves even while Aether is down, and in standby after the store
-/// hit a full disk.
+/// Run until `Shutdown` or SIGTERM/SIGINT: recover, bind the socket and run
+/// the server and every worker; it serves while Aether is down and in standby.
 pub async fn run(options: DaemonOptions) -> Result<(), ArchonError> {
     let endpoint = Endpoint::from_config(&options.config.aether)?;
     let ctx = build_context(options)?;
@@ -178,7 +175,7 @@ async fn supervise(
     }
     assert_eq!(
         workers.len(),
-        5 + usize::from(auto_gc),
+        7 + usize::from(auto_gc),
         "every daemon worker is supervised"
     );
     let result = tokio::select! {
@@ -242,11 +239,6 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
     }
     let store = Store::open(&paths.store)?;
     store.configure_learning(&config.learning)?;
-    store.save_learning_value(
-        "learning/policy",
-        &serde_json::to_string(&config.models.policy())
-            .map_err(|e| ArchonError::Config(format!("serialize model policy: {e}")))?,
-    )?;
     let lavish = Lavish::detect(&config.lavish)?;
     let aether = Arc::new(AetherLink::new());
     let backend = Arc::new(AetherBackend::new(aether.clone(), config.models.policy()));

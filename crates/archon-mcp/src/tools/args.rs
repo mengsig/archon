@@ -31,15 +31,7 @@ pub(super) fn to_request(tool: &str, arguments: Value) -> Result<Request, ToolEr
     };
     let mut args = Args::new(definition, arguments)?;
     let request = match tool {
-        "message_orchestrator" => {
-            let text = args.required_text("text")?;
-            archon_core::agent_message::check_text(&text).map_err(|e| args.error("text", e))?;
-            Request::MessageOrchestrator {
-                text,
-                kind: args.optional("kind")?.unwrap_or_default(),
-                caller: None,
-            }
-        }
+        "message_orchestrator" => message_orchestrator(&mut args)?,
         "list_pipelines" => Request::ListPipelines {
             repo: args.optional("repo")?,
         },
@@ -54,12 +46,7 @@ pub(super) fn to_request(tool: &str, arguments: Value) -> Result<Request, ToolEr
         "get_stage" => get_stage(&mut args)?,
         "queue_status" => Request::Status,
         "cost_report" => cost_report(&mut args)?,
-        "model_evidence" => Request::ModelEvidence(ModelEvidenceQuery {
-            repo: args.optional("repo")?,
-            pipeline: args.optional_text("pipeline")?,
-            stage: args.optional_text("stage")?,
-            since: day_bound(&mut args, "since")?,
-        }),
+        "model_evidence" => model_evidence(&mut args)?,
         "register_repo" => register_repo(&mut args)?,
         "enqueue" => Request::Enqueue(enqueue(&mut args)?),
         "update_item" => update_item(&mut args)?,
@@ -67,13 +54,7 @@ pub(super) fn to_request(tool: &str, arguments: Value) -> Result<Request, ToolEr
             item: args.required("item")?,
             reason: args.optional_text("reason")?,
         },
-        "retry_item" => Request::RetryItem {
-            item: args.required("item")?,
-            model_plan: args.optional_plan("model_plan")?,
-            model_reasons: args.optional_reasons()?,
-            fresh: args.optional("fresh")?.unwrap_or(false),
-            brief_append: args.optional_text("brief_append")?,
-        },
+        "retry_item" => retry_item(&mut args)?,
         "pause" => Request::Pause(pause_target(&mut args)?),
         "resume" => Request::Resume(pause_target(&mut args)?),
         "notify" => Request::Notify {
@@ -389,6 +370,35 @@ fn day_bound(args: &mut Args, key: &str) -> Result<Option<DayBound>, ToolError> 
         Err(ArchonError::Invalid(why)) => Err(args.error(key, format_args!("is invalid: {why}"))),
         Err(other) => Err(args.error(key, other)),
     }
+}
+
+fn message_orchestrator(args: &mut Args) -> Result<Request, ToolError> {
+    let text = args.required_text("text")?;
+    archon_core::agent_message::check_text(&text).map_err(|e| args.error("text", e))?;
+    Ok(Request::MessageOrchestrator {
+        text,
+        kind: args.optional("kind")?.unwrap_or_default(),
+        caller: None,
+    })
+}
+
+fn model_evidence(args: &mut Args) -> Result<Request, ToolError> {
+    Ok(Request::ModelEvidence(ModelEvidenceQuery {
+        repo: args.optional("repo")?,
+        pipeline: args.optional_text("pipeline")?,
+        stage: args.optional_text("stage")?,
+        since: day_bound(args, "since")?,
+    }))
+}
+
+fn retry_item(args: &mut Args) -> Result<Request, ToolError> {
+    Ok(Request::RetryItem {
+        item: args.required("item")?,
+        model_plan: args.optional_plan("model_plan")?,
+        model_reasons: args.optional_reasons()?,
+        fresh: args.optional("fresh")?.unwrap_or(false),
+        brief_append: args.optional_text("brief_append")?,
+    })
 }
 
 fn list_queue(args: &mut Args) -> Result<Request, ToolError> {

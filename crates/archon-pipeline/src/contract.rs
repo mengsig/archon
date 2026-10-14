@@ -110,7 +110,10 @@ pub fn dependency_rules(base: &str, dependencies: &[Dependency]) -> String {
         "one line of facts per dependency"
     );
     format!(
-        "\n## Dependencies\n\nArchon prepared this branch from `{base}`; the daemon prepares other same-repository parents by merging. Diff, review and target the PR against `{base}`, overriding an older prompt base; pass this base to reviewers.\n\n{facts}"
+        "\n## Dependencies\n\nArchon prepared this branch from `{base}`, with any other \
+         parent in this repository merged in, and the change's pull request is for `{base}`. \
+         Diff and review against `{base}`, whatever base an older prompt names, and pass \
+         this base to reviewers.\n\n{facts}"
     )
 }
 
@@ -391,20 +394,24 @@ fn ship_record_rules(kind: StageKind) -> String {
         "\n## Ship record\n\n\
          - Archon delivers this run's commits itself once every stage passed: do not push \
          and do not open a pull request. {leave}\n\
+         - Name what ships in `complete_task`'s `structured` data, beside any other keys:\n\n\
+         {SHIP_RECORD_JSON}\n\
          {SHIP_RECORD_SHAPE}"
     );
     debug_assert!(rules.ends_with('\n'), "sections end with a newline");
     rules
 }
 
-const SHIP_RECORD_SHAPE: &str = "\
-- Name what ships in `complete_task`'s `structured` data, beside any other keys:\n\n\
+/// The ship record as an agent writes it, in a fenced block.
+pub(crate) const SHIP_RECORD_JSON: &str = "\
 ```json\n\
 {\"commit\": \"<git rev-parse HEAD>\", \"tree\": \"<git rev-parse HEAD^{tree}>\",\n \
 \"checks\": [\"<each verification command that ran>\"],\n \
 \"pr\": {\"title\": \"<one line, in the repository's convention>\", \
 \"body\": \"<what changed and why, how it was verified, assumptions>\"}}\n\
-```\n\n\
+```\n";
+
+const SHIP_RECORD_SHAPE: &str = "\
 - Read both hashes after the last commit. Archon ships exactly that commit and tree, \
 made under the repository's own git identity, and fails the run when the branch \
 holds anything else. It adds the review and later stages' results to the body.\n";

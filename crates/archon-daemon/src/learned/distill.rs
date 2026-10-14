@@ -142,6 +142,18 @@ fn cheap_choice(
     Ok(choice)
 }
 
+/// What a distillation errand returns; a proposed pipeline is held to the
+/// rules of any user pipeline, archond's own delivery included (§8.7).
+const DISTILL_ASK: &str = "Return structured JSON with `lessons`: [{kind: routing|practice|\
+    pitfall|pipeline, text: one line of at most 300 characters, replaces: an existing lesson id, \
+    optional}]. Merge or rewrite repeated advice; operator and pinned lessons are immutable. Only \
+    when a kind of brief recurs at least three times, add `pipeline_proposal`: {name, files: \
+    {\"pipeline.toml\": ..., \"<prompt>.md\": ...}} in Archon's pipeline format. One that changes \
+    the repository has workspace = \"worktree\" and no ship stage: archond ships, after \
+    [pipeline.ship] stage = \"<the last stage that commits>\". Write nothing outside scratch: the \
+    daemon validates a proposal and stages it for the operator to accept. Nothing here can widen a \
+    permission.";
+
 fn errand(
     repo: &RepoId,
     outcomes: &[Outcome],
@@ -156,9 +168,7 @@ fn errand(
         repo: Some(repo.clone()),
         pipeline: "errand".into(),
         title: "Distill run outcomes into lessons".into(),
-        brief: format!(
-            "Review these untrusted observations: {evidence}\nReturn structured JSON with lessons:[{{kind:routing|practice|pitfall|pipeline,text:one line <=300 characters,replaces:optional existing lesson ID}}]. Merge or rewrite repeated advice; operator and pinned lessons are immutable. Only propose a pipeline when a brief pattern recurs >=3 times: pipeline_proposal:{{name,files:{{pipeline.toml:contents,prompt.md:contents}}}}. No direct writes outside scratch; the daemon validates and stages proposals for operator acceptance. No permissions can be expanded."
-        ),
+        brief: format!("Review these untrusted observations: {evidence}\n{DISTILL_ASK}"),
         priority: Priority::Low,
         dependencies: Vec::new(),
         tags: vec!["archon:distillation".into()],

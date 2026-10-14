@@ -8,11 +8,12 @@ mod support;
 
 use std::sync::Arc;
 
+use archon_core::run::RunState;
 use archon_core::steer::{RunEdit, Then};
 use archon_pipeline::RunDriver;
 use archon_pipeline::reshape::{apply, apply_all, insert_edit, started_prefix, switch_edit};
 use archon_pipeline::spec::PipelineSpec;
-use sim::{Agent, Sim, finish_state, slots, spawn_plans, spawned};
+use sim::{Agent, Sim, finish_state, ship_plans, slots, spawn_plans, spawned};
 
 const FANS: [&str; 2] = ["claude-code/opus", "codex/astra"];
 
@@ -26,6 +27,11 @@ fn ids(spec: &PipelineSpec) -> Vec<&str> {
     spec.file.stages.iter().map(|s| s.id.as_str()).collect()
 }
 
+/// The stage whose ship record archond delivers for a run on `spec`.
+fn recorder(spec: &PipelineSpec) -> Option<&str> {
+    spec.ship_record_stage().map(|stage| stage.id.as_str())
+}
+
 fn refusal<T: std::fmt::Debug>(result: Result<T, archon_core::error::ArchonError>) -> String {
     result.expect_err("refused").to_string()
 }
@@ -37,8 +43,9 @@ fn an_inserted_stage_lands_after_the_started_ones_and_replays_from_the_edit_alon
     let prefix = started_prefix(&run, ["implement"]);
     assert_eq!(prefix, 1);
     let (edit, reshaped) = insert_edit(&run, prefix, &source, "review", None).unwrap();
-    assert_eq!(ids(&reshaped), ["implement", "review", "ship"]);
+    assert_eq!(ids(&reshaped), ["implement", "review"]);
     assert_eq!(reshaped.name(), "quick-pr", "the run keeps its snapshot");
+    assert_eq!(recorder(&reshaped), Some("implement"), "it still ships");
     let review = reshaped.stage("review").unwrap();
     assert_eq!(review.on_fail.as_ref().unwrap().goto, "implement");
     assert_eq!(
@@ -78,14 +85,53 @@ fn inserting_inside_the_started_stages_is_refused() {
         nowhere.contains("the run has no stage \"deploy\""),
         "{nowhere}"
     );
-    let after_ship = refusal(insert_edit(&run, prefix, &source, "test", Some("ship")));
+    // A work stage after the ship record would commit what nobody records.
+    let bugfix = support::builtin("bugfix");
+    let unrecorded = refusal(insert_edit(&run, prefix, &bugfix, "reproduce", None));
     assert!(
-        after_ship.contains("the run could not continue"),
-        "{after_ship}"
+        unrecorded.contains("the run could not continue"),
+        "{unrecorded}"
     );
+    assert!(unrecorded.contains("can still commit"), "{unrecorded}");
 
     let (_, ok) = insert_edit(&run, prefix, &source, "test", None).unwrap();
-    assert_eq!(ids(&ok), ["implement", "review", "test", "ship"]);
+    assert_eq!(ids(&ok), ["implement", "review", "test"]);
+}
+
+/// The stage a pipeline has archond ship from keeps that role in a run it is
+/// carried into, once it runs after the stage the run shipped from so far.
+#[test]
+fn a_carried_stage_that_wrote_the_ship_record_writes_the_run_s() {
+    let run = support::builtin("quick-pr");
+    let docs = support::builtin("docs");
+    assert_eq!(
+        (recorder(&run), recorder(&docs)),
+        (Some("implement"), Some("write"))
+    );
+    let (edit, written) = insert_edit(&run, 1, &docs, "write", None).unwrap();
+    assert_eq!(ids(&written), ["implement", "write"]);
+    assert_eq!(recorder(&written), Some("write"), "the last commits ship");
+    assert_eq!(apply(&run, &edit).unwrap(), written, "a restart agrees");
+
+    let (edit, switched) = switch_edit(&run, 1, &support::builtin("team-pr")).unwrap();
+    assert_eq!(
+        ids(&switched),
+        ["implement", "plan", "build", "e2e", "review"]
+    );
+    assert_eq!(recorder(&switched), Some("review"));
+    assert_eq!(apply_all((*run).clone(), [&edit]).unwrap(), switched);
+
+    // Ahead of the stage that ships, the carried one records nothing.
+    let review = support::builtin("default-pr-review");
+    let (_, early) = insert_edit(&review, 0, &docs, "write", None).unwrap();
+    assert_eq!(ids(&early), ["write", "implement", "review"]);
+    assert_eq!(recorder(&early), Some("implement"));
+
+    // A pipeline that ships nothing leaves a run nothing to ship either.
+    let audit = support::builtin("code-audit");
+    assert_eq!(recorder(&audit), None);
+    let (_, report) = switch_edit(&run, 0, &audit).unwrap();
+    assert_eq!((ids(&report), recorder(&report)), (ids(&audit), None));
 }
 
 #[test]
@@ -97,17 +143,16 @@ fn a_clashing_id_or_prompt_gets_a_free_name() {
     assert_ne!(theirs, ours, "the two pipelines word the stage differently");
 
     let (_, reshaped) = insert_edit(&run, 1, &source, "implement", None).unwrap();
-    assert_eq!(ids(&reshaped), ["implement", "implement-2", "ship"]);
+    assert_eq!(ids(&reshaped), ["implement", "implement-2"]);
+    assert_eq!(recorder(&reshaped), Some("implement-2"));
     let second = reshaped.stage("implement-2").unwrap();
     assert_eq!(second.prompt, "implement-2-steered.md");
     assert_eq!(&reshaped.prompts[&second.prompt], theirs);
     assert_eq!(&reshaped.prompts["implement.md"], ours, "ours is untouched");
 
     let (_, again) = insert_edit(&reshaped, 1, &source, "implement", None).unwrap();
-    assert_eq!(
-        ids(&again),
-        ["implement", "implement-3", "implement-2", "ship"]
-    );
+    assert_eq!(ids(&again), ["implement", "implement-3", "implement-2"]);
+    assert_eq!(recorder(&again), Some("implement-2"), "the later one");
     let third = again.stage("implement-3").unwrap();
     assert_eq!(&again.prompts[&third.prompt], theirs);
 }
@@ -117,7 +162,7 @@ fn a_switch_keeps_started_stages_and_takes_the_rest_of_the_new_pipeline() {
     let run = support::builtin("quick-pr");
     let target = support::builtin("strict-pr-review");
     let (edit, reshaped) = switch_edit(&run, 1, &target).unwrap();
-    assert_eq!(ids(&reshaped), ["implement", "test", "review", "ship"]);
+    assert_eq!(ids(&reshaped), ["implement", "test", "review"]);
     assert_eq!(reshaped.name(), "quick-pr");
     let kept = reshaped.stage("implement").unwrap();
     assert_eq!(
@@ -125,17 +170,17 @@ fn a_switch_keeps_started_stages_and_takes_the_rest_of_the_new_pipeline() {
         run.stage("implement").unwrap(),
         "history is not rewritten"
     );
-    let ship = reshaped.stage("ship").unwrap();
-    assert_ne!(ship.prompt, "ship.md", "the old ship prompt keeps its file");
+    assert_eq!(recorder(&reshaped), Some("implement"));
+    let review = reshaped.stage("review").unwrap();
     assert_eq!(
-        reshaped.prompts[&ship.prompt],
-        target.prompts[&target.stage("ship").unwrap().prompt],
+        reshaped.prompts[&review.prompt],
+        target.prompts[&target.stage("review").unwrap().prompt],
         "an unstarted stage is the new pipeline's"
     );
     let RunEdit::SwitchPipeline { pipeline, stages } = &edit else {
         panic!("a switch is recorded as one: {edit:?}");
     };
-    assert_eq!((pipeline.as_str(), stages.len()), ("strict-pr-review", 4));
+    assert_eq!((pipeline.as_str(), stages.len()), ("strict-pr-review", 3));
     assert_eq!(stages[0], serde_json::json!({"keep": "implement"}));
     assert_eq!(apply_all((*run).clone(), [&edit]).unwrap(), reshaped);
 
@@ -149,12 +194,13 @@ fn a_switch_to_another_workspace_or_with_nothing_left_is_refused() {
     let run = support::builtin("quick-pr");
     let other = refusal(switch_edit(&run, 1, &support::builtin("ask")));
     assert!(other.contains("a run keeps its workspace"), "{other}");
-    let done = started_prefix(&run, ["ship"]);
+    let run = support::builtin("default-pr-review");
+    let done = started_prefix(&run, ["review"]);
     assert_eq!(done, 2, "every stage up to the last started one");
     let target = support::builtin("default-pr-review");
     let nothing = refusal(switch_edit(&run, done, &target));
     assert!(
-        nothing.contains("nothing left to run after stage \"ship\""),
+        nothing.contains("nothing left to run after stage \"review\""),
         "{nothing}"
     );
 }
@@ -180,9 +226,13 @@ fn a_run_continues_on_an_inserted_stage_and_loops_through_it() {
     );
     sim.settle("implement", 0, Agent::Done("handles the empty case"));
     let ship = sim.settle("review", 0, Agent::Pass);
-    assert_eq!(spawned(&ship), slots(&[("ship", 1, 0)]));
-    let done = sim.settle("ship", 0, Agent::Done("shipped"));
-    assert!(finish_state(&done).is_some());
+    assert_eq!(ship_plans(&ship).len(), 1, "archond ships what passed");
+    assert_eq!(ship_plans(&ship)[0].record_stage, "implement");
+    let done = sim.ship_pr("https://github.com/o/r/pull/1");
+    assert!(matches!(
+        finish_state(&done),
+        Some(RunState::Succeeded { .. })
+    ));
 }
 
 #[test]
@@ -216,18 +266,27 @@ fn an_aborted_stage_is_retried_by_a_fresh_agent() {
 
 #[test]
 fn an_aborted_stage_is_skipped_and_leaves_a_note_where_its_summary_would_be() {
-    let mut sim = sim("default-pr-review");
+    let mut sim = sim("strict-pr-review");
     sim.start();
     sim.settle("implement", 0, Agent::Done("built it"));
-    let ship = sim.abort("review", 1, Then::Skip);
-    assert_eq!(spawned(&ship), slots(&[("ship", 1, 0)]));
-    let prompt = &spawn_plans(&ship)[0].prompt;
+    let review = sim.abort("test", 1, Then::Skip);
+    assert!(spawned(&review).iter().all(|slot| slot.0 == "review"));
+    let prompt = &spawn_plans(&review)[0].prompt;
     assert!(prompt.contains("skipped by a steer"), "{prompt}");
     assert!(
         prompt.contains("built it"),
         "earlier work is still handed on"
     );
-    assert!(finish_state(&sim.settle("ship", 0, Agent::Done("shipped"))).is_some());
+    for fan in 0..spawned(&review).len() as u32 {
+        sim.settle("review", fan, Agent::Pass);
+    }
+    // The pull request says so too: nobody reads it as a stage that passed.
+    let body = &sim.open_ship.as_ref().expect("archond ships it").body;
+    assert!(
+        body.contains("### `test`\n\n(This stage was skipped by a steer"),
+        "{body}"
+    );
+    assert!(finish_state(&sim.ship_pr("https://github.com/o/r/pull/1")).is_some());
 }
 
 #[test]
@@ -291,8 +350,10 @@ fn aborts_the_pipeline_cannot_do_are_refused() {
         unknown.contains("has no stage \"lint\" to abort"),
         "{unknown}"
     );
-    let last = refusal(driver.record_abort("ship", 1, Then::Skip));
+    let last = refusal(driver.record_abort("review", 1, Then::Skip));
     assert!(last.contains("cancel the item instead"), "{last}");
+    let recorder = refusal(driver.record_abort("implement", 1, Then::Skip));
+    assert!(recorder.contains("writes the ship record"), "{recorder}");
     let nowhere = refusal(driver.record_abort("review", 1, to("deploy")));
     assert!(
         nowhere.contains("has no stage \"deploy\" to go to"),
@@ -300,7 +361,6 @@ fn aborts_the_pipeline_cannot_do_are_refused() {
     );
     let unstarted = refusal(driver.record_abort("review", 0, Then::Retry));
     assert!(unstarted.contains("it can only be skipped"), "{unstarted}");
-    driver.record_abort("review", 0, Then::Skip).unwrap();
     driver.record_abort("review", 2, to("implement")).unwrap();
 }
 
@@ -324,6 +384,9 @@ fn the_implementing_agent_is_kept_and_resumed_with_the_findings() {
     );
     assert!(message.contains("off-by-one in window end"), "{message}");
     assert!(message.contains("do not call `complete_task`"), "{message}");
+    // Its task took `structured` once, so the new ship record comes in the message.
+    assert!(message.contains("\"commit\": \"<git rev-parse HEAD>\""));
+    assert!(message.contains("as its last fenced block"), "{message}");
     assert!(
         fix.prompt
             .contains("`implement`, your stage's last attempt"),

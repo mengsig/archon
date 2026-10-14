@@ -37,11 +37,8 @@ impl Reach {
     }
 }
 
-/// What `roots`, an agent's workspace root and allowed paths, reach of the
-/// mirrors in the orchestrator's `workspace`. A root inside a mirror, or in
-/// a git worktree of one (an isolated child's), reaches that mirror; a root
-/// that holds the mirrors directory reaches all of them, as does a scope
-/// with no root at all, which says nothing about where the agent reads.
+/// The mirrors in `workspace` that an agent's `roots` reach: one a root is in
+/// or is a worktree of; all for a root above them, or for no root at all.
 pub fn reach(workspace: &Path, roots: &[PathBuf]) -> Reach {
     let mirrors = resolved(&workspace.join(MIRRORS_DIR));
     let mut found = Reach {
@@ -74,9 +71,8 @@ fn mirror_holding(at: &Path, mirrors: &Path) -> Option<String> {
     Some(name.as_os_str().to_string_lossy().into_owned())
 }
 
-/// The mirror `at` is a git worktree of: the nearest `.git` above it is a
-/// file whose `gitdir:` leads into that mirror. Aether makes an isolated
-/// child's workspace this way, outside the orchestrator's.
+/// The mirror `at` is a git worktree of (an isolated child's workspace): the
+/// nearest `.git` above it is a file whose `gitdir:` leads into it.
 fn worktree_of(at: &Path, mirrors: &Path) -> Option<String> {
     let dot_git = at
         .ancestors()

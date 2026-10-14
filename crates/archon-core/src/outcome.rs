@@ -78,6 +78,10 @@ pub enum FailureClass {
     Ship,
     /// The agent backend or the machine, not the work.
     Infrastructure,
+    /// A stage said the task needs another pipeline (`ESCALATE:`).
+    Escalated,
+    /// A stage said only the operator can unblock it (`BLOCKED:`).
+    Blocked,
     Other,
 }
 
@@ -90,6 +94,8 @@ impl FailureClass {
             Self::Verification => "verification",
             Self::Ship => "ship",
             Self::Infrastructure => "infrastructure",
+            Self::Escalated => "escalated",
+            Self::Blocked => "blocked",
             Self::Other => "other",
         }
     }
@@ -105,6 +111,19 @@ pub enum Correction {
     PrClosed,
     ChangesRequested,
     OperatorContradiction,
+}
+
+impl Correction {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::RetryAfterDone => "retry_after_done",
+            Self::GateRejected => "gate_rejected",
+            Self::Steered => "steered",
+            Self::PrClosed => "pr_closed",
+            Self::ChangesRequested => "changes_requested",
+            Self::OperatorContradiction => "operator_contradiction",
+        }
+    }
 }
 
 /// One stage of the run under one model choice.

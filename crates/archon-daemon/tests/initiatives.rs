@@ -1,6 +1,8 @@
 //! Coordinated admission, delivery and recovery across repositories.
 mod common;
 
+use archon_core::autonomy::{MergeMode, ReviewLevel};
+use archon_core::error::ArchonError;
 use archon_core::initiative::{
     EnqueueInitiative, InitiativeDetail, InitiativeMember, InitiativeState,
 };
@@ -27,6 +29,7 @@ fn member(repo: &str) -> InitiativeMember {
         title: None,
         pipeline: Some(PIPELINE.into()),
         model_plan: Some(plan()),
+        autonomy: Default::default(),
         after: Vec::new(),
     }
 }
@@ -313,4 +316,34 @@ async fn a_member_needs_only_repo_and_brief_and_its_default_model_obeys_policy()
         h.state(&detail.members[0].id).await,
         QueueState::Running { .. }
     ));
+}
+
+/// A member takes an enqueue's knobs, but an atomic initiative's members are
+/// merged by hand, together: one asking to merge itself refuses the whole set.
+#[tokio::test]
+async fn a_member_takes_its_own_knobs_but_never_merges_an_atomic_set_alone() {
+    let h = setup().await;
+    let mut req = request();
+    req.members.truncate(2);
+    req.members[0].pipeline = None;
+    req.members[0].model_plan = None;
+    req.members[0].autonomy.review = Some(ReviewLevel::None);
+    req.members[1].autonomy.merge = Some(MergeMode::Auto);
+    let refused = h.cli(Request::EnqueueInitiative(req.clone())).await;
+    let Err(ArchonError::Invalid(why)) = refused else {
+        panic!("{refused:?}")
+    };
+    assert!(why.contains("by hand"), "{why}");
+    assert!(h.ctx.store.lock().await.initiatives().unwrap().is_empty());
+
+    req.members[1].autonomy.merge = None;
+    let detail = enqueue(&h, req).await;
+    let quick = &detail.members[0];
+    assert_eq!(
+        quick.pipeline, "quick-pr",
+        "the review knob picks the family"
+    );
+    assert_eq!(quick.autonomy.review, ReviewLevel::None);
+    let manual = |m: &archon_core::queue::QueueItem| m.autonomy.merge == MergeMode::Manual;
+    assert!(detail.members.iter().all(manual));
 }

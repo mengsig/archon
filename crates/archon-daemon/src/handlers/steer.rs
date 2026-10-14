@@ -280,6 +280,8 @@ async fn store_steer(
     let mut store = ctx.store.lock().await;
     let mut item = item;
     let mut revive = false;
+    // The failed run a shape steer revives: the steer corrects it.
+    let mut corrected = None;
     if let Some((edit, stages)) = &shape {
         match asked.sources.switches_to(&item.pipeline) {
             true => live::forget_shape(&mut store, &item.id)?,
@@ -290,6 +292,7 @@ async fn store_steer(
             if let Some(run) = run {
                 item = revived(&store.run(run)?, edit, item)?;
             }
+            corrected = run.clone();
             what.push("queued it again on its branch".to_owned());
         }
     }
@@ -308,7 +311,7 @@ async fn store_steer(
         what: what.clone(),
         note: asked.steer.note.as_ref().map(|note| note.trim().to_owned()),
     };
-    live::record(&mut store, &item.id, record)?;
+    live::record(&mut store, &item.id, corrected.as_ref(), record)?;
     drop(store);
     let text = live::history_line(&item.id, asked.by, &what, asked.steer.note.as_deref());
     items::post_note(ctx, &item.id, &text).await;

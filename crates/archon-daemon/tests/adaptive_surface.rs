@@ -42,6 +42,7 @@ fn enqueue_initiative() -> Request {
             title: None,
             pipeline: None,
             model_plan: None,
+            autonomy: Default::default(),
             after: Vec::new(),
         }],
         idempotency_key: None,

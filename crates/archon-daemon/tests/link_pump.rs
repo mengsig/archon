@@ -996,9 +996,8 @@ async fn the_orchestrators_helpers_follow_every_registered_repositorys_policy() 
     );
 }
 
-/// A helper reads mirrors, never the operator's checkout: one whose
-/// workspace or allowed path leads into a registered repository, even
-/// through a link, is cancelled.
+/// A helper whose workspace or allowed path leads into a registered
+/// repository, even through a link, is cancelled: it reads mirrors only.
 #[tokio::test]
 async fn a_helper_placed_in_a_repository_is_cancelled_wherever_the_path_leads_from() {
     let harness = Harness::new().await;
@@ -1448,9 +1447,8 @@ async fn dispatcher_woken(harness: &Harness) -> bool {
     tokio::time::timeout(Duration::ZERO, woken).await.is_ok()
 }
 
-/// Spend changes the dispatcher's plan only by reaching the total or the
-/// daily budget. Without one a usage update is recorded and costs no pass;
-/// with one, the pass that holds new work at the budget follows at once.
+/// A usage update costs a dispatch pass only when a total or daily budget is
+/// set, and then the pass holding work at the budget follows at once.
 #[tokio::test]
 async fn usage_wakes_the_dispatcher_only_while_a_global_budget_is_set() {
     let harness = Harness::new().await;
@@ -1673,9 +1671,8 @@ async fn an_aetherd_that_starts_late_is_found_within_a_second_or_so() {
 
 const HELPER_5: &str = "agt_0105";
 
-/// Repositories `alpha`, whose `[models]` refuses [`DENIED`], and `beta`,
-/// with the directories of their mirrors in the orchestrator's workspace.
-/// Returns where the repositories are and that workspace.
+/// Repositories `alpha` (refusing [`DENIED`]) and `beta`, mirrored in the
+/// orchestrator's workspace; returns where they are and that workspace.
 async fn two_mirrored_repos(harness: &Harness) -> (tempfile::TempDir, PathBuf) {
     let repos = tempfile::tempdir().unwrap();
     let (alpha, beta) = (repos.path().join("alpha"), repos.path().join("beta"));
@@ -1714,9 +1711,8 @@ fn cancelled(harness: &Harness) -> Vec<(String, String)> {
         .collect()
 }
 
-/// A helper answers to the repositories whose mirrors its scope reads, not
-/// to every registered one: `alpha` refusing a model does not refuse it to
-/// a helper that works in `beta`'s mirror or in scratch.
+/// A helper answers only to the repositories whose mirrors it reads: `alpha`
+/// refusing a model does not refuse it in `beta`'s mirror or in scratch.
 #[tokio::test]
 async fn a_helper_follows_the_policy_of_the_mirrors_its_scope_reads() {
     let harness = Harness::new().await;
@@ -1805,9 +1801,8 @@ async fn an_isolated_child_of_a_mirror_answers_to_that_mirrors_repository() {
     );
 }
 
-/// A code question needs no item: a helper reads the mirror. The operator's
-/// checkout and the items' worktrees stay closed, also through a link the
-/// repository tracks.
+/// A code question needs no item: a helper reads the mirror, never the checkout
+/// or the items' worktrees, also through a link the repository tracks.
 #[tokio::test]
 async fn a_helper_reads_a_mirror_and_is_kept_out_of_the_checkout_and_worktrees() {
     let harness = Harness::new().await;

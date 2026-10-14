@@ -66,9 +66,8 @@ pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     }
 }
 
-/// One pass: every registered repository has a mirror at its base branch,
-/// and nothing else is left under the mirrors directory. A repository whose
-/// mirror cannot be made or refreshed is reported, and the pass goes on.
+/// One pass: a mirror at its base branch per registered repository and
+/// nothing else; one that cannot be made or refreshed is reported, not fatal.
 pub async fn sync_all(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let repos = ctx.store.lock().await.repos()?;
     let layout = Layout::of(ctx);
@@ -112,9 +111,8 @@ impl Layout {
         }
     }
 
-    /// Create the mirrors and scratch directories and the push guard. A
-    /// symbolic link where the mirrors directory belongs is removed first:
-    /// git would otherwise work wherever it leads.
+    /// Create the mirrors and scratch directories and the push guard, first
+    /// removing a symlink in the mirrors' place, where git would follow it.
     fn prepare(&self) -> Result<(), ArchonError> {
         if git::is_symlink(&self.root)? {
             std::fs::remove_file(&self.root)
@@ -317,9 +315,8 @@ fn announcement(repo: &str, problem: Option<&Problem>) -> (&'static str, String,
     }
 }
 
-/// Remove what the mirrors directory holds besides the mirrors of `repos`
-/// (an unregistered repository's mirror, a clone a crash left half made),
-/// and forget the state of repositories no longer registered.
+/// Remove everything in the mirrors directory but the mirrors of `repos`, and
+/// forget the state of repositories no longer registered.
 async fn forget_unregistered(
     ctx: &DaemonContext,
     layout: &Layout,

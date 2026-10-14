@@ -56,6 +56,8 @@ pub(super) struct Request<'a> {
     pub base: &'a str,
     pub title: &'a str,
     pub body: &'a str,
+    /// Opened as a draft: a member of an atomic initiative, until all pass.
+    pub draft: bool,
 }
 
 /// What a finished command printed.
@@ -258,9 +260,8 @@ pub(in crate::executor) async fn open_pr(
     Ok(pr.url.clone())
 }
 
-/// The open pull request of `request.branch`: the one GitHub lists already,
-/// moved onto `request.base` if it is for another, else a new one. Never a
-/// second: an open one is always reused, so a repeated delivery finds it.
+/// The open pull request of `request.branch`, reused (moved onto
+/// `request.base`) when GitHub lists one, else opened: never a second.
 pub(super) async fn pull_request(
     binary: &Path,
     workspace: &Path,
@@ -299,7 +300,7 @@ async fn create(
     workspace: &Path,
     request: Request<'_>,
 ) -> Result<Result<String, String>, ArchonError> {
-    let args = [
+    let mut args = vec![
         "pr",
         "create",
         "--base",
@@ -311,6 +312,9 @@ async fn create(
         "--body-file",
         "-",
     ];
+    if request.draft {
+        args.push("--draft");
+    }
     let command = gh(binary, workspace, &args);
     let created = run(command, "gh pr create", Some(request.body), GH_TIMEOUT).await?;
     let listed = match open_prs(binary, workspace, request.branch).await? {

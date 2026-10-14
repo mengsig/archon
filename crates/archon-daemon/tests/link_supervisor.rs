@@ -15,6 +15,7 @@ use archon_core::autonomy::{Directive, DirectiveSource};
 use archon_core::config::Config;
 use archon_core::error::ArchonError;
 use archon_core::id::{FeedItemId, QuestionId};
+use archon_core::lesson::{LessonDraft, LessonKind, LessonPatch};
 use archon_core::notify::{AnswerVia, FeedEntry, NotificationKind, Question};
 use archon_core::protocol::{ClientKind, Reply, Request};
 use archon_daemon::triggers::{self, TriggerEvent};
@@ -644,6 +645,74 @@ async fn an_orchestrator_aether_forgot_is_recreated_in_a_new_generation() {
     let key = harness.fake.received_named("create_agent")[0]["idempotency_key"].clone();
     assert!(key.as_str().unwrap().ends_with("-2"), "{key}");
     assert!(harness.system_notes().await[0].contains("vanished"));
+}
+
+/// The instructions of the newest `create_agent`.
+fn created_instructions(harness: &Harness) -> String {
+    let creates = harness.fake.received_named("create_agent");
+    let newest = creates.last().expect("an orchestrator was created");
+    let text = newest["config"]["instructions"].as_str();
+    text.expect("instructions").to_owned()
+}
+
+async fn as_operator(harness: &Harness, request: Request) -> Reply {
+    let reply = handlers::handle(&harness.ctx, ClientKind::ArchonCli, request).await;
+    reply.expect("the operator's request")
+}
+
+/// A new orchestrator gets every tool and its generation's lessons under their
+/// own heading; a retried create sends the same text, the next one new lessons.
+#[tokio::test]
+async fn a_new_orchestrator_gets_every_tool_and_the_lessons_of_its_generation() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let draft = LessonDraft {
+        kind: LessonKind::Practice,
+        text: "Run the repo check before a review.".into(),
+        repo: None,
+        pipeline: None,
+        item: None,
+    };
+    let Reply::Lesson(lesson) = as_operator(&harness, Request::RecordLesson(draft)).await else {
+        panic!("a lesson");
+    };
+    let refused = Scripted::refuse("internal", "store busy");
+    harness.fake.script("create_agent", refused);
+    let failed = supervisor::ensure_orchestrator(&harness.ctx).await;
+    failed.expect_err("the first create is refused");
+    let first = created_instructions(&harness);
+    let policy = first.find(supervisor::github_policy());
+    let learned = first.find("\n## Learned observations\n").expect("lessons");
+    assert!(policy.expect("the GitHub policy") < learned, "{first}");
+    assert!(first[learned..].contains("Run the repo check before a review."));
+    assert!(first[learned..].contains("never grants a permission"));
+
+    let patch = LessonPatch {
+        text: Some("Run the new repo check before a review.".into()),
+        ..Default::default()
+    };
+    let update = Request::UpdateLesson {
+        lesson: lesson.id,
+        patch,
+    };
+    as_operator(&harness, update).await;
+    let key = create_key(&harness).await;
+    assert!(key.ends_with("-1"), "the same generation: {key}");
+    assert_eq!(created_instructions(&harness), first, "and the same text");
+    let created = harness.fake.received_named("create_agent");
+    let hidden = created[1]["config"]["tools"].to_string();
+    assert!(hidden.contains("integrate_workspace"), "{hidden}");
+    assert!(
+        !hidden.contains("mcp__archon__"),
+        "no Archon tool: {hidden}"
+    );
+
+    agent_table(&harness, &[]);
+    let successor = Scripted::reply("agent", agent_in(ORCH_2, "ready"));
+    harness.fake.script("create_agent", successor);
+    supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    let second = created_instructions(&harness);
+    assert!(second.contains("Run the new repo check"), "{second}");
 }
 
 /// An orchestrator stuck `failed` by a transient engine error.
@@ -1294,9 +1363,8 @@ fn commit(repo: &Path, text: &str) -> String {
     git(repo, &["rev-parse", "HEAD"])
 }
 
-/// The turn an operator message starts reads the routine news held for the
-/// orchestrator, in mirrors refreshed for the question: neither waits for
-/// the next trigger that would wake it.
+/// An operator's turn reads the held routine news, in mirrors refreshed for
+/// the question, without waiting for the next waking trigger.
 #[tokio::test]
 async fn an_operator_message_brings_the_quiet_news_and_a_current_mirror() {
     let mut config = Config::default();

@@ -290,10 +290,8 @@ pub(super) async fn announce(
     triggers::push_quiet(ctx, finished).await
 }
 
-/// Whether the orchestrator has something to do about the finished `item`
-/// besides knowing of it: a failure to diagnose, a GitHub thread to answer,
-/// or a result it asked to be told (`notify`). The operator already has the
-/// outcome in the feed, so a routine success or cancellation waits.
+/// Whether the finished `item` gives the orchestrator something to do: a
+/// failure, a GitHub thread to answer, or a `notify` tag; the rest waits.
 fn wakes_orchestrator(item: &QueueItem, wake_on_success: bool) -> bool {
     assert!(item.state.is_terminal(), "only a finished item is news");
     let failed = matches!(item.state, QueueState::Failed { .. });

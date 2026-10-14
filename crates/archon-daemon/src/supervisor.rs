@@ -54,22 +54,10 @@ pub const ORCHESTRATOR_ROLE: &str = "archon-orchestrator";
 /// Aether tools the orchestrator does not get. It delegates, but a change to a
 /// repository is an item, never a child's edits (ARCHITECTURE §4.4, §18.4).
 pub const ORCHESTRATOR_HIDDEN_TOOLS: &[&str] = &["integrate_workspace"];
-/// Archon tools the orchestrator does not get yet: archond does not carry
-/// them out. Deleting a name here hands the tool over and puts the prompt's
-/// slot for it in ([`built_in_prompt`]); the prompt itself is not edited.
-const ORCHESTRATOR_PENDING_TOOLS: &[&str] = &[
-    "enqueue_initiative",
-    "update_initiative",
-    "steer_item",
-    "record_lesson",
-];
 /// Hidden as well while Aether does not name callers (see `callers`).
 const DELEGATE_TOOL: &str = "delegate";
 
 const BUILTIN_PROMPT: &str = include_str!("../prompts/orchestrator.md");
-/// A line that opens a slot of the built-in prompt, up to the tools it names.
-const SLOT_OPEN: &str = "<!-- slot: ";
-const SLOT_CLOSE: &str = "<!-- /slot -->";
 
 /// How long a cancelled orchestrator gets to end the turn it was in before
 /// its restart is put off: Aether restarts only a stopped agent.
@@ -132,7 +120,7 @@ pub fn orchestrator_instructions(config: &Config, workspace: &Path) -> Result<St
         "orchestrator workspace must be absolute"
     );
     let user_pipelines = archon_core::paths::config_dir().join("pipelines");
-    let mut text = built_in_prompt(ORCHESTRATOR_PENDING_TOOLS);
+    let mut text = BUILTIN_PROMPT.to_owned();
     text.push_str(&installation_paths(workspace, &user_pipelines));
     if let Some(path) = &config.orchestrator.instructions_file {
         let extra = std::fs::read_to_string(path)
@@ -141,32 +129,6 @@ pub fn orchestrator_instructions(config: &Config, workspace: &Path) -> Result<St
         text.push_str(&extra);
     }
     Ok(text)
-}
-
-/// The built-in prompt as an orchestrator without the tools in `pending`
-/// gets it. A slot is the lines between a `<!-- slot: a, b -->` line, naming
-/// the tools it teaches, and a `<!-- /slot -->` line: it is left out while
-/// any of them is pending. The marker lines themselves never go out.
-fn built_in_prompt(pending: &[&str]) -> String {
-    let mut text = String::with_capacity(BUILTIN_PROMPT.len());
-    // Inside a slot: whether its lines stay.
-    let mut slot: Option<bool> = None;
-    for line in BUILTIN_PROMPT.split_inclusive('\n') {
-        let marker = line.trim_end();
-        let opened = marker
-            .strip_prefix(SLOT_OPEN)
-            .and_then(|rest| rest.strip_suffix(" -->"));
-        if let Some(tools) = opened {
-            assert!(slot.is_none(), "a slot opens inside another: {marker}");
-            slot = Some(!tools.split(", ").any(|tool| pending.contains(&tool)));
-        } else if marker == SLOT_CLOSE {
-            assert!(slot.take().is_some(), "a slot closes that never opened");
-        } else if slot != Some(false) {
-            text.push_str(line);
-        }
-    }
-    assert!(slot.is_none(), "the prompt's last slot is never closed");
-    text
 }
 
 /// The paths the built-in prompt refers to but cannot know.
@@ -249,9 +211,6 @@ pub fn orchestrator_create_agent(
     assert!(generation > 0, "generations start at 1");
     let also_hidden = (!delegation).then_some(DELEGATE_TOOL);
     let hidden = ORCHESTRATOR_HIDDEN_TOOLS.iter().copied().chain(also_hidden);
-    let pending = ORCHESTRATOR_PENDING_TOOLS
-        .iter()
-        .map(|tool| archon_core::mcp_tools::qualified(tool));
     CreateAgent {
         role: ORCHESTRATOR_ROLE.into(),
         name: Some(config.orchestrator.name.clone()),
@@ -270,7 +229,7 @@ pub fn orchestrator_create_agent(
             cost_budget: None,
             deadline: None,
             tools: ToolExposure::Except {
-                names: hidden.map(str::to_owned).chain(pending).collect(),
+                names: hidden.map(str::to_owned).collect(),
             },
             long_lived: true,
             leaf: false,
@@ -883,6 +842,8 @@ async fn create_generation(
         let mut store = ctx.store.lock().await;
         let generation = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?.max(1);
         store.kv_set(keys::ORCHESTRATOR_GENERATION, &generation.to_string())?;
+        // Chosen once per generation, so a retried create sends the same text.
+        instructions.push_str(&crate::learned::lessons_for_orchestrator(&store)?);
         generation
     };
     let store = store_id(ctx).await?;
@@ -1044,21 +1005,11 @@ mod tests {
         let ToolExposure::Except { names } = agent_config.tools else {
             panic!("the orchestrator hides a fixed set");
         };
-        let (pending, hidden): (Vec<&str>, Vec<&str>) = names
-            .iter()
-            .map(String::as_str)
-            .partition(|name| name.starts_with("mcp__archon__"));
+        let hidden: Vec<&str> = names.iter().map(String::as_str).collect();
         assert_eq!(
             hidden, ORCHESTRATOR_HIDDEN_TOOLS,
-            "yolo keeps only the justified hides"
+            "yolo keeps only the justified hides: every Archon tool is its own"
         );
-        // The exposure holds its names as a set, which iterates in order.
-        let mut unbuilt: Vec<String> = ORCHESTRATOR_PENDING_TOOLS
-            .iter()
-            .map(|tool| archon_core::mcp_tools::qualified(tool))
-            .collect();
-        unbuilt.sort();
-        assert_eq!(pending, unbuilt, "and the tools archond cannot carry out");
     }
 
     #[test]
@@ -1241,95 +1192,15 @@ mod tests {
     #[test]
     fn builtin_prompt_teaches_every_tool_the_orchestrator_has() {
         let prompt = prompt();
-        let taught = archon_core::mcp_tools::TOOLS
-            .iter()
-            .filter(|tool| !ORCHESTRATOR_PENDING_TOOLS.contains(&tool.name));
-        for tool in taught {
+        assert!(!archon_core::mcp_tools::TOOLS.is_empty());
+        for tool in archon_core::mcp_tools::TOOLS {
             assert!(
                 prompt.contains(&format!("`{}`", tool.name)),
                 "prompt never mentions {}",
                 tool.name
             );
         }
-        for pending in ORCHESTRATOR_PENDING_TOOLS {
-            let known = archon_core::mcp_tools::TOOLS
-                .iter()
-                .any(|t| t.name == *pending);
-            assert!(known, "{pending} is not an Archon tool");
-            assert!(
-                !prompt.contains(pending),
-                "{pending} is taught to an orchestrator that does not have it"
-            );
-        }
-        assert!(!prompt.contains("<!--"), "a slot marker went out: {prompt}");
-    }
-
-    /// The tools `marker` names, for each slot of the built-in prompt.
-    fn slots() -> Vec<Vec<&'static str>> {
-        let opened = BUILTIN_PROMPT
-            .lines()
-            .filter_map(|line| line.strip_prefix(SLOT_OPEN)?.strip_suffix(" -->"));
-        opened.map(|tools| tools.split(", ").collect()).collect()
-    }
-
-    /// The integrator hands a tool over by deleting its name from the pending
-    /// list: the prompt then teaches it, and still fits its budget.
-    #[test]
-    fn a_tool_that_stops_pending_is_taught_by_its_slot_without_a_prompt_edit() {
-        let all = built_in_prompt(&[]);
-        assert!(!all.contains("<!--"), "markers never go out: {all}");
-        assert!(
-            all.len() <= BUDGET_BYTES,
-            "{} bytes with every slot",
-            all.len()
-        );
-        for tool in archon_core::mcp_tools::TOOLS {
-            let named = format!("`{}`", tool.name);
-            assert!(all.contains(&named), "no slot teaches {}", tool.name);
-        }
-        for (heading, tool) in [
-            ("**Initiatives.**", "update_initiative"),
-            ("**Stacking.**", "enqueue_initiative"),
-            ("**Steering.**", "steer_item"),
-            ("**Lessons.**", "record_lesson"),
-        ] {
-            assert!(all.contains(heading), "{heading} is missing");
-            let without = built_in_prompt(&[tool]);
-            assert!(!without.contains(heading), "{heading} waits for {tool}");
-            assert!(!without.contains(&format!("`{tool}`")), "{tool} is taught");
-        }
-        let one = built_in_prompt(&["enqueue_initiative", "update_initiative", "record_lesson"]);
-        assert!(one.contains("**Steering.**") && !one.contains("**Lessons.**"));
-        assert!(
-            !one.contains("\n\n\n"),
-            "a slot leaves no gap behind: {one}"
-        );
-    }
-
-    #[test]
-    fn every_slot_names_archon_tools_and_stays_out_of_the_github_policy() {
-        let slots = slots();
-        assert_eq!(slots.len(), 4, "initiatives, stacking, steering, lessons");
-        for tool in slots.iter().flatten() {
-            let known = archon_core::mcp_tools::TOOLS
-                .iter()
-                .any(|t| t.name == *tool);
-            assert!(known, "a slot waits for {tool}, which is no Archon tool");
-        }
-        for pending in ORCHESTRATOR_PENDING_TOOLS {
-            assert!(
-                slots.iter().flatten().any(|tool| tool == pending),
-                "no slot teaches {pending}"
-            );
-        }
-        assert_eq!(
-            BUILTIN_PROMPT.matches(SLOT_OPEN).count(),
-            BUILTIN_PROMPT.matches(SLOT_CLOSE).count()
-        );
-        assert!(
-            !github_policy().contains("<!--"),
-            "an orchestrator is matched on the policy as it received it"
-        );
+        assert!(!prompt.contains("<!--"), "a comment went out: {prompt}");
     }
 
     #[test]
@@ -1351,14 +1222,10 @@ mod tests {
             "refactor",
             "test-coverage",
             "design-doc",
-            "direct",
         ];
         let catalog = archon_pipeline::Catalog::builtin();
         for name in pending_catalog_guidance {
             catalog.get(name).expect("pending pipeline is discoverable");
-        }
-        for named in ["`adaptive`", "`direct`"] {
-            assert!(prompt.contains(named), "{named} is named");
         }
         for pipeline in archon_pipeline::builtin::BUILTINS {
             if pending_catalog_guidance.contains(&pipeline.name) {
@@ -1454,6 +1321,33 @@ mod tests {
         }
     }
 
+    /// What the daemon does with coordinated and corrected work, so that the
+    /// orchestrator neither waits for a merge nor restarts what can be kept.
+    #[test]
+    fn builtin_prompt_steers_stacks_and_groups_work_instead_of_restarting_it() {
+        let prompt = unwrapped(&prompt());
+        for said in [
+            "0, 1 or 3 reviewers in `adaptive` and `direct` (other pipelines fix theirs)",
+            "`model_evidence` how each model and pipeline fared",
+            "`steer_item` changes an item without cancelling it",
+            "One failed with `ESCALATE:` does not fit its pipeline: do not retry it; \
+             `switch_pipeline` or `insert_stage` revives it on its branch.",
+            "forks from that branch and targets its pull request; the daemon restacks it",
+            "Queue a chain at once; wait for no merge.",
+            "built to one `contract` that `update_initiative` amends",
+            "A passing member is routine: act on `initiative_finished`.",
+            "On a `lesson_hint`, `record_lesson` a reusable practice",
+            "Never accept a proposed lesson or pipeline: the operator does.",
+        ] {
+            assert!(prompt.contains(said), "missing {said:?}");
+        }
+        let escalated = prompt.find("`ESCALATE:`").unwrap();
+        assert!(
+            prompt.find("then `retry_item`").unwrap() < escalated,
+            "the exception follows the rule it narrows"
+        );
+    }
+
     #[test]
     fn builtin_prompt_states_what_a_helper_is_given_and_what_it_costs() {
         let prompt = unwrapped(&prompt());
@@ -1470,9 +1364,8 @@ mod tests {
         }
     }
 
-    /// A helper reads a mirror and never the operator's checkout, and never
-    /// works for an external request: the daemon enforces the first (as it
-    /// does the depth and the model policy), only the prompt the second.
+    /// A helper reads a mirror, never the checkout (the daemon enforces it),
+    /// and never works for an external request (only the prompt says so).
     #[test]
     fn builtin_prompt_gives_a_helper_a_mirror_and_external_requests_no_helper() {
         let prompt = unwrapped(&prompt());
@@ -1558,10 +1451,6 @@ mod tests {
             BUILTIN_PROMPT.len() <= BUDGET_BYTES,
             "the built-in prompt grew to {} bytes",
             BUILTIN_PROMPT.len()
-        );
-        assert!(
-            built_in_prompt(ORCHESTRATOR_PENDING_TOOLS).len() < BUILTIN_PROMPT.len(),
-            "what goes out is the file less its markers and pending slots"
         );
         assert!(
             github_policy().len() < BUILTIN_PROMPT.len() / 2,

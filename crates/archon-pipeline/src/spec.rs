@@ -63,9 +63,8 @@ fn default_true() -> bool {
     true
 }
 
-/// `[pipeline.review]`: `stage` has its change reviewed and passes only with
-/// that on record (ARCHITECTURE §8.2). `level` is the default; an item's own
-/// review level replaces it in the manifest its run freezes.
+/// `[pipeline.review]`: `stage` passes only with its review on record (§8.2),
+/// at `level` unless the item's own level replaces it in the frozen manifest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InStageReview {

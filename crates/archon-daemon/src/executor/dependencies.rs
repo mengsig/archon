@@ -10,7 +10,7 @@ use archon_core::run::PipelineRun;
 use archon_pipeline::contract::{self, Dependency};
 use archon_queue::Store;
 
-use super::recover;
+use super::{recover, restack};
 
 /// Longer than any pull request URL; what exceeds it is not passed on.
 const MAX_URL_CHARS: usize = 200;
@@ -38,19 +38,7 @@ pub(super) fn section(
         found.push(dependency(store, id, item.repo.as_ref())?);
     }
     let parents = store.stack_parents(&item.id)?;
-    let current_base = if parents.is_empty() {
-        None
-    } else {
-        store
-            .stack_base(&item.id)?
-            .map(|p| p.0)
-            .or(store
-                .repo(&crate::resolve::repo_ref(
-                    item.repo.as_ref().expect("stack repository"),
-                ))?
-                .base_branch)
-            .or(store.stack_repository_base(&item.id)?)
-    };
+    let current_base = restack::target_base(store, &item.id)?;
     let mut rules = contract::dependency_rules(current_base.as_ref().unwrap_or(base), &found);
     if parents.iter().any(|p| p.conflict.is_some()) {
         rules.push_str("Resolve and commit the pending parent merge, then merge every remaining parent SHA below before starting the requested change (never rebase):\n");

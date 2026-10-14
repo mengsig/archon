@@ -24,13 +24,6 @@ pub struct StackParent {
 }
 
 impl Store {
-    pub fn stack_repository_base(&self, item: &QueueItemId) -> Result<Option<String>, ArchonError> {
-        Ok(self
-            .stack_parents(item)?
-            .first()
-            .and_then(|p| p.repository_base.clone()))
-    }
-
     /// The first unmerged parent's branch and last incorporated SHA.
     pub fn stack_base(&self, item: &QueueItemId) -> Result<Option<(String, String)>, ArchonError> {
         Ok(self
@@ -142,7 +135,10 @@ impl Store {
         fix.id = QueueItemId::new();
         fix.title = format!("Restack {}", child.id);
         fix.brief = format!(
-            "Resolve the pending merge of {} ({sha}) into {}. Conflicting paths:\n{conflict}\nCommit the merge, validate the resolution, then push the existing child branch and update its PR. Never rebase or force-push.",
+            "Resolve the pending merge of {} ({sha}) into {}. Conflicting paths:\n{conflict}\n\
+             Commit the merge on the existing branch and validate the resolution. It ships as \
+             this run's pipeline ships, into the pull request the branch already has: never \
+             open a second one, and never rebase or force-push.",
             parent.parent_branch, run.branch
         );
         fix.dependencies.clear();

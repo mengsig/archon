@@ -4,7 +4,7 @@ use super::super::Store;
 use super::super::codec::{SqlContext, from_json};
 use archon_core::error::ArchonError;
 use archon_core::outcome::{DiffStat, FailureClass, Outcome, OutcomeResult, OutcomeStage};
-use archon_core::run::{PipelineRun, RunState, StageRun, StageState, Verdict};
+use archon_core::run::{PipelineRun, RunState, StageOutcome, StageRun, StageState, Verdict};
 use rusqlite::OptionalExtension;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -167,25 +167,36 @@ fn result(state: &RunState) -> Result<(OutcomeResult, Option<FailureClass>), Arc
         RunState::Succeeded { .. } => Ok((OutcomeResult::Succeeded, None)),
         RunState::Cancelled { .. } => Ok((OutcomeResult::Cancelled, None)),
         RunState::Failed { stage_id, error } => {
-            let text = error.to_lowercase();
-            let class = if text.contains("budget") {
-                FailureClass::Budget
-            } else if text.contains("timed out") || text.contains("timeout") {
-                FailureClass::Timeout
-            } else if text.contains("aether") || text.contains("disk") {
-                FailureClass::Infrastructure
-            } else if stage_id.contains("review") {
-                FailureClass::Review
-            } else if stage_id.contains("test") {
-                FailureClass::Verification
-            } else if stage_id.contains("ship") {
-                FailureClass::Ship
-            } else {
-                FailureClass::Other
-            };
-            Ok((OutcomeResult::Failed, Some(class)))
+            Ok((OutcomeResult::Failed, Some(failure_class(stage_id, error))))
         }
         _ => Err(ArchonError::Invalid("a live run has no outcome".into())),
+    }
+}
+
+/// What a failed run's error says of the failure. A stage's own word that
+/// the task is in the wrong pipeline or needs the operator comes first.
+fn failure_class(stage_id: &str, error: &str) -> FailureClass {
+    if error.starts_with(StageOutcome::ESCALATE_PREFIX) {
+        return FailureClass::Escalated;
+    }
+    if error.starts_with(StageOutcome::BLOCKED_PREFIX) {
+        return FailureClass::Blocked;
+    }
+    let text = error.to_lowercase();
+    if text.contains("budget") {
+        FailureClass::Budget
+    } else if text.contains("timed out") || text.contains("timeout") {
+        FailureClass::Timeout
+    } else if text.contains("aether") || text.contains("disk") {
+        FailureClass::Infrastructure
+    } else if stage_id.contains("review") {
+        FailureClass::Review
+    } else if stage_id.contains("test") {
+        FailureClass::Verification
+    } else if stage_id.contains("ship") {
+        FailureClass::Ship
+    } else {
+        FailureClass::Other
     }
 }
 

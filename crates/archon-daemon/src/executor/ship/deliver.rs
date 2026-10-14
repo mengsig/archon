@@ -18,7 +18,9 @@ use archon_core::run::{PipelineRun, StageState};
 use archon_pipeline::{RunDriver, ShipOutcome, ShipPlan};
 use archon_queue::Store;
 
-use super::super::{FollowUp, RunTable, ShipRetry, descendants, finish, recover, settle};
+use super::super::{
+    FollowUp, RunTable, ShipRetry, descendants, finish, initiative_ship, recover, restack, settle,
+};
 use super::{checks, remote};
 use crate::context::DaemonContext;
 use crate::resolve;
@@ -60,10 +62,8 @@ struct Claimed {
     recorded: Option<ShipOutcome>,
 }
 
-/// Run `run`'s queued delivery once and let its driver finish the run. A
-/// refusal fails the run with its reason; a failure another try may pass
-/// (the network, GitHub) is left queued for the sweep, a bounded number of
-/// times. An outcome persisted already is never delivered again.
+/// Run `run`'s queued delivery once and let its driver finish the run; a
+/// transient failure stays queued for the sweep, a persisted outcome replays.
 pub(in crate::executor) async fn deliver(
     ctx: &DaemonContext,
     run_id: &PipelineRunId,
@@ -94,9 +94,8 @@ pub(in crate::executor) async fn deliver(
     result
 }
 
-/// The queued delivery of a live run, marked in flight; `None` when there
-/// is none, another caller runs it, its next try is not due yet, or what the
-/// run's agents delegated is still to be stopped.
+/// The live run's queued delivery, marked in flight; `None` when none is due
+/// to run here now or the run's delegated agents are still to be stopped.
 async fn claim(
     ctx: &DaemonContext,
     run_id: &PipelineRunId,
@@ -182,13 +181,18 @@ async fn carry_out(ctx: &DaemonContext, claimed: &Claimed) -> Result<ShipOutcome
         return refused("the item's repository is no longer registered with Archon".into());
     };
     let pushes = pushes(&claimed.vars)?;
+    let (base, draft) = {
+        let store = ctx.store.lock().await;
+        let base = base_of(&store, run, &claimed.vars)?;
+        (base, initiative_ship::opens_as_draft(&store, &run.item)?)
+    };
     let target = checks::Target {
         repo_path,
         workspace: run.workspace.clone(),
         branch: run.branch.clone(),
-        base: base_of(&claimed.vars)?,
+        base: base.clone(),
     };
-    let (base, record) = (target.base.clone(), plan.record.clone());
+    let record = plan.record.clone();
     let checked = tokio::task::spawn_blocking(move || checks::check(&target, &record))
         .await
         .map_err(|e| ArchonError::io("delivery check task", std::io::Error::other(e)))??;
@@ -210,14 +214,21 @@ async fn carry_out(ctx: &DaemonContext, claimed: &Claimed) -> Result<ShipOutcome
         base: &base,
         title: &plan.record.title,
         body: &plan.body,
+        draft,
     };
     let gh = &ctx.config.github.binary;
-    match remote::pull_request(gh, &run.workspace, request).await? {
-        Ok(url) => Ok(ShipOutcome::Shipped {
+    let url = match remote::pull_request(gh, &run.workspace, request).await? {
+        Ok(url) => url,
+        Err(refusal) => return refused(refusal),
+    };
+    // The stack and the initiative the change belongs to are settled before it counts.
+    match initiative_ship::record(ctx, run, &url).await {
+        Ok(()) => Ok(ShipOutcome::Shipped {
             commit,
             pr_url: Some(url),
         }),
-        Err(refusal) => refused(refusal),
+        Err(ArchonError::Invalid(why)) => refused(why),
+        Err(error) => Err(error),
     }
 }
 
@@ -233,17 +244,24 @@ fn pushes(vars: &BTreeMap<String, String>) -> Result<bool, ArchonError> {
     }
 }
 
-/// The branch the run's change is for: the branch of the item it is stacked
-/// on, when its start recorded one, else the repository's base branch.
-fn base_of(vars: &BTreeMap<String, String>) -> Result<String, ArchonError> {
-    let named = |key: &str| vars.get(key).map(|v| v.trim()).filter(|v| !v.is_empty());
-    let base = named("stack_parent").or_else(|| named("base_branch"));
-    let Some(base) = base else {
-        return Err(ArchonError::Protocol(
+/// The branch the run's change is for: the one its item is stacked on now
+/// (§8.8), which moves as parents merge, else the base its worktree forked from.
+fn base_of(
+    store: &Store,
+    run: &PipelineRun,
+    vars: &BTreeMap<String, String>,
+) -> Result<String, ArchonError> {
+    if let Some(stacked) = restack::target_base(store, &run.item)? {
+        assert_ne!(stacked, run.branch, "an item is never stacked on itself");
+        return Ok(stacked);
+    }
+    let forked = vars.get("base_branch").map(|base| base.trim());
+    match forked.filter(|base| !base.is_empty()) {
+        Some(base) => Ok(base.to_owned()),
+        None => Err(ArchonError::Protocol(
             "the run's variables name no base branch".into(),
-        ));
-    };
-    Ok(base.to_owned())
+        )),
+    }
 }
 
 /// Enable auto-merge where the repository asks for it. The change is
@@ -361,9 +379,8 @@ async fn retry_or_fail(
     apply(ctx, table, run, outcome).await
 }
 
-/// Acting on a delivery's outcome failed part way: queue it again for the
-/// sweep, and drop the driver, which may have acted already, so the retry
-/// rebuilds it from the store. A persisted outcome is replayed, not redone.
+/// Queue a delivery whose outcome was half acted on again, dropping the
+/// driver so the retry rebuilds it from the store and replays the outcome.
 fn requeue(table: &mut RunTable, run_id: &PipelineRunId, plan: ShipPlan) {
     assert!(
         !table.shipping.contains(run_id),
@@ -432,18 +449,6 @@ mod tests {
     fn vars(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         let owned = |(k, v): &(&str, &str)| ((*k).to_owned(), (*v).to_owned());
         pairs.iter().map(owned).collect()
-    }
-
-    /// W2 records the branch an item is stacked on in the run's variables.
-    #[test]
-    fn a_stacked_run_is_for_its_parent_s_branch_and_any_other_for_the_base() {
-        let plain = vars(&[("base_branch", "main")]);
-        assert_eq!(base_of(&plain).unwrap(), "main");
-        let stacked = vars(&[("base_branch", "main"), ("stack_parent", "archon/parent")]);
-        assert_eq!(base_of(&stacked).unwrap(), "archon/parent");
-        let blank = vars(&[("base_branch", "main"), ("stack_parent", " ")]);
-        assert_eq!(base_of(&blank).unwrap(), "main", "an empty parent is none");
-        assert!(base_of(&vars(&[])).is_err());
     }
 
     #[test]

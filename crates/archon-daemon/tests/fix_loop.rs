@@ -1,7 +1,8 @@
 //! One agent through the fix loop (ARCHITECTURE §6.7), on the built-in
 //! `default-pr-review` pipeline: the implementer outlives its task and is
 //! resumed with the reviewer's findings, reviewers stay fresh, and a fresh
-//! implementer takes over only when the kept one cannot go on.
+//! implementer takes over only when the kept one cannot go on. archond ships
+//! the run (§8.7) from the ship record the implementer's last answer names.
 
 mod common;
 
@@ -10,13 +11,14 @@ use std::collections::BTreeSet;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::model::{Effort, ModelPlan};
-use archon_core::ports::DescendantState;
+use archon_core::ports::{DescendantState, resumed_reply_outcome};
 use archon_core::protocol::Request;
 use archon_core::queue::{QueueItem, QueueState};
-use archon_core::run::{StageOutcome, StageRun, StageState};
+use archon_core::run::{PipelineRun, StageOutcome, StageRun, StageState};
 use archon_core::steer::Steer;
 use archon_daemon::executor;
-use common::{Harness, MODEL, REVIEW_MODEL, choice, completed, expire_deadline};
+use common::delivery::{FakeGh, add_origin, change, origin_of, pushed, shipped_by};
+use common::{Harness, MODEL, REVIEW_MODEL, choice, expire_deadline, git};
 
 const PIPELINE: &str = "default-pr-review";
 const FINDINGS: &str = "the greeting is never tested";
@@ -28,6 +30,9 @@ description = "an implementer with helpers"
 version = 1
 workspace = "worktree"
 requires_repo = true
+
+[pipeline.ship]
+stage = "implement"
 
 [[stage]]
 id = "implement"
@@ -44,12 +49,6 @@ fan_out = 2
 gate = "all_pass"
 timeout_minutes = 30
 on_fail = { goto = "implement", max_loops = 1 }
-
-[[stage]]
-id = "ship"
-kind = "ship"
-prompt = "ship.md"
-timeout_minutes = 90
 "#;
 
 fn plan() -> ModelPlan {
@@ -57,7 +56,6 @@ fn plan() -> ModelPlan {
     let stages = [
         ("implement", choice(MODEL, Effort::High)),
         ("review", choice(REVIEW_MODEL, Effort::Medium)),
-        ("ship", choice(MODEL, Effort::Low)),
     ];
     for (stage, choice) in stages {
         plan.0.insert(stage.into(), vec![choice]);
@@ -88,6 +86,15 @@ fn agent(stage: &StageRun) -> AetherAgentId {
     stage.aether_agent.clone().expect("a running stage's agent")
 }
 
+/// The running `implement` attempt completes its task with `summary`: a
+/// change committed in the run's worktree and the ship record that names it.
+async fn settle_recorded(h: &Harness, summary: &str) -> StageRun {
+    let first = running(h, "implement").await;
+    let outcome = shipped_by(h, &first, summary, serde_json::json!({})).await;
+    h.settle_running(|_| outcome.clone()).await;
+    first
+}
+
 /// Enqueue and run `implement` to its end: its agent is now kept.
 async fn implemented(h: &Harness, title: &str) -> (QueueItem, StageRun) {
     let item = h
@@ -95,9 +102,7 @@ async fn implemented(h: &Harness, title: &str) -> (QueueItem, StageRun) {
         .await
         .expect("enqueue");
     h.dispatch().await;
-    let first = running(h, "implement").await;
-    h.settle_running(|_| completed("added the greeting in src/greet.rs"))
-        .await;
+    let first = settle_recorded(h, "added the greeting in src/greet.rs").await;
     h.dispatch().await;
     (item, first)
 }
@@ -110,16 +115,35 @@ async fn sent_back(h: &Harness) -> StageRun {
     running(h, "implement").await
 }
 
-/// The kept agent ends the turn it was resumed in with `answer`.
-async fn answers(h: &Harness, agent: &AetherAgentId, answer: &str) {
-    h.backend.answer(agent, completed(answer));
-    executor::turn_ended(&h.ctx, agent).await.expect("turn end");
+/// The last message of the agent resumed for `fix`: `summary`, then the ship
+/// record of its fix, read as Aether's answer would be.
+async fn fixed(h: &Harness, fix: &StageRun, summary: &str) -> StageOutcome {
+    let run = h.ctx.store.lock().await.run(&fix.run).expect("run");
+    let record = change(&run.workspace);
+    let outcome = resumed_reply_outcome(&format!("{summary}\n\n```json\n{record}\n```"));
+    assert!(
+        matches!(&outcome, StageOutcome::Completed { structured, .. } if structured.as_ref() == Some(&record)),
+        "{outcome:?}"
+    );
+    outcome
+}
+
+/// The kept agent ends the turn it was resumed in for `fix` with `answer`.
+async fn answers(h: &Harness, fix: &StageRun, answer: &str) {
+    let outcome = fixed(h, fix, answer).await;
+    h.backend.answer(&agent(fix), outcome);
+    let ended = executor::turn_ended(&h.ctx, &agent(fix)).await;
+    ended.expect("turn end");
     h.dispatch().await;
 }
 
+/// The whole loop to its delivery: the parked implementer neither holds the
+/// delivery back nor outlives its run, and what ships is its last fix.
 #[tokio::test]
 async fn the_implementer_is_resumed_through_every_fix_and_reviewers_stay_fresh() {
     let h = Harness::new().await;
+    add_origin(&h);
+    let gh = FakeGh::install(&h);
     let (item, first) = implemented(&h, "add a greeting").await;
     let implementer = agent(&first);
     assert!(h.backend.requests()[0].keep, "created to outlive its task");
@@ -138,7 +162,7 @@ async fn the_implementer_is_resumed_through_every_fix_and_reviewers_stay_fresh()
         let told = h.backend.resumed_with(&fix);
         assert!(told.contains(FINDINGS), "{told}");
         assert!(told.contains(&format!("attempt {attempt}")), "{told}");
-        answers(&h, &implementer, "added tests/greet.rs; cargo test passes").await;
+        answers(&h, &fix, "added tests/greet.rs; cargo test passes").await;
         let fixed = &h.stages(&item.id).await;
         let fixed = fixed.iter().find(|s| s.id == fix.id).expect("the fix");
         assert_eq!(fixed.state, StageState::Completed);
@@ -153,21 +177,43 @@ async fn the_implementer_is_resumed_through_every_fix_and_reviewers_stay_fresh()
 
     h.settle_running(|_| review(true)).await;
     h.dispatch().await;
-    running(&h, "ship").await;
-    h.settle_running(|_| completed("opened the pull request"))
-        .await;
-    h.dispatch().await;
+    let run = h.run(&item.id).await;
+    let head = git(&h.repo, &["rev-parse", &run.branch]);
     let state = h.state(&item.id).await;
-    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+    let QueueState::Succeeded { summary, .. } = &state else {
+        panic!("archond ships with the implementer parked: {state:?}");
+    };
+    let shipped = format!("SHIPPED: https://github.com/o/r/pull/1 (commit {head})");
+    assert!(summary.ends_with(&shipped), "{summary}");
+    assert_eq!(pushed(&origin_of(&h), &run.branch), Some(head));
+    assert_eq!(gh.count("pr create"), 1, "{:?}", gh.calls());
 
     let requests = h.backend.requests();
     let kept: Vec<bool> = requests.iter().map(|r| r.keep).collect();
-    assert_eq!(kept, [true, false, false, false, false], "one implementer");
+    assert_eq!(kept, [true, false, false, false], "one implementer");
     assert_eq!(
         h.backend.cancelled(),
         h.backend.node_ids(),
         "the kept agent ends with its run's node"
     );
+    learned_as_three_attempts(&h, &run).await;
+}
+
+/// What is learned counts the one kept agent's three turns as three attempts
+/// of its stage, each reviewed, in a run that is a win.
+async fn learned_as_three_attempts(h: &Harness, run: &PipelineRun) {
+    let outcome = h.ctx.store.lock().await.outcome(&run.id).unwrap();
+    let outcome = outcome.expect("captured as the run finished");
+    let attempts = |id: &str| {
+        outcome
+            .stages
+            .iter()
+            .find(|s| s.stage == id)
+            .map(|s| s.attempts)
+    };
+    assert_eq!(attempts("implement"), Some(3), "{outcome:?}");
+    assert_eq!(outcome.review_rounds, 3);
+    assert!(outcome.is_win(), "{outcome:?}");
 }
 
 #[tokio::test]
@@ -198,7 +244,8 @@ async fn a_resumed_attempt_settles_on_the_sweep() {
     h.dispatch().await;
     assert_eq!(running(&h, "implement").await.id, fix.id, "still working");
 
-    h.backend.answer(&agent(&first), completed("fixed"));
+    let answer = fixed(&h, &fix, "fixed").await;
+    h.backend.answer(&agent(&first), answer);
     h.dispatch().await;
     running(&h, "review").await;
     let stages = h.stages(&item.id).await;
@@ -357,7 +404,7 @@ async fn the_helpers_of_a_kept_agent_are_stopped_and_it_stays() {
     h.dispatch().await;
     let first = running(&h, "implement").await;
     let helper = h.backend.delegate(&agent(&first), MODEL);
-    h.settle_running(|_| completed("implemented")).await;
+    settle_recorded(&h, "implemented").await;
     let stopped = h.backend.cancelled();
     assert_eq!(stopped, std::slice::from_ref(&helper), "only the helper");
     h.backend.end_delegated(&helper, DescendantState::Stopped);
@@ -388,7 +435,7 @@ async fn a_restart_mid_fix_keeps_the_agent_and_its_answer() {
     assert_eq!(h.backend.requests().len(), spawned, "nothing respawned");
     assert_eq!(h.backend.messages().len(), 1, "the findings went out once");
 
-    answers(&h, &agent(&first), "fixed after the restart").await;
+    answers(&h, &again, "fixed after the restart").await;
     running(&h, "review").await;
     let stages = h.stages(&item.id).await;
     let fixed = stages.iter().find(|s| s.id == again.id).expect("the fix");
@@ -467,7 +514,7 @@ async fn a_steer_into_a_resumed_fix_ends_no_turn_and_keeps_its_answer() {
     assert_eq!(last.0, implementer);
     assert!(last.1.contains(NOTE), "{}", last.1);
 
-    answers(&h, &implementer, "localised the greeting; tests pass").await;
+    answers(&h, &fix, "localised the greeting; tests pass").await;
     let stages = h.stages(&item.id).await;
     let fixed = stages.iter().find(|s| s.id == fix.id).expect("the fix");
     assert_eq!(fixed.state, StageState::Completed);

@@ -362,9 +362,8 @@ impl RunDriver {
         Ok(self.act_on_runs(all))
     }
 
-    /// Record how archond's delivery of the run ended without acting on it:
-    /// resume needs it persisted before a restart. The same outcome twice is
-    /// a no-op; a different one is refused.
+    /// Record how archond's delivery ended, without acting on it, for resume;
+    /// the same outcome again is a no-op, a different one refused.
     pub fn record_ship(&mut self, outcome: ShipOutcome) -> Result<(), ArchonError> {
         if self.spec.ship_record_stage().is_none() {
             return Err(ArchonError::InvalidTransition(format!(
@@ -449,11 +448,17 @@ impl RunDriver {
                 "stage {stage_id:?} has not started, so there is nothing to abort; it can only be skipped"
             )));
         }
+        let records = |id: &str| self.spec.ship_record_stage().is_some_and(|s| s.id == id);
         match &then {
             Then::Retry => {}
             Then::Skip if index + 1 == stages.len() => {
                 return Err(ArchonError::Invalid(format!(
                     "stage {stage_id:?} is the last one, so nothing follows a skip: cancel the item instead"
+                )));
+            }
+            Then::Skip if records(stage_id) => {
+                return Err(ArchonError::Invalid(format!(
+                    "stage {stage_id:?} writes the ship record Archon delivers, so it cannot be skipped: retry it, or cancel the item"
                 )));
             }
             Then::Skip => {}
@@ -959,6 +964,17 @@ impl RunDriver {
         let Some(record_stage) = self.spec.ship_record_stage() else {
             return stop(RunState::Succeeded { summary });
         };
+        // A steer's goto can pass the record stage by: then nothing is proved.
+        if at.record.is_none() {
+            return stop(RunState::Failed {
+                stage_id: SHIP_STEP.to_owned(),
+                error: format!(
+                    "stage `{}`, which writes the ship record, never passed in this run, so \
+                     there is nothing Archon can ship",
+                    record_stage.id
+                ),
+            });
+        }
         match &self.shipped {
             None => Replay::AwaitShip {
                 plan: self.ship_plan(at, record_stage, summary),
@@ -982,7 +998,7 @@ impl RunDriver {
         let (record, review) = at
             .record
             .clone()
-            .expect("every stage passed, so the record stage did");
+            .expect("the caller checked that the record stage passed");
         let stages = &self.spec.file.stages;
         let passed = |stage: &StageSpec| match stage.id == stages[at.stage].id {
             true => Some(summary.as_str()),
@@ -1107,8 +1123,9 @@ impl RunDriver {
         let context =
             sections::context(&self.spec, stage, &at.feedback, &at.previous, &at.approved);
         let keep = self.keeps_agent(&stage.id);
+        let owed = self.spec.owed(stage);
         let resume = (keep && at.attempt > 1 && !at.feedback.trim().is_empty())
-            .then(|| sections::resume_message(stage, at.attempt, &at.feedback));
+            .then(|| sections::resume_message(stage, at.attempt, &at.feedback, owed));
         fans.iter()
             .map(|&fan| {
                 assert!(fan < stage.fan_out, "slot {fan} outside fan_out");
@@ -1121,7 +1138,6 @@ impl RunDriver {
                     prompt.push_str(&format!("\n\n## Your role\n\n{}\n", extra.trim()));
                 }
                 let part = self.team_part(team.as_ref());
-                let owed = self.spec.owed(stage);
                 let workspace = &vars["workspace"];
                 let instructions = contract::instructions(stage, mode, workspace, part, owed);
                 EngineAction::Spawn(SpawnPlan {

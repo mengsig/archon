@@ -86,10 +86,18 @@ async fn a_routine_success_reaches_the_feed_and_does_not_wake_the_orchestrator()
         "{}",
         outcomes[0]
     );
-    let TriggerEvent::ItemFinished { state, pr_url, .. } = finished_news(&h, &item).await else {
+    let news = finished_news(&h, &item).await;
+    let TriggerEvent::ItemFinished {
+        state,
+        pr_url,
+        lesson_hint,
+        ..
+    } = news
+    else {
         unreachable!("finished_news returns item_finished");
     };
     assert_eq!(state, "succeeded");
+    assert_eq!(lesson_hint, None, "an uncorrected success teaches nothing");
     assert_eq!(
         pr_url.as_deref(),
         Some("https://github.com/o/r/pull/1"),
@@ -113,11 +121,18 @@ async fn a_failure_wakes_the_orchestrator() {
     .await;
     assert!(matches!(h.state(&item.id).await, QueueState::Failed { .. }));
     assert_eq!(h.notices(NotificationKind::Outcome).await.len(), 1);
-    finished_news(&h, &item).await;
+    let news = finished_news(&h, &item).await;
     assert!(
         triggers::due(&h.ctx).await.unwrap(),
         "a failure is diagnosed now"
     );
+    let TriggerEvent::ItemFinished { lesson_hint, .. } = news else {
+        unreachable!("finished_news returns item_finished");
+    };
+    let hint = lesson_hint.expect("the turn it wakes is asked what the failure teaches");
+    assert!(hint.contains("record_lesson"), "{hint}");
+    let learned_from = format!("Run of {}: failed; failure: other", item.id);
+    assert!(hint.contains(&learned_from), "{hint}");
 }
 
 #[tokio::test]

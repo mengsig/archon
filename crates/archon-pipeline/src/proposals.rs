@@ -181,6 +181,31 @@ mod tests {
         );
         assert!(accept(dir.path(), "learned-check").is_err());
     }
+    /// A learned pipeline that ships through archond (ARCHITECTURE §8.7)
+    /// passes the same checks as one the operator wrote.
+    #[test]
+    fn a_proposal_shipped_by_archond_is_held_to_the_ship_record_rules() {
+        let shipped = |ship: &str| {
+            let manifest = format!(
+                "[pipeline]\nname='learned-fix'\ndescription='Repeated fixes'\nversion=1\n\
+                 workspace='worktree'\n[pipeline.ship]\nstage='{ship}'\n[[stage]]\n\
+                 id='implement'\nkind='work'\nprompt='implement.md'\ntimeout_minutes=5\n"
+            );
+            BTreeMap::from([
+                ("pipeline.toml".into(), manifest),
+                ("implement.md".into(), "Fix it: {{task.brief}}".into()),
+            ])
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let refused = stage(dir.path(), "learned-fix", &shipped("review")).unwrap_err();
+        assert!(refused.to_string().contains("[pipeline.ship]"), "{refused}");
+        assert!(!dir.path().join("learned-fix.proposed").exists());
+        stage(dir.path(), "learned-fix", &shipped("implement")).unwrap();
+        let accepted = accept(dir.path(), "learned-fix").unwrap();
+        let spec = crate::catalog::load_dir(&accepted, PipelineSource::User).unwrap();
+        let record = spec.ship_record_stage().map(|stage| stage.id.as_str());
+        assert_eq!(record, Some("implement"), "archond ships its result");
+    }
     #[test]
     fn proposal_cannot_escape_its_directory_or_skip_validation() {
         assert!(validate("../escape", &files()).is_err());

@@ -25,9 +25,8 @@ pub struct FinishedItem {
     pub cost_usd: f64,
 }
 
-/// Split `held` into its quiet item outcomes, folded into one event, and the
-/// rest in order. An outcome the item no longer shows (it was retried or
-/// pruned since) is left out.
+/// Split `held` into its quiet outcomes, folded into one event without those
+/// the item no longer shows, and the rest in order.
 pub(super) fn fold(held: Vec<Held>, facts: &Facts) -> (Option<TriggerEvent>, Vec<Held>) {
     let before = held.len();
     let mut outcomes = Vec::new();

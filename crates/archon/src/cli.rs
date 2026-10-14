@@ -494,8 +494,8 @@ pub enum QueueCommand {
         #[arg(long)]
         reason: Option<String>,
     },
-    /// Queue a failed or cancelled item again. Its new run reuses the
-    /// item's worktree and branch unless `--fresh`.
+    /// Queue a finished item again, in its worktree and branch unless `--fresh`;
+    /// a succeeded one delivers into its pull request and corrects the run.
     Retry {
         /// The item's qi_… id, or enough of its start to name one item.
         item: String,

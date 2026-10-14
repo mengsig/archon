@@ -18,10 +18,8 @@ use crate::context::DaemonContext;
 pub(crate) use deliver::prune_finished_ships;
 pub(super) use deliver::{deliver, queue, replay, stalled};
 
-/// `outcome` with the pull request GitHub lists for a ship agent's stage in
-/// place of any URL an agent wrote; a ship agent whose pull request is not
-/// there fails. `daemon_ships` says archond delivers this run itself, so no
-/// stage of it has one to report.
+/// `outcome` with the pull request GitHub lists for a ship agent's stage, or
+/// failed without one; nothing to check when archond ships (`daemon_ships`).
 pub(super) async fn verify(
     ctx: &DaemonContext,
     run: &PipelineRun,

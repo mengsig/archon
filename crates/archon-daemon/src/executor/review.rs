@@ -13,9 +13,8 @@ use crate::context::DaemonContext;
 /// Agents named in a refusal: enough to see what the lead delegated to.
 const MAX_LISTED: usize = 6;
 
-/// `outcome` with Archon's finding on the pass it claims in place of any an
-/// agent wrote; found only for a `stage` that owes `owed` reviewers (0: it holds
-/// no review, or the item asked for none). `Err` while Aether cannot be asked.
+/// `outcome` with Archon's own finding on the review pass it claims, for a
+/// `stage` owing `owed` reviewers (0: none). `Err` while Aether cannot be asked.
 pub(super) async fn verify(
     ctx: &DaemonContext,
     stage: &StageRun,
@@ -66,9 +65,8 @@ async fn reviewers(
     }
 }
 
-/// One direct child of `lead` per model in `models`, each a different agent
-/// that completed on it: the latest first, as Aether's agent ids sort by
-/// creation and a review is the last thing a lead delegates.
+/// A distinct direct child of `lead` that completed on each of `models`,
+/// newest first: Aether's ids sort by creation, and a review comes last.
 fn pick_reviewers(
     lead: &AetherAgentId,
     beneath: &[Descendant],

@@ -496,8 +496,9 @@ pub(super) async fn filled_plan(
     let store = ctx.store.lock().await;
     store.configure_learning(&ctx.config.learning)?;
     let repo = env.repo.as_ref().map(|repo| &repo.id);
-    // What the item would run with nothing learned: savings are measured against it.
-    let baseline = knobs::fill_static_stages(base, spec, plan.clone(), fallback.as_ref())?;
+    // What an enqueue naming no model runs with nothing learned: savings are measured against it.
+    let unnamed = ModelPlan::default();
+    let baseline = knobs::fill_static_stages(base, spec, unnamed, fallback.as_ref())?;
     store.record_static_plan(repo, spec.name(), &baseline)?;
     let learned = learned::plan_for_item(&store, id, repo, spec, &policy, &plan)?;
     let mut plan = plan;
@@ -505,7 +506,7 @@ pub(super) async fn filled_plan(
     // A known diff size is routed on its own evidence: pooled evidence must not refill it.
     match learned::item_size(&store, id)? {
         Some(_) => knobs::fill_static_stages(base, spec, plan, fallback.as_ref()),
-        None => knobs::fill_plan(&store, repo, base, spec, plan, fallback.as_ref()),
+        None => knobs::fill_plan(&store, repo, (base, spec), plan, &policy, fallback.as_ref()),
     }
 }
 

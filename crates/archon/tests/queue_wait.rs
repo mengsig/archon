@@ -54,6 +54,95 @@ fn wait(
     wait_with_reason(states, transition, stall, None)
 }
 
+fn snapshot(row: QueueItem, waiting_reason: Option<archon_core::protocol::WaitingReason>) -> Reply {
+    Reply::ItemDetail(Box::new(ItemDetail {
+        steers: Vec::new(),
+        item: row,
+        runs: vec![],
+        stages: vec![],
+        spent_usd: 0.0,
+        gates: vec![],
+        delegations: Default::default(),
+        waiting_on: None,
+        waiting_reason,
+    }))
+}
+
+/// The feed event that wakes a waiter to read its items again.
+fn completion_feed() -> ServerFrame {
+    ServerFrame::Feed {
+        sub: 1,
+        item: FeedItem {
+            id: FeedItemId::new(),
+            seq: 1,
+            at: archon_core::now(),
+            entry: FeedEntry::System {
+                text: "completion".into(),
+            },
+        },
+    }
+}
+
+/// A daemon answering one `queue wait`: `transition` makes the first snapshot
+/// queued and the feed wake it, `stall` holds every snapshot past the deadline.
+fn serve(
+    listener: UnixListener,
+    rows: Vec<QueueItem>,
+    transition: bool,
+    stall: bool,
+    waiting_reason: Option<archon_core::protocol::WaitingReason>,
+) {
+    let (stream, _) = listener.accept().unwrap();
+    let mut writer = stream.try_clone().unwrap();
+    let mut subscribed = false;
+    let mut gets = 0;
+    for line in BufReader::new(stream).lines() {
+        let Ok(line) = line else { break };
+        let frame: ClientFrame = serde_json::from_str(&line).unwrap();
+        let reply = match frame.request {
+            Request::Hello { .. } => Reply::Welcome(Welcome {
+                protocol_version: PROTOCOL_VERSION,
+                daemon_version: "fixture".into(),
+                pid: std::process::id(),
+            }),
+            Request::SubscribeFeed { .. } => {
+                subscribed = true;
+                Reply::Subscribed { id: 1, last_seq: 0 }
+            }
+            Request::GetItem { item: id } => {
+                assert!(subscribed, "subscribe before the first snapshot");
+                assert!(
+                    waiting_reason.is_none() || gets == 0,
+                    "a failed dependency stops before requesting other items"
+                );
+                if stall {
+                    std::thread::sleep(Duration::from_secs(4));
+                }
+                let mut row = rows.iter().find(|row| row.id == id).unwrap().clone();
+                if transition && gets == 0 {
+                    row.state = QueueState::Queued;
+                }
+                gets += 1;
+                snapshot(row, waiting_reason.clone())
+            }
+            other => panic!("unexpected request {other:?}"),
+        };
+        let response = ServerFrame::Reply {
+            id: frame.id,
+            result: Ok(reply),
+        };
+        if writeln!(writer, "{}", serde_json::to_string(&response).unwrap()).is_err() {
+            break;
+        }
+        if transition && gets == 1 {
+            let feed = completion_feed();
+            if writeln!(writer, "{}", serde_json::to_string(&feed).unwrap()).is_err() {
+                break;
+            }
+        }
+    }
+}
+
 fn wait_with_reason(
     states: Vec<QueueState>,
     transition: bool,
@@ -66,77 +155,8 @@ fn wait_with_reason(
     args.extend(rows.iter().map(|row| row.id.to_string()));
     args.extend(["--timeout", "1s", "--json"].map(str::to_owned));
     let listener = UnixListener::bind(env.path("archond.sock")).unwrap();
-    let server = std::thread::spawn(move || {
-        let (stream, _) = listener.accept().unwrap();
-        let mut writer = stream.try_clone().unwrap();
-        let mut subscribed = false;
-        let mut gets = 0;
-        for line in BufReader::new(stream).lines() {
-            let Ok(line) = line else { break };
-            let frame: ClientFrame = serde_json::from_str(&line).unwrap();
-            let reply = match frame.request {
-                Request::Hello { .. } => Reply::Welcome(Welcome {
-                    protocol_version: PROTOCOL_VERSION,
-                    daemon_version: "fixture".into(),
-                    pid: std::process::id(),
-                }),
-                Request::SubscribeFeed { .. } => {
-                    subscribed = true;
-                    Reply::Subscribed { id: 1, last_seq: 0 }
-                }
-                Request::GetItem { item: id } => {
-                    assert!(subscribed, "subscribe before the first snapshot");
-                    assert!(
-                        waiting_reason.is_none() || gets == 0,
-                        "a failed dependency stops before requesting other items"
-                    );
-                    if stall {
-                        std::thread::sleep(Duration::from_secs(4));
-                    }
-                    let mut row = rows.iter().find(|row| row.id == id).unwrap().clone();
-                    if transition && gets == 0 {
-                        row.state = QueueState::Queued;
-                    }
-                    gets += 1;
-                    Reply::ItemDetail(Box::new(ItemDetail {
-                        steers: Vec::new(),
-                        item: row,
-                        runs: vec![],
-                        stages: vec![],
-                        spent_usd: 0.0,
-                        gates: vec![],
-                        delegations: Default::default(),
-                        waiting_on: None,
-                        waiting_reason: waiting_reason.clone(),
-                    }))
-                }
-                other => panic!("unexpected request {other:?}"),
-            };
-            let response = ServerFrame::Reply {
-                id: frame.id,
-                result: Ok(reply),
-            };
-            if writeln!(writer, "{}", serde_json::to_string(&response).unwrap()).is_err() {
-                break;
-            }
-            if transition && gets == 1 {
-                let feed = ServerFrame::Feed {
-                    sub: 1,
-                    item: FeedItem {
-                        id: FeedItemId::new(),
-                        seq: 1,
-                        at: archon_core::now(),
-                        entry: FeedEntry::System {
-                            text: "completion".into(),
-                        },
-                    },
-                };
-                if writeln!(writer, "{}", serde_json::to_string(&feed).unwrap()).is_err() {
-                    break;
-                }
-            }
-        }
-    });
+    let server =
+        std::thread::spawn(move || serve(listener, rows, transition, stall, waiting_reason));
     let started = Instant::now();
     let out = env
         .command(&args.iter().map(String::as_str).collect::<Vec<_>>())

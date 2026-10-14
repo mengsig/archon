@@ -257,8 +257,9 @@ async fn told_after_settlement(
             at: archon_core::now(),
         })
         .unwrap();
-    triggers::flush_quiet(&h.ctx).await.unwrap();
-    // No Aether is connected, so the keyed batch stays in flight to be read.
+    // No Aether is connected, so the flush keys a batch that stays in flight to be read.
+    let ctx = h.ctx.clone();
+    let flush = tokio::spawn(async move { triggers::flush_quiet(&ctx).await });
     let delivery = tokio::spawn(triggers::deliver_loop(h.ctx.clone()));
     let told = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
@@ -275,6 +276,7 @@ async fn told_after_settlement(
     .await
     .expect("the batch is keyed");
     delivery.abort();
+    flush.abort();
     told
 }
 

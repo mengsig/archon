@@ -6,6 +6,7 @@
 
 mod compact;
 mod directives;
+mod flush;
 mod routine;
 mod summary;
 
@@ -27,6 +28,7 @@ pub use self::compact::MAX_PENDING;
 use self::compact::{Facts, Held};
 pub use self::directives::DirectiveChanges;
 use self::directives::DirectiveNews;
+pub use self::flush::flush_quiet;
 pub use self::routine::{FinishedItem, MAX_LISTED};
 use crate::context::DaemonContext;
 use crate::{feed, supervisor};
@@ -343,6 +345,18 @@ pub struct TriggerQueue {
     news: Notify,
     /// Cuts the coalescing window short: a turn is starting right now.
     urgent: Notify,
+    /// Batches delivered, or keyed with nothing left to tell, since start;
+    /// changed under the store lock, so [`flush_quiet`] can wait on it.
+    settled: watch::Sender<u64>,
+}
+
+impl TriggerQueue {
+    /// Count one more batch settled; the caller holds the store lock.
+    fn settle_one(&self) {
+        let before = *self.settled.borrow();
+        self.settled.send_modify(|count| *count += 1);
+        assert_eq!(*self.settled.borrow(), before + 1, "one batch at a time");
+    }
 }
 
 /// Save `event` for the orchestrator, then wake delivery. Once this returns
@@ -544,23 +558,6 @@ async fn wait_for_news(ctx: &DaemonContext, coalesce: Duration) -> Result<(), Ar
     }
 }
 
-/// The orchestrator is starting a turn (an operator message): send the quiet
-/// news now, so it reads it in that turn instead of being woken for it.
-pub async fn flush_quiet(ctx: &DaemonContext) -> Result<(), ArchonError> {
-    {
-        let mut store = ctx.store.lock().await;
-        let mut outbox = read_outbox(&store)?;
-        if outbox.pending.is_empty() || outbox.flush {
-            return Ok(());
-        }
-        outbox.flush = true;
-        write_outbox(&mut store, &outbox)?;
-    }
-    ctx.triggers.urgent.notify_waiters();
-    ctx.triggers.news.notify_one();
-    Ok(())
-}
-
 /// Move every pending event into one keyed batch, compacted when it is
 /// due; a no-op while only quiet news waits. A batch already keyed is never
 /// touched.
@@ -582,7 +579,9 @@ async fn key_pending(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let events = batch_events(&mut store, held, collapse)?;
     if events.is_empty() {
         // Every outcome held was superseded since: nothing is left to tell.
-        return write_outbox(&mut store, &outbox);
+        write_outbox(&mut store, &outbox)?;
+        ctx.triggers.settle_one();
+        return Ok(());
     }
     let key = batch_key(&mut store, &store_id, events.len())?;
     let directives = directives::for_batch(&mut store, generation, archon_core::now())?;
@@ -680,7 +679,9 @@ async fn forget_delivered(ctx: &DaemonContext, key: &str) -> Result<(), ArchonEr
         delivered.is_some_and(|batch| batch.key == key),
         "only the batch in flight is delivered"
     );
-    write_outbox(&mut store, &outbox)
+    write_outbox(&mut store, &outbox)?;
+    ctx.triggers.settle_one();
+    Ok(())
 }
 
 fn read_outbox(store: &Store) -> Result<Outbox, ArchonError> {

@@ -638,13 +638,46 @@ async fn a_flush_delivers_quiet_news_at_once_and_only_when_there_is_some() {
     );
 
     triggers::flush_quiet(&harness.ctx).await.unwrap();
-    let sent = harness.fake.wait_for("trigger", 1, WAIT).await;
+    let sent = harness.fake.received_named("trigger");
+    assert_eq!(
+        sent.len(),
+        1,
+        "Aether has the news when the flush returns, before any operator message"
+    );
     delivery.abort();
     assert_eq!(
         types(&sent[0]),
         ["items_finished"],
         "sent without the minute-long coalesce window"
     );
+}
+
+/// A flush waits behind the batch already in flight, then for its own.
+#[tokio::test]
+async fn a_flush_returns_once_the_batch_in_flight_and_the_held_news_are_delivered() {
+    let mut config = Config::default();
+    config.orchestrator.trigger_coalesce_ms = 60_000;
+    let harness = Harness::with(config, None).await;
+    harness.connect().await;
+    let delivery = delivering(&harness).await;
+    triggers::push(&harness.ctx, blocked("needs a decision"))
+        .await
+        .unwrap();
+    let item = cancelled_item(&harness.ctx, harness.dir.path()).await;
+    triggers::push_quiet(&harness.ctx, routine(&item))
+        .await
+        .unwrap();
+    triggers::push(&harness.ctx, violation("cancelled"))
+        .await
+        .unwrap();
+
+    triggers::flush_quiet(&harness.ctx).await.unwrap();
+    let sent = harness.fake.received_named("trigger");
+    delivery.abort();
+    let told: Vec<&str> = sent.iter().flat_map(|trigger| types(trigger)).collect();
+    assert!(told.contains(&"items_finished"), "{told:?}");
+    assert!(told.contains(&"policy_violation"), "{told:?}");
+    assert_eq!(triggers::held_news(&harness.ctx).await.unwrap(), 0);
 }
 
 /// News the operator waits on, or must act on, goes out at once; other

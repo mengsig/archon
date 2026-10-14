@@ -145,11 +145,23 @@ pub struct ModelSegment {
     pub cost_before_usd: f64,
 }
 
+/// The key under a result's `review` where Archon, and only Archon, writes
+/// why it refused the review pass the result claims.
+pub const REVIEW_REFUSED_KEY: &str = "unverified";
+
 impl StageRun {
     pub fn current_choice(&self) -> &ModelChoice {
         self.model_segments
             .last()
             .map_or(&self.choice, |s| &s.choice)
+    }
+
+    /// Whether Archon refused the review pass this stage's result claims.
+    pub fn review_refused(&self) -> bool {
+        let review = self.structured.as_ref().and_then(|s| s.get("review"));
+        let why = review.and_then(|review| review.get(REVIEW_REFUSED_KEY));
+        why.and_then(serde_json::Value::as_str)
+            .is_some_and(|why| !why.trim().is_empty())
     }
 }
 
@@ -482,6 +494,18 @@ mod tests {
             "only completed stages count"
         );
         assert_eq!(pr_url([].iter()), None);
+    }
+
+    #[test]
+    fn a_review_is_refused_only_with_archons_reason_on_record() {
+        let review = |review: serde_json::Value| Some(serde_json::json!({"review": review}));
+        let refused = review(serde_json::json!({"verdict": "pass", REVIEW_REFUSED_KEY: "why"}));
+        assert!(stage(StageState::Completed, refused).review_refused());
+        let checked = review(serde_json::json!({"verdict": "pass", "reviewer_agents": ["agt_r"]}));
+        assert!(!stage(StageState::Completed, checked).review_refused());
+        let blank = review(serde_json::json!({REVIEW_REFUSED_KEY: "  "}));
+        assert!(!stage(StageState::Completed, blank).review_refused());
+        assert!(!stage(StageState::Completed, None).review_refused());
     }
 
     #[test]

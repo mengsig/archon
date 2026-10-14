@@ -553,6 +553,37 @@ async fn a_review_of_another_tree_than_the_ship_record_fails_the_item() {
     assert_eq!(pushed(&origin_of(&h), &run.branch), None);
 }
 
+/// A pass Archon refused is the lead's failure: learning does not count its
+/// stage as a pass for the lead's model.
+#[tokio::test]
+async fn a_refused_review_is_no_pass_for_the_leads_model() {
+    let (h, gh) = delivering().await;
+    let item = enqueue(&h, "adaptive", asking(ReviewLevel::Standard))
+        .await
+        .unwrap();
+    h.dispatch().await;
+    let (lead, _) = settle_reviewed_by(&h, 0, 1).await;
+    let error = failed(&h, &item).await;
+    assert!(error.contains("the lead delegated to no agent"), "{error}");
+    assert!(gh.calls().is_empty(), "nothing is delivered");
+
+    let run = h.run(&item.id).await;
+    let outcome = h.ctx.store.lock().await.outcome(&run.id).unwrap();
+    let outcome = outcome.expect("the finished run is learnt from");
+    let observed: Vec<_> = outcome
+        .stages
+        .iter()
+        .filter(|stage| stage.stage == lead.stage_id)
+        .collect();
+    assert_eq!(observed.len(), 1, "{:?}", outcome.stages);
+    assert_eq!(observed[0].choice, lead.choice);
+    assert_eq!(
+        observed[0].passed,
+        Some(false),
+        "a refused review is no pass"
+    );
+}
+
 /// `direct` holds its review too: asked for one, its agent may delegate, is
 /// told to, and Archon checks the reviewer like any lead's.
 #[tokio::test]

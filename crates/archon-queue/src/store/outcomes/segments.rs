@@ -73,7 +73,8 @@ pub(super) fn observations(
     let passed = match stage.state {
         _ if stage.infrastructure_failure => None,
         archon_core::run::StageState::Cancelled | archon_core::run::StageState::TimedOut => None,
-        archon_core::run::StageState::Completed => Some(true),
+        // A pass whose review Archon refused failed the stage's own gate.
+        archon_core::run::StageState::Completed => Some(!stage.review_refused()),
         _ => Some(false),
     };
     values.push(observation(

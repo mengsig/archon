@@ -14,7 +14,7 @@ pub const MAX_NAMED_REVIEWERS: usize = 12;
 /// `review` keys only Archon writes: the reviewers it found, or why it found too few.
 const REVIEWER_AGENTS: &str = "reviewer_agents";
 const REVIEWER_MODELS: &str = "reviewer_models";
-const UNVERIFIED: &str = "unverified";
+const UNVERIFIED: &str = archon_core::run::REVIEW_REFUSED_KEY;
 /// What Archon wrote for the one reviewer before a review could need several,
 /// beside the model its lead named.
 const LEGACY_REVIEWER_AGENT: &str = "reviewer_agent";

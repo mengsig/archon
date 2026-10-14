@@ -2014,7 +2014,7 @@ record's `tree`, the tree delivery later checks: what ships is what was read.
 The counted agents and the models Aether ran them on are stored as
 `review.reviewer_agents` and `review.reviewer_models`; otherwise `archond`
 stores `review.unverified` with the reason, and the engine fails the run
-at that stage with it. These keys, and the `reviewer_model(s)` and
+at that stage with it; learning counts such a stage as no pass. These keys, and the `reviewer_model(s)` and
 `reviewer_agent` a 1.0 record held, are Archon's: whatever an agent wrote
 under them is removed before the result is stored, so a lead cannot supply
 its own finding. Records stored by 1.0 still read as they were. While

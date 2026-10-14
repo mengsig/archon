@@ -953,7 +953,7 @@ back to the built-in.
 
 | Name | Stages | Nudges |
 | --- | --- | --- |
-| `direct` | implement | fast tier; review level `none` unless the item asks. One agent implements, runs the affected tests, commits and returns the ship record. The cheapest path for a small, low-risk change; the agent escalates work that is not. |
+| `direct` | implement | fast tier; review level `none` unless the item asks. One agent implements, runs the affected tests, commits and returns the ship record. The cheapest path for a change one author can make and check, whatever its size; the agent escalates risky work. |
 | `adaptive` | build (work, delegation enabled, holds the review) | balanced tier; review level `standard` unless the item asks. One lead chooses workers at runtime and has the integrated change reviewed by as many independent reviewers as the item's review level asks for. |
 | `quick-pr` | implement | fast tier. For small, low-risk changes. The implement stage escalates risky work. |
 | `default-pr-review` | implement → review (1, `all_pass`, back to implement ×2) | balanced tier, independent reviewer |
@@ -979,8 +979,9 @@ your own. Each pipeline directory stays self-contained.
 
 ### `direct`
 
-Use `direct` for a small change with low risk: a typo, a rename, a
-one-function fix, a configuration value. One agent does all of it. It
+Use `direct` for any change one author can make and check, whatever its
+size: a fix, docs, a feature in familiar code, a mechanical sweep. One
+agent does all of it. It
 implements the change, runs the tests the change affects, commits, and
 returns the ship record; archond ships. There is no other stage, and the
 stage contract and prompt are the shortest of any pipeline that ships.
@@ -993,19 +994,18 @@ independent reviewers of its committed change, and Archon verifies them
 (see "A declared review"). Under an operator ceiling of `standard` or
 `strict`, every `direct` item is reviewed at least at that level.
 
-The agent does not stretch the pipeline. A task that turns out large or
-risky (security, concurrency, a data migration, a public API break, more
-than a few hundred lines) fails with `ESCALATE:` and what it needs instead,
-before anything is committed.
+The agent does not stretch the pipeline. A task that turns out risky
+(security, concurrency, a data migration, a public API break) or reaches
+beyond the task into code it depends on fails with `ESCALATE:` and what it
+needs instead, before anything is committed. Size alone is no risk.
 
 ### `adaptive`
 
 Use `adaptive` for a repository change where one lead that keeps its
 context through fixes, or integrates parts that split, saves restarts. A
-small low-risk change is cheaper in `direct`, and a bounded change by
-one author with one review in `default-pr-review`. The lead sizes,
-implements, integrates, verifies and fixes the change. Its prompt has it
-spend where spending pays:
+change one author can make and check is cheaper in `direct`, with the
+review level its risk calls for. The lead sizes, implements, integrates,
+verifies and fixes the change. Its prompt has it spend where spending pays:
 
 - **Workers.** A leaf child in an isolated workspace gets an independent
   deliverable with its own paths, and only when running it in parallel

@@ -2066,7 +2066,7 @@ literal `{{`.
 
 | Name | Stages | Nudges |
 | --- | --- | --- |
-| `direct` | implement (work, holds the review) | tier = fast. One agent implements a small, low-risk change, runs the affected checks, commits and returns the ship record; the cheapest path to a shipped change. Review level `none` unless the item asks (§8.2); the agent escalates what turns out large or risky. |
+| `direct` | implement (work, holds the review) | tier = fast. One agent implements a change one author can make and check, whatever its size, runs the affected checks, commits and returns the ship record; the cheapest path to a shipped change. Review level `none` unless the item asks (§8.2); the agent escalates what turns out risky. |
 | `adaptive` | build (work, `allow_delegation`, holds the review) | tier = balanced, independent_reviewers. For a change where one lead that keeps its context through fixes, or integrates independent parts, saves restarts: it sizes the work, delegates the parts worth splitting, integrates them and has the integrated diff reviewed by as many reviewers as the item's review level asks. Review level `standard` unless the item asks (§8.2). |
 | `quick-pr` | implement | tier = fast |
 | `default-pr-review` | implement → review (1, all_pass, goto implement ×2) | tier = balanced |

@@ -70,12 +70,12 @@ item, but nothing needs it.
 
 Every change to a repository is an item, so the pipeline's
 gates, your ship mode, caps and autonomy ceiling apply. The orchestrator
-picks the cheapest pipeline that fits: `direct` for a small, low-risk
-change, where one agent does all of it, `default-pr-review` for bounded
-work that needs one independent review, `adaptive` where one lead that
-keeps its context through fixes or integrates independent parts saves
-restarts, and a heavier one only when the work clearly calls for it. How
-much review an item gets is a choice of its own, not the pipeline's: see
+picks the cheapest pipeline that fits: `direct` for any change one author
+can make and check, whatever its size, where one agent does all of it,
+`adaptive` where one lead that keeps its context through fixes or
+integrates independent parts saves restarts, and a heavier one only when
+the work clearly calls for it. How much review an item gets is a choice of
+its own, set by risk rather than size: see
 [Autonomy levels](#autonomy-levels). The orchestrator adds no review on top
 of a pipeline, and when work was split into parts it has the integrated
 result reviewed once, with a depth that follows the risk.
@@ -271,7 +271,7 @@ per stage. Add your own under `~/.config/archon/pipelines/` or
 
 | Pipeline | Stages | Leans toward |
 | --- | --- | --- |
-| `direct` | implement | fast models; the cheapest path for a small, low-risk change. One agent implements it, runs the affected checks and commits, and Archon ships. No review unless the item's `review` knob asks for one; the agent hands back work that turns out large or risky. See [`docs/PIPELINES.md`](PIPELINES.md#direct) |
+| `direct` | implement | fast models; the cheapest path for a change one author can make and check, whatever its size. One agent implements it, runs the affected checks and commits, and Archon ships. No review unless the item's `review` knob asks for one; the agent hands back work that turns out risky. See [`docs/PIPELINES.md`](PIPELINES.md#direct) |
 | `adaptive` | build (delegation enabled, holds the review) | balanced models; the orchestrator's choice where one lead that keeps its context through fixes, or integrates independent parts, saves restarts. One lead builds it, delegates the parts worth splitting and has the integrated diff reviewed by as many independent reviewers as the item's `review` knob asks for (one by default); Archon ships only a build with those reviewers verified. Chosen by name or as a repository's `default_pipeline`; see [`docs/PIPELINES.md`](PIPELINES.md#adaptive) |
 | `quick-pr` | implement | fast models |
 | `default-pr-review` | implement → review (gate, fix loop) | balanced models |

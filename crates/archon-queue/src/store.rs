@@ -15,6 +15,7 @@ mod delegated;
 mod directives;
 mod feed;
 mod gates;
+mod handoffs;
 pub mod initiatives;
 mod items;
 mod lessons;
@@ -76,6 +77,22 @@ pub struct SpendRow {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub at: Timestamp,
+}
+
+/// What a kept agent and every agent beneath it had been charged when it
+/// passed to `attempt` of its slot: where that attempt's cost starts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentHandoff {
+    pub attempt: u32,
+    /// Each agent of the subtree the ledger had charged by then.
+    pub spent: std::collections::BTreeMap<AetherAgentId, f64>,
+}
+
+impl AgentHandoff {
+    /// What `agent` had been charged by the hand-off; 0 if nothing.
+    pub fn spent_by(&self, agent: &AetherAgentId) -> f64 {
+        self.spent.get(agent).copied().unwrap_or(0.0)
+    }
 }
 
 /// What [`Store::finish_run`] committed: the settled item, and the feed
@@ -511,6 +528,14 @@ impl Store {
         estimates: bool,
     ) -> Result<f64, ArchonError> {
         spend::for_agent(&self.conn, agent, estimates)
+    }
+    /// Every time the kept agent `agent` passed to a later attempt, by attempt.
+    pub fn agent_handoffs(
+        &self,
+        agent: &AetherAgentId,
+        estimates: bool,
+    ) -> Result<Vec<AgentHandoff>, ArchonError> {
+        handoffs::of_agent(&self.conn, agent, estimates)
     }
     /// `parent` delegated to `agent`, on `model`; `effort` once it is known.
     pub fn record_delegated(

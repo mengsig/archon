@@ -4,6 +4,7 @@
 
 use std::collections::BTreeSet;
 
+use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::protocol::{
     Reply, StageDelegation, StageDetail, StageQuery, StageRunView, TextPage,
@@ -130,8 +131,8 @@ fn pick(
     Ok(picked)
 }
 
-/// Set `stage`'s cost to what the ledger charged its agent and every agent beneath
-/// it; the split, when it delegated. No agent is beneath two stages' agents.
+/// Set `stage`'s cost to what the ledger charged its agent and every agent beneath it
+/// during this attempt, from hand-off to hand-off of a kept agent; the split, when it delegated.
 pub(super) fn charge(
     store: &Store,
     stage: &mut StageRun,
@@ -140,18 +141,33 @@ pub(super) fn charge(
     let Some(agent) = &stage.aether_agent else {
         return Ok(None);
     };
-    let direct_usd = store.spend_for_agent(agent, estimates)?;
-    let agents = store.delegated_beneath(agent, estimates)?;
+    let handoffs = store.agent_handoffs(agent, estimates)?;
+    let from = handoffs.iter().find(|h| h.attempt == stage.attempt);
+    let until = handoffs.iter().find(|h| h.attempt > stage.attempt);
+    let span = |agent: &AetherAgentId, now: f64| {
+        let start = from.map_or(0.0, |h| h.spent_by(agent));
+        let end = until.map_or(now, |h| h.spent_by(agent));
+        // A provider's settled total may land below an interim charge.
+        (end - start).max(0.0)
+    };
+    let direct_usd = span(agent, store.spend_for_agent(agent, estimates)?);
+    let mut agents = store.delegated_beneath(agent, estimates)?;
     assert!(
         agents.iter().all(|delegated| delegated.agent != *agent),
         "a stage agent is not beneath itself"
     );
+    agents.retain_mut(|delegated| {
+        let earlier = from.is_some_and(|h| h.spent.contains_key(&delegated.agent));
+        delegated.cost_usd = span(&delegated.agent, delegated.cost_usd);
+        delegated.cost_usd > 0.0 || (until.is_none() && !earlier)
+    });
     if agents.is_empty() {
         stage.cost_usd = direct_usd;
         return Ok(None);
     }
     let delegation = StageDelegation::of(direct_usd, agents);
     stage.cost_usd = delegation.total_usd();
+    debug_assert!(stage.cost_usd.is_finite() && stage.cost_usd >= 0.0);
     Ok(Some(delegation))
 }
 
@@ -198,4 +214,159 @@ fn output_text(stage: &StageRun) -> String {
 fn joined<T: ToString>(values: impl IntoIterator<Item = T>) -> String {
     let values: Vec<String> = values.into_iter().map(|v| v.to_string()).collect();
     values.join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
+    use archon_core::queue::QueueState;
+    use archon_core::run::RunState;
+    use archon_queue::store::SpendRow;
+
+    use super::*;
+
+    fn agent(name: &str) -> AetherAgentId {
+        AetherAgentId::parse(name).unwrap()
+    }
+
+    /// An item with a live run, in a fresh store.
+    fn running_item() -> (Store, QueueItem, PipelineRun) {
+        let mut store = Store::open_in_memory().unwrap();
+        let now = archon_core::now();
+        let item = QueueItem {
+            id: QueueItemId::new(),
+            repo: None,
+            pipeline: "ask".into(),
+            title: "repaired".into(),
+            brief: "brief".into(),
+            priority: Default::default(),
+            dependencies: vec![],
+            tags: vec![],
+            model_plan: Default::default(),
+            model_reasons: None,
+            budget_usd: None,
+            autonomy: Default::default(),
+            origin: None,
+            fresh_retries: 0,
+            initiative: None,
+            state: QueueState::Queued,
+            created_at: now,
+            updated_at: now,
+        };
+        let item = store.insert_item(&item, None).unwrap();
+        store
+            .transition_item(&item.id, QueueState::Dispatching, now)
+            .unwrap();
+        let run = PipelineRun {
+            id: PipelineRunId::new(),
+            item: item.id.clone(),
+            pipeline: item.pipeline.clone(),
+            shipped: false,
+            aether_run: None,
+            workspace: "/wt/x".into(),
+            team_root: None,
+            branch: "archon/x".into(),
+            state: RunState::Running {
+                stage_id: "implement".into(),
+                attempt: 1,
+            },
+            cost_usd: 0.0,
+            started_at: now,
+            finished_at: None,
+        };
+        store.insert_run(&run).unwrap();
+        let running = QueueState::Running {
+            run: run.id.clone(),
+        };
+        let item = store.transition_item(&item.id, running, now).unwrap();
+        (store, item, run)
+    }
+
+    fn attempt(run: &PipelineRun, attempt: u32, agent: &AetherAgentId) -> StageRun {
+        StageRun {
+            id: StageRunId::new(),
+            run: run.id.clone(),
+            stage_id: "implement".into(),
+            attempt,
+            fan_index: 0,
+            choice: archon_core::model::ModelChoice {
+                model: "claude-code/opus".parse().unwrap(),
+                effort: archon_core::model::Effort::High,
+            },
+            model_segments: Vec::new(),
+            infrastructure_failure: false,
+            aether_agent: Some(agent.clone()),
+            aether_task: None,
+            state: StageState::Running,
+            verdict: None,
+            summary: None,
+            structured: None,
+            cost_usd: 0.0,
+            started_at: archon_core::now(),
+            finished_at: None,
+        }
+    }
+
+    fn spent(store: &mut Store, item: &QueueItem, agent: &AetherAgentId, total: f64) {
+        store
+            .record_spend(&SpendRow {
+                agent: agent.clone(),
+                item: Some(item.id.clone()),
+                cost_usd: total,
+                cost_basis: archon_core::cost::CostBasis::ProviderReported,
+                cost_complete: None,
+                estimated_cost_usd: 0.0,
+                input_tokens: 1,
+                output_tokens: 1,
+                at: archon_core::now(),
+            })
+            .unwrap();
+    }
+
+    /// A kept agent resumed for a repair attempt: each attempt is charged what
+    /// was spent during it, so the attempts add up to what the agents cost.
+    #[test]
+    fn attempts_sharing_a_kept_agent_are_charged_once_between_them() {
+        let (mut store, item, run) = running_item();
+        let (lead, early, late) = (agent("agt_lead"), agent("agt_early"), agent("agt_late"));
+        let model = "claude-code/opus".parse().unwrap();
+        let mut first = attempt(&run, 1, &lead);
+        first.aether_task = Some("tsk_first".to_owned().try_into().unwrap());
+        store.upsert_stage_run(&first).unwrap();
+        store.record_delegated(&early, &lead, &model, None).unwrap();
+        spent(&mut store, &item, &lead, 1.0);
+        spent(&mut store, &item, &early, 0.5);
+        first.state = StageState::Failed {
+            error: "review failed".into(),
+        };
+        first.finished_at = Some(archon_core::now());
+        store.upsert_stage_run(&first).unwrap();
+
+        let mut second = attempt(&run, 2, &lead);
+        store.upsert_stage_run(&second).unwrap();
+        store.record_delegated(&late, &lead, &model, None).unwrap();
+        spent(&mut store, &item, &lead, 3.0);
+        spent(&mut store, &item, &early, 0.75);
+        spent(&mut store, &item, &late, 0.25);
+
+        let split = charge(&store, &mut first, false).unwrap().unwrap();
+        assert_eq!((first.cost_usd, split.direct_usd), (1.5, 1.0));
+        let named: Vec<_> = split
+            .agents
+            .iter()
+            .map(|a| (&a.agent, a.cost_usd))
+            .collect();
+        assert_eq!(named, [(&early, 0.5)], "the late agent is the repair's");
+        let split = charge(&store, &mut second, false).unwrap().unwrap();
+        assert_eq!((second.cost_usd, split.direct_usd), (2.5, 2.0));
+        let named: Vec<_> = split
+            .agents
+            .iter()
+            .map(|a| (&a.agent, a.cost_usd))
+            .collect();
+        assert_eq!(named, [(&early, 0.25), (&late, 0.25)]);
+        let item_total = store.spend_for_item(&item.id, false).unwrap();
+        assert_eq!(item_total, 4.0);
+        assert_eq!(first.cost_usd + second.cost_usd, item_total);
+    }
 }

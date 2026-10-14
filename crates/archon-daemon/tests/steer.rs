@@ -561,7 +561,10 @@ async fn a_stage_that_has_not_started_is_removed_and_a_started_one_is_not() {
         .await
         .expect("removed");
     let what = &detail(&h, &item.id).await.steers[0].what;
-    assert_eq!(what, "removed stage `review`");
+    assert_eq!(
+        what,
+        "removed stage `review`; lowered the review level from standard to none"
+    );
     assert_eq!(run_out(&h, &item.id).await, ["implement", "ship"]);
     assert!(matches!(
         h.state(&item.id).await,
@@ -662,6 +665,36 @@ async fn the_pipeline_is_switched_for_the_stages_not_started() {
     assert!(
         nothing.contains("nothing left to run after stage \"ship\""),
         "{nothing}"
+    );
+}
+
+#[tokio::test]
+async fn a_steer_that_moves_the_review_level_says_so() {
+    let h = harness().await;
+    let item = h.enqueue("reviewed after all").await;
+    steer(&h, &item.id, switch("steer-quick"))
+        .await
+        .expect("switched");
+    let review = Steer {
+        insert_stage: Some(InsertStage {
+            stage: "review".into(),
+            from: Some(PIPELINE.into()),
+            after: Some("implement".into()),
+        }),
+        ..Steer::default()
+    };
+    let steered = steer(&h, &item.id, review).await.expect("inserted");
+    assert_eq!(steered.autonomy.review.to_string(), "standard");
+    let steers = detail(&h, &item.id).await.steers;
+    let what: Vec<&str> = steers.iter().map(|steer| steer.what.as_str()).collect();
+    assert_eq!(
+        what,
+        [
+            "switched the stages still to run to `steer-quick`; lowered the review level from \
+             standard to none",
+            "inserted stage `review` of `wp5-review`; raised the review level from none to \
+             standard",
+        ]
     );
 }
 

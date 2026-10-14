@@ -5,7 +5,9 @@
 
 use std::collections::BTreeSet;
 
-use archon_core::autonomy::{Autonomy, MergeMode, ProposalMode, ReportMode, ReviewLevel};
+use archon_core::autonomy::{
+    Autonomy, Knob as _, MergeMode, ProposalMode, ReportMode, ReviewLevel,
+};
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::model::ModelPlan;
@@ -153,6 +155,7 @@ pub(crate) fn reshape(
         return Ok(None);
     };
     let autonomy = within_ceiling(ctx, env, &reshaped, &removed, item.autonomy, knobs)?;
+    let what = noting_review(what, item.autonomy.review, autonomy.review);
     let repo = env.repo.as_ref().map(|repo| &repo.id);
     let policy = env.policy(&ctx.config);
     let learning = Learning {
@@ -182,6 +185,21 @@ fn review_after(spec: &PipelineSpec, removed: &BTreeSet<String>) -> ReviewLevel 
     left.file.pipeline.review = declared.filter(|review| !removed.contains(&review.stage));
     assert!(left.file.stages.len() <= spec.file.stages.len());
     review_level(&left)
+}
+
+/// `what` a steer did, saying so when that moved the item's review level
+/// from what it `had`.
+pub(crate) fn noting_review(what: String, had: ReviewLevel, now: ReviewLevel) -> String {
+    assert!(!what.is_empty(), "a steer that changed something");
+    if had == now {
+        return what;
+    }
+    let way = if now.rank() < had.rank() {
+        "raised"
+    } else {
+        "lowered"
+    };
+    format!("{what}; {way} the review level from {had} to {now}")
 }
 
 /// `knobs` with the review `spec` performs without the `removed` stages.

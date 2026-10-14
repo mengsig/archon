@@ -1449,7 +1449,9 @@ writes the run's when it runs after the stage the run shipped from so far
 (`reshape::ship_after`), and an insert that would commit after the ship
 record is refused. The result must pass the model policy and
 the autonomy ceiling: a steer cannot take out the review an enqueue could
-not leave out (§18.2). An item that is dispatching is refused with "steer
+not leave out (§18.2). The item's review level follows the stages it keeps,
+and a steer that moves it says so in its record ("raised the review level
+from none to standard"). An item that is dispatching is refused with "steer
 it again in a moment", a succeeded one always, and a cancelled one for a
 shape change (retry it first).
 

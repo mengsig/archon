@@ -140,7 +140,8 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
   branch, with what it committed. `archon queue show`, `queue list`,
   `status` and `get_item` name the pipeline a steer switched an item to.
 - Every steer is kept with the item: who made it, when and what it
-  changed. Learning counts a steer as a correction.
+  changed, including a review level it raised or lowered. Learning counts
+  a steer as a correction.
 - The implementer is kept through its fix loop: it waits while the review
   runs and then gets the findings, with its context intact, and the fix
   attempt's own budget on top of what it already spent. A fix whose final

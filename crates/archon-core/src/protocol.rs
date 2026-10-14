@@ -165,6 +165,9 @@ pub enum Request {
 
     ListPipelines {
         repo: Option<RepoRef>,
+        /// Only this pipeline, listed in full.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pipeline: Option<String>,
     },
     ModelPolicy {
         repo: Option<RepoRef>,

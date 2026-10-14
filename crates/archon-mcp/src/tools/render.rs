@@ -436,8 +436,17 @@ fn stage_ref(
     format!("get_stage with item {item}{run}, stage {stage:?}, attempt {attempt}, slot {slot}")
 }
 
+/// One line per pipeline, or a lone pipeline (one asked for by name) in full.
 fn catalog_text(catalog: &CatalogListing) -> String {
-    let mut text = listing("pipelines", catalog.pipelines.iter().map(pipeline_text));
+    let full = catalog.pipelines.len() == 1;
+    let lines = catalog.pipelines.iter().map(|pipeline| match full {
+        true => pipeline_text(pipeline),
+        false => pipeline_line(pipeline),
+    });
+    let mut text = listing("pipelines", lines);
+    if catalog.pipelines.len() > 1 {
+        text.push_str("\nName a `pipeline` to see its stages, gates, loops and nudges.");
+    }
     for problem in &catalog.problems {
         let place = problem
             .path
@@ -451,6 +460,24 @@ fn catalog_text(catalog: &CatalogListing) -> String {
             problem.error
         );
     }
+    text
+}
+
+/// What choosing `pipeline` takes: its description and stage ids.
+fn pipeline_line(pipeline: &PipelineSummary) -> String {
+    let stages: Vec<&str> = pipeline.stages.iter().map(|s| s.id.as_str()).collect();
+    assert!(!stages.is_empty(), "a loaded pipeline has stages");
+    let mut text = format!(
+        "{} ({}): {}; stages {}",
+        pipeline.name,
+        snake(&pipeline.source),
+        pipeline.description,
+        stages.join(", ")
+    );
+    if let Some(tier) = pipeline.nudges.tier {
+        let _ = write!(text, "; tier {}", snake(&tier));
+    }
+    text.push('.');
     text
 }
 

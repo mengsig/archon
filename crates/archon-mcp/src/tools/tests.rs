@@ -38,7 +38,10 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
             "message_orchestrator",
             json!({"text": "a blocker", "kind": "escalation"}),
         ),
-        ("list_pipelines", json!({"repo": "web"})),
+        (
+            "list_pipelines",
+            json!({"repo": "web", "pipeline": "direct"}),
+        ),
         ("list_repos", json!({})),
         ("model_policy", json!({"repo": "web"})),
         (
@@ -587,6 +590,69 @@ fn rendered_catalog_shows_what_a_model_plan_needs() {
         text.contains("Unusable pipeline broken (user): stage ids must be unique"),
         "{text}"
     );
+}
+
+/// The whole catalog is one line per pipeline; one named is shown in full.
+#[test]
+fn a_rendered_catalog_lists_pipelines_in_a_line_each() {
+    let stage = |id: &str| StageSummary {
+        id: id.into(),
+        kind: StageKind::Work,
+        fan_out: 1,
+        gate: Gate::None,
+        timeout_minutes: 60,
+        nudge: Some("a long nudge".into()),
+        loops_to: None,
+        max_loops: 0,
+        roles: Vec::new(),
+    };
+    let pipeline = |name: &str, stages: Vec<StageSummary>| PipelineSummary {
+        name: name.into(),
+        description: format!("The {name} pipeline"),
+        source: PipelineSource::Builtin,
+        path: None,
+        workspace: WorkspaceMode::Worktree,
+        requires_repo: true,
+        nudges: Nudges {
+            notes: Some("long notes".into()),
+            ..Default::default()
+        },
+        stages,
+    };
+    let catalog = CatalogListing {
+        pipelines: vec![
+            pipeline("direct", vec![stage("implement")]),
+            pipeline(
+                "default-pr-review",
+                vec![stage("implement"), stage("review")],
+            ),
+        ],
+        problems: Vec::new(),
+    };
+    let text = render("list_pipelines", &Reply::Catalog(catalog.clone()));
+    assert!(text.starts_with("2 pipelines:"), "{text}");
+    assert!(
+        text.contains(
+            "default-pr-review (builtin): The default-pr-review pipeline; stages implement, review."
+        ),
+        "{text}"
+    );
+    assert!(
+        !text.contains("long notes") && !text.contains("a long nudge"),
+        "{text}"
+    );
+    assert!(text.contains("Name a `pipeline`"), "{text}");
+
+    let one = CatalogListing {
+        pipelines: catalog.pipelines[1..].to_vec(),
+        problems: Vec::new(),
+    };
+    let text = render("list_pipelines", &Reply::Catalog(one));
+    assert!(
+        text.contains("stage review (work, timeout 60m): a long nudge"),
+        "{text}"
+    );
+    assert!(text.contains("Notes: long notes"), "{text}");
 }
 
 #[test]

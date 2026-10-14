@@ -220,11 +220,14 @@ fn list_pipelines() -> ToolDefinition {
     define(
         "list_pipelines",
         "List pipelines",
-        "The pipelines work can be queued into, with each stage's id, kind, fan_out or team \
+        "Pipelines to queue work into, a line each; name a `pipeline` for its stages' kind, \
          roles, gate, loop target and nudge (advice, not a rule). A broken pipeline file is \
-         listed as a problem and cannot be used.",
+         listed as a problem.",
         object(
-            json!({"repo": repo_ref("Add this repository's own pipelines.")}),
+            json!({
+                "repo": repo_ref("Add this repository's own pipelines."),
+                "pipeline": {"type": "string"},
+            }),
             &[],
         ),
         false,

@@ -394,12 +394,9 @@ async fn a_member_takes_its_own_knobs_but_never_merges_an_atomic_set_alone() {
 
     req.members[1].autonomy.merge = None;
     let detail = enqueue(&h, req).await;
-    let quick = &detail.members[0];
-    assert_eq!(
-        quick.pipeline, "quick-pr",
-        "the review knob picks the family"
-    );
-    assert_eq!(quick.autonomy.review, ReviewLevel::None);
+    let unreviewed = &detail.members[0];
+    assert_eq!(unreviewed.pipeline, "direct", "a review level runs direct");
+    assert_eq!(unreviewed.autonomy.review, ReviewLevel::None);
     let manual = |m: &archon_core::queue::QueueItem| m.autonomy.merge == MergeMode::Manual;
     assert!(detail.members.iter().all(manual));
 }

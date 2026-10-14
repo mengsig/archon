@@ -251,7 +251,7 @@ pub async fn spawning_stage(
     let stage = stage_run(&run.id, StageState::Spawning);
     let request = SpawnRequest {
         idempotency_key: stage.id.to_string(),
-        role: "archon-stage:quick-pr/implement".into(),
+        role: "archon-stage:direct/implement".into(),
         name: "implement · link test item".into(),
         objective: "do it".into(),
         instructions: "contract".into(),
@@ -307,7 +307,7 @@ fn repo_at(path: &Path) -> Repo {
         path: path.to_path_buf(),
         ship: ShipMode::Local,
         base_branch: Some("main".into()),
-        default_pipeline: Some("quick-pr".into()),
+        default_pipeline: Some("direct".into()),
         autonomy_max: Default::default(),
         added_at: archon_core::now(),
     }
@@ -366,7 +366,7 @@ fn queue_item(repo: &Repo) -> QueueItem {
     QueueItem {
         id: QueueItemId::new(),
         repo: Some(repo.id.clone()),
-        pipeline: "quick-pr".into(),
+        pipeline: "direct".into(),
         title: "link test item".into(),
         brief: "exercise the daemon link".into(),
         priority: Priority::Normal,
@@ -389,7 +389,7 @@ fn pipeline_run(item: &QueueItemId) -> PipelineRun {
     PipelineRun {
         id: PipelineRunId::new(),
         item: item.clone(),
-        pipeline: "quick-pr".into(),
+        pipeline: "direct".into(),
         shipped: false,
         aether_run: None,
         workspace: "/wt/alpha/x".into(),

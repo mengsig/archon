@@ -300,11 +300,11 @@ fn filters_by_repo_pipeline_stage_and_since_without_counting_other_attempts() {
     store.insert_repo(&alpha).unwrap();
     store.insert_repo(&beta).unwrap();
     for (n, owner, pipeline, started) in [
-        (20, Some(&alpha), "quick-pr", 100),
-        (21, Some(&beta), "quick-pr", 100),
+        (20, Some(&alpha), "direct", 100),
+        (21, Some(&beta), "direct", 100),
         (22, Some(&alpha), "ask", 100),
-        (23, Some(&alpha), "quick-pr", -86_400),
-        (24, None, "quick-pr", 100),
+        (23, Some(&alpha), "direct", -86_400),
+        (24, None, "direct", 100),
     ] {
         let mut item = item(owner, "fixture");
         item.pipeline = pipeline.into();
@@ -316,7 +316,7 @@ fn filters_by_repo_pipeline_stage_and_since_without_counting_other_attempts() {
     }
     let query = ModelEvidenceQuery {
         repo: Some(RepoRef("alpha".into())),
-        pipeline: Some("quick-pr".into()),
+        pipeline: Some("direct".into()),
         stage: Some("implement".into()),
         since: Some(archon_core::cost::DayBound::Days(1)),
     };

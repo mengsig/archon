@@ -23,6 +23,6 @@ Keep both repositories' existing tests passing (`cargo test`, \
 `python3 -m unittest`), update their READMEs, and commit in both.
 """
 timeout_minutes = 35
-pipeline = "default-pr-review"
+pipeline = "direct"
 repos = ["ledger", "reports"]
 tags = ["feature", "multi-repo", "rust", "python"]

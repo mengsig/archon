@@ -194,7 +194,9 @@ async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, Ar
         }
         Request::Status => control::status(ctx).await,
         Request::SetCaps { caps } => control::set_caps(ctx, caps).await,
-        Request::ListPipelines { repo } => control::list_pipelines(ctx, repo.as_ref()).await,
+        Request::ListPipelines { repo, pipeline } => {
+            control::list_pipelines(ctx, repo.as_ref(), pipeline.as_deref()).await
+        }
         Request::ModelPolicy { repo } => control::model_policy(ctx, repo.as_ref()).await,
         Request::CostReport(query) => cost::report(ctx, &query).await,
         Request::ModelEvidence(query) => model_evidence::report(ctx, &query).await,

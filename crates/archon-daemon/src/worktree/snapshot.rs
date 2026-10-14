@@ -12,7 +12,7 @@ use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 
 use super::team::{check_worktree, common_dir};
-use super::{Head, WorktreeManager, git, head, path_arg, registered_missing};
+use super::{Head, WorktreeManager, add_checked_out, git, head, path_arg, registered_missing};
 
 /// A snapshot added for a run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,10 +57,8 @@ impl WorktreeManager {
         std::fs::create_dir_all(item_dir)
             .map_err(|e| ArchonError::io(format!("creating {}", item_dir.display()), e))?;
         forget_snapshot(repo_path, &path)?;
-        git(
-            repo_path,
-            &["worktree", "add", "--detach", path_arg(&path)?, &commit],
-        )?;
+        let args = ["--detach", path_arg(&path)?, &commit];
+        add_checked_out(&self.shadow_home(), repo_path, &path, &args)?;
         debug_assert_eq!(head(&path)?, Head::Detached, "git added it detached");
         Ok(Snapshot { path, commit })
     }

@@ -56,10 +56,24 @@ impl Dirs {
     }
 }
 
+fn examples_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/examples/pipelines")
+}
+
 fn example_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/examples/pipelines")
-        .join(EXAMPLE)
+    examples_dir().join(EXAMPLE)
+}
+
+/// The built-ins under every documented example, as a user who copied them all.
+fn examples() -> Catalog {
+    let sources = CatalogSources {
+        user_dir: Some(examples_dir()),
+        repo_root: None,
+        disabled: Vec::new(),
+    };
+    let catalog = Catalog::discover(&sources).expect("discover");
+    assert!(catalog.problems().is_empty(), "{:#?}", catalog.problems());
+    catalog
 }
 
 /// Copy the documented example into `parent/<EXAMPLE>`, as a user would.
@@ -118,21 +132,13 @@ fn builtins_load_without_problems() {
             "adaptive",
             "agent-testing",
             "ask",
-            "bugfix",
             "code-audit",
-            "default-pr-review",
-            "dependency-upgrade",
             "design-doc",
             "direct",
-            "docs",
             "e2e-testing",
             "errand",
             "performance",
-            "quick-pr",
             "refactor",
-            "strict-pr-review",
-            "team-pr",
-            "test-coverage",
         ]
     );
     let missing_dirs = CatalogSources {
@@ -199,17 +205,17 @@ fn a_dropped_in_user_pipeline_is_discovered_and_runs() {
 #[test]
 fn precedence_is_builtin_then_user_then_repo() {
     let dirs = Dirs::new();
-    write_pipeline(&dirs.user, "quick-pr", "user quick-pr");
+    write_pipeline(&dirs.user, "direct", "user direct");
     write_pipeline(&dirs.user, "ask", "user ask");
     write_pipeline(&dirs.repo_pipelines(), "ask", "repo ask");
     let catalog = dirs.discover();
     assert_eq!(
-        description(&catalog, "quick-pr"),
-        "user quick-pr",
+        description(&catalog, "direct"),
+        "user direct",
         "user replaces built-in"
     );
     assert_eq!(
-        catalog.get("quick-pr").expect("user").source,
+        catalog.get("direct").expect("user").source,
         PipelineSource::User
     );
     assert_eq!(
@@ -222,7 +228,7 @@ fn precedence_is_builtin_then_user_then_repo() {
         PipelineSource::Repo
     );
     assert_eq!(
-        catalog.get("strict-pr-review").expect("built-in").source,
+        catalog.get("refactor").expect("built-in").source,
         PipelineSource::Builtin
     );
 
@@ -241,9 +247,9 @@ fn precedence_is_builtin_then_user_then_repo() {
 #[test]
 fn an_override_replaces_the_whole_directory() {
     let dirs = Dirs::new();
-    let dir = write_pipeline(&dirs.user, "quick-pr", "one stage only");
+    let dir = write_pipeline(&dirs.user, "direct", "one stage only");
     let catalog = dirs.discover();
-    let spec = catalog.get("quick-pr").expect("override");
+    let spec = catalog.get("direct").expect("override");
     assert_eq!(
         spec.file.stages.len(),
         1,
@@ -256,10 +262,10 @@ fn an_override_replaces_the_whole_directory() {
 #[test]
 fn a_broken_override_makes_the_name_unavailable_instead_of_falling_back() {
     let dirs = Dirs::new();
-    let dir = write_pipeline(&dirs.user, "quick-pr", "broken");
+    let dir = write_pipeline(&dirs.user, "direct", "broken");
     fs::remove_file(dir.join("answer.md")).expect("remove prompt");
     let catalog = dirs.discover();
-    let error = catalog.get("quick-pr").expect_err("unavailable");
+    let error = catalog.get("direct").expect_err("unavailable");
     assert!(matches!(error, ArchonError::Pipeline(_)), "{error}");
     assert!(
         error.to_string().contains("broken") && error.to_string().contains("answer.md"),
@@ -267,13 +273,13 @@ fn a_broken_override_makes_the_name_unavailable_instead_of_falling_back() {
     );
     let listing = catalog.listing();
     assert!(
-        listing.pipelines.iter().all(|p| p.name != "quick-pr"),
+        listing.pipelines.iter().all(|p| p.name != "direct"),
         "no built-in fallback"
     );
     let problem = &listing.problems[0];
     assert_eq!(
         (problem.name.as_str(), problem.source),
-        ("quick-pr", PipelineSource::User)
+        ("direct", PipelineSource::User)
     );
     assert_eq!(problem.path.as_deref(), Some(dir.as_path()));
 }
@@ -331,6 +337,22 @@ fn problems_name_the_path_and_reason() {
     ));
 }
 
+/// A name 1.1.0 retired says what replaces it, unless the operator has a
+/// pipeline of that name of their own.
+#[test]
+fn a_retired_built_in_names_its_replacement_unless_one_of_that_name_exists() {
+    let dirs = Dirs::new();
+    let catalog = dirs.discover();
+    for (name, replacement) in archon_pipeline::builtin::RETIRED {
+        let error = catalog.get(name).expect_err("retired").to_string();
+        assert!(error.contains("Archon 1.1.0 removed"), "{error}");
+        assert!(error.ends_with(replacement), "{error}");
+    }
+    write_pipeline(&dirs.user, "bugfix", "the operator's own");
+    let catalog = dirs.discover();
+    assert_eq!(description(&catalog, "bugfix"), "the operator's own");
+}
+
 #[test]
 fn non_pipeline_entries_are_ignored() {
     let dirs = Dirs::new();
@@ -350,7 +372,7 @@ fn non_pipeline_entries_are_ignored() {
 fn disabled_pipelines_are_hidden_with_a_clear_error() {
     let dirs = Dirs::new();
     let sources = CatalogSources {
-        disabled: vec!["quick-pr".into()],
+        disabled: vec!["direct".into()],
         ..dirs.sources()
     };
     let catalog = Catalog::discover(&sources).expect("discover");
@@ -359,9 +381,9 @@ fn disabled_pipelines_are_hidden_with_a_clear_error() {
             .listing()
             .pipelines
             .iter()
-            .all(|p| p.name != "quick-pr")
+            .all(|p| p.name != "direct")
     );
-    let error = catalog.get("quick-pr").expect_err("disabled").to_string();
+    let error = catalog.get("direct").expect_err("disabled").to_string();
     assert!(error.contains("disabled"), "{error}");
 }
 
@@ -438,18 +460,18 @@ fn assert_broken_user_override(catalog: &Catalog, name: &str, needle: &str) {
 fn a_dangling_manifest_symlink_is_reported_instead_of_falling_back() {
     use std::os::unix::fs::symlink;
     let dirs = Dirs::new();
-    let dir = write_pipeline(&dirs.user, "default-pr-review", "override");
+    let dir = write_pipeline(&dirs.user, "adaptive", "override");
     fs::remove_file(dir.join("pipeline.toml")).expect("remove");
     symlink(dirs.repo.join("moved.toml"), dir.join("pipeline.toml")).expect("symlink");
-    assert_broken_user_override(&dirs.discover(), "default-pr-review", "pipeline.toml");
+    assert_broken_user_override(&dirs.discover(), "adaptive", "pipeline.toml");
 }
 
 #[test]
 fn a_manifest_that_is_not_a_file_is_reported() {
     let dirs = Dirs::new();
-    let dir = dirs.user.join("quick-pr");
+    let dir = dirs.user.join("direct");
     fs::create_dir_all(dir.join("pipeline.toml")).expect("directory named pipeline.toml");
-    assert_broken_user_override(&dirs.discover(), "quick-pr", "pipeline.toml");
+    assert_broken_user_override(&dirs.discover(), "direct", "pipeline.toml");
 }
 
 #[cfg(unix)]
@@ -457,14 +479,14 @@ fn a_manifest_that_is_not_a_file_is_reported() {
 fn an_unsearchable_pipeline_directory_is_reported() {
     use std::os::unix::fs::PermissionsExt;
     let dirs = Dirs::new();
-    let dir = write_pipeline(&dirs.user, "quick-pr", "override");
+    let dir = write_pipeline(&dirs.user, "direct", "override");
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o000)).expect("chmod");
     // Root ignores permissions, so there is nothing to observe.
     let enforced = fs::metadata(dir.join("pipeline.toml")).is_err();
     let catalog = dirs.discover();
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).expect("chmod back");
     if enforced {
-        assert_broken_user_override(&catalog, "quick-pr", "pipeline.toml");
+        assert_broken_user_override(&catalog, "direct", "pipeline.toml");
     }
 }
 
@@ -539,9 +561,11 @@ fn load_dir_keeps_a_week_long_timeout_and_refuses_one_past_the_maximum() {
 }
 
 #[test]
-fn team_pr_builds_as_a_team_then_loops_e2e_and_review_back_to_build() {
-    let catalog = Catalog::builtin();
-    let summary = catalog.get("team-pr").expect("team-pr loads").summary();
+fn the_team_pr_example_builds_as_a_team_then_loops_e2e_and_review_back_to_build() {
+    let catalog = examples();
+    let spec = catalog.get("team-pr").expect("team-pr loads");
+    assert_eq!(spec.source, PipelineSource::User);
+    let summary = spec.summary();
     let stages: Vec<(&str, StageKind)> = summary
         .stages
         .iter()
@@ -585,7 +609,7 @@ fn direct_is_one_work_stage_that_archond_ships() {
         .collect();
     assert_eq!(stages, [("implement", StageKind::Work)]);
     assert_eq!(summary.workspace, WorkspaceMode::Worktree);
-    assert_eq!(summary.nudges.tier, Some(Tier::Fast));
+    assert_eq!(summary.nudges.tier, Some(Tier::Balanced));
     let record = spec.ship_record_stage().expect("archond ships it");
     assert_eq!(record.id, "implement");
     assert!(spec.holds_review(record), "its one agent holds the review");
@@ -595,32 +619,6 @@ fn direct_is_one_work_stage_that_archond_ships() {
         (0, false),
         "none by default"
     );
-}
-
-#[test]
-fn bugfix_has_a_single_independent_review_and_two_fix_loops() {
-    let catalog = Catalog::builtin();
-    let summary = catalog.get("bugfix").expect("bugfix loads").summary();
-    let stages: Vec<(&str, StageKind)> = summary
-        .stages
-        .iter()
-        .map(|s| (s.id.as_str(), s.kind))
-        .collect();
-    assert_eq!(
-        stages,
-        [
-            ("reproduce", StageKind::Work),
-            ("fix", StageKind::Work),
-            ("review", StageKind::Review)
-        ]
-    );
-    let review = summary.stage("review").expect("review");
-    assert_eq!(review.gate, Gate::AllPass);
-    assert_eq!(review.fan_out, 1);
-    assert_eq!(review.loops_to.as_deref(), Some("fix"));
-    assert_eq!(review.max_loops, 2);
-    assert_eq!(summary.nudges.tier, Some(Tier::Balanced));
-    assert!(summary.nudges.independent_reviewers);
 }
 
 #[test]

@@ -17,7 +17,7 @@ stage = "build"
 [nudges]
 tier = "balanced"
 independent_reviewers = true
-notes = "For a repository change where one lead that keeps its context through fixes, or integrates parts that split, saves restarts. A small low-risk change belongs in direct or quick-pr, and unrelated changes are never bundled to fit here. The item's review level sets how many independent reviewers the lead owes: none, standard (one) or strict (three)."
+notes = "For a repository change where one lead that keeps its context through fixes, or integrates parts that split, saves restarts. A change one author can make and check belongs in direct, and unrelated changes are never bundled to fit here. The item's review level sets how many independent reviewers the lead owes: none, standard (one) or strict (three)."
 
 [[stage]]
 id = "build"

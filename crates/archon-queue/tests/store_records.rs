@@ -635,7 +635,7 @@ fn pause_state_and_kv_round_trip() {
     let pause = PauseState {
         global: true,
         repos: vec![repo.id.clone()],
-        pipelines: vec!["quick-pr".into()],
+        pipelines: vec!["direct".into()],
     };
     store.set_pause_state(&pause).unwrap();
     assert_eq!(store.pause_state().unwrap(), pause);

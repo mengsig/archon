@@ -165,6 +165,9 @@ pub enum Request {
 
     ListPipelines {
         repo: Option<RepoRef>,
+        /// Only this pipeline, listed in full.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pipeline: Option<String>,
     },
     ModelPolicy {
         repo: Option<RepoRef>,
@@ -1166,7 +1169,7 @@ mod tests {
             },
             RepoPatch {
                 base_branch: Clearable::Set("main".into()),
-                default_pipeline: Clearable::Set("quick-pr".into()),
+                default_pipeline: Clearable::Set("direct".into()),
                 autonomy_max: Some(ceiling),
                 ..RepoPatch::default()
             },

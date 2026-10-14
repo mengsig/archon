@@ -81,7 +81,7 @@ Contents:
 | `archond` (`archon daemon run`) | The Archon daemon: store, dispatcher, pipeline engine, Aether link, orchestrator supervisor, feed, lavish plugin. | Long-running; autostarted by any `archon` client. |
 | `archon` | The CLI, a client of `archond`. With no subcommand it opens the terminal UI (`archon tui`, §4.7); `archon chat` is the quiet operator chat (§12). | Per command. |
 | `archon mcp` | Stdio MCP server. Aether spawns it as the `archon` MCP server, and it proxies each tool call to `archond`. | Owned by `aetherd`. |
-| `aetherd` (Archon's own) | In dedicated mode (the default), an unmodified `aether daemon` with its config, store and socket under Archon's directories (§4.7). | Started by any `archon` command that needs `archond`; stopped by `archon daemon stop --aether`. |
+| `aetherd` (Archon's own) | In dedicated mode (the default), an unmodified `aether daemon` with its config, store and socket under Archon's directories (§4.7). | Started by any `archon` command that needs `archond`; stopped by `archon daemon stop` (not with `--keep-aether`). |
 | orchestrator | One long-lived root Aether agent (`role = "archon-orchestrator"`). Uses native tools plus `mcp__archon__*`. | Created once and supervised by `archond`. |
 | run node | One passive root Aether agent per pipeline run (`role = "archon-run:<pipeline>"`), never started. Its children are the run's stage agents, so Aether's tree shows one subtree per item. | Created with the run's first stage agent; cancelled when the run finishes. |
 | stage agents | One Aether agent per stage attempt and fan-out slot, a child of its run node. | Created and settled per stage. |
@@ -329,11 +329,11 @@ In `archon tui` (Aether's TUI) an item therefore reads as
 
 ```
 Archon                                  archon-orchestrator
-add a greeting                          archon-run:default-pr-review
-  #q69g5fav implement · add a greeting            archon-stage:default-pr-review/implement
-  #q69g5fav review 1/2 · add a greeting           archon-stage:default-pr-review/review
-  #q69g5fav review 2/2 · add a greeting           archon-stage:default-pr-review/review
-  #q69g5fav ship · add a greeting                 archon-stage:default-pr-review/ship
+split the parser                        archon-run:refactor
+  #q69g5fav baseline · split the parser           archon-stage:refactor/baseline
+  #q69g5fav refactor · split the parser           archon-stage:refactor/refactor
+  #q69g5fav verify · split the parser             archon-stage:refactor/verify
+  #q69g5fav review · split the parser             archon-stage:refactor/review
 ```
 
 `archon aether agents` passes through to Aether's flat table, which shows
@@ -618,9 +618,9 @@ the detached daemon listens. `archond` itself never starts Aether. In
 dedicated mode it connects only to the instance's socket, and config
 validation refuses `[aether] socket` or `address`.
 
-- `archon daemon stop` stops `archond`.
-- `archon daemon stop --aether` (alias `--all`) then also runs `aether stop`
-  against the instance.
+- `archon daemon stop` stops `archond`, then in dedicated mode runs `aether
+  stop` against the instance. `--keep-aether` stops only `archond`;
+  `--aether` (alias `--all`) is refused in shared mode.
 - `archon daemon status` shows both daemons.
 - `archon tui` connects/starts archond and the selected Aether instance, then
   sends operator-only `OrchestratorAttach`. The supervisor ensures a live
@@ -676,13 +676,13 @@ the start check every command runs, not of a migration step.
   longer, and the `aether daemon` that follows then exits with `another
   aether daemon is already running`. On that one error the start is retried
   every 250 ms for up to 15 s; any other failure is returned at once. This
-  also covers `archon daemon stop --aether` followed directly by a command
+  also covers `archon daemon stop` followed directly by a command
   that starts it again.
 
 Not covered: a config that was brought up to date by hand or by an older
 binary's `--resync` while `aetherd` kept running leaves no marker, so
 nothing tells Archon the daemon is stale. `archond` notices the unnamed
-calls (§11) and its notice names the restart: `archon daemon stop --aether`,
+calls (§11) and its notice names the restart: `archon daemon stop`,
 after which any command starts it again.
 
 **Shared mode.** `[aether] mode = "shared"` keeps the earlier behaviour.
@@ -879,6 +879,10 @@ stage's cost from its agent's ledger row plus the rows of the agents it
 delegated to, and derives each run's `cost_usd`
 from that run's stages and delegated descendants on every read, including terminal runs. Late usage
 therefore remains with its own stage and run across retries and restarts.
+A kept agent passing to a later attempt records what it and the agents
+beneath it had been charged (kv `agent-handoff/<agent>/<attempt>`), and
+each attempt is charged only what was spent between its hand-off and the
+next, so an item's attempts add up to what its agents cost.
 A stage that delegated also reports the split (`delegations` in `GetItem`,
 `delegation` in `GetStage`): its own agent's cost, the delegated agents'
 cost, and each delegated agent with its parent, model, effort and cost.
@@ -984,16 +988,23 @@ operator from the daemon itself, as an `Outcome` or `Blocker` feed entry
 | Failed, or the operator must act (a `Blocker`, a `BLOCKED:` result) | wakes |
 | Succeeded with an `origin`: a GitHub thread is owed the result | wakes |
 | Succeeded and tagged `notify` by whoever queued it | wakes |
-| Succeeded otherwise | wakes unless `wake_on_success = false` |
+| Succeeded otherwise, with no other item queued, dispatching or running | wakes unless `wake_on_success = false` |
+| Succeeded otherwise, while other items are queued, dispatching or running | deferred, then wakes |
 | Cancelled | quiet |
 
 A success wakes by default because Aether's terminal UI shows only what the
 orchestrator says, and Aether 1.0 has no way to add an entry to an agent's
-chat without starting its turn.
+chat without starting its turn. A deferred success is held in the outbox
+with a `defer_until` at most five minutes ahead (`MAX_SUCCESS_DEFER`). It
+wakes nothing until that time, and it rides with any news that wakes before
+then, so the last item of a batch to finish reports all of them in one
+turn. The check for other unfinished items and the hold are made under one
+store lock, so the last success to finish always wakes.
 
 A waking failure also carries `lesson_hint` (§19). An initiative's member
 makes no `item_finished`: its initiative's `initiative_finished` wakes once
-it is done or failed (§8.9).
+it is done or failed (§8.9), carrying each finished member's state, summary
+and cost as `results`.
 
 Every other event wakes: `agent_message`, `item_blocked`, `gate_opened`,
 `operator_answer`, `chat_answer`, `lavish_feedback`, `budget`,
@@ -1001,8 +1012,10 @@ Every other event wakes: `agent_message`, `item_blocked`, `gate_opened`,
 (§13.3) is quiet. Quiet news is saved in the outbox like any other and makes
 no trigger by itself. It leaves with the next trigger there is, and an
 operator message sends it at once, without the coalescing window
-(`triggers::flush_quiet`, called before the message is delivered), so the
-turn that answers the operator has read it. When it is keyed, the quiet
+(`triggers::flush_quiet`, called before the message is delivered), deferred
+news too. `flush_quiet` returns once Aether has the batch in flight and the
+flushed one, or after 10 seconds while Aether is unreachable, so the turn
+that answers the operator has read it. When it is keyed, the quiet
 outcomes become one `items_finished` event at the end of the batch: item,
 title, state, pull request and cost of the newest outcome of each item, at
 most 20, with `more` counting the rest, and without an outcome the item no
@@ -1447,9 +1460,11 @@ is a team stage for a run that was started without team worktrees. A stage
 an insert or a switch carries in that wrote its own pipeline's ship record
 writes the run's when it runs after the stage the run shipped from so far
 (`reshape::ship_after`), and an insert that would commit after the ship
-record is refused. The result must pass the model policy and
-the autonomy ceiling: a steer cannot take out the review an enqueue could
-not leave out (§18.2). The item's review level follows the stages it keeps,
+record is refused. A switch drops the review and ship record the old
+pipeline declared on a stage it does not keep, even where a new stage has
+that id, so the new pipeline's own declarations apply. The result must
+pass the model policy and the autonomy ceiling: a steer cannot take out the
+review an enqueue could not leave out (§18.2). The item's review level follows the stages it keeps,
 and a steer that moves it says so in its record ("raised the review level
 from none to standard"). An item that is dispatching is refused with "steer
 it again in a moment", a succeeded one always, and a cancelled one for a
@@ -1874,8 +1889,8 @@ matter of dropping in a directory. The catalog is re-read at every
 
 ```toml
 [pipeline]
-name = "strict-pr-review"            # must equal the directory name
-description = "Implement, test, three independent reviews, ship"
+name = "triple-review"               # must equal the directory name
+description = "Implement, test, three independent reviews; archond ships"
 version = 1                          # schema version; only 1 exists
 workspace = "worktree"               # worktree | repo-readonly | scratch
 requires_repo = true                 # false: repo optional (e.g. ask)
@@ -2008,7 +2023,9 @@ base branch, or none, means the whole change was read; a delta's `base`
 must be a head another named reviewer read. A pass counts when it read the
 branch head, or when a counted pass read every commit after its head
 (`base` at or before it). A fail never counts and must be followed by such
-a pass. Counted passes below the level fail the run with the reasons. When
+a pass, or by a later fail that read every commit after its head and was
+itself followed so (a fix of a fix, each reviewed as a delta). Counted
+passes below the level fail the run with the reasons. When
 the same result is the ship record (§8.7), the branch head must hold the
 record's `tree`, the tree delivery later checks: what ships is what was read.
 
@@ -2062,18 +2079,10 @@ literal `{{`.
 
 | Name | Stages | Nudges |
 | --- | --- | --- |
-| `direct` | implement (work, holds the review) | tier = fast. One agent implements a small, low-risk change, runs the affected checks, commits and returns the ship record; the cheapest path to a shipped change. Review level `none` unless the item asks (§8.2); the agent escalates what turns out large or risky. |
+| `direct` | implement (work, holds the review) | tier = balanced. The pipeline an item that names none runs. One agent implements a change one author can make and check, whatever its size, runs the affected checks, commits and returns the ship record; the cheapest path to a shipped change. Review level `none` unless the item asks (§8.2); the agent escalates what turns out risky. |
 | `adaptive` | build (work, `allow_delegation`, holds the review) | tier = balanced, independent_reviewers. For a change where one lead that keeps its context through fixes, or integrates independent parts, saves restarts: it sizes the work, delegates the parts worth splitting, integrates them and has the integrated diff reviewed by as many reviewers as the item's review level asks. Review level `standard` unless the item asks (§8.2). |
-| `quick-pr` | implement | tier = fast |
-| `default-pr-review` | implement → review (1, all_pass, goto implement ×2) | tier = balanced |
-| `bugfix` | reproduce (failing test) → fix → review (1, all_pass, goto fix ×2) | tier = balanced, independent_reviewers. For describable bugs; direct or quick-pr for trivial one-liners, strict-pr-review for security/concurrency bugs. |
-| `docs` | write → verify (1, all_pass, goto write ×2) | tier = balanced, independent_reviewers. For documentation: every claim, command and internal link checked against the code. Use `direct` for a typo. |
-| `dependency-upgrade` | survey → upgrade → verify (test, all_pass, goto upgrade ×3) | tier = balanced. Version bumps with changelog research and build/tests/audit; use `default-pr-review` for features that add dependencies. |
-| `refactor` | baseline/characterize → refactor → verify (test, all_pass, goto refactor ×3) → review (1, all_pass, goto refactor ×2) | tier = balanced, independent_reviewers. Structure-only changes; use default-pr-review for behaviour changes. |
-| `strict-pr-review` | implement → test (gate) → review (3, all_pass, goto implement ×3) | tier = strongest, independent_reviewers |
-| `team-pr` | plan → build (team: backend, frontend) → e2e (test, all_pass, goto build ×2) → review (1, all_pass, goto build ×2) | tier = balanced, independent_reviewers. For changes that split cleanly into parts. |
-| `performance` | measure → optimize → verify (test, all_pass, goto optimize ×3) → review (1, all_pass, goto optimize ×2) | tier = strongest, independent_reviewers. For a specific slow path with a measurable goal; use `default-pr-review` for ordinary changes. |
-| `test-coverage` | analyze (work) → write (work) → verify (test, all_pass, goto write ×2) | tier = balanced. Risk-ranked coverage of existing code, at least three passing runs and per-test mutation checks. Bugs become follow-ups; use `bugfix` to fix one. |
+| `refactor` | baseline/characterize → refactor → verify (test, all_pass, goto refactor ×3) → review (1, all_pass, goto refactor ×2) | tier = balanced, independent_reviewers. Structure-only changes; use `direct` for behaviour changes. |
+| `performance` | measure → optimize → verify (test, all_pass, goto optimize ×3) → review (1, all_pass, goto optimize ×2) | tier = strongest, independent_reviewers. For a specific slow path with a measurable goal; use `direct` for ordinary changes. |
 | `agent-testing` | plan → exercise (fan_out 2, report) → report | Agents drive the product as a user would and report defects. workspace = worktree |
 | `code-audit` | scope (work) → audit (fan_out 3, report) → report | Security, reliability and maintainability lenses produce HTML with high/critical issue drafts. No code changes or ship. workspace = worktree, tier = strongest, independent_reviewers. Use `ask` for one question. |
 | `e2e-testing` | setup → e2e (test gate, goto setup ×1) → report | The report stage produces HTML and screenshots under `.archon/reports/` for Lavish. |
@@ -2081,18 +2090,25 @@ literal `{{`.
 | `errand` | errand (report) | workspace = scratch, requires_repo = false, tier = balanced. A small job answered in its summary and optionally as one self-contained Lavish page. No repository changes or outward side effects; read an attached checkout only, and run code on a throwaway copy in scratch. Other files are temporary and collected after `worktrees.gc_after` (default 7d; §13.2). |
 | `design-doc` | research → critique (1, all_pass, goto research ×2) → report (HTML design/RFC) | workspace = worktree, requires_repo = true, tier = strongest, independent_reviewers. Before a large or ambiguous change; no product-code changes or shipping. Use `proposal: lavish` for design and implementation in one item. |
 
-The first twelve change a repository. Each declares `[pipeline.ship]`, so
+The first four change a repository. Each declares `[pipeline.ship]`, so
 archond delivers its change once the last stage passed (§8.7) and none has
-a ship agent: `team-pr` takes the ship record from `review`, the rest from
-their last committing stage. The `propose` and change-report stages the
-autonomy knobs insert (§18.1) use the shared prompts in `pipelines/_shared/`.
+a ship agent: each takes the ship record from its last committing stage.
+The `propose` and change-report stages the autonomy knobs insert (§18.1)
+use the shared prompts in `pipelines/_shared/`.
+
+1.1.0 removed the built-ins `quick-pr`, `default-pr-review`,
+`strict-pr-review`, `team-pr`, `bugfix`, `docs`, `dependency-upgrade` and
+`test-coverage`: `direct` and `adaptive` at a review level cover them.
+Naming one fails with its replacement unless a user or repository pipeline
+of that name exists, and a run already going keeps its frozen pipeline
+(§6.6). `team-pr` lives on as `docs/examples/pipelines/team-pr/`.
 
 `direct` and `adaptive` have no review stage: the stage agent delegates the
 review, and the item's review level decides how many reviewers that is
-(§8.2). They are chosen by naming them (`pipeline = "adaptive"`, or a
-`default_pipeline`), never by the `review` knob, which selects
-`default-pr-review`, `strict-pr-review` or `quick-pr` when no pipeline is
-named. Named, they take any level the ceiling allows (§18.2). At `none`
+(§8.2). An item that names no pipeline runs `direct` if it asks a review
+level, else its repository's `default_pipeline`, else the configured one,
+else `direct`; `adaptive` runs only by name or as a default. Either takes
+any level the ceiling allows (§18.2). At `none`
 under `tools = guarded`, `direct`'s agent is a leaf: it cannot delegate, and
 its contract carries no delegation section.
 
@@ -2450,7 +2466,7 @@ max_agent_messages = 20        # message_orchestrator calls per agent, lifetime;
 initiative_members = 16        # 1..=64
 initiative_contract_bytes = 2048  # 1..=16384
 [limits.per_pipeline]          # name = max running stage agents
-# strict-pr-review = 3
+# adaptive = 3
 
 [dispatcher]
 tick_secs = 15
@@ -2502,7 +2518,7 @@ Per-repository `<repo>/.archon/config.toml`:
 [repo]
 ship = "pr"                    # default for `archon repo add` when --ship is omitted
 base_branch = "main"
-default_pipeline = "default-pr-review"
+default_pipeline = "adaptive"
 
 [limits]
 max_per_repo = 2               # may only lower the global value
@@ -2511,7 +2527,7 @@ max_per_repo = 2               # may only lower the global value
 allow = ["claude-code/claude-opus-5-5"]   # intersected with the global allowlist
 
 [pipelines]
-disabled = ["quick-pr"]
+disabled = ["performance"]
 
 [autonomy.max]                 # may only lower the ceiling; [autonomy.default] likewise
 tools = "guarded"
@@ -2668,7 +2684,7 @@ can reach the socket (§5.5).
 
 | Tool | Arguments | Request |
 | --- | --- | --- |
-| `list_pipelines` | `{repo?}` | `ListPipelines` |
+| `list_pipelines` | `{repo?, pipeline?}`: a line per pipeline, or the one named in full | `ListPipelines` |
 | `list_repos` | `{}` | `RepoList` |
 | `model_policy` | `{repo?}` | `ModelPolicy` |
 | `register_repo` | `{path, name?, ship?, base_branch?, default_pipeline?}` | `RepoAdd` (never raises a ceiling) |
@@ -2800,7 +2816,8 @@ object per line under `--json`).
 - Worktree per pipeline run:
   `<worktrees.root>/<repo>/<item-id>` on branch
   `<branch_prefix><item-short>-<slug(title)>`, created with
-  `git -C <repo> worktree add -b <branch> <path> <base>`. The base is
+  `git -C <repo> worktree add -b <branch> <path> <base>`, checked out
+  through the shadow (§13.4). The base is
   `repo.base_branch`, or the repo's current `HEAD` commit.
   **Uncommitted changes in the operator's checkout are not included**, unlike
   Aether's isolated-delegation snapshot.
@@ -3345,14 +3362,20 @@ Removing a worktree asks the shadow what `git worktree remove` would: a
 populated submodule or the worktree's own `modules`, a tracked change
 (`update-index --refresh`, `diff-files`, `diff-index --cached`), or an
 untracked file not ignored by the tree's `.gitignore`, the repository's
-`info/exclude` or the operator's. Any of them keeps the worktree; else it
+`info/exclude` or the operator's, nor a cache: `__pycache__`, `*.pyc`,
+`*.pyo`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.hypothesis`,
+`.tox`, `.coverage` and `node_modules` at any depth, a top-level `target`,
+and `worktrees.cache_dirs`. Any of them keeps the worktree; else it
 goes with `worktree remove --force`, so git's own `status`, which reads the
 repository's filters, never runs. A repository-only `core.excludesFile` or
 `core.autocrlf` is not read, which can only keep a worktree that was clean.
 
-Not yet through the shadow: `worktree add` and a team's merges and status
-(§13.1) check files out and read them under the repository's config, with
-no hook, but with its filters.
+A new worktree or snapshot is added with a sealed `git worktree add
+--no-checkout`, then checked out with `read-tree -m -u` through a shadow at
+`<worktrees.root>/.archon/daemon-git/<format>`: the repository's hooks and
+filters never run, the operator's do. Not yet through the shadow: a team's
+worker worktrees, merges and status (§13.1), which run no hook but the
+repository's filters.
 
 ## 14. Lavish plugin
 
@@ -3833,7 +3856,7 @@ can raise. The types are in `archon_core::autonomy`.
 
 | Knob | Values, least to most autonomous | Effect |
 | --- | --- | --- |
-| `review` | `strict`, `standard`, `none` | With no pipeline named, picks `strict-pr-review`, `default-pr-review` or `quick-pr`. A named pipeline that holds its own review (`adaptive`, `direct`; §8.2) runs at the level asked: three, one or no independent reviewers, verified. One with gated review and test stages fixes the level from them, and a `review` that contradicts it is refused. |
+| `review` | `strict`, `standard`, `none` | With no pipeline named, the item runs `direct` at that level. A pipeline that holds its own review (`adaptive`, `direct`; §8.2) runs at the level asked: three, one or no independent reviewers, verified. One with gated review and test stages fixes the level from them, and a `review` that contradicts it is refused. |
 | `proposal` | `lavish`, `off` | `lavish`: a `propose` stage first writes `.archon/reports/proposal/index.html`, and the run waits for the operator (§18.3). The approved proposal, with the operator's note, goes into every later stage's prompt. |
 | `report` | `before-pr`, `with-pr`, `off` | `with-pr`: a report stage before shipping writes `.archon/reports/change/index.html`. The page is published, the report goes into the PR body, and nothing waits. `before-pr` also waits for the operator before shipping (§18.3). |
 | `merge` | `manual`, `auto` | `auto` sets `{{ship.auto_merge}}`: archond asks GitHub to merge the PR once its checks allow (§8.7), and a ship stage of a pipeline that has one merges its own. |

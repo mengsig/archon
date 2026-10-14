@@ -24,7 +24,7 @@ Attempt {{attempt}}: build on what the branch already holds.
    change: the base (`git merge-base {{base_branch}} HEAD`) and head commits,
    the changed paths, the checks you ran and the verdict your contract shows.
    Fix a blocking finding in a new commit and have a new reviewer read that
-   fix from the reviewed head.
+   fix from the reviewed head (an amended commit needs a full re-review).
 
 Finish with `complete_task`: the `structured` data your contract requires
 and a summary of a few lines saying what changed, the checks and their

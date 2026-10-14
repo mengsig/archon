@@ -1,0 +1,802 @@
+{
+  "manifest": {
+    "stamp": "20261014T095439Z",
+    "started_at": "2026-10-14T09:54:39.675834773Z",
+    "finished_at": "2026-10-14T10:18:19.227198115Z",
+    "archon_commit": "27ad3ed7cfb8cc526db241b6268c671ea9a3edb1",
+    "versions": {
+      "aetherd": "1.0.3",
+      "archon": "archon 1.1.0"
+    },
+    "models": {
+      "aether": "claude-code/claude-opus-5-5",
+      "archon": "claude-code/claude-opus-5-5"
+    },
+    "effort": "high",
+    "arms": [
+      "archon",
+      "aether"
+    ],
+    "tasks": [
+      "ask-cache-invalidation",
+      "feature-token-bucket",
+      "fix-off-by-one",
+      "long-backlog",
+      "multi-repo-currency",
+      "multi-repo-pagination",
+      "refactor-order-status",
+      "review-seeded-bug"
+    ],
+    "trials": 1,
+    "parallel": 2,
+    "timeout_factor": 1.0,
+    "max_usd": 16.0,
+    "max_trials": 100,
+    "planned": 16,
+    "completed": 16,
+    "skipped": 0,
+    "spent_usd": 12.2561864,
+    "unpriced_trials": 0,
+    "stopped_reason": null
+  },
+  "k": 1,
+  "arms": [
+    {
+      "arm": "archon",
+      "model": "claude-code/claude-opus-5-5",
+      "trials": 8,
+      "successes": 7,
+      "infra": 0,
+      "timeouts": 0,
+      "success_rate": 0.875,
+      "pass_at_1": 0.875,
+      "pass_at_k": 0.875,
+      "score": {
+        "n": 8,
+        "mean": 0.875,
+        "stdev": 0.3535533905932738
+      },
+      "wall_secs": {
+        "n": 8,
+        "mean": 131.68437377212499,
+        "stdev": 111.0792197235845
+      },
+      "input_tokens": {
+        "n": 8,
+        "mean": 761881.125,
+        "stdev": 474763.04271753365
+      },
+      "output_tokens": {
+        "n": 8,
+        "mean": 13282.375,
+        "stdev": 9594.378010622382
+      },
+      "cost_usd": {
+        "n": 8,
+        "mean": 1.1325176000000001,
+        "stdev": 0.7172900368912981
+      },
+      "operator_messages": {
+        "n": 8,
+        "mean": 2.75,
+        "stdev": 1.6690459207925603
+      }
+    },
+    {
+      "arm": "aether",
+      "model": "claude-code/claude-opus-5-5",
+      "trials": 8,
+      "successes": 7,
+      "infra": 0,
+      "timeouts": 0,
+      "success_rate": 0.875,
+      "pass_at_1": 0.875,
+      "pass_at_k": 0.875,
+      "score": {
+        "n": 8,
+        "mean": 0.875,
+        "stdev": 0.3535533905932738
+      },
+      "wall_secs": {
+        "n": 8,
+        "mean": 78.355846232125,
+        "stdev": 46.17277701124586
+      },
+      "input_tokens": {
+        "n": 8,
+        "mean": 260023.25,
+        "stdev": 190631.7448963165
+      },
+      "output_tokens": {
+        "n": 8,
+        "mean": 7654.0,
+        "stdev": 5144.13705105142
+      },
+      "cost_usd": {
+        "n": 8,
+        "mean": 0.39950569999999996,
+        "stdev": 0.1929994808944314
+      },
+      "operator_messages": {
+        "n": 8,
+        "mean": 3.25,
+        "stdev": 2.3754698783308417
+      }
+    }
+  ],
+  "tasks": {
+    "ask-cache-invalidation": [
+      {
+        "arm": "archon",
+        "model": "claude-code/claude-opus-5-5",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 30.022900628,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 203721.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 2243.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.42461460000000006,
+          "stdev": 0.0
+        },
+        "operator_messages": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        }
+      },
+      {
+        "arm": "aether",
+        "model": "claude-code/claude-opus-5-5",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 29.051373596,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 94449.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 2342.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.1995302,
+          "stdev": 0.0
+        },
+        "operator_messages": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        }
+      }
+    ],
+    "feature-token-bucket": [
+      {
+        "arm": "archon",
+        "model": "claude-code/claude-opus-5-5",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 375.188366413,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 982183.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 22514.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 1.4319366,
+          "stdev": 0.0
+        },
+        "operator_messages": {
+          "n": 1,
+          "mean": 2.0,
+          "stdev": 0.0
+        }
+      },
+      {
+        "arm": "aether",
+        "model": "claude-code/claude-opus-5-5",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 114.544573188,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 304914.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 11419.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.5111928,
+          "stdev": 0.0
+        },
+        "operator_messages": {
+          "n": 1,
+          "mean": 4.0,
+          "stdev": 0.0
+        }
+      }
+    ],
+    "fix-off-by-one": [
+      {
+        "arm": "archon",
+        "model": "claude-code/claude-opus-5-5",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 35.022892259,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 336181.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 2812.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.4177838,
+          "stdev": 0.0
+        },
+        "operator_messages": {
+          "n": 1,
+          "mean": 2.0,
+          "stdev": 0.0
+        }
+      },
+      {
+        "arm": "aether",
+        "model": "claude-code/claude-opus-5-5",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 20.012964172,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 89924.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 1219.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.1632172,
+          "stdev": 0.0
+        },
+        "operator_messages": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        }
+      }
+    ],
+    "long-backlog": [
+      {
+        "arm": "archon",
+        "model": "claude-code/claude-opus-5-5",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 135.083114153,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 1497364.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 26712.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 2.2456667999999995,
+          "stdev": 0.0
+        },
+        "operator_messages": {
+          "n": 1,
+          "mean": 5.0,
+          "stdev": 0.0
+        }
+      },
+      {
+        "arm": "aether",
+        "model": "claude-code/claude-opus-5-5",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 159.578874744,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 670548.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 16761.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.7463426,
+          "stdev": 0.0
+        },
+        "operator_messages": {
+          "n": 1,
+          "mean": 7.0,
+          "stdev": 0.0
+        }
+      }
+    ],
+    "multi-repo-currency": [
+      {
+        "arm": "archon",
+        "model": "claude-code/claude-opus-5-5",
+        "trials": 1,
+        "successes": 0,
+        "infra": 0,
+        "timeouts": 0,
+        "success_rate": 0.0,
+        "pass_at_1": 0.0,
+        "pass_at_k": 0.0,
+        "score": {
+          "n": 1,
+          "mean": 0.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 141.399027305,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 1094148.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 18623.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 1.674266,
+          "stdev": 0.0
+        },
+        "operator_messages": {
+          "n": 1,
+          "mean": 5.0,
+          "stdev": 0.0
+        }
+      },
+      {
+        "arm": "aether",
+        "model": "claude-code/claude-opus-5-5",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 93.542534839,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 274146.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 9891.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.4844712,
+          "stdev": 0.0
+        },
+        "operator_messages": {
+          "n": 1,
+          "mean": 4.0,
+          "stdev": 0.0
+        }
+      }
+    ],
+    "multi-repo-pagination": [
+      {
+        "arm": "archon",
+        "model": "claude-code/claude-opus-5-5",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 156.633218191,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 1084378.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 18402.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 1.6254914,
+          "stdev": 0.0
+        },
+        "operator_messages": {
+          "n": 1,
+          "mean": 4.0,
+          "stdev": 0.0
+        }
+      },
+      {
+        "arm": "aether",
+        "model": "claude-code/claude-opus-5-5",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 84.033962736,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 324435.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 8461.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.4554532,
+          "stdev": 0.0
+        },
+        "operator_messages": {
+          "n": 1,
+          "mean": 6.0,
+          "stdev": 0.0
+        }
+      }
+    ],
+    "refactor-order-status": [
+      {
+        "arm": "archon",
+        "model": "claude-code/claude-opus-5-5",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 130.09002334,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 654442.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 11022.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.9358956000000002,
+          "stdev": 0.0
+        },
+        "operator_messages": {
+          "n": 1,
+          "mean": 2.0,
+          "stdev": 0.0
+        }
+      },
+      {
+        "arm": "aether",
+        "model": "claude-code/claude-opus-5-5",
+        "trials": 1,
+        "successes": 0,
+        "infra": 0,
+        "timeouts": 0,
+        "success_rate": 0.0,
+        "pass_at_1": 0.0,
+        "pass_at_k": 0.0,
+        "score": {
+          "n": 1,
+          "mean": 0.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 78.039567961,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 202621.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 7010.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.3830626,
+          "stdev": 0.0
+        },
+        "operator_messages": {
+          "n": 1,
+          "mean": 2.0,
+          "stdev": 0.0
+        }
+      }
+    ],
+    "review-seeded-bug": [
+      {
+        "arm": "archon",
+        "model": "claude-code/claude-opus-5-5",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 50.035447888,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 242632.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 3931.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.304486,
+          "stdev": 0.0
+        },
+        "operator_messages": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        }
+      },
+      {
+        "arm": "aether",
+        "model": "claude-code/claude-opus-5-5",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 48.042918621,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 119149.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 4129.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.2527758,
+          "stdev": 0.0
+        },
+        "operator_messages": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        }
+      }
+    ]
+  },
+  "infra": []
+}

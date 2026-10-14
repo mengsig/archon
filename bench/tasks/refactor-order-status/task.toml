@@ -22,5 +22,5 @@ Observable behaviour (errors, report output and ordering, parsing) must stay \
 exactly the same, and `cargo test` must pass. Commit your work.
 """
 timeout_minutes = 25
-pipeline = "default-pr-review"
+pipeline = "direct"
 tags = ["refactor", "rust", "single-repo"]

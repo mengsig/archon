@@ -215,7 +215,7 @@ async fn handshake(shared: &Shared, kind: ClientKind) -> Result<Welcome, ArchonE
 fn incompatible(detail: &str) -> ArchonError {
     ArchonError::Protocol(format!(
         "this archon speaks daemon protocol {PROTOCOL_VERSION} but archond does not: {detail}. \
-         Restart the daemon from the same build (`archon daemon stop`, then retry)"
+         Restart the daemon from the same build (`archon daemon stop --keep-aether`, then retry)"
     ))
 }
 

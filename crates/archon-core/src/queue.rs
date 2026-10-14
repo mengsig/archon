@@ -288,7 +288,7 @@ mod tests {
         QueueItem {
             id: QueueItemId::new(),
             repo: Some(RepoId::new()),
-            pipeline: "quick-pr".into(),
+            pipeline: "direct".into(),
             title: "t".into(),
             brief: "b".into(),
             priority: Priority::Normal,

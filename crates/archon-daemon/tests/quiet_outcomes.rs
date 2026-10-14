@@ -233,6 +233,34 @@ async fn by_default_a_success_wakes_the_orchestrator_so_the_chat_shows_it() {
     );
 }
 
+#[tokio::test]
+async fn a_routine_success_waits_for_the_work_still_queued_and_wakes_with_it() {
+    let h = Harness::new().await;
+    let first = enqueued(&h, request("the first change")).await;
+    let mut after = request("the change after it");
+    after.depends_on = vec![first.id.clone()];
+    let second = enqueued(&h, after).await;
+    succeed(&h, &first).await;
+    finished_news(&h, &first).await;
+    assert!(
+        !triggers::due(&h.ctx).await.unwrap(),
+        "one turn reports both: the second is still queued"
+    );
+    assert_eq!(h.notices(NotificationKind::Outcome).await.len(), 1);
+
+    succeed(&h, &second).await;
+    assert!(
+        triggers::due(&h.ctx).await.unwrap(),
+        "the last success wakes it"
+    );
+    for item in [&first, &second] {
+        let TriggerEvent::ItemFinished { summary, .. } = finished_news(&h, item).await else {
+            unreachable!("finished_news returns item_finished");
+        };
+        assert!(summary.contains("opened a pull request"), "{summary}");
+    }
+}
+
 /// The cost the orchestrator is told for `item` once its provider settled
 /// $4.25 after the run finished: `pick` reads it from the batch Archon keys.
 async fn told_after_settlement(
@@ -257,8 +285,9 @@ async fn told_after_settlement(
             at: archon_core::now(),
         })
         .unwrap();
-    triggers::flush_quiet(&h.ctx).await.unwrap();
-    // No Aether is connected, so the keyed batch stays in flight to be read.
+    // No Aether is connected, so the flush keys a batch that stays in flight to be read.
+    let ctx = h.ctx.clone();
+    let flush = tokio::spawn(async move { triggers::flush_quiet(&ctx).await });
     let delivery = tokio::spawn(triggers::deliver_loop(h.ctx.clone()));
     let told = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
@@ -275,6 +304,7 @@ async fn told_after_settlement(
     .await
     .expect("the batch is keyed");
     delivery.abort();
+    flush.abort();
     told
 }
 

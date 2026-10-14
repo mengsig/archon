@@ -515,7 +515,7 @@ pub enum QueueCommand {
     /// Change an item without cancelling it: its brief, a stage's model, its
     /// budget or deadline, or the stages that have not started.
     #[command(
-        after_help = "Examples:\n  archon queue steer qi_… --note 'Use the v2 client'\n  archon queue steer qi_… --stage implement --model claude-code/claude-opus-5-5 --effort high\n  archon queue steer qi_… --abort --goto implement\n  archon queue steer qi_… --insert test --from strict-pr-review --after implement"
+        after_help = "Examples:\n  archon queue steer qi_… --note 'Use the v2 client'\n  archon queue steer qi_… --stage implement --model claude-code/claude-opus-5-5 --effort high\n  archon queue steer qi_… --abort --goto implement\n  archon queue steer qi_… --insert verify --from refactor --after implement"
     )]
     Steer(Box<QueueSteerArgs>),
     /// Show the runtime caps, or change them until archond restarts (the
@@ -710,11 +710,15 @@ pub enum DaemonCommand {
     },
     /// Start archond in the background unless it is running.
     Start,
-    /// Ask archond to shut down and wait until it has.
+    /// Ask archond to shut down and wait until it has; in dedicated mode,
+    /// then Archon's own aetherd too.
     Stop {
-        /// Also stop Archon's own aetherd (dedicated mode).
-        #[arg(long, visible_alias = "all")]
+        /// Require stopping Archon's own aetherd: refused in shared mode.
+        #[arg(long, visible_alias = "all", conflicts_with = "keep_aether")]
         aether: bool,
+        /// Leave Archon's own aetherd running; only archond stops.
+        #[arg(long)]
+        keep_aether: bool,
     },
     /// Whether archond is running (exit code 3 when not).
     Status,
@@ -1222,9 +1226,28 @@ mod tests {
         for flag in ["--aether", "--all"] {
             assert!(matches!(
                 parse(&["daemon", "stop", flag]),
-                Command::Daemon(DaemonCommand::Stop { aether: true })
+                Command::Daemon(DaemonCommand::Stop {
+                    aether: true,
+                    keep_aether: false
+                })
             ));
         }
+        assert!(matches!(
+            parse(&["daemon", "stop"]),
+            Command::Daemon(DaemonCommand::Stop {
+                aether: false,
+                keep_aether: false
+            })
+        ));
+        assert!(matches!(
+            parse(&["daemon", "stop", "--keep-aether"]),
+            Command::Daemon(DaemonCommand::Stop {
+                aether: false,
+                keep_aether: true
+            })
+        ));
+        let both = ["archon", "daemon", "stop", "--aether", "--keep-aether"];
+        assert!(Cli::try_parse_from(both).is_err());
         assert!(matches!(parse(&["tui"]), Command::Tui(_)));
     }
 

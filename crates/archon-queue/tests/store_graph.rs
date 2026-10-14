@@ -421,7 +421,7 @@ fn the_snapshot_counts_live_agents_runs_pause_and_spend() {
     assert_eq!(snapshot.running_total, 4);
     assert_eq!(snapshot.running_by_repo.get(&repo.id), Some(&3));
     assert_eq!(snapshot.running_by_repo.len(), 1);
-    assert_eq!(snapshot.running_by_pipeline.get("quick-pr"), Some(&3));
+    assert_eq!(snapshot.running_by_pipeline.get("direct"), Some(&3));
     assert_eq!(snapshot.running_by_pipeline.get("ask"), Some(&1));
     assert_eq!(snapshot.active_runs, 3);
     assert_eq!(snapshot.pause, pause);

@@ -206,7 +206,7 @@ fn switch(pipeline: &str) -> Steer {
 #[tokio::test]
 async fn the_stages_of_a_run_that_is_delivering_no_longer_change() {
     let (h, gh) = delivering().await;
-    let (item, run) = started(&h, "quick-pr").await;
+    let (item, run) = started(&h, "direct").await;
     gh.fail_next("pr list", "HTTP 502: Bad Gateway");
     settle_with(&h, change(&run.workspace)).await;
     let state = h.state(&item.id).await;
@@ -279,7 +279,7 @@ async fn a_steer_that_leaves_nothing_to_ship_is_refused() {
 #[tokio::test]
 async fn a_delivery_runs_no_program_the_repository_or_its_origin_configures() {
     let (h, gh) = delivering().await;
-    let (item, run) = started(&h, "quick-pr").await;
+    let (item, run) = started(&h, "direct").await;
     std::fs::write(
         run.workspace.join(".gitattributes"),
         "* filter=planted merge=planted\n",
@@ -306,11 +306,11 @@ async fn a_delivery_runs_no_program_the_repository_or_its_origin_configures() {
 #[tokio::test]
 async fn a_stacked_run_missing_a_parent_commit_pushes_nothing() {
     let (h, gh) = delivering().await;
-    let (parent, parent_run) = started(&h, "quick-pr").await;
+    let (parent, parent_run) = started(&h, "direct").await;
     settle_with(&h, change(&parent_run.workspace)).await;
     let state = h.state(&parent.id).await;
     assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
-    let (child, child_run) = started_after(&h, "quick-pr", &[&parent]).await;
+    let (child, child_run) = started_after(&h, "direct", &[&parent]).await;
     let tip = git(&h.repo, &["rev-parse", &parent_run.branch]);
     let tree = format!("{tip}^{{tree}}");
     let moved = git(
@@ -351,7 +351,7 @@ async fn the_identity_a_ship_admits_is_the_one_recorded_by_the_operator() {
         &h.repo,
         &["config", "user.email", "agent@elsewhere.invalid"],
     );
-    let (item, run) = started(&h, "quick-pr").await;
+    let (item, run) = started(&h, "direct").await;
     std::fs::write(run.workspace.join("change.txt"), "a change\n").unwrap();
     git(&run.workspace, &["add", "change.txt"]);
     let committed = std::process::Command::new("git")

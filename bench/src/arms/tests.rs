@@ -239,7 +239,7 @@ fn item(state: QueueState, repo: Option<RepoId>, minute: i64) -> QueueItem {
     QueueItem {
         id: QueueItemId::new(),
         repo,
-        pipeline: "default-pr-review".into(),
+        pipeline: "direct".into(),
         title: "t".into(),
         brief: "b".into(),
         priority: Priority::Normal,

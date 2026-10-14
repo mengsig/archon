@@ -34,6 +34,7 @@ pub(super) fn to_request(tool: &str, arguments: Value) -> Result<Request, ToolEr
         "message_orchestrator" => message_orchestrator(&mut args)?,
         "list_pipelines" => Request::ListPipelines {
             repo: args.optional("repo")?,
+            pipeline: args.optional_text("pipeline")?,
         },
         "list_repos" => Request::RepoList,
         "model_policy" => Request::ModelPolicy {

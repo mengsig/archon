@@ -23,7 +23,7 @@ use common::initiative::{gh_calls, install_explicit_gh, prs, set_pr};
 use common::{Harness, REPO_NAME, git};
 use serde_json::json;
 
-const PIPELINE: &str = "quick-pr";
+const PIPELINE: &str = "direct";
 
 /// A harness whose repository has an `origin` and whose GitHub holds only
 /// the pull requests archond opens.
@@ -207,6 +207,17 @@ async fn an_atomic_initiative_opens_drafts_and_readies_them_together() {
     let held = triggers::held(&h.ctx).await.unwrap();
     assert_eq!(finished_initiatives(&held), 1, "{held:?}");
     assert!(triggers::due(&h.ctx).await.unwrap(), "the initiative wakes");
+    let results = held.iter().find_map(|event| match event {
+        TriggerEvent::InitiativeFinished { results, .. } => Some(results),
+        _ => None,
+    });
+    let results = results.expect("the initiative's news");
+    let items: Vec<_> = results.iter().map(|result| &result.item).collect();
+    assert_eq!(items, [first, second], "every member, in order");
+    for result in results {
+        assert_eq!(result.state, "succeeded", "{result:?}");
+        assert!(result.summary.starts_with("Done: "), "{result:?}");
+    }
 }
 
 async fn outcome(h: &Harness, run: &PipelineRun) -> Outcome {

@@ -1196,6 +1196,7 @@ mod tests {
             "You are woken for:",
             "`item_finished`: a failure, a blocker, an item tagged `notify`, one with a GitHub \
              `origin` to answer, and a success unless the operator turned that off.",
+            "Relay a success in a line with its pull request, verifying nothing: the daemon did.",
             "A trigger states all `directives` once, then only `directive_changes`; if you hold \
              fewer than `directives_in_force`, read `autonomy_policy`.",
             "A mirror holds the registered repository's local base commit (HEAD when no base \
@@ -1233,18 +1234,8 @@ mod tests {
             prompt.contains("Call `list_pipelines` to see the catalog"),
             "new pipelines must be discoverable without static prompt guidance"
         );
-        // Static guidance for the new catalog is deferred to one follow-up.
-        // Keep checking every other built-in until that follow-up lands.
-        let pending_catalog_guidance = [
-            "bugfix",
-            "docs",
-            "code-audit",
-            "performance",
-            "dependency-upgrade",
-            "refactor",
-            "test-coverage",
-            "design-doc",
-        ];
+        // Reports the operator asks for by name need no routing guidance.
+        let pending_catalog_guidance = ["code-audit", "design-doc"];
         let catalog = archon_pipeline::Catalog::builtin();
         for name in pending_catalog_guidance {
             catalog.get(name).expect("pending pipeline is discoverable");
@@ -1262,7 +1253,7 @@ mod tests {
     }
 
     /// Reading code takes no item: every repository is mirrored beside the
-    /// orchestrator, and only a change is queued.
+    /// orchestrator, and a clear change is queued without reading it first.
     #[test]
     fn builtin_prompt_answers_and_reads_code_before_it_queues_anything() {
         let prompt = unwrapped(&prompt());
@@ -1275,8 +1266,8 @@ mod tests {
         assert!(at.is_sorted(), "cheapest shape first: {at:?}");
         for said in [
             "Take the first that fits",
-            "every repository in `list_repos` is mirrored at `repos/<name>` in your workspace, \
-             so reading code takes no item",
+            "every repository in `list_repos` has a mirror, so reading code takes no item",
+            "Queue clear changes at once, in one message; read code only to split them or judge risk.",
             "a large request is a backlog ordered with `depends_on` and `priority`",
             "Never change a repository yourself or through a child.",
             "A mirror holds the registered repository's local base commit",
@@ -1298,13 +1289,11 @@ mod tests {
         let prompt = unwrapped(&prompt());
         let choice = [
             "For a change, the cheapest that fits",
-            "`direct` or `quick-pr`: small and low-risk with an obvious check. One agent, then \
-             the daemon ships.",
-            "`default-pr-review`: bounded one-author work that needs one independent review",
+            "`direct`: one author can make and check it, whatever its size. One agent, then the \
+             daemon ships.",
             "`adaptive`: one lead that keeps its context through real fixes, or integrates parts \
              that split.",
             "Never bundle unrelated changes into it.",
-            "`strict-pr-review`: security, concurrency, migrations, public APIs, CI.",
             "only where they clearly fit",
         ];
         let at: Vec<usize> = choice.iter().map(|s| prompt.find(s).unwrap()).collect();
@@ -1325,7 +1314,10 @@ mod tests {
     fn builtin_prompt_sets_review_per_item_and_reviews_the_whole_once() {
         let prompt = unwrapped(&prompt());
         for said in [
-            "Set `review` (`none`, `standard`, `strict`) on `enqueue` by risk",
+            "Set `review` (`none`, `standard`, `strict`) on `enqueue` by risk, not size: `none` \
+             only if its tests prove it and a slip would be cheap to spot, `standard` if one \
+             could hide (shared code, data), `strict` for security, concurrency, migrations, \
+             public APIs or CI.",
             "coupled parts are one item, reviewed once",
             "An item's gates are its pipeline's; add none.",
             "On a failure read `get_item`, then `retry_item`, split the work, or `notify` a \
@@ -1348,14 +1340,14 @@ mod tests {
         let prompt = unwrapped(&prompt());
         for said in [
             "0, 1 or 3 reviewers in `adaptive` and `direct` (other pipelines fix theirs)",
-            "`steer_item` changes an item without cancelling it and blames no model; once its \
-             run delivers, only a `note` reaches it.",
+            "`steer_item` blames no model; once a run delivers, only its `note` reaches it.",
             "One failed with `ESCALATE:` does not fit its pipeline: do not retry it; \
              `switch_pipeline` or `insert_stage` revives it on its branch.",
-            "forks from that branch and targets its pull request; the daemon restacks it",
+            "An item that `depends_on` an unmerged one of its repository stacks on its branch \
+             and pull request.",
             "Queue a chain at once; wait for no merge.",
-            "built to one `contract` that `update_initiative` amends",
-            "A passing member is routine: act on `initiative_finished`.",
+            "is one `enqueue_initiative` (`update_initiative` amends its contract)",
+            "Act on `initiative_finished`, not a member.",
             "On a `lesson_hint`, `record_lesson` a reusable practice",
             "Never accept a proposed lesson or pipeline: the operator does.",
         ] {
@@ -1395,7 +1387,7 @@ mod tests {
             "It may delegate to the depth in This installation.",
             "an agent deeper, one placed in a registered repository or an \
              item's worktree, and one whose model or effort `model_policy` refuses, globally or \
-             for a repository whose mirror it reads",
+             for the mirror it reads",
             "reports as `policy_violation`",
             "Never delegate for an external request (GitHub without operator standing).",
         ] {

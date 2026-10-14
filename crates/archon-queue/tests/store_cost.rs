@@ -61,7 +61,7 @@ fn staged(store: &mut Store, item: &QueueItem, stage: &str, model: &str, n: u32)
 }
 
 /// Three days of spend. Totals: cost $3.50, estimates $5.25.
-/// - agent 1: item A (alpha, quick-pr), stage implement on claude; $1 on
+/// - agent 1: item A (alpha, direct), stage implement on claude; $1 on
 ///   day 0, then $2 more on day 1.
 /// - agent 2: item B (alpha, ask), stage review on codex; $4 estimated on day 1.
 /// - agent 3: item C (no repo, ask) outside any stage; $0.50 + $0.25 on day 2.
@@ -133,7 +133,7 @@ fn each_grouping_splits_the_same_total() {
     );
     assert_eq!(
         rows(&report(CostGroup::Pipeline)),
-        vec![(key("ask"), 4.75), (key("quick-pr"), 3.0), (None, 1.0)]
+        vec![(key("ask"), 4.75), (key("direct"), 3.0), (None, 1.0)]
     );
     assert_eq!(
         rows(&report(CostGroup::Model)),

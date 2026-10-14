@@ -20,6 +20,6 @@ repository's tests passing (`python3 -m unittest` and `npm test`).
 Commit in both repositories.
 """
 timeout_minutes = 30
-pipeline = "default-pr-review"
+pipeline = "direct"
 repos = ["inventory-api", "inventory-client"]
 tags = ["feature", "multi-repo", "python", "node"]

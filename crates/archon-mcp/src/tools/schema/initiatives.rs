@@ -15,7 +15,7 @@ pub(super) fn enqueue_initiative() -> ToolDefinition {
             "pipeline": {"type": "string", "minLength": 1},
             "model_plan": {"type": "object", "description": "As in enqueue."},
             "autonomy": {"type": "object", "description": "As in enqueue; an atomic initiative's members merge by hand."},
-            "after": {"type": "array", "items": {"type": "integer", "minimum": 0}, "description": "Positions (from 0) of earlier members this one depends on."},
+            "after": {"type": "array", "items": {"type": "integer", "minimum": 0}, "description": "Positions (from 0) of earlier members this one waits for. Members build against the contract at once: wait only for one whose code this one cannot build or test without."},
         }),
         &["repo", "brief"],
     );

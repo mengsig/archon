@@ -1,5 +1,5 @@
-//! One agent through the fix loop (ARCHITECTURE §6.7), on the built-in
-//! `default-pr-review` pipeline: the implementer outlives its task and is
+//! One agent through the fix loop (ARCHITECTURE §6.7), on a repository
+//! pipeline shaped like 1.0's `default-pr-review`: the implementer outlives its task and is
 //! resumed with the reviewer's findings, reviewers stay fresh, and a fresh
 //! implementer takes over only when the kept one cannot go on. archond ships
 //! the run (§8.7) from the ship record the implementer's last answer names.
@@ -18,9 +18,8 @@ use archon_core::run::{PipelineRun, StageOutcome, StageRun, StageState};
 use archon_core::steer::Steer;
 use archon_daemon::executor;
 use common::delivery::{FakeGh, add_origin, change, origin_of, pushed, shipped_by};
-use common::{Harness, MODEL, REVIEW_MODEL, choice, expire_deadline, git};
+use common::{Harness, MODEL, REVIEW_MODEL, REVIEWED, REVIEWED_TOML, choice, expire_deadline, git};
 
-const PIPELINE: &str = "default-pr-review";
 const FINDINGS: &str = "the greeting is never tested";
 
 /// The harness pipeline with an implementer that may delegate.
@@ -50,6 +49,13 @@ gate = "all_pass"
 timeout_minutes = 30
 on_fail = { goto = "implement", max_loops = 1 }
 "#;
+
+/// A harness whose repository has [`REVIEWED`].
+async fn harness() -> Harness {
+    let h = Harness::new().await;
+    h.add_pipeline(REVIEWED, REVIEWED_TOML);
+    h
+}
 
 fn plan() -> ModelPlan {
     let mut plan = ModelPlan::default();
@@ -98,7 +104,7 @@ async fn settle_recorded(h: &Harness, summary: &str) -> StageRun {
 /// Enqueue and run `implement` to its end: its agent is now kept.
 async fn implemented(h: &Harness, title: &str) -> (QueueItem, StageRun) {
     let item = h
-        .enqueue_in(PIPELINE, title, plan())
+        .enqueue_in(REVIEWED, title, plan())
         .await
         .expect("enqueue");
     h.dispatch().await;
@@ -141,7 +147,7 @@ async fn answers(h: &Harness, fix: &StageRun, answer: &str) {
 /// delivery back nor outlives its run, and what ships is its last fix.
 #[tokio::test]
 async fn the_implementer_is_resumed_through_every_fix_and_reviewers_stay_fresh() {
-    let h = Harness::new().await;
+    let h = harness().await;
     add_origin(&h);
     let gh = FakeGh::install(&h);
     let (item, first) = implemented(&h, "add a greeting").await;
@@ -218,7 +224,7 @@ async fn learned_as_three_attempts(h: &Harness, run: &PipelineRun) {
 
 #[tokio::test]
 async fn a_kept_agent_waits_parked_and_gets_its_stage_deadline_back() {
-    let h = Harness::new().await;
+    let h = harness().await;
     let (_, first) = implemented(&h, "park").await;
     let implementer = agent(&first);
     let parked: Vec<_> = h.backend.updates();
@@ -239,9 +245,9 @@ async fn a_kept_agent_waits_parked_and_gets_its_stage_deadline_back() {
 /// what it spent so far plus the new attempt's grant, not the old remainder.
 #[tokio::test]
 async fn a_resumed_agent_gets_its_spend_so_far_plus_a_new_grant() {
-    let h = Harness::new().await;
+    let h = harness().await;
     let item = h
-        .enqueue_in(PIPELINE, "capped", plan())
+        .enqueue_in(REVIEWED, "capped", plan())
         .await
         .expect("enqueue");
     let patch = archon_core::protocol::ItemPatch {
@@ -289,7 +295,7 @@ async fn a_resumed_agent_gets_its_spend_so_far_plus_a_new_grant() {
 /// The turn-end event was missed: the sweep reads the answer.
 #[tokio::test]
 async fn a_resumed_attempt_settles_on_the_sweep() {
-    let h = Harness::new().await;
+    let h = harness().await;
     let (item, first) = implemented(&h, "sweep").await;
     let fix = sent_back(&h).await;
     h.dispatch().await;
@@ -306,7 +312,7 @@ async fn a_resumed_attempt_settles_on_the_sweep() {
 
 #[tokio::test]
 async fn a_kept_agent_that_is_gone_is_replaced_with_findings_and_a_digest() {
-    let h = Harness::new().await;
+    let h = harness().await;
     let (_, first) = implemented(&h, "gone").await;
     h.backend.kill(&agent(&first));
 
@@ -332,7 +338,7 @@ async fn a_kept_agent_that_is_gone_is_replaced_with_findings_and_a_digest() {
 /// agent is stopped and a fresh one takes the attempt.
 #[tokio::test]
 async fn a_kept_agent_that_cannot_take_the_findings_is_stopped_and_replaced() {
-    let h = Harness::new().await;
+    let h = harness().await;
     let (_, first) = implemented(&h, "refused").await;
     let refusal = ArchonError::Aether("invalid_state: the agent's context is exhausted".into());
     h.backend.fail_next_message(refusal);
@@ -348,7 +354,7 @@ async fn a_kept_agent_that_cannot_take_the_findings_is_stopped_and_replaced() {
 /// goes out again under the same key, once.
 #[tokio::test]
 async fn an_unanswered_resume_is_repeated_under_its_key() {
-    let h = Harness::new().await;
+    let h = harness().await;
     let (_, first) = implemented(&h, "away").await;
     h.backend
         .fail_next_message(ArchonError::Unavailable("aether away".into()));
@@ -372,7 +378,7 @@ async fn an_unanswered_resume_is_repeated_under_its_key() {
 /// so a fresh agent retries the attempt with the findings.
 #[tokio::test]
 async fn a_kept_agent_lost_mid_fix_is_retried_by_a_fresh_one() {
-    let h = Harness::new().await;
+    let h = harness().await;
     let (_, first) = implemented(&h, "lost").await;
     let fix = sent_back(&h).await;
     h.backend.kill(&agent(&first));
@@ -388,7 +394,7 @@ async fn a_kept_agent_lost_mid_fix_is_retried_by_a_fresh_one() {
 
 #[tokio::test]
 async fn a_resumed_attempt_that_says_failed_fails_its_stage() {
-    let h = Harness::new().await;
+    let h = harness().await;
     let (item, first) = implemented(&h, "cannot").await;
     sent_back(&h).await;
     let failed = StageOutcome::Failed {
@@ -424,7 +430,7 @@ async fn ends_without_its_record(h: &Harness, fix: &StageRun, summary: &str) -> 
 
 #[tokio::test]
 async fn a_resumed_agent_that_leaves_out_its_record_is_asked_for_it_once() {
-    let h = Harness::new().await;
+    let h = harness().await;
     let (item, _) = implemented(&h, "forgot the record").await;
     let fix = sent_back(&h).await;
     let asked = ends_without_its_record(&h, &fix, "added the test in tests/greet.rs").await;
@@ -446,7 +452,7 @@ async fn a_resumed_agent_that_leaves_out_its_record_is_asked_for_it_once() {
 
 #[tokio::test]
 async fn a_resumed_agent_asked_for_its_record_in_vain_fails_its_stage() {
-    let h = Harness::new().await;
+    let h = harness().await;
     let (item, _) = implemented(&h, "never records").await;
     let fix = sent_back(&h).await;
     ends_without_its_record(&h, &fix, "added the test").await;
@@ -471,7 +477,7 @@ async fn a_resumed_agent_asked_for_its_record_in_vain_fails_its_stage() {
 
 #[tokio::test]
 async fn a_resumed_attempt_past_its_deadline_is_stopped_as_timed_out() {
-    let h = Harness::new().await;
+    let h = harness().await;
     let (item, first) = implemented(&h, "slow").await;
     let fix = sent_back(&h).await;
     expire_deadline(&h, &fix).await;
@@ -485,7 +491,7 @@ async fn a_resumed_attempt_past_its_deadline_is_stopped_as_timed_out() {
 
 #[tokio::test]
 async fn cancelling_the_item_stops_the_resumed_agent() {
-    let h = Harness::new().await;
+    let h = harness().await;
     let (item, first) = implemented(&h, "cancel").await;
     let fix = sent_back(&h).await;
     let cancel = Request::CancelItem {
@@ -507,7 +513,7 @@ async fn cancelling_the_item_stops_the_resumed_agent() {
 /// any stage, and the agent itself stays to be resumed.
 #[tokio::test]
 async fn the_helpers_of_a_kept_agent_are_stopped_and_it_stays() {
-    let h = Harness::new().await;
+    let h = harness().await;
     h.add_pipeline("fix-delegating", DELEGATING);
     let mut plan = plan();
     let reviewer = plan.0["review"][0].clone();
@@ -536,7 +542,7 @@ async fn the_helpers_of_a_kept_agent_are_stopped_and_it_stays() {
 
 #[tokio::test]
 async fn a_restart_mid_fix_keeps_the_agent_and_its_answer() {
-    let mut h = Harness::new().await;
+    let mut h = harness().await;
     let (item, first) = implemented(&h, "restart").await;
     let fix = sent_back(&h).await;
     let spawned = h.backend.requests().len();
@@ -580,7 +586,7 @@ fn retunes(h: &Harness) -> Vec<(AetherAgentId, archon_core::model::ModelChoice)>
 #[tokio::test]
 async fn a_kept_agent_is_resumed_only_on_the_choice_it_runs_now() {
     for (back_to_high, resumed) in [(false, true), (true, false)] {
-        let h = Harness::new().await;
+        let h = harness().await;
         let (item, first) = implemented(&h, "retuned mid-fix").await;
         let implementer = agent(&first);
         let fix = sent_back(&h).await;
@@ -623,7 +629,7 @@ async fn a_kept_agent_is_resumed_only_on_the_choice_it_runs_now() {
 /// then: it comes with the findings it is resumed with.
 #[tokio::test]
 async fn a_note_steered_while_the_agent_is_parked_comes_with_the_findings() {
-    let h = Harness::new().await;
+    let h = harness().await;
     let (item, first) = implemented(&h, "noted mid-review").await;
     let implementer = agent(&first);
     let reviewer = agent(&running(&h, "review").await);
@@ -650,7 +656,7 @@ async fn a_note_steered_while_the_agent_is_parked_comes_with_the_findings() {
 /// turn to end: the agent reads the note in it, and its answer still counts.
 #[tokio::test]
 async fn a_steer_into_a_resumed_fix_ends_no_turn_and_keeps_its_answer() {
-    let h = Harness::new().await;
+    let h = harness().await;
     let (item, first) = implemented(&h, "steered mid-fix").await;
     let implementer = agent(&first);
     let fix = sent_back(&h).await;
@@ -687,7 +693,7 @@ async fn a_steer_into_a_resumed_fix_ends_no_turn_and_keeps_its_answer() {
 /// agent on it, with the findings and a digest of the attempt it continues.
 #[tokio::test]
 async fn a_model_steered_for_the_stage_gives_the_fix_to_a_fresh_agent() {
-    let h = Harness::new().await;
+    let h = harness().await;
     let (item, first) = implemented(&h, "a stronger model for the fix").await;
     let implementer = agent(&first);
     running(&h, "review").await;

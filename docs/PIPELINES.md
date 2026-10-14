@@ -39,7 +39,7 @@ name, as a whole directory**:
 
   ```toml
   [pipelines]
-  disabled = ["quick-pr"]
+  disabled = ["performance"]
   ```
 - A pipeline that learning proposes is written to the user directory as
   `<name>.proposed/`, which the catalog ignores. It was checked like any
@@ -64,8 +64,8 @@ To make it available to a single repository only, copy it to
 `<repo>/.archon/pipelines/bugfix-tdd/` instead. That copy wins over a user
 pipeline of the same name.
 
-The orchestrator now sees `bugfix-tdd` in `list_pipelines`, with its stages,
-gates and nudges, and can enqueue items with it. A test in
+The orchestrator now sees `bugfix-tdd` in `list_pipelines`, and its stages,
+gates and nudges when it names it there, and can enqueue items with it. A test in
 `crates/archon-pipeline/tests/catalog.rs` copies this exact directory into a
 temporary user directory and runs it through the engine, so the example
 cannot rot.
@@ -312,7 +312,12 @@ completed with a verdict; a builder or researcher that returned none is not
 a reviewer. Archon then holds the verdicts to the run branch: a pass counts
 when its reviewer read the branch head, or an earlier head whose later
 commits a passing reviewer read as a delta. A fail never counts, and it
-stands until such a pass read past it. When the stage also writes the ship
+stands until such a pass read past it, or a later reviewer read past it and
+failed in turn, and that fail was answered: a fix of a fix is reviewed as a
+delta too. A verdict on a commit the branch no
+longer holds (the agent amended or rebased it away) is superseded: it is
+left out rather than failing the run, and a superseded fail stands until
+the counted passes read the whole change. When the stage also writes the ship
 record, the branch head must hold the record's `tree`. With fewer counted
 passes than the level asks for, the run fails at that stage with each reason. Archon
 records the counted reviewers as `review.reviewer_agents` and the models
@@ -454,8 +459,8 @@ The run state machine is `RunDriver` in `crates/archon-pipeline`:
 
 `attempt` counts how often a stage has been entered: 1 the first time, 2
 after the first loop back to it, and so on. Each stage has its own count. In
-`strict-pr-review`, for example, the test stage's third attempt can lead to
-the review stage's second.
+`refactor`, for example, the verify stage's third attempt can lead to the
+review stage's second.
 
 Every decision is derived from the stage runs Archon has persisted, so a
 daemon restart resumes a run exactly where it was.
@@ -469,8 +474,8 @@ resumes it.
 
 A stage's agent is kept when the stage is `kind = "work"` with one agent
 (`fan_out = 1`), some stage names it in `on_fail.goto`, and it does not
-hold a [declared review](#a-declared-review). In `default-pr-review` that
-is `implement`. You declare nothing for it.
+hold a [declared review](#a-declared-review). In `refactor` that is its
+`refactor` stage. You declare nothing for it.
 
 When a gate loops back (step 5), the same agent gets a message with the
 findings and fixes its own work, with everything it learned still in its
@@ -846,11 +851,10 @@ findings. Page paths, gate behavior and report metadata do not change.
 
 ## Worked example: `bugfix-tdd`
 
-The built-in `bugfix` uses this reproduce → fix → review pattern
-with one independent reviewer and up to two fix loops; no installation is
-needed. This `bugfix-tdd` tutorial keeps two reviewers to demonstrate fan-out.
-Use `direct` for trivial obvious one-liners and `strict-pr-review` for
-security or concurrency bugs.
+This tutorial splits a bug fix into reproduce → fix → review stages, with
+two reviewers to demonstrate fan-out. For an ordinary bug, `direct` is
+enough: its one agent reproduces, fixes and checks it. Raise its review
+level for security or concurrency bugs.
 
 [`docs/examples/pipelines/bugfix-tdd/pipeline.toml`](examples/pipelines/bugfix-tdd/pipeline.toml):
 
@@ -934,12 +938,12 @@ policy does not allow.
 
 ## Overriding a built-in
 
-To change a built-in pipeline, for example to give `default-pr-review` two
+To change a built-in pipeline, for example to give `refactor` two
 reviewers:
 
 ```sh
-cp -r pipelines/default-pr-review ~/.config/archon/pipelines/
-$EDITOR ~/.config/archon/pipelines/default-pr-review/pipeline.toml   # fan_out = 2
+cp -r pipelines/refactor ~/.config/archon/pipelines/
+$EDITOR ~/.config/archon/pipelines/refactor/pipeline.toml   # review: fan_out = 2
 archon pipelines check
 ```
 
@@ -950,18 +954,10 @@ back to the built-in.
 
 | Name | Stages | Nudges |
 | --- | --- | --- |
-| `direct` | implement | fast tier; review level `none` unless the item asks. One agent implements, runs the affected tests, commits and returns the ship record. The cheapest path for a small, low-risk change; the agent escalates work that is not. |
+| `direct` | implement | balanced tier; review level `none` unless the item asks. The pipeline an item runs when it names none. One agent implements, runs the affected tests, commits and returns the ship record. The cheapest path for a change one author can make and check, whatever its size; the agent escalates risky work. |
 | `adaptive` | build (work, delegation enabled, holds the review) | balanced tier; review level `standard` unless the item asks. One lead chooses workers at runtime and has the integrated change reviewed by as many independent reviewers as the item's review level asks for. |
-| `quick-pr` | implement | fast tier. For small, low-risk changes. The implement stage escalates risky work. |
-| `default-pr-review` | implement → review (1, `all_pass`, back to implement ×2) | balanced tier, independent reviewer |
-| `bugfix` | reproduce (failing test) → fix → review (1, `all_pass`, back to fix ×2) | balanced tier, independent reviewer. For bugs with a describable symptom; `direct` or `quick-pr` for trivial one-liners, `strict-pr-review` for security/concurrency bugs. |
-| `docs` | write → verify (1, `all_pass`, back to write ×2) | fast/balanced tier, independent reviewer. For README, guides, API/reference docs, changelogs and docstrings; verifies every claim, command and internal link against the code. Use `direct` for a typo. |
-| `dependency-upgrade` | survey → upgrade → verify (`all_pass`, back to upgrade ×3) | balanced tier. Research changelogs, bump libraries/toolchains/base images, verify build/tests/audit. Use `default-pr-review` for features that add dependencies. |
-| `refactor` | baseline/characterize → refactor → verify (`all_pass`, back to refactor ×3) → review (1, `all_pass`, back to refactor ×2) | balanced tier, independent reviewer. Structure-only changes; use `default-pr-review` for behaviour changes. |
-| `strict-pr-review` | implement → test (`all_pass`, back to implement ×3) → review (3 lenses, `all_pass`, back to implement ×3) | strongest tier, independent reviewers |
-| `team-pr` | plan → build (team: `backend`, `frontend`) → e2e (`all_pass`, back to build ×2) → review (1, `all_pass`, back to build ×2) | balanced tier, independent reviewer. For a change that spans cleanly separable parts. See below. |
-| `performance` | measure → optimize → verify (`all_pass`, back to optimize ×3) → review (1, `all_pass`, back to optimize ×2) | strongest tier, independent reviewer. For a specific slow path with a measurable goal, not speculative micro-optimization; use `default-pr-review` for ordinary changes. |
-| `test-coverage` | analyze → write → verify (test, `all_pass`, back to write ×2) | balanced tier. Raise coverage of existing code with risk-ranked tests, at least three passing runs and per-test mutation checks. Bugs become follow-ups; use `bugfix` to fix one. |
+| `refactor` | baseline/characterize → refactor → verify (`all_pass`, back to refactor ×3) → review (1, `all_pass`, back to refactor ×2) | balanced tier, independent reviewer. Structure-only changes; use `direct` for behaviour changes. |
+| `performance` | measure → optimize → verify (`all_pass`, back to optimize ×3) → review (1, `all_pass`, back to optimize ×2) | strongest tier, independent reviewer. For a specific slow path with a measurable goal, not speculative micro-optimization; use `direct` for ordinary changes. |
 | `agent-testing` | plan → exercise (2 exploratory testers) → report (HTML) | balanced tier, independent testers |
 | `code-audit` | scope → audit (3 lenses, report) → report (HTML with issue drafts) | strongest tier, independent auditors. Read-and-report only; findings become follow-up items. Use `ask` for a single question or `agent-testing` to exercise the product. |
 | `e2e-testing` | setup → e2e (`all_pass`, back to setup ×1) → report (HTML with screenshots) | balanced tier |
@@ -969,15 +965,17 @@ back to the built-in.
 | `errand` | errand (report) | balanced tier. A small job answered in text or as a Lavish page, with no repository changes or outward side effects. Scratch workspace, repository optional. Use `ask` for repository questions in text, and a shipping pipeline for changes. |
 | `design-doc` | research → critique (`all_pass`, back to research ×2) → report (HTML design/RFC) | strongest tier, independent critic. Before a large or ambiguous change; no product-code changes or shipping. Use `proposal: lavish` for design and implementation in one item. |
 
-The first twelve change a repository, and archond ships each of them once
+The first four change a repository, and archond ships each of them once
 its last stage has passed (see "Shipping"); none has a ship agent. Their
 prompts, in [`pipelines/`](../pipelines/), are a good starting point for
 your own. Each pipeline directory stays self-contained.
 
 ### `direct`
 
-Use `direct` for a small change with low risk: a typo, a rename, a
-one-function fix, a configuration value. One agent does all of it. It
+Use `direct` for any change one author can make and check, whatever its
+size: a fix, a feature in familiar code, tests, docs, a dependency upgrade,
+a mechanical sweep. An item that names no pipeline runs it. One agent does
+all of it. It
 implements the change, runs the tests the change affects, commits, and
 returns the ship record; archond ships. There is no other stage, and the
 stage contract and prompt are the shortest of any pipeline that ships.
@@ -990,19 +988,18 @@ independent reviewers of its committed change, and Archon verifies them
 (see "A declared review"). Under an operator ceiling of `standard` or
 `strict`, every `direct` item is reviewed at least at that level.
 
-The agent does not stretch the pipeline. A task that turns out large or
-risky (security, concurrency, a data migration, a public API break, more
-than a few hundred lines) fails with `ESCALATE:` and what it needs instead,
-before anything is committed.
+The agent does not stretch the pipeline. A task that turns out risky
+(security, concurrency, a data migration, a public API break) or reaches
+beyond the task into code it depends on fails with `ESCALATE:` and what it
+needs instead, before anything is committed. Size alone is no risk.
 
 ### `adaptive`
 
 Use `adaptive` for a repository change where one lead that keeps its
 context through fixes, or integrates parts that split, saves restarts. A
-small low-risk change is cheaper in `direct`, and a bounded change by
-one author with one review in `default-pr-review`. The lead sizes,
-implements, integrates, verifies and fixes the change. Its prompt has it
-spend where spending pays:
+change one author can make and check is cheaper in `direct`, with the
+review level its risk calls for. The lead sizes, implements, integrates,
+verifies and fixes the change. Its prompt has it spend where spending pays:
 
 - **Workers.** A leaf child in an isolated workspace gets an independent
   deliverable with its own paths, and only when running it in parallel
@@ -1043,7 +1040,7 @@ recorded. Both ship modes work.
 
 Select it with `pipeline = "adaptive"` or as a repository's
 `default_pipeline`. The `review` knob alone never selects it: without a
-named pipeline, `review = standard` picks `default-pr-review`. With
+named pipeline, an item runs `direct` at the level it asks. With
 `adaptive` named, `review` sets how much review the lead owes: leave it out
 for one reviewer, say `strict` for three, or `none` for a change that needs
 no second reader, where the operator's ceiling allows it. Proposal and
@@ -1078,13 +1075,14 @@ run, once the item also passes gc's age checks. `--older-than` overrides
 the age cutoff. With `worktrees.auto_gc` on, passes run at startup and
 every 30 minutes. See [workspace retention](ARCHITECTURE.md#132-worktree-gc).
 
-### `team-pr`
+### The `team-pr` example
 
-`team-pr` builds one change as a team and ships it as one pull request.
-Use it when the change spans parts that can be built side by side with
-little overlap, such as an API and the UI that calls it. For small or
-tightly coupled changes, the split costs more than it saves: use
-`default-pr-review`.
+[`docs/examples/pipelines/team-pr/`](examples/pipelines/team-pr/) builds one
+change as a team and ships it as one pull request; it was a built-in until
+1.1.0. Use it when the change spans parts that can be built side by side
+with little overlap, such as an API and the UI that calls it. For small or
+tightly coupled changes, the split costs more than it saves: use `direct`
+or `adaptive`.
 
 1. `plan` (work) writes `.archon/plan.md` and commits it on the run branch:
    the brief split per role, the files each role owns, and the interface
@@ -1100,10 +1098,10 @@ tightly coupled changes, the split costs more than it saves: use
 5. archond delivers the run branch as for the other shipping pipelines.
 
 A balanced tier suits `plan`, `e2e` and `review`; give the `build` roles a
-strong coding model. The roles are fixed in the pipeline file, so a
-repository with other parts overrides the whole pipeline by name in
-`<repo>/.archon/pipelines/team-pr/`: copy `pipelines/team-pr/` there and
-change `roles`, and optionally `role_prompts`:
+strong coding model. The roles are fixed in the pipeline file: copy
+`docs/examples/pipelines/team-pr/` to `~/.config/archon/pipelines/team-pr/`,
+or to `<repo>/.archon/pipelines/team-pr/` for one repository, and change
+`roles`, and optionally `role_prompts`:
 
 ```toml
 [[stage]]
@@ -1115,6 +1113,6 @@ role_prompts = { mobile = "Own apps/mobile/ only; call the API as the plan speci
 timeout_minutes = 150
 ```
 
-`archon pipelines check` in the repository then lists the override. Keep
+`archon pipelines check` in the repository then lists it. Keep
 `plan.md` naming your roles, since the plan stage splits the brief for
 them. A team of more roles than the caps allow is refused at enqueue.

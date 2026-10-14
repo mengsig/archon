@@ -385,7 +385,7 @@ mod tests {
     fn blockers_and_escalations_end_a_run_and_other_failures_do_not() {
         assert!(StageOutcome::ends_run("  BLOCKED: no push access"));
         assert!(StageOutcome::ends_run(
-            "ESCALATE: needs a review; use default-pr-review"
+            "ESCALATE: needs a review; use adaptive"
         ));
         assert!(!StageOutcome::ends_run(
             "tests failed: ESCALATE: is not a prefix here"
@@ -513,7 +513,7 @@ mod tests {
         let mut run = PipelineRun {
             id: PipelineRunId::new(),
             item: QueueItemId::new(),
-            pipeline: "quick-pr".into(),
+            pipeline: "direct".into(),
             shipped: false,
             aether_run: None,
             workspace: "/archon/worktrees/x".into(),

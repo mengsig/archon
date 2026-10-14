@@ -12,7 +12,7 @@ use archon_queue::dispatch::{
 };
 use common::Rng;
 
-const PIPELINES: [&str; 3] = ["quick-pr", "strict", "ask"];
+const PIPELINES: [&str; 3] = ["direct", "strict", "ask"];
 const PRIORITIES: [Priority; 4] = [
     Priority::Low,
     Priority::Normal,

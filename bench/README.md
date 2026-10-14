@@ -201,6 +201,17 @@ its wall time includes about 60 s of waiting.
     failures. The published summary was re-rendered from the same
     `results.jsonl`.
 
+## Later results
+
+These snapshots rerun only the `archon` and `aether` arms on the same model.
+Each has a `summary.md` with Archon's overhead per task.
+
+- [`results-v2/`](results-v2/summary.md) covers Archon 1.1.0 as first built.
+  Cost overhead was 3.69× and wall-time overhead 1.98×.
+- [`results-v3/`](results-v3/summary.md) is Archon 1.1.0 after the cost work.
+  Cost overhead fell to 3.09×, input-token overhead to 3.24×, and wall-time
+  overhead stayed at 2.02×. `long-backlog` reached wall parity.
+
 ## Reproduce
 
 Point the harness at a sandbox Aether daemon, never the one you work with

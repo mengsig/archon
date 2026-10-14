@@ -496,7 +496,7 @@ fn item_in(state: QueueState, updated_secs_ago: i64) -> QueueItem {
     QueueItem {
         id: QueueItemId::new(),
         repo: None,
-        pipeline: "quick-pr".into(),
+        pipeline: "direct".into(),
         title: "t".into(),
         brief: String::new(),
         priority: archon_core::queue::Priority::Normal,
@@ -519,7 +519,7 @@ fn run_in(workspace: &Path, finished_secs_ago: Option<i64>) -> PipelineRun {
     PipelineRun {
         id: archon_core::id::PipelineRunId::new(),
         item: QueueItemId::new(),
-        pipeline: "quick-pr".into(),
+        pipeline: "direct".into(),
         shipped: false,
         aether_run: None,
         workspace: workspace.into(),

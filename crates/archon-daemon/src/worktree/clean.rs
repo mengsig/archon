@@ -12,10 +12,29 @@ use super::stack::is_commit_id;
 
 /// Git's mode of a submodule's entry in an index.
 const GITLINK_MODE: &str = "160000";
+/// Untracked build and tool caches that are never work, ignored or not: the
+/// directories by name at any depth, `target` only at the top level.
+const CACHE_PATTERNS: [&str; 11] = [
+    "__pycache__/",
+    "*.pyc",
+    "*.pyo",
+    ".pytest_cache/",
+    ".mypy_cache/",
+    ".ruff_cache/",
+    ".hypothesis/",
+    ".tox/",
+    ".coverage",
+    "node_modules/",
+    "/target/",
+];
 
-/// Why `git worktree remove` would refuse `tree` without `--force`, if it
-/// would: a submodule in it, or changes to tracked or untracked files.
-pub(crate) fn unremovable(shadow: &Shadow, tree: &Path) -> Result<Option<String>, ArchonError> {
+/// Why `git worktree remove` would refuse `tree` without `--force`, if it would: a submodule,
+/// or changes to tracked or untracked files other than caches (built-in or under `cache_dirs`).
+pub(crate) fn unremovable(
+    shadow: &Shadow,
+    tree: &Path,
+    cache_dirs: &[PathBuf],
+) -> Result<Option<String>, ArchonError> {
     assert!(tree.is_absolute(), "worktree paths are absolute");
     let index = index_of(tree)?;
     if let Some(submodule) = submodule_in(tree)? {
@@ -25,7 +44,7 @@ pub(crate) fn unremovable(shadow: &Shadow, tree: &Path) -> Result<Option<String>
         .args(["rev-parse", "--verify", "HEAD^{commit}"])
         .text()?;
     assert!(is_commit_id(&head), "rev-parse --verify prints a commit id");
-    if !is_clean(shadow, tree, &index, &head)? || has_untracked(shadow, tree, &index)? {
+    if !is_clean(shadow, tree, &index, &head)? || has_untracked(shadow, tree, &index, cache_dirs)? {
         return Ok(Some("it has uncommitted changes".to_owned()));
     }
     Ok(None)
@@ -67,9 +86,14 @@ pub(crate) fn is_clean(
     Ok(true)
 }
 
-/// Whether `tree` has a file neither tracked nor ignored by its
-/// `.gitignore` files, the repository's `info/exclude` or the operator's.
-fn has_untracked(shadow: &Shadow, tree: &Path, index: &Path) -> Result<bool, ArchonError> {
+/// Whether `tree` has a file neither tracked, ignored (`.gitignore`, the repository's
+/// `info/exclude` or the operator's), nor a cache ([`CACHE_PATTERNS`], `cache_dirs`).
+fn has_untracked(
+    shadow: &Shadow,
+    tree: &Path,
+    index: &Path,
+    cache_dirs: &[PathBuf],
+) -> Result<bool, ArchonError> {
     assert!(tree.is_absolute(), "worktree paths are absolute");
     assert!(
         index.is_absolute(),
@@ -77,6 +101,7 @@ fn has_untracked(shadow: &Shadow, tree: &Path, index: &Path) -> Result<bool, Arc
     );
     let exclude = git_path(tree, "info/exclude")?;
     let exclude_from = format!("--exclude-from={}", path_str(&exclude)?);
+    let caches = cache_excludes(cache_dirs)?;
     let mut args = vec![
         "ls-files",
         "-z",
@@ -88,6 +113,7 @@ fn has_untracked(shadow: &Shadow, tree: &Path, index: &Path) -> Result<bool, Arc
     if kind(&exclude)?.is_some_and(|kind| kind.is_file()) {
         args.push(&exclude_from);
     }
+    args.extend(caches.iter().map(String::as_str));
     let ran = shadow
         .git(Some(tree), Config::Operator)?
         .env("GIT_INDEX_FILE", path_str(index)?)
@@ -97,6 +123,28 @@ fn has_untracked(shadow: &Shadow, tree: &Path, index: &Path) -> Result<bool, Arc
         return Err(ran.failure());
     }
     Ok(!ran.stdout.is_empty())
+}
+
+/// `--exclude` options for the built-in caches and each of `cache_dirs`,
+/// anchored at the top of the worktree, with git's wildcards taken literally.
+fn cache_excludes(cache_dirs: &[PathBuf]) -> Result<Vec<String>, ArchonError> {
+    let mut excludes: Vec<String> = CACHE_PATTERNS
+        .iter()
+        .map(|pattern| format!("--exclude={pattern}"))
+        .collect();
+    for dir in cache_dirs {
+        assert!(dir.is_relative(), "config validation keeps them relative");
+        let mut pattern = String::from("/");
+        for c in path_str(dir)?.trim_end_matches('/').chars() {
+            if matches!(c, '*' | '?' | '[' | '\\') {
+                pattern.push('\\');
+            }
+            pattern.push(c);
+        }
+        assert!(pattern.len() > 1, "config validation refuses an empty path");
+        excludes.push(format!("--exclude={pattern}/"));
+    }
+    Ok(excludes)
 }
 
 /// A submodule `git worktree remove` refuses to delete: one whose git
@@ -168,7 +216,7 @@ mod tests {
             &format!("touch {}", marker.display()),
         ]);
         let shadow = Shadow::of(&root.join("data"), &repo).unwrap();
-        let why = || unremovable(&shadow, &repo).unwrap();
+        let why = || unremovable(&shadow, &repo, &[]).unwrap();
 
         std::fs::write(repo.join("ignored"), "x").unwrap();
         assert_eq!(why(), None, "an ignored file is no change");
@@ -191,5 +239,59 @@ mod tests {
         ]);
         std::fs::create_dir_all(repo.join("sub/.git")).unwrap();
         assert_eq!(why().as_deref(), Some("it holds the submodule `sub`"));
+    }
+
+    #[test]
+    fn untracked_caches_are_no_change_but_untracked_source_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let repo = root.join("repo");
+        std::fs::create_dir_all(repo.join("pkg")).unwrap();
+        let git = |args: &[&str]| {
+            let git = DaemonGit::sealed_in(&repo);
+            git.args(args.to_vec()).text().unwrap()
+        };
+        git(&["init", "--quiet"]);
+        std::fs::write(repo.join("pkg/mod.py"), "x = 1\n").unwrap();
+        git(&["add", "."]);
+        let who = ["-c", "user.name=a", "-c", "user.email=a@example.invalid"];
+        git(&[&who[..], &["commit", "--quiet", "-m", "x"]].concat());
+        let shadow = Shadow::of(&root.join("data"), &repo).unwrap();
+        let build = [PathBuf::from("web/build")];
+        let why = || unremovable(&shadow, &repo, &build).unwrap();
+        let write = |path: &str| {
+            let path = repo.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "cache").unwrap();
+        };
+        for cache in [
+            "pkg/__pycache__/mod.cpython-313.pyc",
+            "pkg/stray.pyc",
+            ".pytest_cache/v/cache/lastfailed",
+            ".mypy_cache/3.13/pkg.json",
+            "web/node_modules/left-pad/index.js",
+            "target/debug/app",
+            "web/build/app.js",
+        ] {
+            write(cache);
+        }
+        assert_eq!(why(), None, "untracked caches are no change");
+        assert_eq!(
+            unremovable(&shadow, &repo, &[]).unwrap().as_deref(),
+            Some("it has uncommitted changes"),
+            "web/build is a cache only where it is configured"
+        );
+
+        for work in ["pkg/new.py", "pkg/target/kept.py", "build/app.js"] {
+            write(work);
+            assert_eq!(
+                why().as_deref(),
+                Some("it has uncommitted changes"),
+                "{work}"
+            );
+            std::fs::remove_file(repo.join(work)).unwrap();
+        }
+        std::fs::write(repo.join("pkg/mod.py"), "x = 2\n").unwrap();
+        assert_eq!(why().as_deref(), Some("it has uncommitted changes"));
     }
 }

@@ -406,7 +406,8 @@ const REVIEW_CHECK_RULES: &str = "\
 different one you delegated to yourself that completed with that verdict, and as many \
 as the review asks must have passed the branch head, or an earlier head whose later \
 commits a passing reviewer read with `base` at or before it. A fail stands until such \
-a pass. Anything else fails the run here, and nothing ships. Never report `pass` for a \
+a pass, or after an amend or rebase until a pass of the whole change. Anything else \
+fails the run, and nothing ships. Never report `pass` for a \
 review that did not run or did not pass: with a blocking finding open, call \
 `fail_task` and say which.\n\
 - Archon adds the review as the last line of your summary: write no `REVIEW:` line \
@@ -416,9 +417,9 @@ yourself.\n";
 fn ship_record_rules(kind: StageKind) -> String {
     let leave = match kind {
         StageKind::Work => {
-            "Commit all that should ship on the run branch: Archon refuses uncommitted \
-             changes to tracked files and delivers no untracked file, so the change must \
-             not need one."
+            "Commit all that should ship on the run branch and no build cache such as \
+             `__pycache__`: Archon refuses uncommitted changes to tracked files and \
+             delivers no untracked file."
         }
         StageKind::Review | StageKind::Test => {
             "You commit nothing: the record names the commit you judged, as it stands on \
@@ -1027,7 +1028,8 @@ mod tests {
         );
         for said in [
             "do not push and do not open a pull request",
-            "delivers no untracked file, so the change must not need one",
+            "and no build cache such as `__pycache__`: Archon refuses",
+            "delivers no untracked file.",
             "verifies the recorded tree against the current branch head and delivers that head",
             "\"commit\": \"<git rev-parse HEAD>\", \"tree\": \"<git rev-parse HEAD^{tree}>\"",
             "\"pr\": {\"title\":",

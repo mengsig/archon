@@ -73,7 +73,7 @@ fn variant_name(command: &Command) -> &'static str {
 
 fn full_create_agent() -> CreateAgent {
     CreateAgent {
-        role: "archon-stage:quick-pr/implement".into(),
+        role: "archon-stage:direct/implement".into(),
         name: Some("implement · the thing".into()),
         objective: Some("do it".into()),
         model: Some("claude-code/claude-opus-5-5".parse().unwrap()),

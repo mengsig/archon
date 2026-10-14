@@ -38,13 +38,13 @@ fn refusal<T: std::fmt::Debug>(result: Result<T, archon_core::error::ArchonError
 
 #[test]
 fn an_inserted_stage_lands_after_the_started_ones_and_replays_from_the_edit_alone() {
-    let run = support::builtin("quick-pr");
-    let source = support::builtin("default-pr-review");
+    let run = support::builtin("direct");
+    let source = support::builtin("reviewed");
     let prefix = started_prefix(&run, ["implement"]);
     assert_eq!(prefix, 1);
     let (edit, reshaped) = insert_edit(&run, prefix, &source, "review", None).unwrap();
     assert_eq!(ids(&reshaped), ["implement", "review"]);
-    assert_eq!(reshaped.name(), "quick-pr", "the run keeps its snapshot");
+    assert_eq!(reshaped.name(), "direct", "the run keeps its snapshot");
     assert_eq!(recorder(&reshaped), Some("implement"), "it still ships");
     let review = reshaped.stage("review").unwrap();
     assert_eq!(review.on_fail.as_ref().unwrap().goto, "implement");
@@ -65,8 +65,8 @@ fn an_inserted_stage_lands_after_the_started_ones_and_replays_from_the_edit_alon
 
 #[test]
 fn inserting_inside_the_started_stages_is_refused() {
-    let run = support::builtin("default-pr-review");
-    let source = support::builtin("strict-pr-review");
+    let run = support::builtin("reviewed");
+    let source = support::builtin("strict-reviewed");
     let prefix = started_prefix(&run, ["implement", "review"]);
     assert_eq!(prefix, 2);
     let early = refusal(insert_edit(
@@ -86,8 +86,8 @@ fn inserting_inside_the_started_stages_is_refused() {
         "{nowhere}"
     );
     // A work stage after the ship record would commit what nobody records.
-    let bugfix = support::builtin("bugfix");
-    let unrecorded = refusal(insert_edit(&run, prefix, &bugfix, "reproduce", None));
+    let refactor = support::builtin("refactor");
+    let unrecorded = refusal(insert_edit(&run, prefix, &refactor, "baseline", None));
     assert!(
         unrecorded.contains("the run could not continue"),
         "{unrecorded}"
@@ -98,17 +98,35 @@ fn inserting_inside_the_started_stages_is_refused() {
     assert_eq!(ids(&ok), ["implement", "review", "test"]);
 }
 
+/// An operator's pipeline whose one stage writes what archond ships.
+const WRITER: &str = r#"
+[pipeline]
+name = "writer"
+description = "Write, then ship"
+version = 1
+workspace = "worktree"
+requires_repo = true
+
+[pipeline.ship]
+stage = "write"
+
+[[stage]]
+id = "write"
+kind = "work"
+prompt = "write.md"
+"#;
+
 /// The stage a pipeline has archond ship from keeps that role in a run it is
 /// carried into, once it runs after the stage the run shipped from so far.
 #[test]
 fn a_carried_stage_that_wrote_the_ship_record_writes_the_run_s() {
-    let run = support::builtin("quick-pr");
-    let docs = support::builtin("docs");
+    let run = support::builtin("direct");
+    let writer = support::spec_from(WRITER, &[]);
     assert_eq!(
-        (recorder(&run), recorder(&docs)),
+        (recorder(&run), recorder(&writer)),
         (Some("implement"), Some("write"))
     );
-    let (edit, written) = insert_edit(&run, 1, &docs, "write", None).unwrap();
+    let (edit, written) = insert_edit(&run, 1, &writer, "write", None).unwrap();
     assert_eq!(ids(&written), ["implement", "write"]);
     assert_eq!(recorder(&written), Some("write"), "the last commits ship");
     assert_eq!(apply(&run, &edit).unwrap(), written, "a restart agrees");
@@ -122,8 +140,8 @@ fn a_carried_stage_that_wrote_the_ship_record_writes_the_run_s() {
     assert_eq!(apply_all((*run).clone(), [&edit]).unwrap(), switched);
 
     // Ahead of the stage that ships, the carried one records nothing.
-    let review = support::builtin("default-pr-review");
-    let (_, early) = insert_edit(&review, 0, &docs, "write", None).unwrap();
+    let review = support::builtin("reviewed");
+    let (_, early) = insert_edit(&review, 0, &writer, "write", None).unwrap();
     assert_eq!(ids(&early), ["write", "implement", "review"]);
     assert_eq!(recorder(&early), Some("implement"));
 
@@ -136,8 +154,8 @@ fn a_carried_stage_that_wrote_the_ship_record_writes_the_run_s() {
 
 #[test]
 fn a_clashing_id_or_prompt_gets_a_free_name() {
-    let run = support::builtin("quick-pr");
-    let source = support::builtin("default-pr-review");
+    let run = support::builtin("direct");
+    let source = support::builtin("reviewed");
     let theirs = &source.prompts[&source.stage("implement").unwrap().prompt];
     let ours = &run.prompts[&run.stage("implement").unwrap().prompt];
     assert_ne!(theirs, ours, "the two pipelines word the stage differently");
@@ -159,11 +177,11 @@ fn a_clashing_id_or_prompt_gets_a_free_name() {
 
 #[test]
 fn a_switch_keeps_started_stages_and_takes_the_rest_of_the_new_pipeline() {
-    let run = support::builtin("quick-pr");
-    let target = support::builtin("strict-pr-review");
+    let run = support::builtin("direct");
+    let target = support::builtin("strict-reviewed");
     let (edit, reshaped) = switch_edit(&run, 1, &target).unwrap();
     assert_eq!(ids(&reshaped), ["implement", "test", "review"]);
-    assert_eq!(reshaped.name(), "quick-pr");
+    assert_eq!(reshaped.name(), "direct");
     let kept = reshaped.stage("implement").unwrap();
     assert_eq!(
         kept,
@@ -180,7 +198,7 @@ fn a_switch_keeps_started_stages_and_takes_the_rest_of_the_new_pipeline() {
     let RunEdit::SwitchPipeline { pipeline, stages } = &edit else {
         panic!("a switch is recorded as one: {edit:?}");
     };
-    assert_eq!((pipeline.as_str(), stages.len()), ("strict-pr-review", 3));
+    assert_eq!((pipeline.as_str(), stages.len()), ("strict-reviewed", 3));
     assert_eq!(stages[0], serde_json::json!({"keep": "implement"}));
     assert_eq!(apply_all((*run).clone(), [&edit]).unwrap(), reshaped);
 
@@ -189,15 +207,43 @@ fn a_switch_keeps_started_stages_and_takes_the_rest_of_the_new_pipeline() {
     assert_eq!(ids(&whole), ids(&target));
 }
 
+/// A stage of the old pipeline's id is not the stage that pipeline declared
+/// its review and ship record on; only a kept stage carries those over.
+#[test]
+fn a_switch_takes_the_new_pipeline_s_review_and_ship_unless_the_holder_is_kept() {
+    let run = support::builtin("direct");
+    let adaptive = support::builtin("adaptive");
+    let (edit, whole) = switch_edit(&run, 0, &adaptive).unwrap();
+    assert_eq!(
+        whole.file.pipeline.review, adaptive.file.pipeline.review,
+        "the lead holds adaptive's review"
+    );
+    assert_eq!(recorder(&whole), Some("build"));
+    assert_eq!(apply_all((*run).clone(), [&edit]).unwrap(), whole);
+
+    let (_, plain) = switch_edit(&run, 0, &support::builtin("reviewed")).unwrap();
+    assert_eq!(ids(&plain), ["implement", "review"]);
+    assert_eq!(plain.file.pipeline.review, None, "its reviews are stages");
+    assert_eq!(recorder(&plain), Some("implement"));
+
+    let (_, kept) = switch_edit(&run, 1, &adaptive).unwrap();
+    assert_eq!(ids(&kept), ["implement", "build"]);
+    assert_eq!(
+        kept.file.pipeline.review, run.file.pipeline.review,
+        "the started implement keeps the review it owes"
+    );
+    assert_eq!(recorder(&kept), Some("build"), "the last commits ship");
+}
+
 #[test]
 fn a_switch_to_another_workspace_or_with_nothing_left_is_refused() {
-    let run = support::builtin("quick-pr");
+    let run = support::builtin("direct");
     let other = refusal(switch_edit(&run, 1, &support::builtin("ask")));
     assert!(other.contains("a run keeps its workspace"), "{other}");
-    let run = support::builtin("default-pr-review");
+    let run = support::builtin("reviewed");
     let done = started_prefix(&run, ["review"]);
     assert_eq!(done, 2, "every stage up to the last started one");
-    let target = support::builtin("default-pr-review");
+    let target = support::builtin("reviewed");
     let nothing = refusal(switch_edit(&run, done, &target));
     assert!(
         nothing.contains("nothing left to run after stage \"review\""),
@@ -207,9 +253,9 @@ fn a_switch_to_another_workspace_or_with_nothing_left_is_refused() {
 
 #[test]
 fn a_run_continues_on_an_inserted_stage_and_loops_through_it() {
-    let mut sim = sim("quick-pr");
+    let mut sim = sim("direct");
     sim.start();
-    let source = support::builtin("default-pr-review");
+    let source = support::builtin("reviewed");
     let (_, reshaped) = insert_edit(&sim.spec, 1, &source, "review", None).unwrap();
     let plan = support::plan_for(&reshaped, &FANS);
     let owed = sim.reshape(reshaped, plan);
@@ -237,9 +283,9 @@ fn a_run_continues_on_an_inserted_stage_and_loops_through_it() {
 
 #[test]
 fn a_switch_mid_run_runs_what_the_new_pipeline_has_left() {
-    let mut sim = sim("quick-pr");
+    let mut sim = sim("direct");
     sim.start();
-    let target = support::builtin("strict-pr-review");
+    let target = support::builtin("strict-reviewed");
     let (_, reshaped) = switch_edit(&sim.spec, 1, &target).unwrap();
     let plan = support::plan_for(&reshaped, &FANS);
     sim.reshape(reshaped, plan);
@@ -253,7 +299,7 @@ fn a_switch_mid_run_runs_what_the_new_pipeline_has_left() {
 
 #[test]
 fn an_aborted_stage_is_retried_by_a_fresh_agent() {
-    let mut sim = sim("default-pr-review");
+    let mut sim = sim("reviewed");
     sim.start();
     let again = sim.abort("implement", 1, Then::Retry);
     assert_eq!(spawned(&again), slots(&[("implement", 2, 0)]));
@@ -266,7 +312,7 @@ fn an_aborted_stage_is_retried_by_a_fresh_agent() {
 
 #[test]
 fn an_aborted_stage_is_skipped_and_leaves_a_note_where_its_summary_would_be() {
-    let mut sim = sim("strict-pr-review");
+    let mut sim = sim("strict-reviewed");
     sim.start();
     sim.settle("implement", 0, Agent::Done("built it"));
     let review = sim.abort("test", 1, Then::Skip);
@@ -291,7 +337,7 @@ fn an_aborted_stage_is_skipped_and_leaves_a_note_where_its_summary_would_be() {
 
 #[test]
 fn an_abort_can_send_the_run_back_with_a_fresh_loop_budget() {
-    let mut sim = sim("default-pr-review");
+    let mut sim = sim("reviewed");
     sim.start();
     sim.settle("implement", 0, Agent::Done("one"));
     sim.settle("review", 0, Agent::Fail("first finding"));
@@ -310,7 +356,7 @@ fn an_abort_can_send_the_run_back_with_a_fresh_loop_budget() {
 
 #[test]
 fn a_removed_stage_is_stepped_over_every_time_the_run_reaches_it() {
-    let mut sim = sim("strict-pr-review");
+    let mut sim = sim("strict-reviewed");
     sim.start();
     let nothing = sim.abort("test", 0, Then::Skip);
     assert!(nothing.is_empty(), "the running stage goes on untouched");
@@ -338,7 +384,7 @@ fn a_removed_stage_is_stepped_over_every_time_the_run_reaches_it() {
 
 #[test]
 fn aborts_the_pipeline_cannot_do_are_refused() {
-    let spec = support::builtin("default-pr-review");
+    let spec = support::builtin("reviewed");
     let plan = support::plan_for(&spec, &FANS);
     let run = archon_core::id::PipelineRunId::new();
     let item = archon_core::id::QueueItemId::new();
@@ -366,7 +412,7 @@ fn aborts_the_pipeline_cannot_do_are_refused() {
 
 #[test]
 fn the_implementing_agent_is_kept_and_resumed_with_the_findings() {
-    let mut sim = sim("default-pr-review");
+    let mut sim = sim("reviewed");
     let first = sim.start();
     let implement = spawn_plans(&first)[0];
     assert!(implement.keep, "a later stage loops back to it");
@@ -394,7 +440,7 @@ fn the_implementing_agent_is_kept_and_resumed_with_the_findings() {
     );
     assert!(fix.prompt.contains("first try"));
 
-    let quick = self::sim("quick-pr").start();
+    let quick = self::sim("direct").start();
     assert!(!spawn_plans(&quick)[0].keep, "nothing loops back to it");
 }
 

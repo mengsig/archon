@@ -70,12 +70,12 @@ item, but nothing needs it.
 
 Every change to a repository is an item, so the pipeline's
 gates, your ship mode, caps and autonomy ceiling apply. The orchestrator
-picks the cheapest pipeline that fits: `direct` for a small, low-risk
-change, where one agent does all of it, `default-pr-review` for bounded
-work that needs one independent review, `adaptive` where one lead that
-keeps its context through fixes or integrates independent parts saves
-restarts, and a heavier one only when the work clearly calls for it. How
-much review an item gets is a choice of its own, not the pipeline's: see
+picks the cheapest pipeline that fits: `direct` for any change one author
+can make and check, whatever its size, where one agent does all of it,
+`adaptive` where one lead that keeps its context through fixes or
+integrates independent parts saves restarts, and a heavier one only when
+the work clearly calls for it. How much review an item gets is a choice of
+its own, set by risk rather than size: see
 [Autonomy levels](#autonomy-levels). The orchestrator adds no review on top
 of a pipeline, and when work was split into parts it has the integrated
 result reviewed once, with a depth that follows the risk.
@@ -271,24 +271,20 @@ per stage. Add your own under `~/.config/archon/pipelines/` or
 
 | Pipeline | Stages | Leans toward |
 | --- | --- | --- |
-| `direct` | implement | fast models; the cheapest path for a small, low-risk change. One agent implements it, runs the affected checks and commits, and Archon ships. No review unless the item's `review` knob asks for one; the agent hands back work that turns out large or risky. See [`docs/PIPELINES.md`](PIPELINES.md#direct) |
+| `direct` | implement | balanced models; the default, and the cheapest path for a change one author can make and check, whatever its size: a fix, a feature, tests, docs or a dependency upgrade. One agent implements it, runs the affected checks and commits, and Archon ships. No review unless the item's `review` knob asks for one; the agent hands back work that turns out risky. See [`docs/PIPELINES.md`](PIPELINES.md#direct) |
 | `adaptive` | build (delegation enabled, holds the review) | balanced models; the orchestrator's choice where one lead that keeps its context through fixes, or integrates independent parts, saves restarts. One lead builds it, delegates the parts worth splitting and has the integrated diff reviewed by as many independent reviewers as the item's `review` knob asks for (one by default); Archon ships only a build with those reviewers verified. Chosen by name or as a repository's `default_pipeline`; see [`docs/PIPELINES.md`](PIPELINES.md#adaptive) |
-| `quick-pr` | implement | fast models |
-| `default-pr-review` | implement → review (gate, fix loop) | balanced models |
-| `bugfix` | reproduce (failing test) → fix → review (`all_pass`, back to fix ×2) | balanced models, independent reviewer; describable bugs (`direct` for trivial one-liners, `strict-pr-review` for security/concurrency) |
-| `docs` | write → verify (all claims, commands and internal links; gate, back to write ×2) | documentation with an independent reviewer; fast/balanced models. Use `direct` for a typo. |
-| `dependency-upgrade` | survey → upgrade → verify (build/tests/audit, back to upgrade ×3) | balanced models; version bumps, with changelog research; use `default-pr-review` for features that add dependencies |
-| `refactor` | baseline/characterize → refactor → verify (gate, back to refactor ×3) → review (gate, back to refactor ×2) | balanced tier, independent reviewer; structure-only changes, use `default-pr-review` for behaviour changes |
-| `strict-pr-review` | implement → test (gate) → 3 independent reviews (all must pass) | the strongest models |
-| `team-pr` | plan → build (a `backend` and a `frontend` role in parallel) → e2e (gate, fix loop) → review (gate, fix loop) | changes that split cleanly into parts |
-| `performance` | measure → optimize → verify (gate, back to optimize ×3) → review (gate, back to optimize ×2) | strongest tier, independent reviewer. For a specific slow path with a measurable goal; use `default-pr-review` for ordinary changes. |
-| `test-coverage` | analyze → write → verify (`all_pass`, back to write ×2) | balanced models; raise coverage of existing code, with bugs reported as follow-ups; use `bugfix` to fix one |
+| `refactor` | baseline/characterize → refactor → verify (gate, back to refactor ×3) → review (gate, back to refactor ×2) | balanced tier, independent reviewer; structure-only changes, use `direct` for behaviour changes |
+| `performance` | measure → optimize → verify (gate, back to optimize ×3) → review (gate, back to optimize ×2) | strongest tier, independent reviewer. For a specific slow path with a measurable goal; use `direct` for ordinary changes. |
 | `agent-testing` | plan → exercise (fan-out) → report | agents using the product as a user would |
 | `code-audit` | scope → audit (3 independent lenses) → report (HTML with issue drafts) | code inspection with evidence and follow-up findings; use `ask` for one question |
 | `e2e-testing` | setup → e2e (gate) → report | HTML and screenshot reports for Lavish |
 | `ask` | answer | a read-only answer about a repository, with no PR |
 | `errand` | errand (report) | a small job that changes no repository, answered in text or as a Lavish page; no outward side effects |
 | `design-doc` | research → critique (gate, retry ×2) → report (HTML design/RFC) | design before a large or ambiguous change, strongest tier and independent critic; no product-code changes or shipping. Use `proposal: lavish` for design and implementation in one item |
+
+A change that splits cleanly into a backend and a frontend part can run the
+[`team-pr` example](examples/pipelines/team-pr/pipeline.toml): copy its
+directory to your pipelines and edit its roles.
 
 A work item ships in one of two modes, set per repository:
 
@@ -445,9 +441,11 @@ Every turn of the orchestrator reads its whole context again, so a wake
 costs money whether or not there is anything to decide. `archond` posts
 every outcome to the feed itself and wakes the orchestrator for:
 
-- an item that succeeded, so the terminal UI shows it at once: Aether's
-  chat shows only what the orchestrator says, and Aether has no way to add
-  an entry to it without a turn;
+- an item that succeeded, so the terminal UI shows it: Aether's chat shows
+  only what the orchestrator says, and Aether has no way to add an entry to
+  it without a turn. While other items are still queued or running, a
+  routine success waits for them, up to five minutes, so one turn reports
+  the batch;
 - an item that failed or is blocked, to diagnose it, retry it or tell you;
 - an item tagged `notify` (`archon queue add --tag notify`, or the
   orchestrator's own choice when it wants to act on the result);
@@ -523,14 +521,14 @@ Known limitations:
 
 `archon` starts Archon's `aetherd` and `archond` when they are not running.
 `archon aether <args…>` runs any `aether` command against Archon's instance,
-for example `archon aether agents`. `archon daemon stop --aether` stops both
-daemons. In the TUI's tree each work item is one subtree: a node named after
+for example `archon aether agents`. `archon daemon stop` stops both
+daemons (`--keep-aether` stops only archond). In the TUI's tree each work item is one subtree: a node named after
 the item, with its stage agents (`implement · <title>`, `review 1/2 · <title>`,
 `ship · <title>`) underneath, beside the `archon` orchestrator.
 
 ```sh
 archon repo add ~/code/api --ship pr
-archon repo add ~/code/web --pipeline strict-pr-review
+archon repo add ~/code/web --pipeline adaptive
 ```
 
 In `archon chat`, just talk. Slash commands cover the rest: `/questions`,
@@ -563,7 +561,7 @@ progress too; also `/verbose`), `/pause` and `/resume` (optionally `hard`,
 | `archon pause` / `archon resume` | hold dispatch globally, per repo or per pipeline; `--hard` also pauses running agents |
 | `archon gc [--offline]` | delete finished runs' build caches and remove their old worktrees now; `--offline` works without archond, e.g. on a full disk. See [disk use](configuration.md#disk-use) |
 | `archon aether …` | Aether's CLI on Archon's own Aether |
-| `archon daemon status` / `archon daemon stop [--aether]` | both daemons' state; stop archond, and with `--aether` Archon's aetherd too |
+| `archon daemon status` / `archon daemon stop [--keep-aether]` | both daemons' state; stop archond and, in dedicated mode, Archon's aetherd unless `--keep-aether` |
 
 See [scripted queue usage](queue-scripting.md) for file formats, autonomy
 flags, idempotency, JSON results and wait exit statuses.
@@ -673,7 +671,7 @@ $ archon queue steer 01k2 --note "Use the v2 client, not the legacy one."
 Steered qi_01K2…: amended the brief.
 $ archon queue steer 01k2 --stage implement --model claude-code/claude-opus-5-5 --effort high
 $ archon queue steer 01k2 --abort --goto implement
-$ archon queue steer 01k2 --insert test --from strict-pr-review --after implement
+$ archon queue steer 01k2 --insert verify --from refactor --after implement
 ```
 
 A stage that already started keeps its shape: an insert lands after it, a
@@ -700,7 +698,7 @@ Every steer is recorded with who made it (`operator` or `orchestrator`) and
 what it changed. `archon queue show <id>` lists them, and the feed has a
 `Steered …` entry for each. An item switched to another pipeline keeps the
 name it was queued with, and `queue show`, `queue list` and `status` print
-both, as in `default-pr-review → quick-pr`.
+both, as in `direct → adaptive`.
 
 ### Stacked changes
 
@@ -756,7 +754,7 @@ to be served by that instance, not by your everyday Aether:
 - Give that instance its own `[remote] address` in
   `~/.config/archon/aether/config.toml`. The default, `127.0.0.1:8377`, is
   the one your own Aether uses, and two daemons cannot bind it. Restart
-  Archon's aetherd afterwards (`archon daemon stop --aether`, then `archon`).
+  Archon's aetherd afterwards (`archon daemon stop`, then `archon`).
   `archon setup --resync` rebuilds that file from your own Aether config, so
   set the address again after a resync.
 
@@ -785,7 +783,7 @@ risk and from what you told it, within a ceiling that only you can raise.
 
 | Knob | Values (default first) | What it changes |
 | --- | --- | --- |
-| `review` | `standard`, `strict`, `none` | how much independent checking the change gets. With no pipeline named it picks `default-pr-review` (one reviewer), `strict-pr-review` (a test gate and three reviewers) or `quick-pr` (none); with `adaptive` or `direct` named, the stage agent delegates one, three or no reviewers and Archon verifies them. Any other pipeline has the level its gated stages give it, whatever its reviewer count: a gated review or test stage makes it `standard` and both make it `strict`, so `refactor` is `strict` with one reviewer |
+| `review` | `standard`, `strict`, `none` | how much independent checking the change gets. With no pipeline named the item runs `direct`; in `adaptive` or `direct` the stage agent delegates one, three or no reviewers and Archon verifies them. Any other pipeline has the level its gated stages give it, whatever its reviewer count: a gated review or test stage makes it `standard` and both make it `strict`, so `refactor` is `strict` with one reviewer |
 | `proposal` | `off`, `lavish` | `lavish`: a proposal page first, and nothing is built until you approve it |
 | `report` | `off`, `with-pr`, `before-pr` | a change report in the PR; `before-pr` waits for your approval before the PR |
 | `merge` | `manual`, `auto` | `auto`: Archon asks GitHub to merge the PR once its checks allow |

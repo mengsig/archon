@@ -469,7 +469,7 @@ mod tests {
     fn request() -> SpawnRequest {
         SpawnRequest {
             idempotency_key: "stg_01".into(),
-            role: "archon-stage:quick-pr/implement".into(),
+            role: "archon-stage:direct/implement".into(),
             name: "implement · add a greeting".into(),
             objective: "do it".into(),
             instructions: "contract".into(),
@@ -495,7 +495,7 @@ mod tests {
     fn node_request() -> RunNodeRequest {
         RunNodeRequest {
             idempotency_key: "prun_01:node:1".into(),
-            role: "archon-run:quick-pr".into(),
+            role: "archon-run:direct".into(),
             name: "add a greeting".into(),
             model: "claude-code/claude-opus-5-5".parse().unwrap(),
             workspace: "/work/tree".into(),

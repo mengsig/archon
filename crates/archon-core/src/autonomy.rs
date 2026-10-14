@@ -115,17 +115,6 @@ knob!(
     ToolsMode, "tools", [Guarded = "guarded", Yolo = "yolo"]
 );
 
-impl ReviewLevel {
-    /// The built-in pipeline of this review family.
-    pub fn pipeline(self) -> &'static str {
-        match self {
-            Self::None => "quick-pr",
-            Self::Standard => "default-pr-review",
-            Self::Strict => "strict-pr-review",
-        }
-    }
-}
-
 /// Every knob set. The default is standard review, no proposal or report,
 /// manual merge and guarded tools.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

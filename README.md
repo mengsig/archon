@@ -13,9 +13,9 @@ ceiling. Agents run on [Aether](https://github.com/mengsig/aether).
   the CLI, or mention `@archon` on a watched GitHub repository. The
   orchestrator answers code questions from its own copy of your
   repositories and queues every change as an item.
-- **Pipelines with real gates.** Eighteen built-in pipelines, from a single
-  cheap agent to tests plus three independent reviewers, or your own in
-  TOML. A failed gate sends the findings back to the implementer, which
+- **Pipelines with real gates.** Ten built-in pipelines, from a single
+  agent with no reviewer to a lead with three independent ones, or your own
+  in TOML. A failed gate sends the findings back to the implementer, which
   keeps its context through the fix.
 - **`archond` ships, not an agent.** It delivers only the tree the reviewers
   read, made under your git identity, pushes without ever forcing, and
@@ -55,7 +55,7 @@ e-mail set), and logged in to your engine (run `claude` once):
 gh auth login
 archon setup
 archon aether models    # the configured orchestrator model must be listed
-archon repo add . --name example --ship pr --pipeline docs
+archon repo add . --name example --ship pr
 archon doctor
 archon
 ```
@@ -64,10 +64,11 @@ If the orchestrator's model is missing from the list,
 [choose another](docs/configuration.md#select-an-available-model) first.
 `archon` opens the terminal UI on the orchestrator. Ask, for example:
 
-> In repository example, use the docs pipeline to add a short guide to the existing test commands. Verify each command and open a pull request. Do not merge.
+> In repository example, add a short guide to the existing test commands, with one reviewer. Run each command it names and open a pull request. Do not merge.
 
-The `docs` pipeline writes the change, has it verified independently and
-ships it; the orchestrator reports the pull request. Answer its questions in
+The orchestrator queues it on `direct` at review level `standard`: one agent
+writes and checks the guide, has it reviewed independently, and Archon ships
+it; the orchestrator reports the pull request. Answer its questions in
 place. `/quit` leaves and the work continues. `archon say "…"` sends one
 request and exits, and `archon chat` is a line chat for SSH and scripts.
 Commands start `archond` and Archon's own Aether instance when needed.
@@ -80,11 +81,11 @@ Commands start `archond` and Archon's own Aether instance when needed.
   A **gate** holds the run on stage verdicts or your approval, and can send
   it back to fix.
 - **Review level:** `none`, `standard` or `strict`. With no pipeline named
-  these pick `quick-pr`, `default-pr-review` and `strict-pr-review`. `direct`
-  and `adaptive` delegate no, one or three reviewers as the item's level
-  asks. Any other pipeline's level follows its gated stages, not a reviewer
-  count: a gated review or test stage makes it `standard`, both make it
-  `strict`, so `refactor` is `strict` with one reviewer.
+  an item runs `direct`. `direct` and `adaptive` delegate no, one or three
+  reviewers as the item's level asks. Any other pipeline's level follows its
+  gated stages, not a reviewer count: a gated review or test stage makes it
+  `standard`, both make it `strict`, so `refactor` is `strict` with one
+  reviewer.
 - **Delivery:** in `pr` mode `archond` pushes the run branch and opens a pull
   request, and the item succeeds once that pull request is open. It does
   not wait for your CI or repair a failing check: ask for a fix, or run
@@ -101,22 +102,17 @@ Commands start `archond` and Archon's own Aether instance when needed.
 
 | Pipeline | Stages | Independent checking |
 | --- | --- | --- |
-| `direct` | one agent implements, checks and commits | as the item's level asks; none by default |
+| `direct` | one agent implements, checks and commits: a fix, a feature, tests, docs or an upgrade | as the item's level asks; none by default |
 | `adaptive` | one lead builds, delegates and integrates | as the item's level asks; one reviewer by default |
-| `quick-pr` | implement | none |
-| `default-pr-review` | implement → review | one reviewer |
-| `strict-pr-review` | implement → test → review | a test gate and three reviewers |
-| `bugfix` | reproduce → fix → review | one reviewer |
 | `refactor`, `performance` | baseline or measure → change → verify → review | a test gate and one reviewer |
-| `team-pr` | plan → backend and frontend roles → e2e → review | an e2e gate and one reviewer |
-| `docs` | write → verify | one verifier of every claim, command and link |
-| `dependency-upgrade`, `test-coverage` | survey or analyze → change → verify | a test gate, no reviewer |
 
 `agent-testing`, `e2e-testing`, `code-audit`, `design-doc`, `ask` and
 `errand` test, audit, design and answer without shipping. See the
 [pipelines in the guide](docs/guide.md#pipelines), and
 [write your own](docs/PIPELINES.md#quick-start-add-a-pipeline) for every
-repository or for one.
+repository or for one, such as the
+[`team-pr` example](docs/examples/pipelines/team-pr/pipeline.toml) of a plan,
+a backend and frontend team, an e2e gate and a review.
 
 ## Everyday commands
 

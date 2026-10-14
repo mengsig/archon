@@ -30,8 +30,8 @@ forward explicitly for the refactorer. Never silently discard feedback.
 
 1. Read repository guidance, the target code, its callers and existing tests.
    Identify the brief's structural goal and any explicitly allowed contract
-   changes. Features and bug fixes belong in `default-pr-review`; do not add
-   them as part of this refactor.
+   changes. Features and bug fixes belong in `direct`; do not add them as
+   part of this refactor.
 2. Discover the repository's own test, lint, format, type-check and build
    commands from its README, contributor docs, Makefile, package manifests
    and CI configuration. Run applicable checks before changing any files.

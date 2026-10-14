@@ -25,7 +25,7 @@ max_per_repo = 2
 budget_usd_daily = 50.0
 min_free_gb = 10               # nothing new starts below this much free disk; 0 = off
 [limits.per_pipeline]
-strict-pr-review = 3
+adaptive = 3
 
 [worktrees]
 auto_gc = true                 # archond collects finished runs' worktrees itself
@@ -67,8 +67,10 @@ own `[models]` refuses the orchestrator's model gets no mirror.
 `archond` posts every finished item to your feed itself and wakes the
 orchestrator for a success, a failure, a blocker, an item tagged `notify`
 or one a GitHub thread asked for; every wake is a whole orchestrator turn
-that you pay for. The success wake is what shows a finished item in the
-terminal UI at once. If you follow Archon in `archon chat` instead, set
+that you pay for. A routine success waits, up to five minutes, while other
+items are queued or running, so one wake reports them together. The success
+wake is what shows a finished item in the terminal UI. If you follow Archon
+in `archon chat` instead, set
 `wake_on_success = false` under `[orchestrator]`: a routine success then
 reaches the orchestrator with its next turn
 ([guide](guide.md#when-the-orchestrator-is-woken)).

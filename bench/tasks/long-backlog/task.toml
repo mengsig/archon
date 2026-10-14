@@ -8,5 +8,5 @@ acceptance criteria exactly. Keep the existing tests passing \
 build, use only the standard library, and commit each ticket separately.
 """
 timeout_minutes = 60
-pipeline = "default-pr-review"
+pipeline = "direct"
 tags = ["long", "multi-step", "python", "single-repo"]

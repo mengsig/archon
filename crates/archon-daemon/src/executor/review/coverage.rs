@@ -1,5 +1,8 @@
 //! Whether reviewers' verdicts hold for the change as the run's branch holds
 //! it: a counted pass read the head, or later passes read every commit since.
+//! A verdict on a commit the branch no longer holds (amended or rebased away)
+//! is superseded: it never counts, and a superseded fail stands until the
+//! counted passes read the whole change.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -21,6 +24,8 @@ pub(super) struct Placed {
     pub head: String,
     /// Where the diff it read starts; `None` when it read the whole change.
     pub base: Option<String>,
+    /// The branch no longer holds `head`: an amend or rebase replaced it.
+    pub superseded: bool,
 }
 
 /// Ancestry in the run's workspace, each pair asked of git once.
@@ -66,20 +71,16 @@ pub(super) fn place(
     let fork = fork_point(dir, base_branch, &head)?;
     let mut placed = Vec::with_capacity(named.len());
     for (agent, verdict) in named {
-        let read = match place_one(history, &head, fork.as_deref(), verdict)? {
-            Ok(read) => read,
+        match place_one(history, &head, fork.as_deref(), agent, verdict)? {
+            Ok(read) => placed.push(read),
             Err(why) => return Ok(Err(format!("reviewer {agent} {why}"))),
-        };
-        let (head, base) = read;
-        let (agent, pass) = (agent.clone(), verdict.pass);
-        placed.push(Placed {
-            agent,
-            pass,
-            head,
-            base,
-        });
+        }
     }
     assert_eq!(placed.len(), named.len(), "every verdict is placed");
+    assert!(
+        placed.iter().all(|read| is_commit_id(&read.head)),
+        "every placed head is a full commit id"
+    );
     Ok(Ok((head, placed)))
 }
 
@@ -124,14 +125,15 @@ fn fork_point(dir: &Path, base_branch: &str, head: &str) -> Result<Option<String
     worktree::merge_base(dir, &base, head)
 }
 
-/// One verdict's head and base as full commit ids, the base dropped when it
-/// is at or before the fork: such a reviewer read the whole change.
+/// `agent`'s verdict with its head and base as full commit ids, the base
+/// dropped when it is at or before the fork: such a reviewer read the whole change.
 fn place_one(
     history: &mut History,
     head: &str,
     fork: Option<&str>,
+    agent: &str,
     verdict: &Verdict,
-) -> Result<Result<(String, Option<String>), String>, ArchonError> {
+) -> Result<Result<Placed, String>, ArchonError> {
     // Ids are compared as text below, so both must be full.
     assert!(is_commit_id(head), "the branch head is a full commit id");
     let dir = history.dir;
@@ -142,17 +144,21 @@ fn place_one(
         )));
     };
     assert!(is_commit_id(&read), "git names the commit read in full");
+    let placed = |head: String, base: Option<String>, superseded: bool| Placed {
+        agent: agent.to_owned(),
+        pass: verdict.pass,
+        head,
+        base,
+        superseded,
+    };
     if !history.holds(&read, head)? {
-        let read = short(&read);
-        return Ok(Err(format!(
-            "read {read}, which the branch no longer holds"
-        )));
+        return Ok(Ok(placed(read, None, true)));
     }
     if fork == Some(read.as_str()) {
         return Ok(Err("read the base branch, not the change".into()));
     }
     let Some(base) = &verdict.base else {
-        return Ok(Ok((read, None)));
+        return Ok(Ok(placed(read, None, false)));
     };
     let Some(base) = worktree::commit_id(dir, base)? else {
         return Ok(Err(format!(
@@ -169,7 +175,7 @@ fn place_one(
         Some(fork) => history.holds(&base, fork)?,
         None => false,
     };
-    Ok(Ok((read, (!whole).then_some(base))))
+    Ok(Ok(placed(read, (!whole).then_some(base), false)))
 }
 
 /// Indexes of the `placed` passes that hold for the branch at `head`, or
@@ -181,12 +187,19 @@ pub(super) fn counted(
     owed: u32,
 ) -> Result<Result<Vec<usize>, String>, ArchonError> {
     assert!(owed >= 1, "only an owed review is checked");
+    assert!(
+        placed
+            .iter()
+            .all(|read| !read.superseded || read.base.is_none()),
+        "a superseded read keeps no base"
+    );
+    // What a superseded read covered is not on the branch, so it anchors nothing.
     let anchored = spread(
         placed,
         |_, read| read.base.is_none(),
         |read, by| {
             let base = read.base.as_deref().expect("unanchored reads have a base");
-            history.holds(base, &by.head)
+            Ok(!by.superseded && history.holds(base, &by.head)?)
         },
     )?;
     if let Some((read, _)) = placed.iter().zip(&anchored).find(|(_, held)| !**held) {
@@ -199,10 +212,15 @@ pub(super) fn counted(
     let current = spread(
         placed,
         |_, read| read.pass && read.head == head,
-        |read, by| Ok(read.pass && covers(history, by, &read.head)?),
+        |read, by| Ok(read.pass && !read.superseded && covers(history, by, &read.head)?),
     )?;
     let passes: Vec<usize> = (0..placed.len()).filter(|i| current[*i]).collect();
-    assert!(passes.iter().all(|i| placed[*i].pass), "only a pass counts");
+    assert!(
+        passes
+            .iter()
+            .all(|i| placed[*i].pass && !placed[*i].superseded),
+        "only a pass of a commit the branch holds counts"
+    );
     if passes.len() < owed as usize {
         return Ok(Err(short_of(placed, &current, owed)));
     }
@@ -263,32 +281,87 @@ fn spread(
 }
 
 /// Why a named fail still stands: no counted pass read past its head and
-/// the commits after it.
+/// the commits after it, nor a later fail that read past it and was answered.
 fn open_fail(
     history: &mut impl Ancestry,
     placed: &[Placed],
     current: &[bool],
 ) -> Result<Option<String>, ArchonError> {
     assert_eq!(placed.len(), current.len(), "one mark per read");
-    for fail in placed.iter().filter(|read| !read.pass) {
-        let mut answered = false;
-        for (pass, _) in placed.iter().zip(current).filter(|(_, held)| **held) {
-            let later = pass.head != fail.head && history.holds(&fail.head, &pass.head)?;
-            if later && covers(history, pass, &fail.head)? {
-                answered = true;
-                break;
-            }
-        }
-        if !answered {
-            return Ok(Some(format!(
-                "reviewer {} failed the change at {}, and no passing reviewer named read what \
-                 changed after it",
-                fail.agent,
-                short(&fail.head)
-            )));
+    let mut by_a_pass = Vec::with_capacity(placed.len());
+    for read in placed {
+        by_a_pass.push(!read.pass && answered_by_a_pass(history, placed, current, read)?);
+    }
+    // A reviewer that read a fix and failed it again answers the fail it read past once its own is.
+    let answered = spread(
+        placed,
+        |i, _| by_a_pass[i],
+        |read, by| {
+            let chained = !read.pass && !by.pass && !read.superseded && !by.superseded;
+            Ok(chained && reads_past(history, by, read)?)
+        },
+    )?;
+    let Some(fail) = placed
+        .iter()
+        .zip(&answered)
+        .find(|(read, held)| !read.pass && !**held)
+        .map(|(read, _)| read)
+    else {
+        return Ok(None);
+    };
+    let at = short(&fail.head);
+    Ok(Some(match fail.superseded {
+        true => format!(
+            "reviewer {} failed {at}, which the branch no longer holds, and no passing \
+             reviewer named read the whole change since",
+            fail.agent
+        ),
+        false => format!(
+            "reviewer {} failed the change at {at}, and no passing reviewer named read \
+             what changed after it",
+            fail.agent
+        ),
+    }))
+}
+
+/// Whether one of the counted passes answers `fail`.
+fn answered_by_a_pass(
+    history: &mut impl Ancestry,
+    placed: &[Placed],
+    current: &[bool],
+    fail: &Placed,
+) -> Result<bool, ArchonError> {
+    for (pass, _) in placed.iter().zip(current).filter(|(_, held)| **held) {
+        if answers(history, pass, fail)? {
+            return Ok(true);
         }
     }
-    Ok(None)
+    Ok(false)
+}
+
+/// Whether the counted `pass` read past `fail`: the commits after its head,
+/// or, when that head was amended or rebased away, the change from the fork.
+fn answers(history: &mut impl Ancestry, pass: &Placed, fail: &Placed) -> Result<bool, ArchonError> {
+    assert!(pass.pass && !fail.pass, "a pass answers a fail");
+    assert!(!pass.superseded, "a counted pass is on the branch");
+    if fail.superseded {
+        return Ok(pass.base.is_none());
+    }
+    reads_past(history, pass, fail)
+}
+
+/// Whether `by` read a later head than `earlier` and every commit after it.
+fn reads_past(
+    history: &mut impl Ancestry,
+    by: &Placed,
+    earlier: &Placed,
+) -> Result<bool, ArchonError> {
+    assert!(
+        !earlier.superseded,
+        "a superseded head has no commits after it"
+    );
+    let later = by.head != earlier.head && history.holds(&earlier.head, &by.head)?;
+    Ok(later && covers(history, by, &earlier.head)?)
 }
 
 /// Why too few passes count, naming each that no longer holds.
@@ -299,13 +372,18 @@ fn short_of(placed: &[Placed], current: &[bool], owed: u32) -> String {
         .iter()
         .zip(current)
         .filter(|(_, held)| !**held)
-        .map(|(read, _)| match read.pass {
-            true => format!(
+        .map(|(read, _)| match (read.superseded, read.pass) {
+            (true, _) => format!(
+                "{} read {}, which the branch no longer holds",
+                read.agent,
+                short(&read.head)
+            ),
+            (false, true) => format!(
                 "{} passed {} and no passing reviewer named read the commits after it",
                 read.agent,
                 short(&read.head)
             ),
-            false => format!("{} failed {}", read.agent, short(&read.head)),
+            (false, false) => format!("{} failed {}", read.agent, short(&read.head)),
         })
         .collect();
     let mut why = format!(
@@ -341,6 +419,15 @@ mod tests {
             pass,
             head: head.into(),
             base: base.map(Into::into),
+            superseded: false,
+        }
+    }
+
+    /// A read of `head`, a commit an amend or rebase took off the branch.
+    fn gone(agent: &str, pass: bool, head: &str) -> Placed {
+        Placed {
+            superseded: true,
+            ..read(agent, pass, head, None)
         }
     }
 
@@ -400,6 +487,34 @@ mod tests {
     }
 
     /// A strict review: three read the change, one failed, a fourth read the fix.
+    /// A fix failed its delta review, and a third reviewer passed the fix of the fix.
+    #[test]
+    fn a_failed_fix_answered_by_a_later_delta_answers_the_fail_it_read_past() {
+        let chain = [
+            read("agt_a", false, "c3", None),
+            read("agt_b", false, "c4", Some("c3")),
+            read("agt_c", true, "c5", Some("c4")),
+        ];
+        assert_eq!(count(&chain, "c5", 1).unwrap(), [2]);
+        let unanswered = [
+            read("agt_a", false, "c3", None),
+            read("agt_b", false, "c4", Some("c3")),
+            read("agt_c", true, "c4", Some("c3")),
+        ];
+        let refused = count(&unanswered, "c4", 1).unwrap_err();
+        assert!(
+            refused.contains("agt_b failed the change at c4"),
+            "{refused}"
+        );
+        let skipped = [
+            read("agt_a", false, "c3", None),
+            read("agt_b", false, "c4", None),
+            read("agt_c", false, "c5", Some("c4")),
+            read("agt_d", true, "c6", Some("c5")),
+        ];
+        assert_eq!(count(&skipped, "c6", 1).unwrap(), [3]);
+    }
+
     #[test]
     fn several_full_reviews_hold_through_a_reviewed_fix() {
         let strict = [
@@ -411,5 +526,47 @@ mod tests {
         assert_eq!(count(&strict, "c5", 3).unwrap(), [1, 2, 3]);
         let unread = count(&strict, "c6", 3).unwrap_err();
         assert!(unread.contains("agt_d passed c5"), "{unread}");
+    }
+
+    /// The lead amended a reviewed commit (`x3`, off the line) into `c4`.
+    #[test]
+    fn a_pass_of_an_amended_commit_is_superseded_and_never_counts() {
+        let amended = [gone("agt_a", true, "x3"), read("agt_b", true, "c4", None)];
+        assert_eq!(count(&amended, "c4", 1).unwrap(), [1]);
+        let short = count(&amended, "c4", 2).unwrap_err();
+        assert!(short.starts_with("1 of the reviewers named"), "{short}");
+        assert!(
+            short.contains("agt_a read x3, which the branch no longer holds"),
+            "{short}"
+        );
+        // `x3` sorts after `c3` in `Line`, so only the guard keeps it from anchoring.
+        let unanchored = [
+            gone("agt_a", true, "x3"),
+            read("agt_b", true, "c4", Some("c3")),
+        ];
+        let refused = count(&unanchored, "c4", 1).unwrap_err();
+        assert!(refused.contains("agt_b read only from c3"), "{refused}");
+    }
+
+    #[test]
+    fn a_fail_of_an_amended_commit_stands_until_passes_read_the_whole_change() {
+        let delta = [
+            gone("agt_a", false, "x3"),
+            read("agt_b", false, "c2", None),
+            read("agt_c", true, "c4", Some("c2")),
+        ];
+        let refused = count(&delta, "c4", 1).unwrap_err();
+        assert!(
+            refused.contains("agt_a failed x3, which the branch no longer holds"),
+            "{refused}"
+        );
+        let chain = [
+            gone("agt_a", false, "x3"),
+            read("agt_b", true, "c2", None),
+            read("agt_c", true, "c4", Some("c2")),
+        ];
+        assert_eq!(count(&chain, "c4", 1).unwrap(), [1, 2]);
+        let whole = [gone("agt_a", false, "x3"), read("agt_b", true, "c4", None)];
+        assert_eq!(count(&whole, "c4", 1).unwrap(), [1]);
     }
 }

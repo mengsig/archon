@@ -378,8 +378,8 @@ fn write_stage(conn: &Connection, stage: &StageRun, holds_agent: bool) -> Result
     Ok(())
 }
 
-/// Whether `stage` holds its agent in the unique `aether_agent` column: a
-/// kept agent (§6.7) passes to the next attempt of its slot, named in `data`.
+/// Whether `stage` holds its agent in the unique `aether_agent` column: a kept agent (§6.7)
+/// passes to the next attempt of its slot, named in `data`, with its [`super::handoffs`].
 fn claim_agent(conn: &Connection, stage: &StageRun) -> Result<bool, ArchonError> {
     let Some(agent) = &stage.aether_agent else {
         return Ok(false);
@@ -419,6 +419,7 @@ fn claim_agent(conn: &Connection, stage: &StageRun) -> Result<bool, ArchonError>
         holder.attempt < stage.attempt,
         "a kept agent passes to a later attempt only"
     );
+    super::handoffs::record(conn, agent, stage)?;
     let released = conn
         .execute(
             "UPDATE stage_runs SET aether_agent = NULL WHERE id = ?1",

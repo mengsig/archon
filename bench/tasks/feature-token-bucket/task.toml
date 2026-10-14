@@ -7,5 +7,5 @@ error cases and edge cases; the tests in `test_ratelimit.py` only cover the \
 basics. Keep it dependency-free (standard library only) and commit your work.
 """
 timeout_minutes = 25
-pipeline = "default-pr-review"
+pipeline = "direct"
 tags = ["feature", "python", "single-repo", "spec"]

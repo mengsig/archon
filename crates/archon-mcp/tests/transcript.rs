@@ -204,7 +204,7 @@ impl Mcp {
 
 fn enqueue_arguments() -> Value {
     json!({
-        "repo": "web", "pipeline": "quick-pr", "title": "Fix login", "brief": "Fix it.",
+        "repo": "web", "pipeline": "direct", "title": "Fix login", "brief": "Fix it.",
         "model_plan": {"implement": [{"model": "x/y", "effort": "high"}], "ship": [{"model": "x/y", "effort": "low"}]}
     })
 }
@@ -239,9 +239,7 @@ async fn a_session_initializes_lists_tools_and_relays_a_daemon_refusal() {
     assert!(text(&refused).contains("x/y is not allowed"), "{refused}");
     assert_eq!(refused["structuredContent"]["code"], "policy");
 
-    let invalid = mcp
-        .call(4, "enqueue", json!({"pipeline": "quick-pr"}))
-        .await;
+    let invalid = mcp.call(4, "enqueue", json!({"pipeline": "direct"})).await;
     assert_eq!(invalid["isError"], true);
     assert!(
         text(&invalid).contains("missing required argument(s)"),

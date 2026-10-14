@@ -7,5 +7,5 @@ the function is correct for every input, not just the tested ones. Commit \
 your fix.
 """
 timeout_minutes = 15
-pipeline = "default-pr-review"
+pipeline = "direct"
 tags = ["bugfix", "python", "single-repo"]

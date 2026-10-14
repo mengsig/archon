@@ -292,7 +292,7 @@ fn outcome_cost_tracks_late_provider_settlement_in_both_directions() {
         );
         assert_eq!(
             store
-                .route_evidence(None, "quick-pr", "implement", None)
+                .route_evidence(None, "direct", "implement", None)
                 .unwrap()[0]
                 .median_cost_usd,
             cost
@@ -325,7 +325,7 @@ fn infrastructure_failure_does_not_become_negative_model_evidence() {
         .unwrap();
     assert!(
         store
-            .route_evidence(None, "quick-pr", "implement", None)
+            .route_evidence(None, "direct", "implement", None)
             .unwrap()
             .is_empty()
     );
@@ -368,7 +368,7 @@ fn quality_feedback_is_stage_specific_and_scope_changes_are_not_failures() {
     store.record_feedback(&run.id, feedback).unwrap();
     assert_eq!(
         store
-            .route_evidence(None, "quick-pr", "implement", None)
+            .route_evidence(None, "direct", "implement", None)
             .unwrap()[0]
             .route
             .passed,
@@ -376,7 +376,7 @@ fn quality_feedback_is_stage_specific_and_scope_changes_are_not_failures() {
     );
     assert_eq!(
         store
-            .route_evidence(None, "quick-pr", "review", None)
+            .route_evidence(None, "direct", "review", None)
             .unwrap()[0]
             .route
             .passed,
@@ -430,7 +430,7 @@ fn model_segments_preserve_the_start_choice_and_attribute_the_final_result() {
         2.0
     );
     let evidence = store
-        .route_evidence(None, "quick-pr", "implement", None)
+        .route_evidence(None, "direct", "implement", None)
         .unwrap();
     assert_eq!(evidence.len(), 1);
     assert_eq!(evidence[0].route.choice, next);

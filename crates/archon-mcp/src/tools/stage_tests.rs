@@ -228,7 +228,7 @@ fn item_detail(stage: StageRun) -> ItemDetail {
     let run = PipelineRun {
         id: stage.run.clone(),
         item: QueueItemId::new(),
-        pipeline: "default-pr-review".into(),
+        pipeline: "refactor".into(),
         shipped: false,
         aether_run: None,
         workspace: "/srv/wt".into(),

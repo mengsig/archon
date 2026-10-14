@@ -231,12 +231,28 @@ pub(super) async fn set_caps(ctx: &DaemonContext, caps: Caps) -> Result<Reply, A
     Ok(Reply::Ok)
 }
 
+/// The catalog, or only `pipeline` in it when one is named.
 pub(super) async fn list_pipelines(
     ctx: &DaemonContext,
     repo: Option<&RepoRef>,
+    pipeline: Option<&str>,
 ) -> Result<Reply, ArchonError> {
     let env = repo_env(ctx, repo).await?;
-    Ok(Reply::Catalog(env.catalog()?.listing()))
+    let mut listing = env.catalog()?.listing();
+    let Some(name) = pipeline else {
+        return Ok(Reply::Catalog(listing));
+    };
+    let known: Vec<String> = listing.pipelines.iter().map(|p| p.name.clone()).collect();
+    listing.pipelines.retain(|p| p.name == name);
+    listing.problems.retain(|p| p.name == name);
+    if listing.pipelines.is_empty() && listing.problems.is_empty() {
+        return Err(ArchonError::NotFound(format!(
+            "no pipeline {name:?}; known: {}",
+            known.join(", ")
+        )));
+    }
+    assert!(listing.pipelines.len() <= 1, "pipeline names are unique");
+    Ok(Reply::Catalog(listing))
 }
 
 pub(super) async fn model_policy(

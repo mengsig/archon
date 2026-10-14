@@ -643,7 +643,7 @@ mod tests {
             [limits]
             max_parallel_agents = 20
             [limits.per_pipeline]
-            strict-pr-review = 3
+            adaptive = 3
             [lavish]
             enabled = "off"
             [github]
@@ -652,7 +652,7 @@ mod tests {
         let config: Config = toml::from_str(text).unwrap();
         config.validate().unwrap();
         assert_eq!(config.orchestrator.effort, Effort::XHigh);
-        assert_eq!(config.limits.per_pipeline["strict-pr-review"], 3);
+        assert_eq!(config.limits.per_pipeline["adaptive"], 3);
         assert_eq!(config.github.binary, PathBuf::from("/usr/bin/gh"));
         assert!(toml::from_str::<Config>("[limits]\nmax_paralel_agents = 3").is_err());
     }

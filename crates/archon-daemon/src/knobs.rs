@@ -14,6 +14,7 @@ use archon_core::policy::ModelPolicy;
 use archon_core::queue::QueueItem;
 use archon_pipeline::PipelineSpec;
 use archon_pipeline::autonomy::{augment, chosen_review, review_is_chosen, review_level, ships};
+use archon_pipeline::builtin::DEFAULT_PIPELINE;
 use archon_queue::Store;
 
 use crate::learned;
@@ -38,9 +39,15 @@ pub(crate) fn resolve(
     patch: &AutonomyPatch,
 ) -> Result<Resolved, ArchonError> {
     let policy = env.autonomy(config);
-    let name = pipeline_name(env, pipeline, patch, &policy);
+    let (name, patch) = match pipeline_name(env, pipeline, patch) {
+        Some(name) => (name, *patch),
+        None => (
+            DEFAULT_PIPELINE.to_owned(),
+            defaulted_review(patch, &policy),
+        ),
+    };
     let base = env.catalog()?.get(&name)?.clone();
-    let autonomy = knobs(&base, patch, &policy)?;
+    let autonomy = knobs(&base, &patch, &policy)?;
     check_ceiling(&policy, env, &base, autonomy)?;
     let spec = augment(&base, &autonomy)?;
     assert_eq!(spec.name(), name, "augmenting keeps the pipeline's name");
@@ -52,25 +59,25 @@ pub(crate) fn resolve(
     })
 }
 
-/// An explicit pipeline wins; else the review knob's family, the
-/// repository's default pipeline, and the default review's family.
-fn pipeline_name(
-    env: &RepoEnv,
-    pipeline: Option<String>,
-    patch: &AutonomyPatch,
-    policy: &AutonomyPolicy,
-) -> String {
-    if let Some(name) = pipeline {
-        return name;
-    }
-    if let Some(review) = patch.review {
-        return review.pipeline().to_owned();
+/// An explicit pipeline wins, then a default one; `None` when the enqueue
+/// asks for a review level instead, or nothing names one.
+fn pipeline_name(env: &RepoEnv, pipeline: Option<String>, patch: &AutonomyPatch) -> Option<String> {
+    if pipeline.is_some() || patch.review.is_some() {
+        return pipeline;
     }
     env.repo
         .as_ref()
         .and_then(|r| r.default_pipeline.clone())
         .or_else(|| env.config.repo.default_pipeline.clone())
-        .unwrap_or_else(|| policy.default.review.pipeline().to_owned())
+}
+
+/// `patch` on [`DEFAULT_PIPELINE`]: an enqueue that names neither a pipeline
+/// nor a review level gets the default review, not the pipeline's cheapest.
+fn defaulted_review(patch: &AutonomyPatch, policy: &AutonomyPolicy) -> AutonomyPatch {
+    AutonomyPatch {
+        review: Some(patch.review.unwrap_or(policy.default.review)),
+        ..*patch
+    }
 }
 
 /// An item's review level on `base`: where a stage holds the review, the one
@@ -87,10 +94,8 @@ fn review_of(
     if let Some(asked) = patch.review.filter(|asked| *asked != review) {
         return Err(ArchonError::Invalid(format!(
             "pipeline {:?} runs review={review} in its own stages, not review={asked}; name \
-             pipeline {:?} or one that takes a review level (`adaptive`, `direct`) instead, \
-             or leave review out",
+             one that takes a review level (`adaptive`, `direct`) instead, or leave review out",
             base.name(),
-            asked.pipeline()
         )));
     }
     Ok(review)
@@ -278,7 +283,7 @@ mod tests {
 
     #[test]
     fn the_pipeline_fixes_review_and_a_conflict_is_refused() {
-        let strict = builtin("strict-pr-review");
+        let strict = builtin("refactor");
         let chosen = knobs(&strict, &AutonomyPatch::default(), &policy()).unwrap();
         assert_eq!(chosen.review, ReviewLevel::Strict);
         let conflict = AutonomyPatch {
@@ -288,7 +293,7 @@ mod tests {
         let err = knobs(&strict, &conflict, &policy())
             .unwrap_err()
             .to_string();
-        assert!(err.contains("\"quick-pr\""), "{err}");
+        assert!(err.contains("(`adaptive`, `direct`)"), "{err}");
     }
 
     #[test]
@@ -308,7 +313,7 @@ mod tests {
 
     #[test]
     fn inserted_stages_borrow_the_first_stage_choice() {
-        let base = builtin("default-pr-review");
+        let base = builtin("refactor");
         let knobs = Autonomy {
             proposal: ProposalMode::Lavish,
             report: ReportMode::WithPr,
@@ -334,7 +339,7 @@ mod tests {
     /// An enqueue may leave the whole plan out: every stage gets the default.
     #[test]
     fn stages_an_enqueue_leaves_out_get_the_default_choice() {
-        let base = builtin("default-pr-review");
+        let base = builtin("refactor");
         let knobs = Autonomy {
             report: ReportMode::WithPr,
             ..Autonomy::default()
@@ -354,7 +359,7 @@ mod tests {
         let filled =
             fill_plan(&store, None, (&base, &spec), plan, &policy, Some(&default)).unwrap();
         assert_eq!(filled.choices_for("review"), Some(&[named][..]), "kept");
-        for stage in ["implement", "report"] {
+        for stage in ["baseline", "refactor", "verify", "report"] {
             assert_eq!(filled.choices_for(stage), Some(&[default.clone()][..]));
         }
         assert_eq!(filled.0.len(), spec.file.stages.len());
@@ -366,7 +371,7 @@ mod tests {
         let own = config.orchestrator.model.clone();
         let other: archon_core::model::ModelRef = "codex/gpt-5.5".parse().unwrap();
         let direct = builtin("direct");
-        let strict = builtin("strict-pr-review");
+        let strict = builtin("performance");
         let open = ModelPolicy::default();
         let effort = |spec| default_choice(&config, &open, spec).unwrap().effort;
         assert!(

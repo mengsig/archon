@@ -44,7 +44,7 @@ fn losing_lesson_retracts_but_pinned_lesson_survives() {
             let run = start(&mut store, &item.id);
             assert_eq!(
                 store
-                    .lessons_for_run(&run.id, None, "quick-pr")
+                    .lessons_for_run(&run.id, None, "direct")
                     .unwrap()
                     .len(),
                 1
@@ -82,7 +82,7 @@ fn late_correction_revokes_a_win_once_and_keeps_the_run_snapshot() {
     let lesson = advice(&store, false);
     let item = store.insert_item(&item(None, "result"), None).unwrap();
     let run = start(&mut store, &item.id);
-    let used = store.lessons_for_run(&run.id, None, "quick-pr").unwrap();
+    let used = store.lessons_for_run(&run.id, None, "direct").unwrap();
     settle_run(
         &mut store,
         &run,
@@ -113,7 +113,7 @@ fn late_correction_revokes_a_win_once_and_keeps_the_run_snapshot() {
         )
         .unwrap();
     assert_eq!(
-        store.lessons_for_run(&run.id, None, "quick-pr").unwrap(),
+        store.lessons_for_run(&run.id, None, "direct").unwrap(),
         used
     );
     assert_eq!(
@@ -182,7 +182,7 @@ fn lesson_selection_is_bounded_repo_first_and_disabled_mode_has_no_effects() {
         store.record_lesson(l).unwrap();
     }
     let chosen = store
-        .select_lessons(Some(&repo.id), Some("quick-pr"), 6, 1200)
+        .select_lessons(Some(&repo.id), Some("direct"), 6, 1200)
         .unwrap();
     assert!(chosen.len() <= 6 && chosen.iter().map(|l| l.text.len()).sum::<usize>() <= 1200);
     assert!(chosen.iter().all(|l| l.scope.repo.is_some()));
@@ -198,7 +198,7 @@ fn lesson_selection_is_bounded_repo_first_and_disabled_mode_has_no_effects() {
     let run = start(&mut store, &item.id);
     assert!(
         store
-            .lessons_for_run(&run.id, Some(&repo.id), "quick-pr")
+            .lessons_for_run(&run.id, Some(&repo.id), "direct")
             .unwrap()
             .is_empty()
     );

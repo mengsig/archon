@@ -413,7 +413,7 @@ mod tests {
         PipelineRun {
             id: PipelineRunId::new(),
             item: item.id.clone(),
-            pipeline: "quick-pr".into(),
+            pipeline: "direct".into(),
             shipped: false,
             aether_run: None,
             workspace: "/w".into(),
@@ -455,14 +455,14 @@ mod tests {
     fn items_show_stage_age_cost_and_pull_request() {
         let repo = RepoId::new();
         let names: RepoNames = [(repo.clone(), "api".to_owned())].into();
-        let mut running = summary(queue_item(Some(&repo), "add a greeting", "quick-pr"));
+        let mut running = summary(queue_item(Some(&repo), "add a greeting", "direct"));
         running.item.state = QueueState::Running {
             run: PipelineRunId::new(),
         };
         running.item.created_at = at(9, 55);
         running.stage = Some("review".into());
         running.spent_usd = 1.2;
-        let mut shipped = summary(queue_item(Some(&repo), "fix typo", "strict-pr-review"));
+        let mut shipped = summary(queue_item(Some(&repo), "fix typo", "adaptive"));
         shipped.item.state = QueueState::Succeeded {
             run: PipelineRunId::new(),
             summary: "done".into(),
@@ -474,8 +474,8 @@ mod tests {
 
         let text = items(&[running, shipped], &names, at(10, 0));
         let expected = format!(
-            "{a}  running    review  5m      $1.20  api  quick-pr          add a greeting\n\
-             {b}  succeeded  -       2h 30m  $4.10  api  strict-pr-review  fix typo  \
+            "{a}  running    review  5m      $1.20  api  direct    add a greeting\n\
+             {b}  succeeded  -       2h 30m  $4.10  api  adaptive  fix typo  \
              https://github.com/o/r/pull/12"
         );
         assert_eq!(text, expected);
@@ -527,15 +527,15 @@ mod tests {
 
     #[test]
     fn listed_titles_cannot_rewrite_the_screen_or_fake_a_row() {
-        let spoof = "fix typo\x1b[2K\x1b[1G\nqi_FAKE  succeeded  api  quick-pr  done";
-        let mut row = summary(queue_item(None, spoof, "quick-pr"));
+        let spoof = "fix typo\x1b[2K\x1b[1G\nqi_FAKE  succeeded  api  direct  done";
+        let mut row = summary(queue_item(None, spoof, "direct"));
         row.pr_url = Some("https://x/\x1b[2Kpull/1\nqi_FAKE".into());
         let text = items(&[row], &RepoNames::new(), archon_core::now());
         assert_inert(&text);
         assert_eq!(text.lines().count(), 1, "one item, one row: {text:?}");
         assert!(
             text.ends_with(
-                "fix typo[2K[1G qi_FAKE  succeeded  api  quick-pr  done  \
+                "fix typo[2K[1G qi_FAKE  succeeded  api  direct  done  \
                  https://x/[2Kpull/1 qi_FAKE"
             ),
             "{text}"
@@ -543,7 +543,7 @@ mod tests {
     }
 
     fn detail_with_stages() -> ItemDetail {
-        let item = queue_item(None, "add a greeting", "quick-pr");
+        let item = queue_item(None, "add a greeting", "direct");
         let run = pipeline_run(
             &item,
             RunState::Succeeded {
@@ -604,17 +604,17 @@ mod tests {
     #[test]
     fn a_switched_pipeline_is_named_after_the_one_queued() {
         let mut detail = detail_with_stages();
-        detail.switched_to = Some("direct\nqi_FAKE".into());
+        detail.switched_to = Some("adaptive\nqi_FAKE".into());
         let text = item_detail(&detail, &RepoNames::new(), false);
         assert!(
-            text.contains("\nrepo: -, pipeline: quick-pr → direct qi_FAKE, priority: Normal\n"),
+            text.contains("\nrepo: -, pipeline: direct → adaptive qi_FAKE, priority: Normal\n"),
             "{text}"
         );
         let mut row = summary(detail.item.clone());
         row.switched_to = detail.switched_to.clone();
         let listing = items(&[row], &RepoNames::new(), archon_core::now());
         assert!(
-            listing.contains("  quick-pr → direct qi_FAKE  add a greeting"),
+            listing.contains("  direct → adaptive qi_FAKE  add a greeting"),
             "{listing}"
         );
         assert_inert(&listing);
@@ -755,7 +755,7 @@ mod tests {
 
     #[test]
     fn item_detail_strips_escapes_from_agent_text() {
-        let mut item = queue_item(None, "title\x1b]52;c;cm0gLXJm\x07", "quick-pr");
+        let mut item = queue_item(None, "title\x1b]52;c;cm0gLXJm\x07", "direct");
         item.brief = "line one\x1b[2J\nline two\r".into();
         item.tags = vec!["t\x1b[8m".into()];
         item.state = QueueState::Cancelled {

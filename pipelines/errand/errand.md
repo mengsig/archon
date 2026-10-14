@@ -31,8 +31,8 @@ better visually, also write one HTML page for Archon to publish in Lavish.
   only for outside facts and only when the item's network policy permits
   it; prefer primary sources.
 - Make no repository changes. A request to change code belongs in
-  `quick-pr` or another shipping pipeline; report that boundary rather
-  than making the change.
+  `direct` or another shipping pipeline; report that boundary rather than
+  making the change.
 - Cause no outward side effects: no pushes, PR or issue comments, merges,
   messages, purchases or paid API calls. Those stay with the orchestrator,
   which holds the operator's directives. Draft requested text locally.

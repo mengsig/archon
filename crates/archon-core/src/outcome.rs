@@ -267,7 +267,7 @@ mod tests {
             run: PipelineRunId::new(),
             item: QueueItemId::new(),
             repo: Some(RepoId::new()),
-            pipeline: "quick-pr".into(),
+            pipeline: "direct".into(),
             diff: Some(DiffStat {
                 files: 2,
                 added: 30,

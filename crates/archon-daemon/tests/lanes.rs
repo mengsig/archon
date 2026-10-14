@@ -92,7 +92,7 @@ async fn other_repository(h: &Harness) -> PathBuf {
 async fn quick_pr_in(h: &Harness, repo: &str) -> QueueItem {
     let request = EnqueueRequest {
         repo: Some(RepoRef(repo.into())),
-        pipeline: Some("quick-pr".into()),
+        pipeline: Some("direct".into()),
         title: format!("a change in {repo}"),
         brief: "brief".into(),
         priority: Default::default(),

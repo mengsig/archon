@@ -155,11 +155,9 @@ fn fake_aetherd(log: PathBuf, socket: PathBuf, lives: usize) -> JoinHandle<()> {
     })
 }
 
-#[test]
-fn setup_seeds_and_the_lifecycle_drives_archons_own_aether() {
-    let env = Env::new();
-    let operator_before = contents(&env.path("operator-aether"));
-
+/// Run `archon setup` twice and once as JSON: it seeds Archon's Aether config
+/// from the operator's, then leaves it unchanged. The instance config dir.
+fn setup_seeds_the_instance(env: &Env) -> PathBuf {
     let setup = String::from_utf8(env.run(&["setup"]).stdout).unwrap();
     assert!(setup.contains("seeded from"), "{setup}");
     assert!(setup.contains("modes/calm.toml seeded"), "{setup}");
@@ -180,6 +178,14 @@ fn setup_seeds_and_the_lifecycle_drives_archons_own_aether() {
     let json: serde_json::Value =
         serde_json::from_slice(&env.run(&["--json", "setup"]).stdout).unwrap();
     assert_eq!(json["calm_mode"], "installed");
+    instance_dir
+}
+
+#[test]
+fn setup_seeds_and_the_lifecycle_drives_archons_own_aether() {
+    let env = Env::new();
+    let operator_before = contents(&env.path("operator-aether"));
+    let instance_dir = setup_seeds_the_instance(&env);
 
     let socket = env.path("run/aetherd.sock");
     let daemon = fake_aetherd(env.path("aether-calls.log"), socket.clone(), 1);
@@ -192,17 +198,21 @@ fn setup_seeds_and_the_lifecycle_drives_archons_own_aether() {
         "{status}"
     );
     env.run(&["aether", "agents", "--json"]);
-    let stopped = String::from_utf8(env.run(&["daemon", "stop", "--aether"]).stdout).unwrap();
-    assert!(stopped.contains("Stopped archond"), "{stopped}");
-    assert!(
-        stopped.contains("Stopped Archon's own aetherd"),
-        "{stopped}"
-    );
-    daemon.join().unwrap();
+    let kept = String::from_utf8(env.run(&["daemon", "stop", "--keep-aether"]).stdout).unwrap();
+    assert!(kept.contains("Stopped archond"), "{kept}");
+    assert!(!kept.contains("aetherd"), "{kept}");
     assert!(
         archond.0.wait().unwrap().success(),
         "archond stopped cleanly"
     );
+    assert!(socket.exists(), "Archon's own aetherd was kept running");
+    let stopped = String::from_utf8(env.run(&["daemon", "stop"]).stdout).unwrap();
+    assert!(stopped.contains("archond is not running"), "{stopped}");
+    assert!(
+        stopped.contains("Stopped Archon's own aetherd"),
+        "a plain stop also stops Archon's own aetherd: {stopped}"
+    );
+    daemon.join().unwrap();
 
     let calls = env.calls();
     let verbs: Vec<_> = calls.iter().map(|c| c[0].as_str()).collect();

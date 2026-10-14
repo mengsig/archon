@@ -99,6 +99,7 @@ fn wait_with_reason(
                     }
                     gets += 1;
                     Reply::ItemDetail(Box::new(ItemDetail {
+                        steers: Vec::new(),
                         item: row,
                         runs: vec![],
                         stages: vec![],

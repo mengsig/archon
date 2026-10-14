@@ -34,6 +34,14 @@ fn commit_file(tree: &Path, file: &str, text: &str) {
     git(tree, &["commit", "--quiet", "-m", &format!("write {file}")]);
 }
 
+/// What the planner, kept through the loop, was told to plan again with.
+async fn replan_brief(h: &Harness) -> String {
+    let running = h.running().await;
+    assert_eq!(running.len(), 1, "only `plan` runs: {running:?}");
+    assert_eq!(running[0].stage_id, "plan");
+    h.backend.resumed_with(&running[0])
+}
+
 fn merge_subjects(tree: &Path) -> Vec<String> {
     let log = git(tree, &["log", "--merges", "--format=%s"]);
     log.lines().map(str::to_owned).collect()
@@ -138,18 +146,9 @@ async fn a_conflict_loops_back_with_its_files() {
         (running[0].stage_id.as_str(), running[0].attempt),
         ("plan", 2)
     );
-    let requests = h.backend.requests();
-    let replan = requests.last().expect("the plan stage again");
-    assert!(
-        replan.objective.contains("merging role `ui`"),
-        "{}",
-        replan.objective
-    );
-    assert!(
-        replan.objective.contains("`README.md`"),
-        "{}",
-        replan.objective
-    );
+    let replan = replan_brief(&h).await;
+    assert!(replan.contains("merging role `ui`"), "{replan}");
+    assert!(replan.contains("`README.md`"), "{replan}");
 
     h.settle_running(|_| completed("split differently")).await;
     h.dispatch().await;
@@ -260,13 +259,7 @@ async fn a_role_off_its_branch_loops_back() {
         (running[0].stage_id.as_str(), running[0].attempt),
         ("plan", 2)
     );
-    let replan = h
-        .backend
-        .requests()
-        .last()
-        .expect("plan again")
-        .objective
-        .clone();
+    let replan = replan_brief(&h).await;
     assert!(replan.contains("`feature` checked out"), "{replan}");
     assert!(replan.contains(&branch(&run, "ui", 1)), "{replan}");
 }
@@ -333,8 +326,8 @@ async fn an_uncommitted_run_worktree_loops_back_before_the_roles_start() {
         ("plan", 2)
     );
     let requests = h.backend.requests();
-    assert_eq!(requests.len(), 2, "no role agent was created");
-    let replan = &requests[1].objective;
+    assert_eq!(requests.len(), 1, "no role agent was created");
+    let replan = replan_brief(&h).await;
     assert!(
         replan.contains("uncommitted changes to README.md"),
         "{replan}"
@@ -475,13 +468,7 @@ async fn a_role_left_mid_rebase_gets_its_next_attempt() {
     h.settle_running(|s| completed(role_of(s))).await;
     assert!(merge_subjects(&run.workspace).is_empty(), "nothing merged");
     h.dispatch().await;
-    let replan = h
-        .backend
-        .requests()
-        .last()
-        .expect("plan again")
-        .objective
-        .clone();
+    let replan = replan_brief(&h).await;
     assert!(replan.contains("`HEAD` checked out"), "{replan}");
 
     h.settle_running(|_| completed("split differently")).await;
@@ -519,8 +506,7 @@ async fn a_role_that_committed_its_own_repository_gets_its_next_attempt() {
     h.settle_running(|s| completed(role_of(s))).await;
     assert!(merge_subjects(&run.workspace).is_empty(), "nothing merged");
     h.dispatch().await;
-    let requests = h.backend.requests();
-    let replan = &requests.last().expect("plan again").objective;
+    let replan = replan_brief(&h).await;
     assert!(
         replan.contains(": vendor/lib. The next attempt"),
         "{replan}"

@@ -84,7 +84,7 @@ enum ShippingProof {
 }
 
 async fn shipping_proof(ctx: &DaemonContext, run: &PipelineRun) -> ShippingProof {
-    let spec = match frozen::thaw(&ctx.paths.data_dir, &run.id, &run.pipeline).await {
+    let spec = match frozen::thaw(ctx, &run.id, &run.pipeline).await {
         Ok(spec) => spec,
         Err(error) => {
             tracing::warn!(%error, run = %run.id, "shipping proof unavailable; retaining workspace");

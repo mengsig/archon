@@ -18,6 +18,7 @@ mod gates;
 mod items;
 mod model_evidence;
 mod repos;
+mod run_edits;
 mod runs;
 mod schema;
 mod settings;
@@ -39,10 +40,12 @@ use archon_core::protocol::{ItemQuery, RepoRef};
 use archon_core::queue::{PauseState, QueueItem, QueueState};
 use archon_core::repo::Repo;
 use archon_core::run::{OperatorGate, PipelineRun, StageRun};
+use archon_core::steer::RunEdit;
 
 use crate::dispatch::DispatchSnapshot;
 
 pub use model_evidence::ModelEvidenceSnapshot;
+pub use run_edits::RecordedEdit;
 
 /// Well-known `kv` keys.
 pub mod keys {
@@ -294,6 +297,22 @@ impl Store {
     /// runs, for crash recovery. Oldest first.
     pub fn live_stage_runs(&self) -> Result<Vec<StageRun>, ArchonError> {
         runs::live_stages(&self.conn)
+    }
+
+    // ----- run edits ---------------------------------------------------------
+    /// Record a steer's change to a live run's shape; returns its 1-based
+    /// place in the run's order.
+    pub fn append_run_edit(
+        &mut self,
+        run: &PipelineRunId,
+        edit: &RunEdit,
+        at: Timestamp,
+    ) -> Result<u32, ArchonError> {
+        run_edits::append(&mut self.conn, run, edit, at)
+    }
+    /// A run's edits in the order they were made.
+    pub fn run_edits(&self, run: &PipelineRunId) -> Result<Vec<RecordedEdit>, ArchonError> {
+        run_edits::for_run(&self.conn, run)
     }
 
     // ----- dispatch ----------------------------------------------------------

@@ -101,7 +101,7 @@ fn define(
 
 /// The `brief_append` property shared by `update_item` and `retry_item`.
 fn brief_append() -> Value {
-    json!({"type": "string", "description": "Guidance appended to the brief for the next run's stages, e.g. \"the reviewer found X; do Y\"."})
+    json!({"type": "string", "description": "Guidance added to the brief, e.g. \"the reviewer found X; do Y\". Every stage that starts after it reads it."})
 }
 
 /// An object schema that refuses undeclared fields.
@@ -431,9 +431,9 @@ fn update_item() -> ToolDefinition {
     define(
         "update_item",
         "Update queue item",
-        "Change an item that has not succeeded. While a run is dispatching or running, \
-         `model_plan` and `brief_append` cannot change and the call is refused: cancel_item, \
-         then retry_item with them.",
+        "Change an item that has not succeeded. On a running item `model_plan` and \
+         `brief_append` are steered into its run without cancelling it; while it is just \
+         starting they are refused: send them again in a moment.",
         object(
             json!({
                 "item": item_id(""),

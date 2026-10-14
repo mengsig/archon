@@ -113,7 +113,9 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
     );
     let waiting_on = super::item_views::waiting_on(&store, &item, &runs, &stages)?;
     let waiting_reason = waiting.reason(&store, &item, waiting_on.as_ref())?;
+    let steers = executor::steer::records(&store, id)?;
     Ok(Reply::ItemDetail(Box::new(ItemDetail {
+        steers,
         waiting_reason,
         waiting_on,
         item,
@@ -126,7 +128,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
 }
 
 /// Priority, tags, budget and dependencies change any time before success;
-/// the model plan and the brief only while no run is starting or running.
+/// the model plan and the brief here only while no run is starting or running.
 pub(super) async fn update(
     ctx: &DaemonContext,
     id: &QueueItemId,
@@ -165,8 +167,8 @@ pub(super) async fn update(
     Ok(Reply::Item(item))
 }
 
-/// Refuse a patch `item`'s state does not allow: nothing changes after
-/// success, and a plan or brief its live run already read would not apply.
+/// Refuse a patch `item`'s state does not allow: nothing after success, and
+/// no plan or brief while a run is starting, before a steer can reach it.
 fn check_patchable(item: &QueueItem, patch: &ItemPatch) -> Result<(), ArchonError> {
     let id = &item.id;
     if matches!(item.state, QueueState::Succeeded { .. }) {
@@ -174,20 +176,11 @@ fn check_patchable(item: &QueueItem, patch: &ItemPatch) -> Result<(), ArchonErro
             "item {id} already succeeded"
         )));
     }
-    if !item.state.is_active() {
-        return Ok(());
-    }
-    if patch.model_plan.is_some() {
+    let steered = patch.model_plan.is_some() || patch.brief_append.is_some();
+    if item.state.is_active() && steered {
         return Err(ArchonError::InvalidTransition(format!(
-            "item {id} is {}; cancel and retry it with the new model_plan",
-            item.state.kind()
-        )));
-    }
-    if patch.brief_append.is_some() {
-        return Err(ArchonError::InvalidTransition(format!(
-            "item {id} is {} and its stages already read the brief; amend it once the run \
-             ends, or cancel the item and retry it with brief_append",
-            item.state.kind()
+            "the run of item {id} is just starting; send its new model_plan or brief_append \
+             again in a moment, and it is steered into the run"
         )));
     }
     Ok(())
@@ -392,7 +385,7 @@ async fn start_fresh(
 
 /// Store what a retry changed on `loaded` and queue it again, with the
 /// dependents it alone blocked. The caller holds the run table.
-fn queue_again(
+pub(super) fn queue_again(
     store: &mut archon_queue::Store,
     loaded: &QueueItem,
     mut item: QueueItem,
@@ -417,7 +410,7 @@ async fn note_amendment(ctx: &DaemonContext, id: &QueueItemId, text: &str, via: 
 /// Post `text` to the item's progress. What it reports is done and stored
 /// already, and repeating the request would do it twice, so a note that
 /// cannot be posted goes to the daemon's log instead of failing it.
-async fn post_note(ctx: &DaemonContext, id: &QueueItemId, text: &str) {
+pub(super) async fn post_note(ctx: &DaemonContext, id: &QueueItemId, text: &str) {
     assert!(!text.trim().is_empty(), "a note says what was done");
     let posted = executor::notify(ctx, NotificationKind::Progress, text, Some(id), None).await;
     if let Err(error) = posted {
@@ -455,19 +448,20 @@ fn unblock_dependents(
     Ok(())
 }
 
-/// The item's repository environment and the pipeline it would run now,
-/// as the catalog has it and with its knobs' stages.
+/// The item's repository environment and the pipeline it would run now: as
+/// the catalog has it, and with its knobs' stages and any steered stage list.
 async fn item_pipeline(
     ctx: &DaemonContext,
     item: &QueueItem,
 ) -> Result<(RepoEnv, PipelineSpec, PipelineSpec), ArchonError> {
     let env = RepoEnv::load(ctx, item.repo.as_ref()).await?;
     let (base, spec) = knobs::item_specs(&env, item)?;
+    let spec = executor::steer::shaped(ctx, item, spec).await?;
     Ok((env, base, spec))
 }
 
 /// `plan` with what it leaves out filled for `env`'s repository.
-async fn filled_plan(
+pub(super) async fn filled_plan(
     ctx: &DaemonContext,
     env: &RepoEnv,
     base: &PipelineSpec,
@@ -482,7 +476,7 @@ async fn filled_plan(
 
 /// Every stage has 1 to `fan_out` choices, no unknown stage is named, and
 /// every choice passes the effective model policy.
-fn check_plan(
+pub(super) fn check_plan(
     ctx: &DaemonContext,
     env: &RepoEnv,
     spec: &PipelineSpec,
@@ -511,7 +505,10 @@ fn check_plan(
     env.policy(&ctx.config).check_plan(plan)
 }
 
-fn check_reasons(spec: &PipelineSpec, reasons: Option<&ModelReasons>) -> Result<(), ArchonError> {
+pub(super) fn check_reasons(
+    spec: &PipelineSpec,
+    reasons: Option<&ModelReasons>,
+) -> Result<(), ArchonError> {
     let Some(reasons) = reasons else {
         return Ok(());
     };
@@ -529,7 +526,7 @@ fn check_reasons(spec: &PipelineSpec, reasons: Option<&ModelReasons>) -> Result<
 /// The pipeline can run in `env`: on a repository when it needs one, and
 /// with every team stage within the agent caps. A team stage is admitted
 /// whole (ARCHITECTURE §7.3), so a bigger one would wait forever.
-async fn check_runs_here(
+pub(super) async fn check_runs_here(
     ctx: &DaemonContext,
     env: &RepoEnv,
     spec: &PipelineSpec,

@@ -16,7 +16,9 @@ mod gates;
 mod naming;
 mod pages;
 mod recover;
+mod resume;
 mod review;
+mod revive;
 mod roster;
 mod run_node;
 mod settle;
@@ -24,6 +26,7 @@ mod ship;
 mod siblings;
 mod spawn;
 mod start;
+pub(crate) mod steer;
 mod sweep;
 mod team;
 
@@ -42,6 +45,7 @@ use crate::context::DaemonContext;
 
 pub(crate) use finish::notify;
 pub(crate) use recover::prune_finished_run_vars;
+pub(crate) use revive::revived;
 pub(crate) use roster::prune_settled_rosters;
 pub(crate) use run_node::recover_message_node;
 pub(crate) use run_node::{is_node_agent, node_run, prune_retired_node_agents};
@@ -135,6 +139,12 @@ pub(crate) struct FollowUp {
     pub merge: Vec<PipelineRunId>,
     /// Runs whose queued delivery to make.
     pub ship: Vec<PipelineRunId>,
+    /// Attempts resumed on a kept agent, which may have answered (§6.7).
+    pub resumed: Vec<StageRunId>,
+    /// Kept agents to park or end now that an attempt of theirs settled.
+    pub kept: Vec<resume::Kept>,
+    /// Live stage runs a steer still owes a patch or a message (§6.6).
+    pub steers: Vec<StageRunId>,
     /// Capacity or pending spawns changed: wake the dispatcher.
     pub poke: bool,
 }
@@ -162,6 +172,9 @@ impl FollowUp {
         self.publish.extend(other.publish);
         self.merge.extend(other.merge);
         self.ship.extend(other.ship);
+        self.resumed.extend(other.resumed);
+        self.kept.extend(other.kept);
+        self.steers.extend(other.steers);
         self.poke |= other.poke;
     }
 
@@ -180,6 +193,9 @@ impl FollowUp {
             && self.publish.is_empty()
             && self.merge.is_empty()
             && self.ship.is_empty()
+            && self.resumed.is_empty()
+            && self.kept.is_empty()
+            && self.steers.is_empty()
     }
 }
 
@@ -232,6 +248,17 @@ pub async fn stage_settled(
         return Ok(());
     };
     let follow = settle::settle(ctx, &stage.id, outcome).await?;
+    run_follow_up(ctx, follow).await
+}
+
+/// Called by the event pump when an agent's turn ended: an attempt resumed
+/// on a kept agent settles on what it said (§6.7); any other is left alone.
+pub async fn turn_ended(ctx: &DaemonContext, agent: &AetherAgentId) -> Result<(), ArchonError> {
+    let stage = ctx.store.lock().await.stage_run_by_agent(agent)?;
+    let Some(stage) = stage.filter(|s| !s.state.is_terminal() && s.aether_task.is_none()) else {
+        return Ok(());
+    };
+    let follow = resume::check(ctx, &stage.id).await?;
     run_follow_up(ctx, follow).await
 }
 
@@ -365,64 +392,108 @@ pub(crate) async fn run_follow_up(
     first_error.map_or(Ok(()), Err)
 }
 
-async fn follow_up_round(ctx: &DaemonContext, follow: FollowUp) -> (FollowUp, Option<ArchonError>) {
-    let mut next = FollowUp::default();
-    let mut first_error = None;
-    let mut record = |result: Result<FollowUp, ArchonError>| match result {
-        Ok(more) => next.merge(more),
-        Err(error) if first_error.is_none() => first_error = Some(error),
-        Err(error) => tracing::error!(%error, "follow-up failed"),
-    };
-    // First: a spawn of the same run waits for these.
-    for stage in dedup(follow.descendant_stops) {
-        record(descendants::stop(ctx, &stage).await);
+/// What one round of follow-ups leaves: the work it found and its first
+/// error. Later errors are logged, so every step is still attempted.
+#[derive(Default)]
+struct Round {
+    next: FollowUp,
+    first_error: Option<ArchonError>,
+}
+
+impl Round {
+    fn record(&mut self, result: Result<FollowUp, ArchonError>) {
+        match result {
+            Ok(more) => self.next.merge(more),
+            Err(error) if self.first_error.is_none() => self.first_error = Some(error),
+            Err(error) => tracing::error!(%error, "follow-up failed"),
+        }
     }
-    match issuable(ctx, follow.issue).await {
+}
+
+async fn follow_up_round(
+    ctx: &DaemonContext,
+    mut follow: FollowUp,
+) -> (FollowUp, Option<ArchonError>) {
+    let mut round = Round::default();
+    stop_and_spawn(ctx, &mut round, &mut follow).await;
+    deliver_and_tidy(ctx, &mut round, follow).await;
+    (round.next, round.first_error)
+}
+
+/// The agents a round ends, starts and asks about, taken out of `follow`.
+async fn stop_and_spawn(ctx: &DaemonContext, round: &mut Round, follow: &mut FollowUp) {
+    use std::mem::take;
+    // First: a spawn of the same run waits for these.
+    for stage in dedup(take(&mut follow.descendant_stops)) {
+        round.record(descendants::stop(ctx, &stage).await);
+    }
+    match issuable(ctx, take(&mut follow.issue)).await {
         Ok(issue) => {
             for id in issue {
-                record(spawn::issue(ctx, &id).await);
+                round.record(spawn::issue(ctx, &id).await);
             }
         }
-        Err(error) => record(Err(error)),
+        Err(error) => round.record(Err(error)),
     }
-    for (stage, task) in follow.check {
-        record(sweep::check_outcome(ctx, &stage, &task).await);
+    for (stage, task) in take(&mut follow.check) {
+        round.record(sweep::check_outcome(ctx, &stage, &task).await);
     }
-    for run in dedup(follow.stop) {
-        record(sweep::stop_run(ctx, &run).await);
+    for run in dedup(take(&mut follow.stop)) {
+        round.record(sweep::stop_run(ctx, &run).await);
     }
-    for stage in dedup(follow.time_out) {
-        record(sweep::time_out(ctx, &stage).await);
+    for stage in dedup(take(&mut follow.time_out)) {
+        round.record(sweep::time_out(ctx, &stage).await);
     }
-    for run in dedup(follow.retire) {
+    for run in dedup(take(&mut follow.retire)) {
         let retired = run_node::retire(ctx, &run).await;
-        record(retired.map(|()| FollowUp::default()));
+        round.record(retired.map(|()| FollowUp::default()));
     }
-    for (agent, reason) in follow.cancel_agents {
-        record(sweep::cancel_stray(ctx, &agent, &reason).await);
+    for (agent, reason) in take(&mut follow.cancel_agents) {
+        round.record(sweep::cancel_stray(ctx, &agent, &reason).await);
     }
-    for stage in dedup(follow.sibling_stops) {
-        record(siblings::stop(ctx, &stage).await);
+    for stage in dedup(take(&mut follow.sibling_stops)) {
+        round.record(siblings::stop(ctx, &stage).await);
+    }
+}
+
+/// What a round owes once its stops and spawns are made: steers, rosters,
+/// gates, pages, merges, kept agents and the worktrees of ended runs.
+async fn deliver_and_tidy(ctx: &DaemonContext, round: &mut Round, follow: FollowUp) {
+    assert!(
+        follow.descendant_stops.is_empty() && follow.issue.is_empty(),
+        "stops and spawns are made first"
+    );
+    assert!(
+        follow.stop.is_empty() && follow.sibling_stops.is_empty(),
+        "stops and spawns are made first"
+    );
+    for stage in dedup(follow.steers) {
+        round.record(steer::deliver(ctx, &stage).await);
     }
     for run in dedup(follow.roster) {
-        record(roster::deliver(ctx, &run).await);
+        round.record(roster::deliver(ctx, &run).await);
     }
     for key in dedup(follow.gates) {
-        record(gates::announce(ctx, &key).await);
+        round.record(gates::announce(ctx, &key).await);
     }
     for stage in dedup(follow.publish) {
-        record(pages::publish_stage(ctx, &stage).await);
+        round.record(pages::publish_stage(ctx, &stage).await);
     }
     for run in dedup(follow.merge) {
-        record(team::merge(ctx, &run).await);
+        round.record(team::merge(ctx, &run).await);
+    }
+    for kept in dedup(follow.kept) {
+        round.record(resume::settle_kept(ctx, kept).await);
+    }
+    for stage in dedup(follow.resumed) {
+        round.record(resume::check(ctx, &stage).await);
     }
     for run in dedup(follow.ship) {
-        record(ship::deliver(ctx, &run).await);
+        round.record(ship::deliver(ctx, &run).await);
     }
     for cleanup in follow.cleanup {
-        record(remove_ended_worktree(ctx, cleanup).await);
+        round.record(remove_ended_worktree(ctx, cleanup).await);
     }
-    (next, first_error)
 }
 
 /// Remove the worktree a run left behind; nothing follows from it.

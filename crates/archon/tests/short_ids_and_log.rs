@@ -138,6 +138,7 @@ impl Fake {
             }),
             Request::ResolveItem { prefix } => return self.resolve(prefix),
             Request::GetItem { item } => Reply::ItemDetail(Box::new(ItemDetail {
+                steers: Vec::new(),
                 waiting_on: None,
                 waiting_reason: None,
                 item: self.items.iter().find(|i| &i.id == item).unwrap().clone(),

@@ -191,7 +191,7 @@ async fn a_failed_role_cancels_its_live_sibling() {
         (replan[0].stage_id.as_str(), replan[0].attempt),
         ("plan", 2)
     );
-    let objective = h.backend.requests().last().expect("plan").objective.clone();
+    let objective = h.backend.resumed_with(&replan[0]);
     assert!(objective.contains("role `ui` failed"), "{objective}");
     assert!(objective.contains("the ui build is broken"), "{objective}");
     assert_eq!(h.backend.cancelled().len(), 1, "cancelled once");

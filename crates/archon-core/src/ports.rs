@@ -76,6 +76,38 @@ pub struct SpawnRequest {
     /// that daemon sent it, with Aether's default.
     #[serde(default)]
     pub network: Option<NetworkPolicy>,
+    /// The agent outlives its task, so a later attempt of its slot can
+    /// resume it by message instead of starting cold (§6.7).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub keep: bool,
+}
+
+/// How a resumed agent's attempt ended, from its turn's final message
+/// (§6.7): a failure after `FAILED:` or `BLOCKED:`, else the summary.
+pub fn resumed_reply_outcome(reply: &str) -> StageOutcome {
+    const FAILED_PREFIX: &str = "FAILED:";
+    let reply = reply.trim();
+    assert!(!reply.is_empty(), "a silent turn is not an answer");
+    if let Some(why) = reply.strip_prefix(FAILED_PREFIX) {
+        let error = match why.trim() {
+            "" => "the stage agent reported that it could not fix its work".to_owned(),
+            why => why.to_owned(),
+        };
+        return StageOutcome::Failed {
+            error,
+            infra: false,
+        };
+    }
+    if reply.starts_with(StageOutcome::BLOCKED_PREFIX) {
+        return StageOutcome::Failed {
+            error: reply.to_owned(),
+            infra: false,
+        };
+    }
+    StageOutcome::Completed {
+        summary: reply.to_owned(),
+        structured: None,
+    }
 }
 
 /// The passive Aether agent under which one pipeline run's stage agents
@@ -214,11 +246,48 @@ pub trait AgentBackend: Send + Sync {
         content: &str,
         idempotency_key: &str,
     ) -> Result<(), ArchonError>;
+
+    /// How the turn ended in which a kept agent took `message` (§6.7): `None`
+    /// while it works, an `infra` failure when it is gone or said nothing.
+    async fn resumed_outcome(
+        &self,
+        agent: &AetherAgentId,
+        message: &str,
+    ) -> Result<Option<StageOutcome>, ArchonError>;
 }
 
 #[cfg(test)]
 mod tests {
     use super::NetworkPolicy::{Allowed, Denied};
+
+    #[test]
+    fn a_resumed_reply_is_a_summary_unless_it_starts_with_a_failure_prefix() {
+        use super::resumed_reply_outcome;
+        use crate::run::StageOutcome;
+        let done = resumed_reply_outcome("  Fixed the null check in src/a.rs; tests pass.\n");
+        let summary = "Fixed the null check in src/a.rs; tests pass.".to_owned();
+        let structured = None;
+        assert_eq!(
+            done,
+            StageOutcome::Completed {
+                summary,
+                structured
+            }
+        );
+        let failed = resumed_reply_outcome("FAILED: the API this needs does not exist");
+        let error = "the API this needs does not exist".to_owned();
+        assert_eq!(
+            failed,
+            StageOutcome::Failed {
+                error,
+                infra: false
+            }
+        );
+        let blocked = resumed_reply_outcome("BLOCKED: needs a deploy key");
+        assert!(blocked.is_operator_blocker(), "{blocked:?}");
+        let bare = resumed_reply_outcome("FAILED:");
+        assert!(matches!(bare, StageOutcome::Failed { ref error, .. } if !error.is_empty()));
+    }
 
     #[test]
     fn the_narrower_network_denies_unless_both_allow() {

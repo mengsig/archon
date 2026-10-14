@@ -149,19 +149,15 @@ async fn review_failure_loops_back_then_ships() {
         (again[0].stage_id.as_str(), again[0].attempt),
         ("implement", 2)
     );
-    let retry = h.backend.requests().pop().expect("a second implementer");
+    let first = &h.stages(&item.id).await[0];
+    assert_eq!(again[0].aether_agent, first.aether_agent, "the same agent");
+    assert_eq!(again[0].aether_task, None, "resumed, not spawned");
+    assert_eq!(h.backend.requests().len(), 3, "no second implementer");
+    let findings = h.backend.resumed_with(&again[0]);
     assert!(
-        retry.objective.contains("missing tests"),
-        "review feedback reaches the fix"
+        findings.contains("missing tests"),
+        "review feedback reaches the fix: {findings}"
     );
-    assert_eq!(
-        retry.name,
-        format!(
-            "#{} implement (attempt 2) · add a greeting",
-            short_item(&item.id)
-        )
-    );
-    assert_eq!(retry.labels["archon.attempt"], "2");
     // Reviewers are issued in stage-run id order, which is random.
     let reviewers: BTreeSet<String> = h.backend.requests()[1..3]
         .iter()

@@ -79,7 +79,7 @@ async fn initiatives_are_the_orchestrators_to_change_and_not_built_yet() {
 }
 
 #[tokio::test]
-async fn steering_is_the_orchestrators_and_not_built_yet() {
+async fn steering_is_the_orchestrators_and_the_operators() {
     let h = Harness::new().await;
     let steer = Request::SteerItem {
         item: QueueItemId::new(),
@@ -89,8 +89,12 @@ async fn steering_is_the_orchestrators_and_not_built_yet() {
         },
     };
     assert_orchestrators_alone(as_helper(&h, steer.clone()).await);
-    assert_not_implemented(h.orchestrator(steer.clone()).await, "steer_item");
-    assert_not_implemented(h.cli(steer).await, "steer_item");
+    for answer in [h.orchestrator(steer.clone()).await, h.cli(steer).await] {
+        assert!(
+            matches!(answer, Err(ArchonError::NotFound(_))),
+            "carried out, so the item is looked up: {answer:?}"
+        );
+    }
 }
 
 #[tokio::test]

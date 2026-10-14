@@ -445,6 +445,7 @@ carries each agent's `parent`.
  "config":{"instructions":"<stage contract, §8.6>",
            "effort":"<effort>",
            "leaf":true,                                // false when stage.allow_delegation or tools = yolo
+           "long_lived":false,                         // true for the agent kept through a fix loop (§6.7)
            "cost_budget":<remaining item budget, a team slot's share of it (§13.1), or omitted>,
            "deadline":"<now + stage.timeout_minutes>",
            "tools":{"mode":"except","names":["mcp__archon__enqueue", "…every archon tool…",  // yolo: only the mutating ones
@@ -1379,6 +1380,180 @@ returns the slot's original `SpawnPlan` (or `None` if the run is already
 decided), and the executor persists the failure and the new stage run in one
 transaction. The newest stage run of a slot supersedes older ones.
 
+### 6.5 Stage hand-off
+
+A stage starts with what the stages before it reported, so it does not
+spend its first turns finding that out again. `sections::context` appends
+`## Handoff from earlier stages` to the rendered prompt: one entry per
+earlier stage with a summary, and one for the stage's own last attempt when
+it is re-entered. Stages the prompt already shows are left out: one its
+template names as `{{previous.<id>.summary}}`, the proposal (it has its own
+section, §18.3), and what the change report covers for a ship stage or
+lists itself.
+
+The digest is bounded: at most 1,200 characters per stage and 4,000 in all
+(`HANDOFF_STAGE_CHARS`, `HANDOFF_TOTAL_CHARS`). When the budget runs out the
+nearest stages are kept, and the entries stay in pipeline order. A stage a
+steer skipped (§6.6) has no entry. The digest is prompt text, appended
+after rendering, so a summary is never read as a template; the workspace is
+stated to be the truth where the two differ.
+
+### 6.6 Steering
+
+A steer changes an item without cancelling it (`Request::SteerItem`,
+`archon_core::steer::Steer`). The orchestrator steers through `steer_item`,
+the operator through `archon queue steer`; a helper or a stage agent is
+refused (§11). `Steer::check` refuses one that changes nothing.
+
+| Field | On a running item | On an item with no live run |
+| --- | --- | --- |
+| `note` | Amends the brief (`## Amendment (<UTC time>)`) and the run's `task.brief`, so every prompt rendered from then on has it. Every live stage agent is sent it, and so is every live agent beneath one. | Amends the brief. |
+| `model`, `effort` (+ `stage`) | Changes every choice of the stage in the item's plan, checked against the model policy (§7.4), and patches the stage's live agents. `stage` defaults to the running stage. | Changes the plan; `stage` is required. |
+| `budget_usd` | Sets the item's cap. A live agent that carries a cap of its own gets the difference, a team's roles each their share. | Sets the item's cap. |
+| `extend_minutes` | Moves the deadline of every stage run working now. | Refused. |
+| `abort` (`then`: `retry`, `skip`, `goto`) | Ends the running attempt of `stage` as cancelled without judging it; the run then retries the stage, goes past it, or goes to the named stage. On a stage that has not started, only `skip`: the run passes the stage over when it reaches it. | Refused. |
+| `insert_stage {stage, from?, after?}` | Puts a copy of stage `stage` of pipeline `from` (the item's own when left out) among the stages that have not started: after `after`, or before the first of them. | The same, for every later run. A failed item is queued again (below). |
+| `switch_pipeline` | Replaces the stages that have not started with what the named pipeline runs after the stages both share. | The same, for every later run. A failed item is queued again. |
+
+Refusals name the reason. A stage that already started keeps its shape: an
+insert lands after the last started stage, a switch keeps every started
+stage, and a stage that ran and is not running now can be neither aborted
+nor removed (abort the running stage with `goto` to run it again). A stage
+that passed and waits at an operator gate is decided at its gate, not
+aborted. A switch on a run under way leaves out the new pipeline's
+proposal stage, since the run is past it. A switch to a pipeline with
+another workspace mode, or one that leaves nothing to run, is refused; so is a team stage for a run that was
+started without team worktrees. The result must pass the model policy and
+the autonomy ceiling: a steer cannot take out the review an enqueue could
+not leave out (§18.2). An item that is dispatching is refused with "steer
+it again in a moment", a succeeded one always, and a cancelled one for a
+shape change (retry it first).
+
+**How a live run takes a steer.** `executor::steer::steer_run` holds the
+run table. `plan::plan` works the steer out against the stored run with
+nothing written, and builds the driver the result would leave
+(`recover::driver_of`): a steer no driver can run is refused before
+anything changed. `apply` then stores, under one store lock, the item, the
+run's variables, the edits, the cancelled stage runs of an aborted group
+with the stop their agents are owed, what each live stage run's agents are
+owed, and the audit record. It rebuilds the driver from the store with
+`recover::resume_run`, which is the path a restart takes. So a steered run
+replays the same after a restart.
+
+**Run edits.** A change to a run's stages is a `RunEdit` appended to the
+`run_edits` table (`Store::append_run_edit`), numbered per run:
+`InsertStage`, `SwitchPipeline` and `AbortStage {stage, attempt, then}`.
+An insert or a switch carries the stages and the prompt texts it adds, so
+replay never reads the catalog. `frozen::thaw` applies the run's edits in
+order to its frozen pipeline (`reshape::apply_all`) before
+`RunDriver::resume`, and `record_abort` gives the driver each abort. An
+inserted stage whose id is taken gets a numbered one (`test-2`), and a
+prompt file name that already holds another text becomes
+`<id>-steered.md`. An aborted group is never judged: its `on_fail` is
+not consulted, `retry` re-enters the stage with the feedback it had,
+`skip` and `goto` clear the feedback, and `goto` back gives the stages it
+re-runs their full loop budget. A removed stage is `AbortStage` with
+attempt 0. It holds for this run; a later run of the item has the stage
+again.
+
+**What the live agents are owed.** Aether applies a patched model or effort
+at the agent's next turn, not inside the running one: `update_agent`
+(`aether-runtime` `commands/update.rs`) writes it to the agent, and a turn
+reads the agent's model when it starts. A move within one engine keeps the
+session and its history; a move between engines starts the next turn from
+Aether's checkpoint of the context. So a model or effort steer is three
+steps for the stage's own agent, in this order: `update_agent`, `interrupt`
+to end the running turn, then a message that starts the next turn on the
+new model and says so. A note, a budget and a deadline need no interrupt. Each step is stored in
+`kv.steer_owed:<stage run>` in the same lock as the steer, with a unique
+key that Aether dedupes the message by. A step Aether did not answer stays
+owed and the sweep repeats it; a step Aether refuses is dropped with a
+progress note on the item, and what the steer stored still applies to the
+stage's next agents. A stage run that settled is owed nothing more. A steer
+at an operator gate changes what the next stage starts with and leaves the
+gate and its question as they are.
+
+**An item with no live run.** The steer changes what the item runs next.
+A shape change is kept as the item's stage list in `kv.shape:<item>` (a
+`RunEdit` holding the whole list), which `start` and `get_item` apply over
+the catalog's pipeline; a switch back to the item's own pipeline forgets
+it. An item that already ran cannot change between a team layout and a
+single worktree.
+
+**Reviving a failed item.** A stage that returns `escalate`, or fails any
+other way, ends its run. An `insert_stage` or `switch_pipeline` on the
+failed item says how it goes on: `executor::revived(failed_run, edit,
+item)` amends the brief with the stage that failed, its error and the
+branch the work is on, and the item is queued again as a plain retry is
+(§13). Its next run works in the same worktree and on the same branch, with
+the failed run's commits, and runs the reshaped stage list from its first
+stage.
+
+**`update_item` on a running item.** `brief_append` is steered in as a
+note. `model_plan` replaces the plan for the agents started from now, and
+each live stage run whose slot gets another model or effort is patched as
+above. While an item is dispatching both are refused.
+
+**Audit.** Every steer is a `SteerRecord {at, by, what, note}` kept with
+the item (`kv.steers:<item>`, the newest 100), a progress entry in the
+feed (`Steered <item> (<by>): <what>.`), and a line in `archon queue show`
+and `get_item`.
+
+### 6.7 One agent through a fix loop
+
+A fix attempt by a cold agent pays for reading the task, the repository and
+its own earlier work again. So the agent of a work stage that a later stage
+can send back is kept, and its next attempt is the same agent told what to
+fix.
+
+`RunDriver::keeps_agent(stage)` holds for a `work` stage with one agent that
+some stage names as its `on_fail.goto` and that does not hold the declared
+review (a resumed attempt hands in no checked result). Its `SpawnPlan` has
+`keep = true`, and the agent is created `long_lived`: Aether leaves it
+waiting on its inbox when its task completes. Reviewers and every other
+stage are created as before, a fresh agent per attempt.
+
+- **Parked.** When an attempt of a kept agent completes, its deadline is
+  moved 7 days out (`PARKED_DAYS`) and it waits. It is a child of the run's
+  node, so the node's cancel ends it with the run (§4.5); the node's
+  retirement does not wait for it to end a turn. An attempt that ends any
+  other way has its agent stopped.
+- **Resumed.** The next attempt of the slot, entered with feedback, takes
+  the agent over (`resume::takeover`). `update_agent` gives it the stage's
+  deadline, and `send_message`, keyed by the stage run, gives it
+  `sections::resume_message`: the findings, and how to hand in. The stage
+  run is `running` with the same agent and no task. Notes steered in while
+  the agent was parked are added to the message.
+- **Settled.** The agent's task settled with its first attempt, so a
+  resumed attempt settles on the turn in which the agent took the message.
+  `AgentBackend::resumed_outcome` reads the agent's own events: the
+  delivery of the message, the turn that consumed it, and the last thing
+  the agent said before going idle. A message starting `FAILED:` fails the
+  attempt, `BLOCKED:` is an operator blocker, and anything else is the
+  attempt's summary. The pump checks when the agent's turn ends and the
+  sweep checks again, so a missed event only delays it. A resumed attempt
+  past its deadline has its agent cancelled and is `timed_out`.
+- **Replaced.** A fresh agent takes the attempt, with the findings under
+  `## Feedback to address` and the digest of the last attempt (§6.5), when
+  the kept one cannot go on: Aether no longer holds it live, Aether refuses
+  the deadline or the message, a steer gave the stage another model or
+  effort, the stage is re-entered without findings (a steer's `goto`), or
+  the resumed attempt was lost to an infrastructure failure. The kept agent
+  is stopped before the fresh one is created, so the fresh one has the
+  worktree to itself: the agent to stop is stored with the reserved spawn
+  (`StoredSpawn.replaces`), and stopping one that already ended is done.
+
+The stage run rows keep this replayable. `stage_runs.aether_agent` is
+unique, and a kept agent passes from a finished attempt to the next attempt
+of the same slot (`claim_agent`); the finished row still names it in its
+data. After a restart a resumed attempt is found running with an agent and
+no task, and is read as above. Spend follows the agent to the attempt that
+holds it.
+
+A steer for a resumed attempt patches and messages the agent but does not
+interrupt it, since the attempt settles on its turn's last word; the
+attempt then settles on the turn that took the steer's message.
+
 ## 7. Scheduling, caps and budgets
 
 ### 7.1 Capacity unit
@@ -2298,7 +2473,8 @@ can reach the socket (§5.5).
 | `list_queue` | `{states?, repo?, pipeline?, tag?, limit?}` | `ListItems` |
 | `get_item` | `{item}` | `GetItem` (stage summaries and errors clipped at 1500 characters, naming `get_stage`, and the run unless it is the latest) |
 | `get_stage` | `{item, run?, stage?, attempt?, slot?, offset?, limit?}` | `GetStage` |
-| `update_item` | `{item, priority?, model_plan?, model_reasons?, tags?, add_depends_on?, budget_usd?, brief_append?}` | `UpdateItem` (not after success; `model_plan` and `brief_append` not while dispatching or running) |
+| `update_item` | `{item, priority?, model_plan?, model_reasons?, tags?, add_depends_on?, budget_usd?, brief_append?}` | `UpdateItem` (not after success; on a running item `model_plan` and `brief_append` are steered into its run, §6.6; neither while dispatching) |
+| `steer_item` | `{item, note?, stage?, model?, effort?, budget_usd?, extend_minutes?, abort_stage?, then?: retry\|skip\|goto, goto?, insert_stage?: {stage, from?, after?}, switch_pipeline?}` | `SteerItem` (§6.6; at least one change) |
 | `cancel_item` | `{item, reason?}` | `CancelItem` |
 | `retry_item` | `{item, model_plan?, model_reasons?, fresh?, brief_append?}` | `RetryItem` (§13: `fresh` starts again from the base branch) |
 | `queue_status` | `{}` | `Status` |
@@ -2465,11 +2641,12 @@ object per line under `--json`).
   `worktrees.gc_after` (default 7d) after the item's last run, with no check
   for uncommitted changes, which `archon queue retry --fresh`, `retry_item`
   and the progress note say.
-- A brief amendment (`brief_append` on `retry_item` or `update_item`, the
-  latter refused while the item is dispatching or running; `archon queue
-  retry --append`) is appended to the brief under a dated `## Amendment
-  (<UTC time>)` heading, so every later stage prompt carries it, and a
-  progress note records it against the item.
+- A brief amendment (`brief_append` on `retry_item` or `update_item`, a
+  `note` on `steer_item`, `archon queue retry --append`) is appended to the
+  brief under a dated `## Amendment (<UTC time>)` heading, so every later
+  stage prompt carries it, and a progress note records it against the item.
+  A running item's live agents are sent it (§6.6); only an item that is
+  dispatching is refused.
 - Cleanup: after `succeeded` with a completed ship-kind stage in the run's
   frozen pipeline, repository ship mode `pr`, and when
   `keep_on_success = false`, the worktree's build caches are deleted
@@ -3145,6 +3322,10 @@ rubric), and a review task (seeded bug must be reported).
 | Orchestrator missing (first start) | No `kv.orchestrator_agent`. | Create it (§4.4). |
 | `archon mcp` cannot reach `archond` | Connect error in the proxy. | `connect_or_start` autostarts `archond` (`archon daemon run --detach`, which waits until the daemon listens and fails as soon as it exits). If that fails, return a tool error with the launcher's stderr and the startup log. |
 | Stage exceeds deadline | Timer. | `cancel` the agent, mark the stage `timed_out`, and let the driver treat it as a failed verdict or failed work. |
+| A steer is stored but Aether does not take what the live agents are owed | `update_agent`, `interrupt` or `send_message` unanswered, or a crash after the store. | The steps stay in `kv.steer_owed:<stage run>` and every sweep repeats them in order, each message under its own key so it is delivered once. A step Aether refuses is dropped with a progress note; what the steer stored reaches the stage's next agents (§6.6). |
+| `archond` restarts on a steered run | Startup reconcile. | `frozen::thaw` applies the run's `run_edits` to its frozen pipeline and the driver takes its recorded aborts before `RunDriver::resume`, so the run has the stages and decisions the steers left (§6.6). |
+| A kept agent cannot take its fix attempt | `get_agent` reports it not live, or Aether refuses the deadline or the message. | The agent is cancelled and a fresh one takes the attempt with the findings and the digest of the last attempt (§6.7). An unanswered call is repeated under the same key instead. |
+| A resumed attempt's agent dies or ends its turn saying nothing | `resumed_outcome` at the agent's turn end and at every sweep. | Infra retry (§6.3): the kept agent is stopped and a fresh agent takes the slot. |
 | Worktree creation fails | git exit status. | Item `failed` with git's stderr. The feed gets a `Blocker`. |
 | Disk low or full | Free space below `limits.min_free_gb` at a dispatch pass, or a stage or `create_agent` failed with `database or disk is full`, `No space left on device` or `ENOSPC`. | The disk hold (§7.3): no dispatch, and one `Blocker` with the free space, the path and `archon gc`. With `worktrees.auto_gc` on, a worktree gc pass (§13.2) runs before the held dispatch. When `archond` cannot start, `archon gc --offline` collects without it. A stage that failed on a full disk is retried once space is back, without using an infra retry (§6.3); a `create_agent` that keeps failing so fails its run after 5 tries. |
 | Archon's store on a full disk | SQLite `SQLITE_FULL`, mapped to `ArchonError::DiskFull` (`store: disk full: ...`). | Standby: the pump, dispatcher, trigger delivery, pruning and `archond`'s own gc passes stop, since memory may no longer match a store whose write failed. The socket keeps serving reads (`status`, items, repos, pipelines, questions, the feed, reports, the spend report), so `archon status` and `archon gc` work, and refuses everything else with the `DiskFull` error. Staying up also keeps clients that autostart `archond` from restarting it in a loop. Once free space ends the disk hold, `archond` exits cleanly, and the next command starts it, which recovers as after a crash. A store that fails to open on a full disk ends the start with the same error. |
@@ -3214,7 +3395,7 @@ so a pass costs what is still stored.
 
 | Entry | Deleted when |
 | --- | --- |
-| `spawn_request:<stage run>` | Its stage run is terminal (or was never recorded). |
+| `spawn_request:<stage run>` | Its stage run is terminal (or was never recorded); a kept agent's (§6.7) once its run's node retired as well. |
 | `run_vars:<run>` | Its run is terminal (or was never inserted); only a live run's driver is rebuilt from it. |
 | `team_merge:<run>:<stage>:<attempt>` | Its run is terminal (or was never inserted); like `run_vars`, only a live run's driver replays it. |
 | `ship:<run>` | Its run is terminal (or was never inserted); only a live run's driver replays the delivery outcome (§8.7). |
@@ -3224,6 +3405,7 @@ so a pass costs what is still stored.
 | `report:<id>` | The report is settled and last changed more than 7 days ago (§14). An ended or disconnected report is kept while its HTML file exists. |
 | An entry of `orchestrator_retired` | The orchestrator was replaced more than 7 days ago and the sweep of what it left running is no longer owed (§16). |
 | `descendant_stop:<stage run>` | Not by this pass: the dispatcher deletes it once Aether has confirmed the stop (§6.3). |
+| `steer_owed:<stage run>` | Not by this pass: the sweep deletes each step once Aether took it, and the rest when the stage run settled (§6.6). |
 | `orchestrator_gave_up`, `orchestrator_failures` | At once: the give-up rule that wrote them was replaced by the revival backoff, and nothing reads them. |
 
 The retention keeps what late events still need: a watched child's entry
@@ -3236,7 +3418,10 @@ streak in `orchestrator_backoff`, a replaced orchestrator whose sweep is
 still owed in `orchestrator_retired`, an owed `descendant_stop:`, and the
 other single keys (cursors, the orchestrator's id and
 generation, the hard pause, the budget and disk holds), which do not grow
-with work. Questions are rows, not `kv`, so an answer not yet
+with work. An item's steer history and steered stage list
+(`steers:<item>`, `shape:<item>`, §6.6) are the item's own data and stay
+with it: at most 100 records and one stage list per steered item.
+Questions are rows, not `kv`, so an answer not yet
 delivered is never pruned, nor is a report whose reopen question waits.
 
 ## 17. Aether limitations and how Archon handles them

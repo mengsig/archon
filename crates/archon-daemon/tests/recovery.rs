@@ -3,10 +3,13 @@
 
 mod common;
 
-use archon_core::id::StageRunId;
+use archon_core::error::ArchonError;
+use archon_core::id::{QueueItemId, StageRunId};
 use archon_core::ports::NetworkPolicy;
+use archon_core::protocol::Request;
 use archon_core::queue::QueueState;
 use archon_core::run::{StageOutcome, StageRun, StageState};
+use archon_core::steer::{InsertStage, Steer, Then};
 use archon_daemon::executor;
 use common::{Harness, completed, verdict};
 use serde_json::Value;
@@ -481,4 +484,212 @@ async fn reserve_replacement_by_hand(h: &Harness, failing: &StageRun) {
     let key = format!("spawn_request:{}", replacement.id);
     store.kv_set(&key, &spawn.to_string()).expect("kv set");
     store.upsert_stage_run(&replacement).expect("replacement");
+}
+
+/// A catalog pipeline whose one stage a steer inserts into a run.
+const STEER_SOURCE: &str = r#"[pipeline]
+name = "steer-source"
+description = "a stage to borrow"
+version = 1
+workspace = "worktree"
+requires_repo = true
+
+[[stage]]
+id = "verify"
+kind = "work"
+prompt = "verify.md"
+timeout_minutes = 30
+"#;
+
+/// A catalog pipeline a steer switches a run to.
+const STEER_TARGET: &str = r#"[pipeline]
+name = "steer-target"
+description = "no review"
+version = 1
+workspace = "worktree"
+requires_repo = true
+
+[[stage]]
+id = "implement"
+kind = "work"
+prompt = "implement.md"
+timeout_minutes = 30
+
+[[stage]]
+id = "ship"
+kind = "ship"
+prompt = "plain-ship.md"
+timeout_minutes = 90
+"#;
+
+/// Add the two pipelines steers name, each with a prompt of its own.
+fn add_steer_pipelines(h: &Harness) {
+    let pipelines = h.repo.join(".archon/pipelines");
+    h.add_pipeline("steer-source", STEER_SOURCE);
+    let verify = "Verify {{task.title}} by running it.\n\n{{task.brief}}\n";
+    std::fs::write(pipelines.join("steer-source/verify.md"), verify).expect("prompt");
+    h.add_pipeline("steer-target", STEER_TARGET);
+    let ship = "Ship {{task.title}} unreviewed: {{previous.implement.summary}}\n";
+    std::fs::write(pipelines.join("steer-target/plain-ship.md"), ship).expect("prompt");
+}
+
+async fn steer(h: &Harness, item: &QueueItemId, steer: Steer) {
+    let request = Request::SteerItem {
+        item: item.clone(),
+        steer,
+    };
+    h.cli(request).await.expect("steered");
+}
+
+/// The stage ids of the item's stage runs, in the order they ran.
+async fn ran(h: &Harness, item: &QueueItemId) -> Vec<String> {
+    let stages = h.stages(item).await;
+    stages.into_iter().map(|s| s.stage_id).collect()
+}
+
+/// Shape edits are applied to the run's snapshot before its driver is
+/// rebuilt, so a restart keeps them whatever the catalog says by then.
+#[tokio::test]
+async fn an_inserted_stage_and_a_removed_one_survive_a_restart() {
+    let mut h = Harness::new().await;
+    add_steer_pipelines(&h);
+    let item = h.enqueue("steered, then restarted").await;
+    h.dispatch().await;
+    let insert = Steer {
+        insert_stage: Some(InsertStage {
+            stage: "verify".into(),
+            from: Some("steer-source".into()),
+            after: Some("implement".into()),
+        }),
+        ..Steer::default()
+    };
+    steer(&h, &item.id, insert).await;
+    let remove = Steer {
+        stage: Some("review".into()),
+        abort: Some(Then::Skip),
+        ..Steer::default()
+    };
+    steer(&h, &item.id, remove).await;
+    std::fs::remove_dir_all(h.repo.join(".archon/pipelines/steer-source")).expect("catalog edit");
+
+    h.restart();
+    executor::recover(&h.ctx).await.expect("recover");
+    h.dispatch().await;
+    assert_eq!(
+        h.backend.created(),
+        1,
+        "the implementer is not spawned twice"
+    );
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let verify = h
+        .backend
+        .requests()
+        .pop()
+        .expect("the inserted stage's request");
+    assert!(
+        verify
+            .objective
+            .starts_with("Verify steered, then restarted by running it.")
+    );
+    h.settle_running(|_| completed("verified")).await;
+    h.dispatch().await;
+    h.settle_running(|_| completed("shipped")).await;
+    h.dispatch().await;
+    assert_eq!(ran(&h, &item.id).await, ["implement", "verify", "ship"]);
+    assert!(matches!(
+        h.state(&item.id).await,
+        QueueState::Succeeded { .. }
+    ));
+}
+
+#[tokio::test]
+async fn a_switched_pipeline_survives_a_restart() {
+    let mut h = Harness::new().await;
+    add_steer_pipelines(&h);
+    let item = h.enqueue("switched, then restarted").await;
+    h.dispatch().await;
+    let switch = Steer {
+        switch_pipeline: Some("steer-target".into()),
+        ..Steer::default()
+    };
+    steer(&h, &item.id, switch).await;
+    std::fs::remove_dir_all(h.repo.join(".archon/pipelines/steer-target")).expect("catalog edit");
+
+    h.restart();
+    executor::recover(&h.ctx).await.expect("recover");
+    h.settle_running(|_| completed("implemented in one go"))
+        .await;
+    h.dispatch().await;
+    let ship = h
+        .backend
+        .requests()
+        .pop()
+        .expect("the switched-in stage's request");
+    assert_eq!(
+        ship.objective.trim(),
+        "Ship switched, then restarted unreviewed: implemented in one go"
+    );
+    h.settle_running(|_| completed("shipped")).await;
+    h.dispatch().await;
+    assert_eq!(ran(&h, &item.id).await, ["implement", "ship"]);
+    assert!(matches!(
+        h.state(&item.id).await,
+        QueueState::Succeeded { .. }
+    ));
+
+    // A later run of the item keeps the stages steered into it.
+    let retried = h.item(&item.id).await;
+    assert_eq!(
+        retried.model_plan.0.len(),
+        2,
+        "a plan for implement and ship"
+    );
+    assert!(h.kv(&format!("shape:{}", item.id)).await.is_some());
+}
+
+/// A crash right after an abort is stored loses neither the retry nor the
+/// stop its agent is owed, and an undelivered note is delivered once.
+#[tokio::test]
+async fn an_abort_and_an_undelivered_note_survive_a_restart() {
+    let mut h = Harness::new().await;
+    let item = h.enqueue("aborted, then restarted").await;
+    h.dispatch().await;
+    let working = h.running().await.remove(0);
+    let agent = working.aether_agent.clone().expect("agent");
+    let away = || ArchonError::Unavailable("aetherd is restarting".into());
+    h.backend.fail_next_cancel(away());
+    let abort = Steer {
+        abort: Some(Then::Retry),
+        ..Steer::default()
+    };
+    steer(&h, &item.id, abort).await;
+    assert!(
+        h.backend.cancelled().is_empty(),
+        "Aether did not take the stop"
+    );
+
+    h.restart();
+    executor::recover(&h.ctx).await.expect("recover");
+    h.dispatch().await;
+    assert_eq!(h.backend.cancelled(), [agent], "the stop is repeated");
+    let retry = h.running().await.remove(0);
+    assert_eq!((retry.stage_id.as_str(), retry.attempt), ("implement", 2));
+    assert_eq!(h.backend.created(), 2, "one retry, not two");
+
+    h.backend.fail_next_message(away());
+    let note = Steer {
+        note: Some("Keep the public API as it is.".into()),
+        ..Steer::default()
+    };
+    steer(&h, &item.id, note).await;
+    assert!(h.backend.messages().is_empty());
+    h.restart();
+    executor::recover(&h.ctx).await.expect("recover");
+    h.dispatch().await;
+    h.dispatch().await;
+    let messages = h.backend.messages();
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert_eq!(Some(&messages[0].0), retry.aether_agent.as_ref());
+    assert!(messages[0].1.contains("Keep the public API as it is."));
 }

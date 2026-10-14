@@ -1,6 +1,7 @@
 //! Queue inspection, enqueue and bounded waits.
 
 mod add;
+mod steer;
 mod wait;
 
 use std::process::ExitCode;
@@ -18,6 +19,7 @@ use crate::views;
 pub async fn run(command: QueueCommand, json: bool) -> anyhow::Result<ExitCode> {
     match command {
         QueueCommand::Add(args) => add::run(*args, json).await?,
+        QueueCommand::Steer(args) => steer::run(*args, json).await?,
         QueueCommand::Wait { items, timeout } => return wait::run(items, &timeout, json).await,
         QueueCommand::List { state, repo, limit } => {
             let query = ItemQuery {

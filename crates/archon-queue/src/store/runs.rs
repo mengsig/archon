@@ -347,7 +347,14 @@ fn load_stage(conn: &Connection, id: &StageRunId) -> Result<Option<StageRun>, Ar
     data.map(|d| from_json(&d, "stage run")).transpose()
 }
 
-fn write_stage(conn: &Connection, stage: &StageRun) -> Result<(), ArchonError> {
+/// `holds_agent` says whether this row takes the unique `aether_agent`
+/// column; `data` names the stage run's agent either way.
+fn write_stage(conn: &Connection, stage: &StageRun, holds_agent: bool) -> Result<(), ArchonError> {
+    assert!(
+        !holds_agent || stage.aether_agent.is_some(),
+        "only a stage run with an agent can hold one"
+    );
+    let agent = stage.aether_agent.as_ref().filter(|_| holds_agent);
     conn.execute(
         "INSERT INTO stage_runs (id, run, stage_id, attempt, fan_index, aether_agent, state,
                                  terminal, started_at, data)
@@ -360,7 +367,7 @@ fn write_stage(conn: &Connection, stage: &StageRun) -> Result<(), ArchonError> {
             stage.stage_id,
             stage.attempt,
             stage.fan_index,
-            stage.aether_agent.as_ref().map(AetherAgentId::as_str),
+            agent.map(AetherAgentId::as_str),
             stage_kind(&stage.state),
             stage.state.is_terminal(),
             ts(&stage.started_at),
@@ -371,9 +378,11 @@ fn write_stage(conn: &Connection, stage: &StageRun) -> Result<(), ArchonError> {
     Ok(())
 }
 
-fn ensure_agent_free(conn: &Connection, stage: &StageRun) -> Result<(), ArchonError> {
+/// Whether `stage` holds its agent in the unique `aether_agent` column: a
+/// kept agent (§6.7) passes to the next attempt of its slot, named in `data`.
+fn claim_agent(conn: &Connection, stage: &StageRun) -> Result<bool, ArchonError> {
     let Some(agent) = &stage.aether_agent else {
-        return Ok(());
+        return Ok(false);
     };
     if let Some(run) = super::spend::agent_run(conn, agent)?
         && run != stage.run
@@ -382,20 +391,42 @@ fn ensure_agent_free(conn: &Connection, stage: &StageRun) -> Result<(), ArchonEr
             "Aether agent {agent} already belongs to run {run}"
         )));
     }
-    let owner: Option<String> = conn
+    let holder: Option<String> = conn
         .query_row(
-            "SELECT id FROM stage_runs WHERE aether_agent = ?1 AND id <> ?2",
+            "SELECT data FROM stage_runs WHERE aether_agent = ?1 AND id <> ?2",
             params![agent.as_str(), stage.id.as_str()],
             |row| row.get(0),
         )
         .optional()
         .ctx("look up agent owner")?;
-    match owner {
-        None => Ok(()),
-        Some(owner) => Err(ArchonError::Invalid(format!(
-            "Aether agent {agent} already belongs to stage run {owner}"
-        ))),
+    let Some(holder) = holder else {
+        return Ok(true);
+    };
+    let holder: StageRun = from_json(&holder, "stage run")?;
+    let same_slot = holder.run == stage.run
+        && holder.stage_id == stage.stage_id
+        && holder.fan_index == stage.fan_index;
+    if same_slot && holder.attempt > stage.attempt {
+        return Ok(false);
     }
+    if !same_slot || holder.attempt == stage.attempt || !holder.state.is_terminal() {
+        return Err(ArchonError::Invalid(format!(
+            "Aether agent {agent} already belongs to stage run {}",
+            holder.id
+        )));
+    }
+    assert!(
+        holder.attempt < stage.attempt,
+        "a kept agent passes to a later attempt only"
+    );
+    let released = conn
+        .execute(
+            "UPDATE stage_runs SET aether_agent = NULL WHERE id = ?1",
+            [holder.id.as_str()],
+        )
+        .ctx("hand a kept agent to its next attempt")?;
+    assert_eq!(released, 1, "the holder was read in this transaction");
+    Ok(true)
 }
 
 /// Inserts a new stage run into a live pipeline run, or applies a forward
@@ -414,8 +445,8 @@ pub(super) fn upsert_stage(conn: &mut Connection, stage: &StageRun) -> Result<()
             }
         }
     }
-    ensure_agent_free(&tx, stage)?;
-    write_stage(&tx, stage)?;
+    let holds_agent = claim_agent(&tx, stage)?;
+    write_stage(&tx, stage, holds_agent)?;
     tx.commit().ctx("commit stage run")
 }
 

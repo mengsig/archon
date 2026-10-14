@@ -284,6 +284,7 @@ fn succeeded(repo: &RepoId, branch: &str, minute: i64) -> ItemDetail {
         finished_at: Some(item.updated_at),
     };
     ItemDetail {
+        steers: Vec::new(),
         waiting_on: None,
         waiting_reason: None,
         item,
@@ -396,6 +397,7 @@ fn result_branches_follow_completion_order_per_repo() {
     ]
     .into();
     let failed = ItemDetail {
+        steers: Vec::new(),
         waiting_on: None,
         waiting_reason: None,
         item: item(

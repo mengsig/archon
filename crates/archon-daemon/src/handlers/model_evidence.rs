@@ -37,7 +37,7 @@ pub(super) async fn report(
         let Entry::Vacant(entry) = runs.entry(stage.run.clone()) else {
             continue;
         };
-        let spec = match frozen::thaw(&ctx.paths.data_dir, &stage.run, pipeline).await {
+        let spec = match frozen::thaw(ctx, &stage.run, pipeline).await {
             Ok(spec) => Some(spec),
             Err(error) => {
                 tracing::debug!(run = %stage.run, %error, "evidence snapshot unavailable; using catalog");

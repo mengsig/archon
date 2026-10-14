@@ -280,7 +280,7 @@ async fn an_amendment_on_retry_reaches_the_next_runs_stage_prompt() {
 }
 
 #[tokio::test]
-async fn update_item_amends_the_brief_only_while_the_item_is_not_running() {
+async fn update_item_amends_the_brief_of_a_running_item_without_a_cancel() {
     let h = Harness::new().await;
     let item = h.enqueue("amend me").await;
     h.cli(amend(&item, "Keep the public API as it is."))
@@ -290,13 +290,18 @@ async fn update_item_amends_the_brief_only_while_the_item_is_not_running() {
     let request = h.backend.requests().pop().expect("implementer");
     assert!(request.objective.contains("Keep the public API as it is."));
 
-    let before = h.item(&item.id).await.brief;
-    let refused = h.cli(amend(&item, "Too late.")).await.expect_err("running");
+    h.cli(amend(&item, "Mid-run change."))
+        .await
+        .expect("a running item is steered");
+    let agent = h.running().await[0].aether_agent.clone().expect("agent");
+    let told = h.backend.messages();
     assert!(
-        matches!(&refused, ArchonError::InvalidTransition(why) if why.contains("running")),
-        "{refused:?}"
+        told.iter()
+            .any(|(to, text)| to == &agent && text.contains("Mid-run change.")),
+        "the running agent is told: {told:?}"
     );
-    assert_eq!(h.item(&item.id).await.brief, before, "nothing changed");
+    assert!(h.backend.cancelled().is_empty(), "and it goes on");
+    assert!(h.item(&item.id).await.brief.contains("Mid-run change."));
 
     cancel(&h, &item).await;
     h.cli(amend(&item, "Also update the docs."))
@@ -307,8 +312,12 @@ async fn update_item_amends_the_brief_only_while_the_item_is_not_running() {
     h.cli(retry(&item, false, None)).await.expect("retry");
     h.dispatch().await;
     let next = h.backend.requests().pop().expect("a new implementer");
-    for text in ["Keep the public API as it is.", "Also update the docs."] {
+    let amendments = [
+        "Keep the public API as it is.",
+        "Mid-run change.",
+        "Also update the docs.",
+    ];
+    for text in amendments {
         assert!(next.objective.contains(text), "{text}");
     }
-    assert!(!next.objective.contains("Too late."));
 }

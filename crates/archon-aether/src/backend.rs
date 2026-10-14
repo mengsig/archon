@@ -15,6 +15,7 @@ use async_trait::async_trait;
 
 use crate::client::AetherClient;
 use crate::link::AetherLink;
+use crate::resumed;
 use crate::wire::{
     Agent, AgentConfig, AgentPatch, AgentQuery, ApprovalPolicy, CreateAgent, NetworkPolicy, Scope,
     Task, TaskStatus, ToolExposure,
@@ -146,7 +147,7 @@ pub fn stage_create_agent(request: &SpawnRequest, network: NetworkPolicy) -> Cre
                 .filter(|_| request.aether_cost_budget != Some(false)),
             deadline: request.deadline,
             tools,
-            long_lived: false,
+            long_lived: request.keep,
             leaf: request.leaf,
         }),
         approval: Some(ApprovalPolicy::none()),
@@ -432,6 +433,27 @@ impl AgentBackend for AetherBackend {
             .send_message(to, content, idempotency_key)
             .await
     }
+
+    async fn resumed_outcome(
+        &self,
+        agent: &AetherAgentId,
+        message: &str,
+    ) -> Result<Option<StageOutcome>, ArchonError> {
+        let client = self.link.client()?;
+        let found = match client.get_agent(agent).await {
+            Ok(found) => found,
+            Err(ArchonError::NotFound(why)) => return Ok(Some(resumed::lost(&why))),
+            Err(error) => return Err(error),
+        };
+        if !agent_is_live(&found) {
+            let state = agent_state(&found);
+            return Ok(Some(resumed::lost(&format!("Aether holds it as {state}"))));
+        }
+        if !resumed::is_idle(&found) {
+            return Ok(None);
+        }
+        resumed::read(&client, agent, message).await
+    }
 }
 
 #[cfg(test)]
@@ -465,6 +487,7 @@ mod tests {
             attach_run: None,
             parent: Some(node_id()),
             network: Some(NetworkPolicy::Denied),
+            keep: false,
         }
     }
 

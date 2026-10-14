@@ -209,43 +209,59 @@ async fn a_filled_plan_stays_within_the_model_policy() {
     assert!(matches!(refused, ArchonError::Policy(_)), "{refused:?}");
 }
 
+/// `plan()` with the implementer at low effort.
+fn cheaper_plan() -> ModelPlan {
+    let mut cheaper = plan();
+    let low = vec![choice(MODEL, Effort::Low)];
+    cheaper.0.insert("implement".into(), low);
+    cheaper
+}
+
 #[tokio::test]
-async fn model_plan_changes_wait_for_a_retry_which_keeps_the_worktree() {
+async fn a_running_item_is_steered_onto_a_new_model_plan() {
     let h = Harness::new().await;
     let item = h.enqueue("change of plan").await;
-    let mut cheaper = plan();
-    cheaper
-        .0
-        .insert("implement".into(), vec![choice(MODEL, Effort::Low)]);
-    let patch = |plan: &ModelPlan| ItemPatch {
-        model_plan: Some(plan.clone()),
-        model_reasons: None,
-        ..ItemPatch::default()
-    };
-    let update = |p| Request::UpdateItem {
+    let update = |plan: ModelPlan| Request::UpdateItem {
         item: item.id.clone(),
-        patch: p,
+        patch: ItemPatch {
+            model_plan: Some(plan),
+            ..ItemPatch::default()
+        },
     };
-    h.cli(update(patch(&cheaper)))
+    h.cli(update(cheaper_plan()))
         .await
         .expect("queued items take a new plan");
     h.dispatch().await;
-    let refused = h.cli(update(patch(&plan()))).await.expect_err("running");
-    assert!(
-        matches!(refused, ArchonError::InvalidTransition(_)),
-        "{refused:?}"
-    );
+    h.cli(update(plan()))
+        .await
+        .expect("a running item is steered onto its new plan");
     assert_eq!(h.backend.requests()[0].choice, choice(MODEL, Effort::Low));
+    let implementer = h.running().await[0].aether_agent.clone().expect("agent");
+    let retuned: Vec<_> = h
+        .backend
+        .updates()
+        .into_iter()
+        .filter_map(|(agent, update)| update.choice.map(|choice| (agent, choice)))
+        .collect();
+    assert_eq!(retuned, vec![(implementer, choice(MODEL, Effort::High))]);
+    assert_eq!(h.item(&item.id).await.model_plan, plan());
+    assert!(h.backend.cancelled().is_empty(), "nothing was cancelled");
+}
 
-    let retry = Request::RetryItem {
+#[tokio::test]
+async fn a_retry_takes_a_new_plan_and_keeps_the_worktree() {
+    let h = Harness::new().await;
+    let item = h.enqueue("second try").await;
+    h.dispatch().await;
+    let retry = |plan: Option<ModelPlan>| Request::RetryItem {
         item: item.id.clone(),
-        model_plan: None,
+        model_plan: plan,
         model_reasons: None,
         fresh: false,
         brief_append: None,
     };
     let refused = h
-        .cli(retry.clone())
+        .cli(retry(None))
         .await
         .expect_err("only failed or cancelled");
     assert!(matches!(refused, ArchonError::InvalidTransition(_)));
@@ -257,22 +273,12 @@ async fn model_plan_changes_wait_for_a_retry_which_keeps_the_worktree() {
     let workspace = h.backend.requests()[0].workspace.clone();
     std::fs::write(workspace.join("draft.txt"), "prior work\n").expect("draft");
     h.cli(cancel).await.expect("cancel");
-    let retry = Request::RetryItem {
-        item: item.id.clone(),
-        model_plan: Some(plan()),
-        model_reasons: None,
-        fresh: false,
-        brief_append: None,
-    };
-    h.cli(retry).await.expect("retry");
+    h.cli(retry(Some(cheaper_plan()))).await.expect("retry");
     assert_eq!(h.state(&item.id).await, QueueState::Queued);
     h.dispatch().await;
     let last = h.backend.requests().pop().expect("a new implementer");
-    assert_eq!(
-        last.choice,
-        choice(MODEL, Effort::High),
-        "the retry uses the new plan"
-    );
+    let low = choice(MODEL, Effort::Low);
+    assert_eq!(last.choice, low, "the retry uses the new plan");
     assert_eq!(
         last.workspace, workspace,
         "a retried item keeps its worktree"

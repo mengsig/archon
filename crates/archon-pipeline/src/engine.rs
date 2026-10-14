@@ -14,6 +14,7 @@ use archon_core::model::{ModelChoice, ModelPlan};
 use archon_core::run::{
     GateDecision, GateSubject, PipelineRun, RunState, StageOutcome, StageRun, StageState,
 };
+use archon_core::steer::Then;
 
 use crate::autonomy::{self, OperatorGates};
 use crate::gate::{self, GroupResult};
@@ -74,6 +75,12 @@ pub struct SpawnPlan {
     /// The slot's role, branch and worktree on a team stage; `None` for
     /// every other kind, whose agents work in the run's workspace.
     pub team: Option<TeamSlot>,
+    /// A later stage may loop back here: the agent is kept after its task
+    /// settles so that the next attempt can resume it.
+    pub keep: bool,
+    /// What the kept agent of the slot's previous attempt is told instead of
+    /// spawning anew; `None` when only a fresh agent will do.
+    pub resume: Option<String>,
 }
 
 /// Errors carried into `RunState::Failed` are capped; the full feedback
@@ -109,6 +116,8 @@ pub struct RunDriver {
     shipping: bool,
     /// Team siblings this instance already asked to cancel.
     cancelling: BTreeSet<StageRunId>,
+    /// Steered aborts by `(stage id, attempt)`; persisted by the daemon.
+    aborts: BTreeMap<(String, u32), Then>,
 }
 
 /// A live role of a team group another role already failed, and why it is
@@ -215,6 +224,7 @@ impl RunDriver {
             shipped: None,
             shipping: false,
             cancelling: BTreeSet::new(),
+            aborts: BTreeMap::new(),
         };
         driver.check_prompts_render()?;
         Ok(driver)
@@ -417,6 +427,74 @@ impl RunDriver {
     /// a team role that failed, rather than because the run finished.
     pub fn cancels_sibling(&self, stage_run: &StageRunId) -> bool {
         self.cancelling.contains(stage_run)
+    }
+
+    /// Record a steer's abort of group `(stage_id, attempt)`; attempt 0 with
+    /// a skip removes an unstarted stage. Then `resume` or [`Self::reconsider`].
+    pub fn record_abort(
+        &mut self,
+        stage_id: &str,
+        attempt: u32,
+        then: Then,
+    ) -> Result<(), ArchonError> {
+        let stages = &self.spec.file.stages;
+        let Some(index) = self.spec.stage_index(stage_id) else {
+            return Err(ArchonError::Invalid(format!(
+                "pipeline {:?} has no stage {stage_id:?} to abort",
+                self.spec.name()
+            )));
+        };
+        if attempt == 0 && then != Then::Skip {
+            return Err(ArchonError::Invalid(format!(
+                "stage {stage_id:?} has not started, so there is nothing to abort; it can only be skipped"
+            )));
+        }
+        match &then {
+            Then::Retry => {}
+            Then::Skip if index + 1 == stages.len() => {
+                return Err(ArchonError::Invalid(format!(
+                    "stage {stage_id:?} is the last one, so nothing follows a skip: cancel the item instead"
+                )));
+            }
+            Then::Skip => {}
+            Then::Goto { to } if self.spec.stage_index(to).is_none() => {
+                return Err(ArchonError::Invalid(format!(
+                    "pipeline {:?} has no stage {to:?} to go to",
+                    self.spec.name()
+                )));
+            }
+            Then::Goto { .. } => {}
+        }
+        self.aborts.insert((stage_id.to_owned(), attempt), then);
+        Ok(())
+    }
+
+    /// The decision the persisted stage runs imply now, after an abort was
+    /// recorded on a live driver. Spawns come once per group, as ever.
+    pub fn reconsider(&mut self, all: &[StageRun]) -> Vec<EngineAction> {
+        assert!(
+            all.windows(2).all(|pair| pair[0].run == pair[1].run),
+            "stage runs of several runs passed together"
+        );
+        if self.finished {
+            return Vec::new();
+        }
+        self.act_on_runs(all)
+    }
+
+    /// Whether `stage`'s agent outlives its task: a single work agent a later
+    /// stage can send back, unless it holds the declared review.
+    pub fn keeps_agent(&self, stage_id: &str) -> bool {
+        let stages = &self.spec.file.stages;
+        let Some(stage) = self.spec.stage(stage_id) else {
+            return false;
+        };
+        let looped_to = stages
+            .iter()
+            .filter_map(|s| s.on_fail.as_ref())
+            .any(|on_fail| on_fail.goto == stage.id);
+        let single_worker = stage.kind == StageKind::Work && stage.fan_out == 1;
+        single_worker && looped_to && !self.spec.holds_review(stage)
     }
 
     /// Actions for a brand-new run: the first stage's spawns.
@@ -694,10 +772,22 @@ impl RunDriver {
         };
         let mut at = Position::first(&mut counts.entries);
         // Each pass that does not return consumes a distinct, fully persisted
-        // group, so there are at most `slots.len()` of them.
-        for _ in 0..=slots.len() {
+        // group or an abort, or steps over one removed stage towards one.
+        let passes = (slots.len() + self.aborts.len() + 1) * (stages.len() + 1);
+        for _ in 0..passes {
             let stage = &stages[at.stage];
             let group = group_at(&slots, stage, at.attempt);
+            if let Some(then) = self.abort_at(&stage.id, at.attempt) {
+                if group.iter().flatten().any(|m| !m.state.is_terminal()) {
+                    // Its agents are being stopped; no slot is spawned anew.
+                    let missing = Vec::new();
+                    return Replay::Await { at, missing };
+                }
+                if let Some(stop) = self.after_abort(&mut at, &mut counts, then) {
+                    return stop;
+                }
+                continue;
+            }
             if let Some(stop) = blocked_stop(stage, &group) {
                 return stop;
             }
@@ -762,6 +852,57 @@ impl RunDriver {
             }
             None => Some(self.failed_stop(at.stage, &counts.loops, &headline, &report)),
         }
+    }
+
+    /// The abort recorded for this attempt of the stage, or the standing
+    /// skip of a stage that was removed before it started.
+    fn abort_at(&self, stage_id: &str, attempt: u32) -> Option<&Then> {
+        let exact = self.aborts.get(&(stage_id.to_owned(), attempt));
+        exact.or_else(|| self.aborts.get(&(stage_id.to_owned(), 0)))
+    }
+
+    /// An aborted group is never judged: the run does what the steer said,
+    /// a step back with a fresh fix-loop budget. `Some` ends the replay.
+    fn after_abort(&self, at: &mut Position, counts: &mut Counters, then: &Then) -> Option<Replay> {
+        let stages = &self.spec.file.stages;
+        let from = at.stage;
+        let target = match then {
+            Then::Retry => Some(from),
+            Then::Skip => Some(from + 1).filter(|next| *next < stages.len()),
+            Then::Goto { to } => self.spec.stage_index(to),
+        };
+        let Some(target) = target else {
+            // The stage it named was edited away after the abort was recorded.
+            let error = format!(
+                "stage `{}` was aborted by a steer, and the stage to continue with no longer exists",
+                stages[from].id
+            );
+            return Some(Replay::Stop {
+                cancel: Vec::new(),
+                state: RunState::Failed {
+                    stage_id: stages[from].id.clone(),
+                    error,
+                },
+            });
+        };
+        assert!(
+            target < stages.len(),
+            "the run goes on at one of its stages"
+        );
+        for passed_over in &stages[from..target.max(from)] {
+            at.previous
+                .entry(template::previous_variable(&passed_over.id))
+                .or_insert_with(|| sections::SKIPPED_SUMMARY.to_owned());
+        }
+        if target < from {
+            counts.loops[target..].fill(0);
+        }
+        let feedback = match then {
+            Then::Retry => at.feedback.clone(),
+            Then::Skip | Then::Goto { .. } => String::new(),
+        };
+        at.enter(target, &mut counts.entries, feedback);
+        None
     }
 
     /// A passed group: wait for or apply an operator decision on a gate,
@@ -965,6 +1106,9 @@ impl RunDriver {
         let mode = self.spec.file.pipeline.workspace;
         let context =
             sections::context(&self.spec, stage, &at.feedback, &at.previous, &at.approved);
+        let keep = self.keeps_agent(&stage.id);
+        let resume = (keep && at.attempt > 1 && !at.feedback.trim().is_empty())
+            .then(|| sections::resume_message(stage, at.attempt, &at.feedback));
         fans.iter()
             .map(|&fan| {
                 assert!(fan < stage.fan_out, "slot {fan} outside fan_out");
@@ -994,6 +1138,8 @@ impl RunDriver {
                         || owed.review.is_some_and(|duty| duty.reviewers > 0),
                     workspace: mode,
                     team,
+                    keep,
+                    resume: resume.clone(),
                 })
             })
             .collect()

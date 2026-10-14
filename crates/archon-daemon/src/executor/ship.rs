@@ -94,7 +94,7 @@ async fn agent_pr(
             )));
         }
     }
-    let spec = frozen::thaw(&ctx.paths.data_dir, &run.id, &run.pipeline).await?;
+    let spec = frozen::thaw(ctx, &run.id, &run.pipeline).await?;
     let ships =
         |s: &archon_pipeline::spec::StageSpec| s.id == stage.stage_id && s.kind == StageKind::Ship;
     if !spec.file.stages.iter().any(ships) {

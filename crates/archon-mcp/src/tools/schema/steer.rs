@@ -17,7 +17,7 @@ pub(super) fn steer_item() -> ToolDefinition {
     define(
         "steer_item",
         "Steer item",
-        "Change a queued or running item without cancelling it; give at least one change. Stages that already started keep their shape.",
+        "Change an item without cancelling it; give at least one change. A running item's live agents take a note, model, effort, budget and more time as they work; stages that already started keep their shape. A failed item given insert_stage or switch_pipeline is queued again on its branch and worktree.",
         object(
             json!({
                 "item": item_id("The item to steer."),
@@ -27,7 +27,7 @@ pub(super) fn steer_item() -> ToolDefinition {
                 "effort": {"type": "string", "enum": ["low", "medium", "high", "x_high", "xhigh", "max"]},
                 "budget_usd": {"type": "number", "exclusiveMinimum": 0, "description": "The item's new dollar cap."},
                 "extend_minutes": {"type": "integer", "minimum": 1, "maximum": MAX_EXTEND_MINUTES, "description": "Minutes added to the running stage's deadline."},
-                "abort_stage": {"type": "boolean", "description": "Stop the stage's agents now, then do `then`."},
+                "abort_stage": {"type": "boolean", "description": "Stop the stage's agents now, then do `then`. With `then: skip` on a stage that has not started, removes it."},
                 "then": {"type": "string", "enum": ["retry", "skip", "goto"], "description": "After abort_stage; retry when omitted."},
                 "goto": {"type": "string", "minLength": 1, "description": "Stage `then: goto` continues at."},
                 "insert_stage": insert,

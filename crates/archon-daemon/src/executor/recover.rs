@@ -6,10 +6,11 @@ use std::sync::Arc;
 
 use archon_core::error::ArchonError;
 use archon_core::id::PipelineRunId;
-use archon_core::queue::QueueState;
+use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::{PipelineRun, StageRun};
-use archon_pipeline::RunDriver;
+use archon_core::steer::{RunEdit, Then};
 use archon_pipeline::autonomy::OperatorGates;
+use archon_pipeline::{PipelineSpec, RunDriver};
 use archon_queue::Store;
 
 use super::{FollowUp, RunTable, finish, frozen, settle, ship, team};
@@ -160,19 +161,68 @@ pub(super) async fn resume_run(
     settle::apply(ctx, table, run, actions).await
 }
 
-/// The driver as it was: the frozen pipeline, the item's gates, and every
-/// operator decision, team merge outcome and delivery recorded so far.
-async fn build_driver(ctx: &DaemonContext, run: &PipelineRun) -> Result<RunDriver, ArchonError> {
-    let (item, vars, gates) = {
+/// What a run's driver is built from besides its gates and merges: as
+/// stored, or as a steer would have it before it is stored.
+#[derive(Debug, Clone)]
+pub(super) struct Blueprint {
+    pub item: QueueItem,
+    /// The frozen pipeline after the recorded shape edits.
+    pub spec: PipelineSpec,
+    pub vars: BTreeMap<String, String>,
+    /// Steered aborts still in force, in the order they were recorded.
+    pub aborts: Vec<(String, u32, Then)>,
+}
+
+/// The run's blueprint as stored.
+pub(super) async fn blueprint(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+) -> Result<Blueprint, ArchonError> {
+    let (item, vars, recorded) = {
         let store = ctx.store.lock().await;
-        let gates = store.gates_for_run(&run.id)?;
-        (
-            store.item(&run.item)?,
-            load_run_vars(&store, &run.id)?,
-            gates,
-        )
+        let vars = load_run_vars(&store, &run.id)?;
+        (store.item(&run.item)?, vars, store.run_edits(&run.id)?)
     };
-    let spec = frozen::thaw(&ctx.paths.data_dir, &run.id, &run.pipeline).await?;
+    assert_eq!(item.id, run.item, "a run's blueprint is its item's");
+    let edits: Vec<RunEdit> = recorded.into_iter().map(|r| r.edit).collect();
+    let spec = frozen::thaw_edited(&ctx.paths.data_dir, &run.id, &run.pipeline, &edits).await?;
+    let mut aborts = Vec::new();
+    for edit in edits {
+        match edit {
+            RunEdit::AbortStage {
+                stage,
+                attempt,
+                then,
+            } => aborts.push((stage, attempt, then)),
+            // The stages a removal was about went with the pipeline switched away.
+            RunEdit::SwitchPipeline { .. } => aborts.retain(|(_, attempt, _)| *attempt != 0),
+            RunEdit::InsertStage { .. } => {}
+        }
+    }
+    aborts.retain(|(stage, _, _)| spec.stage(stage).is_some());
+    Ok(Blueprint {
+        item,
+        spec,
+        vars,
+        aborts,
+    })
+}
+
+/// The driver `blueprint` describes, with every decision, merge outcome and
+/// delivery recorded so far. Errors when its parts do not fit together.
+pub(super) async fn driver_of(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+    blueprint: Blueprint,
+) -> Result<RunDriver, ArchonError> {
+    let Blueprint {
+        item,
+        spec,
+        vars,
+        aborts,
+    } = blueprint;
+    assert_eq!(spec.name(), run.pipeline, "a run keeps its snapshot's name");
+    let gates = ctx.store.lock().await.gates_for_run(&run.id)?;
     let operator_gates = OperatorGates::for_run(&spec, &item.autonomy);
     let mut driver =
         RunDriver::new(Arc::new(spec), item.model_plan, vars)?.with_gates(operator_gates)?;
@@ -182,10 +232,20 @@ async fn build_driver(ctx: &DaemonContext, run: &PipelineRun) -> Result<RunDrive
             driver.record_decision(&gate.stage_id, gate.attempt, decision)?;
         }
     }
+    for (stage, attempt, then) in aborts {
+        driver.record_abort(&stage, attempt, then)?;
+    }
     let store = ctx.store.lock().await;
     team::replay_merges(&store, &run.id, &mut driver)?;
     if driver.ships_by_daemon() {
         ship::replay(&store, &run.id, &mut driver)?;
     }
     Ok(driver)
+}
+
+/// The driver as it was: the frozen pipeline with its recorded edits, the
+/// item's gates, and every decision, merge outcome and abort recorded so far.
+async fn build_driver(ctx: &DaemonContext, run: &PipelineRun) -> Result<RunDriver, ArchonError> {
+    let blueprint = blueprint(ctx, run).await?;
+    driver_of(ctx, run, blueprint).await
 }

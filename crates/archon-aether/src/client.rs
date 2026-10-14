@@ -412,6 +412,34 @@ impl AetherClient {
         self.request(command, "message_sent").await.map(drop)
     }
 
+    /// One page of the events matching `query` with `seq > after`, oldest
+    /// first; Aether caps a page at 5000.
+    pub async fn events_after(
+        &self,
+        after: u64,
+        query: EventQuery,
+        limit: usize,
+    ) -> Result<Vec<AetherEvent>, ArchonError> {
+        assert!(limit > 0, "a page holds at least one event");
+        let command = Command::GetEvents {
+            after,
+            limit,
+            query,
+        };
+        let raw: Vec<serde_json::Value> = self.typed(command, "events").await?;
+        let events = raw
+            .into_iter()
+            .map(crate::events::parse_event)
+            .collect::<Result<Vec<AetherEvent>, _>>()
+            .map_err(|e| ArchonError::Protocol(format!("`events` reply did not decode: {e}")))?;
+        if events.len() > limit || events.iter().any(|e| e.seq <= after) {
+            return Err(ArchonError::Protocol(format!(
+                "`events` reply is not a page of at most {limit} events after {after}"
+            )));
+        }
+        Ok(events)
+    }
+
     pub async fn trigger(
         &self,
         agent: &AetherAgentId,

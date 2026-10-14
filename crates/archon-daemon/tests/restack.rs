@@ -466,6 +466,45 @@ async fn a_restack_fix_and_its_item_never_run_at_once() {
     assert!(h.state(&fix).await.is_active(), "{:?}", h.state(&fix).await);
 }
 
+/// Admitted in one pass, whose starts run in parallel lanes, a restack fix
+/// and its item still never start together: the fix goes first.
+#[tokio::test]
+async fn a_restack_fix_and_its_item_admitted_together_start_one_at_a_time() {
+    let (h, parent, child) = stack_pair().await;
+    finish_item(&h, &child.id).await;
+    let sha = git(&h.repo, &["rev-parse", &h.run(&parent.id).await.branch]);
+    let fix = {
+        let mut store = h.ctx.store.lock().await;
+        let item = store.item(&child.id).unwrap();
+        let run = store.runs_for_item(&child.id).unwrap().pop().unwrap();
+        let stacked = store.stack_parents(&child.id).unwrap().remove(0);
+        let fix = store
+            .enqueue_stack_fix(&item, &run, &stacked, &sha, "parent.txt")
+            .unwrap();
+        // As a revival would: the item is queued again beside its fix.
+        let now = archon_core::now();
+        store
+            .transition_item(&child.id, QueueState::Queued, now)
+            .unwrap();
+        fix
+    };
+    archon_daemon::dispatcher::dispatch_once(&h.ctx)
+        .await
+        .expect("dispatch pass");
+
+    assert!(h.state(&fix).await.is_active(), "{:?}", h.state(&fix).await);
+    assert_eq!(
+        h.state(&child.id).await,
+        QueueState::Queued,
+        "the item waits for its fix"
+    );
+    let live = h.ctx.store.lock().await.runs_for_item(&child.id).unwrap();
+    assert!(
+        live.iter().all(|run| run.state.is_terminal()),
+        "no second run"
+    );
+}
+
 /// One stacked item whose maintenance fails, its branch checked out where
 /// archond may not move it, is its own blocker, told once: the next item
 /// is still restacked, on this pass and every later one.

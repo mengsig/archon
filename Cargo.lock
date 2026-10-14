@@ -175,6 +175,7 @@ dependencies = [
  "archon-queue",
  "async-trait",
  "chrono",
+ "futures-util",
  "rustix",
  "serde",
  "serde_json",

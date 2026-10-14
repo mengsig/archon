@@ -964,8 +964,11 @@ is saved in kv `trigger_outbox` when it is pushed, before any coalescing, so
 news waiting in the window survives an `archond` stop or crash. The outbox
 also keeps the keyed batch, so a restart resumes it under the same key.
 After a quiet spell, delivery waits the window from the first event. News
-pushed while a batch is delivered has waited already and goes out right
-after it.
+the operator waits on or must act on ends the window at once: an
+`operator_answer`, a `chat_answer`, a `gate_opened`, an `item_blocked`,
+`lavish_feedback`, a `budget` and a stage's escalation
+(`TriggerEvent::is_urgent`). News pushed while a batch is delivered has
+waited already and goes out right after it.
 
 **Which news wakes the orchestrator.** A wake is a whole turn of the
 orchestrator over its context, so the daemon spends one only on news the
@@ -1183,7 +1186,8 @@ operator and system inbox messages have a separate cap of 20 per run node.
 The tool returns a clear error above the cap. Invalid or excess run-node
 messages produce an idempotent refusal to the sending agent, or a notice
 in the operator feed. Accepted messages share the normal trigger coalescing
-window and remain pinned through compaction until delivery. Counts and
+window, which an escalation ends (§5.4), and remain pinned through
+compaction until delivery. Counts and
 routing tombstones are kept through the late-message window. Message counts
 remain durable so restarts or routing recovery cannot reset limits.
 
@@ -1618,6 +1622,14 @@ repo and pipeline, pause state, spend) plus `Caps`, and returns a
    budget posts one `Blocker` to the feed and a `budget` trigger. The holds
    are checked in that order, and `held_by` names the first that applies
    (`GlobalPause`, `LowDisk`, `TotalBudget`, `DailyBudget`).
+
+**Carrying out a plan.** Independent work runs in parallel lanes
+(`executor::lanes`, at most 8 at once), and each lane runs its work in
+order. Starts and ships are laned by repository, because git writes a
+repository's shared state (its worktree list, `.git/config` on
+`push --set-upstream`). Spawns are laned by pipeline run, because a run's
+first spawn creates its Aether run node. So one slow Aether call or
+`git push` holds back only its own lane.
 
 **Derived waiting reasons.** `dispatch::waiting_reasons` calls the same pure
 planner and uses its admissions to distinguish `capacity` from `next_in_line`.
@@ -3160,10 +3172,12 @@ does in a mirror writes to the repository. Only a process that set out to
 overwrite an object file in place would damage both.
 
 **Refresh.** One worker (`mirror::run`) brings every mirror up to date at
-start and whenever one is asked for: when a repository is registered,
-changed or unregistered, when an item finishes (its pull request may have
-moved the base), and when the operator sends a message. A request never
-waits for the refresh. A pass resolves the base in the repository, skips
+start and when the operator sends a message. It refreshes one repository's
+mirror when that repository is registered or changed and when one of its
+items finishes (its pull request may have moved the base). Every pass also
+retries a mirror that has a problem or was never made. Requests made
+during a pass share the next one, and a request never waits for the
+refresh. A pass resolves the base in the repository, skips
 the fetch when the mirror is already there, fetches only what it lacks
 otherwise, and checks out with `--force --detach`: tracked files a helper
 changed are reset, untracked ones are left. A clone is made beside its

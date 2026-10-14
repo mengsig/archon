@@ -623,6 +623,8 @@ struct FakeState {
     descendant_checks: Vec<AetherAgentId>,
     /// What a kept agent said to end the turn it was resumed in.
     answers: BTreeMap<AetherAgentId, StageOutcome>,
+    /// Spawns whose objective holds the text wait for the gate to open.
+    stalls: Vec<(String, Arc<tokio::sync::Semaphore>)>,
 }
 
 impl FakeState {
@@ -905,6 +907,14 @@ impl FakeBackend {
         self.state().descendant_failures.push_back(error);
     }
 
+    /// Hold every spawn whose objective contains `text` until the returned
+    /// gate gets a permit.
+    pub fn stall_spawns(&self, text: &str) -> Arc<tokio::sync::Semaphore> {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        self.state().stalls.push((text.to_owned(), gate.clone()));
+        gate
+    }
+
     /// Every agent `descendants` was asked about, in order.
     pub fn descendant_checks(&self) -> Vec<AetherAgentId> {
         self.state().descendant_checks.clone()
@@ -914,6 +924,15 @@ impl FakeBackend {
 #[async_trait]
 impl AgentBackend for FakeBackend {
     async fn spawn(&self, request: SpawnRequest) -> Result<SpawnedAgent, ArchonError> {
+        let stalled = self.state().stalls.iter().find_map(|(text, gate)| {
+            request
+                .objective
+                .contains(text.as_str())
+                .then(|| gate.clone())
+        });
+        if let Some(gate) = stalled {
+            let _open = gate.acquire().await.expect("a stall gate is never closed");
+        }
         let mut state = self.state();
         state.requests.push(request.clone());
         if let Some(error) = state.failures.pop_front() {

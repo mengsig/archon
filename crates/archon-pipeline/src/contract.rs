@@ -432,7 +432,8 @@ stages' results to the body.\n";
 const WORK_RULES: &str = "\n## Work stage\n\n\
 - Use the report format the stage prompt gives for your summary. If it gives none, \
 list what changed and why, the files touched, the exact verification commands you ran \
-with their results, and any known gaps.\n";
+with their results, and any known gaps.\n\
+- Report the `git rev-parse HEAD^{tree}` of your last full check.\n";
 
 const TEAM_RULES: &str = "\n## Team stage\n\n\
 - Use the report format the stage prompt gives for your summary. If it gives none, \
@@ -649,7 +650,12 @@ mod tests {
         ] {
             assert!(ship.contains(said), "missing {said:?} in {ship}");
         }
-        assert!(!of(StageKind::Work).contains("HEAD^{tree}"));
+        let work = of(StageKind::Work);
+        assert!(!work.contains("must print the same tree"));
+        assert!(
+            work.contains("Report the `git rev-parse HEAD^{tree}` of your last full check"),
+            "a later stage may rely on a check bound to the tree: {work}"
+        );
     }
 
     #[test]

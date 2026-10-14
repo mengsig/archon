@@ -47,7 +47,7 @@ pub(super) async fn add(ctx: &DaemonContext, add: RepoAdd) -> Result<Reply, Arch
     check_repo(&repo).await?;
     ctx.store.lock().await.insert_repo(&repo)?;
     // The orchestrator reads it in a mirror, made in the background.
-    ctx.mirrors.request();
+    ctx.mirrors.request_repo(&repo.id);
     tracing::info!(repo = %repo.name, path = %repo.path.display(), "repository registered");
     Ok(Reply::Repo(repo))
 }
@@ -77,7 +77,8 @@ pub(super) async fn remove(ctx: &DaemonContext, reference: &RepoRef) -> Result<R
     let mut store = ctx.store.lock().await;
     let repo = store.repo(reference)?;
     store.remove_repo(&repo.id)?;
-    ctx.mirrors.request();
+    // Every pass forgets the mirrors of unregistered repositories.
+    ctx.mirrors.request_repo(&repo.id);
     tracing::info!(repo = %repo.name, "repository removed");
     Ok(Reply::Ok)
 }
@@ -104,7 +105,7 @@ pub(super) async fn update(
     assert_eq!(repo.path, before.path, "a patch never moves a repository");
     ctx.store.lock().await.update_repo(&repo)?;
     // Its base branch may have changed.
-    ctx.mirrors.request();
+    ctx.mirrors.request_repo(&repo.id);
     Ok(Reply::Repo(repo))
 }
 

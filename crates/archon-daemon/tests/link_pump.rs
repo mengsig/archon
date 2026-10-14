@@ -19,7 +19,7 @@ use archon_core::id::{FeedItemId, QueueItemId, RepoId};
 use archon_core::model::{Effort, ModelRef};
 use archon_core::notify::{FeedEntry, NotificationKind};
 use archon_core::protocol::{ClientKind, Reply, Request};
-use archon_core::queue::Caps;
+use archon_core::queue::{Caps, NOTIFY_TAG};
 use archon_core::repo::{Repo, ShipMode};
 use archon_core::run::{StageRun, StageState};
 use archon_daemon::triggers::{self, TriggerEvent};
@@ -624,6 +624,15 @@ async fn cancel_item_of(harness: &Harness, stage: &StageRun) {
         .expect("cancel");
 }
 
+/// Tag the item of `stage` `notify`, so its outcome wakes the orchestrator.
+async fn tag_notify(harness: &Harness, stage: &StageRun) {
+    let mut store = harness.ctx.store.lock().await;
+    let mut item = store.item(&store.run(&stage.run).unwrap().item).unwrap();
+    item.tags.push(NOTIFY_TAG.into());
+    store.update_item(&item).unwrap();
+    assert!(store.item(&item.id).unwrap().wants_notice());
+}
+
 /// `trigger` refused while `ORCH` is failed, as Aether does, and counted
 /// once it takes one.
 fn triggers_reach_orch_when_live(agents: &Agents, harness: &Harness) -> Arc<AtomicUsize> {
@@ -646,10 +655,8 @@ fn triggers_reach_orch_when_live(agents: &Agents, harness: &Harness) -> Arc<Atom
 /// its news waits and reaches the orchestrator once revival recovers it.
 #[tokio::test]
 async fn outcomes_show_while_the_orchestrator_is_down_and_backoff_delivers_its_news() {
-    // A cancellation is routine news, which by itself is not delivered.
-    let mut config = Config::default();
-    config.orchestrator.wake_on_success = true;
-    let harness = Harness::with(config, None).await;
+    // A cancellation is quiet news unless its item is tagged `notify`.
+    let harness = Harness::new().await;
     let (agents, pump) = running_pump(&harness).await;
     harness.fake.set_default("cancel", Scripted::ok());
     let still_failed = agents.clone();
@@ -667,6 +674,7 @@ async fn outcomes_show_while_the_orchestrator_is_down_and_backoff_delivers_its_n
     .await;
     let repo = tempfile::tempdir().unwrap();
     let stage = running_stage(&harness.ctx, repo.path(), STAGE, STAGE_TASK).await;
+    tag_notify(&harness, &stage).await;
     cancel_item_of(&harness, &stage).await;
     harness
         .eventually("the outcome shows and its news is held", || async {

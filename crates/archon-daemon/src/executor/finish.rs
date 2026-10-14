@@ -282,8 +282,10 @@ pub(super) async fn announce(
         origin: item.origin.clone(),
         lesson_hint: crate::learned::lesson_hint(&*ctx.store.lock().await, item)?,
     };
-    // The base branch may have moved, and the operator may ask about it next.
-    ctx.mirrors.request();
+    // Its base branch may have moved, and the operator may ask about it next.
+    if let Some(repo) = &item.repo {
+        ctx.mirrors.request_repo(repo);
+    }
     if needs_operator || wakes_orchestrator(item, ctx.config.orchestrator.wake_on_success) {
         return triggers::push(ctx, finished).await;
     }

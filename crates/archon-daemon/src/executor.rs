@@ -15,6 +15,7 @@ pub(crate) mod frozen;
 mod gate_news;
 mod gates;
 pub(crate) mod initiative_ship;
+mod lanes;
 mod naming;
 mod pages;
 pub mod pull_requests;
@@ -211,6 +212,59 @@ impl FollowUp {
 pub async fn start_item(ctx: &DaemonContext, item: &QueueItemId) -> Result<(), ArchonError> {
     let follow = start::start_item(ctx, item).await?;
     run_follow_up(ctx, follow).await
+}
+
+/// Start `items` as [`start_item`] does, the git work of one repository in
+/// order (git locks its shared state) and up to `lanes::MAX_LANES`
+/// repositories at once, then every first spawn. One item's failure does
+/// not hold back the others; the first is returned.
+pub async fn start_items(ctx: &DaemonContext, items: &[QueueItemId]) -> Result<(), ArchonError> {
+    let by_repo = items_by_repository(ctx, items).await?;
+    let started = lanes::run(by_repo, |id| async move {
+        (id, start::start_item(ctx, id).await)
+    })
+    .await;
+    assert_eq!(started.len(), items.len(), "every item is started once");
+    let mut follow = FollowUp::default();
+    let mut first_error = None;
+    for (id, result) in started {
+        match result {
+            Ok(more) => follow.merge(more),
+            Err(error) => {
+                tracing::error!(item = %id, %error, "starting item failed");
+                first_error.get_or_insert(error);
+            }
+        }
+    }
+    let followed = run_follow_up(ctx, follow).await;
+    match (first_error, followed) {
+        (Some(error), Err(later)) => {
+            tracing::error!(error = %later, "following up started items failed");
+            Err(error)
+        }
+        (Some(error), Ok(())) => Err(error),
+        (None, followed) => followed,
+    }
+}
+
+/// `items` in lanes by repository; one without a repository runs no git
+/// and has a lane of its own.
+async fn items_by_repository<'a>(
+    ctx: &DaemonContext,
+    items: &'a [QueueItemId],
+) -> Result<BTreeMap<String, Vec<&'a QueueItemId>>, ArchonError> {
+    let store = ctx.store.lock().await;
+    let mut keyed = Vec::with_capacity(items.len());
+    for id in items {
+        let lane = match store.item(id)?.repo {
+            Some(repo) => repo.as_str().to_owned(),
+            None => id.as_str().to_owned(),
+        };
+        keyed.push((lane, id));
+    }
+    let lanes = lanes::group(keyed);
+    assert_eq!(lanes.values().map(Vec::len).sum::<usize>(), items.len());
+    Ok(lanes)
 }
 
 /// Start up to `slots` pending spawns of `run` (dispatcher-admitted).
@@ -433,11 +487,7 @@ async fn stop_and_spawn(ctx: &DaemonContext, round: &mut Round, follow: &mut Fol
         round.record(descendants::stop(ctx, &stage).await);
     }
     match issuable(ctx, take(&mut follow.issue)).await {
-        Ok(issue) => {
-            for id in issue {
-                round.record(spawn::issue(ctx, &id).await);
-            }
-        }
+        Ok(issue) => issue_by_run(ctx, round, issue).await,
         Err(error) => round.record(Err(error)),
     }
     for (stage, task) in take(&mut follow.check) {
@@ -493,12 +543,53 @@ async fn deliver_and_tidy(ctx: &DaemonContext, round: &mut Round, follow: Follow
     for stage in dedup(follow.resumed) {
         round.record(resume::check(ctx, &stage).await);
     }
-    for run in dedup(follow.ship) {
-        round.record(ship::deliver(ctx, &run).await);
+    let ships = runs_by_repository(ctx, round, dedup(follow.ship)).await;
+    for shipped in lanes::run(ships, |run| async move { ship::deliver(ctx, &run).await }).await {
+        round.record(shipped);
     }
-    for cleanup in follow.cleanup {
-        round.record(remove_ended_worktree(ctx, cleanup).await);
+    let cleanups = lanes::group(follow.cleanup.into_iter().map(|c| (c.repo_path.clone(), c)));
+    for removed in lanes::run(cleanups, |cleanup| remove_ended_worktree(ctx, cleanup)).await {
+        round.record(removed);
     }
+}
+
+/// Issue `spawns`: one run's in order, as its first may create the run's
+/// node, and up to `lanes::MAX_LANES` runs at once.
+async fn issue_by_run(ctx: &DaemonContext, round: &mut Round, spawns: BTreeSet<StageRunId>) {
+    let by_run = {
+        let store = ctx.store.lock().await;
+        let mut keyed = Vec::with_capacity(spawns.len());
+        for id in spawns {
+            match store.stage_run(&id) {
+                Ok(stage) => keyed.push((stage.run, id)),
+                Err(error) => round.record(Err(error)),
+            }
+        }
+        lanes::group(keyed)
+    };
+    for issued in lanes::run(by_run, |id| async move { spawn::issue(ctx, &id).await }).await {
+        round.record(issued);
+    }
+}
+
+/// `runs` in lanes by repository: a delivery pushes with `--set-upstream`,
+/// which writes the repository's shared git config.
+async fn runs_by_repository(
+    ctx: &DaemonContext,
+    round: &mut Round,
+    runs: BTreeSet<PipelineRunId>,
+) -> BTreeMap<String, Vec<PipelineRunId>> {
+    let store = ctx.store.lock().await;
+    let mut keyed = Vec::with_capacity(runs.len());
+    for run in runs {
+        let repo = store.run(&run).and_then(|r| store.item(&r.item));
+        match repo.map(|item| item.repo) {
+            Ok(Some(repo)) => keyed.push((repo.as_str().to_owned(), run)),
+            Ok(None) => keyed.push((run.as_str().to_owned(), run)),
+            Err(error) => round.record(Err(error)),
+        }
+    }
+    lanes::group(keyed)
 }
 
 /// Remove the worktree a run left behind; nothing follows from it.

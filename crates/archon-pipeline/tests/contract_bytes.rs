@@ -14,7 +14,7 @@ const WORKSPACE: &str = "/worktree";
 const POLICY: &str = "any model the policy allows";
 
 /// Byte budgets, a little above what the built-ins weigh today.
-const PLAIN_BUDGET: usize = 2_600;
+const PLAIN_BUDGET: usize = 2_650;
 const REVIEW_BUDGET: usize = 2_900;
 const RECORD_BUDGET: usize = 1_300;
 /// What holding a review adds: the record and the verdict each reviewer returns.

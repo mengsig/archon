@@ -3,7 +3,7 @@
 //! symlink inside a root could otherwise point anywhere.
 
 use std::io::ErrorKind;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use archon_core::error::ArchonError;
 use archon_core::protocol::{GcReport, Reclaimed};
@@ -234,7 +234,7 @@ fn remove_dir(path: &Path) -> Verdict {
 /// `repo`. One with uncommitted changes stays, without its caches.
 fn remove_worktree(repo: &Path, path: &Path, roots: &Roots, policy: &Policy) -> Verdict {
     if !policy.force {
-        match unremovable(&roots.data_dir, repo, path) {
+        match unremovable(&roots.data_dir, repo, path, &policy.cache_dirs) {
             Ok(None) => {}
             Ok(Some(why)) => {
                 let reclaimed = match cache::reclaim_worktree(path, &policy.cache_dirs) {
@@ -281,15 +281,16 @@ pub(super) fn is_listed_worktree(repo: &Path, path: &Path) -> Result<bool, Archo
     Ok(listed && path != repo)
 }
 
-/// Why `git worktree remove` would refuse `worktree` without `--force`,
-/// asked through `repo`'s shadow under `data_dir` so no filter runs.
+/// Why `git worktree remove` would refuse `worktree` without `--force`, untracked
+/// caches aside, asked through `repo`'s shadow under `data_dir` so no filter runs.
 fn unremovable(
     data_dir: &Path,
     repo: &Path,
     worktree: &Path,
+    cache_dirs: &[PathBuf],
 ) -> Result<Option<String>, ArchonError> {
     let shadow = Shadow::of(data_dir, repo)?;
-    clean::unremovable(&shadow, worktree)
+    clean::unremovable(&shadow, worktree, cache_dirs)
 }
 
 /// `git worktree remove` with `forces` times `--force`: once removes a

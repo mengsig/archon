@@ -194,11 +194,12 @@ pub(super) async fn remove_worktree(
     when: &str,
     mark: Option<crate::gc::Mark>,
 ) -> Result<(), ArchonError> {
+    let cache_dirs = ctx.config.worktrees.cache_dirs.clone();
     let manager = WorktreeManager::new(
         ctx.paths.worktrees.clone(),
         ctx.config.worktrees.branch_prefix.clone(),
-    );
-    let cache_dirs = ctx.config.worktrees.cache_dirs.clone();
+    )
+    .with_cache_dirs(cache_dirs.clone());
     let data_dir = ctx.paths.data_dir.clone();
     let target = cleanup.worktree.clone();
     let (reclaimed, removed) = tokio::task::spawn_blocking(move || {

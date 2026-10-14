@@ -8,12 +8,12 @@ mod common;
 use std::path::Path;
 use std::process::Command;
 
+use archon_core::aether_ids::AetherAgentId;
 use archon_core::autonomy::{AutonomyPatch, MergeMode, ReviewLevel};
 use archon_core::error::ArchonError;
 use archon_core::model::ModelPlan;
 use archon_core::notify::NotificationKind;
 use archon_core::outcome::{Correction, FailureClass};
-use archon_core::ports::DescendantState;
 use archon_core::protocol::{EnqueueRequest, Reply, RepoPatch, RepoRef, Request};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::ShipMode;
@@ -21,7 +21,9 @@ use archon_core::run::{PipelineRun, StageOutcome, StageRun};
 use archon_core::steer::Steer;
 use archon_daemon::executor;
 use archon_daemon::triggers::{self, TriggerEvent};
-use common::delivery::{FakeGh, add_origin, change, origin_of, pushed, record, shipped_by};
+use common::delivery::{
+    FakeGh, add_origin, change, origin_of, pass_by, pushed, record, shipped_by, verdict_on,
+};
 use common::{Harness, REPO_NAME, REVIEW_MODEL, git, verdict};
 use serde_json::{Value, json};
 
@@ -375,24 +377,28 @@ async fn direct_runs_one_agent_from_enqueue_to_pull_request() {
     );
 }
 
-/// The running lead delegates `count` reviewers that complete, and settles
-/// with a change, its ship record and a pass naming `named` of them.
+/// The running lead delegates `count` reviewers that pass its change, and
+/// settles with it, its ship record and a pass naming `named` agents: those
+/// reviewers first, then agents it never delegated to.
 async fn settle_reviewed_by(h: &Harness, count: usize, named: usize) -> (StageRun, Vec<String>) {
     let lead = h.running().await.remove(0);
     let agent = lead.aether_agent.clone().unwrap();
-    let mut reviewers = Vec::new();
-    for _ in 0..count {
-        let reviewer = h.backend.delegate(&agent, REVIEW_MODEL);
-        h.backend
-            .end_delegated(&reviewer, DescendantState::Completed);
-        reviewers.push(reviewer.to_string());
+    let reviewers: Vec<AetherAgentId> = (0..count)
+        .map(|_| h.backend.delegate(&agent, REVIEW_MODEL))
+        .collect();
+    let mut names = reviewers.clone();
+    names.truncate(named);
+    for n in count..named {
+        names.push(AetherAgentId::parse(&format!("agt_stranger{n}")).unwrap());
     }
-    let models = vec![REVIEW_MODEL; named];
-    let review = json!({"review": {"verdict": "pass", "reviewer_models": models}});
-    let built = shipped_by(h, &lead, "Built; reviewed", review).await;
+    let built = shipped_by(h, &lead, "Built; reviewed", pass_by(&names)).await;
+    for reviewer in &reviewers {
+        h.backend
+            .complete_delegated(reviewer, verdict_on(&built, "pass"));
+    }
     h.settle_running(|_| built.clone()).await;
     h.dispatch().await;
-    (lead, reviewers)
+    (lead, reviewers.iter().map(ToString::to_string).collect())
 }
 
 fn asking(review: ReviewLevel) -> AutonomyPatch {
@@ -465,7 +471,7 @@ async fn too_few_reviewers_for_the_level_fail_the_item() {
         ),
         (
             3,
-            "no further agent the lead delegated to completed on that model",
+            "it names reviewer agt_stranger2, which is not an agent the lead delegated to",
         ),
     ] {
         let (h, gh) = delivering().await;

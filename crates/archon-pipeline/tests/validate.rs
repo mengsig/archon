@@ -593,8 +593,11 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
         "the exact base and head commits (`git merge-base {{base_branch}} HEAD`",
         "medium for ordinary risk, high where security or an invariant is at stake",
         "never because a tree that passed was committed",
-        "after a pass only when a later commit changes production behaviour",
-        "It reads that delta and the callers it affects",
+        "for any commit after a pass: Archon delivers only commits a passing reviewer read",
+        "It reads that delta (`base` the reviewed commit) and the callers it affects",
+        "Use leaf workers unless a bounded subproblem benefits from another level allowed by the contract",
+        "Continue while fixes make progress within the item's time and spending limits; \
+         escalate repeated findings or a stalled approach with evidence",
         "An unresolved blocking finding, a failed check",
         "Advice left open fails nothing",
         "Archon delivers your commits as they are. Do not push.",
@@ -603,10 +606,33 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
         assert!(build.contains(said), "build.md lacks {said:?}");
     }
     assert!(!build.contains("Open findings"), "only blocking ones fail");
+    assert!(
+        !build.contains("Each worker is a leaf"),
+        "another level may pay"
+    );
+    assert!(
+        !build.contains("at most two"),
+        "progress, not a count, bounds fixing"
+    );
     assert!(!spec.prompts.contains_key("ship.md"), "no agent ships");
     let nudge = spec.stage("build").unwrap().nudge.as_deref().unwrap();
     assert!(nudge.contains("at high effort; medium for a bounded change"));
     assert!(nudge.contains("x_high or max only for a reasoning problem you can name"));
+}
+
+/// `direct` escalates on what a change risks and reaches into, not on its
+/// size, and its reviewers return the verdict Archon checks.
+#[test]
+fn direct_escalates_on_risk_not_size() {
+    let catalog = Catalog::builtin();
+    let prompt = &catalog.get("direct").unwrap().prompts["implement.md"];
+    let prompt = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(!prompt.contains("few hundred lines"), "{prompt}");
+    assert!(prompt.contains("Size alone is no risk"), "{prompt}");
+    assert!(
+        prompt.contains("the verdict your contract shows"),
+        "{prompt}"
+    );
 }
 
 /// A declared review is a claim Archon enforces at one agent's result, so

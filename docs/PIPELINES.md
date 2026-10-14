@@ -273,12 +273,21 @@ are agents it delegates to. At `none` it delegates only if the stage allows
 it otherwise.
 
 Archon holds the stage to the level. Its contract gains a
-`## Review on record` section, and its `complete_task` must carry a pass
-that names one model per reviewer:
+`## Review on record` section. Each reviewer finishes with its own verdict
+on the commits it read, where `base` is the commit its diff starts from
+(the merge base for the whole change, an earlier reviewer's head for a
+re-review of a fix):
 
 ```json
-{"review": {"verdict": "pass", "reviewer_model": "<provider>/<model>"}}
-{"review": {"verdict": "pass", "reviewer_models": ["<provider>/<model>", "…", "…"]}}
+{"verdict": "pass", "head": "<commit>", "base": "<commit>", "findings": []}
+```
+
+and the stage agent's `complete_task` names the agent id `delegate`
+returned for each reviewer the pass rests on, including a failed one whose
+findings it fixed:
+
+```json
+{"review": {"verdict": "pass", "reviewers": ["<agent id>", "…"]}}
 ```
 
 When the object is missing, the verdict is anything else, or the pass names
@@ -286,14 +295,18 @@ fewer reviewers than the level asks for, Archon fails the run at that stage
 and nothing ships. At `none` the contract tells the agent to delegate no
 reviewer and record no review.
 
-A pass is not taken on the agent's word. As the stage ends, Archon asks
-Aether which agents that agent delegated to. The pass counts only when, for
-every model named, a different direct child completed on it, neither
-cancelled nor failed; otherwise the run fails at that stage and the error
-lists what the agent did delegate to. Archon records those children's agent
-ids with the evidence as `review.reviewer_agents`, replacing anything the
-agent wrote there. This shows that such reviewers ran to completion, not
-what they read or concluded.
+A pass is not taken on the agent's word. As the stage ends, Archon lists
+the agents it delegated to (one Aether call) and reads the task result of
+each one named. Every named agent must be a different direct child that
+completed with a verdict; a builder or researcher that returned none is not
+a reviewer. Archon then holds the verdicts to the run branch: a pass counts
+when its reviewer read the branch head, or an earlier head whose later
+commits a passing reviewer read as a delta. A fail never counts, and it
+stands until such a pass read past it. With fewer counted passes than the
+level asks for, the run fails at that stage with each reason. Archon
+records the counted reviewers as `review.reviewer_agents` and the models
+Aether ran them on as `review.reviewer_models`, replacing anything the
+agent wrote there.
 
 On a pass Archon appends `REVIEW: pass, by <model> (agent <id>), …` as the
 last line of the stage summary, and at `none`

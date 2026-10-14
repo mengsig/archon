@@ -860,16 +860,36 @@ impl FakeBackend {
         let mut state = self.state();
         let known = state.knows(parent) || state.delegated.iter().any(|d| d.agent == *parent);
         assert!(known, "only a created agent delegates: {parent}");
-        let agent = AetherAgentId::parse(&format!("agt_child{:04}", state.delegated.len() + 1));
-        let agent = agent.expect("agent id");
+        let n = state.delegated.len() + 1;
+        let agent = AetherAgentId::parse(&format!("agt_child{n:04}")).expect("agent id");
+        let task = AetherTaskId::parse(&format!("tsk_child{n:04}")).expect("task id");
         state.delegated.push(Descendant {
             agent: agent.clone(),
             parent: parent.clone(),
             model: model.parse().expect("model"),
             effort: Some(Effort::Medium),
             state: DescendantState::Live,
+            task: Some(task),
         });
         agent
+    }
+
+    /// The delegated `agent` completed its task with `structured` as its
+    /// result, as a reviewer returns its verdict.
+    pub fn complete_delegated(&self, agent: &AetherAgentId, structured: serde_json::Value) {
+        let mut state = self.state();
+        let delegated = state.delegated.iter_mut().find(|d| d.agent == *agent);
+        let delegated = delegated.expect("a delegated agent");
+        delegated.state = DescendantState::Completed;
+        let task = delegated
+            .task
+            .clone()
+            .expect("a delegated agent has a task");
+        let outcome = StageOutcome::Completed {
+            summary: "reviewed".into(),
+            structured: Some(structured),
+        };
+        state.outcomes.insert(task, outcome);
     }
 
     /// The delegated agent ended as `ended`.

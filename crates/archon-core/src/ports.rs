@@ -188,6 +188,8 @@ pub struct Descendant {
     /// `None` when its config states none Archon can read.
     pub effort: Option<Effort>,
     pub state: DescendantState,
+    /// The task it was given, kept after it ends; `None` before it has one.
+    pub task: Option<AetherTaskId>,
 }
 
 /// A change to a live agent; `None` leaves that part as it is.

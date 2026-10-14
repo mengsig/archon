@@ -88,6 +88,7 @@ pub fn subtree(root: &AetherAgentId, agents: &[Agent]) -> Vec<Descendant> {
                 model: child.model.clone(),
                 effort: child.config.effort.as_deref().and_then(|e| e.parse().ok()),
                 state: descendant_state(child),
+                task: child.current_task.clone(),
             });
         }
     }

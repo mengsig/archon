@@ -325,18 +325,18 @@ fn review_rules(duty: ReviewDuty) -> String {
         !duty.may_skip || duty.reviewers == 1,
         "a skip stands in for one reviewer"
     );
-    let (who, pass) = match duty.reviewers {
+    let (who, named) = match duty.reviewers {
         0 => return NO_REVIEW_RULES.to_owned(),
         1 => (
             "an agent you delegate to that wrote none of it".to_owned(),
-            "\"reviewer_model\": \"<provider>/<model>\"".to_owned(),
+            "\"<agent id>\"".to_owned(),
         ),
         many => (
             format!(
                 "{many} agents you delegate to, each working alone and none of which \
                  wrote any of it"
             ),
-            format!("\"reviewer_models\": [\"<provider>/<model>\", … {many} in all]"),
+            format!("\"<agent id>\", … {many} or more"),
         ),
     };
     let skip = match duty.may_skip {
@@ -345,11 +345,13 @@ fn review_rules(duty: ReviewDuty) -> String {
     };
     let rules = format!(
         "\n## Review on record\n\n\
-         - Your stage holds this run's review: before you finish, the change as it finally \
-         stands is reviewed by {who}. Only a later change the stage prompt says needs no \
-         second look may follow the pass.\n\
-         - Record it in `complete_task`'s `structured` data, beside any other keys:\n\n\
-         ```json\n{{\"review\": {{\"verdict\": \"pass\", {pass}}}}}\n```\n\n\
+         - Your stage holds this run's review: the change as it finally stands is reviewed \
+         by {who}.\n\
+         {REVIEWER_VERDICT_RULES}\
+         - Record it in `complete_task`'s `structured` data, beside any other keys, naming \
+         the agent id `delegate` returned for each reviewer the pass rests on, a failed \
+         one whose findings you fixed included:\n\n\
+         ```json\n{{\"review\": {{\"verdict\": \"pass\", \"reviewers\": [{named}]}}}}\n```\n\n\
          {skip}\
          {REVIEW_CHECK_RULES}"
     );
@@ -368,12 +370,21 @@ or, only where the stage prompt lets a change go without review:\n\n\
 {\"review\": {\"verdict\": \"skipped\", \"reason\": \"<why this change needed none>\"}}\n\
 ```\n\n";
 
+const REVIEWER_VERDICT_RULES: &str = "\
+- Tell each reviewer to finish with this `structured` data, its verdict on the \
+commits it read; `base` is where the diff it read starts:\n\n\
+```json\n\
+{\"verdict\": \"pass\" or \"fail\", \"head\": \"<commit>\", \"base\": \"<commit>\", \"findings\": […]}\n\
+```\n\n";
+
 const REVIEW_CHECK_RULES: &str = "\
-- Archon checks a pass against Aether: each model named must be that of a different \
-agent you delegated to yourself that completed, not one you cancelled or that \
-failed. A missing object, any other verdict or a reviewer Archon cannot find fails \
-the run here, and nothing ships. Never report `pass` for a review that did not run \
-or did not pass: with a blocking finding open, call `fail_task` and say which.\n\
+- Archon checks a pass against Aether and the branch. Each agent named must be a \
+different one you delegated to yourself that completed with that verdict, and as many \
+as the review asks must have passed the branch head, or an earlier head whose later \
+commits a passing reviewer read with `base` at or before it. A fail stands until such \
+a pass. Anything else fails the run here, and nothing ships. Never report `pass` for a \
+review that did not run or did not pass: with a blocking finding open, call \
+`fail_task` and say which.\n\
 - Archon adds the review as the last line of your summary: write no `REVIEW:` line \
 yourself.\n";
 
@@ -381,8 +392,9 @@ yourself.\n";
 fn ship_record_rules(kind: StageKind) -> String {
     let leave = match kind {
         StageKind::Work => {
-            "Commit all that should ship on the run branch and leave `git status \
-             --porcelain` empty: Archon refuses a worktree with uncommitted changes."
+            "Commit all that should ship on the run branch: Archon refuses uncommitted \
+             changes to tracked files and delivers no untracked file, so the change must \
+             not need one."
         }
         StageKind::Review | StageKind::Test => {
             "You commit nothing: the record names the commit you judged, as it stands on \
@@ -412,9 +424,10 @@ pub(crate) const SHIP_RECORD_JSON: &str = "\
 ```\n";
 
 const SHIP_RECORD_SHAPE: &str = "\
-- Read both hashes after the last commit. Archon ships exactly that commit and tree, \
-made under the repository's own git identity, and fails the run when the branch \
-holds anything else. It adds the review and later stages' results to the body.\n";
+- Read both hashes after the last commit, made under the repository's own git \
+identity. Archon verifies the recorded tree against the current branch head and \
+delivers that head, failing the run when they differ. It adds the review and later \
+stages' results to the body.\n";
 
 const WORK_RULES: &str = "\n## Work stage\n\n\
 - Use the report format the stage prompt gives for your summary. If it gives none, \
@@ -905,9 +918,11 @@ mod tests {
         for said in [
             "## Review on record",
             "reviewed by an agent you delegate to that wrote none of it",
-            "{\"review\": {\"verdict\": \"pass\", \"reviewer_model\": \"<provider>/<model>\"}}",
+            "{\"review\": {\"verdict\": \"pass\", \"reviewers\": [\"<agent id>\"]}}",
             "{\"review\": {\"verdict\": \"skipped\", \"reason\": \"<why this change needed none>\"}}",
-            "each model named must be that of a different agent you delegated to yourself",
+            "{\"verdict\": \"pass\" or \"fail\", \"head\": \"<commit>\", \"base\": \"<commit>\"",
+            "Each agent named must be a different one you delegated to yourself",
+            "a passing reviewer read with `base` at or before it",
             "write no `REVIEW:` line yourself",
         ] {
             assert!(rules.contains(said), "missing {said:?} in {rules}");
@@ -931,7 +946,7 @@ mod tests {
         assert!(none.contains("review level is `none`: delegate no reviewer"));
         assert_eq!(none.matches("\"verdict\"").count(), 0, "{none}");
         let one = work_contract(owing(1, false));
-        assert!(one.contains("\"reviewer_model\": \"<provider>/<model>\""));
+        assert!(one.contains("\"reviewers\": [\"<agent id>\"]"));
         assert_eq!(
             one.matches("skipped").count(),
             0,
@@ -940,7 +955,7 @@ mod tests {
         let strict = work_contract(owing(3, false));
         for said in [
             "reviewed by 3 agents you delegate to, each working alone and none of which wrote any of it",
-            "\"reviewer_models\": [\"<provider>/<model>\", … 3 in all]",
+            "\"reviewers\": [\"<agent id>\", … 3 or more]",
         ] {
             assert!(strict.contains(said), "missing {said:?} in {strict}");
         }
@@ -964,7 +979,8 @@ mod tests {
         );
         for said in [
             "do not push and do not open a pull request",
-            "leave `git status --porcelain` empty",
+            "delivers no untracked file, so the change must not need one",
+            "verifies the recorded tree against the current branch head and delivers that head",
             "\"commit\": \"<git rev-parse HEAD>\", \"tree\": \"<git rev-parse HEAD^{tree}>\"",
             "\"pr\": {\"title\":",
             "Read both hashes after the last commit",
@@ -974,12 +990,7 @@ mod tests {
         let review = stage(StageKind::Review, Gate::AllPass, 1);
         let judged = instructions(&review, WorkspaceMode::Worktree, "/w", TeamPart::Solo, owed);
         assert!(judged.contains("You commit nothing: the record names the commit you judged"));
-        assert_eq!(
-            judged
-                .matches("leave `git status --porcelain` empty")
-                .count(),
-            0
-        );
+        assert_eq!(judged.matches("untracked").count(), 0, "{judged}");
     }
 
     /// A task that does not fit its pipeline goes back to the orchestrator

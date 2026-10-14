@@ -265,10 +265,11 @@ pub(super) async fn retry(
 ) -> Result<Reply, ArchonError> {
     let current = ctx.store.lock().await.item(id)?;
     let replaces_plan = retry.model_plan.is_some();
-    let plan = retry
-        .model_plan
-        .unwrap_or_else(|| current.model_plan.clone());
     let (env, base, spec) = item_pipeline(ctx, &current).await?;
+    // A 1.0 item names the ship agent its built-in no longer has; the retry stores the repair.
+    let mut kept_plan = current.model_plan.clone();
+    spec.drop_retired_ship(&mut kept_plan, None);
+    let plan = retry.model_plan.unwrap_or(kept_plan);
     let plan = filled_plan(ctx, id, &env, &base, &spec, plan).await?;
     check_plan(ctx, &env, &spec, &plan)?;
     check_reasons(&spec, retry.model_reasons.as_ref())?;
@@ -286,6 +287,7 @@ pub(super) async fn retry(
         if replaces_plan || retry.model_reasons.is_some() {
             item.model_reasons = retry.model_reasons;
         }
+        spec.drop_retired_ship(&mut item.model_plan, item.model_reasons.as_mut());
         if let Some(text) = &retry.brief_append {
             item.amend_brief(text, archon_core::now())?;
         }

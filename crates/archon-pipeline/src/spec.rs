@@ -9,11 +9,14 @@ use archon_core::catalog::{
     Gate, Nudges, PipelineSource, PipelineSummary, StageKind, StageSummary, WorkspaceMode,
 };
 use archon_core::error::ArchonError;
+use archon_core::model::{ModelPlan, ModelReasons};
 use serde::{Deserialize, Serialize};
 
 use crate::template;
 
 pub const SCHEMA_VERSION: u32 = 1;
+/// The stage the 1.0 built-ins ran their ship agent as; archond ships them now.
+pub const RETIRED_SHIP_STAGE: &str = "ship";
 pub const MAX_FAN_OUT: u32 = 16;
 pub const MAX_LOOPS: u32 = 10;
 /// 30 days. Stage agents get exactly the configured timeout; a larger one
@@ -284,6 +287,31 @@ impl PipelineSpec {
         let stage = self.stage(&ship.stage);
         debug_assert!(stage.is_some(), "validated: [pipeline.ship] names a stage");
         stage
+    }
+
+    /// Drop the model choice and reason a 1.0 item stored for the ship agent
+    /// this built-in no longer has; `true` when anything went. Only built-ins
+    /// are repaired: user pipelines and run snapshots load as other sources.
+    pub fn drop_retired_ship(
+        &self,
+        plan: &mut ModelPlan,
+        reasons: Option<&mut ModelReasons>,
+    ) -> bool {
+        let shipped_by_daemon = self.file.pipeline.ship.is_some();
+        if self.source != PipelineSource::Builtin
+            || !shipped_by_daemon
+            || self.stage(RETIRED_SHIP_STAGE).is_some()
+        {
+            return false;
+        }
+        let choice = plan.0.remove(RETIRED_SHIP_STAGE).is_some();
+        let reason = reasons.is_some_and(|r| r.remove(RETIRED_SHIP_STAGE).is_some());
+        assert!(!plan.0.contains_key(RETIRED_SHIP_STAGE), "removed above");
+        assert!(
+            self.ship_record_stage().is_some(),
+            "validated: archond ships a record"
+        );
+        choice || reason
     }
 
     /// A declared review is held by one work stage, at any level: the item's

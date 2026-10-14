@@ -1939,31 +1939,48 @@ The level binds the named stage. Its agent's contract gains a
 asks for a reviewer, and its `complete_task` must carry in `structured`
 
 ```json
-{"review": {"verdict": "pass", "reviewer_model": "<provider>/<model>"}}
-{"review": {"verdict": "pass", "reviewer_models": ["<provider>/<model>", "…", "…"]}}
+{"review": {"verdict": "pass", "reviewers": ["<agent id>", "…"]}}
 ```
 
-with one model per reviewer. A completion without it, with any other
-verdict, or with a pass that names fewer reviewers than the level asks for
-fails the run at that stage with what is missing: nothing loops, no later
-stage starts and nothing ships. At `none` nothing is owed and the contract
-says to delegate no reviewer.
+naming the agent of each reviewer the pass rests on, a failed one whose
+findings were fixed included. Each reviewer's own `complete_task` carries
+its verdict on the commits it read:
 
-A pass is checked against Aether, not taken from the lead. When the stage
-settles, `archond` lists the lead's descendants once (`list_agents`, the
-call the owed stop of §6.3 makes) and assigns each named model a different
-direct child that completed on it; a cancelled, failed or still running
-child does not count, nor does a grandchild, and one child never stands for
-two reviewers. Their agent ids are stored in the stage's structured result
-as `review.reviewer_agents`. When a model has no such child, `archond`
-stores `review.unverified` with what the lead did delegate to, and the
-engine fails the run at that stage with it. Both keys are Archon's:
-whatever an agent wrote under them is removed from every stage's result
-before it is stored, so a lead cannot supply its own finding. While Aether
-cannot be asked the stage stays live and the pump's reconciliation settles
-it later. The check shows that this many reviewers on those models ran to
-completion beneath the lead; what they read and what they concluded remain
-the lead's report.
+```json
+{"verdict": "pass", "head": "<commit>", "base": "<commit>", "findings": []}
+```
+
+A completion without the record, with any other verdict, or with a pass
+that names fewer reviewers than the level asks for fails the run at that
+stage with what is missing: nothing loops, no later stage starts and
+nothing ships. At `none` nothing is owed and the contract says to delegate
+no reviewer.
+
+A pass is checked against Aether and the run branch, not taken from the
+lead (`executor/review.rs`). When the stage settles, `archond` lists the
+lead's descendants once (`list_agents`, the call the owed stop of §6.3
+makes) and reads the task result of each named agent (`get_task`). Each
+must be a different direct child that completed with a verdict: a
+cancelled, failed or running child, a grandchild, or a child that returned
+no verdict (a builder) is refused. The verdicts are then placed on the
+branch in the run's workspace (`executor/review/coverage.rs`): every `head`
+must be a commit the branch holds; a `base` at or before the fork from the
+base branch, or none, means the whole change was read; a delta's `base`
+must be a head another named reviewer read. A pass counts when it read the
+branch head, or when a counted pass read every commit after its head
+(`base` at or before it). A fail never counts and must be followed by such
+a pass. Counted passes below the level fail the run with the reasons.
+
+The counted agents and the models Aether ran them on are stored as
+`review.reviewer_agents` and `review.reviewer_models`; otherwise `archond`
+stores `review.unverified` with the reason, and the engine fails the run
+at that stage with it. These keys, and the `reviewer_model(s)` and
+`reviewer_agent` a 1.0 record held, are Archon's: whatever an agent wrote
+under them is removed before the result is stored, so a lead cannot supply
+its own finding. Records stored by 1.0 still read as they were. While
+Aether cannot be asked the stage stays live and the pump's reconciliation
+settles it later. What a reviewer concluded is its own report; Archon binds
+that report to the commits it names.
 
 Archon then appends `REVIEW: pass, by <model> (agent <id>), …`, or at
 `none` `REVIEW: none, as this item's review level asks`, as the last line

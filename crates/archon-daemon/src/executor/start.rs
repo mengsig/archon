@@ -105,6 +105,7 @@ async fn prepare(
     let current = super::steer::shaped(ctx, item, current).await?;
     // The ceiling may have been lowered since the item was enqueued.
     knobs::check_ceiling(&env.autonomy(&ctx.config), &env, &base, item.autonomy)?;
+    let item = &without_retired_ship(item, &current);
     let spec = Arc::new(frozen::freeze(&ctx.paths.data_dir, &run_id, &current).await?);
     let header = &spec.file.pipeline;
     if header.requires_repo && env.repo.is_none() {
@@ -124,6 +125,16 @@ async fn prepare(
             Err(error)
         }
     }
+}
+
+/// `item` as its run reads it: a 1.0 item queued for a built-in keeps no
+/// choice for the ship agent archond replaced. The stored item is unchanged.
+fn without_retired_ship(item: &QueueItem, spec: &PipelineSpec) -> QueueItem {
+    let mut read = item.clone();
+    if spec.drop_retired_ship(&mut read.model_plan, read.model_reasons.as_mut()) {
+        tracing::info!(item = %item.id, pipeline = %item.pipeline, "dropped the retired ship stage from a 1.0 model plan");
+    }
+    read
 }
 
 /// The run in `workspace` and its driver, which may still refuse the

@@ -24,8 +24,9 @@ read again.
    own work saves more than briefing it, integrating it and the reading it
    repeats. No number of workers is right in itself; often it is none. Do a
    bounded local read yourself instead of sending a child to research it.
-   Each worker is a leaf in an isolated workspace. Sequence dependent parts
-   after their prerequisites and keep tightly coupled work yourself. Give
+   Use leaf workers unless a bounded subproblem benefits from another level
+   allowed by the contract; each works in an isolated workspace. Sequence
+   dependent parts after their prerequisites and keep tightly coupled work yourself. Give
    each child the model and effort its own task needs, whatever yours are.
    Keep generated outputs ignored and check disk headroom before costly
    builds; never copy build caches or source trees into `/tmp`. Tell every
@@ -60,8 +61,9 @@ read again.
      bear on the change: no conversation, no project history.
 
    Choose its effort yourself: medium for ordinary risk, high where security
-   or an invariant is at stake or the brief asks for depth. Require a
-   pass/fail verdict and actionable findings (path, issue, impact, remedy).
+   or an invariant is at stake or the brief asks for depth. Require the
+   verdict your contract shows, on the head it read, with actionable
+   findings (path, issue, impact, remedy).
    Correctness, security and missing essential coverage block; style advice
    does not. Prefer a model other than your own where the policy in your
    contract allows one; otherwise use your own and say so in the summary. Do
@@ -71,15 +73,17 @@ read again.
    suite again only for a fix whose broad impact you can name, or where the
    project's policy demands it; never because a tree that passed was
    committed. Leave advisory and style findings open and list them.
-   A second look is owed after a failed verdict, and after a pass only when a
-   later commit changes production behaviour, security or an invariant, or
-   adds scope. A reviewer that finished cannot look again: delegate a NEW one
+   A second look is owed after a failed verdict and for any commit after a
+   pass: Archon delivers only commits a passing reviewer read, so batch
+   fixes. A reviewer that finished cannot look again: delegate a NEW one
    with the previous verdict, the reviewed commit and the new one, each
    finding beside its fix, and the regression evidence. It reads that delta
-   and the callers it affects, and widens only by naming the assumption the
-   delta broke. If the operator adds scope while a review runs, let it
-   finish, keep its verdict for the commit it read, and have the addition
-   reviewed as a delta. Allow at most two fix-and-review rounds.
+   (`base` the reviewed commit) and the callers it affects, and widens only
+   by naming the assumption the delta broke. If the operator adds scope
+   while a review runs, let it finish, keep its verdict for the commit it
+   read, and have the addition reviewed as a delta. Continue while fixes
+   make progress within the item's time and spending limits; escalate
+   repeated findings or a stalled approach with evidence.
 7. **Finish or fail.** An unresolved blocking finding, a failed check, a
    review your contract asks for that did not run, or delegation you needed
    and could not get fail this stage via `fail_task`; use `BLOCKED:` for
@@ -89,10 +93,9 @@ read again.
 
 Call `complete_task` with the `structured` data your contract requires: the
 ship record and, where reviewers were asked for, the review record naming the
-model of each reviewer whose pass covers the change as committed. The
-`pr.body` is what a maintainer reads: what changed and why, how it was
-verified, the review's scope (the commit it read, and any later commit with
-why that needed no second look), advisory findings left open, assumptions and
-limits. Keep the summary to what the orchestrator acts on, in a few lines:
+agent id of each reviewer the pass rests on. The `pr.body` is what a
+maintainer reads: what changed and why, how it was verified, the review's
+scope (the commits each reviewer read), advisory findings left open,
+assumptions and limits. Keep the summary to what the orchestrator acts on, in a few lines:
 what changed, the paths, the verification commands with their results, what
 workers did, and anything left open.

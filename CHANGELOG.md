@@ -211,6 +211,10 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
 - `archon doctor` warns about a pre-1.0 `archon.toml`, which is still not
   read.
 - `archon daemon stop --aether` waits until Archon's `aetherd` is gone.
+- A detached start appends to the daemon log beside the socket
+  (`archond.log`) instead of truncating it, after a line marking the start.
+  Past 16 MiB the log moves to `archond.log.1` first. A failed autostart
+  shows only that start's part.
 - Under `--json`, a command line that does not parse prints the JSON error
   envelope (`invalid_argument`, exit 2) instead of clap's text.
 - Limits that were fixed are now `[limits]` keys with the old values as

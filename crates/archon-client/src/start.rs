@@ -132,14 +132,21 @@ fn start_failed(socket: &Path, archon_bin: &Path, why: &str) -> ArchonError {
     ))
 }
 
-/// The end of the startup log, or a note saying why there is none.
+/// The end of this start's part of the startup log, or a note saying why
+/// there is none.
 fn log_tail(log: &Path) -> String {
     let text = match std::fs::read(log) {
         Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
         Err(e) => return format!("(no startup log: {e})"),
     };
+    let (marked, text) = since_last_start(&text);
     if text.trim().is_empty() {
-        return "(the startup log is empty)".to_owned();
+        let note = if marked {
+            "(nothing since this start)"
+        } else {
+            "(the startup log is empty)"
+        };
+        return note.to_owned();
     }
     let lines: Vec<&str> = text.lines().collect();
     let tail = lines[lines.len().saturating_sub(LOG_TAIL_LINES)..].join("\n");
@@ -148,4 +155,18 @@ fn log_tail(log: &Path) -> String {
         return tail;
     }
     tail.chars().skip(total - LOG_TAIL_CHARS).collect()
+}
+
+/// What follows the last start mark, and whether there was one; a log
+/// written before marks existed is all one start.
+fn since_last_start(text: &str) -> (bool, &str) {
+    let Some(at) = text.rfind(archon_core::paths::STARTUP_LOG_MARK) else {
+        return (false, text);
+    };
+    let after = text[at..].split_once('\n').map_or("", |(_, rest)| rest);
+    assert!(
+        !after.contains(archon_core::paths::STARTUP_LOG_MARK),
+        "the part kept starts after the last mark"
+    );
+    (true, after)
 }

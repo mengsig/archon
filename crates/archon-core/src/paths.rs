@@ -55,6 +55,10 @@ pub fn startup_log_for(socket: &Path) -> PathBuf {
     socket.with_extension("log")
 }
 
+/// Starts the line each detached start appends to the startup log; what
+/// follows the last one is the current daemon's output.
+pub const STARTUP_LOG_MARK: &str = "--- archond starting";
+
 /// Where a repository keeps its Archon overrides: `.archon/config.toml` and
 /// `.archon/pipelines/<name>/`.
 pub fn repo_archon_dir(repo_root: &Path) -> PathBuf {

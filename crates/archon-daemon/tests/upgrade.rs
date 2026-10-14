@@ -127,6 +127,18 @@ async fn a_retried_1_0_item_keeps_its_plan_without_the_ship_stage() {
         ["implement", "review"],
         "the ship stage's reason went with it"
     );
+    let repo = stored.repo.as_ref().expect("a repository item");
+    let key = format!("learning/static/{}/{BUILTIN}", repo.as_str());
+    let baseline = h
+        .kv(&key)
+        .await
+        .expect("routing measures against a baseline");
+    let baseline: ModelPlan = serde_json::from_str(&baseline).expect("a plan");
+    assert_eq!(
+        baseline.0.keys().collect::<Vec<_>>(),
+        ["implement", "review"],
+        "routing's baseline has no retired ship stage either"
+    );
     h.dispatch().await;
     assert_eq!(h.running().await[0].stage_id, "implement");
 }

@@ -164,11 +164,12 @@ fn view(
     page: Option<usize>,
 ) -> StageRunView {
     let output = page.map(|limit| TextPage::of(&output_text(&stage), offset, limit));
+    let choice = stage.current_choice().clone();
     StageRunView {
         stage_id: stage.stage_id,
         attempt: stage.attempt,
         slot: stage.fan_index,
-        choice: stage.choice,
+        choice,
         state: stage.state,
         verdict: stage.verdict,
         cost_usd: stage.cost_usd,

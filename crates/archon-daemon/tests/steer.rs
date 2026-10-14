@@ -13,7 +13,7 @@ use archon_core::model::Effort;
 use archon_core::notify::{NotificationKind, Question};
 use archon_core::ports::{AgentUpdate, DescendantState};
 use archon_core::protocol::{
-    EnqueueRequest, ItemDetail, ItemPatch, ItemQuery, Reply, RepoRef, Request,
+    EnqueueRequest, ItemDetail, ItemPatch, ItemQuery, Reply, RepoRef, Request, StageQuery,
 };
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::{RunState, StageOutcome, StageRun, StageState};
@@ -255,6 +255,23 @@ async fn a_note_and_a_new_model_reach_the_running_agent_without_a_cancel() {
     );
     assert_eq!(still.current_choice(), &choice(REVIEW_MODEL, Effort::Low));
     assert_eq!(still.model_segments.len(), 1);
+    let query = StageQuery {
+        item: item.id.clone(),
+        run: None,
+        stage: Some("implement".into()),
+        attempt: None,
+        slot: None,
+        offset: 0,
+        limit: None,
+    };
+    let Ok(Reply::StageDetail(shown)) = h.cli(Request::GetStage(query)).await else {
+        panic!("the stage is shown");
+    };
+    assert_eq!(
+        shown.stages[0].choice,
+        *still.current_choice(),
+        "shown on the choice its agent runs now"
+    );
     h.settle_running(|_| completed("implemented")).await;
     h.dispatch().await;
     let reviewers = running(&h, "review").await;

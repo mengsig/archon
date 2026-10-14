@@ -953,6 +953,7 @@ pub struct StageRunView {
     pub stage_id: String,
     pub attempt: u32,
     pub slot: u32,
+    /// What its agent runs on now, a steer's live retune included.
     pub choice: ModelChoice,
     pub state: StageState,
     pub verdict: Option<Verdict>,

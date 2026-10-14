@@ -396,9 +396,10 @@ fn stage_line(item: &QueueItemId, run: Option<&PipelineRunId>, stage: &StageRun)
         }
         other => snake(other).replace('_', " "),
     };
+    let choice = stage.current_choice();
     let mut line = format!(
         "{} attempt {} slot {}: {} {} [{state}]",
-        stage.stage_id, stage.attempt, stage.fan_index, stage.choice.model, stage.choice.effort
+        stage.stage_id, stage.attempt, stage.fan_index, choice.model, choice.effort
     );
     if let Some(verdict) = stage.verdict {
         let _ = write!(line, " verdict {}", snake(&verdict));

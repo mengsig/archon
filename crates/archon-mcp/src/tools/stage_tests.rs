@@ -320,3 +320,26 @@ fn get_item_clips_a_long_stage_summary_and_points_to_get_stage() {
         "{text}"
     );
 }
+
+/// A stage a steer retuned while it ran is listed on the choice it runs now.
+#[test]
+fn get_item_names_the_choice_a_retuned_stage_runs_now() {
+    let mut stage = long_review(PipelineRunId::new());
+    let retuned = ModelChoice {
+        model: "claude-code/opus".parse().expect("model ref"),
+        effort: Effort::Low,
+    };
+    stage.model_segments.push(archon_core::run::ModelSegment {
+        delivery: "steer-1".into(),
+        choice: retuned.clone(),
+        started_at: archon_core::now(),
+        cost_before_usd: 0.0,
+    });
+    let text = render("get_item", &Reply::ItemDetail(Box::new(item_detail(stage))));
+    let line = format!(
+        "review attempt 1 slot 0: {} {}",
+        retuned.model, retuned.effort
+    );
+    assert!(text.contains(&line), "{text}");
+    assert!(!text.contains(&choice().model.to_string()), "{text}");
+}

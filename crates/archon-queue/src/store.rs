@@ -16,7 +16,9 @@ mod directives;
 mod feed;
 mod gates;
 mod items;
+mod lessons;
 mod model_evidence;
+mod outcomes;
 mod repos;
 mod runs;
 mod schema;
@@ -43,6 +45,7 @@ use archon_core::run::{OperatorGate, PipelineRun, StageRun};
 use crate::dispatch::DispatchSnapshot;
 
 pub use model_evidence::ModelEvidenceSnapshot;
+pub use model_evidence::RouteEvidence;
 
 /// Well-known `kv` keys.
 pub mod keys {

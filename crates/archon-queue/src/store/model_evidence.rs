@@ -1,4 +1,4 @@
-//! Stage observations grouped on demand; no persisted assessments or routing.
+//! Stage observations and finished-run evidence for inspectable model defaults.
 
 use std::collections::HashMap;
 
@@ -223,6 +223,7 @@ fn finish(
         estimates_counted: estimates,
         rows,
         omitted,
+        pipelines: Vec::new(),
     }
 }
 
@@ -234,4 +235,179 @@ fn median(sorted: &[f64]) -> Option<f64> {
     } else {
         upper
     })
+}
+
+/// One model's independent run samples, including all its attempts and descendants.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RouteEvidence {
+    pub route: archon_core::outcome::LearnedRoute,
+    pub median_cost_usd: f64,
+}
+
+impl super::Store {
+    pub fn route_evidence(
+        &self,
+        repo: Option<&archon_core::id::RepoId>,
+        pipeline: &str,
+        stage: &str,
+        size: Option<archon_core::outcome::DiffSize>,
+    ) -> Result<Vec<RouteEvidence>, ArchonError> {
+        if pipeline.is_empty() || stage.is_empty() {
+            return Err(ArchonError::Invalid(
+                "route needs pipeline and stage".into(),
+            ));
+        }
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT s.model,s.effort,s.cost_usd,
+            s.passed=1 AND o.result='succeeded' AND o.corrected=0
+            FROM outcome_stages s JOIN outcomes o ON o.run=s.run
+            WHERE (?1 IS NULL OR o.repo=?1) AND o.pipeline=?2 AND s.stage_id=?3
+            AND (?4 IS NULL OR o.size=?4) ORDER BY s.model,s.effort,o.run",
+            )
+            .ctx("prepare learned routes")?;
+        let rows = stmt
+            .query_map(
+                params![
+                    repo.map(|r| r.as_str()),
+                    pipeline,
+                    stage,
+                    size.map(|s| s.as_str())
+                ],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, f64>(2)?,
+                        r.get::<_, Option<bool>>(3)?,
+                    ))
+                },
+            )
+            .ctx("query learned routes")?;
+        let mut groups = std::collections::BTreeMap::new();
+        for row in rows {
+            let (model, effort, cost, passed) = row.ctx("read learned route")?;
+            let (costs, wins) = groups.entry((model, effort)).or_insert((Vec::new(), 0u32));
+            costs.push(cost);
+            *wins += u32::from(passed == Some(true));
+        }
+        finish_routes(groups, repo, pipeline, stage, size)
+    }
+}
+
+fn finish_routes(
+    groups: std::collections::BTreeMap<(String, String), (Vec<f64>, u32)>,
+    repo: Option<&archon_core::id::RepoId>,
+    pipeline: &str,
+    stage: &str,
+    size: Option<archon_core::outcome::DiffSize>,
+) -> Result<Vec<RouteEvidence>, ArchonError> {
+    use archon_core::outcome::LearnedRoute;
+    use std::str::FromStr;
+    let mut evidence = Vec::new();
+    for ((model, effort), (mut costs, passed)) in groups {
+        assert!(passed as usize <= costs.len());
+        let runs = u32::try_from(costs.len())
+            .map_err(|_| ArchonError::Store("too many route samples".into()))?;
+        let median_cost_usd = super::outcomes::stats::median(&mut costs);
+        evidence.push(RouteEvidence {
+            median_cost_usd,
+            route: LearnedRoute {
+                repo: repo.cloned(),
+                pipeline: pipeline.into(),
+                stage: stage.into(),
+                size,
+                choice: ModelChoice {
+                    model: archon_core::model::ModelRef::from_str(&model)?,
+                    effort: archon_core::model::Effort::from_str(&effort)?,
+                },
+                runs,
+                passed,
+            },
+        });
+    }
+    evidence.sort_by(|a, b| a.median_cost_usd.total_cmp(&b.median_cost_usd));
+    assert!(
+        evidence
+            .windows(2)
+            .all(|p| p[0].median_cost_usd <= p[1].median_cost_usd)
+    );
+    Ok(evidence)
+}
+
+impl super::Store {
+    /// The static fallback used by plan filling, for a measured counterfactual.
+    pub fn record_static_plan(
+        &self,
+        repo: Option<&archon_core::id::RepoId>,
+        pipeline: &str,
+        plan: &archon_core::model::ModelPlan,
+    ) -> Result<(), ArchonError> {
+        if !self.learning_config()?.enabled {
+            return Ok(());
+        }
+        if pipeline.is_empty() || plan.0.values().any(Vec::is_empty) {
+            return Err(ArchonError::Invalid(
+                "a static baseline names a pipeline and nonempty choices".into(),
+            ));
+        }
+        self.save_learning_value(
+            &format!(
+                "learning/static/{}/{pipeline}",
+                repo.map_or("global", |r| r.as_str())
+            ),
+            &super::codec::to_json(plan, "static model baseline")?,
+        )
+    }
+
+    pub fn estimated_model_saving(
+        &self,
+        repo: Option<&archon_core::id::RepoId>,
+        pipeline: &str,
+        policy: &archon_core::policy::ModelPolicy,
+    ) -> Result<Option<f64>, ArchonError> {
+        let key = format!(
+            "learning/static/{}/{pipeline}",
+            repo.map_or("global", |r| r.as_str())
+        );
+        let Some(raw) = self.kv_get(&key)? else {
+            return Ok(None);
+        };
+        let plan: archon_core::model::ModelPlan = from_json(&raw, "static model baseline")?;
+        let mut saving = 0.0;
+        let mut measured = false;
+        for (stage, choices) in plan.0 {
+            let mut evidence = self.route_evidence(repo, pipeline, &stage, None)?;
+            evidence.retain(|e| policy.check(&e.route.choice).is_ok());
+            let best = evidence
+                .iter()
+                .filter(|e| e.route.runs >= 5)
+                .map(|e| f64::from(e.route.passed) / f64::from(e.route.runs))
+                .max_by(f64::total_cmp);
+            let Some(best) = best else {
+                continue;
+            };
+            let selected = evidence
+                .iter()
+                .find(|e| {
+                    e.route.runs >= 5
+                        && f64::from(e.route.passed) / f64::from(e.route.runs) + 0.05 >= best
+                })
+                .expect("best route is within its own band");
+            for choice in choices {
+                let Some(baseline) = evidence
+                    .iter()
+                    .find(|e| e.route.runs >= 5 && e.route.choice == choice)
+                else {
+                    return Ok(None);
+                };
+                saving += baseline.median_cost_usd - selected.median_cost_usd;
+                measured = true;
+            }
+        }
+        assert!(saving.is_finite());
+        assert!(!measured || !raw.is_empty());
+        Ok(measured.then_some(saving))
+    }
 }

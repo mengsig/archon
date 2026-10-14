@@ -15,7 +15,20 @@ use crate::format;
 use crate::views;
 
 pub async fn run(command: PipelineCommand, json: bool) -> anyhow::Result<ExitCode> {
+    if let PipelineCommand::Accept { name } = &command {
+        let path = archon_pipeline::proposals::accept(
+            &archon_core::paths::config_dir().join("pipelines"),
+            name,
+        )?;
+        emit(
+            json,
+            || Ok(serde_json::json!({"name":name,"path":path})),
+            &format!("Activated pipeline {name}."),
+        )?;
+        return Ok(ExitCode::SUCCESS);
+    }
     let (repo, check) = match command {
+        PipelineCommand::Accept { .. } => unreachable!("accept handled above"),
         PipelineCommand::List { repo } => (repo, false),
         PipelineCommand::Check { repo } => (repo, true),
     };

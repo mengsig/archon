@@ -295,6 +295,7 @@ mod tests {
             summary: "s".into(),
             pr_url: None,
             cost_usd: 1.0,
+            lesson_hint: None,
             origin: None,
         }
     }

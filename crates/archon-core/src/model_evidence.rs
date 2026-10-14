@@ -52,6 +52,8 @@ pub struct ModelEvidenceReport {
     pub estimates_counted: bool,
     pub rows: Vec<ModelEvidenceRow>,
     pub omitted: usize,
+    #[serde(default)]
+    pub pipelines: Vec<crate::lesson::PipelineEvidence>,
 }
 
 impl ModelEvidenceReport {
@@ -103,6 +105,22 @@ impl ModelEvidenceReport {
         if self.omitted > 0 {
             let _ = writeln!(text, "Truncated: {} more groups omitted.", self.omitted);
         }
+        self.pipeline_text(&mut text);
         text.trim_end().to_owned()
+    }
+    fn pipeline_text(&self, text: &mut String) {
+        for p in &self.pipelines {
+            let _ = writeln!(
+                text,
+                "Pipeline {} / {} n={} pass={:.0}% median=${:.3} wall={:.0}s corrected={:.0}%",
+                p.repo.as_ref().map_or("global", |repo| repo.as_str()),
+                p.pipeline,
+                p.runs,
+                p.pass_rate * 100.0,
+                p.median_cost_usd,
+                p.median_wall_secs,
+                p.correction_rate * 100.0
+            );
+        }
     }
 }

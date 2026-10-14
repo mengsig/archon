@@ -24,24 +24,25 @@ pub(super) async fn enqueue(
 ) -> Result<Reply, ArchonError> {
     let title = req.title.trim().to_owned();
     check_enqueue(&req.title, &req.brief, &req.tags, req.budget_usd)?;
-    let repo = match &req.repo {
-        Some(reference) => Some(ctx.store.lock().await.repo(reference)?),
-        None => None,
-    };
-    let env = RepoEnv::new(repo)?;
-    if env.repo.is_none() && req.pipeline.is_none() {
-        return Err(ArchonError::Invalid(
-            "name a pipeline; only repositories have a default one".into(),
-        ));
+    let (env, resolved) = enqueue_context(ctx, &req).await?;
+    let id = QueueItemId::new();
+    if ctx.config.learning.enabled {
+        crate::learned::hint_size(&*ctx.store.lock().await, &id, &req.tags)?;
     }
-    let resolved = knobs::resolve(&ctx.config, &env, req.pipeline.clone(), &req.autonomy)?;
-    check_runs_here(ctx, &env, &resolved.spec).await?;
-    let plan = filled_plan(ctx, &env, &resolved.base, &resolved.spec, req.model_plan).await?;
+    let plan = filled_plan(
+        ctx,
+        &id,
+        &env,
+        &resolved.base,
+        &resolved.spec,
+        req.model_plan,
+    )
+    .await?;
     check_plan(ctx, &env, &resolved.spec, &plan)?;
     check_reasons(&resolved.spec, req.model_reasons.as_ref())?;
     let now = archon_core::now();
     let item = QueueItem {
-        id: QueueItemId::new(),
+        id,
         repo: env.repo.as_ref().map(|r| r.id.clone()),
         pipeline: resolved.pipeline,
         title,
@@ -75,6 +76,27 @@ pub(super) async fn enqueue(
     );
     ctx.dispatch.notify_one();
     Ok(Reply::Item(stored))
+}
+
+async fn enqueue_context(
+    ctx: &DaemonContext,
+    req: &EnqueueRequest,
+) -> Result<(RepoEnv, knobs::Resolved), ArchonError> {
+    let repo = match &req.repo {
+        Some(reference) => Some(ctx.store.lock().await.repo(reference)?),
+        None => None,
+    };
+    let env = RepoEnv::new(repo)?;
+    if env.repo.is_none() && req.pipeline.is_none() {
+        return Err(ArchonError::Invalid(
+            "name a pipeline; only repositories have a default one".into(),
+        ));
+    }
+    let resolved = knobs::resolve(&ctx.config, &env, req.pipeline.clone(), &req.autonomy)?;
+    check_runs_here(ctx, &env, &resolved.spec).await?;
+    assert_eq!(resolved.spec.name(), resolved.pipeline);
+    assert!(!resolved.spec.file.stages.is_empty());
+    Ok((env, resolved))
 }
 
 pub(super) async fn list(ctx: &DaemonContext, query: &ItemQuery) -> Result<Reply, ArchonError> {
@@ -140,7 +162,7 @@ pub(super) async fn update(
     if patch.model_plan.is_some() || patch.model_reasons.is_some() {
         let (env, base, spec) = item_pipeline(ctx, &current).await?;
         if let Some(plan) = patch.model_plan.take() {
-            let plan = filled_plan(ctx, &env, &base, &spec, plan).await?;
+            let plan = filled_plan(ctx, id, &env, &base, &spec, plan).await?;
             check_plan(ctx, &env, &spec, &plan)?;
             patch.model_plan = Some(plan);
         }
@@ -254,7 +276,7 @@ pub(super) async fn retry(
         .model_plan
         .unwrap_or_else(|| current.model_plan.clone());
     let (env, base, spec) = item_pipeline(ctx, &current).await?;
-    let plan = filled_plan(ctx, &env, &base, &spec, plan).await?;
+    let plan = filled_plan(ctx, id, &env, &base, &spec, plan).await?;
     check_plan(ctx, &env, &spec, &plan)?;
     check_reasons(&spec, retry.model_reasons.as_ref())?;
     check_runs_here(ctx, &env, &spec).await?;
@@ -301,12 +323,12 @@ pub(super) async fn retry(
 fn check_retryable(item: &QueueItem) -> Result<(), ArchonError> {
     if matches!(
         item.state,
-        QueueState::Failed { .. } | QueueState::Cancelled { .. }
+        QueueState::Succeeded { .. } | QueueState::Failed { .. } | QueueState::Cancelled { .. }
     ) {
         return Ok(());
     }
     Err(ArchonError::InvalidTransition(format!(
-        "only failed or cancelled items are retried; {} is {}",
+        "only finished items are retried; {} is {}",
         item.id,
         item.state.kind()
     )))
@@ -469,14 +491,24 @@ async fn item_pipeline(
 /// `plan` with what it leaves out filled for `env`'s repository.
 async fn filled_plan(
     ctx: &DaemonContext,
+    id: &QueueItemId,
     env: &RepoEnv,
     base: &PipelineSpec,
     spec: &PipelineSpec,
     plan: ModelPlan,
 ) -> Result<ModelPlan, ArchonError> {
     let store = ctx.store.lock().await;
+    store.configure_learning(&ctx.config.learning)?;
     let repo = env.repo.as_ref().map(|repo| &repo.id);
-    knobs::fill_plan(&store, repo, base, spec, plan)
+    let learned =
+        crate::learned::plan_for_item(&store, id, repo, spec, &env.policy(&ctx.config), &plan)?;
+    let mut plan = plan;
+    plan.0.extend(learned.0);
+    if crate::learned::item_size(&store, id)?.is_some() {
+        knobs::fill_static_stages(base, spec, plan)
+    } else {
+        knobs::fill_plan(&store, repo, base, spec, plan)
+    }
 }
 
 /// Every stage has 1 to `fan_out` choices, no unknown stage is named, and

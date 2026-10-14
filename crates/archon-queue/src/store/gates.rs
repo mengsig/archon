@@ -191,6 +191,19 @@ pub(super) fn update(conn: &mut Connection, gate: &OperatorGate) -> Result<(), A
         )));
     }
     write(&tx, gate)?;
+    if matches!(
+        gate.decision,
+        Some(
+            archon_core::run::GateDecision::Reject { .. }
+                | archon_core::run::GateDecision::Revise { .. }
+        )
+    ) {
+        super::outcomes::correct(
+            &tx,
+            &gate.run,
+            archon_core::outcome::Correction::GateRejected,
+        )?;
+    }
     tx.commit().ctx("commit gate update")
 }
 

@@ -3238,3 +3238,40 @@ directives. `archon status` adds the global policy and the gates that are
 waiting, and `archon queue show` shows an item's knobs and gates. The
 orchestrator states the knobs it chose, with a reason, in the `decision` it
 notifies for each item.
+
+
+## Durable learning
+
+`store/outcomes` stores one finish-time outcome per pipeline run and one grouped
+stage observation per model/effort. Costs include agents below each stage lead;
+ledger charges are counted once for reused agents. Corrections are appended
+idempotently and retained before the outcome exists. Late corrections rescore
+`lesson_uses`, so a previously successful but corrected result is not a win.
+The daemon performs a bounded, resumable historical import in its learning
+worker. V10 creates only empty tables; no migration scans historical runs.
+
+`store/model_evidence` supplies run samples for token-free defaults, filtered by
+repository, pipeline, stage and optional diff-size class. Repository evidence
+falls back to global evidence. Five independent runs qualify a choice; among
+choices within five percentage points of the best, median cost breaks the tie.
+At most the configured 10% exploration fraction tries the adjacent cheaper
+observed choice. Explicit plans are preserved and effective model policy is
+checked before a default is used. Routing explanations are persisted by item. The static fallback provider calls
+`Store::record_static_plan(repo, pipeline, plan)` before applying learned choices;
+`estimated_model_saving` compares observed medians only when baseline sample
+sizes reach five, otherwise reporting unknown.
+
+`store/lessons` owns normalization, scope limits, deduplication, operator edits,
+Wilson confidence and 30-day unconfirmed decay. Contract text is frozen by run
+in `learning/uses/<run>` and joined to outcomes through `lesson_uses`. Pinned
+lessons never automatically retract or decay. The orchestrator integration is
+`learned::lessons_for_orchestrator(&Store) -> Result<String, ArchonError>`;
+`ORCHESTRATOR_GENERATION` freezes its selection for each generation.
+
+Every configured outcome window creates an idempotent, low-priority errand
+with a $1 budget and normal policy, accounting and dispatch caps. It produces
+proposed lessons and optional pipeline files. `PipelineSpec::validate`, also
+used by catalog checks, validates proposals before publication; `.proposed`
+directories are excluded from discovery until explicit operator acceptance.
+Distillation items are excluded from outcome production to prevent recursion.
+`[learning] enabled = false` disables learning effects while retaining evidence.

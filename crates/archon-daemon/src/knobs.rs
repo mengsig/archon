@@ -172,6 +172,14 @@ pub(crate) fn fill_plan(
         assert!(!choices.is_empty(), "a learned default names a choice");
         plan.0.entry(stage).or_insert(choices);
     }
+    fill_static_stages(base, spec, plan)
+}
+
+pub(crate) fn fill_static_stages(
+    base: &PipelineSpec,
+    spec: &PipelineSpec,
+    mut plan: ModelPlan,
+) -> Result<ModelPlan, ArchonError> {
     let first = base
         .file
         .stages

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Learning
+
+- Record durable run outcomes and corrections, backfill historical runs lazily,
+  and use policy-constrained evidence to fill missing model choices without an
+  LLM call. Pipeline evidence includes pass, correction, cost and wall statistics.
+- Add `archon lessons` to record, inspect, edit, pin, retract and accept short
+  lessons; `why` explains the advice and model evidence used for an item.
+- Queue budgeted distillation errands, retain validated proposed pipelines
+  outside the active catalog, and activate them with `archon pipelines accept`.
+  `[learning]` controls the loop, distillation interval and bounded exploration.
+
 The orchestrator answers and delegates work that needs no repository
 itself, and a pipeline stage can delegate again.
 

@@ -146,6 +146,45 @@ until you have made the fix above. Once the orchestrator makes a named
 call, a read included, `archond` says so and the next orchestrator
 delegates again.
 
+## What Archon learns
+
+Archon keeps outcomes and short lessons in its own store. `archon lessons stats`
+shows per-repository pipeline pass rates, correction rates, median cost and wall
+time, and learned model defaults with sample sizes. The existing
+`model_evidence` tool includes compact pipeline evidence for the
+orchestrator's pipeline selection. These are observations, not guarantees. Estimated model savings compare median
+stage costs with a recorded static fallback, require at least five samples for
+that fallback, and are shown per planned run. Missing baseline evidence is
+reported as unknown.
+
+```sh
+archon lessons --repo my-repo
+archon lessons --all
+archon lessons add --repo my-repo --kind pitfall "Run migrations against an old database."
+archon lessons edit lsn_ID "Check both upgrades and fresh databases."
+archon lessons pin lsn_ID
+archon lessons retract lsn_ID
+archon lessons accept lsn_ID
+archon lessons why qi_ID
+archon lessons stats --repo my-repo --json
+archon pipelines accept learned-check
+```
+
+`why` shows the frozen lesson text and routing sample sizes used for an item.
+A run uses at most six lessons, with a 1,200-byte rendered section, preferring
+its repository and pipeline. Lessons are untrusted advice and cannot expand
+permissions. Duplicate text is merged; operator edits take precedence. Wins
+are successful runs without corrections. Five or more scored uses can retract
+a lesson whose decayed Wilson confidence drops below 0.3. Pinning prevents
+automatic retraction and decay; `pin --unpin` releases the pin.
+
+Retrying a finished item, rejecting a gate and steering are corrections.
+An operator message naming a full `qi_…` ID and saying “wrong”, “incorrect”,
+“not fixed”, “still fails”, or “regression” also records a contradiction.
+GitHub reconciliation can attach requested changes or a closed unmerged PR.
+Late corrections revoke lesson wins. Historical evidence and explicit plans
+remain available when learning is disabled; see [configuration](configuration.md#learning).
+
 ## Agents talking to the orchestrator
 
 Every stage agent can call Archon's `message_orchestrator(text, kind)` in

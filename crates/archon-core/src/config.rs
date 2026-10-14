@@ -41,6 +41,41 @@ pub struct Config {
     pub lavish: LavishConfig,
     pub github: GithubConfig,
     pub autonomy: AutonomyConfig,
+    pub learning: LearningConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct LearningConfig {
+    pub enabled: bool,
+    pub distill_every: u32,
+    pub explore_rate: f64,
+}
+
+impl Default for LearningConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            distill_every: 20,
+            explore_rate: 0.1,
+        }
+    }
+}
+
+impl LearningConfig {
+    pub fn validate(&self) -> Result<(), ArchonError> {
+        if self.distill_every == 0 {
+            return Err(ArchonError::Config(
+                "learning.distill_every must be positive".into(),
+            ));
+        }
+        if !self.explore_rate.is_finite() || !(0.0..=0.1).contains(&self.explore_rate) {
+            return Err(ArchonError::Config(
+                "learning.explore_rate must be between 0 and 0.1".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -411,6 +446,7 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), ArchonError> {
+        self.learning.validate()?;
         self.aether.validate()?;
         self.paths_absolute()?;
         if self.dispatcher.tick_secs == 0 {

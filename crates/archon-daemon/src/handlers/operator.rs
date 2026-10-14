@@ -24,6 +24,7 @@ pub(super) async fn say(ctx: &DaemonContext, text: &str) -> Result<Reply, Archon
     let text = checked_text(text, "a chat line")?;
     let item = feed::append(ctx, FeedEntry::Operator { text: text.clone() }).await?;
     assert!(item.seq > 0, "feed sequences start at 1");
+    crate::learned::operator_message(ctx, &text).await?;
     supervisor::deliver_operator_message(ctx, &item.id, &text).await?;
     Ok(Reply::Ok)
 }

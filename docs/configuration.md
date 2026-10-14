@@ -66,6 +66,33 @@ Aether config sets `[scheduler] run_budget_usd`, Archon's instance inherits
 it, and it is cumulative: once the orchestrator's run has spent it, Aether
 refuses every delegation until `archon orchestrator restart`.
 
+## Learning
+
+```toml
+[learning]
+enabled = true
+distill_every = 20
+explore_rate = 0.1
+```
+
+Learning records finished runs, including stage attempts and descendant costs.
+Historical finished runs are imported in small background batches, never during
+schema migration. Missing historical diff sizes stay unknown. Learned defaults
+need at least five run samples, use the cheapest permitted choice within five
+percentage points of the best pass rate, and preserve explicit model plans.
+`explore_rate` is between 0 and 0.1; zero disables exploration. An item's ID
+makes its exploration decision reproducible. When size is known before starting,
+use the existing item tags `diff:small`, `diff:medium`, or `diff:large` to select
+that evidence bucket; otherwise size is pooled. Small means at most 50 changed
+lines, medium at most 400, and large more than 400.
+
+`distill_every` must be positive. Each repository's new outcome window queues
+one low-priority `errand`, limited to $1 and the normal model policy and budgets.
+Distillation itself does not generate another learning outcome. Its short
+lessons and validated `<name>.proposed/` user pipelines require acceptance.
+Set `enabled = false` to disable outcome writes, defaults, lesson use and
+scoring, hints, and distillation. Existing evidence remains inspectable.
+
 ## Disk use
 
 Every item that works on a repository runs in its own git worktree, by

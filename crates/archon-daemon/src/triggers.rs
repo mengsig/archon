@@ -78,6 +78,9 @@ pub enum TriggerEvent {
         title: String,
         state: String,
         members: Vec<QueueItemId>,
+        /// The finished members' outcomes, as `item_finished` words them.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        results: Vec<MemberResult>,
     },
     ItemBlocked {
         item: QueueItemId,
@@ -159,6 +162,16 @@ pub enum TriggerEvent {
     DirectivesRestated {
         reason: String,
     },
+}
+
+/// One finished member of an `initiative_finished` event.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MemberResult {
+    pub item: QueueItemId,
+    /// `QueueState::kind()`.
+    pub state: String,
+    pub summary: String,
+    pub cost_usd: f64,
 }
 
 fn is_zero(count: &u32) -> bool {

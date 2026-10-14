@@ -439,7 +439,7 @@ fn notice_sentence(text: &str) -> String {
     clip(sentence, 240)
 }
 
-fn outcome_text(item: &QueueItem) -> String {
+pub(super) fn outcome_text(item: &QueueItem) -> String {
     let text = match &item.state {
         QueueState::Succeeded { summary, .. } => format!("Done: {}. {summary}", item.title),
         QueueState::Failed { error, .. } => format!("Failed: {}. {error}", item.title),
@@ -451,7 +451,7 @@ fn outcome_text(item: &QueueItem) -> String {
 }
 
 /// `text` for the orchestrator; when clipped, it says where the rest is.
-fn finished_summary(text: &str, item: &QueueItem) -> String {
+pub(super) fn finished_summary(text: &str, item: &QueueItem) -> String {
     let total = text.chars().count();
     if total <= MAX_FINISHED_CHARS {
         return text.to_owned();

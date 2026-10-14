@@ -1003,7 +1003,8 @@ store lock, so the last success to finish always wakes.
 
 A waking failure also carries `lesson_hint` (§19). An initiative's member
 makes no `item_finished`: its initiative's `initiative_finished` wakes once
-it is done or failed (§8.9).
+it is done or failed (§8.9), carrying each finished member's state, summary
+and cost as `results`.
 
 Every other event wakes: `agent_message`, `item_blocked`, `gate_opened`,
 `operator_answer`, `chat_answer`, `lavish_feedback`, `budget`,

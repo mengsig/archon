@@ -225,7 +225,9 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
   members get the whole new text. An atomic initiative opens draft pull
   requests and readies them together once every member passed. It never
   merges them: you merge the set. A failed member fails the initiative and
-  holds its queued members.
+  holds its queued members. Members build at once against the contract
+  unless one waits (`after`) for another's code, and `initiative_finished`
+  carries each member's outcome, so no member needs reading.
 - `archon initiatives` lists them, `create <file>` starts one from a JSON or
   TOML file, and `update <id> --append-file` or `--contract-file` extends
   or replaces its contract. `show`, `update`, `cancel` and `retry` take an

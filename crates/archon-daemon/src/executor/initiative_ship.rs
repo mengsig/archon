@@ -3,11 +3,12 @@
 use super::dependencies::{is_plain_branch, is_plain_url};
 use super::gh::{self, Pass};
 use crate::context::DaemonContext;
+use crate::triggers::MemberResult;
 use crate::worktree::stack;
 use archon_core::error::ArchonError;
 use archon_core::id::{InitiativeId, QueueItemId};
 use archon_core::initiative::{Initiative, InitiativeDetail, InitiativeState};
-use archon_core::queue::QueueState;
+use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::Repo;
 use archon_core::run::PipelineRun;
 
@@ -433,11 +434,34 @@ pub(crate) async fn announce(ctx: &DaemonContext, id: &InitiativeId) -> Result<(
         .kv_get(&format!("initiative_cycle:{id}"))?
         .unwrap_or_else(|| "initial".into());
     let key = format!("initiative_finished:{id}:{cycle}");
+    let results = member_results(ctx, &detail.members).await?;
     let event = crate::triggers::TriggerEvent::InitiativeFinished {
         initiative: id.clone(),
         title: detail.initiative.title,
         state: detail.initiative.state.as_str().into(),
         members: detail.members.into_iter().map(|m| m.id).collect(),
+        results,
     };
     crate::triggers::push_once(ctx, event, &key).await
+}
+
+/// Each finished member's outcome, so the orchestrator relays them without reading each item.
+async fn member_results(
+    ctx: &DaemonContext,
+    members: &[QueueItem],
+) -> Result<Vec<MemberResult>, ArchonError> {
+    assert!(!members.is_empty(), "an initiative has members");
+    let store = ctx.store.lock().await;
+    let mut results = Vec::with_capacity(members.len());
+    for member in members.iter().filter(|m| m.state.is_terminal()) {
+        let text = super::finish::outcome_text(member);
+        results.push(MemberResult {
+            item: member.id.clone(),
+            state: member.state.kind().to_owned(),
+            summary: super::finish::finished_summary(&text, member),
+            cost_usd: store.spend_for_item(&member.id, ctx.config.limits.count_estimated_cost)?,
+        });
+    }
+    assert!(results.len() <= members.len(), "one result per member");
+    Ok(results)
 }

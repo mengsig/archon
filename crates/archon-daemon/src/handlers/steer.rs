@@ -283,9 +283,13 @@ async fn store_steer(
     // The failed run a shape steer revives: the steer corrects it.
     let mut corrected = None;
     if let Some((edit, stages)) = &shape {
+        let switched = match edit {
+            RunEdit::SwitchPipeline { pipeline, .. } => Some(pipeline.as_str()),
+            _ => None,
+        };
         match asked.sources.switches_to(&item.pipeline) {
             true => live::forget_shape(&mut store, &item.id)?,
-            false => live::keep_shape(&mut store, &item.id, stages)?,
+            false => live::keep_shape(&mut store, &item.id, stages, switched)?,
         }
         if let QueueState::Failed { run, .. } = &loaded.state {
             revive = true;

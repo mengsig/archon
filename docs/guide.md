@@ -679,7 +679,9 @@ over. A cancelled item is retried first, and a succeeded one is done.
 
 Every steer is recorded with who made it (`operator` or `orchestrator`) and
 what it changed. `archon queue show <id>` lists them, and the feed has a
-`Steered …` entry for each.
+`Steered …` entry for each. An item switched to another pipeline keeps the
+name it was queued with, and `queue show`, `queue list` and `status` print
+both, as in `default-pr-review → quick-pr`.
 
 ### Stacked changes
 

@@ -136,7 +136,9 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
     let waiting_on = super::item_views::waiting_on(&store, &item, &runs, &stages)?;
     let waiting_reason = waiting.reason(&store, &item, waiting_on.as_ref())?;
     let steers = executor::steer::records(&store, id)?;
+    let switched_to = executor::steer::switched_to(&store, &item)?;
     Ok(Reply::ItemDetail(Box::new(ItemDetail {
+        switched_to,
         steers,
         waiting_reason,
         waiting_on,

@@ -738,6 +738,10 @@ pub struct ItemSummary {
     pub waiting_on: Option<WaitingOn>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting_reason: Option<WaitingReason>,
+    /// The catalog pipeline a steer switched the item to; `item.pipeline`
+    /// stays the one it was queued with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub switched_to: Option<String>,
 }
 
 /// Stable read-time reason codes; these are never stored on a queue item.
@@ -798,6 +802,9 @@ pub struct ItemDetail {
     pub waiting_on: Option<WaitingOn>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting_reason: Option<WaitingReason>,
+    /// As in [`ItemSummary`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub switched_to: Option<String>,
 }
 
 /// An agent a stage agent delegated to, itself or through another.
@@ -1238,6 +1245,7 @@ mod tests {
             stage: Some("review".into()),
             spent_usd: 1.5,
             pr_url: None,
+            switched_to: None,
         };
         let reply = Reply::ItemSummaries(vec![summary.clone()]);
         let value = serde_json::to_value(&reply).unwrap();

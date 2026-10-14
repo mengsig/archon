@@ -12,7 +12,9 @@ use archon_core::id::QueueItemId;
 use archon_core::model::Effort;
 use archon_core::notify::{NotificationKind, Question};
 use archon_core::ports::{AgentUpdate, DescendantState};
-use archon_core::protocol::{EnqueueRequest, ItemDetail, ItemPatch, Reply, RepoRef, Request};
+use archon_core::protocol::{
+    EnqueueRequest, ItemDetail, ItemPatch, ItemQuery, Reply, RepoRef, Request,
+};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::{RunState, StageOutcome, StageRun, StageState};
 use archon_core::steer::{InsertStage, Steer, SteeredBy, Then};
@@ -137,6 +139,22 @@ async fn detail(h: &Harness, item: &QueueItemId) -> ItemDetail {
         Ok(Reply::ItemDetail(detail)) => *detail,
         other => panic!("get_item replied {other:?}"),
     }
+}
+
+/// The pipeline `get_item` and `list_item_summaries` say a steer switched
+/// the item to; they must agree.
+async fn switched_to(h: &Harness, item: &QueueItemId) -> Option<String> {
+    let shown = detail(h, item).await.switched_to;
+    let query = ItemQuery {
+        limit: Some(usize::MAX),
+        ..ItemQuery::default()
+    };
+    let Ok(Reply::ItemSummaries(rows)) = h.cli(Request::ListItemSummaries(query)).await else {
+        panic!("list_item_summaries failed");
+    };
+    let row = rows.into_iter().find(|row| &row.item.id == item).unwrap();
+    assert_eq!(row.switched_to, shown, "the list and the detail agree");
+    shown
 }
 
 fn agent(stage: &StageRun) -> AetherAgentId {
@@ -614,6 +632,11 @@ async fn the_pipeline_is_switched_for_the_stages_not_started() {
         "the item keeps its pipeline's name"
     );
     assert_eq!(
+        switched_to(&h, &item.id).await.as_deref(),
+        Some("steer-quick"),
+        "and says which pipeline it runs now"
+    );
+    assert_eq!(
         steered.model_plan.0.len(),
         2,
         "a plan for the stages it has now"
@@ -791,13 +814,28 @@ async fn a_queued_item_runs_the_stages_steered_into_it() {
         QueueState::Succeeded { .. }
     ));
 
+    assert_eq!(
+        switched_to(&h, &item.id).await,
+        None,
+        "inserted, not switched"
+    );
+
     let other = h.enqueue("back to the catalog").await;
     steer(&h, &other.id, switch("steer-quick"))
         .await
         .expect("switched");
+    steer(&h, &other.id, insert("verify", Some("implement")))
+        .await
+        .expect("inserted");
+    assert_eq!(
+        switched_to(&h, &other.id).await.as_deref(),
+        Some("steer-quick"),
+        "an insert keeps the pipeline switched to"
+    );
     steer(&h, &other.id, switch("wp5-review"))
         .await
         .expect("switched back");
+    assert_eq!(switched_to(&h, &other.id).await, None);
     assert_eq!(
         h.kv(&format!("shape:{}", other.id)).await,
         None,

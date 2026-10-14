@@ -256,6 +256,7 @@ fn item_detail(stage: StageRun) -> ItemDetail {
         spent_usd: 0.0,
         gates: vec![],
         delegations: Default::default(),
+        switched_to: None,
     }
 }
 

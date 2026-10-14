@@ -24,7 +24,8 @@ use crate::knobs;
 use crate::resolve::RepoEnv;
 
 /// `kv`: `shape:<item>` → the JSON [`RunEdit`] holding the item's whole
-/// steered stage list, which every later run of it starts with.
+/// steered stage list, which every later run of it starts with. Its
+/// `pipeline` names the catalog pipeline the item was last switched to.
 const KEY_PREFIX: &str = "shape:";
 
 fn key(item: &QueueItemId) -> String {
@@ -253,17 +254,50 @@ fn projected_plan(
     Ok(filled)
 }
 
-/// Keep `spec` as the stage list every later run of `item` starts with.
+/// Keep `spec` as the stage list every later run of `item` starts with,
+/// named for the pipeline `switched` to, else the one it was last switched to.
 pub(crate) fn keep(
     store: &mut Store,
     item: &QueueItemId,
     spec: &PipelineSpec,
+    switched: Option<&str>,
 ) -> Result<(), ArchonError> {
     // A switch from nothing to itself carries every stage with its prompt.
     let (whole, same) = reshape::switch_edit(spec, 0, spec)?;
     assert_eq!(same.file.stages, spec.file.stages, "kept as it is");
-    assert_eq!(whole.kind(), "switch_pipeline");
+    let RunEdit::SwitchPipeline { stages, .. } = whole else {
+        unreachable!("switch_edit yields a switch, not {whole:?}");
+    };
+    let pipeline = match switched {
+        Some(name) => name.to_owned(),
+        None => kept_name(store, item)?.unwrap_or_else(|| spec.name().to_owned()),
+    };
+    let whole = RunEdit::SwitchPipeline { pipeline, stages };
     store.kv_set(&key(item), &serde_json::to_string(&whole)?)
+}
+
+/// The pipeline the stage list kept for `item` is named for, if one is kept.
+fn kept_name(store: &Store, item: &QueueItemId) -> Result<Option<String>, ArchonError> {
+    let Some(raw) = store.kv_get(&key(item))? else {
+        return Ok(None);
+    };
+    let whole: RunEdit = serde_json::from_str(&raw)
+        .map_err(|e| ArchonError::Store(format!("steered stages of item {item}: {e}")))?;
+    let RunEdit::SwitchPipeline { pipeline, .. } = whole else {
+        return Err(ArchonError::Store(format!(
+            "steered stages of item {item} are kept as a {} edit, not a switch",
+            whole.kind()
+        )));
+    };
+    assert!(!pipeline.is_empty(), "a kept stage list names its pipeline");
+    Ok(Some(pipeline))
+}
+
+/// The catalog pipeline a steer switched `item` to, when it is not the
+/// item's own: what `queue show` and `status` name beside it.
+pub(crate) fn switched_to(store: &Store, item: &QueueItem) -> Result<Option<String>, ArchonError> {
+    let name = kept_name(store, &item.id)?;
+    Ok(name.filter(|name| name != &item.pipeline))
 }
 
 /// Forget the steered stage list: the item runs its pipeline as the catalog

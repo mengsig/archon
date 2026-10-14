@@ -147,6 +147,7 @@ impl Fake {
                 spent_usd: 0.0,
                 gates: vec![],
                 delegations: Default::default(),
+                switched_to: None,
             })),
             Request::RepoList => Reply::Repos(vec![]),
             Request::ListQuestions { .. } => Reply::Questions(vec![]),

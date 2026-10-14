@@ -70,6 +70,7 @@ fn summarize(
     let spent_usd = store.spend_for_item(&item.id, estimates)?;
     let waiting_on = waiting_on(store, &item, &runs, &stages)?;
     let waiting_reason = waiting.reason(store, &item, waiting_on.as_ref())?;
+    let switched_to = crate::executor::steer::switched_to(store, &item)?;
     Ok(ItemSummary {
         waiting_reason,
         waiting_on,
@@ -77,6 +78,7 @@ fn summarize(
         stage,
         spent_usd,
         pr_url,
+        switched_to,
     })
 }
 

@@ -137,8 +137,8 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
   still to come. The model policy, the budgets and the required review hold
   as for an enqueue. A steered run survives a daemon restart.
 - A failed item given `--insert` or `--switch` is queued again on its own
-  branch, with what it committed. `archon queue show` names the pipeline it
-  runs now.
+  branch, with what it committed. `archon queue show`, `queue list`,
+  `status` and `get_item` name the pipeline a steer switched an item to.
 - Every steer is kept with the item: who made it, when and what it
   changed. Learning counts a steer as a correction.
 - The implementer is kept through its fix loop: it waits while the review

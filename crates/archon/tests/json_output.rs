@@ -217,6 +217,7 @@ impl Canned {
                     pr_url: None,
                     waiting_on: self.waiting_on.clone(),
                     waiting_reason: self.waiting_reason.clone(),
+                    switched_to: None,
                 }])
             }
             Request::Say { .. } | Request::Answer { .. } => Reply::Ok,
@@ -236,6 +237,7 @@ impl Canned {
                 spent_usd: 0.0,
                 gates: vec![],
                 delegations: Default::default(),
+                switched_to: None,
             })),
             Request::CancelItem { .. } | Request::RetryItem { .. } | Request::SteerItem { .. } => {
                 Reply::Item(self.item.clone())
@@ -454,6 +456,7 @@ fn queue_and_status_views_put_the_current_operator_wait_first() {
         pr_url: None,
         waiting_on: canned.waiting_on.clone(),
         waiting_reason: None,
+        switched_to: None,
     }];
     canned.status = Some(status);
     let id = canned.item.id.to_string();
@@ -543,6 +546,7 @@ fn queued_waiting_reason_is_visible_in_queue_and_status_text_and_json() {
         pr_url: None,
         waiting_on: None,
         waiting_reason: canned.waiting_reason.clone(),
+        switched_to: None,
     }];
     canned.status = Some(status);
     let id = canned.item.id.to_string();

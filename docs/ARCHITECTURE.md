@@ -1508,7 +1508,9 @@ branch the work is on, and the item is queued again as a plain retry is
 (§13). Its next run works in the same worktree and on the same branch, with
 the failed run's commits, and runs the reshaped stage list from its first
 stage. The item keeps its pipeline's name; `kv.shape:<item>` holds what it
-runs.
+runs, and its `pipeline` names the catalog pipeline last switched to. Item
+views give that as `switched_to` when it is not the item's own, and `queue
+show`, `queue list` and `status` print `<queued> → <switched to>`.
 
 **`update_item` on a running item.** `brief_append` is steered in as a
 note. `model_plan` replaces the plan for the agents started from now, and

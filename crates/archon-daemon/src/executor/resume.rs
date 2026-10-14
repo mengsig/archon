@@ -118,9 +118,8 @@ pub(super) fn told(store: &mut Store, stage: &StageRunId, text: &str) -> Result<
     spawn::save_spawn(store, stage, &stored)
 }
 
-/// Give the kept agent its stage deadline, its new grant and the findings,
-/// keyed by the stage run. `false` when it cannot go on: a fresh agent takes
-/// the attempt. `request` is the attempt's own, never sent as a spawn.
+/// Give the kept agent its deadline, new grant and findings, keyed by the stage run;
+/// `false` when it cannot go on and a fresh agent takes the attempt (`request` is never spawned).
 pub(super) async fn hand_over(
     ctx: &DaemonContext,
     stage: &StageRun,
@@ -158,9 +157,8 @@ pub(super) async fn hand_over(
     Ok(false)
 }
 
-/// Aether's new cap for `agent`, resumed on `stage` with `grant`. Aether's cap
-/// counts the agent's subtree over its whole life, so it is what the earlier
-/// attempts on the agent spent plus the grant. `None` when it has no cap.
+/// Aether's new cap for `agent` resumed on `stage`: the cap counts its subtree's whole
+/// life, so earlier attempts' spend plus `grant`. `None` when it has no cap.
 fn regranted_cap(
     store: &Store,
     stage: &StageRun,

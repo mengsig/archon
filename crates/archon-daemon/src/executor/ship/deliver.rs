@@ -226,6 +226,11 @@ async fn carry_out(ctx: &DaemonContext, claimed: &Claimed) -> Result<ShipOutcome
         base: base.clone(),
         allowed: repo_identity::RepoIdentity::allowed(identity.as_ref()),
     };
+    let own = repo_identity::DAEMON_EMAIL;
+    assert!(
+        target.allowed.iter().any(|e| e == own),
+        "archond's own merges always ship"
+    );
     let record = plan.record.clone();
     let checked = tokio::task::spawn_blocking(move || checks::check(&target, &record))
         .await
@@ -234,6 +239,8 @@ async fn carry_out(ctx: &DaemonContext, claimed: &Claimed) -> Result<ShipOutcome
         Ok(checked) => checked.commit,
         Err(refusal) => return refused(refusal),
     };
+    let full = crate::worktree::stack::is_commit_id(&commit);
+    assert!(full, "the checks prove a full commit id: {commit:?}");
     if !pushes {
         return Ok(ShipOutcome::Shipped {
             commit,

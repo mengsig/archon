@@ -228,6 +228,15 @@ pub fn sanitized_text(text: &str) -> Result<String, ArchonError> {
             "a lesson cannot instruct an authority or permission override".into(),
         ));
     }
+    assert!(
+        plain.chars().count() <= MAX_TEXT_CHARS,
+        "learned text stays bounded"
+    );
+    let syntax = ['\n', '`', '#', '<', '>', '/', ':', '[', ']', '{', '}', '*'];
+    assert!(
+        !plain.contains(syntax),
+        "learned text is never contract syntax"
+    );
     Ok(plain)
 }
 

@@ -81,9 +81,8 @@ async fn foreground() -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Start `archon daemon run` in its own process group, its output appended
-/// to the startup log beside the socket, and wait until it listens. Fails as
-/// soon as the daemon exits first.
+/// Start `archon daemon run` in its own process group, appending to the startup log
+/// beside the socket, and wait until it listens; fail as soon as it exits first.
 async fn detach(json: bool) -> anyhow::Result<ExitCode> {
     let socket = archon_client::default_socket();
     let socket =

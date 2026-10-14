@@ -323,6 +323,10 @@ async fn apply(
     run: &PipelineRun,
     item: &QueueItem,
 ) -> Result<(), ArchonError> {
+    assert_eq!(
+        run.item, item.id,
+        "a distillation applies to its own errand"
+    );
     if !matches!(run.state, RunState::Succeeded { .. }) {
         return ctx
             .store
@@ -342,6 +346,12 @@ async fn apply(
         ));
     };
     let lessons = proposed_lessons(value, item)?;
+    let waiting =
+        |l: &Lesson| l.state == LessonState::Proposed && l.source == LessonSource::Distilled;
+    assert!(
+        lessons.iter().all(|(l, _)| waiting(l)),
+        "distilled advice waits to be confirmed"
+    );
     let proposal = value
         .get("pipeline_proposal")
         .filter(|v| !v.is_null())

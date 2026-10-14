@@ -155,19 +155,14 @@ pub(crate) async fn inbox(
     seq: u64,
     incoming: &InboxMessage,
 ) -> Result<(), ArchonError> {
-    let cursor = format!("message_inbox:{target}");
+    let cursor = cursor_key(target);
     let known = {
         let store = ctx.store.lock().await;
         let seen: u64 = read(&store, &cursor)?.unwrap_or(0);
         if seq <= seen {
             return Ok(());
         }
-        executor::node_run(&store, target)?.is_some()
-            || store.stage_run_by_agent(target)?.is_some()
-            || store
-                .kv_get(archon_queue::store::keys::ORCHESTRATOR_AGENT)?
-                .as_deref()
-                == Some(target.as_str())
+        is_known(&store, target)?
     };
     if !known {
         match executor::recover_message_node(ctx, target).await {
@@ -175,11 +170,7 @@ pub(crate) async fn inbox(
             Err(error) if error.is_store() || matches!(error, ArchonError::Unavailable(_)) => {
                 return Err(error);
             }
-            Err(refusal) => {
-                refuse_inbox(ctx, target, seq, incoming, &refusal).await?;
-                ctx.store.lock().await.kv_set(&cursor, &seq.to_string())?;
-                return Ok(());
-            }
+            Err(refusal) => return refuse_past(ctx, target, seq, incoming, &refusal).await,
         }
     }
     let result = {
@@ -192,32 +183,65 @@ pub(crate) async fn inbox(
             remember_operator(&mut store, target, seq, incoming)?;
             return Ok(());
         };
-        let key = counter_key(&incoming.sender, target);
         let most = ctx.config.limits.max_agent_messages;
-        match check_text(&incoming.text).and_then(|()| next_count(&store, &key, most)) {
-            Ok(count) => {
-                let count = count.to_string();
-                let seq = seq.to_string();
-                node_message(&store, target, run, incoming).and_then(|message| {
-                    triggers::record_message(
-                        &mut store,
-                        message,
-                        &[(&key, &count), (&cursor, &seq)],
-                    )
-                })
-            }
-            Err(refusal) => Err(refusal),
-        }
+        admit(&mut store, target, run, seq, incoming, most)
     };
     match result {
         Ok(receipt) => publish(ctx, &receipt),
         Err(error) if error.is_store() => return Err(error),
-        Err(refusal) => {
-            refuse_inbox(ctx, target, seq, incoming, &refusal).await?;
-            ctx.store.lock().await.kv_set(&cursor, &seq.to_string())?;
-        }
+        Err(refusal) => refuse_past(ctx, target, seq, incoming, &refusal).await?,
     }
     Ok(())
+}
+
+fn cursor_key(target: &AetherAgentId) -> String {
+    format!("message_inbox:{target}")
+}
+
+/// Whether `target` is a run node's, a stage's or the orchestrator's agent.
+fn is_known(store: &Store, target: &AetherAgentId) -> Result<bool, ArchonError> {
+    let orchestrator = store.kv_get(archon_queue::store::keys::ORCHESTRATOR_AGENT)?;
+    Ok(executor::node_run(store, target)?.is_some()
+        || store.stage_run_by_agent(target)?.is_some()
+        || orchestrator.as_deref() == Some(target.as_str()))
+}
+
+/// Record `incoming` to `run`'s node within the sender's `most` messages,
+/// moving the inbox cursor past `seq` in the same write.
+fn admit(
+    store: &mut Store,
+    target: &AetherAgentId,
+    run: archon_core::id::PipelineRunId,
+    seq: u64,
+    incoming: &InboxMessage,
+    most: u32,
+) -> Result<FeedItem, ArchonError> {
+    check_text(&incoming.text)?;
+    let key = counter_key(&incoming.sender, target);
+    let count = next_count(store, &key, most)?;
+    assert!(
+        (1..=most).contains(&count),
+        "a counted message is within the limit"
+    );
+    let message = node_message(store, target, run, incoming)?;
+    assert_eq!(message.addressed_to_run_node.as_ref(), Some(target));
+    let (cursor, count, seq) = (cursor_key(target), count.to_string(), seq.to_string());
+    triggers::record_message(store, message, &[(&key, &count), (&cursor, &seq)])
+}
+
+/// Refuse `incoming` to its sender and move the inbox cursor past `seq`.
+async fn refuse_past(
+    ctx: &DaemonContext,
+    target: &AetherAgentId,
+    seq: u64,
+    incoming: &InboxMessage,
+    refusal: &ArchonError,
+) -> Result<(), ArchonError> {
+    refuse_inbox(ctx, target, seq, incoming, refusal).await?;
+    ctx.store
+        .lock()
+        .await
+        .kv_set(&cursor_key(target), &seq.to_string())
 }
 
 fn remember_operator(

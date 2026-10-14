@@ -39,6 +39,10 @@ pub(super) async fn verify(
     owed: Owed,
     outcome: StageOutcome,
 ) -> Result<StageOutcome, ArchonError> {
+    assert_eq!(
+        stage.run, run.id,
+        "a stage's review is checked with its own run"
+    );
     let StageOutcome::Completed {
         summary,
         structured: Some(mut structured),
@@ -65,9 +69,8 @@ pub(super) async fn verify(
     })
 }
 
-/// The reviewers among the `named` agents that passed `stage`'s change as
-/// the run's branch holds it, or why they do not make the `owed` reviewers.
-/// A branch not holding the `shipped` tree, if given, is not what ships.
+/// The `named` agents that passed `stage`'s change as the branch holds it, or why they
+/// are not the `owed` reviewers or the branch does not hold the `shipped` tree.
 async fn reviewers(
     ctx: &DaemonContext,
     run: &PipelineRun,
@@ -100,6 +103,16 @@ async fn reviewers(
             Err(why) => return Ok(Err(format!("reviewer {} {why}", child.agent))),
         }
     }
+    // `holding` counts passes by index, which must name the picked agent.
+    assert_eq!(
+        verdicts.len(),
+        picked.len(),
+        "a verdict for every reviewer picked"
+    );
+    assert!(
+        picked.len() >= owed as usize,
+        "the review level's reviewers were picked"
+    );
     let counted = holding(ctx, run, verdicts, owed, shipped).await?;
     Ok(counted.map(|passes| {
         let found = passes.into_iter().map(|i| picked[i]);

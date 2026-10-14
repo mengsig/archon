@@ -26,9 +26,8 @@ pub(super) struct Request<'a> {
     pub draft: bool,
 }
 
-/// Push `commit`, the one the checks proved, to `branch` on `repo`'s
-/// `origin`, never forced. Pushing what `origin` has already is a success,
-/// so a repeated delivery pushes nothing twice.
+/// Push `commit`, the one the checks proved, to `branch` on `repo`'s `origin`, never
+/// forced; what `origin` already has is a success, so a repeated delivery pushes once.
 pub(super) async fn push(
     data_dir: &Path,
     repo: &Path,
@@ -165,6 +164,11 @@ async fn create(
     repo: &Path,
     request: Request<'_>,
 ) -> Result<Result<String, String>, ArchonError> {
+    assert!(!request.branch.is_empty() && !request.base.is_empty());
+    assert_ne!(
+        request.branch, request.base,
+        "a pull request is for another branch"
+    );
     let mut args = vec![
         "pr",
         "create",

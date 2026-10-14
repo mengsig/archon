@@ -58,6 +58,14 @@ pub(super) async fn settle(
             return Ok(FollowUp::poke());
         }
         let all = store.stage_runs(&current_run.id)?;
+        assert_eq!(
+            current_stage.run, current_run.id,
+            "a stage settles into its own run"
+        );
+        assert!(
+            all.iter().any(|s| s.id == current_stage.id),
+            "the run lists the stage it settles"
+        );
         (current_stage, current_run, all)
     };
     // Verification failures are final stage outcomes, not infrastructure

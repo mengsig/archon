@@ -409,7 +409,7 @@ fn caller_errors_have_typed_json_categories() {
             &["pause", "--hard", "--pipeline", "ask"],
             "invalid_argument",
         ),
-        (&["repo", "set", "missing"], "invalid_argument"),
+        (&["repo", "set", "missing"], "not_found"),
         (&["pipelines", "list", "--repo", "missing"], "not_found"),
         (&["setup", "--resync"], "invalid_argument"),
         (&["daemon", "stop", "--aether"], "invalid_argument"),

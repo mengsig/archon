@@ -289,9 +289,8 @@ impl PipelineSpec {
         stage
     }
 
-    /// Drop the model choice and reason a 1.0 item stored for the ship agent
-    /// this built-in no longer has; `true` when anything went. Only built-ins
-    /// are repaired: user pipelines and run snapshots load as other sources.
+    /// Drop a 1.0 item's model choice and reason for the ship agent this built-in no
+    /// longer has; `true` when any went. User pipelines and run snapshots keep theirs.
     pub fn drop_retired_ship(
         &self,
         plan: &mut ModelPlan,

@@ -115,9 +115,8 @@ pub(crate) enum Config {
     /// Only the repository's own, which may be an agent's: no system or
     /// global file, and no credential helper at all.
     Sealed,
-    /// The operator's system and global files too: credential helpers,
-    /// `insteadOf`, ssh and filter settings apply. Only on a git directory
-    /// the daemon writes, or for [`DaemonGit::configured_in`].
+    /// The operator's system and global files too (credential helpers, `insteadOf`, ssh,
+    /// filters); only on a git directory the daemon writes, or [`DaemonGit::configured_in`].
     Operator,
 }
 
@@ -148,9 +147,8 @@ impl DaemonGit {
         git
     }
 
-    /// Git on `git_dir`, which only the daemon writes, with `work_tree` if
-    /// it has one: `--git-dir` names it, so no `.git` or `core.worktree`
-    /// written elsewhere is followed.
+    /// Git on `git_dir`, which only the daemon writes, and `work_tree` if any: `--git-dir`
+    /// names it, so no `.git` or `core.worktree` written elsewhere is followed.
     pub(crate) fn owned(git_dir: &Path, work_tree: Option<&Path>, config: Config) -> Self {
         assert!(git_dir.is_absolute(), "daemon git directories are absolute");
         let place = work_tree.unwrap_or(git_dir);

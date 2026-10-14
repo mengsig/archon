@@ -217,10 +217,8 @@ pub async fn start_item(ctx: &DaemonContext, item: &QueueItemId) -> Result<(), A
     run_follow_up(ctx, follow).await
 }
 
-/// Start `items` as [`start_item`] does, the git work of one repository in
-/// order (git locks its shared state) and up to `lanes::MAX_LANES`
-/// repositories at once, then every first spawn. One item's failure does
-/// not hold back the others; the first is returned.
+/// Start `items` as [`start_item`] does, each repository's git work in order and
+/// `lanes::MAX_LANES` repositories at once; a failure stops no other, the first is returned.
 pub async fn start_items(ctx: &DaemonContext, items: &[QueueItemId]) -> Result<(), ArchonError> {
     let by_repo = items_by_repository(ctx, items).await?;
     let started = lanes::run(by_repo, |id| async move {

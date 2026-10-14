@@ -337,6 +337,11 @@ fn retune(
         *choice = retuned(choice, steer);
     }
     let now = choices[0].clone();
+    let model_named = steer.model.as_ref().is_none_or(|model| *model == now.model);
+    assert!(
+        model_named && steer.effort.is_none_or(|e| e == now.effort),
+        "the plan runs the steer"
+    );
     asked.env.policy(&ctx.config).check_plan(plan)?;
     for stage in at.live().filter(|stage| stage.stage_id == at.target) {
         let choice = retuned(stage.current_choice(), steer);

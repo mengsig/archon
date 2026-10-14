@@ -8,6 +8,7 @@ use archon_core::error::ArchonError;
 use archon_pipeline::review::Verdict;
 
 use crate::worktree;
+use crate::worktree::stack::is_commit_id;
 
 /// Commits a refusal names, shortened past this many digits.
 const SHOWN_DIGITS: usize = 12;
@@ -131,6 +132,8 @@ fn place_one(
     fork: Option<&str>,
     verdict: &Verdict,
 ) -> Result<Result<(String, Option<String>), String>, ArchonError> {
+    // Ids are compared as text below, so both must be full.
+    assert!(is_commit_id(head), "the branch head is a full commit id");
     let dir = history.dir;
     let Some(read) = worktree::commit_id(dir, &verdict.head)? else {
         return Ok(Err(format!(
@@ -138,6 +141,7 @@ fn place_one(
             verdict.head
         )));
     };
+    assert!(is_commit_id(&read), "git names the commit read in full");
     if !history.holds(&read, head)? {
         let read = short(&read);
         return Ok(Err(format!(

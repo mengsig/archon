@@ -144,9 +144,8 @@ async fn sync(ctx: &DaemonContext, asked: &Asked) -> Result<(), ArchonError> {
     forget_unregistered(ctx, &layout, &repos).await
 }
 
-/// The repositories of `repos` a pass refreshes: every one when all were
-/// asked for, else those asked for and those whose mirror has a problem or
-/// was never made.
+/// The `repos` a pass refreshes: all when all were asked for, else those asked for
+/// and those whose mirror has a problem or was never made.
 async fn selected<'a>(
     ctx: &DaemonContext,
     repos: &'a [Repo],

@@ -96,9 +96,8 @@ fn git(tree: &Path, args: &[&str]) -> Result<String, ArchonError> {
     DaemonGit::sealed_in(tree).args(args.iter().copied()).text()
 }
 
-/// The tracked files of the run worktree that differ from `commit`, compared
-/// through the shadow in an index of its own: no filter the worktree's config
-/// names runs, and nothing in the worktree is written.
+/// The run worktree's tracked files that differ from `commit`, compared through the
+/// shadow in its own index, so no configured filter runs and the worktree is not written.
 fn changed_files(target: &Target, commit: &str) -> Result<String, ArchonError> {
     assert!(crate::worktree::stack::is_commit_id(commit), "a commit id");
     let shadow = Shadow::of(&target.data_dir, &target.repo_path)?;

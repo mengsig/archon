@@ -281,13 +281,7 @@ pub(super) async fn retry(
     let (item, fresh_note) = {
         let _table = ctx.runs.lock().await;
         let loaded = ctx.store.lock().await.item(id)?;
-        check_retryable(&loaded)?;
-        if ctx.store.lock().await.has_pending_stack_fix(id)? {
-            return Err(ArchonError::InvalidTransition(format!(
-                "{id} has a restack fix still to finish, which works on its branch; retry it once \
-                 the fix is done, or cancel the fix first"
-            )));
-        }
+        check_retryable(&*ctx.store.lock().await, &loaded)?;
         let mut item = loaded.clone();
         item.model_plan = plan;
         if replaces_plan || retry.model_reasons.is_some() {
@@ -321,18 +315,27 @@ pub(super) async fn retry(
     Ok(Reply::Item(item))
 }
 
-fn check_retryable(item: &QueueItem) -> Result<(), ArchonError> {
-    if matches!(
+/// A finished item whose restack fix, which works on its branch, is not
+/// still to run.
+fn check_retryable(store: &archon_queue::Store, item: &QueueItem) -> Result<(), ArchonError> {
+    if !matches!(
         item.state,
         QueueState::Succeeded { .. } | QueueState::Failed { .. } | QueueState::Cancelled { .. }
     ) {
-        return Ok(());
+        return Err(ArchonError::InvalidTransition(format!(
+            "only finished items are retried; {} is {}",
+            item.id,
+            item.state.kind()
+        )));
     }
-    Err(ArchonError::InvalidTransition(format!(
-        "only finished items are retried; {} is {}",
-        item.id,
-        item.state.kind()
-    )))
+    if store.has_pending_stack_fix(&item.id)? {
+        return Err(ArchonError::InvalidTransition(format!(
+            "{} has a restack fix still to finish, which works on its branch; retry it once \
+             the fix is done, or cancel the fix first",
+            item.id
+        )));
+    }
+    Ok(())
 }
 
 /// The repository a fresh retry starts again in: only a pipeline that works

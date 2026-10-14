@@ -29,6 +29,7 @@ pub(super) async fn verify(
     daemon_ships: bool,
     outcome: StageOutcome,
 ) -> Result<StageOutcome, ArchonError> {
+    assert_eq!(stage.run, run.id, "a stage is verified with its own run");
     let StageOutcome::Completed {
         summary,
         structured,

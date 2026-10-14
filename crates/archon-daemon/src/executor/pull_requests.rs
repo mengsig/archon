@@ -28,9 +28,8 @@ struct ShippedPr {
     url: String,
 }
 
-/// Ask GitHub about the watched pull requests, with one listing of each
-/// repository's open ones, and record what changed. One that cannot be read
-/// is logged and asked about again in the next pass.
+/// Record what changed in the watched pull requests, one GitHub listing per repository;
+/// one that cannot be read is logged and asked about again next pass.
 pub async fn observe(ctx: &DaemonContext) -> Result<Observed, ArchonError> {
     let mut seen = Observed::default();
     if !ctx.config.learning.enabled {

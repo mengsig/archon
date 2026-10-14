@@ -154,9 +154,8 @@ impl WorktreeManager {
         Ok(Some(aside))
     }
 
-    /// Remove a worktree `git worktree remove` would remove without
-    /// `--force`, asking through the shadow under `data_dir` whether it is
-    /// clean, so no filter runs; the branch is kept.
+    /// Remove a worktree `git worktree remove` would without `--force`, asking the
+    /// shadow under `data_dir` whether it is clean so no filter runs; the branch stays.
     pub fn remove(
         &self,
         data_dir: &Path,

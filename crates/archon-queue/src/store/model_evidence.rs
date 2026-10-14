@@ -346,6 +346,10 @@ impl super::Store {
                 *wins += u32::from(observed.passed == Some(true) && !corrected);
             }
         }
+        let bounded = groups
+            .values()
+            .all(|(costs, wins)| *wins as usize <= costs.len());
+        assert!(bounded, "a choice wins at most once per observation");
         finish_routes(groups, repo, pipeline, stage, size)
     }
 }

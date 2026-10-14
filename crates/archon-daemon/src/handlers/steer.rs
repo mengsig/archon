@@ -278,12 +278,16 @@ async fn store_steer(
         shape,
     } = changed;
     assert_eq!(loaded.state, item.state, "the state changes by transition");
+    assert_eq!(
+        loaded.id, item.id,
+        "a steer changes the item it was asked for"
+    );
     let now = archon_core::now();
     let mut store = ctx.store.lock().await;
     let mut item = item;
     let mut revive = false;
-    // The failed run a shape steer revives: the steer corrects it.
-    let mut corrected = None;
+    // The failed run a shape steer revives; a steer is no correction of it.
+    let mut revived_run = None;
     if let Some((edit, stages)) = &shape {
         let switched = match edit {
             RunEdit::SwitchPipeline { pipeline, .. } => Some(pipeline.as_str()),
@@ -298,7 +302,7 @@ async fn store_steer(
             if let Some(run) = run {
                 item = revived(&store.run(run)?, edit, item)?;
             }
-            corrected = run.clone();
+            revived_run = run.clone();
             what.push("queued it again on its branch".to_owned());
         }
     }
@@ -317,7 +321,7 @@ async fn store_steer(
         what: what.clone(),
         note: asked.steer.note.as_ref().map(|note| note.trim().to_owned()),
     };
-    live::record(&mut store, &item.id, corrected.as_ref(), record)?;
+    live::record(&mut store, &item.id, revived_run.as_ref(), record)?;
     drop(store);
     let text = live::history_line(&item.id, asked.by, &what, asked.steer.note.as_deref());
     items::post_note(ctx, &item.id, &text).await;

@@ -992,7 +992,10 @@ async fn states_that_cannot_be_steered_say_so() {
     let (done, _) = implementing(&h, "finished").await;
     run_out(&h, &done.id).await;
     let over = refused(&h, &done.id, note(NOTE)).await;
-    assert!(over.contains("already succeeded"), "{over}");
+    assert!(
+        over.contains("already succeeded; retry it, then steer it"),
+        "{over}"
+    );
 
     let (stopped, _) = implementing(&h, "cancelled").await;
     let cancel = Request::CancelItem {

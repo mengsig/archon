@@ -675,7 +675,11 @@ stage's model (name the stage), and an insert or a switch. `--abort`,
 `--insert` or `--switch` is queued again on the same branch and worktree,
 with what its failed run committed; this is how an item whose stage gave
 up with `ESCALATE:` continues on a stronger pipeline instead of starting
-over. A cancelled item is retried first, and a succeeded one is done.
+over. A cancelled item takes no stage change and a succeeded one no steer
+at all until it is retried. `archon queue retry` queues a succeeded item
+again on its branch, delivering into the pull request it has; an item
+waiting on it waits for it to succeed again, and the retry counts against
+the run that passed.
 
 Every steer is recorded with who made it (`operator` or `orchestrator`) and
 what it changed. `archon queue show <id>` lists them, and the feed has a

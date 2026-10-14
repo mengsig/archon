@@ -170,7 +170,9 @@ fn check_steerable(item: &QueueItem, steer: &Steer) -> Result<(), ArchonError> {
     let refuse = |why: &str| Err(ArchonError::InvalidTransition(format!("item {id} {why}")));
     match &item.state {
         QueueState::Dispatching => return refuse("is starting; steer it again in a moment"),
-        QueueState::Succeeded { .. } => return refuse("already succeeded"),
+        QueueState::Succeeded { .. } => {
+            return refuse("already succeeded; retry it, then steer it");
+        }
         QueueState::Cancelled { .. } if steer.changes_shape() => {
             return refuse("was cancelled; retry it, then steer its stages");
         }

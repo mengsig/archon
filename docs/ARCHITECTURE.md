@@ -1224,9 +1224,13 @@ The legal edges are implemented in `QueueState::can_transition_to`:
 - `running` can go to `succeeded`, `failed` or `cancelled`.
 - `blocked` can go to `queued` or `cancelled`.
 - `failed`, `cancelled` and `succeeded` can go back to `queued` (operator or
-  orchestrator retry). A retried `succeeded` item continues on its branch into
-  the pull request it has, and the retry is a correction of the run that had
-  passed (§19).
+  orchestrator retry; the `retry` edge above). Until 1.1 `succeeded` was
+  final. A retried `succeeded` item runs again in its worktree and on its
+  branch (a fresh retry forks a new branch from the base), delivers into the
+  pull request it has, and the retry is a `retry_after_done` correction of
+  the run that had passed (§19), written with the transition. A dependent
+  still queued waits for it to succeed again; one that already started goes
+  on. Until it is retried, a `succeeded` item takes no steer or update.
 
 When a dependency fails or is cancelled, its dependents move to `blocked` and
 the orchestrator gets an `item_blocked` trigger. When a dependency is retried,

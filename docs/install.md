@@ -40,12 +40,12 @@ profile, and it never touches Archon's configuration or data.
 Set these in the environment of `sh`, after the pipe:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mengsig/archon/main/install.sh | ARCHON_VERSION=v1.0.1 sh
+curl -fsSL https://raw.githubusercontent.com/mengsig/archon/main/install.sh | ARCHON_VERSION=v1.1.0 sh
 ```
 
 | Variable | Effect |
 | --- | --- |
-| `ARCHON_VERSION` | Install this release, such as `v1.0.1`, instead of the latest. |
+| `ARCHON_VERSION` | Install this release, such as `v1.1.0`, instead of the latest. |
 | `ARCHON_INSTALL_DIR` | Install here instead of `~/.local/bin`. The directory must be yours to write. |
 | `ARCHON_SKIP_AETHER=1` | Do not install Aether; print the command that does. |
 | `ARCHON_NONINTERACTIVE=1` | Ask nothing: a missing Aether is installed without a question. |
@@ -106,7 +106,7 @@ Every release carries, for each archive, a `.sha256` file, and one
 `SHA256SUMS` file that lists all of them.
 
 ```sh
-tag=v1.0.1
+tag=v1.1.0
 target=x86_64-unknown-linux-musl
 base=https://github.com/mengsig/archon/releases/download/$tag
 curl -fsSLO "$base/archon-$target.tar.gz"
@@ -127,7 +127,7 @@ archive holds `LICENSE` and `THIRD-PARTY-NOTICES`; the installer and
 ```sh
 archon update            # install the latest release when it is newer
 archon update --check    # only report: exit 0 when up to date, 10 when a newer release exists
-archon update --version v1.2.3    # install exactly this release; an older one is a downgrade
+archon update --version v1.2.3    # install exactly this release
 ```
 
 `archon update` downloads the same archive as the installer, makes the same
@@ -155,6 +155,40 @@ archon orchestrator restart
 
 It also reports whether your Aether serves what the new version needs, and
 prints `aether update` when it does not.
+
+### Back up before a release that migrates the store
+
+A release may migrate the queue database (`archon.db` in the data
+directory) when its `archond` first starts, and an older `archond` refuses
+a migrated store: "store schema version 10 is newer than this archon
+supports (7)". The migration is one-way. 1.1.0 migrates a 1.0 store, so
+back it up first:
+
+```sh
+archon daemon stop
+cd ~/.local/share/archon      # or $ARCHON_DATA_DIR; ~/Library/Application Support/archon on macOS
+cp archon.db archon-1.0.db
+archon update
+```
+
+An `archond` that stopped cleanly leaves no `archon.db-wal` beside the
+store. If there is one, copy it too, as `archon-1.0.db-wal`.
+
+To go back, stop the new `archond`, install the old release and put the
+copy back. Everything the newer release recorded since the copy is lost.
+
+```sh
+archon daemon stop
+archon update --version v1.0.1
+cd ~/.local/share/archon
+rm -f archon.db-wal archon.db-shm
+cp archon-1.0.db archon.db    # and archon-1.0.db-wal as archon.db-wal, if you copied one
+archon daemon start
+```
+
+`archon update --version` with an older release installs it even when
+the store was migrated; the old `archond` then refuses to start until the
+copy is back.
 
 `archon update` only replaces an `archon` that the installer put in a
 directory you can write. For a `cargo install` or a build directory it

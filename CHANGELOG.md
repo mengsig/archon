@@ -143,8 +143,10 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
   changed. Learning counts a steer as a correction.
 - The implementer is kept through its fix loop: it waits while the review
   runs and then gets the findings, with its context intact, and the fix
-  attempt's own budget on top of what it already spent. Reviewers stay
-  fresh. A stage's prompt carries `## Handoff from earlier stages`.
+  attempt's own budget on top of what it already spent. A fix whose final
+  message leaves out the ship record is asked for it once before the stage
+  fails. Reviewers stay fresh. A stage's prompt carries `## Handoff from
+  earlier stages`.
 
 ### Stacked changes and initiatives
 

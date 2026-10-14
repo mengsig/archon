@@ -71,6 +71,10 @@ pub(crate) struct StoredSpawn {
 pub(crate) struct KeptAgent {
     pub agent: AetherAgentId,
     pub message: String,
+    /// The summary of a final message that left out the ship record, kept
+    /// once the agent was asked for the record (§6.7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asked_record: Option<String>,
 }
 
 /// The branch a team slot's worker worktree must have checked out.

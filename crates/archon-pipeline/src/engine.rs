@@ -414,6 +414,12 @@ impl RunDriver {
         Some(&stage.roles)
     }
 
+    /// Whether stage `stage_id` hands in the ship record archond delivers.
+    pub fn records_ship(&self, stage_id: &str) -> bool {
+        let records = self.spec.ship_record_stage();
+        records.is_some_and(|stage| stage.id == stage_id)
+    }
+
     /// How many independent reviewers stage `stage_id` owes this run as the
     /// review its pipeline declares; `0` when it holds none.
     pub fn reviewers_owed(&self, stage_id: &str) -> u32 {

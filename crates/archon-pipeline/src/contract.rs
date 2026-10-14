@@ -439,7 +439,7 @@ fn ship_record_rules(kind: StageKind) -> String {
 }
 
 /// The ship record as an agent writes it, in a fenced block.
-pub(crate) const SHIP_RECORD_JSON: &str = "\
+pub const SHIP_RECORD_JSON: &str = "\
 ```json\n\
 {\"commit\": \"<git rev-parse HEAD>\", \"tree\": \"<git rev-parse HEAD^{tree}>\",\n \
 \"checks\": [\"<each verification command that ran>\"],\n \

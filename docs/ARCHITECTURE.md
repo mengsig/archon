@@ -1560,7 +1560,11 @@ stage are created as before, a fresh agent per attempt.
   the attempt's summary, with the object of its last fenced `json` block
   as its `structured`. That is how a kept agent of the stage `[pipeline.ship]`
   names hands in a new ship record (§8.7) for its fix, which
-  `sections::resume_message` asks of it. The pump checks when the agent's turn ends and the
+  `sections::resume_message` asks of it. A message without a valid record
+  gets one more message, keyed `<stage run>:record`, asking for the record
+  alone (`resume::recorded`); the attempt then settles on that answer's
+  record with the first message's summary, and a second miss fails the
+  stage at its gate. The pump checks when the agent's turn ends and the
   sweep checks again, so a missed event only delays it. A resumed attempt
   past its deadline has its agent cancelled and is `timed_out`.
 - **Replaced.** A fresh agent takes the attempt, with the findings under
@@ -3460,6 +3464,7 @@ rubric), and a review task (seeded bug must be reported).
 | `archond` restarts on a steered run | Startup reconcile. | `frozen::thaw` applies the run's `run_edits` to its frozen pipeline and the driver takes its recorded aborts before `RunDriver::resume`, so the run has the stages and decisions the steers left (§6.6). |
 | A kept agent cannot take its fix attempt | `get_agent` reports it not live, or Aether refuses the deadline or the message. | The agent is cancelled and a fresh one takes the attempt with the findings and the digest of the last attempt (§6.7). An unanswered call is repeated under the same key instead. |
 | A resumed attempt's agent dies or ends its turn saying nothing | `resumed_outcome` at the agent's turn end and at every sweep. | Infra retry (§6.3): the kept agent is stopped and a fresh agent takes the slot. |
+| A resumed attempt's final message leaves out the ship record it owes | `ShipRecord::read` of its `structured` as it settles. | The agent is asked once for the record alone (§6.7); a second miss fails the stage, saying what is wrong with the record. |
 | Worktree creation fails | git exit status. | Item `failed` with git's stderr. The feed gets a `Blocker`. |
 | Disk low or full | Free space below `limits.min_free_gb` at a dispatch pass, or a stage or `create_agent` failed with `database or disk is full`, `No space left on device` or `ENOSPC`. | The disk hold (§7.3): no dispatch, and one `Blocker` with the free space, the path and `archon gc`. With `worktrees.auto_gc` on, a worktree gc pass (§13.2) runs before the held dispatch. When `archond` cannot start, `archon gc --offline` collects without it. A stage that failed on a full disk is retried once space is back, without using an infra retry (§6.3); a `create_agent` that keeps failing so fails its run after 5 tries. |
 | Archon's store on a full disk | SQLite `SQLITE_FULL`, mapped to `ArchonError::DiskFull` (`store: disk full: ...`). | Standby: the pump, dispatcher, trigger delivery, pruning and `archond`'s own gc passes stop, since memory may no longer match a store whose write failed. The socket keeps serving reads (`status`, items, repos, pipelines, questions, the feed, reports, the spend report), so `archon status` and `archon gc` work, and refuses everything else with the `DiskFull` error. Staying up also keeps clients that autostart `archond` from restarting it in a loop. Once free space ends the disk hold, `archond` exits cleanly, and the next command starts it, which recovers as after a crash. A store that fails to open on a full disk ends the start with the same error. |

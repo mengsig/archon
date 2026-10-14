@@ -491,20 +491,24 @@ fn abort(
         attempt > 0 || change.cancel.is_empty(),
         "a stage that never started has no agents to stop"
     );
-    change.what.push(aborted(at.target, attempt, &then));
+    let what = aborted(at.target, attempt, &then);
+    let now = blueprint.item.autonomy.review;
+    change
+        .what
+        .push(shape::noting_review(what, knobs.review, now));
     change.rebuild = true;
     Ok(())
 }
 
-/// What aborting attempt `attempt` of `stage`, then doing `then`, changed.
-fn aborted(stage: &str, attempt: u32, then: &Then) -> String {
+/// For the item's history: what aborting `attempt` of stage `target` did.
+fn aborted(target: &str, attempt: u32, then: &Then) -> String {
+    if attempt == 0 {
+        return format!("removed stage `{target}`");
+    }
     let next = match then {
         Then::Retry => "retries it".to_owned(),
         Then::Skip => "skips it".to_owned(),
         Then::Goto { to } => format!("goes to stage `{to}`"),
     };
-    match attempt {
-        0 => format!("removed stage `{stage}`"),
-        _ => format!("aborted stage `{stage}` (attempt {attempt}); the run {next}"),
-    }
+    format!("aborted stage `{target}` (attempt {attempt}); the run {next}")
 }

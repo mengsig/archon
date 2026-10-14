@@ -283,20 +283,23 @@ pub(super) async fn announce(
         origin: item.origin.clone(),
         lesson_hint: crate::learned::lesson_hint(&*ctx.store.lock().await, item)?,
     };
-    // The base branch may have moved, and the operator may ask about it next.
-    ctx.mirrors.request();
+    // Its base branch may have moved, and the operator may ask about it next.
+    if let Some(repo) = &item.repo {
+        ctx.mirrors.request_repo(repo);
+    }
     if needs_operator || wakes_orchestrator(item, ctx.config.orchestrator.wake_on_success) {
         return triggers::push(ctx, finished).await;
     }
     triggers::push_quiet(ctx, finished).await
 }
 
-/// Whether the finished `item` gives the orchestrator something to do: a
-/// failure, a GitHub thread to answer, or a `notify` tag; the rest waits.
+/// Whether the finished `item` wakes the orchestrator: a failure, a GitHub
+/// thread to answer, a `notify` tag, or a success with `wake_on_success`.
 fn wakes_orchestrator(item: &QueueItem, wake_on_success: bool) -> bool {
     assert!(item.state.is_terminal(), "only a finished item is news");
     let failed = matches!(item.state, QueueState::Failed { .. });
-    failed || wake_on_success || item.origin.is_some() || item.wants_notice()
+    let succeeded = matches!(item.state, QueueState::Succeeded { .. });
+    failed || (succeeded && wake_on_success) || item.origin.is_some() || item.wants_notice()
 }
 
 /// Keep the notification small; the queue, stages and orchestrator retain the

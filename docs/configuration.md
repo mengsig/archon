@@ -65,10 +65,12 @@ more checkout; on another filesystem it is a full copy. A repository whose
 own `[models]` refuses the orchestrator's model gets no mirror.
 
 `archond` posts every finished item to your feed itself and wakes the
-orchestrator only for a failure, a blocker, an item tagged `notify` or one
-a GitHub thread asked for; every wake is a whole orchestrator turn that
-you pay for. The rest reach it with its next turn. Set `wake_on_success =
-true` under `[orchestrator]` to have it woken for every finished item
+orchestrator for a success, a failure, a blocker, an item tagged `notify`
+or one a GitHub thread asked for; every wake is a whole orchestrator turn
+that you pay for. The success wake is what shows a finished item in the
+terminal UI at once. If you follow Archon in `archon chat` instead, set
+`wake_on_success = false` under `[orchestrator]`: a routine success then
+reaches the orchestrator with its next turn
 ([guide](guide.md#when-the-orchestrator-is-woken)).
 
 The helper agents the orchestrator delegates to
@@ -76,12 +78,45 @@ The helper agents the orchestrator delegates to
 mirror or in a scratch directory, never in your checkout. A helper is held
 to `[models]` narrowed by the `[models]` of the repository whose mirror it
 reads, and to `[models]` alone when it reads none. It may delegate once
-more, and no deeper. Helpers' spend counts toward the daily and total
+more, and no deeper ([`max_delegation_depth`](#structural-limits)).
+Helpers' spend counts toward the daily and total
 budgets. `max_parallel_agents` and the other caps count stage agents
 only, so the orchestrator is told to keep its helpers within them. If your
 Aether config sets `[scheduler] run_budget_usd`, Archon's instance inherits
 it, and it is cumulative: once the orchestrator's run has spent it, Aether
 refuses every delegation until `archon orchestrator restart`.
+
+## Structural limits
+
+These `[limits]` keys bound shapes rather than spend. Each default is the
+value earlier releases fixed, and each has a ceiling the daemon will not
+go past:
+
+```toml
+[limits]
+max_delegation_depth = 2         # 1..=4
+max_agent_messages = 20          # 1..=200
+initiative_members = 16          # 1..=64
+initiative_contract_bytes = 2048 # 1..=16384
+```
+
+- `max_delegation_depth`: how many delegations below a stage agent or the
+  orchestrator an agent may be. 2 lets a child delegate once more; 1 makes
+  every child a leaf. Every level adds agents that run outside
+  `max_parallel_agents`. The orchestrator's prompt and each delegating
+  stage's contract state the configured depth.
+- `max_agent_messages`: the `message_orchestrator` calls one stage agent
+  may make in its lifetime, and the messages one run node's inbox may
+  relay. Each message is an orchestrator turn.
+- `initiative_members` and `initiative_contract_bytes`: an initiative's
+  size. The contract is in every member's stage contract, and is sent
+  whole to running members whenever it changes.
+
+Others stay fixed. The pipeline format's own bounds (32 stages, `fan_out`
+16, `max_loops` 10) are the same everywhere, so a pipeline that loads on
+one installation loads on all ([pipelines](PIPELINES.md)). The git-identity
+rules, workspace placement, model policy, budgets, review evidence and
+gates are protections, not sizes, and no configuration turns them off.
 
 ## Learning
 

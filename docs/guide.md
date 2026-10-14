@@ -234,10 +234,11 @@ and kind (`archon log --item <id>`): an escalation shows in the chat as a
 blocker, a relay or info with progress. It also delivers an `agent_message`
 news event to the orchestrator, which acts on it and does not repeat it to
 you. Delivery is durable and coalesced; each
-agent can send at most 20 messages, with a clear refusal after that.
+agent can send at most 20 messages (`[limits] max_agent_messages`), with
+a clear refusal after that.
 Delivered messages to passive run nodes are forwarded through the same
 path, including late events for retired nodes whose normal index was pruned. External
-messages have a separate 20-message cap per run node; refusals reach the
+messages have a separate cap of the same size per run node; refusals reach the
 sending agent or the operator feed. Use the tool for stage messages.
 
 Relay wording alone grants no operator authority. A relay has operator
@@ -302,7 +303,10 @@ holds that tree and carries only commits under your repository's git
 identity, pushes without ever forcing, and opens the PR with `gh`, or
 reuses the one already open for the branch. A delivery that is refused
 fails the item with what to change, and a restart in the middle never
-opens a second PR. See [Shipping](PIPELINES.md#shipping).
+opens a second PR. The item succeeds once its PR is open: `archond` does
+not wait for your CI and does not repair a failing check. Ask for a fix, or
+run `archon queue retry <id> --append "…"`, which delivers into the same
+PR. See [Shipping](PIPELINES.md#shipping).
 
 ## Aether setup
 
@@ -416,8 +420,8 @@ Archon's feed. They overlap, but they are not the same list.
   Aether's native questions and approvals, delegations, stage messages,
   failures, and one row per Archon news trigger, such as
   `Trigger from archon · item finished: qi_… failed — <title>`.
-- **Shown later than in the line chat:** an item that simply succeeded. The
-  orchestrator is not woken for it (see
+- **Shown later than in the line chat, with `wake_on_success = false`:** an
+  item that simply succeeded. The orchestrator is then not woken for it (see
   [When the orchestrator is woken](#when-the-orchestrator-is-woken)), so the
   terminal UI shows it with the orchestrator's next turn, as a row
   `3 routine items finished`, while `archon chat`, `archon log` and
@@ -437,9 +441,12 @@ Archon's feed. They overlap, but they are not the same list.
 ### When the orchestrator is woken
 
 Every turn of the orchestrator reads its whole context again, so a wake
-costs money whether or not there is anything to decide. `archond` therefore
-posts every outcome to the feed itself and wakes the orchestrator only for:
+costs money whether or not there is anything to decide. `archond` posts
+every outcome to the feed itself and wakes the orchestrator for:
 
+- an item that succeeded, so the terminal UI shows it at once: Aether's
+  chat shows only what the orchestrator says, and Aether has no way to add
+  an entry to it without a turn;
 - an item that failed or is blocked, to diagnose it, retry it or tell you;
 - an item tagged `notify` (`archon queue add --tag notify`, or the
   orchestrator's own choice when it wants to act on the result);
@@ -447,15 +454,18 @@ posts every outcome to the feed itself and wakes the orchestrator only for:
 - a stage agent's message, a gate that opened, your answer to its question,
   feedback on a report, a budget that was reached, a cancelled helper.
 
-An item that succeeded or was cancelled without any of these waits. The
-orchestrator reads all such items as one short list at its next turn, and
-a message from you delivers that list first, so it never answers you
-without it. To have it woken for every finished item, as before, set
+A cancelled item waits. So does a routine success when you turn success
+wakes off, which saves a turn per item when you follow Archon in
+`archon chat` or `archon status` rather than in the terminal UI:
 
 ```toml
 [orchestrator]
-wake_on_success = true
+wake_on_success = false
 ```
+
+The orchestrator reads all waiting items as one short list at its next
+turn, and a message from you delivers that list first, so it never answers
+you without it.
 
 ### Answering in the orchestrator's chat
 
@@ -679,11 +689,17 @@ stage's model (name the stage), and an insert or a switch. `--abort`,
 `--insert` or `--switch` is queued again on the same branch and worktree,
 with what its failed run committed; this is how an item whose stage gave
 up with `ESCALATE:` continues on a stronger pipeline instead of starting
-over. A cancelled item is retried first, and a succeeded one is done.
+over. A cancelled item takes no stage change and a succeeded one no steer
+at all until it is retried. `archon queue retry` queues a succeeded item
+again on its branch, delivering into the pull request it has; an item
+waiting on it waits for it to succeed again, and the retry counts against
+the run that passed.
 
 Every steer is recorded with who made it (`operator` or `orchestrator`) and
 what it changed. `archon queue show <id>` lists them, and the feed has a
-`Steered …` entry for each.
+`Steered …` entry for each. An item switched to another pipeline keeps the
+name it was queued with, and `queue show`, `queue list` and `status` print
+both, as in `default-pr-review → quick-pr`.
 
 ### Stacked changes
 
@@ -697,7 +713,7 @@ forward. Conflicts create a fix item on the child branch, visible in the queue.
 
 Ask for one initiative when a request spans repositories. Its shared contract
 states the API names, formats and rollout rules each member must follow.
-`enqueue_initiative` accepts a title, contract (up to 2 KiB), and members with
+`enqueue_initiative` accepts a title, contract (up to 2 KiB), and 1 to 16 members with
 `repo`, `brief`, optional `title`, `pipeline`, `model_plan` and `autonomy` (as
 in an enqueue), and `after: [0, ...]` indices of earlier members. Supply an
 `idempotency_key` when retrying a request. Set `atomic: true` to keep all PRs
@@ -707,7 +723,15 @@ adds a “Part of …” section with sibling PR links and reports one group out
 
 `archon initiatives` lists groups; `archon initiatives show ini_…` shows the
 shared contract and members. `archon queue show qi_…` names its initiative.
-`update_initiative` appends to the shared contract and tells live member leads.
+`update_initiative` appends to the shared contract or replaces it when what was
+agreed changes, and tells live member leads the whole new contract.
+From the CLI, `archon initiatives create request.json` sends the same request
+from a JSON or TOML file, `archon initiatives update ini_… --append-file
+more.md` appends, and `--contract-file revised.md` replaces (`-` reads stdin
+for either). Like an item, an initiative can be named by the start of its id:
+`archon initiatives show 01k2`. `[limits] initiative_members` and
+`initiative_contract_bytes` raise the 16 members and 2 KiB
+([configuration](configuration.md#structural-limits)).
 
 `archon initiatives cancel ini_…` stops unfinished members and leaves successful
 branches and PRs in place. `archon initiatives retry ini_…` resumes failed,
@@ -760,7 +784,7 @@ risk and from what you told it, within a ceiling that only you can raise.
 
 | Knob | Values (default first) | What it changes |
 | --- | --- | --- |
-| `review` | `standard`, `strict`, `none` | how many independent reviewers the change gets: one, three or none. With no pipeline named it picks `default-pr-review`, `strict-pr-review` or `quick-pr`; with `adaptive` or `direct` named, the stage agent delegates that many reviewers and Archon verifies them |
+| `review` | `standard`, `strict`, `none` | how much independent checking the change gets. With no pipeline named it picks `default-pr-review` (one reviewer), `strict-pr-review` (a test gate and three reviewers) or `quick-pr` (none); with `adaptive` or `direct` named, the stage agent delegates one, three or no reviewers and Archon verifies them. Any other pipeline has the level its gated stages give it, whatever its reviewer count: a gated review or test stage makes it `standard` and both make it `strict`, so `refactor` is `strict` with one reviewer |
 | `proposal` | `off`, `lavish` | `lavish`: a proposal page first, and nothing is built until you approve it |
 | `report` | `off`, `with-pr`, `before-pr` | a change report in the PR; `before-pr` waits for your approval before the PR |
 | `merge` | `manual`, `auto` | `auto`: Archon asks GitHub to merge the PR once its checks allow |

@@ -65,6 +65,7 @@ fn snapshot(row: QueueItem, waiting_reason: Option<archon_core::protocol::Waitin
         delegations: Default::default(),
         waiting_on: None,
         waiting_reason,
+        switched_to: None,
     }))
 }
 

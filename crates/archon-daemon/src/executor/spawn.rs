@@ -71,6 +71,10 @@ pub(crate) struct StoredSpawn {
 pub(crate) struct KeptAgent {
     pub agent: AetherAgentId,
     pub message: String,
+    /// The summary of a final message that left out the ship record, kept
+    /// once the agent was asked for the record (§6.7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asked_record: Option<String>,
 }
 
 /// The branch a team slot's worker worktree must have checked out.
@@ -384,7 +388,8 @@ impl Target<'_> {
             Ok(env) => env.policy(self.config).describe(),
             Err(error) => format!("none: the repository's model policy cannot be read ({error})"),
         };
-        let rules = contract::delegation_rules(plan.workspace, &models);
+        let depth = self.config.limits.max_delegation_depth;
+        let rules = contract::delegation_rules(plan.workspace, &models, depth);
         format!("{contract}{rules}")
     }
 }
@@ -717,7 +722,7 @@ async fn resume_or_spawn(
             ParentBinding::Pending,
             "a resume sends no create"
         );
-        if resume::hand_over(ctx, stage, &kept, spawn.request.deadline).await? {
+        if resume::hand_over(ctx, stage, &kept, &spawn.request).await? {
             return Ok(Issued::Resumed(kept.agent));
         }
         save_spawn(&mut *ctx.store.lock().await, &stage.id, &spawn)?;

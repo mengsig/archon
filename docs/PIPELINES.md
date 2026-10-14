@@ -151,6 +151,13 @@ the field:
   or `any`): their agents return a verdict, and `gate = "none"` would ignore
   it.
 - `on_fail.goto` names an **earlier** stage, and `max_loops` is at most 10.
+
+These bounds (32 stages, `fan_out` 16, `max_loops` 10) belong to the file
+format and are the same on every installation, unlike `[limits]`: a
+pipeline that loads on one machine loads on every other, and a run's frozen
+copy loads again after any configuration change. How many agents run at
+once is set by `[limits]` instead.
+
 - There is at most one `ship` stage, it is the last stage, and the pipeline
   uses `workspace = "worktree"`.
 - `[pipeline.ship]`, when present, needs `workspace = "worktree"` and no
@@ -192,7 +199,9 @@ by either route. It says to:
 
 - let a child delegate once more when its part splits further, telling it
   to pass `leaf: true` for its own children, and pass `leaf: true` for a
-  child that should not. The watchdog cancels an agent a third level down;
+  child that should not. The watchdog cancels an agent a third level down.
+  That is the default depth of 2; `[limits] max_delegation_depth` (1 to 4)
+  changes it, and the section says what the configured depth allows;
 - give a child that edits its own copy (`workspace_mode: "isolated"`) and
   bring back only accepted changes with `integrate_workspace`, while a
   child that only reads shares the stage's workspace. In a read-only
@@ -239,9 +248,10 @@ source repository; Archon has no setting for it.
 
 ### A declared review
 
-The `review` autonomy knob normally follows a pipeline's gates: gated
-`review` or `test` stages make it `standard` or `strict`, and a pipeline
-without them runs at `none`. A pipeline whose review happens inside one
+The `review` autonomy knob normally follows a pipeline's gates, not its
+reviewer count: a gated `review` or `test` stage makes it `standard`, both
+make it `strict` (`refactor` is `strict` with one reviewer), and a pipeline
+with neither runs at `none`. A pipeline whose review happens inside one
 agent's stage has no such gate, so it declares the review instead:
 
 ```toml
@@ -273,12 +283,21 @@ are agents it delegates to. At `none` it delegates only if the stage allows
 it otherwise.
 
 Archon holds the stage to the level. Its contract gains a
-`## Review on record` section, and its `complete_task` must carry a pass
-that names one model per reviewer:
+`## Review on record` section. Each reviewer finishes with its own verdict
+on the commits it read, where `base` is the commit its diff starts from
+(the merge base for the whole change, an earlier reviewer's head for a
+re-review of a fix):
 
 ```json
-{"review": {"verdict": "pass", "reviewer_model": "<provider>/<model>"}}
-{"review": {"verdict": "pass", "reviewer_models": ["<provider>/<model>", "…", "…"]}}
+{"verdict": "pass", "head": "<commit>", "base": "<commit>", "findings": []}
+```
+
+and the stage agent's `complete_task` names the agent id `delegate`
+returned for each reviewer the pass rests on, including a failed one whose
+findings it fixed:
+
+```json
+{"review": {"verdict": "pass", "reviewers": ["<agent id>", "…"]}}
 ```
 
 When the object is missing, the verdict is anything else, or the pass names
@@ -286,14 +305,18 @@ fewer reviewers than the level asks for, Archon fails the run at that stage
 and nothing ships. At `none` the contract tells the agent to delegate no
 reviewer and record no review.
 
-A pass is not taken on the agent's word. As the stage ends, Archon asks
-Aether which agents that agent delegated to. The pass counts only when, for
-every model named, a different direct child completed on it, neither
-cancelled nor failed; otherwise the run fails at that stage and the error
-lists what the agent did delegate to. Archon records those children's agent
-ids with the evidence as `review.reviewer_agents`, replacing anything the
-agent wrote there. This shows that such reviewers ran to completion, not
-what they read or concluded.
+A pass is not taken on the agent's word. As the stage ends, Archon lists
+the agents it delegated to (one Aether call) and reads the task result of
+each one named. Every named agent must be a different direct child that
+completed with a verdict; a builder or researcher that returned none is not
+a reviewer. Archon then holds the verdicts to the run branch: a pass counts
+when its reviewer read the branch head, or an earlier head whose later
+commits a passing reviewer read as a delta. A fail never counts, and it
+stands until such a pass read past it. With fewer counted passes than the
+level asks for, the run fails at that stage with each reason. Archon
+records the counted reviewers as `review.reviewer_agents` and the models
+Aether ran them on as `review.reviewer_models`, replacing anything the
+agent wrote there.
 
 On a pass Archon appends `REVIEW: pass, by <model> (agent <id>), …` as the
 last line of the stage summary, and at `none`
@@ -741,7 +764,8 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   other parents, and targets the parent branch when opening the PR.
   Review and diff against this base. Dependencies in other repositories
   give context without contributing a Git branch.
-- **Initiative members** get the shared contract (at most 2 KiB) and every
+- **Initiative members** get the shared contract (2 KiB at most by default,
+  `[limits] initiative_contract_bytes`) and every
   sibling's repository, branch, PR and state. For `atomic=true`, the ship
   stage keeps its PR a draft and does not enable auto-merge. The daemon
   links sibling PRs and marks them ready after every member passes.

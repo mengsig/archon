@@ -12,6 +12,7 @@ use std::time::Duration;
 use archon_aether::AetherEvent;
 use archon_aether::events::EventKind;
 use archon_core::Timestamp;
+use archon_core::aether_ids::AetherAgentId;
 use archon_core::config::Config;
 use archon_core::error::ArchonError;
 use archon_core::model::Effort;
@@ -21,7 +22,9 @@ use archon_core::protocol::{PauseTarget, Request};
 use archon_core::queue::QueueState;
 use archon_core::run::{PipelineRun, RunState, StageOutcome, StageRun, StageState};
 use archon_daemon::{dispatcher, executor, pump};
-use common::delivery::{FakeGh, add_origin, origin_of, pushed, shipped_by};
+use common::delivery::{
+    FakeGh, add_origin, origin_of, pass_by, pushed, reviewed_by, shipped_by, verdict_on,
+};
 use common::{
     Harness, MODEL, REPO_NAME, REVIEW_MODEL, choice, completed, expire_deadline, git, verdict,
 };
@@ -2028,22 +2031,28 @@ async fn led_item(h: &Harness) -> archon_core::queue::QueueItem {
     planned_item(h, "led", &["build", "ship"]).await
 }
 
-fn pass_by_one() -> serde_json::Value {
-    serde_json::json!({"review": {"verdict": "pass", "reviewer_model": REVIEW_MODEL}})
-}
-
 /// The running lead's result: its change committed, the ship record for it,
-/// and a pass by one reviewer.
+/// and a pass by one reviewer it delegated to, which passed that commit.
 async fn reviewed(h: &Harness, summary: &str) -> StageOutcome {
-    let lead = h.running().await.remove(0);
-    shipped_by(h, &lead, summary, pass_by_one()).await
+    reviewed_by_one(h, summary).await.0
 }
 
-/// The lead's reviewer completed, and the lead settles with its pass on record.
+/// [`reviewed`], with the reviewer.
+async fn reviewed_by_one(h: &Harness, summary: &str) -> (StageOutcome, AetherAgentId) {
+    let lead = h.running().await.remove(0);
+    let reviewer = h.backend.delegate(&lead_agent(&lead), REVIEW_MODEL);
+    let built = reviewed_by(h, &lead, summary, std::slice::from_ref(&reviewer)).await;
+    (built, reviewer)
+}
+
+/// The lead settles with its change reviewed by one agent.
 async fn settle_reviewed(h: &Harness, summary: &str) -> Vec<StageRun> {
-    delegated_by_the_lead(h, REVIEW_MODEL, DescendantState::Completed).await;
     let built = reviewed(h, summary).await;
     h.settle_running(|_| built.clone()).await
+}
+
+fn lead_agent(lead: &StageRun) -> AetherAgentId {
+    lead.aether_agent.clone().expect("a lead agent")
 }
 
 /// Whether archond delivered the item's run: nothing else makes it succeed.
@@ -2052,15 +2061,26 @@ async fn delivered(h: &Harness, item: &archon_core::queue::QueueItem) -> bool {
 }
 
 /// The running lead delegated to an agent on `model`, which ended as `ended`.
-async fn delegated_by_the_lead(
-    h: &Harness,
-    model: &str,
-    ended: DescendantState,
-) -> archon_core::aether_ids::AetherAgentId {
-    let lead = h.running().await[0].aether_agent.clone().unwrap();
+async fn delegated_by_the_lead(h: &Harness, model: &str, ended: DescendantState) -> AetherAgentId {
+    let lead = lead_agent(&h.running().await[0]);
     let child = h.backend.delegate(&lead, model);
     h.backend.end_delegated(&child, ended);
     child
+}
+
+/// The item's failure, once its lead's review was refused.
+async fn refused_review(h: &Harness, item: &archon_core::queue::QueueItem) -> String {
+    h.dispatch().await;
+    let branch = h.run(&item.id).await.branch;
+    assert_eq!(pushed(&origin_of(h), &branch), None, "nothing is delivered");
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!("the item fails: {:?}", h.state(&item.id).await);
+    };
+    assert!(
+        error.contains("the review this pipeline declares is not on record"),
+        "{error}"
+    );
+    error
 }
 
 /// The stage flag makes a guarded agent a delegating one: it is told how,
@@ -2088,8 +2108,7 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     assert!(build.instructions.contains("\n## Review on record\n"));
     assert!(build.instructions.contains("\n## Ship record\n"));
 
-    let reviewer = delegated_by_the_lead(&h, REVIEW_MODEL, DescendantState::Completed).await;
-    let built = reviewed(&h, "Verified; one reviewer passed it").await;
+    let (built, reviewer) = reviewed_by_one(&h, "Verified; one reviewer passed it").await;
     h.settle_running(|_| built.clone()).await;
     h.dispatch().await;
     assert_eq!(stage_labels(&h), ["build"], "no agent ships");
@@ -2101,54 +2120,126 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     assert!(body.contains(&review), "{body}");
 }
 
-/// A pass is the lead's word until Aether shows the reviewer: without a
-/// completed child on the named model, nothing ships.
+/// A pass is the lead's word until Aether shows the reviewer: an agent it
+/// names that ended without completing reviewed nothing.
 #[tokio::test]
 async fn adaptive_refuses_a_pass_whose_reviewer_aether_does_not_show() {
     let h = Harness::new().await;
     let item = adaptive_item(&h).await;
-    delegated_by_the_lead(&h, MODEL, DescendantState::Completed).await;
     let cancelled = delegated_by_the_lead(&h, REVIEW_MODEL, DescendantState::Stopped).await;
-    let built = reviewed(&h, "Verified; one reviewer passed it").await;
+    let lead = h.running().await.remove(0);
+    let named = pass_by(std::slice::from_ref(&cancelled));
+    let built = shipped_by(&h, &lead, "Verified; one reviewer passed it", named).await;
     let build = h.settle_running(|_| built.clone()).await;
-    h.dispatch().await;
-    let branch = h.run(&item.id).await.branch;
-    assert_eq!(
-        pushed(&origin_of(&h), &branch),
-        None,
-        "nothing is delivered"
-    );
-    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
-        panic!("the item fails: {:?}", h.state(&item.id).await);
-    };
-    assert!(
-        error.contains("the review this pipeline declares is not on record"),
-        "{error}"
-    );
-    assert!(error.contains("no agent the lead delegated to completed on that model"));
-    assert!(
-        error.contains(&format!(
-            "{cancelled} on {REVIEW_MODEL} ended without completing"
-        )),
-        "{error}"
-    );
+    let error = refused_review(&h, &item).await;
+    let held = format!("it names {cancelled} on {REVIEW_MODEL} ended without completing");
+    assert!(error.contains(&held), "{error}");
     let stored = h.ctx.store.lock().await.stage_run(&build[0].id).unwrap();
     let review = &stored.structured.as_ref().unwrap()["review"];
     assert_eq!(review.get("reviewer_agents"), None);
     assert!(review["unverified"].as_str().is_some());
 }
 
-/// The reviewer's agent is Archon's finding: one the lead wrote itself is
-/// replaced, and the stored evidence names the agent Aether shows.
+/// A completed child is not a reviewer by completing: the builder the lead
+/// names returned no verdict, even on the model the 1.0 record named.
+#[tokio::test]
+async fn a_completed_builder_named_as_the_reviewer_is_no_review() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let builder = h.backend.delegate(&lead_agent(&lead), REVIEW_MODEL);
+    let mut named = pass_by(std::slice::from_ref(&builder));
+    named["review"]["reviewer_model"] = REVIEW_MODEL.into();
+    let built = shipped_by(&h, &lead, "Built with a helper", named).await;
+    let work = serde_json::json!({"summary": "implemented the parser", "files": 3});
+    h.backend.complete_delegated(&builder, work);
+    h.settle_running(|_| built.clone()).await;
+    let error = refused_review(&h, &item).await;
+    assert!(error.contains(&format!("reviewer {builder}")), "{error}");
+    assert!(error.contains("no `verdict`"), "{error}");
+}
+
+/// A reviewer that failed the change does not pass it, whatever the lead says.
+#[tokio::test]
+async fn a_reviewer_that_failed_the_change_is_no_pass() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let reviewer = h.backend.delegate(&lead_agent(&lead), REVIEW_MODEL);
+    let mut named = pass_by(std::slice::from_ref(&reviewer));
+    named["review"]["reviewer_model"] = REVIEW_MODEL.into();
+    let built = shipped_by(&h, &lead, "Reviewed", named).await;
+    h.backend
+        .complete_delegated(&reviewer, verdict_on(&built, "fail"));
+    h.settle_running(|_| built.clone()).await;
+    let error = refused_review(&h, &item).await;
+    assert!(error.contains("0 of the reviewers named passed"), "{error}");
+    assert!(error.contains(&format!("{reviewer} failed")), "{error}");
+}
+
+/// A pass holds for the commit its reviewer read: a later commit needs a
+/// reviewer of its own, who read from the first one's head.
+#[tokio::test]
+async fn a_commit_after_the_review_needs_its_own_reviewer() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let first = h.backend.delegate(&lead_agent(&lead), REVIEW_MODEL);
+    let read = shipped_by(&h, &lead, "Built", serde_json::json!({})).await;
+    h.backend
+        .complete_delegated(&first, verdict_on(&read, "pass"));
+    let named = pass_by(std::slice::from_ref(&first));
+    let later = shipped_by(&h, &lead, "Built, then fixed", named).await;
+    h.settle_running(|_| later.clone()).await;
+    let error = refused_review(&h, &item).await;
+    assert!(
+        error.contains(&format!("{first} passed")) && error.contains("commits after it"),
+        "{error}"
+    );
+}
+
+/// The re-review: a second reviewer read the fix from the first one's head,
+/// so together they read the change as it is delivered.
+#[tokio::test]
+async fn a_reviewer_of_the_fix_carries_the_first_pass_to_the_head() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let first = h.backend.delegate(&lead_agent(&lead), REVIEW_MODEL);
+    let read = shipped_by(&h, &lead, "Built", serde_json::json!({})).await;
+    let first_pass = verdict_on(&read, "pass");
+    h.backend.complete_delegated(&first, first_pass.clone());
+    let delta = h.backend.delegate(&lead_agent(&lead), REVIEW_MODEL);
+    let both = [first.clone(), delta.clone()];
+    let fixed = shipped_by(&h, &lead, "Built, then fixed", pass_by(&both)).await;
+    let mut on_fix = verdict_on(&fixed, "pass");
+    on_fix["base"] = first_pass["head"].clone();
+    h.backend.complete_delegated(&delta, on_fix);
+    h.settle_running(|_| fixed.clone()).await;
+    h.dispatch().await;
+    let QueueState::Succeeded { summary, .. } = h.state(&item.id).await else {
+        panic!("delivered: {:?}", h.state(&item.id).await);
+    };
+    assert!(summary.contains(&format!("(agent {first})")), "{summary}");
+    assert!(summary.contains(&format!("(agent {delta})")), "{summary}");
+}
+
+/// The reviewer's agent and model are Archon's finding: what the lead wrote
+/// there itself is replaced by what Aether shows.
 #[tokio::test]
 async fn adaptive_records_the_reviewer_it_found_not_the_one_the_lead_names() {
     let h = Harness::new().await;
     adaptive_item(&h).await;
-    let reviewer = delegated_by_the_lead(&h, REVIEW_MODEL, DescendantState::Completed).await;
-    let forged = serde_json::json!({"review": {"verdict": "pass", "reviewer_model": REVIEW_MODEL,
-        "reviewer_agent": "agt_forged", "reviewer_agents": ["agt_forged"]}});
     let lead = h.running().await.remove(0);
+    let reviewer = h.backend.delegate(&lead_agent(&lead), REVIEW_MODEL);
+    let mut forged = pass_by(std::slice::from_ref(&reviewer));
+    let claims = serde_json::json!({"reviewer_model": "a/forged", "reviewer_models": ["a/forged"],
+        "reviewer_agent": "agt_forged", "reviewer_agents": ["agt_forged"]});
+    let review = forged["review"].as_object_mut().unwrap();
+    review.extend(claims.as_object().unwrap().clone());
     let built = shipped_by(&h, &lead, "Verified", forged).await;
+    h.backend
+        .complete_delegated(&reviewer, verdict_on(&built, "pass"));
     let build = h.settle_running(|_| built.clone()).await;
     let stored = h.ctx.store.lock().await.stage_run(&build[0].id).unwrap();
     let review = &stored.structured.as_ref().unwrap()["review"];
@@ -2156,7 +2247,9 @@ async fn adaptive_records_the_reviewer_it_found_not_the_one_the_lead_names() {
         review["reviewer_agents"],
         serde_json::json!([reviewer.as_str()])
     );
+    assert_eq!(review["reviewer_models"], serde_json::json!([REVIEW_MODEL]));
     assert_eq!(review.get("reviewer_agent"), None);
+    assert_eq!(review.get("reviewer_model"), None);
     assert_eq!(review.get("unverified"), None);
 }
 
@@ -2166,8 +2259,7 @@ async fn adaptive_records_the_reviewer_it_found_not_the_one_the_lead_names() {
 async fn adaptive_leaves_the_build_live_while_aether_cannot_show_the_reviewer() {
     let h = Harness::new().await;
     let item = adaptive_item(&h).await;
-    delegated_by_the_lead(&h, REVIEW_MODEL, DescendantState::Completed).await;
-    let lead = h.running().await[0].aether_agent.clone().unwrap();
+    let lead = lead_agent(&h.running().await[0]);
     let built = reviewed(&h, "Verified").await;
     h.backend
         .fail_next_descendants(ArchonError::Unavailable("aether: disconnected".into()));

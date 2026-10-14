@@ -430,6 +430,48 @@ fn fake_bin(dir: &Path, name: &str, body: &str) -> PathBuf {
 }
 
 #[tokio::test]
+async fn a_failed_start_reports_only_its_own_part_of_the_startup_log() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("archond.sock");
+    let log = archon_core::paths::startup_log_for(&socket);
+    std::fs::write(&log, "an earlier session's stale error\n").unwrap();
+    let mark = archon_core::paths::STARTUP_LOG_MARK;
+    let failing = fake_bin(
+        dir.path(),
+        "archon-failing",
+        &format!("echo '{mark} at now ---' >> '{}'\nexit 3", log.display()),
+    );
+    let quick = Duration::from_millis(400);
+
+    let error = start::connect_or_start_within(&socket, ClientKind::ArchonCli, &failing, quick)
+        .await
+        .expect_err("the launcher failed");
+    let text = error.to_string();
+    assert!(
+        text.contains("nothing since this start"),
+        "a start that wrote nothing says so: {text}"
+    );
+    assert!(
+        !text.contains("stale error"),
+        "an earlier session's output is not this start's cause: {text}"
+    );
+
+    let more = format!(
+        "echo 'config.toml: unknown key [bogus]' >> '{}'",
+        log.display()
+    );
+    let failing = fake_bin(
+        dir.path(),
+        "archon-failing-again",
+        &format!("{more}\nexit 3"),
+    );
+    let error = start::connect_or_start_within(&socket, ClientKind::ArchonCli, &failing, quick)
+        .await
+        .expect_err("the launcher failed");
+    assert!(error.to_string().contains("unknown key [bogus]"), "{error}");
+}
+
+#[tokio::test]
 async fn connect_or_start_spawns_the_daemon_and_reports_its_startup_log() {
     let dir = tempfile::tempdir().unwrap();
     let marker = dir.path().join("spawned");

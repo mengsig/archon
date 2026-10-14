@@ -235,6 +235,57 @@ async fn a_kept_agent_waits_parked_and_gets_its_stage_deadline_back() {
     assert_eq!(agent(&fix), implementer);
 }
 
+/// Aether's cap counts the kept agent's whole life: resumed, it may spend
+/// what it spent so far plus the new attempt's grant, not the old remainder.
+#[tokio::test]
+async fn a_resumed_agent_gets_its_spend_so_far_plus_a_new_grant() {
+    let h = Harness::new().await;
+    let item = h
+        .enqueue_in(PIPELINE, "capped", plan())
+        .await
+        .expect("enqueue");
+    let patch = archon_core::protocol::ItemPatch {
+        budget_usd: Some(10.0),
+        ..Default::default()
+    };
+    h.cli(Request::UpdateItem {
+        item: item.id.clone(),
+        patch,
+    })
+    .await
+    .expect("a budget");
+    h.dispatch().await;
+    let first = running(&h, "implement").await;
+    let key = |stage: &StageRun| format!("spawn_request:{}", stage.id);
+    let mut spawn: serde_json::Value =
+        serde_json::from_str(&h.kv(&key(&first)).await.expect("stored")).unwrap();
+    assert_eq!(spawn["request"]["cost_budget_usd"], 10.0);
+    // As when Aether enforces the cap it was created with.
+    spawn["request"]["aether_cost_budget"] = true.into();
+    let raw = spawn.to_string();
+    h.ctx.store.lock().await.kv_set(&key(&first), &raw).unwrap();
+    settle_recorded(&h, "added the greeting").await;
+    {
+        let mut store = h.ctx.store.lock().await;
+        let mut spent = store.stage_run(&first.id).unwrap();
+        spent.cost_usd = 7.5;
+        store.upsert_stage_run(&spent).unwrap();
+    }
+    h.dispatch().await;
+
+    let fix = sent_back(&h).await;
+    assert_eq!(agent(&fix), agent(&first), "resumed");
+    let stored: serde_json::Value =
+        serde_json::from_str(&h.kv(&key(&fix)).await.expect("stored")).unwrap();
+    let grant = stored["request"]["cost_budget_usd"]
+        .as_f64()
+        .expect("a grant");
+    let updates = h.backend.updates();
+    let resumed = &updates.last().expect("the resume's update").1;
+    assert_eq!(resumed.cost_budget_usd, Some(7.5 + grant), "{updates:?}");
+    assert!(resumed.deadline.is_some(), "and its stage deadline");
+}
+
 /// The turn-end event was missed: the sweep reads the answer.
 #[tokio::test]
 async fn a_resumed_attempt_settles_on_the_sweep() {
@@ -353,6 +404,69 @@ async fn a_resumed_attempt_that_says_failed_fails_its_stage() {
         panic!("{state:?}");
     };
     assert!(error.contains("does not exist"), "{error}");
+}
+
+/// The kept implementer ends its fix with `summary` and no ship record; it is
+/// asked once for the record, and that message is returned.
+async fn ends_without_its_record(h: &Harness, fix: &StageRun, summary: &str) -> String {
+    let before = h.backend.messages().len();
+    h.backend
+        .answer(&agent(fix), resumed_reply_outcome(summary));
+    let ended = executor::turn_ended(&h.ctx, &agent(fix)).await;
+    ended.expect("turn end");
+    h.dispatch().await;
+    let messages = h.backend.messages();
+    assert_eq!(messages.len(), before + 1, "asked once: {messages:?}");
+    let (to, asked) = messages.last().cloned().expect("the request");
+    assert_eq!(to, agent(fix));
+    asked
+}
+
+#[tokio::test]
+async fn a_resumed_agent_that_leaves_out_its_record_is_asked_for_it_once() {
+    let h = Harness::new().await;
+    let (item, _) = implemented(&h, "forgot the record").await;
+    let fix = sent_back(&h).await;
+    let asked = ends_without_its_record(&h, &fix, "added the test in tests/greet.rs").await;
+    assert!(asked.contains("it has no fenced `json` block"), "{asked}");
+    assert!(asked.contains("\"commit\""), "it shows the record: {asked}");
+    assert_eq!(running(&h, "implement").await.id, fix.id, "the fix goes on");
+
+    answers(&h, &fix, "Here is the record.").await;
+    let stages = h.stages(&item.id).await;
+    let done = stages.iter().find(|s| s.id == fix.id).expect("the fix");
+    assert_eq!(done.state, StageState::Completed);
+    assert_eq!(
+        done.summary.as_deref(),
+        Some("added the test in tests/greet.rs"),
+        "the summary is the fix's, not the record's"
+    );
+    running(&h, "review").await;
+}
+
+#[tokio::test]
+async fn a_resumed_agent_asked_for_its_record_in_vain_fails_its_stage() {
+    let h = Harness::new().await;
+    let (item, _) = implemented(&h, "never records").await;
+    let fix = sent_back(&h).await;
+    ends_without_its_record(&h, &fix, "added the test").await;
+    h.backend
+        .answer(&agent(&fix), resumed_reply_outcome("I committed it."));
+    let ended = executor::turn_ended(&h.ctx, &agent(&fix)).await;
+    ended.expect("turn end");
+    h.dispatch().await;
+    let state = h.state(&item.id).await;
+    let QueueState::Failed { error, .. } = &state else {
+        panic!("{state:?}");
+    };
+    assert!(
+        error.contains("ship record archond delivers is not on record"),
+        "{error}"
+    );
+    assert!(
+        error.contains("added the test"),
+        "the fix's own summary: {error}"
+    );
 }
 
 #[tokio::test]

@@ -257,7 +257,7 @@ async fn still_owed(
     };
     let names: Vec<&str> = live.iter().map(AetherAgentId::as_str).collect();
     let text = format!(
-        "Stage `{stage_id}` ended {} s ago, but {} it delegated to still run in Aether after          their cancel ({}). The item waits for them to end; `archon aether agents` shows them.",
+        "Stage `{stage_id}` ended {} s ago, but {} it delegated to still run in Aether after their cancel ({}). The item waits for them to end; `archon aether agents` shows them.",
         (now - since).num_seconds(),
         agents(live.len()),
         names.join(", ")

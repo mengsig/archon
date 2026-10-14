@@ -20,6 +20,7 @@ use archon_core::id::RepoId;
 use archon_core::model::ModelChoice;
 use archon_core::policy::ModelPolicy;
 use archon_core::repo::Repo;
+use archon_queue::store::Store;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 
@@ -41,17 +42,43 @@ const GIT_DIRS: &str = "mirror-git";
 const STATE_KEY_PREFIX: &str = "mirror_";
 const MAX_DETAIL_CHARS: usize = 400;
 
-/// Wakes the mirror worker; what it does is read from the registry.
+/// Wakes the mirror worker with the mirrors it is asked to refresh.
 #[derive(Debug, Default)]
 pub struct MirrorQueue {
     wanted: Notify,
+    asked: std::sync::Mutex<Asked>,
+}
+
+/// The mirrors a pass refreshes besides those with a problem.
+#[derive(Debug, Default)]
+struct Asked {
+    all: bool,
+    repos: BTreeSet<RepoId>,
 }
 
 impl MirrorQueue {
     /// Ask for every mirror to be brought up to date soon. Never blocks:
     /// requests made while the worker is busy share its next pass.
     pub fn request(&self) {
+        self.asked().all = true;
         self.wanted.notify_one();
+    }
+
+    /// Ask for `repo`'s mirror alone, as when one of its items finished.
+    pub fn request_repo(&self, repo: &RepoId) {
+        self.asked().repos.insert(repo.clone());
+        self.wanted.notify_one();
+    }
+
+    fn take(&self) -> Asked {
+        std::mem::take(&mut *self.asked())
+    }
+
+    fn asked(&self) -> std::sync::MutexGuard<'_, Asked> {
+        // Every write leaves the set whole, so a panicked holder corrupted nothing.
+        self.asked
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -68,15 +95,32 @@ pub fn git_dirs_root(data_dir: &Path) -> PathBuf {
 /// Bring the mirrors up to date at start and whenever one is asked for,
 /// until the daemon stops; only a store failure ends it.
 pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
+    sync_all(&ctx).await?;
     loop {
-        sync_all(&ctx).await?;
         ctx.mirrors.wanted.notified().await;
+        refresh_requested(&ctx).await?;
     }
+}
+
+/// One pass over every mirror; see `sync`.
+pub async fn sync_all(ctx: &DaemonContext) -> Result<(), ArchonError> {
+    let every = Asked {
+        all: true,
+        repos: BTreeSet::new(),
+    };
+    sync(ctx, &every).await
+}
+
+/// One pass over the mirrors asked for since the last, and those with a problem.
+pub async fn refresh_requested(ctx: &DaemonContext) -> Result<(), ArchonError> {
+    let asked = ctx.mirrors.take();
+    sync(ctx, &asked).await
 }
 
 /// One pass: a mirror at its base branch per registered repository and
 /// nothing else; one that cannot be made or refreshed is reported, not fatal.
-pub async fn sync_all(ctx: &DaemonContext) -> Result<(), ArchonError> {
+/// Only the repositories [`selected`] are refreshed.
+async fn sync(ctx: &DaemonContext, asked: &Asked) -> Result<(), ArchonError> {
     let repos = ctx.store.lock().await.repos()?;
     let layout = Layout::of(ctx);
     let prepared = {
@@ -90,7 +134,7 @@ pub async fn sync_all(ctx: &DaemonContext) -> Result<(), ArchonError> {
         }
         return Ok(());
     }
-    for repo in &repos {
+    for repo in selected(ctx, &repos, asked).await? {
         let plan = Plan::new(ctx, &layout, repo);
         let outcome = blocking(move || Ok(plan.refresh()))
             .await
@@ -98,6 +142,29 @@ pub async fn sync_all(ctx: &DaemonContext) -> Result<(), ArchonError> {
         record(ctx, repo, outcome).await?;
     }
     forget_unregistered(ctx, &layout, &repos).await
+}
+
+/// The repositories of `repos` a pass refreshes: every one when all were
+/// asked for, else those asked for and those whose mirror has a problem or
+/// was never made.
+async fn selected<'a>(
+    ctx: &DaemonContext,
+    repos: &'a [Repo],
+    asked: &Asked,
+) -> Result<Vec<&'a Repo>, ArchonError> {
+    if asked.all {
+        return Ok(repos.iter().collect());
+    }
+    let store = ctx.store.lock().await;
+    let mut chosen = Vec::new();
+    for repo in repos {
+        let state = stored_state(&store, &repo.id)?;
+        let settled = state.problem.is_none() && state.commit.is_some();
+        if asked.repos.contains(&repo.id) || !settled {
+            chosen.push(repo);
+        }
+    }
+    Ok(chosen)
 }
 
 /// The directories mirrors are made in.
@@ -246,17 +313,23 @@ fn state_key(repo: &RepoId) -> String {
     format!("{STATE_KEY_PREFIX}{repo}")
 }
 
+/// What the store remembers of `repo`'s mirror; nothing yet for a new one.
+fn stored_state(store: &Store, repo: &RepoId) -> Result<MirrorState, ArchonError> {
+    let key = state_key(repo);
+    match store.kv_get(&key)? {
+        None => Ok(MirrorState::default()),
+        Some(raw) => serde_json::from_str(&raw)
+            .map_err(|e| ArchonError::Store(format!("kv {key} = {raw:?}: {e}"))),
+    }
+}
+
 /// Remember how the refresh of `repo` ended. A problem that began, changed
 /// or ended is posted to the feed and held as quiet news for the orchestrator.
 async fn record(ctx: &DaemonContext, repo: &Repo, outcome: Outcome) -> Result<(), ArchonError> {
     let key = state_key(&repo.id);
     let (before, after) = {
         let mut store = ctx.store.lock().await;
-        let before: MirrorState = match store.kv_get(&key)? {
-            None => MirrorState::default(),
-            Some(raw) => serde_json::from_str(&raw)
-                .map_err(|e| ArchonError::Store(format!("kv {key} = {raw:?}: {e}")))?,
-        };
+        let before = stored_state(&store, &repo.id)?;
         let after = state_after(&before, outcome);
         if after == before {
             return Ok(());

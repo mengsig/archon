@@ -80,6 +80,7 @@ fn item_summaries(rows: &[archon_core::protocol::ItemSummary]) -> String {
         "items",
         rows.iter().map(|row| {
             let mut line = item_line(&row.item, LINE_CHARS);
+            switched(&mut line, row.switched_to.as_deref());
             if let Some(reason) = &row.waiting_reason {
                 let _ = write!(
                     line,
@@ -187,6 +188,13 @@ fn item_line(item: &QueueItem, reason_chars: usize) -> String {
     line
 }
 
+/// Name the catalog pipeline a steer switched the item to, if one did.
+fn switched(line: &mut String, to: Option<&str>) {
+    if let Some(to) = to {
+        let _ = write!(line, "; a steer switched it to pipeline {to}");
+    }
+}
+
 fn state_detail(state: &QueueState) -> Option<String> {
     match state {
         QueueState::Running { run } => Some(format!("run {run}")),
@@ -212,6 +220,7 @@ fn item_detail(detail: &ItemDetail) -> String {
         .budget_usd
         .map_or("the configured default".to_owned(), usd);
     let mut text = item_line(item, CLIP_CHARS);
+    switched(&mut text, detail.switched_to.as_deref());
     if let Some(reason) = &detail.waiting_reason {
         let _ = write!(
             text,

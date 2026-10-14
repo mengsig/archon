@@ -12,7 +12,9 @@ use archon_core::id::QueueItemId;
 use archon_core::model::Effort;
 use archon_core::notify::{NotificationKind, Question};
 use archon_core::ports::{AgentUpdate, DescendantState};
-use archon_core::protocol::{EnqueueRequest, ItemDetail, ItemPatch, Reply, RepoRef, Request};
+use archon_core::protocol::{
+    EnqueueRequest, ItemDetail, ItemPatch, ItemQuery, Reply, RepoRef, Request,
+};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::{RunState, StageOutcome, StageRun, StageState};
 use archon_core::steer::{InsertStage, Steer, SteeredBy, Then};
@@ -137,6 +139,22 @@ async fn detail(h: &Harness, item: &QueueItemId) -> ItemDetail {
         Ok(Reply::ItemDetail(detail)) => *detail,
         other => panic!("get_item replied {other:?}"),
     }
+}
+
+/// The pipeline `get_item` and `list_item_summaries` say a steer switched
+/// the item to; they must agree.
+async fn switched_to(h: &Harness, item: &QueueItemId) -> Option<String> {
+    let shown = detail(h, item).await.switched_to;
+    let query = ItemQuery {
+        limit: Some(usize::MAX),
+        ..ItemQuery::default()
+    };
+    let Ok(Reply::ItemSummaries(rows)) = h.cli(Request::ListItemSummaries(query)).await else {
+        panic!("list_item_summaries failed");
+    };
+    let row = rows.into_iter().find(|row| &row.item.id == item).unwrap();
+    assert_eq!(row.switched_to, shown, "the list and the detail agree");
+    shown
 }
 
 fn agent(stage: &StageRun) -> AetherAgentId {
@@ -549,7 +567,10 @@ async fn a_stage_that_has_not_started_is_removed_and_a_started_one_is_not() {
         .await
         .expect("removed");
     let what = &detail(&h, &item.id).await.steers[0].what;
-    assert_eq!(what, "removed stage `review`");
+    assert_eq!(
+        what,
+        "removed stage `review`; lowered the review level from standard to none"
+    );
     assert_eq!(run_out(&h, &item.id).await, ["implement", "ship"]);
     assert!(matches!(
         h.state(&item.id).await,
@@ -620,6 +641,11 @@ async fn the_pipeline_is_switched_for_the_stages_not_started() {
         "the item keeps its pipeline's name"
     );
     assert_eq!(
+        switched_to(&h, &item.id).await.as_deref(),
+        Some("steer-quick"),
+        "and says which pipeline it runs now"
+    );
+    assert_eq!(
         steered.model_plan.0.len(),
         2,
         "a plan for the stages it has now"
@@ -645,6 +671,36 @@ async fn the_pipeline_is_switched_for_the_stages_not_started() {
     assert!(
         nothing.contains("nothing left to run after stage \"ship\""),
         "{nothing}"
+    );
+}
+
+#[tokio::test]
+async fn a_steer_that_moves_the_review_level_says_so() {
+    let h = harness().await;
+    let item = h.enqueue("reviewed after all").await;
+    steer(&h, &item.id, switch("steer-quick"))
+        .await
+        .expect("switched");
+    let review = Steer {
+        insert_stage: Some(InsertStage {
+            stage: "review".into(),
+            from: Some(PIPELINE.into()),
+            after: Some("implement".into()),
+        }),
+        ..Steer::default()
+    };
+    let steered = steer(&h, &item.id, review).await.expect("inserted");
+    assert_eq!(steered.autonomy.review.to_string(), "standard");
+    let steers = detail(&h, &item.id).await.steers;
+    let what: Vec<&str> = steers.iter().map(|steer| steer.what.as_str()).collect();
+    assert_eq!(
+        what,
+        [
+            "switched the stages still to run to `steer-quick`; lowered the review level from \
+             standard to none",
+            "inserted stage `review` of `wp5-review`; raised the review level from none to \
+             standard",
+        ]
     );
 }
 
@@ -797,13 +853,28 @@ async fn a_queued_item_runs_the_stages_steered_into_it() {
         QueueState::Succeeded { .. }
     ));
 
+    assert_eq!(
+        switched_to(&h, &item.id).await,
+        None,
+        "inserted, not switched"
+    );
+
     let other = h.enqueue("back to the catalog").await;
     steer(&h, &other.id, switch("steer-quick"))
         .await
         .expect("switched");
+    steer(&h, &other.id, insert("verify", Some("implement")))
+        .await
+        .expect("inserted");
+    assert_eq!(
+        switched_to(&h, &other.id).await.as_deref(),
+        Some("steer-quick"),
+        "an insert keeps the pipeline switched to"
+    );
     steer(&h, &other.id, switch("wp5-review"))
         .await
         .expect("switched back");
+    assert_eq!(switched_to(&h, &other.id).await, None);
     assert_eq!(
         h.kv(&format!("shape:{}", other.id)).await,
         None,
@@ -960,7 +1031,10 @@ async fn states_that_cannot_be_steered_say_so() {
     let (done, _) = implementing(&h, "finished").await;
     run_out(&h, &done.id).await;
     let over = refused(&h, &done.id, note(NOTE)).await;
-    assert!(over.contains("already succeeded"), "{over}");
+    assert!(
+        over.contains("already succeeded; retry it, then steer it"),
+        "{over}"
+    );
 
     let (stopped, _) = implementing(&h, "cancelled").await;
     let cancel = Request::CancelItem {

@@ -147,6 +147,39 @@ fn emit(
     Ok(())
 }
 
+/// The text of `path`, the `what` it holds; `-` reads stdin.
+fn read_text(path: &std::path::Path, what: &str) -> anyhow::Result<String> {
+    use anyhow::Context as _;
+    use std::io::Read as _;
+    if path == std::path::Path::new("-") {
+        let mut text = String::new();
+        std::io::stdin()
+            .read_to_string(&mut text)
+            .with_context(|| format!("reading {what} from stdin"))?;
+        return Ok(text);
+    }
+    std::fs::read_to_string(path).with_context(|| format!("reading {what} {}", path.display()))
+}
+
+/// `path` decoded by its extension, `.json` or `.toml`.
+fn read_map<T: serde::de::DeserializeOwned>(path: &std::path::Path) -> anyhow::Result<T> {
+    use anyhow::Context as _;
+    use archon_core::error::ArchonError;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    match path.extension().and_then(|s| s.to_str()) {
+        Some("json") => serde_json::from_str(&text)
+            .map_err(|e| ArchonError::Invalid(format!("{}: {e}", path.display())).into()),
+        Some("toml") => toml::from_str(&text)
+            .map_err(|e| ArchonError::Invalid(format!("{}: {e}", path.display())).into()),
+        _ => Err(ArchonError::Invalid(format!(
+            "{} must have a .json or .toml extension",
+            path.display()
+        ))
+        .into()),
+    }
+}
+
 fn to_json(value: &impl serde::Serialize) -> anyhow::Result<serde_json::Value> {
     serde_json::to_value(value).map_err(|e| anyhow::anyhow!("encoding JSON output: {e}"))
 }

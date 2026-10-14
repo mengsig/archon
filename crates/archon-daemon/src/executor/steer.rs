@@ -15,7 +15,7 @@ use archon_core::id::{NotificationId, QueueItemId, StageRunId};
 use archon_core::model::{ModelPlan, ModelReasons};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::{PipelineRun, StageOutcome, StageRun};
-use archon_core::steer::{Steer, SteerRecord, SteeredBy};
+use archon_core::steer::{RunEdit, Steer, SteerRecord, SteeredBy};
 use archon_queue::Store;
 
 use super::spawn::StoredSpawn;
@@ -26,13 +26,13 @@ use crate::resolve::RepoEnv;
 pub(crate) use audit::{notes_since, record, records};
 pub(crate) use owed::{deliver, owed};
 pub(crate) use shape::{Current, Sources, forget as forget_shape, keep as keep_shape};
-pub(crate) use shape::{correct_shaped, reshape, shaped};
+pub(crate) use shape::{correct_shaped, reshape, shaped, switched_to};
 
 use owed::Delivery;
 use plan::{Change, Tune};
 
 /// The least Aether is told an agent may still spend: zero would lift its cap.
-const MIN_GRANT_USD: f64 = 0.01;
+pub(super) const MIN_GRANT_USD: f64 = 0.01;
 /// How much of a note the item's feed repeats.
 const NOTE_PREVIEW_CHARS: usize = 240;
 
@@ -180,7 +180,11 @@ fn store_blueprint(
         store.append_run_edit(&run.id, edit, now)?;
     }
     if change.reshaped {
-        shape::keep(store, &run.item, &change.blueprint.spec)?;
+        let switched = change.edits.iter().find_map(|edit| match edit {
+            RunEdit::SwitchPipeline { pipeline, .. } => Some(pipeline.as_str()),
+            _ => None,
+        });
+        shape::keep(store, &run.item, &change.blueprint.spec, switched)?;
     }
     Ok(())
 }

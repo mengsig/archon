@@ -198,6 +198,28 @@ impl TriggerEvent {
             Self::DirectivesRestated { .. } => "directives_restated",
         }
     }
+
+    /// Whether the operator waits on the turn it starts, or must act on it:
+    /// such news skips the coalescing window.
+    fn is_urgent(&self) -> bool {
+        use archon_core::agent_message::MessageKind;
+        match self {
+            Self::OperatorAnswer { .. }
+            | Self::ChatAnswer { .. }
+            | Self::GateOpened { .. }
+            | Self::ItemBlocked { .. }
+            | Self::LavishFeedback { .. }
+            | Self::Budget { .. } => true,
+            Self::AgentMessage { message } => message.kind == MessageKind::Escalation,
+            Self::ItemFinished { .. }
+            | Self::InitiativeFinished { .. }
+            | Self::PolicyViolation { .. }
+            | Self::NewsDigest { .. }
+            | Self::ItemsFinished { .. }
+            | Self::Mirror { .. }
+            | Self::DirectivesRestated { .. } => false,
+        }
+    }
 }
 
 /// `raw` without its top-level `dom_snapshot` field and the lines nested
@@ -297,6 +319,11 @@ impl Outbox {
     /// orchestrator, or a turn is starting that quiet news can join.
     fn is_due(&self) -> bool {
         !self.pending.is_empty() && (self.flush || self.pending.iter().any(|news| !news.quiet))
+    }
+
+    /// Whether `pending` should go out without waiting for more news.
+    fn is_now(&self) -> bool {
+        self.is_due() && (self.flush || self.pending.iter().any(|news| news.event.is_urgent()))
     }
 }
 
@@ -484,7 +511,7 @@ pub async fn deliver_loop(ctx: std::sync::Arc<DaemonContext>) -> Result<(), Arch
 /// Wait for news that makes a trigger, then let more gather for `coalesce`.
 /// The window is not extended by later events, so a steady stream still
 /// yields a trigger per window. Quiet news alone is not waited on; a flush
-/// skips the window, as the turn it joins is starting.
+/// or urgent news ends the window, as the operator waits on that turn.
 async fn wait_for_news(ctx: &DaemonContext, coalesce: Duration) -> Result<(), ArchonError> {
     loop {
         let held = read_outbox(&*ctx.store.lock().await)?;
@@ -492,19 +519,29 @@ async fn wait_for_news(ctx: &DaemonContext, coalesce: Duration) -> Result<(), Ar
             held.in_flight.is_none(),
             "news waits only when nothing is in flight"
         );
-        if held.flush && held.is_due() {
-            return Ok(());
-        }
         if held.is_due() {
             break;
         }
         ctx.triggers.news.notified().await;
     }
-    tokio::select! {
-        () = tokio::time::sleep(coalesce) => {}
-        () = ctx.triggers.urgent.notified() => {}
+    let deadline = tokio::time::Instant::now() + coalesce;
+    loop {
+        // Enabled before the outbox is read, so a flush in between still ends the window.
+        let flushed = ctx.triggers.urgent.notified();
+        tokio::pin!(flushed);
+        flushed.as_mut().enable();
+        let held = read_outbox(&*ctx.store.lock().await)?;
+        assert!(held.in_flight.is_none(), "only this task keys a batch");
+        // Compaction may have left nothing waking; keying then finds nothing due.
+        if !held.is_due() || held.is_now() {
+            return Ok(());
+        }
+        tokio::select! {
+            () = tokio::time::sleep_until(deadline) => return Ok(()),
+            () = flushed => return Ok(()),
+            () = ctx.triggers.news.notified() => {}
+        }
     }
-    Ok(())
 }
 
 /// The orchestrator is starting a turn (an operator message): send the quiet

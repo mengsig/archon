@@ -29,9 +29,6 @@ use crate::mirror::{self, Reach};
 use crate::triggers::{self, TriggerEvent};
 use crate::{executor, feed};
 
-/// Most delegations below a stage agent or the orchestrator: its child, and
-/// that child's own children.
-const MAX_DELEGATION_DEPTH: u32 = 2;
 const CHILD_KEY_PREFIX: &str = "link_child_";
 const STAGE_AGENT_KEY_PREFIX: &str = "link_stage_agent_";
 /// Aether calls one pruning pass may make about the orchestrator's children.
@@ -102,7 +99,8 @@ pub(super) async fn agent_created(
         return Ok(());
     }
     let depth = adopt(ctx, agent, parent, item.as_ref()).await?;
-    let refusal = match depth_refusal(depth, item.is_none()) {
+    let most = ctx.config.limits.max_delegation_depth;
+    let refusal = match depth_refusal(depth, most, item.is_none()) {
         Some(refusal) => Some(refusal),
         None => violation(ctx, agent, model, item.as_ref()).await?,
     };
@@ -189,8 +187,10 @@ fn depth_of(store: &Store, agent: &AetherAgentId) -> Result<u32, ArchonError> {
 }
 
 /// Why a child `depth` delegations down may not run, if it is too deep.
-fn depth_refusal(depth: u32, helper: bool) -> Option<String> {
-    if depth <= MAX_DELEGATION_DEPTH {
+fn depth_refusal(depth: u32, most: u32, helper: bool) -> Option<String> {
+    assert!(depth >= 1, "a watched child is below its top agent");
+    assert!(most >= 1, "validated with the config");
+    if depth <= most {
         return None;
     }
     let top = if helper {
@@ -199,8 +199,8 @@ fn depth_refusal(depth: u32, helper: bool) -> Option<String> {
         "its stage agent"
     };
     Some(format!(
-        "it is {depth} delegations below {top}; at most {MAX_DELEGATION_DEPTH} are allowed \
-         (a child's own children are delegated with `leaf: true`)"
+        "it is {depth} delegations below {top}; `[limits] max_delegation_depth` allows {most} \
+         (an agent {most} down is delegated with `leaf: true`)"
     ))
 }
 

@@ -6,13 +6,13 @@
 
 use std::collections::BTreeSet;
 
-use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
-use archon_core::ports::AgentUpdate;
+use archon_core::ports::{AgentUpdate, SpawnRequest};
 use archon_core::run::{StageOutcome, StageRun, StageState};
-use archon_pipeline::SpawnPlan;
+use archon_pipeline::contract::SHIP_RECORD_JSON;
+use archon_pipeline::{ShipRecord, SpawnPlan};
 use archon_queue::Store;
 
 use super::spawn::{self, KeptAgent};
@@ -98,7 +98,11 @@ pub(super) fn takeover(
     for note in steer::notes_since(store, &item, parked_at)? {
         message.push_str(&format!("\n\n{}", steer::note_message(&note)));
     }
-    Ok(Takeover::Resume(KeptAgent { agent, message }))
+    Ok(Takeover::Resume(KeptAgent {
+        agent,
+        message,
+        asked_record: None,
+    }))
 }
 
 /// Record that the agent of resumed attempt `stage` was told `text` after
@@ -113,13 +117,14 @@ pub(super) fn told(store: &mut Store, stage: &StageRunId, text: &str) -> Result<
     spawn::save_spawn(store, stage, &stored)
 }
 
-/// Give the kept agent its stage deadline and the findings, keyed by the
-/// stage run. `false` when it cannot go on: a fresh agent takes the attempt.
+/// Give the kept agent its stage deadline, its new grant and the findings,
+/// keyed by the stage run. `false` when it cannot go on: a fresh agent takes
+/// the attempt. `request` is the attempt's own, never sent as a spawn.
 pub(super) async fn hand_over(
     ctx: &DaemonContext,
     stage: &StageRun,
     kept: &KeptAgent,
-    deadline: Option<Timestamp>,
+    request: &SpawnRequest,
 ) -> Result<bool, ArchonError> {
     assert_eq!(stage.state, StageState::Spawning, "a reserved attempt");
     assert!(!kept.message.trim().is_empty(), "resumed with findings");
@@ -128,8 +133,13 @@ pub(super) async fn hand_over(
         tracing::info!(stage = %stage.id, %agent, "kept agent is gone; spawning a fresh one");
         return Ok(false);
     }
+    let cost_budget_usd = {
+        let store = ctx.store.lock().await;
+        regranted_cap(&store, stage, agent, request.cost_budget_usd)?
+    };
     let update = AgentUpdate {
-        deadline,
+        deadline: request.deadline,
+        cost_budget_usd,
         ..AgentUpdate::default()
     };
     let key = stage.id.as_str();
@@ -145,6 +155,37 @@ pub(super) async fn hand_over(
     tracing::info!(stage = %stage.id, %agent, %refusal, "kept agent cannot be resumed; spawning a fresh one");
     replace(ctx, agent).await?;
     Ok(false)
+}
+
+/// Aether's new cap for `agent`, resumed on `stage` with `grant`. Aether's cap
+/// counts the agent's subtree over its whole life, so it is what the earlier
+/// attempts on the agent spent plus the grant. `None` when it has no cap.
+fn regranted_cap(
+    store: &Store,
+    stage: &StageRun,
+    agent: &AetherAgentId,
+    grant: Option<f64>,
+) -> Result<Option<f64>, ArchonError> {
+    let Some(grant) = grant else {
+        return Ok(None);
+    };
+    assert!(grant.is_finite(), "a grant is an amount, not {grant}");
+    let runs = store.stage_runs(&stage.run)?;
+    let earlier: Vec<&StageRun> = runs
+        .iter()
+        .filter(|s| s.id != stage.id && s.aether_agent.as_ref() == Some(agent))
+        .collect();
+    let Some(created) = earlier.iter().min_by_key(|s| s.attempt) else {
+        return Ok(None);
+    };
+    // The cap its create sent, as `stage_create_agent` decides it.
+    let spawned = load_spawn(store, &created.id)?.request;
+    if spawned.cost_budget_usd.is_none() || spawned.aether_cost_budget == Some(false) {
+        return Ok(None);
+    }
+    let spent: f64 = earlier.iter().map(|s| s.cost_usd).sum();
+    assert!(spent.is_finite() && spent >= 0.0, "spend is an amount");
+    Ok(Some((spent + grant).max(steer::MIN_GRANT_USD)))
 }
 
 /// Stop the kept agent a fresh one takes over from, so the fresh one has
@@ -187,17 +228,17 @@ pub(super) async fn resumed_ok(
     })
 }
 
-/// The kept agent a running attempt was resumed on and what it was told;
-/// `None` for a stage run that waits for a task.
+/// A running attempt resumed on a kept agent, with that agent and what it
+/// was told; `None` for a stage run that waits for a task.
 fn resumed_on(
     store: &Store,
     id: &StageRunId,
-) -> Result<Option<(AetherAgentId, String)>, ArchonError> {
+) -> Result<Option<(StageRun, KeptAgent)>, ArchonError> {
     let stage = store.stage_run(id)?;
     if stage.state != StageState::Running || stage.aether_task.is_some() {
         return Ok(None);
     }
-    let Some(agent) = stage.aether_agent else {
+    let Some(agent) = &stage.aether_agent else {
         return Ok(None);
     };
     let kept = match load_spawn(store, id) {
@@ -206,18 +247,19 @@ fn resumed_on(
         Err(error) => return Err(error),
     };
     assert!(
-        kept.as_ref().is_none_or(|kept| kept.agent == agent),
+        kept.as_ref().is_none_or(|kept| &kept.agent == agent),
         "an attempt runs on the agent it was resumed on"
     );
-    Ok(kept.map(|kept| (agent, kept.message)))
+    Ok(kept.map(|kept| (stage, kept)))
 }
 
 /// Settle a resumed attempt once its agent answered; nothing while it works.
 pub(super) async fn check(ctx: &DaemonContext, id: &StageRunId) -> Result<FollowUp, ArchonError> {
-    let Some((agent, message)) = resumed_on(&*ctx.store.lock().await, id)? else {
+    let Some((stage, kept)) = resumed_on(&*ctx.store.lock().await, id)? else {
         return Ok(FollowUp::default());
     };
-    let outcome = match ctx.backend.resumed_outcome(&agent, &message).await {
+    let agent = &kept.agent;
+    let outcome = match ctx.backend.resumed_outcome(agent, &kept.message).await {
         Ok(Some(outcome)) => outcome,
         Ok(None) => return Ok(FollowUp::default()),
         Err(error) if unanswered(&error) => {
@@ -226,9 +268,107 @@ pub(super) async fn check(ctx: &DaemonContext, id: &StageRunId) -> Result<Follow
         }
         Err(error) => return Err(error),
     };
+    let Some(outcome) = recorded(ctx, &stage, &kept, outcome).await? else {
+        return Ok(FollowUp::default());
+    };
     // An infrastructure failure is replaced by a fresh agent, which stops
     // this one before it starts ([`Takeover::Replace`]).
     settle::settle(ctx, id, outcome).await
+}
+
+/// `outcome` as the attempt settles on it; `None` while its agent is asked for
+/// the ship record its final message left out. The answer keeps the summary.
+async fn recorded(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    kept: &KeptAgent,
+    outcome: StageOutcome,
+) -> Result<Option<StageOutcome>, ArchonError> {
+    assert_eq!(
+        stage.aether_agent.as_ref(),
+        Some(&kept.agent),
+        "the attempt runs on its kept agent"
+    );
+    let StageOutcome::Completed {
+        summary,
+        structured,
+    } = &outcome
+    else {
+        return Ok(Some(outcome));
+    };
+    if let Some(first) = &kept.asked_record {
+        assert!(!first.trim().is_empty(), "a final message has a summary");
+        let structured = structured.clone();
+        let summary = first.clone();
+        return Ok(Some(StageOutcome::Completed {
+            summary,
+            structured,
+        }));
+    }
+    let Err(why) = ShipRecord::read(structured.as_ref()) else {
+        return Ok(Some(outcome));
+    };
+    if !records_ship(ctx, stage).await {
+        return Ok(Some(outcome));
+    }
+    let why = if structured.is_none() {
+        "it has no fenced `json` block".to_owned()
+    } else {
+        why
+    };
+    let asked = ask_for_record(ctx, stage, &kept.agent, &why, summary).await?;
+    Ok((!asked).then_some(outcome))
+}
+
+/// Whether `stage` hands in the ship record archond delivers, as its run's
+/// driver has it. A run without a driver is settled as it stands.
+async fn records_ship(ctx: &DaemonContext, stage: &StageRun) -> bool {
+    let table = ctx.runs.lock().await;
+    let driver = table.drivers.get(&stage.run);
+    driver.is_some_and(|driver| driver.records_ship(&stage.stage_id))
+}
+
+/// Ask `agent` once, keyed by the stage run, for the ship record its final
+/// message `summary` left out. `false` when Aether refuses the message.
+async fn ask_for_record(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    agent: &AetherAgentId,
+    why: &str,
+    summary: &str,
+) -> Result<bool, ArchonError> {
+    assert_eq!(stage.state, StageState::Running, "a resumed attempt");
+    assert!(!why.is_empty(), "the agent is told what is missing");
+    let text = format!(
+        "Archon cannot ship your fix: the ship record is not in your last message ({why}). \
+         Do not change your work. Reply with the ship record of the commit you leave, read \
+         after your last commit, as one fenced `json` block:\n\n{SHIP_RECORD_JSON}\n\n\
+         If there is no commit to ship, start the message with `FAILED:` and say why.\n"
+    );
+    let key = format!("{}:record", stage.id);
+    match ctx.backend.send_message(agent, &text, &key).await {
+        Ok(()) => {}
+        Err(error) if unanswered(&error) => {
+            tracing::info!(stage = %stage.id, %agent, %error, "record request unanswered; the next sweep asks again");
+            return Ok(true);
+        }
+        Err(refusal) => {
+            tracing::info!(stage = %stage.id, %agent, %refusal, "kept agent cannot be asked for its record");
+            return Ok(false);
+        }
+    }
+    let mut store = ctx.store.lock().await;
+    let mut stored = load_spawn(&store, &stage.id)?;
+    let kept = stored
+        .resume
+        .as_mut()
+        .expect("a resumed attempt keeps its agent");
+    if kept.asked_record.is_none() {
+        kept.message = text;
+        kept.asked_record = Some(summary.to_owned());
+        spawn::save_spawn(&mut store, &stage.id, &stored)?;
+    }
+    Ok(true)
 }
 
 /// Stop a resumed attempt's agent and settle the attempt with `outcome`.

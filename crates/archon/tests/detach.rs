@@ -1,5 +1,6 @@
 //! `archon daemon run --detach`: the daemon runs in the data directory, not
-//! the caller's, and relative directory overrides keep the caller's meaning.
+//! the caller's, relative directory overrides keep the caller's meaning, and
+//! the startup log keeps earlier sessions.
 #![cfg(target_os = "linux")]
 
 use std::path::{Path, PathBuf};
@@ -59,6 +60,9 @@ fn the_detached_daemon_runs_in_the_data_dir_the_caller_named() {
     std::fs::write(config.join("config.toml"), "[aether]\nmode = \"shared\"\n").unwrap();
     let caller = home.join("caller");
     std::fs::create_dir_all(&caller).unwrap();
+    let run = home.join("run");
+    std::fs::create_dir_all(&run).unwrap();
+    std::fs::write(run.join("archond.log"), "an earlier session's last line\n").unwrap();
     let mut detached = Detached {
         caller: caller.clone(),
         pid: None,
@@ -86,4 +90,14 @@ fn the_detached_daemon_runs_in_the_data_dir_the_caller_named() {
         "a relative ARCHON_DATA_DIR is not resolved twice"
     );
     assert!(home.join("run/archond.sock").exists());
+    let log = std::fs::read_to_string(run.join("archond.log")).unwrap();
+    assert!(
+        log.starts_with("an earlier session's last line\n"),
+        "a start appends to the log: {log}"
+    );
+    assert_eq!(
+        log.matches(archon_core::paths::STARTUP_LOG_MARK).count(),
+        1,
+        "each start marks where its output begins: {log}"
+    );
 }

@@ -540,6 +540,7 @@ fn answer_long_history(request: &Request) -> Result<Reply, ErrorReply> {
                         message: "Next in line for the next dispatch pass".into(),
                         next_action,
                     }),
+                    switched_to: None,
                 }
             })
             .collect(),

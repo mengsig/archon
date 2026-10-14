@@ -1,6 +1,6 @@
 //! Which finished items wake the orchestrator (ARCHITECTURE §5.4): the
-//! operator gets every outcome in the feed from the daemon, and the
-//! orchestrator is woken only when it has something to do about one.
+//! operator gets every outcome in the feed from the daemon. A success wakes
+//! the orchestrator unless `wake_on_success` is off; then only work for it does.
 
 mod common;
 
@@ -49,6 +49,13 @@ async fn enqueued(h: &Harness, request: EnqueueRequest) -> QueueItem {
     }
 }
 
+/// An instance that wakes the orchestrator only when it has work to do.
+fn quiet() -> Config {
+    let mut config = Config::default();
+    config.orchestrator.wake_on_success = false;
+    config
+}
+
 /// Run the item's pipeline to the end with every stage passing.
 async fn succeed(h: &Harness, item: &QueueItem) {
     h.dispatch().await;
@@ -71,7 +78,7 @@ async fn finished_news(h: &Harness, item: &QueueItem) -> TriggerEvent {
 
 #[tokio::test]
 async fn a_routine_success_reaches_the_feed_and_does_not_wake_the_orchestrator() {
-    let h = Harness::new().await;
+    let h = Harness::with_config(quiet()).await;
     let item = enqueued(&h, request("bump a dependency")).await;
     succeed(&h, &item).await;
 
@@ -111,7 +118,7 @@ async fn a_routine_success_reaches_the_feed_and_does_not_wake_the_orchestrator()
 
 #[tokio::test]
 async fn a_failure_wakes_the_orchestrator() {
-    let h = Harness::new().await;
+    let h = Harness::with_config(quiet()).await;
     let item = enqueued(&h, request("fix the login bug")).await;
     h.dispatch().await;
     h.settle_running(|_| StageOutcome::Failed {
@@ -137,7 +144,7 @@ async fn a_failure_wakes_the_orchestrator() {
 
 #[tokio::test]
 async fn an_outcome_the_operator_must_act_on_wakes_the_orchestrator() {
-    let h = Harness::new().await;
+    let h = Harness::with_config(quiet()).await;
     let item = enqueued(&h, request("needs a credential")).await;
     h.dispatch().await;
     h.settle_running(|_| StageOutcome::Failed {
@@ -152,7 +159,7 @@ async fn an_outcome_the_operator_must_act_on_wakes_the_orchestrator() {
 
 #[tokio::test]
 async fn an_item_tagged_notify_wakes_the_orchestrator_when_it_succeeds() {
-    let h = Harness::new().await;
+    let h = Harness::with_config(quiet()).await;
     let mut asked = request("the first of two steps");
     asked.tags = vec!["release".into(), NOTIFY_TAG.into()];
     let item = enqueued(&h, asked).await;
@@ -166,7 +173,7 @@ async fn an_item_tagged_notify_wakes_the_orchestrator_when_it_succeeds() {
 
 #[tokio::test]
 async fn an_item_asked_for_on_github_wakes_the_orchestrator_to_reply_there() {
-    let h = Harness::new().await;
+    let h = Harness::with_config(quiet()).await;
     let thread: GithubThread =
         serde_json::from_value(serde_json::json!({"repository": "Owner/Repo", "number": 12}))
             .unwrap();
@@ -205,10 +212,8 @@ async fn a_cancelled_item_is_quiet_news() {
 }
 
 #[tokio::test]
-async fn wake_on_success_restores_a_trigger_per_outcome() {
-    let mut config = Config::default();
-    config.orchestrator.wake_on_success = true;
-    let h = Harness::with_config(config).await;
+async fn by_default_a_success_wakes_the_orchestrator_so_the_chat_shows_it() {
+    let h = Harness::new().await;
     assert_eq!(
         h.kv(archon_queue::store::keys::ORCHESTRATOR_AGENT).await,
         None
@@ -221,7 +226,11 @@ async fn wake_on_success_restores_a_trigger_per_outcome() {
         Some(ORCHESTRATOR)
     );
     succeed(&h, &item).await;
-    assert!(triggers::due(&h.ctx).await.unwrap());
+    finished_news(&h, &item).await;
+    assert!(
+        triggers::due(&h.ctx).await.unwrap(),
+        "Aether's chat shows only what the orchestrator says"
+    );
 }
 
 #[tokio::test]

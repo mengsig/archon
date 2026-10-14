@@ -14,9 +14,11 @@ const WORKSPACE: &str = "/worktree";
 const POLICY: &str = "any model the policy allows";
 
 /// Byte budgets, a little above what the built-ins weigh today.
-const PLAIN_BUDGET: usize = 2_600;
+const PLAIN_BUDGET: usize = 2_650;
 const REVIEW_BUDGET: usize = 2_900;
 const RECORD_BUDGET: usize = 1_300;
+/// What holding a review adds: the record and the verdict each reviewer returns.
+const REVIEW_HOLDER_BUDGET: usize = 450;
 const TOTAL_BUDGET: usize = 120_000;
 
 /// One built-in stage's fixed input, in bytes.
@@ -57,7 +59,7 @@ fn costs() -> Vec<Cost> {
                     .review_duty(stage)
                     .is_some_and(|duty| duty.reviewers > 0);
             let delegation = match delegates {
-                true => contract::delegation_rules(mode, POLICY).len(),
+                true => contract::delegation_rules(mode, POLICY, 2).len(),
                 false => 0,
             };
             out.push(Cost {
@@ -113,7 +115,11 @@ fn built_in_contracts_stay_within_their_byte_budgets() {
             .get(&cost.pipeline)
             .expect("a listed built-in loads");
         let owed = spec.owed(spec.stage(&cost.stage).expect("a listed stage"));
-        let budget = budget(cost, owed.ship_record || owed.review.is_some());
+        let holds_review = owed.review.is_some_and(|duty| duty.reviewers > 0);
+        let mut budget = budget(cost, owed.ship_record || owed.review.is_some());
+        if holds_review {
+            budget += REVIEW_HOLDER_BUDGET;
+        }
         if cost.contract > budget {
             over.push(format!(
                 "{}/{}: {} B",

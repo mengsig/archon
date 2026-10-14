@@ -57,7 +57,7 @@ fn message_orchestrator() -> ToolDefinition {
         "Send the orchestrator a message, recorded with your item and stage: `relay` for an \
          operator message meant for it, `escalation` for a blocker outside your stage, else \
          `info`. Returns at once: keep working, and never wait for a reply or end your turn \
-         over it. At most 20 per agent.",
+         over it. At most 20 per agent by default.",
         object(
             json!({
                 "text": {"type": "string", "minLength": 1, "maxLength": archon_core::agent_message::MAX_MESSAGE_CHARS},
@@ -198,7 +198,7 @@ fn autonomy() -> Value {
         "description": "A knob left out takes autonomy_policy's default. Its `propose` and \
             `report` stages take the first stage's model unless model_plan names them.",
         "properties": {
-            "review": {"type": "string", "enum": ["strict", "standard", "none"], "description": "Reviewers the change gets: none 0, standard 1, strict 3. Without `pipeline` it picks one: strict → strict-pr-review, standard → default-pr-review, none → quick-pr; `adaptive` and `direct` take it as given."},
+            "review": {"type": "string", "enum": ["strict", "standard", "none"], "description": "Without `pipeline` it picks one: strict → strict-pr-review, standard → default-pr-review, none → quick-pr. `adaptive` and `direct` delegate 3, 1 or 0 reviewers; another pipeline's gates fix it."},
             "proposal": {"type": "string", "enum": ["off", "lavish"], "description": "lavish: a proposal page first, and the run waits for the operator's verdict on it. For an ambiguous direction or a requested plan."},
             "report": {"type": "string", "enum": ["off", "with-pr", "before-pr"], "description": "with-pr: a change report linked from the PR. before-pr: the operator approves it before the PR opens. For a diff that is hard to review alone."},
             "merge": {"type": "string", "enum": ["manual", "auto"], "description": "auto: GitHub merges the PR once its checks allow."},
@@ -395,7 +395,7 @@ fn enqueue() -> ToolDefinition {
         "Enqueue work",
         "Queue one unit of work and return its item (`qi_…`) at once. The daemon runs it through \
          `pipeline` in a fresh worktree and branch when dependencies, caps and budgets allow. \
-         item_finished news follows: do not poll.",
+         item_finished, or a later items_finished, reports it: do not poll.",
         object(
             json!({
                 "repo": repo_ref("Left out only for a pipeline with requires_repo = false (`ask`)."),

@@ -2,7 +2,10 @@
 
 use archon_core::error::ArchonError;
 use archon_core::id::InitiativeId;
-use archon_core::initiative::{EnqueueInitiative, Initiative, InitiativeDetail, InitiativeState};
+use archon_core::initiative::{
+    ContractChange, EnqueueInitiative, Initiative, InitiativeDetail, InitiativeLimits,
+    InitiativeState,
+};
 use archon_core::queue::{QueueItem, QueueState};
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -40,7 +43,7 @@ impl Store {
         members: &[QueueItem],
         request: &EnqueueInitiative,
     ) -> Result<InitiativeDetail, ArchonError> {
-        request.check()?;
+        request.check(&InitiativeLimits::CEILING)?;
         assert_eq!(initiative.state, InitiativeState::Open);
         assert_eq!(members.len(), request.members.len());
         let tx = write_tx(&mut self.conn)?;
@@ -63,30 +66,30 @@ impl Store {
         Ok(stored)
     }
 
-    pub fn append_initiative_contract(
+    /// Append to or replace the contract of an initiative that is not
+    /// finished. A replacement with the same text changes nothing.
+    pub fn change_initiative_contract(
         &mut self,
         id: &InitiativeId,
-        text: &str,
+        change: &ContractChange,
+        limits: &InitiativeLimits,
     ) -> Result<InitiativeDetail, ArchonError> {
-        if text.trim().is_empty() {
-            return Err(ArchonError::Invalid(
-                "contract_append must not be empty".into(),
-            ));
-        }
+        assert!(limits.within(&InitiativeLimits::CEILING));
         let tx = write_tx(&mut self.conn)?;
         let mut current = detail(&tx, id)?;
         if current.initiative.state.is_terminal() {
             return Err(ArchonError::InvalidTransition(
-                "retry a terminal initiative before amending it".into(),
+                "retry a terminal initiative before changing its contract".into(),
             ));
         }
-        let contract = format!("{}\n\n{}", current.initiative.contract, text.trim());
-        archon_core::initiative::check_contract(&contract)?;
-        assert!(contract.starts_with(&current.initiative.contract));
-        assert!(contract.len() > current.initiative.contract.len());
+        let contract = change.apply(&current.initiative.contract, limits)?;
+        if contract == current.initiative.contract {
+            return Ok(current);
+        }
         current.initiative.contract = contract;
         save(&tx, &mut current.initiative)?;
-        tx.commit().ctx("amend initiative contract")?;
+        tx.commit().ctx("change initiative contract")?;
+        assert_eq!(&current.initiative.id, id);
         Ok(current)
     }
 
@@ -227,7 +230,8 @@ fn detail(conn: &Connection, id: &InitiativeId) -> Result<InitiativeDetail, Arch
 
 fn save(conn: &Connection, initiative: &mut Initiative) -> Result<(), ArchonError> {
     assert!(!initiative.title.is_empty());
-    assert!(archon_core::initiative::check_contract(&initiative.contract).is_ok());
+    let ceiling = InitiativeLimits::CEILING;
+    assert!(archon_core::initiative::check_contract(&initiative.contract, &ceiling).is_ok());
     initiative.updated_at =
         archon_core::now().max(initiative.updated_at + chrono::Duration::nanoseconds(1));
     let changed = conn

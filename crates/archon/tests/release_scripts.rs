@@ -168,16 +168,27 @@ fn an_archive_holds_archon_and_the_licence_files_of_this_checkout() {
         assert_eq!(archive_member(&archive, notice), here, "{notice}");
     }
     let unpacked = tempfile::tempdir().unwrap();
+    // `-p`: the modes as packed, not narrowed by this process's umask.
     let extracted = Command::new("tar")
-        .arg("-xzf")
+        .arg("-xpzf")
         .arg(&archive)
         .arg("-C")
         .arg(unpacked.path())
         .status()
         .unwrap();
     assert!(extracted.success(), "the archive unpacks");
-    let mode = std::fs::metadata(unpacked.path().join("archon")).unwrap();
-    assert_eq!(mode.permissions().mode() & 0o777, 0o755, "archon runs");
+    let mode = |name: &str| {
+        let meta = std::fs::metadata(unpacked.path().join(name)).unwrap();
+        meta.permissions().mode() & 0o777
+    };
+    assert_eq!(mode("archon"), 0o755, "archon runs");
+    for notice in ["LICENSE", "THIRD-PARTY-NOTICES"] {
+        assert_eq!(
+            mode(notice),
+            0o644,
+            "{notice} is readable whatever the checkout's umask"
+        );
+    }
 }
 
 #[test]

@@ -18,7 +18,7 @@ use crate::id::{
     DirectiveId, InitiativeId, LessonId, PipelineRunId, QuestionId, QueueItemId, ReportId,
     StageRunId,
 };
-use crate::initiative::{EnqueueInitiative, Initiative, InitiativeDetail};
+use crate::initiative::{ContractChange, EnqueueInitiative, Initiative, InitiativeDetail};
 use crate::lesson::{Lesson, LessonDraft, LessonPatch, LessonQuery, LessonStats, LessonWhy};
 use crate::model::{Effort, ModelChoice, ModelPlan, ModelReasons, ModelRef};
 use crate::model_evidence::{ModelEvidenceQuery, ModelEvidenceReport};
@@ -292,10 +292,11 @@ pub enum Request {
     GetInitiative {
         initiative: InitiativeId,
     },
-    /// Append to the shared contract; live members are told.
+    /// Append to the shared contract or replace it; live members are told.
     UpdateInitiative {
         initiative: InitiativeId,
-        contract_append: String,
+        #[serde(flatten)]
+        change: ContractChange,
     },
     /// Change a queued or running item without cancelling it.
     SteerItem {
@@ -737,6 +738,10 @@ pub struct ItemSummary {
     pub waiting_on: Option<WaitingOn>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting_reason: Option<WaitingReason>,
+    /// The catalog pipeline a steer switched the item to; `item.pipeline`
+    /// stays the one it was queued with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub switched_to: Option<String>,
 }
 
 /// Stable read-time reason codes; these are never stored on a queue item.
@@ -797,6 +802,9 @@ pub struct ItemDetail {
     pub waiting_on: Option<WaitingOn>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting_reason: Option<WaitingReason>,
+    /// As in [`ItemSummary`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub switched_to: Option<String>,
 }
 
 /// An agent a stage agent delegated to, itself or through another.
@@ -1237,6 +1245,7 @@ mod tests {
             stage: Some("review".into()),
             spent_usd: 1.5,
             pr_url: None,
+            switched_to: None,
         };
         let reply = Reply::ItemSummaries(vec![summary.clone()]);
         let value = serde_json::to_value(&reply).unwrap();
@@ -1340,8 +1349,19 @@ mod tests {
         }
         let append = Request::UpdateInitiative {
             initiative: InitiativeId::new(),
-            contract_append: "Also rename the column.".into(),
+            change: ContractChange::Append("Also rename the column.".into()),
         };
+        let wire = serde_json::to_value(&append).unwrap();
+        assert_eq!(wire["contract_append"], "Also rename the column.");
+        assert_eq!(serde_json::from_value::<Request>(wire).unwrap(), append);
+        let replace = serde_json::json!({
+            "cmd": "update_initiative", "initiative": InitiativeId::new(), "contract": "New."
+        });
+        let Request::UpdateInitiative { change, .. } = serde_json::from_value(replace).unwrap()
+        else {
+            panic!("an update");
+        };
+        assert_eq!(change, ContractChange::Replace("New.".into()));
         let draft = Request::RecordLesson(LessonDraft {
             kind: crate::lesson::LessonKind::Pitfall,
             text: "CI needs `make lint`.".into(),

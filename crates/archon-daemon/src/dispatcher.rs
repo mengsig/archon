@@ -86,7 +86,7 @@ pub async fn dispatch_once(ctx: &DaemonContext) -> Result<DispatchPlan, ArchonEr
         merged.never_fits = admission.plan.never_fits.clone();
         let spawned = executor::run_follow_up(ctx, admission.follow).await;
         keep_error(&mut first_error, spawned)?;
-        keep_error(&mut first_error, start_items(ctx, &started).await)?;
+        keep_error(&mut first_error, executor::start_items(ctx, &started).await)?;
         last = Some(admission.budget);
         if started.is_empty() {
             break;
@@ -195,18 +195,6 @@ async fn mark_dispatching(
         }
     }
     Ok(moved)
-}
-
-/// Start each item; one item's failure does not hold back the others.
-async fn start_items(ctx: &DaemonContext, items: &[QueueItemId]) -> Result<(), ArchonError> {
-    let mut first_error = None;
-    for id in items {
-        if let Err(error) = executor::start_item(ctx, id).await {
-            tracing::error!(item = %id, %error, "starting item failed");
-            first_error.get_or_insert(error);
-        }
-    }
-    first_error.map_or(Ok(()), Err)
 }
 
 /// `queued → blocked` for items whose dependencies failed or were

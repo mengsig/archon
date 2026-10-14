@@ -18,14 +18,17 @@ mod wrap;
 
 use std::process::ExitCode;
 
-use clap::Parser;
+use clap::Parser as _;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::LevelFilter;
 
 use crate::cli::{Cli, Command, DaemonCommand};
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => return usage_error(&error),
+    };
     let json = cli.json;
     // The daemon logs its work; everything else stays quiet unless RUST_LOG
     // asks. `archon mcp` speaks JSON-RPC on stdout, so logs go to stderr.
@@ -60,4 +63,25 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// A command line that does not parse: what clap prints, or under `--json`
+/// the usual error envelope on stdout. Either way with clap's exit status.
+fn usage_error(error: &clap::Error) -> ExitCode {
+    let status = u8::try_from(error.exit_code()).unwrap_or(2);
+    let wants_json = std::env::args_os().skip(1).any(|arg| arg == "--json");
+    // Help and the version are no error: clap prints them to stdout.
+    if !error.use_stderr() || !wants_json {
+        return match error.print() {
+            Ok(()) => ExitCode::from(status),
+            Err(_) => ExitCode::FAILURE,
+        };
+    }
+    assert_ne!(status, 0, "a command line that does not parse fails");
+    let rendered = error.render().to_string();
+    let message = rendered.trim().trim_start_matches("error: ");
+    let code = archon_core::protocol::ErrorCode::InvalidArgument;
+    let envelope = serde_json::json!({"error": {"code": code, "message": message}});
+    println!("{envelope}");
+    ExitCode::from(status)
 }

@@ -43,7 +43,7 @@ pub(super) async fn settle(
     // Leave the stage live until verification is persisted. If interrupted,
     // reconnect reconciliation reads the task outcome and verifies it again.
     let outcome = ship::verify(ctx, &run, &stage, daemon_ships, outcome).await?;
-    let outcome = super::review::verify(ctx, &stage, reviewers_owed, outcome).await?;
+    let outcome = super::review::verify(ctx, &run, &stage, reviewers_owed, outcome).await?;
     let mut table = ctx.runs.lock().await;
     let (stage, run, all) = {
         let store = ctx.store.lock().await;

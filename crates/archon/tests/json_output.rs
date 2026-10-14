@@ -217,6 +217,7 @@ impl Canned {
                     pr_url: None,
                     waiting_on: self.waiting_on.clone(),
                     waiting_reason: self.waiting_reason.clone(),
+                    switched_to: None,
                 }])
             }
             Request::Say { .. } | Request::Answer { .. } => Reply::Ok,
@@ -236,6 +237,7 @@ impl Canned {
                 spent_usd: 0.0,
                 gates: vec![],
                 delegations: Default::default(),
+                switched_to: None,
             })),
             Request::CancelItem { .. } | Request::RetryItem { .. } | Request::SteerItem { .. } => {
                 Reply::Item(self.item.clone())
@@ -340,6 +342,39 @@ fn json_errors_keep_codes_messages_and_exit_status() {
 }
 
 #[test]
+fn a_command_line_that_does_not_parse_is_an_envelope_under_json() {
+    let env = Env::new();
+    let cases: [&[&str]; 4] = [
+        &["--json", "queue", "steer", "qi_x", "--budget-usd", "-1"],
+        &["queue", "steer", "qi_x", "--budget-usd", "-1", "--json"],
+        &["--json", "no-such-command"],
+        &["--json", "initiatives", "update", "ini_x"],
+    ];
+    for args in cases {
+        let out = env.command(args).output().unwrap();
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {out:?}");
+        let value = parse(args, &out.stdout);
+        assert_eq!(value["error"]["code"], "invalid_argument", "{value}");
+        let message = value["error"]["message"].as_str().unwrap();
+        assert!(
+            !message.is_empty() && !message.starts_with("error:"),
+            "{message}"
+        );
+        assert!(out.stderr.is_empty(), "{args:?}: {out:?}");
+    }
+    let plain = env
+        .command(&["queue", "steer", "qi_x", "--budget-usd", "-1"])
+        .output()
+        .unwrap();
+    assert_eq!(plain.status.code(), Some(2));
+    assert!(plain.stdout.is_empty(), "{plain:?}");
+    assert!(String::from_utf8_lossy(&plain.stderr).starts_with("error: "));
+    let help = env.command(&["--json", "--help"]).output().unwrap();
+    assert!(help.status.success(), "help is still help: {help:?}");
+    assert!(String::from_utf8_lossy(&help.stdout).contains("Usage:"));
+}
+
+#[test]
 fn caller_errors_have_typed_json_categories() {
     let env = Env::new();
     let daemon = start_daemon(&env);
@@ -421,6 +456,7 @@ fn queue_and_status_views_put_the_current_operator_wait_first() {
         pr_url: None,
         waiting_on: canned.waiting_on.clone(),
         waiting_reason: None,
+        switched_to: None,
     }];
     canned.status = Some(status);
     let id = canned.item.id.to_string();
@@ -510,6 +546,7 @@ fn queued_waiting_reason_is_visible_in_queue_and_status_text_and_json() {
         pr_url: None,
         waiting_on: None,
         waiting_reason: canned.waiting_reason.clone(),
+        switched_to: None,
     }];
     canned.status = Some(status);
     let id = canned.item.id.to_string();

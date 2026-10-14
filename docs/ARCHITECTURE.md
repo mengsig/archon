@@ -142,7 +142,7 @@ daemon also serves 14).
 
 ```json
 {"req":1,"cmd":"hello","protocol_version":17,"client_name":"archon",
- "client_version":"1.0.1","features":[]}
+ "client_version":"1.1.0","features":[]}
 ```
 
 The reply is `Welcome {protocol_version, daemon_version, instance_id,
@@ -299,7 +299,9 @@ starts. So:
   cancelled, and the orchestrator hears `policy_violation`. Its spend counts
   toward the daily and total budgets.
 - It may delegate once more. An agent a third delegation below the
-  orchestrator is cancelled for its depth (§7.4), whatever its model.
+  orchestrator is cancelled for its depth (§7.4), whatever its model. That
+  is `[limits] max_delegation_depth = 2`, which the "This installation"
+  section of its prompt states.
 - It is outside `max_parallel_agents` and `max_stage_agents_per_item`, which
   count stage agents (§7.1). The prompt holds the orchestrator to the
   parallel-agent cap, counting its own children with Aether's `list_agents`,
@@ -964,8 +966,11 @@ is saved in kv `trigger_outbox` when it is pushed, before any coalescing, so
 news waiting in the window survives an `archond` stop or crash. The outbox
 also keeps the keyed batch, so a restart resumes it under the same key.
 After a quiet spell, delivery waits the window from the first event. News
-pushed while a batch is delivered has waited already and goes out right
-after it.
+the operator waits on or must act on ends the window at once: an
+`operator_answer`, a `chat_answer`, a `gate_opened`, an `item_blocked`,
+`lavish_feedback`, a `budget` and a stage's escalation
+(`TriggerEvent::is_urgent`). News pushed while a batch is delivered has
+waited already and goes out right after it.
 
 **Which news wakes the orchestrator.** A wake is a whole turn of the
 orchestrator over its context, so the daemon spends one only on news the
@@ -979,7 +984,12 @@ operator from the daemon itself, as an `Outcome` or `Blocker` feed entry
 | Failed, or the operator must act (a `Blocker`, a `BLOCKED:` result) | wakes |
 | Succeeded with an `origin`: a GitHub thread is owed the result | wakes |
 | Succeeded and tagged `notify` by whoever queued it | wakes |
-| Succeeded otherwise, or cancelled | quiet |
+| Succeeded otherwise | wakes unless `wake_on_success = false` |
+| Cancelled | quiet |
+
+A success wakes by default because Aether's terminal UI shows only what the
+orchestrator says, and Aether 1.0 has no way to add an entry to an agent's
+chat without starting its turn.
 
 A waking failure also carries `lesson_hint` (§19). An initiative's member
 makes no `item_finished`: its initiative's `initiative_finished` wakes once
@@ -996,8 +1006,7 @@ turn that answers the operator has read it. When it is keyed, the quiet
 outcomes become one `items_finished` event at the end of the batch: item,
 title, state, pull request and cost of the newest outcome of each item, at
 most 20, with `more` counting the rest, and without an outcome the item no
-longer shows (it was retried since). `[orchestrator] wake_on_success = true`
-makes every outcome waking again.
+longer shows (it was retried since).
 
 An `agent_message` is one feed entry the daemon writes with the news, in
 the same transaction (§5.5), so the orchestrator does not echo it: an
@@ -1147,7 +1156,9 @@ never repeats a message to the operator; it acts on it. The news event
 carries item, pipeline run, stage run, stage, attempt, agent, kind, text and
 original sender. One SQLite transaction commits the feed entry, the
 sender's count and the `agent_message` news event in the durable outbox.
-The receipt is the feed entry id. The tool does no Aether
+A sender's count is capped at `[limits] max_agent_messages` (20 by
+default), and so is each run node's count of external messages; the
+refusal names the key. The receipt is the feed entry id. The tool does no Aether
 I/O and does not settle the stage. Stage instructions and the receipt say
 to continue working: ending a turn would complete the stage, and sending
 a message is never a reason to wait or end it.
@@ -1179,7 +1190,8 @@ operator and system inbox messages have a separate cap of 20 per run node.
 The tool returns a clear error above the cap. Invalid or excess run-node
 messages produce an idempotent refusal to the sending agent, or a notice
 in the operator feed. Accepted messages share the normal trigger coalescing
-window and remain pinned through compaction until delivery. Counts and
+window, which an escalation ends (§5.4), and remain pinned through
+compaction until delivery. Counts and
 routing tombstones are kept through the late-message window. Message counts
 remain durable so restarts or routing recovery cannot reset limits.
 
@@ -1212,9 +1224,13 @@ The legal edges are implemented in `QueueState::can_transition_to`:
 - `running` can go to `succeeded`, `failed` or `cancelled`.
 - `blocked` can go to `queued` or `cancelled`.
 - `failed`, `cancelled` and `succeeded` can go back to `queued` (operator or
-  orchestrator retry). A retried `succeeded` item continues on its branch into
-  the pull request it has, and the retry is a correction of the run that had
-  passed (§19).
+  orchestrator retry; the `retry` edge above). Until 1.1 `succeeded` was
+  final. A retried `succeeded` item runs again in its worktree and on its
+  branch (a fresh retry forks a new branch from the base), delivers into the
+  pull request it has, and the retry is a `retry_after_done` correction of
+  the run that had passed (§19), written with the transition. A dependent
+  still queued waits for it to succeed again; one that already started goes
+  on. Until it is retried, a `succeeded` item takes no steer or update.
 
 When a dependency fails or is cancelled, its dependents move to `blocked` and
 the orchestrator gets an `item_blocked` trigger. When a dependency is retried,
@@ -1433,7 +1449,9 @@ writes the run's when it runs after the stage the run shipped from so far
 (`reshape::ship_after`), and an insert that would commit after the ship
 record is refused. The result must pass the model policy and
 the autonomy ceiling: a steer cannot take out the review an enqueue could
-not leave out (§18.2). An item that is dispatching is refused with "steer
+not leave out (§18.2). The item's review level follows the stages it keeps,
+and a steer that moves it says so in its record ("raised the review level
+from none to standard"). An item that is dispatching is refused with "steer
 it again in a moment", a succeeded one always, and a cancelled one for a
 shape change (retry it first).
 
@@ -1496,7 +1514,9 @@ branch the work is on, and the item is queued again as a plain retry is
 (§13). Its next run works in the same worktree and on the same branch, with
 the failed run's commits, and runs the reshaped stage list from its first
 stage. The item keeps its pipeline's name; `kv.shape:<item>` holds what it
-runs.
+runs, and its `pipeline` names the catalog pipeline last switched to. Item
+views give that as `switched_to` when it is not the item's own, and `queue
+show`, `queue list` and `status` print `<queued> → <switched to>`.
 
 **`update_item` on a running item.** `brief_append` is steered in as a
 note. `model_plan` replaces the plan for the agents started from now, and
@@ -1530,7 +1550,9 @@ stage are created as before, a fresh agent per attempt.
   other way has its agent stopped.
 - **Resumed.** The next attempt of the slot, entered with feedback, takes
   the agent over (`resume::takeover`). `update_agent` gives it the stage's
-  deadline, and `send_message`, keyed by the stage run, gives it
+  deadline and, when its creation set a cost cap, a cap of what its earlier
+  attempts spent plus the new attempt's grant (`resume::regranted_cap`).
+  `send_message`, keyed by the stage run, gives it
   `sections::resume_message`: the findings, and how to hand in. The stage
   run is `running` with the same agent and no task. Notes steered in while
   the agent was parked are added to the message.
@@ -1544,7 +1566,11 @@ stage are created as before, a fresh agent per attempt.
   the attempt's summary, with the object of its last fenced `json` block
   as its `structured`. That is how a kept agent of the stage `[pipeline.ship]`
   names hands in a new ship record (§8.7) for its fix, which
-  `sections::resume_message` asks of it. The pump checks when the agent's turn ends and the
+  `sections::resume_message` asks of it. A message without a valid record
+  gets one more message, keyed `<stage run>:record`, asking for the record
+  alone (`resume::recorded`); the attempt then settles on that answer's
+  record with the first message's summary, and a second miss fails the
+  stage at its gate. The pump checks when the agent's turn ends and the
   sweep checks again, so a missed event only delays it. A resumed attempt
   past its deadline has its agent cancelled and is `timed_out`.
 - **Replaced.** A fresh agent takes the attempt, with the findings under
@@ -1614,6 +1640,14 @@ repo and pipeline, pause state, spend) plus `Caps`, and returns a
    budget posts one `Blocker` to the feed and a `budget` trigger. The holds
    are checked in that order, and `held_by` names the first that applies
    (`GlobalPause`, `LowDisk`, `TotalBudget`, `DailyBudget`).
+
+**Carrying out a plan.** Independent work runs in parallel lanes
+(`executor::lanes`, at most 8 at once), and each lane runs its work in
+order. Starts and ships are laned by repository, because git writes a
+repository's shared state (its worktree list, `.git/config` on
+`push --set-upstream`). Spawns are laned by pipeline run, because a run's
+first spawn creates its Aether run node. So one slow Aether call or
+`git push` holds back only its own lane.
 
 **Derived waiting reasons.** `dispatch::waiting_reasons` calls the same pure
 planner and uses its admissions to distinguish `capacity` from `next_in_line`.
@@ -1751,9 +1785,10 @@ five places:
    helper whose scope leads into a registered repository or the worktrees
    root is cancelled the same way (§4.4).
 5. Depth: the watchdog records how many delegations each child is below
-   its stage agent or the orchestrator, and cancels one more than two down
-   with the same `Blocker` and trigger. A delegating stage agent's
-   contract tells it so (§8.6): its child may delegate once more.
+   its stage agent or the orchestrator, and cancels one deeper than
+   `[limits] max_delegation_depth` (2: two down) with the same `Blocker`
+   and trigger. A delegating stage agent's contract states the configured
+   depth (§8.6); at 2, its child may delegate once more.
 
 Effort is not restricted by default. `[models] max_effort` optionally caps it.
 
@@ -1913,8 +1948,9 @@ Validation rules (load-time errors):
   agent, and no `work` or `team` stage follows it; unknown keys are refused.
 
 **A declared review.** A pipeline's review level is otherwise derived from
-its gates: three reviewers are `strict`, a gated review `standard`, none
-`none` (§18.1). A pipeline whose review happens inside a work stage, by
+its gates, not its reviewer count: gated review and test stages are
+`strict`, either one alone `standard`, neither `none`
+(`archon_pipeline::autonomy::review_level`, §18.1). A pipeline whose review happens inside a work stage, by
 agents that stage's agent delegates to, has no gate to derive it from, so
 it declares the stage that holds the review.
 
@@ -1939,31 +1975,48 @@ The level binds the named stage. Its agent's contract gains a
 asks for a reviewer, and its `complete_task` must carry in `structured`
 
 ```json
-{"review": {"verdict": "pass", "reviewer_model": "<provider>/<model>"}}
-{"review": {"verdict": "pass", "reviewer_models": ["<provider>/<model>", "…", "…"]}}
+{"review": {"verdict": "pass", "reviewers": ["<agent id>", "…"]}}
 ```
 
-with one model per reviewer. A completion without it, with any other
-verdict, or with a pass that names fewer reviewers than the level asks for
-fails the run at that stage with what is missing: nothing loops, no later
-stage starts and nothing ships. At `none` nothing is owed and the contract
-says to delegate no reviewer.
+naming the agent of each reviewer the pass rests on, a failed one whose
+findings were fixed included. Each reviewer's own `complete_task` carries
+its verdict on the commits it read:
 
-A pass is checked against Aether, not taken from the lead. When the stage
-settles, `archond` lists the lead's descendants once (`list_agents`, the
-call the owed stop of §6.3 makes) and assigns each named model a different
-direct child that completed on it; a cancelled, failed or still running
-child does not count, nor does a grandchild, and one child never stands for
-two reviewers. Their agent ids are stored in the stage's structured result
-as `review.reviewer_agents`. When a model has no such child, `archond`
-stores `review.unverified` with what the lead did delegate to, and the
-engine fails the run at that stage with it. Both keys are Archon's:
-whatever an agent wrote under them is removed from every stage's result
-before it is stored, so a lead cannot supply its own finding. While Aether
-cannot be asked the stage stays live and the pump's reconciliation settles
-it later. The check shows that this many reviewers on those models ran to
-completion beneath the lead; what they read and what they concluded remain
-the lead's report.
+```json
+{"verdict": "pass", "head": "<commit>", "base": "<commit>", "findings": []}
+```
+
+A completion without the record, with any other verdict, or with a pass
+that names fewer reviewers than the level asks for fails the run at that
+stage with what is missing: nothing loops, no later stage starts and
+nothing ships. At `none` nothing is owed and the contract says to delegate
+no reviewer.
+
+A pass is checked against Aether and the run branch, not taken from the
+lead (`executor/review.rs`). When the stage settles, `archond` lists the
+lead's descendants once (`list_agents`, the call the owed stop of §6.3
+makes) and reads the task result of each named agent (`get_task`). Each
+must be a different direct child that completed with a verdict: a
+cancelled, failed or running child, a grandchild, or a child that returned
+no verdict (a builder) is refused. The verdicts are then placed on the
+branch in the run's workspace (`executor/review/coverage.rs`): every `head`
+must be a commit the branch holds; a `base` at or before the fork from the
+base branch, or none, means the whole change was read; a delta's `base`
+must be a head another named reviewer read. A pass counts when it read the
+branch head, or when a counted pass read every commit after its head
+(`base` at or before it). A fail never counts and must be followed by such
+a pass. Counted passes below the level fail the run with the reasons.
+
+The counted agents and the models Aether ran them on are stored as
+`review.reviewer_agents` and `review.reviewer_models`; otherwise `archond`
+stores `review.unverified` with the reason, and the engine fails the run
+at that stage with it. These keys, and the `reviewer_model(s)` and
+`reviewer_agent` a 1.0 record held, are Archon's: whatever an agent wrote
+under them is removed before the result is stored, so a lead cannot supply
+its own finding. Records stored by 1.0 still read as they were. While
+Aether cannot be asked the stage stays live and the pump's reconciliation
+settles it later. What a reviewer concluded is its own report; Archon binds
+that report to the commits it names.
 
 Archon then appends `REVIEW: pass, by <model> (agent <id>), …`, or at
 `none` `REVIEW: none, as this item's review level asks`, as the last line
@@ -2066,7 +2119,9 @@ states:
 
 - a child may delegate once more, passing `leaf: true` for its own
   children: two levels below the stage agent is the limit, and the watchdog
-  cancels an agent a third level down (§7.4);
+  cancels an agent a third level down (§7.4). That is the default
+  `[limits] max_delegation_depth`; at 1 every child is a leaf, and deeper
+  limits tell each child its level;
 - how the workspace is shared: in a writable workspace a child that edits
   gets `workspace_mode: "isolated"` and the lead brings accepted changes in
   with `integrate_workspace`, while a child that only reads shares the
@@ -2226,6 +2281,13 @@ record repeats steps 2 to 4, which push nothing new and find the pull
 request GitHub lists. `prune` deletes `ship:<run>` and `ship_retry:<run>`
 once their run is terminal.
 
+Delivered is not green. The item succeeds once its pull request is open;
+archond does not wait for the repository's CI and does not repair a failing
+check. `executor/pull_requests.rs` later reads only whether the pull request
+merged, closed or had changes requested, for learning (§19). A red check is
+the operator's to act on: a fix item, or `archon queue retry --append`,
+which delivers into the same pull request (§6.1).
+
 **A ship stage.** A pipeline may instead end in one `kind = "ship"` stage,
 as every built-in did before archond shipped. Its agent delivers with git
 and `gh` under the contract of §8.6, and in `pr` mode archond accepts its
@@ -2292,7 +2354,10 @@ goes once the subject passes again.
 ### 8.9 Initiatives
 
 An initiative groups 1 to 16 member items, one per change in a repository,
-under a shared contract of at most 2 KiB. `enqueue_initiative` validates
+under a shared contract of at most 2 KiB. `[limits] initiative_members`
+(up to 64) and `initiative_contract_bytes` (up to 16 KiB) raise these;
+`archon mcp` refuses only what exceeds those ceilings, and `archond` the
+configured limits. `enqueue_initiative` validates
 every member as an enqueue (`handlers/initiatives.rs::prepare_member`: its
 pipeline, model plan and `autonomy` knobs under the repository's ceiling)
 before one transaction inserts the initiative and all its items. A repeated
@@ -2301,9 +2366,11 @@ that key is refused. `after` holds indices of earlier members, so the
 dependency graph is acyclic; members in one repository stack (§8.8). The
 member agents see each sibling's repository, branch, pull request and state
 as JSON, with branch names and URLs filtered before they enter another
-contract. `update_initiative` stores the amended contract and sends it to
-the members' running leads under durable message keys; the coordination
-worker retries what is undelivered.
+contract. `update_initiative` appends to the contract (`contract_append`)
+or replaces it (`contract`), stores the result and sends the whole new
+contract to the members' running leads under durable message keys; the
+coordination worker retries what is undelivered. A replacement with the
+same text changes nothing.
 
 An initiative moves `open → shipping → done`, or to `failed` or
 `cancelled`. The first delivered pull request starts `shipping`, and every
@@ -2355,7 +2422,7 @@ effort = "high"
 name = "Archon"
 # instructions_file = "~/.config/archon/orchestrator.md"  # appended to the built-in prompt
 trigger_coalesce_ms = 2000
-wake_on_success = false        # true: every finished item wakes the orchestrator (§5.4)
+wake_on_success = true         # false: a routine success waits for its next turn (§5.4)
 
 [models]
 allow = []                     # e.g. ["claude-code/claude-opus-5-5"]; [] = any
@@ -2372,6 +2439,10 @@ budget_usd_total = 0.0
 count_estimated_cost = true
 infra_retries = 1
 min_free_gb = 10               # hold dispatch below this much free disk; 0 = off
+max_delegation_depth = 2       # delegations below a stage agent or the orchestrator; 1..=4
+max_agent_messages = 20        # message_orchestrator calls per agent, lifetime; 1..=200
+initiative_members = 16        # 1..=64
+initiative_contract_bytes = 2048  # 1..=16384
 [limits.per_pipeline]          # name = max running stage agents
 # strict-pr-review = 3
 
@@ -2602,7 +2673,7 @@ can reach the socket (§5.5).
 | `update_item` | `{item, priority?, model_plan?, model_reasons?, tags?, add_depends_on?, budget_usd?, brief_append?}` | `UpdateItem` (not after success; on a running item `model_plan` and `brief_append` are steered into its run, §6.6; neither while dispatching) |
 | `steer_item` | `{item, note?, stage?, model?, effort?, budget_usd?, extend_minutes?, abort_stage?, then?: retry\|skip\|goto, goto?, insert_stage?: {stage, from?, after?}, switch_pipeline?}` | `SteerItem` (§6.6; at least one change) |
 | `enqueue_initiative` | `{title, contract, atomic?, members: [{repo, brief, title?, pipeline?, model_plan?, autonomy?, after?}], idempotency_key?}` | `EnqueueInitiative` (§8.9; members validated as enqueues, created together) |
-| `update_initiative` | `{initiative, contract_append}` | `UpdateInitiative` (§8.9) |
+| `update_initiative` | `{initiative, contract_append \| contract}` | `UpdateInitiative` (§8.9) |
 | `cancel_item` | `{item, reason?}` | `CancelItem` |
 | `retry_item` | `{item, model_plan?, model_reasons?, fresh?, brief_append?}` | `RetryItem` (§13: `fresh` starts again from the base branch) |
 | `queue_status` | `{}` | `Status` |
@@ -3191,10 +3262,12 @@ costs about one more copy of the repository; nothing git does in a mirror
 writes to the repository.
 
 **Refresh.** One worker (`mirror::run`) brings every mirror up to date at
-start and whenever one is asked for: when a repository is registered,
-changed or unregistered, when an item finishes (its pull request may have
-moved the base), and when the operator sends a message. A request never
-waits for the refresh. A pass resolves the base in the repository, skips
+start and when the operator sends a message. It refreshes one repository's
+mirror when that repository is registered or changed and when one of its
+items finishes (its pull request may have moved the base). Every pass also
+retries a mirror that has a problem or was never made. Requests made
+during a pass share the next one, and a request never waits for the
+refresh. A pass resolves the base in the repository, skips
 the fetch when the mirror is already there, fetches only what it lacks
 otherwise, and checks out with `--force --detach`: tracked files a helper
 changed are reset, untracked ones are left. A git directory is made beside
@@ -3506,12 +3579,13 @@ rubric), and a review task (seeded bug must be reported).
 | A delegating stage agent settles while its children run | The stage's settle: its stored request has `leaf: false`. | `kv.descendant_stop:<stage run>` is written with the settle. No agent of that run is created (next stage or replacement), and archond does not deliver the run (§8.7), until Archon has cancelled the settled agent and Aether holds no agent beneath it in a non-terminal state; the agent is first left to end its own turn, up to 60 s. The cancel is sent once; the check is repeated each dispatcher pass and after a restart. Agents still running 120 s after the cancel are named in one `Blocker` and the run keeps waiting; a refused cancel fails the run with a `Blocker` (§6.3). |
 | Aether names no caller on Archon's tools | An unnamed call that changes Archon reaches `archond`. | One `Blocker` with the fix; such calls are accepted only from an orchestrator that cannot delegate, and new generations start without `delegate`, until the orchestrator makes a named call of any kind (§11). In dedicated mode the registration is repaired and Archon's `aetherd` restarted by the next command (§4.7). |
 | Orchestrator missing (first start) | No `kv.orchestrator_agent`. | Create it (§4.4). |
-| `archon mcp` cannot reach `archond` | Connect error in the proxy. | `connect_or_start` autostarts `archond` (`archon daemon run --detach`, which waits until the daemon listens and fails as soon as it exits). If that fails, return a tool error with the launcher's stderr and the startup log. |
+| `archon mcp` cannot reach `archond` | Connect error in the proxy. | `connect_or_start` autostarts `archond` (`archon daemon run --detach`, which waits until the daemon listens and fails as soon as it exits). If that fails, return a tool error with the launcher's stderr and the startup log since the last start mark (each detached start appends to `archond.log`, moving it to `archond.log.1` past 16 MiB). |
 | Stage exceeds deadline | Timer. | `cancel` the agent, mark the stage `timed_out`, and let the driver treat it as a failed verdict or failed work. |
 | A steer is stored but Aether does not take what the live agents are owed | `update_agent`, `interrupt` or `send_message` unanswered, or a crash after the store. | The steps stay in `kv.steer_owed:<stage run>` and every sweep repeats them in order, each message under its own key so it is delivered once. A step Aether refuses is dropped with a progress note; what the steer stored reaches the stage's next agents (§6.6). |
 | `archond` restarts on a steered run | Startup reconcile. | `frozen::thaw` applies the run's `run_edits` to its frozen pipeline and the driver takes its recorded aborts before `RunDriver::resume`, so the run has the stages and decisions the steers left (§6.6). |
 | A kept agent cannot take its fix attempt | `get_agent` reports it not live, or Aether refuses the deadline or the message. | The agent is cancelled and a fresh one takes the attempt with the findings and the digest of the last attempt (§6.7). An unanswered call is repeated under the same key instead. |
 | A resumed attempt's agent dies or ends its turn saying nothing | `resumed_outcome` at the agent's turn end and at every sweep. | Infra retry (§6.3): the kept agent is stopped and a fresh agent takes the slot. |
+| A resumed attempt's final message leaves out the ship record it owes | `ShipRecord::read` of its `structured` as it settles. | The agent is asked once for the record alone (§6.7); a second miss fails the stage, saying what is wrong with the record. |
 | Worktree creation fails | git exit status. | Item `failed` with git's stderr. The feed gets a `Blocker`. |
 | Disk low or full | Free space below `limits.min_free_gb` at a dispatch pass, or a stage or `create_agent` failed with `database or disk is full`, `No space left on device` or `ENOSPC`. | The disk hold (§7.3): no dispatch, and one `Blocker` with the free space, the path and `archon gc`. With `worktrees.auto_gc` on, a worktree gc pass (§13.2) runs before the held dispatch. When `archond` cannot start, `archon gc --offline` collects without it. A stage that failed on a full disk is retried once space is back, without using an infra retry (§6.3); a `create_agent` that keeps failing so fails its run after 5 tries. |
 | Archon's store on a full disk | SQLite `SQLITE_FULL`, mapped to `ArchonError::DiskFull` (`store: disk full: ...`). | Standby: the pump, dispatcher, trigger delivery, pruning and `archond`'s own gc passes stop, since memory may no longer match a store whose write failed. The socket keeps serving reads (`status`, items, repos, pipelines, questions, the feed, reports, the spend report), so `archon status` and `archon gc` work, and refuses everything else with the `DiskFull` error. Staying up also keeps clients that autostart `archond` from restarting it in a loop. Once free space ends the disk hold, `archond` exits cleanly, and the next command starts it, which recovers as after a crash. A store that fails to open on a full disk ends the start with the same error. |

@@ -2,9 +2,7 @@
 
 use archon_aether::events::InboxMessage;
 use archon_core::aether_ids::AetherAgentId;
-use archon_core::agent_message::{
-    AgentMessage, MAX_AGENT_MESSAGES, MessageKind, MessageSender, check_text,
-};
+use archon_core::agent_message::{AgentMessage, MessageKind, MessageSender, check_text};
 use archon_core::error::ArchonError;
 use archon_core::notify::FeedItem;
 use archon_core::protocol::Reply;
@@ -47,11 +45,13 @@ fn read<T: serde::de::DeserializeOwned>(
         .transpose()
 }
 
-fn next_count(store: &Store, key: &str) -> Result<u32, ArchonError> {
+/// The count `key` reaches with one more message, within `most`.
+fn next_count(store: &Store, key: &str, most: u32) -> Result<u32, ArchonError> {
+    assert!(most >= 1, "validated with the config");
     let count: u32 = read(store, key)?.unwrap_or(0);
-    if count >= MAX_AGENT_MESSAGES {
+    if count >= most {
         return Err(ArchonError::Invalid(format!(
-            "message_orchestrator limit reached ({MAX_AGENT_MESSAGES} messages per agent or run-node external inbox); this message was refused"
+            "message_orchestrator limit reached ({most} messages per agent or run-node external inbox, `[limits] max_agent_messages`); this message was refused"
         )));
     }
     Ok(count + 1)
@@ -89,7 +89,8 @@ pub(crate) async fn send(
         let run = store.run(&stage.run)?;
         let sender = MessageSender::Agent { id: agent.clone() };
         let key = counter_key(&sender, agent);
-        let count = next_count(&store, &key)?.to_string();
+        let most = ctx.config.limits.max_agent_messages;
+        let count = next_count(&store, &key, most)?.to_string();
         let operator: Option<OperatorMessage> = read(&store, &operator_key(agent))?;
         let original_sender =
             if kind == MessageKind::Relay && operator.is_some_and(|m| m.text == text) {
@@ -126,16 +127,16 @@ async fn not_a_stage_agent(
 ) -> Result<ArchonError, ArchonError> {
     let why = match crate::pump::fleet_role(ctx, agent).await? {
         Some(FleetRole::Stage(_)) => format!(
-            "the stage of {agent} is still being recorded. Try once more in a few seconds,              and keep working meanwhile"
+            "the stage of {agent} is still being recorded. Try once more in a few seconds, and keep working meanwhile"
         ),
         Some(FleetRole::StageChild(item)) => format!(
-            "{agent} was delegated part of item {item} by one. Do not retry: report to the              agent that delegated to you, which can send the message"
+            "{agent} was delegated part of item {item} by one. Do not retry: report to the agent that delegated to you, which can send the message"
         ),
         Some(FleetRole::OrchestratorChild) => format!(
-            "{agent} was delegated to by the orchestrator. Do not retry: put what it should              know in your result"
+            "{agent} was delegated to by the orchestrator. Do not retry: put what it should know in your result"
         ),
         None => format!(
-            "Archon has no stage on record for {agent}. If your stage started moments ago,              try once more in a few seconds; otherwise do not retry"
+            "Archon has no stage on record for {agent}. If your stage started moments ago, try once more in a few seconds; otherwise do not retry"
         ),
     };
     Ok(ArchonError::Forbidden(format!(
@@ -192,7 +193,8 @@ pub(crate) async fn inbox(
             return Ok(());
         };
         let key = counter_key(&incoming.sender, target);
-        match check_text(&incoming.text).and_then(|()| next_count(&store, &key)) {
+        let most = ctx.config.limits.max_agent_messages;
+        match check_text(&incoming.text).and_then(|()| next_count(&store, &key, most)) {
             Ok(count) => {
                 let count = count.to_string();
                 let seq = seq.to_string();

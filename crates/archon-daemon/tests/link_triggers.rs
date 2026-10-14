@@ -86,7 +86,7 @@ async fn a_run_node_pruned_by_an_older_daemon_is_recovered_from_validated_aether
 
 #[tokio::test]
 async fn stage_messages_survive_compaction_and_are_delivered_with_attribution() {
-    use archon_core::agent_message::{MAX_AGENT_MESSAGES, MessageKind};
+    use archon_core::agent_message::{DEFAULT_AGENT_MESSAGES, MessageKind};
     use archon_core::protocol::{ClientKind, Request};
     let harness = harness().await;
     harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
@@ -95,7 +95,7 @@ async fn stage_messages_survive_compaction_and_are_delivered_with_attribution() 
     let stage =
         link_common::running_stage(&harness.ctx, harness.dir.path(), "agt_stage", "tsk_stage")
             .await;
-    for index in 0..MAX_AGENT_MESSAGES {
+    for index in 0..DEFAULT_AGENT_MESSAGES {
         archon_daemon::handlers::handle(
             &harness.ctx,
             ClientKind::ArchonMcp,
@@ -120,7 +120,7 @@ async fn stage_messages_survive_compaction_and_are_delivered_with_attribution() 
     assert_eq!(sent[0]["payload"], sent[1]["payload"]);
     assert_eq!(sent[0]["idempotency_key"], sent[1]["idempotency_key"]);
     let events = sent[1]["payload"]["events"].as_array().unwrap();
-    assert_eq!(events.len(), MAX_AGENT_MESSAGES as usize);
+    assert_eq!(events.len(), DEFAULT_AGENT_MESSAGES as usize);
     let item = harness.ctx.store.lock().await.run(&stage.run).unwrap().item;
     for (index, message) in events.iter().enumerate() {
         assert_eq!(message["type"], "agent_message");
@@ -168,6 +168,23 @@ fn blocked(reason: &str) -> TriggerEvent {
         item: QueueItemId::new(),
         reason: reason.into(),
     }
+}
+
+/// Waking news the orchestrator handles in its own time.
+fn violation(action: &str) -> TriggerEvent {
+    TriggerEvent::PolicyViolation {
+        agent: "agt_helper".into(),
+        model: "claude-code/claude-opus-5-5".into(),
+        action: action.into(),
+    }
+}
+
+fn actions(trigger: &Value) -> Vec<&str> {
+    let events = trigger["payload"]["events"].as_array().unwrap();
+    events
+        .iter()
+        .map(|e| e["action"].as_str().unwrap())
+        .collect()
 }
 
 fn reasons(trigger: &Value) -> Vec<&str> {
@@ -349,10 +366,10 @@ async fn news_inside_the_coalesce_window_survives_a_stop() {
     live_orchestrator(&harness);
     harness.fake.set_default("trigger", Scripted::ok());
     let delivery = tokio::spawn(triggers::deliver_loop(harness.ctx.clone()));
-    triggers::push(&harness.ctx, blocked("finished"))
+    triggers::push(&harness.ctx, violation("finished"))
         .await
         .unwrap();
-    triggers::push(&harness.ctx, blocked("blocked"))
+    triggers::push(&harness.ctx, violation("cancelled"))
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -361,7 +378,7 @@ async fn news_inside_the_coalesce_window_survives_a_stop() {
     assert!(harness.fake.received_named("trigger").is_empty());
     assert_eq!(triggers::held_news(&harness.ctx).await.unwrap(), 2);
 
-    triggers::push(&harness.ctx, blocked("while stopped"))
+    triggers::push(&harness.ctx, violation("while stopped"))
         .await
         .unwrap();
     let delivery = tokio::spawn(triggers::deliver_loop(harness.ctx.clone()));
@@ -372,7 +389,10 @@ async fn news_inside_the_coalesce_window_survives_a_stop() {
         })
         .await;
     delivery.abort();
-    assert_eq!(reasons(&sent[0]), ["finished", "blocked", "while stopped"]);
+    assert_eq!(
+        actions(&sent[0]),
+        ["finished", "cancelled", "while stopped"]
+    );
     let store = supervisor::store_id(&harness.ctx).await.unwrap();
     assert_eq!(sent[0]["idempotency_key"], format!("trg_{store}_1_3"));
 }
@@ -624,6 +644,45 @@ async fn a_flush_delivers_quiet_news_at_once_and_only_when_there_is_some() {
         types(&sent[0]),
         ["items_finished"],
         "sent without the minute-long coalesce window"
+    );
+}
+
+/// News the operator waits on, or must act on, goes out at once; other
+/// waking news still waits the window for more to share its turn.
+#[tokio::test]
+async fn news_the_operator_waits_on_skips_the_coalesce_window() {
+    let mut config = Config::default();
+    config.orchestrator.trigger_coalesce_ms = 60_000;
+    let harness = Harness::with(config, None).await;
+    harness.connect().await;
+    let delivery = delivering(&harness).await;
+    triggers::push(&harness.ctx, violation("cancelled"))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        harness.fake.received_named("trigger").is_empty(),
+        "routine news waits the window"
+    );
+
+    triggers::push(&harness.ctx, blocked("needs a decision"))
+        .await
+        .unwrap();
+    let sent = harness.fake.wait_for("trigger", 1, WAIT).await;
+    assert_eq!(types(&sent[0]), ["policy_violation", "item_blocked"]);
+    delivered(&harness).await;
+
+    let answer = TriggerEvent::OperatorAnswer {
+        question: archon_core::id::QuestionId::new(),
+        text: "use the staging database".into(),
+    };
+    triggers::push(&harness.ctx, answer).await.unwrap();
+    let sent = harness.fake.wait_for("trigger", 2, WAIT).await;
+    delivery.abort();
+    assert_eq!(
+        types(&sent[1]),
+        ["operator_answer"],
+        "an answer opens no window of its own"
     );
 }
 

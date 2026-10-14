@@ -9,12 +9,14 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::Duration;
 
-use archon_core::protocol::{RepoRef, Request};
+use archon_core::id::RepoId;
+use archon_core::protocol::{Reply, RepoAdd, RepoRef, Request};
 use archon_core::queue::QueueState;
+use archon_core::repo::ShipMode;
 use archon_core::run::{StageOutcome, StageRun};
 use archon_daemon::mirror;
 use archon_daemon::triggers::{self, TriggerEvent};
-use common::{Harness, REPO_NAME, completed, git, verdict};
+use common::{Harness, PIPELINE, REPO_NAME, completed, git, verdict};
 
 fn mirror_of(h: &Harness) -> PathBuf {
     mirror::mirrors_root(&h.ctx.paths.orchestrator_workspace).join(REPO_NAME)
@@ -225,6 +227,56 @@ async fn a_refresh_resets_tracked_files_and_keeps_untracked_ones() {
     assert_eq!(
         std::fs::read_to_string(mirror.join("notes.txt")).unwrap(),
         "a helper's notes\n"
+    );
+}
+
+/// Register a second repository, `name`, and return its id.
+async fn register(h: &Harness, name: &str) -> RepoId {
+    let path = common::init_repo(&h.dir.path().join(name));
+    let reply = h
+        .cli(Request::RepoAdd(RepoAdd {
+            path,
+            name: Some(name.into()),
+            ship: Some(ShipMode::Pr),
+            base_branch: Some("main".into()),
+            default_pipeline: Some(PIPELINE.into()),
+            auto_merge: false,
+        }))
+        .await
+        .expect("register");
+    let Reply::Repo(repo) = reply else {
+        panic!("expected the repository, got {reply:?}");
+    };
+    repo.id
+}
+
+#[tokio::test]
+async fn a_pass_refreshes_only_the_mirrors_asked_for() {
+    let h = synced().await;
+    let other = register(&h, "other").await;
+    mirror::refresh_requested(&h.ctx).await.unwrap();
+    let mirrors = [mirror_of(&h), mirror_of(&h).with_file_name("other")];
+    let readme = |at: usize| std::fs::read_to_string(mirrors[at].join("README.md")).unwrap();
+    assert_eq!(readme(1), "demo\n", "a new repository's mirror is made");
+    for mirror in &mirrors {
+        std::fs::write(mirror.join("README.md"), "a helper's experiment\n").unwrap();
+    }
+
+    h.ctx.mirrors.request_repo(&other);
+    mirror::refresh_requested(&h.ctx).await.unwrap();
+    assert_eq!(readme(1), "demo\n", "the mirror asked for is refreshed");
+    assert_eq!(
+        readme(0),
+        "a helper's experiment\n",
+        "the other is left alone"
+    );
+
+    h.ctx.mirrors.request();
+    mirror::refresh_requested(&h.ctx).await.unwrap();
+    assert_eq!(
+        readme(0),
+        "demo\n",
+        "a request for all refreshes every mirror"
     );
 }
 

@@ -621,6 +621,8 @@ struct FakeState {
     descendant_checks: Vec<AetherAgentId>,
     /// What a kept agent said to end the turn it was resumed in.
     answers: BTreeMap<AetherAgentId, StageOutcome>,
+    /// Spawns whose objective holds the text wait for the gate to open.
+    stalls: Vec<(String, Arc<tokio::sync::Semaphore>)>,
 }
 
 impl FakeState {
@@ -858,16 +860,36 @@ impl FakeBackend {
         let mut state = self.state();
         let known = state.knows(parent) || state.delegated.iter().any(|d| d.agent == *parent);
         assert!(known, "only a created agent delegates: {parent}");
-        let agent = AetherAgentId::parse(&format!("agt_child{:04}", state.delegated.len() + 1));
-        let agent = agent.expect("agent id");
+        let n = state.delegated.len() + 1;
+        let agent = AetherAgentId::parse(&format!("agt_child{n:04}")).expect("agent id");
+        let task = AetherTaskId::parse(&format!("tsk_child{n:04}")).expect("task id");
         state.delegated.push(Descendant {
             agent: agent.clone(),
             parent: parent.clone(),
             model: model.parse().expect("model"),
             effort: Some(Effort::Medium),
             state: DescendantState::Live,
+            task: Some(task),
         });
         agent
+    }
+
+    /// The delegated `agent` completed its task with `structured` as its
+    /// result, as a reviewer returns its verdict.
+    pub fn complete_delegated(&self, agent: &AetherAgentId, structured: serde_json::Value) {
+        let mut state = self.state();
+        let delegated = state.delegated.iter_mut().find(|d| d.agent == *agent);
+        let delegated = delegated.expect("a delegated agent");
+        delegated.state = DescendantState::Completed;
+        let task = delegated
+            .task
+            .clone()
+            .expect("a delegated agent has a task");
+        let outcome = StageOutcome::Completed {
+            summary: "reviewed".into(),
+            structured: Some(structured),
+        };
+        state.outcomes.insert(task, outcome);
     }
 
     /// The delegated agent ended as `ended`.
@@ -883,6 +905,14 @@ impl FakeBackend {
         self.state().descendant_failures.push_back(error);
     }
 
+    /// Hold every spawn whose objective contains `text` until the returned
+    /// gate gets a permit.
+    pub fn stall_spawns(&self, text: &str) -> Arc<tokio::sync::Semaphore> {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        self.state().stalls.push((text.to_owned(), gate.clone()));
+        gate
+    }
+
     /// Every agent `descendants` was asked about, in order.
     pub fn descendant_checks(&self) -> Vec<AetherAgentId> {
         self.state().descendant_checks.clone()
@@ -892,6 +922,15 @@ impl FakeBackend {
 #[async_trait]
 impl AgentBackend for FakeBackend {
     async fn spawn(&self, request: SpawnRequest) -> Result<SpawnedAgent, ArchonError> {
+        let stalled = self.state().stalls.iter().find_map(|(text, gate)| {
+            request
+                .objective
+                .contains(text.as_str())
+                .then(|| gate.clone())
+        });
+        if let Some(gate) = stalled {
+            let _open = gate.acquire().await.expect("a stall gate is never closed");
+        }
         let mut state = self.state();
         state.requests.push(request.clone());
         if let Some(error) = state.failures.pop_front() {

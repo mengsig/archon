@@ -17,6 +17,7 @@ archon-pipeline = { workspace = true }
 archon-queue = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
+futures-util = { workspace = true }
 rustix = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

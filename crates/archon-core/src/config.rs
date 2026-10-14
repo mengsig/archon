@@ -8,8 +8,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::age::Age;
+use crate::agent_message::{AGENT_MESSAGES_CEILING, DEFAULT_AGENT_MESSAGES};
 use crate::autonomy::AutonomyConfig;
 use crate::error::ArchonError;
+use crate::initiative::InitiativeLimits;
 use crate::model::{Effort, ModelRef};
 use crate::policy::ModelPolicy;
 use crate::queue::Caps;
@@ -20,6 +22,11 @@ pub const CONFIG_FILE_NAME: &str = "config.toml";
 /// `limits.min_free_gb` above this (1 PiB) is surely a typo, and its bytes
 /// must fit in `u64`.
 pub const MAX_MIN_FREE_GB: u64 = 1 << 20;
+
+/// `limits.max_delegation_depth` by default, and the most it may be: every
+/// level multiplies the agents running outside Archon's caps.
+pub const DEFAULT_DELEGATION_DEPTH: u32 = 2;
+pub const DELEGATION_DEPTH_CEILING: u32 = 4;
 
 /// The keys holding filesystem paths, which `Config::load` resolves.
 const PATH_KEYS: [&str; 3] = [
@@ -143,8 +150,8 @@ pub struct OrchestratorConfig {
     /// Extra instructions appended to the built-in orchestrator prompt.
     pub instructions_file: Option<PathBuf>,
     pub trigger_coalesce_ms: u64,
-    /// Wake the orchestrator for every finished item, also a routine
-    /// success it would otherwise only read of in its next trigger.
+    /// Wake the orchestrator for every success, so it reports it in its
+    /// chat; off, a routine success waits for its next turn.
     pub wake_on_success: bool,
 }
 
@@ -156,7 +163,7 @@ impl Default for OrchestratorConfig {
             name: "Archon".into(),
             instructions_file: None,
             trigger_coalesce_ms: 2000,
-            wake_on_success: false,
+            wake_on_success: true,
         }
     }
 }
@@ -194,6 +201,13 @@ pub struct LimitsConfig {
     /// space than this, in GiB; 0 disables the hold (ARCHITECTURE §7.3).
     pub min_free_gb: u64,
     pub per_pipeline: BTreeMap<String, u32>,
+    /// Most delegations below a stage agent or the orchestrator (§7.4).
+    pub max_delegation_depth: u32,
+    /// Messages one agent may send the orchestrator, and one run node's
+    /// inbox may relay, over its lifetime.
+    pub max_agent_messages: u32,
+    pub initiative_members: u32,
+    pub initiative_contract_bytes: u32,
 }
 
 impl Default for LimitsConfig {
@@ -210,6 +224,10 @@ impl Default for LimitsConfig {
             infra_retries: 1,
             min_free_gb: 10,
             per_pipeline: BTreeMap::new(),
+            max_delegation_depth: DEFAULT_DELEGATION_DEPTH,
+            max_agent_messages: DEFAULT_AGENT_MESSAGES,
+            initiative_members: InitiativeLimits::DEFAULT.members as u32,
+            initiative_contract_bytes: InitiativeLimits::DEFAULT.contract_bytes as u32,
         }
     }
 }
@@ -218,6 +236,69 @@ impl LimitsConfig {
     /// `min_free_gb` in bytes; 0 when the disk hold is off.
     pub fn min_free_bytes(&self) -> u64 {
         self.min_free_gb.saturating_mul(1 << 30)
+    }
+
+    /// The size an initiative may have here.
+    pub fn initiatives(&self) -> InitiativeLimits {
+        let limits = InitiativeLimits {
+            members: self.initiative_members as usize,
+            contract_bytes: self.initiative_contract_bytes as usize,
+        };
+        assert!(
+            limits.members >= 1 && limits.contract_bytes >= 1,
+            "validated"
+        );
+        assert!(limits.within(&InitiativeLimits::CEILING), "validated");
+        limits
+    }
+
+    fn validate(&self) -> Result<(), ArchonError> {
+        let budgets = [
+            self.budget_usd_per_item,
+            self.budget_usd_daily,
+            self.budget_usd_total,
+        ];
+        if budgets.iter().any(|b| !b.is_finite() || *b < 0.0) {
+            return Err(ArchonError::Config(
+                "limits budgets must be finite and >= 0 (0 = unlimited)".into(),
+            ));
+        }
+        if self.min_free_gb > MAX_MIN_FREE_GB {
+            return Err(ArchonError::Config(format!(
+                "limits.min_free_gb must be at most {MAX_MIN_FREE_GB} (0 = no disk hold)"
+            )));
+        }
+        let ceiling = InitiativeLimits::CEILING;
+        let structural = [
+            (
+                "max_delegation_depth",
+                self.max_delegation_depth,
+                DELEGATION_DEPTH_CEILING,
+            ),
+            (
+                "max_agent_messages",
+                self.max_agent_messages,
+                AGENT_MESSAGES_CEILING,
+            ),
+            (
+                "initiative_members",
+                self.initiative_members,
+                ceiling.members as u32,
+            ),
+            (
+                "initiative_contract_bytes",
+                self.initiative_contract_bytes,
+                ceiling.contract_bytes as u32,
+            ),
+        ];
+        for (key, value, most) in structural {
+            if !(1..=most).contains(&value) {
+                return Err(ArchonError::Config(format!(
+                    "limits.{key} must be between 1 and {most}, not {value}"
+                )));
+            }
+        }
+        Ok(())
     }
 
     pub fn caps(&self) -> Caps {
@@ -465,21 +546,7 @@ impl Config {
                 "dispatcher.tick_secs must be > 0".into(),
             ));
         }
-        let budgets = [
-            self.limits.budget_usd_per_item,
-            self.limits.budget_usd_daily,
-            self.limits.budget_usd_total,
-        ];
-        if budgets.iter().any(|b| !b.is_finite() || *b < 0.0) {
-            return Err(ArchonError::Config(
-                "limits budgets must be finite and >= 0 (0 = unlimited)".into(),
-            ));
-        }
-        if self.limits.min_free_gb > MAX_MIN_FREE_GB {
-            return Err(ArchonError::Config(format!(
-                "limits.min_free_gb must be at most {MAX_MIN_FREE_GB} (0 = no disk hold)"
-            )));
-        }
+        self.limits.validate()?;
         self.autonomy.validate()?;
         self.worktrees.validate()?;
         let orchestrator = crate::model::ModelChoice {
@@ -562,7 +629,7 @@ mod tests {
         let config = Config::load(&dir.path().join("config.toml")).unwrap();
         assert_eq!(config, Config::default());
         assert_eq!(config.limits.caps().max_parallel_agents, 8);
-        assert!(!config.orchestrator.wake_on_success);
+        assert!(config.orchestrator.wake_on_success);
     }
 
     #[test]
@@ -645,6 +712,44 @@ mod tests {
         let huge = format!("[limits]\nmin_free_gb = {}", MAX_MIN_FREE_GB + 1);
         let refused: Config = toml::from_str(&huge).unwrap();
         assert!(matches!(refused.validate(), Err(ArchonError::Config(_))));
+    }
+
+    #[test]
+    fn structural_ceilings_default_to_their_old_values_and_are_bounded() {
+        let limits = Config::default().limits;
+        assert_eq!(limits.max_delegation_depth, 2);
+        assert_eq!(limits.max_agent_messages, 20);
+        assert_eq!(
+            limits.initiatives(),
+            InitiativeLimits {
+                members: 16,
+                contract_bytes: 2048
+            }
+        );
+        let raised: Config = toml::from_str(
+            "[limits]\nmax_delegation_depth = 3\nmax_agent_messages = 50\n\
+             initiative_members = 32\ninitiative_contract_bytes = 8192",
+        )
+        .unwrap();
+        raised.validate().unwrap();
+        assert_eq!(raised.limits.initiatives().contract_bytes, 8192);
+        for wrong in [
+            "max_delegation_depth = 0",
+            "max_delegation_depth = 5",
+            "max_agent_messages = 0",
+            "initiative_members = 65",
+            "initiative_contract_bytes = 16385",
+        ] {
+            let config: Config = toml::from_str(&format!("[limits]\n{wrong}")).unwrap();
+            let Err(ArchonError::Config(error)) = config.validate() else {
+                panic!("{wrong} was accepted");
+            };
+            let key = wrong.split(' ').next().unwrap();
+            assert!(
+                error.contains(&format!("limits.{key} must be between 1 and")),
+                "{error}"
+            );
+        }
     }
 
     #[test]

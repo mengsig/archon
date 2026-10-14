@@ -14,6 +14,7 @@ use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::model::ModelPlan;
 use archon_core::run::{RunState, StageRun, StageState};
 use archon_pipeline::autonomy::augment;
+use archon_pipeline::review::Reviewer;
 use archon_pipeline::team::{MergeOutcome, worker_branch};
 use archon_pipeline::{EngineAction, RunDriver, ShipOutcome, ShipPlan};
 use sim::{Agent, Sim, cancelled, finish_state, ship_plans, slots, spawn_plans, spawned};
@@ -1902,8 +1903,13 @@ fn design_doc_exhausted_or_missing_critique_verdict_never_publishes_a_report() {
 
 /// A lead's passed review as stored once Archon found its reviewer in Aether.
 fn reviewed_by(model: &str) -> serde_json::Value {
-    let mut result = serde_json::json!({"review": {"verdict": "pass", "reviewer_model": model}});
-    archon_pipeline::review::record_check(&mut result, Some(Ok(vec!["agt_reviewer".into()])));
+    let mut result =
+        serde_json::json!({"review": {"verdict": "pass", "reviewers": ["agt_reviewer"]}});
+    let reviewer = Reviewer {
+        model: model.into(),
+        agent: "agt_reviewer".into(),
+    };
+    archon_pipeline::review::record_check(&mut result, Some(Ok(vec![reviewer])));
     result
 }
 
@@ -1926,7 +1932,10 @@ fn adaptive_keeps_one_build_lead_and_archond_ships_its_reviewed_change() {
             .contains("never to touch the operator's checkout at `")
     );
     assert!(lead.instructions.contains("## Review on record"));
-    assert!(lead.instructions.contains("\"reviewer_model\""));
+    assert!(
+        lead.instructions
+            .contains("\"reviewers\": [\"<agent id>\"]")
+    );
     assert!(lead.instructions.contains("## Ship record"));
     let ship = sim.settle(
         "build",
@@ -1965,7 +1974,7 @@ fn adaptive_fails_a_build_that_completed_without_a_review_on_record() {
         ),
         (
             Agent::DoneStructured("Done.", serde_json::json!({"review": {"verdict": "pass"}})),
-            "reviewer_model",
+            "not checked its reviewers",
         ),
         (
             Agent::DoneStructured(
@@ -1977,9 +1986,11 @@ fn adaptive_fails_a_build_that_completed_without_a_review_on_record() {
         (
             Agent::DoneStructured(
                 "Done.",
-                serde_json::json!({"review": {"verdict": "pass", "reviewer_model": "a/1"}}),
+                serde_json::json!({"review": {"verdict": "pass", "reviewers": ["agt_1"],
+                    "reviewer_models": ["a/1"], "reviewer_agents": ["agt_1"],
+                    "unverified": "reviewer agt_1 failed the change"}}),
             ),
-            "not checked its reviewer",
+            "reviewer agt_1 failed the change",
         ),
     ];
     for (outcome, why) in unreviewed {
@@ -2024,11 +2035,17 @@ fn sim_reviewed(pipeline: &str, level: ReviewLevel) -> Sim {
     Sim::new(spec, plan)
 }
 
-/// A passed review naming `models`, checked against the `found` agents.
+/// A passed review by the `found` agents on `models`, as Archon checked it.
 fn reviewed_by_all(models: &[&str], found: &[&str]) -> serde_json::Value {
-    let mut result = serde_json::json!({"review": {"verdict": "pass", "reviewer_models": models}});
-    let agents = found.iter().map(|agent| (*agent).to_owned()).collect();
-    archon_pipeline::review::record_check(&mut result, Some(Ok(agents)));
+    let mut result = serde_json::json!({"review": {"verdict": "pass", "reviewers": found}});
+    let reviewers = models.iter().zip(found).map(|(model, agent)| Reviewer {
+        model: (*model).to_owned(),
+        agent: (*agent).to_owned(),
+    });
+    let reviewers: Vec<Reviewer> = reviewers.collect();
+    // Archon checks no reviewer where the item's level owes none.
+    let found = (!reviewers.is_empty()).then_some(Ok(reviewers));
+    archon_pipeline::review::record_check(&mut result, found);
     result
 }
 

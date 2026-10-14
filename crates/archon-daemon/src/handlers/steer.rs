@@ -170,7 +170,9 @@ fn check_steerable(item: &QueueItem, steer: &Steer) -> Result<(), ArchonError> {
     let refuse = |why: &str| Err(ArchonError::InvalidTransition(format!("item {id} {why}")));
     match &item.state {
         QueueState::Dispatching => return refuse("is starting; steer it again in a moment"),
-        QueueState::Succeeded { .. } => return refuse("already succeeded"),
+        QueueState::Succeeded { .. } => {
+            return refuse("already succeeded; retry it, then steer it");
+        }
         QueueState::Cancelled { .. } if steer.changes_shape() => {
             return refuse("was cancelled; retry it, then steer its stages");
         }
@@ -283,9 +285,13 @@ async fn store_steer(
     // The failed run a shape steer revives: the steer corrects it.
     let mut corrected = None;
     if let Some((edit, stages)) = &shape {
+        let switched = match edit {
+            RunEdit::SwitchPipeline { pipeline, .. } => Some(pipeline.as_str()),
+            _ => None,
+        };
         match asked.sources.switches_to(&item.pipeline) {
             true => live::forget_shape(&mut store, &item.id)?,
-            false => live::keep_shape(&mut store, &item.id, stages)?,
+            false => live::keep_shape(&mut store, &item.id, stages, switched)?,
         }
         if let QueueState::Failed { run, .. } = &loaded.state {
             revive = true;

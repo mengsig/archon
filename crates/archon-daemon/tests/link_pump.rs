@@ -19,7 +19,7 @@ use archon_core::id::{FeedItemId, QueueItemId, RepoId};
 use archon_core::model::{Effort, ModelRef};
 use archon_core::notify::{FeedEntry, NotificationKind};
 use archon_core::protocol::{ClientKind, Reply, Request};
-use archon_core::queue::Caps;
+use archon_core::queue::{Caps, NOTIFY_TAG};
 use archon_core::repo::{Repo, ShipMode};
 use archon_core::run::{StageRun, StageState};
 use archon_daemon::triggers::{self, TriggerEvent};
@@ -624,6 +624,15 @@ async fn cancel_item_of(harness: &Harness, stage: &StageRun) {
         .expect("cancel");
 }
 
+/// Tag the item of `stage` `notify`, so its outcome wakes the orchestrator.
+async fn tag_notify(harness: &Harness, stage: &StageRun) {
+    let mut store = harness.ctx.store.lock().await;
+    let mut item = store.item(&store.run(&stage.run).unwrap().item).unwrap();
+    item.tags.push(NOTIFY_TAG.into());
+    store.update_item(&item).unwrap();
+    assert!(store.item(&item.id).unwrap().wants_notice());
+}
+
 /// `trigger` refused while `ORCH` is failed, as Aether does, and counted
 /// once it takes one.
 fn triggers_reach_orch_when_live(agents: &Agents, harness: &Harness) -> Arc<AtomicUsize> {
@@ -646,10 +655,8 @@ fn triggers_reach_orch_when_live(agents: &Agents, harness: &Harness) -> Arc<Atom
 /// its news waits and reaches the orchestrator once revival recovers it.
 #[tokio::test]
 async fn outcomes_show_while_the_orchestrator_is_down_and_backoff_delivers_its_news() {
-    // A cancellation is routine news, which by itself is not delivered.
-    let mut config = Config::default();
-    config.orchestrator.wake_on_success = true;
-    let harness = Harness::with(config, None).await;
+    // A cancellation is quiet news unless its item is tagged `notify`.
+    let harness = Harness::new().await;
     let (agents, pump) = running_pump(&harness).await;
     harness.fake.set_default("cancel", Scripted::ok());
     let still_failed = agents.clone();
@@ -667,6 +674,7 @@ async fn outcomes_show_while_the_orchestrator_is_down_and_backoff_delivers_its_n
     .await;
     let repo = tempfile::tempdir().unwrap();
     let stage = running_stage(&harness.ctx, repo.path(), STAGE, STAGE_TASK).await;
+    tag_notify(&harness, &stage).await;
     cancel_item_of(&harness, &stage).await;
     harness
         .eventually("the outcome shows and its news is held", || async {
@@ -1527,7 +1535,9 @@ async fn children_delegated_before_their_stage_is_recorded_are_policed_at_every_
     assert!(model.contains("is not allowed"), "{model}");
     let depth = cancels[1]["reason"].as_str().unwrap();
     assert!(
-        depth.contains("3 delegations below its stage agent; at most 2 are allowed"),
+        depth.contains(
+            "3 delegations below its stage agent; `[limits] max_delegation_depth` allows 2"
+        ),
         "{depth}"
     );
     let owned = Some(format!("\"{item}\""));
@@ -1883,7 +1893,9 @@ async fn the_orchestrators_helpers_delegate_one_level_deeper_and_no_further() {
     assert_eq!(cancels[0].0, GREAT_GRANDCHILD);
     let reason = &cancels[0].1;
     assert!(
-        reason.contains("3 delegations below the orchestrator; at most 2 are allowed"),
+        reason.contains(
+            "3 delegations below the orchestrator; `[limits] max_delegation_depth` allows 2"
+        ),
         "{reason}"
     );
     for kept in [CHILD, GRANDCHILD] {
@@ -1897,6 +1909,34 @@ async fn the_orchestrators_helpers_delegate_one_level_deeper_and_no_further() {
     let blockers = harness.notifications(NotificationKind::Blocker).await;
     assert_eq!(blockers.len(), 1, "{blockers:?}");
     assert!(blockers[0].contains("3 delegations below the orchestrator"));
+}
+
+/// `[limits] max_delegation_depth` moves where a helper's descendants are
+/// cancelled: at 1, already the helper's own child.
+#[tokio::test]
+async fn the_configured_delegation_depth_decides_how_deep_helpers_go() {
+    let mut config = Config::default();
+    config.limits.max_delegation_depth = 1;
+    let harness = Harness::with(config, None).await;
+    let (_agents, pump) = running_pump(&harness).await;
+    harness.fake.set_default("cancel", Scripted::ok());
+    let fleet = keys::CURSOR_FLEET;
+    push(&harness, created(CHILD, ORCH, ALLOWED), fleet).await;
+    push(&harness, created(GRANDCHILD, CHILD, ALLOWED), fleet).await;
+    pump.abort();
+
+    let cancels = cancelled(&harness);
+    assert_eq!(cancels.len(), 1, "{cancels:?}");
+    assert_eq!(cancels[0].0, GRANDCHILD);
+    assert!(
+        cancels[0].1.contains(
+            "2 delegations below the orchestrator; `[limits] max_delegation_depth` allows 1"
+        ),
+        "{}",
+        cancels[0].1
+    );
+    let tracked = harness.kv(&format!("link_child_{CHILD}")).await;
+    assert_eq!(tracked.as_deref(), Some("null"), "the helper itself runs");
 }
 
 /// Aether folded the orchestrator's context: what it was told of the

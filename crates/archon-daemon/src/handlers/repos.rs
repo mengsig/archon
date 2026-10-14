@@ -49,7 +49,7 @@ pub(super) async fn add(ctx: &DaemonContext, add: RepoAdd) -> Result<Reply, Arch
     ctx.store.lock().await.insert_repo(&repo)?;
     repo_identity::record(ctx, &repo).await?;
     // The orchestrator reads it in a mirror, made in the background.
-    ctx.mirrors.request();
+    ctx.mirrors.request_repo(&repo.id);
     tracing::info!(repo = %repo.name, path = %repo.path.display(), "repository registered");
     Ok(Reply::Repo(repo))
 }
@@ -80,7 +80,8 @@ pub(super) async fn remove(ctx: &DaemonContext, reference: &RepoRef) -> Result<R
     let repo = store.repo(reference)?;
     store.remove_repo(&repo.id)?;
     repo_identity::forget(&mut store, &repo.id)?;
-    ctx.mirrors.request();
+    // Every pass forgets the mirrors of unregistered repositories.
+    ctx.mirrors.request_repo(&repo.id);
     tracing::info!(repo = %repo.name, "repository removed");
     Ok(Reply::Ok)
 }
@@ -109,7 +110,7 @@ pub(super) async fn update(
     // The operator's deliberate update is when a changed git identity is taken.
     repo_identity::record(ctx, &repo).await?;
     // Its base branch may have changed.
-    ctx.mirrors.request();
+    ctx.mirrors.request_repo(&repo.id);
     Ok(Reply::Repo(repo))
 }
 

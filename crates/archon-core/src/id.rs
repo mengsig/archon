@@ -104,24 +104,32 @@ const ULID_LEN: usize = 26;
 /// The start of a queue item id as an operator types it: `01k2`, `QI_01K2`
 /// or a whole id. Returns it as ids are stored, `qi_` and upper case.
 pub fn queue_item_prefix(text: &str) -> Result<String, ArchonError> {
+    id_prefix(text, QueueItemId::PREFIX, "queue item")
+}
+
+/// The start of an id of `kind` (its prefix, such as `ini`) as an operator
+/// types it, with or without `<kind>_`, in any case; `what` names the kind.
+pub fn id_prefix(text: &str, kind: &str, what: &str) -> Result<String, ArchonError> {
+    assert!(!kind.is_empty() && kind.is_ascii(), "id kinds are ASCII");
     let trimmed = text.trim();
-    let bare = match trimmed.get(..3) {
-        Some(head) if head.eq_ignore_ascii_case("qi_") => &trimmed[3..],
+    let head = kind.len() + 1;
+    let bare = match (trimmed.get(..kind.len()), trimmed.get(kind.len()..head)) {
+        (Some(given), Some("_")) if given.eq_ignore_ascii_case(kind) => &trimmed[head..],
         _ => trimmed,
     };
     let ulid = bare.to_ascii_uppercase();
     if ulid.is_empty() || ulid.len() > ULID_LEN {
         return Err(ArchonError::Invalid(format!(
-            "{text:?} is not a queue item id or its start: give 1 to {ULID_LEN} characters \
-             after qi_"
+            "{text:?} is not a {what} id or its start: give 1 to {ULID_LEN} characters \
+             after {kind}_"
         )));
     }
     if let Some(bad) = ulid.chars().find(|c| !ULID_ALPHABET.contains(*c)) {
         return Err(ArchonError::Invalid(format!(
-            "{text:?} is not a queue item id or its start: {bad:?} is not a ULID character"
+            "{text:?} is not a {what} id or its start: {bad:?} is not a ULID character"
         )));
     }
-    let prefix = format!("{}_{ulid}", QueueItemId::PREFIX);
+    let prefix = format!("{kind}_{ulid}");
     assert!(prefix.is_ascii(), "a checked prefix is plain ASCII");
     Ok(prefix)
 }
@@ -141,6 +149,25 @@ mod tests {
         for bad in ["", "qi_", "01k2%", "qi_01_", "01U", &format!("{ulid}0")] {
             assert!(queue_item_prefix(bad).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn prefixes_of_other_kinds_take_their_own_prefix() {
+        let id = InitiativeId::new();
+        assert_eq!(
+            id_prefix(id.as_str(), "ini", "initiative").unwrap(),
+            id.as_str()
+        );
+        assert_eq!(
+            id_prefix("INI_01k2", "ini", "initiative").unwrap(),
+            "ini_01K2"
+        );
+        assert_eq!(id_prefix("01k2", "ini", "initiative").unwrap(), "ini_01K2");
+        let wrong = id_prefix("qi_01K2", "ini", "initiative").unwrap_err();
+        assert!(
+            wrong.to_string().contains("not a ULID character"),
+            "{wrong}"
+        );
     }
 
     #[test]

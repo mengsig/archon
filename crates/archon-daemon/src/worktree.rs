@@ -399,6 +399,41 @@ pub(crate) fn git(dir: &Path, args: &[&str]) -> Result<String, ArchonError> {
     Ok(stdout.trim().to_owned())
 }
 
+/// The full id of the commit `name` resolves to in `dir`; `None` when there is none.
+pub(crate) fn commit_id(dir: &Path, name: &str) -> Result<Option<String>, ArchonError> {
+    let commit = format!("{name}^{{commit}}");
+    let id = git_exit(dir, &["rev-parse", "-q", "--verify", commit.as_str()])?;
+    assert!(
+        id.as_ref().is_none_or(|id| matches!(id.len(), 40 | 64)),
+        "rev-parse --verify prints a full object id"
+    );
+    Ok(id)
+}
+
+/// Whether `ancestor` is `of` or one of its ancestors.
+pub(crate) fn is_ancestor(dir: &Path, ancestor: &str, of: &str) -> Result<bool, ArchonError> {
+    let args = ["merge-base", "--is-ancestor", ancestor, of];
+    Ok(git_exit(dir, &args)?.is_some())
+}
+
+/// The best common ancestor of commits `a` and `b`; `None` when they share none.
+pub(crate) fn merge_base(dir: &Path, a: &str, b: &str) -> Result<Option<String>, ArchonError> {
+    git_exit(dir, &["merge-base", a, b])
+}
+
+/// `git` whose exit 1 answers no (`None`) rather than failing; stdout on success.
+/// Both `rev-parse -q --verify` and `merge-base --is-ancestor` exit 1 exactly so.
+fn git_exit(dir: &Path, args: &[&str]) -> Result<Option<String>, ArchonError> {
+    let output = git_output(dir, args)?;
+    match output.status.code() {
+        Some(0) => Ok(Some(
+            String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+        )),
+        Some(1) => Ok(None),
+        _ => Err(git_failure(dir, args, &output)),
+    }
+}
+
 fn git_output(dir: &Path, args: &[&str]) -> Result<std::process::Output, ArchonError> {
     assert!(!args.is_empty(), "a git command needs arguments");
     // A role controls its worktree: no hook or fsmonitor command it

@@ -1,13 +1,13 @@
 //! Shared contract and sibling locations for each initiative member.
 
-use archon_core::initiative::{InitiativeBrief, MAX_CONTRACT_BYTES};
+use archon_core::initiative::{InitiativeBrief, InitiativeLimits};
 
 pub fn initiative_rules(initiative: Option<&InitiativeBrief>) -> String {
     let Some(initiative) = initiative else {
         return String::new();
     };
     assert!(!initiative.contract.trim().is_empty());
-    assert!(initiative.contract.len() <= MAX_CONTRACT_BYTES);
+    assert!(initiative.contract.len() <= InitiativeLimits::CEILING.contract_bytes);
     let mut out = format!(
         "\n## Initiative\n\n{}\n\nShared contract:\n{}\n\nSibling facts (JSON):\n",
         initiative.title, initiative.contract

@@ -21,7 +21,7 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 # [orchestrator]
 # model = "claude-code/claude-opus-5-5"   # an entry of `archon aether models`
 # effort = "high"
-# wake_on_success = false   # true: every finished item wakes it, not only failures
+# wake_on_success = true    # false: a routine success waits for its next turn
 
 # Optional narrowing. Without [models] every model Aether reports ready may
 # be used; there are no tiers or presets to define.

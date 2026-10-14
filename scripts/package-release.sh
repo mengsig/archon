@@ -27,6 +27,7 @@ main() {
     cp "$binary" "$staging/archon"
     chmod 755 "$staging/archon"
     cp "$root/LICENSE" "$root/THIRD-PARTY-NOTICES" "$staging/"
+    chmod 644 "$staging/LICENSE" "$staging/THIRD-PARTY-NOTICES"
     # shellcheck disable=SC2086  # MEMBERS is a list of plain names
     tar -czf "$archive" -C "$staging" $MEMBERS
 

@@ -69,9 +69,19 @@ fn item_row(row: &ItemSummary, names: &RepoNames, now: Timestamp) -> [String; 8]
         duration((now - item.created_at).num_seconds()),
         archon_core::cost::format_usd(row.spent_usd),
         repo_label(names, item.repo.as_ref()),
-        sanitize_line(&item.pipeline),
+        pipeline_label(item, row.switched_to.as_deref()),
         last,
     ]
+}
+
+/// The pipeline the item was queued with, then the one a steer switched it
+/// to, if any.
+fn pipeline_label(item: &QueueItem, switched_to: Option<&str>) -> String {
+    let queued = sanitize_line(&item.pipeline);
+    match switched_to {
+        Some(to) => format!("{queued} → {}", sanitize_line(to)),
+        None => queued,
+    }
 }
 
 fn state_detail(state: &QueueState) -> String {
@@ -113,7 +123,7 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
         out,
         "repo: {}, pipeline: {}, priority: {:?}",
         repo_label(names, item.repo.as_ref()),
-        sanitize_line(&item.pipeline),
+        pipeline_label(item, detail.switched_to.as_deref()),
         item.priority
     );
     if let Some(initiative) = &item.initiative {
@@ -395,6 +405,7 @@ mod tests {
             stage: None,
             spent_usd: 0.0,
             pr_url: None,
+            switched_to: None,
         }
     }
 
@@ -556,6 +567,7 @@ mod tests {
             spent_usd: 1.0,
             gates: vec![],
             delegations: Default::default(),
+            switched_to: None,
         }
     }
 
@@ -587,6 +599,25 @@ mod tests {
             "{full}"
         );
         assert!(!full.contains("--full"), "{full}");
+    }
+
+    #[test]
+    fn a_switched_pipeline_is_named_after_the_one_queued() {
+        let mut detail = detail_with_stages();
+        detail.switched_to = Some("direct\nqi_FAKE".into());
+        let text = item_detail(&detail, &RepoNames::new(), false);
+        assert!(
+            text.contains("\nrepo: -, pipeline: quick-pr → direct qi_FAKE, priority: Normal\n"),
+            "{text}"
+        );
+        let mut row = summary(detail.item.clone());
+        row.switched_to = detail.switched_to.clone();
+        let listing = items(&[row], &RepoNames::new(), archon_core::now());
+        assert!(
+            listing.contains("  quick-pr → direct qi_FAKE  add a greeting"),
+            "{listing}"
+        );
+        assert_inert(&listing);
     }
 
     #[test]
@@ -750,6 +781,7 @@ mod tests {
             spent_usd: 0.0,
             gates: vec![gate],
             delegations: Default::default(),
+            switched_to: None,
         };
         let text = item_detail(&detail, &RepoNames::new(), true);
         assert_inert(&text);

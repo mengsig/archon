@@ -36,9 +36,11 @@ Treat this report as a claim to verify, not as evidence.
    input, secrets in code or logs, and weakened authentication or permission
    checks.
 5. **Is it tested?** Check that the tests exercise the new behaviour and
-   would fail without it. Run the relevant tests yourself, and the full suite
-   if it is reasonably fast. A red test caused by the change is a finding.
-   Quote the command and output.
+   would fail without it. Run the tests that exercise the change yourself, and
+   probe its edge cases. Run the full suite too unless the report shows it
+   passing on the tree you review: the `git rev-parse HEAD^{tree}` it names
+   must equal yours. A red test caused by the change is a finding. Quote the
+   command and output.
 6. **Is it maintainable?** Check that it follows the codebase's conventions,
    uses clear names and has no needless complexity or dead code. Mention these
    only when they matter.

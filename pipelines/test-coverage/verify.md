@@ -32,18 +32,22 @@ evidence; failures go back to the writer.
    convention, including their actual failure reason; a skip is not evidence
    that a regression test passes. Report demonstrably pre-existing failures
    separately with evidence, without weakening checks or repairing production.
-3. Run all new passing tests at least three times. Use different recorded
-   seeds and random order where the runner supports it; otherwise record that
-   limitation and run them repeatedly with fresh, isolated fixtures. Do not
-   retry away failures. Check for ordering dependence, uncontrolled time,
-   randomness, external services or shared resources. Any flakiness fails.
-4. For each meaningful new regression test, deliberately break the behaviour
-   it guards with a small, relevant temporary mutation, and run that specific
-   test. It must fail for its intended assertion, not a compile error, setup
-   failure or unrelated test. An existing mutation runner may be used when
-   its results map each test to such a failure. Merely disabling the test or
-   changing its assertion is not a valid mutation. A surviving mutation or
-   missing per-test sensitivity evidence fails; coverage alone is insufficient.
+3. Run all new passing tests, and run again, at least three times, those
+   that touch time, concurrency, randomness, ordering, the filesystem or
+   external services. Use different recorded seeds and random order where the
+   runner supports it; otherwise record that limitation and use fresh,
+   isolated fixtures. Do not retry away failures. Check for ordering
+   dependence, uncontrolled time, randomness, external services or shared
+   resources. Any flakiness fails.
+4. For each new regression test that guards a high-risk behaviour of the
+   plan, deliberately break that behaviour with a small, relevant temporary
+   mutation, and run that specific test; for the rest, mutate a sample and
+   name it. A test must fail for its intended assertion, not a compile error,
+   setup failure or unrelated test. An existing mutation runner may be used
+   when its results map each test to such a failure. Merely disabling the
+   test or changing its assertion is not a valid mutation. A surviving
+   mutation, or a high-risk test without sensitivity evidence, fails; coverage
+   alone is insufficient.
 5. Before each mutation, preserve the exact original contents of affected
    files. Apply one mutation at a time in this workspace, restore it immediately
    after the test even on error, and verify restoration before continuing.

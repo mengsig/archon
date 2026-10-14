@@ -5,6 +5,7 @@
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use archon_core::aether_ids::AetherAgentId;
 use archon_core::run::{StageOutcome, StageRun};
 use serde_json::{Value, json};
 
@@ -188,6 +189,40 @@ pub fn record(workspace: &Path) -> Value {
         "checks": ["cargo test"],
         "pr": {"title": "Change the thing", "body": "Why, and how it was verified."},
     })
+}
+
+/// A lead's pass naming the `reviewers` it rests on.
+pub fn pass_by(reviewers: &[AetherAgentId]) -> Value {
+    let named: Vec<&str> = reviewers.iter().map(AetherAgentId::as_str).collect();
+    json!({"review": {"verdict": "pass", "reviewers": named}})
+}
+
+/// A reviewer's own result: `verdict` on the commit `built` records.
+pub fn verdict_on(built: &StageOutcome, verdict: &str) -> Value {
+    let StageOutcome::Completed {
+        structured: Some(record),
+        ..
+    } = built
+    else {
+        panic!("a completed change: {built:?}")
+    };
+    json!({"verdict": verdict, "head": record["commit"], "findings": []})
+}
+
+/// `stage` completing with a new change, its ship record and a pass naming
+/// the `reviewers` it delegated, each of which passed that commit.
+pub async fn reviewed_by(
+    h: &Harness,
+    stage: &StageRun,
+    summary: &str,
+    reviewers: &[AetherAgentId],
+) -> StageOutcome {
+    let built = shipped_by(h, stage, summary, pass_by(reviewers)).await;
+    for reviewer in reviewers {
+        h.backend
+            .complete_delegated(reviewer, verdict_on(&built, "pass"));
+    }
+    built
 }
 
 /// `stage` completing with a new change committed in its run's worktree and

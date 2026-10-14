@@ -92,23 +92,34 @@ distill_every = 20
 explore_rate = 0.1
 ```
 
-Learning records finished runs, including stage attempts and descendant costs.
-Historical finished runs are imported in small background batches, never during
-schema migration. Missing historical diff sizes stay unknown. Learned defaults
-need at least five run samples, use the cheapest permitted choice within five
-percentage points of the best pass rate, and preserve explicit model plans.
-`explore_rate` is between 0 and 0.1; zero disables exploration. An item's ID
-makes its exploration decision reproducible. When size is known before starting,
-use the existing item tags `diff:small`, `diff:medium`, or `diff:large` to select
-that evidence bucket; otherwise size is pooled. Small means at most 50 changed
-lines, medium at most 400, and large more than 400.
+Learning keeps an outcome for every finished run: its result, its stage
+attempts with what their delegated agents cost, and the corrections it drew
+later, among them what GitHub says of the pull request `archond` delivered
+(merged, closed, or sent back by a reviewer; read every 10 minutes for 14
+days). Runs that finished before you updated are imported in small batches
+in the background; their diff sizes stay unknown.
 
-`distill_every` must be positive. Each repository's new outcome window queues
-one low-priority `errand`, limited to $1 and the normal model policy and budgets.
-Distillation itself does not generate another learning outcome. Its short
-lessons and validated `<name>.proposed/` user pipelines require acceptance.
-Set `enabled = false` to disable outcome writes, defaults, lesson use and
-scoring, hints, and distillation. Existing evidence remains inspectable.
+A stage an item's model plan leaves out gets a learned default once a choice
+has at least five runs of that pipeline's stage: the cheapest choice your
+policy allows within five percentage points of the best pass rate, from the
+repository's runs, else from all. A plan you or the orchestrator wrote is
+never changed. When the size of a change is known before it starts, tag the
+item `diff:small` (at most 50 changed lines), `diff:medium` (at most 400) or
+`diff:large` to use only that size's evidence; otherwise every size is
+pooled. `explore_rate`, from 0 to 0.1, is the share of items that try the
+next cheaper choice instead; the item's id decides, so the same item always
+decides alike, and 0 turns exploration off.
+
+`distill_every` (at least 1) is how many new outcomes of a repository queue
+one low-priority `errand` item, limited to $1 and to your model policy and
+budgets, that distils lessons and may propose a pipeline. Its own run
+produces no outcome. What it proposes waits for you: `archon lessons accept`
+for a lesson, `archon pipelines accept <name>` for a pipeline
+([guide](guide.md#what-archon-learns)).
+
+`enabled = false` stops recording outcomes, learned defaults, lessons given
+to agents and their scoring, the orchestrator's lesson hints, and
+distillation. What was recorded stays readable.
 
 ## Disk use
 

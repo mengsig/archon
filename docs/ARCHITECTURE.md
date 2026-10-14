@@ -30,6 +30,7 @@ Contents:
 16. [Failure modes and recovery](#16-failure-modes-and-recovery)
 17. [Aether limitations and how Archon handles them](#17-aether-limitations-and-how-archon-handles-them)
 18. [Autonomy](#18-autonomy)
+19. [Learning](#19-learning)
 
 ---
 
@@ -233,13 +234,10 @@ or schedules, and never touches the GitHub watcher of an Aether it shares.
   prompt does not repeat it. Archon appends `## This installation` to it:
   the orchestrator's workspace, where its mirrors and scratch directory are,
   and the user pipelines directory, resolved for this machine.
-- A paragraph of the prompt about tools not released yet stands between
-  `<!-- slot: tool_a, tool_b -->` and `<!-- /slot -->`. It is left out while
-  any tool it names is in `ORCHESTRATOR_PENDING_TOOLS` (§11) and joins the
-  prompt, without its markers, once none is: releasing a tool is deleting
-  its name from that list, with no edit of the prompt. Tests hold that every
-  tool the orchestrator is shown is taught, that no pending one is
-  mentioned, and that no slot reaches into `## GitHub requests`.
+- Every Archon tool is the orchestrator's, and tests hold that the prompt
+  names each one. After the paths Archon appends `## Learned observations`,
+  the lessons chosen for this generation of the orchestrator (§19): quoted,
+  under their own heading, and said there to be advice that grants nothing.
 
 **What the orchestrator does without an item.** It answers what it knows or
 can look up, reads code in a mirror, and delegates what would flood its
@@ -983,9 +981,13 @@ operator from the daemon itself, as an `Outcome` or `Blocker` feed entry
 | Succeeded and tagged `notify` by whoever queued it | wakes |
 | Succeeded otherwise, or cancelled | quiet |
 
+A waking failure also carries `lesson_hint` (§19). An initiative's member
+makes no `item_finished`: its initiative's `initiative_finished` wakes once
+it is done or failed (§8.9).
+
 Every other event wakes: `agent_message`, `item_blocked`, `gate_opened`,
 `operator_answer`, `chat_answer`, `lavish_feedback`, `budget`,
-`policy_violation`, `directives_restated`. A mirror's change of state
+`policy_violation`, `directives_restated`, `initiative_finished`. A mirror's change of state
 (§13.3) is quiet. Quiet news is saved in the outbox like any other and makes
 no trigger by itself. It leaves with the next trigger there is, and an
 operator message sends it at once, without the coalescing window
@@ -1199,8 +1201,8 @@ remain durable so restarts or routing recovery cannot reset limits.
    │          │             │
    │   ┌──────┴──────┐      │ worktree/spawn error
    │   ▼             ▼      ▼
-   └ failed ◀──── (run failed)
-     succeeded (run succeeded)
+   ├ failed ◀──── (run failed)
+   └ succeeded (run succeeded)
 ```
 
 The legal edges are implemented in `QueueState::can_transition_to`:
@@ -1209,8 +1211,10 @@ The legal edges are implemented in `QueueState::can_transition_to`:
 - `dispatching` can go to `running`, `failed` or `cancelled`.
 - `running` can go to `succeeded`, `failed` or `cancelled`.
 - `blocked` can go to `queued` or `cancelled`.
-- `failed` and `cancelled` can go back to `queued` (operator or orchestrator retry).
-- `succeeded` is final.
+- `failed`, `cancelled` and `succeeded` can go back to `queued` (operator or
+  orchestrator retry). A retried `succeeded` item continues on its branch into
+  the pull request it has, and the retry is a correction of the run that had
+  passed (§19).
 
 When a dependency fails or is cancelled, its dependents move to `blocked` and
 the orchestrator gets an `item_blocked` trigger. When a dependency is retried,
@@ -1422,8 +1426,12 @@ nor removed (abort the running stage with `goto` to run it again). A stage
 that passed and waits at an operator gate is decided at its gate, not
 aborted. A switch on a run under way leaves out the new pipeline's
 proposal stage, since the run is past it. A switch to a pipeline with
-another workspace mode, or one that leaves nothing to run, is refused; so is a team stage for a run that was
-started without team worktrees. The result must pass the model policy and
+another workspace mode, or one that leaves nothing to run, is refused; so
+is a team stage for a run that was started without team worktrees. A stage
+an insert or a switch carries in that wrote its own pipeline's ship record
+writes the run's when it runs after the stage the run shipped from so far
+(`reshape::ship_after`), and an insert that would commit after the ship
+record is refused. The result must pass the model policy and
 the autonomy ceiling: a steer cannot take out the review an enqueue could
 not leave out (§18.2). An item that is dispatching is refused with "steer
 it again in a moment", a succeeded one always, and a cancelled one for a
@@ -1464,8 +1472,8 @@ session and its history; a move between engines starts the next turn from
 Aether's checkpoint of the context. So a model or effort steer is three
 steps for the stage's own agent, in this order: `update_agent`, `interrupt`
 to end the running turn, then a message that starts the next turn on the
-new model and says so. A note, a budget and a deadline need no interrupt. Each step is stored in
-`kv.steer_owed:<stage run>` in the same lock as the steer, with a unique
+new model and says so. A note, a budget and a deadline need no
+interrupt. Each step is stored in `kv.steer_owed:<stage run>` in the same lock as the steer, with a unique
 key that Aether dedupes the message by. A step Aether did not answer stays
 owed and the sweep repeats it; a step Aether refuses is dropped with a
 progress note on the item, and what the steer stored still applies to the
@@ -1480,14 +1488,15 @@ the catalog's pipeline; a switch back to the item's own pipeline forgets
 it. An item that already ran cannot change between a team layout and a
 single worktree.
 
-**Reviving a failed item.** A stage that returns `escalate`, or fails any
-other way, ends its run. An `insert_stage` or `switch_pipeline` on the
+**Reviving a failed item.** A stage that fails with `ESCALATE:`, or fails
+any other way, ends its run. An `insert_stage` or `switch_pipeline` on the
 failed item says how it goes on: `executor::revived(failed_run, edit,
 item)` amends the brief with the stage that failed, its error and the
 branch the work is on, and the item is queued again as a plain retry is
 (§13). Its next run works in the same worktree and on the same branch, with
 the failed run's commits, and runs the reshaped stage list from its first
-stage.
+stage. The item keeps its pipeline's name; `kv.shape:<item>` holds what it
+runs.
 
 **`update_item` on a running item.** `brief_append` is steered in as a
 note. `model_plan` replaces the plan for the agents started from now, and
@@ -1497,7 +1506,8 @@ above. While an item is dispatching both are refused.
 **Audit.** Every steer is a `SteerRecord {at, by, what, note}` kept with
 the item (`kv.steers:<item>`, the newest 100), a progress entry in the
 feed (`Steered <item> (<by>): <what>.`), and a line in `archon queue show`
-and `get_item`.
+and `get_item`. A steer of a running run, and the start of a run whose
+shape a steer set, record a `steered` correction of that run (§19).
 
 ### 6.7 One agent through a fix loop
 
@@ -1528,9 +1538,13 @@ stage are created as before, a fresh agent per attempt.
   resumed attempt settles on the turn in which the agent took the message.
   `AgentBackend::resumed_outcome` reads the agent's own events: the
   delivery of the message, the turn that consumed it, and the last thing
-  the agent said before going idle. A message starting `FAILED:` fails the
-  attempt, `BLOCKED:` is an operator blocker, and anything else is the
-  attempt's summary. The pump checks when the agent's turn ends and the
+  the agent said before going idle (`ports::resumed_reply_outcome`). A
+  message starting `FAILED:` fails the attempt; one starting `BLOCKED:` or
+  `ESCALATE:` ends the run as from a fresh agent (§8.6); anything else is
+  the attempt's summary, with the object of its last fenced `json` block
+  as its `structured`. That is how a kept agent of the stage `[pipeline.ship]`
+  names hands in a new ship record (§8.7) for its fix, which
+  `sections::resume_message` asks of it. The pump checks when the agent's turn ends and the
   sweep checks again, so a missed event only delays it. A resumed attempt
   past its deadline has its agent cancelled and is `timed_out`.
 - **Replaced.** A fresh agent takes the attempt, with the findings under
@@ -2044,57 +2058,6 @@ A team stage's contract names the agent's role and the other roles, keeps
 it to its own worktree and role, and asks it to commit on its branch
 without pushing: only commits are merged.
 
-An item queued after others (`depends_on`) starts after their successful
-pipeline runs, including opening their PRs; it does not wait for merging.
-`executor/start.rs` forks from the first unmerged same-repository parent's
-branch and merges the other parents. `stacks` persists the parent item,
-branch, SHA and order. `Store::stack_base(item)` returns the first unmerged
-parent's branch and SHA, or `None`; shipping uses this as the PR base.
-The stack also retains the repository base (its original HEAD branch when
-unconfigured), exposed by `Store::stack_repository_base` for retargeting.
-The dependency contract states the actual base and bounded JSON facts.
-Cross-repository and scratch dependencies do not become stack parents.
-
-`executor/restack.rs` reconciles persisted stacks in a supervised coordination
-worker, woken on item finish with a 60-second external-change fallback. GitHub
-and merge maintenance never delay unrelated queue admission. A merged
-parent causes `gh pr edit --base` to retarget the child to the next unmerged
-parent, or the repository base. A moved parent is merged into a registered
-worktree on the child's branch and pushed, never rebased or force-pushed.
-A conflict retains the merge and atomically queues one fix item, with the
-conflicting paths as its brief, that reuses the child branch and worktree.
-The fix uses the child's validated pipeline and policy. Git never runs a
-merge in the operator checkout and inherits the repository's Git identity.
-
-Initiatives group 1–16 items under a shared contract of at most 2 KiB.
-`enqueue_initiative` validates every member before a single transaction
-inserts the initiative and all member items. A repeated idempotency key
-returns the original initiative; different input under that key is refused.
-`after` holds indices of earlier members, making the dependency graph
-acyclic. The member agents see sibling repo, branch, PR and state as JSON;
-branch names and PR URLs are filtered before entering another contract.
-`update_initiative` persists the amended contract and sends it to live
-member leads using durable message keys; coordination retries pending delivery.
-
-Initiatives move `open → shipping → done`, or to `failed`/`cancelled`.
-The first shipped PR starts shipping; all members passing completes it.
-Member failure or cancellation fails the initiative and holds queued members.
-Cancellation stops unfinished members but preserves successful work and PRs.
-Retry requires a failed/cancelled initiative with no active members, requeues
-failed/cancelled/blocked members together, and keeps successful members.
-Retry retains branches and starts a new notification cycle. Ordinary member
-retries are held while their initiative is failed or cancelled; retry the
-initiative to resume coordinated admission.
-
-`executor/initiative_ship.rs::record` is the ship integration point. It saves
-verified PR URLs and replaces a marked section in each PR body with sibling
-links. Atomic initiatives disable auto-merge and keep PRs draft until all
-members pass, then reconcile each PR to ready. External writes are idempotent
-and replay from persisted state after restart. A terminal initiative emits
-one `InitiativeFinished` trigger per cycle, with its durable receipt committed
-in the same transaction as the trigger outbox; member finishes retain their
-feed outcomes without generating individual finish triggers.
-
 A stage agent that can delegate also gets a `## Delegation` section. The
 daemon writes it when it builds the spawn request, from what the agent can
 actually do (`allow_delegation` on its stage, or the item's `tools = yolo`),
@@ -2149,8 +2112,10 @@ stage's live siblings cancelled (`StageOutcome::ends_run`):
   than the stage allows for, or better split. The item fails as
   `stage <id>: ESCALATE: <why and what it recommends>` with an ordinary
   `Outcome`, and `item_finished` carries that text to the orchestrator,
-  which decides what to enqueue instead. Archon changes nothing itself: no
-  other pipeline is started and nothing ships.
+  which decides what to do instead. Archon changes nothing itself: no
+  other pipeline is started and nothing ships. A `switch_pipeline` or
+  `insert_stage` steer queues the failed item again on its branch (§6.6).
+  Learning records the run with failure class `escalated` (§19).
 
 ### 8.7 Shipping
 
@@ -2196,9 +2161,10 @@ table and delivers it off every lock:
    committer e-mail that the worktree's own git configuration yields
    (`git var`, read with `GIT_*` identity variables removed) or
    `archon@localhost`, under which archond's team merges are made. Any
-   miss is a refusal that names the paths or commits. The base is the run
-   variable `stack_parent` when the run's start recorded the branch of the
-   item it is stacked on, else `base_branch`.
+   miss is a refusal that names the paths or commits. The base is what
+   `restack::target_base` reads from the stack (§8.8): the branch of the
+   item's first unmerged parent, the repository's base once every parent
+   merged, and the run variable `base_branch` for an item that is not stacked.
 3. **Push**, `pr` mode only: `git push --porcelain --set-upstream origin
    refs/heads/<branch>:refs/heads/<branch>` with `core.hooksPath=/dev/null`
    and no terminal prompt, so nothing a run configured runs as the daemon.
@@ -2242,6 +2208,78 @@ completion only once `gh pr list` shows one open pull request for the run
 branch, whose URL replaces the one the agent reported. Such a pipeline
 declares no `[pipeline.ship]`, and it pays for an agent that reads the run
 to do what archond does in seconds.
+
+### 8.8 Stacking
+
+An item queued after others (`depends_on`) starts after their successful
+pipeline runs, including delivery; it does not wait for a merge.
+`executor/start.rs` forks its branch from the first unmerged
+same-repository parent's branch and merges the other parents in. `stacks`
+persists each parent's item, branch, SHA and order, and
+`Store::stack_base(item)` returns the first unmerged parent's branch and
+SHA, or `None`. Cross-repository and scratch dependencies are no stack
+parents. The `## Dependencies` section of the contract (§8.6,
+`contract::dependency_rules`) names the base the branch was prepared from
+and each dependency's item, branch and pull request as bounded JSON.
+
+`restack::target_base` is the base a stacked change is for now: that first
+unmerged parent's branch, or the repository's base once every parent
+merged. Delivery (§8.7) proves the run against it and opens or moves the
+pull request onto it, so a child ships onto its parent's branch.
+
+`executor/restack.rs` reconciles persisted stacks in the coordination worker
+(`executor/coordination.rs`), woken when an item finishes and every 60
+seconds for changes made outside Archon. GitHub and merge maintenance never
+delay the admission of unrelated items. A merged parent has the child's
+pull request moved with `gh pr edit --base` to the next unmerged parent or
+the repository's base. Commits a parent gains later are merged into the
+child's branch, in its registered worktree, and pushed: never rebased or
+force-pushed. A conflict keeps the merge and atomically queues one fix item
+on the child's branch and worktree, with the conflicting paths as its
+brief, under the child's validated pipeline and policy. Git never merges in
+the operator's checkout, and every merge commit is made under the
+repository's Git identity.
+
+### 8.9 Initiatives
+
+An initiative groups 1 to 16 member items, one per change in a repository,
+under a shared contract of at most 2 KiB. `enqueue_initiative` validates
+every member as an enqueue (`handlers/initiatives.rs::prepare_member`: its
+pipeline, model plan and `autonomy` knobs under the repository's ceiling)
+before one transaction inserts the initiative and all its items. A repeated
+idempotency key returns the original initiative, and different input under
+that key is refused. `after` holds indices of earlier members, so the
+dependency graph is acyclic; members in one repository stack (§8.8). The
+member agents see each sibling's repository, branch, pull request and state
+as JSON, with branch names and URLs filtered before they enter another
+contract. `update_initiative` stores the amended contract and sends it to
+the members' running leads under durable message keys; the coordination
+worker retries what is undelivered.
+
+An initiative moves `open → shipping → done`, or to `failed` or
+`cancelled`. The first delivered pull request starts `shipping`, and every
+member passing completes it. A member that fails or is cancelled fails the
+initiative and holds the queued members. Cancelling stops the unfinished
+members and keeps successful work and pull requests. A retry needs a failed
+or cancelled initiative with no active member, queues its failed, cancelled
+and blocked members again together on their branches, keeps the successful
+ones and starts a new notification cycle. A member's own retry is held
+while its initiative is failed or cancelled.
+
+`executor/initiative_ship.rs::record` is called by delivery (§8.7) for a
+member. It stores the verified pull request URL and replaces a marked
+"Part of …" section in each member's pull request body with links to its
+siblings. An atomic initiative's members are forced to `merge = manual` (a
+member asking for `auto` is refused at enqueue), their pull requests are
+opened with `gh pr create --draft`, and once every member passed the
+coordination worker readies each with `gh pr ready`. Every write to GitHub
+is idempotent and replayed from stored state after a restart.
+
+A member's finish posts its outcome to the feed and wakes nobody (§5.4).
+A terminal initiative pushes one `initiative_finished` trigger per cycle,
+whose durable receipt is committed in the same transaction as the trigger
+outbox, so a failed member reaches the orchestrator through its
+initiative.
 
 ## 9. Configuration
 
@@ -2324,6 +2362,11 @@ proposal = "off"
 report = "off"
 merge = "manual"               # "auto" lets items merge their own PRs
 tools = "yolo"
+
+[learning]                     # §19
+enabled = true                 # false: no outcomes, learned defaults, lessons or distillation
+distill_every = 20             # new outcomes of a repository per distillation errand
+explore_rate = 0.1             # share of items that try a cheaper choice; 0..0.1
 ```
 
 Per-repository `<repo>/.archon/config.toml`:
@@ -2508,6 +2551,8 @@ can reach the socket (§5.5).
 | `get_stage` | `{item, run?, stage?, attempt?, slot?, offset?, limit?}` | `GetStage` |
 | `update_item` | `{item, priority?, model_plan?, model_reasons?, tags?, add_depends_on?, budget_usd?, brief_append?}` | `UpdateItem` (not after success; on a running item `model_plan` and `brief_append` are steered into its run, §6.6; neither while dispatching) |
 | `steer_item` | `{item, note?, stage?, model?, effort?, budget_usd?, extend_minutes?, abort_stage?, then?: retry\|skip\|goto, goto?, insert_stage?: {stage, from?, after?}, switch_pipeline?}` | `SteerItem` (§6.6; at least one change) |
+| `enqueue_initiative` | `{title, contract, atomic?, members: [{repo, brief, title?, pipeline?, model_plan?, autonomy?, after?}], idempotency_key?}` | `EnqueueInitiative` (§8.9; members validated as enqueues, created together) |
+| `update_initiative` | `{initiative, contract_append}` | `UpdateInitiative` (§8.9) |
 | `cancel_item` | `{item, reason?}` | `CancelItem` |
 | `retry_item` | `{item, model_plan?, model_reasons?, fresh?, brief_append?}` | `RetryItem` (§13: `fresh` starts again from the base branch) |
 | `queue_status` | `{}` | `Status` |
@@ -2522,6 +2567,7 @@ can reach the socket (§5.5).
 | `set_directive` | `{text, expires_in_hours?}` | `SetDirective` |
 | `clear_directive` | `{directive?, all?}` | `ClearDirective` |
 | `github_reply` | `{repository, number, body}` | `GithubReply` (Archon's watched repositories only; see `docs/github-watcher.md`) |
+| `record_lesson` | `{kind: routing\|practice\|pitfall\|pipeline, text, repo?, pipeline?, item?}` | `RecordLesson` (§19; active at once, advice only) |
 
 `get_stage` reads the item's latest run, or the one `run` names; attempts
 restart at 1 in each run. Without `stage` it lists every
@@ -3820,38 +3866,100 @@ orchestrator states the knobs it chose, with a reason, in the `decision` it
 notifies for each item.
 
 
-## Durable learning
+## 19. Learning
 
-`store/outcomes` stores one finish-time outcome per pipeline run and one grouped
-stage observation per model/effort. Costs include agents below each stage lead;
-ledger charges are counted once for reused agents. Corrections are appended
-idempotently and retained before the outcome exists. Late corrections rescore
-`lesson_uses`, so a previously successful but corrected result is not a win.
-The daemon performs a bounded, resumable historical import in its learning
-worker. V10 creates only empty tables; no migration scans historical runs.
+Learning is token-free: it records what runs did and what was later said
+about them, and uses that to fill model plans and to hand agents short
+lessons. Only distillation spends, through a budgeted item.
 
-`store/model_evidence` supplies run samples for token-free defaults, filtered by
-repository, pipeline, stage and optional diff-size class. Repository evidence
-falls back to global evidence. Five independent runs qualify a choice; among
-choices within five percentage points of the best, median cost breaks the tie.
-At most the configured 10% exploration fraction tries the adjacent cheaper
-observed choice. Explicit plans are preserved and effective model policy is
-checked before a default is used. Routing explanations are persisted by item. The static fallback provider calls
-`Store::record_static_plan(repo, pipeline, plan)` before applying learned choices;
-`estimated_model_saving` compares observed medians only when baseline sample
-sizes reach five, otherwise reporting unknown.
+**Outcomes.** `store/outcomes` stores one outcome per finished pipeline
+run, written as the run finishes (`learned::finished`, from
+`executor/finish.rs`): its result, failure class, stage attempts (one
+grouped observation per model and effort, whose costs include the agents
+below each stage lead, with a reused agent's ledger charges counted once),
+cost, wall time, diff size, corrections, and `merged`, empty until
+observed. `capture::failure_class` reads the class from the run's error:
+`escalated` and `blocked` from the `ESCALATE:` and `BLOCKED:` prefixes
+(§8.6), else what the text names. Distillation items produce no outcome.
+The learning worker (`learned::run`) imports runs that finished before the
+update in bounded, resumable batches; migration V10 creates only empty
+tables, so no migration scans historical runs.
 
-`store/lessons` owns normalization, scope limits, deduplication, operator edits,
-Wilson confidence and 30-day unconfirmed decay. Contract text is frozen by run
-in `learning/uses/<run>` and joined to outcomes through `lesson_uses`. Pinned
-lessons never automatically retract or decay. The orchestrator integration is
-`learned::lessons_for_orchestrator(&Store) -> Result<String, ArchonError>`;
-`ORCHESTRATOR_GENERATION` freezes its selection for each generation.
+**Corrections** (`archon_core::outcome::Correction`) are appended
+idempotently, kept even before the run's outcome exists, and rescore
+`lesson_uses`, so a success that was corrected is no win:
 
-Every configured outcome window creates an idempotent, low-priority errand
-with a $1 budget and normal policy, accounting and dispatch caps. It produces
-proposed lessons and optional pipeline files. `PipelineSpec::validate`, also
-used by catalog checks, validates proposals before publication; `.proposed`
-directories are excluded from discovery until explicit operator acceptance.
-Distillation items are excluded from outcome production to prevent recursion.
-`[learning] enabled = false` disables learning effects while retaining evidence.
+- `retry_after_done`: a retry of a succeeded item, written on its
+  `Succeeded → Queued` transition (`store/items.rs`);
+- `gate_rejected`: a gate the operator rejected (`store/gates.rs`);
+- `steered`: a steer of a running or revived run (`steer/audit.rs::record`,
+  `steer/shape.rs::correct_shaped`);
+- `operator_contradiction`: an operator message naming a full `qi_…` id
+  with "wrong", "incorrect", "not fixed", "still fails" or "regression"
+  (`learned::operator_message`);
+- `pr_closed` and `changes_requested`, from GitHub.
+  `executor/pull_requests.rs::observe`, run by the coordination worker
+  every 10 minutes, reads each succeeded outcome of the last 14 days that
+  is not settled and whose run archond delivered as a pull request, with
+  `gh pr view --json state,reviewDecision,…`. `MERGED` sets `merged`
+  true; `CLOSED` sets it false and adds `pr_closed`; an open one whose
+  review decision is `CHANGES_REQUESTED` gets `changes_requested` once. A
+  settled outcome is not read again. A `gh` failure is logged and the pull
+  request read again at the next pass; a store failure ends the worker,
+  and with it the daemon, as in every worker.
+
+**Learned defaults.** `knobs::fill_plan` calls
+`learned::default_plan(store, repo, spec, policy)` with the item's
+effective model policy, for the stages its plan leaves out. Samples come
+from `store/model_evidence` by repository, pipeline, stage and, when the
+item's `diff:small`, `diff:medium` or `diff:large` tag gives it, diff size;
+repository evidence falls back to global evidence when no choice in it has
+five runs. A choice qualifies with five runs, and among those within five
+percentage points of the best pass rate the cheapest median cost wins. The
+item's id decides whether it is among the `explore_rate` (at most 0.1) of
+items that try the adjacent cheaper choice. An explicit choice is never
+replaced, and the policy is checked before a default is used.
+`learned::plan_for_item` stores the reason for each choice per item, which
+`archon lessons why` shows. `handlers/items.rs::filled_plan` records the
+static default the plan would have had without learning
+(`Store::record_static_plan`); `estimated_model_saving` compares medians
+only once that baseline has five samples, and reports unknown before.
+
+`[learning]` is mirrored into the store's `kv` (`learning/config`) by
+`Store::configure_learning` where the daemon builds its context and in the
+handlers that read it, so that store functions see it. `enabled = false`
+stops outcome writes, learned defaults, lesson use and scoring, hints and
+distillation; what was recorded stays readable.
+
+**Lessons.** `store/lessons` owns normalization, scope limits,
+deduplication, operator edits, Wilson confidence and the 30-day decay of
+unconfirmed lessons. Five scored uses whose decayed confidence falls below
+0.3 retract a lesson; a pinned one never decays or retracts. An operator's
+lesson is confirmed at once, the orchestrator's (`record_lesson`) is active
+at once, and a distilled one is `proposed` until `archon lessons accept`.
+
+- A stage agent gets at most six lessons, in a section of at most 1,200
+  bytes, preferring its repository and pipeline (`learned::lessons_for_run`
+  at spawn). The text is frozen per run in `learning/uses/<run>` and joined
+  to outcomes through `lesson_uses`.
+- A new orchestrator gets `learned::lessons_for_orchestrator` appended to
+  its instructions under `## Learned observations` (§4.4) by
+  `supervisor::create_generation`. The selection is frozen in
+  `learning/orchestrator/<generation>`, so a retried create sends the same
+  text.
+- A failed item's `item_finished` carries `lesson_hint`: the result,
+  failure class and corrections of its newest outcome, and the ask to
+  `record_lesson` a reusable practice.
+
+**Distillation.** Every `distill_every` new outcomes of a repository,
+`learned::maintenance` queues one idempotent, low-priority `errand` item
+with a $1 budget under the normal policy, accounting and caps. Its brief
+quotes the observations as untrusted and asks (`distill::DISTILL_ASK`) for
+lessons and an optional `pipeline_proposal` in Archon's pipeline format; one
+that changes a repository needs `workspace = "worktree"`, no ship stage and
+`[pipeline.ship] stage` naming the last stage that commits.
+`archon_pipeline::proposals::stage` validates it as any user pipeline,
+archond's delivery rules (§8.7) included, and writes it to
+`<user pipelines>/<name>.proposed/`, which discovery skips.
+`proposals::accept` (`archon pipelines accept`) validates it again and
+renames it into place, never over an existing pipeline.

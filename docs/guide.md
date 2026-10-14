@@ -167,10 +167,11 @@ Archon keeps outcomes and short lessons in its own store. `archon lessons stats`
 shows per-repository pipeline pass rates, correction rates, median cost and wall
 time, and learned model defaults with sample sizes. The existing
 `model_evidence` tool includes compact pipeline evidence for the
-orchestrator's pipeline selection. These are observations, not guarantees. Estimated model savings compare median
-stage costs with a recorded static fallback, require at least five samples for
-that fallback, and are shown per planned run. Missing baseline evidence is
-reported as unknown.
+orchestrator's pipeline selection. These are observations, not guarantees.
+Estimated model savings compare median stage costs with the static default a
+plan would have had without learning, need at least five samples of that
+default, and are shown per planned run. Missing baseline evidence is reported
+as unknown.
 
 ```sh
 archon lessons --repo my-repo
@@ -196,9 +197,17 @@ automatic retraction and decay; `pin --unpin` releases the pin.
 Retrying a finished item, rejecting a gate and steering are corrections.
 An operator message naming a full `qi_…` ID and saying “wrong”, “incorrect”,
 “not fixed”, “still fails”, or “regression” also records a contradiction.
-GitHub reconciliation can attach requested changes or a closed unmerged PR.
+For 14 days after `archond` delivers a pull request it asks GitHub every 10
+minutes what became of it: a merge is recorded, and a review requesting
+changes or a close without a merge is a correction of the run that shipped it.
 Late corrections revoke lesson wins. Historical evidence and explicit plans
 remain available when learning is disabled; see [configuration](configuration.md#learning).
+
+The orchestrator starts with the lessons chosen for it, under a heading of
+their own that calls them advice, and keeps them until it is replaced. When
+an item fails it is woken with a hint to `record_lesson` what the failure
+teaches. A lesson it records is used at once, and `archon lessons retract`
+takes it back; one a distillation proposes waits for `archon lessons accept`.
 
 ## Agents talking to the orchestrator
 
@@ -524,7 +533,7 @@ progress too; also `/verbose`), `/pause` and `/resume` (optionally `hard`,
 | `archon queue list` | one line per item: state, current stage, age, cost, title, PR URL and derived waiting reason with one next action |
 | `archon queue show <id> [--full]` | an item's runs and each stage's attempt, slot, state, verdict, model, agent, cost and summary (first lines; `--full` for all), with the PR URL, recorded plan reasons and full waiting explanation when present. A stage that delegated shows how its cost splits (its own agent, then each delegated agent with model, effort and cost), and a stage holding a declared review shows the review on record. Steers made to the item are listed with who made them |
 | `archon queue cancel <id>` / `archon queue caps` | cancel an item, or show and change runtime caps |
-| `archon queue retry <id> [--fresh] [--append "…"]` | queue a failed or cancelled item again in its worktree and branch; `--fresh` starts over from the base branch on a new branch and sets the old worktree aside, which worktree gc deletes, uncommitted work included, `worktrees.gc_after` (7 days) after the item's last run; `--append` adds guidance to the brief |
+| `archon queue retry <id> [--fresh] [--append "…"]` | queue a finished item again in its worktree and branch (a succeeded one delivers into its pull request again, and the retry counts against the run that passed); `--fresh` starts over from the base branch on a new branch and sets the old worktree aside, which worktree gc deletes, uncommitted work included, `worktrees.gc_after` (7 days) after the item's last run; `--append` adds guidance to the brief |
 | `archon queue steer <id> [--note "…"] [--stage <stage>] [--model <provider/model>] [--effort <effort>] [--budget-usd <usd>] [--extend <minutes>] [--abort [--then retry\|skip] [--goto <stage>]] [--remove <stage>] [--insert <stage> [--from <pipeline>] [--after <stage>]] [--switch <pipeline>]` | change an item without cancelling it; see [steering an item](#steering-an-item) |
 | `archon log` | the complete feed; `--item <id>` keeps one item's entries, `--kind <kind>` (repeatable) some kinds, and `--follow` keeps printing new ones |
 | `archon reports` / `archon reports reopen <rpt_…>` | list published reports with their state and URL, or show a closed one again |
@@ -658,12 +667,43 @@ stage's model (name the stage), and an insert or a switch. `--abort`,
 `--extend` and `--remove` need a running item. A failed item given
 `--insert` or `--switch` is queued again on the same branch and worktree,
 with what its failed run committed; this is how an item whose stage gave
-up with `escalate` continues on a stronger pipeline instead of starting
+up with `ESCALATE:` continues on a stronger pipeline instead of starting
 over. A cancelled item is retried first, and a succeeded one is done.
 
 Every steer is recorded with who made it (`operator` or `orchestrator`) and
 what it changed. `archon queue show <id>` lists them, and the feed has a
 `Steered …` entry for each.
+
+### Stacked changes
+
+An item that `depends_on` an unmerged item of its own repository stacks on it:
+its branch forks from the first unmerged parent's, and `archond` opens its
+pull request against that branch. Other parents are merged
+in. A parent's merge retargets the child PR; later parent commits are merged
+forward. Conflicts create a fix item on the child branch, visible in the queue.
+
+### Coordinated changes across repositories
+
+Ask for one initiative when a request spans repositories. Its shared contract
+states the API names, formats and rollout rules each member must follow.
+`enqueue_initiative` accepts a title, contract (up to 2 KiB), and members with
+`repo`, `brief`, optional `title`, `pipeline`, `model_plan` and `autonomy` (as
+in an enqueue), and `after: [0, ...]` indices of earlier members. Supply an
+`idempotency_key` when retrying a request. Set `atomic: true` to keep all PRs
+draft until every member passes; they are then readied together and you merge
+them, so an atomic member asking for `merge: auto` is refused. The daemon
+adds a “Part of …” section with sibling PR links and reports one group outcome.
+
+`archon initiatives` lists groups; `archon initiatives show ini_…` shows the
+shared contract and members. `archon queue show qi_…` names its initiative.
+`update_initiative` appends to the shared contract and tells live member leads.
+
+`archon initiatives cancel ini_…` stops unfinished members and leaves successful
+branches and PRs in place. `archon initiatives retry ini_…` resumes failed,
+cancelled and blocked members on their existing branches once no member is
+active. Successful members are preserved. A member failure holds queued siblings;
+retry the initiative to resume them. Retrying individual members does not reopen
+a failed or cancelled group.
 
 ## Using Archon from Aether's remote app
 
@@ -768,29 +808,3 @@ enter its queue; a fresh Aether run does not itself become an Archon item.
 See [Aether's documentation](https://github.com/mengsig/aether).
 
 For benchmark results and the crate layout, see [development and benchmarks](development.md).
-
-### Coordinated changes across repositories
-
-Ask for one initiative when a request spans repositories. Its shared contract
-states the API names, formats and rollout rules each member must follow.
-`enqueue_initiative` accepts a title, contract (up to 2 KiB), and members with
-`repo`, `brief`, optional `pipeline` and `model_plan`, and `after: [0, ...]`
-indices of earlier members. Supply an `idempotency_key` when retrying a request.
-Set `atomic: true` to keep all PRs draft until every member passes. The daemon
-adds a “Part of …” section with sibling PR links and reports one group outcome.
-
-`archon initiatives` lists groups; `archon initiatives show ini_…` shows the
-shared contract and members. `archon queue show qi_…` names its initiative.
-`update_initiative` appends to the shared contract and tells live member leads.
-
-`archon initiatives cancel ini_…` stops unfinished members and leaves successful
-branches and PRs in place. `archon initiatives retry ini_…` resumes failed,
-cancelled and blocked members on their existing branches once no member is
-active. Successful members are preserved. A member failure holds queued siblings;
-retry the initiative to resume them. Retrying individual members does not reopen
-a failed or cancelled group.
-
-Same-repository dependencies stack automatically: the child branches from the
-first unmerged parent and its PR targets that branch. Other parents are merged
-in. A parent's merge retargets the child PR; later parent commits are merged
-forward. Conflicts create a fix item on the child branch, visible in the queue.

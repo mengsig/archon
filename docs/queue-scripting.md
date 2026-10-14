@@ -29,9 +29,11 @@ archon queue wait "$item" --timeout 30m
 
 `--brief-file -` reads UTF-8 text from stdin. The model plan is a JSON or TOML
 file with the same stage-to-choice-array shape as MCP `model_plan`. The file
-extension must be `.json` or `.toml`. It may name only some stages: a stage
-it leaves out gets the orchestrator's model where your policy allows it,
-else the first allowed model, at the effort the pipeline's tier suggests. The equivalent TOML plan is:
+extension must be `.json` or `.toml`. The file is optional, and it may name
+only some stages: a stage it leaves out gets the choice learned for the
+repository ([configuration](configuration.md#learning)), else the
+orchestrator's model where your policy allows it, else the first allowed
+model, at the effort the pipeline's tier suggests. The equivalent TOML plan is:
 
 ```toml
 [[answer]]

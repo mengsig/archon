@@ -2,33 +2,11 @@
 
 ## Unreleased
 
-The orchestrator answers, reads your code and delegates by itself, is
-woken only for what needs it, and a pipeline stage can delegate again.
-### Stacking and initiatives
-
-- Dependent changes now fork from their first unmerged same-repository parent,
-  target its PR branch, and merge additional parents. Parent merges retarget
-  children; moved parents merge forward without rebasing or force-pushing.
-  Conflicts queue a durable fix item on the existing child branch.
-- Multi-repository initiatives create all members transactionally, share a
-  bounded contract, deliver live amendments, and cross-link PRs. Atomic
-  initiatives retain drafts until every member passes. Restart resumes
-  delivery and reconciliation, with one coordinated finish notification.
-- Added `archon initiatives` list/show/cancel/retry and initiative membership
-  to queue details. Retry preserves successful members and existing branches.
-### Learning
-
-- Record durable run outcomes and corrections, backfill historical runs lazily,
-  and use policy-constrained evidence to fill missing model choices without an
-  LLM call. Pipeline evidence includes pass, correction, cost and wall statistics.
-- Add `archon lessons` to record, inspect, edit, pin, retract and accept short
-  lessons; `why` explains the advice and model evidence used for an item.
-- Queue budgeted distillation errands, retain validated proposed pipelines
-  outside the active catalog, and activate them with `archon pipelines accept`.
-  `[learning]` controls the loop, distillation interval and bounded exploration.
-
-The orchestrator answers and delegates work that needs no repository
-itself, and a pipeline stage can delegate again.
+`archond` now ships the work itself, stacks dependent changes, coordinates
+a change across repositories, lets you steer an item without restarting it,
+and learns from what its runs did. The orchestrator answers, reads your code
+and delegates by itself, is woken only for what needs it, and a pipeline
+stage can delegate again.
 
 ### Orchestrator
 
@@ -62,23 +40,41 @@ itself, and a pipeline stage can delegate again.
   them.
 - A helper may delegate once more, and so may a child of a delegating stage
   agent. `archond` cancels an agent a third delegation down.
-- The orchestrator is told never to delegate for a GitHub request without
-  operator standing. Only its prompt holds this.
 - A helper gets only the instructions the orchestrator writes for it; none
   of the orchestrator's own rules are copied. Its prompt now has it state
   them for every helper: commit and push nothing, stay in the workspace
-  given, no git identity overrides, no questions to the operator.
+  given, no git identity overrides, no questions to the operator. It is
+  told never to delegate for a GitHub request without operator standing;
+  only its prompt holds this.
+- Every change to a repository is still an item, so the pipeline's gates,
+  the ship mode, the caps and the autonomy ceiling apply. The orchestrator
+  cannot integrate a helper's edits.
+- For a change the orchestrator takes the cheapest pipeline that fits and
+  says what it expects the choice to save: `direct` or `quick-pr` for a
+  small, low-risk change, `default-pr-review` for bounded work by one author
+  that needs one independent review, `adaptive` where one lead that keeps its
+  context through fixes or integrates independent parts saves restarts. It
+  sets the item's review level by risk, never bundles unrelated changes to
+  use `adaptive`, and leaves the model plan out unless you asked for a model
+  or it has a reason it writes down. It plans `x_high` or `max` only for a
+  reasoning problem it can name that inspecting the work left unresolved:
+  that you prefer strong models is not one.
+- It changes an item instead of restarting it (`steer_item`), queues a chain
+  of dependent changes at once instead of waiting for each merge, and makes
+  a change across repositories one initiative (`enqueue_initiative`,
+  `update_initiative`). An item that failed with `ESCALATE:` is moved to a
+  pipeline that fits, not retried. See the sections below.
 - A finished item no longer wakes the orchestrator unless it has something
   to do about it. `archond` posts every outcome to your feed itself, as
   before. The orchestrator is woken for a failure, a blocker, an item
-  tagged `notify` and an item a GitHub thread asked for, and reads the
-  other outcomes as one short list at its next turn; your next message
-  delivers that list first. One wake is a whole turn over the
-  orchestrator's context, and almost all of them were routine successes.
-  `[orchestrator] wake_on_success = true` restores a wake per outcome.
-  In `archon chat` nothing changes. The terminal UI shows only what the
-  orchestrator says, so there a routine success now appears with its next
-  turn, not as it happens.
+  tagged `notify`, an item a GitHub thread asked for and a finished
+  initiative, and reads the other outcomes as one short list at its next
+  turn; your next message delivers that list first. One wake is a whole
+  turn over the orchestrator's context, and almost all of them were routine
+  successes. `[orchestrator] wake_on_success = true` restores a wake per
+  outcome. In `archon chat` nothing changes. The terminal UI shows only what
+  the orchestrator says, so there a routine success now appears with its
+  next turn, not as it happens.
 - A message a stage agent sends with `message_orchestrator` is written to
   the feed by `archond`, whole: an escalation shows in `archon chat` as a
   blocker. The orchestrator acts on it and no longer repeats it.
@@ -86,10 +82,16 @@ itself, and a pipeline stage can delegate again.
   that only as what was set and cleared, with a count of how many are in
   force. They are sent in full again after an orchestrator restart, a
   revival and a compaction of its context. They were most of every trigger.
-- The orchestrator's prompt is 12 KiB, down from 19, and the descriptions
-  and schemas of its 25 Archon tools 17.7 kB, down from 30.1: roughly 5,000
-  fewer tokens in every orchestrator context. What a tool does is said in
-  the tool's description only.
+- The orchestrator's prompt is 12 KiB, down from 19, with the GitHub rules
+  kept word for word. The descriptions and schemas of the 25 Archon tools it
+  had are 18.0 kB, down from 30.1, and all 29, with `steer_item`,
+  `enqueue_initiative`, `update_initiative` and `record_lesson`, are 23.1
+  kB: roughly 5,000 fewer tokens in every orchestrator context. What a tool
+  does is said in the tool's description only.
+- A new orchestrator starts with the lessons chosen for it (see Learning)
+  under `## Learned observations`, a heading of their own that calls them
+  advice that grants nothing. They are chosen once per orchestrator, so a
+  retried start sends the same text.
 - `[limits] max_parallel_agents` defaults to 8, from 3. A config that sets
   it keeps its value.
 - `archond` does less while agents work: a usage update no longer runs a
@@ -108,21 +110,198 @@ itself, and a pipeline stage can delegate again.
   behind are cancelled, also when Aether restarted it several times in a
   row. A cancel that fails is kept on record and retried in the background
   until Aether confirms it, across daemon restarts.
-- Every change to a repository is still an item, so the pipeline's gates,
-  the ship mode, the caps and the autonomy ceiling apply. The orchestrator
-  cannot integrate a helper's edits.
-- For a change the orchestrator takes the cheapest pipeline that fits and
-  says what it expects the choice to save: `quick-pr` for a small, low-risk
-  change with an obvious regression test and no need of review,
-  `default-pr-review` for bounded work by one author that needs one
-  independent review, `adaptive` where one lead that keeps its context
-  through fixes or integrates independent parts saves restarts. It never
-  bundles unrelated changes to use `adaptive`. It plans `x_high` or `max`
-  only for a reasoning problem it can name that inspecting the work left
-  unresolved: that you prefer strong models is not one.
 - The orchestrator may write a pipeline for work you keep asking for. It
   saves one to the user pipelines directory after `archon pipelines check`
   passes, and only proposes a pipeline inside a repository.
+
+### Shipping, review levels and model plans
+
+Pipelines got faster: the stage that only pushed and opened the pull
+request is gone, a small change takes one agent, and an item carries only
+the choices someone had a reason to make.
+
+- **`archond` ships; no agent does.** Every built-in pipeline that changes
+  a repository used to end in a `ship` stage: an agent that read the run
+  again to push a branch and open a pull request, about 40 seconds and
+  166,000 input tokens per item. That stage is gone from all of them. One
+  stage, usually the last that commits, returns a ship record (`commit`,
+  `tree`, `checks` and the pull request's `title` and `body`), and once
+  every stage has passed `archond` delivers it: it checks that the run
+  worktree is the run's own, on the run branch, without uncommitted
+  changes, holding exactly the recorded tree, ahead of its base, with every
+  new commit under the repository's git identity; pushes without ever
+  forcing and with no repository hook; and opens the pull request with
+  `gh`, or reuses the one already open for the branch. `local` ship mode
+  runs the same checks and pushes nothing. `merge = auto` has `archond` ask
+  GitHub to merge once the checks allow.
+- A refused delivery fails the item as `stage ship: <what to change>`:
+  the dirty paths, the commits under another identity, the remote branch
+  that holds other commits. What only you can fix (no `origin`, a lapsed
+  `gh` login, a branch rule) is a blocker. A network or GitHub failure is
+  retried five times, from 15 seconds apart and doubling.
+- Delivery survives a daemon restart, and a retried item, without a second
+  pull request: the outcome is stored before the run finishes, an
+  interrupted delivery pushes nothing `origin` already has, and a pull
+  request whose creation reply was lost is found on GitHub, not opened
+  again. A succeeded item retried delivers into its open pull request.
+- A pipeline of your own opts in with `[pipeline.ship] stage = "<id>"`
+  and drops its `ship` stage; `docs/examples/pipelines/bugfix-tdd` shows
+  it. The record stage cannot come before a stage that commits. A pipeline
+  that still ends in a `kind = "ship"` stage keeps working unchanged.
+- **New built-in pipeline `direct`**, the cheapest path to a shipped
+  change: one agent implements a small, low-risk change, runs the checks it
+  affects, commits and returns the ship record. It has the shortest
+  contract and prompt of any pipeline that ships, and no review unless the
+  item asks for one. There are now 18 built-in pipelines.
+- **The review level belongs to the item, not the pipeline.** `adaptive`
+  and `direct` hold their own review, and an item's `review` knob now sets
+  how much of it there is: `none`, `standard` or `strict` is no, one or
+  three independent reviewers, which the stage agent delegates and Archon
+  verifies against Aether one by one. `adaptive` no longer refuses `strict`
+  and `none`, and a pipeline may declare any level as its default. Your
+  autonomy ceiling still bounds the choice, and raises an item that names
+  no level. A pipeline whose review stages are its own runs the level those
+  stages give, and an item asking that pipeline for another is refused.
+- **A model plan is optional.** `enqueue` and `archon queue add` no longer
+  need `model_plan` or `--model-plan-file`, whole or per stage. A stage left
+  out gets the choice learned for the repository (see Learning), else the
+  orchestrator's model where your policy allows it, else the first allowed
+  model, at the effort the pipeline's tier suggests and never above
+  `max_effort`. A chosen model is checked against the policy as before, and
+  the item shows the filled plan.
+- **A stage can hand a task back.** An agent that finds its task too large
+  or too risky for its pipeline fails with `ESCALATE:` and what it
+  recommends, instead of stretching the pipeline or failing without a
+  reason; `BLOCKED:` says what it needs from you. The run ends at once,
+  nothing ships, and the orchestrator gets the recommendation with the
+  item's failure. `direct` and `quick-pr` use it for work that is not
+  small. An escalated item moved to another pipeline (`--switch` or
+  `--insert`, below) goes on from its branch.
+- Stage contracts are shorter. With the ship stages gone and the repeated
+  rules cut, the instructions and delegation sections Archon generates for
+  all built-in stages together went from 139,966 to 116,170 bytes (17 %
+  less, with `direct` added), with every safety rule kept.
+
+### Steering and the fix loop
+
+- `archon queue steer <id>` and the orchestrator's `steer_item` change an
+  item without cancelling it. `--note` amends the brief and is sent to
+  every agent working on the item, helpers included. `--model` and
+  `--effort` change a stage within the model policy: a running agent ends
+  its turn and goes on with its work on the new model, since Aether applies
+  a model change at an agent's next turn. `--budget-usd` and `--extend`
+  move the budget and the running stage's deadline. Nothing is restarted,
+  and later attempts, later stages and retries use what was steered.
+- `--abort` stops the running stage and retries it, skips it
+  (`--then skip`) or continues at another stage (`--goto`). `--remove`
+  takes out a stage that has not started, `--insert` adds one from any
+  pipeline, and `--switch` replaces the stages that have not started with
+  another pipeline's. A stage that already started keeps its shape, and
+  the refusal says so. A stage that hands in its pipeline's ship record
+  keeps that role in the run it is carried into when it runs after the
+  stage that shipped so far, and an insert that would commit after the ship
+  record is refused. The model policy, the budgets and the review the
+  autonomy ceiling requires hold for a steer as for an enqueue.
+- Steers are recorded as run edits and applied before a run is resumed, so
+  a steered run goes on unchanged after a daemon restart. What a steer owes
+  the running agents is stored with it and repeated until Aether takes it.
+- A failed item given `--insert` or `--switch` is queued again on the same
+  branch and worktree with what its failed run committed, so an item whose
+  stage gave up continues on a stronger pipeline instead of starting over.
+  A switched item keeps its pipeline's name; its steers show what it runs.
+- `update_item` no longer refuses `brief_append` and `model_plan` on a
+  running item: both are steered into its run. Only an item that is just
+  starting its run still refuses them.
+- Every steer is kept with the item: who made it, when and what it changed.
+  `archon queue show`, `get_item` and the feed show them. Learning counts a
+  steer as a correction of the run.
+- The implementing agent is kept through its fix loop. Where a gate sends
+  work back (`on_fail.goto`) to a `work` stage with one agent, that agent is
+  no longer replaced by a cold one for every fix: it waits while the review
+  runs and is then sent the findings, with what it learned still in its
+  context. Reviewers stay fresh and independent on every attempt. A fresh
+  agent takes the fix, with the findings and a digest of the last attempt,
+  only when the kept one cannot go on: it is gone, Aether refuses it, or a
+  steer changed the stage's model. A kept agent that holds the ship record
+  hands in a new one with its fix, and a fix it escalates ends the run.
+- A stage's prompt now carries `## Handoff from earlier stages`: what each
+  earlier stage, and this stage's own last attempt, reported, at most 1,200
+  characters per stage and 4,000 in all, so it need not rediscover it. A
+  stage the prompt already shows through `{{previous.<id>.summary}}` is not
+  repeated.
+
+### Stacked changes and initiatives
+
+- An item that `depends_on` an unmerged item of its own repository is
+  stacked on it: its branch forks from the first unmerged parent's branch,
+  further parents are merged in, and `archond` opens its pull request
+  against the parent's branch. Its agents are told where each dependency
+  left its work (item, branch and pull request) in a `## Dependencies`
+  section of their contract, and its reviewer is handed the diff from that
+  base, not from the repository's.
+- `archond` restacks by itself: once a parent merges, the child's pull
+  request is moved to the next unmerged parent or the base branch, and
+  commits a parent gains later are merged forward, never rebased or
+  force-pushed. A conflict queues a fix item on the child's branch, visible
+  in the queue, instead of failing the child.
+- A change across repositories is one initiative: `enqueue_initiative`
+  takes a title, a shared contract of up to 2 KiB, and a member per
+  repository with its brief and, as in an enqueue, an optional title,
+  pipeline, model plan and autonomy, and the earlier members it waits for.
+  The members are created together or not at all, an `idempotency_key`
+  makes a retried request safe, and `update_initiative` amends the contract
+  and tells the members' running agents. Each member's pull request gets a
+  "Part of …" section linking its siblings.
+- An atomic initiative (`atomic: true`) opens its members' pull requests
+  as drafts and readies them together once every member passed. None is
+  handed to auto-merge, whatever its repository allows: you merge the set,
+  and a member asking for `merge = auto` is refused.
+- A member that finishes wakes nobody by itself. One that fails fails the
+  initiative, which holds the queued members, and a failed or done
+  initiative wakes the orchestrator once (`initiative_finished`). Delivery
+  and coordination resume after a daemon restart.
+- `archon initiatives` lists them; `show`, `cancel` and `retry` take an
+  `ini_…` id. Cancel stops the unfinished members and leaves successful
+  branches and pull requests in place; retry resumes failed, cancelled and
+  blocked members on their branches, keeping the successful ones.
+  `archon queue show` names an item's initiative.
+
+### Learning
+
+- `archond` records an outcome for every finished run: its result, why it
+  failed (an `ESCALATE:` and a `BLOCKED:` are told apart from other
+  failures), its stage attempts with the agents they delegated to, its cost,
+  wall time and diff size, and the corrections it drew. Runs from before the
+  update are imported in small batches in the background.
+- A correction is a sign that a run that passed was not right: a retry of
+  a finished item, a rejected gate, a steer, an operator message naming the
+  item and saying it is wrong, and, for 14 days after `archond` delivered a
+  pull request, a review requesting changes or a close without a merge, read
+  from GitHub every 10 minutes. A merge is recorded too.
+- A stage an item leaves out of its model plan gets the cheapest choice
+  your policy allows that passed within five points of the best on at least
+  five runs of that pipeline's stage, in the repository or else anywhere,
+  and of the diff size when the item's `diff:small`, `diff:medium` or
+  `diff:large` tag says it. A share of items, 10 % by default and never
+  more, tries the next cheaper choice, decided by the item's id. A plan you wrote is never changed, and no model
+  call is made to choose.
+- `archon lessons` records, lists, edits, pins, retracts and accepts short
+  lessons; `archon lessons why <item>` shows the lessons and the model
+  evidence an item was given, and `archon lessons stats` each pipeline's
+  pass and correction rates, costs and wall times. A run's agents get at
+  most six lessons for its repository and pipeline, quoted as untrusted
+  advice. A lesson whose uses keep ending in corrections is retracted.
+- When an item fails, the orchestrator is woken with a hint to
+  `record_lesson` what the failure teaches.
+- Every 20 new outcomes of a repository queue one low-priority `errand`,
+  limited to $1, that distils lessons and may propose a pipeline. A proposed
+  lesson waits for `archon lessons accept`; a proposed pipeline is checked
+  like any of yours, `archond`'s delivery rules included, kept as
+  `<name>.proposed/` outside the catalog, and used once you run
+  `archon pipelines accept <name>`.
+- `[learning]` holds `enabled`, `distill_every` and `explore_rate` (0 to
+  0.1). `enabled = false` stops recording, learned defaults, lessons and
+  distillation; what was recorded stays readable.
 
 ### Pipelines
 
@@ -158,7 +337,7 @@ itself, and a pipeline stage can delegate again.
   Archon fails the run at that stage unless its agent completes with the
   review on record: a pass naming each reviewer's model. How many reviewers
   that is follows the item's review level (see "Shipping, review levels and
-  model plans" below).
+  model plans" above).
 - A recorded pass is checked, not believed. As the stage ends Archon asks
   Aether which agents its lead delegated to, and the pass counts only when
   one of them completed on each model it names; a cancelled or failed
@@ -196,120 +375,6 @@ itself, and a pipeline stage can delegate again.
 - Every delegating stage agent is now told to hand a child what it already
   holds rather than have it read again, and what a reviewer's hand-off
   contains.
-- The agents of an item queued after others (`depends_on`) are told where
-  each dependency left its work: its item id, branch and pull request, in
-  a `## Dependencies` section of their contract. A dependent item's branch
-  still forks from the repository's base, so a change the brief stacks on a
-  dependency's branch used to be reviewed as a diff from the base, the
-  dependency's change included. The section defines the base of such a
-  change, and the reviewer is handed it. Archon still does not stack items
-  itself: the branch and the pull request of a dependent item start from
-  the base.
-
-### Shipping, review levels and model plans
-
-Pipelines got faster: the stage that only pushed and opened the pull
-request is gone, a small change takes one agent, and an item carries only
-the choices someone had a reason to make.
-
-- **`archond` ships; no agent does.** Every built-in pipeline that changes
-  a repository used to end in a `ship` stage: an agent that read the run
-  again to push a branch and open a pull request, about 40 seconds and
-  166,000 input tokens per item. That stage is gone from all of them. One
-  stage, usually the last that commits, returns a ship record (`commit`,
-  `tree`, `checks` and the pull request's `title` and `body`), and once
-  every stage has passed `archond` delivers it: it checks that the run worktree is the
-  run's own, on the run branch, without uncommitted changes, holding
-  exactly the recorded tree, ahead of its base, with every new commit under
-  the repository's git identity; pushes without ever forcing and with no
-  repository hook; and opens the pull request with `gh`, or reuses the one
-  already open for the branch. `local` ship mode runs the same checks and
-  pushes nothing. `merge = auto` has `archond` ask GitHub to merge once the
-  checks allow.
-- A refused delivery fails the item as `stage ship: <what to change>`:
-  the dirty paths, the commits under another identity, the remote branch
-  that holds other commits. What only you can fix (no `origin`, a lapsed
-  `gh` login, a branch rule) is a blocker. A network or GitHub failure is
-  retried five times, from 15 seconds apart and doubling.
-- Delivery survives a daemon restart, and a retried item, without a second
-  pull request: the outcome is stored before the run finishes, an
-  interrupted delivery pushes nothing `origin` already has, and a pull
-  request whose creation reply was lost is found on GitHub, not opened
-  again.
-- A pipeline of your own opts in with `[pipeline.ship] stage = "<id>"`
-  and drops its `ship` stage; `docs/examples/pipelines/bugfix-tdd` shows
-  it. A pipeline that still ends in a `kind = "ship"` stage keeps working
-  unchanged.
-- **New built-in pipeline `direct`**, the cheapest path to a shipped
-  change: one agent implements a small, low-risk change, runs the checks it
-  affects, commits and returns the ship record. It has the shortest
-  contract and prompt of any pipeline that ships, and no review unless the
-  item asks for one. There are now 18 built-in pipelines.
-- **The review level belongs to the item, not the pipeline.** `adaptive`
-  and `direct` hold their own review, and an item's `review` knob now sets
-  how much of it there is: `none`, `standard` or `strict` is no, one or
-  three independent reviewers, which the stage agent delegates and Archon
-  verifies against Aether one by one. `adaptive` no longer refuses `strict`
-  and `none`, and a pipeline may declare any level as its default. Your
-  autonomy ceiling still bounds the choice, and raises an item that names
-  no level. Pipelines with review stages of their own run the level those
-  stages give, as before.
-- **A model plan is optional.** `enqueue` and `archon queue add` no longer
-  need `model_plan` or `--model-plan-file`, whole or per stage. A stage left
-  out gets the orchestrator's model where your policy allows it, else the
-  first allowed model, at the effort the pipeline's tier suggests and never
-  above `max_effort`. A chosen model is checked against the policy as
-  before, and the item shows the filled plan.
-- **A stage can hand a task back.** An agent that finds its task too large
-  or too risky for its pipeline fails with `ESCALATE:` and what it
-  recommends, instead of stretching the pipeline or failing without a
-  reason. The run ends at once, nothing ships, and the orchestrator gets
-  the recommendation with the item's failure. `direct` and `quick-pr` use
-  it for work that is not small.
-- Stage contracts are shorter. With the ship stages gone and the repeated
-  rules cut, the instructions and delegation sections Archon generates for
-  all built-in stages together went from 139,966 to 116,170 bytes (17 %
-  less, with `direct` added), with every safety rule kept.
-### Steering and the fix loop
-
-- `archon queue steer <id>` and the orchestrator's `steer_item` change an
-  item without cancelling it. `--note` amends the brief and is sent to
-  every agent working on the item, helpers included. `--model` and
-  `--effort` change a stage within the model policy: a running agent ends
-  its turn and goes on with its work on the new model, since Aether applies
-  a model change at an agent's next turn. `--budget-usd` and `--extend`
-  move the budget and the running stage's deadline. Nothing is restarted,
-  and later attempts, later stages and retries use what was steered.
-- `--abort` stops the running stage and retries it, skips it
-  (`--then skip`) or continues at another stage (`--goto`). `--remove`
-  takes out a stage that has not started, `--insert` adds one from any
-  pipeline, and `--switch` replaces the stages that have not started with
-  another pipeline's. A stage that already started keeps its shape, and
-  the refusal says so. The model policy, the budgets and the review the
-  autonomy ceiling requires hold for a steer as for an enqueue.
-- Steers are recorded as run edits and applied before a run is resumed, so
-  a steered run goes on unchanged after a daemon restart. What a steer owes
-  the running agents is stored with it and repeated until Aether takes it.
-- A failed item given `--insert` or `--switch` is queued again on the same
-  branch and worktree with what its failed run committed, so an item whose
-  stage gave up continues on a stronger pipeline instead of starting over.
-- `update_item` no longer refuses `brief_append` and `model_plan` on a
-  running item: both are steered into its run. Only an item that is just
-  starting its run still refuses them.
-- Every steer is kept with the item: who made it, when and what it changed.
-  `archon queue show`, `get_item` and the feed show them.
-- The implementing agent is kept through its fix loop. Where a gate sends
-  work back (`on_fail.goto`) to a `work` stage with one agent, that agent is
-  no longer replaced by a cold one for every fix: it waits while the review
-  runs and is then sent the findings, with what it learned still in its
-  context. Reviewers stay fresh and independent on every attempt. A fresh
-  agent takes the fix, with the findings and a digest of the last attempt,
-  only when the kept one cannot go on: it is gone, Aether refuses it, or a
-  steer changed the stage's model.
-- A stage's prompt now carries `## Handoff from earlier stages`: what each
-  earlier stage, and this stage's own last attempt, reported, at most 1,200
-  characters per stage and 4,000 in all, so it need not rediscover it. A stage the prompt already shows
-  through `{{previous.<id>.summary}}` is not repeated.
 
 ### Cost
 
@@ -341,9 +406,9 @@ the choices someone had a reason to make.
   disconnected` for a restart it made itself. `archond` now looks for an
   `aetherd` that is not running every second instead of at a growing
   interval of up to 30 seconds, so any restart of Aether is picked up at
-  once.
-  In shared mode Archon never edits your Aether config: `archon doctor`
-  fails with the line to add, and your `aetherd` needs a restart after it.
+  once. In shared mode Archon never edits your Aether config: `archon
+  doctor` fails with the line to add, and your `aetherd` needs a restart
+  after it.
 - Until Aether names the callers, `archond` posts one blocker saying so,
   takes those tools only from an orchestrator that cannot delegate, and
   starts new orchestrators without `delegate`. An orchestrator started by
@@ -358,10 +423,12 @@ the choices someone had a reason to make.
   and a start that still finds the old one holding its database retries
   for up to 15 seconds instead of failing with "another aether daemon is
   already running".
-- `archon` and `archond` speak protocol 6: restart `archond` after
-  updating, as `archon update` says.
+- `archon` and `archond` speak protocol 7: restart `archond` after
+  updating, as `archon update` says. The store is migrated when `archond`
+  starts.
 - `archon setup` writes a `config.toml` with every key commented out when
-  there is none, and never touches one that exists.
+  there is none, `[learning]` and `wake_on_success` included, and never
+  touches one that exists.
 - An `archon.toml` from before 1.0 is still not read. `archon doctor` now
   warns about it and `archond` posts one notice as it starts, both naming
   the `config.toml` that is read.
@@ -372,12 +439,13 @@ the choices someone had a reason to make.
 After updating: run the commands `archon update` prints. The last one,
 `archon orchestrator restart`, matters here: a running orchestrator keeps
 the prompt, tools and workspace it was created with, so it neither
-delegates nor knows `adaptive` or its mirrors until a new one starts, and
-it still expects to be woken for every finished item. Until then it is
-sent every directive in every trigger, as its prompt expects. In shared
-mode, add
-`send_caller_meta = true` to the `archon` server in your Aether config and
-restart your `aetherd` before that restart; `archon doctor` checks it.
+delegates, steers, stacks nor knows `adaptive`, `direct` or its mirrors
+until a new one starts, and it still expects to be woken for every finished
+item. Until then it is sent every directive in every trigger, as its prompt
+expects. In shared mode, add `send_caller_meta = true` to the `archon`
+server in your Aether config and restart your `aetherd` before that
+restart; `archon doctor` checks it. A pipeline of your own that ends in a
+`kind = "ship"` stage needs no change.
 
 ## 1.0.1
 

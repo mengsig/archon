@@ -41,6 +41,11 @@ name, as a whole directory**:
   [pipelines]
   disabled = ["quick-pr"]
   ```
+- A pipeline that learning proposes is written to the user directory as
+  `<name>.proposed/`, which the catalog ignores. It was checked like any
+  pipeline of yours; read it, then `archon pipelines accept <name>` renames
+  it to `<name>/`, after checking it again. A pipeline of that name already
+  there is never replaced.
 
 ## Quick start: add a pipeline
 
@@ -345,7 +350,9 @@ base when it is for another branch. The body is the record's, then the
 stage under `## Review and verification`, the change report's summary under
 `## Change report`, and the item's id. With `merge = auto` archond asks
 GitHub to merge when the checks allow; a refusal of that is reported and
-fails nothing.
+fails nothing. A member of an atomic initiative is opened as a draft and is
+never handed to auto-merge: archond readies the drafts together once every
+member passed, and you merge them.
 
 The run's summary ends `SHIPPED: <url> (commit <sha>)`, or
 `SHIPPED: commit <sha> on the run branch` in `local` mode. A refused

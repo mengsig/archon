@@ -99,7 +99,8 @@ seeded from your Aether configuration by `archon setup`.
 
 ## Core ideas
 
-- **Item:** one queued task with a brief, priority, dependencies, and optional repository.
+- **Item:** one queued task with a brief, priority, dependencies, and optional repository. An item that depends on an unmerged item of its repository is stacked on that item's branch and pull request, and `archond` restacks it when the parent merges.
+- **Initiative:** one change across repositories: a member item per repository, built to one shared contract, with pull requests linked to each other and, when atomic, readied together.
 - **Pipeline:** a named sequence of stages, chosen for the kind of work.
 - **Stage:** a work step run by an agent, such as implementation, testing, or review.
 - **Gate:** a rule that requires stage verdicts or operator approval before continuing.
@@ -107,6 +108,7 @@ seeded from your Aether configuration by `archon setup`.
 - **Autonomy:** five knobs for review, proposal, report, merge, and tool access, bounded by your ceiling. `review` sets how many independent reviewers a change gets: none, one or three.
 - **Ship mode:** `pr` opens a PR, `local` keeps commits on the run branch. `archond` ships the verified commits itself; no agent does.
 - **Orchestrator:** the agent you chat with; it answers directly, reads your code in mirrors `archond` keeps for it, delegates wide reads and research to helpers, and queues every change as an item.
+- **Learning:** every finished run leaves an outcome; what was later corrected, merged or closed counts against it. Archon fills unplanned stages with the models that passed for the repository and gives agents short lessons, as advice that grants nothing ([guide](docs/guide.md#what-archon-learns)).
 
 ## Built-in pipelines
 
@@ -158,9 +160,11 @@ Replace `<id>` with an item ID from the queue; a unique prefix also works.
 | `archon` / `archon say "…"` | Open the terminal UI, or send one request and exit |
 | `archon status` | Show health, capacity, spending, and waiting work |
 | `archon queue list` / `archon queue show <id> --full` | Inspect items and stage results |
-| `archon queue retry <id>` / `archon queue cancel <id>` | Retry a failed item or cancel work |
+| `archon queue retry <id>` / `archon queue cancel <id>` | Run a finished item again or cancel work |
 | `archon queue steer <id> --note "…"` | Change a running item without cancelling it: its brief, model, budget, deadline or stages |
 | `archon queue caps` | Inspect or change runtime limits |
+| `archon initiatives` / `archon initiatives show <ini_id>` | List changes across repositories, or show one's contract and members |
+| `archon lessons` / `archon lessons why <id>` | Read and edit learned lessons, or see what an item was given and why |
 | `archon pause` / `archon resume` | Hold or resume dispatch; add `--hard` for running agents |
 | `archon questions` / `archon answer <number> "…"` | Read and answer operator questions |
 | `archon log --item <id> --follow` | Follow one item's events |
@@ -169,7 +173,7 @@ Replace `<id>` with an item ID from the queue; a unique prefix also works.
 | `archon model-evidence` | Inspect recorded stage costs, durations, and verdicts |
 | `archon github-watcher add example-org/example-repo` | Route authorized `@archon` requests to the orchestrator |
 | `archon aether schedule --help` | Use Aether's schedules for recurring requests |
-| `archon pipelines list` / `archon pipelines check` | List or validate available pipelines |
+| `archon pipelines list` / `archon pipelines check` | List or validate available pipelines; `archon pipelines accept <name>` activates a proposed one |
 
 See [scripted queue usage](docs/queue-scripting.md) for enqueueing from files
 and waiting for results, or the [user guide](docs/guide.md) for chat and lifecycle details.

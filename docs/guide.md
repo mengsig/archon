@@ -298,16 +298,16 @@ A work item ships in one of two modes, set per repository:
 
 No agent ships. A stage of the pipeline, usually the last that commits,
 returns what is to ship (the commit, its tree, the checks it ran, the PR
-title and body), and `archond` delivers it in a few seconds: it checks
-that the worktree is clean, still holds that tree and carries only commits
-under your repository's git identity (as `archon repo add` or `archon repo
-set` recorded it; run the latter after you change it), pushes without ever
-forcing, and opens the PR with `gh`, or reuses the one already open for the
-branch. A delivery that is refused fails the item with what to change, and
-a restart in the middle never opens a second PR. The item succeeds once its PR is open: `archond` does
-not wait for your CI and does not repair a failing check. Ask for a fix, or
-run `archon queue retry <id> --append "…"`, which delivers into the same
-PR. See [Shipping](PIPELINES.md#shipping).
+title and body), and `archond` delivers it in a few seconds: it checks that
+the worktree is clean, still holds that tree and carries only commits under
+your repository's git identity (as `archon repo add` recorded it; run
+`archon repo set <repo>` after you change it), pushes without ever forcing,
+and opens the PR with `gh`, or reuses the one already open for the branch. A
+delivery that is refused fails the item with what to change, and a restart
+in the middle never opens a second PR. The item succeeds once its PR is
+open: `archond` does not wait for your CI and does not repair a failing
+check. Ask for a fix, or run `archon queue retry <id> --append "…"`, which
+delivers into the same PR. See [Shipping](PIPELINES.md#shipping).
 
 ## Aether setup
 

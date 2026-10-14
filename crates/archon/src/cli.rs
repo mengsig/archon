@@ -256,7 +256,8 @@ pub enum RepoCommand {
         /// The repository's name or repo_… id.
         repo: String,
     },
-    /// Change a repository's settings.
+    /// Change a repository's settings and record its git identity again;
+    /// with no option, only the identity.
     Set {
         /// The repository's name or repo_… id.
         repo: String,
@@ -977,6 +978,11 @@ mod tests {
             panic!()
         };
         assert_eq!(autonomy_max.as_deref(), Some("merge=auto"));
+        let Command::Repo(RepoCommand::Set { repo, ship, .. }) = parse(&["repo", "set", "api"])
+        else {
+            panic!("a bare repo set records the git identity again")
+        };
+        assert_eq!((repo.as_str(), ship), ("api", None));
         let both = [
             "repo",
             "set",

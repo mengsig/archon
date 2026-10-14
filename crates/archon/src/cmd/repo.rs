@@ -62,7 +62,7 @@ pub async fn run(command: RepoCommand, json: bool) -> anyhow::Result<ExitCode> {
             auto_merge,
         } => {
             let ceiling = ceiling(&repo, autonomy_max, auto_merge).await?;
-            set(repo, repo_patch(ship, base, pipeline, ceiling)?, json).await?;
+            set(repo, repo_patch(ship, base, pipeline, ceiling), json).await?;
         }
     }
     Ok(ExitCode::SUCCESS)
@@ -125,32 +125,25 @@ fn with_merge(mut ceiling: AutonomyPatch, auto: bool) -> AutonomyPatch {
     ceiling
 }
 
-/// An empty `--base` or `--pipeline` clears the setting.
+/// An empty `--base` or `--pipeline` clears the setting; no option at all
+/// changes nothing but the git identity the daemon records again.
 fn repo_patch(
     ship: Option<Ship>,
     base: Option<String>,
     pipeline: Option<String>,
     autonomy_max: Option<AutonomyPatch>,
-) -> anyhow::Result<RepoPatch> {
+) -> RepoPatch {
     let clearable = |value: Option<String>| match value.as_deref().map(str::trim) {
         None => Clearable::Keep,
         Some("") => Clearable::Clear,
         Some(v) => Clearable::Set(v.to_owned()),
     };
-    let patch = RepoPatch {
+    RepoPatch {
         ship: ship.map(ship_mode),
         base_branch: clearable(base),
         default_pipeline: clearable(pipeline),
         autonomy_max,
-    };
-    if patch == RepoPatch::default() {
-        return Err(archon_core::ArchonError::Invalid(
-            "nothing to change; pass --ship, --base, --pipeline, --autonomy-max or --auto-merge"
-                .into(),
-        )
-        .into());
     }
-    Ok(patch)
 }
 
 fn ship_mode(ship: Ship) -> ShipMode {
@@ -165,17 +158,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_values_clear_and_no_flags_is_an_error() {
-        let patch = repo_patch(None, Some(String::new()), Some("fix".into()), None).unwrap();
+    fn empty_values_clear_and_no_flags_change_nothing() {
+        let patch = repo_patch(None, Some(String::new()), Some("fix".into()), None);
         assert_eq!(patch.base_branch, Clearable::Clear);
         assert_eq!(patch.default_pipeline, Clearable::Set("fix".into()));
-        let blank = repo_patch(None, None, Some("  ".into()), None).unwrap();
+        let blank = repo_patch(None, None, Some("  ".into()), None);
         assert_eq!(blank.default_pipeline, Clearable::Clear);
         assert_eq!(blank.base_branch, Clearable::Keep);
-        assert!(repo_patch(None, None, None, None).is_err());
-        let cleared = repo_patch(None, None, None, Some(AutonomyPatch::default())).unwrap();
+        let identity_only = repo_patch(None, None, None, None);
+        assert_eq!(identity_only, RepoPatch::default());
+        let cleared = repo_patch(None, None, None, Some(AutonomyPatch::default()));
         assert_eq!(cleared.autonomy_max, Some(AutonomyPatch::default()));
-        let patch = repo_patch(Some(Ship::Local), None, None, None).unwrap();
+        let patch = repo_patch(Some(Ship::Local), None, None, None);
         assert_eq!(patch.ship, Some(ShipMode::Local));
     }
 

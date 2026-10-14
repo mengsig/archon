@@ -94,7 +94,7 @@ pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     }
 }
 
-/// One pass over every mirror; see [`sync`].
+/// One pass over every mirror; see `sync`.
 pub async fn sync_all(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let every = Asked {
         all: true,

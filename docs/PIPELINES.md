@@ -312,7 +312,9 @@ completed with a verdict; a builder or researcher that returned none is not
 a reviewer. Archon then holds the verdicts to the run branch: a pass counts
 when its reviewer read the branch head, or an earlier head whose later
 commits a passing reviewer read as a delta. A fail never counts, and it
-stands until such a pass read past it. A verdict on a commit the branch no
+stands until such a pass read past it, or a later reviewer read past it and
+failed in turn, and that fail was answered: a fix of a fix is reviewed as a
+delta too. A verdict on a commit the branch no
 longer holds (the agent amended or rebased it away) is superseded: it is
 left out rather than failing the run, and a superseded fail stands until
 the counted passes read the whole change. When the stage also writes the ship

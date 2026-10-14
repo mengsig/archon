@@ -281,39 +281,62 @@ fn spread(
 }
 
 /// Why a named fail still stands: no counted pass read past its head and
-/// the commits after it.
+/// the commits after it, nor a later fail that read past it and was answered.
 fn open_fail(
     history: &mut impl Ancestry,
     placed: &[Placed],
     current: &[bool],
 ) -> Result<Option<String>, ArchonError> {
     assert_eq!(placed.len(), current.len(), "one mark per read");
-    for fail in placed.iter().filter(|read| !read.pass) {
-        let mut answered = false;
-        for (pass, _) in placed.iter().zip(current).filter(|(_, held)| **held) {
-            if answers(history, pass, fail)? {
-                answered = true;
-                break;
-            }
-        }
-        if answered {
-            continue;
-        }
-        let at = short(&fail.head);
-        return Ok(Some(match fail.superseded {
-            true => format!(
-                "reviewer {} failed {at}, which the branch no longer holds, and no passing \
-                 reviewer named read the whole change since",
-                fail.agent
-            ),
-            false => format!(
-                "reviewer {} failed the change at {at}, and no passing reviewer named read \
-                 what changed after it",
-                fail.agent
-            ),
-        }));
+    let mut by_a_pass = Vec::with_capacity(placed.len());
+    for read in placed {
+        by_a_pass.push(!read.pass && answered_by_a_pass(history, placed, current, read)?);
     }
-    Ok(None)
+    // A reviewer that read a fix and failed it again answers the fail it read past once its own is.
+    let answered = spread(
+        placed,
+        |i, _| by_a_pass[i],
+        |read, by| {
+            let chained = !read.pass && !by.pass && !read.superseded && !by.superseded;
+            Ok(chained && reads_past(history, by, read)?)
+        },
+    )?;
+    let Some(fail) = placed
+        .iter()
+        .zip(&answered)
+        .find(|(read, held)| !read.pass && !**held)
+        .map(|(read, _)| read)
+    else {
+        return Ok(None);
+    };
+    let at = short(&fail.head);
+    Ok(Some(match fail.superseded {
+        true => format!(
+            "reviewer {} failed {at}, which the branch no longer holds, and no passing \
+             reviewer named read the whole change since",
+            fail.agent
+        ),
+        false => format!(
+            "reviewer {} failed the change at {at}, and no passing reviewer named read \
+             what changed after it",
+            fail.agent
+        ),
+    }))
+}
+
+/// Whether one of the counted passes answers `fail`.
+fn answered_by_a_pass(
+    history: &mut impl Ancestry,
+    placed: &[Placed],
+    current: &[bool],
+    fail: &Placed,
+) -> Result<bool, ArchonError> {
+    for (pass, _) in placed.iter().zip(current).filter(|(_, held)| **held) {
+        if answers(history, pass, fail)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Whether the counted `pass` read past `fail`: the commits after its head,
@@ -324,8 +347,21 @@ fn answers(history: &mut impl Ancestry, pass: &Placed, fail: &Placed) -> Result<
     if fail.superseded {
         return Ok(pass.base.is_none());
     }
-    let later = pass.head != fail.head && history.holds(&fail.head, &pass.head)?;
-    Ok(later && covers(history, pass, &fail.head)?)
+    reads_past(history, pass, fail)
+}
+
+/// Whether `by` read a later head than `earlier` and every commit after it.
+fn reads_past(
+    history: &mut impl Ancestry,
+    by: &Placed,
+    earlier: &Placed,
+) -> Result<bool, ArchonError> {
+    assert!(
+        !earlier.superseded,
+        "a superseded head has no commits after it"
+    );
+    let later = by.head != earlier.head && history.holds(&earlier.head, &by.head)?;
+    Ok(later && covers(history, by, &earlier.head)?)
 }
 
 /// Why too few passes count, naming each that no longer holds.
@@ -451,6 +487,34 @@ mod tests {
     }
 
     /// A strict review: three read the change, one failed, a fourth read the fix.
+    /// A fix failed its delta review, and a third reviewer passed the fix of the fix.
+    #[test]
+    fn a_failed_fix_answered_by_a_later_delta_answers_the_fail_it_read_past() {
+        let chain = [
+            read("agt_a", false, "c3", None),
+            read("agt_b", false, "c4", Some("c3")),
+            read("agt_c", true, "c5", Some("c4")),
+        ];
+        assert_eq!(count(&chain, "c5", 1).unwrap(), [2]);
+        let unanswered = [
+            read("agt_a", false, "c3", None),
+            read("agt_b", false, "c4", Some("c3")),
+            read("agt_c", true, "c4", Some("c3")),
+        ];
+        let refused = count(&unanswered, "c4", 1).unwrap_err();
+        assert!(
+            refused.contains("agt_b failed the change at c4"),
+            "{refused}"
+        );
+        let skipped = [
+            read("agt_a", false, "c3", None),
+            read("agt_b", false, "c4", None),
+            read("agt_c", false, "c5", Some("c4")),
+            read("agt_d", true, "c6", Some("c5")),
+        ];
+        assert_eq!(count(&skipped, "c6", 1).unwrap(), [3]);
+    }
+
     #[test]
     fn several_full_reviews_hold_through_a_reviewed_fix() {
         let strict = [

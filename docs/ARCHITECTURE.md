@@ -2020,7 +2020,9 @@ base branch, or none, means the whole change was read; a delta's `base`
 must be a head another named reviewer read. A pass counts when it read the
 branch head, or when a counted pass read every commit after its head
 (`base` at or before it). A fail never counts and must be followed by such
-a pass. Counted passes below the level fail the run with the reasons. When
+a pass, or by a later fail that read every commit after its head and was
+itself followed so (a fix of a fix, each reviewed as a delta). Counted
+passes below the level fail the run with the reasons. When
 the same result is the ship record (§8.7), the branch head must hold the
 record's `tree`, the tree delivery later checks: what ships is what was read.
 

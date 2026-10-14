@@ -125,7 +125,7 @@ restart`: until then it cannot delegate, steer, stack or use `adaptive`,
   reviewers. When the reviewed stage also writes the ship record, the
   commit they passed must hold the tree that ships. A failed verdict
   stands until a later pass reads past it, and a fix can be reviewed as a
-  delta. A review of an amended commit supersedes the verdict on the commit
+  delta, also when the review of an earlier fix failed. A review of an amended commit supersedes the verdict on the commit
   it replaced, instead of failing the run.
 - **A model plan is optional.** A stage left out gets the learned choice,
   else the orchestrator's model where your policy allows it, else the first

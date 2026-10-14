@@ -9,7 +9,9 @@ use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
 use archon_core::run::{StageOutcome, StageRun, StageState};
 
-use super::{FollowUp, descendants, load_spawn, run_follow_up, run_node, settle, siblings, team};
+use super::{
+    FollowUp, descendants, load_spawn, run_follow_up, run_node, settle, ship, siblings, team,
+};
 use crate::context::DaemonContext;
 
 /// Aether settles a timed-out agent itself; the daemon steps in after this.
@@ -19,12 +21,14 @@ const DEADLINE_GRACE_SECS: i64 = 60;
 pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let now = archon_core::now();
     let grace = chrono::Duration::seconds(DEADLINE_GRACE_SECS);
-    let (in_flight, merge) = {
+    let (in_flight, merge, ship) = {
         let table = ctx.runs.lock().await;
-        (table.in_flight.clone(), team::stalled(&table))
+        let due = ship::stalled(&table, std::time::Instant::now());
+        (table.in_flight.clone(), team::stalled(&table), due)
     };
     let mut follow = FollowUp {
         merge,
+        ship,
         ..FollowUp::default()
     };
     {

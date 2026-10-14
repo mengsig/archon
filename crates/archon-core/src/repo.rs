@@ -9,7 +9,7 @@ use crate::Timestamp;
 use crate::autonomy::AutonomyPatch;
 use crate::id::RepoId;
 
-/// How a pipeline's ship stage delivers finished work. Nothing merges unless
+/// How finished work leaves a repository. Nothing merges unless
 /// the item's `merge = auto` knob is within the operator's ceiling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Default)]
 #[serde(rename_all = "kebab-case")]

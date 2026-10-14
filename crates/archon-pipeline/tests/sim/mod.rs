@@ -14,7 +14,7 @@ use archon_core::run::{GateDecision, PipelineRun, RunState, StageRun, StageState
 use archon_pipeline::autonomy::OperatorGates;
 use archon_pipeline::spec::PipelineSpec;
 use archon_pipeline::team::{MergeOutcome, MergePlan};
-use archon_pipeline::{EngineAction, OperatorWait, RunDriver, SpawnPlan};
+use archon_pipeline::{EngineAction, OperatorWait, RunDriver, ShipOutcome, ShipPlan, SpawnPlan};
 
 use crate::support;
 
@@ -62,6 +62,13 @@ pub struct Sim {
     pub merges: Vec<(String, u32, MergeOutcome)>,
     /// The team merge the run waits on, as the daemon's table holds it.
     pub open_merge: Option<MergePlan>,
+    /// How archond's delivery ended, as the daemon persists it.
+    pub shipped: Option<ShipOutcome>,
+    /// The delivery the run waits on, as the daemon's table holds it.
+    pub open_ship: Option<ShipPlan>,
+    /// Whether the record stage's agent writes the ship record its contract
+    /// asks for; a test of a missing record turns it off.
+    pub writes_record: bool,
     clock: Timestamp,
 }
 
@@ -109,6 +116,9 @@ impl Sim {
             open_gate: None,
             merges: Vec::new(),
             open_merge: None,
+            shipped: None,
+            open_ship: None,
+            writes_record: true,
             clock,
         }
     }
@@ -145,6 +155,10 @@ impl Sim {
         let index = self.live_index(stage, fan);
         let at = self.tick();
         apply_agent(&mut self.stages[index], &agent, at);
+        let records = self.spec.ship_record_stage().is_some_and(|s| s.id == stage);
+        if records && self.writes_record {
+            write_ship_record(&mut self.stages[index]);
+        }
         let settled = self.stages[index].clone();
         let owed = self.resume_fresh();
         let actions = self.driver.on_stage_settled(&settled, &self.stages);
@@ -216,6 +230,42 @@ impl Sim {
         actions
     }
 
+    /// Finish the open delivery the way the daemon does: persist the
+    /// outcome, feed the driver, and check the resume property and
+    /// idempotency.
+    pub fn ship(&mut self, outcome: ShipOutcome) -> Vec<EngineAction> {
+        let plan = self.open_ship.take().expect("a delivery is open");
+        assert!(self.shipped.is_none(), "a run is delivered once");
+        self.shipped = Some(outcome.clone());
+        let owed = self.resume_fresh();
+        let actions = self
+            .driver
+            .on_shipped(outcome.clone(), &self.stages)
+            .expect("an open delivery accepts its outcome");
+        assert_eq!(
+            owed,
+            self.expected_owed(&actions),
+            "resumed driver disagrees after shipping {plan:?} with {outcome:?}"
+        );
+        let again = self
+            .driver
+            .on_shipped(outcome, &self.stages)
+            .expect("the same outcome twice is accepted");
+        assert!(again.is_empty(), "a duplicate delivery must be a no-op");
+        self.apply(&actions, usize::MAX);
+        actions
+    }
+
+    /// Deliver the open plan as a pull request for the commit it records.
+    pub fn ship_pr(&mut self, url: &str) -> Vec<EngineAction> {
+        let plan = self.open_ship.as_ref().expect("a delivery is open");
+        let outcome = ShipOutcome::Shipped {
+            commit: plan.record.commit.clone(),
+            pr_url: Some(url.to_owned()),
+        };
+        self.ship(outcome)
+    }
+
     /// Cancel the run the way the daemon does for an operator request.
     pub fn cancel(&mut self, reason: &str) -> Vec<EngineAction> {
         let live: Vec<StageRun> = self
@@ -264,6 +314,11 @@ impl Sim {
             driver
                 .record_merge(stage, *attempt, outcome.clone())
                 .expect("persisted merge outcomes replay");
+        }
+        if let Some(outcome) = &self.shipped {
+            driver
+                .record_ship(outcome.clone())
+                .expect("a persisted delivery replays");
         }
         driver
     }
@@ -325,6 +380,15 @@ impl Sim {
         self.pending.iter().any(|p| p.team.is_some())
     }
 
+    /// A gate, a merge or a delivery opens only once nothing runs or waits.
+    fn assert_settled(&self, what: &str) {
+        assert!(
+            self.live().is_empty(),
+            "{what} opens once its stage settled"
+        );
+        assert!(self.pending.is_empty(), "nothing is pending at {what}");
+    }
+
     fn apply(&mut self, actions: &[EngineAction], admit: usize) {
         let spawns: Vec<SpawnPlan> = spawn_plans(actions).into_iter().cloned().collect();
         let admit = gang_admit(&spawns, admit);
@@ -343,15 +407,12 @@ impl Sim {
                     self.pending.clear();
                     self.open_gate = None;
                     self.open_merge = None;
+                    self.open_ship = None;
                     let at = self.tick();
                     self.run.finish(state.clone(), at).expect("finish once");
                 }
                 EngineAction::AwaitOperator(wait) => {
-                    assert!(
-                        self.live().is_empty(),
-                        "a gate opens once its stage settled"
-                    );
-                    assert!(self.pending.is_empty(), "nothing is pending at a gate");
+                    self.assert_settled("a gate");
                     self.run.state = RunState::AwaitingOperator {
                         stage_id: wait.stage_id.clone(),
                         attempt: wait.attempt,
@@ -360,13 +421,14 @@ impl Sim {
                     self.open_gate = Some(wait.clone());
                 }
                 EngineAction::MergeTeam(plan) => {
-                    assert!(
-                        self.live().is_empty(),
-                        "a merge starts once its roles settled"
-                    );
-                    assert!(self.pending.is_empty(), "nothing is pending at a merge");
+                    self.assert_settled("a merge");
                     assert!(self.open_merge.is_none(), "one merge at a time");
                     self.open_merge = Some(plan.clone());
+                }
+                EngineAction::Ship(plan) => {
+                    self.assert_settled("a delivery");
+                    assert!(self.open_ship.is_none(), "one delivery per run");
+                    self.open_ship = Some(plan.clone());
                 }
             }
         }
@@ -403,6 +465,7 @@ impl Sim {
             .collect();
         owed.extend(self.open_gate.clone().map(EngineAction::AwaitOperator));
         owed.extend(self.open_merge.clone().map(EngineAction::MergeTeam));
+        owed.extend(self.open_ship.clone().map(EngineAction::Ship));
         owed
     }
 
@@ -464,6 +527,30 @@ impl Sim {
     fn tick(&mut self) -> Timestamp {
         self.clock += std::time::Duration::from_millis(1);
         self.clock
+    }
+}
+
+/// The commit and tree every simulated record stage reports.
+pub const COMMIT: &str = "1111111111111111111111111111111111111111";
+pub const TREE: &str = "2222222222222222222222222222222222222222";
+
+/// The ship record a record stage's agent writes.
+pub fn ship_record() -> serde_json::Value {
+    serde_json::json!({"commit": COMMIT, "tree": TREE, "checks": ["cargo test"],
+        "pr": {"title": "fix(widget): handle the empty case", "body": "What changed and why."}})
+}
+
+/// Put the ship record on a completed result, beside what the agent wrote.
+fn write_ship_record(stage: &mut StageRun) {
+    if stage.state != StageState::Completed {
+        return;
+    }
+    let data = stage
+        .structured
+        .get_or_insert_with(|| serde_json::json!({}));
+    let fields = data.as_object_mut().expect("structured data is an object");
+    for (key, value) in ship_record().as_object().expect("an object") {
+        fields.entry(key.clone()).or_insert_with(|| value.clone());
     }
 }
 
@@ -573,6 +660,17 @@ pub fn awaited(actions: &[EngineAction]) -> Vec<&OperatorWait> {
         .iter()
         .filter_map(|a| match a {
             EngineAction::AwaitOperator(w) => Some(w),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The deliveries `actions` ask of archond.
+pub fn ship_plans(actions: &[EngineAction]) -> Vec<&ShipPlan> {
+    actions
+        .iter()
+        .filter_map(|a| match a {
+            EngineAction::Ship(plan) => Some(plan),
             _ => None,
         })
         .collect()

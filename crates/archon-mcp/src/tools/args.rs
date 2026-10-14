@@ -314,8 +314,7 @@ fn enqueue(args: &mut Args) -> Result<EnqueueRequest, ToolError> {
     if title.contains('\n') {
         return Err(args.error("title", "must be a single line; put the details in `brief`"));
     }
-    let model_plan = args.optional_plan("model_plan")?;
-    let model_plan = model_plan.ok_or_else(|| args.error("model_plan", "is required"))?;
+    let model_plan = args.optional_plan("model_plan")?.unwrap_or_default();
     let request = EnqueueRequest {
         repo: args.optional("repo")?,
         pipeline: args.optional_text("pipeline")?,

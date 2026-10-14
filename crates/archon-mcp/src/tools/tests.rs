@@ -288,6 +288,21 @@ fn enqueue_maps_its_fields_and_both_model_spellings() {
     assert_eq!(origin.to_string(), "acme/web#42");
 }
 
+/// A plan is the stages whose model the caller chooses: without one the
+/// request carries none, and archond fills every stage.
+#[test]
+fn enqueue_without_a_model_plan_leaves_every_stage_to_archon() {
+    let arguments = json!({"title": "t", "brief": "b", "pipeline": "direct"});
+    let Ok(Request::Enqueue(request)) = to_request("enqueue", arguments) else {
+        panic!("enqueue maps to Enqueue");
+    };
+    assert_eq!(request.pipeline.as_deref(), Some("direct"));
+    assert!(request.model_plan.0.is_empty());
+    assert_eq!(request.model_reasons, None);
+    let required: Vec<&str> = definition("enqueue").expect("defined").required().collect();
+    assert_eq!(required, ["title", "brief"]);
+}
+
 #[test]
 fn github_reply_names_one_thread_and_never_its_own_marker() {
     let request = to_request(
@@ -359,9 +374,10 @@ fn clear_directive_needs_exactly_one_target() {
 #[test]
 fn argument_errors_name_the_argument_and_the_fix() {
     let missing = refusal("enqueue", json!({"pipeline": "quick-pr"}));
+    assert!(missing.contains("`title`, `brief`"), "{missing}");
     assert!(
-        missing.contains("`title`, `brief`, `model_plan`"),
-        "{missing}"
+        !missing.contains("`model_plan`"),
+        "a plan is optional: {missing}"
     );
     let bad_model = refusal(
         "enqueue",

@@ -6,7 +6,7 @@ use archon_core::catalog::{Gate, StageKind, WorkspaceMode};
 use archon_core::run::StageOutcome;
 use serde::Serialize;
 
-use crate::spec::StageSpec;
+use crate::spec::{Owed, ReviewDuty, StageSpec};
 use crate::team::TeamSlot;
 
 mod initiative;
@@ -26,14 +26,14 @@ pub enum TeamPart<'a> {
     Role(&'a TeamSlot),
 }
 
-/// The contract for one stage agent working in `workspace`; `holds_review` when
-/// its stage is the pipeline's review. See [`delegation_rules`] for delegators.
+/// The contract for one stage agent working in `workspace`, with what its
+/// stage `owed` its run on record. See [`delegation_rules`] for delegators.
 pub fn instructions(
     stage: &StageSpec,
     mode: WorkspaceMode,
     workspace: &str,
     team: TeamPart<'_>,
-    holds_review: bool,
+    owed: Owed,
 ) -> String {
     assert!(!workspace.is_empty(), "a stage always has a workspace");
     assert!(stage.fan_out >= 1, "validated specs have fan_out >= 1");
@@ -47,8 +47,15 @@ pub fn instructions(
     if needs_verdict(stage) {
         out.push_str(VERDICT_RULES);
     }
-    if holds_review {
-        out.push_str(REVIEW_EVIDENCE_RULES);
+    // An agent that cannot delegate needs no telling that it reviews nothing.
+    if let Some(duty) = owed
+        .review
+        .filter(|d| d.reviewers > 0 || stage.allow_delegation)
+    {
+        out.push_str(&review_rules(duty));
+    }
+    if owed.ship_record {
+        out.push_str(&ship_record_rules(stage.kind));
     }
     out
 }
@@ -63,17 +70,16 @@ pub fn delegation_rules(mode: WorkspaceMode, models: &str) -> String {
     };
     format!(
         "\n## Delegation\n\n\
-         - You can hand scoped parts of this stage to child agents with Aether's \
-         `delegate`. Pass `leaf: true` for every child: a child does not delegate further.\n\
+         - Aether's `delegate` hands a scoped part of this stage to a child agent. Pass \
+         `leaf: true` for every child: a child does not delegate further.\n\
          {workspaces}\
          - Choose each child's model and effort within Archon's policy for this item: \
          {models}. Archon cancels a child outside it. Aether's `list_models` lists what \
          is connected, not what is allowed.\n\
          - Wait for every child (`wait_for`) or cancel it (`cancel_agent`) before you \
          finish: Archon cancels whatever still runs when your stage ends, and that work \
-         is lost.\n\
-         - A child that finished cannot be asked again. For a second look after a change, \
-         delegate a new child.\n\
+         is lost. A child that finished cannot be asked again: for a second look, \
+         delegate a new one.\n\
          {DELEGATE_HAND_OFF}\
          {DELEGATE_CHILD_RULES}"
     )
@@ -126,15 +132,15 @@ fn dependency_fact(dependency: &Dependency) -> String {
 }
 
 const DELEGATE_WRITABLE: &str = "\
-- A child that edits files gets its own copy: pass `workspace_mode: \"isolated\"`. \
-Read its result, then bring only the changes you accept into your workspace with \
+- A child that edits files gets its own copy: pass `workspace_mode: \"isolated\"`, \
+then bring only the changes you accept into your workspace with \
 `integrate_workspace`; nothing integrates by itself. A child that only reads (a \
-reviewer, a researcher) shares your workspace, so it sees the change as it stands.\n";
+reviewer, a researcher) shares your workspace and sees the change as it stands.\n";
 
 const DELEGATE_HAND_OFF: &str = "\
 - A child starts cold and pays to read whatever you do not tell it. Hand it what you \
-already hold, in a few lines: what done means, the paths that matter and what you \
-found there. Never your conversation or the project's history. Read a bounded local \
+hold, in a few lines: what done means, the paths that matter and what you found \
+there. Never your conversation or the project's history. Read a bounded local \
 question yourself instead of delegating it.\n\
 - A reviewer's hand-off is the exact base and head commits, the changed paths, the \
 checks you ran with their results and the commit they ran on, the risks you know of, \
@@ -156,36 +162,36 @@ fn contract_header(
         "a team slot comes with a team stage, and only with one"
     );
     assert!(!stage.id.is_empty(), "validated stages have an id");
-    let blocked = StageOutcome::BLOCKED_PREFIX;
     format!(
         "# Archon stage contract\n\n\
-         You are one stage (`{id}`, kind `{kind}`) of an Archon pipeline, running \
-         unattended. Archon reads your result mechanically, so follow this contract \
-         exactly. It overrides any conflicting habit or instruction.\n\n\
+         You are stage `{id}` (kind `{kind}`) of an Archon pipeline, running unattended. \
+         Archon reads your result mechanically: this contract overrides any conflicting \
+         habit or instruction.\n\n\
          ## Workspace\n\n\
          - Work only in `{workspace}`. {mode_rule}\n\
-         - Do not ask the operator questions and do not wait for replies: nobody is \
-         watching this agent. Make the conservative choice, and state every assumption \
-         in your summary.\n\
-         - Use `mcp__archon__message_orchestrator` to relay operator messages meant for \
-         the orchestrator (`kind=relay`, quote their text exactly), escalate blockers \
-         outside your stage (`kind=escalation`), or send low-priority `info`. It returns \
-         a receipt immediately. Keep working on your stage afterwards: never wait for \
-         a reply, end your turn, or complete the stage because you sent a message. \
-         Your passive run-node parent cannot answer; do not use raw `send_message` \
-         to reach the orchestrator. Other Archon mutation tools are reserved for it.\n\
+         - Nobody is watching: never ask the operator anything or wait for a reply. Make \
+         the conservative choice and state every assumption in your summary.\n\
+         - `mcp__archon__message_orchestrator` relays an operator message meant for the \
+         orchestrator (`kind=relay`, their exact text), reports a blocker outside your \
+         stage (`kind=escalation`) or sends low-priority `info`. It returns at once: keep \
+         working, and never wait for a reply, end your turn or complete the stage because \
+         you sent one. Use no raw `send_message` to the orchestrator and no other Archon \
+         mutation tool.\n\
          {fan_rule}\n\
          ## Finishing\n\n\
-         - When done, call Aether's `complete_task` exactly once with a concise \
-         `summary`: plain prose, what you did or found, how you verified it, and what \
-         is left undone. Later stages and the orchestrator read only this.\n\
-         - If you cannot proceed without a human (missing credentials or access, a \
-         contradictory or ambiguous brief with no safe default, an irreversible action \
-         the brief does not authorise), call `fail_task` with an error that starts \
-         with `{blocked}` followed by exactly what the operator must provide or decide. \
-         This escalates to the operator and is never retried automatically.\n\
-         - For any other failure, call `fail_task` with a precise error: what failed, \
-         what you tried, and the evidence. Never report a failure as completed.\n",
+         - When done, call Aether's `complete_task` exactly once. Its `summary` is concise \
+         plain prose: what you did or found, how you verified it, what is left undone. \
+         Later stages and the orchestrator read only this.\n\
+         - Otherwise call `fail_task`, never `complete_task`, with an error that starts \
+         with:\n  \
+         - `{blocked}` when only a human can unblock you (missing credentials or access, a \
+         contradictory brief with no safe default, an irreversible action the brief does \
+         not authorise), then exactly what the operator must provide or decide. It is \
+         never retried.\n  \
+         - `{escalate}` when the task does not fit this pipeline (far larger or riskier \
+         than the stage prompt allows for, or better split), then why and the pipeline or \
+         split you recommend. Leave nothing half done: the orchestrator reshapes the work.\n  \
+         - what failed, what you tried and the evidence, for any other failure.\n",
         id = stage.id,
         kind = kind_name(stage.kind),
         mode_rule = mode_rule(mode),
@@ -193,6 +199,8 @@ fn contract_header(
             TeamPart::Role(slot) => team_rule(stage, slot),
             TeamPart::Solo | TeamPart::RunTree { .. } => fan_rule(stage),
         },
+        blocked = StageOutcome::BLOCKED_PREFIX,
+        escalate = StageOutcome::ESCALATE_PREFIX,
     )
 }
 
@@ -217,9 +225,8 @@ fn kind_name(kind: StageKind) -> &'static str {
 fn mode_rule(mode: WorkspaceMode) -> &'static str {
     match mode {
         WorkspaceMode::Worktree => {
-            "It is a git worktree dedicated to this pipeline run; earlier and later \
-             stages of the same run work in it too. Do not touch other worktrees, other \
-             branches, or the operator's own checkout."
+            "It is this run's own git worktree, shared with its other stages. Never touch \
+             another worktree, another branch or the operator's own checkout."
         }
         WorkspaceMode::RepoReadonly => {
             "With a repository, it is a detached snapshot of the commit the repository has \
@@ -308,8 +315,7 @@ so the `summary` must state the approach on its own.\n";
 const DELEGATE_CHILD_RULES: &str = "\
 - A child inherits none of this contract or of the stage prompt: Aether gives it \
 only the `objective` and `instructions` you pass to `delegate`. In every child's \
-`instructions`, state each rule below that applies to its role, in your own words \
-for its task:\n  \
+`instructions`, state each rule below that applies to its role:\n  \
 - work only in the workspace it is given, and never touch other worktrees, other \
 branches or the operator's own checkout;\n  \
 - do not push;\n  \
@@ -320,40 +326,109 @@ context;\n  \
 - read only, with no edits, commits, stashes or branch switches: for a reviewer \
 always, and for every child when your own workspace is READ-ONLY.\n";
 
-const REVIEW_EVIDENCE_RULES: &str = "\n## Review on record\n\n\
-- This pipeline counts your stage as its review, so the change is reviewed before \
-you finish: by an agent you delegate to that wrote none of it, on the change as it \
-finally stands. Only a later change the stage prompt says needs no second look may \
-follow the pass.\n\
-- `complete_task` must include `structured` data saying how that went (other keys \
-may sit beside it):\n\n\
-```json\n\
-{\"review\": {\"verdict\": \"pass\", \"reviewer_model\": \"<provider>/<model>\"}}\n\
-```\n\n\
+/// What the stage holding its run's review does and records, for `duty`.
+fn review_rules(duty: ReviewDuty) -> String {
+    assert!(
+        !duty.may_skip || duty.reviewers == 1,
+        "a skip stands in for one reviewer"
+    );
+    let (who, pass) = match duty.reviewers {
+        0 => return NO_REVIEW_RULES.to_owned(),
+        1 => (
+            "an agent you delegate to that wrote none of it".to_owned(),
+            "\"reviewer_model\": \"<provider>/<model>\"".to_owned(),
+        ),
+        many => (
+            format!(
+                "{many} agents you delegate to, each working alone and none of which \
+                 wrote any of it"
+            ),
+            format!("\"reviewer_models\": [\"<provider>/<model>\", … {many} in all]"),
+        ),
+    };
+    let skip = match duty.may_skip {
+        true => REVIEW_SKIP_RULE,
+        false => "",
+    };
+    let rules = format!(
+        "\n## Review on record\n\n\
+         - Your stage holds this run's review: before you finish, the change as it finally \
+         stands is reviewed by {who}. Only a later change the stage prompt says needs no \
+         second look may follow the pass.\n\
+         - Record it in `complete_task`'s `structured` data, beside any other keys:\n\n\
+         ```json\n{{\"review\": {{\"verdict\": \"pass\", {pass}}}}}\n```\n\n\
+         {skip}\
+         {REVIEW_CHECK_RULES}"
+    );
+    debug_assert!(rules.ends_with('\n'), "sections end with a newline");
+    rules
+}
+
+const NO_REVIEW_RULES: &str = "\n## Review on record\n\n\
+- This item's review level is `none`: delegate no reviewer and record no review, \
+whatever the stage prompt says about one. Your own verification is all this change \
+gets, so run it in full.\n";
+
+const REVIEW_SKIP_RULE: &str = "\
 or, only where the stage prompt lets a change go without review:\n\n\
 ```json\n\
 {\"review\": {\"verdict\": \"skipped\", \"reason\": \"<why this change needed none>\"}}\n\
+```\n\n";
+
+const REVIEW_CHECK_RULES: &str = "\
+- Archon checks a pass against Aether: each model named must be that of a different \
+agent you delegated to yourself that completed, not one you cancelled or that \
+failed. A missing object, any other verdict or a reviewer Archon cannot find fails \
+the run here, and nothing ships. Never report `pass` for a review that did not run \
+or did not pass: with a blocking finding open, call `fail_task` and say which.\n\
+- Archon adds the review as the last line of your summary: write no `REVIEW:` line \
+yourself.\n";
+
+/// What the stage whose result is the ship record leaves and reports.
+fn ship_record_rules(kind: StageKind) -> String {
+    let leave = match kind {
+        StageKind::Work => {
+            "Commit all that should ship on the run branch and leave `git status \
+             --porcelain` empty: Archon refuses a worktree with uncommitted changes."
+        }
+        StageKind::Review | StageKind::Test => {
+            "You commit nothing: the record names the commit you judged, as it stands on \
+             the run branch."
+        }
+        other => panic!("validated: a {other:?} stage writes no ship record"),
+    };
+    let rules = format!(
+        "\n## Ship record\n\n\
+         - Archon delivers this run's commits itself once every stage passed: do not push \
+         and do not open a pull request. {leave}\n\
+         {SHIP_RECORD_SHAPE}"
+    );
+    debug_assert!(rules.ends_with('\n'), "sections end with a newline");
+    rules
+}
+
+const SHIP_RECORD_SHAPE: &str = "\
+- Name what ships in `complete_task`'s `structured` data, beside any other keys:\n\n\
+```json\n\
+{\"commit\": \"<git rev-parse HEAD>\", \"tree\": \"<git rev-parse HEAD^{tree}>\",\n \
+\"checks\": [\"<each verification command that ran>\"],\n \
+\"pr\": {\"title\": \"<one line, in the repository's convention>\", \
+\"body\": \"<what changed and why, how it was verified, assumptions>\"}}\n\
 ```\n\n\
-- Archon fails the run here, and nothing is shipped, when the object is missing, the \
-verdict is anything else, or a pass names no reviewer. It checks a pass against \
-Aether: `reviewer_model` must be the model of an agent you delegated to yourself that \
-completed, not one you cancelled or that failed. Never report `pass` for a review \
-that did not run or did not pass: if a blocking finding stays open, call `fail_task` \
-and say which.\n\
-- Archon adds the review as the last line of your summary for the later stages. Do \
-not write a `REVIEW:` line yourself.\n";
+- Read both hashes after the last commit. Archon ships exactly that commit and tree, \
+made under the repository's own git identity, and fails the run when the branch \
+holds anything else. It adds the review and later stages' results to the body.\n";
 
 const WORK_RULES: &str = "\n## Work stage\n\n\
-- Your summary is the hand-off to later stages and the orchestrator. Use the report \
-format the stage prompt gives. If it gives none, list what changed and why, the files \
-touched, the exact verification commands you ran with their results, and any known \
-gaps.\n";
+- Use the report format the stage prompt gives for your summary. If it gives none, \
+list what changed and why, the files touched, the exact verification commands you ran \
+with their results, and any known gaps.\n";
 
 const TEAM_RULES: &str = "\n## Team stage\n\n\
-- Your summary is the hand-off to later stages and the orchestrator. Use the report \
-format the stage prompt gives. If it gives none, list what your role changed and why, \
-the files touched, the commits you made, the verification commands you ran with their \
-results, any assumption you made about a peer's work, and any known gaps.\n\
+- Use the report format the stage prompt gives for your summary. If it gives none, \
+list what your role changed and why, the files touched, the commits you made, the \
+verification commands you ran with their results, any assumption you made about a \
+peer's work, and any known gaps.\n\
 \n## Team coordination\n\n\
 - Once every role has an agent, Archon sends you one roster message: each role's name, \
 Aether agent id, worktree and branch. If a role is replaced, a roster with a higher \
@@ -405,8 +480,7 @@ report you want published: `{\"reports\": [\"/abs/…/index.html\"]}`. Use an em
 list if you wrote none. Archon publishes exactly these files.\n";
 
 const VERDICT_RULES: &str = "\n## Verdict\n\n\
-- `complete_task` must include `structured` data of this shape (other keys may sit \
-beside it):\n\n\
+- Put this in `complete_task`'s `structured` data, beside any other keys:\n\n\
 ```json\n\
 {\"verdict\": \"pass\" | \"fail\",\n \
 \"findings\": [{\"severity\": \"critical|high|medium|low\", \"title\": \"…\", \
@@ -454,7 +528,7 @@ mod tests {
                 WorkspaceMode::Worktree,
                 "/w",
                 TeamPart::Solo,
-                false,
+                Owed::default(),
             );
             assert!(text.contains("Work only in `/w`"), "{kind:?}");
             assert!(text.contains("`BLOCKED:`"), "{kind:?}");
@@ -464,11 +538,15 @@ mod tests {
                 "{kind:?}"
             );
             assert!(
-                text.contains("Keep working on your stage afterwards"),
+                text.contains("It returns at once: keep working"),
                 "{kind:?}"
             );
             assert!(
                 text.contains("never wait for a reply, end your turn"),
+                "{kind:?}"
+            );
+            assert!(
+                text.contains("call `fail_task`, never `complete_task`"),
                 "{kind:?}"
             );
         }
@@ -482,7 +560,7 @@ mod tests {
                 WorkspaceMode::Worktree,
                 "/w",
                 TeamPart::Solo,
-                false,
+                Owed::default(),
             );
             assert!(text.contains("VERDICT: PASS"), "{kind:?}");
             assert!(text.contains("\"verdict\""), "{kind:?}");
@@ -494,7 +572,7 @@ mod tests {
             WorkspaceMode::Worktree,
             "/w",
             TeamPart::Solo,
-            false,
+            Owed::default(),
         );
         assert!(!work.contains("VERDICT: PASS"));
     }
@@ -508,14 +586,20 @@ mod tests {
             WorkspaceMode::Worktree,
             "/w",
             TeamPart::Solo,
-            false,
+            Owed::default(),
         );
         assert!(text.contains("\"reports\""));
         assert!(text.contains("one of 2 agents"));
         assert!(!text.contains("VERDICT: PASS"));
         assert!(
-            instructions(&gated, WorkspaceMode::Worktree, "/w", TeamPart::Solo, false)
-                .contains("VERDICT: PASS")
+            instructions(
+                &gated,
+                WorkspaceMode::Worktree,
+                "/w",
+                TeamPart::Solo,
+                Owed::default()
+            )
+            .contains("VERDICT: PASS")
         );
     }
 
@@ -526,7 +610,7 @@ mod tests {
             WorkspaceMode::Worktree,
             "/w",
             TeamPart::Solo,
-            false,
+            Owed::default(),
         );
         assert!(text.contains("\"pr_url\""));
         assert!(text.contains("\"commit\""));
@@ -538,7 +622,13 @@ mod tests {
     fn ship_contract_forbids_changing_the_commits_it_was_given() {
         let of = |kind| {
             let stage = stage(kind, Gate::None, 1);
-            instructions(&stage, WorkspaceMode::Worktree, "/w", TeamPart::Solo, false)
+            instructions(
+                &stage,
+                WorkspaceMode::Worktree,
+                "/w",
+                TeamPart::Solo,
+                Owed::default(),
+            )
         };
         let ship = of(StageKind::Ship);
         for said in [
@@ -559,7 +649,7 @@ mod tests {
             WorkspaceMode::Worktree,
             "/w",
             TeamPart::Solo,
-            false,
+            Owed::default(),
         );
         assert!(text.contains("kind `propose`"));
         assert!(text.contains(".archon/reports/proposal/index.html"));
@@ -576,7 +666,13 @@ mod tests {
             workspace: "/t/s-ui".into(),
         };
         let part = TeamPart::Role(&slot);
-        let text = instructions(&team, WorkspaceMode::Worktree, "/t/s-ui", part, false);
+        let text = instructions(
+            &team,
+            WorkspaceMode::Worktree,
+            "/t/s-ui",
+            part,
+            Owed::default(),
+        );
         assert!(text.contains("kind `team`"));
         assert!(text.contains("role `ui` of roles [api, ui]"), "{text}");
         assert!(text.contains("Commit your work on branch `archon/x--ui-q69g5fav-a1`"));
@@ -598,7 +694,7 @@ mod tests {
             WorkspaceMode::Worktree,
             "/t/s-api",
             TeamPart::Role(&slot),
-            false,
+            Owed::default(),
         );
         for rule in [
             "Archon sends you one roster message",
@@ -619,7 +715,7 @@ mod tests {
             WorkspaceMode::Worktree,
             "/w",
             TeamPart::Solo,
-            false,
+            Owed::default(),
         );
         assert!(!solo.contains("roster"), "only team roles get a roster");
     }
@@ -637,7 +733,7 @@ mod tests {
                 WorkspaceMode::Worktree,
                 "/t/main",
                 part,
-                false,
+                Owed::default(),
             );
             let rule = text.contains("Commit your changes on `archon/x` before you finish");
             assert_eq!(rule, kind == StageKind::Work, "{kind:?}");
@@ -649,7 +745,7 @@ mod tests {
             WorkspaceMode::Worktree,
             "/w",
             TeamPart::Solo,
-            false,
+            Owed::default(),
         );
         assert!(!solo.contains("team stage"));
     }
@@ -660,7 +756,13 @@ mod tests {
     fn delegation_rules_fit_the_workspace_and_state_the_model_policy() {
         let mut work = stage(StageKind::Work, Gate::None, 1);
         work.allow_delegation = true;
-        let contract = instructions(&work, WorkspaceMode::Worktree, "/w", TeamPart::Solo, false);
+        let contract = instructions(
+            &work,
+            WorkspaceMode::Worktree,
+            "/w",
+            TeamPart::Solo,
+            Owed::default(),
+        );
         assert_eq!(contract.matches("delegate").count(), 0, "{contract}");
 
         let writable = delegation_rules(WorkspaceMode::Worktree, "a/one, b/two");
@@ -786,21 +888,133 @@ mod tests {
         }
     }
 
+    fn owing(reviewers: u32, may_skip: bool) -> Owed {
+        Owed {
+            review: Some(ReviewDuty {
+                reviewers,
+                may_skip,
+            }),
+            ship_record: false,
+        }
+    }
+
+    fn work_contract(owed: Owed) -> String {
+        let work = stage(StageKind::Work, Gate::None, 1);
+        instructions(&work, WorkspaceMode::Worktree, "/w", TeamPart::Solo, owed)
+    }
+
     #[test]
     fn only_the_stage_that_holds_the_review_is_told_to_record_it() {
-        let work = stage(StageKind::Work, Gate::None, 1);
-        let plain = instructions(&work, WorkspaceMode::Worktree, "/w", TeamPart::Solo, false);
+        let plain = work_contract(Owed::default());
         assert_eq!(plain.matches("## Review on record").count(), 0);
-        let holder = instructions(&work, WorkspaceMode::Worktree, "/w", TeamPart::Solo, true);
+        let holder = work_contract(owing(1, true));
         assert!(holder.starts_with(&plain), "the review rules are appended");
         let rules = &holder[plain.len()..];
         for said in [
             "## Review on record",
+            "reviewed by an agent you delegate to that wrote none of it",
             "{\"review\": {\"verdict\": \"pass\", \"reviewer_model\": \"<provider>/<model>\"}}",
             "{\"review\": {\"verdict\": \"skipped\", \"reason\": \"<why this change needed none>\"}}",
-            "Do not write a `REVIEW:` line yourself",
+            "each model named must be that of a different agent you delegated to yourself",
+            "write no `REVIEW:` line yourself",
         ] {
             assert!(rules.contains(said), "missing {said:?} in {rules}");
+        }
+    }
+
+    /// The item's review level sets how many reviewers the holder delegates
+    /// to: none, one, or several working alone. Only a ship agent judges a skip.
+    #[test]
+    fn the_review_rules_follow_the_run_s_review_level() {
+        let leaf = work_contract(owing(0, false));
+        assert_eq!(
+            leaf,
+            work_contract(Owed::default()),
+            "it cannot delegate at all"
+        );
+        let mut lead = stage(StageKind::Work, Gate::None, 1);
+        lead.allow_delegation = true;
+        let owed = owing(0, false);
+        let none = instructions(&lead, WorkspaceMode::Worktree, "/w", TeamPart::Solo, owed);
+        assert!(none.contains("review level is `none`: delegate no reviewer"));
+        assert_eq!(none.matches("\"verdict\"").count(), 0, "{none}");
+        let one = work_contract(owing(1, false));
+        assert!(one.contains("\"reviewer_model\": \"<provider>/<model>\""));
+        assert_eq!(
+            one.matches("skipped").count(),
+            0,
+            "no ship agent judges a skip"
+        );
+        let strict = work_contract(owing(3, false));
+        for said in [
+            "reviewed by 3 agents you delegate to, each working alone and none of which wrote any of it",
+            "\"reviewer_models\": [\"<provider>/<model>\", … 3 in all]",
+        ] {
+            assert!(strict.contains(said), "missing {said:?} in {strict}");
+        }
+        assert_eq!(strict.matches("skipped").count(), 0);
+    }
+
+    /// archond ships what the record names, so the stage that writes it is
+    /// told to commit, to leave the tree clean and not to deliver anything.
+    #[test]
+    fn only_the_record_stage_is_told_to_write_the_ship_record() {
+        let plain = work_contract(Owed::default());
+        assert_eq!(plain.matches("## Ship record").count(), 0);
+        let owed = Owed {
+            review: None,
+            ship_record: true,
+        };
+        let recording = work_contract(owed);
+        assert!(
+            recording.starts_with(&plain),
+            "the record rules are appended"
+        );
+        for said in [
+            "do not push and do not open a pull request",
+            "leave `git status --porcelain` empty",
+            "\"commit\": \"<git rev-parse HEAD>\", \"tree\": \"<git rev-parse HEAD^{tree}>\"",
+            "\"pr\": {\"title\":",
+            "Read both hashes after the last commit",
+        ] {
+            assert!(recording.contains(said), "missing {said:?} in {recording}");
+        }
+        let review = stage(StageKind::Review, Gate::AllPass, 1);
+        let judged = instructions(&review, WorkspaceMode::Worktree, "/w", TeamPart::Solo, owed);
+        assert!(judged.contains("You commit nothing: the record names the commit you judged"));
+        assert_eq!(
+            judged
+                .matches("leave `git status --porcelain` empty")
+                .count(),
+            0
+        );
+    }
+
+    /// A task that does not fit its pipeline goes back to the orchestrator
+    /// with a recommendation instead of failing as if it were broken.
+    #[test]
+    fn every_contract_says_how_to_escalate_a_task_that_does_not_fit() {
+        for kind in [StageKind::Work, StageKind::Review, StageKind::Test] {
+            let gate = match kind {
+                StageKind::Work => Gate::None,
+                _ => Gate::AllPass,
+            };
+            let stage = stage(kind, gate, 1);
+            let text = instructions(
+                &stage,
+                WorkspaceMode::Worktree,
+                "/w",
+                TeamPart::Solo,
+                Owed::default(),
+            );
+            assert!(
+                text.contains("- `ESCALATE:` when the task does not fit this pipeline"),
+                "{kind:?}"
+            );
+            assert!(
+                text.contains("the pipeline or split you recommend"),
+                "{kind:?}"
+            );
         }
     }
 
@@ -811,7 +1025,7 @@ mod tests {
             WorkspaceMode::RepoReadonly,
             "/r",
             TeamPart::Solo,
-            false,
+            Owed::default(),
         );
         assert!(text.contains("READ-ONLY"));
         assert!(

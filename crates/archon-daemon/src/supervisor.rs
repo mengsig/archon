@@ -1208,6 +1208,7 @@ mod tests {
             "refactor",
             "test-coverage",
             "design-doc",
+            "direct",
         ];
         let catalog = archon_pipeline::Catalog::builtin();
         for name in pending_catalog_guidance {

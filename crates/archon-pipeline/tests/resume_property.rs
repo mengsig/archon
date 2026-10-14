@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use archon_core::autonomy::{Autonomy, ProposalMode, ReportMode};
 use archon_core::run::GateDecision;
+use archon_pipeline::ShipOutcome;
 use archon_pipeline::autonomy::{OperatorGates, augment};
 use archon_pipeline::builtin::BUILTINS;
 use archon_pipeline::spec::PipelineSpec;
@@ -140,6 +141,24 @@ fn random_merge(rng: &mut Lcg, roles: &[String]) -> MergeOutcome {
 }
 
 /// Mostly approvals, with revisions and the odd rejection.
+/// How archond's delivery ends: mostly shipped, sometimes refused.
+fn random_delivery(rng: &mut Lcg) -> ShipOutcome {
+    let commit = sim::COMMIT.to_owned();
+    match rng.below(4) {
+        0 => ShipOutcome::Failed {
+            error: "the remote branch moved".into(),
+        },
+        1 => ShipOutcome::Shipped {
+            commit,
+            pr_url: None,
+        },
+        _ => ShipOutcome::Shipped {
+            commit,
+            pr_url: Some("https://github.com/o/r/pull/7".into()),
+        },
+    }
+}
+
 fn random_decision(rng: &mut Lcg) -> GateDecision {
     match rng.below(100) {
         0..=54 => GateDecision::Approve { note: None },
@@ -168,16 +187,20 @@ fn gated(base: &PipelineSpec) -> (Arc<PipelineSpec>, OperatorGates) {
     (Arc::new(spec), gates)
 }
 
-/// Drive one run to its end with random events; returns the step count
-/// and how many team merges it took.
-fn run_random(spec: Arc<PipelineSpec>, gates: OperatorGates, seed: u64) -> (usize, usize) {
+/// Drive one run to its end with random events; returns the step count,
+/// how many team merges it took and whether archond delivered it.
+fn run_random(spec: Arc<PipelineSpec>, gates: OperatorGates, seed: u64) -> (usize, usize, bool) {
     let plan = support::plan_for(&spec, &["claude-code/opus", "codex/astra"]);
     let mut sim = Sim::with_gates(spec, plan, gates);
     let mut rng = Lcg(seed);
     sim.start_partial(1 + rng.below(3) as usize);
     for step in 0..MAX_STEPS {
         if sim.finished().is_some() {
-            return (step, sim.merges.len());
+            return (step, sim.merges.len(), sim.shipped.is_some());
+        }
+        if sim.open_ship.is_some() {
+            sim.ship(random_delivery(&mut rng));
+            continue;
         }
         if sim.open_gate.is_some() {
             sim.decide(random_decision(&mut rng));
@@ -198,7 +221,7 @@ fn run_random(spec: Arc<PipelineSpec>, gates: OperatorGates, seed: u64) -> (usiz
         if rng.below(60) == 0 {
             sim.cancel("random cancel");
             assert!(sim.finished().is_some(), "cancel finishes the run");
-            return (step, sim.merges.len());
+            return (step, sim.merges.len(), false);
         }
         let live = sim.live();
         assert!(
@@ -229,15 +252,17 @@ fn resume_matches_the_live_driver_on_generated_runs() {
     specs.push(gated(&support::builtin("default-pr-review")));
     specs.push(gated(&support::builtin("strict-pr-review")));
     specs.push(gated(&team_spec()));
-    let (mut total_steps, mut total_merges) = (0, 0);
+    let (mut total_steps, mut total_merges, mut deliveries) = (0, 0, 0);
     for (spec, gates) in &specs {
         for seed in 0..SEEDS {
-            let (steps, merges) =
+            let (steps, merges, delivered) =
                 run_random(spec.clone(), gates.clone(), seed.wrapping_mul(7919) + 1);
             total_steps += steps;
             total_merges += merges;
+            deliveries += usize::from(delivered);
         }
     }
+    assert!(deliveries > SEEDS as usize, "runs reach archond's delivery");
     assert!(
         total_merges > SEEDS as usize,
         "team runs reach their merges"

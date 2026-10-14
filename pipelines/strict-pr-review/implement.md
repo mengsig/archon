@@ -72,3 +72,7 @@ Call `complete_task`. The test stage and the reviewers start from your
 - **Feedback addressed** (attempt 2 and later): one line per finding.
 - **Assumptions, risks and gaps:** anything the reviewers should look at
   especially hard.
+
+Include the ship record your contract requires in `structured`. Its `pr.body`
+is the pull request description a maintainer reads: what changed and why,
+how it was verified, and what is left open.

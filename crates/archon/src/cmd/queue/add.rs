@@ -16,7 +16,8 @@ use crate::views;
 
 pub async fn run(args: QueueAddArgs, json: bool) -> anyhow::Result<()> {
     let brief = read_brief(&args.brief_file)?;
-    let model_plan = read_map(&args.model_plan_file)?;
+    let model_plan = args.model_plan_file.as_deref().map(read_map).transpose()?;
+    let model_plan = model_plan.unwrap_or_default();
     let model_reasons = args
         .model_reasons_file
         .as_deref()

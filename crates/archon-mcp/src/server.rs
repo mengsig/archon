@@ -51,7 +51,7 @@ const MAX_ECHOED_NAME_BYTES: usize = 128;
 
 const INSTRUCTIONS: &str = "Archon runs queued work through pipelines of Aether agents across \
     registered repositories. Plan with list_pipelines, model_policy and list_repos; call enqueue \
-    once per unit of work with a model_plan naming every stage. Outcomes, blocked items and \
+    once per unit of work, with a model_plan for the stages whose model you choose. Outcomes, blocked items and \
     operator answers arrive as triggers, so never poll; use get_item or list_queue to inspect, \
     and get_stage for a stage's full summary and findings.";
 

@@ -35,21 +35,9 @@ pub(super) async fn finish_run(
     blocker: bool,
 ) -> Result<FollowUp, ArchonError> {
     assert!(state.is_terminal(), "finish_run needs a terminal state");
-    let ship_stage = if matches!(state, RunState::Succeeded { .. }) {
-        match frozen::thaw(&ctx.paths.data_dir, &run.id, &run.pipeline).await {
-            Ok(spec) => spec
-                .file
-                .stages
-                .iter()
-                .find(|s| s.kind == StageKind::Ship)
-                .map(|s| s.id.clone()),
-            Err(error) => {
-                tracing::warn!(%error, run = %run.id, "shipping proof unavailable; retaining workspace");
-                None
-            }
-        }
-    } else {
-        None
+    let proof = match &state {
+        RunState::Succeeded { .. } => shipping_proof(ctx, &run).await,
+        _ => ShippingProof::None,
     };
     let now = archon_core::now();
     let finished = {
@@ -57,11 +45,13 @@ pub(super) async fn finish_run(
         let estimates = ctx.config.limits.count_estimated_cost;
         let stages = store.stage_runs(&run.id)?;
         run.cost_usd = store.spend_for_run(&run.id, estimates)?;
-        run.shipped = ship_stage.is_some_and(|id| {
-            stages
+        run.shipped = match &proof {
+            ShippingProof::Daemon => true,
+            ShippingProof::Stage(id) => stages
                 .iter()
-                .any(|s| s.stage_id == id && s.state == StageState::Completed)
-        });
+                .any(|s| &s.stage_id == id && s.state == StageState::Completed),
+            ShippingProof::None => false,
+        };
         run.finish(state, now)?;
         store.finish_run(&run, item_state(&run), now)?
     };
@@ -71,6 +61,8 @@ pub(super) async fn finish_run(
     table.drivers.remove(&run.id);
     table.pending.remove(&run.id);
     table.merges.remove(&run.id);
+    table.ships.remove(&run.id);
+    table.ship_retries.remove(&run.id);
     crate::feed::publish(ctx, finished.answers);
     crate::reports::close_stale_questions(ctx).await?;
     let pr_url = pr_url(ctx, &run).await?;
@@ -79,6 +71,31 @@ pub(super) async fn finish_run(
     follow.stop.push(run.id.clone());
     follow.cleanup.extend(cleanup_for(ctx, &item, &run).await?);
     Ok(follow)
+}
+
+/// What shows that a succeeded run shipped.
+enum ShippingProof {
+    /// archond delivered it: such a run succeeds only once it has.
+    Daemon,
+    /// Its pipeline's ship agent, whose stage must have completed.
+    Stage(String),
+    /// The pipeline ships nothing, or no longer loads.
+    None,
+}
+
+async fn shipping_proof(ctx: &DaemonContext, run: &PipelineRun) -> ShippingProof {
+    let spec = match frozen::thaw(&ctx.paths.data_dir, &run.id, &run.pipeline).await {
+        Ok(spec) => spec,
+        Err(error) => {
+            tracing::warn!(%error, run = %run.id, "shipping proof unavailable; retaining workspace");
+            return ShippingProof::None;
+        }
+    };
+    if spec.ship_record_stage().is_some() {
+        return ShippingProof::Daemon;
+    }
+    let agent = spec.file.stages.iter().find(|s| s.kind == StageKind::Ship);
+    agent.map_or(ShippingProof::None, |s| ShippingProof::Stage(s.id.clone()))
 }
 
 /// Fail a live run outright (policy refusal, exhausted budget, a pipeline

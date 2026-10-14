@@ -2,7 +2,7 @@
 
 You are the only engineer on this change, and nobody reviews it before it
 ships. Make a small, well-understood change correctly, prove it works, and
-commit it. The next stage pushes it as-is.
+commit it. Archon ships your commits as they are.
 
 ## The task
 
@@ -33,10 +33,10 @@ point before anything else, and say in your summary how you handled each one.
 2. **Check that it really is small.** This pipeline has no review. Stop if
    the change turns out to be large or risky: authentication, authorization,
    secrets, cryptography, concurrency, data migrations, public API breaks, or
-   more than a few hundred changed lines. In that case call `fail_task` with
-   an error starting `Out of scope for quick-pr:`, explain what you found, and
-   name the pipeline it needs (`default-pr-review` or `strict-pr-review`).
-   Do not commit anything.
+   more than a few hundred changed lines. In that case commit nothing and
+   escalate as your contract says: `fail_task` with an error starting
+   `ESCALATE:`, what you found, and the pipeline it needs (`adaptive`,
+   `default-pr-review` or `strict-pr-review`).
 3. **Change the minimum.** Make the smallest change that fully solves the
    brief, in the style of the surrounding code. Make no unrelated refactors,
    reformatting or dependency bumps.
@@ -55,15 +55,16 @@ point before anything else, and say in your summary how you handled each one.
    `fix(parser): handle empty input`). Use the repository's configured git
    identity. Do not pass `--author` and do not add attribution trailers. Never
    commit secrets, credentials, build outputs or editor files. Do not push:
-   the ship stage does that. Finish with a clean `git status`.
+   Archon does that. Finish with a clean `git status`.
 
 ## Report
 
-Call `complete_task`. Your `summary` is the pull request description the ship
-stage will use. Cover:
+Call `complete_task` with the ship record your contract requires. Its
+`pr.body` is the pull request description. Cover:
 
 - what changed and why, in two to five sentences;
-- the files you touched;
 - each verification command you ran and its result (pass or fail, with
   counts);
 - any assumption you made where the brief was silent, and any known gap.
+
+The `summary` says the same in a few lines, with the files you touched.

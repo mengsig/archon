@@ -5,6 +5,10 @@ version = 1
 workspace = "worktree"
 requires_repo = true
 
+# Archon ships the commits this stage records; no agent does.
+[pipeline.ship]
+stage = "implement"
+
 [nudges]
 tier = "fast"
 notes = "Fast and cheap: for small, low-risk changes (typos, docs, small fixes with an obvious test). No review stage, so step up the implement model if the change is less trivial than it looks, or use default-pr-review."
@@ -15,10 +19,3 @@ kind = "work"
 prompt = "implement.md"
 timeout_minutes = 90
 nudge = "A fast, inexpensive coding model at medium effort; the stage refuses changes that turn out to be risky."
-
-[[stage]]
-id = "ship"
-kind = "ship"
-prompt = "ship.md"
-timeout_minutes = 90
-nudge = "A fast model at low effort is enough for both ship modes."

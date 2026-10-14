@@ -430,7 +430,9 @@ pub struct EnqueueRequest {
     pub depends_on: Vec<QueueItemId>,
     #[serde(default)]
     pub tags: Vec<String>,
-    /// Must name every stage of the pipeline, within the model policy.
+    /// Choices per stage, within the model policy. Optional: a stage left
+    /// out gets what was learned for the repository, else a default.
+    #[serde(default)]
     pub model_plan: ModelPlan,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_reasons: Option<ModelReasons>,

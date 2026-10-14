@@ -107,7 +107,7 @@ knob!(
     ReportMode, "report", [BeforePr = "before-pr", WithPr = "with-pr", Off = "off"]
 );
 knob!(
-    /// Whether the ship stage may merge the pull request itself.
+    /// Whether the pull request merges by itself once its checks allow.
     MergeMode, "merge", [Manual = "manual", Auto = "auto"]
 );
 knob!(

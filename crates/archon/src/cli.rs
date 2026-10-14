@@ -537,9 +537,10 @@ pub struct QueueAddArgs {
     /// UTF-8 brief file, or - to read stdin.
     #[arg(long, value_name = "PATH|-")]
     pub brief_file: PathBuf,
-    /// JSON or TOML stage-to-choice-array map, as MCP model_plan.
+    /// JSON or TOML stage-to-choice-array map, as MCP model_plan. Stages it
+    /// leaves out, or all without it, get the daemon's defaults.
     #[arg(long)]
-    pub model_plan_file: PathBuf,
+    pub model_plan_file: Option<PathBuf>,
     /// Optional JSON or TOML stage-to-reason map, as MCP model_reasons.
     #[arg(long)]
     pub model_reasons_file: Option<PathBuf>,

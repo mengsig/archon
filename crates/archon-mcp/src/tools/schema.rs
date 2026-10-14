@@ -208,10 +208,10 @@ fn autonomy() -> Value {
             ceiling is refused with the values allowed. Example: {\"review\": \"strict\", \
             \"report\": \"with-pr\"}.",
         "properties": {
-            "review": {"type": "string", "enum": ["strict", "standard", "none"], "description": "Review depth; picks the pipeline when `pipeline` is omitted: strict → strict-pr-review, standard → default-pr-review, none → quick-pr. With an explicit pipeline leave it out."},
+            "review": {"type": "string", "enum": ["strict", "standard", "none"], "description": "How many independent reviewers the change gets: none 0, standard 1, strict 3. Without `pipeline` it picks one: strict → strict-pr-review, standard → default-pr-review, none → quick-pr. With `adaptive` or `direct` it sets the reviewers that stage must show; with a pipeline that has review stages leave it out."},
             "proposal": {"type": "string", "enum": ["off", "lavish"], "description": "lavish: a propose stage first writes a proposal page, and the run waits until the operator approves, revises or rejects it."},
             "report": {"type": "string", "enum": ["off", "with-pr", "before-pr"], "description": "with-pr: a change report is written, published and linked from the PR, without waiting. before-pr: the same, but the operator approves it before the PR is opened."},
-            "merge": {"type": "string", "enum": ["manual", "auto"], "description": "auto: the ship stage merges the PR once every gate passed. Only when the operator said so."},
+            "merge": {"type": "string", "enum": ["manual", "auto"], "description": "auto: GitHub merges the PR once its checks allow. Only when the operator said so."},
             "tools": {"type": "string", "enum": ["guarded", "yolo"], "description": "yolo: the item's stage agents may delegate to subagents and also see Archon's read-only tools; nothing waits for approval. guarded is the norm."},
         },
         "additionalProperties": false,
@@ -231,8 +231,8 @@ fn list_pipelines() -> ToolDefinition {
         "list_pipelines",
         "List pipelines",
         "List the pipelines work can be enqueued into, with every stage: id, kind, fan_out (or a team stage's \
-         roles), gate, loop target and per-stage nudge. Call it before enqueue: the model_plan must name every \
-         stage id shown here. Pipeline nudges (tier, independent_reviewers, notes) are advice for \
+         roles), gate, loop target and per-stage nudge. Call it before enqueue: a model_plan names the \
+         stage ids shown here. Pipeline nudges (tier, independent_reviewers, notes) are advice for \
          choosing models, not rules. Pass `repo` to include that repository's own pipelines and \
          overrides. Broken pipeline files are reported as problems and cannot be used.",
         object(
@@ -426,10 +426,12 @@ fn enqueue() -> ToolDefinition {
          daemon runs it through `pipeline` in a fresh git worktree and branch once dependencies, \
          caps and budgets allow; this call does not wait for that. When the item finishes you \
          receive an item_finished trigger, so do not poll. Before calling, choose the pipeline \
-         with list_pipelines, the models with model_policy, and the `autonomy` knobs within \
-         autonomy_policy's ceiling; omit `pipeline` to let `autonomy.review` pick the review \
-         family. Knobs may add `propose` and `report` stages; the model_plan may name them and \
-         otherwise they take the first stage's model. Call once per independent unit of work; \
+         with list_pipelines and the `autonomy` knobs within autonomy_policy's ceiling. \
+         `autonomy.review` sets how many independent reviewers `adaptive` and `direct` delegate \
+         (none 0, standard 1, strict 3); without `pipeline` it picks the review family. \
+         `model_plan` is optional: a stage it leaves out gets the model learned for the \
+         repository, else a default within model_policy. Knobs may add `propose` and `report` \
+         stages; the model_plan may name them and otherwise they take the first stage's model. Call once per independent unit of work; \
          use depends_on to order units. Set idempotency_key whenever the call might be retried: \
          a repeat with the same key returns the first item instead of a duplicate.",
         object(
@@ -442,7 +444,7 @@ fn enqueue() -> ToolDefinition {
                 "depends_on": string_list("Items (`qi_…`) that must succeed before this one starts. If one fails or is cancelled, this item becomes blocked. This only orders them: the item's branch still forks from the repository's base, so it holds a dependency's work only once that is merged there. Its agents are told each dependency's branch and pull request."),
                 "tags": string_list("Free-form labels for filtering with list_queue."),
                 "model_reasons": model_reasons(),
-                "model_plan": model_plan("Model and effort for every stage."),
+                "model_plan": model_plan("Model and effort per stage. Optional: a stage left out gets what was learned for the repository, else a default within model_policy."),
                 "budget_usd": budget(),
                 "idempotency_key": {"type": "string", "description": "Any unique string for this unit of work; a retried enqueue with the same key and arguments returns the original item."},
                 "autonomy": autonomy(),
@@ -457,7 +459,7 @@ fn enqueue() -> ToolDefinition {
                     "additionalProperties": false,
                 },
             }),
-            &["title", "brief", "model_plan"],
+            &["title", "brief"],
         ),
         false,
     )

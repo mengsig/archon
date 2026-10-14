@@ -123,6 +123,7 @@ fn builtins_load_without_problems() {
             "default-pr-review",
             "dependency-upgrade",
             "design-doc",
+            "direct",
             "docs",
             "e2e-testing",
             "errand",
@@ -552,8 +553,7 @@ fn team_pr_builds_as_a_team_then_loops_e2e_and_review_back_to_build() {
             ("plan", StageKind::Work),
             ("build", StageKind::Team),
             ("e2e", StageKind::Test),
-            ("review", StageKind::Review),
-            ("ship", StageKind::Ship)
+            ("review", StageKind::Review)
         ]
     );
     let build = summary.stage("build").expect("build");
@@ -571,6 +571,32 @@ fn team_pr_builds_as_a_team_then_loops_e2e_and_review_back_to_build() {
     assert!(listed.pipelines.iter().any(|p| p.name == "team-pr"));
 }
 
+/// `direct` is one agent and nothing else: archond ships what it records,
+/// and the item's review level, not a stage, says whether anyone reviews it.
+#[test]
+fn direct_is_one_work_stage_that_archond_ships() {
+    let catalog = Catalog::builtin();
+    let spec = catalog.get("direct").expect("direct loads");
+    let summary = spec.summary();
+    let stages: Vec<(&str, StageKind)> = summary
+        .stages
+        .iter()
+        .map(|s| (s.id.as_str(), s.kind))
+        .collect();
+    assert_eq!(stages, [("implement", StageKind::Work)]);
+    assert_eq!(summary.workspace, WorkspaceMode::Worktree);
+    assert_eq!(summary.nudges.tier, Some(Tier::Fast));
+    let record = spec.ship_record_stage().expect("archond ships it");
+    assert_eq!(record.id, "implement");
+    assert!(spec.holds_review(record), "its one agent holds the review");
+    let duty = spec.review_duty(record).expect("the holder has a duty");
+    assert_eq!(
+        (duty.reviewers, duty.may_skip),
+        (0, false),
+        "none by default"
+    );
+}
+
 #[test]
 fn bugfix_has_a_single_independent_review_and_two_fix_loops() {
     let catalog = Catalog::builtin();
@@ -585,8 +611,7 @@ fn bugfix_has_a_single_independent_review_and_two_fix_loops() {
         [
             ("reproduce", StageKind::Work),
             ("fix", StageKind::Work),
-            ("review", StageKind::Review),
-            ("ship", StageKind::Ship)
+            ("review", StageKind::Review)
         ]
     );
     let review = summary.stage("review").expect("review");

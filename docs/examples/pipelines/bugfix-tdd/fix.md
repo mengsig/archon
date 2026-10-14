@@ -29,6 +29,7 @@ Work in `{{workspace}}` on branch `{{branch}}`. This is attempt {{attempt}}.
 
 ## Report
 
-Call `complete_task`. The `summary` gives the root cause, the fix, the files
-touched, the commands you ran with their results, and, on later attempts, one
-line per review finding.
+Call `complete_task` with the `structured` data your contract requires: the
+ship record of what you committed, whose `pr.body` a maintainer reads. The
+`summary` gives the root cause, the fix, the files touched, the commands you
+ran with their results, and, on later attempts, one line per review finding.

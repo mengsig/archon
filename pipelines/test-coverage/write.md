@@ -57,4 +57,8 @@ each test guards, commands and actual results, before/after coverage or its
 absence, proposed mutations, every production seam and its justification,
 feedback addressed, and outstanding gaps. Clearly separate discovered bugs
 and expected-failure reproducers from the passing tests to be verified. Carry
-forward baseline failures and follow-ups for the ship stage's PR description.
+forward baseline failures and follow-ups, in the `pr.body` too.
+
+Include the ship record your contract requires in `structured`. Its `pr.body`
+is the pull request description a maintainer reads: what changed and why,
+how it was verified, and what is left open.

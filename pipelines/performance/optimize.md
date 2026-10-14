@@ -55,4 +55,8 @@ files and commits, preserved behavior and risks, exact check commands and
 results, baseline and new repeated measurements with units and variance,
 target and noise comparison, every feedback item addressed, and remaining
 limitations. Carry the reproducible benchmark instructions and baseline
-forward so the ship stage can explain the evidence in the PR.
+forward, and put the measured evidence in the `pr.body` too.
+
+Include the ship record your contract requires in `structured`. Its `pr.body`
+is the pull request description a maintainer reads: what changed and why,
+how it was verified, and what is left open.

@@ -26,6 +26,7 @@ pub struct Pruned {
     pub spawn_requests: usize,
     pub run_vars: usize,
     pub team_merges: usize,
+    pub ships: usize,
     pub team_rosters: usize,
     pub node_agents: usize,
     pub children: usize,
@@ -40,6 +41,7 @@ impl Pruned {
         self.spawn_requests
             + self.run_vars
             + self.team_merges
+            + self.ships
             + self.team_rosters
             + self.node_agents
             + self.children
@@ -76,6 +78,7 @@ pub async fn prune_once(ctx: &DaemonContext, now: Timestamp) -> Result<Pruned, A
     let spawn_requests = executor::prune_settled_requests(&mut *ctx.store.lock().await)?;
     let run_vars = executor::prune_finished_run_vars(&mut *ctx.store.lock().await)?;
     let team_merges = executor::prune_finished_merges(&mut *ctx.store.lock().await)?;
+    let ships = executor::prune_finished_ships(&mut *ctx.store.lock().await)?;
     let team_rosters = executor::prune_settled_rosters(&mut *ctx.store.lock().await)?;
     let node_agents = executor::prune_retired_node_agents(&mut *ctx.store.lock().await, cutoff)?;
     let reports = {
@@ -90,6 +93,7 @@ pub async fn prune_once(ctx: &DaemonContext, now: Timestamp) -> Result<Pruned, A
         spawn_requests,
         run_vars,
         team_merges,
+        ships,
         team_rosters,
         node_agents,
         children,

@@ -36,7 +36,7 @@ use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::queue::QueueItem;
 use archon_core::run::{GateDecision, OperatorGate, StageOutcome};
 use archon_pipeline::team::MergePlan;
-use archon_pipeline::{RunDriver, SpawnPlan};
+use archon_pipeline::{RunDriver, ShipPlan, SpawnPlan};
 
 use crate::context::DaemonContext;
 
@@ -45,6 +45,7 @@ pub(crate) use recover::prune_finished_run_vars;
 pub(crate) use roster::prune_settled_rosters;
 pub(crate) use run_node::recover_message_node;
 pub(crate) use run_node::{is_node_agent, node_run, prune_retired_node_agents};
+pub(crate) use ship::prune_finished_ships;
 pub(crate) use spawn::{load_spawn, prune_settled_requests, runs_awaiting_spawn};
 pub(crate) use sweep::sweep_live_stages;
 pub(crate) use team::prune_finished_merges;
@@ -65,6 +66,20 @@ pub struct RunTable {
     pub merges: BTreeMap<PipelineRunId, MergePlan>,
     /// Runs whose team merge is running git right now.
     pub merging: BTreeSet<PipelineRunId>,
+    /// Deliveries drivers asked archond for, not yet recorded.
+    pub ships: BTreeMap<PipelineRunId, ShipPlan>,
+    /// Runs whose delivery is running git or `gh` right now.
+    pub shipping: BTreeSet<PipelineRunId>,
+    /// Deliveries that failed in a way another try may pass, and their wait.
+    pub ship_retries: BTreeMap<PipelineRunId, ShipRetry>,
+}
+
+/// The failed tries of one run's delivery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShipRetry {
+    pub failures: u32,
+    /// The next try waits for this.
+    pub not_before: std::time::Instant,
 }
 
 /// The failed `create_agent` calls of one spawning stage run, by kind.
@@ -118,6 +133,8 @@ pub(crate) struct FollowUp {
     pub publish: Vec<StageRunId>,
     /// Runs whose queued team merge to run.
     pub merge: Vec<PipelineRunId>,
+    /// Runs whose queued delivery to make.
+    pub ship: Vec<PipelineRunId>,
     /// Capacity or pending spawns changed: wake the dispatcher.
     pub poke: bool,
 }
@@ -144,6 +161,7 @@ impl FollowUp {
         self.gates.extend(other.gates);
         self.publish.extend(other.publish);
         self.merge.extend(other.merge);
+        self.ship.extend(other.ship);
         self.poke |= other.poke;
     }
 
@@ -161,6 +179,7 @@ impl FollowUp {
             && self.gates.is_empty()
             && self.publish.is_empty()
             && self.merge.is_empty()
+            && self.ship.is_empty()
     }
 }
 
@@ -376,11 +395,8 @@ async fn follow_up_round(ctx: &DaemonContext, follow: FollowUp) -> (FollowUp, Op
         record(sweep::time_out(ctx, &stage).await);
     }
     for run in dedup(follow.retire) {
-        record(
-            run_node::retire(ctx, &run)
-                .await
-                .map(|()| FollowUp::default()),
-        );
+        let retired = run_node::retire(ctx, &run).await;
+        record(retired.map(|()| FollowUp::default()));
     }
     for (agent, reason) in follow.cancel_agents {
         record(sweep::cancel_stray(ctx, &agent, &reason).await);
@@ -399,6 +415,9 @@ async fn follow_up_round(ctx: &DaemonContext, follow: FollowUp) -> (FollowUp, Op
     }
     for run in dedup(follow.merge) {
         record(team::merge(ctx, &run).await);
+    }
+    for run in dedup(follow.ship) {
+        record(ship::deliver(ctx, &run).await);
     }
     for cleanup in follow.cleanup {
         record(remove_ended_worktree(ctx, cleanup).await);

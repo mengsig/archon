@@ -66,3 +66,7 @@ precise:
 - **Feedback addressed** (attempt 2 and later): one line per finding, saying
   what you did about it, or why you disagree.
 - **Assumptions and gaps:** where the brief was silent, and anything not done.
+
+Include the ship record your contract requires in `structured`. Its `pr.body`
+is the pull request description a maintainer reads: what changed and why,
+how it was verified, and what is left open.

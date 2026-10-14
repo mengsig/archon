@@ -54,19 +54,62 @@ pub struct PipelineHeader {
     /// do not show it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review: Option<InStageReview>,
+    /// Set when archond ships the run itself, with no ship agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ship: Option<DaemonShip>,
 }
 
 fn default_true() -> bool {
     true
 }
 
-/// `[pipeline.review]`: the pipeline runs at `level` because `stage` has its
-/// change reviewed, and passes only with that on record (ARCHITECTURE §8.2).
+/// `[pipeline.review]`: `stage` has its change reviewed and passes only with
+/// that on record (ARCHITECTURE §8.2). `level` is the default; an item's own
+/// review level replaces it in the manifest its run freezes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InStageReview {
     pub level: ReviewLevel,
     pub stage: String,
+}
+
+/// `[pipeline.ship]`: once every stage passed, archond delivers the commits
+/// `stage` described in its ship record (ARCHITECTURE §8.7). No agent ships.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DaemonShip {
+    pub stage: String,
+}
+
+/// Independent reviewers a `strict` in-stage review needs; `standard` needs one.
+pub const STRICT_REVIEWERS: u32 = 3;
+
+/// How many independent reviewers an in-stage review at `level` needs.
+pub fn reviewers(level: ReviewLevel) -> u32 {
+    match level {
+        ReviewLevel::None => 0,
+        ReviewLevel::Standard => 1,
+        ReviewLevel::Strict => STRICT_REVIEWERS,
+    }
+}
+
+/// What the stage holding a run's review must put on record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReviewDuty {
+    /// Independent reviewers that must pass the change; none at level `none`.
+    pub reviewers: u32,
+    /// Whether a reasoned `skipped` stands in for the one reviewer: only where
+    /// a ship agent still judges it, as pipelines with a ship stage have.
+    pub may_skip: bool,
+}
+
+/// What a stage owes on its result besides passing its gate.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Owed {
+    /// The review it holds for its run.
+    pub review: Option<ReviewDuty>,
+    /// Whether archond ships what its result's ship record describes.
+    pub ship_record: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -203,33 +246,54 @@ impl PipelineSpec {
         validate_propose_placement(stages)?;
         validate_ship_placement(stages, self.file.pipeline.workspace)?;
         validate_team_names(stages)?;
-        self.validate_review()
+        self.validate_review()?;
+        self.validate_daemon_ship()
     }
 
     /// Whether `stage` holds the review the pipeline declares.
     pub fn holds_review(&self, stage: &StageSpec) -> bool {
-        let review = self.file.pipeline.review.as_ref();
-        review.is_some_and(|review| review.stage == stage.id)
+        self.review_duty(stage).is_some()
     }
 
-    /// A declared review is `standard`, and held by one delegating work
-    /// stage that runs before anything ships.
+    /// What `stage` owes as the run's review; `None` when another stage
+    /// holds it or the pipeline declares none.
+    pub fn review_duty(&self, stage: &StageSpec) -> Option<ReviewDuty> {
+        let review = self.file.pipeline.review.as_ref()?;
+        if review.stage != stage.id {
+            return None;
+        }
+        let reviewers = reviewers(review.level);
+        let ship_agent = self.file.stages.iter().any(|s| s.kind == StageKind::Ship);
+        Some(ReviewDuty {
+            reviewers,
+            may_skip: ship_agent && reviewers == 1,
+        })
+    }
+
+    /// What `stage` owes on its result besides passing its gate.
+    pub fn owed(&self, stage: &StageSpec) -> Owed {
+        let records = self.ship_record_stage();
+        Owed {
+            review: self.review_duty(stage),
+            ship_record: records.is_some_and(|records| records.id == stage.id),
+        }
+    }
+
+    /// The stage whose result carries the ship record archond delivers.
+    pub fn ship_record_stage(&self) -> Option<&StageSpec> {
+        let ship = self.file.pipeline.ship.as_ref()?;
+        let stage = self.stage(&ship.stage);
+        debug_assert!(stage.is_some(), "validated: [pipeline.ship] names a stage");
+        stage
+    }
+
+    /// A declared review is held by one work stage, at any level: the item's
+    /// own level decides how many reviewers that stage delegates to.
     fn validate_review(&self) -> Result<(), ArchonError> {
         let Some(review) = &self.file.pipeline.review else {
             return Ok(());
         };
         let refuse = |why: &str| Err(invalid(format!("[pipeline.review] {why}")));
-        match review.level {
-            ReviewLevel::Standard => {}
-            ReviewLevel::Strict => {
-                return refuse(
-                    "level = \"strict\" cannot be declared: strict is gated review and test stages",
-                );
-            }
-            ReviewLevel::None => {
-                return refuse("level = \"none\" declares no review: leave the table out");
-            }
-        }
         let Some(index) = self.stage_index(&review.stage) else {
             return refuse(&format!("stage {:?} names no stage", review.stage));
         };
@@ -238,10 +302,45 @@ impl PipelineSpec {
         if stage.kind != StageKind::Work {
             return refuse(&format!("stage {:?} must be a work stage", stage.id));
         }
-        if !stage.allow_delegation {
+        debug_assert_eq!(stage.fan_out, 1, "validated: one agent per work stage");
+        Ok(())
+    }
+
+    /// archond ships a worktree's commits as one agent's result describes
+    /// them, and only where no ship agent does.
+    fn validate_daemon_ship(&self) -> Result<(), ArchonError> {
+        let Some(ship) = &self.file.pipeline.ship else {
+            return Ok(());
+        };
+        let refuse = |why: &str| Err(invalid(format!("[pipeline.ship] {why}")));
+        if self.file.pipeline.workspace != WorkspaceMode::Worktree {
+            return refuse("needs workspace = \"worktree\": archond ships a branch's commits");
+        }
+        if let Some(agent) = self.file.stages.iter().find(|s| s.kind == StageKind::Ship) {
             return refuse(&format!(
-                "stage {:?} needs allow_delegation = true: its reviewer is an agent it delegates to",
+                "cannot be combined with ship stage {:?}: either archond ships or an agent does",
+                agent.id
+            ));
+        }
+        let Some(index) = self.stage_index(&ship.stage) else {
+            return refuse(&format!("stage {:?} names no stage", ship.stage));
+        };
+        let stage = &self.file.stages[index];
+        let one_agent = matches!(
+            stage.kind,
+            StageKind::Work | StageKind::Review | StageKind::Test
+        ) && stage.fan_out == 1;
+        if !one_agent {
+            return refuse(&format!(
+                "stage {:?} must be a work, review or test stage with one agent: its result is the ship record",
                 stage.id
+            ));
+        }
+        let commits = |s: &&StageSpec| matches!(s.kind, StageKind::Work | StageKind::Team);
+        if let Some(later) = self.file.stages[index + 1..].iter().find(commits) {
+            return refuse(&format!(
+                "stage {:?} must come after stage {:?}, which can still commit: the record names the commits that ship",
+                stage.id, later.id
             ));
         }
         Ok(())

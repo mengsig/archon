@@ -54,3 +54,7 @@ groups and commit ids, compatibility changes, lockfile tooling, exact checks
 and results, advisory changes, every feedback resolution, deviations and
 anything deferred with its reason. Carry forward the survey's baseline and
 research gaps so verify can check the complete upgrade independently.
+
+Include the ship record your contract requires in `structured`. Its `pr.body`
+is the pull request description a maintainer reads: what changed and why,
+how it was verified, and what is left open.

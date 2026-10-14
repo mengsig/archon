@@ -87,8 +87,19 @@ impl StageOutcome {
     /// The prefix a stage uses in `fail_task` to escalate to the operator.
     pub const BLOCKED_PREFIX: &'static str = "BLOCKED:";
 
+    /// The prefix a stage uses in `fail_task` to hand its item back to the
+    /// orchestrator: the work needs another shape than this run has.
+    pub const ESCALATE_PREFIX: &'static str = "ESCALATE:";
+
     pub fn is_operator_blocker(&self) -> bool {
         matches!(self, Self::Failed { error, .. } if error.trim_start().starts_with(Self::BLOCKED_PREFIX))
+    }
+
+    /// Whether `error` ends its run at once: an operator blocker or an
+    /// escalation, neither of which a fix loop or a retry can resolve.
+    pub fn ends_run(error: &str) -> bool {
+        let error = error.trim_start();
+        error.starts_with(Self::BLOCKED_PREFIX) || error.starts_with(Self::ESCALATE_PREFIX)
     }
 }
 
@@ -336,6 +347,25 @@ mod tests {
             Verdict::Pass
         );
         assert_eq!(Verdict::extract("no verdict here", None), Verdict::Unknown);
+    }
+
+    #[test]
+    fn blockers_and_escalations_end_a_run_and_other_failures_do_not() {
+        assert!(StageOutcome::ends_run("  BLOCKED: no push access"));
+        assert!(StageOutcome::ends_run(
+            "ESCALATE: needs a review; use default-pr-review"
+        ));
+        assert!(!StageOutcome::ends_run(
+            "tests failed: ESCALATE: is not a prefix here"
+        ));
+        let escalated = StageOutcome::Failed {
+            error: "ESCALATE: too large".into(),
+            infra: false,
+        };
+        assert!(
+            !escalated.is_operator_blocker(),
+            "the operator is not asked"
+        );
     }
 
     #[test]

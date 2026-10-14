@@ -1,22 +1,32 @@
-//! PR shipping evidence comes from GitHub, never from an agent's report.
+//! Shipping (ARCHITECTURE §8.7). archond delivers a run itself where its
+//! pipeline declares `[pipeline.ship]` ([`deliver`]); a pipeline that still
+//! ends in a ship agent has that agent's claim checked here. Either way, PR
+//! evidence comes from GitHub, never from an agent's report.
 
-use std::path::Path;
-use std::process::Stdio;
-use std::time::Duration;
+mod checks;
+mod deliver;
+mod remote;
 
 use archon_core::catalog::StageKind;
 use archon_core::error::ArchonError;
 use archon_core::run::{PipelineRun, StageOutcome, StageRun};
-use serde::Deserialize;
-use tokio::process::Command;
+use serde_json::Value;
 
 use super::{frozen, recover};
 use crate::context::DaemonContext;
 
+pub(crate) use deliver::prune_finished_ships;
+pub(super) use deliver::{deliver, queue, replay, stalled};
+
+/// `outcome` with the pull request GitHub lists for a ship agent's stage in
+/// place of any URL an agent wrote; a ship agent whose pull request is not
+/// there fails. `daemon_ships` says archond delivers this run itself, so no
+/// stage of it has one to report.
 pub(super) async fn verify(
     ctx: &DaemonContext,
     run: &PipelineRun,
     stage: &StageRun,
+    daemon_ships: bool,
     outcome: StageOutcome,
 ) -> Result<StageOutcome, ArchonError> {
     let StageOutcome::Completed {
@@ -26,45 +36,13 @@ pub(super) async fn verify(
     else {
         return Ok(outcome);
     };
-    if run.state.is_terminal() {
-        let mut structured = structured;
-        if let Some(data) = structured
-            .as_mut()
-            .and_then(serde_json::Value::as_object_mut)
-        {
-            data.remove("pr_url");
-        }
+    if run.state.is_terminal() || daemon_ships {
         return Ok(StageOutcome::Completed {
             summary,
-            structured,
+            structured: without_pr_url(structured),
         });
     }
-    let lookup = async {
-        let vars = recover::load_run_vars(&*ctx.store.lock().await, &run.id)?;
-        match vars.get("ship.mode").map(String::as_str) {
-            Some("pr") => {}
-            Some("local") => return Ok(None),
-            mode => {
-                return Err(ArchonError::Protocol(format!(
-                    "invalid recorded ship mode: {mode:?}"
-                )));
-            }
-        }
-        let spec = frozen::thaw(&ctx.paths.data_dir, &run.id, &run.pipeline).await?;
-        if !spec
-            .file
-            .stages
-            .iter()
-            .any(|s| s.id == stage.stage_id && s.kind == StageKind::Ship)
-        {
-            return Ok(None);
-        }
-        open_pr(&ctx.config.github.binary, &run.workspace, &run.branch)
-            .await
-            .map(Some)
-    }
-    .await;
-    match lookup {
+    match agent_pr(ctx, run, stage).await {
         Ok(None) => Ok(StageOutcome::Completed {
             summary,
             structured,
@@ -91,67 +69,39 @@ pub(super) async fn verify(
     }
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PullRequest {
-    url: String,
-    number: u64,
-    head_ref_name: String,
-    state: String,
+/// `structured` without a pull request URL, which only GitHub vouches for.
+fn without_pr_url(mut structured: Option<Value>) -> Option<Value> {
+    if let Some(data) = structured.as_mut().and_then(Value::as_object_mut) {
+        data.remove("pr_url");
+    }
+    structured
 }
 
-async fn open_pr(gh: &Path, workspace: &Path, branch: &str) -> Result<String, ArchonError> {
-    let mut command = Command::new(gh);
-    command
-        .args([
-            "pr",
-            "list",
-            "--head",
-            branch,
-            "--state",
-            "open",
-            "--limit",
-            "2",
-            "--json",
-            "url,number,headRefName,state",
-        ])
-        .current_dir(workspace)
-        .env("GH_PROMPT_DISABLED", "1")
-        .env_remove("GH_REPO")
-        .stdin(Stdio::null())
-        .kill_on_drop(true);
-    let output = tokio::time::timeout(Duration::from_secs(30), command.output())
+/// The open pull request a ship agent's `stage` must have left in `pr`
+/// mode; `None` for any other stage and in `local` mode.
+async fn agent_pr(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+    stage: &StageRun,
+) -> Result<Option<String>, ArchonError> {
+    let vars = recover::load_run_vars(&*ctx.store.lock().await, &run.id)?;
+    match vars.get("ship.mode").map(String::as_str) {
+        Some("pr") => {}
+        Some("local") => return Ok(None),
+        mode => {
+            return Err(ArchonError::Protocol(format!(
+                "invalid recorded ship mode: {mode:?}"
+            )));
+        }
+    }
+    let spec = frozen::thaw(&ctx.paths.data_dir, &run.id, &run.pipeline).await?;
+    let ships =
+        |s: &archon_pipeline::spec::StageSpec| s.id == stage.stage_id && s.kind == StageKind::Ship;
+    if !spec.file.stages.iter().any(ships) {
+        return Ok(None);
+    }
+    let gh = &ctx.config.github.binary;
+    remote::open_pr(gh, &run.workspace, &run.branch)
         .await
-        .map_err(|_| ArchonError::Unavailable("GitHub PR lookup timed out after 30s".into()))?
-        .map_err(|e| ArchonError::io("GitHub PR lookup", e))?;
-    if !output.status.success() {
-        let detail: String = String::from_utf8_lossy(&output.stderr)
-            .trim()
-            .chars()
-            .take(2000)
-            .collect();
-        return Err(ArchonError::Unavailable(format!(
-            "GitHub PR lookup failed ({}): {detail}",
-            output.status
-        )));
-    }
-    let prs: Vec<PullRequest> = serde_json::from_slice(&output.stdout)
-        .map_err(|e| ArchonError::Protocol(format!("invalid GitHub PR lookup response: {e}")))?;
-    let [pr] = prs.as_slice() else {
-        return Err(ArchonError::Unavailable(format!(
-            "expected one open PR, found {}",
-            prs.len()
-        )));
-    };
-    if pr.head_ref_name != branch
-        || pr.state != "OPEN"
-        || pr.number == 0
-        || !pr.url.starts_with("https://")
-        || !pr.url.ends_with(&format!("/pull/{}", pr.number))
-    {
-        return Err(ArchonError::Protocol(
-            "GitHub returned a PR that does not match the branch, open state or URL".into(),
-        ));
-    }
-    Ok(pr.url.clone())
+        .map(Some)
 }

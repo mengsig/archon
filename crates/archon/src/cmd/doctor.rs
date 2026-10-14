@@ -30,6 +30,8 @@ use crate::style::{Palette, Style};
 use registry::{COMMAND_TIMEOUT, Registry, run_bounded};
 
 const AETHER_TIMEOUT: Duration = Duration::from_secs(5);
+/// The oldest git `archond` runs: restacking merges with `merge-tree --write-tree`.
+const MIN_GIT: (u32, u32) = (2, 38);
 /// The check-name column; the longest name is `mcp registered`.
 const NAME_WIDTH: usize = 14;
 
@@ -581,11 +583,7 @@ fn disk_verdict(reading: Result<DiskReading, ArchonError>, min_free_bytes: u64) 
 
 async fn check_git() -> Check {
     match run_bounded(Path::new("git"), &["--version"], None, COMMAND_TIMEOUT).await {
-        Ok(out) if out.status.success() => check(
-            "git",
-            Level::Ok,
-            String::from_utf8_lossy(&out.stdout).trim().to_owned(),
-        ),
+        Ok(out) if out.status.success() => git_verdict(String::from_utf8_lossy(&out.stdout).trim()),
         Ok(out) => check(
             "git",
             Level::Fail,
@@ -593,6 +591,30 @@ async fn check_git() -> Check {
         ),
         Err(e) => check("git", Level::Fail, e),
     }
+}
+
+/// The git check for what `git --version` `printed`.
+fn git_verdict(printed: &str) -> Check {
+    let (major, minor) = MIN_GIT;
+    let needed = format!("archond needs git {major}.{minor} or later");
+    match git_version(printed) {
+        Some(version) if version >= MIN_GIT => check("git", Level::Ok, printed),
+        Some(_) => check("git", Level::Fail, format!("{printed}: {needed}")),
+        None => check(
+            "git",
+            Level::Warn,
+            format!("{printed:?} names no version Archon reads; {needed}"),
+        ),
+    }
+}
+
+/// `(major, minor)` of `git version 2.43.0` and its vendors' variants.
+fn git_version(printed: &str) -> Option<(u32, u32)> {
+    let number = printed.strip_prefix("git version ")?;
+    let mut parts = number.split_whitespace().next()?.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    Some((major, minor))
 }
 
 fn check_lavish(config: &Config) -> Check {
@@ -657,6 +679,27 @@ mod tests {
         assert!(mcp_verdict(&failed).detail.contains("exit 1"));
         assert_eq!(mcp_verdict(&McpHealth::Unknown).level, Level::Warn);
         assert_eq!(mcp_verdict(&McpHealth::NotLoaded).level, Level::Fail);
+    }
+
+    #[test]
+    fn git_older_than_2_38_fails_and_an_unread_version_warns() {
+        for printed in [
+            "git version 2.38.0",
+            "git version 2.39.3 (Apple Git-146)",
+            "git version 2.45.1.windows.1",
+            "git version 3.0.0",
+        ] {
+            assert_eq!(git_verdict(printed).level, Level::Ok, "{printed}");
+        }
+        let old = git_verdict("git version 2.34.1");
+        assert_eq!(old.level, Level::Fail);
+        assert!(
+            old.detail.contains("needs git 2.38 or later"),
+            "{}",
+            old.detail
+        );
+        assert_eq!(git_verdict("git version 1.99.9").level, Level::Fail);
+        assert_eq!(git_verdict("hub version 2.14.2").level, Level::Warn);
     }
 
     #[test]

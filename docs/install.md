@@ -89,7 +89,7 @@ If you are already signed in to Claude Code or Codex, neither Archon nor Aether 
 | Program | Used for | Required? | Install |
 | --- | --- | --- | --- |
 | [Aether](https://github.com/mengsig/aether) (`aether`) | Runs the orchestrator and stage agents | Yes | The Archon installer offers it; see [Aether](#aether). |
-| [git](https://git-scm.com/install/) | A worktree and a branch for every item | Yes | `brew install git`, or your distribution's package |
+| [git](https://git-scm.com/install/) 2.38 or later | A worktree and a branch for every item | Yes | `brew install git`, or your distribution's package |
 | [Claude Code](https://code.claude.com/docs/en/quickstart) (`claude`) | Claude engine and its login | One engine required | `curl -fsSL https://claude.ai/install.sh \| bash`, then run `claude` once to log in |
 | [Codex](https://github.com/openai/codex) (`codex`) | Codex engine and its login | Alternative engine | `npm install -g @openai/codex`, then `codex login` |
 | [GitHub CLI](https://cli.github.com/) (`gh`) | The `pr` ship mode and the GitHub watcher | Optional; local work works without it | `brew install gh`, then `gh auth login` |

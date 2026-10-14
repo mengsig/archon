@@ -148,7 +148,7 @@ update itself interrupts no running item. To move the daemon to the new
 version:
 
 ```sh
-archon daemon stop
+archon daemon stop --keep-aether
 archon aether mcp refresh archon
 archon orchestrator restart
 ```
@@ -198,7 +198,7 @@ also updates.
 ## Uninstalling
 
 ```sh
-archon daemon stop --aether    # stop archond and Archon's own aetherd
+archon daemon stop             # stop archond and Archon's own aetherd
 rm ~/.local/bin/archon         # or the directory you chose with ARCHON_INSTALL_DIR
 ```
 

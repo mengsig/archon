@@ -99,12 +99,12 @@ policy in its instructions, and the new tools (`github_reply`, `enqueue`'s
      keeps working against the aetherd you run now (15 or 16). The other
      order does not work: an aetherd that speaks 17 serves only 16 and 17,
      and an older Archon speaks 15 at most. Restart archond
-     (`archon daemon stop`, then any command starts it). Everything works
+     (`archon daemon stop --keep-aether`, then any command starts it). Everything works
      as before, except that `archon github-watcher operators <LOGIN>...` is
      refused and `archon doctor` warns, both naming protocol 17 and the
      next step.
   2. **Then Archon's aetherd.** Install an `aether` that speaks protocol 17,
-     then run `archon daemon stop --aether`; the next `archon` command
+     then run `archon daemon stop`; the next `archon` command
      starts both daemons. `archon doctor` then shows `protocol 17`.
   3. **Then the tools and the orchestrator.**
 
@@ -141,12 +141,12 @@ policy in its instructions, and the new tools (`github_reply`, `enqueue`'s
   Archon.
 - **archond.** The `archon` CLI and archond speak Archon's protocol 3 now,
   so a CLI and an archond from either side of this change refuse each other
-  at hello. After upgrading, restart archond (`archon daemon stop`, then
+  at hello. After upgrading, restart archond (`archon daemon stop --keep-aether`, then
   any command starts it), then reload the `archon mcp` server and restart
   the orchestrator:
 
   ```sh
-  archon daemon stop
+  archon daemon stop --keep-aether
   archon aether mcp refresh archon
   archon orchestrator restart
   ```

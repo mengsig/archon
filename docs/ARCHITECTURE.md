@@ -81,7 +81,7 @@ Contents:
 | `archond` (`archon daemon run`) | The Archon daemon: store, dispatcher, pipeline engine, Aether link, orchestrator supervisor, feed, lavish plugin. | Long-running; autostarted by any `archon` client. |
 | `archon` | The CLI, a client of `archond`. With no subcommand it opens the terminal UI (`archon tui`, §4.7); `archon chat` is the quiet operator chat (§12). | Per command. |
 | `archon mcp` | Stdio MCP server. Aether spawns it as the `archon` MCP server, and it proxies each tool call to `archond`. | Owned by `aetherd`. |
-| `aetherd` (Archon's own) | In dedicated mode (the default), an unmodified `aether daemon` with its config, store and socket under Archon's directories (§4.7). | Started by any `archon` command that needs `archond`; stopped by `archon daemon stop --aether`. |
+| `aetherd` (Archon's own) | In dedicated mode (the default), an unmodified `aether daemon` with its config, store and socket under Archon's directories (§4.7). | Started by any `archon` command that needs `archond`; stopped by `archon daemon stop` (not with `--keep-aether`). |
 | orchestrator | One long-lived root Aether agent (`role = "archon-orchestrator"`). Uses native tools plus `mcp__archon__*`. | Created once and supervised by `archond`. |
 | run node | One passive root Aether agent per pipeline run (`role = "archon-run:<pipeline>"`), never started. Its children are the run's stage agents, so Aether's tree shows one subtree per item. | Created with the run's first stage agent; cancelled when the run finishes. |
 | stage agents | One Aether agent per stage attempt and fan-out slot, a child of its run node. | Created and settled per stage. |
@@ -618,9 +618,9 @@ the detached daemon listens. `archond` itself never starts Aether. In
 dedicated mode it connects only to the instance's socket, and config
 validation refuses `[aether] socket` or `address`.
 
-- `archon daemon stop` stops `archond`.
-- `archon daemon stop --aether` (alias `--all`) then also runs `aether stop`
-  against the instance.
+- `archon daemon stop` stops `archond`, then in dedicated mode runs `aether
+  stop` against the instance. `--keep-aether` stops only `archond`;
+  `--aether` (alias `--all`) is refused in shared mode.
 - `archon daemon status` shows both daemons.
 - `archon tui` connects/starts archond and the selected Aether instance, then
   sends operator-only `OrchestratorAttach`. The supervisor ensures a live
@@ -676,13 +676,13 @@ the start check every command runs, not of a migration step.
   longer, and the `aether daemon` that follows then exits with `another
   aether daemon is already running`. On that one error the start is retried
   every 250 ms for up to 15 s; any other failure is returned at once. This
-  also covers `archon daemon stop --aether` followed directly by a command
+  also covers `archon daemon stop` followed directly by a command
   that starts it again.
 
 Not covered: a config that was brought up to date by hand or by an older
 binary's `--resync` while `aetherd` kept running leaves no marker, so
 nothing tells Archon the daemon is stale. `archond` notices the unnamed
-calls (§11) and its notice names the restart: `archon daemon stop --aether`,
+calls (§11) and its notice names the restart: `archon daemon stop`,
 after which any command starts it again.
 
 **Shared mode.** `[aether] mode = "shared"` keeps the earlier behaviour.
@@ -879,6 +879,10 @@ stage's cost from its agent's ledger row plus the rows of the agents it
 delegated to, and derives each run's `cost_usd`
 from that run's stages and delegated descendants on every read, including terminal runs. Late usage
 therefore remains with its own stage and run across retries and restarts.
+A kept agent passing to a later attempt records what it and the agents
+beneath it had been charged (kv `agent-handoff/<agent>/<attempt>`), and
+each attempt is charged only what was spent between its hand-off and the
+next, so an item's attempts add up to what its agents cost.
 A stage that delegated also reports the split (`delegations` in `GetItem`,
 `delegation` in `GetStage`): its own agent's cost, the delegated agents'
 cost, and each delegated agent with its parent, model, effort and cost.
@@ -2800,7 +2804,8 @@ object per line under `--json`).
 - Worktree per pipeline run:
   `<worktrees.root>/<repo>/<item-id>` on branch
   `<branch_prefix><item-short>-<slug(title)>`, created with
-  `git -C <repo> worktree add -b <branch> <path> <base>`. The base is
+  `git -C <repo> worktree add -b <branch> <path> <base>`, checked out
+  through the shadow (§13.4). The base is
   `repo.base_branch`, or the repo's current `HEAD` commit.
   **Uncommitted changes in the operator's checkout are not included**, unlike
   Aether's isolated-delegation snapshot.
@@ -3345,14 +3350,20 @@ Removing a worktree asks the shadow what `git worktree remove` would: a
 populated submodule or the worktree's own `modules`, a tracked change
 (`update-index --refresh`, `diff-files`, `diff-index --cached`), or an
 untracked file not ignored by the tree's `.gitignore`, the repository's
-`info/exclude` or the operator's. Any of them keeps the worktree; else it
+`info/exclude` or the operator's, nor a cache: `__pycache__`, `*.pyc`,
+`*.pyo`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.hypothesis`,
+`.tox`, `.coverage` and `node_modules` at any depth, a top-level `target`,
+and `worktrees.cache_dirs`. Any of them keeps the worktree; else it
 goes with `worktree remove --force`, so git's own `status`, which reads the
 repository's filters, never runs. A repository-only `core.excludesFile` or
 `core.autocrlf` is not read, which can only keep a worktree that was clean.
 
-Not yet through the shadow: `worktree add` and a team's merges and status
-(§13.1) check files out and read them under the repository's config, with
-no hook, but with its filters.
+A new worktree or snapshot is added with a sealed `git worktree add
+--no-checkout`, then checked out with `read-tree -m -u` through a shadow at
+`<worktrees.root>/.archon/daemon-git/<format>`: the repository's hooks and
+filters never run, the operator's do. Not yet through the shadow: a team's
+worker worktrees, merges and status (§13.1), which run no hook but the
+repository's filters.
 
 ## 14. Lavish plugin
 

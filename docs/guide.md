@@ -523,8 +523,8 @@ Known limitations:
 
 `archon` starts Archon's `aetherd` and `archond` when they are not running.
 `archon aether <args…>` runs any `aether` command against Archon's instance,
-for example `archon aether agents`. `archon daemon stop --aether` stops both
-daemons. In the TUI's tree each work item is one subtree: a node named after
+for example `archon aether agents`. `archon daemon stop` stops both
+daemons (`--keep-aether` stops only archond). In the TUI's tree each work item is one subtree: a node named after
 the item, with its stage agents (`implement · <title>`, `review 1/2 · <title>`,
 `ship · <title>`) underneath, beside the `archon` orchestrator.
 
@@ -563,7 +563,7 @@ progress too; also `/verbose`), `/pause` and `/resume` (optionally `hard`,
 | `archon pause` / `archon resume` | hold dispatch globally, per repo or per pipeline; `--hard` also pauses running agents |
 | `archon gc [--offline]` | delete finished runs' build caches and remove their old worktrees now; `--offline` works without archond, e.g. on a full disk. See [disk use](configuration.md#disk-use) |
 | `archon aether …` | Aether's CLI on Archon's own Aether |
-| `archon daemon status` / `archon daemon stop [--aether]` | both daemons' state; stop archond, and with `--aether` Archon's aetherd too |
+| `archon daemon status` / `archon daemon stop [--keep-aether]` | both daemons' state; stop archond and, in dedicated mode, Archon's aetherd unless `--keep-aether` |
 
 See [scripted queue usage](queue-scripting.md) for file formats, autonomy
 flags, idempotency, JSON results and wait exit statuses.
@@ -756,7 +756,7 @@ to be served by that instance, not by your everyday Aether:
 - Give that instance its own `[remote] address` in
   `~/.config/archon/aether/config.toml`. The default, `127.0.0.1:8377`, is
   the one your own Aether uses, and two daemons cannot bind it. Restart
-  Archon's aetherd afterwards (`archon daemon stop --aether`, then `archon`).
+  Archon's aetherd afterwards (`archon daemon stop`, then `archon`).
   `archon setup --resync` rebuilds that file from your own Aether config, so
   set the address again after a resync.
 

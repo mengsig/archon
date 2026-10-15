@@ -30,6 +30,7 @@ pub struct FakeOpsState {
     pub installs: Vec<InstallStep>,
     pub restarts: Vec<RestartPlan>,
     pub latest_checks: u32,
+    pub probe_barrier: Option<Arc<tokio::sync::Barrier>>,
 }
 
 impl FakeOps {
@@ -68,13 +69,23 @@ impl OpsPort for FakeOps {
     }
 
     async fn installed_version(&self, program: Program) -> Result<Option<String>, ArchonError> {
-        Ok(self.snapshot().installed.get(&program).cloned())
+        let snapshot = self.snapshot();
+        if let Some(barrier) = snapshot.probe_barrier {
+            barrier.wait().await;
+        }
+        Ok(snapshot.installed.get(&program).cloned())
     }
 
     async fn latest_release(&self, program: Program) -> Result<Option<String>, ArchonError> {
-        let mut state = self.state.lock().expect("fake ops");
-        state.latest_checks += 1;
-        Ok(state.latest.get(&program).cloned())
+        let snapshot = {
+            let mut state = self.state.lock().expect("fake ops");
+            state.latest_checks += 1;
+            state.clone()
+        };
+        if let Some(barrier) = snapshot.probe_barrier {
+            barrier.wait().await;
+        }
+        Ok(snapshot.latest.get(&program).cloned())
     }
 
     fn spawn_restart(&self, plan: &RestartPlan) -> Result<(), ArchonError> {

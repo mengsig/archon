@@ -1,6 +1,6 @@
 //! The operator's drained upgrade and restart of Archon (ARCHITECTURE §16):
-//! install what was named, hold dispatch until the running stage agents
-//! finish, hand the restart to a detached `archon daemon relaunch`, stop,
+//! hold dispatch until the running stage agents finish, install what was
+//! named, hand the restart to a detached `archon daemon relaunch`, stop,
 //! and report the versions once the next archond is up. archond never asks
 //! the network for releases by itself; only `CheckUpdates` does.
 
@@ -172,11 +172,15 @@ pub async fn versions(ctx: &DaemonContext) -> Versions {
 /// Ask the network for the latest releases (the operator's request) and
 /// read the installed versions again.
 pub async fn check_updates(ctx: &DaemonContext) -> Result<Versions, ArchonError> {
-    refresh_installed(ctx).await;
-    for program in [Program::Archon, Program::Aether] {
-        let latest = ctx.ops.port.latest_release(program).await?;
+    let (_, archon, aether) = tokio::join!(
+        refresh_installed(ctx),
+        ctx.ops.port.latest_release(Program::Archon),
+        ctx.ops.port.latest_release(Program::Aether),
+    );
+    {
         let mut seen = ctx.ops.seen.lock().await;
-        program_versions(&mut seen, program).latest = latest;
+        seen.archon.latest = archon?;
+        seen.aether.latest = aether?;
     }
     Ok(versions(ctx).await)
 }
@@ -190,8 +194,12 @@ fn program_versions(versions: &mut Versions, program: Program) -> &mut ProgramVe
 
 /// Read the installed versions; one that cannot be read keeps the last.
 async fn refresh_installed(ctx: &DaemonContext) {
-    for program in [Program::Archon, Program::Aether] {
-        match ctx.ops.port.installed_version(program).await {
+    let (archon, aether) = tokio::join!(
+        ctx.ops.port.installed_version(Program::Archon),
+        ctx.ops.port.installed_version(Program::Aether),
+    );
+    for (program, installed) in [(Program::Archon, archon), (Program::Aether, aether)] {
+        match installed {
             Ok(installed) => {
                 let mut seen = ctx.ops.seen.lock().await;
                 program_versions(&mut seen, program).installed = installed;
@@ -230,14 +238,6 @@ async fn upgrade(ctx: &DaemonContext, request: &UpgradeRequest) -> Result<bool, 
     let what = request.describe();
     let before = versions(ctx).await;
     feed::system(ctx, format!("Upgrade started: {what}.")).await?;
-    match install_all(ctx, request, &what).await {
-        Ok(()) => {}
-        Err(error) if error.is_store() => return Err(error),
-        Err(error) => {
-            let why = format!("{what} stopped: {error}. Nothing was restarted.");
-            return give_up(ctx, why).await.map(|()| false);
-        }
-    }
     let limit = Duration::from_secs(request.drain_secs);
     ctx.ops.hold(ctx, true);
     let busy = drain(ctx, &what, limit).await?;
@@ -248,6 +248,14 @@ async fn upgrade(ctx: &DaemonContext, request: &UpgradeRequest) -> Result<bool, 
             limit.as_secs()
         );
         return give_up(ctx, why).await.map(|()| false);
+    }
+    match install_all(ctx, request, &what).await {
+        Ok(()) => {}
+        Err(error) if error.is_store() => return Err(error),
+        Err(error) => {
+            let why = format!("{what} stopped: {error}. Nothing was restarted.");
+            return give_up(ctx, why).await.map(|()| false);
+        }
     }
     let restart_aether = ctx.config.aether.mode == AetherMode::Dedicated && !request.keep_aether;
     hand_off(

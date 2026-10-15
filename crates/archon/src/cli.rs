@@ -773,7 +773,7 @@ pub enum DaemonCommand {
         #[arg(long)]
         keep_aether: bool,
     },
-    /// Install archon and/or aether, then restart as `archon daemon restart`
+    /// Drain, install archon and/or aether, then restart as `archon daemon restart`
     /// does. A cargo build is rebuilt with `cargo install --git`; an
     /// installer's binary updates itself with `<program> update`.
     #[command(after_help = "Examples:\n  archon daemon upgrade --archon latest\n  \
@@ -986,6 +986,97 @@ mod tests {
         let mut argv = vec!["archon"];
         argv.extend_from_slice(args);
         Cli::try_parse_from(argv).unwrap().command.unwrap()
+    }
+
+    #[test]
+    fn daemon_upgrade_and_restart_parse_targets_and_drain_flags() {
+        let Command::Daemon(DaemonCommand::Upgrade {
+            archon,
+            aether,
+            drain,
+        }) = parse(&[
+            "daemon",
+            "upgrade",
+            "--archon",
+            "main",
+            "--aether",
+            "1.0.7",
+            "--wait",
+            "600",
+            "--requeue",
+        ])
+        else {
+            panic!("upgrade");
+        };
+        assert_eq!(archon.as_deref(), Some("main"));
+        assert_eq!(aether.as_deref(), Some("1.0.7"));
+        assert_eq!(drain.wait, 600);
+        assert!(drain.requeue);
+        let Command::Daemon(DaemonCommand::Upgrade {
+            archon,
+            aether,
+            drain,
+        }) = parse(&["daemon", "upgrade", "--aether", "latest"])
+        else {
+            panic!("aether-only upgrade");
+        };
+        assert!(archon.is_none());
+        assert_eq!(aether.as_deref(), Some("latest"));
+        assert_eq!(drain.wait, archon_core::ops::DEFAULT_DRAIN_SECS);
+        assert!(!drain.requeue);
+        let Command::Daemon(DaemonCommand::Restart { drain, keep_aether }) = parse(&[
+            "daemon",
+            "restart",
+            "--keep-aether",
+            "--wait",
+            "30",
+            "--requeue",
+        ]) else {
+            panic!("restart");
+        };
+        assert_eq!(drain.wait, 30);
+        assert!(drain.requeue && keep_aether);
+        let Command::Daemon(DaemonCommand::Restart { drain, keep_aether }) =
+            parse(&["daemon", "restart"])
+        else {
+            panic!("restart defaults");
+        };
+        assert_eq!(drain.wait, archon_core::ops::DEFAULT_DRAIN_SECS);
+        assert!(!drain.requeue && !keep_aether);
+        for args in [
+            vec!["daemon", "upgrade"],
+            vec!["daemon", "upgrade", "--archon"],
+            vec!["daemon", "restart", "--wait", "later"],
+            vec!["daemon", "restart", "--archon", "latest"],
+        ] {
+            assert!(Cli::try_parse_from([vec!["archon"], args].concat()).is_err());
+        }
+    }
+
+    #[test]
+    fn status_update_checks_and_repo_github_watch_are_explicit() {
+        assert!(matches!(
+            parse(&["status", "--check-updates"]),
+            Command::Status {
+                check_updates: true,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse(&["status"]),
+            Command::Status {
+                check_updates: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse(&["repo", "add", ".", "--github"]),
+            Command::Repo(RepoCommand::Add { github: true, .. })
+        ));
+        assert!(matches!(
+            parse(&["repo", "add", "."]),
+            Command::Repo(RepoCommand::Add { github: false, .. })
+        ));
     }
 
     #[test]

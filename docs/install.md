@@ -162,14 +162,23 @@ archon daemon upgrade --archon main --wait 600 --requeue
 archon daemon restart                              # the same drained restart, installing nothing
 ```
 
-archond installs (`<program> update` for an installer's binary,
-`cargo install --locked --git` for one in cargo's bin directory), holds
-dispatch until running stage agents finish or `--wait` seconds pass, then
+archond holds dispatch until running stage agents finish or `--wait`
+seconds pass, then installs (`<program> update` for an installer's binary,
+`cargo install --locked --git` for one in cargo's bin directory) and
 restarts itself and Archon's own aetherd through a detached helper and
 reports the old and new versions in `archon log`. When the wait runs out it
-gives the restart up, unless `--requeue` says to restart anyway and retry
+gives the upgrade up without installing anything, unless `--requeue` says to restart anyway and retry
 the stages it stopped. The orchestrator's chat takes the same as `/upgrade`
 ([guide](guide.md#upgrading-and-watching-from-the-orchestrators-chat)).
+
+Installation keeps dispatch held until the restart, so a source build can
+extend the pause beyond `--wait`. Between installation and restart, a new
+CLI may be unable to talk to the old archond after a protocol change;
+wait for the detached restart to finish. In shared mode, or when keeping
+Aether running, existing agents retain their old `archon mcp` processes.
+After an Archon protocol change those tools may be incompatible with the
+new archond; restart the affected agents (`archon orchestrator restart`
+for the orchestrator). Dedicated mode restarts Aether and its tools too.
 
 ### Back up before a release that migrates the store
 

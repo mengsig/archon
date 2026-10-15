@@ -618,8 +618,8 @@ message, and off in shared mode.
 ```
 
 `/upgrade` is `archon daemon upgrade` (or `archon daemon restart`): archond
-installs what you named, holds dispatch while running stage agents finish
-(at most 30 minutes), then hands the restart to a detached
+holds dispatch while running stage agents finish (at most 30 minutes),
+installs what you named while dispatch stays held, then hands the restart to a detached
 `archon daemon relaunch` that outlives it, stops, and is started again with
 Archon's own aetherd. The next archond reports the old and new versions in
 the feed. Without `requeue` a drain that runs out gives the restart up and

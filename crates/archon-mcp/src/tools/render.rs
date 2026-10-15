@@ -637,20 +637,44 @@ fn disk_text(disk: &DiskStatus) -> String {
         (Some(free), _) => gib(free),
         (None, error) => format!("unknown ({})", error.as_deref().unwrap_or("no reading")),
     };
+    let mut text = format!("\nDisk: {free} free at {}.", disk.path.display());
     let state = if let Some(why) = &disk.standby {
-        format!("archond is in STANDBY and serves reads only ({why})")
+        Some(format!(
+            "archond is in STANDBY and serves reads only ({why})"
+        ))
     } else if let Some(error) = &disk.disk_full {
-        format!("dispatch is HELD after a write failed on a full disk ({error})")
+        Some(format!(
+            "dispatch is HELD after a write failed on a full disk ({error})"
+        ))
     } else if disk.held {
-        "dispatch is HELD for low disk space".to_owned()
+        Some("dispatch is HELD for low disk space".to_owned())
     } else {
-        return format!("\nDisk: {free} free at {}.", disk.path.display());
+        None
     };
-    format!(
-        "\nDisk: {free} free at {}; {state}. Nothing new starts until the operator frees \
-         space (`archon gc`).",
-        disk.path.display()
-    )
+    if let Some(state) = state {
+        text.push_str(&format!(
+            " {state}. Nothing new starts until the operator frees space (`archon gc`)."
+        ));
+    }
+    for usage in &disk.storage {
+        let size = usage.bytes.map_or_else(
+            || {
+                format!(
+                    "unknown ({})",
+                    usage.error.as_deref().unwrap_or("no reading")
+                )
+            },
+            |bytes| format!("{bytes} bytes"),
+        );
+        text.push_str(&format!("\nStorage {}: {size}.", usage.kind));
+    }
+    if let Some(gc) = &disk.gc {
+        text.push_str(&format!(
+            "\nLast GC at {} freed {} bytes: {}",
+            gc.at, gc.bytes_freed, gc.headline
+        ));
+    }
+    text
 }
 
 fn github_text(watch: &GithubWatch) -> String {

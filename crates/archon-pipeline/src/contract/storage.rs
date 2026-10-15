@@ -62,6 +62,6 @@ mod tests {
         let text = artifact_rules(&ArtifactsConfig::default());
         assert!(text.contains("mcp__archon__publish_artifact"), "{text}");
         assert!(text.contains("256 MB a file, 1024 MB an item"), "{text}");
-        assert!(text.contains("kept 30d after"), "{text}");
+        assert!(text.contains("kept 2w after"), "{text}");
     }
 }

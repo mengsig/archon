@@ -455,6 +455,7 @@ pub fn context(
     let (feed, _) = broadcast::channel(1024);
     let dispatch = Arc::new(Notify::new());
     DaemonContext {
+        storage: Default::default(),
         config,
         paths,
         store: Mutex::new(store),

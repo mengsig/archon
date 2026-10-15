@@ -123,6 +123,18 @@ fn link_lines(out: &mut String, status: &DaemonStatus) {
     }
     if let Some(disk) = &status.disk {
         let _ = writeln!(out, "disk: {}", disk_line(disk));
+        for usage in &disk.storage {
+            let size = usage.bytes.map_or_else(
+                || {
+                    format!(
+                        "unknown ({})",
+                        sanitize_line(usage.error.as_deref().unwrap_or("no reading"))
+                    )
+                },
+                |bytes| format!("{bytes} bytes"),
+            );
+            let _ = writeln!(out, "storage {}: {size}", usage.kind);
+        }
     }
 }
 
@@ -763,6 +775,7 @@ pub(crate) mod tests {
             disk_full: None,
             standby: None,
             gc: None,
+            storage: vec![],
         };
         let mut with_disk = status_with(AetherLinkStatus::Disconnected {
             error: "down".into(),

@@ -18,6 +18,7 @@ pub mod pump;
 pub mod reports;
 pub mod server;
 mod standby;
+mod storage;
 pub mod supervisor;
 pub mod triggers;
 pub mod worktree;
@@ -295,6 +296,7 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
     let (feed, _) = broadcast::channel(FEED_BROADCAST_CAPACITY);
     let dispatch = Arc::new(Notify::new());
     let ctx = DaemonContext {
+        storage: Default::default(),
         config,
         paths,
         store: Mutex::new(store),

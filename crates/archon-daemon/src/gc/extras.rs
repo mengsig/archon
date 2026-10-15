@@ -45,12 +45,16 @@ impl Extras {
         pressure: bool,
     ) -> Result<Self, ArchonError> {
         let mut cache_after = older_than.unwrap_or(config.worktrees.shared_cache_after);
-        if pressure && older_than.is_none() {
+        if pressure
+            && older_than.is_none()
+            && cache_after.secs() != 0
+            && config.worktrees.pressure_after.secs() != 0
+        {
             cache_after = cache_after.min(config.worktrees.pressure_after);
         }
         let extras = Self {
-            cache_before: now - cache_after.chrono()?,
-            artifacts_before: now - config.artifacts.keep_after.chrono()?,
+            cache_before: super::cutoff(now, cache_after, older_than.is_none())?,
+            artifacts_before: super::cutoff(now, config.artifacts.keep_after, true)?,
         };
         assert!(extras.cache_before <= now && extras.artifacts_before <= now);
         Ok(extras)

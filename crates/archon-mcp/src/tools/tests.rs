@@ -975,10 +975,10 @@ const DESCRIBED_RULES: &[(&str, &str)] = &[
         "retry_item",
         "counts against the run that passed: enqueue new work instead",
     ),
-    ("refresh_item", "updates the same pull request"),
+    ("refresh_item", "branch and same pull request"),
     (
         "refresh_item",
-        "reads from the new merge base, conflict resolutions included",
+        "reads from the new merge base, conflict fixes included",
     ),
     ("update_item", "steered into its run without cancelling it"),
     ("steer_item", "stages that already started keep their shape"),

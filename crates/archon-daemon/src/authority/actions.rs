@@ -14,8 +14,10 @@ pub(super) fn check_channel(
     message: &OperatorMessage,
     action: &Request,
 ) -> Result<(), ArchonError> {
-    if !message.channel.is_github()
-        && ctx.config.aether.mode != archon_core::config::AetherMode::Dedicated
+    if matches!(
+        message.channel,
+        archon_core::authority::OperatorChannel::AetherChat
+    ) && ctx.config.aether.mode != archon_core::config::AetherMode::Dedicated
     {
         return Err(ArchonError::Forbidden(
             "operator authority from Aether chat is disabled in shared mode".into(),

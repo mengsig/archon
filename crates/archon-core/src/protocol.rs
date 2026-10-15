@@ -400,6 +400,10 @@ pub enum Request {
     /// operator asked it to: archond asks the operator to confirm, unless
     /// the repository's `grant_merge` lets it merge at once.
     /// The orchestrator cites a message observed on archond's own stream.
+    /// Whole-message command on the operator socket; never exposed over MCP.
+    OperatorCommand {
+        text: String,
+    },
     UndoAuthority {
         change: u64,
     },
@@ -423,7 +427,8 @@ impl Request {
     /// agent, whichever client forwards them.
     pub fn is_operator_only(&self) -> bool {
         match self {
-            Self::UndoAuthority { .. }
+            Self::OperatorCommand { .. }
+            | Self::UndoAuthority { .. }
             | Self::Shutdown
             | Self::RepoRemove { .. }
             | Self::RepoUpdate { .. }

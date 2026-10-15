@@ -45,7 +45,7 @@ pub(crate) async fn handle(
         return Ok(());
     };
     let evidence = OperatorMessage {
-        agent: agent.clone(),
+        agent: Some(agent.clone()),
         seq,
         channel: channel.clone(),
         text: message
@@ -56,10 +56,52 @@ pub(crate) async fn handle(
         at: event.at,
     };
     evidence::record(ctx, &evidence).await?;
+    execute(ctx, evidence, &message.text).await
+}
+
+/// The operator socket is already authenticated, including in shared mode.
+/// Its feed sequence is audit evidence, never an Aether inbox citation.
+pub(crate) async fn from_socket(
+    ctx: &DaemonContext,
+    text: &str,
+) -> Result<archon_core::protocol::Reply, ArchonError> {
+    if text.chars().count() > evidence::MAX_MESSAGE_CHARS {
+        return Err(ArchonError::Invalid(
+            "operator command exceeds 4000 characters".into(),
+        ));
+    }
+    let item = feed::append(
+        ctx,
+        archon_core::notify::FeedEntry::Operator { text: text.into() },
+    )
+    .await?;
+    let evidence = OperatorMessage {
+        agent: None,
+        seq: item.seq,
+        channel: OperatorChannel::ArchonChat,
+        text: text.into(),
+        at: item.at,
+    };
+    execute(ctx, evidence, text).await?;
+    Ok(archon_core::protocol::Reply::Ok)
+}
+
+async fn execute(
+    ctx: &DaemonContext,
+    evidence: OperatorMessage,
+    text: &str,
+) -> Result<(), ArchonError> {
+    let channel = &evidence.channel;
+    let github = channel.is_github();
     if crate::authority::bare_reply(ctx, &evidence).await? {
         return Ok(());
     }
-    let text = command_text(&message.text, github);
+    let text = command_text(text, github);
+    if text.starts_with('/') && text.chars().count() > evidence::MAX_MESSAGE_CHARS {
+        return feed::system(ctx, "Operator command exceeds the 4000-character limit.")
+            .await
+            .map(drop);
+    }
     if let Some(action) = crate::authority::commands::parse(ctx, text).await {
         let result = match action {
             Ok(action) => crate::authority::explicit(ctx, &evidence, action).await,
@@ -80,11 +122,6 @@ pub(crate) async fn handle(
             },
         )
         .await;
-    }
-    if text.starts_with('/') && text.chars().count() > evidence::MAX_MESSAGE_CHARS {
-        return feed::system(ctx, "Operator command exceeds the 4000-character limit.")
-            .await
-            .map(drop);
     }
     let command = match gate_alias(ctx, text).await {
         Ok(Some(command)) => command,
@@ -112,6 +149,7 @@ pub(crate) async fn handle(
     chat_answer::handle(ctx, &command, Some(&evidence)).await?;
     let authority = match channel {
         OperatorChannel::AetherChat => MergeAuthority::AetherChat,
+        OperatorChannel::ArchonChat => MergeAuthority::ArchonChat,
         OperatorChannel::Github {
             repository,
             number,

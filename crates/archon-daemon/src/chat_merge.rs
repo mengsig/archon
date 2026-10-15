@@ -94,7 +94,10 @@ async fn apply(
     authority: MergeAuthority,
 ) -> Result<Option<String>, ArchonError> {
     if ctx.config.aether.mode != AetherMode::Dedicated
-        && !matches!(authority, MergeAuthority::Github { .. })
+        && !matches!(
+            authority,
+            MergeAuthority::Github { .. } | MergeAuthority::ArchonChat
+        )
     {
         return Ok(Some(SHARED_REFUSAL.to_owned()));
     }

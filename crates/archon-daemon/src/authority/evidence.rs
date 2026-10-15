@@ -18,7 +18,10 @@ pub(crate) async fn record(
     message: &OperatorMessage,
 ) -> Result<(), ArchonError> {
     let mut store = ctx.store.lock().await;
-    let key = key(&message.agent, message.seq);
+    let agent = message.agent.as_ref().ok_or_else(|| {
+        ArchonError::Invalid("only inbox deliveries can be recorded as citations".into())
+    })?;
+    let key = key(agent, message.seq);
     // Replays cannot change the original provenance or renew consent.
     if store.kv_get(&key)?.is_none() {
         store.kv_set(&key, &serde_json::to_string(message)?)?;

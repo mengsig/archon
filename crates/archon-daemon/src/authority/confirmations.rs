@@ -127,31 +127,42 @@ pub(super) async fn decide(
     question: &Question,
     text: &str,
 ) -> Result<bool, ArchonError> {
+    let _changes = ctx.authority_changes.lock().await;
     let Some(mut pending) = load(ctx, &question.id).await? else {
         return Ok(false);
     };
-    let _changes = ctx.authority_changes.lock().await;
-    if pending.state != State::Waiting {
-        return Err(ArchonError::InvalidTransition("this authority confirmation already ended or began execution; inspect settings before requesting another".into()));
-    }
     let Some(yes) = yes_no(text) else {
         return Err(ArchonError::Invalid(
             "answer this authority confirmation with yes or no".into(),
         ));
     };
+    if pending.state != State::Waiting && (yes || pending.state != State::Executing) {
+        return Err(ArchonError::InvalidTransition("this authority confirmation already ended or began execution; inspect settings before requesting another".into()));
+    }
     if !yes {
+        let outcome = if pending.state == State::Executing {
+            "closed after an interrupted operation; inspect settings, no effects were undone"
+        } else {
+            "declined"
+        };
         pending.state = State::Declined;
         save(ctx, &question.id, &pending).await?;
         super::audit(
             ctx,
             &pending.evidence,
             "confirmation",
-            "declined",
+            outcome,
             pending.before,
             Value::Null,
         )
         .await?;
         return Ok(true);
+    }
+    actions::check_channel(ctx, &pending.evidence, &pending.action)?;
+    if pending.evidence.channel.is_github() && !ctx.config.authority.github_may_loosen {
+        return Err(ArchonError::Forbidden(
+            "GitHub loosening is disabled by authority.github_may_loosen".into(),
+        ));
     }
     let current = actions::snapshot(ctx, &pending.action).await?;
     if current != pending.before {
@@ -193,16 +204,27 @@ pub(super) async fn bare_reply(
     ctx: &DaemonContext,
     evidence: &OperatorMessage,
 ) -> Result<bool, ArchonError> {
+    let changes = ctx.authority_changes.lock().await;
     let open = ctx.store.lock().await.questions(true)?;
     let mut confirmations = Vec::new();
+    let mut other_confirmations = 0;
     for question in open {
+        if ctx
+            .store
+            .lock()
+            .await
+            .merge_by_question(&question.id)?
+            .is_some()
+        {
+            other_confirmations += 1;
+        }
         if let Some(pending) = load(ctx, &question.id).await?
             && pending.state == State::Waiting
         {
             confirmations.push((question, pending));
         }
     }
-    let only_one = confirmations.len() == 1;
+    let only_one = confirmations.len() + other_confirmations == 1;
     let mut target = None;
     for (question, mut pending) in confirmations {
         if pending.evidence.agent != evidence.agent || evidence.at < pending.asked_at {
@@ -225,7 +247,17 @@ pub(super) async fn bare_reply(
     )) else {
         return Ok(false);
     };
+    drop(changes);
     check_answer(ctx, &question.id, evidence).await?;
+    super::audit(
+        ctx,
+        evidence,
+        "answer confirmation",
+        "received",
+        serde_json::to_value(&question)?,
+        serde_json::json!({"answer": yes}),
+    )
+    .await?;
     handlers::answer_question(
         ctx,
         &question.id,

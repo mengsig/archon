@@ -8,6 +8,7 @@ use crate::{Timestamp, aether_ids::AetherAgentId, github::GithubRepo};
 #[serde(tag = "channel", rename_all = "snake_case")]
 pub enum OperatorChannel {
     AetherChat,
+    ArchonChat,
     Github {
         repository: GithubRepo,
         number: u64,
@@ -25,7 +26,7 @@ impl OperatorChannel {
 /// is the event's original time, so reconnecting cannot refresh old consent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OperatorMessage {
-    pub agent: AetherAgentId,
+    pub agent: Option<AetherAgentId>,
     pub seq: u64,
     pub channel: OperatorChannel,
     pub text: String,

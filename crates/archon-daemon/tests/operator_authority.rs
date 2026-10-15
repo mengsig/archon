@@ -382,3 +382,76 @@ async fn github_loosening_switch_blocks_explicit_and_cited_changes() {
     .await;
     assert!(!granted(&h).await);
 }
+
+#[tokio::test]
+async fn socket_chat_commands_work_in_shared_mode_but_agents_cannot_impersonate_them() {
+    let h = harness(AetherMode::Shared).await;
+    let command = Request::OperatorCommand {
+        text: format!("/archon set --repo {REPO_NAME} grant_merge=true"),
+    };
+    assert!(h.orchestrator(command.clone()).await.is_err());
+    assert!(
+        handlers::handle(&h.ctx, ClientKind::ArchonMcp, command.clone())
+            .await
+            .is_err()
+    );
+    tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        handlers::handle(&h.ctx, ClientKind::ArchonCli, command),
+    )
+    .await
+    .expect("socket command must not deadlock")
+    .unwrap();
+    assert!(granted(&h).await);
+    assert!(h.ctx.store.lock().await.feed_after(0, 100).unwrap().iter().any(|entry|
+        matches!(&entry.entry, archon_core::notify::FeedEntry::Authority { evidence, .. }
+            if evidence.agent.is_none() && evidence.channel == archon_core::authority::OperatorChannel::ArchonChat)));
+}
+
+#[tokio::test]
+async fn escaped_commands_are_not_applied_after_aether_delivery() {
+    let h = harness(AetherMode::Dedicated).await;
+    deliver(
+        &h,
+        1,
+        user(&format!("//archon set --repo {REPO_NAME} grant_merge=true")),
+    )
+    .await;
+    assert!(!granted(&h).await);
+}
+
+#[tokio::test]
+async fn interrupted_confirmation_can_be_closed_but_never_replayed() {
+    let h = harness(AetherMode::Dedicated).await;
+    deliver(&h, 1, user("grant requested merges")).await;
+    let question = confirmation(&h, 1).await;
+    let key = format!("authority_confirmation:{}", question.id);
+    {
+        let mut store = h.ctx.store.lock().await;
+        let mut saved: Value = serde_json::from_str(&store.kv_get(&key).unwrap().unwrap()).unwrap();
+        saved["state"] = json!("executing");
+        store.kv_set(&key, &saved.to_string()).unwrap();
+    }
+    deliver(&h, 2, user(&format!("/answer {} yes", question.number))).await;
+    assert!(!granted(&h).await);
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .question(&question.id)
+            .unwrap()
+            .is_open()
+    );
+    deliver(&h, 3, user(&format!("/answer {} no", question.number))).await;
+    assert!(
+        !h.ctx
+            .store
+            .lock()
+            .await
+            .question(&question.id)
+            .unwrap()
+            .is_open()
+    );
+    assert!(!granted(&h).await);
+}

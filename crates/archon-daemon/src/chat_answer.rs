@@ -106,7 +106,12 @@ async fn apply(
     evidence: Option<&archon_core::authority::OperatorMessage>,
 ) -> Result<Outcome, ArchonError> {
     if ctx.config.aether.mode != AetherMode::Dedicated
-        && !evidence.is_some_and(|m| m.channel.is_github())
+        && !evidence.is_some_and(|m| {
+            !matches!(
+                m.channel,
+                archon_core::authority::OperatorChannel::AetherChat
+            )
+        })
     {
         return Ok(Outcome::refused(None, SHARED_REFUSAL));
     }

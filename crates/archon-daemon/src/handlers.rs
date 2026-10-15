@@ -67,7 +67,26 @@ pub async fn handle(
         supervisor::saw_call(ctx, caller.as_ref()).await?;
         None
     };
-    let _changes = if request.is_operator_only() && !matches!(request, Request::Answer { .. }) {
+    // Serialize the state whose before/after authority confirmations observe.
+    // Lifecycle and chat delivery can replace the orchestrator, so they must
+    // never hold this mutex while waiting for its authority write lock.
+    let _changes = if matches!(
+        request,
+        Request::RepoUpdate { .. }
+            | Request::RepoRemove { .. }
+            | Request::RepoAdd(_)
+            | Request::SetCaps { .. }
+            | Request::Pause(_)
+            | Request::Resume(_)
+            | Request::ConfigureGithubWatcher { .. }
+            | Request::SetDirective { .. }
+            | Request::ClearDirective { .. }
+            | Request::UpdateLesson { .. }
+            | Request::LearningCorrect(_)
+            | Request::LearningUndo { .. }
+            | Request::LearningRestoreMemory { .. }
+            | Request::LearningRetryMemory { .. }
+    ) {
         Some(ctx.authority_changes.lock().await)
     } else {
         None
@@ -147,6 +166,9 @@ pub(crate) async fn route(
         // The server stops once this reply is sent.
         Request::Shutdown => Ok(Reply::Ok),
         Request::RepoAdd(add) => repos::add(ctx, add).await,
+        Request::OperatorCommand { text } => {
+            crate::operator_commands::from_socket(ctx, &text).await
+        }
         Request::UndoAuthority { .. } => Err(ArchonError::Invalid(
             "use /archon undo N in verified operator chat, or cite it through request_authority"
                 .into(),

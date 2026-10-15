@@ -137,6 +137,7 @@ async fn add_client(h: &Harness) {
         base_branch: Some("main".into()),
         default_pipeline: Some(PIPELINE.into()),
         auto_merge: true,
+        github_watch: false,
     };
     h.cli(Request::RepoAdd(add)).await.expect("repo add");
 }

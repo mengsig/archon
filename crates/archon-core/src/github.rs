@@ -53,6 +53,26 @@ impl GithubRepo {
         }
     }
 
+    /// The github.com repository a git remote URL names: `https://`,
+    /// `ssh://git@` or scp-like `git@github.com:owner/name`, with or without
+    /// `.git`. `None` for any other host or shape.
+    pub fn from_remote_url(url: &str) -> Option<Self> {
+        let url = url.trim();
+        let path = [
+            "https://github.com/",
+            "ssh://git@github.com/",
+            "git@github.com:",
+        ]
+        .into_iter()
+        .find_map(|prefix| url.strip_prefix(prefix))?;
+        let path = path.trim_end_matches('/');
+        let path = path.strip_suffix(".git").unwrap_or(path);
+        if path.matches('/').count() != 1 {
+            return None;
+        }
+        Self::parse(path).ok()
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -373,6 +393,34 @@ mod tests {
         assert!(GithubRepo::parse(&format!("{}/b", "a".repeat(101))).is_err());
         let decoded: Result<GithubRepo, _> = serde_json::from_str("\"not a repo\"");
         assert!(decoded.is_err());
+    }
+
+    #[test]
+    fn only_a_github_com_remote_names_a_repository() {
+        for url in [
+            "https://github.com/Mengsig/Archon.git",
+            "https://github.com/mengsig/archon/",
+            "git@github.com:mengsig/archon.git",
+            "ssh://git@github.com/mengsig/archon",
+        ] {
+            let repo = GithubRepo::from_remote_url(url);
+            assert_eq!(
+                repo.map(String::from).as_deref(),
+                Some("mengsig/archon"),
+                "{url}"
+            );
+        }
+        for url in [
+            "",
+            "/srv/git/archon",
+            "https://gitlab.com/mengsig/archon.git",
+            "https://github.com.evil.example/mengsig/archon",
+            "https://github.com/mengsig",
+            "https://github.com/mengsig/archon/tree/main",
+            "git@github.com:mengsig/../archon",
+        ] {
+            assert_eq!(GithubRepo::from_remote_url(url), None, "{url}");
+        }
     }
 
     #[test]

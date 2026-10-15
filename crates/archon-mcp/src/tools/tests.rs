@@ -258,7 +258,7 @@ fn no_tool_can_change_the_github_watcher_or_set_its_operator_logins() {
 }
 
 #[test]
-fn register_repo_never_turns_on_auto_merge() {
+fn register_repo_never_turns_on_auto_merge_or_a_github_watch() {
     let Ok(Request::RepoAdd(add)) = to_request("register_repo", json!({"path": "/srv/web"})) else {
         panic!("register_repo maps to RepoAdd");
     };
@@ -270,6 +270,14 @@ fn register_repo_never_turns_on_auto_merge() {
     assert!(
         text.contains("unknown argument(s) `auto_merge`") && text.contains("accepted: "),
         "{text}"
+    );
+    let watch = refusal(
+        "register_repo",
+        json!({"path": "/srv/web", "github_watch": true}),
+    );
+    assert!(
+        watch.contains("unknown argument(s) `github_watch`"),
+        "{watch}"
     );
 }
 

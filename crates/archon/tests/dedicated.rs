@@ -112,8 +112,10 @@ impl Env {
 
     fn calls(&self) -> Vec<Vec<String>> {
         let text = std::fs::read_to_string(self.path("aether-calls.log")).unwrap_or_default();
+        // archond's own `aether --version` probe, for `status`, invokes nothing.
         text.lines()
-            .map(|line| line.split('|').map(str::to_owned).collect())
+            .map(|line| line.split('|').map(str::to_owned).collect::<Vec<_>>())
+            .filter(|call| call[0] != "--version")
             .collect()
     }
 }

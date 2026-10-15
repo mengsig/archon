@@ -97,6 +97,12 @@ fn label(event: &TriggerEvent) -> String {
             let verdict = if *applied { "applied" } else { "refused" };
             format!("chat answer {verdict}: {question}")
         }
+        TriggerEvent::ChatCommand {
+            command, applied, ..
+        } => {
+            let verdict = if *applied { "started" } else { "refused" };
+            format!("chat command {verdict}: {command}")
+        }
         TriggerEvent::LavishFeedback { report, item, .. } => match item {
             Some(item) => format!("report feedback: {report} ({item})"),
             None => format!("report feedback: {report}"),

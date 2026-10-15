@@ -288,6 +288,7 @@ fn register_repo(args: &mut Args) -> Result<Request, ToolError> {
         base_branch: args.optional_text("base_branch")?,
         default_pipeline: args.optional_text("default_pipeline")?,
         auto_merge: false,
+        github_watch: false,
     }))
 }
 

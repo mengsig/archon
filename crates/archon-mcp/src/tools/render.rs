@@ -78,6 +78,8 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         | Reply::Feed(_)
         | Reply::Orchestrator(_)
         | Reply::GithubWatcher(_)
+        | Reply::UpgradeStarted { .. }
+        | Reply::Versions(_)
         | Reply::Gc(_) => serde_json::to_string(reply)
             .unwrap_or_else(|e| format!("(reply could not be encoded: {e})")),
     }
@@ -579,7 +581,7 @@ fn daemon_status(status: &DaemonStatus) -> String {
         "archond {} (pid {}), up since {}. Aether: {aether}. Orchestrator: {orchestrator}.\n\
          Paused: {}.\nAgents running {} (max {}), active runs {} (max {}), queued {}, blocked {}, \
          open questions {}, operator gates waiting {}.\n{} Lavish {}.\nAutonomy defaults {}; the ceiling allows {}; {} \
-         directive(s) in force (autonomy_policy lists them).{}{}",
+         directive(s) in force (autonomy_policy lists them).{}{}{}",
         status.daemon_version,
         status.pid,
         status.started_at.to_rfc3339(),
@@ -602,8 +604,24 @@ fn daemon_status(status: &DaemonStatus) -> String {
         status.autonomy.ceiling.describe_allowed(),
         status.directives.len(),
         status.github.as_ref().map_or(String::new(), github_text),
-        status.disk.as_ref().map_or(String::new(), disk_text)
+        status.disk.as_ref().map_or(String::new(), disk_text),
+        upkeep_text(status)
     )
+}
+
+/// An upgrade under way, and versions that differ: running against
+/// installed, or against the latest release once the operator checked.
+fn upkeep_text(status: &DaemonStatus) -> String {
+    let mut text = String::new();
+    if let Some(upgrade) = &status.upgrade {
+        text.push_str(&format!(
+            "\nUpgrade under way (dispatch held while it drains): {upgrade}."
+        ));
+    }
+    for line in status.versions.iter().flat_map(|versions| versions.lines()) {
+        text.push_str(&format!("\nVersions: {line}."));
+    }
+    text
 }
 
 /// Spend against the budgets, or that the budgets are off.

@@ -83,6 +83,7 @@ async fn other_repository(h: &Harness) -> PathBuf {
         base_branch: Some("main".into()),
         default_pipeline: None,
         auto_merge: false,
+        github_watch: false,
     };
     let added = h.cli(Request::RepoAdd(add)).await.expect("repo add");
     assert!(matches!(added, Reply::Repo(_)), "{added:?}");

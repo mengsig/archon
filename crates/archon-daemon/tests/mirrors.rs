@@ -241,6 +241,7 @@ async fn register(h: &Harness, name: &str) -> RepoId {
             base_branch: Some("main".into()),
             default_pipeline: Some(PIPELINE.into()),
             auto_merge: false,
+            github_watch: false,
         }))
         .await
         .expect("register");

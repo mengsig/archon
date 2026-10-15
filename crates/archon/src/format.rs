@@ -62,6 +62,12 @@ pub fn status(status: &DaemonStatus, names: &RepoNames) -> String {
         status.pid,
         duration(uptime.num_seconds())
     );
+    if let Some(upgrade) = &status.upgrade {
+        let _ = writeln!(out, "upgrade: {upgrade}");
+    }
+    for line in status.versions.iter().flat_map(|versions| versions.lines()) {
+        let _ = writeln!(out, "versions: {line}");
+    }
     link_lines(&mut out, status);
     let _ = writeln!(
         out,
@@ -698,6 +704,7 @@ pub fn problems(listing: &CatalogListing) -> Vec<String> {
 #[cfg(test)]
 pub(crate) mod tests {
     use archon_core::autonomy::{AutonomyConfig, AutonomyPolicy};
+    use archon_core::ops::{ProgramVersions, Versions};
 
     use super::*;
 
@@ -726,7 +733,37 @@ pub(crate) mod tests {
             mcp: None,
             github: None,
             disk: None,
+            versions: None,
+            upgrade: None,
         }
+    }
+
+    #[test]
+    fn status_shows_versions_only_where_they_differ_and_the_upgrade_under_way() {
+        let mut up = status_with(AetherLinkStatus::Disconnected {
+            error: "x".into(),
+            retry_at: None,
+        });
+        let program = |running: &str, installed: &str| ProgramVersions {
+            running: Some(running.into()),
+            installed: Some(installed.into()),
+            latest: None,
+        };
+        up.versions = Some(Versions {
+            archon: program("1.2.2", "1.2.3"),
+            aether: program("1.0.7", "1.0.7"),
+        });
+        up.upgrade = Some("a drained restart: draining, 2 still running, 60s left".into());
+        let text = status(&up, &RepoNames::new());
+        assert!(
+            text.contains("\nversions: archon running 1.2.2, installed 1.2.3\n"),
+            "{text}"
+        );
+        assert!(!text.contains("versions: aether"), "{text}");
+        assert!(
+            text.contains("\nupgrade: a drained restart: draining"),
+            "{text}"
+        );
     }
 
     #[test]

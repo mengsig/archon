@@ -2,6 +2,7 @@
 
 mod agent_messages;
 mod chat_answer;
+mod chat_ops;
 pub mod context;
 pub mod disk;
 pub mod dispatcher;
@@ -11,6 +12,7 @@ pub mod gc;
 pub mod github;
 pub mod handlers;
 pub mod mirror;
+pub mod ops;
 pub mod prune;
 pub mod pump;
 pub mod reports;
@@ -202,7 +204,8 @@ impl Workers {
 
 /// The server and every worker task; the first to end stops the daemon.
 /// Only the server ends cleanly (on `Shutdown`); a worker ending is a
-/// failure, and one on a full disk turns the daemon to standby.
+/// failure, and one on a full disk turns the daemon to standby. An
+/// upgrade's handed-off restart also stops it cleanly.
 async fn supervise(
     ctx: Arc<DaemonContext>,
     listener: tokio::net::UnixListener,
@@ -218,19 +221,24 @@ async fn supervise(
     workers.spawn("store pruning", prune::run(ctx.clone()));
     workers.spawn("repository mirrors", mirror::run(ctx.clone()));
     workers.spawn("learning", learned::run(ctx.clone()));
+    workers.spawn("upgrades", ops::run(ctx.clone()));
     let auto_gc = ctx.config.worktrees.auto_gc;
     if auto_gc {
         workers.spawn("worktree gc", gc::run(ctx.clone()));
     }
     assert_eq!(
         workers.names.len(),
-        7 + usize::from(auto_gc),
+        8 + usize::from(auto_gc),
         "every daemon worker is supervised"
     );
     let result = tokio::select! {
         stopped = signals.stop() => stopped,
         served = &mut server => server_ended(served),
         Some(done) = workers.join_next() => task_ended(done),
+        () = ctx.ops.stopping() => {
+            tracing::info!("stopping for an upgrade's restart");
+            Ok(())
+        }
     };
     workers.stop(WORKER_STOP).await;
     match result {
@@ -275,6 +283,11 @@ fn task_ended(done: Result<TaskResult, tokio::task::JoinError>) -> Result<(), Ar
 fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
     let DaemonOptions { config, archon_bin } = options;
     let paths = absolute_paths(DaemonPaths::resolve(&config, archon_bin))?;
+    let ops_port = Arc::new(ops::system::SystemOps {
+        archon_bin: paths.archon_bin.clone(),
+        workdir: paths.scratch.clone(),
+        startup_log: archon_core::paths::startup_log_for(&paths.socket),
+    });
     for dir in [
         &paths.data_dir,
         &paths.worktrees,
@@ -317,6 +330,7 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
         standby: std::sync::OnceLock::new(),
         gc: Mutex::new(None),
         collecting: gc::Collecting::new(dispatch),
+        ops: ops::OpsState::new(ops_port, ops::DRAIN_POLL),
     };
     Ok(ctx)
 }

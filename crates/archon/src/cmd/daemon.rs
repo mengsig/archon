@@ -1,4 +1,4 @@
-//! `archon daemon run|start|stop|status` and `archon mcp`.
+//! `archon daemon run|start|stop|status|restart|upgrade` and `archon mcp`.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write as _;
@@ -11,16 +11,19 @@ use anyhow::Context as _;
 use archon_client::ArchonClient;
 use archon_core::config::{AetherMode, Config};
 use archon_core::error::ArchonError;
-use archon_core::protocol::{ClientKind, Request};
+use archon_core::ops::{UpgradeRequest, UpgradeTarget};
+use archon_core::protocol::{ClientKind, Reply, Request};
 use archon_daemon::DaemonOptions;
 
 use super::{emit, instance};
-use crate::cli::DaemonCommand;
-use crate::connect::{archon_bin, connect_existing, connect_or_start};
+use crate::cli::{DaemonCommand, DrainArgs};
+use crate::connect::{archon_bin, connect_existing, connect_or_start, connect_running, unexpected};
 use crate::instance::{Instance, create_private_dir, effective_aether};
 
 const STOP_WAIT: Duration = Duration::from_secs(10);
 const STOP_POLL: Duration = Duration::from_millis(100);
+/// How long the restart helper waits for the archond that started it to exit.
+const RELAUNCH_WAIT: Duration = Duration::from_secs(120);
 /// How long `--detach` waits for its daemon to listen. Shorter than the
 /// client's autostart timeout, so the client still hears how it ended.
 const DETACH_WAIT: Duration = Duration::from_secs(8);
@@ -43,6 +46,15 @@ pub async fn run(command: DaemonCommand, json: bool) -> anyhow::Result<ExitCode>
             keep_aether,
         } => stop(json, aether, keep_aether).await,
         DaemonCommand::Status => status(json).await,
+        DaemonCommand::Restart { drain, keep_aether } => {
+            upgrade(upgrade_request(None, None, drain, keep_aether)?, json).await
+        }
+        DaemonCommand::Upgrade {
+            archon,
+            aether,
+            drain,
+        } => upgrade(upgrade_request(archon, aether, drain, false)?, json).await,
+        DaemonCommand::Relaunch { keep_aether } => relaunch(keep_aether).await,
     }
 }
 
@@ -304,6 +316,72 @@ fn running(client: &ArchonClient) -> (serde_json::Value, String) {
         serde_json::json!({"running": true, "welcome": welcome}),
         text,
     )
+}
+
+fn upgrade_request(
+    archon: Option<String>,
+    aether: Option<String>,
+    drain: DrainArgs,
+    keep_aether: bool,
+) -> anyhow::Result<UpgradeRequest> {
+    let target = |text: Option<String>| text.as_deref().map(UpgradeTarget::parse).transpose();
+    let request = UpgradeRequest {
+        archon: target(archon)?,
+        aether: target(aether)?,
+        drain_secs: drain.wait,
+        requeue: drain.requeue,
+        keep_aether,
+    };
+    request.check()?;
+    Ok(request)
+}
+
+/// Hand `request` to the running archond, which drains and restarts itself
+/// through a detached helper, so this command returns at once.
+async fn upgrade(request: UpgradeRequest, json: bool) -> anyhow::Result<ExitCode> {
+    let client = connect_running().await?;
+    let text = match client.call(Request::Upgrade(request)).await? {
+        Ok(Reply::UpgradeStarted { text }) => text,
+        Ok(other) => return Err(unexpected(&other, "upgrade_started")),
+        Err(refusal) => return Err(archon_client::refusal_error(refusal).into()),
+    };
+    emit(json, || Ok(serde_json::json!({"started": text})), &text)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The helper archond starts for an upgrade's restart: once archond has let
+/// go of its data directory, stop Archon's own aetherd unless kept, then
+/// start both again. Its output goes to archond's startup log.
+async fn relaunch(keep_aether: bool) -> anyhow::Result<ExitCode> {
+    wait_for_data_dir(RELAUNCH_WAIT).await?;
+    if !keep_aether && owns_aetherd()? {
+        let (_, text) = instance::stop_aether().await?;
+        println!("{text}");
+    }
+    let client = connect_or_start().await?;
+    report_running(&client, false)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Wait until no archond holds the data directory: it has exited then,
+/// even if its parent has not reaped it yet.
+async fn wait_for_data_dir(limit: Duration) -> anyhow::Result<()> {
+    let data = std::path::absolute(archon_core::paths::data_dir())
+        .context("resolving the data directory")?;
+    let deadline = tokio::time::Instant::now() + limit;
+    loop {
+        match archon_queue::DataLock::share(&data) {
+            Ok(lock) => {
+                drop(lock);
+                return Ok(());
+            }
+            Err(ArchonError::Unavailable(held)) if tokio::time::Instant::now() >= deadline => {
+                anyhow::bail!("nothing was restarted: after {limit:?}, {held}")
+            }
+            Err(ArchonError::Unavailable(_)) => tokio::time::sleep(STOP_POLL).await,
+            Err(error) => return Err(error.into()),
+        }
+    }
 }
 
 /// Serve MCP on stdio for Aether; never prints anything else to stdout.

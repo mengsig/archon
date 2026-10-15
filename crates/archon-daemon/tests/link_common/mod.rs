@@ -3,6 +3,9 @@
 
 #![allow(dead_code, reason = "each test binary uses a different subset")]
 
+#[path = "../common/fake_ops.rs"]
+pub mod fake_ops;
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -81,6 +84,7 @@ impl Harness {
             standby: OnceLock::new(),
             gc: Mutex::new(None),
             collecting: archon_daemon::gc::Collecting::new(dispatch),
+            ops: Arc::new(fake_ops::FakeOps::default()).ops_state(),
         };
         Self {
             dir,

@@ -5,7 +5,7 @@ use std::ffi::OsStr;
 use std::fs::DirEntry;
 use std::io::ErrorKind;
 use std::os::unix::fs::MetadataExt as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use anyhow::Context as _;
@@ -57,15 +57,7 @@ pub fn refusal(exe: &Path, cargo_bin: Option<&Path>) -> Option<String> {
     ))
 }
 
-/// Where `cargo install` puts binaries: `$CARGO_HOME/bin`, else `~/.cargo/bin`.
-pub fn cargo_bin_dir() -> Option<PathBuf> {
-    let home = match std::env::var_os("CARGO_HOME") {
-        Some(home) if !home.is_empty() => PathBuf::from(home),
-        _ => dirs::home_dir()?.join(".cargo"),
-    };
-    // Compared with a canonical executable path; a missing one matches nothing.
-    home.join("bin").canonicalize().ok()
-}
+pub use archon_core::paths::cargo_bin_dir;
 
 /// A private directory beside the binaries, so the staged files are on their
 /// filesystem and a rename over them is atomic. Removed when dropped.

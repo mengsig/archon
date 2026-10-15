@@ -154,6 +154,23 @@ archon orchestrator restart
 It also reports whether your Aether serves what the new version needs, and
 prints `aether update` when it does not.
 
+Or let archond do all of it without interrupting work:
+
+```sh
+archon daemon upgrade --archon latest              # --aether too, in dedicated mode
+archon daemon upgrade --archon main --wait 600 --requeue
+archon daemon restart                              # the same drained restart, installing nothing
+```
+
+archond installs (`<program> update` for an installer's binary,
+`cargo install --locked --git` for one in cargo's bin directory), holds
+dispatch until running stage agents finish or `--wait` seconds pass, then
+restarts itself and Archon's own aetherd through a detached helper and
+reports the old and new versions in `archon log`. When the wait runs out it
+gives the restart up, unless `--requeue` says to restart anyway and retry
+the stages it stopped. The orchestrator's chat takes the same as `/upgrade`
+([guide](guide.md#upgrading-and-watching-from-the-orchestrators-chat)).
+
 ### Back up before a release that migrates the store
 
 A release may migrate the queue database (`archon.db` in the data

@@ -2,6 +2,7 @@
 
 mod agent_messages;
 mod artifacts;
+mod authority;
 mod build_cache;
 mod chat_answer;
 mod chat_merge;
@@ -14,6 +15,7 @@ pub mod gc;
 pub mod github;
 pub mod handlers;
 pub mod mirror;
+mod operator_commands;
 pub mod prune;
 pub mod pump;
 pub mod reports;

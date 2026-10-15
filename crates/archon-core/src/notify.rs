@@ -145,6 +145,14 @@ impl AnswerVia {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "entry", rename_all = "snake_case")]
 pub enum FeedEntry {
+    /// The daemon observed an authenticated operator command.
+    Authority {
+        evidence: crate::authority::OperatorMessage,
+        action: String,
+        result: String,
+        before: serde_json::Value,
+        after: serde_json::Value,
+    },
     Operator {
         text: String,
     },

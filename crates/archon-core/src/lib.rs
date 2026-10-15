@@ -11,6 +11,7 @@
 pub mod aether_ids;
 pub mod age;
 pub mod agent_message;
+pub mod authority;
 pub mod autonomy;
 pub mod catalog;
 pub mod config;

@@ -68,12 +68,16 @@ pub(crate) fn parse(message: &str) -> Option<Result<Command, String>> {
 /// Apply `message` if it is a `/merge` command. Only a store failure is
 /// returned: the pump shows a message here once, so a refusal is reported,
 /// never retried.
-pub(crate) async fn handle(ctx: &DaemonContext, message: &str) -> Result<(), ArchonError> {
+pub(crate) async fn handle(
+    ctx: &DaemonContext,
+    message: &str,
+    authority: MergeAuthority,
+) -> Result<(), ArchonError> {
     let Some(parsed) = parse(message) else {
         return Ok(());
     };
     let refusal = match parsed {
-        Ok(command) => apply(ctx, &command).await?,
+        Ok(command) => apply(ctx, &command, authority).await?,
         Err(usage) => Some(usage),
     };
     match refusal {
@@ -84,8 +88,14 @@ pub(crate) async fn handle(ctx: &DaemonContext, message: &str) -> Result<(), Arc
 
 /// `Some(reason)` when no merge began; a merge that did is reported by the
 /// merge path itself.
-async fn apply(ctx: &DaemonContext, command: &Command) -> Result<Option<String>, ArchonError> {
-    if ctx.config.aether.mode != AetherMode::Dedicated {
+async fn apply(
+    ctx: &DaemonContext,
+    command: &Command,
+    authority: MergeAuthority,
+) -> Result<Option<String>, ArchonError> {
+    if ctx.config.aether.mode != AetherMode::Dedicated
+        && !matches!(authority, MergeAuthority::Github { .. })
+    {
         return Ok(Some(SHARED_REFUSAL.to_owned()));
     }
     let item = match handlers::resolve_item(ctx, &command.item).await {
@@ -93,7 +103,6 @@ async fn apply(ctx: &DaemonContext, command: &Command) -> Result<Option<String>,
         Err(error) if error.is_store() => return Err(error),
         Err(error) => return Ok(Some(error.to_string())),
     };
-    let authority = MergeAuthority::AetherChat;
     match operator_merge::merge_now(ctx, &item, authority, command.ignore_checks).await {
         Ok(merge) => {
             assert_eq!(merge.item, item, "the item named was merged");

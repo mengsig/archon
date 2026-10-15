@@ -19,6 +19,12 @@ pub enum MergeAuthority {
     /// A whole-message `/merge` from the `user` actor in the orchestrator's
     /// Aether chat, in dedicated mode.
     AetherChat,
+    /// A watcher-authenticated operator command, with its original thread.
+    Github {
+        repository: String,
+        number: u64,
+        login: String,
+    },
     /// The orchestrator's `request_merge`, which the operator confirmed by
     /// answering the daemon's question `Q<number>`.
     Confirmed { question: QuestionId, number: u64 },
@@ -32,7 +38,7 @@ impl MergeAuthority {
     pub fn orchestrator_asked(&self) -> bool {
         matches!(
             self,
-            Self::AetherChat | Self::Confirmed { .. } | Self::Grant
+            Self::AetherChat | Self::Github { .. } | Self::Confirmed { .. } | Self::Grant
         )
     }
 
@@ -42,6 +48,11 @@ impl MergeAuthority {
             Self::Cli => "the operator's `archon merge`".into(),
             Self::ArchonChat => "the operator's `/merge` in archon chat".into(),
             Self::AetherChat => "the operator's `/merge` in the orchestrator's chat".into(),
+            Self::Github {
+                repository,
+                number,
+                login,
+            } => format!("GitHub operator {login} on {repository}#{number}"),
             Self::Confirmed { number, .. } => {
                 format!(
                     "the orchestrator's request, confirmed by the operator's answer to Q{number}"

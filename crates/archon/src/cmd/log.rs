@@ -66,6 +66,7 @@ impl LogFilter {
             FeedEntry::Question(_)
             | FeedEntry::Operator { .. }
             | FeedEntry::Orchestrator { .. }
+            | FeedEntry::Authority { .. }
             | FeedEntry::System { .. } => false,
         };
         kind_ok && about
@@ -79,7 +80,7 @@ fn kind_of(entry: &FeedEntry) -> LogKind {
         FeedEntry::Question(_) => LogKind::Question,
         FeedEntry::Answer { .. } => LogKind::Answer,
         FeedEntry::Report { .. } => LogKind::Report,
-        FeedEntry::System { .. } => LogKind::System,
+        FeedEntry::System { .. } | FeedEntry::Authority { .. } => LogKind::System,
         FeedEntry::Notification(n) => match n.kind {
             NotificationKind::Question => LogKind::Question,
             NotificationKind::Decision => LogKind::Decision,

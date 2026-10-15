@@ -11,7 +11,7 @@ use archon_core::notify::FeedEntry;
 use super::fleet;
 use crate::context::DaemonContext;
 use crate::feed::{self, REPLY_STATE_KEY, ReplyTracker};
-use crate::{chat_answer, chat_merge, supervisor, triggers};
+use crate::{operator_commands, supervisor, triggers};
 
 /// Aether's event type for an agent whose older context became a summary.
 const COMPACTION_COMPLETED: &str = "compaction.completed";
@@ -92,8 +92,7 @@ async fn delivered(
     // Marked seen first: a crash here drops the command, never repeats it.
     match message {
         Some(message) if fresh && from_operator => {
-            chat_answer::handle(ctx, &message.text).await?;
-            chat_merge::handle(ctx, &message.text).await
+            operator_commands::handle(ctx, event, seq, message).await
         }
         _ => Ok(()),
     }

@@ -85,19 +85,27 @@ pub(crate) fn parse(message: &str) -> Option<Result<Command, String>> {
 /// Apply `message` if it is an `/answer` command and tell the operator what
 /// happened. Only a store failure is returned: the pump shows a message
 /// here once, so any other refusal is reported, never retried.
-pub(crate) async fn handle(ctx: &DaemonContext, message: &str) -> Result<(), ArchonError> {
+pub(crate) async fn handle(
+    ctx: &DaemonContext,
+    message: &str,
+    github: bool,
+) -> Result<(), ArchonError> {
     let Some(parsed) = parse(message) else {
         return Ok(());
     };
     let outcome = match parsed {
-        Ok(command) => apply(ctx, &command).await?,
+        Ok(command) => apply(ctx, &command, github).await?,
         Err(usage) => Outcome::refused(None, usage),
     };
     report(ctx, outcome).await
 }
 
-async fn apply(ctx: &DaemonContext, command: &Command) -> Result<Outcome, ArchonError> {
-    if ctx.config.aether.mode != AetherMode::Dedicated {
+async fn apply(
+    ctx: &DaemonContext,
+    command: &Command,
+    github: bool,
+) -> Result<Outcome, ArchonError> {
+    if ctx.config.aether.mode != AetherMode::Dedicated && !github {
         return Ok(Outcome::refused(None, SHARED_REFUSAL));
     }
     let Some(question) = find(ctx, &command.question).await? else {

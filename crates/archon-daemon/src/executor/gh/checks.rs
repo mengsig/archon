@@ -97,9 +97,11 @@ pub(crate) async fn of_pull_request(
             }
         }
     }
-    // A refusal such as billing stops every job: past the probes, so are the rest.
+    // A refusal such as billing stops every Actions job: past the probes, so are the rest.
     if not_started.len() == MAX_PROBES {
-        not_started.extend(failing.iter().skip(MAX_PROBES).map(|c| c.name.clone()));
+        let rest = failing.iter().skip(MAX_PROBES);
+        let jobs = rest.filter(|c| actions_job(&c.link).is_some());
+        not_started.extend(jobs.map(|c| c.name.clone()));
     }
     let queued = if waited_long {
         unstarted(&checks)

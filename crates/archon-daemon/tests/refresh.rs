@@ -454,14 +454,14 @@ async fn passing_checks_end_the_watch_quietly() {
     assert!(pr_checks_news(&h).await.is_empty());
 }
 
-/// Past the probes a billing refusal stops the rest too; a probe GitHub
-/// refuses leaves its check failed rather than hiding it.
+/// Past the probes a billing refusal stops the other Actions jobs too, not a
+/// check outside Actions; a probe GitHub refuses leaves its check failed.
 #[tokio::test]
 async fn many_unstarted_jobs_and_refused_probes_are_told_right() {
     let (h, gh) = delivering().await;
     let (_, run) = shipped(&h, "the change").await;
     let started = "2026-10-15T09:20:44Z";
-    let jobs: Vec<Value> = (0..10)
+    let mut jobs: Vec<Value> = (0..10)
         .map(|i| job(&format!("job{i}"), "fail", started, 20 + i))
         .collect();
     gh.set_checks(&json!(jobs));
@@ -477,12 +477,25 @@ async fn many_unstarted_jobs_and_refused_probes_are_told_right() {
         "all ten never started: {news:?}"
     );
 
+    let external = "https://ci.example.com/build/7";
+    jobs.push(
+        json!({"name": "external", "bucket": "fail", "startedAt": started, "link": external}),
+    );
+    gh.set_checks(&json!(jobs));
     let (_, second) = shipped(&h, "another change").await;
-    gh.set_checks(&json!([job("test", "fail", started, 40)]));
-    gh.set_annotations(&json!("not annotations"));
     age_watch(&h, &second, 3).await;
     executor::coordination::reconcile(&h.ctx).await.unwrap();
     let news = pr_checks_news(&h).await;
     assert_eq!(news.len(), 2, "{news:?}");
-    assert_eq!(news[1], ("failed".to_owned(), "failed: test".to_owned()));
+    let ran = ("failed".to_owned(), "failed: external".to_owned());
+    assert_eq!(news[1], ran, "a check outside Actions ran and failed");
+
+    let (_, third) = shipped(&h, "a third change").await;
+    gh.set_checks(&json!([job("test", "fail", started, 40)]));
+    gh.set_annotations(&json!("not annotations"));
+    age_watch(&h, &third, 3).await;
+    executor::coordination::reconcile(&h.ctx).await.unwrap();
+    let news = pr_checks_news(&h).await;
+    assert_eq!(news.len(), 3, "{news:?}");
+    assert_eq!(news[2], ("failed".to_owned(), "failed: test".to_owned()));
 }

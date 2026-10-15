@@ -6,8 +6,10 @@
 
 use std::path::Path;
 
+use archon_core::autonomy::{ProposalMode, ReportMode};
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
+use archon_core::model::{ModelPlan, reviewers_key};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::{Repo, ShipMode};
 use archon_core::run::PipelineRun;
@@ -16,6 +18,8 @@ use archon_queue::store::stacks::Refresh;
 use super::dependencies::is_plain_branch;
 use super::{gh, recover};
 use crate::context::DaemonContext;
+use crate::knobs;
+use crate::resolve::RepoEnv;
 use crate::worktree::shadow::Shadow;
 use crate::worktree::stack;
 
@@ -26,7 +30,9 @@ pub(crate) async fn refresh_item(
     id: &QueueItemId,
 ) -> Result<QueueItem, ArchonError> {
     let (owner, run, repo) = target(ctx, id).await?;
-    let base = base_of(ctx, &run).await?;
+    let env = RepoEnv::new(Some(repo.clone()))?;
+    let base = base_of(ctx, &run, &env).await?;
+    let prepared = refresh_owner(ctx, &owner, &env)?;
     if repo.ship == ShipMode::Pr && run.shipped {
         check_pr_open(ctx, &repo, &run.branch).await?;
     }
@@ -42,7 +48,7 @@ pub(crate) async fn refresh_item(
                 "{id} changed while its refresh was prepared; ask again"
             )));
         }
-        store.enqueue_refresh(&owner, &run, &refresh)?
+        store.enqueue_refresh(&prepared, &run, &refresh)?
     };
     assert!(!queued.state.is_terminal(), "a refresh still to run");
     tracing::info!(item = %id, refresh = %queued.id, base = %refresh.base, sha = %refresh.sha, "refresh queued");
@@ -93,13 +99,98 @@ async fn target(
     Ok((item, run, repo))
 }
 
-/// The base branch `run` forked from, by name.
-async fn base_of(ctx: &DaemonContext, run: &PipelineRun) -> Result<String, ArchonError> {
-    let vars = recover::load_run_vars(&*ctx.store.lock().await, &run.id)?;
-    let base = vars
-        .get("base_branch")
-        .map(|b| b.trim())
-        .unwrap_or_default();
+/// Keep the owner's pipeline, but discard stale stage choices left by steering.
+fn refresh_owner(
+    ctx: &DaemonContext,
+    owner: &QueueItem,
+    env: &RepoEnv,
+) -> Result<QueueItem, ArchonError> {
+    let mut item = owner.clone();
+    item.autonomy.proposal = ProposalMode::Off;
+    item.autonomy.report = ReportMode::Off;
+    let (base, spec) = knobs::item_specs(env, &item)?;
+    knobs::check_ceiling(&env.autonomy(&ctx.config), env, &base, item.autonomy)?;
+    let policy = env.policy(&ctx.config);
+    let fallback = knobs::default_choice(&ctx.config, &policy, &spec);
+    let mut plan = ModelPlan::default();
+    let mut reasons = archon_core::model::ModelReasons::default();
+    for stage in &spec.file.stages {
+        let source = if stage.id == "implement" && !owner.model_plan.0.contains_key("implement") {
+            "build"
+        } else {
+            &stage.id
+        };
+        for (target, source, limit) in [
+            (stage.id.clone(), source.to_owned(), stage.fan_out as usize),
+            (
+                reviewers_key(&stage.id),
+                reviewers_key(source),
+                archon_pipeline::spec::STRICT_REVIEWERS as usize,
+            ),
+        ] {
+            if target.ends_with(".review") && spec.reviewers_key().as_ref() != Some(&target) {
+                continue;
+            }
+            if let Some(choices) = owner.model_plan.choices_for(&source) {
+                let choices: Vec<_> = choices
+                    .iter()
+                    .filter(|choice| policy.check(choice).is_ok())
+                    .take(limit)
+                    .cloned()
+                    .collect();
+                if !choices.is_empty() {
+                    plan.0.insert(target.clone(), choices);
+                    if let Some(reason) = owner.model_reasons.as_ref().and_then(|r| r.get(&source))
+                    {
+                        reasons.insert(target, reason.clone());
+                    }
+                }
+            }
+        }
+    }
+    item.model_plan = knobs::fill_static_stages(&base, &spec, plan, fallback.as_ref())?;
+    item.model_reasons = Some(reasons);
+    item.stage_timeouts
+        .retain(|stage, _| spec.stage(stage).is_some());
+    for stage in &spec.file.stages {
+        if item
+            .model_plan
+            .choices_for(&stage.id)
+            .is_none_or(|choices| choices.is_empty())
+        {
+            return Err(ArchonError::Invalid(format!(
+                "no model allowed for refresh stage {:?}",
+                stage.id
+            )));
+        }
+    }
+    spec.check_plan_keys(&item.model_plan)?;
+    policy.check_plan(&item.model_plan)?;
+    Ok(item)
+}
+
+/// Retained fork metadata survives template expiry; old runs use the configured
+/// repository base when neither the metadata nor their templates remain.
+async fn base_of(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+    env: &RepoEnv,
+) -> Result<String, ArchonError> {
+    let store = ctx.store.lock().await;
+    let base = match store.kv_get(&format!("run_base:{}", run.id))? {
+        Some(base) => base,
+        None => match recover::load_run_vars(&store, &run.id) {
+            Ok(vars) => vars.get("base_branch").cloned().unwrap_or_default(),
+            Err(ArchonError::NotFound(_)) => env
+                .repo
+                .as_ref()
+                .and_then(|repo| repo.base_branch.clone())
+                .or_else(|| env.config.repo.base_branch.clone())
+                .unwrap_or_default(),
+            Err(error) => return Err(error),
+        },
+    };
+    let base = base.trim();
     if stack::is_commit_id(base) || !is_plain_branch(base) {
         return Err(ArchonError::Invalid(format!(
             "the item's run forked from {base:?}, not a base branch; set the repository's base \

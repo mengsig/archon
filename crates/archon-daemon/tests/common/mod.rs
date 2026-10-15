@@ -635,6 +635,8 @@ struct FakeState {
     by_key: BTreeMap<String, SpawnedAgent>,
     failures: VecDeque<ArchonError>,
     cancel_failures: VecDeque<ArchonError>,
+    /// Agents whose accepted cancel leaves them live until `kill`.
+    slow_cancels: BTreeSet<AetherAgentId>,
     outcome_failures: VecDeque<ArchonError>,
     /// Tasks whose `task_outcome` always fails with this Aether error.
     unreadable: BTreeMap<AetherTaskId, String>,
@@ -696,9 +698,17 @@ impl FakeState {
         self.node_by_key.values().any(|n| n.agent == *agent)
     }
 
-    /// Created long-lived: it outlives its task until it is cancelled.
+    /// Created long-lived: it outlives its task until it or its run node
+    /// is cancelled, as Aether's cancel takes the node's subtree with it.
     fn is_kept(&self, agent: &AetherAgentId) -> bool {
-        let kept = |key: &String| self.recorded[key].keep;
+        let kept = |key: &String| {
+            let request = &self.recorded[key];
+            request.keep
+                && !request
+                    .parent
+                    .as_ref()
+                    .is_some_and(|p| self.dead.contains(p))
+        };
         self.by_key
             .iter()
             .any(|(key, s)| s.agent == *agent && kept(key))
@@ -748,6 +758,12 @@ impl FakeBackend {
     /// The next `cancel` calls fail with these errors, in order.
     pub fn fail_next_cancel(&self, error: ArchonError) {
         self.state().cancel_failures.push_back(error);
+    }
+
+    /// A cancel of `agent` is accepted but, being cooperative, leaves it
+    /// live (`is_live`) until `kill`.
+    pub fn cancel_slowly(&self, agent: &AetherAgentId) {
+        self.state().slow_cancels.insert(agent.clone());
     }
 
     /// The next `task_outcome` calls fail with these errors, in order.
@@ -857,6 +873,7 @@ impl FakeBackend {
         let mut state = self.state();
         assert!(state.knows(agent), "kill knows only created agents");
         state.dead.insert(agent.clone());
+        state.in_turn.remove(agent);
     }
 
     /// `network_default` reports `network` from now on: Aether's
@@ -1111,8 +1128,28 @@ impl AgentBackend for FakeBackend {
             return Err(error);
         }
         state.cancelled.push(agent.clone());
+        if state.slow_cancels.contains(agent) {
+            state.in_turn.insert(agent.clone());
+            return Ok(());
+        }
         state.dead.insert(agent.clone());
         state.in_turn.remove(agent);
+        if state.is_node(agent) {
+            let children: Vec<_> = state
+                .by_key
+                .iter()
+                .filter_map(|(key, child)| {
+                    (state.recorded[key].parent.as_ref() == Some(agent))
+                        .then_some(child.agent.clone())
+                })
+                .collect();
+            for child in children {
+                if !state.slow_cancels.contains(&child) {
+                    state.dead.insert(child.clone());
+                    state.in_turn.remove(&child);
+                }
+            }
+        }
         Ok(())
     }
 

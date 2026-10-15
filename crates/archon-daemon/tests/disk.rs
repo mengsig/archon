@@ -102,6 +102,33 @@ async fn low_disk_holds_dispatch_with_one_blocker_per_episode() {
 }
 
 #[tokio::test]
+async fn low_disk_also_holds_the_next_stage_of_an_already_running_item() {
+    let h = Harness::new().await;
+    h.enqueue("running before the disk filled").await;
+    h.dispatch().await;
+    assert_eq!(h.backend.requests().len(), 1);
+    h.set_free_bytes(GIB);
+    h.dispatch().await;
+    h.settle_running(|_| common::completed("implemented")).await;
+    h.dispatch().await;
+    assert_eq!(
+        h.backend.requests().len(),
+        1,
+        "no next-stage agent starts below the floor"
+    );
+    assert!(disk_status(&h).await.held);
+    assert!(h.notices(NotificationKind::Blocker).await[0].contains("limits.min_free_gb"));
+
+    h.set_free_bytes(100 * GIB);
+    h.dispatch().await;
+    assert!(
+        h.backend.requests().len() > 1,
+        "next stage starts once space returns"
+    );
+    assert!(!disk_status(&h).await.held);
+}
+
+#[tokio::test]
 async fn min_free_gb_zero_turns_the_low_disk_hold_off() {
     let h = Harness::with_config(without_low_disk_hold()).await;
     h.set_free_bytes(0);

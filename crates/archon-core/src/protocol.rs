@@ -743,6 +743,10 @@ pub struct GcReport {
     /// Items' published artifacts deleted after `artifacts.keep_after`.
     #[serde(default)]
     pub artifacts: Vec<Reclaimed>,
+    /// Items' own build target directories deleted: at the item's end, or
+    /// by gc once its item was final or gone.
+    #[serde(default)]
+    pub item_caches: Vec<Reclaimed>,
     /// Owned report snapshots of settled items removed after storage retention.
     #[serde(default)]
     pub reports: Vec<Reclaimed>,
@@ -767,6 +771,7 @@ impl GcReport {
         self.reclaimed.extend(other.reclaimed);
         self.caches.extend(other.caches);
         self.artifacts.extend(other.artifacts);
+        self.item_caches.extend(other.item_caches);
         self.reports.extend(other.reports);
         self.skipped.extend(other.skipped);
         self.failed.extend(other.failed);
@@ -779,6 +784,7 @@ impl GcReport {
             || !self.reclaimed.is_empty()
             || !self.caches.is_empty()
             || !self.artifacts.is_empty()
+            || !self.item_caches.is_empty()
             || !self.reports.is_empty()
     }
 
@@ -791,11 +797,13 @@ impl GcReport {
         };
         format!(
             "Gc{why} freed {}: removed {} worktree(s) and set-aside directories, deleted the \
-             build caches of {} worktree(s), {} shared build cache(s), the artifacts of {} item(s), and {} report snapshot(s).",
+             build caches of {} worktree(s), {} shared build cache(s), the build directories of {} item(s), \
+             the artifacts of {} item(s), and {} report snapshot(s).",
             gib(self.bytes_freed),
             self.removed.len(),
             self.reclaimed.len(),
             self.caches.len(),
+            self.item_caches.len(),
             self.artifacts.len(),
             self.reports.len(),
         )

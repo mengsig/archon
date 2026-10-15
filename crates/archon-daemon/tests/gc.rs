@@ -61,6 +61,7 @@ async fn cancelled_run(h: &Harness, title: &str) -> (QueueItem, PathBuf) {
         reason: None,
     };
     h.cli(cancel).await.expect("cancel");
+    h.dispatch().await;
     assert!(matches!(
         h.state(&item.id).await,
         QueueState::Cancelled { .. }

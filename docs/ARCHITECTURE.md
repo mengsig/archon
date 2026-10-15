@@ -409,7 +409,9 @@ carries each agent's `parent`.
   refusal fails the stage. `unavailable` leaves the request pending and
   re-issues the stage under its key on the next pass.
 - **Retirement.** When the run finishes and none of its stage runs is
-  live any more, the node is cancelled and its `kv` entry deleted. Aether
+  live any more, the node is cancelled; its `kv` entry stays until Aether
+  confirms that it, every recorded stage agent, and their descendants have
+  ended. Aether
   settles a task in the middle of the agent's turn (`complete_task`), and
   the agent completes only when the turn ends, seconds later for an engine
   agent; its cancel cascades through the node's live subtree. So before
@@ -417,10 +419,12 @@ carries each agent's `parent`.
   within the last 60 s, most recently settled first, and waits while one
   is still live, so the last stage ends as `completed` rather than
   `cancelled` and its final turn is not cut short. An agent more than 60 s
-  past its own settlement is not asked about: its grace is over and the
-  node is cancelled regardless, so a long run's history (up to 32 stages,
-  16 agents each) is never queried, and the usual case (the last stage
-  still ending its turn) costs one `get_agent`. Retirement is derived from the
+  past its own settlement no longer delays cancellation. The usual case
+  (the last stage still ending its turn) costs one `get_agent` per sweep.
+  After cancellation, all recorded builders are checked, including older
+  stages and kept agents: acceptance of a cooperative cancel is not proof
+  that it stopped. Unanswered checks retain the node and build cache.
+  Retirement is derived from the
   store, not from memory: `stop_run` asks for it at once, and every
   dispatch sweep ranges over `kv.run_node:*` (a primary-key range, so it
   costs what is still to retire, not the store's history) for finished runs
@@ -3028,7 +3032,14 @@ object per line under `--json`).
   conflicts. It never rebases or force-pushes: archond fetches the base's
   head (`origin`'s in `pr` mode, else the local branch) and queues a new
   item, titled `Refresh <item> onto <base>`, that runs the owner's pipeline
-  on the owner's branch and worktree like a restack fix (§8.8): its agent
+  on the owner's branch and worktree like a restack fix (§8.8). Proposal and
+  report are always off; review, merge and tools are retained. The model plan
+  is mapped to that pipeline's stages (a steered `build` supplies `implement`
+  and its reviewer choices); missing or no longer permitted choices use the
+  refresh default within model policy. The plan is validated before enqueue.
+  The run's base branch is retained separately from expiring prompt templates;
+  older runs with neither use the repository's configured base, or require
+  `archon repo set` when none is configured. Its agent
   merges that commit with `git merge`, resolves conflicts, commits and runs
   the checks; its review must cover the change from the new merge base
   (conflict resolutions included: the review fork of §8.2 counts `origin`'s
@@ -3557,28 +3568,69 @@ filters never run, the operator's do. Not yet through the shadow: a team's
 worker worktrees, merges and status (§13.1), which run no hook but the
 repository's filters.
 
-### 13.5 Shared build cache and durable artifacts
+### 13.5 Build cache and durable artifacts
 
-**Build cache.** A repository's stages build into one cargo target directory,
-`<data>/cache/<repo>/cargo-target`, never one per task and never `/tmp`.
-Aether cannot set an agent's environment, so archond keeps a
-`.cargo/config.toml` (marked as its own) in `<worktrees>/<repo>/` that
-points cargo at it for every worktree below, and the stage contract names
-the directory (`CARGO_TARGET_DIR=...`) for builds run elsewhere. A
-repository's own `.cargo/config.toml` is nearer a worktree and wins.
-`[worktrees] shared_cache = false`, or `[cache] shared = false` in
-`<repo>/.archon/config.toml`, turns it off; archond then removes the config
-it wrote. Cargo locks the directory, so concurrent builds are safe, but
-builds of one profile queue on that lock: a repository with many parallel
-items trades build time for disk and warm incremental state, and may opt
-out. A pool of target directories is not built; nothing needed it yet.
+**Build cache.** Cargo output of agent builds filled disks (one cold build of
+a mid-size workspace takes ~38 GB, 28 GB of it test-binary debuginfo and 10 GB
+incremental state), so builds are lean and scoped to the item.
 
-**Cache gc.** The gc pass (§13.2) also deletes a repository's cache that no
-run started in for `worktrees.shared_cache_after` (default 14d), unless a run
-of the repository is live (it is listed as skipped). While dispatch is held
-for disk space, `worktrees.pressure_after` applies to caches as to worktrees.
-The pass's feed note and `archon gc` / `archon status` report caches and
-artifacts removed and the bytes freed. Live runs' worktrees are never touched.
+- *Per-item target directory (default).* Each item builds into
+  `<data>/cache/<repo>/items/<item>/cargo-target`, never `/tmp`. Retries and
+  later stages of the item reuse it. When the item reaches a final state
+  (succeeded, failed, cancelled; a retry queues it again and recreates the
+  directory) archond deletes the directory once the run's agents, and what
+  they delegated, are confirmed stopped. A durable `build_release:<item>`
+  obligation retries delayed cleanup on each dispatch sweep, including after
+  a restart; GC leaves it to that cleanup. Deletion runs after making unreadable subdirectories owner-accessible (test suites leave
+  mode-000 directories plain `rm` cannot enter). The feed and `archon status`
+  say how many bytes it freed. The gc pass (§13.2) sweeps `items/*`
+  directories whose item is final or gone, reporting them as item build
+  directories; a name that is no item id, and an `items` directory that is a
+  symlink, are left alone.
+- *Shared directory (option).* `[worktrees] shared_cache = true` (per
+  repository: `[cache] shared`) builds every item of the repository into
+  `<data>/cache/<repo>/cargo-target`. Cargo's build lock serialises parallel
+  builds of one profile, so items can hit the stage timeout; the idle
+  directory is deleted after `worktrees.shared_cache_after`.
+- *Off.* `[worktrees] item_cache = false` (per repository `[cache] item =
+  false`) with the shared mode off leaves agents building in their worktrees,
+  whose caches the worktree gc deletes.
+- *Lean profile.* Unless `[worktrees] lean_builds = false` (per repository
+  `[cache] lean = false`), archond's `.cargo/config.toml` sets
+  `[build] incremental = false` and `debug = "line-tables-only"` for
+  `[profile.dev]` and `[profile.test]`; backtraces keep file:line. Archond
+  writes it (marked as its own) in `<worktrees>/<repo>/`, above every
+  worktree, and removes it when neither the lean profile nor the shared
+  directory applies.
+
+Aether cannot set an agent's environment and cargo config has no per-item
+templating, so the per-item directory reaches cargo through the stage
+contract (`CARGO_TARGET_DIR=...`, which beats any config once exported); an agent
+that ignores it builds into its worktree, whose caches gc deletes. The shared
+directory is also written into the config as `target-dir`.
+
+*Precedence (checked with cargo 1.98).* Cargo takes each key from the nearest
+config, so a repository's own `.cargo/config.toml` (nearer a worktree) wins
+for any key it sets, including its own `[profile]` and `target-dir`.
+A `[profile]` in config beats the same setting in `Cargo.toml`, so archond's
+lean profile overrides a `debug = 2` in the repository's `Cargo.toml`;
+a repository that needs full debuginfo sets `[cache] lean = false` or its own
+`.cargo/config.toml`. `CARGO_TARGET_DIR` and `CARGO_PROFILE_*` environment
+variables beat all config files.
+
+*Disk floor.* The low-disk hold (§7.3, `limits.min_free_gb`, default 10 GiB)
+already covers builds started by new stages: no item and no stage agent is
+spawned below the floor, and the data directory (where the cache lives) is
+watched. It cannot stop a build a running agent starts; the lean profile and
+the end-of-item deletion keep those small.
+
+**Cache gc.** The gc pass (§13.2) also deletes a repository's shared cache
+that no run started in for `worktrees.shared_cache_after` (default 14d),
+unless a run of the repository is live (it is listed as skipped). While
+dispatch is held for disk space, `worktrees.pressure_after` applies to caches
+as to worktrees. The pass's feed note and `archon gc` / `archon status`
+report caches, item build directories and artifacts removed and the bytes
+freed. Live runs' worktrees are never touched.
 
 **Artifacts.** A stage publishes files with `publish_artifact` (a file or a
 directory of regular files, from inside its workspace). They are copied to
@@ -3859,7 +3911,7 @@ rubric), and a review task (seeded bug must be reported).
 | `archond` crash or restart | Startup. | Open the store, then reconcile. `dispatching` items without a run go back to `queued`. For `spawning` stage runs, re-issue `create_agent` with the stored request under the same key (Aether dedupes): a `bound` one exactly as stored, a `pending` one after binding it to the run's node, which `kv.run_node:<run>` names and `get_agent` confirms live (§4.5). A node create whose reply was lost is replayed from its stored request. For `running` stage runs, `get_task`, and feed any settled outcome to the driver. Rebuild drivers with `RunDriver::resume`. Resubscribe from cursors. Finished runs whose node was not retired are retired by the first sweep, once none of their stage agents is still live in Aether (§4.5). A shipped run's worktree whose removal the crash lost is removed by worktree gc (§13.2). |
 | Run node lost (Aether wiped, or cancelled in its TUI) | `get_agent` before the run's next stage is bound. | Create a replacement under `<run>:node:<generation+1>` and parent the stage agent under it (§4.5). Aether's cancel cascade has already ended the node's live stage agents; their `agent.cancelled` events settle their stages as cancelled, which the driver treats as failed work. A stage already bound to the lost node is refused when re-issued and fails. |
 | Run node cancel unanswered or failed | `cancel` returns `unavailable` or an error at retirement. | The `kv.run_node:<run>` entry stays; every dispatch sweep retires finished runs with no live stage until the cancel is answered (§4.5). |
-| Stage agent still ending its turn when its run finishes | `get_agent` at retirement reports it live. | The node is left for the next sweep, up to 60 s after that stage settled; then it is cancelled regardless (§4.5). Only agents settled within the last 60 s are asked, newest first. |
+| Stage agent still ending its turn when its run finishes | `get_agent` at retirement reports it live. | The node is left for the next sweep, up to 60 s after that stage settled; then it is cancelled regardless (§4.5). Before cancellation, only agents settled within the last 60 s are asked, newest first. After cancellation all builders and descendants must be confirmed stopped before retirement permits cache deletion. |
 | Aether's `[network] default` changes mid-run | `status.network_default`, read each time a stage is bound to its node. | A stage bound afterwards states the narrower of its node's network and the new default: a tightened default is honoured at once, and a loosened one never widens the node, which Aether would refuse. A stage bound before the change is replayed exactly as stored (§4.5). |
 | Archon's own `aetherd` cannot start (dedicated mode) | `aether daemon` exits non-zero, or nothing listens within 10 s. | The command fails with Aether's own stderr. `archond` is not started by that command. `archon doctor` shows the instance's state. |
 | Aether unreachable at start | Connect error. | Serve the Archon socket anyway. `Status` shows `aether: disconnected`. Reconnect with backoff from 1s to 30s; while nothing listens on a local socket (it is missing, or refuses) every second instead, logged once, so an aetherd that starts is found at once. No dispatch while disconnected. An `archon` command that started or restarted Archon's own aetherd, or waited while another did, waits up to 5 s for `archond` to report the link before it runs, and says so when that runs out. |

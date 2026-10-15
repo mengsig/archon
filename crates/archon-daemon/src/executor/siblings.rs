@@ -41,6 +41,11 @@ pub(super) fn owe(
     store.kv_set(&stop_key(stage), &serde_json::to_string(&owed)?)
 }
 
+/// Whether the stop of `stage`'s agent is still owed.
+pub(super) fn owes(store: &Store, stage: &StageRunId) -> Result<bool, ArchonError> {
+    Ok(store.kv_get(&stop_key(stage))?.is_some())
+}
+
 /// Stage runs whose agent stop is still owed.
 pub(super) fn owed(store: &Store) -> Result<Vec<StageRunId>, ArchonError> {
     let mut stages = Vec::new();
@@ -79,6 +84,15 @@ pub(super) async fn stop(ctx: &DaemonContext, stage: &StageRunId) -> Result<Foll
             tracing::warn!(agent = %owed.agent, %refusal, "Aether refused to stop a cancelled sibling; it has most likely ended");
         }
     }
-    ctx.store.lock().await.kv_delete(&key)?;
-    Ok(FollowUp::default())
+    let build = {
+        let mut store = ctx.store.lock().await;
+        store.kv_delete(&key)?;
+        let run = store.stage_run(stage)?.run;
+        super::finish::run_build(&store, &run)?
+    };
+    // Its item's build directory waited for the stop too.
+    Ok(FollowUp {
+        release_builds: build.into_iter().collect(),
+        ..FollowUp::default()
+    })
 }

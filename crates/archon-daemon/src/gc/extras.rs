@@ -21,8 +21,8 @@ use archon_core::repo::Repo;
 use archon_queue::Store;
 
 use super::Roots;
-use super::cache::disk_usage;
-use crate::build_cache::USED_MARKER;
+use super::cache::remove_tree;
+use crate::build_cache::{ITEMS_DIR, USED_MARKER};
 
 /// Directories claimed by a pass that stopped before deleting them start
 /// with this; the next pass deletes them.
@@ -74,6 +74,7 @@ pub(super) struct Claimed {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Cache,
+    ItemCache,
     Artifacts,
     Experiments,
 }
@@ -106,6 +107,8 @@ pub(super) fn claim(
         };
         if due {
             claim_dir(dir, Kind::Cache, &mut claimed, report);
+        } else if !name.starts_with(CLAIMED_PREFIX) {
+            claim_orphan_items(store, &dir.join(ITEMS_DIR), &mut claimed, report)?;
         }
     }
     for dir in subdirectories(&roots.artifacts(), report) {
@@ -126,6 +129,51 @@ pub(super) fn claim(
         }
     }
     Ok(claimed)
+}
+
+/// Claim the build directories under `items_root` whose item is final or
+/// gone: the item's end deletes its own, so these are what a crash or a
+/// failed deletion left. An unparsable name is the operator's to judge.
+fn claim_orphan_items(
+    store: &Store,
+    items_root: &Path,
+    claimed: &mut Vec<Claimed>,
+    report: &mut GcReport,
+) -> Result<(), ArchonError> {
+    match crate::build_cache::real_dir(items_root) {
+        Ok(true) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Ok(false) => {
+            let why = "not a directory of archond's (a symlink?); left alone".to_owned();
+            report.failed.push((items_root.to_path_buf(), why));
+            return Ok(());
+        }
+        Err(e) => {
+            report
+                .failed
+                .push((items_root.to_path_buf(), format!("inspecting it: {e}")));
+            return Ok(());
+        }
+    }
+    for dir in subdirectories(items_root, report) {
+        let name = file_name(&dir);
+        let due = if name.starts_with(CLAIMED_PREFIX) {
+            true
+        } else {
+            let Ok(id) = QueueItemId::parse(&name) else {
+                continue;
+            };
+            match store.item(&id) {
+                Ok(_) => crate::build_cache::is_sweepable(store, &id)?,
+                Err(ArchonError::NotFound(_)) => true,
+                Err(error) => return Err(error),
+            }
+        };
+        if due {
+            claim_dir(dir, Kind::ItemCache, claimed, report);
+        }
+    }
+    Ok(())
 }
 
 /// Whether an experiments directory outlived its item: nothing of the item can run any
@@ -203,7 +251,8 @@ pub(crate) fn is_claimed(name: &str) -> bool {
     name.starts_with(CLAIMED_PREFIX)
 }
 
-/// The names of the registered repositories with an item not yet settled.
+/// The names of the registered repositories with an item not yet settled,
+/// or settled with an agent that may still run.
 fn live_repositories(store: &Store) -> Result<HashSet<String>, ArchonError> {
     let names: std::collections::HashMap<_, _> = store
         .repos()?
@@ -216,7 +265,7 @@ fn live_repositories(store: &Store) -> Result<HashSet<String>, ArchonError> {
     };
     let mut live = HashSet::new();
     for item in store.items(&query)? {
-        if item.state.is_terminal() {
+        if crate::build_cache::is_sweepable(store, &item.id)? {
             continue;
         }
         if let Some(name) = item.repo.as_ref().and_then(|id| names.get(id)) {
@@ -320,12 +369,7 @@ pub(super) fn delete(claimed: Vec<Claimed>) -> GcReport {
         kind,
     } in claimed
     {
-        let freed = disk_usage(&aside).and_then(|bytes| {
-            std::fs::remove_dir_all(&aside)
-                .map_err(|e| ArchonError::io(format!("removing {}", aside.display()), e))?;
-            Ok(bytes)
-        });
-        match freed {
+        match remove_tree(&aside) {
             Ok(bytes) => {
                 let freed = Reclaimed {
                     path: original,
@@ -333,6 +377,7 @@ pub(super) fn delete(claimed: Vec<Claimed>) -> GcReport {
                 };
                 match kind {
                     Kind::Cache => report.caches.push(freed),
+                    Kind::ItemCache => report.item_caches.push(freed),
                     Kind::Artifacts => report.artifacts.push(freed),
                     Kind::Experiments => report.removed.push(freed.path),
                 }

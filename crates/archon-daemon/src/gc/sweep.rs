@@ -237,7 +237,11 @@ fn remove_worktree(repo: &Path, path: &Path, roots: &Roots, policy: &Policy) -> 
         match unremovable(&roots.data_dir, repo, path, &policy.cache_dirs) {
             Ok(None) => {}
             Ok(Some(why)) => {
-                let reclaimed = match cache::reclaim_worktree(path, &policy.cache_dirs) {
+                let reclaimed = match if policy.reclaim_before == archon_core::Timestamp::MIN_UTC {
+                    Ok(None)
+                } else {
+                    cache::reclaim_worktree(path, &policy.cache_dirs)
+                } {
                     Ok(bytes) => bytes,
                     Err(e) => return Verdict::Failed(format!("deleting its caches: {e}")),
                 };

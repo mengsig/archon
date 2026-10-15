@@ -42,8 +42,45 @@ pressure_after = "1d"          # shorter ages while dispatch is held for disk sp
 [artifacts]                    # files stages publish; read by item id later
 max_file_mb = 256
 max_item_mb = 1024
-keep_after = "30d"             # after the item settled
+keep_after = "14d"             # after the item settled; "0s" disables expiry
+
+[storage]
+retention_days = 14            # settled item reports and daemon log age; 0 disables age expiry
+log_max_mb = 10                # rotate detached daemon logs by size; 0 disables size rotation
+log_max_files = 3              # archives in addition to the active log; 0 disables count limit
 ```
+
+Filesystem ages retain the existing duration syntax. Set `gc_after`,
+`cache_after`, `shared_cache_after` or `artifacts.keep_after` to `"0s"` to
+disable that expiry, including pressure GC. `pressure_after = "0s"` disables
+pressure acceleration. An explicit `archon gc --older-than 0s` still requests
+immediate collection; dirty worktrees remain protected unless `--force` is
+explicitly requested. `keep_on_success = false` still permits normal cleanup
+immediately after shipping.
+
+`[storage]` uses integer days, matching Aether's retention setting. It applies
+to Archon's owned report/Lavish snapshots after both the item and report have
+been quiet for that long. Live or recently settled items, unfinished or recent
+runs, open reports, open gates, pending questions and stack fixes are protected.
+Original source pages are never removed. The existing store prune leaves an
+item's owned snapshot to filesystem GC; metadata and orphan cleanup retain
+their existing 7-day policy. Disabling `worktrees.auto_gc` also disables the
+periodic report pass; online `archon gc` still applies it. Offline GC collects
+workspaces, caches and artifacts only, leaving reports for the daemon.
+
+Detached `archond.log` rotates while the daemon runs, keeping the active file
+and three archives by default. Rotation applies size, archive count and age
+limits independently; `0` disables each corresponding limit. Foreground daemon
+output remains on its configured stdout/stderr. Storage config validation
+allows `retention_days` 0..36500, `log_max_mb` 0..1048576 and `log_max_files`
+0..1000. SQLite rows, the spend ledger and 90-day evidence windows are unchanged.
+
+`archon status` and MCP `queue_status` show allocated bytes by storage kind,
+including database WAL/SHM and the startup log beside the socket, plus the last
+GC that freed data. Filesystem readings are cached for up to one minute and
+invalidated after GC. Unknown sizes report the read error. Symlinks are counted
+without following them. Bench results live in independently selected output
+roots and are not swept or measured by the daemon.
 
 A repository opts out of the shared cache with `[cache] shared = false` in
 `<repo>/.archon/config.toml`. Cargo locks a shared target directory, so

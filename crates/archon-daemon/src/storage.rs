@@ -35,6 +35,14 @@ fn measure(paths: &DaemonPaths) -> Vec<StorageUsage> {
         ("store", paths.store.clone()),
         ("orchestrator_mirrors", paths.orchestrator_workspace.clone()),
         ("aether", paths.data_dir.join("aether")),
+        ("mirror_git", paths.data_dir.join("mirror-git")),
+        ("pipeline_snapshots", paths.data_dir.join("pipeline-runs")),
+        (
+            "initiative_bodies",
+            paths.data_dir.join("initiative-bodies"),
+        ),
+        ("chat_history", paths.data_dir.join("chat_history")),
+        ("mirror_hooks", paths.data_dir.join("mirror-hooks")),
     ];
     let mut usage: Vec<_> = roots
         .into_iter()
@@ -99,7 +107,15 @@ fn logs(paths: &DaemonPaths) -> StorageUsage {
     );
     for entry in entries {
         match entry {
-            Ok(entry) if entry.file_name().to_string_lossy().starts_with(&prefix) => {
+            Ok(entry)
+                if entry
+                    .file_name()
+                    .to_string_lossy()
+                    .strip_prefix(&prefix)
+                    .is_some_and(|suffix| {
+                        !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
+                    }) =>
+            {
                 add(&mut usage, &entry.path())
             }
             Ok(_) => {}
@@ -110,4 +126,74 @@ fn logs(paths: &DaemonPaths) -> StorageUsage {
         }
     }
     usage
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn paths(root: &Path) -> DaemonPaths {
+        DaemonPaths {
+            socket: root.join("run/archond.sock"),
+            data_dir: root.join("data"),
+            store: root.join("data/archon.db"),
+            worktrees: root.join("trees"),
+            orchestrator_workspace: root.join("data/orchestrator"),
+            scratch: root.join("data/scratch"),
+            reports: root.join("data/reports"),
+            logs: root.join("data/logs"),
+            archon_bin: root.join("archon"),
+        }
+    }
+
+    #[test]
+    fn accounting_includes_sidecars_and_numeric_log_archives_without_following_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = paths(dir.path());
+        std::fs::create_dir_all(&paths.data_dir).unwrap();
+        std::fs::create_dir_all(paths.socket.parent().unwrap()).unwrap();
+        for name in ["archon.db", "archon.db-wal", "archon.db-shm"] {
+            std::fs::write(paths.data_dir.join(name), vec![1; 8192]).unwrap();
+        }
+        let active = archon_core::paths::startup_log_for(&paths.socket);
+        std::fs::write(&active, vec![1; 8192]).unwrap();
+        let archive = active.with_extension("log.1");
+        std::fs::write(&archive, vec![1; 8192]).unwrap();
+        std::fs::write(active.with_extension("log.lock"), vec![1; 8192]).unwrap();
+        std::fs::create_dir_all(&paths.worktrees).unwrap();
+        std::os::unix::fs::symlink(&paths.data_dir, paths.worktrees.join("alias")).unwrap();
+        let usage = measure(&paths);
+        let bytes = |kind| {
+            usage
+                .iter()
+                .find(|usage| usage.kind == kind)
+                .unwrap()
+                .bytes
+                .unwrap()
+        };
+        let store_bytes: u64 = ["archon.db", "archon.db-wal", "archon.db-shm"]
+            .into_iter()
+            .map(|name| disk_usage(&paths.data_dir.join(name)).unwrap())
+            .sum();
+        assert_eq!(bytes("store"), store_bytes);
+        assert_eq!(
+            bytes("daemon_log"),
+            disk_usage(&active).unwrap() + disk_usage(&archive).unwrap()
+        );
+        assert!(
+            bytes("worktrees") < store_bytes,
+            "directory links are not traversed"
+        );
+        assert_eq!(bytes("artifacts"), 0, "absent directories hold no data");
+    }
+
+    #[test]
+    fn unreadable_paths_report_errors_instead_of_zero_usage() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("file");
+        std::fs::write(&file, "data").unwrap();
+        let usage = reading("broken", file.join("not-a-directory"));
+        assert!(usage.bytes.is_none());
+        assert!(usage.error.is_some());
+    }
 }

@@ -784,3 +784,23 @@ fn clip_noting(text: &str, max: usize, note: &str) -> String {
     let kept: String = text.chars().take(max).collect();
     format!("{kept}… [clipped: {total} chars in full{note}]")
 }
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+
+    #[test]
+    fn queue_status_includes_storage_and_last_gc_even_without_disk_pressure() {
+        let disk: DiskStatus = serde_json::from_value(serde_json::json!({
+            "path": "/data", "free_bytes": 1000000, "min_free_bytes": 0, "held": false,
+            "storage": [{"kind": "reports_lavish", "path": "/data/reports", "bytes": 8192}],
+            "gc": {"at": archon_core::now(), "bytes_freed": 4096, "pressure": false, "headline": "one report"}
+        })).unwrap();
+        let text = disk_text(&disk);
+        assert!(
+            text.contains("Storage reports_lavish: 8192 bytes"),
+            "{text}"
+        );
+        assert!(text.contains("freed 4096 bytes: one report"), "{text}");
+    }
+}

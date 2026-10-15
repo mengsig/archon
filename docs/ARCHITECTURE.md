@@ -3522,8 +3522,45 @@ directory of regular files, from inside its workspace). They are copied to
 (a publish over either is refused, naming the limit), and read with
 `list_artifacts` and `read_artifact` by item id after the worktree is gone.
 A dependent stage's contract names its dependencies' artifact directories.
-The gc pass deletes an item's artifacts `[artifacts] keep_after` (30d) after
+The gc pass deletes an item's artifacts `[artifacts] keep_after` (14d) after
 the item settled.
+
+### 13.6 Filesystem retention and storage accounting
+
+`[storage] retention_days = 14` governs settled item report/Lavish snapshots
+and detached daemon log age; `0` disables that age expiry. Existing tighter
+worktree and cache ages stay 7d and 1h; idle shared caches and item artifacts
+use 14d. Existing duration settings accept `"0s"` to disable their cleanup,
+including pressure acceleration. Explicit CLI `--older-than 0s` remains an
+immediate request; explicit `--force` retains its established meaning.
+
+Online workspace GC also expires owned report snapshots, holding `report_files`
+before the store exactly as publication/reopen do. Only known terminal items
+and reports older than the cutoff qualify; recent or unfinished runs, open
+reports, item/report gates, pending questions and stack fixes exclude them.
+Only `<data>/reports/<report-id>` is deleted, never source pages. GC reports
+allocated bytes freed, leaves metadata intact, and reports failures for retry.
+The existing metadata prune leaves item-owned files for GC, then may prune
+records once their files are gone. Its existing orphan cleanup remains 7d.
+Reports are left untouched by offline GC and by disabled automatic GC.
+
+Detached daemon tracing uses a rotating writer, with `[storage] log_max_mb = 10`
+and `log_max_files = 3` archives beyond the active log. Size, age and count
+limits are independent; zero disables the corresponding limit. Normal
+foreground execution preserves its caller's stdout/stderr destination.
+
+`archon status` and `queue_status` expose allocated bytes by kind, including
+worktrees, scratch, build caches, artifacts, report/Lavish copies, logs, the
+SQLite store plus WAL/SHM, orchestrator mirrors, mirror git objects, frozen
+pipeline definitions, initiative bodies, chat history and dedicated Aether.
+A one-minute cache avoids full filesystem traversal for every status poll;
+GC invalidates it. Symlinks are not followed; unreadable kinds carry errors.
+The existing last-GC record includes report bytes freed. No SQLite history or
+ledger rows are newly deleted; the existing prune and 90-day evidence windows
+remain intact. Bench output roots and external Lavish service storage are
+operator-owned, outside daemon GC. Mirrors, recovery/configuration files and
+other lifecycle-owned data are audited separately; age alone does not authorize
+removing them.
 
 ## 14. Lavish plugin
 
@@ -3643,7 +3680,9 @@ pub enum LavishFeedback { Prompts { raw: String, prompts: Vec<String> }, Ended {
   days for as long as its HTML file exists. `archon reports` states this
   rule. Pruning removes the durable directory together with its record,
   never the original source. Ended and disconnected copies stay resumable
-  independently of workspace retention. Under the same `report_files` lock
+  independently of workspace retention until the item-owned copy expires under
+  §13.6. Item-owned snapshots are left to filesystem GC rather than deleted by
+  the metadata prune. Under the same `report_files` lock
   used for publication, pruning also removes unreferenced `<report-id>` and
   `.<report-id>-<report-id>` staging directories left by cancellation, crashes
   or incomplete cleanup. Only directories whose mtime precedes the prune
@@ -3756,7 +3795,7 @@ rubric), and a review task (seeded bug must be reported).
 | A delegating stage agent settles while its children run | The stage's settle: its stored request has `leaf: false`. | `kv.descendant_stop:<stage run>` is written with the settle. No agent of that run is created (next stage or replacement), and archond does not deliver the run (§8.7), until Archon has cancelled the settled agent and Aether holds no agent beneath it in a non-terminal state; the agent is first left to end its own turn, up to 60 s. The cancel is sent once; the check is repeated each dispatcher pass and after a restart. Agents still running 120 s after the cancel are named in one `Blocker` and the run keeps waiting; a refused cancel fails the run with a `Blocker` (§6.3). |
 | Aether names no caller on Archon's tools | An unnamed call that changes Archon reaches `archond`. | One `Blocker` with the fix; such calls are accepted only from an orchestrator that cannot delegate, and new generations start without `delegate`, until the orchestrator makes a named call of any kind (§11). In dedicated mode the registration is repaired and Archon's `aetherd` restarted by the next command (§4.7). |
 | Orchestrator missing (first start) | No `kv.orchestrator_agent`. | Create it (§4.4). |
-| `archon mcp` cannot reach `archond` | Connect error in the proxy. | A read-only tool call returns a tool error saying archond is not running, and never starts it. For any other call, `connect_or_start` autostarts `archond`, except where the path overrides mix moved and default locations (§9), when it returns that as the error (`archon daemon run --detach`, which waits until the daemon listens and fails as soon as it exits). If that fails, return a tool error with the launcher's stderr and the startup log since the last start mark (each detached start appends to `archond.log`, moving it to `archond.log.1` past 16 MiB). |
+| `archon mcp` cannot reach `archond` | Connect error in the proxy. | A read-only tool call returns a tool error saying archond is not running, and never starts it. For any other call, `connect_or_start` autostarts `archond`, except where the path overrides mix moved and default locations (§9), when it returns that as the error (`archon daemon run --detach`, which waits until the daemon listens and fails as soon as it exits). If that fails, return a tool error with the launcher's stderr and the startup log since the last start mark (detached daemon tracing uses the size/count/age rotation in §13.6). |
 | Stage exceeds deadline | Timer. | `cancel` the agent, mark the stage `timed_out`, and let the driver treat it as a failed verdict or failed work. |
 | A steer is stored but Aether does not take what the live agents are owed | `update_agent`, `interrupt` or `send_message` unanswered, or a crash after the store. | The steps stay in `kv.steer_owed:<stage run>` and every sweep repeats them in order, each message under its own key so it is delivered once. A step Aether refuses is dropped with a progress note; what the steer stored reaches the stage's next agents (§6.6). |
 | `archond` restarts on a steered run | Startup reconcile. | `frozen::thaw` applies the run's `run_edits` to its frozen pipeline and the driver takes its recorded aborts before `RunDriver::resume`, so the run has the stages and decisions the steers left (§6.6). |

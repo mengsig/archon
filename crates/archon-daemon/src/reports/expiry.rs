@@ -1,5 +1,6 @@
 //! Expiry removes only Archon's owned copies. Source pages and store history stay.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use archon_core::Timestamp;
@@ -20,6 +21,16 @@ pub(crate) fn expire_files(
     let records = records::all(store)?;
     let gates = store.open_gates()?;
     let questions = store.questions(true)?;
+    let mut referenced = BTreeMap::<_, BTreeSet<_>>::new();
+    for (id, record) in &records {
+        for path in std::iter::once(&record.html).chain(record.source.iter()) {
+            if let Ok(relative) = path.strip_prefix(root)
+                && let Some(std::path::Component::Normal(name)) = relative.components().next()
+            {
+                referenced.entry(root.join(name)).or_default().insert(id);
+            }
+        }
+    }
     let mut result = GcReport::default();
     for (id, record) in &records {
         if record.updated_at >= cutoff
@@ -58,11 +69,9 @@ pub(crate) fn expire_files(
                 .source
                 .as_ref()
                 .is_some_and(|source| source != &record.html)
-            || records.iter().any(|(other, record)| {
-                other != id
-                    && (record.html.starts_with(&dir)
-                        || record.source.as_ref().is_some_and(|p| p.starts_with(&dir)))
-            })
+            || referenced
+                .get(&dir)
+                .is_some_and(|ids| ids.iter().any(|other| *other != id))
         {
             continue;
         }

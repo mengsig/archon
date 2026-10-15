@@ -129,6 +129,24 @@ pub(super) fn put(
 pub fn prune(store: &mut Store, root: &Path, cutoff: Timestamp) -> Result<usize, ArchonError> {
     let mut pruned = 0;
     for (report, record) in all(store)? {
+        if let Some(id) = &record.item {
+            // Item-owned snapshots expire through filesystem GC, which checks
+            // live work, gates, questions and the configurable retention first.
+            let protected = match store.item(id) {
+                Ok(item) => !item.state.is_terminal() || item.updated_at >= cutoff,
+                Err(ArchonError::NotFound(_)) => true,
+                Err(error) => return Err(error),
+            };
+            let owned_file = record
+                .source
+                .as_ref()
+                .is_some_and(|source| source != &record.html)
+                && record.html.starts_with(root.join(report.as_str()))
+                && record.html.exists();
+            if protected || owned_file || store.open_gate_by_report(&report)?.is_some() {
+                continue;
+            }
+        }
         // The file check last: only an old, settled record needs it.
         if record.is_settled() && record.updated_at < cutoff && !record.is_resumable() {
             if record

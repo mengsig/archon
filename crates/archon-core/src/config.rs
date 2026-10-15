@@ -873,6 +873,38 @@ mod tests {
     }
 
     #[test]
+    fn storage_defaults_disable_switches_and_validation() {
+        let config = Config::default();
+        assert_eq!(config.storage.retention_days, 14);
+        assert_eq!(config.storage.log_max_mb, 10);
+        assert_eq!(config.storage.log_max_files, 3);
+        assert_eq!(config.artifacts.keep_after.secs(), 14 * 86_400);
+        let off: Config =
+            toml::from_str("[storage]\nretention_days = 0\nlog_max_mb = 0\nlog_max_files = 0")
+                .unwrap();
+        off.validate().unwrap();
+        for bad in [
+            "retention_days = 36501",
+            "log_max_mb = 1048577",
+            "log_max_files = 1001",
+        ] {
+            let config: Config = toml::from_str(&format!("[storage]\n{bad}")).unwrap();
+            assert!(config.validate().is_err(), "{bad}");
+        }
+        for bad in [
+            "retention_days = -1",
+            "retention_days = 1.5",
+            "retention_days = \"14d\"",
+            "retenton_days = 14",
+        ] {
+            assert!(
+                toml::from_str::<Config>(&format!("[storage]\n{bad}")).is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
     fn the_disk_hold_defaults_to_ten_gib_and_zero_turns_it_off() {
         let config = Config::default();
         assert_eq!(config.limits.min_free_gb, 10);

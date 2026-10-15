@@ -73,6 +73,9 @@ async fn cancelled_run(h: &Harness, title: &str) -> (QueueItem, PathBuf) {
 
 async fn age_finished_runs(h: &Harness, item: &QueueItem) {
     let mut store = h.ctx.store.lock().await;
+    let mut settled = store.item(&item.id).unwrap();
+    settled.updated_at -= chrono::Duration::seconds(2);
+    store.update_item(&settled).unwrap();
     for mut run in store.runs_for_item(&item.id).unwrap() {
         if let Some(at) = &mut run.finished_at {
             *at -= chrono::Duration::seconds(2);

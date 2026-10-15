@@ -113,7 +113,8 @@ pub struct Store {
     conn: rusqlite::Connection,
     learning: std::cell::RefCell<archon_core::config::LearningConfig>,
     learning_config_loaded: std::cell::Cell<bool>,
-    learning_models: std::cell::RefCell<Vec<archon_core::model::ModelRef>>,
+    /// Aether's connected models with their tiers, refreshed while stale.
+    learning_models: std::cell::RefCell<archon_core::model_tier::ModelCatalog>,
     learning_models_at: std::cell::Cell<Option<archon_core::Timestamp>>,
     /// The data directory's lock for an on-disk store opened read-write.
     /// Declared last, so it is released only after the connection closes.
@@ -653,7 +654,9 @@ impl Store {
         mut is_verdict_stage: impl FnMut(&QueueItem, &str) -> Result<bool, ArchonError>,
     ) -> Result<archon_core::model_evidence::ModelEvidenceReport, ArchonError> {
         self.model_evidence_snapshot(query, range, estimates)?
-            .report(|item, stage| is_verdict_stage(item, &stage.stage_id))
+            .report(&self.model_catalog(), |item, stage| {
+                is_verdict_stage(item, &stage.stage_id)
+            })
     }
 
     /// Read owned observations before releasing the store for file-based classification.

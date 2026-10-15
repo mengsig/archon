@@ -471,6 +471,7 @@ mod tests {
             choice: ModelChoice {
                 model: "claude-code/opus".parse().unwrap(),
                 effort: crate::model::Effort::Low,
+                tier: None,
             },
             aether_agent: None,
             aether_task: None,

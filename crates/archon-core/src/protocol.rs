@@ -1800,6 +1800,7 @@ mod tests {
             choice: ModelChoice {
                 model: "codex/gpt-6-sol".parse().unwrap(),
                 effort: Effort::High,
+                tier: None,
             },
             state: StageState::Completed,
             verdict: Some(Verdict::Fail),

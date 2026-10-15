@@ -314,10 +314,7 @@ fn plan_text(
         .0
         .iter()
         .map(|(stage, choices)| {
-            let picks: Vec<String> = choices
-                .iter()
-                .map(|c| format!("{} {}", c.model, c.effort))
-                .collect();
+            let picks: Vec<String> = choices.iter().map(ToString::to_string).collect();
             let reason = reasons
                 .and_then(|r| r.get(stage))
                 .map_or(String::new(), |r| format!(" ({r})"));
@@ -472,8 +469,8 @@ fn stage_line(item: &QueueItemId, run: Option<&PipelineRunId>, stage: &StageRun)
     };
     let choice = stage.current_choice();
     let mut line = format!(
-        "{} attempt {} slot {}: {} {} [{state}]",
-        stage.stage_id, stage.attempt, stage.fan_index, choice.model, choice.effort
+        "{} attempt {} slot {}: {choice} [{state}]",
+        stage.stage_id, stage.attempt, stage.fan_index
     );
     if let Some(verdict) = stage.verdict {
         let _ = write!(line, " verdict {}", snake(&verdict));

@@ -6,7 +6,7 @@ workspace = "worktree"
 requires_repo = true
 
 [nudges]
-tier = "strongest"
+tier = "strong"
 independent_reviewers = true
 notes = "Design/RFC before a large or ambiguous change. No product-code changes or shipping. Use the proposal: lavish knob instead when you want the design and the implementation in one item."
 
@@ -16,7 +16,7 @@ kind = "work"
 prompt = "research.md"
 timeout_minutes = 120
 effort = "high"
-nudge = "Prefer the strongest tier at high effort for repository research and architectural trade-offs."
+nudge = "Prefer the strong tier at high effort for repository research and architectural trade-offs."
 
 [[stage]]
 id = "critique"
@@ -24,7 +24,7 @@ kind = "review"
 prompt = "critique.md"
 gate = "all_pass"
 timeout_minutes = 60
-nudge = "Use an independent critic; prefer a reviewer different from the researcher when the allowlist permits."
+nudge = "Use an independent critic that discovers on its own; another provider at the same tier counts."
 on_fail = { goto = "research", max_loops = 2 }
 
 [[stage]]

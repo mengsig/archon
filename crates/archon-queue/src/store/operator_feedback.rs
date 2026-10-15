@@ -358,6 +358,7 @@ pub(super) fn active_masks(
             choice: ModelChoice {
                 model: model.parse()?,
                 effort: effort.parse()?,
+                tier: None,
             },
         });
     }

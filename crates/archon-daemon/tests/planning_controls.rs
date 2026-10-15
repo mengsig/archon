@@ -10,8 +10,9 @@ use common::{Harness, MODEL, PIPELINE, REPO_NAME};
 
 fn draft(stage: &str, effort: Option<Effort>) -> ModelPlanDraft {
     let choice = ModelChoiceDraft {
-        model: MODEL.parse().unwrap(),
+        model: Some(MODEL.parse().unwrap()),
         effort,
+        ..Default::default()
     };
     ModelPlanDraft([(stage.to_owned(), vec![choice])].into())
 }
@@ -249,8 +250,9 @@ fn reviewer_enqueue() -> Request {
     request.model_plan.0.insert(
         "implement.review".into(),
         vec![ModelChoiceDraft {
-            model: REVIEWER.parse().unwrap(),
+            model: Some(REVIEWER.parse().unwrap()),
             effort: Some(Effort::Low),
+            ..Default::default()
         }],
     );
     Request::Enqueue(request)

@@ -242,6 +242,7 @@ impl Plan {
             orchestrator: ModelChoice {
                 model: ctx.config.orchestrator.model.clone(),
                 effort: ctx.config.orchestrator.effort,
+                tier: None,
             },
         }
     }

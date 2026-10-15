@@ -95,8 +95,8 @@ stage = "build"              # the work stage that holds the review
 stage = "build"              # the stage whose result names the commits to ship
 
 [nudges]                     # optional advice to the orchestrator; never enforced
-tier = "balanced"            # fast | balanced | strongest
-independent_reviewers = true # prefer distinct models or vendors across reviewers
+tier = "balanced"            # fast | balanced | strong | frontier (strongest = strong)
+independent_reviewers = true # reviewers discover independently (another provider counts)
 notes = "When to use this pipeline."
 
 [[stage]]                    # one or more, run in order
@@ -832,7 +832,7 @@ finish.
   one three times.
 - **Never name a model.** Model and effort are chosen per item by the
   orchestrator within the operator's allowlist. Put advice in `[nudges]` and
-  stage `nudge` fields instead ("prefer the strongest tier", "a fast model is
+  stage `nudge` fields instead ("prefer the strong tier", "the fast tier is
   enough"), and the orchestrator weighs it against the allowlist.
 
 ## Stages the autonomy knobs add
@@ -952,23 +952,30 @@ the orchestrator wants to choose, and each fan-out stage may list one
 choice per agent:
 
 ```json
-{"fix":    [{"model": "claude-code/claude-opus-5-5", "effort": "high"}],
- "review": [{"model": "claude-code/claude-opus-5-5", "effort": "high"},
-            {"model": "codex/gpt-6-astra", "effort": "high"}]}
+{"fix":    [{"tier": "strong", "effort": "medium"}],
+ "review": [{"tier": "fast", "effort": "low"},
+            {"tier": "fast", "provider": "codex", "effort": "low"}]}
 ```
+
+A choice names an exact `model` (`provider/model`, as `list_models` gives
+it) or a `tier`, optionally with a `provider`. Archon resolves a tier from
+Aether's catalog within the model policy, on the orchestrator's provider
+unless the choice names one, and falls back to a lower tier where the
+provider has none. `get_item` shows the tier and the model it resolved to.
 
 A choice that leaves out `effort` gets the stage's default `effort` (`medium`
 unless the stage sets one). An effort above it needs a `model_reasons` entry
 for that stage, or the request is refused with the stage and its default; a
-lower effort needs none. A stronger model at the default effort often beats a
-weaker one at a higher effort.
+lower effort needs none. A stronger tier at lower effort often beats a weaker
+one at max effort: effort buys deliberation, not capability. Raise it on a
+weaker tier only for long, well-specified, test-verifiable work.
 
 A stage the plan leaves out, here `reproduce`, gets Archon's default: the
-choice learned for that pipeline and stage where there is one, else the
-orchestrator's own model when the model policy allows it (the first allowed
-model otherwise), at the effort the pipeline's `[nudges] tier` suggests:
-`fast` low, `balanced` medium, `strongest` high, never above the policy's
-`max_effort`. Archon refuses a plan that names a stage the pipeline does
+choice learned for that pipeline and stage where there is one, else a model
+of the pipeline's `[nudges] tier` (never above `[models] max_default_tier`,
+`strong` by default), else the orchestrator's own model when the model
+policy allows it, at the effort the tier suggests: `fast` low, `balanced`
+medium, `strong` high, never above the policy's `max_effort`. Archon refuses a plan that names a stage the pipeline does
 not have, lists more choices than a stage has agents, or picks a model the
 policy does not allow.
 
@@ -993,13 +1000,13 @@ back to the built-in.
 | `direct` | implement | balanced tier; review level `none` unless the item asks. The pipeline an item runs when it names none. One agent implements, runs the affected tests, commits and returns the ship record. The cheapest path for a change one author can make and check, whatever its size; the agent escalates risky work. |
 | `adaptive` | build (work, delegation enabled, holds the review) | balanced tier; review level `standard` unless the item asks. One lead chooses workers at runtime and has the integrated change reviewed by as many independent reviewers as the item's review level asks for. |
 | `refactor` | baseline/characterize → refactor → verify (`all_pass`, back to refactor ×3) → review (1, `all_pass`, back to refactor ×2) | balanced tier, independent reviewer. Structure-only changes; use `direct` for behaviour changes. |
-| `performance` | measure → optimize → verify (`all_pass`, back to optimize ×3) → review (1, `all_pass`, back to optimize ×2) | strongest tier, independent reviewer. For a specific slow path with a measurable goal, not speculative micro-optimization; use `direct` for ordinary changes. |
+| `performance` | measure → optimize → verify (`all_pass`, back to optimize ×3) → review (1, `all_pass`, back to optimize ×2) | strong tier, independent reviewer. For a specific slow path with a measurable goal, not speculative micro-optimization; use `direct` for ordinary changes. |
 | `agent-testing` | plan → exercise (2 exploratory testers) → report (HTML) | balanced tier, independent testers |
-| `code-audit` | scope → audit (3 lenses, report) → report (HTML with issue drafts) | strongest tier, independent auditors. Read-and-report only; findings become follow-up items. Use `ask` for a single question or `agent-testing` to exercise the product. |
+| `code-audit` | scope → audit (3 lenses, report) → report (HTML with issue drafts) | strong tier, independent auditors. Read-and-report only; findings become follow-up items. Use `ask` for a single question or `agent-testing` to exercise the product. |
 | `e2e-testing` | setup → e2e (`all_pass`, back to setup ×1) → report (HTML with screenshots) | balanced tier |
 | `ask` | answer | balanced tier. Read-only, and no repository required. With one, it works in a disposable snapshot of the repository's `HEAD` commit, so it sees committed work only. |
 | `errand` | errand (report) | balanced tier. A small job answered in text or as a Lavish page, with no repository changes or outward side effects. Scratch workspace, repository optional. Use `ask` for repository questions in text, and a shipping pipeline for changes. |
-| `design-doc` | research → critique (`all_pass`, back to research ×2) → report (HTML design/RFC) | strongest tier, independent critic. Before a large or ambiguous change; no product-code changes or shipping. Use `proposal: lavish` for design and implementation in one item. |
+| `design-doc` | research → critique (`all_pass`, back to research ×2) → report (HTML design/RFC) | strong tier, independent critic. Before a large or ambiguous change; no product-code changes or shipping. Use `proposal: lavish` for design and implementation in one item. |
 
 The first four change a repository, and archond ships each of them once
 its last stage has passed (see "Shipping"); none has a ship agent. Their

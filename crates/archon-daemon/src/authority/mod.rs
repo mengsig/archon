@@ -245,9 +245,10 @@ pub(crate) fn guide(topic: &str) -> Result<Reply, ArchonError> {
         "authority" => include_str!("../../prompts/topics/authority.md"),
         "settings" => include_str!("../../prompts/topics/settings.md"),
         "github" => include_str!("../../prompts/topics/github.md"),
+        "models" => include_str!("../../prompts/topics/models.md"),
         _ => {
             return Err(ArchonError::Invalid(
-                "unknown guide topic; choose authority, settings or github".into(),
+                "unknown guide topic; choose authority, settings, github or models".into(),
             ));
         }
     };
@@ -258,12 +259,28 @@ pub(crate) fn guide(topic: &str) -> Result<Reply, ArchonError> {
 mod tests {
     #[test]
     fn topics_stay_within_their_individual_budget() {
-        for topic in ["authority", "settings", "github"] {
+        for topic in ["authority", "settings", "github", "models"] {
             let archon_core::protocol::Reply::Guide { text } = super::guide(topic).unwrap() else {
                 panic!("guide reply")
             };
             assert!(text.len() <= 4096, "{topic}: {} bytes", text.len());
         }
         assert!(super::guide("../../config.toml").is_err());
+    }
+
+    #[test]
+    fn the_models_topic_trades_tiers_against_effort_without_naming_models() {
+        let archon_core::protocol::Reply::Guide { text } = super::guide("models").unwrap() else {
+            panic!("guide reply")
+        };
+        assert_eq!(archon_core::testing::model_name_in(&text), None);
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        for said in [
+            "Effort buys deliberation, not capability",
+            "one stronger-tier judge at low effort",
+            "another provider at the same tier",
+        ] {
+            assert!(text.contains(said), "{said:?}");
+        }
     }
 }

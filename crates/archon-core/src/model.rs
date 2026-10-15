@@ -8,6 +8,7 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::error::ArchonError;
+use crate::model_tier::{Tier, TierChoice};
 
 /// `provider/model`, e.g. `claude-code/opus` or `codex/astra`. Serializes as
 /// Aether's `{provider, model}` object; also deserializes from the string form
@@ -118,31 +119,110 @@ impl fmt::Display for Effort {
     }
 }
 
-/// What the orchestrator chose for one agent: both fields are mandatory,
-/// mirroring Aether's `delegate`, which inherits neither.
+/// What the orchestrator chose for one agent: model and effort are
+/// mandatory, mirroring Aether's `delegate`, which inherits neither.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelChoice {
     pub model: ModelRef,
     pub effort: Effort,
+    /// Set when the choice asked for a tier; `model` is its resolution and
+    /// is resolved again at dispatch. `None` is an exact pin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<TierChoice>,
 }
 
-/// A [`ModelChoice`] as a request gives it: `effort` may be left out, and the
-/// stage's default effort stands in.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+impl ModelChoice {
+    /// An exact pin of `model`.
+    pub fn pinned(model: ModelRef, effort: Effort) -> Self {
+        Self {
+            model,
+            effort,
+            tier: None,
+        }
+    }
+
+    /// The model and effort alone, as evidence and Aether compare them.
+    pub fn without_tier(&self) -> Self {
+        Self::pinned(self.model.clone(), self.effort)
+    }
+}
+
+impl fmt::Display for ModelChoice {
+    /// `model effort`, and the tier it resolved when it asked for one.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {}", self.model, self.effort)?;
+        match &self.tier {
+            Some(tier) => write!(f, " ({tier})"),
+            None => Ok(()),
+        }
+    }
+}
+
+/// A [`ModelChoice`] as a request gives it: an exact `model`, or a `tier`
+/// (optionally on `provider`) that Archon resolves from Aether's catalog.
+/// `effort` may be left out, and the stage's default effort stands in.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelChoiceDraft {
-    pub model: ModelRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<Tier>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<Effort>,
 }
 
 impl From<ModelChoice> for ModelChoiceDraft {
+    /// A tiered choice drafts its tier again, so it is resolved anew.
     fn from(choice: ModelChoice) -> Self {
-        Self {
-            model: choice.model,
-            effort: Some(choice.effort),
+        let effort = Some(choice.effort);
+        match choice.tier {
+            Some(tier) => Self {
+                tier: Some(tier.requested),
+                provider: tier.provider,
+                effort,
+                ..Self::default()
+            },
+            None => Self {
+                model: Some(choice.model),
+                effort,
+                ..Self::default()
+            },
         }
+    }
+}
+
+/// What a draft names: exactly one of a model or a tier.
+enum Pick {
+    Model(ModelRef),
+    Tier(Tier, Option<String>),
+}
+
+impl ModelChoiceDraft {
+    fn pick(self, stage: &str) -> Result<(Pick, Option<Effort>), ArchonError> {
+        let pick = match (self.model, self.tier, self.provider) {
+            (Some(model), None, None) => Pick::Model(model),
+            (None, Some(tier), provider) => Pick::Tier(tier, provider),
+            (Some(_), None, Some(_)) => {
+                return Err(ArchonError::Invalid(format!(
+                    "model_plan {stage:?}: `provider` goes with `tier`; a `model` names its own"
+                )));
+            }
+            (Some(_), Some(_), _) => {
+                return Err(ArchonError::Invalid(format!(
+                    "model_plan {stage:?}: give `model` or `tier`, not both"
+                )));
+            }
+            (None, None, _) => {
+                return Err(ArchonError::Invalid(format!(
+                    "model_plan {stage:?}: each choice needs a `model` or a `tier`"
+                )));
+            }
+        };
+        Ok((pick, self.effort))
     }
 }
 
@@ -163,28 +243,37 @@ impl From<ModelPlan> for ModelPlanDraft {
 }
 
 impl ModelPlanDraft {
-    /// The plan with each missing effort set to `default_for(key)`; `None`
-    /// from it names a key the caller already found to be no stage.
-    pub fn resolve(self, default_for: impl Fn(&str) -> Option<Effort>) -> ModelPlan {
-        let resolve = |stage: &str, draft: ModelChoiceDraft| {
-            let effort = draft
-                .effort
-                .or_else(|| default_for(stage))
-                .unwrap_or(Effort::Medium);
-            ModelChoice {
-                model: draft.model,
-                effort,
+    /// The plan with each missing effort set to `default_for(key)` and each
+    /// tier resolved by `tier_model`; `None` from `default_for` names a key
+    /// the caller already found to be no stage.
+    pub fn resolve(
+        self,
+        default_for: impl Fn(&str) -> Option<Effort>,
+        mut tier_model: impl FnMut(Tier, Option<&str>) -> Result<(ModelRef, TierChoice), ArchonError>,
+    ) -> Result<ModelPlan, ArchonError> {
+        let mut plan = ModelPlan::default();
+        for (stage, drafts) in self.0 {
+            let mut choices = Vec::with_capacity(drafts.len());
+            for draft in drafts {
+                let (pick, effort) = draft.pick(&stage)?;
+                let effort = effort
+                    .or_else(|| default_for(&stage))
+                    .unwrap_or(Effort::Medium);
+                choices.push(match pick {
+                    Pick::Model(model) => ModelChoice::pinned(model, effort),
+                    Pick::Tier(tier, provider) => {
+                        let (model, tier) = tier_model(tier, provider.as_deref())?;
+                        ModelChoice {
+                            model,
+                            effort,
+                            tier: Some(tier),
+                        }
+                    }
+                });
             }
-        };
-        ModelPlan(
-            self.0
-                .into_iter()
-                .map(|(stage, drafts)| {
-                    let choices = drafts.into_iter().map(|d| resolve(&stage, d)).collect();
-                    (stage, choices)
-                })
-                .collect(),
-        )
+            plan.0.insert(stage, choices);
+        }
+        Ok(plan)
     }
 }
 
@@ -231,6 +320,24 @@ impl ModelPlan {
 
     pub fn choices_for(&self, stage_id: &str) -> Option<&[ModelChoice]> {
         self.0.get(stage_id).map(Vec::as_slice)
+    }
+
+    /// Each tiered choice resolved again by `tier_model`, as at dispatch;
+    /// exact pins stay as they are.
+    pub fn resolve_tiers(
+        &mut self,
+        mut tier_model: impl FnMut(Tier, Option<&str>) -> Result<(ModelRef, TierChoice), ArchonError>,
+    ) -> Result<(), ArchonError> {
+        for choice in self.0.values_mut().flatten() {
+            let Some(asked) = &choice.tier else {
+                continue;
+            };
+            let (model, tier) = tier_model(asked.requested, asked.provider.as_deref())?;
+            debug_assert_eq!(tier.requested, asked.requested);
+            choice.model = model;
+            choice.tier = Some(tier);
+        }
+        Ok(())
     }
 
     /// Distinct providers named anywhere in the plan; a strict pipeline's
@@ -285,6 +392,7 @@ mod tests {
         let choice = |model: &str| ModelChoice {
             model: model.parse().unwrap(),
             effort: Effort::Low,
+            tier: None,
         };
         let mut plan = ModelPlan::default();
         plan.0.insert("implement".into(), vec![choice("a/one")]);
@@ -292,6 +400,83 @@ mod tests {
         plan.0
             .insert(reviewers_key("implement"), vec![choice("b/two")]);
         assert_eq!(plan.reviewer_choices(), Some(&[choice("b/two")][..]));
+    }
+
+    #[test]
+    fn a_draft_names_a_model_or_a_tier_and_a_pin_stays_as_it_was() {
+        let draft: ModelPlanDraft = serde_json::from_value(serde_json::json!({
+            "build": [{"model": "a/one", "effort": "high"}],
+            "review": [{"tier": "strongest", "provider": "b"}, {"tier": "fast"}],
+        }))
+        .unwrap();
+        let mut asked = Vec::new();
+        let plan = draft
+            .resolve(
+                |_| Some(Effort::Low),
+                |tier, provider| {
+                    asked.push((tier, provider.map(str::to_owned)));
+                    let tier = TierChoice {
+                        requested: tier,
+                        provider: provider.map(str::to_owned),
+                        resolved: tier,
+                    };
+                    Ok(("b/resolved".parse().unwrap(), tier))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            asked,
+            [(Tier::Strong, Some("b".into())), (Tier::Fast, None)]
+        );
+        let pin = &plan.choices_for("build").unwrap()[0];
+        assert_eq!(
+            pin,
+            &ModelChoice::pinned("a/one".parse().unwrap(), Effort::High)
+        );
+        assert_eq!(
+            serde_json::to_value(pin).unwrap(),
+            serde_json::json!({"model": {"provider": "a", "model": "one"}, "effort": "high"}),
+            "a pin serializes as before"
+        );
+        let reviewer = &plan.choices_for("review").unwrap()[0];
+        assert_eq!(reviewer.effort, Effort::Low, "the stage default");
+        assert_eq!(reviewer.tier.as_ref().unwrap().requested, Tier::Strong);
+        for bad in [
+            serde_json::json!({"s": [{"effort": "low"}]}),
+            serde_json::json!({"s": [{"model": "a/one", "tier": "fast"}]}),
+            serde_json::json!({"s": [{"model": "a/one", "provider": "a"}]}),
+        ] {
+            let draft: ModelPlanDraft = serde_json::from_value(bad).unwrap();
+            let refused = draft.resolve(|_| None, |_, _| unreachable!());
+            assert!(refused.is_err());
+        }
+    }
+
+    #[test]
+    fn a_choice_shows_the_tier_it_asked_for_beside_the_model_it_resolved() {
+        let pinned = ModelChoice::pinned("p/m".parse().unwrap(), Effort::High);
+        assert_eq!(pinned.to_string(), "p/m high");
+        let tiered = ModelChoice {
+            tier: Some(TierChoice {
+                requested: Tier::Frontier,
+                provider: None,
+                resolved: Tier::Strong,
+            }),
+            ..pinned
+        };
+        assert_eq!(
+            tiered.to_string(),
+            "p/m high (tier frontier, fell back to strong)"
+        );
+    }
+
+    #[test]
+    fn a_stored_pinned_plan_reads_back_unchanged() {
+        let stored = serde_json::json!({"build": [{"model": {"provider": "a", "model": "one"}, "effort": "low"}]});
+        let mut plan: ModelPlan = serde_json::from_value(stored.clone()).unwrap();
+        plan.resolve_tiers(|_, _| unreachable!("a pin is not resolved"))
+            .unwrap();
+        assert_eq!(serde_json::to_value(&plan).unwrap(), stored);
     }
 
     #[test]

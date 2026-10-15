@@ -135,6 +135,7 @@ mod tests {
         ModelChoice {
             model: m(model),
             effort,
+            tier: None,
         }
     }
 

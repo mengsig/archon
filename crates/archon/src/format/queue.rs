@@ -164,10 +164,7 @@ fn plan_lines(out: &mut String, item: &QueueItem) {
         return;
     };
     for (stage, choices) in &item.model_plan.0 {
-        let picks: Vec<_> = choices
-            .iter()
-            .map(|c| format!("{} {}", c.model, c.effort))
-            .collect();
+        let picks: Vec<_> = choices.iter().map(ToString::to_string).collect();
         let reason = reasons
             .get(stage)
             .map_or(String::new(), |r| format!(" ({})", sanitize_line(r)));
@@ -310,14 +307,22 @@ fn stage_line(stage: &StageRun) -> String {
         .as_ref()
         .map_or_else(|| "no agent yet".to_owned(), |a| format!("agent {a}"));
     format!(
-        "{} attempt {} slot {}: {state}{verdict}, {}, {} ({}), {agent}",
+        "{} attempt {} slot {}: {state}{verdict}, {}, {}, {agent}",
         stage.stage_id,
         stage.attempt,
         stage.fan_index,
         archon_core::cost::format_usd(stage.cost_usd),
-        stage.current_choice().model,
-        stage.current_choice().effort,
+        attempt_choice(stage.current_choice()),
     )
+}
+
+/// `model (effort)`, and the tier it resolved when it asked for one.
+fn attempt_choice(choice: &archon_core::model::ModelChoice) -> String {
+    let tier = choice
+        .tier
+        .as_ref()
+        .map_or(String::new(), |t| format!(", {t}"));
+    format!("{} ({}{tier})", choice.model, choice.effort)
 }
 
 /// A stage summary's lines: all of them with `full`, else the first
@@ -444,6 +449,7 @@ mod tests {
             choice: ModelChoice {
                 model: "claude-code/opus".parse().unwrap(),
                 effort: Effort::High,
+                tier: None,
             },
             aether_agent: Some(AetherAgentId::parse("agt_one").unwrap()),
             aether_task: None,

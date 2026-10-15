@@ -194,6 +194,21 @@ fn every_tool_name_has_exactly_one_definition() {
     }
 }
 
+/// Tool text speaks of tiers, so a new model release needs no change to it.
+#[test]
+fn tool_text_names_tiers_not_models() {
+    for definition in definitions() {
+        let text = format!("{} {}", definition.description, definition.input_schema);
+        let named = archon_core::testing::model_name_in(&text);
+        assert_eq!(named, None, "{}", definition.name);
+    }
+    let enqueue = definition("enqueue").unwrap().input_schema.to_string();
+    assert!(
+        enqueue.contains("guide(topic=models)"),
+        "the tradeoffs are a guide away"
+    );
+}
+
 #[test]
 fn definitions_fit_aethers_limits_and_are_self_consistent() {
     for definition in definitions() {
@@ -313,7 +328,10 @@ fn enqueue_maps_its_fields_and_both_model_spellings() {
     assert_eq!(request.pipeline.as_deref(), Some("refactor"));
     assert_eq!(request.priority, Priority::High);
     let review = request.model_plan.0.get("review").expect("review stage");
-    assert_eq!(review[0].model.to_string(), "codex/gpt-6-sol");
+    assert_eq!(
+        review[0].model.as_ref().unwrap().to_string(),
+        "codex/gpt-6-sol"
+    );
     assert_eq!(review[0].effort, Some(Effort::XHigh));
     assert_eq!(request.idempotency_key.as_deref(), Some("fix-login-1"));
     let origin = request.origin.expect("the GitHub thread is kept");
@@ -995,11 +1013,12 @@ fn shown_bytes(definition: &ToolDefinition) -> usize {
 }
 
 /// Every orchestrator turn pays for the tool list: 1.0's 25 tools (30,071 bytes
-/// then) stay within 61% of that, and all of them within 28 KiB.
+/// then) stay within 62% of that (61% before model_plan tiers), and all of
+/// them within 28 KiB.
 #[test]
 fn the_tool_list_stays_within_its_budget() {
     const FROM_1_0: usize = 25;
-    const FROM_1_0_BUDGET_BYTES: usize = 18_200;
+    const FROM_1_0_BUDGET_BYTES: usize = 18_400;
     const BUDGET_BYTES: usize = 28 * 1024;
     let definitions = definitions();
     assert_eq!(definitions[FROM_1_0 - 1].name, "message_orchestrator");

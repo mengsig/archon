@@ -162,6 +162,7 @@ fn cheap_choice(
             .cloned()
             .unwrap_or_else(|| ctx.config.orchestrator.model.clone()),
         effort: Effort::Low,
+        tier: None,
     });
     policy.check(&choice)?;
     assert!(policy.permits_model(&choice.model));

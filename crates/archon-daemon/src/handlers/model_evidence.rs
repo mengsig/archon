@@ -54,7 +54,8 @@ pub(super) async fn report(
         };
         entry.insert(spec);
     }
-    let mut report = snapshot.report(|_, stage| {
+    let catalog = ctx.store.lock().await.model_catalog();
+    let mut report = snapshot.report(&catalog, |_, stage| {
         Ok(runs
             .get(&stage.run)
             .and_then(Option::as_ref)

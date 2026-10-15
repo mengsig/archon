@@ -142,6 +142,7 @@ async fn prepare(
         policy.ceiling,
     )?;
     knobs::check_ceiling(&policy, &env, &base, checked)?;
+    let item = &tiers_at_dispatch(ctx, &env, item).await?;
     let item = &without_retired_ship(item, &current);
     let spec = Arc::new(frozen::freeze(&ctx.paths.data_dir, &run_id, &current).await?);
     crate::learned::freeze_context(ctx, &run_id, item, &spec).await?;
@@ -164,6 +165,46 @@ async fn prepare(
             Err(error)
         }
     }
+}
+
+/// `item` with each tiered choice resolved again from Aether's catalog as it
+/// is now, and stored so a recovered run keeps it. With no catalog read
+/// yet, the last resolution stands.
+async fn tiers_at_dispatch(
+    ctx: &DaemonContext,
+    env: &RepoEnv,
+    item: &QueueItem,
+) -> Result<QueueItem, ArchonError> {
+    let tiered = item
+        .model_plan
+        .0
+        .values()
+        .flatten()
+        .any(|c| c.tier.is_some());
+    let catalog = match tiered {
+        true => crate::learned::catalog(ctx).await?,
+        false => return Ok(item.clone()),
+    };
+    if catalog.is_empty() {
+        return Ok(item.clone());
+    }
+    let policy = env.policy(&ctx.config);
+    let tiers = knobs::TierScope::new(&ctx.config, &policy, &catalog);
+    let mut store = ctx.store.lock().await;
+    let mut stored = store.item(&item.id)?;
+    let before = stored.model_plan.clone();
+    stored
+        .model_plan
+        .resolve_tiers(|tier, provider| tiers.resolve(tier, provider))?;
+    if stored.model_plan != before {
+        tracing::info!(item = %item.id, "re-resolved tiered model choices at dispatch");
+        stored.updated_at = archon_core::now();
+        store.update_item(&stored)?;
+    }
+    Ok(QueueItem {
+        model_plan: stored.model_plan,
+        ..item.clone()
+    })
 }
 
 /// `item` as its run reads it: a 1.0 item queued for a built-in keeps no

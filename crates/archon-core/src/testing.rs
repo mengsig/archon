@@ -85,3 +85,46 @@ mod tests {
         assert_eq!(text, "#!/bin/sh\nexit 4\n");
     }
 }
+
+/// The first model-name-like word of `text`: a model family of today's
+/// providers, or a `provider/model` id. Guidance names tiers instead.
+pub fn model_name_in(text: &str) -> Option<String> {
+    const FAMILIES: [&str; 8] = [
+        "opus", "sonnet", "haiku", "fable", "luna", "sol", "astra", "gpt",
+    ];
+    let lower = text.to_ascii_lowercase();
+    let words = lower.split(|c: char| !(c.is_ascii_alphanumeric() || "-./_".contains(c)));
+    words
+        .filter(|w| !w.is_empty())
+        .find(|word| {
+            let parts = word.split(['-', '.', '/', '_']);
+            let pinned = ["claude-code/", "codex/"].iter().any(|p| word.contains(p));
+            pinned || parts.into_iter().any(|part| FAMILIES.contains(&part))
+        })
+        .map(str::to_owned)
+}
+
+#[cfg(test)]
+mod model_name_tests {
+    use super::model_name_in;
+
+    #[test]
+    fn finds_families_and_ids_but_not_tiers() {
+        assert_eq!(
+            model_name_in("use claude-opus-5-5 now").as_deref(),
+            Some("claude-opus-5-5")
+        );
+        assert_eq!(
+            model_name_in("pin `codex/x-1`").as_deref(),
+            Some("codex/x-1")
+        );
+        assert_eq!(
+            model_name_in("Sonnet, at medium").as_deref(),
+            Some("sonnet")
+        );
+        assert_eq!(
+            model_name_in("the strong tier; frontier only if asked; solve it"),
+            None
+        );
+    }
+}

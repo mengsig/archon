@@ -363,6 +363,7 @@ fn policy_refusal(policy: &ModelPolicy, model: &ModelRef, held: &Value) -> Optio
     let choice = ModelChoice {
         model: model.clone(),
         effort,
+        tier: None,
     };
     policy.check(&choice).err()
 }
@@ -641,6 +642,7 @@ mod reviewer_tests {
         let named = [ModelChoice {
             model: model.clone(),
             effort: Effort::Medium,
+            tier: None,
         }];
         let reviewer = |effort| json!({"role": "reviewer", "config": {"effort": effort}});
         assert!(reviewer_refusal(&named, &model, &reviewer("medium")).is_none());

@@ -161,6 +161,7 @@ pub(crate) fn reshape(
         store,
         repo,
         policy: &policy,
+        max_tier: env.max_default_tier(&ctx.config),
     };
     let plan = projected_plan(&learning, spec, &reshaped, &item.model_plan)?;
     policy.check_plan(&plan)?;
@@ -231,6 +232,7 @@ struct Learning<'a> {
     store: &'a Store,
     repo: Option<&'a archon_core::id::RepoId>,
     policy: &'a ModelPolicy,
+    max_tier: archon_core::model_tier::Tier,
 }
 
 /// `plan` for the stages of `new`: the choices of the stages it keeps, then
@@ -258,8 +260,10 @@ fn projected_plan(
         store,
         repo,
         policy,
+        max_tier,
     } = *learning;
-    let filled = knobs::fill_plan(store, repo, (new, new), kept, policy, fallback.as_ref())?;
+    let bounds = (policy, max_tier);
+    let filled = knobs::fill_plan(store, repo, (new, new), kept, bounds, fallback.as_ref())?;
     let unfilled = new.file.stages.iter();
     if let Some(stage) = unfilled
         .into_iter()

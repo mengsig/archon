@@ -22,7 +22,7 @@ kind = "report"
 prompt = "exercise.md"
 fan_out = 2
 timeout_minutes = 120
-nudge = "Two testers on different charters; distinct models find more distinct defects."
+nudge = "Two testers on different charters; independent discovery (another provider at the same tier helps) finds more distinct defects."
 
 [[stage]]
 id = "report"

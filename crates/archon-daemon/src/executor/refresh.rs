@@ -32,7 +32,8 @@ pub(crate) async fn refresh_item(
     let (owner, run, repo) = target(ctx, id).await?;
     let env = RepoEnv::new(Some(repo.clone()))?;
     let base = base_of(ctx, &run, &env).await?;
-    let prepared = refresh_owner(ctx, &owner, &env)?;
+    let catalog = crate::learned::catalog(ctx).await?;
+    let prepared = refresh_owner(ctx, &owner, &env, &catalog)?;
     if repo.ship == ShipMode::Pr && run.shipped {
         check_pr_open(ctx, &repo, &run.branch).await?;
     }
@@ -104,6 +105,7 @@ fn refresh_owner(
     ctx: &DaemonContext,
     owner: &QueueItem,
     env: &RepoEnv,
+    catalog: &archon_core::model_tier::ModelCatalog,
 ) -> Result<QueueItem, ArchonError> {
     let mut item = owner.clone();
     item.autonomy.proposal = ProposalMode::Off;
@@ -111,7 +113,9 @@ fn refresh_owner(
     let (base, spec) = knobs::item_specs(env, &item)?;
     knobs::check_ceiling(&env.autonomy(ctx), env, &base, item.autonomy)?;
     let policy = env.policy(&ctx.config);
-    let fallback = knobs::default_choice(&ctx.config, &policy, &spec);
+    let tiers = knobs::TierScope::new(&ctx.config, &policy, catalog);
+    let max_tier = env.max_default_tier(&ctx.config);
+    let fallback = knobs::default_choice(&ctx.config, tiers, max_tier, &spec);
     let mut plan = ModelPlan::default();
     let mut reasons = archon_core::model::ModelReasons::default();
     for stage in &spec.file.stages {

@@ -1988,6 +1988,7 @@ async fn reviewer_spawn_is_checked_against_the_items_named_model_and_effort() {
             vec![ModelChoice {
                 model: ModelRef::new(ALLOWED.0, ALLOWED.1),
                 effort: Effort::Medium,
+                tier: None,
             }],
         );
         store.update_item(&item).unwrap();

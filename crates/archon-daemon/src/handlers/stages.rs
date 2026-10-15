@@ -294,6 +294,7 @@ mod tests {
             choice: archon_core::model::ModelChoice {
                 model: "claude-code/opus".parse().unwrap(),
                 effort: archon_core::model::Effort::High,
+                tier: None,
             },
             model_segments: Vec::new(),
             infrastructure_failure: false,

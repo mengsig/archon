@@ -7,10 +7,11 @@ use archon_core::cost::DayRange;
 use archon_core::error::ArchonError;
 use archon_core::feedback::feedback_window;
 use archon_core::id::{FeedbackId, PipelineRunId, RepoId};
-use archon_core::model::ModelChoice;
+use archon_core::model::{Effort, ModelChoice};
 use archon_core::model_evidence::{
-    MAX_ROWS, ModelEvidenceQuery, ModelEvidenceReport, ModelEvidenceRow,
+    MAX_ROWS, ModelEvidenceQuery, ModelEvidenceReport, ModelEvidenceRow, TierEvidenceRow,
 };
+use archon_core::model_tier::{ModelCatalog, Tier};
 use archon_core::outcome::{
     CorrectionCause, DiffSize, FailureClass, Outcome, OutcomeResult, RouteContext,
 };
@@ -128,92 +129,169 @@ impl ModelEvidenceSnapshot {
             .map(|a| (&a.item, a.pipeline.as_str(), &a.stage))
     }
 
-    /// Aggregate the captured rows with the caller's stage classification.
+    /// Aggregate the captured rows with the caller's stage classification,
+    /// by model and by tier: the tier an attempt recorded, else `catalog`'s.
     pub fn report(
         self,
+        catalog: &ModelCatalog,
         mut is_verdict_stage: impl FnMut(&QueueItem, &StageRun) -> Result<bool, ArchonError>,
     ) -> Result<ModelEvidenceReport, ArchonError> {
         let mut groups: HashMap<(String, ModelChoice, archon_core::config::HostContext), Samples> =
             HashMap::new();
+        let mut tiers: HashMap<(String, Tier, Effort), Samples> = HashMap::new();
         for attempt in self.attempts {
-            let stage = attempt.stage;
-            let samples = groups
-                .entry((
-                    stage.stage_id.clone(),
-                    stage.current_choice().clone(),
-                    stage.host_context,
-                ))
-                .or_default();
-            samples.attempts += 1;
-            if stage.state != StageState::Completed {
-                continue;
+            let stage = &attempt.stage;
+            let choice = stage.current_choice();
+            let sample = sample(&attempt, self.estimates, &mut is_verdict_stage)?;
+            let key = (
+                stage.stage_id.clone(),
+                choice.without_tier(),
+                stage.host_context,
+            );
+            groups.entry(key).or_default().add(sample);
+            let tier = match &choice.tier {
+                Some(tier) => Some(tier.resolved),
+                None => catalog.tier_of(&choice.model),
+            };
+            if let Some(tier) = tier {
+                let key = (stage.stage_id.clone(), tier, choice.effort);
+                tiers.entry(key).or_default().add(sample);
             }
-            let cost = attempt.billed.unwrap_or(stage.cost_usd)
-                + attempt.delegated_billed
-                + if self.estimates {
-                    attempt.estimated.unwrap_or(0.0) + attempt.delegated_estimated
-                } else {
-                    0.0
-                };
-            if !cost.is_finite() || cost < 0.0 {
+        }
+        Ok(finish(groups, tiers, self.range, self.estimates))
+    }
+}
+
+/// What one attempt adds to its groups; only a completed one is measured.
+#[derive(Clone, Copy)]
+struct Sample {
+    completed: Option<Completed>,
+}
+
+#[derive(Clone, Copy)]
+struct Completed {
+    cost: f64,
+    minutes: Option<f64>,
+    verdict: Option<bool>,
+}
+
+impl Samples {
+    fn add(&mut self, sample: Sample) {
+        self.attempts += 1;
+        let Some(done) = sample.completed else {
+            return;
+        };
+        self.costs.push(done.cost);
+        self.minutes.extend(done.minutes);
+        if let Some(passed) = done.verdict {
+            self.verdicts += 1;
+            self.passed += usize::from(passed);
+        }
+    }
+
+    /// Sorted, with the summary every evidence row shows.
+    fn summary(mut self) -> Summary {
+        self.costs.sort_by(f64::total_cmp);
+        self.minutes.sort_by(f64::total_cmp);
+        Summary {
+            attempts: self.attempts,
+            completed: self.costs.len(),
+            median_cost_usd: median(&self.costs),
+            // Nearest-rank p90, including the maximum for fewer than ten samples.
+            p90_cost_usd: self
+                .costs
+                .get((self.costs.len() * 9).div_ceil(10).saturating_sub(1))
+                .copied(),
+            median_minutes: median(&self.minutes),
+            verdicts: self.verdicts,
+            passed: self.passed,
+        }
+    }
+}
+
+struct Summary {
+    attempts: usize,
+    completed: usize,
+    median_cost_usd: Option<f64>,
+    p90_cost_usd: Option<f64>,
+    median_minutes: Option<f64>,
+    verdicts: usize,
+    passed: usize,
+}
+
+fn sample(
+    attempt: &Attempt,
+    estimates: bool,
+    is_verdict_stage: &mut impl FnMut(&QueueItem, &StageRun) -> Result<bool, ArchonError>,
+) -> Result<Sample, ArchonError> {
+    let stage = &attempt.stage;
+    if stage.state != StageState::Completed {
+        return Ok(Sample { completed: None });
+    }
+    let cost = attempt.billed.unwrap_or(stage.cost_usd)
+        + attempt.delegated_billed
+        + if estimates {
+            attempt.estimated.unwrap_or(0.0) + attempt.delegated_estimated
+        } else {
+            0.0
+        };
+    if !cost.is_finite() || cost < 0.0 {
+        return Err(ArchonError::Store(format!(
+            "stage {} has invalid evidence cost {cost}",
+            stage.id
+        )));
+    }
+    let boundary = stage
+        .model_segments
+        .last()
+        .map_or(0.0, |s| s.cost_before_usd.min(cost));
+    let minutes = match stage.finished_at {
+        Some(end) => {
+            let elapsed = end.signed_duration_since(stage.started_at);
+            if elapsed < chrono::Duration::zero() {
                 return Err(ArchonError::Store(format!(
-                    "stage {} has invalid evidence cost {cost}",
+                    "stage {} finishes before it starts",
                     stage.id
                 )));
             }
-            let boundary = stage
-                .model_segments
-                .last()
-                .map_or(0.0, |s| s.cost_before_usd.min(cost));
-            samples.costs.push(cost - boundary);
-            if let Some(end) = stage.finished_at {
-                let elapsed = end.signed_duration_since(stage.started_at);
-                if elapsed < chrono::Duration::zero() {
-                    return Err(ArchonError::Store(format!(
-                        "stage {} finishes before it starts",
-                        stage.id
-                    )));
-                }
-                samples
-                    .minutes
-                    .push(elapsed.num_milliseconds() as f64 / 60_000.0);
-            }
-            if is_verdict_stage(&attempt.item, &stage)?
-                && let Some(verdict) = stage.verdict
-            {
-                samples.verdicts += 1;
-                samples.passed += usize::from(verdict == Verdict::Pass);
-            }
+            Some(elapsed.num_milliseconds() as f64 / 60_000.0)
         }
-        Ok(finish(groups, self.range, self.estimates))
-    }
+        None => None,
+    };
+    let verdict = match is_verdict_stage(&attempt.item, stage)? {
+        true => stage.verdict.map(|v| v == Verdict::Pass),
+        false => None,
+    };
+    Ok(Sample {
+        completed: Some(Completed {
+            cost: cost - boundary,
+            minutes,
+            verdict,
+        }),
+    })
 }
 
 fn finish(
     groups: HashMap<(String, ModelChoice, archon_core::config::HostContext), Samples>,
+    tiers: HashMap<(String, Tier, Effort), Samples>,
     range: DayRange,
     estimates: bool,
 ) -> ModelEvidenceReport {
     let mut rows: Vec<_> = groups
         .into_iter()
-        .map(|((stage, choice, host_context), mut samples)| {
-            samples.costs.sort_by(f64::total_cmp);
-            samples.minutes.sort_by(f64::total_cmp);
+        .map(|((stage, choice, host_context), samples)| {
+            let s = samples.summary();
             ModelEvidenceRow {
                 stage,
                 choice,
                 host_context,
-                attempts: samples.attempts,
-                completed: samples.costs.len(),
-                median_cost_usd: median(&samples.costs),
-                // Nearest-rank p90, including the maximum for fewer than ten samples.
-                p90_cost_usd: samples
-                    .costs
-                    .get((samples.costs.len() * 9).div_ceil(10).saturating_sub(1))
-                    .copied(),
-                median_minutes: median(&samples.minutes),
-                verdicts: samples.verdicts,
-                passed: samples.passed,
+                attempts: s.attempts,
+                completed: s.completed,
+                median_cost_usd: s.median_cost_usd,
+                p90_cost_usd: s.p90_cost_usd,
+                median_minutes: s.median_minutes,
+                verdicts: s.verdicts,
+                passed: s.passed,
             }
         })
         .collect();
@@ -236,11 +314,32 @@ fn finish(
     });
     let omitted = rows.len().saturating_sub(MAX_ROWS);
     rows.truncate(MAX_ROWS);
+    let mut tiers: Vec<_> = tiers
+        .into_iter()
+        .map(|((stage, tier, effort), samples)| {
+            let s = samples.summary();
+            TierEvidenceRow {
+                stage,
+                tier,
+                effort,
+                attempts: s.attempts,
+                completed: s.completed,
+                median_cost_usd: s.median_cost_usd,
+                p90_cost_usd: s.p90_cost_usd,
+                median_minutes: s.median_minutes,
+                verdicts: s.verdicts,
+                passed: s.passed,
+            }
+        })
+        .collect();
+    tiers.sort_by(|a, b| (&a.stage, a.tier, a.effort).cmp(&(&b.stage, b.tier, b.effort)));
+    tiers.truncate(MAX_ROWS);
     ModelEvidenceReport {
         range,
         estimates_counted: estimates,
         rows,
         omitted,
+        tiers,
         pipelines: Vec::new(),
     }
 }
@@ -465,6 +564,7 @@ fn finish_routes(
                 choice: ModelChoice {
                     model: archon_core::model::ModelRef::from_str(&model)?,
                     effort: archon_core::model::Effort::from_str(&effort)?,
+                    tier: None,
                 },
                 runs,
                 passed,

@@ -1090,8 +1090,9 @@ async fn inserting_a_stage_preserves_the_delegated_reviewer_plan() {
     model_plan.0.insert(
         "implement.review".into(),
         vec![archon_core::model::ModelChoiceDraft {
-            model: reviewer.parse().unwrap(),
+            model: Some(reviewer.parse().unwrap()),
             effort: Some(Effort::Low),
+            ..Default::default()
         }],
     );
     let Reply::Item(queued) = h

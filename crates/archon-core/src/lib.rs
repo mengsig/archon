@@ -27,6 +27,7 @@ pub mod mcp_tools;
 pub mod merge;
 pub mod model;
 pub mod model_evidence;
+pub mod model_tier;
 pub mod notify;
 pub mod ops;
 pub mod outcome;

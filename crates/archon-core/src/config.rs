@@ -13,6 +13,7 @@ use crate::autonomy::AutonomyConfig;
 use crate::error::ArchonError;
 use crate::initiative::InitiativeLimits;
 use crate::model::{Effort, ModelRef};
+use crate::model_tier::Tier;
 use crate::policy::ModelPolicy;
 use crate::queue::Caps;
 use crate::repo::ShipMode;
@@ -221,11 +222,24 @@ pub struct ModelsConfig {
     pub allow: Vec<ModelRef>,
     pub deny: Vec<ModelRef>,
     pub max_effort: Option<Effort>,
+    /// The highest tier a default picks on its own ([`DEFAULT_MAX_TIER`]
+    /// when unset); a plan may name any. A repository may only lower it.
+    pub max_default_tier: Option<Tier>,
 }
+
+/// Defaults stop below the frontier tier unless the operator raises them.
+pub const DEFAULT_MAX_TIER: Tier = Tier::Strong;
 
 impl ModelsConfig {
     pub fn policy(&self) -> ModelPolicy {
         ModelPolicy::from_lists(&self.allow, &self.deny, self.max_effort)
+    }
+
+    /// The global cap on a default's tier, lowered by `repo`'s.
+    pub fn max_default_tier(&self, repo: &ModelsConfig) -> Tier {
+        let global = self.max_default_tier.unwrap_or(DEFAULT_MAX_TIER);
+        repo.max_default_tier
+            .map_or(global, |local| local.min(global))
     }
 }
 
@@ -762,6 +776,7 @@ impl Config {
         let orchestrator = crate::model::ModelChoice {
             model: self.orchestrator.model.clone(),
             effort: self.orchestrator.effort,
+            tier: None,
         };
         self.models
             .policy()

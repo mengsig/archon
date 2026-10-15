@@ -1052,6 +1052,7 @@ mod tests {
             choice: archon_core::model::ModelChoice {
                 model: "claude-code/claude-sonnet-5".parse().unwrap(),
                 effort: archon_core::model::Effort::Medium,
+                tier: None,
             },
             aether_agent: Some(AetherAgentId::parse(agent).unwrap()),
             aether_task: None,

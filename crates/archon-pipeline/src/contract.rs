@@ -1181,6 +1181,7 @@ mod tests {
         let choice = |model: &str, effort| ModelChoice {
             model: model.parse().unwrap(),
             effort,
+            tier: None,
         };
         let named = [
             choice("claude-code/opus", archon_core::model::Effort::Medium),

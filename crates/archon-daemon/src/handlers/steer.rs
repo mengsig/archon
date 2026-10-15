@@ -166,7 +166,7 @@ async fn running_plan(
     let run = ctx.store.lock().await.run(run)?;
     let spec = frozen::thaw(ctx, &run.id, &run.pipeline).await?;
     let reasons = patch.model_reasons.take();
-    let given = knobs::resolve_plan(&spec, plan, reasons.as_ref())?;
+    let given = items::resolve_draft(ctx, env, &spec, plan, reasons.as_ref()).await?;
     let plan = items::filled_plan(ctx, &run.item, env, &spec, &spec, given).await?;
     items::check_plan(ctx, env, &spec, &plan)?;
     items::check_reasons(&spec, reasons.as_ref())?;

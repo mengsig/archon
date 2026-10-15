@@ -17,6 +17,7 @@ pub fn choice(model: &str) -> ModelChoice {
     ModelChoice {
         model: model.parse().expect("provider/model"),
         effort: Effort::High,
+        tier: None,
     }
 }
 

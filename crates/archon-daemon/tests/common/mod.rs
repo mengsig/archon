@@ -577,6 +577,7 @@ pub fn choice(model: &str, effort: Effort) -> ModelChoice {
     ModelChoice {
         model: model.parse().expect("model ref"),
         effort,
+        tier: None,
     }
 }
 

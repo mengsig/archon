@@ -543,6 +543,7 @@ mod tests {
             choice: archon_core::model::ModelChoice {
                 model: "a/work".parse().unwrap(),
                 effort: archon_core::model::Effort::Low,
+                tier: None,
             },
             model_segments: Vec::new(),
             infrastructure_failure: false,

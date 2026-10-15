@@ -98,6 +98,7 @@ mod tests {
             choice: ModelChoice {
                 model: "claude-code/claude-sonnet-5".parse().unwrap(),
                 effort: Effort::Medium,
+                tier: None,
             },
             prompt: "do it".into(),
             instructions: "contract".into(),

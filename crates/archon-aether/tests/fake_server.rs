@@ -35,6 +35,7 @@ fn spawn_request() -> SpawnRequest {
         choice: ModelChoice {
             model: "claude-code/claude-opus-5-5".parse().unwrap(),
             effort: Effort::High,
+            tier: None,
         },
         workspace: "/work/tree".into(),
         repository: Some("repo".into()),
@@ -464,6 +465,7 @@ async fn update_agent_patches_only_what_the_update_names() {
         choice: Some(ModelChoice {
             model: "claude-code/claude-opus-5-5".parse().unwrap(),
             effort: Effort::High,
+            tier: None,
         }),
         cost_budget_usd: Some(7.5),
         deadline: Some(deadline),

@@ -371,6 +371,7 @@ pub fn choice() -> ModelChoice {
     ModelChoice {
         model: "claude-code/claude-opus-5-5".parse().unwrap(),
         effort: Effort::High,
+        tier: None,
     }
 }
 

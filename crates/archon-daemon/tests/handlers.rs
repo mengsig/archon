@@ -218,6 +218,7 @@ async fn enqueue_fills_the_stages_a_plan_leaves_out() {
     let default = vec![ModelChoice {
         model: h.ctx.config.orchestrator.model.clone(),
         effort: Effort::Medium,
+        tier: None,
     }];
     let mut partial = plan();
     partial.0.remove("ship");

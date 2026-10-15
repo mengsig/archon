@@ -3002,7 +3002,14 @@ object per line under `--json`).
   conflicts. It never rebases or force-pushes: archond fetches the base's
   head (`origin`'s in `pr` mode, else the local branch) and queues a new
   item, titled `Refresh <item> onto <base>`, that runs the owner's pipeline
-  on the owner's branch and worktree like a restack fix (§8.8): its agent
+  on the owner's branch and worktree like a restack fix (§8.8). Proposal and
+  report are always off; review, merge and tools are retained. The model plan
+  is mapped to that pipeline's stages (a steered `build` supplies `implement`
+  and its reviewer choices); missing or no longer permitted choices use the
+  refresh default within model policy. The plan is validated before enqueue.
+  The run's base branch is retained separately from expiring prompt templates;
+  older runs with neither use the repository's configured base, or require
+  `archon repo set` when none is configured. Its agent
   merges that commit with `git merge`, resolves conflicts, commits and runs
   the checks; its review must cover the change from the new merge base
   (conflict resolutions included: the review fork of §8.2 counts `origin`'s

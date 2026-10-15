@@ -500,3 +500,187 @@ async fn many_unstarted_jobs_and_refused_probes_are_told_right() {
     assert_eq!(news.len(), 3, "{news:?}");
     assert_eq!(news[2], ("failed".to_owned(), "failed: test".to_owned()));
 }
+
+/// Steering changes a run's plan without changing the item's pipeline name.
+#[tokio::test]
+async fn a_refresh_maps_a_steered_build_and_its_reviewers_to_implement() {
+    let (h, _gh) = delivering().await;
+    let (owner, _) = shipped(&h, "steered change").await;
+    let mut stored = h.ctx.store.lock().await.item(&owner.id).unwrap();
+    let implement = stored.model_plan.0.remove("implement").unwrap();
+    stored
+        .model_plan
+        .0
+        .insert("build".into(), implement.clone());
+    let reviewers = vec![common::choice(
+        REVIEW_MODEL,
+        archon_core::model::Effort::Medium,
+    )];
+    stored
+        .model_plan
+        .0
+        .insert("build.review".into(), reviewers.clone());
+    stored.model_reasons = Some([("build".into(), "retain the implementer".into())].into());
+    h.ctx.store.lock().await.update_item(&stored).unwrap();
+    advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let fix = refresh(&h, &owner).await.unwrap();
+    assert_eq!(fix.pipeline, "direct");
+    assert_eq!(
+        fix.model_plan.choices_for("implement"),
+        Some(implement.as_slice())
+    );
+    assert_eq!(
+        fix.model_plan.choices_for("implement.review"),
+        Some(reviewers.as_slice())
+    );
+    assert!(!fix.model_plan.0.contains_key("build"));
+    assert_eq!(
+        fix.model_reasons.unwrap()["implement"],
+        "retain the implementer"
+    );
+    h.dispatch().await;
+    assert_eq!(h.running().await[0].stage_id, "implement");
+    assert!(matches!(h.state(&fix.id).await, QueueState::Running { .. }));
+}
+
+#[tokio::test]
+async fn a_refresh_turns_off_proposal_and_report_but_keeps_other_knobs() {
+    use archon_core::autonomy::{ProposalMode, ReportMode};
+    let (h, _gh) = delivering().await;
+    let (owner, _) = shipped(&h, "gated change").await;
+    let mut stored = h.ctx.store.lock().await.item(&owner.id).unwrap();
+    stored.autonomy.proposal = ProposalMode::Lavish;
+    stored.autonomy.report = ReportMode::WithPr;
+    h.ctx.store.lock().await.update_item(&stored).unwrap();
+    advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let fix = refresh(&h, &owner).await.unwrap();
+    assert_eq!(fix.autonomy.proposal, ProposalMode::Off);
+    assert_eq!(fix.autonomy.report, ReportMode::Off);
+    assert_eq!(fix.autonomy.review, stored.autonomy.review);
+    assert_eq!(fix.autonomy.merge, stored.autonomy.merge);
+    assert_eq!(fix.autonomy.tools, stored.autonomy.tools);
+    h.dispatch().await;
+    assert_eq!(h.running().await[0].stage_id, "implement");
+}
+
+#[tokio::test]
+async fn a_refresh_after_a_retry_survives_template_expiry_and_legacy_missing_metadata() {
+    for legacy in [false, true] {
+        let (h, _gh) = delivering().await;
+        let owner = enqueue(&h, "retry change").await;
+        h.dispatch().await;
+        h.cli(Request::CancelItem {
+            item: owner.id.clone(),
+            reason: None,
+        })
+        .await
+        .unwrap();
+        h.cli(Request::RetryItem {
+            item: owner.id.clone(),
+            model_plan: None,
+            model_reasons: None,
+            fresh: false,
+            brief_append: None,
+        })
+        .await
+        .unwrap();
+        h.dispatch().await;
+        settle_reviewed(&h, None).await;
+        let run = h
+            .ctx
+            .store
+            .lock()
+            .await
+            .runs_for_item(&owner.id)
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(
+            h.ctx
+                .store
+                .lock()
+                .await
+                .runs_for_item(&owner.id)
+                .unwrap()
+                .len(),
+            2
+        );
+        if legacy {
+            h.ctx
+                .store
+                .lock()
+                .await
+                .kv_delete(&format!("run_base:{}", run.id))
+                .unwrap();
+        }
+        archon_daemon::prune::prune_once(&h.ctx, archon_core::now())
+            .await
+            .unwrap();
+        assert_eq!(h.kv(&format!("run_vars:{}", run.id)).await, None);
+        assert_eq!(
+            h.kv(&format!("run_base:{}", run.id)).await.as_deref(),
+            Some("main")
+        );
+        if legacy {
+            h.ctx
+                .store
+                .lock()
+                .await
+                .kv_delete(&format!("run_base:{}", run.id))
+                .unwrap();
+        }
+        advance_origin(&h, "upstream.txt", "elsewhere\n");
+        let fix = refresh(&h, &owner).await.unwrap();
+        h.dispatch().await;
+        assert_eq!(h.run(&fix.id).await.branch, run.branch);
+        assert!(matches!(h.state(&fix.id).await, QueueState::Running { .. }));
+    }
+}
+
+#[tokio::test]
+async fn a_refresh_defaults_missing_or_disallowed_models_and_refuses_an_empty_policy() {
+    for missing in [false, true] {
+        let (h, _gh) = delivering().await;
+        let (owner, _) = shipped(&h, "model fallback").await;
+        let mut stored = h.ctx.store.lock().await.item(&owner.id).unwrap();
+        stored.model_plan.0.clear();
+        if !missing {
+            stored.model_plan.0.insert(
+                "build".into(),
+                vec![common::choice(
+                    "blocked/model",
+                    archon_core::model::Effort::Medium,
+                )],
+            );
+        }
+        h.ctx.store.lock().await.update_item(&stored).unwrap();
+        h.repo_config("[models]\ndeny = [\"blocked/model\"]\n");
+        advance_origin(&h, "upstream.txt", "elsewhere\n");
+        let fix = refresh(&h, &owner).await.unwrap();
+        assert_ne!(
+            fix.model_plan.choices_for("implement").unwrap()[0]
+                .model
+                .to_string(),
+            "blocked/model"
+        );
+        h.dispatch().await;
+        assert!(matches!(h.state(&fix.id).await, QueueState::Running { .. }));
+    }
+    let (h, _gh) = delivering().await;
+    let (owner, _) = shipped(&h, "no permitted model").await;
+    h.repo_config("[models]\nallow = [\"blocked/model\"]\ndeny = [\"blocked/model\"]\n");
+    advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let error = refresh(&h, &owner).await.unwrap_err().to_string();
+    assert!(
+        error.contains("no model allowed for refresh stage"),
+        "{error}"
+    );
+    assert!(
+        !h.ctx
+            .store
+            .lock()
+            .await
+            .has_pending_stack_fix(&owner.id)
+            .unwrap()
+    );
+}

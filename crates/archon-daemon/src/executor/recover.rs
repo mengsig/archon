@@ -29,6 +29,9 @@ pub(super) fn save_run_vars(
     vars: &BTreeMap<String, String>,
 ) -> Result<(), ArchonError> {
     assert!(vars.contains_key("workspace"), "run variables are complete");
+    if let Some(base) = vars.get("base_branch") {
+        store.kv_set(&format!("run_base:{run}"), base)?;
+    }
     store.kv_set(&run_vars_key(run), &serde_json::to_string(vars)?)
 }
 
@@ -55,8 +58,13 @@ pub(crate) fn prune_finished_run_vars(store: &mut Store) -> Result<usize, Archon
             .expect("ranged by prefix");
         let run = PipelineRunId::parse(raw)
             .map_err(|e| ArchonError::Store(format!("run variables key {key}: {e}")))?;
-        let finished = match store.run(&run) {
-            Ok(found) => {
+        let found = match store.run(&run) {
+            Ok(found) => Some(found),
+            Err(ArchonError::NotFound(_)) => None,
+            Err(error) => return Err(error),
+        };
+        let finished = match &found {
+            Some(found) => {
                 assert_eq!(
                     found.state.is_terminal(),
                     found.finished_at.is_some(),
@@ -64,10 +72,18 @@ pub(crate) fn prune_finished_run_vars(store: &mut Store) -> Result<usize, Archon
                 );
                 found.state.is_terminal()
             }
-            Err(ArchonError::NotFound(_)) => true,
-            Err(error) => return Err(error),
+            None => true,
         };
         if finished {
+            if found.is_some() && store.kv_get(&format!("run_base:{run}"))?.is_none() {
+                let vars = load_run_vars(store, &run)?;
+                if let Some(base) = vars.get("base_branch") {
+                    store.kv_set(&format!("run_base:{run}"), base)?;
+                }
+            }
+            if found.is_none() {
+                store.kv_delete(&format!("run_base:{run}"))?;
+            }
             store.kv_delete(&key)?;
             pruned += 1;
         }

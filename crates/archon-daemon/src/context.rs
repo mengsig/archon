@@ -21,6 +21,10 @@ use crate::mirror::MirrorQueue;
 use crate::supervisor::Supervisor;
 use crate::triggers::TriggerQueue;
 
+/// Under the data dir: shared build caches, and published artifacts.
+pub const CACHE_DIR: &str = "cache";
+pub const ARTIFACTS_DIR: &str = "artifacts";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DaemonPaths {
     pub socket: PathBuf,
@@ -55,6 +59,16 @@ impl DaemonPaths {
             data_dir,
         }
     }
+
+    /// Shared build caches, one directory per repository.
+    pub fn cache(&self) -> PathBuf {
+        self.data_dir.join(CACHE_DIR)
+    }
+
+    /// Published artifacts, one directory per item.
+    pub fn artifacts(&self) -> PathBuf {
+        self.data_dir.join(ARTIFACTS_DIR)
+    }
 }
 
 pub struct DaemonContext {
@@ -78,6 +92,12 @@ pub struct DaemonContext {
     /// Held while an operator answer is delivered and then recorded, so a
     /// question is delivered at most once (see `handlers::operator`).
     pub answering: Mutex<()>,
+    /// Serializes background evidence delivery with explicit retries.
+    pub learning_memory: Mutex<()>,
+    /// Explicit forget requests retain their serialization independently of evidence.
+    pub memory_curation: Mutex<()>,
+    /// New or revoked corrections and Aether reconnects wake durable delivery.
+    pub memory_feedback_ready: Notify,
     /// Serializes report snapshot refreshes with pruning.
     pub report_files: Arc<Mutex<()>>,
     /// Serializes orchestrator create/revive and announces its id.

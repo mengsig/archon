@@ -92,11 +92,22 @@ impl Store {
     }
 }
 
+/// An item that works on another item's branch: a restack fix, or a refresh.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StackFix {
     pub owner: QueueItemId,
     pub branch: String,
     pub team: bool,
+    /// Set for a refresh: the base commit it must merge before it ships.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh: Option<Refresh>,
+}
+
+/// The fetched head of the base branch a refresh merges into the owner's branch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Refresh {
+    pub base: String,
+    pub sha: String,
 }
 
 impl Store {
@@ -153,6 +164,7 @@ impl Store {
             owner: child.id.clone(),
             branch: run.branch.clone(),
             team: run.team_root.is_some(),
+            refresh: None,
         };
         let tx = write_tx(&mut self.conn)?;
         items::insert_in(&tx, &fix, None, &Default::default())?;
@@ -165,6 +177,82 @@ impl Store {
         tx.commit().ctx("enqueue restack fix")?;
         Ok(fix.id)
     }
+}
+
+impl Store {
+    /// Queue a refresh of `owner`, whose last run is `run`: an item on its branch
+    /// that merges `refresh.sha` and ships into the same pull request. The one
+    /// still to finish for that commit is returned again; another unfinished
+    /// restack fix or refresh of `owner` refuses it.
+    pub fn enqueue_refresh(
+        &mut self,
+        owner: &archon_core::queue::QueueItem,
+        run: &archon_core::run::PipelineRun,
+        refresh: &Refresh,
+    ) -> Result<archon_core::queue::QueueItem, ArchonError> {
+        use super::{items, settings};
+        use archon_core::queue::QueueState;
+        assert_eq!(run.item, owner.id, "the owner's own run");
+        assert!(!run.branch.is_empty(), "a refresh works on a branch");
+        let key = format!("restack_fix:{}:refresh:{}", owner.id, refresh.sha);
+        if let Some(id) = self.kv_get(&key)? {
+            let earlier = self.item(&QueueItemId::parse(&id)?)?;
+            if !earlier.state.is_terminal() {
+                return Ok(earlier);
+            }
+        }
+        if self.has_pending_stack_fix(&owner.id)? {
+            return Err(ArchonError::InvalidTransition(format!(
+                "{} has a restack fix or refresh still to finish, which works on its branch",
+                owner.id
+            )));
+        }
+        let mut fix = owner.clone();
+        fix.id = QueueItemId::new();
+        fix.title = format!("Refresh {} onto {}", owner.id, refresh.base);
+        fix.brief = refresh_brief(owner, &run.branch, refresh);
+        fix.dependencies.clear();
+        fix.initiative = None;
+        fix.origin = None;
+        fix.fresh_retries = 0;
+        fix.state = QueueState::Queued;
+        fix.created_at = archon_core::now();
+        fix.updated_at = fix.created_at;
+        let target = StackFix {
+            owner: owner.id.clone(),
+            branch: run.branch.clone(),
+            team: run.team_root.is_some(),
+            refresh: Some(refresh.clone()),
+        };
+        let tx = write_tx(&mut self.conn)?;
+        let queued = items::insert_in(&tx, &fix, None, &Default::default())?;
+        settings::kv_set(&tx, &key, fix.id.as_str())?;
+        settings::kv_set(
+            &tx,
+            &format!("restack_target:{}", fix.id),
+            &to_json(&target, "stack fix")?,
+        )?;
+        tx.commit().ctx("enqueue refresh")?;
+        assert_eq!(queued.id, fix.id, "a new item, no replay");
+        Ok(queued)
+    }
+}
+
+/// What a refresh's agent is asked: merge the base in, resolve, check, and
+/// have the change reviewed from where it now leaves the base.
+fn refresh_brief(owner: &archon_core::queue::QueueItem, branch: &str, refresh: &Refresh) -> String {
+    let (base, sha) = (&refresh.base, &refresh.sha);
+    format!(
+        "Refresh `{branch}` onto `{base}`: merge {sha}, the head of `{base}` Archon just \
+         fetched, into the branch with `git merge {sha}`. Resolve any \
+         conflicts, commit the merge on the existing branch and run the checks again. It ships \
+         as this run's pipeline ships, into the pull request the branch already has: never \
+         open a second one, and never rebase or force-push. Archon delivers it only once the \
+         branch holds {sha}. The review reads the change from its new merge base \
+         (`git merge-base {sha} HEAD`) to the head, conflict resolutions included.\n\n\
+         The item refreshed, {}: {}\n\n{}",
+        owner.id, owner.title, owner.brief
+    )
 }
 
 fn validate_parent(conn: &rusqlite::Connection, parent: &StackParent) -> Result<(), ArchonError> {

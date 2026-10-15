@@ -94,30 +94,49 @@ async fn check_stack_base(ctx: &DaemonContext, run: &PipelineRun) -> Result<(), 
 }
 
 /// Refuse to deliver `rev` of a stacked run, before anything is pushed,
-/// unless it holds every parent commit its stack has not seen merged (§8.8).
+/// unless it holds every parent commit its stack has not seen merged (§8.8),
+/// or of a refresh unless it holds the base commit it was queued to merge.
 pub(super) async fn verify_stack(
     ctx: &DaemonContext,
     run: &PipelineRun,
     rev: &str,
 ) -> Result<(), ArchonError> {
-    let (parents, repo) = {
+    let (needed, repo) = {
         let store = ctx.store.lock().await;
         let fix = store.stack_fix(&run.item)?;
+        let refresh = fix.as_ref().and_then(|fix| fix.refresh.clone());
         let owner = fix.map_or_else(|| run.item.clone(), |fix| fix.owner);
         let parents = store.stack_parents(&owner)?;
-        if parents.is_empty() {
+        let mut needed: Vec<(String, String)> = parents
+            .into_iter()
+            .filter(|p| !p.merged)
+            .map(|p| {
+                let why = format!(
+                    "stack is missing parent {} at {}",
+                    p.parent_item, p.parent_sha
+                );
+                (p.parent_sha, why)
+            })
+            .collect();
+        if let Some(refresh) = refresh {
+            let why = format!(
+                "the refresh has not merged `{}` at {}",
+                refresh.base, refresh.sha
+            );
+            needed.push((refresh.sha, why));
+        }
+        if needed.is_empty() {
             return Ok(());
         }
-        (parents, stack_repo(&store, &owner)?)
+        (needed, stack_repo(&store, &owner)?)
     };
-    assert!(parents.iter().all(|p| stack::is_commit_id(&p.parent_sha)));
+    assert!(needed.iter().all(|(sha, _)| stack::is_commit_id(sha)));
     let rev = rev.to_owned();
     tokio::task::spawn_blocking(move || {
-        for parent in parents.iter().filter(|p| !p.merged) {
-            if !stack::contains(&repo.path, &parent.parent_sha, &rev)? {
+        for (sha, why) in &needed {
+            if !stack::contains(&repo.path, sha, &rev)? {
                 return Err(ArchonError::Invalid(format!(
-                    "stack is missing parent {} at {}; merge it into the branch before shipping",
-                    parent.parent_item, parent.parent_sha
+                    "{why}; merge it into the branch before shipping"
                 )));
             }
         }

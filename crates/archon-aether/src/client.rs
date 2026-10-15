@@ -196,9 +196,8 @@ enum Handshake {
 }
 
 impl AetherClient {
-    /// Connect and handshake at protocol 17, or at the newest protocol an
-    /// older daemon serves, down to 14. Any other `incompatible` refusal is
-    /// reported as "Archon speaks Aether protocol 14..17; the daemon serves a..b".
+    /// Handshake at protocol 18, falling back to the newest served version down to 14.
+    /// Incompatible refusals report both protocol windows.
     pub async fn connect(endpoint: &Endpoint) -> Result<Self, ArchonError> {
         Self::connect_with(endpoint, ClientOptions::default()).await
     }
@@ -904,10 +903,10 @@ mod tests {
         let text = "client protocol 17 is not served: this daemon speaks 18 to 19";
         assert_eq!(
             incompatible_message(text),
-            "Archon speaks Aether protocol 14..17; the daemon serves 18..19"
+            "Archon speaks Aether protocol 14..18; the daemon serves 18..19"
         );
         let odd = incompatible_message("go away");
-        assert!(odd.starts_with("Archon speaks Aether protocol 14..17"));
+        assert!(odd.starts_with("Archon speaks Aether protocol 14..18"));
         assert!(odd.ends_with("go away"));
     }
 
@@ -927,11 +926,11 @@ mod tests {
         assert_eq!(serving(13, 14), Some(14));
         assert_eq!(serving(14, 14), Some(14));
         assert_eq!(serving(12, 13), None, "older than Archon speaks");
-        assert_eq!(serving(18, 19), None, "newer: retrying older cannot help");
+        assert_eq!(serving(19, 20), None, "newer: retrying older cannot help");
         assert_eq!(
             serving(16, 17),
-            None,
-            "17 is asked for first, never retried"
+            Some(17),
+            "fall back to 17 before submissions could be resolved"
         );
         assert_eq!(fallback_version("unauthorized"), None);
     }

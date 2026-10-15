@@ -66,7 +66,7 @@ Contents:
         ▲                  │ aether link (1 connection, 2 subscriptions) · worktrees · lavish │
         │                  │ SQLite store (archon.db)                                         │
         │                  └───────────────▲──────────────────────────────┬───────────────────┘
-        │                    archon protocol│                              │ aether protocol v17
+        │                    archon protocol│                              │ aether protocol v18
         │                                  │                              ▼
         │          ┌──── archon mcp (stdio) ◀── spawned by ──┐   ┌───────── aetherd ─────────┐
         └──────────┤                                         └───┤ orchestrator agent (root) │
@@ -101,7 +101,7 @@ archon-core ◀── archon-aether ◀──┐
 | Crate | Owns | Must not |
 | --- | --- | --- |
 | `archon-core` | Ids (Archon's and Aether's), domain records (repo, queue item, run, stage run, feed), `Config` schema and loading, `ModelPolicy`, the Archon daemon protocol (`protocol`), the `AgentBackend` port trait (`ports`), pipeline catalog vocabulary (`catalog`), and the MCP tool names (`mcp_tools`). | Do I/O beyond reading config files. |
-| `archon-aether` | Rust client for Aether protocol v17 (falls back to 16, 15 and 14): transport, handshake, request multiplexing, subscriptions, typed subset of commands and events (`wire`, `events`), the reconnecting `AetherLink`, and `AetherBackend: AgentBackend`. | Know about queues or pipelines. |
+| `archon-aether` | Rust client for Aether protocol v18 (falls back to 17, 16, 15 and 14): transport, handshake, request multiplexing, subscriptions, typed subset of commands and events (`wire`, `events`), the reconnecting `AetherLink`, and `AetherBackend: AgentBackend`. | Know about queues or pipelines. |
 | `archon-queue` | `Store` (SQLite, migrations): repos, items, dependencies, runs, stage runs, feed, questions, spend ledger, pause state, kv cursors. Pure scheduler `plan_dispatch`. | Talk to Aether. |
 | `archon-pipeline` | Pipeline discovery (built-in, user, repo), TOML parse and validation, prompt templating, and the `RunDriver` state machine (gates, loops, fan-out). | Do I/O except reading pipeline files; spawn anything. |
 | `archon-client` | Async client for the Archon daemon socket (`connect`, `connect_or_start`, `request`, `subscribe_feed`), and the NDJSON framing shared with the server. | Contain daemon logic. |
@@ -144,21 +144,21 @@ protocol 17 alone does not imply support.
 ### 4.2 Handshake
 
 ```json
-{"req":1,"cmd":"hello","protocol_version":17,"client_name":"archon",
- "client_version":"1.2.2","features":[]}
+{"req":1,"cmd":"hello","protocol_version":18,"client_name":"archon",
+ "client_version":"1.2.3","features":[]}
 ```
 
 The reply is `Welcome {protocol_version, daemon_version, instance_id,
 schema_version, pid, features, daemon_protocol_version?, min_protocol_version?,
-idle_timeout_secs?}`. If Aether refuses the handshake with `incompatible`
-and the newest protocol it serves is 16, 15 or 14, Archon reconnects and
+idle_timeout_secs?, submission_horizon?}`. If Aether refuses the handshake with `incompatible`
+and the newest protocol it serves is 17, 16, 15 or 14, Archon reconnects and
 says hello at that one: an aetherd not yet upgraded keeps working. What its
 protocol cannot store, Archon refuses to save, before anything is sent:
 GitHub operator logins below 17 (`operator_users`), and a GitHub watcher
 allowlist at 14, which would widen who may dispatch. An aetherd that
 answers a watcher read with `incompatible` because operator logins are set
 is reported as that, never as a reply that failed to decode. Any other
-refusal is reported as "Archon speaks Aether protocol 14..17; the daemon
+refusal is reported as "Archon speaks Aether protocol 14..18; the daemon
 serves {min}..{max}". A change to `instance_id` between connections means
 Aether restarted, which triggers reconciliation (§16).
 
@@ -1014,7 +1014,7 @@ and cost as `results`.
 
 Every other event wakes: `agent_message`, `item_blocked`, `gate_opened`,
 `operator_answer`, `chat_answer`, `lavish_feedback`, `budget`,
-`policy_violation`, `directives_restated`, `initiative_finished`. A mirror's change of state
+`policy_violation`, `directives_restated`, `initiative_finished`, `pr_checks` (§8.7). A mirror's change of state
 (§13.3) is quiet. Quiet news is saved in the outbox like any other and makes
 no trigger by itself. It leaves with the next trigger there is, and an
 operator message sends it at once, without the coalescing window
@@ -2047,7 +2047,10 @@ cancelled, failed or running child, a grandchild, or a child that returned
 no verdict (a builder) is refused. The verdicts are then placed on the
 branch in the run's workspace (`executor/review/coverage.rs`): every `head`
 must be a commit the branch holds; a `base` at or before the fork from the
-base branch, or none, means the whole change was read; a delta's `base`
+base branch, or none, means the whole change was read. The fork is the merge
+base of the head with the local base branch and `refs/remotes/origin/<base>`
+together, so after a refresh (§13) merged a newer base the change is read
+from that base, conflict resolutions included; a delta's `base`
 must be a head another named reviewer read. If none is, the lead's other
 direct children that completed a task are read and placed too, those not on
 the branch left out; the ones anchored with the named reads join the check,
@@ -2346,6 +2349,23 @@ check. `executor/pull_requests.rs` later reads only whether the pull request
 merged, closed or had changes requested, for learning (§19). A red check is
 the operator's to act on: a fix item, or `archon queue retry --append`,
 which delivers into the same pull request (§6.1).
+
+**Checks are watched, not waited for.** Each delivered pull request is owed
+a look at its checks, in `kv` `ship_checks:<run>` (a later delivery into the
+same pull request replaces it). The coordination pass reads `gh pr checks
+<url> --json name,bucket,startedAt,link` two minutes after delivery, then
+every ten minutes. A failing or cancelled GitHub Actions job is asked why
+(`gh api repos/<owner>/<repo>/check-runs/<job>/annotations`, at most eight a
+look; when all eight never started, neither did the rest, and a refused ask
+leaves its check failed): GitHub's "The job was not started because …"
+(billing, a spending limit) means the check never ran, and so does a check still queued, never
+started, 30 minutes after delivery (no runner). Checks that ran and failed
+are an outcome in the feed and a `pr_checks` event (`state: "failed"`);
+checks that never started are a blocker and a `pr_checks` event (`state:
+"not_started"` with GitHub's reason), never reported as the change failing.
+Either is told once and ends the watch. Passing checks, no checks 30 minutes
+after delivery, or a day without an answer end it quietly; a `gh` failure is
+logged and the next look tries again.
 
 **A ship stage.** A pipeline may instead end in one `kind = "ship"` stage,
 as every built-in did before archond shipped. Its agent delivers with git
@@ -2769,6 +2789,7 @@ can reach the socket (§5.5).
 | `update_initiative` | `{initiative, contract_append \| contract}` | `UpdateInitiative` (§8.9) |
 | `cancel_item` | `{item, reason?}` | `CancelItem` |
 | `retry_item` | `{item, model_plan?, model_reasons?, fresh?, brief_append?}` | `RetryItem` (§13: `fresh` starts again from the base branch) |
+| `refresh_item` | `{item}` | `RefreshItem` (§13: a finished item's base, fetched from `origin`, merged into the same branch and pull request) |
 | `queue_status` | `{}` | `Status` |
 | `model_evidence` | `{repo?, pipeline?, stage?, since?}` | `ModelEvidence` (30 local days by default; stage attempt observations, at most 60 groups) |
 | `cost_report` | `{since?, until?, by?: day\|repo\|pipeline\|model\|item\|stage}` | `CostReport` (§5.3) |
@@ -2889,7 +2910,14 @@ object per line under `--json`).
   `<branch_prefix><item-short>-<slug(title)>`, created with
   `git -C <repo> worktree add -b <branch> <path> <base>`, checked out
   through the shadow (§13.4). The base is
-  `repo.base_branch`, or the repo's current `HEAD` commit.
+  `repo.base_branch`, or the repo's current `HEAD` commit. In `pr` mode a new
+  branch forks from `origin`'s head of the base, fetched through the shadow
+  just before (`ls-remote`, then the objects), with
+  `refs/remotes/origin/<base>` moved to it; the operator's local base branch
+  and checkout are never touched. A repository without `origin` forks from
+  the local base silently; a fetch that fails forks from it with a warning
+  (a `decision` in the item's feed), and `refresh_item` can merge the newer
+  base in later. The run's `base_branch` stays the branch name.
   **Uncommitted changes in the operator's checkout are not included**, unlike
   Aether's isolated-delegation snapshot.
 - `workspace = "repo-readonly"` runs the stage in a snapshot, never in the
@@ -2935,6 +2963,21 @@ object per line under `--json`).
   `worktrees.gc_after` (default 7d) after the item's last run, with no check
   for uncommitted changes, which `archon queue retry --fresh`, `retry_item`
   and the progress note say.
+- A refresh (`refresh_item`, `archon queue refresh <id>`) brings a finished
+  item's branch up to its base once the base moved on or its pull request
+  conflicts. It never rebases or force-pushes: archond fetches the base's
+  head (`origin`'s in `pr` mode, else the local branch) and queues a new
+  item, titled `Refresh <item> onto <base>`, that runs the owner's pipeline
+  on the owner's branch and worktree like a restack fix (§8.8): its agent
+  merges that commit with `git merge`, resolves conflicts, commits and runs
+  the checks; its review must cover the change from the new merge base
+  (conflict resolutions included: the review fork of §8.2 counts `origin`'s
+  base), and it delivers into the same pull request. Delivery refuses until the branch
+  holds the fetched commit. A refresh is refused for an item that is not
+  finished, is itself a fix, is stacked on an unmerged parent, has a
+  restack fix or refresh pending, whose branch already holds the base head,
+  or (delivered in `pr` mode) whose pull request merged or closed. Asking
+  again for the same base commit returns the refresh already queued.
 - A brief amendment (`brief_append` on `retry_item` or `update_item`, a
   `note` on `steer_item`, `archon queue retry --append`) is appended to the
   brief under a dated `## Amendment (<UTC time>)` heading, so every later
@@ -3427,7 +3470,9 @@ insteadOf`, `http.*` and `credential.helper` apply, and a push or fetch
 keeps `GIT_SSH_COMMAND`, `GIT_SSH` and `GIT_SSH_VARIANT` from the daemon's
 environment. Only https, ssh and local `origin` URLs are used; a local
 remote's `receive-pack` and `upload-pack` run with no hook. A fetch writes
-no ref and no `FETCH_HEAD` in the repository, only the objects it lacks.
+no ref and no `FETCH_HEAD` in the repository, only the objects it lacks; a
+base fetched to fork from or refresh onto (§13) then moves only
+`refs/remotes/origin/<base>`, with a `Sealed` `update-ref`.
 
 Removing a worktree asks the shadow what `git worktree remove` would: a
 populated submodule or the worktree's own `modules`, a tracked change
@@ -3447,6 +3492,38 @@ A new worktree or snapshot is added with a sealed `git worktree add
 filters never run, the operator's do. Not yet through the shadow: a team's
 worker worktrees, merges and status (§13.1), which run no hook but the
 repository's filters.
+
+### 13.5 Shared build cache and durable artifacts
+
+**Build cache.** A repository's stages build into one cargo target directory,
+`<data>/cache/<repo>/cargo-target`, never one per task and never `/tmp`.
+Aether cannot set an agent's environment, so archond keeps a
+`.cargo/config.toml` (marked as its own) in `<worktrees>/<repo>/` that
+points cargo at it for every worktree below, and the stage contract names
+the directory (`CARGO_TARGET_DIR=...`) for builds run elsewhere. A
+repository's own `.cargo/config.toml` is nearer a worktree and wins.
+`[worktrees] shared_cache = false`, or `[cache] shared = false` in
+`<repo>/.archon/config.toml`, turns it off; archond then removes the config
+it wrote. Cargo locks the directory, so concurrent builds are safe, but
+builds of one profile queue on that lock: a repository with many parallel
+items trades build time for disk and warm incremental state, and may opt
+out. A pool of target directories is not built; nothing needed it yet.
+
+**Cache gc.** The gc pass (§13.2) also deletes a repository's cache that no
+run started in for `worktrees.shared_cache_after` (default 14d), unless a run
+of the repository is live (it is listed as skipped). While dispatch is held
+for disk space, `worktrees.pressure_after` applies to caches as to worktrees.
+The pass's feed note and `archon gc` / `archon status` report caches and
+artifacts removed and the bytes freed. Live runs' worktrees are never touched.
+
+**Artifacts.** A stage publishes files with `publish_artifact` (a file or a
+directory of regular files, from inside its workspace). They are copied to
+`<data>/artifacts/<item>/` under `[artifacts] max_file_mb` and `max_item_mb`
+(a publish over either is refused, naming the limit), and read with
+`list_artifacts` and `read_artifact` by item id after the worktree is gone.
+A dependent stage's contract names its dependencies' artifact directories.
+The gc pass deletes an item's artifacts `[artifacts] keep_after` (30d) after
+the item settled.
 
 ## 14. Lavish plugin
 
@@ -4188,6 +4265,45 @@ Infrastructure, timeout, budget, blocked, escalation and shipping failures are
 excluded from model quality samples. Each `StageRun` records the `kind` its stage
 had in the run's frozen pipeline when it was spawned; `archon learning` credits
 a model only for a stage recorded as `work`, never by the current catalog.
+
+**Memory feedback.** When Aether advertises `memory_feedback` and
+`memory_context`, `archon learning correct` queues `hurt` evidence for the
+corrected stage's recorded Aether tasks, including retries and fan-out slots.
+With `--forget-memory`, it sends `operator` evidence for every correction cause,
+only when that memory appears in the task's context; otherwise the receipt
+explains the skip. The requested forget proceeds independently and still waits
+for Aether. Without a named memory, only `quality` corrections send `outcome`
+evidence for each distinct memory in each task's context. Truncated context is
+marked partial and the listed memories still receive feedback. Older Aether
+instances receive no feedback commands.
+
+The correction's JSON `data` stores a delivery ledger bound to the known Aether
+instance and the stage's tasks when the correction is recorded. Migration 12
+blocks older Archon binaries that would deserialize and rewrite corrections
+without preserving the ledger; it also marks older corrections as having none.
+Context discovery, memory/task pairs, errors, attempted submissions, original
+submission horizons and Aether `mfb_` receipts are durable; memory text is never
+stored. A supervised background worker delivers outside the store lock under
+`learning_memory`; corrections and undo never wait for this lock or feedback.
+Explicit forgets retain their serialization under a separate curation lock.
+The worker reloads revocation before each entry, so undo during an in-flight
+send queues its retraction without waiting. Startup, every Aether reconnect,
+correction and undo wake the worker; `retry-memory` also resumes pending work.
+Store errors stop the worker and propagate through daemon supervision.
+
+Each write first persists its intent and uses `archon:<feedback>:<memory>:<task>`
+as its idempotency key. Protocol 18 supplies a `submission_horizon`, persisted
+before the first send and never replaced on reconnect. An attempted entry
+without a feedback id calls `resolve_submission` with the original command,
+key and horizon. `executed` adopts the validated receipt, `absent_safe` permits
+resending, and `unknown` stays pending without resending, even if a later answer
+claims safe absence. Hosts without resolution support also leave uncertain
+submissions pending. Undo drops unattempted entries and retracts known or
+recovered receipts. Transient and unknown failures remain pending; missing
+features, instance mismatches, `not_found` and `invalid_argument` are terminal
+skips with their reason. Undo still leaves a forgotten memory forgotten.
+`learning why` and JSON show sent, pending, skipped and retracted counts, partial
+tasks and errors; pending counts include tasks awaiting context discovery.
 
 **Routing.** Evidence is keyed by repository, pipeline and content revision,
 review level, task class (`task:<class>`, otherwise `general`), stage, and known diff

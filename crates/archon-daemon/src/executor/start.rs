@@ -8,6 +8,7 @@ use archon_core::autonomy::MergeMode;
 use archon_core::catalog::{StageKind, WorkspaceMode, is_snapshot_of};
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId};
+use archon_core::notify::NotificationKind;
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::{Repo, ShipMode};
 use archon_core::run::{PipelineRun, RunState};
@@ -19,6 +20,8 @@ use crate::context::DaemonContext;
 use crate::knobs;
 use crate::resolve::RepoEnv;
 use crate::worktree::WorktreeManager;
+use crate::worktree::shadow::Shadow;
+use crate::worktree::stack;
 
 /// How a failed removal names the worktree of an abandoned start.
 const ABANDONED: &str = "of a start that was abandoned";
@@ -236,6 +239,10 @@ async fn workspace(
         .as_ref()
         .and_then(|r| r.base_branch.clone())
         .or_else(|| env.config.repo.base_branch.clone());
+    if let Some(repo) = &env.repo {
+        let shared = env.config.shared_cache(&ctx.config.worktrees);
+        crate::build_cache::prepare(&ctx.paths, &repo.name, shared)?;
+    }
     match (mode, &env.repo) {
         (WorkspaceMode::Worktree, Some(repo)) => add_worktree(ctx, repo, item, base, team).await,
         (WorkspaceMode::Worktree, None) => Err(ArchonError::Invalid(
@@ -277,15 +284,19 @@ async fn add_worktree(
         Some(target) => ctx.store.lock().await.stack_parents(&target.owner)?,
         None => super::restack::parents(ctx, item, repo, base.as_deref()).await?,
     };
-    let base = parents
-        .iter()
-        .find(|p| !p.merged)
-        .map(|p| p.parent_branch.clone())
-        .or(base);
+    let stacked_on = parents.iter().find(|p| !p.merged);
     let branch = target
         .as_ref()
         .map(|t| t.branch.clone())
         .unwrap_or_else(|| manager.branch_name(&item.id, &item.title, item.fresh_retries));
+    let fork = match (&target, stacked_on, base.as_deref(), repo.ship) {
+        (None, None, Some(base), ShipMode::Pr) => {
+            remote_fork(ctx, repo, item, base, &branch).await?
+        }
+        _ => None,
+    };
+    let base = stacked_on.map(|p| p.parent_branch.clone()).or(base);
+    let start = fork.clone().or_else(|| base.clone());
     let item_id = target
         .as_ref()
         .map(|t| t.owner.clone())
@@ -295,12 +306,18 @@ async fn add_worktree(
     let source_repo = repo.clone();
     let repo = repo.clone();
     let repo_path = repo.path.clone();
-    let tree = tokio::task::spawn_blocking(move || match team {
-        true => manager.create_team_run(&repo.path, &repo.name, &item_id, &branch, base.as_deref()),
-        false => manager.create(&repo.path, &repo.name, &item_id, &branch, base.as_deref()),
+    let mut tree = tokio::task::spawn_blocking(move || match team {
+        true => {
+            manager.create_team_run(&repo.path, &repo.name, &item_id, &branch, start.as_deref())
+        }
+        false => manager.create(&repo.path, &repo.name, &item_id, &branch, start.as_deref()),
     })
     .await
     .map_err(|e| ArchonError::io("worktree creation task", std::io::Error::other(e)))??;
+    // Forked from `origin`'s commit, the change is still for the base branch by name.
+    if let (Some(_), Some(base)) = (&fork, base) {
+        tree.base = base;
+    }
     assert!(
         tree.path.starts_with(&ctx.paths.worktrees),
         "worktrees are added under the worktree root"
@@ -310,6 +327,47 @@ async fn add_worktree(
         merge_stack(ctx, &source_repo, &workspace, &parents).await?;
     }
     Ok(workspace)
+}
+
+/// The commit a new branch of `item` forks from in `pr` mode: `origin`'s head of
+/// `base`, fetched now, as the local `base` may be behind what GitHub merged.
+/// `None` keeps the local `base`: the branch exists already, the repository has
+/// no `origin`, or the fetch failed, which the item's feed says.
+async fn remote_fork(
+    ctx: &DaemonContext,
+    repo: &Repo,
+    item: &QueueItem,
+    base: &str,
+    branch: &str,
+) -> Result<Option<String>, ArchonError> {
+    assert_eq!(
+        repo.ship,
+        ShipMode::Pr,
+        "only a pr repository forks from `origin`"
+    );
+    let (data_dir, path) = (ctx.paths.data_dir.clone(), repo.path.clone());
+    let (base_name, branch) = (base.to_owned(), branch.to_owned());
+    let fetched = tokio::task::spawn_blocking(move || -> Result<_, ArchonError> {
+        if crate::worktree::branch_exists(&path, &branch)? {
+            return Ok(Ok(None));
+        }
+        let shadow = Shadow::of(&data_dir, &path)?;
+        Ok(stack::fetch_head(&shadow, &path, &base_name))
+    })
+    .await
+    .map_err(|e| ArchonError::io("base fetch task", std::io::Error::other(e)))??;
+    let error = match fetched {
+        Ok(fork) => return Ok(fork),
+        Err(error) => error,
+    };
+    tracing::warn!(item = %item.id, %base, %error, "base not fetched; forking from the local branch");
+    let text = format!(
+        "Could not fetch `origin/{base}` before forking {}: {error}. It forks from the local \
+         `{base}`, which may be behind GitHub; `refresh_item` merges the newer base in later.",
+        item.id
+    );
+    super::finish::notify(ctx, NotificationKind::Decision, &text, Some(&item.id), None).await?;
+    Ok(None)
 }
 
 async fn merge_stack(

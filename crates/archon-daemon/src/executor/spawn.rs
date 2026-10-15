@@ -312,7 +312,7 @@ fn reserve_plans(
         let stage = plans[0].stage_id.clone();
         return Ok(Err(Exhausted { stage, error }));
     }
-    let sections = run_sections(store, &run, &item, plans[0].workspace)?;
+    let sections = run_sections(ctx, store, &run, &item, repo.as_ref(), plans[0].workspace)?;
     let existing = store.stage_runs(run_id)?;
     let mut ids = Vec::new();
     for plan in plans {
@@ -342,15 +342,19 @@ fn reserve_plans(
 }
 
 /// What the store adds to the contract of every agent of `run`: where the
-/// item's dependencies left their work, its initiative, and the run's lessons.
+/// item's dependencies left their work, its initiative, and the run's lessons,
+/// then the build cache and the artifact store.
 fn run_sections(
+    ctx: &DaemonContext,
     store: &Store,
     run: &PipelineRun,
     item: &QueueItem,
+    repo: Option<&Repo>,
     mode: WorkspaceMode,
 ) -> Result<String, ArchonError> {
     assert_eq!(run.item, item.id, "the run is the item's");
-    let dependencies = dependencies::section(store, run, item, mode)?;
+    let artifacts = ctx.paths.artifacts();
+    let dependencies = dependencies::section(store, run, item, mode, &artifacts)?;
     let initiative = dependencies::initiative_brief(store, item)?;
     let lessons = learned::lessons_for_run(store, run, item)?;
     assert!(
@@ -359,7 +363,22 @@ fn run_sections(
     );
     let initiative = contract::initiative_rules(initiative.as_ref());
     let lessons = contract::lesson_rules(&lessons)?;
-    Ok([dependencies, initiative, lessons].concat())
+    let cache = build_cache_section(ctx, repo)?;
+    let storage = contract::artifact_rules(&ctx.config.artifacts);
+    Ok([dependencies, initiative, lessons, cache, storage].concat())
+}
+
+/// The Build cache section, unless the repository (or none) builds into
+/// per-task directories.
+fn build_cache_section(ctx: &DaemonContext, repo: Option<&Repo>) -> Result<String, ArchonError> {
+    let Some(repo) = repo else {
+        return Ok(String::new());
+    };
+    let shared = RepoEnv::new(Some(repo.clone()))?
+        .config
+        .shared_cache(&ctx.config.worktrees);
+    let target = shared.then(|| crate::build_cache::cargo_target(&ctx.paths, &repo.name));
+    Ok(contract::build_cache_rules(target.as_deref()))
 }
 
 fn same_slot(stage: &StageRun, plan: &SpawnPlan) -> bool {
@@ -550,7 +569,7 @@ const HIDDEN_NATIVE_TOOLS: [&str; 3] = ["create_schedule", "update_schedule", "l
 const INTEGRATE_TOOL: &str = "integrate_workspace";
 
 /// What a stage agent does not see: Archon's tools that act for the
-/// orchestrator, and the Aether tools above. A child inherits the list.
+/// orchestrator (but for [`STAGE_TOOLS`](archon_core::mcp_tools::STAGE_TOOLS)), and the Aether tools above. A child inherits the list.
 fn hidden_tools(tools: ToolsMode, workspace: WorkspaceMode) -> Vec<String> {
     let hidden = match tools {
         ToolsMode::Guarded => archon_core::mcp_tools::qualified_names(),
@@ -566,7 +585,11 @@ fn hidden_tools(tools: ToolsMode, workspace: WorkspaceMode) -> Vec<String> {
         .chain(read_only.then_some(INTEGRATE_TOOL));
     hidden
         .into_iter()
-        .filter(|name| name != &archon_core::mcp_tools::qualified("message_orchestrator"))
+        .filter(|name| {
+            !archon_core::mcp_tools::STAGE_TOOLS
+                .iter()
+                .any(|tool| name == &archon_core::mcp_tools::qualified(tool))
+        })
         .chain(native.map(str::to_owned))
         .collect()
 }
@@ -597,7 +620,7 @@ pub(super) fn reserve_replacement(
         .as_ref()
         .map(|id| store.repo(&resolve::repo_ref(id)))
         .transpose()?;
-    let sections = run_sections(store, &run, &item, plan.workspace)?;
+    let sections = run_sections(ctx, store, &run, &item, repo.as_ref(), plan.workspace)?;
     let target = Target {
         run: &run,
         item: &item,

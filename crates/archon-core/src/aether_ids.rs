@@ -68,6 +68,7 @@ aether_id!(AetherAgentId, "agt");
 aether_id!(AetherTaskId, "tsk");
 aether_id!(AetherRunId, "run");
 aether_id!(AetherArtifactId, "art");
+aether_id!(AetherMemoryFeedbackId, "mfb");
 
 /// An Aether memory id, checked exactly as Aether's schema states it
 /// (`mem_` and an upper-case ULID): the operator types it for a forget.

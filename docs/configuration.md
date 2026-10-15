@@ -35,7 +35,20 @@ auto_gc = true                 # archond collects finished runs' worktrees itsel
 cache_after = "1h"             # then deletes their build caches (git-ignored files)
 gc_after = "7d"                # and removes worktrees without uncommitted changes
 cache_dirs = ["target"]        # only these caches; unset = everything git ignores
+shared_cache = true            # stages build into one cargo target dir per repository
+shared_cache_after = "14d"     # idle shared caches go; never while a run is live
+pressure_after = "1d"          # shorter ages while dispatch is held for disk space
+
+[artifacts]                    # files stages publish; read by item id later
+max_file_mb = 256
+max_item_mb = 1024
+keep_after = "30d"             # after the item settled
 ```
+
+A repository opts out of the shared cache with `[cache] shared = false` in
+`<repo>/.archon/config.toml`. Cargo locks a shared target directory, so
+parallel builds of one profile queue on it; opt out if that costs more than
+the disk.
 
 To run Archon on your own `aetherd` instead, set `[aether] mode = "shared"`.
 In shared mode, `archon setup` adds the `archon` MCP server to your

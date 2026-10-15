@@ -398,7 +398,13 @@ CREATE INDEX operator_feedback_by_cohort
     WHERE stage_run IS NOT NULL AND cause = 'quality';
 "#;
 
-pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11];
+// Existing corrections owe no memory feedback; new ledgers live in their JSON data.
+const V12: &str = r#"
+UPDATE operator_feedback SET data = json_set(data, '$.memory_feedback', NULL)
+WHERE json_type(data, '$.memory_feedback') IS NULL;
+"#;
+
+pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12];
 
 /// Pragmas every connection needs. `on_disk` connections must end up in
 /// WAL mode; in-memory databases report `memory` and stay that way.
@@ -962,5 +968,33 @@ mod tests {
             "a correction is not revoked before it was made"
         );
         assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
+    }
+
+    #[test]
+    fn v12_leaves_old_corrections_without_retroactive_memory_feedback() {
+        let mut conn = v2_store();
+        insert_v2_item(&conn, "qi_new");
+        migrate(&mut conn).unwrap();
+        insert_run(&conn, "prun_new", "qi_new");
+        conn.execute_batch(
+            "INSERT INTO stage_runs (id, run, stage_id, attempt, fan_index, state, terminal,
+                 started_at, data)
+             VALUES ('stg_a', 'prun_new', 'answer', 1, 0, 'completed', 1, 't', '{}')",
+        )
+        .unwrap();
+        insert_feedback(&conn, "fb_old", V11_ROW).unwrap();
+        conn.execute_batch("DELETE FROM schema_migrations WHERE version = 12")
+            .unwrap();
+        assert_eq!(migrate(&mut conn).unwrap(), 12);
+        let (data, reason): (String, String) = conn
+            .query_row(
+                "SELECT data, reason FROM operator_feedback WHERE id = 'fb_old'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(data, r#"{"memory_feedback":null}"#);
+        assert_eq!(reason, "wrong file");
+        assert_eq!(migrate(&mut conn).unwrap(), 12);
     }
 }

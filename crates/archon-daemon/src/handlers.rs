@@ -8,6 +8,10 @@ mod initiatives;
 mod item_views;
 mod items;
 mod learning;
+
+pub use learning::memory_feedback::{
+    resume as resume_memory_feedback, run as deliver_memory_feedback,
+};
 mod lessons;
 mod model_evidence;
 mod operator;
@@ -71,7 +75,10 @@ fn orchestrators_alone(
     caller: Option<&AetherAgentId>,
     request: &Request,
 ) -> bool {
-    let stage_message = matches!(request, Request::MessageOrchestrator { .. });
+    let stage_message = matches!(
+        request,
+        Request::MessageOrchestrator { .. } | Request::PublishArtifact { .. }
+    );
     for_an_agent(client, caller) && !request.is_read_only() && !stage_message
 }
 
@@ -88,6 +95,7 @@ fn check_named_caller(
 ) -> Result<(), ArchonError> {
     let named = match request {
         Request::MessageOrchestrator { caller, .. }
+        | Request::PublishArtifact { caller, .. }
         | Request::AskOperator { caller, .. }
         | Request::RecordChatAnswer { caller, .. } => caller.as_ref(),
         _ => None,
@@ -112,6 +120,16 @@ async fn route(
         Request::MessageOrchestrator { text, kind, caller } => {
             crate::agent_messages::send(ctx, caller.as_ref(), kind, text).await
         }
+        Request::PublishArtifact { path, name, caller } => {
+            crate::artifacts::publish_for(ctx, caller.as_ref(), path, name).await
+        }
+        Request::ListArtifacts { item } => crate::artifacts::list_for(ctx, &item).await,
+        Request::ReadArtifact {
+            item,
+            name,
+            offset,
+            limit,
+        } => crate::artifacts::read_for(ctx, &item, name, offset, limit).await,
         Request::Hello { .. } => Err(ArchonError::Invalid(
             "hello is only valid as a connection's first frame".into(),
         )),
@@ -211,6 +229,7 @@ async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, Ar
             };
             items::retry(ctx, &item, retry).await
         }
+        Request::RefreshItem { item } => items::refresh(ctx, &item).await,
         Request::Status => control::status(ctx).await,
         Request::SetCaps { caps } => control::set_caps(ctx, caps).await,
         Request::ListPipelines { repo, pipeline } => {

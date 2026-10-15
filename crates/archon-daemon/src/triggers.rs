@@ -165,6 +165,14 @@ pub enum TriggerEvent {
         state: String,
         detail: String,
     },
+    /// A delivered pull request's checks `failed` (they ran), or are `not_started`:
+    /// GitHub never ran them (billing, no runner), which only the operator fixes.
+    PrChecks {
+        item: QueueItemId,
+        url: String,
+        state: String,
+        detail: String,
+    },
     /// The orchestrator may have lost the directives (a new generation, a
     /// compacted context): this trigger's `directives` state all in force.
     DirectivesRestated {
@@ -221,6 +229,7 @@ impl TriggerEvent {
             Self::ItemsFinished { .. } => "items_finished",
             Self::Mirror { .. } => "mirror",
             Self::DirectivesRestated { .. } => "directives_restated",
+            Self::PrChecks { .. } => "pr_checks",
         }
     }
 
@@ -243,6 +252,7 @@ impl TriggerEvent {
             | Self::NewsDigest { .. }
             | Self::ItemsFinished { .. }
             | Self::Mirror { .. }
+            | Self::PrChecks { .. }
             | Self::DirectivesRestated { .. } => false,
         }
     }
@@ -1056,6 +1066,12 @@ mod tests {
                 detail: "d".into(),
             },
             TriggerEvent::DirectivesRestated { reason: "r".into() },
+            TriggerEvent::PrChecks {
+                item: QueueItemId::new(),
+                url: "https://github.com/o/r/pull/1".into(),
+                state: "not_started".into(),
+                detail: "d".into(),
+            },
         ];
         for event in events {
             let value = serde_json::to_value(&event).unwrap();

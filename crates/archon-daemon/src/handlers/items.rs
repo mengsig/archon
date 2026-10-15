@@ -255,6 +255,12 @@ pub(super) async fn cancel(
     Ok(Reply::Item(item))
 }
 
+/// Queue the item that merges `id`'s base branch into its branch.
+pub(super) async fn refresh(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, ArchonError> {
+    let refresh = executor::refresh::refresh_item(ctx, id).await?;
+    Ok(Reply::Item(refresh))
+}
+
 /// What a retry changes besides the item's state.
 pub(super) struct Retry {
     pub model_plan: Option<ModelPlan>,

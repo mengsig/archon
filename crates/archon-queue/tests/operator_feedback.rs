@@ -110,6 +110,7 @@ fn request(run: &PipelineRun, cause: CorrectionCause, reason: &str) -> Correctio
 
 fn facts(observed_at: Timestamp) -> CorrectionFacts {
     CorrectionFacts {
+        memory_feedback: None,
         delivery_commit: Some("abc123".into()),
         aether_instance: None,
         observed_at,
@@ -496,4 +497,65 @@ fn routing_reads_a_corrections_columns_never_its_record() {
     let evidence = store.cohort_evidence(&query, t(200)).unwrap();
     assert!(evidence.feedback_history && evidence.penalties == vec![event.id]);
     assert_eq!(standing(&store, Some(&repo), &ctx, t(200)).1, counts(4));
+}
+
+#[test]
+fn memory_feedback_intent_and_receipts_survive_reopening_without_changing_attribution() {
+    use archon_core::aether_ids::{AetherMemoryFeedbackId, AetherMemoryId, AetherTaskId};
+    use archon_core::feedback::{MemoryFeedback, MemoryFeedbackEntry, MemoryFeedbackTask};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("archon.db");
+    let (store, _, _, cheap) = cohort(&path);
+    let mut facts = facts(t(100));
+    facts.memory_feedback = Some(MemoryFeedback {
+        instance_id: "instance".into(),
+        skipped: None,
+        tasks: vec![MemoryFeedbackTask {
+            task: AetherTaskId::parse("tsk_1").unwrap(),
+            discovered: false,
+            partial: false,
+            skipped: None,
+            error: None,
+            records: Vec::new(),
+        }],
+    });
+    let (first, _) = store
+        .record_operator_correction(
+            &request(&cheap[0], CorrectionCause::Quality, "wrong"),
+            &facts,
+        )
+        .unwrap();
+    drop(store);
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.operator_feedback(&first.id).unwrap(), first);
+    let mut ledger = first.memory_feedback.clone().unwrap();
+    ledger.tasks[0].discovered = true;
+    ledger.tasks[0].records.push(MemoryFeedbackEntry {
+        memory: AetherMemoryId::parse("mem_01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap(),
+        feedback: Some(AetherMemoryFeedbackId::parse("mfb_1").unwrap()),
+        attempted: true,
+        submission_horizon: Some("epoch:0".into()),
+        unconfirmed: false,
+        failed: None,
+        retracted: false,
+        dropped: false,
+        error: None,
+    });
+    store.revoke_feedback(&first.id, t(150)).unwrap();
+    let updated = store.update_memory_feedback(&first.id, &ledger).unwrap();
+    assert_eq!(updated.attribution, first.attribution);
+    assert_eq!(updated.revoked_at, Some(t(150)));
+    drop(store);
+    let store = Store::open(&path).unwrap();
+    assert_eq!(
+        store.operator_feedback(&first.id).unwrap().memory_feedback,
+        Some(ledger.clone())
+    );
+    ledger.instance_id = "other".into();
+    assert!(
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+            || store.update_memory_feedback(&first.id, &ledger)
+        ))
+        .is_err()
+    );
 }

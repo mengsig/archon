@@ -330,6 +330,7 @@ mod tests {
                     choice: ModelChoice {
                         model: ModelRef::new("codex", "gpt-6-luna"),
                         effort: Effort::Low,
+                        tier: None,
                     },
                 },
             },

@@ -10,7 +10,7 @@ requires_repo = true
 stage = "optimize"
 
 [nudges]
-tier = "strongest"
+tier = "strong"
 independent_reviewers = true
 notes = "For a specific slow path with a measurable goal, not speculative micro-optimization. Prefer direct for ordinary features and fixes without a performance target."
 
@@ -20,7 +20,7 @@ kind = "work"
 prompt = "measure.md"
 timeout_minutes = 120
 effort = "high"
-nudge = "Strongest tier, high effort; establish a reproducible baseline and profile the actual hotspot."
+nudge = "Strong tier, high effort; establish a reproducible baseline and profile the actual hotspot."
 
 [[stage]]
 id = "optimize"
@@ -28,7 +28,7 @@ kind = "work"
 prompt = "optimize.md"
 timeout_minutes = 180
 effort = "high"
-nudge = "Strongest tier, high effort; preserve behavior while changing only the measured hotspot."
+nudge = "Strong tier, high effort; preserve behavior while changing only the measured hotspot."
 
 [[stage]]
 id = "verify"
@@ -37,7 +37,7 @@ prompt = "verify.md"
 gate = "all_pass"
 timeout_minutes = 120
 effort = "high"
-nudge = "Strongest tier, high effort; independently reproduce the measurements and run the full test suite."
+nudge = "Strong tier, high effort; independently reproduce the measurements and run the full test suite."
 on_fail = { goto = "optimize", max_loops = 3 }
 
 [[stage]]
@@ -46,5 +46,5 @@ kind = "review"
 prompt = "review.md"
 gate = "all_pass"
 timeout_minutes = 90
-nudge = "Strongest tier; prefer a reviewer independent of the optimizer when the allowlist permits."
+nudge = "Strong tier; a reviewer that discovers independently of the optimizer, on another provider where the allowlist permits."
 on_fail = { goto = "optimize", max_loops = 2 }

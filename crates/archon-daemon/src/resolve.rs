@@ -6,6 +6,7 @@ use archon_core::autonomy::AutonomyPolicy;
 use archon_core::config::{Config, RepoConfig};
 use archon_core::error::ArchonError;
 use archon_core::id::RepoId;
+use archon_core::model_tier::Tier;
 use archon_core::policy::ModelPolicy;
 use archon_core::protocol::RepoRef;
 use archon_core::queue::Caps;
@@ -71,6 +72,11 @@ impl RepoEnv {
             .models
             .policy()
             .narrowed_by(&self.config.models.policy())
+    }
+
+    /// The highest tier a default picks for this repository.
+    pub fn max_default_tier(&self, config: &Config) -> Tier {
+        config.models.max_default_tier(&self.config.models)
     }
 
     /// Global `[autonomy]` and overlay, the registry ceiling and repository

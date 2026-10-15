@@ -327,6 +327,7 @@ async fn savings_require_a_measured_static_baseline() {
         vec![ModelChoice {
             model: "codex/expensive".parse().unwrap(),
             effort: Effort::Low,
+            tier: None,
         }],
     )]));
     store

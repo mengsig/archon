@@ -406,3 +406,53 @@ async fn unknown_kinds_do_not_hide_store_validation_failures() {
         "{error}"
     );
 }
+
+/// Aether 1.0.9 books Codex usage as an estimate beside a zero cost. Budgets
+/// that leave estimates out see $0, but evidence and learning never do.
+#[tokio::test]
+async fn evidence_and_outcomes_count_codex_estimates_when_budgets_do_not() {
+    use archon_core::cost::CostBasis;
+    use archon_queue::store::SpendRow;
+    let mut config = archon_core::config::Config::default();
+    config.limits.count_estimated_cost = false;
+    let h = Harness::with_config(config).await;
+    let item = h.enqueue("codex estimate").await;
+    h.dispatch().await;
+    let agent = h.running().await[0].aether_agent.clone().expect("agent");
+    let codex = SpendRow {
+        agent,
+        item: Some(item.id.clone()),
+        cost_usd: 0.0,
+        cost_basis: CostBasis::ListPrice,
+        cost_complete: Some(false),
+        estimated_cost_usd: 0.75,
+        input_tokens: 10,
+        output_tokens: 5,
+        at: archon_core::now(),
+    };
+    h.ctx.store.lock().await.record_spend(&codex).unwrap();
+    h.settle_running(|_| completed("Applied supplied fix"))
+        .await;
+    h.dispatch().await;
+    h.settle_running(|_| completed("VERDICT: PASS")).await;
+    let reply = h
+        .cli(Request::ModelEvidence(ModelEvidenceQuery::default()))
+        .await
+        .unwrap();
+    let Reply::ModelEvidence(report) = reply else {
+        panic!("evidence reply");
+    };
+    assert!(report.estimates_counted);
+    let work = report.rows.iter().find(|r| r.stage == "implement").unwrap();
+    assert_eq!(work.median_cost_usd, Some(0.75));
+    let cancel = Request::CancelItem {
+        item: item.id.clone(),
+        reason: Some("learn from it now".into()),
+    };
+    h.cli(cancel).await.unwrap();
+    let run = h.stages(&item.id).await[0].run.clone();
+    let store = h.ctx.store.lock().await;
+    let outcome = store.outcome(&run).unwrap().expect("captured at finish");
+    assert_eq!((outcome.cost_usd, outcome.count_estimates), (0.75, true));
+    assert_eq!(store.spend_for_item(&item.id, false).unwrap(), 0.0);
+}

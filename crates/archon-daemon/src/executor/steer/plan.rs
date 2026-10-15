@@ -323,6 +323,7 @@ fn retuned(choice: &ModelChoice, steer: &Steer) -> ModelChoice {
     ModelChoice {
         model: steer.model.clone().unwrap_or_else(|| choice.model.clone()),
         effort: steer.effort.unwrap_or(choice.effort),
+        tier: None,
     }
 }
 

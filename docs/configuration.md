@@ -14,12 +14,16 @@ warns about it, and `archond` says so once in the feed when it starts.
 You do not list models or model tiers anywhere. With no `[models]` section
 Archon may use every model Aether reports ready (`archon aether models`),
 and the orchestrator picks a model and effort for each stage of each item.
-`[models]` only narrows that choice.
+`[models]` only narrows that choice. Aether places each model in a tier
+(`fast`, `balanced`, `strong` or `frontier`), so a plan may ask for a tier
+instead of a model and a new model release needs no Archon change. Defaults
+never pick above `max_default_tier`; set it to `"frontier"` to let them.
 
 ```toml
 [models]                       # optional: leave it out to allow every ready model
 allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-sol"]
 max_effort = "high"
+# max_default_tier = "strong"  # the highest tier a default picks (the default)
 
 [limits]
 max_parallel_agents = 8        # the hard cap on running stage agents (the default)

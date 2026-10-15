@@ -143,10 +143,10 @@ fn record(shared: &Shared, result: &TrialResult) -> anyhow::Result<()> {
 
 fn progress_line(r: &TrialResult) -> String {
     let verdict = if r.success { "pass" } else { "FAIL" };
-    let floor = if r.cost_is_floor() { "≥ " } else { "" };
+    let mark = CostBound::of([r]).marker();
     let cost = r
         .effective_cost_usd()
-        .map_or_else(|| "$?".to_owned(), |c| format!("{floor}${c:.2}"));
+        .map_or_else(|| "$?".to_owned(), |c| format!("{mark}${c:.2}"));
     let problem = r
         .error
         .as_deref()
@@ -512,13 +512,14 @@ mod tests {
     }
 
     #[test]
-    fn progress_marks_only_a_gapped_reported_cost_as_a_floor() {
+    fn progress_marks_a_gapped_cost_by_its_bound() {
         let mut gapped = result(Some(1.5), None);
         gapped.cost_gap = Some("interrupted".into());
         assert!(progress_line(&gapped).ends_with("1s ≥ $1.50"));
         assert!(progress_line(&result(Some(1.5), None)).ends_with("1s $1.50"));
+        assert!(progress_line(&result(Some(0.0), Some(2.0))).ends_with("1s $2.00"));
         let mut estimated = result(Some(0.0), Some(2.0));
         estimated.cost_gap = Some("unpriced".into());
-        assert!(progress_line(&estimated).ends_with("1s $2.00"));
+        assert!(progress_line(&estimated).ends_with("1s * $2.00"));
     }
 }

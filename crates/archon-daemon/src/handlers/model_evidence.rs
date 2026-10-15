@@ -26,7 +26,7 @@ pub(super) async fn report(
     let snapshot = ctx.store.lock().await.model_evidence_snapshot(
         query,
         &range,
-        ctx.config.limits.count_estimated_cost,
+        archon_core::cost::API_EQUIVALENT,
     )?;
     let mut runs = HashMap::new();
     let mut catalogs = HashMap::new();
@@ -54,7 +54,8 @@ pub(super) async fn report(
         };
         entry.insert(spec);
     }
-    let mut report = snapshot.report(|_, stage| {
+    let catalog = ctx.store.lock().await.model_catalog();
+    let mut report = snapshot.report(&catalog, |_, stage| {
         Ok(runs
             .get(&stage.run)
             .and_then(Option::as_ref)

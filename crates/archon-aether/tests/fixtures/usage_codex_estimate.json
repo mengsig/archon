@@ -1,0 +1,35 @@
+{
+  "seq": 42,
+  "at": "2026-10-09T12:00:00Z",
+  "agent_id": "agt_0201",
+  "task_id": "tsk_0201",
+  "parent_agent_id": "agt_0001",
+  "run": "run_0001",
+  "kind": {
+    "type": "agent.usage_updated",
+    "total": {
+      "input_tokens": 1200,
+      "output_tokens": 300,
+      "cache_read_tokens": 80,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 120,
+      "cost_usd": 0.0,
+      "cost_complete": false,
+      "cost_gap": "unpriced",
+      "cost_basis": "list_price",
+      "estimated_cost_usd": 0.5
+    },
+    "turn_usage": {
+      "input_tokens": 1200,
+      "output_tokens": 300,
+      "cache_read_tokens": 80,
+      "cache_write_tokens": 0,
+      "reasoning_tokens": 120,
+      "cost_usd": 0.0,
+      "cost_complete": false,
+      "cost_gap": "unpriced",
+      "cost_basis": "list_price",
+      "estimated_cost_usd": 0.5
+    }
+  }
+}

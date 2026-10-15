@@ -20,7 +20,7 @@ kind = "work"
 prompt = "baseline.md"
 timeout_minutes = 120
 effort = "high"
-nudge = "A strong coding model at high effort; characterize current behaviour before changing structure."
+nudge = "The strong tier at high effort; characterize current behaviour before changing structure."
 
 [[stage]]
 id = "refactor"
@@ -28,7 +28,7 @@ kind = "work"
 prompt = "refactor.md"
 timeout_minutes = 120
 effort = "high"
-nudge = "A strong coding model at high effort; keep changes small and behaviour intact."
+nudge = "The strong tier at high effort; keep changes small and behaviour intact."
 
 [[stage]]
 id = "verify"
@@ -37,7 +37,7 @@ prompt = "verify.md"
 gate = "all_pass"
 timeout_minutes = 90
 effort = "high"
-nudge = "A capable model at high effort; independently check behaviour and public-surface preservation."
+nudge = "The balanced tier at high effort; independently check behaviour and public-surface preservation."
 on_fail = { goto = "refactor", max_loops = 3 }
 
 [[stage]]
@@ -46,5 +46,5 @@ kind = "review"
 prompt = "review.md"
 gate = "all_pass"
 timeout_minutes = 60
-nudge = "Prefer a strong reviewer independent of the refactorer when the allowlist permits."
+nudge = "Prefer a strong-tier reviewer that discovers independently of the refactorer."
 on_fail = { goto = "refactor", max_loops = 2 }

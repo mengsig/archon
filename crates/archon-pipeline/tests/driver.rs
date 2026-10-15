@@ -1198,7 +1198,7 @@ fn code_audit_scopes_then_spawns_three_independent_lenses() {
     let spec = support::builtin("code-audit");
     assert_eq!(spec.file.pipeline.workspace, WorkspaceMode::Worktree);
     assert!(spec.file.pipeline.requires_repo);
-    assert_eq!(spec.file.nudges.tier, Some(Tier::Strongest));
+    assert_eq!(spec.file.nudges.tier, Some(Tier::Strong));
     assert!(spec.file.nudges.independent_reviewers);
     let stages: Vec<_> = spec
         .file

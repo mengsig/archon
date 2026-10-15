@@ -7,7 +7,7 @@ requires_repo = false
 
 [nudges]
 tier = "balanced"
-notes = "Read-only research; step up to the strongest tier for deep architectural questions."
+notes = "Read-only research; step up to the strong tier for deep architectural questions."
 
 [[stage]]
 id = "answer"

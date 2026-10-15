@@ -6,7 +6,7 @@ workspace = "worktree"
 requires_repo = true
 
 [nudges]
-tier = "strongest"
+tier = "strong"
 independent_reviewers = true
 notes = "Read-and-report only; findings become follow-up items. Pick this for a security, reliability or maintainability audit. Use ask for a single question, or agent-testing to exercise the running product."
 
@@ -23,7 +23,7 @@ prompt = "audit.md"
 fan_out = 3
 timeout_minutes = 120
 effort = "high"
-nudge = "Strongest tier, high effort. Independent auditors on distinct models or vendors where the allowlist permits, each with its own lens."
+nudge = "Strong tier, high effort. Independent auditors, each with its own lens; another provider at the same tier adds independence where the allowlist permits."
 
 [[stage]]
 id = "report"

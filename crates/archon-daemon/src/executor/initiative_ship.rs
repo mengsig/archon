@@ -478,7 +478,7 @@ async fn member_results(
             item: member.id.clone(),
             state: member.state.kind().to_owned(),
             summary: super::finish::finished_summary(&text, member),
-            cost_usd: store.spend_for_item(&member.id, ctx.config.limits.count_estimated_cost)?,
+            cost_usd: store.spend_for_item(&member.id, archon_core::cost::API_EQUIVALENT)?,
         });
     }
     assert!(results.len() <= members.len(), "one result per member");

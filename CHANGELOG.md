@@ -1,15 +1,58 @@
 # Changelog
 
-## Unreleased
+## 1.2.4
+
+Released 2026-10-15.
+
+Model plans speak in tiers: with Aether 1.0.9 a stage can ask for `fast`,
+`balanced`, `strong` or `frontier` and Archon resolves the model from Aether's
+catalog within model policy. Operators approve gates and change safeguards
+from chat, the TUI or GitHub; ask for a merge in chat and it lands on current
+main; new branches fork from a freshly fetched base and `refresh_item` brings a
+stale pull request up to date. Upgrades drain first, builds are lean and per
+item, and logs, reports and artifacts expire. Codex work stays priced after
+Aether's subscription estimates. The store migrates automatically on first
+start (migrations 13 and 14); older Archon binaries refuse the migrated store.
+Daemon protocol 13.
 
 ### Added
 
+- Tier-based `model_plan`: an entry may be `{tier, effort, provider?}`
+  instead of `{model, effort}`, with tiers `fast`, `balanced`, `strong` and
+  `frontier` (`strongest` is an alias of `strong`). Archon resolves them from
+  Aether's `list_models` tiers within model policy at enqueue, update, retry
+  and dispatch, prefers the orchestrator's provider unless one is named, falls
+  back downward and records the fallback. get_item and the CLI show the tier
+  and the resolved model. Defaults resolve the pipeline nudge's tier, capped
+  by `[models] max_default_tier` (default `strong`; a repository may only
+  lower it). Exact pins and stored plans behave as before (#59).
+- Operator authority from every channel: proposal and report gates, and the
+  supported safeguards, can be approved or changed from the Aether TUI, remote
+  chat, `archon chat` or GitHub comments with operator standing. Plain-language
+  loosening needs a daemon confirmation bound to the originating channel.
+  Agent messages, relays and outside GitHub requests confer no authority.
+  Settings persist globally or per repository with an Authority audit feed and
+  guarded undo, and the new `guide` tool serves the authority, settings and
+  GitHub topics (#55).
+- `/merge` in chat merges an item's pull request on the operator's request,
+  pinned to the reviewed head. Requests GitHub queues are kept and settled when
+  the merge lands or the pull request closes; confirmations settle atomically
+  with the merge (migration 14) (#51, #57).
+- Reviewer and timeout control: `model_plan` names delegated reviewers through
+  `<stage>.review` under model policy, stages declare effort defaults (a higher
+  effort needs a stated reason, and get_item marks it), and `stage_timeouts`
+  on enqueue, update_item and steer_item bound each stage (#47).
+- Fresh bases and `refresh_item`: in `pr` mode a new branch forks from a
+  freshly fetched `origin/<base>`, leaving the operator's checkout untouched.
+  `refresh_item` (`archon queue refresh`) merges a newer base into a finished
+  item's branch and ships into the same pull request. Pull-request checks that
+  never start (billing, no runner) raise a Blocker separately from checks that
+  failed (#41).
 - Drained upgrades and restarts (`archon daemon upgrade`, `daemon restart`
   and `/upgrade`), running/installed/latest versions in status, and explicit
   `status --check-updates` release checks (#37, #43). Daemon protocol 11.
 - `repo add --github` and `/watch` register GitHub watching for a repository
   through Archon's dedicated Aether (#37, #43).
-
 - Sustainable filesystem retention: detached daemon logs rotate by size and
   age (10 MiB, three archives, 14 days by default), settled item report/Lavish
   snapshots expire after `[storage] retention_days = 14` with live work, gates
@@ -18,6 +61,17 @@
 
 ### Changed
 
+- Codex usage is an estimate since Aether 1.0.9: a Codex turn bills $0 and
+  carries its list-price dollars as `estimated_cost_usd`. With the default
+  `count_estimated_cost = true` budgets count it as before, so a Codex-heavy
+  item stays bounded; with it off, Codex counts $0 toward budgets. Learning,
+  model evidence, a finished item's reported cost and benchmark costs now
+  always use the API-equivalent total, billed plus estimated, so a Codex
+  stage never looks free. `archon cost` and `cost_report` add
+  `≈ $X API-equivalent` when budgets leave estimates out. Older records keep
+  their list-price cost and read as before, and outcomes captured while
+  budgets left estimates out are re-priced with them when learning reads them.
+  A benchmark cost stays marked when unpriced work has no estimate covering it.
 - Agent cargo builds are lean and per item: each item builds into
   `<data>/cache/<repo>/items/<item>/cargo-target`, kept across retries and
   deleted by archond when the item ends (unreadable subdirectories included);
@@ -28,7 +82,6 @@
   true`); `[worktrees] item_cache`, `lean_builds` and the per-repository
   `[cache] item`, `lean` switches turn the rest off. `GcReport` gains
   `item_caches` (defaulted, so older clients still decode it).
-
 - Artifact retention defaults to 14 days. Existing tighter worktree/cache
   defaults stay unchanged; zero durations disable their configured expiry.
 
@@ -46,7 +99,6 @@
   run (including a retry) works after its prompt templates expire: the base
   branch is retained separately, with the configured repository base used
   for older runs whose metadata is already gone.
-
 - Upgrades drain before replacing binaries, keeping the old CLI and agent
   tools compatible with archond while running stages finish. Dispatch stays
   held during installation; an expired drain installs nothing unless requeue

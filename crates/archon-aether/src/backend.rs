@@ -526,6 +526,7 @@ mod tests {
             choice: ModelChoice {
                 model: "claude-code/claude-opus-5-5".parse().unwrap(),
                 effort: Effort::High,
+                tier: None,
             },
             workspace: "/work/tree".into(),
             repository: Some("repo".into()),

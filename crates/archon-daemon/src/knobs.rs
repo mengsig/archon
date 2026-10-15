@@ -9,7 +9,8 @@ use archon_core::catalog::Tier;
 use archon_core::config::Config;
 use archon_core::error::ArchonError;
 use archon_core::id::RepoId;
-use archon_core::model::{Effort, ModelChoice, ModelPlan, ModelPlanDraft, ModelReasons};
+use archon_core::model::{Effort, ModelChoice, ModelPlan, ModelPlanDraft, ModelReasons, ModelRef};
+use archon_core::model_tier::{ModelCatalog, TierChoice};
 use archon_core::policy::ModelPolicy;
 use archon_core::queue::QueueItem;
 use archon_pipeline::PipelineSpec;
@@ -231,36 +232,85 @@ pub(crate) fn item_specs(
     Ok((base, spec))
 }
 
-/// A stage's choice when nothing names one: the orchestrator's model, else
-/// `policy`'s first, at the tier's effort within its cap; `None` if none.
+/// What a tier resolves against: Aether's catalog within the item's model
+/// policy, preferring the orchestrator's provider.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TierScope<'a> {
+    pub catalog: &'a ModelCatalog,
+    pub policy: &'a ModelPolicy,
+    pub prefer: &'a str,
+}
+
+impl<'a> TierScope<'a> {
+    pub fn new(config: &'a Config, policy: &'a ModelPolicy, catalog: &'a ModelCatalog) -> Self {
+        Self {
+            catalog,
+            policy,
+            prefer: &config.orchestrator.model.provider,
+        }
+    }
+
+    pub fn resolve(
+        &self,
+        tier: Tier,
+        provider: Option<&str>,
+    ) -> Result<(ModelRef, TierChoice), ArchonError> {
+        self.catalog
+            .resolve(tier, provider, Some(self.prefer), self.policy)
+    }
+}
+
+/// A stage's choice when nothing names one, at the pipeline tier's effort
+/// within the policy's cap: a model of the pipeline's tier (at most
+/// `max_tier`); else the orchestrator's model; else one of the balanced
+/// tier, or the policy's first. Pins above `max_tier` are skipped; an
+/// untiered model (no catalog tier) still qualifies. `None` if none.
 pub(crate) fn default_choice(
     config: &Config,
-    policy: &ModelPolicy,
+    scope: TierScope<'_>,
+    max_tier: Tier,
     spec: &PipelineSpec,
 ) -> Option<ModelChoice> {
-    let own = &config.orchestrator.model;
-    let model = match policy.permits_model(own) {
-        true => own.clone(),
-        false => {
-            let allowed = policy.allow.iter().flatten();
-            allowed
-                .into_iter()
-                .find(|m| policy.permits_model(m))?
-                .clone()
-        }
-    };
-    let suggested = match spec.file.nudges.tier {
+    let policy = scope.policy;
+    let nudged = spec.file.nudges.tier;
+    let suggested = match nudged {
         Some(Tier::Fast) => Effort::Low,
         Some(Tier::Balanced) | None => Effort::Medium,
-        Some(Tier::Strongest) => Effort::High,
+        Some(Tier::Strong | Tier::Frontier) => Effort::High,
     };
     let effort = policy
         .max_effort
         .map_or(suggested, |cap| suggested.min(cap));
-    let choice = ModelChoice { model, effort };
+    let tiered = |tier: Tier| {
+        let (model, tier) = scope.resolve(tier.min(max_tier), None).ok()?;
+        Some(ModelChoice {
+            model,
+            effort,
+            tier: Some(tier),
+        })
+    };
+    let pinnable = |m: &ModelRef| {
+        policy.permits_model(m) && scope.catalog.tier_of(m).is_none_or(|t| t <= max_tier)
+    };
+    let own = &config.orchestrator.model;
+    let choice = nudged
+        .and_then(tiered)
+        .or_else(|| pinnable(own).then(|| ModelChoice::pinned(own.clone(), effort)))
+        .or_else(|| tiered(Tier::Balanced))
+        .or_else(|| {
+            let first = policy.allow.iter().flatten().find(|m| pinnable(m))?;
+            Some(ModelChoice::pinned(first.clone(), effort))
+        })?;
     debug_assert!(
         policy.check(&choice).is_ok(),
         "a default is within the policy"
+    );
+    debug_assert!(
+        scope
+            .catalog
+            .tier_of(&choice.model)
+            .is_none_or(|t| t <= max_tier),
+        "a default is within the tier ceiling"
     );
     Some(choice)
 }
@@ -272,10 +322,10 @@ pub(crate) fn fill_plan(
     repo: Option<&RepoId>,
     (base, spec): (&PipelineSpec, &PipelineSpec),
     mut plan: ModelPlan,
-    policy: &ModelPolicy,
+    (policy, max_tier): (&ModelPolicy, Tier),
     fallback: Option<&ModelChoice>,
 ) -> Result<ModelPlan, ArchonError> {
-    let learned = learned::default_plan(store, repo, spec, policy)?;
+    let learned = learned::default_plan(store, repo, spec, policy, max_tier)?;
     for (stage, choices) in learned.0 {
         assert!(
             spec.stage(&stage).is_some(),
@@ -322,14 +372,19 @@ pub(crate) fn fill_static_stages(
     Ok(plan)
 }
 
-/// A request's plan with each missing effort set to its stage's default. An
-/// effort above that default needs a `reasons` entry for the stage.
+/// A request's plan with each missing effort set to its stage's default and
+/// each tier resolved in `tiers`. An effort above that default needs a
+/// `reasons` entry for the stage.
 pub(crate) fn resolve_plan(
     spec: &PipelineSpec,
     draft: ModelPlanDraft,
     reasons: Option<&ModelReasons>,
+    tiers: TierScope<'_>,
 ) -> Result<ModelPlan, ArchonError> {
-    let plan = draft.resolve(|key| spec.default_effort(key));
+    let plan = draft.resolve(
+        |key| spec.default_effort(key),
+        |tier, provider| tiers.resolve(tier, provider),
+    )?;
     for (key, choices) in &plan.0 {
         let top = choices.iter().map(|c| c.effort).max();
         if let (Some(top), Some(default)) = (top, spec.default_effort(key)) {
@@ -355,7 +410,7 @@ pub(crate) fn check_effort_reason(
     }
     Err(ArchonError::Invalid(format!(
         "effort {effort} for {key:?} is above its default {default}: add a model_reasons entry for \
-         {key:?} saying why (a stronger model at {default} often beats a weaker one at {effort}), \
+         {key:?} saying why (a stronger tier at {default} often beats a weaker one at {effort}), \
          or use {default} or lower"
     )))
 }
@@ -416,6 +471,7 @@ mod tests {
         let choice = archon_core::model::ModelChoice {
             model: "claude-code/claude-opus-5-5".parse().unwrap(),
             effort: archon_core::model::Effort::High,
+            tier: None,
         };
         let mut plan = ModelPlan::default();
         for stage in &base.file.stages {
@@ -423,7 +479,15 @@ mod tests {
         }
         let store = Store::open_in_memory().unwrap();
         let policy = ModelPolicy::default();
-        let filled = fill_plan(&store, None, (&base, &spec), plan.clone(), &policy, None).unwrap();
+        let filled = fill_plan(
+            &store,
+            None,
+            (&base, &spec),
+            plan.clone(),
+            (&policy, Tier::Strong),
+            None,
+        )
+        .unwrap();
         assert_eq!(filled.choices_for("propose"), Some(&[choice.clone()][..]));
         assert_eq!(filled.choices_for("report"), Some(&[choice][..]));
         assert_eq!(filled.0.len(), plan.0.len() + 2);
@@ -439,18 +503,28 @@ mod tests {
         };
         let spec = augment(&base, &knobs).unwrap();
         let config = Config::default();
-        let default = default_choice(&config, &ModelPolicy::default(), &spec).unwrap();
+        let (open, none) = (ModelPolicy::default(), ModelCatalog::default());
+        let tiers = TierScope::new(&config, &open, &none);
+        let default = default_choice(&config, tiers, Tier::Strong, &spec).unwrap();
         assert_eq!(default.model, config.orchestrator.model);
         let named = archon_core::model::ModelChoice {
             model: "codex/gpt-5.5".parse().unwrap(),
             effort: Effort::High,
+            tier: None,
         };
         let mut plan = ModelPlan::default();
         plan.0.insert("review".into(), vec![named.clone()]);
         let store = Store::open_in_memory().unwrap();
         let policy = ModelPolicy::default();
-        let filled =
-            fill_plan(&store, None, (&base, &spec), plan, &policy, Some(&default)).unwrap();
+        let filled = fill_plan(
+            &store,
+            None,
+            (&base, &spec),
+            plan,
+            (&policy, Tier::Strong),
+            Some(&default),
+        )
+        .unwrap();
         assert_eq!(filled.choices_for("review"), Some(&[named][..]), "kept");
         for stage in ["baseline", "refactor", "verify", "report"] {
             assert_eq!(filled.choices_for(stage), Some(&[default.clone()][..]));
@@ -465,23 +539,142 @@ mod tests {
         let other: archon_core::model::ModelRef = "codex/gpt-5.5".parse().unwrap();
         let direct = builtin("direct");
         let strict = builtin("performance");
+        let none = ModelCatalog::default();
+        let pick = |policy: &ModelPolicy, spec| {
+            default_choice(
+                &config,
+                TierScope::new(&config, policy, &none),
+                Tier::Strong,
+                spec,
+            )
+        };
         let open = ModelPolicy::default();
-        let effort = |spec| default_choice(&config, &open, spec).unwrap().effort;
+        let effort = |spec| pick(&open, spec).unwrap().effort;
         assert!(
             effort(&direct) < effort(&strict),
             "a fast pipeline thinks less"
         );
         let capped = ModelPolicy::from_lists(&[], &[], Some(Effort::Low));
-        let low = default_choice(&config, &capped, &strict).unwrap();
+        let low = pick(&capped, &strict).unwrap();
         assert_eq!(low.effort, Effort::Low, "never above the policy's cap");
         let elsewhere = ModelPolicy::from_lists(std::slice::from_ref(&other), &[], None);
-        let picked = default_choice(&config, &elsewhere, &strict).unwrap();
+        let picked = pick(&elsewhere, &strict).unwrap();
         assert_eq!(
             picked.model, other,
             "the orchestrator's model is not allowed"
         );
         let nothing = ModelPolicy::from_lists(&[], &[own], None);
-        assert_eq!(default_choice(&config, &nothing, &strict), None);
+        assert_eq!(pick(&nothing, &strict), None);
+    }
+
+    fn tiered_catalog() -> ModelCatalog {
+        use archon_core::model_tier::CatalogModel;
+        let entry = |model: &str, tier| CatalogModel {
+            model: model.parse().unwrap(),
+            tier: Some(tier),
+            is_default: false,
+        };
+        ModelCatalog::new(vec![
+            entry("claude-code/one-fast", Tier::Fast),
+            entry("claude-code/one-balanced", Tier::Balanced),
+            entry("claude-code/one-strong", Tier::Strong),
+            entry("claude-code/one-frontier", Tier::Frontier),
+            entry("codex/two-strong", Tier::Strong),
+        ])
+    }
+
+    /// The pipeline's tier picks a model of that tier, never above the
+    /// default ceiling; frontier only when the operator raises it.
+    #[test]
+    fn the_nudged_tier_selects_a_model_of_that_tier_within_the_ceiling() {
+        let mut config = Config::default();
+        config.orchestrator.model = "claude-code/own".parse().unwrap();
+        let catalog = tiered_catalog();
+        let open = ModelPolicy::default();
+        let tiers = TierScope::new(&config, &open, &catalog);
+        let mut spec = builtin("performance");
+        let strong = default_choice(&config, tiers, Tier::Strong, &spec).unwrap();
+        assert_eq!(strong.model.to_string(), "claude-code/one-strong");
+        assert_eq!(strong.tier.as_ref().unwrap().requested, Tier::Strong);
+        spec.file.nudges.tier = Some(Tier::Frontier);
+        let capped = default_choice(&config, tiers, Tier::Strong, &spec).unwrap();
+        assert_eq!(
+            capped.model.to_string(),
+            "claude-code/one-strong",
+            "never frontier on its own"
+        );
+        let raised = default_choice(&config, tiers, Tier::Frontier, &spec).unwrap();
+        assert_eq!(raised.model.to_string(), "claude-code/one-frontier");
+        let balanced = default_choice(&config, tiers, Tier::Strong, &builtin("direct")).unwrap();
+        assert_eq!(balanced.model.to_string(), "claude-code/one-balanced");
+        spec.file.nudges.tier = None;
+        let own = default_choice(&config, tiers, Tier::Strong, &spec).unwrap();
+        assert_eq!(
+            (own.model, own.tier),
+            (config.orchestrator.model.clone(), None)
+        );
+    }
+
+    /// The pinned fallbacks keep to the ceiling too: an orchestrator or
+    /// allowlisted model the catalog places above it is skipped.
+    #[test]
+    fn a_pinned_fallback_above_the_ceiling_is_not_a_default() {
+        use archon_core::model_tier::CatalogModel;
+        let mut config = Config::default();
+        config.orchestrator.model = "p/top".parse().unwrap();
+        let entry = |model: &str, tier| CatalogModel {
+            model: model.parse().unwrap(),
+            tier: Some(tier),
+            is_default: false,
+        };
+        let only_frontier = ModelCatalog::new(vec![entry("p/top", Tier::Frontier)]);
+        let open = ModelPolicy::default();
+        let spec = builtin("direct");
+        let tiers = TierScope::new(&config, &open, &only_frontier);
+        assert_eq!(default_choice(&config, tiers, Tier::Strong, &spec), None);
+        let raised = default_choice(&config, tiers, Tier::Frontier, &spec).unwrap();
+        assert_eq!(raised.model.to_string(), "p/top", "the operator raised it");
+
+        let strong = ModelCatalog::new(vec![entry("p/top", Tier::Strong)]);
+        let allowed: Vec<ModelRef> = vec!["p/top".parse().unwrap(), "q/untiered".parse().unwrap()];
+        let listed = ModelPolicy::from_lists(&allowed, &[], None);
+        let tiers = TierScope::new(&config, &listed, &strong);
+        let lowered = default_choice(&config, tiers, Tier::Balanced, &spec).unwrap();
+        assert_eq!(
+            (lowered.model.to_string(), lowered.tier),
+            ("q/untiered".to_owned(), None),
+            "a repository-lowered ceiling skips the strong pins"
+        );
+    }
+
+    #[test]
+    fn a_tiered_plan_entry_resolves_and_a_pin_is_kept() {
+        let config = Config::default();
+        let catalog = tiered_catalog();
+        let open = ModelPolicy::default();
+        let tiers = TierScope::new(&config, &open, &catalog);
+        let spec = builtin("direct");
+        let draft: ModelPlanDraft = serde_json::from_value(serde_json::json!({
+            "implement": [{"tier": "frontier", "provider": "codex", "effort": "low"}],
+        }))
+        .unwrap();
+        let plan = resolve_plan(&spec, draft, None, tiers).unwrap();
+        let choice = &plan.choices_for("implement").unwrap()[0];
+        assert_eq!(choice.model.to_string(), "codex/two-strong");
+        assert!(choice.tier.as_ref().unwrap().fell_back(), "{choice:?}");
+        let draft: ModelPlanDraft = serde_json::from_value(serde_json::json!({
+            "implement": [{"tier": "fast", "provider": "codex"}],
+        }))
+        .unwrap();
+        let error = resolve_plan(&spec, draft, None, tiers)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(
+                "available tiers: claude-code: fast, balanced, strong, frontier; codex: strong"
+            ),
+            "{error}"
+        );
     }
 
     /// The review level is the item's on a pipeline whose stage holds it.

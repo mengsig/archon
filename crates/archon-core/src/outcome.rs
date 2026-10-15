@@ -289,6 +289,7 @@ mod tests {
                 choice: ModelChoice {
                     model: ModelRef::new("anthropic", "claude-sonnet-5-5"),
                     effort: Effort::Medium,
+                    tier: None,
                 },
                 cost_usd: 0.4,
                 wall_secs: 90,

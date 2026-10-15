@@ -231,18 +231,21 @@ fn model_plan(what: &str) -> Value {
         "type": "object",
         "properties": {
             "model": model_ref(),
+            "tier": {"type": "string", "enum": ["fast", "balanced", "strong", "frontier", "strongest"]},
+            "provider": {"type": "string", "minLength": 1},
             "effort": {"type": "string", "enum": ["low", "medium", "high", "x_high", "xhigh", "max"]},
         },
-        "required": ["model"],
+        "anyOf": [{"required": ["model"]}, {"required": ["tier"]}],
         "additionalProperties": false,
     });
     json!({
         "type": "object",
         "description": format!(
-            "{what} Stage id (list_pipelines) to {{model, effort}} lists within model_policy; \
-             fan-out cycles fewer choices. \
-             No effort = the stage default; above it needs a model_reasons entry (prefer a stronger \
-             model at default effort). `<stage>.review`: reviewers a stage delegates."
+            "{what} Stage id (list_pipelines) to {{model or tier, effort}} lists within model_policy; \
+             fan-out cycles fewer choices. No effort = the stage default; above it needs a \
+             model_reasons entry. A tier, on `provider` if given, resolves at dispatch; tradeoffs: \
+             guide(topic=models). \
+             `<stage>.review`: reviewers a stage delegates."
         ),
         "minProperties": 1,
         "additionalProperties": {"type": "array", "minItems": 1, "items": choice},
@@ -258,7 +261,7 @@ fn new_model_plan(what: &str) -> Value {
 /// Aether's `{provider, model}` object.
 fn model_ref() -> Value {
     json!({
-        "description": "`provider/model`, e.g. `claude-code/claude-opus-5-5`, or {provider, model}.",
+        "description": "`provider/model` as list_models gives it, or {provider, model}.",
         "anyOf": [
             {"type": "string", "minLength": 3},
             {
@@ -795,7 +798,7 @@ fn guide() -> ToolDefinition {
         "Read an Archon guide",
         "Read action formats and workflows when needed; core safety rules always apply.",
         object(
-            json!({"topic":{"type":"string","enum":["authority","settings","github"]}}),
+            json!({"topic":{"type":"string","enum":["authority","settings","github","models"]}}),
             &["topic"],
         ),
         false,

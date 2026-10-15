@@ -41,6 +41,10 @@ pub fn format_usd(amount: f64) -> String {
     }
 }
 
+/// The `estimates` argument of spend reads that learn from or report what work
+/// cost: the API-equivalent total, so unbilled subscription usage is never free.
+pub const API_EQUIVALENT: bool = true;
+
 /// Days a report covers when it names no start: the last week, today included.
 pub const DEFAULT_DAYS: u32 = 7;
 
@@ -195,6 +199,29 @@ pub struct CostAmounts {
     pub unclassified_cost_usd: f64,
 }
 
+impl CostAmounts {
+    /// Every dollar Aether reported or estimated: what the work would cost at
+    /// API prices, whether or not budgets count the estimates.
+    pub fn api_equivalent_usd(&self) -> f64 {
+        let parts = [
+            self.cost_usd,
+            self.estimated_cost_usd,
+            self.unclassified_cost_usd,
+        ];
+        assert!(parts.iter().all(|v| v.is_finite() && *v >= 0.0));
+        let total = parts.iter().sum::<f64>();
+        debug_assert!(total + 1e-9 >= self.counted_usd, "counted is a part");
+        total
+    }
+
+    /// The API-equivalent total when the counted amount leaves out at least
+    /// half a cent of estimates, as budgets with `count_estimated_cost` off do.
+    pub fn uncounted_api_equivalent_usd(&self) -> Option<f64> {
+        let total = self.api_equivalent_usd();
+        (total - self.counted_usd >= 0.005).then_some(total)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CostRow {
     /// The day, repository name, pipeline, `provider/model`, item id or
@@ -250,6 +277,23 @@ mod tests {
         ] {
             assert_eq!(serde_json::to_value(basis).unwrap(), basis.name());
         }
+    }
+
+    #[test]
+    fn only_uncounted_estimates_add_an_api_equivalent_total() {
+        // A Claude lead billed $2 and its Codex reviewer was estimated at $0.75.
+        let mut amounts = CostAmounts {
+            counted_usd: 2.75,
+            cost_usd: 2.0,
+            estimated_cost_usd: 0.75,
+            unclassified_cost_usd: 0.0,
+        };
+        assert_eq!(amounts.api_equivalent_usd(), 2.75);
+        assert_eq!(amounts.uncounted_api_equivalent_usd(), None);
+        amounts.counted_usd = 2.0;
+        assert_eq!(amounts.uncounted_api_equivalent_usd(), Some(2.75));
+        amounts.counted_usd = 2.75 - 1e-12;
+        assert_eq!(amounts.uncounted_api_equivalent_usd(), None, "rounding");
     }
 
     #[test]

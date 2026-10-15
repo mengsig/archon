@@ -354,6 +354,7 @@ async fn restaging_keeps_explicit_reviewer_choices_and_reasons() {
     let reviewers = vec![archon_core::model::ModelChoice {
         model: common::MODEL.parse().unwrap(),
         effort: archon_core::model::Effort::Low,
+        tier: None,
     }];
     let mut plan = item.model_plan.clone();
     plan.0.insert("implement.review".into(), reviewers.clone());

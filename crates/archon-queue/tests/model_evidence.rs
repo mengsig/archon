@@ -398,7 +398,9 @@ fn snapshot_owns_attempts_and_can_be_classified_after_the_store_is_dropped() {
     assert_eq!(owner.id, item.id);
     assert_eq!(pipeline, run.pipeline);
     assert_eq!(stage.run, run.id);
-    let report = snapshot.report(|_, stage| Ok(stage.run == run.id)).unwrap();
+    let report = snapshot
+        .report(&Default::default(), |_, stage| Ok(stage.run == run.id))
+        .unwrap();
     assert_eq!(report.rows.len(), 1);
     let row = &report.rows[0];
     assert_eq!(
@@ -441,4 +443,77 @@ fn lean_and_full_attempts_are_reported_separately() {
     }
     assert!(evidence.text().contains("host_context=lean"));
     assert!(evidence.text().contains("host_context=full"));
+}
+
+/// A tier's evidence pools the models that served it: a recorded tier
+/// first, else the one Aether's catalog gives the model now.
+#[test]
+fn evidence_also_groups_by_stage_tier_and_effort() {
+    use archon_core::model_tier::{CatalogModel, ModelCatalog, Tier, TierChoice};
+    let mut store = store();
+    let item = store.insert_item(&item(None, "fixture"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    let completed = |n: u32, model: &str, tier: Option<TierChoice>, cost: f64| {
+        let mut stage = running_stage(&run, n, n);
+        stage.stage_id = "review".into();
+        stage.choice.model = model.parse().unwrap();
+        stage.choice.effort = Effort::Medium;
+        stage.choice.tier = tier;
+        stage.state = StageState::Completed;
+        stage.finished_at = Some(t(80));
+        stage.cost_usd = cost;
+        stage
+    };
+    let fell_back = TierChoice {
+        requested: Tier::Frontier,
+        provider: Some("codex".into()),
+        resolved: Tier::Strong,
+    };
+    for stage in [
+        completed(1, "a/old-strong", None, 1.0),
+        completed(2, "a/new-strong", Some(fell_back.clone()), 3.0),
+        completed(3, "a/new-strong", None, 5.0),
+        completed(4, "a/unplaced", None, 7.0),
+    ] {
+        store.upsert_stage_run(&stage).unwrap();
+    }
+    let place = |model: &str, tier| CatalogModel {
+        model: model.parse().unwrap(),
+        tier,
+        is_default: false,
+    };
+    store.set_model_catalog(ModelCatalog::new(vec![
+        place("a/old-strong", Some(Tier::Strong)),
+        place("a/new-strong", Some(Tier::Strong)),
+        place("a/unplaced", None),
+    ]));
+    let report = report(&store, ModelEvidenceQuery::default(), range(0, 1000));
+    let by_model: Vec<_> = report
+        .rows
+        .iter()
+        .map(|r| {
+            (
+                r.choice.model.to_string(),
+                r.attempts,
+                r.choice.tier.is_some(),
+            )
+        })
+        .collect();
+    assert!(
+        by_model.contains(&("a/new-strong".into(), 2, false)),
+        "a tiered and a pinned attempt of one model are one model row: {by_model:?}"
+    );
+    assert_eq!(report.tiers.len(), 1, "{:?}", report.tiers);
+    let strong = &report.tiers[0];
+    assert_eq!(
+        (strong.stage.as_str(), strong.tier, strong.effort),
+        ("review", Tier::Strong, Effort::Medium)
+    );
+    assert_eq!((strong.attempts, strong.completed), (3, 3));
+    assert_eq!(strong.median_cost_usd, Some(3.0));
+    let text = report.text();
+    assert!(
+        text.contains("Tier review strong medium n=3 completed=3"),
+        "{text}"
+    );
 }

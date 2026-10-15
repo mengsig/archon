@@ -40,8 +40,12 @@ pub fn cost(report: &CostReport) -> String {
         cells.push(row_cells(key, &row.amounts));
     }
     cells.push(row_cells("total".to_owned(), &report.total));
-    let text = format!("{header}\n{}", table(&cells));
+    let mut text = format!("{header}\n{}", table(&cells));
     debug_assert_eq!(text.lines().count(), report.rows.len() + 3);
+    // Uncounted estimates, such as Codex usage, must not read as free.
+    if let Some(total) = report.total.uncounted_api_equivalent_usd() {
+        text = format!("{text}\n≈ ${total:.2} API-equivalent with the estimates.");
+    }
     text
 }
 
@@ -122,9 +126,13 @@ mod tests {
         report.estimates_counted = false;
         let text = cost(&report);
         assert!(text.contains("separate API-equivalent estimates do not count"));
+        let lines: Vec<&str> = text.lines().collect();
         assert_eq!(
-            text.lines().last().unwrap(),
-            "total     $2.00    $0.00   $2.00                    $1.00"
+            lines[lines.len() - 2..],
+            [
+                "total     $2.00    $0.00   $2.00                    $1.00",
+                "≈ $3.00 API-equivalent with the estimates.",
+            ]
         );
     }
 

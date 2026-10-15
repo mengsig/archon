@@ -530,3 +530,59 @@ fn a_correction_takes_back_only_what_that_agent_was_charged() {
     assert_eq!(days.total.cost_usd, 3.25);
     assert_eq!(days.total.unclassified_cost_usd, 0.0);
 }
+
+fn usage(n: u32, item: &QueueItem, cost: f64, basis: CostBasis, estimate: f64) -> SpendRow {
+    SpendRow {
+        item: Some(item.id.clone()),
+        estimated_cost_usd: estimate,
+        ..total(n, cost, basis, estimate == 0.0, 0)
+    }
+}
+
+/// Aether 1.0.9 books a Codex turn as an estimate beside a zero cost; older
+/// records carried the same dollars as list-price cost. A Claude lead's billed
+/// cost and its Codex reviewer's estimate make up a mixed tree.
+#[test]
+fn codex_estimates_count_like_the_list_price_they_replace() {
+    let mut store = store();
+    let old = store.insert_item(&item(None, "old codex"), None).unwrap();
+    let new = store.insert_item(&item(None, "new codex"), None).unwrap();
+    let mixed = store.insert_item(&item(None, "mixed tree"), None).unwrap();
+    staged(&mut store, &mixed, "implement", "claude-code/opus", 3);
+    let codex = "codex/sol".parse().unwrap();
+    store
+        .record_delegated(&agent(4), &agent(3), &codex, None)
+        .unwrap();
+    for row in [
+        usage(1, &old, 0.75, CostBasis::ListPrice, 0.0),
+        usage(2, &new, 0.0, CostBasis::ListPrice, 0.75),
+        usage(3, &mixed, 2.0, CostBasis::ProviderReported, 0.0),
+        usage(4, &mixed, 0.0, CostBasis::ListPrice, 0.75),
+    ] {
+        store.record_spend(&row).unwrap();
+    }
+    let item_spend =
+        |item: &QueueItem, estimates| store.spend_for_item(&item.id, estimates).unwrap();
+    assert_eq!(
+        (item_spend(&old, true), item_spend(&new, true)),
+        (0.75, 0.75)
+    );
+    assert_eq!(item_spend(&mixed, true), 2.75);
+    // Budgets that leave estimates out count only the old record's dollars.
+    assert_eq!(
+        (item_spend(&old, false), item_spend(&new, false)),
+        (0.75, 0.0)
+    );
+    assert_eq!(item_spend(&mixed, false), 2.0);
+    let reviewer = |estimates| store.delegated_beneath(&agent(3), estimates).unwrap()[0].cost_usd;
+    assert_eq!((reviewer(true), reviewer(false)), (0.75, 0.0));
+    for (estimates, counted) in [(true, 4.25), (false, 2.75)] {
+        let report = store
+            .cost_report(&range(0, 0), CostGroup::Item, estimates)
+            .unwrap();
+        assert_eq!(report.total.counted_usd, counted);
+        assert_eq!(report.total.cost_usd, 2.0, "only the lead was billed");
+        assert_eq!(report.total.estimated_cost_usd, 2.25);
+        assert_eq!(report.total.api_equivalent_usd(), 4.25);
+    }
+}

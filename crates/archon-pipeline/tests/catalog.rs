@@ -628,7 +628,7 @@ fn design_doc_researches_and_critiques_before_reporting_without_shipping() {
     let summary = spec.summary();
     assert_eq!(summary.workspace, WorkspaceMode::Worktree);
     assert!(summary.requires_repo);
-    assert_eq!(summary.nudges.tier, Some(Tier::Strongest));
+    assert_eq!(summary.nudges.tier, Some(Tier::Strong));
     assert!(summary.nudges.independent_reviewers);
     let stages: Vec<(&str, StageKind)> = summary
         .stages

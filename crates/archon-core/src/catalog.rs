@@ -83,14 +83,7 @@ pub fn is_snapshot_of(workspace: &Path, item: &QueueItemId) -> bool {
     workspace.file_name() == Some(SNAPSHOT_DIR.as_ref()) && item_dir == Some(item.as_str().as_ref())
 }
 
-/// Advice to the orchestrator; never enforced.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Tier {
-    Fast,
-    Balanced,
-    Strongest,
-}
+pub use crate::model_tier::Tier;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]

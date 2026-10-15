@@ -30,7 +30,14 @@ pub(super) async fn enqueue(
     let (env, resolved) = enqueue_context(ctx, &req).await?;
     let id = QueueItemId::new();
     crate::learned::prepare_routing(ctx, &id, &resolved, &req.tags).await?;
-    let given = knobs::resolve_plan(&resolved.spec, req.model_plan, req.model_reasons.as_ref())?;
+    let given = resolve_draft(
+        ctx,
+        &env,
+        &resolved.spec,
+        req.model_plan,
+        req.model_reasons.as_ref(),
+    )
+    .await?;
     check_stage_timeouts(ctx, &resolved.spec, &req.stage_timeouts)?;
     let plan = filled_plan(ctx, &id, &env, &resolved.base, &resolved.spec, given).await?;
     check_plan(ctx, &env, &resolved.spec, &plan)?;
@@ -224,7 +231,8 @@ pub(super) async fn update_within(
     if replaces_plan || patch.model_reasons.is_some() || !patch.stage_timeouts.is_empty() {
         let (env, base, spec) = item_pipeline(ctx, &current).await?;
         if let Some(draft) = patch.model_plan.take() {
-            let given = knobs::resolve_plan(&spec, draft, patch.model_reasons.as_ref())?;
+            let given =
+                resolve_draft(ctx, &env, &spec, draft, patch.model_reasons.as_ref()).await?;
             let filled = filled_plan(ctx, id, &env, &base, &spec, given).await?;
             check_plan(ctx, &env, &spec, &filled)?;
             plan = Some(filled);
@@ -414,7 +422,7 @@ pub(super) async fn retry(
     let mut kept_plan = current.model_plan.clone();
     spec.drop_retired_ship(&mut kept_plan, None);
     let plan = match retry.model_plan {
-        Some(draft) => knobs::resolve_plan(&spec, draft, retry.model_reasons.as_ref())?,
+        Some(draft) => resolve_draft(ctx, &env, &spec, draft, retry.model_reasons.as_ref()).await?,
         None => kept_plan,
     };
     let plan = filled_plan(ctx, id, &env, &base, &spec, plan).await?;
@@ -640,6 +648,21 @@ async fn item_pipeline(
     Ok((env, base, spec))
 }
 
+/// `draft` as [`knobs::resolve_plan`] gives it, its tiers resolved from
+/// Aether's catalog within `env`'s model policy.
+pub(super) async fn resolve_draft(
+    ctx: &DaemonContext,
+    env: &RepoEnv,
+    spec: &PipelineSpec,
+    draft: ModelPlanDraft,
+    reasons: Option<&ModelReasons>,
+) -> Result<ModelPlan, ArchonError> {
+    let catalog = learned::catalog(ctx).await?;
+    let policy = env.policy(&ctx.config);
+    let tiers = knobs::TierScope::new(&ctx.config, &policy, &catalog);
+    knobs::resolve_plan(spec, draft, reasons, tiers)
+}
+
 /// `plan` with what it leaves out filled for `env`'s repository.
 pub(super) async fn filled_plan(
     ctx: &DaemonContext,
@@ -650,7 +673,10 @@ pub(super) async fn filled_plan(
     plan: ModelPlan,
 ) -> Result<ModelPlan, ArchonError> {
     let policy = env.policy(&ctx.config);
-    let fallback = knobs::default_choice(&ctx.config, &policy, spec);
+    let catalog = learned::catalog(ctx).await?;
+    let tiers = knobs::TierScope::new(&ctx.config, &policy, &catalog);
+    let max_tier = env.max_default_tier(&ctx.config);
+    let fallback = knobs::default_choice(&ctx.config, tiers, max_tier, spec);
     let store = ctx.store.lock().await;
     store.configure_learning(&ctx.config.learning)?;
     let repo = env.repo.as_ref().map(|repo| &repo.id);
@@ -658,7 +684,7 @@ pub(super) async fn filled_plan(
     let unnamed = ModelPlan::default();
     let baseline = knobs::fill_static_stages(base, spec, unnamed, fallback.as_ref())?;
     store.record_static_plan(repo, spec.name(), &baseline)?;
-    let learned = learned::plan_for_item(&store, id, repo, spec, &policy, &plan)?;
+    let learned = learned::plan_for_item(&store, id, repo, spec, (&policy, max_tier), &plan)?;
     let mut plan = plan;
     plan.0.extend(learned.0);
     knobs::fill_static_stages(base, spec, plan, fallback.as_ref())

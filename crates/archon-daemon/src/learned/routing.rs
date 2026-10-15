@@ -2,7 +2,8 @@ use archon_core::Timestamp;
 use archon_core::error::ArchonError;
 use archon_core::feedback::ChoiceStanding;
 use archon_core::id::{QueueItemId, RepoId};
-use archon_core::model::{ModelChoice, ModelPlan};
+use archon_core::model::{ModelChoice, ModelPlan, ModelRef};
+use archon_core::model_tier::Tier;
 use archon_core::outcome::DiffSize;
 use archon_core::policy::ModelPolicy;
 use archon_pipeline::PipelineSpec;
@@ -17,8 +18,9 @@ pub(crate) fn default_plan(
     repo: Option<&RepoId>,
     spec: &PipelineSpec,
     policy: &ModelPolicy,
+    max_tier: Tier,
 ) -> Result<ModelPlan, ArchonError> {
-    let (plan, _) = select_plan(store, repo, spec, policy, None, None)?;
+    let (plan, _) = select_plan(store, repo, spec, (policy, max_tier), None, None)?;
     assert!(
         plan.0.keys().all(|stage| spec.stage(stage).is_some()),
         "evidence is read per stage of the pipeline"
@@ -34,7 +36,7 @@ pub(crate) fn plan_for_item(
     item: &QueueItemId,
     repo: Option<&RepoId>,
     spec: &PipelineSpec,
-    policy: &ModelPolicy,
+    (policy, max_tier): (&ModelPolicy, Tier),
     explicit: &ModelPlan,
 ) -> Result<ModelPlan, ArchonError> {
     if !store.learning_config()?.enabled {
@@ -55,7 +57,7 @@ pub(crate) fn plan_for_item(
             store,
             repo,
             spec,
-            policy,
+            (policy, max_tier),
             Some(item),
             item_size(store, item)?,
         )?,
@@ -116,7 +118,7 @@ fn select_plan(
     store: &Store,
     repo: Option<&RepoId>,
     spec: &PipelineSpec,
-    policy: &ModelPolicy,
+    (policy, max_tier): (&ModelPolicy, Tier),
     item: Option<&QueueItemId>,
     size: Option<DiffSize>,
 ) -> Result<(ModelPlan, BTreeMap<String, String>), ArchonError> {
@@ -136,7 +138,7 @@ fn select_plan(
             size,
             context: context.as_ref(),
         };
-        let mut cohort = stage_evidence(store, &query, policy, as_of)?;
+        let mut cohort = stage_evidence(store, &query, (policy, max_tier), as_of)?;
         if let Some(item) = item {
             cohort.routes.sort_by_key(|e| {
                 super::routing_context::fingerprint(&format!(
@@ -176,12 +178,13 @@ fn route_context(
         .map_err(|e| ArchonError::Store(format!("routing context: {e}")))
 }
 
-/// A stage's permitted evidence. A thin repository cohort pools global
-/// evidence only while it has no typed operator feedback.
+/// A stage's permitted evidence, on models no higher than `max_tier` in
+/// Aether's catalog. A thin repository cohort pools global evidence only
+/// while it has no typed operator feedback.
 fn stage_evidence(
     store: &Store,
     query: &RouteQuery<'_>,
-    policy: &ModelPolicy,
+    (policy, max_tier): (&ModelPolicy, Tier),
     as_of: Timestamp,
 ) -> Result<CohortEvidence, ArchonError> {
     let mut cohort = store.cohort_evidence(query, as_of)?;
@@ -194,9 +197,11 @@ fn stage_evidence(
         cohort.routes = store.cohort_evidence(&global, as_of)?.routes;
     }
     seed(store, &mut cohort.routes, query, policy);
+    let catalog = store.model_catalog();
+    let within = |m: &ModelRef| catalog.tier_of(m).is_none_or(|tier| tier <= max_tier);
     cohort
         .routes
-        .retain(|e| policy.check(&e.route.choice).is_ok());
+        .retain(|e| policy.check(&e.route.choice).is_ok() && within(&e.route.choice.model));
     assert!(cohort.routes.iter().all(|e| e.route.stage == query.stage));
     assert!(cohort.routes.iter().all(|e| e.route.passed <= e.route.runs));
     let local = cohort.routes.iter().all(|e| e.route.repo.is_some());
@@ -209,7 +214,7 @@ fn stage_evidence(
 pub(crate) fn standings(
     store: &Store,
     query: &RouteQuery<'_>,
-    policy: &ModelPolicy,
+    (policy, max_tier): (&ModelPolicy, Tier),
     corrected: Option<&ModelChoice>,
     as_of: Timestamp,
 ) -> Result<(Option<ChoiceStanding>, Option<ChoiceStanding>), ArchonError> {
@@ -228,7 +233,7 @@ pub(crate) fn standings(
         }
         None => None,
     };
-    let cohort = stage_evidence(store, query, policy, as_of)?;
+    let cohort = stage_evidence(store, query, (policy, max_tier), as_of)?;
     let selected = archon_queue::store::preferred_route(&cohort.routes).map(standing);
     assert!(corrected.as_ref().is_none_or(|c| c.passed <= c.runs));
     assert!(selected.as_ref().is_none_or(|s| s.runs >= 5));
@@ -253,6 +258,7 @@ fn seed(
                 .max_effort
                 .unwrap_or(Effort::Medium)
                 .min(Effort::Medium),
+            tier: None,
         };
         if policy.check(&choice).is_err()
             || evidence
@@ -408,6 +414,7 @@ mod tests {
                 choice: ModelChoice {
                     model: format!("codex/{name}").parse().unwrap(),
                     effort: Effort::Low,
+                    tier: None,
                 },
                 runs,
                 passed,

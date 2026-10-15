@@ -359,13 +359,13 @@ per stage. Add your own under `~/.config/archon/pipelines/` or
 | `direct` | implement | balanced models; the default, and the cheapest path for a change one author can make and check, whatever its size: a fix, a feature, tests, docs or a dependency upgrade. One agent implements it, runs the affected checks and commits, and Archon ships. No review unless the item's `review` knob asks for one; the agent hands back work that turns out risky. See [`docs/PIPELINES.md`](PIPELINES.md#direct) |
 | `adaptive` | build (delegation enabled, holds the review) | balanced models; the orchestrator's choice where one lead that keeps its context through fixes, or integrates independent parts, saves restarts. One lead builds it, delegates the parts worth splitting and has the integrated diff reviewed by as many independent reviewers as the item's `review` knob asks for (one by default); Archon ships only a build with those reviewers verified. Chosen by name or as a repository's `default_pipeline`; see [`docs/PIPELINES.md`](PIPELINES.md#adaptive) |
 | `refactor` | baseline/characterize → refactor → verify (gate, back to refactor ×3) → review (gate, back to refactor ×2) | balanced tier, independent reviewer; structure-only changes, use `direct` for behaviour changes |
-| `performance` | measure → optimize → verify (gate, back to optimize ×3) → review (gate, back to optimize ×2) | strongest tier, independent reviewer. For a specific slow path with a measurable goal; use `direct` for ordinary changes. |
+| `performance` | measure → optimize → verify (gate, back to optimize ×3) → review (gate, back to optimize ×2) | strong tier, independent reviewer. For a specific slow path with a measurable goal; use `direct` for ordinary changes. |
 | `agent-testing` | plan → exercise (fan-out) → report | agents using the product as a user would |
 | `code-audit` | scope → audit (3 independent lenses) → report (HTML with issue drafts) | code inspection with evidence and follow-up findings; use `ask` for one question |
 | `e2e-testing` | setup → e2e (gate) → report | HTML and screenshot reports for Lavish |
 | `ask` | answer | a read-only answer about a repository, with no PR |
 | `errand` | errand (report) | a small job that changes no repository, answered in text or as a Lavish page; no outward side effects |
-| `design-doc` | research → critique (gate, retry ×2) → report (HTML design/RFC) | design before a large or ambiguous change, strongest tier and independent critic; no product-code changes or shipping. Use `proposal: lavish` for design and implementation in one item |
+| `design-doc` | research → critique (gate, retry ×2) → report (HTML design/RFC) | design before a large or ambiguous change, strong tier and independent critic; no product-code changes or shipping. Use `proposal: lavish` for design and implementation in one item |
 
 A change that splits cleanly into a backend and a frontend part can run the
 [`team-pr` example](examples/pipelines/team-pr/pipeline.toml): copy its
@@ -695,6 +695,10 @@ Cost reports distinguish provider-reported billing, list-price estimates, and
 unclassified legacy or mixed-basis amounts. The counted total follows budgets:
 Aether's reported cost always counts, including list-price amounts; only its
 separate API-equivalent estimate depends on `limits.count_estimated_cost`.
+Since Aether 1.0.9 Codex usage is such an estimate (billed $0), so with the
+default setting budgets count Codex as before; with it off, Codex counts $0
+toward budgets and the report adds `≈ $X API-equivalent`. Learning and model
+evidence always compare the API-equivalent total, billed plus estimated.
 Finished run costs in `queue show` sum their own stages' current ledger costs,
 so late usage stays with the correct run after a retry or restart. A stage's
 cost includes the agents it delegated to; a run's and an item's totals count

@@ -145,7 +145,7 @@ protocol 17 alone does not imply support.
 
 ```json
 {"req":1,"cmd":"hello","protocol_version":18,"client_name":"archon",
- "client_version":"1.2.3","features":[]}
+ "client_version":"1.2.4","features":[]}
 ```
 
 The reply is `Welcome {protocol_version, daemon_version, instance_id,
@@ -968,6 +968,26 @@ are preserved, and new growth is classified using its observed basis.
 These labels do not change enforcement: raw `cost_usd` counts regardless
 of basis, even with estimates disabled; only the separate API-equivalent
 `estimated_cost_usd` is controlled by `limits.count_estimated_cost`.
+
+Since Aether 1.0.9 a Codex (subscription) turn reports `cost_usd = 0`,
+`cost_complete = false`, `cost_gap = "unpriced"` and its list-price dollars as
+`estimated_cost_usd`, with a `list_price` basis; older records keep those
+dollars in `cost_usd`. Archon reads the estimate as 0 when Aether omits it.
+With the default `count_estimated_cost = true` budgets count both shapes alike,
+so a Codex-heavy item stays bounded exactly as before. With it off, budgets
+count billed dollars only: Codex adds $0 to the daily and total budgets, a
+budgeted Codex stage is refused at spawn, and Codex usage on a budgeted item
+stops its run as unaccounted. `budgets_enabled = false` overrides both: no
+budget is enforced and spend is still recorded.
+
+Learning and reports of what work cost do not follow that setting. Outcome
+capture, model segments, model evidence, the finished item's cost told to the
+orchestrator, initiative member costs and the finish-time run cost use the
+API-equivalent total, `cost_usd + estimated_cost_usd` (`cost::API_EQUIVALENT`),
+so model selection never sees a subscription model as free. `GetItem`, item
+lists, `GetStage` and the status spend lines count as the budgets do. When the
+budgets leave estimates out, the cost report also gives the API-equivalent
+total as `≈ $X API-equivalent`, Aether's wording.
 CLI status and MCP `queue_status` spend lines name these budget-counted totals.
 A day's counted amount is what the daily budget counts for that day, and over
 every day the total is what the total budget counts. Rows that do not add up to the total
@@ -1862,10 +1882,30 @@ what a wrong result would break and how tests or review would catch it, and
 which available model and effort are the cheapest plausible choices. The
 highest efforts (`x_high`, `max`) are for a reasoning problem it can name that
 inspecting the work left unresolved; that the operator prefers strong models is
-not one. Reviewers preferably use a different model from the implementer. A
-failed stage prompts reconsideration through `retry_item`'s `model_plan`. The
-daemon validates policy; it never ranks models, and never replaces a choice
-the orchestrator made.
+not one. Reviewers need independent discovery: another provider at the same
+tier counts, and several fast-tier reviewers, or a fast-tier team checked by
+one stronger-tier judge at low effort, can beat one balanced reviewer for far
+less. A failed stage prompts reconsideration through `retry_item`'s
+`model_plan`. The daemon validates policy and never replaces a choice the
+orchestrator made. It never ranks models itself; it resolves tiers from
+Aether's catalog data.
+
+**Tiers.** Aether's `list_models` gives each model a tier, `fast`, `balanced`,
+`strong` or `frontier` (or none); it is the only place that maps model names
+to tiers, so a new release needs no Archon change. `strongest` is accepted
+everywhere as the legacy spelling of `strong`. A `model_plan` entry is an exact
+pin `{model, effort}`, unchanged, or `{tier, effort}` with an optional
+`provider`. Archon resolves a tier against the connected models within the
+item's model policy (`model_tier::ModelCatalog::resolve`): on `provider` when
+given, else on the orchestrator's provider first, then any other; within that
+provider the highest tier at or below the one asked for, Aether's default model
+first, then catalog order. A provider without the tier falls back downward
+(Codex `frontier` resolves to `strong`). Nothing at or below it refuses the
+request, naming the tiers there are. The tier is resolved at enqueue and again
+when the run starts, from Aether's catalog as it is then; the resolved model,
+the tier asked for and any fallback are stored on the plan and on every attempt
+(`ModelChoice.tier`), and `get_item` shows both. The daemon caches the catalog
+for five minutes; with none read yet, a stored resolution stands.
 
 **Stages the plan leaves out.** A `model_plan` is optional, whole or per
 stage, so an enqueue that has nothing to say about a model says nothing.
@@ -1873,10 +1913,14 @@ stage, so an enqueue that has nothing to say about a model says nothing.
 
 1. what `learned::default_plan` holds for the repository, pipeline and
    stage;
-2. `knobs::default_choice`: the orchestrator's own model when the item's
-   policy permits it, else the first model the policy allows, at the effort
-   the pipeline's `[nudges] tier` suggests (`fast` low, `balanced` or none
-   medium, `strongest` high), lowered to `max_effort` where that caps it;
+2. `knobs::default_choice`: a model of the pipeline's `[nudges] tier`,
+   resolved as above but never above `[models] max_default_tier` (`strong`
+   unless the operator raises it, so no default picks `frontier` on its
+   own); else the orchestrator's own model when the item's policy permits
+   it; else a `balanced` model, or the first model the policy allows. Its
+   effort is the one the tier suggests (`fast` low, `balanced` or none
+   medium, `strong` or `frontier` high), lowered to `max_effort` where that
+   caps it. Learned defaults keep to the same ceiling;
 3. for a stage a knob inserted (§18.1), the first choice of the pipeline's
    first stage.
 
@@ -1892,8 +1936,13 @@ or `enqueue`, `update_item`, `retry_item` and `steer_item` refuse it naming
 the stage and its default; a lower one needs none. `steer_item` takes the
 reason from the item's recorded `model_reasons`. `get_item` marks each choice
 above its default. Plans the daemon fills (learned, tier) are not asked for
-reasons. A stronger model at the default effort often beats a weaker one at
-`high`, and `model_evidence` groups by `(stage, model, effort)` for comparing.
+reasons. A stronger tier at lower effort often beats a weaker one at max
+effort: effort buys deliberation, not capability, so raise it on a weaker tier
+only for long, well-specified, test-verifiable work. `model_evidence` groups by
+`(stage, model, effort)` and by `(stage, tier, effort)` for comparing; a tier
+row pools the models that served it (the tier an attempt recorded, else
+Aether's tier for its model now), so evidence survives a model replaced within
+its tier.
 
 **Reviewers.** A pipeline with a declared review (§8.2) takes the key
 `<stage>.review` in `model_plan` and `model_reasons`, with at most as many
@@ -1925,8 +1974,8 @@ sorted by stage then median completed cost, with model/effort tie breakers and
 uncompleted groups last within a stage. Each line shows attempts, completed
 attempts, median and nearest-rank p90 cost per completed attempt, median minutes
 of completed attempts with finish times, and review/test recorded verdict pass
-share (unknown verdicts do not pass). Costs use the budget's estimate setting
-and latest agent ledger totals, falling back to stored stage cost when there is
+share (unknown verdicts do not pass). Costs are API-equivalent totals from the
+latest agent ledger totals, whatever the budgets count, falling back to stored stage cost when there is
 no ledger row. Completed n below five is marked as a small sample. Output is
 limited to 60 groups and states the omitted count. This evidence recommends
 nothing and introduces no persistent cache, background job, price list or storage table.
@@ -1979,7 +2028,7 @@ requires_repo = true                 # false: repo optional (e.g. ask)
 stage = "implement"                  # the stage whose result names the commits to ship
 
 [nudges]                             # advice to the orchestrator; never enforced
-tier = "strongest"                   # fast | balanced | strongest
+tier = "strong"                      # fast | balanced | strong | frontier
 independent_reviewers = true         # prefer distinct models/vendors for fan-out
 notes = "Security-sensitive changes land here."
 
@@ -1999,7 +2048,7 @@ kind = "review"
 prompt = "review.md"
 fan_out = 3
 gate = "all_pass"
-nudge = "Prefer the strongest tier; reviewers independent of the implementer."
+nudge = "Prefer the strong tier; reviewers independent of the implementer."
 on_fail = { goto = "implement", max_loops = 3 }
 
 [[stage]]
@@ -2175,13 +2224,13 @@ literal `{{`.
 | `direct` | implement (work, holds the review) | tier = balanced. The pipeline an item that names none runs. One agent implements a change one author can make and check, whatever its size, runs the affected checks, commits and returns the ship record; the cheapest path to a shipped change. Review level `none` unless the item asks (§8.2); the agent escalates what turns out risky. |
 | `adaptive` | build (work, `allow_delegation`, holds the review) | tier = balanced, independent_reviewers. For a change where one lead that keeps its context through fixes, or integrates independent parts, saves restarts: it sizes the work, delegates the parts worth splitting, integrates them and has the integrated diff reviewed by as many reviewers as the item's review level asks. Review level `standard` unless the item asks (§8.2). |
 | `refactor` | baseline/characterize → refactor → verify (test, all_pass, goto refactor ×3) → review (1, all_pass, goto refactor ×2) | tier = balanced, independent_reviewers. Structure-only changes; use `direct` for behaviour changes. |
-| `performance` | measure → optimize → verify (test, all_pass, goto optimize ×3) → review (1, all_pass, goto optimize ×2) | tier = strongest, independent_reviewers. For a specific slow path with a measurable goal; use `direct` for ordinary changes. |
+| `performance` | measure → optimize → verify (test, all_pass, goto optimize ×3) → review (1, all_pass, goto optimize ×2) | tier = strong, independent_reviewers. For a specific slow path with a measurable goal; use `direct` for ordinary changes. |
 | `agent-testing` | plan → exercise (fan_out 2, report) → report | Agents drive the product as a user would and report defects. workspace = worktree |
-| `code-audit` | scope (work) → audit (fan_out 3, report) → report | Security, reliability and maintainability lenses produce HTML with high/critical issue drafts. No code changes or ship. workspace = worktree, tier = strongest, independent_reviewers. Use `ask` for one question. |
+| `code-audit` | scope (work) → audit (fan_out 3, report) → report | Security, reliability and maintainability lenses produce HTML with high/critical issue drafts. No code changes or ship. workspace = worktree, tier = strong, independent_reviewers. Use `ask` for one question. |
 | `e2e-testing` | setup → e2e (test gate, goto setup ×1) → report | The report stage produces HTML and screenshots under `.archon/reports/` for Lavish. |
 | `ask` | answer | workspace = repo-readonly (a disposable snapshot of the repository's `HEAD` commit, §13), requires_repo = false, tier = balanced |
 | `errand` | errand (report) | workspace = scratch, requires_repo = false, tier = balanced. A small job answered in its summary and optionally as one self-contained Lavish page. No repository changes or outward side effects; read an attached checkout only, and run code on a throwaway copy in scratch. Other files are temporary and collected after `worktrees.gc_after` (default 7d; §13.2). |
-| `design-doc` | research → critique (1, all_pass, goto research ×2) → report (HTML design/RFC) | workspace = worktree, requires_repo = true, tier = strongest, independent_reviewers. Before a large or ambiguous change; no product-code changes or shipping. Use `proposal: lavish` for design and implementation in one item. |
+| `design-doc` | research → critique (1, all_pass, goto research ×2) → report (HTML design/RFC) | workspace = worktree, requires_repo = true, tier = strong, independent_reviewers. Before a large or ambiguous change; no product-code changes or shipping. Use `proposal: lavish` for design and implementation in one item. |
 
 The first four change a repository. Each declares `[pipeline.ship]`, so
 archond delivers its change once the last stage passed (§8.7) and none has
@@ -2561,6 +2610,7 @@ wake_on_success = true         # false: a routine success waits for its next tur
 allow = []                     # e.g. ["claude-code/claude-opus-5-5"]; [] = any
 deny = []
 # max_effort = "high"          # unset: no cap; else low|medium|high|x_high|max
+# max_default_tier = "strong"  # the highest tier a default picks; a plan may name any
 
 [limits]
 budgets_enabled = true         # false: no dollar budget is enforced; spend still recorded
@@ -2570,7 +2620,7 @@ max_active_runs = 0
 budget_usd_per_item = 0.0
 budget_usd_daily = 0.0
 budget_usd_total = 0.0
-count_estimated_cost = true
+count_estimated_cost = true    # budgets count API-equivalent estimates, e.g. Codex usage
 infra_retries = 1
 min_free_gb = 10               # hold dispatch below this much free disk; 0 = off
 max_delegation_depth = 2       # delegations below a stage agent or the orchestrator; 1..=4
@@ -3887,7 +3937,8 @@ Workspaces are deleted after grading unless `--keep-workspaces` is passed.
 
 Metrics per trial: `success` (grader exit status), `score` (optional grader
 JSON), `wall_secs`, `input_tokens`, `output_tokens`, `cost_usd`,
-`estimated_cost_usd`, `operator_messages`, `error`. Results go to
+`estimated_cost_usd`, `operator_messages`, `error`. Arms are compared by the
+API-equivalent total, `cost_usd + estimated_cost_usd`. Results go to
 `results.jsonl`, one JSON object per trial. A failed trial with an `error`
 (a provider limit, a crash, a grading failure) is an infrastructure failure:
 `summary.md` leaves it out of every aggregate and lists it on its own. Over

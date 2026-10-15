@@ -16,6 +16,7 @@ use archon_core::feedback::{
     MemoryCuration, MemoryView, OperatorFeedback,
 };
 use archon_core::id::{FeedbackId, QueueItemId, RepoId};
+use archon_core::model_tier::Tier;
 use archon_core::policy::ModelPolicy;
 use archon_core::protocol::Reply;
 use archon_queue::store::{CorrectionFacts, RouteQuery, keys};
@@ -367,7 +368,7 @@ async fn view(
         None => (None, None),
     };
     let attribution = &feedback.attribution;
-    let policy = cohort_policy(ctx, attribution.repo.as_ref()).await?;
+    let (policy, max_tier) = cohort_policy(ctx, attribution.repo.as_ref()).await?;
     let as_of = archon_core::now();
     let query = RouteQuery {
         repo: attribution.repo.as_ref(),
@@ -380,7 +381,7 @@ async fn view(
     let (corrected, selected, frozen_explanation) = {
         let store = ctx.store.lock().await;
         let (corrected, selected) =
-            crate::learned::standings(&store, &query, &policy, corrected, as_of)?;
+            crate::learned::standings(&store, &query, (&policy, max_tier), corrected, as_of)?;
         let enabled = store.learning_config()?.enabled;
         let frozen = frozen_explanation(&store, &feedback)?;
         (corrected, selected.filter(|_| enabled), frozen)
@@ -406,10 +407,16 @@ async fn view(
 async fn cohort_policy(
     ctx: &DaemonContext,
     repo: Option<&RepoId>,
-) -> Result<ModelPolicy, ArchonError> {
+) -> Result<(ModelPolicy, Tier), ArchonError> {
     match RepoEnv::load(ctx, repo).await {
-        Ok(env) => Ok(env.policy(&ctx.config)),
-        Err(ArchonError::NotFound(_)) => Ok(ctx.config.models.policy()),
+        Ok(env) => Ok((env.policy(&ctx.config), env.max_default_tier(&ctx.config))),
+        Err(ArchonError::NotFound(_)) => {
+            let global = &ctx.config.models;
+            Ok((
+                global.policy(),
+                global.max_default_tier(&Default::default()),
+            ))
+        }
         Err(error) => Err(error),
     }
 }

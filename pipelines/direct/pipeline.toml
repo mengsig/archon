@@ -23,4 +23,4 @@ id = "implement"
 kind = "work"
 prompt = "implement.md"
 timeout_minutes = 60
-nudge = "A capable coding model at medium effort, high for a larger or subtle change; low only for docs, config or another trivial edit. The agent escalates a change that turns out risky."
+nudge = "The balanced tier at medium effort, high for a larger or subtle change; low only for docs, config or another trivial edit. The agent escalates a change that turns out risky."

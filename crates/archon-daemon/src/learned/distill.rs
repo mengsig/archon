@@ -46,7 +46,7 @@ pub async fn maintenance(ctx: &DaemonContext) -> Result<(), ArchonError> {
         store.prune_learning_snapshots()?;
         store.refresh_lessons(archon_core::now())?;
         let imported = store.kv_get("learning/backfill/done")?.is_some();
-        store.backfill_outcomes(20, ctx.config.limits.count_estimated_cost)? || imported
+        store.backfill_outcomes(20, archon_core::cost::API_EQUIVALENT)? || imported
     };
     if !complete {
         return Ok(());
@@ -162,6 +162,7 @@ fn cheap_choice(
             .cloned()
             .unwrap_or_else(|| ctx.config.orchestrator.model.clone()),
         effort: Effort::Low,
+        tier: None,
     });
     policy.check(&choice)?;
     assert!(policy.permits_model(&choice.model));
@@ -255,7 +256,7 @@ async fn capture_finished(ctx: &DaemonContext, run: &PipelineRun) -> Result<(), 
     ctx.store
         .lock()
         .await
-        .capture_outcome(run, diff, ctx.config.limits.count_estimated_cost)
+        .capture_outcome(run, diff, archon_core::cost::API_EQUIVALENT)
 }
 
 async fn diff_stat(

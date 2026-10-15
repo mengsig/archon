@@ -23,6 +23,7 @@ fn model(name: &str) -> ModelChoice {
     ModelChoice {
         model: format!("codex/{name}").parse().unwrap(),
         effort: Effort::Low,
+        tier: None,
     }
 }
 

@@ -10,6 +10,7 @@ use archon_core::aether_ids::{
 };
 use archon_core::error::ArchonError;
 use archon_core::model::{Effort, ModelRef};
+use archon_core::model_tier::Tier;
 use serde::{Deserialize, Serialize};
 
 use crate::github::WatcherConfig;
@@ -531,6 +532,15 @@ pub struct ModelInfo {
     pub aliases: Vec<String>,
     #[serde(default)]
     pub capabilities: ModelCapabilities,
+    /// Aether's capability tier; `None` when it places the model in none or
+    /// names a tier this Archon does not know.
+    #[serde(default, deserialize_with = "known_tier")]
+    pub tier: Option<Tier>,
+}
+
+fn known_tier<'de, D: serde::Deserializer<'de>>(de: D) -> Result<Option<Tier>, D::Error> {
+    let tier = Option::<String>::deserialize(de)?;
+    Ok(tier.and_then(|t| t.parse().ok()))
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -605,6 +615,23 @@ mod tests {
         assert_eq!(agent.scope.unwrap().labels["archon.run"], "prun_1");
         value["scope"]["labels"] = serde_json::json!(["bad"]);
         assert!(serde_json::from_value::<Agent>(value).is_err());
+    }
+
+    #[test]
+    fn a_model_s_tier_reads_leniently() {
+        let tier = |tier: serde_json::Value| {
+            let row = serde_json::json!({"model": "p/m", "tier": tier});
+            serde_json::from_value::<ModelInfo>(row).unwrap().tier
+        };
+        assert_eq!(tier("strong".into()), Some(Tier::Strong));
+        assert_eq!(tier("strongest".into()), Some(Tier::Strong));
+        assert_eq!(tier("mythic".into()), None, "an unknown tier is untiered");
+        assert_eq!(tier(serde_json::Value::Null), None);
+        let untiered = serde_json::json!({"model": "p/m"});
+        assert_eq!(
+            serde_json::from_value::<ModelInfo>(untiered).unwrap().tier,
+            None
+        );
     }
 
     #[test]

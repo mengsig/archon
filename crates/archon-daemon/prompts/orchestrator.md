@@ -67,6 +67,7 @@ reviewers in `adaptive` and `direct` (other pipelines fix theirs); coupled
 parts are one item, reviewed once. Omit `model_plan` to use learned
 choices or the configured fallback. Override stages when task requirements
 or evidence (`model_evidence`) justify it; explain why in `model_reasons`.
+Choose by `tier`, not model name; `frontier` only if the operator asks; `guide(topic=models)` has the tradeoffs.
 `x_high` or `max` only for a named reasoning problem inspection left open.
 
 The daemon refuses a knob above the ceiling `autonomy_policy` shows; only

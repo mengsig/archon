@@ -17,6 +17,7 @@ fn choice() -> ModelChoice {
     ModelChoice {
         model: "codex/gpt-6-sol".parse().expect("model ref"),
         effort: Effort::High,
+        tier: None,
     }
 }
 
@@ -332,6 +333,7 @@ fn get_item_names_the_choice_a_retuned_stage_runs_now() {
     let retuned = ModelChoice {
         model: "claude-code/opus".parse().expect("model ref"),
         effort: Effort::Low,
+        tier: None,
     };
     stage.model_segments.push(archon_core::run::ModelSegment {
         delivery: "steer-1".into(),

@@ -12,6 +12,7 @@ use archon_core::Timestamp;
 use archon_core::config::LearningConfig;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, RepoId};
+use archon_core::model_tier::{CatalogModel, ModelCatalog};
 use archon_core::outcome::{Correction, Outcome};
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -410,19 +411,37 @@ impl Store {
             .is_none_or(|at| archon_core::now() - at >= chrono::Duration::minutes(5))
     }
 
-    pub fn set_learning_models(&self, mut models: Vec<archon_core::model::ModelRef>) {
-        models.sort();
-        models.dedup();
+    /// Connected models Aether places in no tier.
+    pub fn set_learning_models(&self, models: Vec<archon_core::model::ModelRef>) {
+        let untiered = models.into_iter().map(|model| CatalogModel {
+            model,
+            tier: None,
+            is_default: false,
+        });
+        self.set_model_catalog(ModelCatalog::new(untiered.collect()));
+    }
+
+    pub fn set_model_catalog(&self, catalog: ModelCatalog) {
         assert!(
-            models
+            catalog
+                .models()
                 .iter()
-                .all(|m| !m.provider.is_empty() && !m.model.is_empty())
+                .all(|m| !m.model.provider.is_empty() && !m.model.model.is_empty())
         );
-        *self.learning_models.borrow_mut() = models;
+        *self.learning_models.borrow_mut() = catalog;
         self.learning_models_at.set(Some(archon_core::now()));
     }
 
+    /// The connected models, sorted; empty before the first refresh.
     pub fn learning_models(&self) -> Vec<archon_core::model::ModelRef> {
+        let catalog = self.learning_models.borrow();
+        let mut models: Vec<_> = catalog.models().iter().map(|m| m.model.clone()).collect();
+        models.sort();
+        models
+    }
+
+    /// The connected models in Aether's order, with their tiers.
+    pub fn model_catalog(&self) -> ModelCatalog {
         self.learning_models.borrow().clone()
     }
 }

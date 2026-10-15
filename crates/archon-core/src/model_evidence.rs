@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::ArchonError;
 use crate::cost::{CostQuery, DayBound, DayRange};
-use crate::model::ModelChoice;
+use crate::model::{Effort, ModelChoice};
+use crate::model_tier::Tier;
 use crate::protocol::RepoRef;
 
 pub const DEFAULT_DAYS: u32 = 30;
@@ -48,14 +49,62 @@ pub struct ModelEvidenceRow {
     pub passed: usize,
 }
 
+/// The same observations pooled by the tier of the model that ran, so they
+/// outlive a model replaced within its tier.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TierEvidenceRow {
+    pub stage: String,
+    pub tier: Tier,
+    pub effort: Effort,
+    pub attempts: usize,
+    pub completed: usize,
+    pub median_cost_usd: Option<f64>,
+    pub p90_cost_usd: Option<f64>,
+    pub median_minutes: Option<f64>,
+    pub verdicts: usize,
+    pub passed: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelEvidenceReport {
     pub range: DayRange,
     pub estimates_counted: bool,
     pub rows: Vec<ModelEvidenceRow>,
     pub omitted: usize,
+    /// By (stage, tier, effort); attempts on a model Aether places in no tier are left out.
+    #[serde(default)]
+    pub tiers: Vec<TierEvidenceRow>,
     #[serde(default)]
     pub pipelines: Vec<crate::lesson::PipelineEvidence>,
+}
+
+/// `completed=… median=… p90=… median_min=…`, then any pass share and a
+/// small-sample warning.
+fn measures(
+    completed: usize,
+    (median, p90, minutes): (Option<f64>, Option<f64>, Option<f64>),
+    (passed, verdicts): (usize, usize),
+) -> String {
+    let cost = |value: Option<f64>| value.map_or("-".into(), |v| format!("${v:.4}"));
+    let minutes = minutes.map_or("-".into(), |v| format!("{v:.2}"));
+    let pass = if verdicts == 0 {
+        String::new()
+    } else {
+        format!(
+            " pass={passed}/{verdicts} ({:.0}%)",
+            100.0 * passed as f64 / verdicts as f64
+        )
+    };
+    let small = if completed < 5 {
+        " [small sample: completed n < 5]"
+    } else {
+        ""
+    };
+    format!(
+        "completed={completed} median={} p90={} median_min={minutes}{pass}{small}",
+        cost(median),
+        cost(p90)
+    )
 }
 
 impl ModelEvidenceReport {
@@ -72,34 +121,19 @@ impl ModelEvidenceReport {
             }
         );
         for row in &self.rows {
-            let cost = |value: Option<f64>| value.map_or("-".into(), |v| format!("${v:.4}"));
-            let minutes = row.median_minutes.map_or("-".into(), |v| format!("{v:.2}"));
-            let pass = if row.verdicts == 0 {
-                String::new()
-            } else {
-                format!(
-                    " pass={}/{} ({:.0}%)",
-                    row.passed,
-                    row.verdicts,
-                    100.0 * row.passed as f64 / row.verdicts as f64
-                )
-            };
-            let small = if row.completed < 5 {
-                " [small sample: completed n < 5]"
-            } else {
-                ""
-            };
+            let measures = measures(
+                row.completed,
+                (row.median_cost_usd, row.p90_cost_usd, row.median_minutes),
+                (row.passed, row.verdicts),
+            );
             let _ = writeln!(
                 text,
-                "{} {} {} host_context={} n={} completed={} median={} p90={} median_min={minutes}{pass}{small}",
+                "{} {} {} host_context={} n={} {measures}",
                 row.stage,
                 row.choice.model,
                 row.choice.effort,
                 row.host_context.as_str(),
                 row.attempts,
-                row.completed,
-                cost(row.median_cost_usd),
-                cost(row.p90_cost_usd)
             );
         }
         if self.rows.is_empty() {
@@ -107,6 +141,18 @@ impl ModelEvidenceReport {
         }
         if self.omitted > 0 {
             let _ = writeln!(text, "Truncated: {} more groups omitted.", self.omitted);
+        }
+        for row in &self.tiers {
+            let measures = measures(
+                row.completed,
+                (row.median_cost_usd, row.p90_cost_usd, row.median_minutes),
+                (row.passed, row.verdicts),
+            );
+            let _ = writeln!(
+                text,
+                "Tier {} {} {} n={} {measures}",
+                row.stage, row.tier, row.effort, row.attempts,
+            );
         }
         self.pipeline_text(&mut text);
         text.trim_end().to_owned()

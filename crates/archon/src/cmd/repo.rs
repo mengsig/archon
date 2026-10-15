@@ -22,6 +22,7 @@ pub async fn run(command: RepoCommand, json: bool) -> anyhow::Result<ExitCode> {
             base,
             pipeline,
             auto_merge,
+            github,
         } => {
             // The daemon may run with another working directory.
             let path = path
@@ -34,6 +35,7 @@ pub async fn run(command: RepoCommand, json: bool) -> anyhow::Result<ExitCode> {
                 base_branch: base,
                 default_pipeline: pipeline,
                 auto_merge,
+                github_watch: github,
             };
             add_repo(add, json).await?;
         }
@@ -69,12 +71,17 @@ pub async fn run(command: RepoCommand, json: bool) -> anyhow::Result<ExitCode> {
 }
 
 async fn add_repo(add: RepoAdd, json: bool) -> anyhow::Result<()> {
+    let watch = add.github_watch;
     let client = connect_or_start().await?;
     let repo = match client.request(Request::RepoAdd(add)).await? {
         Reply::Repo(repo) => repo,
         other => return Err(unexpected(&other, "repo")),
     };
-    let text = format!("Added {}", format::repo_line(&repo));
+    let watched = match watch {
+        true => "; watching its GitHub origin for `@archon`",
+        false => "",
+    };
+    let text = format!("Added {}{watched}", format::repo_line(&repo));
     emit(json, || to_json(&repo), &text)
 }
 

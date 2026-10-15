@@ -44,13 +44,17 @@ pub fn artifact_rules(limits: &ArtifactsConfig) -> String {
          `path` in your workspace (a file or a directory of regular files), stored under \
          `name` (default: its last component). Besides `message_orchestrator`, the only \
          Archon mutation tool you may use. Limits: {file} MB a file, {item} MB an item; \
-         kept {keep} after the item settles.\n\
+         kept {keep}.\n\
          - `mcp__archon__list_artifacts` and `mcp__archon__read_artifact` read any \
          item's artifacts by id once its worktree is gone; a dependency's directory is \
          named under Dependencies. Publish before you finish.\n",
         file = limits.max_file_mb,
         item = limits.max_item_mb,
-        keep = limits.keep_after,
+        keep = if limits.keep_after.secs() == 0 {
+            "indefinitely (artifact expiry is disabled)".to_owned()
+        } else {
+            format!("{} after the item settles", limits.keep_after)
+        },
     )
 }
 
@@ -79,6 +83,6 @@ mod tests {
         let text = artifact_rules(&ArtifactsConfig::default());
         assert!(text.contains("mcp__archon__publish_artifact"), "{text}");
         assert!(text.contains("256 MB a file, 1024 MB an item"), "{text}");
-        assert!(text.contains("kept 30d after"), "{text}");
+        assert!(text.contains("kept 2w after"), "{text}");
     }
 }

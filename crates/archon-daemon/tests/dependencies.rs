@@ -37,7 +37,7 @@ fn passing(stage: &StageRun) -> StageOutcome {
 fn scratch_plan() -> ModelPlan {
     let mut plan = ModelPlan::default();
     plan.0
-        .insert("implement".into(), vec![choice(MODEL, Effort::High)]);
+        .insert("implement".into(), vec![choice(MODEL, Effort::Medium)]);
     plan
 }
 
@@ -53,6 +53,7 @@ async fn enqueue_after(
         _ => plan(),
     };
     let request = EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(pipeline.into()),
         title: title.into(),
@@ -60,7 +61,7 @@ async fn enqueue_after(
         priority: Default::default(),
         depends_on: after.iter().map(|item| item.id.clone()).collect(),
         tags: Vec::new(),
-        model_plan,
+        model_plan: model_plan.into(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,

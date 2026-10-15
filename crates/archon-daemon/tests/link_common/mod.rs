@@ -3,6 +3,9 @@
 
 #![allow(dead_code, reason = "each test binary uses a different subset")]
 
+#[path = "../common/fake_ops.rs"]
+pub mod fake_ops;
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -57,6 +60,7 @@ impl Harness {
         let backend = Arc::new(AetherBackend::new(link.clone(), config.models.policy()));
         let dispatch = Arc::new(Notify::new());
         let ctx = DaemonContext {
+            storage: Default::default(),
             paths: paths(dir.path()),
             config,
             store: Mutex::new(Store::open_in_memory().expect("in-memory store")),
@@ -84,6 +88,7 @@ impl Harness {
             standby: OnceLock::new(),
             gc: Mutex::new(None),
             collecting: archon_daemon::gc::Collecting::new(dispatch),
+            ops: Arc::new(fake_ops::FakeOps::default()).ops_state(),
         };
         Self {
             dir,
@@ -384,6 +389,7 @@ fn queue_item(repo: &Repo) -> QueueItem {
         budget_usd: None,
         autonomy: Default::default(),
         origin: None,
+        stage_timeouts: Default::default(),
         fresh_retries: 0,
         initiative: None,
         state: QueueState::Queued,

@@ -139,7 +139,11 @@ async fn decide(
 ) -> Result<FollowUp, ArchonError> {
     assert!(settled.state.is_terminal(), "the driver hears of settles");
     if run.state.is_terminal() {
-        return Ok(FollowUp::poke());
+        // It may have been the last of the finished run's agents.
+        return Ok(FollowUp {
+            discard: vec![run.id],
+            ..FollowUp::poke()
+        });
     }
     let (actions, publish) = match table.drivers.get_mut(&run.id) {
         // A gate stage's page is published when its question is asked.

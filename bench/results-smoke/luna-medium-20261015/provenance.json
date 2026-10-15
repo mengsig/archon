@@ -1,0 +1,14 @@
+{
+  "source_run": "20261015T130836Z",
+  "archon_commit": "c6f34c81e5efc86851d644737cd5f28c1b68615d",
+  "build": "CARGO_TARGET_DIR=$HOME/.local/share/archon/cache/archon/cargo-target CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_PROFILE_TEST_DEBUG=line-tables-only cargo build -p archon -p archon-bench --locked",
+  "binary_sha256": {
+    "archon": "bb999e67e73ae30e3bf5fe0cc57e69279aa267bcfe282a9c701415006d75c609",
+    "archon-bench": "70130ed3bf053a252fa20d46c7a684458447ceb3b28fbc8e3b40e00a17683430"
+  },
+  "command": "archon-bench smoke --bootstrap --model codex/gpt-6-luna --effort medium --archon-bin <sandbox>/bin/archon --aether-socket <sandbox>/run/aetherd.sock --results-dir <workspace>/bench/results/luna-followup/runs",
+  "isolation": "Fresh private sandbox; env -i with HOME, USER, LANG, private-first PATH, TMPDIR and six private AETHER_*/ARCHON_* variables. The sandbox daemon was stopped after the run.",
+  "operator_daemons_touched": false,
+  "cost_note": "Archon cost_gap=interrupted makes its reported costs and the total floors.",
+  "rubric_regrade": "The live run predates #45; after merging origin/main, the original stored answers were regraded offline with rubric fix 1ffff47. Both scores remain 1.0. See regrade-current-rubric/regrade.json. No new model run; measured binary, run commit and costs are preserved."
+}

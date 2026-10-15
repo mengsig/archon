@@ -37,6 +37,7 @@ async fn delivering() -> Harness {
 /// Enqueue a change on [`PIPELINE`] with no model plan, after `parents`.
 async fn enqueue(h: &Harness, title: &str, parents: &[&QueueItem]) -> QueueItem {
     let request = EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(PIPELINE.into()),
         title: title.into(),
@@ -44,7 +45,7 @@ async fn enqueue(h: &Harness, title: &str, parents: &[&QueueItem]) -> QueueItem 
         priority: Default::default(),
         depends_on: parents.iter().map(|p| p.id.clone()).collect(),
         tags: Vec::new(),
-        model_plan: ModelPlan::default(),
+        model_plan: ModelPlan::default().into(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,
@@ -137,6 +138,7 @@ async fn add_client(h: &Harness) {
         base_branch: Some("main".into()),
         default_pipeline: Some(PIPELINE.into()),
         auto_merge: true,
+        github_watch: false,
     };
     h.cli(Request::RepoAdd(add)).await.expect("repo add");
 }

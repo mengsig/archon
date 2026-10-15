@@ -23,7 +23,7 @@ const CACHE_BYTES: usize = 256 << 10;
 /// Caches become due at once; removal waits for the default week.
 fn caches_due_at_once() -> Config {
     let mut config = Config::default();
-    config.worktrees.cache_after = Age::from_secs(0);
+    config.worktrees.cache_after = Age::from_secs(1);
     config
 }
 
@@ -67,7 +67,21 @@ async fn cancelled_run(h: &Harness, title: &str) -> (QueueItem, PathBuf) {
     ));
     assert!(tree.join("README.md").exists(), "a cancelled run keeps it");
     build_in(&tree);
+    age_finished_runs(h, &item).await;
     (item, tree)
+}
+
+async fn age_finished_runs(h: &Harness, item: &QueueItem) {
+    let mut store = h.ctx.store.lock().await;
+    let mut settled = store.item(&item.id).unwrap();
+    settled.updated_at -= chrono::Duration::seconds(2);
+    store.update_item(&settled).unwrap();
+    for mut run in store.runs_for_item(&item.id).unwrap() {
+        if let Some(at) = &mut run.finished_at {
+            *at -= chrono::Duration::seconds(2);
+            store.update_run(&run).unwrap();
+        }
+    }
 }
 
 async fn gc_request(h: &Harness, older_than_secs: Option<u64>, force: bool) -> GcReport {
@@ -360,6 +374,7 @@ async fn ship(h: &Harness, title: &str, in_tree: impl FnOnce(&Path)) -> (QueueIt
         h.state(&item.id).await,
         QueueState::Succeeded { .. }
     ));
+    age_finished_runs(h, &item).await;
     (item, tree)
 }
 

@@ -150,7 +150,8 @@ async fn prepare(
     let team = spec.file.stages.iter().any(|s| s.kind == StageKind::Team);
     let workspace = workspace(ctx, &env, item, header.workspace, team).await?;
     let added = workspace.added.clone();
-    match assemble(item, &env, spec, run_id, workspace) {
+    let experiments = crate::experiments::item_dir(&ctx.paths, &item.id);
+    match assemble(item, &env, spec, run_id, workspace, experiments) {
         Ok(prepared) => Ok(prepared),
         Err(error) => {
             abandon_worktree(ctx, added).await?;
@@ -170,13 +171,14 @@ fn without_retired_ship(item: &QueueItem, spec: &PipelineSpec) -> QueueItem {
 }
 
 /// The run in `workspace` and its driver, which may still refuse the
-/// pipeline's plan, prompts or gates.
+/// pipeline's plan, prompts or gates. Its reviewers experiment in `experiments`.
 fn assemble(
     item: &QueueItem,
     env: &RepoEnv,
     spec: Arc<PipelineSpec>,
     run_id: PipelineRunId,
     workspace: Workspace,
+    experiments: PathBuf,
 ) -> Result<Prepared, ArchonError> {
     assert!(!spec.file.stages.is_empty(), "pipelines have a first stage");
     assert!(workspace.path.is_absolute(), "run workspaces are absolute");
@@ -197,7 +199,8 @@ fn assemble(
     .to_map();
     let gates = OperatorGates::for_run(&spec, &item.autonomy);
     let driver = RunDriver::new(spec.clone(), item.model_plan.clone(), base_vars.clone())?
-        .with_gates(gates)?;
+        .with_gates(gates)?
+        .with_experiments(experiments);
     let run = PipelineRun {
         id: run_id,
         item: item.id.clone(),

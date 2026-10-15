@@ -265,7 +265,7 @@ fn assert_create_agent(frame: &Value, stage: &StageRun, workspace: &std::path::P
         json!(format!("#{short} implement · wire the greeting"))
     );
     assert_eq!(frame["model"], model(MODEL));
-    assert_eq!(frame["config"]["effort"], effort(Effort::High));
+    assert_eq!(frame["config"]["effort"], effort(Effort::Medium));
     let instructions = frame["config"]["instructions"].as_str().expect("contract");
     assert!(!instructions.is_empty());
     assert_eq!(frame["scope"]["workspace_root"], json!(workspace));

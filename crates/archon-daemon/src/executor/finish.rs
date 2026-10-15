@@ -78,6 +78,7 @@ pub(super) async fn finish_run(
     follow.stop.push(run.id.clone());
     follow.cleanup.extend(cleanup_for(ctx, &item, &run).await?);
     follow.release_builds.extend(item_build(ctx, &item).await?);
+    follow.discard.push(run.id.clone());
     Ok(follow)
 }
 

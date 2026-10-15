@@ -728,3 +728,194 @@ async fn a_failed_legacy_refresh_keeps_the_record_and_leaves_its_new_copy_for_or
     assert!(!archive.exists());
     assert!(html.exists());
 }
+
+/// Age the durable record independently of item settlement, as a quiet review
+/// surface can be much older than the work it still protects.
+async fn age_record(h: &Harness, id: &archon_core::id::ReportId, state: &str) {
+    let key = format!("report:{id}");
+    let mut store = h.ctx.store.lock().await;
+    let mut record: serde_json::Value =
+        serde_json::from_str(&store.kv_get(&key).unwrap().unwrap()).unwrap();
+    record["updated_at"] = serde_json::json!(archon_core::now() - chrono::Duration::days(16));
+    record["state"] = serde_json::json!(state);
+    store.kv_set(&key, &record.to_string()).unwrap();
+}
+
+#[tokio::test]
+async fn expiry_requires_old_settled_items_and_quiet_reports_and_keeps_sources_and_history() {
+    for case in [
+        "expired",
+        "unpublished",
+        "live",
+        "recent_item",
+        "recent_report",
+        "open",
+        "question",
+        "disabled",
+        "symlink",
+    ] {
+        let mut config = Config::default();
+        if case == "disabled" {
+            config.storage.retention_days = 0;
+        }
+        let h = Harness::with_config(config).await;
+        let item = h.enqueue(case).await;
+        let source = page(&h.dir.path().join("source"));
+        let published = reports::publish(&h.ctx, "Review", &source, Some(&item.id))
+            .await
+            .unwrap();
+        let stored = reports::list(&h.ctx).await.unwrap().remove(0).path;
+        if case != "live" {
+            h.cli(Request::CancelItem {
+                item: item.id.clone(),
+                reason: None,
+            })
+            .await
+            .unwrap();
+            if case != "recent_item" {
+                let mut store = h.ctx.store.lock().await;
+                let mut item = store.item(&item.id).unwrap();
+                item.updated_at = archon_core::now() - chrono::Duration::days(16);
+                store.update_item(&item).unwrap();
+            }
+        }
+        if case != "recent_report" {
+            age_record(
+                &h,
+                &published.report,
+                if case == "open" {
+                    "open"
+                } else if matches!(case, "unpublished" | "live" | "disabled") {
+                    "unpublished"
+                } else {
+                    "ended"
+                },
+            )
+            .await;
+        }
+        if case == "question" {
+            h.ctx
+                .store
+                .lock()
+                .await
+                .insert_question(&archon_core::notify::Question {
+                    id: archon_core::id::QuestionId::new(),
+                    number: 0,
+                    text: "Still needed?".into(),
+                    options: vec![],
+                    item: Some(item.id.clone()),
+                    aether: None,
+                    asked_by: None,
+                    asked_at: archon_core::now(),
+                    answer: None,
+                    answered_at: None,
+                })
+                .unwrap();
+        }
+        let outside = h.dir.path().join("outside");
+        if case == "symlink" {
+            fs::rename(stored.parent().unwrap(), &outside).unwrap();
+            symlink(&outside, stored.parent().unwrap()).unwrap();
+        }
+        reports::prune(
+            &mut *h.ctx.store.lock().await,
+            &h.ctx.paths.reports,
+            archon_core::now() - chrono::Duration::days(7),
+        )
+        .unwrap();
+        assert!(
+            stored.exists(),
+            "the metadata prune leaves owned snapshots to filesystem GC"
+        );
+        let pass = gc::collect(&h.ctx, None, false).await.unwrap();
+        if matches!(case, "expired" | "unpublished") {
+            assert_eq!(pass.reports.len(), 1, "{case}: {pass:?}");
+            assert!(pass.bytes_freed > 0);
+            assert!(!stored.exists());
+            let again = gc::collect(&h.ctx, None, false).await.unwrap();
+            assert!(
+                again.reports.is_empty(),
+                "already expired files do not count twice"
+            );
+            let archon_core::protocol::Reply::Status(status) =
+                h.cli(Request::Status).await.unwrap()
+            else {
+                panic!("status")
+            };
+            let disk = status.disk.unwrap();
+            assert_eq!(disk.gc.unwrap().bytes_freed, pass.bytes_freed);
+            assert!(
+                disk.storage
+                    .iter()
+                    .any(|usage| usage.kind == "reports_lavish" && usage.bytes.is_some())
+            );
+            assert!(
+                disk.storage.iter().any(|usage| usage.kind == "experiments"),
+                "reviewers' experiment copies are accounted"
+            );
+        } else {
+            assert!(stored.exists(), "{case}: {pass:?}");
+            assert!(pass.reports.is_empty(), "{case}: {pass:?}");
+        }
+        if case == "symlink" {
+            assert_eq!(pass.failed.len(), 1);
+        } else {
+            assert!(pass.failed.is_empty(), "{case}: {pass:?}");
+        }
+        assert!(source.exists(), "original source is never expired");
+        assert_eq!(
+            reports::list(&h.ctx).await.unwrap().len(),
+            1,
+            "expiry does not delete store rows"
+        );
+    }
+}
+
+#[tokio::test]
+async fn expiry_keeps_a_settled_items_report_referenced_by_a_live_gate() {
+    use archon_core::run::{GateSubject, OperatorGate};
+    let h = Harness::new().await;
+    let item = h.enqueue("settled report").await;
+    let source = page(&h.dir.path().join("gate-source"));
+    let published = reports::publish(&h.ctx, "Gate", &source, Some(&item.id))
+        .await
+        .unwrap();
+    let stored = reports::list(&h.ctx).await.unwrap().remove(0).path;
+    h.cli(Request::CancelItem {
+        item: item.id.clone(),
+        reason: None,
+    })
+    .await
+    .unwrap();
+    age_record(&h, &published.report, "ended").await;
+    let gate_item = h.enqueue("live gate").await;
+    h.dispatch().await;
+    let run = h.run(&gate_item.id).await;
+    {
+        let mut store = h.ctx.store.lock().await;
+        let mut item = store.item(&item.id).unwrap();
+        item.updated_at = archon_core::now() - chrono::Duration::days(16);
+        store.update_item(&item).unwrap();
+        store
+            .open_gate(&OperatorGate {
+                run: run.id,
+                item: gate_item.id,
+                stage_id: "implement".into(),
+                attempt: 1,
+                subject: GateSubject::Report,
+                summary: "review".into(),
+                page: None,
+                location: None,
+                report: Some(published.report),
+                question: None,
+                decision: None,
+                withdrawn: None,
+                opened_at: archon_core::now(),
+                decided_at: None,
+            })
+            .unwrap();
+    }
+    let pass = gc::collect(&h.ctx, None, false).await.unwrap();
+    assert!(pass.reports.is_empty(), "{pass:?}");
+    assert!(stored.exists());
+}

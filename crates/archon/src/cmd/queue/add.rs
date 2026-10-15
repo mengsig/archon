@@ -27,6 +27,7 @@ pub async fn run(args: QueueAddArgs, json: bool) -> anyhow::Result<()> {
         depends_on.push(views::resolve_item(&client, &dependency).await?);
     }
     let request = EnqueueRequest {
+        stage_timeouts: Default::default(),
         title: args.title,
         repo: args.repo.map(RepoRef),
         pipeline: args.pipeline,

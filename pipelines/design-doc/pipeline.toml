@@ -15,6 +15,7 @@ id = "research"
 kind = "work"
 prompt = "research.md"
 timeout_minutes = 120
+effort = "high"
 nudge = "Prefer the strongest tier at high effort for repository research and architectural trade-offs."
 
 [[stage]]

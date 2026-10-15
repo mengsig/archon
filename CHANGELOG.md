@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- Sustainable filesystem retention: detached daemon logs rotate by size and
+  age (10 MiB, three archives, 14 days by default), settled item report/Lavish
+  snapshots expire after `[storage] retention_days = 14` with live work, gates
+  and questions protected, and status / `queue_status` report bytes by storage
+  kind and the last GC's freed bytes. SQLite history and spend remain intact.
+
 ### Changed
 
 - Agent cargo builds are lean and per item: each item builds into
@@ -14,6 +22,19 @@
   true`); `[worktrees] item_cache`, `lean_builds` and the per-repository
   `[cache] item`, `lean` switches turn the rest off. `GcReport` gains
   `item_caches` (defaulted, so older clients still decode it).
+
+- Artifact retention defaults to 14 days. Existing tighter worktree/cache
+  defaults stay unchanged; zero durations disable their configured expiry.
+
+### Fixes
+
+- Reviewers' experiment copies now go in a directory Archon owns on its data
+  disk, `<data>/experiments/<item>`, instead of wherever `mktemp -d` puts
+  them, which is often a small `/tmp` the whole machine shares. Archon creates
+  the directory before a stage that can review starts and names it in the
+  contract. It deletes the directory once the item has finished and its
+  agents, and every agent they started, have stopped. `archon gc` removes any
+  a crash left behind, and never follows a symlink there.
 
 ## 1.2.3
 

@@ -9,7 +9,7 @@ use archon_core::catalog::{
     Gate, Nudges, PipelineSource, PipelineSummary, StageKind, StageSummary, WorkspaceMode,
 };
 use archon_core::error::ArchonError;
-use archon_core::model::{ModelPlan, ModelReasons};
+use archon_core::model::{Effort, ModelPlan, ModelReasons};
 use serde::{Deserialize, Serialize};
 
 use crate::template;
@@ -123,6 +123,9 @@ pub struct StageSpec {
     pub fan_out: u32,
     pub gate: Gate,
     pub timeout_minutes: u32,
+    /// The effort a plan gets for this stage when it names none; a higher one
+    /// needs a stated reason.
+    pub effort: Effort,
     /// Allows child delegation even with guarded tools; Archon tool exposure
     /// still follows the item’s tools mode.
     pub allow_delegation: bool,
@@ -152,6 +155,8 @@ struct StageToml {
     gate: Gate,
     #[serde(default = "default_timeout")]
     timeout_minutes: u32,
+    #[serde(default = "default_effort")]
+    effort: Effort,
     #[serde(default)]
     allow_delegation: bool,
     #[serde(default)]
@@ -177,6 +182,7 @@ impl From<StageToml> for StageSpec {
             fan_out: raw.fan_out.unwrap_or(implied),
             gate: raw.gate,
             timeout_minutes: raw.timeout_minutes,
+            effort: raw.effort,
             allow_delegation: raw.allow_delegation,
             nudge: raw.nudge,
             on_fail: raw.on_fail,
@@ -188,6 +194,10 @@ impl From<StageToml> for StageSpec {
 
 fn default_timeout() -> u32 {
     120
+}
+
+fn default_effort() -> Effort {
+    Effort::Medium
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -270,6 +280,52 @@ impl PipelineSpec {
             reviewers,
             may_skip: ship_agent && reviewers == 1,
         })
+    }
+
+    /// The effort a plan key gets when it names none: a stage's, or, for the
+    /// reviewers key, that of the stage holding the review. `None`: no such key.
+    pub fn default_effort(&self, key: &str) -> Option<Effort> {
+        if let Some(stage) = self.stage(key) {
+            return Some(stage.effort);
+        }
+        let holder = key.strip_suffix(archon_core::model::REVIEWERS_KEY_SUFFIX)?;
+        let declared = self.file.pipeline.review.as_ref()?;
+        (declared.stage == holder).then(|| self.stage(holder).map(|s| s.effort))?
+    }
+
+    /// Refuse a `plan` key that is neither a stage nor the reviewers key, and
+    /// more reviewer choices than the strictest review runs.
+    pub fn check_plan_keys(&self, plan: &ModelPlan) -> Result<(), ArchonError> {
+        let reviewers = self.reviewers_key();
+        let unknown = plan
+            .0
+            .keys()
+            .find(|key| self.stage(key).is_none() && Some(*key) != reviewers.as_ref());
+        if let Some(extra) = unknown {
+            let mut keys: Vec<&str> = self.file.stages.iter().map(|s| s.id.as_str()).collect();
+            keys.extend(reviewers.as_deref());
+            return Err(ArchonError::Invalid(format!(
+                "model_plan names stage {extra:?}, which pipeline {:?} does not have (stages: {})",
+                self.name(),
+                keys.join(", ")
+            )));
+        }
+        let listed = reviewers
+            .as_ref()
+            .and_then(|key| plan.choices_for(key))
+            .map_or(0, <[_]>::len);
+        if listed > STRICT_REVIEWERS as usize {
+            return Err(ArchonError::Invalid(format!(
+                "model_plan lists {listed} reviewer choices; a review has at most {STRICT_REVIEWERS}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// The `model_plan` key naming the reviewers the declared review delegates.
+    pub fn reviewers_key(&self) -> Option<String> {
+        let review = self.file.pipeline.review.as_ref()?;
+        Some(archon_core::model::reviewers_key(&review.stage))
     }
 
     /// What `stage` owes on its result besides passing its gate.
@@ -540,6 +596,7 @@ impl PipelineSpec {
                     fan_out: s.fan_out,
                     gate: s.gate,
                     timeout_minutes: s.timeout_minutes,
+                    effort: s.effort,
                     nudge: s.nudge.clone(),
                     loops_to: s.on_fail.as_ref().map(|f| f.goto.clone()),
                     max_loops: s.on_fail.as_ref().map_or(0, |f| f.max_loops),

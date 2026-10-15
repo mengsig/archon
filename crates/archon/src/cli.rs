@@ -77,6 +77,10 @@ pub enum Command {
         /// Kept for older scripts: `status` never starts anything.
         #[arg(long, hide = true)]
         no_start: bool,
+        /// Also ask GitHub for the latest archon and aether releases, which
+        /// archond never does by itself.
+        #[arg(long)]
+        check_updates: bool,
     },
     /// Spend over a range of days, grouped, with a total.
     ///
@@ -252,6 +256,10 @@ pub enum RepoCommand {
         /// Allow merge=auto for this repository (its autonomy ceiling).
         #[arg(long)]
         auto_merge: bool,
+        /// Also watch the repository's GitHub origin for `@archon`, as
+        /// `archon github-watcher add` does (dedicated mode only).
+        #[arg(long)]
+        github: bool,
     },
     /// List registered repositories.
     List,
@@ -742,6 +750,50 @@ pub enum DaemonCommand {
     },
     /// Whether archond is running (exit code 3 when not).
     Status,
+    /// Hold dispatch until running stage agents finish, then restart archond
+    /// and, in dedicated mode, Archon's own aetherd. Running work survives.
+    Restart {
+        #[command(flatten)]
+        drain: DrainArgs,
+        /// Restart archond alone; stage agents keep running in Aether.
+        #[arg(long)]
+        keep_aether: bool,
+    },
+    /// Install archon and/or aether, then restart as `archon daemon restart`
+    /// does. A cargo build is rebuilt with `cargo install --git`; an
+    /// installer's binary updates itself with `<program> update`.
+    #[command(after_help = "Examples:\n  archon daemon upgrade --archon latest\n  \
+                            archon daemon upgrade --archon main --aether 1.0.7 --wait 600")]
+    Upgrade {
+        /// What archon to install: a release such as 1.2.3, latest, or main.
+        #[arg(long, value_name = "TARGET", required_unless_present = "aether")]
+        archon: Option<String>,
+        /// What aether to install: a release, latest, or main (dedicated
+        /// mode only: in shared mode the aetherd is the operator's).
+        #[arg(long, value_name = "TARGET")]
+        aether: Option<String>,
+        #[command(flatten)]
+        drain: DrainArgs,
+    },
+    /// The restart helper an upgrade starts: waits for archond to exit, then
+    /// starts it again. Not for direct use.
+    #[command(hide = true)]
+    Relaunch {
+        /// Restart archond alone, leaving Archon's own aetherd running.
+        #[arg(long)]
+        keep_aether: bool,
+    },
+}
+
+#[derive(Debug, Args)]
+pub struct DrainArgs {
+    /// Longest wait, in seconds, for running stage agents to finish.
+    #[arg(long, value_name = "SECS", default_value_t = archon_core::ops::DEFAULT_DRAIN_SECS)]
+    pub wait: u64,
+    /// When the wait runs out, restart anyway: stages stopped with aetherd
+    /// are retried. Without it the restart is given up.
+    #[arg(long)]
+    pub requeue: bool,
 }
 
 #[derive(Debug, Subcommand)]

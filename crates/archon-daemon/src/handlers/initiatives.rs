@@ -97,6 +97,7 @@ async fn prepare_member(
         budget_usd: None,
         autonomy: resolved.autonomy,
         origin: None,
+        stage_timeouts: Default::default(),
         fresh_retries: 0,
         initiative: Some(initiative.id.clone()),
         state: QueueState::Queued,

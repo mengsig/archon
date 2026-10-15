@@ -27,6 +27,7 @@ fn advance_branch(h: &Harness, branch: &str, file: &str, content: &str) -> Strin
 
 async fn child(h: &Harness, parents: &[&QueueItem]) -> QueueItem {
     let req = EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(PIPELINE.into()),
         title: "Child change".into(),
@@ -34,7 +35,7 @@ async fn child(h: &Harness, parents: &[&QueueItem]) -> QueueItem {
         priority: Default::default(),
         depends_on: parents.iter().map(|p| p.id.clone()).collect(),
         tags: Vec::new(),
-        model_plan: plan(),
+        model_plan: plan().into(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,

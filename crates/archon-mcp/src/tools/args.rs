@@ -9,7 +9,7 @@ use archon_core::cost::{CostGroup, CostQuery, DayBound};
 use archon_core::error::ArchonError;
 use archon_core::github::{GithubRepo, GithubThread};
 use archon_core::id::QueueItemId;
-use archon_core::model::{ModelPlan, ModelReasons, check_reason_lengths};
+use archon_core::model::{ModelPlanDraft, ModelReasons, check_reason_lengths};
 use archon_core::model_evidence::ModelEvidenceQuery;
 use archon_core::protocol::{
     EnqueueRequest, ItemPatch, ItemQuery, PauseTarget, RepoAdd, RepoRef, Request, StageQuery,
@@ -193,11 +193,11 @@ impl Args {
     }
 
     /// A plan naming at least one stage, each with at least one choice.
-    fn optional_plan(&mut self, key: &str) -> Result<Option<ModelPlan>, ToolError> {
+    fn optional_plan(&mut self, key: &str) -> Result<Option<ModelPlanDraft>, ToolError> {
         if let Some(field) = self.fields.get(key).and_then(undeclared_plan_field) {
             return Err(self.error(key, format_args!("has an unknown field {field}")));
         }
-        let Some(plan) = self.optional::<ModelPlan>(key)? else {
+        let Some(plan) = self.optional::<ModelPlanDraft>(key)? else {
             return Ok(None);
         };
         if plan.0.is_empty() {
@@ -305,6 +305,7 @@ fn register_repo(args: &mut Args) -> Result<Request, ToolError> {
         base_branch: args.optional_text("base_branch")?,
         default_pipeline: args.optional_text("default_pipeline")?,
         auto_merge: false,
+        github_watch: false,
     }))
 }
 
@@ -325,6 +326,7 @@ fn enqueue(args: &mut Args) -> Result<EnqueueRequest, ToolError> {
         model_plan,
         model_reasons: args.optional_reasons()?,
         budget_usd: args.optional_budget("budget_usd")?,
+        stage_timeouts: args.optional("stage_timeouts")?.unwrap_or_default(),
         idempotency_key: args.optional_text("idempotency_key")?,
         autonomy: args.optional("autonomy")?.unwrap_or_default(),
         origin: args.optional("origin")?,
@@ -479,12 +481,13 @@ fn update_item(args: &mut Args) -> Result<Request, ToolError> {
         tags,
         add_depends_on: args.optional("add_depends_on")?.unwrap_or_default(),
         budget_usd: args.optional_budget("budget_usd")?,
+        stage_timeouts: args.optional("stage_timeouts")?.unwrap_or_default(),
         brief_append: args.optional_text("brief_append")?,
     };
     if patch == ItemPatch::default() {
         return Err(ToolError(
             "update_item: nothing to change; pass at least one of priority, model_plan, model_reasons, tags, \
-             add_depends_on, budget_usd, brief_append"
+             add_depends_on, budget_usd, stage_timeouts, brief_append"
                 .into(),
         ));
     }

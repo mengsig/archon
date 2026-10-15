@@ -21,9 +21,11 @@ use crate::mirror::MirrorQueue;
 use crate::supervisor::Supervisor;
 use crate::triggers::TriggerQueue;
 
-/// Under the data dir: shared build caches, and published artifacts.
+/// Under the data dir: shared build caches, published artifacts, and the
+/// reviewers' experiment copies, one directory per item.
 pub const CACHE_DIR: &str = "cache";
 pub const ARTIFACTS_DIR: &str = "artifacts";
+pub const EXPERIMENTS_DIR: &str = "experiments";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DaemonPaths {
@@ -69,10 +71,17 @@ impl DaemonPaths {
     pub fn artifacts(&self) -> PathBuf {
         self.data_dir.join(ARTIFACTS_DIR)
     }
+
+    /// Reviewers' experiment copies, one directory per live item.
+    pub fn experiments(&self) -> PathBuf {
+        self.data_dir.join(EXPERIMENTS_DIR)
+    }
 }
 
 pub struct DaemonContext {
     pub config: Config,
+    /// Cached filesystem accounting keeps status polling from repeatedly walking trees.
+    pub storage: Mutex<Option<(std::time::Instant, Vec<archon_core::protocol::StorageUsage>)>>,
     pub paths: DaemonPaths,
     /// The only writer of `archon.db`. Held briefly; never across an await
     /// on Aether.
@@ -124,6 +133,8 @@ pub struct DaemonContext {
     pub gc: Mutex<Option<std::time::Instant>>,
     /// Items a gc pass is collecting right now; none of them is started.
     pub collecting: crate::gc::Collecting,
+    /// The operator's upgrade or restart, and the versions `status` shows.
+    pub ops: crate::ops::OpsState,
 }
 
 impl DaemonContext {

@@ -22,6 +22,7 @@ kind = "report"
 prompt = "audit.md"
 fan_out = 3
 timeout_minutes = 120
+effort = "high"
 nudge = "Strongest tier, high effort. Independent auditors on distinct models or vendors where the allowlist permits, each with its own lens."
 
 [[stage]]

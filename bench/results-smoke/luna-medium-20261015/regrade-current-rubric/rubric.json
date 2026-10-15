@@ -1,0 +1,20 @@
+{
+  "window": 400,
+  "max_chars": 16000,
+  "groups": [
+    {
+      "name": "names verify and its acceptance of a signature prefix",
+      "all": [
+        ["\\bverify\\b"],
+        ["startsWith", "prefix", "truncat", "empty signature", "signature is empty", "empty string", "partial signature", "shorter signature", "trailing dot", "signature of length"]
+      ]
+    },
+    {
+      "name": "ties that bug to forgery / authentication bypass",
+      "all": [
+        ["forg", "bypass", "impersonat", "spoof", "counterfeit", "arbitrary (payload|claims|user|token)", "without (knowing|the) (the )?secret", "any payload", "unsigned", "(without|no) (any |a )?(valid |real |correct |matching )?(signature|mac|hmac)"],
+        ["startsWith", "prefix", "truncat", "empty signature", "signature is empty", "empty string", "partial signature", "shorter signature", "trailing dot", "signature of length"]
+      ]
+    }
+  ]
+}

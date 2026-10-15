@@ -1,0 +1,7 @@
+I found three issues in [src/tokens.js]($HOME/.local/share/archon-bench/work/20261015T130836Z/c550bdcfaf967caf9fc1d37b/review-seeded-bug/src/tokens.js):
+
+- **High — `verify`: signature prefix accepted.** `expected.startsWith(signature)` accepts any prefix of the valid MAC, including an empty signature. An attacker can take a token body and replace its signature with `""` (for example, `body.`); if its `exp` is still valid, `verify` accepts it without knowing the secret. Require an exact-length signature comparison using a timing-safe method.
+- **High — `verify`: malformed tokens can throw.** `JSON.parse(fromBase64Url(body))` is unguarded. A token with a bad signature normally returns `null`, but a matching-MAC body containing invalid JSON throws instead. Malformed input should return `null` per the function’s documented contract. This is especially relevant if callers treat `null` as rejection but do not expect exceptions.
+- **Medium — `sign`: caller claims can overwrite each other.** `{ ...claims, iat: now, exp: ... }` protects `iat` and `exp` from caller overrides, but spreading `null` or another unexpected value can cause confusing results or throw. More importantly, `claims` is not validated as a plain object: `sign("x", secret)` produces a token with numeric keys, and `sign(null, secret)` produces one without the expected claims. Validate the claims shape at the API boundary.
+
+I inspected the implementation, encoding helper, callers, and existing tests. I did not change files or run tests.

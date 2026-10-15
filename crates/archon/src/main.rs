@@ -6,6 +6,7 @@ mod chat;
 mod cli;
 mod cmd;
 mod connect;
+mod daemon_log;
 mod format;
 mod instance;
 mod ops;
@@ -22,6 +23,7 @@ use std::time::{Duration, Instant};
 use clap::Parser as _;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::LevelFilter;
+use tracing_subscriber::fmt::writer::BoxMakeWriter;
 
 use crate::cli::{Cli, Command, DaemonCommand};
 
@@ -35,6 +37,16 @@ fn main() -> ExitCode {
         Err(error) => return usage_error(&error),
     };
     let json = cli.json;
+    let logger = match detached_logger(&cli) {
+        Ok(logger) => logger,
+        Err(error) => {
+            eprintln!("archon: {error:#}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Some(logger) = &logger {
+        logger.install_panic_hook();
+    }
     // The daemon logs its work; everything else stays quiet unless RUST_LOG
     // asks. `archon mcp` speaks JSON-RPC on stdout, so logs go to stderr.
     let default_level = match &cli.command {
@@ -44,20 +56,44 @@ fn main() -> ExitCode {
     let filter = EnvFilter::builder()
         .with_default_directive(default_level.into())
         .from_env_lossy();
-    tracing_subscriber::fmt()
+    let writer = match &logger {
+        Some(logger) => BoxMakeWriter::new(logger.clone()),
+        None => BoxMakeWriter::new(std::io::stderr),
+    };
+    let subscriber = tracing_subscriber::fmt()
         .with_env_filter(filter)
-        .with_writer(std::io::stderr)
-        .init();
+        .with_writer(writer);
+    let subscriber = if logger.is_some() {
+        subscriber.with_ansi(false)
+    } else {
+        subscriber
+    };
+    subscriber.init();
     let result = tokio::runtime::Runtime::new()
         .map_err(anyhow::Error::from)
         .and_then(|runtime| {
-            let result = runtime.block_on(cmd::dispatch(cli));
+            let result = runtime.block_on(async {
+                tokio::select! {
+                    result = cmd::dispatch(cli) => result,
+                    result = monitor_log(logger.as_ref()) => result,
+                }
+            });
             stop_runtime(runtime);
             result
         });
     match result {
         Ok(code) => code,
         Err(error) => {
+            if let Some(logger) = &logger {
+                if let Err(log_error) =
+                    logger.write_message(format!("archon: {error:#}\n").as_bytes())
+                {
+                    use std::io::Write as _;
+                    // The detach caller closes this startup pipe on success.
+                    let _closed_startup_pipe = writeln!(std::io::stderr(), "archon: {log_error}");
+                }
+                return ExitCode::FAILURE;
+            }
             if json {
                 let code = error
                     .downcast_ref::<archon_core::error::ArchonError>()
@@ -71,6 +107,29 @@ fn main() -> ExitCode {
             }
             ExitCode::FAILURE
         }
+    }
+}
+
+fn detached_logger(cli: &Cli) -> anyhow::Result<Option<daemon_log::Logger>> {
+    if !matches!(
+        cli.command,
+        Some(Command::Daemon(DaemonCommand::Run { detach: false }))
+    ) || std::env::var_os(daemon_log::DETACHED_ENV).as_deref() != Some(std::ffi::OsStr::new("1"))
+    {
+        return Ok(None);
+    }
+    let config = archon_core::config::Config::load_default()?;
+    let path = archon_core::paths::startup_log_for(&archon_client::default_socket());
+    daemon_log::Logger::open(&path, &config.storage).map(Some)
+}
+
+async fn monitor_log(logger: Option<&daemon_log::Logger>) -> anyhow::Result<ExitCode> {
+    match logger {
+        Some(logger) => match logger.monitor().await {
+            Ok(never) => match never {},
+            Err(error) => Err(error),
+        },
+        None => std::future::pending().await,
     }
 }
 

@@ -13,9 +13,11 @@
 //!
 //! Beside the workspaces, a pass deletes a repository's shared build cache
 //! once nothing used it for `worktrees.shared_cache_after` and no item of the
-//! repository is live, and an item's published artifacts `artifacts.keep_after`
-//! it settled (`extras`). While dispatch is held for disk space, the ages of
-//! worktrees and caches drop to `worktrees.pressure_after` if that is shorter.
+//! repository is live, an item's published artifacts `artifacts.keep_after`
+//! it settled, and the experiments directory of an item nothing runs for any
+//! more (`extras`).
+//! While dispatch is held for disk space, the ages of worktrees and caches
+//! drop to `worktrees.pressure_after` if that is shorter.
 //! A pass that freed anything leaves a note in the feed and in `archon status`.
 
 pub(crate) mod cache;
@@ -46,6 +48,7 @@ use crate::context::{DaemonContext, DaemonPaths};
 use crate::feed;
 
 pub use extras::Extras;
+pub(crate) use extras::{is_claimed, set_aside};
 pub use mark::{Collecting, Mark};
 
 /// The kv key of the last pass that freed anything, as a [`GcStatus`].
@@ -87,13 +90,14 @@ impl Policy {
         older_than: Option<Age>,
         force: bool,
     ) -> Result<Self, ArchonError> {
+        let explicit = older_than.is_some();
         let older_than = older_than.unwrap_or(config.gc_after);
         let policy = Self {
-            remove_before: now - older_than.chrono()?,
-            reclaim_before: now - config.cache_after.chrono()?,
+            remove_before: cutoff(now, older_than, !explicit)?,
+            reclaim_before: cutoff(now, config.cache_after, true)?,
             force,
             cache_dirs: config.cache_dirs.clone(),
-            owed_cleanup: !config.keep_on_success,
+            owed_cleanup: !config.keep_on_success && config.gc_after.secs() != 0,
         };
         assert!(policy.remove_before <= now, "ages are not negative");
         assert!(policy.reclaim_before <= now, "ages are not negative");
@@ -108,8 +112,10 @@ impl Policy {
         config: &WorktreeConfig,
         now: Timestamp,
     ) -> Result<Self, ArchonError> {
-        let sooner = now - config.pressure_after.chrono()?;
-        self.remove_before = self.remove_before.max(sooner);
+        let sooner = cutoff(now, config.pressure_after, false)?;
+        if config.gc_after.secs() != 0 && config.pressure_after.secs() != 0 {
+            self.remove_before = self.remove_before.max(sooner);
+        }
         assert!(self.remove_before <= now, "ages are not negative");
         Ok(self)
     }
@@ -118,6 +124,16 @@ impl Policy {
     fn settled_before(&self) -> Timestamp {
         self.remove_before.max(self.reclaim_before)
     }
+}
+
+/// A configured zero disables expiry; explicit CLI zero still means now.
+fn cutoff(now: Timestamp, age: Age, zero_disables: bool) -> Result<Timestamp, ArchonError> {
+    if zero_disables && age.secs() == 0 {
+        return Ok(Timestamp::MIN_UTC);
+    }
+    now.checked_sub_signed(age.chrono()?).ok_or_else(|| {
+        ArchonError::Invalid(format!("the age {age} is too large for this timestamp"))
+    })
 }
 
 /// Where archond creates run workspaces, with symlinks resolved as git
@@ -137,6 +153,10 @@ impl Roots {
 
     pub fn artifacts(&self) -> PathBuf {
         self.data_dir.join(crate::context::ARTIFACTS_DIR)
+    }
+
+    pub fn experiments(&self) -> PathBuf {
+        self.data_dir.join(crate::context::EXPERIMENTS_DIR)
     }
 
     pub fn resolve(paths: &DaemonPaths) -> Result<Self, ArchonError> {
@@ -312,8 +332,10 @@ pub async fn collect_planned(ctx: &DaemonContext, pass: Pass<'_>) -> Result<GcRe
         report.absorb(swept.await?);
     }
     report.absorb(collect_extras(ctx, &roots, &extras).await?);
+    report.absorb(collect_reports(ctx).await?);
     report.pressure = pressure;
     *last_pass = Some(Instant::now());
+    *ctx.storage.lock().await = None;
     announce(ctx, &report).await?;
     Ok(report)
 }
@@ -327,18 +349,24 @@ async fn collect_extras(
 ) -> Result<GcReport, ArchonError> {
     let mut report = GcReport::default();
     let claimed = {
-        let _table = ctx.runs.lock().await;
+        let table = ctx.runs.lock().await;
         let store = ctx.store.lock().await;
-        extras::claim(
-            &store,
-            &roots.cache(),
-            &roots.artifacts(),
-            extras,
-            &mut report,
-        )?
+        extras::claim(&store, &table.in_flight, roots, extras, &mut report)?
     };
     report.absorb(blocking(move || extras::delete(claimed)).await?);
     Ok(report)
+}
+
+async fn collect_reports(ctx: &DaemonContext) -> Result<GcReport, ArchonError> {
+    let days = ctx.config.storage.retention_days;
+    if days == 0 {
+        return Ok(GcReport::default());
+    }
+    // Publishing and reopening take this lock before the store too. Keeping
+    // the store held makes the terminal-item and gate checks atomic with expiry.
+    let _files = ctx.report_files.lock().await;
+    let cutoff = archon_core::now() - chrono::Duration::days(i64::from(days));
+    crate::reports::expire_files(&mut *ctx.store.lock().await, &ctx.paths.reports, cutoff)
 }
 
 /// Tell the operator what a pass that freed something did: a feed note, and
@@ -494,13 +522,9 @@ fn collect_locked(
             report.absorb(sweep::sweep(item.found, roots, policy));
         }
     }
-    let claimed = extras::claim(
-        store,
-        &roots.cache(),
-        &roots.artifacts(),
-        extras,
-        &mut report,
-    )?;
+    // No archond runs, so no spawn is in flight.
+    let in_flight = std::collections::BTreeSet::new();
+    let claimed = extras::claim(store, &in_flight, roots, extras, &mut report)?;
     report.absorb(extras::delete(claimed));
     Ok(report)
 }

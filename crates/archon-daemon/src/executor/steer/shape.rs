@@ -246,10 +246,13 @@ fn projected_plan(
         .filter_map(|stage| plan.choices_for(&stage.id))
         .find_map(|choices| choices.first().cloned());
     let mut kept = plan.clone();
-    kept.0.retain(|id, _| new.stage(id).is_some());
+    let reviewers = new.reviewers_key();
+    kept.0
+        .retain(|id, _| new.stage(id).is_some() || Some(id) == reviewers.as_ref());
     for (id, choices) in &mut kept.0 {
-        let stage = new.stage(id).expect("retained above");
-        choices.truncate(stage.fan_out as usize);
+        if let Some(stage) = new.stage(id) {
+            choices.truncate(stage.fan_out as usize);
+        }
     }
     let Learning {
         store,
@@ -267,7 +270,7 @@ fn projected_plan(
             stage.id
         )));
     }
-    assert_eq!(filled.0.len(), new.file.stages.len(), "one entry per stage");
+    new.check_plan_keys(&filled)?;
     Ok(filled)
 }
 

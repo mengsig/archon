@@ -9,7 +9,7 @@ use archon_core::catalog::Tier;
 use archon_core::config::Config;
 use archon_core::error::ArchonError;
 use archon_core::id::RepoId;
-use archon_core::model::{Effort, ModelChoice, ModelPlan};
+use archon_core::model::{Effort, ModelChoice, ModelPlan, ModelPlanDraft, ModelReasons};
 use archon_core::policy::ModelPolicy;
 use archon_core::queue::QueueItem;
 use archon_pipeline::PipelineSpec;
@@ -265,6 +265,44 @@ pub(crate) fn fill_static_stages(
     }
     debug_assert!(plan.0.len() <= spec.file.stages.len() + base.file.stages.len());
     Ok(plan)
+}
+
+/// A request's plan with each missing effort set to its stage's default. An
+/// effort above that default needs a `reasons` entry for the stage.
+pub(crate) fn resolve_plan(
+    spec: &PipelineSpec,
+    draft: ModelPlanDraft,
+    reasons: Option<&ModelReasons>,
+) -> Result<ModelPlan, ArchonError> {
+    let plan = draft.resolve(|key| spec.default_effort(key));
+    for (key, choices) in &plan.0 {
+        let top = choices.iter().map(|c| c.effort).max();
+        if let (Some(top), Some(default)) = (top, spec.default_effort(key)) {
+            check_effort_reason(key, top, default, reasons)?;
+        }
+    }
+    Ok(plan)
+}
+
+/// Effort `effort` for plan key `key`, whose default is `default`, is
+/// refused unless `reasons` says why when it is higher.
+pub(crate) fn check_effort_reason(
+    key: &str,
+    effort: Effort,
+    default: Effort,
+    reasons: Option<&ModelReasons>,
+) -> Result<(), ArchonError> {
+    let reasoned = reasons
+        .and_then(|reasons| reasons.get(key))
+        .is_some_and(|reason| !reason.trim().is_empty());
+    if effort <= default || reasoned {
+        return Ok(());
+    }
+    Err(ArchonError::Invalid(format!(
+        "effort {effort} for {key:?} is above its default {default}: add a model_reasons entry for \
+         {key:?} saying why (a stronger model at {default} often beats a weaker one at {effort}), \
+         or use {default} or lower"
+    )))
 }
 
 #[cfg(test)]

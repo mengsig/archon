@@ -131,7 +131,7 @@ fn active_runs(conn: &Connection) -> Result<u32, ArchonError> {
         .ok_or_else(|| ArchonError::Store("active run count overflows".into()))
 }
 
-/// Everything but `caps`, `repo_caps`, `low_disk`, `pending_spawns` and the
+/// Everything but `caps`, `repo_caps`, `low_disk`, `draining`, `pending_spawns` and the
 /// fan-out of first stages, which need configuration, the disk and live
 /// drivers. Spend counts
 /// estimates (the default `count_estimated_cost = true`).
@@ -145,6 +145,7 @@ pub(super) fn build(conn: &Connection, now: &Timestamp) -> Result<DispatchSnapsh
         repo_caps: BTreeMap::new(),
         pause: settings::pause(&tx)?,
         low_disk: false,
+        draining: false,
         running_total: running.total,
         running_by_repo: running.by_repo,
         running_by_pipeline: running.by_pipeline,

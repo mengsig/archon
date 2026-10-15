@@ -374,6 +374,7 @@ async fn a_known_diff_size_never_pools_evidence_from_another_size() {
     partial.0.remove("implement");
     let request = |size: &str| {
         Request::Enqueue(archon_core::protocol::EnqueueRequest {
+            stage_timeouts: Default::default(),
             repo: Some(archon_core::protocol::RepoRef(common::REPO_NAME.into())),
             pipeline: Some(PIPELINE.into()),
             title: format!("size {size}"),
@@ -381,7 +382,7 @@ async fn a_known_diff_size_never_pools_evidence_from_another_size() {
             priority: Default::default(),
             depends_on: vec![],
             tags: vec![format!("diff:{size}")],
-            model_plan: partial.clone(),
+            model_plan: partial.clone().into(),
             model_reasons: None,
             budget_usd: None,
             idempotency_key: None,

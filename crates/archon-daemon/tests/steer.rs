@@ -778,12 +778,12 @@ async fn update_item_on_a_running_item_is_steered_into_its_run() {
     let mut replaced = plan();
     replaced
         .0
-        .insert("ship".into(), vec![choice(MODEL, Effort::High)]);
+        .insert("ship".into(), vec![choice(MODEL, Effort::Medium)]);
     let update = Request::UpdateItem {
         item: item.id.clone(),
         patch: ItemPatch {
             brief_append: Some(NOTE.into()),
-            model_plan: Some(replaced.clone()),
+            model_plan: Some(replaced.clone().into()),
             tags: Some(vec!["steered".into()]),
             ..ItemPatch::default()
         },
@@ -806,7 +806,7 @@ async fn update_item_on_a_running_item_is_steered_into_its_run() {
     let ship = h.backend.requests().pop().expect("the ship request");
     assert_eq!(
         ship.choice,
-        choice(MODEL, Effort::High),
+        choice(MODEL, Effort::Medium),
         "later stages use the new plan"
     );
 }
@@ -817,7 +817,7 @@ async fn a_waiting_item_takes_what_it_runs_next_and_nothing_that_needs_a_run() {
     let item = h.enqueue("still queued").await;
     let asked = Steer {
         stage: Some("ship".into()),
-        effort: Some(Effort::High),
+        effort: Some(Effort::Medium),
         budget_usd: Some(40.0),
         ..note(NOTE)
     };
@@ -827,7 +827,7 @@ async fn a_waiting_item_takes_what_it_runs_next_and_nothing_that_needs_a_run() {
     assert_eq!(steered.state, QueueState::Queued);
     assert!(steered.brief.contains(NOTE));
     assert_eq!(steered.budget_usd, Some(40.0));
-    let high = choice(MODEL, Effort::High);
+    let high = choice(MODEL, Effort::Medium);
     assert_eq!(steered.model_plan.choices_for("ship"), Some(&[high][..]));
     assert!(h.backend.messages().is_empty() && h.backend.updates().is_empty());
 
@@ -969,6 +969,7 @@ async fn a_failed_item_is_revived_on_its_branch_by_a_shape_steer() {
 /// it: the run then waits for the operator.
 async fn at_proposal_gate(h: &Harness, title: &str) -> QueueItem {
     let request = EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(PIPELINE.into()),
         title: title.into(),
@@ -976,7 +977,7 @@ async fn at_proposal_gate(h: &Harness, title: &str) -> QueueItem {
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: plan(),
+        model_plan: plan().into(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,
@@ -1076,4 +1077,70 @@ async fn states_that_cannot_be_steered_say_so() {
         .await
         .expect_err("no such item");
     assert!(matches!(missing, ArchonError::NotFound(_)), "{missing:?}");
+}
+
+#[tokio::test]
+async fn inserting_a_stage_preserves_the_delegated_reviewer_plan() {
+    let h = harness().await;
+    let reviewer = "claude-code/claude-haiku-5-5";
+    let mut model_plan: archon_core::model::ModelPlanDraft = archon_core::model::ModelPlan(
+        [("implement".to_owned(), vec![choice(MODEL, Effort::Medium)])].into(),
+    )
+    .into();
+    model_plan.0.insert(
+        "implement.review".into(),
+        vec![archon_core::model::ModelChoiceDraft {
+            model: reviewer.parse().unwrap(),
+            effort: Some(Effort::Low),
+        }],
+    );
+    let Reply::Item(queued) = h
+        .cli(Request::Enqueue(EnqueueRequest {
+            repo: Some(RepoRef(REPO_NAME.into())),
+            pipeline: Some("direct".into()),
+            title: "Keep reviewer".into(),
+            brief: "Apply the fix".into(),
+            priority: Default::default(),
+            depends_on: vec![],
+            tags: vec![],
+            model_plan,
+            model_reasons: None,
+            budget_usd: None,
+            idempotency_key: None,
+            autonomy: AutonomyPatch {
+                review: Some(archon_core::autonomy::ReviewLevel::Standard),
+                ..Default::default()
+            },
+            origin: None,
+            stage_timeouts: Default::default(),
+        }))
+        .await
+        .unwrap()
+    else {
+        panic!("item")
+    };
+    let updated = steer(&h, &queued.id, insert("verify", None)).await.unwrap();
+    assert_eq!(
+        updated.model_plan.0["implement.review"],
+        queued.model_plan.0["implement.review"]
+    );
+    h.dispatch().await;
+    h.cli(Request::UpdateItem {
+        item: queued.id.clone(),
+        patch: ItemPatch {
+            stage_timeouts: [("verify".into(), 75)].into(),
+            ..Default::default()
+        },
+    })
+    .await
+    .expect("timeouts accept an inserted stage on a running item");
+    assert_eq!(h.item(&queued.id).await.stage_timeouts["verify"], 75);
+    h.settle_running(|_| completed("verified")).await;
+    h.dispatch().await;
+    assert!(
+        h.backend
+            .requests()
+            .iter()
+            .any(|r| r.instructions.contains(reviewer))
+    );
 }

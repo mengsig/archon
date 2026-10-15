@@ -28,6 +28,10 @@ pub const MAX_MIN_FREE_GB: u64 = 1 << 20;
 pub const DEFAULT_DELEGATION_DEPTH: u32 = 2;
 pub const DELEGATION_DEPTH_CEILING: u32 = 4;
 
+/// `limits.max_stage_timeout_minutes` by default, and the most it may be (30
+/// days, a pipeline stage's own bound).
+pub const DEFAULT_STAGE_TIMEOUT_MINUTES: u32 = 24 * 60;
+pub const STAGE_TIMEOUT_CEILING_MINUTES: u32 = 30 * 24 * 60;
 /// `artifacts.max_item_mb` above this (1 PiB) is surely a typo.
 pub const MAX_ARTIFACT_MB: u64 = 1 << 30;
 
@@ -49,6 +53,7 @@ pub struct Config {
     pub chat: ChatConfig,
     pub worktrees: WorktreeConfig,
     pub artifacts: ArtifactsConfig,
+    pub storage: StorageConfig,
     pub lavish: LavishConfig,
     pub github: GithubConfig,
     pub autonomy: AutonomyConfig,
@@ -245,6 +250,8 @@ pub struct LimitsConfig {
     pub per_pipeline: BTreeMap<String, u32>,
     /// Most delegations below a stage agent or the orchestrator (§7.4).
     pub max_delegation_depth: u32,
+    /// Longest per-stage timeout an item may ask for (`stage_timeouts`).
+    pub max_stage_timeout_minutes: u32,
     /// Messages one agent may send the orchestrator, and one run node's
     /// inbox may relay, over its lifetime.
     pub max_agent_messages: u32,
@@ -268,6 +275,7 @@ impl Default for LimitsConfig {
             min_free_gb: 10,
             per_pipeline: BTreeMap::new(),
             max_delegation_depth: DEFAULT_DELEGATION_DEPTH,
+            max_stage_timeout_minutes: DEFAULT_STAGE_TIMEOUT_MINUTES,
             max_agent_messages: DEFAULT_AGENT_MESSAGES,
             initiative_members: InitiativeLimits::DEFAULT.members as u32,
             initiative_contract_bytes: InitiativeLimits::DEFAULT.contract_bytes as u32,
@@ -317,6 +325,11 @@ impl LimitsConfig {
                 "max_delegation_depth",
                 self.max_delegation_depth,
                 DELEGATION_DEPTH_CEILING,
+            ),
+            (
+                "max_stage_timeout_minutes",
+                self.max_stage_timeout_minutes,
+                STAGE_TIMEOUT_CEILING_MINUTES,
             ),
             (
                 "max_agent_messages",
@@ -443,6 +456,40 @@ impl Default for WorktreeConfig {
     }
 }
 
+/// Filesystem retention; SQLite history and evidence windows are independent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct StorageConfig {
+    /// Settled item reports and rotated logs; 0 disables age expiry.
+    pub retention_days: u32,
+    /// Rotate daemon output after this many MiB; 0 disables size rotation.
+    pub log_max_mb: u64,
+    /// Retained log archives; 0 disables the count limit.
+    pub log_max_files: u32,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            retention_days: 14,
+            log_max_mb: 10,
+            log_max_files: 3,
+        }
+    }
+}
+
+impl StorageConfig {
+    fn validate(&self) -> Result<(), ArchonError> {
+        if self.retention_days > 36_500 || self.log_max_mb > (1 << 20) || self.log_max_files > 1000
+        {
+            return Err(ArchonError::Config(
+                "storage: retention_days must be 0..36500, log_max_mb 0..1048576, and log_max_files 0..1000".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// The durable per-item artifact store (ARCHITECTURE §13.5): files a stage
 /// publishes outlive its worktree, read by item id.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -461,7 +508,7 @@ impl Default for ArtifactsConfig {
         Self {
             max_file_mb: 256,
             max_item_mb: 1024,
-            keep_after: Age::from_secs(30 * 86_400),
+            keep_after: Age::from_secs(14 * 86_400),
         }
     }
 }
@@ -710,6 +757,7 @@ impl Config {
         self.autonomy.validate()?;
         self.worktrees.validate()?;
         self.artifacts.validate()?;
+        self.storage.validate()?;
         let orchestrator = crate::model::ModelChoice {
             model: self.orchestrator.model.clone(),
             effort: self.orchestrator.effort,
@@ -875,6 +923,38 @@ mod tests {
     }
 
     #[test]
+    fn storage_defaults_disable_switches_and_validation() {
+        let config = Config::default();
+        assert_eq!(config.storage.retention_days, 14);
+        assert_eq!(config.storage.log_max_mb, 10);
+        assert_eq!(config.storage.log_max_files, 3);
+        assert_eq!(config.artifacts.keep_after.secs(), 14 * 86_400);
+        let off: Config =
+            toml::from_str("[storage]\nretention_days = 0\nlog_max_mb = 0\nlog_max_files = 0")
+                .unwrap();
+        off.validate().unwrap();
+        for bad in [
+            "retention_days = 36501",
+            "log_max_mb = 1048577",
+            "log_max_files = 1001",
+        ] {
+            let config: Config = toml::from_str(&format!("[storage]\n{bad}")).unwrap();
+            assert!(config.validate().is_err(), "{bad}");
+        }
+        for bad in [
+            "retention_days = -1",
+            "retention_days = 1.5",
+            "retention_days = \"14d\"",
+            "retenton_days = 14",
+        ] {
+            assert!(
+                toml::from_str::<Config>(&format!("[storage]\n{bad}")).is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
     fn the_disk_hold_defaults_to_ten_gib_and_zero_turns_it_off() {
         let config = Config::default();
         assert_eq!(config.limits.min_free_gb, 10);
@@ -892,6 +972,7 @@ mod tests {
         let limits = Config::default().limits;
         assert_eq!(limits.max_delegation_depth, 2);
         assert_eq!(limits.max_agent_messages, 20);
+        assert_eq!(limits.max_stage_timeout_minutes, 1440);
         assert_eq!(
             limits.initiatives(),
             InitiativeLimits {
@@ -909,6 +990,8 @@ mod tests {
         for wrong in [
             "max_delegation_depth = 0",
             "max_delegation_depth = 5",
+            "max_stage_timeout_minutes = 0",
+            "max_stage_timeout_minutes = 43201",
             "max_agent_messages = 0",
             "initiative_members = 65",
             "initiative_contract_bytes = 16385",

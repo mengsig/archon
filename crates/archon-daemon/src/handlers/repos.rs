@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use archon_core::autonomy::{AutonomyPatch, MergeMode};
 use archon_core::config::RepoConfig;
 use archon_core::error::ArchonError;
+use archon_core::github::{GithubRepo, WatcherChange};
 use archon_core::id::RepoId;
 use archon_core::protocol::{Reply, RepoAdd, RepoPatch, RepoRef};
 use archon_core::repo::Repo;
@@ -12,11 +13,12 @@ use archon_core::repo::Repo;
 use crate::context::DaemonContext;
 use crate::executor::repo_identity;
 use crate::resolve::RepoEnv;
-use crate::worktree;
+use crate::{feed, github, worktree};
 
 /// Register a git top level. Unset fields take the repository's
 /// `.archon/config.toml` defaults; the base branch and default pipeline
-/// must resolve.
+/// must resolve. With `github_watch` its GitHub origin is also watched,
+/// checked first so that a repository that cannot be watched is not registered.
 pub(super) async fn add(ctx: &DaemonContext, add: RepoAdd) -> Result<Reply, ArchonError> {
     if !add.path.is_absolute() {
         return Err(ArchonError::Invalid(format!(
@@ -29,6 +31,10 @@ pub(super) async fn add(ctx: &DaemonContext, add: RepoAdd) -> Result<Reply, Arch
     let name = match &add.name {
         Some(name) => name.clone(),
         None => dir_name(&root)?,
+    };
+    let watch = match add.github_watch {
+        true => Some(github_origin(ctx, &root).await?),
+        false => None,
     };
     if !Repo::valid_name(&name) {
         return Err(ArchonError::Invalid(format!(
@@ -51,7 +57,63 @@ pub(super) async fn add(ctx: &DaemonContext, add: RepoAdd) -> Result<Reply, Arch
     // The orchestrator reads it in a mirror, made in the background.
     ctx.mirrors.request_repo(&repo.id);
     tracing::info!(repo = %repo.name, path = %repo.path.display(), "repository registered");
+    if let Some(repository) = watch {
+        watch_origin(ctx, &repo, repository).await?;
+    }
     Ok(Reply::Repo(repo))
+}
+
+/// Watch a registered repository's GitHub origin: the `/watch` chat command.
+pub(super) async fn watch(ctx: &DaemonContext, reference: &RepoRef) -> Result<String, ArchonError> {
+    let repo = ctx.store.lock().await.repo(reference)?;
+    let repository = github_origin(ctx, &repo.path).await?;
+    watch_origin(ctx, &repo, repository.clone()).await?;
+    Ok(format!("watching {repository} on GitHub for {}", repo.name))
+}
+
+/// The GitHub repository `root`'s origin names, in the mode the watcher needs.
+async fn github_origin(ctx: &DaemonContext, root: &Path) -> Result<GithubRepo, ArchonError> {
+    github::require_dedicated(ctx)?;
+    let dir = root.to_path_buf();
+    let url = blocking(move || worktree::stack::origin_url(&dir))
+        .await?
+        .ok_or_else(|| {
+            ArchonError::Invalid(format!(
+                "{} has no origin remote to watch on GitHub",
+                root.display()
+            ))
+        })?;
+    GithubRepo::from_remote_url(&url).ok_or_else(|| {
+        ArchonError::Invalid(format!(
+            "origin {url} is not a github.com repository, so it cannot be watched"
+        ))
+    })
+}
+
+/// Watch `repository` for the just-registered `repo`; a failure says the
+/// registration stands and how to retry the watch alone.
+async fn watch_origin(
+    ctx: &DaemonContext,
+    repo: &Repo,
+    repository: GithubRepo,
+) -> Result<(), ArchonError> {
+    let change = WatcherChange::Add {
+        repository: repository.clone(),
+        allowed_users: None,
+    };
+    if let Err(error) = github::configure(ctx, change).await {
+        let detail = format!(
+            "{} is registered but not watched; retry with `archon github-watcher add {repository}`",
+            repo.name
+        );
+        return Err(error.with_detail(&detail));
+    }
+    feed::system(
+        ctx,
+        format!("Watching {repository} on GitHub for {}", repo.name),
+    )
+    .await?;
+    Ok(())
 }
 
 pub(super) async fn list(ctx: &DaemonContext) -> Result<Reply, ArchonError> {

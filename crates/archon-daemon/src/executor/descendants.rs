@@ -326,6 +326,7 @@ async fn stopped(
         ship: vec![owed.run.clone()],
         // Its item's build directory waited for the stop too.
         release_builds: build.into_iter().collect(),
+        discard: vec![owed.run.clone()],
         poke: true,
         ..FollowUp::default()
     })

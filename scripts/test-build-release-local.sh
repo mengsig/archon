@@ -12,7 +12,8 @@ mkdir -p "$testdir/bin"
 git clone -q --shared --no-checkout "$root" "$testdir/repo"
 mkdir "$testdir/repo/scripts"
 cp "$root/scripts/build-release-local.sh" "$root/scripts/package-release.sh" "$testdir/repo/scripts/"
-version=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' "$root/Cargo.toml")
+git -C "$testdir/repo" show HEAD:Cargo.toml > "$testdir/Cargo.toml"
+version=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' "$testdir/Cargo.toml")
 git -C "$testdir/repo" tag -f "v$version" HEAD
 git -C "$testdir/repo" tag -f v999.999.999 HEAD
 cat > "$testdir/bin/cargo" <<'EOF'

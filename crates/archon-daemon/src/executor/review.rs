@@ -365,7 +365,10 @@ async fn result_of(
 /// The verdict a reviewer's task `outcome` returned, or what keeps it from being one.
 fn verdict_in(outcome: StageOutcome) -> Result<Verdict, String> {
     match outcome {
-        StageOutcome::Completed { structured, .. } => Verdict::read(structured.as_ref()),
+        StageOutcome::Completed {
+            summary,
+            structured,
+        } => Verdict::read_result(&summary, structured.as_ref()),
         _ => Err("did not complete its task".into()),
     }
 }

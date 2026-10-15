@@ -399,11 +399,12 @@ or, only where the stage prompt lets a change go without review:\n\n\
 ```\n\n";
 
 const REVIEWER_VERDICT_RULES: &str = "\
-- Tell each reviewer to finish with this `structured` data, its verdict on the \
-commits it read; `base` is where the diff it read starts:\n\n\
+- In each reviewer's instructions require `complete_task(summary=..., structured=\
+<JSON below>)`, not final text. `base` starts the diff read:\n\n\
 ```json\n\
-{\"verdict\": \"pass\" or \"fail\", \"head\": \"<commit>\", \"base\": \"<commit>\", \"findings\": […]}\n\
-```\n\n";
+{\"verdict\": \"pass\", \"head\": \"<commit>\", \"base\": \"<commit>\", \"findings\": []}\n\
+```\n\n\
+Use `\"fail\"` with findings for failures.\n\n";
 
 const REVIEW_CHECK_RULES: &str = "\
 - Delegate with `wait: false`, then use `wait_for` with `any: true`. On a blocking \
@@ -1041,7 +1042,10 @@ mod tests {
             "reviewed by an agent you delegate to that wrote none of it",
             "{\"review\": {\"verdict\": \"pass\", \"reviewers\": [\"<agent id>\"]}}",
             "{\"review\": {\"verdict\": \"skipped\", \"reason\": \"<why this change needed none>\"}}",
-            "{\"verdict\": \"pass\" or \"fail\", \"head\": \"<commit>\", \"base\": \"<commit>\"",
+            "In each reviewer's instructions require `complete_task(summary=..., structured=<JSON below>)`",
+            "not final text",
+            "{\"verdict\": \"pass\", \"head\": \"<commit>\", \"base\": \"<commit>\"",
+            "Use `\"fail\"` with findings for failures",
             "Each agent named must be a different one you delegated to yourself",
             "a passing reviewer read with `base` at or before it",
             "Name every reviewer that coverage rests on, earlier whole-change passes included",

@@ -283,8 +283,11 @@ are agents it delegates to. At `none` it delegates only if the stage allows
 it otherwise.
 
 Archon holds the stage to the level. Its contract gains a
-`## Review on record` section. Each reviewer finishes with its own verdict
-on the commits it read, where `base` is the commit its diff starts from
+`## Review on record` section. The lead must copy the completion requirement
+into each reviewer's instructions: call Aether's `complete_task` with a concise
+`summary` and the verdict object in the tool's `structured` argument. Each
+reviewer gives its own verdict on the commits it read, where `base` is the
+commit its diff starts from
 (the merge base for the whole change, an earlier reviewer's head for a
 re-review of a fix):
 
@@ -292,7 +295,12 @@ re-review of a fix):
 {"verdict": "pass", "head": "<commit>", "base": "<commit>", "findings": []}
 ```
 
-and the stage agent's `complete_task` names the agent id `delegate`
+For providers that auto-complete a task from final text, Archon also accepts
+this object as the entire `summary` when `structured` is absent. An explicit
+`structured` value takes precedence, even if invalid. Prose, fenced blocks,
+and a `VERDICT:` line alone do not count as a delegated review.
+
+The stage agent's `complete_task` names the agent id `delegate`
 returned for each reviewer the pass rests on, including a failed one whose
 findings it fixed:
 

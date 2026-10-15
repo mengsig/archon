@@ -38,7 +38,7 @@ pub struct Reviewer {
     pub agent: String,
 }
 
-/// A reviewer's own verdict, from the structured result of its task.
+/// A reviewer's own verdict, from the JSON result of its task.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Verdict {
     pub pass: bool,
@@ -49,6 +49,21 @@ pub struct Verdict {
 }
 
 impl Verdict {
+    /// Prefer the task's `structured` field. Aether can auto-complete a Codex
+    /// review with its final JSON text in `summary` and no structured field.
+    /// Accept only a whole JSON value there, never a verdict inferred from prose.
+    pub fn read_result(summary: &str, structured: Option<&Value>) -> Result<Self, String> {
+        if structured.is_some() {
+            return Self::read(structured);
+        }
+        let data: Value = serde_json::from_str(summary).map_err(|error| {
+            format!(
+                "its result carries no structured verdict and its summary is not a JSON verdict: {error}"
+            )
+        })?;
+        Self::read(Some(&data))
+    }
+
     /// Read a reviewer's `{"verdict", "head", "base"}`; `Err` says, in words
     /// for the operator, what keeps it from being a verdict on a commit.
     pub fn read(structured: Option<&Value>) -> Result<Self, String> {
@@ -483,6 +498,70 @@ mod tests {
             let refused = Verdict::read(structured.as_ref()).unwrap_err();
             assert!(refused.contains(why), "{structured:?}: {refused}");
         }
+    }
+
+    #[test]
+    fn luna_auto_completed_reviews_carry_json_in_the_summary() {
+        let capture: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/luna-review-results.json"))
+                .unwrap();
+        let reviews = capture["reviewers"].as_array().unwrap();
+        assert_eq!(reviews.len(), 4);
+        for (review, pass) in reviews.iter().zip([true, false, true, true]) {
+            let result = &review["result"];
+            assert!(result.get("structured").is_none());
+            let summary = result["summary"].as_str().unwrap();
+            let data: Value = serde_json::from_str(summary).unwrap();
+            let verdict = Verdict::read_result(summary, result.get("structured")).unwrap();
+            assert_eq!(verdict.pass, pass, "{}", review["agent"]);
+            assert_eq!(verdict.head, data["head"]);
+            assert_eq!(verdict.base.as_deref(), data["base"].as_str());
+        }
+    }
+
+    #[test]
+    fn summary_json_never_overrides_a_structured_verdict_or_error() {
+        let pass = json!({"verdict": "pass", "head": "abcdef1"}).to_string();
+        let fail = json!({"verdict": "fail", "head": "1234567"});
+        let verdict = Verdict::read_result(&pass, Some(&fail)).unwrap();
+        assert!(!verdict.pass);
+        assert_eq!(verdict.head, "1234567");
+        for invalid in [
+            Value::Null,
+            json!("pass"),
+            json!({}),
+            json!({"verdict": "pass"}),
+        ] {
+            assert!(Verdict::read_result(&pass, Some(&invalid)).is_err());
+        }
+    }
+
+    #[test]
+    fn a_summary_must_be_a_complete_json_verdict_on_a_commit() {
+        let pass = json!({"verdict": "pass", "head": "abcdef1"}).to_string();
+        for summary in [
+            "".to_owned(),
+            "Reviewed; no findings. VERDICT: PASS".to_owned(),
+            format!("Reviewed: {pass}"),
+            format!("```json\n{pass}\n```"),
+            format!("{pass}\nVERDICT: PASS"),
+            format!("{pass}{pass}"),
+            "{\"verdict\":\"pass\"".to_owned(),
+            "null".to_owned(),
+            format!("[{pass}]"),
+            "{}".to_owned(),
+            json!({"verdict": "PASS", "head": "abcdef1"}).to_string(),
+            json!({"verdict": "pass"}).to_string(),
+            json!({"verdict": "pass", "head": "HEAD"}).to_string(),
+            json!({"verdict": "pass", "head": "abcdef1", "base": "main"}).to_string(),
+        ] {
+            assert!(Verdict::read_result(&summary, None).is_err(), "{summary}");
+        }
+        assert!(
+            Verdict::read_result(&format!(" \n{pass}\n"), None)
+                .unwrap()
+                .pass
+        );
     }
 
     #[test]

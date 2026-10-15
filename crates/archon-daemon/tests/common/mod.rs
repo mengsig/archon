@@ -910,6 +910,18 @@ impl FakeBackend {
     /// The delegated `agent` completed its task with `structured` as its
     /// result, as a reviewer returns its verdict.
     pub fn complete_delegated(&self, agent: &AetherAgentId, structured: serde_json::Value) {
+        self.complete_delegated_with(
+            agent,
+            StageOutcome::Completed {
+                summary: "reviewed".into(),
+                structured: Some(structured),
+            },
+        );
+    }
+
+    /// The delegated `agent` completed with Aether's recorded outcome.
+    pub fn complete_delegated_with(&self, agent: &AetherAgentId, outcome: StageOutcome) {
+        assert!(matches!(outcome, StageOutcome::Completed { .. }));
         let mut state = self.state();
         let delegated = state.delegated.iter_mut().find(|d| d.agent == *agent);
         let delegated = delegated.expect("a delegated agent");
@@ -918,10 +930,6 @@ impl FakeBackend {
             .task
             .clone()
             .expect("a delegated agent has a task");
-        let outcome = StageOutcome::Completed {
-            summary: "reviewed".into(),
-            structured: Some(structured),
-        };
         state.outcomes.insert(task, outcome);
     }
 

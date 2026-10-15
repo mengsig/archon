@@ -1,0 +1,36 @@
+{
+  "source_run": "20261015T072502Z",
+  "task": "quality-ledger-transfer",
+  "model": "codex/gpt-6-luna",
+  "effort": "medium",
+  "reviewers": [
+    {
+      "agent": "agt_01M4Z7GPZ0SYE69PJ3MX9YSPHB",
+      "result": {
+        "summary": "{\"verdict\":\"pass\",\"head\":\"55cc219390e4a59b1da272b5ba81edb9deb638ef\",\"base\":\"fd524cdbe0850cb693d58b5b495ca8cc3b6673fc\",\"findings\":[]}",
+        "artifacts": []
+      }
+    },
+    {
+      "agent": "agt_01M4Z7KG8HG7DVVBTH79FJMNGJ",
+      "result": {
+        "summary": "{\"verdict\":\"fail\",\"head\":\"55cc219390e4a59b1da272b5ba81edb9deb638ef\",\"base\":\"fd524cdbe0850cb693d58b5b495ca8cc3b6673fc\",\"findings\":[{\"file\":\"ledger.py\",\"line\":27,\"severity\":\"medium\",\"finding\":\"An unhashable account argument raises TypeError during dictionary membership instead of the specified KeyError for an unknown account. For example, `transfer([], \\\"a\\\", 1)` raises TypeError. Add a focused test and handle this case so unknown account references consistently raise KeyError.\"}]}",
+        "artifacts": []
+      }
+    },
+    {
+      "agent": "agt_01M4Z7N5DXTN4VPVEPCCAWQRMX",
+      "result": {
+        "summary": "{\"verdict\":\"pass\",\"head\":\"d6044e897e2c9d85edf4e9a02a73d1879d9c3356\",\"base\":\"55cc219390e4a59b1da272b5ba81edb9deb638ef\",\"findings\":[]}",
+        "artifacts": []
+      }
+    },
+    {
+      "agent": "agt_01M4Z7Q552DW30XJ724TF8EBDW",
+      "result": {
+        "summary": "{\"verdict\":\"pass\",\"head\":\"d6044e897e2c9d85edf4e9a02a73d1879d9c3356\",\"base\":\"fd524cdbe0850cb693d58b5b495ca8cc3b6673fc\",\"findings\":[]}",
+        "artifacts": []
+      }
+    }
+  ]
+}

@@ -350,6 +350,7 @@ async fn register_repos(
             base_branch: Some(BASE_BRANCH.to_owned()),
             default_pipeline: None,
             auto_merge: false,
+            github_watch: false,
         });
         let Reply::Repo(repo) = client.request(request).await? else {
             bail!("repo_add returned another reply kind");

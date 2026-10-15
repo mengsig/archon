@@ -84,7 +84,7 @@ fn catalog() -> &'static [ToolDefinition] {
 }
 
 /// Validate arguments and build the daemon request. Operator-only requests
-/// are never produced (`register_repo` forces `auto_merge = false`).
+/// are never produced (`register_repo` forces `auto_merge` and `github_watch` off).
 pub fn to_request(tool: &str, arguments: Value) -> Result<Request, ToolError> {
     let request = args::to_request(tool, arguments)?;
     assert!(

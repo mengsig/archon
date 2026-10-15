@@ -355,6 +355,7 @@ async fn repositories_are_checked_when_added() {
         base_branch: Some(base.into()),
         default_pipeline: None,
         auto_merge: false,
+        github_watch: false,
     };
     let relative = h.cli(Request::RepoAdd(add("repo".into(), "main"))).await;
     assert!(

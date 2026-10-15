@@ -382,8 +382,9 @@ fn queue_status() -> ToolDefinition {
     define(
         "queue_status",
         "Queue status",
-        "Daemon overview: Aether connection, orchestrator, pauses, running agents vs caps, \
-         queue counts, open questions, spend today and in total vs budgets.",
+        "Daemon overview: Aether link, orchestrator, pauses, agents against the caps, queue \
+         counts, open questions, spend against the budgets, an upgrade under way (`/upgrade`), \
+         differing versions.",
         object(json!({}), &[]),
         false,
     )
@@ -432,8 +433,8 @@ fn register_repo() -> ToolDefinition {
     define(
         "register_repo",
         "Register repository",
-        "Register a git repository so work can be queued against it. Its autonomy ceiling is \
-         the default, without merge=auto; only the operator raises it, from the CLI.",
+        "Register a git repository so work can be queued against it. Only the operator sets \
+         merge=auto or GitHub watching (`/watch <name>` in chat).",
         object(
             json!({
                 "path": {"type": "string", "description": "Absolute path of its top-level directory."},

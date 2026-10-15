@@ -8,6 +8,7 @@
 //! reaches the pump. Once a report's item finishes, its poll is stopped and
 //! its session ended (see `retire`).
 
+mod expiry;
 mod files;
 mod questions;
 mod records;
@@ -32,6 +33,7 @@ use crate::context::DaemonContext;
 use crate::feed;
 use crate::triggers::TriggerEvent;
 
+pub(crate) use self::expiry::expire_files;
 pub use self::questions::{already_closed, answer_reopen, asks_to_reopen, close_stale_questions};
 pub(crate) use self::records::is_open;
 pub use self::records::{KEY_PREFIX, LEGACY_KEY, prune};

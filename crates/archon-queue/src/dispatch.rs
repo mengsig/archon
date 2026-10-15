@@ -19,6 +19,9 @@ pub struct DispatchSnapshot {
     /// The daemon's disk hold: free space below `limits.min_free_gb`, or a
     /// recent failure on a full disk.
     pub low_disk: bool,
+    /// An operator's upgrade drains Archon: running agents finish, and
+    /// nothing new starts until archond restarts or the upgrade gives up.
+    pub draining: bool,
     /// Running stage agents by repository and by pipeline.
     pub running_total: u32,
     pub running_by_repo: BTreeMap<RepoId, u32>,
@@ -105,6 +108,8 @@ pub enum GangWaiter {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Hold {
     GlobalPause,
+    /// An upgrade is draining Archon before it restarts.
+    Draining,
     /// Too little free disk space, or a recent disk-full failure.
     LowDisk,
     DailyBudget,
@@ -116,9 +121,10 @@ pub enum Hold {
 ///
 /// 1. Items whose dependencies broke are always listed in `block`, even
 ///    while admission is held, since blocking starts no work.
-/// 2. Nothing is admitted while globally paused, while the disk hold is
-///    on, or while total or daily spend has reached its budget (reported
-///    in that order; no budget holds while budgets are off).
+/// 2. Nothing is admitted while globally paused, while an upgrade drains,
+///    while the disk hold is on, or while total or daily spend has reached
+///    its budget (reported in that order; no budget holds while budgets
+///    are off).
 /// 3. Pending spawns of running runs come first, by item priority then
 ///    age. Repository and pipeline pauses do not hold them: they stop new
 ///    items, and finishing work beats starting work.
@@ -162,8 +168,8 @@ pub fn plan_dispatch(snapshot: &DispatchSnapshot) -> DispatchPlan {
 
 /// Explain the same admission pass the dispatcher would execute, including
 /// pending spawns, reservations for earlier items, and gang fairness.
-/// Dependencies take precedence, then global admission holds (pause, disk,
-/// total budget, daily budget), slice pauses, capacity, and next in line.
+/// Dependencies take precedence, then global admission holds (pause, drain,
+/// disk, total budget, daily budget), slice pauses, capacity, and next in line.
 pub fn waiting_reasons(snapshot: &DispatchSnapshot) -> BTreeMap<QueueItemId, WaitingReasonCode> {
     let plan = plan_dispatch(snapshot);
     let started: BTreeSet<_> = plan.start.iter().collect();
@@ -177,6 +183,7 @@ pub fn waiting_reasons(snapshot: &DispatchSnapshot) -> BTreeMap<QueueItemId, Wai
                 DependencyState::AllSucceeded => admission_hold(snapshot)
                     .map(|hold| match hold {
                         Hold::GlobalPause => WaitingReasonCode::GlobalPause,
+                        Hold::Draining => WaitingReasonCode::Draining,
                         Hold::LowDisk => WaitingReasonCode::LowDisk,
                         Hold::TotalBudget => WaitingReasonCode::TotalBudget,
                         Hold::DailyBudget => WaitingReasonCode::DailyBudget,
@@ -276,6 +283,8 @@ fn admission_hold(snapshot: &DispatchSnapshot) -> Option<Hold> {
     let reached = |budget: f64, spent: f64| caps.budgets_enabled && budget > 0.0 && spent >= budget;
     if snapshot.pause.global {
         Some(Hold::GlobalPause)
+    } else if snapshot.draining {
+        Some(Hold::Draining)
     } else if snapshot.low_disk {
         Some(Hold::LowDisk)
     } else if reached(caps.budget_usd_total, snapshot.spend_total_usd) {

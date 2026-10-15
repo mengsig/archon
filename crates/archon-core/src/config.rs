@@ -53,6 +53,7 @@ pub struct Config {
     pub chat: ChatConfig,
     pub worktrees: WorktreeConfig,
     pub artifacts: ArtifactsConfig,
+    pub storage: StorageConfig,
     pub lavish: LavishConfig,
     pub github: GithubConfig,
     pub autonomy: AutonomyConfig,
@@ -443,6 +444,40 @@ impl Default for WorktreeConfig {
     }
 }
 
+/// Filesystem retention; SQLite history and evidence windows are independent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct StorageConfig {
+    /// Settled item reports and rotated logs; 0 disables age expiry.
+    pub retention_days: u32,
+    /// Rotate daemon output after this many MiB; 0 disables size rotation.
+    pub log_max_mb: u64,
+    /// Retained log archives; 0 disables the count limit.
+    pub log_max_files: u32,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            retention_days: 14,
+            log_max_mb: 10,
+            log_max_files: 3,
+        }
+    }
+}
+
+impl StorageConfig {
+    fn validate(&self) -> Result<(), ArchonError> {
+        if self.retention_days > 36_500 || self.log_max_mb > (1 << 20) || self.log_max_files > 1000
+        {
+            return Err(ArchonError::Config(
+                "storage: retention_days must be 0..36500, log_max_mb 0..1048576, and log_max_files 0..1000".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// The durable per-item artifact store (ARCHITECTURE §13.5): files a stage
 /// publishes outlive its worktree, read by item id.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -461,7 +496,7 @@ impl Default for ArtifactsConfig {
         Self {
             max_file_mb: 256,
             max_item_mb: 1024,
-            keep_after: Age::from_secs(30 * 86_400),
+            keep_after: Age::from_secs(14 * 86_400),
         }
     }
 }
@@ -684,6 +719,7 @@ impl Config {
         self.autonomy.validate()?;
         self.worktrees.validate()?;
         self.artifacts.validate()?;
+        self.storage.validate()?;
         let orchestrator = crate::model::ModelChoice {
             model: self.orchestrator.model.clone(),
             effort: self.orchestrator.effort,
@@ -846,6 +882,38 @@ mod tests {
         assert!(matches!(config.validate(), Err(ArchonError::Config(_))));
         let absolute: Config = toml::from_str("[worktrees]\nroot = \"/srv/t\"").unwrap();
         absolute.validate().unwrap();
+    }
+
+    #[test]
+    fn storage_defaults_disable_switches_and_validation() {
+        let config = Config::default();
+        assert_eq!(config.storage.retention_days, 14);
+        assert_eq!(config.storage.log_max_mb, 10);
+        assert_eq!(config.storage.log_max_files, 3);
+        assert_eq!(config.artifacts.keep_after.secs(), 14 * 86_400);
+        let off: Config =
+            toml::from_str("[storage]\nretention_days = 0\nlog_max_mb = 0\nlog_max_files = 0")
+                .unwrap();
+        off.validate().unwrap();
+        for bad in [
+            "retention_days = 36501",
+            "log_max_mb = 1048577",
+            "log_max_files = 1001",
+        ] {
+            let config: Config = toml::from_str(&format!("[storage]\n{bad}")).unwrap();
+            assert!(config.validate().is_err(), "{bad}");
+        }
+        for bad in [
+            "retention_days = -1",
+            "retention_days = 1.5",
+            "retention_days = \"14d\"",
+            "retenton_days = 14",
+        ] {
+            assert!(
+                toml::from_str::<Config>(&format!("[storage]\n{bad}")).is_err(),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

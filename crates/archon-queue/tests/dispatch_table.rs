@@ -35,6 +35,7 @@ impl Fx {
             repo_caps: BTreeMap::new(),
             pause: PauseState::default(),
             low_disk: false,
+            draining: false,
             running_total: 0,
             running_by_repo: BTreeMap::new(),
             running_by_pipeline: BTreeMap::new(),
@@ -122,6 +123,19 @@ fn low_disk(fx: &Fx) -> DispatchSnapshot {
     s.pending_spawns = vec![fx.pending(0, 7, 0, Normal, 0, 1)];
     s.queued = vec![fx.item(0, 0, Normal, 1), fx.item(1, 0, Normal, 2)];
     s.queued[1].deps = DependencyState::Broken;
+    s
+}
+
+fn draining(fx: &Fx) -> DispatchSnapshot {
+    let mut s = low_disk(fx);
+    s.low_disk = false;
+    s.draining = true;
+    s
+}
+
+fn draining_on_low_disk(fx: &Fx) -> DispatchSnapshot {
+    let mut s = draining(fx);
+    s.low_disk = true;
     s
 }
 
@@ -440,6 +454,16 @@ fn hold_cases() -> Vec<Case> {
             fx.plan(&[], &[], &[1], Some(Hold::LowDisk))
         }),
         (
+            "a draining upgrade holds all but blocking",
+            draining,
+            |fx| fx.plan(&[], &[], &[1], Some(Hold::Draining)),
+        ),
+        (
+            "a draining upgrade reported before low disk",
+            draining_on_low_disk,
+            |fx| fx.plan(&[], &[], &[1], Some(Hold::Draining)),
+        ),
+        (
             "low disk reported before budgets",
             low_disk_and_budget,
             |fx| fx.plan(&[], &[], &[], Some(Hold::LowDisk)),
@@ -594,7 +618,7 @@ fn gang_cases() -> Vec<Case> {
 fn plan_dispatch_table() {
     let fx = Fx::new();
     let all = [hold_cases(), order_cases(), cap_cases(), gang_cases()].concat();
-    assert_eq!(all.len(), 33);
+    assert_eq!(all.len(), 35);
     for (name, build, expect) in all {
         let snapshot = build(&fx);
         assert_eq!(plan_dispatch(&snapshot), expect(&fx), "case: {name}");

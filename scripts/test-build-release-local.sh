@@ -7,15 +7,14 @@ testdir=$(mktemp -d "${XDG_CACHE_HOME:-$HOME/.cache}/archon-release-local/test.X
 trap 'rm -rf "$testdir"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-mkdir -p "$testdir/repo/scripts" "$testdir/bin"
+mkdir -p "$testdir/bin"
+# Reuse tracked objects so a fresh CI runner needs no Git author identity.
+git clone -q --shared --no-checkout "$root" "$testdir/repo"
+mkdir "$testdir/repo/scripts"
 cp "$root/scripts/build-release-local.sh" "$root/scripts/package-release.sh" "$testdir/repo/scripts/"
-cp "$root/LICENSE" "$root/THIRD-PARTY-NOTICES" "$testdir/repo/"
-printf '[workspace.package]\nversion = "1.2.3"\n' > "$testdir/repo/Cargo.toml"
-git -C "$testdir/repo" init -q
-git -C "$testdir/repo" add .
-git -C "$testdir/repo" commit -qm 'test fixture'
-git -C "$testdir/repo" tag v1.2.3
-git -C "$testdir/repo" tag v9.9.9
+version=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' "$root/Cargo.toml")
+git -C "$testdir/repo" tag -f "v$version" HEAD
+git -C "$testdir/repo" tag -f v999.999.999 HEAD
 cat > "$testdir/bin/cargo" <<'EOF'
 #!/bin/sh
 set -eu
@@ -54,20 +53,20 @@ expect_failure() {
     [ -z "$(ls -A "$XDG_CACHE_HOME/archon-release-local")" ]
 }
 
-expect_failure v9.9.9 mismatch 'is not the workspace version'
+expect_failure v999.999.999 mismatch 'is not the workspace version'
 export FAIL_TARGET=aarch64-unknown-linux-musl
-expect_failure v1.2.3 failed 'one or more targets failed'
+expect_failure "v$version" failed 'one or more targets failed'
 [ -s "$testdir/failed/archon-x86_64-unknown-linux-musl.tar.gz" ]
 unset FAIL_TARGET
 export TEST_LINKAGE='dynamically linked'
-expect_failure v1.2.3 dynamic 'is not statically linked'
+expect_failure "v$version" dynamic 'is not statically linked'
 [ ! -e "$testdir/dynamic/archon-x86_64-unknown-linux-musl.tar.gz" ]
 unset TEST_LINKAGE
-sh "$script" v1.2.3 "$testdir/success" > "$testdir/log" 2>&1
-[ "$(cat "$testdir/success/VERSION")" = v1.2.3 ]
+sh "$script" "v$version" "$testdir/success" > "$testdir/log" 2>&1
+[ "$(cat "$testdir/success/VERSION")" = "v$version" ]
 [ "$(wc -l < "$testdir/success/SHA256SUMS")" -eq 4 ]
 (cd "$testdir/success" && sha256sum --check --strict SHA256SUMS)
-if sh "$script" v1.2.3 "$testdir/success" > "$testdir/log" 2>&1; then exit 1; fi
+if sh "$script" "v$version" "$testdir/success" > "$testdir/log" 2>&1; then exit 1; fi
 grep -q 'output directory must be empty' "$testdir/log"
 [ "$(git -C "$testdir/repo" worktree list --porcelain | grep -c '^worktree ')" -eq 1 ]
 [ -z "$(ls -A "$XDG_CACHE_HOME/archon-release-local")" ]

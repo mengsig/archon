@@ -52,8 +52,8 @@ timeout_minutes = 90
 /// stage, its ship agent's included.
 fn v101_plan() -> ModelPlan {
     ModelPlan(BTreeMap::from([
-        ("baseline".into(), vec![choice(MODEL, Effort::High)]),
-        ("refactor".into(), vec![choice(MODEL, Effort::High)]),
+        ("baseline".into(), vec![choice(MODEL, Effort::Medium)]),
+        ("refactor".into(), vec![choice(MODEL, Effort::Medium)]),
         ("verify".into(), vec![choice(REVIEW_MODEL, Effort::Medium)]),
         ("review".into(), vec![choice(REVIEW_MODEL, Effort::Medium)]),
         ("ship".into(), vec![choice(MODEL, Effort::Low)]),
@@ -63,7 +63,7 @@ fn v101_plan() -> ModelPlan {
 /// What 1.0.1 stored for a `default-pr-review` item.
 fn v101_retired_plan() -> ModelPlan {
     ModelPlan(BTreeMap::from([
-        ("implement".into(), vec![choice(MODEL, Effort::High)]),
+        ("implement".into(), vec![choice(MODEL, Effort::Medium)]),
         ("review".into(), vec![choice(REVIEW_MODEL, Effort::Medium)]),
         ("ship".into(), vec![choice(MODEL, Effort::Low)]),
     ]))

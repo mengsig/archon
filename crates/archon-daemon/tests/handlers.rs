@@ -145,7 +145,7 @@ async fn enqueue_refuses_models_outside_the_repository_policy() {
         .expect_err("denied");
     assert!(matches!(refused, ArchonError::Policy(_)), "{refused:?}");
 
-    h.repo_config("[models]\nmax_effort = \"medium\"\n");
+    h.repo_config("[models]\nmax_effort = \"low\"\n");
     let refused = h
         .enqueue_with("too much effort", plan())
         .await
@@ -156,7 +156,10 @@ async fn enqueue_refuses_models_outside_the_repository_policy() {
     let mut modest = plan();
     modest
         .0
-        .insert("implement".into(), vec![choice(MODEL, Effort::Medium)]);
+        .insert("implement".into(), vec![choice(MODEL, Effort::Low)]);
+    modest
+        .0
+        .insert("review".into(), vec![choice(MODEL, Effort::Low)]);
     h.enqueue_with("within policy", modest)
         .await
         .expect("allowed");
@@ -187,7 +190,7 @@ async fn enqueue_validates_the_plan_against_the_pipeline() {
     let mut too_many = plan();
     too_many
         .0
-        .insert("implement".into(), vec![choice(MODEL, Effort::High); 2]);
+        .insert("implement".into(), vec![choice(MODEL, Effort::Medium); 2]);
     let mut unknown = plan();
     unknown
         .0
@@ -295,7 +298,7 @@ async fn a_running_item_is_steered_onto_a_new_model_plan() {
         .into_iter()
         .filter_map(|(agent, update)| update.choice.map(|choice| (agent, choice)))
         .collect();
-    assert_eq!(retuned, vec![(implementer, choice(MODEL, Effort::High))]);
+    assert_eq!(retuned, vec![(implementer, choice(MODEL, Effort::Medium))]);
     assert_eq!(h.item(&item.id).await.model_plan, plan());
     assert!(h.backend.cancelled().is_empty(), "nothing was cancelled");
 }

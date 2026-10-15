@@ -778,7 +778,7 @@ async fn update_item_on_a_running_item_is_steered_into_its_run() {
     let mut replaced = plan();
     replaced
         .0
-        .insert("ship".into(), vec![choice(MODEL, Effort::High)]);
+        .insert("ship".into(), vec![choice(MODEL, Effort::Medium)]);
     let update = Request::UpdateItem {
         item: item.id.clone(),
         patch: ItemPatch {
@@ -806,7 +806,7 @@ async fn update_item_on_a_running_item_is_steered_into_its_run() {
     let ship = h.backend.requests().pop().expect("the ship request");
     assert_eq!(
         ship.choice,
-        choice(MODEL, Effort::High),
+        choice(MODEL, Effort::Medium),
         "later stages use the new plan"
     );
 }
@@ -817,7 +817,7 @@ async fn a_waiting_item_takes_what_it_runs_next_and_nothing_that_needs_a_run() {
     let item = h.enqueue("still queued").await;
     let asked = Steer {
         stage: Some("ship".into()),
-        effort: Some(Effort::High),
+        effort: Some(Effort::Medium),
         budget_usd: Some(40.0),
         ..note(NOTE)
     };
@@ -827,7 +827,7 @@ async fn a_waiting_item_takes_what_it_runs_next_and_nothing_that_needs_a_run() {
     assert_eq!(steered.state, QueueState::Queued);
     assert!(steered.brief.contains(NOTE));
     assert_eq!(steered.budget_usd, Some(40.0));
-    let high = choice(MODEL, Effort::High);
+    let high = choice(MODEL, Effort::Medium);
     assert_eq!(steered.model_plan.choices_for("ship"), Some(&[high][..]));
     assert!(h.backend.messages().is_empty() && h.backend.updates().is_empty());
 

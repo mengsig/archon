@@ -37,7 +37,7 @@ fn passing(stage: &StageRun) -> StageOutcome {
 fn scratch_plan() -> ModelPlan {
     let mut plan = ModelPlan::default();
     plan.0
-        .insert("implement".into(), vec![choice(MODEL, Effort::High)]);
+        .insert("implement".into(), vec![choice(MODEL, Effort::Medium)]);
     plan
 }
 

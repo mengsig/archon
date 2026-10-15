@@ -562,7 +562,7 @@ pub fn choice(model: &str, effort: Effort) -> ModelChoice {
 /// One implementer, two different reviewers, one shipper.
 pub fn plan() -> ModelPlan {
     let mut stages = BTreeMap::new();
-    stages.insert("implement".into(), vec![choice(MODEL, Effort::High)]);
+    stages.insert("implement".into(), vec![choice(MODEL, Effort::Medium)]);
     stages.insert(
         "review".into(),
         vec![

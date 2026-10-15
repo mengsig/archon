@@ -47,7 +47,7 @@ fn assert_implementer(h: &Harness, run: &PipelineRun, title: &str) {
     let requests = h.backend.requests();
     assert_eq!(requests.len(), 1, "one implementer");
     let implement = &requests[0];
-    assert_eq!(implement.choice, choice(MODEL, Effort::High));
+    assert_eq!(implement.choice, choice(MODEL, Effort::Medium));
     assert_eq!(implement.workspace, run.workspace);
     assert!(
         run.workspace.join("README.md").exists(),
@@ -88,7 +88,7 @@ fn assert_run_node(h: &Harness, run: &PipelineRun, title: &str) {
     assert_eq!(node.repository.as_deref(), Some(REPO_NAME));
     assert_eq!(node.labels["archon.run"], run.id.as_str());
     assert_eq!(node.labels["archon.item"], run.item.as_str());
-    assert_eq!(node.model, choice(MODEL, Effort::High).model);
+    assert_eq!(node.model, choice(MODEL, Effort::Medium).model);
     assert_eq!(
         node.attach_run, None,
         "the node starts the run's Aether run"
@@ -1052,7 +1052,7 @@ fn long_pipeline_toml() -> String {
 /// One choice per work stage and sixteen reviewers for the long pipeline.
 fn long_plan() -> archon_core::model::ModelPlan {
     let mut stages = std::collections::BTreeMap::new();
-    stages.insert("implement".to_owned(), vec![choice(MODEL, Effort::High)]);
+    stages.insert("implement".to_owned(), vec![choice(MODEL, Effort::Medium)]);
     for n in 2..=15 {
         stages.insert(format!("step-{n:02}"), vec![choice(MODEL, Effort::Low)]);
     }
@@ -1982,7 +1982,7 @@ async fn planned_item(
     pipeline: &str,
     stages: &[&str],
 ) -> archon_core::queue::QueueItem {
-    let planned = |stage: &&str| ((*stage).to_owned(), vec![choice(MODEL, Effort::High)]);
+    let planned = |stage: &&str| ((*stage).to_owned(), vec![choice(MODEL, Effort::Medium)]);
     let plan = archon_core::model::ModelPlan(stages.iter().map(planned).collect());
     let item = h.enqueue_in(pipeline, "a led change", plan).await.unwrap();
     assert_eq!(
@@ -2486,7 +2486,7 @@ async fn a_read_only_delegating_stage_has_nothing_to_integrate() {
     let h = Harness::new().await;
     h.add_pipeline("survey", READ_ONLY_DELEGATING);
     let plan = archon_core::model::ModelPlan(
-        [("implement".to_owned(), vec![choice(MODEL, Effort::High)])].into(),
+        [("implement".to_owned(), vec![choice(MODEL, Effort::Medium)])].into(),
     );
     h.enqueue_in("survey", "survey the code", plan)
         .await

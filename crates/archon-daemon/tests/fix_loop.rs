@@ -60,7 +60,7 @@ async fn harness() -> Harness {
 fn plan() -> ModelPlan {
     let mut plan = ModelPlan::default();
     let stages = [
-        ("implement", choice(MODEL, Effort::High)),
+        ("implement", choice(MODEL, Effort::Medium)),
         ("review", choice(REVIEW_MODEL, Effort::Medium)),
     ];
     for (stage, choice) in stages {
@@ -602,7 +602,7 @@ async fn a_kept_agent_is_resumed_only_on_the_choice_it_runs_now() {
         if back_to_high {
             let higher = Steer {
                 stage: Some("implement".into()),
-                effort: Some(Effort::High),
+                effort: Some(Effort::Medium),
                 ..Steer::default()
             };
             steer(&h, &item, higher).await;
@@ -611,7 +611,7 @@ async fn a_kept_agent_is_resumed_only_on_the_choice_it_runs_now() {
 
         let again = sent_back(&h).await;
         let planned = if back_to_high {
-            choice(MODEL, Effort::High)
+            choice(MODEL, Effort::Medium)
         } else {
             low
         };
@@ -708,7 +708,7 @@ async fn a_model_steered_for_the_stage_gives_the_fix_to_a_fresh_agent() {
     let fix = sent_back(&h).await;
     assert_ne!(agent(&fix), implementer, "a fresh agent on the new model");
     assert!(fix.aether_task.is_some(), "spawned, not resumed");
-    assert_eq!(fix.choice, choice(REVIEW_MODEL, Effort::High));
+    assert_eq!(fix.choice, choice(REVIEW_MODEL, Effort::Medium));
     let request = h.backend.requests().pop().expect("the fix's request");
     assert_eq!(request.choice, fix.choice);
     assert!(

@@ -149,7 +149,8 @@ fn claim_orphan_items(
     Ok(())
 }
 
-/// The names of the registered repositories with an item not yet settled.
+/// The names of the registered repositories with an item not yet settled,
+/// or settled with an agent that may still run.
 fn live_repositories(store: &Store) -> Result<HashSet<String>, ArchonError> {
     let names: std::collections::HashMap<_, _> = store
         .repos()?
@@ -162,7 +163,7 @@ fn live_repositories(store: &Store) -> Result<HashSet<String>, ArchonError> {
     };
     let mut live = HashSet::new();
     for item in store.items(&query)? {
-        if item.state.is_terminal() {
+        if crate::build_cache::is_idle(store, &item.id)? {
             continue;
         }
         if let Some(name) = item.repo.as_ref().and_then(|id| names.get(id)) {

@@ -279,6 +279,14 @@ async fn a_build_directory_stays_while_a_cancelled_item_s_agent_may_still_run() 
     let report = gc(&h, None).await;
     assert!(report.item_caches.is_empty(), "{report:?}");
     assert!(dir.is_dir());
+
+    age_cache(&h, Duration::from_secs(3600));
+    let report = gc(&h, Some(60)).await;
+    assert!(report.caches.is_empty(), "{report:?}");
+    assert!(
+        dir.is_dir(),
+        "an idle repository cache keeps a live agent's"
+    );
 }
 
 #[tokio::test]

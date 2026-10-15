@@ -1,7 +1,5 @@
 //! `archon daemon run|start|stop|status` and `archon mcp`.
 
-use std::fs::{File, OpenOptions};
-use std::io::Write as _;
 use std::os::unix::process::CommandExt as _;
 use std::path::Path;
 use std::process::{Child, Command, ExitCode, Stdio};
@@ -26,8 +24,6 @@ const STOP_POLL: Duration = Duration::from_millis(100);
 const DETACH_WAIT: Duration = Duration::from_secs(8);
 /// `daemon status` exit code when nothing is running (as `systemctl status`).
 const NOT_RUNNING: u8 = 3;
-/// Past this size a start moves the startup log to `archond.log.1` first.
-const LOG_ROTATE_BYTES: u64 = 16 * 1024 * 1024;
 
 pub async fn run(command: DaemonCommand, json: bool) -> anyhow::Result<ExitCode> {
     match command {
@@ -110,14 +106,14 @@ async fn detach(json: bool) -> anyhow::Result<ExitCode> {
             .parent()
             .context("the socket path has no directory")?,
     )?;
-    let log = open_startup_log(&log_path, LOG_ROTATE_BYTES)?;
-    let stderr = log
-        .try_clone()
-        .with_context(|| format!("sharing {}", log_path.display()))?;
+    // Validate before detaching: a child with invalid config has no terminal
+    // on which to explain why it could not initialize its log.
+    Config::load_default()?;
     let mut child = daemon_command(&socket)?
         .stdin(Stdio::null())
-        .stdout(log)
-        .stderr(stderr)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .env(crate::daemon_log::DETACHED_ENV, "1")
         // Its own process group: a Ctrl-C in the operator's terminal must
         // not reach the daemon.
         .process_group(0)
@@ -138,44 +134,6 @@ async fn detach(json: bool) -> anyhow::Result<ExitCode> {
         &text,
     )?;
     Ok(ExitCode::SUCCESS)
-}
-
-/// The startup log, opened to append after a line marking this start. A log
-/// past `rotate_past` bytes first moves to `<log>.1`, replacing the one there.
-fn open_startup_log(path: &Path, rotate_past: u64) -> anyhow::Result<File> {
-    assert!(
-        path.extension().is_some_and(|ext| ext == "log"),
-        "the rotated log is named after a .log path"
-    );
-    assert!(rotate_past > 0, "a zero cap would rotate on every start");
-    rotate_if_past(path, rotate_past)?;
-    let mut log = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .with_context(|| format!("opening {}", path.display()))?;
-    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    writeln!(log, "{} at {now} ---", archon_core::paths::STARTUP_LOG_MARK)
-        .with_context(|| format!("writing {}", path.display()))?;
-    Ok(log)
-}
-
-fn rotate_if_past(path: &Path, rotate_past: u64) -> anyhow::Result<()> {
-    let size = match std::fs::metadata(path) {
-        Ok(meta) => meta.len(),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
-    };
-    if size <= rotate_past {
-        return Ok(());
-    }
-    let older = path.with_extension("log.1");
-    assert_ne!(older, path, "rotation keeps the old log apart");
-    match std::fs::rename(path, &older) {
-        // Another start rotated it first.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        moved => moved.with_context(|| format!("moving {} aside", path.display())),
-    }
 }
 
 /// `archon daemon run` in the data directory, so the daemon never holds the
@@ -311,35 +269,4 @@ pub async fn mcp() -> anyhow::Result<ExitCode> {
     let socket = archon_client::default_socket();
     archon_mcp::serve_stdio(&socket, &archon_bin()?).await?;
     Ok(ExitCode::SUCCESS)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_start_appends_to_the_startup_log_and_moves_a_large_one_aside() {
-        let dir = tempfile::tempdir().unwrap();
-        let log = dir.path().join("archond.log");
-        std::fs::write(&log, "the first session\n").unwrap();
-
-        let mut file = open_startup_log(&log, 96).unwrap();
-        writeln!(file, "the second session, long enough to pass the cap").unwrap();
-        drop(file);
-        let both = std::fs::read_to_string(&log).unwrap();
-        assert!(
-            both.starts_with("the first session\n--- archond starting at "),
-            "{both}"
-        );
-        assert!(both.len() > 96, "the log is past its cap now: {both}");
-
-        drop(open_startup_log(&log, 96).unwrap());
-        let older = std::fs::read_to_string(dir.path().join("archond.log.1")).unwrap();
-        assert_eq!(older, both, "the large log moved aside whole");
-        let fresh = std::fs::read_to_string(&log).unwrap();
-        assert!(
-            fresh.starts_with(archon_core::paths::STARTUP_LOG_MARK) && fresh.lines().count() == 1,
-            "the third start begins a new log: {fresh}"
-        );
-    }
 }

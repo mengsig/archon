@@ -1,0 +1,60 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Archon benchmark</title><style>body{font:15px/1.45 system-ui,sans-serif;max-width:1100px;margin:2em auto;padding:0 1em;color:#222}.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(520px,1fr));gap:1.5em}figure{margin:0}figcaption{font-weight:600;margin-bottom:.3em}svg text{font-size:12px}table{border-collapse:collapse;width:100%;margin:1em 0}th,td{text-align:left;padding:.5em;border-bottom:1px solid #ddd}pre{white-space:pre-wrap;background:#f6f6f6;padding:1em;border-radius:4px;font-size:13px}</style></head><body><h1>Archon benchmark</h1><p>Run <code>20261015T064316Z</code>, effort <code>high</code>, 1 trials per task and arm.</p><div class="charts"><figure><figcaption>Success rate (%)</figcaption><svg role="img" aria-label="Success rate" width="630" height="60" viewBox="0 0 630 60"><text x="0" y="18">archon</text><rect x="80" y="4" width="420.0" height="18" fill="#1f5fa8"><title>claude-code/claude-haiku-5-5</title></rect><text x="506.0" y="18">100 (n=4)</text><text x="0" y="44">aether</text><rect x="80" y="30" width="420.0" height="18" fill="#d9822b"><title>claude-code/claude-haiku-5-5</title></rect><text x="506.0" y="44">100 (n=4)</text></svg></figure><figure><figcaption>Wall time (s)</figcaption><svg role="img" aria-label="Wall time" width="630" height="60" viewBox="0 0 630 60"><text x="0" y="18">archon</text><rect x="80" y="4" width="199.8" height="18" fill="#1f5fa8"><title>claude-code/claude-haiku-5-5</title></rect><line x1="80.0" x2="500.0" y1="13" y2="13" stroke="#222"/><text x="506.0" y="18">289 ± 319 (n=4)</text><text x="0" y="44">aether</text><rect x="80" y="30" width="56.3" height="18" fill="#d9822b"><title>claude-code/claude-haiku-5-5</title></rect><line x1="90.0" x2="182.5" y1="39" y2="39" stroke="#222"/><text x="188.5" y="44">81.53 ± 66.97 (n=4)</text></svg></figure><figure><figcaption>Cost ($)</figcaption><svg role="img" aria-label="Cost" width="630" height="60" viewBox="0 0 630 60"><text x="0" y="18">archon</text><rect x="80" y="4" width="199.9" height="18" fill="#1f5fa8"><title>claude-code/claude-haiku-5-5</title></rect><line x1="80.0" x2="500.0" y1="13" y2="13" stroke="#222"/><text x="506.0" y="18">≥ 0.07 ± 0.07 (n=4)</text><text x="0" y="44">aether</text><rect x="80" y="30" width="35.9" height="18" fill="#d9822b"><title>claude-code/claude-haiku-5-5</title></rect><line x1="101.2" x2="130.5" y1="39" y2="39" stroke="#222"/><text x="136.5" y="44">≥ 0.01 ± 0.00 (n=4)</text></svg></figure><figure><figcaption>Total tokens (input + output) (tok)</figcaption><svg role="img" aria-label="Total tokens (input + output)" width="630" height="60" viewBox="0 0 630 60"><text x="0" y="18">archon</text><rect x="80" y="4" width="201.3" height="18" fill="#1f5fa8"><title>claude-code/claude-haiku-5-5</title></rect><line x1="80.0" x2="500.0" y1="13" y2="13" stroke="#222"/><text x="506.0" y="18">1705019 ± 1852670 (n=4)</text><text x="0" y="44">aether</text><rect x="80" y="30" width="35.4" height="18" fill="#d9822b"><title>claude-code/claude-haiku-5-5</title></rect><line x1="96.5" x2="134.3" y1="39" y2="39" stroke="#222"/><text x="140.3" y="44">299576 ± 160049 (n=4)</text></svg></figure><figure><figcaption>Operator-visible messages (msgs)</figcaption><svg role="img" aria-label="Operator-visible messages" width="630" height="60" viewBox="0 0 630 60"><text x="0" y="18">archon</text><rect x="80" y="4" width="107.1" height="18" fill="#1f5fa8"><title>claude-code/claude-haiku-5-5</title></rect><line x1="143.4" x2="230.8" y1="13" y2="13" stroke="#222"/><text x="236.8" y="18">2.00 ± 0.82 (n=4)</text><text x="0" y="44">aether</text><rect x="80" y="30" width="254.3" height="18" fill="#d9822b"><title>claude-code/claude-haiku-5-5</title></rect><line x1="168.6" x2="500.0" y1="39" y2="39" stroke="#222"/><text x="506.0" y="44">4.75 ± 3.10 (n=4)</text></svg></figure></div><h2>Per pipeline</h2><p>Archon whole-trial observations: each trial appears once per table. Mixed buckets retain all selected and attempted pipelines or selected review levels. Pass rate is the trial grader verdict; cost and wall time cover the whole trial, including orchestration. These are not per-item outcomes or causal comparisons. Review levels are captured policy, not proof of completed review; historical policy changes are unavailable. Unknown means missing metadata; no work means a captured empty queue. Infrastructure failures are excluded from metrics.</p><table><thead><tr><th>Bucket</th><th>Trials</th><th>Pass rate</th><th>Wall s</th><th>Cost $</th><th>Infra</th><th>Timeouts</th></tr></thead><tbody><tr><td>direct</td><td>3</td><td>3/3 (100%)</td><td>337 ± 373 (n=3)</td><td>≥ 0.09 ± 0.08 (n=3)</td><td>0</td><td>0</td></tr><tr><td>no work (empty queue)</td><td>1</td><td>1/1 (100%)</td><td>146 (n=1)</td><td>0.01 (n=1)</td><td>0</td><td>0</td></tr></tbody></table><h2>Per review level</h2><p>Archon whole-trial observations: each trial appears once per table. Mixed buckets retain all selected and attempted pipelines or selected review levels. Pass rate is the trial grader verdict; cost and wall time cover the whole trial, including orchestration. These are not per-item outcomes or causal comparisons. Review levels are captured policy, not proof of completed review; historical policy changes are unavailable. Unknown means missing metadata; no work means a captured empty queue. Infrastructure failures are excluded from metrics.</p><table><thead><tr><th>Bucket</th><th>Trials</th><th>Pass rate</th><th>Wall s</th><th>Cost $</th><th>Infra</th><th>Timeouts</th></tr></thead><tbody><tr><td>no work (empty queue)</td><td>1</td><td>1/1 (100%)</td><td>146 (n=1)</td><td>0.01 (n=1)</td><td>0</td><td>0</td></tr><tr><td>standard</td><td>2</td><td>2/2 (100%)</td><td>125 ± 85 (n=2)</td><td>≥ 0.04 ± 0.02 (n=2)</td><td>0</td><td>0</td></tr><tr><td>strict</td><td>1</td><td>1/1 (100%)</td><td>762 (n=1)</td><td>≥ 0.17 (n=1)</td><td>0</td><td>0</td></tr></tbody></table><h2>Full summary</h2><pre># Archon benchmark
+
+- Run `20261015T064316Z`: 2026-10-15T06:43:16.885499055+00:00 → 2026-10-15T07:12:16.337519915+00:00
+- Archon commit: `1751ed72933ad137025605726f0c6dc9eb5ae0d2`
+- Effort: `high`; trials per task and arm: 1; parallel: 1
+- Model `aether`: `claude-code/claude-haiku-5-5`
+- Model `archon`: `claude-code/claude-haiku-5-5`
+- Version `aetherd`: `1.0.6`
+- Version `archon`: `archon 1.2.2`
+- Trials: 8 planned, 8 completed, 0 skipped; spent ≥ $0.32 of $7.00
+
+## Per arm
+
+| Arm | Model | Trials | Success | pass@1 | pass@1 | Score | Wall s | Input tok | Output tok | Cost $ | Operator msgs | Infra | Timeouts |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| archon | `claude-code/claude-haiku-5-5` | 4 | 4/4 (100%) | 100% | 100% | 1.00 ± 0.00 | 289 ± 319 | 1657702 ± 1851627 | 47316 ± 62170 | ≥ 0.07 ± 0.07 | 2.0 ± 0.8 | 0 | 0 |
+| aether | `claude-code/claude-haiku-5-5` | 4 | 4/4 (100%) | 100% | 100% | 1.00 ± 0.00 | 82 ± 67 | 290248 ± 159968 | 9328 ± 5098 | ≥ 0.01 ± 0.00 | 4.8 ± 3.1 | 0 | 0 |
+
+## Per task
+
+Each cell: passes/trials · wall s · cost $ · operator msgs (mean ± stdev).
+
+| Task | archon | aether |
+|---|---|---|
+| fix-off-by-one | 1/1 · 65 ± 0 · ≥ 0.02 ± 0.00 · 2.0 ± 0.0 | 1/1 · 25 ± 0 · 0.01 ± 0.00 · 3.0 ± 0.0 |
+| quality-ledger-transfer | 1/1 · 762 ± 0 · ≥ 0.17 ± 0.00 · 2.0 ± 0.0 | 1/1 · 80 ± 0 · 0.02 ± 0.00 · 9.0 ± 0.0 |
+| quality-retry-budget | 1/1 · 185 ± 0 · ≥ 0.06 ± 0.00 · 3.0 ± 0.0 | 1/1 · 176 ± 0 · ≥ 0.01 ± 0.00 · 5.0 ± 0.0 |
+| review-seeded-bug | 1/1 · 146 ± 0 · 0.01 ± 0.00 · 1.0 ± 0.0 | 1/1 · 45 ± 0 · 0.01 ± 0.00 · 2.0 ± 0.0 |
+
+## Per pipeline
+
+Archon whole-trial observations: each trial appears once per table. Mixed buckets retain all selected and attempted pipelines or selected review levels. Pass rate is the trial grader verdict; cost and wall time cover the whole trial, including orchestration. These are not per-item outcomes or causal comparisons. Review levels are captured policy, not proof of completed review; historical policy changes are unavailable. Unknown means missing metadata; no work means a captured empty queue. Infrastructure failures are excluded from metrics.
+
+| Bucket | Trials | Pass rate | Wall s | Cost $ | Infra | Timeouts |
+|---|---:|---:|---:|---:|---:|---:|
+| direct | 3 | 3/3 (100%) | 337 ± 373 | ≥ 0.09 ± 0.08 | 0 | 0 |
+| no work (empty queue) | 1 | 1/1 (100%) | 146 ± 0 | 0.01 ± 0.00 | 0 | 0 |
+
+## Per review level
+
+Archon whole-trial observations: each trial appears once per table. Mixed buckets retain all selected and attempted pipelines or selected review levels. Pass rate is the trial grader verdict; cost and wall time cover the whole trial, including orchestration. These are not per-item outcomes or causal comparisons. Review levels are captured policy, not proof of completed review; historical policy changes are unavailable. Unknown means missing metadata; no work means a captured empty queue. Infrastructure failures are excluded from metrics.
+
+| Bucket | Trials | Pass rate | Wall s | Cost $ | Infra | Timeouts |
+|---|---:|---:|---:|---:|---:|---:|
+| no work (empty queue) | 1 | 1/1 (100%) | 146 ± 0 | 0.01 ± 0.00 | 0 | 0 |
+| standard | 2 | 2/2 (100%) | 125 ± 85 | ≥ 0.04 ± 0.02 | 0 | 0 |
+| strict | 1 | 1/1 (100%) | 762 ± 0 | ≥ 0.17 ± 0.00 | 0 | 0 |
+
+## Method
+
+- Every arm gets the same task prompt, effort and time limit, and the same model where the harness allows; `codex` runs its own model. Every arm runs with its tool permission prompts bypassed.
+- `claude` keeps Claude Code's built-in subagents (the Task tool); the `aether` arm is a single leaf agent without delegation.
+- Each trial starts from a fresh copy of the fixtures in an unguessably named directory outside the Archon checkout, with a one-commit git history. Hidden tests, reference solutions and rubrics are copied in only at grade time, into a separate copy the agent never sees, after the agent and every process it started have stopped. Agent processes do not inherit environment variables pointing at the checkout. There is no OS sandbox: an agent that searched the whole home directory could still find the checkout.
+- Success is the hidden grader's verdict. Test graders restore the visible tests from the task, not from the agent's repository, and require the runner's own summary to report no failures and a minimum number of passing tests. Rubric graders need related facts close together and cap the answer length.
+- A failed trial with a harness error (the arm could not run cleanly: a provider limit, a crash, a grading failure) is an infrastructure failure. It is left out of pass rates and every metric, counted under Infra and listed with its error.
+- Wall time runs from handing over the prompt until the arm finished; Archon's daemon start-up (recorded as `setup_secs`) and the quiet window used to detect that Archon finished are excluded.
+- Input tokens include cache reads and writes. Cost is billed dollars when reported, else Aether's estimate or `--price` list prices. `(n=…)` marks a metric only that many trials reported. `≥` marks a cost Aether reported as incomplete (`cost_gap`); the true cost is at least that. `*` marks a cost that includes one Aether reported as incomplete together with estimates; it is not a bound.
+- Operator messages are what the operator had to read: one final result for `claude`/`codex`, the assistant messages of the Aether agent, and the default-visible chat lines for Archon.
+- Values are mean ± sample standard deviation over graded trials. pass@k uses the unbiased estimator per task, averaged over tasks, with k the fewest graded trials any (task, arm) cell has.
+</pre></body></html>

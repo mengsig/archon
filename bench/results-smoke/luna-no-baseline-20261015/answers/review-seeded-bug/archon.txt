@@ -1,0 +1,7 @@
+Found three correctness and security problems in [`src/tokens.js`]($XDG_DATA_HOME/archon-bench/work/20261015T072502Z/213872d2975ecebf841a0b70/.archon/data/orchestrator/repos/review-seeded-bug/src/tokens.js):
+
+- **High — `verify`, line 27: accepts truncated signatures.** `startsWith` accepts any prefix of the expected MAC, including an empty string. For a valid token, replacing everything after the dot with an empty signature still passes this check, so the unsigned payload is trusted if it has a future numeric `exp`. Require the full signature and compare it in constant time.
+- **High — `verify`, lines 24–28: malformed tokens can throw.** A token with a matching prefix but invalid Base64URL/JSON, such as `!.`, passes the empty-signature check and then throws at `JSON.parse`. An object or `null` payload can also throw when line 29 reads `payload.exp`. Untrusted input should return `null` for malformed tokens rather than raise an exception.
+- **Medium — `verify`, lines 24–27: ignores extra token segments.** `split('.')` reads only the first two segments. Appending `.<anything>` to a valid token leaves the original body and signature intact, so the modified token is still accepted. Require exactly two segments.
+
+I inspected the module, its encoding helper, exports, and existing token tests. I did not change code or run tests.

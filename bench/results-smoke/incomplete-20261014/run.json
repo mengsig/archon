@@ -1,0 +1,36 @@
+{
+  "stamp": "20261014T121928Z",
+  "started_at": "2026-10-14T12:19:28.012166533Z",
+  "finished_at": null,
+  "archon_commit": "3da3e125b810b8acf3076bbf57d536c174a01b07",
+  "versions": {
+    "aetherd": "unreachable: io: connecting to aetherd at $XDG_DATA_HOME/archon-bench/qg7h/run/aetherd.sock: No such file or directory (os error 2)",
+    "archon": "archon 1.1.0"
+  },
+  "models": {
+    "aether": "claude-code/claude-haiku-5-5",
+    "archon": "claude-code/claude-haiku-5-5"
+  },
+  "effort": "high",
+  "arms": [
+    "archon",
+    "aether"
+  ],
+  "tasks": [
+    "fix-off-by-one",
+    "quality-ledger-transfer",
+    "quality-retry-budget",
+    "review-seeded-bug"
+  ],
+  "trials": 1,
+  "parallel": 1,
+  "timeout_factor": 1.0,
+  "max_usd": 0.7,
+  "max_trials": 8,
+  "planned": 8,
+  "completed": 0,
+  "skipped": 0,
+  "spent_usd": 0.0,
+  "unpriced_trials": 0,
+  "stopped_reason": null
+}

@@ -1,0 +1,37 @@
+{
+  "stamp": "20261015T064316Z",
+  "started_at": "2026-10-15T06:43:16.885499055Z",
+  "finished_at": "2026-10-15T07:12:16.337519915Z",
+  "archon_commit": "1751ed72933ad137025605726f0c6dc9eb5ae0d2",
+  "versions": {
+    "aetherd": "1.0.6",
+    "archon": "archon 1.2.2"
+  },
+  "models": {
+    "aether": "claude-code/claude-haiku-5-5",
+    "archon": "claude-code/claude-haiku-5-5"
+  },
+  "effort": "high",
+  "arms": [
+    "archon",
+    "aether"
+  ],
+  "tasks": [
+    "fix-off-by-one",
+    "quality-ledger-transfer",
+    "quality-retry-budget",
+    "review-seeded-bug"
+  ],
+  "trials": 1,
+  "parallel": 1,
+  "timeout_factor": 1.0,
+  "max_usd": 7.0,
+  "max_trials": 8,
+  "planned": 8,
+  "completed": 8,
+  "skipped": 0,
+  "spent_usd": 0.317709505,
+  "spent_bound": "floor",
+  "unpriced_trials": 0,
+  "stopped_reason": null
+}

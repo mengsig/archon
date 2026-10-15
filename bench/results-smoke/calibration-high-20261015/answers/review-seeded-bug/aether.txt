@@ -1,0 +1,55 @@
+Reviewed src/tokens.js (plus encoding.js, index.js, tests, package.json). No code changed; repo still clean at b2692ff. Existing tests pass (4/4), but they miss the main bypass. Critical: verify() accepts any token whose signature is empty ("<base64url(payload)>."), so anyone can forge any claims with no secret (confirmed: forged {user:'root'} verifies). High: verify() checks `expected.startsWith(signature)` instead of a full constant-time compare, so truncated signatures verify (1-char signature accepted) and the prefix check leaks timing. High (conditional on misconfig): verify() never validates the secret, so an empty secret accepts HMAC('') tokens (confirmed). Medium: verify() throws (JSON.parse SyntaxError, or TypeError on body "null") on malformed input instead of returning null. Medium: the tests don't cover the empty-signature or truncated-signature cases, which is why this shipped. Low: extra dot segments are silently accepted; sign() has no ttl cap and ttlSeconds=Infinity yields a token that never verifies, silently; verify() honours a caller-supplied `now`, so forwarding request input there accepts expired tokens. Informational: no revocation, no kid for key rotation. Probe script at /tmp/tokens-probe/probe.js (outside repo).
+
+**Do not ship `src/tokens.js` as it is.** The main bug lets anyone forge a token with no secret. The existing tests pass, but they don't cover it. I changed no code. I checked each claim below by running the module with a probe script in `/tmp/tokens-probe/probe.js`, outside the repo.
+
+## Findings
+
+**1. Critical: `verify()` accepts an empty signature, so any payload can be forged.**
+- Input: `base64url(JSON.stringify({user:'root', exp: <future>})) + '.'`
+- `token.split('.')` gives `signature === ''`. The check `signature === undefined` misses it, and `expected.startsWith('')` is always true.
+- Confirmed: this returns `{user:'root', ...}` with no secret.
+
+**2. High: `verify()` compares signatures by prefix, not in full and not in constant time.**
+- Line 27: `if (!expected.startsWith(signature)) return null;`
+- Any prefix of the real MAC verifies. Confirmed: a 1-character signature was accepted for a valid token. Even after fixing #1, an attacker can guess the MAC one character at a time.
+- The prefix comparison also short-circuits on the first mismatched character, which leaks timing. It should be `crypto.timingSafeEqual` on equal-length buffers.
+
+**3. High (conditional on misconfiguration): `verify()` never validates the secret.**
+- `sign()` rejects short secrets, but `verify()` doesn't check at all.
+- Confirmed: `verify(forgedWithEmptyKeyHmac, '')` accepts a token signed with an empty key. If `SESSION_SECRET` is ever empty or unset at verify time, every token is forgeable.
+- Fix: apply the same length check to `verify()`, or have both go through one helper.
+
+**4. Medium: `verify()` throws instead of returning `null` on malformed input.**
+- Line 28: `JSON.parse(fromBase64Url(body))` throws `SyntaxError` on bad JSON. Confirmed with body `{oops`.
+- Body `null` passes the signature step (with an empty signature) and then throws `TypeError` at `payload.exp` (line 29). Confirmed.
+- The documented contract is "the payload... or null otherwise". Callers that don't wrap `verify()` in try/catch will crash.
+
+**5. Medium: the tests missed the bypass.**
+- The "tampered payloads" test reuses the original signature with a changed body, so it only tests body/signature mismatch.
+- No test covers an empty signature, a truncated signature, an empty secret in `verify()`, or malformed bodies.
+- All 4 existing tests pass (`npm test`), which gives false confidence.
+
+**6. Low: extra dot-separated segments are silently accepted.**
+- Confirmed: `validToken + '.garbage'` verifies, because `split('.')` ignores everything after the second part.
+- Should reject tokens that don't have exactly two parts.
+
+**7. Low: `sign()` has no TTL bound, and non-finite TTLs fail silently.**
+- `ttlSeconds: Infinity` gives `exp: Infinity`, which `JSON.stringify` turns into `null`. The token is produced but never verifies, and nothing tells the caller.
+- Also, nothing caps `ttlSeconds`.
+
+**8. Low: `verify()` accepts a caller-supplied `now`.**
+- Confirmed: a token with `exp: 2000` verifies at `now: 1500`, which is in the past relative to real time, if `now` is accepted from request input.
+- Fine for tests. It is risky if anyone forwards user input into the `now` option.
+
+**9. Informational (design, not a bug):**
+- No revocation (logout doesn't invalidate a token until expiry).
+- No `kid` or key version, so rotating the secret invalidates every session at once.
+- `iat` is never checked, so a future `iat` is accepted.
+
+## Suggested fixes (not applied)
+- In `verify()`: reject tokens unless they have exactly two non-empty parts. Validate the secret the same way `sign()` does. Compare `expected` and `signature` with `crypto.timingSafeEqual` after a length check.
+- Wrap decode and parse in a try/catch that returns `null`. Check that the payload is a non-null object with a numeric `exp`.
+- Add tests for: empty signature, truncated signature, extra segment, empty secret in `verify()`, body `null`, and malformed JSON.
+- Consider a bounded `ttlSeconds` and an error for non-finite values.
+
+The repo is unchanged (`git status` clean, HEAD `b2692ff`).

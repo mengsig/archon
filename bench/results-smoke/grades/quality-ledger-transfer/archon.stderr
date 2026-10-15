@@ -1,5 +1,5 @@
 ----------------------------------------------------------------------
-Ran 10 tests in 0.009s
+Ran 10 tests in 0.007s
 
 OK
 expect_tests: 10 unittest tests passed (minimum 10)

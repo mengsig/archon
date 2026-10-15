@@ -1,18 +1,18 @@
 {
   "manifest": {
-    "stamp": "20261014T121928Z",
-    "started_at": "2026-10-14T12:19:28.012166533Z",
-    "finished_at": null,
-    "archon_commit": "3da3e125b810b8acf3076bbf57d536c174a01b07",
+    "stamp": "20261015T071250Z",
+    "started_at": "2026-10-15T07:12:50.985675842Z",
+    "finished_at": "2026-10-15T07:24:22.591843967Z",
+    "archon_commit": "17eeadcba1bbd56e40659527e1b4afa2417f6bf8",
     "versions": {
-      "aetherd": "unreachable: io: connecting to aetherd at $XDG_DATA_HOME/archon-bench/qg7h/run/aetherd.sock: No such file or directory (os error 2)",
-      "archon": "archon 1.1.0"
+      "aetherd": "1.0.6",
+      "archon": "archon 1.2.2"
     },
     "models": {
       "aether": "claude-code/claude-haiku-5-5",
       "archon": "claude-code/claude-haiku-5-5"
     },
-    "effort": "high",
+    "effort": "medium",
     "arms": [
       "archon",
       "aether"
@@ -26,12 +26,13 @@
     "trials": 1,
     "parallel": 1,
     "timeout_factor": 1.0,
-    "max_usd": 0.7,
+    "max_usd": 7.0,
     "max_trials": 8,
     "planned": 8,
-    "completed": 0,
+    "completed": 8,
     "skipped": 0,
-    "spent_usd": 0.0,
+    "spent_usd": 0.181455335,
+    "spent_bound": "floor",
     "unpriced_trials": 0,
     "stopped_reason": null
   },
@@ -40,83 +41,89 @@
     {
       "arm": "archon",
       "model": "claude-code/claude-haiku-5-5",
-      "trials": 2,
-      "successes": 2,
+      "trials": 4,
+      "successes": 4,
       "infra": 0,
       "timeouts": 0,
+      "timeout_graded": 0,
+      "timeout_graded_passes": 0,
       "success_rate": 1.0,
       "pass_at_1": 1.0,
       "pass_at_k": 1.0,
       "score": {
-        "n": 2,
+        "n": 4,
         "mean": 1.0,
         "stdev": 0.0
       },
       "wall_secs": {
-        "n": 2,
-        "mean": 208.031185175,
-        "stdev": 166.7119889830335
+        "n": 4,
+        "mean": 92.60496135550001,
+        "stdev": 53.208484600151564
       },
       "input_tokens": {
-        "n": 2,
-        "mean": 1696867.0,
-        "stdev": 1352227.16772072
+        "n": 4,
+        "mean": 861822.5,
+        "stdev": 612088.483584141
       },
       "output_tokens": {
-        "n": 2,
-        "mean": 41233.5,
-        "stdev": 43783.34478428984
+        "n": 4,
+        "mean": 18091.0,
+        "stdev": 15414.833462177483
       },
       "cost_usd": {
-        "n": 2,
-        "mean": 0.077084685,
-        "stdev": 0.06273191854498354
+        "n": 4,
+        "mean": 0.035955896249999994,
+        "stdev": 0.02850523649782889
       },
+      "cost_bound": "floor",
       "operator_messages": {
-        "n": 2,
-        "mean": 2.0,
-        "stdev": 0.0
+        "n": 4,
+        "mean": 1.75,
+        "stdev": 0.5
       }
     },
     {
       "arm": "aether",
       "model": "claude-code/claude-haiku-5-5",
-      "trials": 1,
-      "successes": 1,
+      "trials": 4,
+      "successes": 4,
       "infra": 0,
       "timeouts": 0,
+      "timeout_graded": 0,
+      "timeout_graded_passes": 0,
       "success_rate": 1.0,
       "pass_at_1": 1.0,
       "pass_at_k": 1.0,
       "score": {
-        "n": 1,
+        "n": 4,
         "mean": 1.0,
         "stdev": 0.0
       },
       "wall_secs": {
-        "n": 1,
-        "mean": 35.460923348,
-        "stdev": 0.0
+        "n": 4,
+        "mean": 34.76958795175,
+        "stdev": 10.6634589842129
       },
       "input_tokens": {
-        "n": 1,
-        "mean": 199635.0,
-        "stdev": 0.0
+        "n": 4,
+        "mean": 212250.0,
+        "stdev": 81475.11193405424
       },
       "output_tokens": {
-        "n": 1,
-        "mean": 3272.0,
-        "stdev": 0.0
+        "n": 4,
+        "mean": 5928.5,
+        "stdev": 2589.1015816301992
       },
       "cost_usd": {
-        "n": 1,
-        "mean": 0.00878317,
-        "stdev": 0.0
+        "n": 4,
+        "mean": 0.009407937500000001,
+        "stdev": 0.0024312138257994364
       },
+      "cost_bound": "exact",
       "operator_messages": {
-        "n": 1,
-        "mean": 4.0,
-        "stdev": 0.0
+        "n": 4,
+        "mean": 3.5,
+        "stdev": 1.0
       }
     }
   ],
@@ -129,6 +136,8 @@
         "successes": 1,
         "infra": 0,
         "timeouts": 0,
+        "timeout_graded": 0,
+        "timeout_graded_passes": 0,
         "success_rate": 1.0,
         "pass_at_1": 1.0,
         "pass_at_k": 1.0,
@@ -139,24 +148,25 @@
         },
         "wall_secs": {
           "n": 1,
-          "mean": 90.14800726,
+          "mean": 65.086212513,
           "stdev": 0.0
         },
         "input_tokens": {
           "n": 1,
-          "mean": 740698.0,
+          "mean": 592446.0,
           "stdev": 0.0
         },
         "output_tokens": {
           "n": 1,
-          "mean": 10274.0,
+          "mean": 8635.0,
           "stdev": 0.0
         },
         "cost_usd": {
           "n": 1,
-          "mean": 0.03272652,
+          "mean": 0.023032075000000003,
           "stdev": 0.0
         },
+        "cost_bound": "floor",
         "operator_messages": {
           "n": 1,
           "mean": 2.0,
@@ -170,6 +180,8 @@
         "successes": 1,
         "infra": 0,
         "timeouts": 0,
+        "timeout_graded": 0,
+        "timeout_graded_passes": 0,
         "success_rate": 1.0,
         "pass_at_1": 1.0,
         "pass_at_k": 1.0,
@@ -180,24 +192,25 @@
         },
         "wall_secs": {
           "n": 1,
-          "mean": 35.460923348,
+          "mean": 21.012284067,
           "stdev": 0.0
         },
         "input_tokens": {
           "n": 1,
-          "mean": 199635.0,
+          "mean": 175605.0,
           "stdev": 0.0
         },
         "output_tokens": {
           "n": 1,
-          "mean": 3272.0,
+          "mean": 2325.0,
           "stdev": 0.0
         },
         "cost_usd": {
           "n": 1,
-          "mean": 0.00878317,
+          "mean": 0.006496180000000001,
           "stdev": 0.0
         },
+        "cost_bound": "exact",
         "operator_messages": {
           "n": 1,
           "mean": 4.0,
@@ -213,6 +226,8 @@
         "successes": 1,
         "infra": 0,
         "timeouts": 0,
+        "timeout_graded": 0,
+        "timeout_graded_passes": 0,
         "success_rate": 1.0,
         "pass_at_1": 1.0,
         "pass_at_k": 1.0,
@@ -223,24 +238,249 @@
         },
         "wall_secs": {
           "n": 1,
-          "mean": 325.91436309,
+          "mean": 155.167650471,
           "stdev": 0.0
         },
         "input_tokens": {
           "n": 1,
-          "mean": 2653036.0,
+          "mean": 1685850.0,
           "stdev": 0.0
         },
         "output_tokens": {
           "n": 1,
-          "mean": 72193.0,
+          "mean": 39147.0,
           "stdev": 0.0
         },
         "cost_usd": {
           "n": 1,
-          "mean": 0.12144285,
+          "mean": 0.07562511,
           "stdev": 0.0
         },
+        "cost_bound": "floor",
+        "operator_messages": {
+          "n": 1,
+          "mean": 2.0,
+          "stdev": 0.0
+        }
+      },
+      {
+        "arm": "aether",
+        "model": "claude-code/claude-haiku-5-5",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "timeout_graded": 0,
+        "timeout_graded_passes": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 47.026710051,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 320179.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 8486.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.01237005,
+          "stdev": 0.0
+        },
+        "cost_bound": "exact",
+        "operator_messages": {
+          "n": 1,
+          "mean": 4.0,
+          "stdev": 0.0
+        }
+      }
+    ],
+    "quality-retry-budget": [
+      {
+        "arm": "archon",
+        "model": "claude-code/claude-haiku-5-5",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "timeout_graded": 0,
+        "timeout_graded_passes": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 115.133072481,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 915067.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 19801.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.03560848,
+          "stdev": 0.0
+        },
+        "cost_bound": "floor",
+        "operator_messages": {
+          "n": 1,
+          "mean": 2.0,
+          "stdev": 0.0
+        }
+      },
+      {
+        "arm": "aether",
+        "model": "claude-code/claude-haiku-5-5",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "timeout_graded": 0,
+        "timeout_graded_passes": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 35.018506471,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 223418.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 6315.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.00987199,
+          "stdev": 0.0
+        },
+        "cost_bound": "exact",
+        "operator_messages": {
+          "n": 1,
+          "mean": 4.0,
+          "stdev": 0.0
+        }
+      }
+    ],
+    "review-seeded-bug": [
+      {
+        "arm": "archon",
+        "model": "claude-code/claude-haiku-5-5",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "timeout_graded": 0,
+        "timeout_graded_passes": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 35.032909957,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 253927.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 4781.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.00955792,
+          "stdev": 0.0
+        },
+        "cost_bound": "exact",
+        "operator_messages": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        }
+      },
+      {
+        "arm": "aether",
+        "model": "claude-code/claude-haiku-5-5",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "timeout_graded": 0,
+        "timeout_graded_passes": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 36.020851218,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 129798.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 6588.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.00889353,
+          "stdev": 0.0
+        },
+        "cost_bound": "exact",
         "operator_messages": {
           "n": 1,
           "mean": 2.0,
@@ -254,53 +494,56 @@
     "direct": {
       "arm": "archon",
       "model": "claude-code/claude-haiku-5-5",
-      "trials": 2,
-      "successes": 2,
+      "trials": 3,
+      "successes": 3,
       "infra": 0,
       "timeouts": 0,
+      "timeout_graded": 0,
+      "timeout_graded_passes": 0,
       "success_rate": 1.0,
       "pass_at_1": 1.0,
       "pass_at_k": 1.0,
       "score": {
-        "n": 2,
+        "n": 3,
         "mean": 1.0,
         "stdev": 0.0
       },
       "wall_secs": {
-        "n": 2,
-        "mean": 208.031185175,
-        "stdev": 166.7119889830335
+        "n": 3,
+        "mean": 111.795645155,
+        "stdev": 45.13335996812667
       },
       "input_tokens": {
-        "n": 2,
-        "mean": 1696867.0,
-        "stdev": 1352227.16772072
+        "n": 3,
+        "mean": 1064454.3333333333,
+        "stdev": 561801.1288030074
       },
       "output_tokens": {
-        "n": 2,
-        "mean": 41233.5,
-        "stdev": 43783.34478428984
+        "n": 3,
+        "mean": 22527.666666666668,
+        "stdev": 15437.667224465404
       },
       "cost_usd": {
-        "n": 2,
-        "mean": 0.077084685,
-        "stdev": 0.06273191854498354
+        "n": 3,
+        "mean": 0.04475522166666666,
+        "stdev": 0.027463685021594575
       },
+      "cost_bound": "floor",
       "operator_messages": {
-        "n": 2,
+        "n": 3,
         "mean": 2.0,
         "stdev": 0.0
       }
-    }
-  },
-  "reviews": {
-    "standard": {
+    },
+    "no work (empty queue)": {
       "arm": "archon",
       "model": "claude-code/claude-haiku-5-5",
       "trials": 1,
       "successes": 1,
       "infra": 0,
       "timeouts": 0,
+      "timeout_graded": 0,
+      "timeout_graded_passes": 0,
       "success_rate": 1.0,
       "pass_at_1": 1.0,
       "pass_at_k": 1.0,
@@ -311,26 +554,117 @@
       },
       "wall_secs": {
         "n": 1,
-        "mean": 90.14800726,
+        "mean": 35.032909957,
         "stdev": 0.0
       },
       "input_tokens": {
         "n": 1,
-        "mean": 740698.0,
+        "mean": 253927.0,
         "stdev": 0.0
       },
       "output_tokens": {
         "n": 1,
-        "mean": 10274.0,
+        "mean": 4781.0,
         "stdev": 0.0
       },
       "cost_usd": {
         "n": 1,
-        "mean": 0.03272652,
+        "mean": 0.00955792,
         "stdev": 0.0
       },
+      "cost_bound": "exact",
       "operator_messages": {
         "n": 1,
+        "mean": 1.0,
+        "stdev": 0.0
+      }
+    }
+  },
+  "reviews": {
+    "no work (empty queue)": {
+      "arm": "archon",
+      "model": "claude-code/claude-haiku-5-5",
+      "trials": 1,
+      "successes": 1,
+      "infra": 0,
+      "timeouts": 0,
+      "timeout_graded": 0,
+      "timeout_graded_passes": 0,
+      "success_rate": 1.0,
+      "pass_at_1": 1.0,
+      "pass_at_k": 1.0,
+      "score": {
+        "n": 1,
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "wall_secs": {
+        "n": 1,
+        "mean": 35.032909957,
+        "stdev": 0.0
+      },
+      "input_tokens": {
+        "n": 1,
+        "mean": 253927.0,
+        "stdev": 0.0
+      },
+      "output_tokens": {
+        "n": 1,
+        "mean": 4781.0,
+        "stdev": 0.0
+      },
+      "cost_usd": {
+        "n": 1,
+        "mean": 0.00955792,
+        "stdev": 0.0
+      },
+      "cost_bound": "exact",
+      "operator_messages": {
+        "n": 1,
+        "mean": 1.0,
+        "stdev": 0.0
+      }
+    },
+    "standard": {
+      "arm": "archon",
+      "model": "claude-code/claude-haiku-5-5",
+      "trials": 2,
+      "successes": 2,
+      "infra": 0,
+      "timeouts": 0,
+      "timeout_graded": 0,
+      "timeout_graded_passes": 0,
+      "success_rate": 1.0,
+      "pass_at_1": 1.0,
+      "pass_at_k": 1.0,
+      "score": {
+        "n": 2,
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "wall_secs": {
+        "n": 2,
+        "mean": 90.10964249700001,
+        "stdev": 35.38847406046636
+      },
+      "input_tokens": {
+        "n": 2,
+        "mean": 753756.5,
+        "stdev": 228127.49685318515
+      },
+      "output_tokens": {
+        "n": 2,
+        "mean": 14218.0,
+        "stdev": 7895.5543187289895
+      },
+      "cost_usd": {
+        "n": 2,
+        "mean": 0.0293202775,
+        "stdev": 0.0088928612584484
+      },
+      "cost_bound": "floor",
+      "operator_messages": {
+        "n": 2,
         "mean": 2.0,
         "stdev": 0.0
       }
@@ -342,6 +676,8 @@
       "successes": 1,
       "infra": 0,
       "timeouts": 0,
+      "timeout_graded": 0,
+      "timeout_graded_passes": 0,
       "success_rate": 1.0,
       "pass_at_1": 1.0,
       "pass_at_k": 1.0,
@@ -352,24 +688,25 @@
       },
       "wall_secs": {
         "n": 1,
-        "mean": 325.91436309,
+        "mean": 155.167650471,
         "stdev": 0.0
       },
       "input_tokens": {
         "n": 1,
-        "mean": 2653036.0,
+        "mean": 1685850.0,
         "stdev": 0.0
       },
       "output_tokens": {
         "n": 1,
-        "mean": 72193.0,
+        "mean": 39147.0,
         "stdev": 0.0
       },
       "cost_usd": {
         "n": 1,
-        "mean": 0.12144285,
+        "mean": 0.07562511,
         "stdev": 0.0
       },
+      "cost_bound": "floor",
       "operator_messages": {
         "n": 1,
         "mean": 2.0,

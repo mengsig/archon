@@ -1,0 +1,37 @@
+**Do not ship `src/tokens.js` as it is.** The `verify` function accepts forged tokens. The repo is registered as `review-seeded-bug` in Archon, but its `package.json` name is `session-lib`, so I reviewed that mirror. I changed nothing and queued nothing. I ran read-only Node checks against the mirror to confirm the behaviour below.
+
+**1. Critical: `verify`, `src/tokens.js:27`. Any payload can be forged with an empty signature.**
+- `token.split('.')` gives `signature === ''` for a token ending in `.`. The check `expected.startsWith('')` is always true, so the MAC is never really compared.
+- Input: `base64url('{"sub":"admin","exp":<now+1h>}') + "."`. It verifies as `{ sub: 'admin', ... }` with no secret.
+- Confirmed: this returned the admin payload.
+- Impact: full authentication bypass for anyone who can send a request.
+
+**2. High: `verify`, `src/tokens.js:27`. The signature is compared by prefix, not in full.**
+- A one-character signature passes whenever the first character matches, which is 1 in 64 guesses. Confirmed with a real token whose signature was cut to its first character.
+- The comparison is not constant-time, so it also leaks the signature through timing.
+- Fix for 1 and 2 together: compare the full MAC with `crypto.timingSafeEqual` on equal-length buffers, and reject a missing or empty signature before that.
+
+**3. High: `verify`, `src/tokens.js:24`. Extra dot-separated segments are ignored.**
+- `token.split('.')` drops everything after the second segment, so `<valid token>.zzz` verifies. Confirmed.
+- This makes tokens malleable. Once the signature check is fixed, reject tokens that don't have exactly two segments.
+
+**4. Medium: `verify`, `src/tokens.js:22-30`. `verify` throws instead of returning `null`.**
+- `JSON.parse` on decoded garbage throws `SyntaxError`. A `null` payload makes `payload.exp` throw `TypeError`. Confirmed with both inputs.
+- The signature check comes first, so today these only trigger for attacker-chosen input that passes the (broken) check. After the fix in item 2, a legitimately signed but corrupt payload would still crash the caller.
+- Fix: wrap the parse, and return `null` unless the payload is a non-null object.
+
+**5. Medium: `verify`, `src/tokens.js:22`. There is no secret check on the verify side.**
+- `sign` requires a secret of at least 32 characters, but `verify` does not. With an empty secret, a token signed with the empty key verifies. Confirmed.
+- A misconfigured environment variable (empty or unset) would silently make every token forgeable. Apply the same length check in `verify`, or throw on a missing secret.
+
+**6. Low: `verify`, `src/tokens.js:29`. A non-finite `exp` is never considered expired.**
+- `JSON.parse('1e400')` gives `Infinity`, and `Infinity <= now` is false. This only matters once the signature is forgeable, so it is moot until item 1 is fixed. Requiring `Number.isFinite(exp)` is cheap.
+
+**7. Low, design: `sign`/`verify`, `src/tokens.js:9-19`. The key is not separated by purpose.**
+- A token signed for one purpose will verify anywhere the same secret is used. Consider a per-purpose audience claim or a derived key. This is a design question for you, not a blocker.
+
+**Test gap.** `test/tokens.test.js` covers a tampered payload, expiry and a short secret. It has no case for an empty signature, a truncated signature, or extra segments. Those are the cases that would have caught items 1–3. Add them alongside the fix.
+
+**Not checked.** I did not run the test suite and did not check how callers use `verify`'s result. The Node checks above were run against the mirror, not against production.
+
+**Recommendation:** hold the release, fix items 1–5 with full-length constant-time comparison, strict two-segment parsing and non-throwing `verify`, and add the missing tests. Say the word and I can queue that as one `direct` item with strict review, because it touches authentication.

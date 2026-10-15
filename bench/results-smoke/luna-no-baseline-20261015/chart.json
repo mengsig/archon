@@ -1,0 +1,717 @@
+{
+  "manifest": {
+    "stamp": "20261015T072502Z",
+    "started_at": "2026-10-15T07:25:02.425783041Z",
+    "finished_at": "2026-10-15T07:43:00.836372537Z",
+    "archon_commit": "17eeadcba1bbd56e40659527e1b4afa2417f6bf8",
+    "versions": {
+      "aetherd": "1.0.6",
+      "archon": "archon 1.2.2"
+    },
+    "models": {
+      "aether": "codex/gpt-6-luna",
+      "archon": "codex/gpt-6-luna"
+    },
+    "effort": "medium",
+    "arms": [
+      "archon",
+      "aether"
+    ],
+    "tasks": [
+      "fix-off-by-one",
+      "quality-ledger-transfer",
+      "quality-retry-budget",
+      "review-seeded-bug"
+    ],
+    "trials": 1,
+    "parallel": 1,
+    "timeout_factor": 1.0,
+    "max_usd": 7.0,
+    "max_trials": 8,
+    "planned": 8,
+    "completed": 8,
+    "skipped": 0,
+    "spent_usd": 0.12278364,
+    "spent_bound": "floor",
+    "unpriced_trials": 0,
+    "stopped_reason": null
+  },
+  "k": 1,
+  "arms": [
+    {
+      "arm": "archon",
+      "model": "codex/gpt-6-luna",
+      "trials": 4,
+      "successes": 2,
+      "infra": 0,
+      "timeouts": 0,
+      "timeout_graded": 0,
+      "timeout_graded_passes": 0,
+      "success_rate": 0.5,
+      "pass_at_1": 0.5,
+      "pass_at_k": 0.5,
+      "score": {
+        "n": 4,
+        "mean": 0.625,
+        "stdev": 0.47871355387816905
+      },
+      "wall_secs": {
+        "n": 4,
+        "mean": 182.6924695385,
+        "stdev": 134.82115745772614
+      },
+      "input_tokens": {
+        "n": 4,
+        "mean": 1063795.75,
+        "stdev": 765727.7413181855
+      },
+      "output_tokens": {
+        "n": 4,
+        "mean": 9808.5,
+        "stdev": 8041.259126115346
+      },
+      "cost_usd": {
+        "n": 4,
+        "mean": 0.026853745000000002,
+        "stdev": 0.019828080694250266
+      },
+      "cost_bound": "floor",
+      "operator_messages": {
+        "n": 4,
+        "mean": 3.0,
+        "stdev": 1.632993161855452
+      }
+    },
+    {
+      "arm": "aether",
+      "model": "codex/gpt-6-luna",
+      "trials": 4,
+      "successes": 3,
+      "infra": 0,
+      "timeouts": 0,
+      "timeout_graded": 0,
+      "timeout_graded_passes": 0,
+      "success_rate": 0.75,
+      "pass_at_1": 0.75,
+      "pass_at_k": 0.75,
+      "score": {
+        "n": 4,
+        "mean": 0.875,
+        "stdev": 0.25
+      },
+      "wall_secs": {
+        "n": 4,
+        "mean": 33.765013812,
+        "stdev": 11.818991531488765
+      },
+      "input_tokens": {
+        "n": 4,
+        "mean": 123637.75,
+        "stdev": 51630.46485280436
+      },
+      "output_tokens": {
+        "n": 4,
+        "mean": 1803.5,
+        "stdev": 1178.5961988738977
+      },
+      "cost_usd": {
+        "n": 4,
+        "mean": 0.003842165,
+        "stdev": 0.0013682519818975843
+      },
+      "cost_bound": "exact",
+      "operator_messages": {
+        "n": 4,
+        "mean": 3.25,
+        "stdev": 0.9574271077563381
+      }
+    }
+  ],
+  "tasks": {
+    "fix-off-by-one": [
+      {
+        "arm": "archon",
+        "model": "codex/gpt-6-luna",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "timeout_graded": 0,
+        "timeout_graded_passes": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 150.179596893,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 954708.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 6778.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.02174492,
+          "stdev": 0.0
+        },
+        "cost_bound": "floor",
+        "operator_messages": {
+          "n": 1,
+          "mean": 3.0,
+          "stdev": 0.0
+        }
+      },
+      {
+        "arm": "aether",
+        "model": "codex/gpt-6-luna",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "timeout_graded": 0,
+        "timeout_graded_passes": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 25.011592392,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 99364.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 837.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.00376546,
+          "stdev": 0.0
+        },
+        "cost_bound": "exact",
+        "operator_messages": {
+          "n": 1,
+          "mean": 3.0,
+          "stdev": 0.0
+        }
+      }
+    ],
+    "quality-ledger-transfer": [
+      {
+        "arm": "archon",
+        "model": "codex/gpt-6-luna",
+        "trials": 1,
+        "successes": 0,
+        "infra": 0,
+        "timeouts": 0,
+        "timeout_graded": 0,
+        "timeout_graded_passes": 0,
+        "success_rate": 0.0,
+        "pass_at_1": 0.0,
+        "pass_at_k": 0.0,
+        "score": {
+          "n": 1,
+          "mean": 0.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 350.350376175,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 2005696.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 19775.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.05072078000000001,
+          "stdev": 0.0
+        },
+        "cost_bound": "floor",
+        "operator_messages": {
+          "n": 1,
+          "mean": 5.0,
+          "stdev": 0.0
+        }
+      },
+      {
+        "arm": "aether",
+        "model": "codex/gpt-6-luna",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "timeout_graded": 0,
+        "timeout_graded_passes": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 35.014278618,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 144577.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 2627.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.00480416,
+          "stdev": 0.0
+        },
+        "cost_bound": "exact",
+        "operator_messages": {
+          "n": 1,
+          "mean": 4.0,
+          "stdev": 0.0
+        }
+      }
+    ],
+    "quality-retry-budget": [
+      {
+        "arm": "archon",
+        "model": "codex/gpt-6-luna",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "timeout_graded": 0,
+        "timeout_graded_passes": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 205.208472464,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 1153923.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 11882.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.031753779999999995,
+          "stdev": 0.0
+        },
+        "cost_bound": "floor",
+        "operator_messages": {
+          "n": 1,
+          "mean": 3.0,
+          "stdev": 0.0
+        }
+      },
+      {
+        "arm": "aether",
+        "model": "codex/gpt-6-luna",
+        "trials": 1,
+        "successes": 1,
+        "infra": 0,
+        "timeouts": 0,
+        "timeout_graded": 0,
+        "timeout_graded_passes": 0,
+        "success_rate": 1.0,
+        "pass_at_1": 1.0,
+        "pass_at_k": 1.0,
+        "score": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 50.021620301,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 184313.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 3003.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.004864640000000001,
+          "stdev": 0.0
+        },
+        "cost_bound": "exact",
+        "operator_messages": {
+          "n": 1,
+          "mean": 4.0,
+          "stdev": 0.0
+        }
+      }
+    ],
+    "review-seeded-bug": [
+      {
+        "arm": "archon",
+        "model": "codex/gpt-6-luna",
+        "trials": 1,
+        "successes": 0,
+        "infra": 0,
+        "timeouts": 0,
+        "timeout_graded": 0,
+        "timeout_graded_passes": 0,
+        "success_rate": 0.0,
+        "pass_at_1": 0.0,
+        "pass_at_k": 0.0,
+        "score": {
+          "n": 1,
+          "mean": 0.5,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 25.031432622,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 140856.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 799.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.0031955000000000004,
+          "stdev": 0.0
+        },
+        "cost_bound": "exact",
+        "operator_messages": {
+          "n": 1,
+          "mean": 1.0,
+          "stdev": 0.0
+        }
+      },
+      {
+        "arm": "aether",
+        "model": "codex/gpt-6-luna",
+        "trials": 1,
+        "successes": 0,
+        "infra": 0,
+        "timeouts": 0,
+        "timeout_graded": 0,
+        "timeout_graded_passes": 0,
+        "success_rate": 0.0,
+        "pass_at_1": 0.0,
+        "pass_at_k": 0.0,
+        "score": {
+          "n": 1,
+          "mean": 0.5,
+          "stdev": 0.0
+        },
+        "wall_secs": {
+          "n": 1,
+          "mean": 25.012563937,
+          "stdev": 0.0
+        },
+        "input_tokens": {
+          "n": 1,
+          "mean": 66297.0,
+          "stdev": 0.0
+        },
+        "output_tokens": {
+          "n": 1,
+          "mean": 747.0,
+          "stdev": 0.0
+        },
+        "cost_usd": {
+          "n": 1,
+          "mean": 0.0019344,
+          "stdev": 0.0
+        },
+        "cost_bound": "exact",
+        "operator_messages": {
+          "n": 1,
+          "mean": 2.0,
+          "stdev": 0.0
+        }
+      }
+    ]
+  },
+  "infra": [],
+  "pipelines": {
+    "direct": {
+      "arm": "archon",
+      "model": "codex/gpt-6-luna",
+      "trials": 3,
+      "successes": 2,
+      "infra": 0,
+      "timeouts": 0,
+      "timeout_graded": 0,
+      "timeout_graded_passes": 0,
+      "success_rate": 0.6666666666666666,
+      "pass_at_1": 0.6666666666666666,
+      "pass_at_k": 0.6666666666666666,
+      "score": {
+        "n": 3,
+        "mean": 0.6666666666666666,
+        "stdev": 0.5773502691896258
+      },
+      "wall_secs": {
+        "n": 3,
+        "mean": 235.24614851066667,
+        "stdev": 103.41074270260397
+      },
+      "input_tokens": {
+        "n": 3,
+        "mean": 1371442.3333333333,
+        "stdev": 558238.2460171762
+      },
+      "output_tokens": {
+        "n": 3,
+        "mean": 12811.666666666666,
+        "stdev": 6548.183895809076
+      },
+      "cost_usd": {
+        "n": 3,
+        "mean": 0.03473982666666667,
+        "stdev": 0.014716911078977593
+      },
+      "cost_bound": "floor",
+      "operator_messages": {
+        "n": 3,
+        "mean": 3.6666666666666665,
+        "stdev": 1.1547005383792515
+      }
+    },
+    "no work (empty queue)": {
+      "arm": "archon",
+      "model": "codex/gpt-6-luna",
+      "trials": 1,
+      "successes": 0,
+      "infra": 0,
+      "timeouts": 0,
+      "timeout_graded": 0,
+      "timeout_graded_passes": 0,
+      "success_rate": 0.0,
+      "pass_at_1": 0.0,
+      "pass_at_k": 0.0,
+      "score": {
+        "n": 1,
+        "mean": 0.5,
+        "stdev": 0.0
+      },
+      "wall_secs": {
+        "n": 1,
+        "mean": 25.031432622,
+        "stdev": 0.0
+      },
+      "input_tokens": {
+        "n": 1,
+        "mean": 140856.0,
+        "stdev": 0.0
+      },
+      "output_tokens": {
+        "n": 1,
+        "mean": 799.0,
+        "stdev": 0.0
+      },
+      "cost_usd": {
+        "n": 1,
+        "mean": 0.0031955000000000004,
+        "stdev": 0.0
+      },
+      "cost_bound": "exact",
+      "operator_messages": {
+        "n": 1,
+        "mean": 1.0,
+        "stdev": 0.0
+      }
+    }
+  },
+  "reviews": {
+    "mixed: none + standard": {
+      "arm": "archon",
+      "model": "codex/gpt-6-luna",
+      "trials": 2,
+      "successes": 2,
+      "infra": 0,
+      "timeouts": 0,
+      "timeout_graded": 0,
+      "timeout_graded_passes": 0,
+      "success_rate": 1.0,
+      "pass_at_1": 1.0,
+      "pass_at_k": 1.0,
+      "score": {
+        "n": 2,
+        "mean": 1.0,
+        "stdev": 0.0
+      },
+      "wall_secs": {
+        "n": 2,
+        "mean": 177.6940346785,
+        "stdev": 38.911291077324854
+      },
+      "input_tokens": {
+        "n": 2,
+        "mean": 1054315.5,
+        "stdev": 140866.27741407807
+      },
+      "output_tokens": {
+        "n": 2,
+        "mean": 9330.0,
+        "stdev": 3609.0730111761386
+      },
+      "cost_usd": {
+        "n": 2,
+        "mean": 0.026749349999999998,
+        "stdev": 0.007077332777946784
+      },
+      "cost_bound": "floor",
+      "operator_messages": {
+        "n": 2,
+        "mean": 3.0,
+        "stdev": 0.0
+      }
+    },
+    "no work (empty queue)": {
+      "arm": "archon",
+      "model": "codex/gpt-6-luna",
+      "trials": 1,
+      "successes": 0,
+      "infra": 0,
+      "timeouts": 0,
+      "timeout_graded": 0,
+      "timeout_graded_passes": 0,
+      "success_rate": 0.0,
+      "pass_at_1": 0.0,
+      "pass_at_k": 0.0,
+      "score": {
+        "n": 1,
+        "mean": 0.5,
+        "stdev": 0.0
+      },
+      "wall_secs": {
+        "n": 1,
+        "mean": 25.031432622,
+        "stdev": 0.0
+      },
+      "input_tokens": {
+        "n": 1,
+        "mean": 140856.0,
+        "stdev": 0.0
+      },
+      "output_tokens": {
+        "n": 1,
+        "mean": 799.0,
+        "stdev": 0.0
+      },
+      "cost_usd": {
+        "n": 1,
+        "mean": 0.0031955000000000004,
+        "stdev": 0.0
+      },
+      "cost_bound": "exact",
+      "operator_messages": {
+        "n": 1,
+        "mean": 1.0,
+        "stdev": 0.0
+      }
+    },
+    "standard": {
+      "arm": "archon",
+      "model": "codex/gpt-6-luna",
+      "trials": 1,
+      "successes": 0,
+      "infra": 0,
+      "timeouts": 0,
+      "timeout_graded": 0,
+      "timeout_graded_passes": 0,
+      "success_rate": 0.0,
+      "pass_at_1": 0.0,
+      "pass_at_k": 0.0,
+      "score": {
+        "n": 1,
+        "mean": 0.0,
+        "stdev": 0.0
+      },
+      "wall_secs": {
+        "n": 1,
+        "mean": 350.350376175,
+        "stdev": 0.0
+      },
+      "input_tokens": {
+        "n": 1,
+        "mean": 2005696.0,
+        "stdev": 0.0
+      },
+      "output_tokens": {
+        "n": 1,
+        "mean": 19775.0,
+        "stdev": 0.0
+      },
+      "cost_usd": {
+        "n": 1,
+        "mean": 0.05072078000000001,
+        "stdev": 0.0
+      },
+      "cost_bound": "floor",
+      "operator_messages": {
+        "n": 1,
+        "mean": 5.0,
+        "stdev": 0.0
+      }
+    }
+  }
+}

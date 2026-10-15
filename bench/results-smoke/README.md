@@ -1,51 +1,74 @@
-# Incomplete quality smoke evidence
+# Quality smoke baseline
 
-**No measured smoke baseline was established.** The fresh Haiku run was
-interrupted after three of eight cells, following a diagnostic isolation error.
-`baseline.template.json` is an unmeasured template and is rejected as a baseline;
-there is deliberately no `baseline.json`. The default gate cannot pass until a
-complete, reviewed Haiku run supplies it. `smoke --dry-run` still prints the plan.
+`baseline.json` is the reviewed Haiku baseline: run `20261015T071250Z`,
+`claude-code/claude-haiku-5-5` at **medium** effort, $7 admission limit,
+**Archon 4/4**. The files in this directory are that run's evidence, and
+`archon-bench smoke --check-results bench/results-smoke` passes on them.
 
-Completed Haiku cells: Archon fix-off-by-one passed (90 s, $0.0327), Aether
-fix-off-by-one passed (35 s, $0.0088), and Archon ledger passed (326 s, $0.1214).
-The remaining cells have **no verdict**, not failures or implied passes.
-Original measurements in `run.json` and `results.jsonl` are preserved; home paths
-in version diagnostics are redacted as recorded in `provenance.json`. The
-interrupted manifest has no finish time. The summaries describe only completed
-trials.
+| Task | Archon | Aether |
+|---|---|---|
+| fix-off-by-one | pass · 65 s · ≥ $0.0230 | pass · 21 s · $0.0065 |
+| quality-ledger-transfer | pass · 155 s · ≥ $0.0756 | pass · 47 s · $0.0124 |
+| quality-retry-budget | pass · 115 s · ≥ $0.0356 | pass · 35 s · $0.0099 |
+| review-seeded-bug | pass · 35 s · $0.0096 | pass · 36 s · $0.0089 |
 
-All-agent accounting is in `accounting.json`: earlier Opus calibration $11.1931992,
-Haiku task agents $0.16886092, accidental Opus agents $0.7771906, total
-**$12.13925072**. This exceeds the $12 assignment cap by $0.13925072. The monitor
-interrupted at $0.7417 fresh-sandbox spend, but shutdown incurred additional usage.
-No further paid run was made. `calibration/` preserves both incomplete Opus runs
-separately; neither is used as a Haiku baseline.
+Total spend ≥ $0.1815 (Archon $0.1438, Aether $0.0377); the run took 11.5 min
+end to end, of which trial wall time was 370 s for Archon and 139 s for Aether.
+Archon trials report `cost_gap = interrupted` because teardown cancels the
+orchestrator, so their costs and the total are floors. Archon routed the three
+code tasks to `direct` (ledger at strict review, the others standard) and
+answered the review task itself without queueing work.
 
-The isolation error was an ad hoc `archon queue list` diagnostic between trials:
-it set private config/socket variables but omitted `ARCHON_DATA_DIR`. That CLI
-can autostart a daemon. With the trial daemon gone, it started against operator
-data and launched unrelated Opus agents on private Aether. Those agents made
-operator queue/carryover changes before shutdown. The private daemons were
-stopped and the incident was reported for recovery; no blind rollback was made.
-The benchmark process itself had all private variables. The shared run/smoke
-preflight now requires all four private config/data directories to be distinct;
-diagnostic commands must retain the entire private environment too. Prefer saved
-captures for inspection.
+Every hidden grader ran: 8, 10 and 14 hidden tests for the code tasks, and
+both rubric groups for the review (each arm named the empty-signature
+`startsWith` check in `verify` and the resulting forgery). `solutions/` holds
+each trial's diff, `grades/` the grader output, `answers/` the review answers,
+`verify.txt` the fixture check of the same checkout and `provenance.json` the
+commits, binary hashes and versions.
 
-The calibration passed both ledger and retry with careful implementations; it
-did not demonstrate an accuracy difference between arms or review rescuing a
-hidden failure. Every naive fixture still fails hidden checks deterministically.
-The Haiku sample is too incomplete to judge task difficulty or compare arms.
-Extraction was removed from the small preset after expensive strict-review
-calibration, and remains in the full eleven-task suite. No Haiku verdict exists
-for retry, extraction or the seeded review task in this attempt.
+One trial per cell is a cheap regression signal, not a reliability estimate:
+4/4 says Archon lost no pass on this run, not that each task always passes.
+
+## Other evidence from the same session
+
+- [`calibration-high-20261015/`](calibration-high-20261015/summary.md): the
+  same preset at **high** effort, started before benchmark runs moved to
+  medium. Both arms 4/4, ≥ $0.3177, 29 min. Archon's ledger trial took 762 s
+  (strict review) against 155 s at medium. Calibration only, not a baseline.
+- [`luna-no-baseline-20261015/`](luna-no-baseline-20261015/summary.md):
+  `--model codex/gpt-6-luna --effort medium`, ≥ $0.1228, 18 min. Bootstrap
+  refused a candidate, so there is **no Luna baseline**. Archon 2/4 with one
+  infrastructure error, Aether 3/4:
+  - fix-off-by-one/archon passed its grader, but archond did not exit within
+    the 20 s grace after the shutdown request and was killed. The trial counts
+    as an infrastructure error. This did not occur with Haiku.
+  - quality-ledger-transfer/archon delivered nothing: three runs were refused
+    because the Luna reviewers' results carried no structured verdict
+    (`answers/quality-ledger-transfer/archon.txt`). The graded `ledger.py` is
+    the untouched stub.
+  - review-seeded-bug failed for both arms on the rubric group "ties that bug
+    to forgery / authentication bypass", although both answers say an empty
+    signature makes an unsigned payload trusted. The rubric looks for wording
+    such as "forg", "bypass" or "any payload"; this looks like a lexical false
+    negative. The grader is unchanged here.
+
+  These are open follow-ups; a Luna baseline needs a new, separately
+  authorized run after them.
+- [`incomplete-20261014/`](incomplete-20261014/README.md): the first,
+  interrupted Haiku attempt (three of eight cells), its Opus calibration and
+  the isolation incident account. Nothing there is a baseline.
+
+The suite's history figure (`history.svg`, `history.csv`) covers the v1–v3
+snapshots only; the smoke uses a different model and task mix.
 
 ## Reproduce in a private sandbox
 
 Build from the checkout being measured. Choose a new sandbox name each time;
-the commands below do not use or restart any operator daemon. The benchmark
-creates and tears down its own Archon daemon for each Archon trial. Keep the
-sandbox Aether daemon alive across the paired trials, then stop it explicitly.
+nothing below uses or restarts an operator daemon. Run every sandbox command,
+including diagnostics, through `sx`, which starts it with `env -i` and only
+the private variables: an `archon` command without `ARCHON_DATA_DIR` can
+autostart a daemon against operator data. The benchmark starts and tears down
+its own archond for each Archon trial; stop the sandbox aetherd yourself.
 
 ```sh
 CARGO_PROFILE_DEV_DEBUG=0 cargo build -p archon -p archon-bench --locked
@@ -53,53 +76,46 @@ sandbox="${XDG_DATA_HOME:-$HOME/.local/share}/archon-bench/q-$(date -u +%H%M%S)"
 mkdir -p "$sandbox/bin" "$sandbox/config/aether" "$sandbox/data/aether" \
   "$sandbox/run" "$sandbox/tmp" "$sandbox/archon/config" "$sandbox/archon/data"
 cp target/debug/archon "$sandbox/bin/archon"
-export PATH="$sandbox/bin:$PATH"
-export AETHER_CONFIG_DIR="$sandbox/config/aether"
-export AETHER_DATA_DIR="$sandbox/data/aether"
-export AETHER_SOCKET="$sandbox/run/aetherd.sock"
-export ARCHON_CONFIG_DIR="$sandbox/archon/config"
-export ARCHON_DATA_DIR="$sandbox/archon/data"
-export ARCHON_SOCKET="$sandbox/run/archond.sock"
-export TMPDIR="$sandbox/tmp"
-"$sandbox/bin/archon" setup --print > "$AETHER_CONFIG_DIR/config.toml"
-printf '[aether]\nmode = "shared"\nsocket = "%s"\n' "$AETHER_SOCKET" > "$ARCHON_CONFIG_DIR/config.toml"
-aether daemon --foreground > "$sandbox/run/aetherd.log" 2>&1 &
-sandbox_pid=$!
-# Wait until `aether status --socket "$AETHER_SOCKET"` reports ready.
+cat > "$sandbox/sx" <<EOF
+#!/bin/sh
+exec env -i HOME="$HOME" USER="$USER" LANG="$LANG" \\
+  PATH="$sandbox/bin:<provider CLIs, node>:/usr/local/bin:/usr/bin" \\
+  AETHER_CONFIG_DIR="$sandbox/config/aether" AETHER_DATA_DIR="$sandbox/data/aether" \\
+  AETHER_SOCKET="$sandbox/run/aetherd.sock" \\
+  ARCHON_CONFIG_DIR="$sandbox/archon/config" ARCHON_DATA_DIR="$sandbox/archon/data" \\
+  ARCHON_SOCKET="$sandbox/run/archond.sock" TMPDIR="$sandbox/tmp" "\$@"
+EOF
+chmod +x "$sandbox/sx"
+"$sandbox/bin/archon" setup --print > "$sandbox/config/aether/config.toml"
+printf '[aether]\nmode = "shared"\nsocket = "%s"\n' "$sandbox/run/aetherd.sock" \
+  > "$sandbox/archon/config/config.toml"
+setsid "$sandbox/sx" aether daemon --foreground > "$sandbox/run/aetherd.log" 2>&1 &
+# Wait until `"$sandbox/sx" aether status --socket "$sandbox/run/aetherd.sock"` is ready.
 target/debug/archon-bench verify
-# Bootstrap the first baseline using the exact preset, then review its results.
-target/debug/archon-bench smoke --bootstrap \
-  --archon-bin "$sandbox/bin/archon" --aether-socket "$AETHER_SOCKET"
-aether stop --socket "$AETHER_SOCKET"
-wait "$sandbox_pid"
+"$sandbox/sx" "$PWD/target/debug/archon-bench" smoke --bootstrap \
+  --archon-bin "$sandbox/bin/archon" --aether-socket "$sandbox/run/aetherd.sock"
+"$sandbox/sx" aether stop --socket "$sandbox/run/aetherd.sock"
 ```
 
-Use a clean daemon environment: omit variables that point into the checkout,
-and nested-session markers such as `CLAUDECODE`. Preserve access to your
-provider CLI/authentication and the sandbox variables above. The measured run
-used `env -i` semantics with only HOME/USER/LANG/PATH and those sandbox paths;
-its `PATH` contained the private binary, the provider CLI, Node, Cargo and
-system tools. The task prompts, Haiku model and requested high effort were identical for
-both arms; Archon may select lower stage effort through its model plan.
+Replace `<provider CLIs, node>` with the directories holding `aether`,
+`claude`/`codex` and `node`; `sx` drops `CLAUDECODE` and every other
+inherited variable. For Luna add `--model codex/gpt-6-luna --effort medium`.
+The gate run is the same command without `--bootstrap` (with
+`--baseline <luna baseline>` for Luna, once one exists).
 
-A future baseline requires a separately authorized fresh run; this assignment
-has exhausted its budget. The default admission limit is $7. The runner admits one trial at a time and
+The default admission limit is $7. The runner admits one trial at a time and
 checks spend after completion; an in-flight trial can overshoot. The smoke
-check also refuses an over-budget total, unpriced trials, incomplete cells,
+check refuses an over-budget total, unpriced trials, incomplete cells,
 timeouts and infrastructure failures. Keep a failed run for diagnosis instead
-of lowering the baseline. One trial per cell cannot prove a task always passes
-or establish how much review improves reliability.
+of lowering the baseline.
 
 Bootstrap does not read or overwrite `baseline.json`. A complete, priced run
-within its cap and with at least one Archon pass writes `candidate-baseline.json`
-in its results directory, marked `"candidate": true`. Review the results,
-failures and provenance before copying that file to `baseline.json` with
-`candidate` changed to `false` in a reviewed commit. Keep `source_run` and
-`max_usd` from the measured run. The gate rejects candidates and any run or
-check cap above the reviewed baseline's cap.
-
-After a complete run establishes `baseline.json`, recheck its evidence without
-a daemon or model call (the incomplete evidence here cannot pass):
+within its cap and with at least one Archon pass writes
+`candidate-baseline.json` in its results directory, marked
+`"candidate": true`. Review the results, failures and provenance before
+copying it to `baseline.json` with `candidate` changed to `false` in a
+reviewed commit, keeping `source_run` and `max_usd`. Recheck committed
+evidence without a daemon or model call:
 
 ```sh
 target/debug/archon-bench smoke --check-results bench/results-smoke
@@ -107,9 +123,9 @@ target/debug/archon-bench smoke --check-results bench/results-smoke
 
 ## What the adversarial fixtures establish
 
-All 11 graders reject untouched fixtures and accept their references. For each
-new task, `naive.patch` passes the public examples and fails hidden checks;
-this property is also enforced by the integration tests.
+All 11 graders reject untouched fixtures and accept their references
+(`verify.txt`). For each quality task, `naive.patch` passes the public
+examples and fails hidden checks; the integration tests enforce this.
 
 - Ledger: overflow must leave the source unchanged, and an unknown destination
   must not debit a valid source. Threaded conservation and deadlock checks are
@@ -120,9 +136,6 @@ this property is also enforced by the integration tests.
 - Retry: the deadline is strict, server Retry-After values are not capped by
   local exponential backoff, and huge attempt counts need bounded arithmetic.
 
-In the archived Opus ledger trial, the reviewer passed the functional implementation
-and identified three nonblocking test weaknesses. The worker then changed
-only `test_ledger.py` and obtained another review. This is evidence of review
-improving tests; it does not establish that review rescued a hidden-grader
-failure. The suite measures selected contract violations, not every possible
-bug, and one paired trial cannot establish that a task always passes.
+The suite measures selected contract violations, not every possible bug.
+Extraction stays in the full eleven-task suite; its strict review cost keeps
+it out of the smoke preset.

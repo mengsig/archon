@@ -1,0 +1,43 @@
+Reviewed src/tokens.js (plus encoding.js, index.js, tests). No code changed. Do not ship as-is: verify() accepts forged tokens, including ones with an empty signature. Findings, most severe first (all in src/tokens.js):
+
+1. CRITICAL, verify() line 27: `expected.startsWith(signature)` is true when signature is "" (token ends in "."). Any payload with a future exp is accepted with no secret. Reproduced: verify(base64url('{"user":"root","exp":<future ms>}') + ".", secret) returns the payload. Existing tests do not cover this.
+
+2. HIGH, verify() line 27: the check is a prefix match, not equality, and not constant-time. A correct prefix of the MAC is accepted, so verify() is a per-character oracle; forging a full MAC takes roughly 43 x 64 requests. Confirmed the oracle: a one-character prefix of a real signature for a real token is accepted. Fix: compare the decoded MAC bytes with crypto.timingSafeEqual after a length check.
+
+3. MEDIUM, verify() line 28-29: JSON.parse throws on a non-JSON body, and a body of "null" throws a TypeError on payload.exp. Reproduced both (SyntaxError and TypeError). Verify should return null for malformed input. Reachable pre-authentication because of finding 1.
+
+4. MEDIUM (interop, confirm consumers), sign() line 16: iat and exp are milliseconds. RFC 7519 NumericDate is seconds. A consumer that reads exp as seconds treats tokens as valid for about 1000x longer. Confirm whether any other service reads these tokens before deciding.
+
+5. LOW, verify() line 24: split('.') ignores extra segments, so "body.sig.junk" verifies. Not a forgery (MAC still has to match), but parsing is lax. Read from code, not run.
+
+6. LOW, verify() line 22: the secret is not length-checked on the verify side, though sign() enforces 32 characters. A verifier configured with a weak or empty secret accepts tokens minted with it. Config risk only.
+
+7. LOW, sign() line 14-15: ttlSeconds is not validated. NaN produces exp null, which every verify rejects silently. The secret length check counts characters, not bytes.
+
+Tests: `node --test` passes 4/4, but the suite misses findings 1-3 (its tamper test keeps the original signature, so it never reaches the prefix or empty-signature paths).
+
+Suggested fix (not applied): reject tokens without exactly two non-empty segments; decode and compare the MAC with timingSafeEqual; try/catch the parse and require a plain-object payload; add regression tests for an empty signature, a prefix signature, a non-JSON body, and a null body. Decide the time units before release.
+
+Severity: finding 1 blocks release; 2 and 3 should be fixed in the same change.
+
+`src/tokens.js` should not ship as written. `verify()` accepts forged tokens, and the existing tests don't catch it. I changed no code.
+
+Findings, most severe first (all in `src/tokens.js`):
+
+1. **Critical: `verify()`, line 27.** The check is `expected.startsWith(signature)`. An empty signature is a prefix of every string, so a token ending in `.` passes with no secret. Reproduced: `verify(base64url('{"user":"root","exp":<future ms>}') + ".", secret)` returns the payload.
+
+2. **High: `verify()`, line 27.** The comparison is a prefix match, not equality, and not constant-time. Any correct prefix of the MAC is accepted, so `verify()` acts as a per-character oracle. Forging a full MAC would take roughly 43 × 64 requests. I confirmed the oracle by checking that a one-character prefix of a real signature is accepted. I did not run the full forgery. Fix: compare the decoded MAC bytes with `crypto.timingSafeEqual` after a length check.
+
+3. **Medium: `verify()`, lines 28–29.** `JSON.parse` throws on a non-JSON body, and a body of `null` throws a TypeError on `payload.exp`. Both reproduced. `verify` should return `null` for malformed input. This is reachable before authentication because of finding 1.
+
+4. **Medium (confirm consumers): `sign()`, line 16.** `iat` and `exp` are in milliseconds. RFC 7519 NumericDate is seconds. Any other service that reads `exp` as seconds would treat tokens as valid about 1000× longer. Check whether anything else reads these tokens before release.
+
+5. **Low: `verify()`, line 24.** `split('.')` ignores extra segments, so `body.sig.junk` verifies. This is not a forgery, since the MAC must still match. I read this from the code and did not run it.
+
+6. **Low: `verify()`, line 22.** The verify side does not check secret length, though `sign()` enforces 32 characters. A verifier with a weak or empty secret accepts tokens minted with it. This is a configuration risk.
+
+7. **Low: `sign()`, lines 14–15.** `ttlSeconds` is not validated. `NaN` yields `exp: null`, which every `verify` rejects silently. The length check counts characters, not bytes.
+
+**Tests:** `node --test` passes 4/4, but the suite misses findings 1–3. The tamper test keeps the original signature, so it never reaches the prefix or empty-signature paths.
+
+**Suggested fix (not applied):** reject tokens that don't have exactly two non-empty segments; compare the MAC with `timingSafeEqual`; wrap the parse in try/catch and require a plain-object payload; add regression tests for an empty signature, a prefix signature, a non-JSON body and a `null` body; settle the time units before release.

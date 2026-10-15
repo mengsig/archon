@@ -268,16 +268,16 @@ diagnostics replace the operator's home path with `$HOME`.
 
 ## Quality smoke gate
 
-**Baseline pending:** the first Haiku attempt completed only three of eight
-cells after a diagnostic isolation error exhausted the budget. No measured
-`baseline.json` is committed; the default gate fails until a complete reviewed
-run establishes one. See [the evidence and incident account](results-smoke/README.md).
-The harness, adversarial checks and dry-run preset are ready.
+**Measured baseline:** `results-smoke/baseline.json` comes from run
+`20261015T071250Z` (Haiku 5.5, medium effort): Archon 4/4 and Aether 4/4,
+total ≥ $0.18, 11.5 min end to end (trial wall 370 s Archon, 139 s Aether).
+A Luna bootstrap in the same session produced no candidate, so there is no
+Luna baseline yet. See [the evidence, calibration and open findings](results-smoke/README.md).
 
 Run this before merging changes to routing, prompts or review. It fixes the
 suite to `fix-off-by-one`, `quality-ledger-transfer`, `quality-retry-budget`
 and `review-seeded-bug`, with `archon` and single-agent `aether`, one trial
-per cell, serial execution, `claude-code/claude-haiku-5-5` at high effort
+per cell, serial execution, `claude-code/claude-haiku-5-5` at medium effort
 and a default **$7 admission limit**. The three
 quality checks require care beyond the visible examples: a naive transfer can
 mutate before detecting overflow, a retry calculation can clip a server delay
@@ -303,7 +303,7 @@ autostart a daemon, even a queue read. Prefer saved captures. Both sockets must 
 Aether daemon needs the same `ARCHON_SOCKET`, its own configuration and data,
 and the benchmark's `archon` MCP registration; its `PATH` must find this
 checkout's copied binary first. Never use an operator daemon. A reproducible
-setup and the measured first run are in
+setup and the measured baseline run are in
 [`results-smoke/README.md`](results-smoke/README.md).
 
 The command prints pass rate, cost and wall time per arm and task, writes the
@@ -312,7 +312,8 @@ loses passes against a measured `results-smoke/baseline.json`. Missing,
 duplicate, unpriced, timed-out or infrastructure-error trials cannot pass.
 The model, effort, task set, trial count and time limits must match the stored
 baseline. Luna is selectable with `--model codex/gpt-6-luna --baseline <luna.json>`;
-that file must point to a separately measured Luna baseline. Do not compare
+that file must point to a separately measured Luna baseline, bootstrapped with
+`--model codex/gpt-6-luna` at the same medium effort. Do not compare
 a different model against Haiku's threshold. Aether's accuracy is reported as the comparison arm; Archon's rate
 is the quality gate. The command never updates the baseline automatically.
 
@@ -376,6 +377,6 @@ python3 bench/history.py bench/results-v1 bench/results-v2 bench/results-v3 \
 
 ![Pass rate, cost and wall over published snapshots](results-smoke/history.svg)
 
-The current history excludes the incomplete smoke attempt. A completed smoke
-will use Haiku and a different task mix, starting a separate quality baseline.
+The history excludes the smoke runs: they use Haiku and a different task
+mix, so `results-smoke/baseline.json` starts a separate quality baseline.
 The historical plot shows observed means, not an apples-to-apples speedup.

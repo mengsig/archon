@@ -1,0 +1,13 @@
+{
+  "archon_source_commit": "c35f633fd8c0dbea352ae3c6b75cb9cc7cce2446",
+  "harness_base_commit": "3da3e125b810b8acf3076bbf57d536c174a01b07",
+  "uncommitted_harness_changes": "Haiku default and tuned four-task preset, included in the archiving commit",
+  "aetherd_version": "1.0.3",
+  "version_capture_note": "Original run.json sampled the socket before daemon startup completed; separate private status read confirmed 1.0.3. Trial dispatch succeeded.",
+  "clean_completed_baseline": false,
+  "isolation_incident": true,
+  "build": "CARGO_PROFILE_DEV_DEBUG=0 cargo build --locked -p archon -p archon-bench",
+  "archon_binary_sha256": "9d49b5884a9c004b0558a55ee331b65b077739fdfd3e1bb6cf1c3fdb1cb1c72b",
+  "bench_binary_sha256": "fe3bd4ddc28a58cb85174918a6c3e5492e6829583003edce06bbd7b0ec42074b",
+  "path_redaction_note": "Operator home paths in smoke run.json, chart.json, summary.md, report.html and calibration run.json are replaced with $XDG_DATA_HOME/archon-bench/<sandbox>; measurements and version diagnostics are otherwise preserved."
+}

@@ -1,0 +1,49 @@
+**Do not ship `src/tokens.js` as it is.** Its `verify()` accepts forged tokens, including one with an empty signature. I reproduced this by running the code; I changed nothing in the repository.
+
+**Scope caveat:** No repository is registered as `session-lib`. I reviewed the mirror of `review-seeded-bug` (`repos/review-seeded-bug`), whose `package.json` is named `session-lib`. Its HEAD is `2ac4faa` ("bench fixture"), and the mirror holds only committed content. If the HEAD-rewrite is uncommitted, or is newer than this commit, I have not seen it. Please confirm which tree ships.
+
+## Findings
+
+**1. `verify()`: an empty signature is accepted (Critical)**
+- Line 27: `expected.startsWith(signature)`. `''` is a prefix of every string, so the MAC check always passes when the signature part is empty.
+- Input: `base64url('{"user":"root","exp":9e15}') + '.'` with the real secret. `verify` returns `{user:'root', exp:9e15}`.
+- Impact: anyone can mint any claims, unauthenticated, including admin identities and never-expiring tokens.
+- Verified: yes, with `node`.
+
+**2. `verify()`: the signature is compared as a prefix, not in full, and not in constant time (High)**
+- Same line 27. The check only covers as many characters as the caller supplies. A 1-char signature passes with probability 1/64, and each guess is an online request. A 2-char signature passes with probability 1/4096.
+- `startsWith` is also not constant-time, so it leaks timing.
+- Fix: require the signature length to equal the MAC length, then compare with `crypto.timingSafeEqual` on equal-length buffers.
+- Verified: a wrong 1-char signature was rejected in one run. That is consistent with the probabilistic bypass, but the bypass itself is not demonstrated.
+
+**3. `verify()`: throws on attacker-controlled input instead of returning `null` (Medium)**
+- Lines 28–29: `JSON.parse` and `payload.exp` run without a guard.
+- Inputs `base64url('null') + '.'` throws `TypeError`. Inputs `base64url('not json') + '.'` throws `SyntaxError`.
+- Once finding 1 is fixed these are reachable only with a validly signed body. Until then, a request handler could return 500 or crash on unauthenticated input.
+- Fix: parse inside a `try`, check the payload is a non-null object, and return `null`.
+
+**4. `verify()`: the secret is not validated (Medium, configuration-dependent)**
+- `sign()` checks the secret length (line 15). `verify()` does not.
+- If a verifier-only service has the secret set to `''`, the HMAC key is public, and anyone can forge tokens. I confirmed this: a token MAC'd with key `''` verifies.
+- An undefined secret throws a `TypeError` (fail-closed, but still unhandled).
+- Fix: apply the same secret check in `verify()`.
+
+**5. `verify()`: trailing segments are ignored (Low)**
+- Line 24: `split('.')` without limit. `token + '.junk'` still verifies (confirmed).
+- The MAC covers only the first two segments, so tokens are malleable. This matters if tokens are used as revocation keys, cache keys or log identifiers.
+- Fix: reject tokens that do not have exactly two segments.
+
+**6. `sign()`: `ttlSeconds` is not validated (Low, fails silently)**
+- Line 16. `ttlSeconds: NaN` produces a token whose `exp` serializes to `null`. It is signed but can never verify. Zero or negative values produce tokens that are already dead.
+- Fix: throw when `ttlSeconds` is not a finite positive number.
+
+**7. Design notes (Low / informational)**
+- `exp`/`iat` are in milliseconds, not seconds. That is unconventional for JWT-style claims and will break any service that expects seconds.
+- `verify()` has no `iat`/`nbf` check.
+- The secret length check counts UTF-16 code units, not bytes, and has no entropy check. `'k'.repeat(40)` passes.
+
+## Test gaps
+
+`test/tokens.test.js` has four tests, and none of them covers findings 1–5. The "tampered payloads" test uses a real signature from another payload, so it passes even though the MAC check is broken. Add tests for an empty signature, a truncated signature, extra segments, non-JSON or `null` bodies, and an empty verify secret.
+
+No code was changed and no item was queued. Nothing was pushed. The temporary proof-of-concept script was removed after the run.

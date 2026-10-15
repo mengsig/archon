@@ -1,20 +1,20 @@
 # Archon benchmark
 
-- Run `20261014T121928Z`: 2026-10-14T12:19:28.012166533+00:00 → unfinished
-- Archon commit: `3da3e125b810b8acf3076bbf57d536c174a01b07`
-- Effort: `high`; trials per task and arm: 1; parallel: 1
+- Run `20261015T071250Z`: 2026-10-15T07:12:50.985675842+00:00 → 2026-10-15T07:24:22.591843967+00:00
+- Archon commit: `17eeadcba1bbd56e40659527e1b4afa2417f6bf8`
+- Effort: `medium`; trials per task and arm: 1; parallel: 1
 - Model `aether`: `claude-code/claude-haiku-5-5`
 - Model `archon`: `claude-code/claude-haiku-5-5`
-- Version `aetherd`: `unreachable: io: connecting to aetherd at $XDG_DATA_HOME/archon-bench/qg7h/run/aetherd.sock: No such file or directory (os error 2)`
-- Version `archon`: `archon 1.1.0`
-- Trials: 8 planned, 0 completed, 0 skipped; spent $0.00 of $0.70
+- Version `aetherd`: `1.0.6`
+- Version `archon`: `archon 1.2.2`
+- Trials: 8 planned, 8 completed, 0 skipped; spent ≥ $0.18 of $7.00
 
 ## Per arm
 
 | Arm | Model | Trials | Success | pass@1 | pass@1 | Score | Wall s | Input tok | Output tok | Cost $ | Operator msgs | Infra | Timeouts |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| archon | `claude-code/claude-haiku-5-5` | 2 | 2/2 (100%) | 100% | 100% | 1.00 ± 0.00 | 208 ± 167 | 1696867 ± 1352227 | 41234 ± 43783 | 0.08 ± 0.06 | 2.0 ± 0.0 | 0 | 0 |
-| aether | `claude-code/claude-haiku-5-5` | 1 | 1/1 (100%) | 100% | 100% | 1.00 ± 0.00 | 35 ± 0 | 199635 ± 0 | 3272 ± 0 | 0.01 ± 0.00 | 4.0 ± 0.0 | 0 | 0 |
+| archon | `claude-code/claude-haiku-5-5` | 4 | 4/4 (100%) | 100% | 100% | 1.00 ± 0.00 | 93 ± 53 | 861822 ± 612088 | 18091 ± 15415 | ≥ 0.04 ± 0.03 | 1.8 ± 0.5 | 0 | 0 |
+| aether | `claude-code/claude-haiku-5-5` | 4 | 4/4 (100%) | 100% | 100% | 1.00 ± 0.00 | 35 ± 11 | 212250 ± 81475 | 5928 ± 2589 | 0.01 ± 0.00 | 3.5 ± 1.0 | 0 | 0 |
 
 ## Per task
 
@@ -22,8 +22,10 @@ Each cell: passes/trials · wall s · cost $ · operator msgs (mean ± stdev).
 
 | Task | archon | aether |
 |---|---|---|
-| fix-off-by-one | 1/1 · 90 ± 0 · 0.03 ± 0.00 · 2.0 ± 0.0 | 1/1 · 35 ± 0 · 0.01 ± 0.00 · 4.0 ± 0.0 |
-| quality-ledger-transfer | 1/1 · 326 ± 0 · 0.12 ± 0.00 · 2.0 ± 0.0 | — |
+| fix-off-by-one | 1/1 · 65 ± 0 · ≥ 0.02 ± 0.00 · 2.0 ± 0.0 | 1/1 · 21 ± 0 · 0.01 ± 0.00 · 4.0 ± 0.0 |
+| quality-ledger-transfer | 1/1 · 155 ± 0 · ≥ 0.08 ± 0.00 · 2.0 ± 0.0 | 1/1 · 47 ± 0 · 0.01 ± 0.00 · 4.0 ± 0.0 |
+| quality-retry-budget | 1/1 · 115 ± 0 · ≥ 0.04 ± 0.00 · 2.0 ± 0.0 | 1/1 · 35 ± 0 · 0.01 ± 0.00 · 4.0 ± 0.0 |
+| review-seeded-bug | 1/1 · 35 ± 0 · 0.01 ± 0.00 · 1.0 ± 0.0 | 1/1 · 36 ± 0 · 0.01 ± 0.00 · 2.0 ± 0.0 |
 
 ## Per pipeline
 
@@ -31,7 +33,8 @@ Archon whole-trial observations: each trial appears once per table. Mixed bucket
 
 | Bucket | Trials | Pass rate | Wall s | Cost $ | Infra | Timeouts |
 |---|---:|---:|---:|---:|---:|---:|
-| direct | 2 | 2/2 (100%) | 208 ± 167 | 0.08 ± 0.06 | 0 | 0 |
+| direct | 3 | 3/3 (100%) | 112 ± 45 | ≥ 0.04 ± 0.03 | 0 | 0 |
+| no work (empty queue) | 1 | 1/1 (100%) | 35 ± 0 | 0.01 ± 0.00 | 0 | 0 |
 
 ## Per review level
 
@@ -39,8 +42,9 @@ Archon whole-trial observations: each trial appears once per table. Mixed bucket
 
 | Bucket | Trials | Pass rate | Wall s | Cost $ | Infra | Timeouts |
 |---|---:|---:|---:|---:|---:|---:|
-| standard | 1 | 1/1 (100%) | 90 ± 0 | 0.03 ± 0.00 | 0 | 0 |
-| strict | 1 | 1/1 (100%) | 326 ± 0 | 0.12 ± 0.00 | 0 | 0 |
+| no work (empty queue) | 1 | 1/1 (100%) | 35 ± 0 | 0.01 ± 0.00 | 0 | 0 |
+| standard | 2 | 2/2 (100%) | 90 ± 35 | ≥ 0.03 ± 0.01 | 0 | 0 |
+| strict | 1 | 1/1 (100%) | 155 ± 0 | ≥ 0.08 ± 0.00 | 0 | 0 |
 
 ## Method
 
@@ -50,6 +54,6 @@ Archon whole-trial observations: each trial appears once per table. Mixed bucket
 - Success is the hidden grader's verdict. Test graders restore the visible tests from the task, not from the agent's repository, and require the runner's own summary to report no failures and a minimum number of passing tests. Rubric graders need related facts close together and cap the answer length.
 - A failed trial with a harness error (the arm could not run cleanly: a provider limit, a crash, a grading failure) is an infrastructure failure. It is left out of pass rates and every metric, counted under Infra and listed with its error.
 - Wall time runs from handing over the prompt until the arm finished; Archon's daemon start-up (recorded as `setup_secs`) and the quiet window used to detect that Archon finished are excluded.
-- Input tokens include cache reads and writes. Cost is billed dollars when reported, else Aether's estimate or `--price` list prices. `(n=…)` marks a metric only that many trials reported.
+- Input tokens include cache reads and writes. Cost is billed dollars when reported, else Aether's estimate or `--price` list prices. `(n=…)` marks a metric only that many trials reported. `≥` marks a cost Aether reported as incomplete (`cost_gap`); the true cost is at least that. `*` marks a cost that includes one Aether reported as incomplete together with estimates; it is not a bound.
 - Operator messages are what the operator had to read: one final result for `claude`/`codex`, the assistant messages of the Aether agent, and the default-visible chat lines for Archon.
 - Values are mean ± sample standard deviation over graded trials. pass@k uses the unbiased estimator per task, averaged over tasks, with k the fewest graded trials any (task, arm) cell has.

@@ -1,0 +1,205 @@
+======================================================================
+ERROR: test_insufficient_funds (test_ledger.LedgerBasics.test_insufficient_funds)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/test_ledger.py", line 13, in test_insufficient_funds
+    ledger = Ledger({"a": 2, "b": 0})
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/ledger.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_transfer (test_ledger.LedgerBasics.test_transfer)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/test_ledger.py", line 8, in test_transfer
+    ledger = Ledger({"a": 12, "b": 3})
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/ledger.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_invalid_amounts_preserve_state (test_ledger_hidden.LedgerEdges.test_invalid_amounts_preserve_state)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/test_ledger_hidden.py", line 30, in test_invalid_amounts_preserve_state
+    ledger = Ledger({"a": 5, "b": 0})
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/ledger.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_invalid_initial_state (test_ledger_hidden.LedgerEdges.test_invalid_initial_state) (balances=[])
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/test_ledger_hidden.py", line 43, in test_invalid_initial_state
+    Ledger(balances)
+    ~~~~~~^^^^^^^^^^
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/ledger.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_invalid_initial_state (test_ledger_hidden.LedgerEdges.test_invalid_initial_state) (balances=None)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/test_ledger_hidden.py", line 43, in test_invalid_initial_state
+    Ledger(balances)
+    ~~~~~~^^^^^^^^^^
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/ledger.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_invalid_initial_state (test_ledger_hidden.LedgerEdges.test_invalid_initial_state) (balances={'': 0})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/test_ledger_hidden.py", line 43, in test_invalid_initial_state
+    Ledger(balances)
+    ~~~~~~^^^^^^^^^^
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/ledger.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_invalid_initial_state (test_ledger_hidden.LedgerEdges.test_invalid_initial_state) (balances={1: 0})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/test_ledger_hidden.py", line 43, in test_invalid_initial_state
+    Ledger(balances)
+    ~~~~~~^^^^^^^^^^
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/ledger.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_invalid_initial_state (test_ledger_hidden.LedgerEdges.test_invalid_initial_state) (balances={'a': True})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/test_ledger_hidden.py", line 43, in test_invalid_initial_state
+    Ledger(balances)
+    ~~~~~~^^^^^^^^^^
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/ledger.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_invalid_initial_state (test_ledger_hidden.LedgerEdges.test_invalid_initial_state) (balances={'a': -1})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/test_ledger_hidden.py", line 43, in test_invalid_initial_state
+    Ledger(balances)
+    ~~~~~~^^^^^^^^^^
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/ledger.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_invalid_initial_state (test_ledger_hidden.LedgerEdges.test_invalid_initial_state) (balances={'a': 9223372036854775808})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/test_ledger_hidden.py", line 43, in test_invalid_initial_state
+    Ledger(balances)
+    ~~~~~~^^^^^^^^^^
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/ledger.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_invalid_initial_state (test_ledger_hidden.LedgerEdges.test_invalid_initial_state) (balances={'a': 1.0})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/test_ledger_hidden.py", line 43, in test_invalid_initial_state
+    Ledger(balances)
+    ~~~~~~^^^^^^^^^^
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/ledger.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_invalid_initial_state (test_ledger_hidden.LedgerEdges.test_invalid_initial_state) (balances={'a': '1'})
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/test_ledger_hidden.py", line 43, in test_invalid_initial_state
+    Ledger(balances)
+    ~~~~~~^^^^^^^^^^
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/ledger.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_invalid_initial_state (test_ledger_hidden.LedgerEdges.test_invalid_initial_state)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/test_ledger_hidden.py", line 44, in test_invalid_initial_state
+    self.assertEqual(Ledger({}).snapshot(), {})
+                     ~~~~~~^^^^
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/ledger.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_opposite_transfers_and_snapshots_preserve_total (test_ledger_hidden.LedgerEdges.test_opposite_transfers_and_snapshots_preserve_total)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/test_ledger_hidden.py", line 77, in test_opposite_transfers_and_snapshots_preserve_total
+    ledger = Ledger({"a": 1000, "b": 1000})
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/ledger.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_overflow_rolls_back (test_ledger_hidden.LedgerEdges.test_overflow_rolls_back)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/test_ledger_hidden.py", line 10, in test_overflow_rolls_back
+    ledger = Ledger({"a": 4, "b": MAX_BALANCE - 1})
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/ledger.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_parallel_spending_has_exact_success_count (test_ledger_hidden.LedgerEdges.test_parallel_spending_has_exact_success_count)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/test_ledger_hidden.py", line 58, in test_parallel_spending_has_exact_success_count
+    ledger = Ledger({"source": 100, **{str(i): 0 for i in range(8)}})
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/ledger.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_self_transfer_at_ceiling (test_ledger_hidden.LedgerEdges.test_self_transfer_at_ceiling)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/test_ledger_hidden.py", line 17, in test_self_transfer_at_ceiling
+    ledger = Ledger({"a": MAX_BALANCE, "b": 0})
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/ledger.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_snapshot_and_input_ownership (test_ledger_hidden.LedgerEdges.test_snapshot_and_input_ownership)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/test_ledger_hidden.py", line 49, in test_snapshot_and_input_ownership
+    ledger = Ledger(initial)
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/ledger.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+======================================================================
+ERROR: test_unknown_destination_is_atomic (test_ledger_hidden.LedgerEdges.test_unknown_destination_is_atomic)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/test_ledger_hidden.py", line 23, in test_unknown_destination_is_atomic
+    ledger = Ledger({"a": 4})
+  File "$XDG_DATA_HOME/archon-bench/work/20261015T072502Z/189939f26ab21cf846461a66/quality-ledger-transfer/ledger.py", line 8, in __init__
+    raise NotImplementedError
+NotImplementedError
+
+----------------------------------------------------------------------
+Ran 10 tests in 0.003s
+
+FAILED (errors=19)
+expect_tests: python3 exited 1

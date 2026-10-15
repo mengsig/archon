@@ -1,13 +1,26 @@
 {
-  "archon_source_commit": "c35f633fd8c0dbea352ae3c6b75cb9cc7cce2446",
-  "harness_base_commit": "3da3e125b810b8acf3076bbf57d536c174a01b07",
-  "uncommitted_harness_changes": "Haiku default and tuned four-task preset, included in the archiving commit",
-  "aetherd_version": "1.0.3",
-  "version_capture_note": "Original run.json sampled the socket before daemon startup completed; separate private status read confirmed 1.0.3. Trial dispatch succeeded.",
-  "clean_completed_baseline": false,
-  "isolation_incident": true,
+  "baseline_run": "20261015T071250Z",
+  "calibration_runs": ["20261015T064316Z"],
+  "failed_bootstrap_runs": ["20261015T072502Z"],
+  "archon_commit_by_run": {
+    "20261015T064316Z": "1751ed72933ad137025605726f0c6dc9eb5ae0d2",
+    "20261015T071250Z": "17eeadcba1bbd56e40659527e1b4afa2417f6bf8",
+    "20261015T072502Z": "17eeadcba1bbd56e40659527e1b4afa2417f6bf8"
+  },
+  "commit_note": "17eeadc only changes the smoke preset's default effort to medium; the archon crate is identical to 1751ed7 (Release 1.2.2).",
   "build": "CARGO_PROFILE_DEV_DEBUG=0 cargo build --locked -p archon -p archon-bench",
-  "archon_binary_sha256": "9d49b5884a9c004b0558a55ee331b65b077739fdfd3e1bb6cf1c3fdb1cb1c72b",
-  "bench_binary_sha256": "fe3bd4ddc28a58cb85174918a6c3e5492e6829583003edce06bbd7b0ec42074b",
-  "path_redaction_note": "Operator home paths in smoke run.json, chart.json, summary.md, report.html and calibration run.json are replaced with $XDG_DATA_HOME/archon-bench/<sandbox>; measurements and version diagnostics are otherwise preserved."
+  "archon_binary_sha256": "78a029fff1a079b8430830f68990eaa895e9ad032e8fcfd89ac5721af16acb52",
+  "bench_binary_sha256": {
+    "20261015T064316Z": "built from 1751ed7, not retained",
+    "20261015T071250Z": "4c487d524904d2be44f5f92b497ad8cb05da998a38ec88246cfeff55060273dc",
+    "20261015T072502Z": "4c487d524904d2be44f5f92b497ad8cb05da998a38ec88246cfeff55060273dc"
+  },
+  "aetherd_version": "1.0.6",
+  "engines": {"claude-code": "2.1.299", "codex-cli": "0.162.1"},
+  "sandboxes": "One fresh $XDG_DATA_HOME/archon-bench/q-<HHMMSS> sandbox per run; every process started with env -i and only HOME, USER, LANG, PATH, TMPDIR and the six private ARCHON_*/AETHER_* variables. Each sandbox aetherd was stopped after its run and no sandbox process remained.",
+  "operator_daemons_touched": false,
+  "cost_note": "Archon trials report cost_gap=interrupted because teardown cancels the orchestrator, so every total is a floor (marked >= in the reports).",
+  "path_redaction_note": "Operator home paths in the Luna answers and grader output are replaced with $XDG_DATA_HOME; the baseline and calibration evidence contained none.",
+  "clean_completed_baseline": true,
+  "isolation_incident": false
 }

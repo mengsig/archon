@@ -1,0 +1,5 @@
+### Findings
+
+- **Critical — `src/tokens.js`, `verify`:** Signature validation accepts any prefix of the correct HMAC, including an empty signature, because it uses `expected.startsWith(signature)`. For example, `verify(validToken.split('.')[0] + '.', secret)` accepts the token body without any signature, as long as its `exp` is still valid. Require an exact, constant-time comparison of the full signature.
+
+- **Medium — `src/tokens.js`, `verify`:** Malformed token payloads can throw instead of returning `null`, despite the function’s documented “null otherwise” behavior. For example, a token with a matching HMAC over `not-json` reaches `JSON.parse` and throws. This can turn attacker-controlled input into an exception for callers that expect invalid tokens to be rejected normally. Catch and handle payload decoding/parsing failures at this boundary.

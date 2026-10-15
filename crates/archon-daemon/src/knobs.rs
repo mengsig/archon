@@ -263,7 +263,8 @@ impl<'a> TierScope<'a> {
 /// A stage's choice when nothing names one, at the pipeline tier's effort
 /// within the policy's cap: a model of the pipeline's tier (at most
 /// `max_tier`); else the orchestrator's model; else one of the balanced
-/// tier, or the policy's first. `None` if none.
+/// tier, or the policy's first. Pins above `max_tier` are skipped; an
+/// untiered model (no catalog tier) still qualifies. `None` if none.
 pub(crate) fn default_choice(
     config: &Config,
     scope: TierScope<'_>,
@@ -288,25 +289,29 @@ pub(crate) fn default_choice(
             tier: Some(tier),
         })
     };
+    let pinnable = |m: &ModelRef| {
+        policy.permits_model(m) && scope.catalog.tier_of(m).is_none_or(|t| t <= max_tier)
+    };
     let own = &config.orchestrator.model;
     let choice = nudged
         .and_then(tiered)
-        .or_else(|| {
-            policy
-                .permits_model(own)
-                .then(|| ModelChoice::pinned(own.clone(), effort))
-        })
+        .or_else(|| pinnable(own).then(|| ModelChoice::pinned(own.clone(), effort)))
         .or_else(|| tiered(Tier::Balanced))
         .or_else(|| {
-            let allowed = policy.allow.iter().flatten();
-            let first = allowed.into_iter().find(|m| policy.permits_model(m))?;
+            let first = policy.allow.iter().flatten().find(|m| pinnable(m))?;
             Some(ModelChoice::pinned(first.clone(), effort))
         })?;
     debug_assert!(
         policy.check(&choice).is_ok(),
         "a default is within the policy"
     );
-    debug_assert!(choice.tier.as_ref().is_none_or(|t| t.resolved <= max_tier));
+    debug_assert!(
+        scope
+            .catalog
+            .tier_of(&choice.model)
+            .is_none_or(|t| t <= max_tier),
+        "a default is within the tier ceiling"
+    );
     Some(choice)
 }
 
@@ -607,6 +612,38 @@ mod tests {
         assert_eq!(
             (own.model, own.tier),
             (config.orchestrator.model.clone(), None)
+        );
+    }
+
+    /// The pinned fallbacks keep to the ceiling too: an orchestrator or
+    /// allowlisted model the catalog places above it is skipped.
+    #[test]
+    fn a_pinned_fallback_above_the_ceiling_is_not_a_default() {
+        use archon_core::model_tier::CatalogModel;
+        let mut config = Config::default();
+        config.orchestrator.model = "p/top".parse().unwrap();
+        let entry = |model: &str, tier| CatalogModel {
+            model: model.parse().unwrap(),
+            tier: Some(tier),
+            is_default: false,
+        };
+        let only_frontier = ModelCatalog::new(vec![entry("p/top", Tier::Frontier)]);
+        let open = ModelPolicy::default();
+        let spec = builtin("direct");
+        let tiers = TierScope::new(&config, &open, &only_frontier);
+        assert_eq!(default_choice(&config, tiers, Tier::Strong, &spec), None);
+        let raised = default_choice(&config, tiers, Tier::Frontier, &spec).unwrap();
+        assert_eq!(raised.model.to_string(), "p/top", "the operator raised it");
+
+        let strong = ModelCatalog::new(vec![entry("p/top", Tier::Strong)]);
+        let allowed: Vec<ModelRef> = vec!["p/top".parse().unwrap(), "q/untiered".parse().unwrap()];
+        let listed = ModelPolicy::from_lists(&allowed, &[], None);
+        let tiers = TierScope::new(&config, &listed, &strong);
+        let lowered = default_choice(&config, tiers, Tier::Balanced, &spec).unwrap();
+        assert_eq!(
+            (lowered.model.to_string(), lowered.tier),
+            ("q/untiered".to_owned(), None),
+            "a repository-lowered ceiling skips the strong pins"
         );
     }
 

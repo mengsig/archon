@@ -277,8 +277,15 @@ fn aether_total(total: &Value) -> Usage {
         output_tokens: field("output_tokens"),
         cost_usd: total["cost_usd"].as_f64(),
         estimated_cost_usd: total["estimated_cost_usd"].as_f64(),
-        cost_gap: cost_gap(&total["cost_gap"]),
+        cost_gap: uncovered_gap(cost_gap(&total["cost_gap"]), &total["estimated_cost_usd"]),
     }
+}
+
+/// An agent's own estimate prices its unpriced usage, so only a gap it leaves
+/// uncovered reaches the trial, where it then always means a floor.
+fn uncovered_gap(gap: Option<String>, estimate: &Value) -> Option<String> {
+    let estimated = estimate.as_f64().is_some_and(|e| e > 0.0);
+    gap.filter(|reason| !(estimated && reason == "unpriced"))
 }
 
 /// Any present value marks the cost incomplete, so an unrecognised or oddly
@@ -432,6 +439,44 @@ mod tests {
             Some("a-future-reason".into())
         );
         assert_eq!(gap(serde_json::json!(7)), Some("unknown".into()));
+    }
+
+    fn priced_event(agent: &str, cost: f64, estimate: Option<f64>, gap: Option<&str>) -> Value {
+        let mut total =
+            serde_json::json!({"input_tokens": 1, "output_tokens": 1, "cost_usd": cost});
+        total["estimated_cost_usd"] = estimate.into();
+        total["cost_gap"] = gap.into();
+        serde_json::json!({
+            "agent_id": agent, "seq": 1,
+            "kind": {"type": "agent.usage_updated", "total": total}
+        })
+    }
+
+    /// A Claude lead billed $2 and a Codex reviewer estimated at $5; an
+    /// unpriced sibling without an estimate keeps the trial's cost a floor.
+    #[test]
+    fn an_estimate_covers_only_its_own_agents_unpriced_gap() {
+        use crate::metrics::{CostBound, tests::result};
+        let lead = priced_event("lead", 2.0, None, None);
+        let reviewer = priced_event("reviewer", 0.0, Some(5.0), Some("unpriced"));
+        let sibling = priced_event("sibling", 0.0, None, Some("unpriced"));
+        let trial = |events: &[Value]| {
+            let usage = aether_usage(events).unwrap().unwrap();
+            let mut trial = result(usage.cost_usd, usage.estimated_cost_usd);
+            trial.cost_gap = usage.cost_gap;
+            trial
+        };
+        let covered = trial(&[lead.clone(), reviewer.clone()]);
+        assert_eq!(covered.cost_gap, None);
+        assert_eq!(covered.effective_cost_usd(), Some(7.0));
+        assert!(covered.cost_is_estimate() && !covered.cost_is_floor());
+        let partly = trial(&[lead, reviewer, sibling]);
+        assert_eq!(partly.cost_gap.as_deref(), Some("unpriced"));
+        assert_eq!(partly.effective_cost_usd(), Some(7.0));
+        assert!(partly.cost_is_estimate());
+        assert_eq!(CostBound::of([&partly]), CostBound::Incomplete);
+        let zero = priced_event("zero", 0.0, Some(0.0), Some("unpriced"));
+        assert_eq!(gap_of(&[zero]), Some("unpriced".into()));
     }
 
     #[test]

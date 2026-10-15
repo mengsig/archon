@@ -78,6 +78,7 @@ pub struct TrialResult {
     /// Subscription estimates, or `--price` applied to the token counts.
     pub estimated_cost_usd: Option<f64>,
     /// Why Aether called `cost_usd` incomplete; present means it is a floor.
+    /// An unpriced gap that the same agent's estimate covers is left out.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_gap: Option<String>,
     /// Messages the operator would have had to read.
@@ -144,14 +145,10 @@ impl TrialResult {
         Some(billed + estimate)
     }
 
-    /// Aether reported this trial's cost as incomplete, so it is a lower bound.
-    /// An estimate stands in for unpriced usage, so that gap alone bounds nothing.
+    /// Aether reported work this trial's cost leaves out, so it is a lower bound.
+    /// Gaps covered by an agent's own estimate never get here (`usage::aether_usage`).
     pub fn cost_is_floor(&self) -> bool {
-        let Some(gap) = self.cost_gap.as_deref() else {
-            return false;
-        };
-        let estimated = gap == "unpriced" && self.cost_is_estimate();
-        self.effective_cost_usd().is_some() && !estimated
+        self.cost_gap.is_some() && self.effective_cost_usd().is_some()
     }
 
     /// Some of the effective cost is an estimate of unbilled usage (Codex,
@@ -328,7 +325,8 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_gap_is_a_floor_unless_an_estimate_prices_the_unpriced_usage() {
+    fn a_gap_left_at_the_trial_is_a_floor_whatever_the_estimate() {
+        // Covered gaps were dropped per agent, so any left mark unpriced work.
         let gapped = |cost, estimate| {
             let mut r = result(cost, estimate);
             r.cost_gap = Some("unpriced".into());
@@ -338,10 +336,12 @@ pub(crate) mod tests {
         interrupted.cost_gap = Some("interrupted".into());
         assert!(interrupted.cost_is_floor() && interrupted.cost_is_estimate());
         assert_eq!(CostBound::of([&interrupted]), CostBound::Incomplete);
-        assert!(!gapped(Some(2.0), Some(5.0)).cost_is_floor());
-        assert!(gapped(Some(0.0), None).cost_is_floor());
-        assert!(!gapped(Some(0.0), Some(5.0)).cost_is_floor());
-        assert!(!gapped(None, Some(5.0)).cost_is_floor());
+        assert!(gapped(Some(2.0), Some(5.0)).cost_is_floor());
+        assert_eq!(
+            CostBound::of([&gapped(None, Some(5.0))]),
+            CostBound::Incomplete
+        );
+        assert_eq!(CostBound::of([&gapped(Some(0.0), None)]), CostBound::Floor);
         assert!(!gapped(None, None).cost_is_floor());
         assert!(!result(Some(2.0), None).cost_is_floor());
     }

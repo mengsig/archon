@@ -3,11 +3,13 @@ use archon_core::{ArchonError, outcome::Outcome};
 
 impl Store {
     /// Spend may arrive after terminal state, and provider billing can lower an estimate.
+    /// Learning reads the API-equivalent total, whatever budget policy captured the outcome.
     pub(super) fn settled_outcome(&self, mut outcome: Outcome) -> Result<Outcome, ArchonError> {
         let stages = self.stage_runs(&outcome.run)?;
         if stages.is_empty() {
             return Ok(outcome);
         }
+        outcome.count_estimates = archon_core::cost::API_EQUIVALENT;
         let live = super::capture::stage_observations(self, &stages, outcome.count_estimates)?;
         assert!(
             live.iter()

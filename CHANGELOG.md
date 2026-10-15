@@ -26,7 +26,9 @@
   always use the API-equivalent total, billed plus estimated, so a Codex
   stage never looks free. `archon cost` and `cost_report` add
   `≈ $X API-equivalent` when budgets leave estimates out. Older records keep
-  their list-price cost and read as before.
+  their list-price cost and read as before, and outcomes captured while
+  budgets left estimates out are re-priced with them when learning reads them.
+  A benchmark cost stays marked when unpriced work has no estimate covering it.
 - Artifact retention defaults to 14 days. Existing tighter worktree/cache
   defaults stay unchanged; zero durations disable their configured expiry.
 

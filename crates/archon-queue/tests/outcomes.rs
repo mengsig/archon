@@ -300,6 +300,54 @@ fn outcome_cost_tracks_late_provider_settlement_in_both_directions() {
     }
 }
 
+/// An outcome captured while budgets left estimates out still learns the
+/// API-equivalent cost; the backfill skips it, so reads must price it again.
+#[test]
+fn outcomes_captured_without_estimates_learn_the_codex_estimate() {
+    let mut store = store();
+    let item = store.insert_item(&item(None, "old codex"), None).unwrap();
+    let run = start(&mut store, &item.id);
+    let mut stage = running_stage(&run, 0, 0);
+    stage.state = StageState::Completed;
+    stage.finished_at = Some(t(30));
+    store.upsert_stage_run(&stage).unwrap();
+    store
+        .record_spend(&archon_queue::store::SpendRow {
+            agent: agent(0),
+            item: Some(item.id.clone()),
+            cost_usd: 0.0,
+            cost_basis: archon_core::cost::CostBasis::ListPrice,
+            cost_complete: Some(false),
+            estimated_cost_usd: 0.75,
+            input_tokens: 1,
+            output_tokens: 1,
+            at: t(25),
+        })
+        .unwrap();
+    settle_run(
+        &mut store,
+        &run,
+        QueueState::Succeeded {
+            run: run.id.clone(),
+            summary: "done".into(),
+        },
+        t(50),
+    );
+    store
+        .capture_outcome(&store.run(&run.id).unwrap(), None, false)
+        .unwrap();
+    assert!(store.backfill_outcomes(20, true).unwrap());
+    let outcome = store.outcome(&run.id).unwrap().unwrap();
+    assert_eq!((outcome.cost_usd, outcome.count_estimates), (0.75, true));
+    assert_eq!(outcome.stages[0].cost_usd, 0.75);
+    assert_eq!(store.outcomes(None).unwrap()[0].cost_usd, 0.75);
+    let stats = store.learning_stats(None).unwrap();
+    assert_eq!(stats.pipelines[0].median_cost_usd, 0.75);
+    let routed = store.route_evidence(None, "direct", "implement", None);
+    assert_eq!(routed.unwrap()[0].median_cost_usd, 0.75);
+    assert_eq!(store.spend_for_item(&item.id, false).unwrap(), 0.0);
+}
+
 #[test]
 fn infrastructure_failure_does_not_become_negative_model_evidence() {
     let mut store = store();

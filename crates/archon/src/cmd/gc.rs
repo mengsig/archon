@@ -92,6 +92,12 @@ fn summary(report: &GcReport) -> String {
             report.artifacts.len()
         ));
     }
+    if !report.reports.is_empty() {
+        lines.push(format!(
+            "Deleted {} report snapshot(s).",
+            report.reports.len()
+        ));
+    }
     if report.pressure {
         lines.push("Disk pressure: finished runs and idle caches were collected sooner.".into());
     }
@@ -127,6 +133,7 @@ mod tests {
             failed: vec![],
             caches: vec![],
             artifacts: vec![],
+            reports: vec![],
             bytes_freed: 3 << 30,
             pressure: false,
         };

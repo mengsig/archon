@@ -1,0 +1,22 @@
+{
+  "source_run": "20261015T130836Z",
+  "rubric_fix_commit": "1ffff479107f66adf4770800b73bd6cde6c7fc2f",
+  "regrade_checkout_commit": "802ef7dc445b8f1591f04bd2cd68e9f6e6a565e8",
+  "rubric_sha256": "f884d60c2a8c0586f3159c0e348607ab945f8c64d33016eac99099ea101abccd",
+  "method": "Run the current grade.sh offline on each original saved answer and original result repository. Both result patches are empty; no changed or untracked Markdown/text files contribute. No new model run. Original result records and cost are unchanged.",
+  "command": "env -i PATH=\"$PATH\" BENCH_ANSWER=<original-answer> BENCH_RESULT_SESSION_LIB=<original-workspace>/review-seeded-bug BENCH_TASK_DIR=\"$PWD/bench/tasks/review-seeded-bug\" BENCH_GRADERS=\"$PWD/bench/graders\" sh \"$PWD/bench/tasks/review-seeded-bug/grade.sh\"",
+  "arms": {
+    "archon": {
+      "original_score": 1.0,
+      "regraded_score": 1.0,
+      "success": true,
+      "saved_answer_sha256": "24c1bf362731d7fd630beae8a17440121decf73058cb16a01db15838fb0096d8"
+    },
+    "aether": {
+      "original_score": 1.0,
+      "regraded_score": 1.0,
+      "success": true,
+      "saved_answer_sha256": "6d1386bc8cdbc71f4ff334ebed645295e0228c1b5b36810bf02ac51581bc2e1a"
+    }
+  }
+}

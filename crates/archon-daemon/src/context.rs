@@ -73,6 +73,8 @@ impl DaemonPaths {
 
 pub struct DaemonContext {
     pub config: Config,
+    /// Cached filesystem accounting keeps status polling from repeatedly walking trees.
+    pub storage: Mutex<Option<(std::time::Instant, Vec<archon_core::protocol::StorageUsage>)>>,
     pub paths: DaemonPaths,
     /// The only writer of `archon.db`. Held briefly; never across an await
     /// on Aether.

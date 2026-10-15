@@ -108,6 +108,7 @@ async fn disk_status(ctx: &DaemonContext) -> Result<DiskStatus, ArchonError> {
         disk_full: ctx.disk.disk_full(),
         standby: ctx.standby.get().cloned(),
         gc: crate::gc::last_pass(&*ctx.store.lock().await)?,
+        storage: crate::storage::usage(ctx).await?,
     };
     assert_ne!(status.free_bytes.is_some(), status.error.is_some());
     assert!(

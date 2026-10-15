@@ -1,10 +1,9 @@
 //! `archon daemon run|start|stop|status|restart|upgrade` and `archon mcp`.
 
-use std::fs::{File, OpenOptions};
-use std::io::Write as _;
+use std::io::Read as _;
 use std::os::unix::process::CommandExt as _;
 use std::path::Path;
-use std::process::{Child, Command, ExitCode, Stdio};
+use std::process::{Child, ChildStderr, Command, ExitCode, Stdio};
 use std::time::Duration;
 
 use anyhow::Context as _;
@@ -29,8 +28,6 @@ const RELAUNCH_WAIT: Duration = Duration::from_secs(120);
 const DETACH_WAIT: Duration = Duration::from_secs(8);
 /// `daemon status` exit code when nothing is running (as `systemctl status`).
 const NOT_RUNNING: u8 = 3;
-/// Past this size a start moves the startup log to `archond.log.1` first.
-const LOG_ROTATE_BYTES: u64 = 16 * 1024 * 1024;
 
 pub async fn run(command: DaemonCommand, json: bool) -> anyhow::Result<ExitCode> {
     match command {
@@ -101,7 +98,13 @@ async fn foreground() -> anyhow::Result<ExitCode> {
 /// mix moved and default ones, which autostart refuses; it is still said.
 fn warn_if_mixed() {
     if let Some(mix) = archon_core::paths::partial_override(&archon_client::default_socket()) {
-        eprintln!("archon: warning: {mix}. Starting archond anyway, as it was asked for directly.");
+        if std::env::var_os(crate::daemon_log::DETACHED_ENV).is_some() {
+            tracing::warn!("{mix}. Starting archond anyway, as it was asked for directly.");
+        } else {
+            eprintln!(
+                "archon: warning: {mix}. Starting archond anyway, as it was asked for directly."
+            );
+        }
     }
 }
 
@@ -122,14 +125,14 @@ async fn detach(json: bool) -> anyhow::Result<ExitCode> {
             .parent()
             .context("the socket path has no directory")?,
     )?;
-    let log = open_startup_log(&log_path, LOG_ROTATE_BYTES)?;
-    let stderr = log
-        .try_clone()
-        .with_context(|| format!("sharing {}", log_path.display()))?;
+    // Validate before detaching: a child with invalid config has no terminal
+    // on which to explain why it could not initialize its log.
+    Config::load_default()?;
     let mut child = daemon_command(&socket)?
         .stdin(Stdio::null())
-        .stdout(log)
-        .stderr(stderr)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .env(crate::daemon_log::DETACHED_ENV, "1")
         // Its own process group: a Ctrl-C in the operator's terminal must
         // not reach the daemon.
         .process_group(0)
@@ -150,44 +153,6 @@ async fn detach(json: bool) -> anyhow::Result<ExitCode> {
         &text,
     )?;
     Ok(ExitCode::SUCCESS)
-}
-
-/// The startup log, opened to append after a line marking this start. A log
-/// past `rotate_past` bytes first moves to `<log>.1`, replacing the one there.
-fn open_startup_log(path: &Path, rotate_past: u64) -> anyhow::Result<File> {
-    assert!(
-        path.extension().is_some_and(|ext| ext == "log"),
-        "the rotated log is named after a .log path"
-    );
-    assert!(rotate_past > 0, "a zero cap would rotate on every start");
-    rotate_if_past(path, rotate_past)?;
-    let mut log = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .with_context(|| format!("opening {}", path.display()))?;
-    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    writeln!(log, "{} at {now} ---", archon_core::paths::STARTUP_LOG_MARK)
-        .with_context(|| format!("writing {}", path.display()))?;
-    Ok(log)
-}
-
-fn rotate_if_past(path: &Path, rotate_past: u64) -> anyhow::Result<()> {
-    let size = match std::fs::metadata(path) {
-        Ok(meta) => meta.len(),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
-    };
-    if size <= rotate_past {
-        return Ok(());
-    }
-    let older = path.with_extension("log.1");
-    assert_ne!(older, path, "rotation keeps the old log apart");
-    match std::fs::rename(path, &older) {
-        // Another start rotated it first.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        moved => moved.with_context(|| format!("moving {} aside", path.display())),
-    }
 }
 
 /// `archon daemon run` in the data directory, so the daemon never holds the
@@ -216,12 +181,22 @@ fn daemon_command(socket: &Path) -> anyhow::Result<Command> {
 /// passes first; an error when the daemon exits before either.
 async fn await_listening(child: &mut Child, socket: &Path, log: &Path) -> anyhow::Result<bool> {
     let deadline = tokio::time::Instant::now() + DETACH_WAIT;
+    let mut stderr = child.stderr.take();
+    if let Some(stderr) = &stderr {
+        rustix::fs::fcntl_setfl(stderr, rustix::fs::OFlags::NONBLOCK)
+            .context("making archond startup diagnostics nonblocking")?;
+    }
+    let mut diagnostics = Vec::new();
     loop {
+        read_startup_error(stderr.as_mut(), &mut diagnostics)?;
         if let Some(status) = child.try_wait().context("waiting for archond")? {
+            read_startup_error(stderr.as_mut(), &mut diagnostics)?;
+            let detail = String::from_utf8_lossy(&diagnostics);
             anyhow::bail!(
-                "archond (pid {}) exited with {status} before it listened; startup log: {}",
+                "archond (pid {}) exited with {status} before it listened; startup log: {}\n{}",
                 child.id(),
-                log.display()
+                log.display(),
+                detail.trim()
             );
         }
         if tokio::net::UnixStream::connect(socket).await.is_ok() {
@@ -232,6 +207,27 @@ async fn await_listening(child: &mut Child, socket: &Path, log: &Path) -> anyhow
         }
         tokio::time::sleep(STOP_POLL).await;
     }
+}
+
+/// Drain during startup so even a large diagnostic cannot fill the pipe and
+/// block the child. Bound both retained bytes and work per readiness poll;
+/// descendants may keep stderr open, so EOF is never required.
+fn read_startup_error(stderr: Option<&mut ChildStderr>, bytes: &mut Vec<u8>) -> anyhow::Result<()> {
+    let Some(stderr) = stderr else {
+        return Ok(());
+    };
+    const LIMIT: usize = 64 * 1024;
+    let mut buffer = [0; 8192];
+    for _ in 0..LIMIT / buffer.len() {
+        match stderr.read(&mut buffer) {
+            Ok(0) => return Ok(()),
+            Ok(count) => bytes.extend_from_slice(&buffer[..count.min(LIMIT - bytes.len())]),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error).context("reading archond startup diagnostics"),
+        }
+    }
+    Ok(())
 }
 
 /// Stop archond, then in dedicated mode Archon's own aetherd unless `keep_aether`.
@@ -395,29 +391,47 @@ pub async fn mcp() -> anyhow::Result<ExitCode> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_start_appends_to_the_startup_log_and_moves_a_large_one_aside() {
+    #[tokio::test]
+    async fn startup_diagnostics_are_returned_after_child_exit() {
+        let mut child = Command::new("sh")
+            .args(["-c", "printf 'cannot initialize daemon log\\n' >&2; exit 1"])
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let log = dir.path().join("archond.log");
-        std::fs::write(&log, "the first session\n").unwrap();
-
-        let mut file = open_startup_log(&log, 96).unwrap();
-        writeln!(file, "the second session, long enough to pass the cap").unwrap();
-        drop(file);
-        let both = std::fs::read_to_string(&log).unwrap();
+        let error = await_listening(
+            &mut child,
+            &dir.path().join("absent.sock"),
+            &dir.path().join("archond.log"),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("cannot initialize daemon log"));
         assert!(
-            both.starts_with("the first session\n--- archond starting at "),
-            "{both}"
+            child
+                .try_wait()
+                .unwrap()
+                .unwrap()
+                .code()
+                .is_some_and(|code| code != 0)
         );
-        assert!(both.len() > 96, "the log is past its cap now: {both}");
+    }
 
-        drop(open_startup_log(&log, 96).unwrap());
-        let older = std::fs::read_to_string(dir.path().join("archond.log.1")).unwrap();
-        assert_eq!(older, both, "the large log moved aside whole");
-        let fresh = std::fs::read_to_string(&log).unwrap();
-        assert!(
-            fresh.starts_with(archon_core::paths::STARTUP_LOG_MARK) && fresh.lines().count() == 1,
-            "the third start begins a new log: {fresh}"
-        );
+    #[tokio::test]
+    async fn large_startup_diagnostic_is_drained_and_bounded() {
+        let mut child = Command::new("sh")
+            .args(["-c", "i=0; while [ \"$i\" -lt 2000 ]; do printf 'initialization failed with a long explanation that exceeds the pipe capacity\\n' >&2; i=$((i + 1)); done; exit 1"])
+            .stderr(Stdio::piped()).spawn().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let error = await_listening(
+            &mut child,
+            &dir.path().join("absent.sock"),
+            &dir.path().join("archond.log"),
+        )
+        .await
+        .unwrap_err();
+        let text = error.to_string();
+        assert!(text.contains("initialization failed"));
+        assert!(text.len() < 64 * 1024 + 1024);
     }
 }

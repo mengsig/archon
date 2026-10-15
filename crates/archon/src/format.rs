@@ -129,6 +129,18 @@ fn link_lines(out: &mut String, status: &DaemonStatus) {
     }
     if let Some(disk) = &status.disk {
         let _ = writeln!(out, "disk: {}", disk_line(disk));
+        for usage in &disk.storage {
+            let size = usage.bytes.map_or_else(
+                || {
+                    format!(
+                        "unknown ({})",
+                        sanitize_line(usage.error.as_deref().unwrap_or("no reading"))
+                    )
+                },
+                |bytes| format!("{bytes} bytes"),
+            );
+            let _ = writeln!(out, "storage {}: {size}", usage.kind);
+        }
     }
 }
 
@@ -800,6 +812,7 @@ pub(crate) mod tests {
             disk_full: None,
             standby: None,
             gc: None,
+            storage: vec![],
         };
         let mut with_disk = status_with(AetherLinkStatus::Disconnected {
             error: "down".into(),
@@ -836,6 +849,26 @@ pub(crate) mod tests {
         disk.min_free_bytes = 0;
         let unknown = disk_line(&disk);
         assert!(unknown.starts_with("free space unknown at /data/archon (permission denied);"));
+    }
+
+    #[test]
+    fn status_shows_allocated_bytes_by_storage_kind() {
+        let mut up = status_with(AetherLinkStatus::Disconnected {
+            error: "down".into(),
+            retry_at: None,
+        });
+        up.disk = Some(
+            serde_json::from_value(serde_json::json!({
+                "path": "/data", "free_bytes": 1000000, "min_free_bytes": 0, "held": false,
+                "storage": [{"kind": "reports_lavish", "path": "/data/reports", "bytes": 8192}]
+            }))
+            .unwrap(),
+        );
+        let text = status(&up, &RepoNames::new());
+        assert!(
+            text.contains("storage reports_lavish: 8192 bytes"),
+            "{text}"
+        );
     }
 
     #[test]

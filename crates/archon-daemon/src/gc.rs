@@ -86,13 +86,14 @@ impl Policy {
         older_than: Option<Age>,
         force: bool,
     ) -> Result<Self, ArchonError> {
+        let explicit = older_than.is_some();
         let older_than = older_than.unwrap_or(config.gc_after);
         let policy = Self {
-            remove_before: now - older_than.chrono()?,
-            reclaim_before: now - config.cache_after.chrono()?,
+            remove_before: cutoff(now, older_than, !explicit)?,
+            reclaim_before: cutoff(now, config.cache_after, true)?,
             force,
             cache_dirs: config.cache_dirs.clone(),
-            owed_cleanup: !config.keep_on_success,
+            owed_cleanup: !config.keep_on_success && config.gc_after.secs() != 0,
         };
         assert!(policy.remove_before <= now, "ages are not negative");
         assert!(policy.reclaim_before <= now, "ages are not negative");
@@ -107,8 +108,10 @@ impl Policy {
         config: &WorktreeConfig,
         now: Timestamp,
     ) -> Result<Self, ArchonError> {
-        let sooner = now - config.pressure_after.chrono()?;
-        self.remove_before = self.remove_before.max(sooner);
+        let sooner = cutoff(now, config.pressure_after, false)?;
+        if config.gc_after.secs() != 0 && config.pressure_after.secs() != 0 {
+            self.remove_before = self.remove_before.max(sooner);
+        }
         assert!(self.remove_before <= now, "ages are not negative");
         Ok(self)
     }
@@ -117,6 +120,16 @@ impl Policy {
     fn settled_before(&self) -> Timestamp {
         self.remove_before.max(self.reclaim_before)
     }
+}
+
+/// A configured zero disables expiry; explicit CLI zero still means now.
+fn cutoff(now: Timestamp, age: Age, zero_disables: bool) -> Result<Timestamp, ArchonError> {
+    if zero_disables && age.secs() == 0 {
+        return Ok(Timestamp::MIN_UTC);
+    }
+    now.checked_sub_signed(age.chrono()?).ok_or_else(|| {
+        ArchonError::Invalid(format!("the age {age} is too large for this timestamp"))
+    })
 }
 
 /// Where archond creates run workspaces, with symlinks resolved as git
@@ -311,8 +324,10 @@ pub async fn collect_planned(ctx: &DaemonContext, pass: Pass<'_>) -> Result<GcRe
         report.absorb(swept.await?);
     }
     report.absorb(collect_extras(ctx, &roots, &extras).await?);
+    report.absorb(collect_reports(ctx).await?);
     report.pressure = pressure;
     *last_pass = Some(Instant::now());
+    *ctx.storage.lock().await = None;
     announce(ctx, &report).await?;
     Ok(report)
 }
@@ -338,6 +353,18 @@ async fn collect_extras(
     };
     report.absorb(blocking(move || extras::delete(claimed)).await?);
     Ok(report)
+}
+
+async fn collect_reports(ctx: &DaemonContext) -> Result<GcReport, ArchonError> {
+    let days = ctx.config.storage.retention_days;
+    if days == 0 {
+        return Ok(GcReport::default());
+    }
+    // Publishing and reopening take this lock before the store too. Keeping
+    // the store held makes the terminal-item and gate checks atomic with expiry.
+    let _files = ctx.report_files.lock().await;
+    let cutoff = archon_core::now() - chrono::Duration::days(i64::from(days));
+    crate::reports::expire_files(&mut *ctx.store.lock().await, &ctx.paths.reports, cutoff)
 }
 
 /// Tell the operator what a pass that freed something did: a feed note, and

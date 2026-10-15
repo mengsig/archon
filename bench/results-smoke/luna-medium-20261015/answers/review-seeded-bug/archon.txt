@@ -1,0 +1,7 @@
+## Findings
+
+- **High — `src/tokens.js`, `verify`: signature prefixes are accepted.** The check `expected.startsWith(signature)` accepts any prefix of the real HMAC, including an empty signature. For a valid token, removing everything after the final `.` leaves a token that can still verify. This lets anyone who obtains a token remove its authentication tag and still use it; an attacker who can construct the payload can forge arbitrary claims. Require an exact, fixed-length signature match, using a constant-time comparison.
+
+- **Medium — `src/tokens.js`, `verify`: malformed signed payloads throw instead of being rejected.** `JSON.parse(fromBase64Url(body))` can throw. For example, a token whose body decodes to `{` and whose signature is valid for that body causes an exception. If callers expect invalid tokens to return `null`, this can turn malformed or deliberately crafted tokens into request failures. Catch parse errors and return `null` (and consider validating the decoded payload’s shape).
+
+I inspected the registered `review-seeded-bug` mirror, whose package is named `session-lib`. No files were changed. I did not run tests.

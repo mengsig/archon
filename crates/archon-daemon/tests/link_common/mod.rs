@@ -60,6 +60,7 @@ impl Harness {
         let backend = Arc::new(AetherBackend::new(link.clone(), config.models.policy()));
         let dispatch = Arc::new(Notify::new());
         let ctx = DaemonContext {
+            storage: Default::default(),
             paths: paths(dir.path()),
             config,
             store: Mutex::new(Store::open_in_memory().expect("in-memory store")),

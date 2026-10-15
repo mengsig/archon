@@ -661,6 +661,9 @@ pub struct GcReport {
     /// Items' published artifacts deleted after `artifacts.keep_after`.
     #[serde(default)]
     pub artifacts: Vec<Reclaimed>,
+    /// Owned report snapshots of settled items removed after storage retention.
+    #[serde(default)]
+    pub reports: Vec<Reclaimed>,
     /// Disk space freed by everything above together.
     pub bytes_freed: u64,
     /// The pass ran with the shorter disk-pressure ages.
@@ -682,6 +685,7 @@ impl GcReport {
         self.reclaimed.extend(other.reclaimed);
         self.caches.extend(other.caches);
         self.artifacts.extend(other.artifacts);
+        self.reports.extend(other.reports);
         self.skipped.extend(other.skipped);
         self.failed.extend(other.failed);
         self.bytes_freed = self.bytes_freed.saturating_add(other.bytes_freed);
@@ -693,6 +697,7 @@ impl GcReport {
             || !self.reclaimed.is_empty()
             || !self.caches.is_empty()
             || !self.artifacts.is_empty()
+            || !self.reports.is_empty()
     }
 
     /// What the pass did, in one line, for the feed and `archon status`.
@@ -704,12 +709,13 @@ impl GcReport {
         };
         format!(
             "Gc{why} freed {}: removed {} worktree(s) and set-aside directories, deleted the \
-             build caches of {} worktree(s), {} shared build cache(s) and the artifacts of {} item(s).",
+             build caches of {} worktree(s), {} shared build cache(s), the artifacts of {} item(s), and {} report snapshot(s).",
             gib(self.bytes_freed),
             self.removed.len(),
             self.reclaimed.len(),
             self.caches.len(),
             self.artifacts.len(),
+            self.reports.len(),
         )
     }
 }
@@ -846,6 +852,19 @@ pub struct DiskStatus {
     /// The last gc pass that freed anything.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gc: Option<GcStatus>,
+    /// Sampled at most once a minute; paths are disjoint within each kind.
+    #[serde(default)]
+    pub storage: Vec<StorageUsage>,
+}
+
+/// Allocated bytes for one storage kind, without following symlinks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StorageUsage {
+    pub kind: String,
+    pub path: std::path::PathBuf,
+    pub bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// `bytes` in GiB with one decimal, as `df -h` shows sizes.

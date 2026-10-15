@@ -8,7 +8,7 @@ Review-holding leads now get reviewer-model advice based on the repository's
 policy when they spawn, and recovery of running work no longer depends on
 reading repository configuration. Local release builds can now produce the
 tagged archives and checksums without GitHub Actions. Daemon protocol remains
-18, and no store migrations changed.
+13, and no store migrations changed.
 
 ### Added
 

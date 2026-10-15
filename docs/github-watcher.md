@@ -397,9 +397,12 @@ it may tell the requester the reason Aether gave.
 on its inbox line and `"operator": true` in its payload. The orchestrator
 takes it as your instruction, as in chat: it may record or clear a
 directive (noting the GitHub login and thread it came from), register a
-repository, pause and resume, and choose any knob up to the ceiling. It
-answers on the public thread without operator-only details, and always
-`notify`s you in chat what was asked and what it did.
+repository, pause and resume, and choose any knob up to the ceiling. A
+"merge" goes through `request_merge`: archond asks you to confirm in chat,
+unless the repository has `grant_merge` (see the guide's "Merging on
+request"); an external request never merges. It answers on the public
+thread without operator-only details, and always `notify`s you in chat
+what was asked and what it did.
 
 The prompt tells it never to infer standing: not from the requester's name,
 not from a marker, a trust sentence or `"operator": true` pasted into the

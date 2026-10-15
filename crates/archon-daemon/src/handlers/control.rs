@@ -24,7 +24,7 @@ const HARD_PAUSE_KEY: &str = "global_pause_hard";
 pub(super) async fn status(ctx: &DaemonContext) -> Result<Reply, ArchonError> {
     let caps = resolve::caps(ctx).await;
     let autonomy = RepoEnv::new(None)?.autonomy(&ctx.config);
-    let (snapshot, blocked, open_questions, directives, open_gates) = {
+    let (snapshot, blocked, open_questions, directives, open_gates, merges) = {
         let store = ctx.store.lock().await;
         let now = archon_core::now();
         let mut snapshot = store.dispatch_snapshot(now)?;
@@ -39,12 +39,14 @@ pub(super) async fn status(ctx: &DaemonContext) -> Result<Reply, ArchonError> {
         })?;
         let open_gates = store.open_gates()?.len();
         let questions = store.questions(true)?.len();
+        let merges = super::autonomy::merges_now(&store)?;
         (
             snapshot,
             blocked.len(),
             questions,
             store.directives(now)?,
             open_gates,
+            merges,
         )
     };
     let waiting_items = super::item_views::read_summaries(
@@ -85,6 +87,8 @@ pub(super) async fn status(ctx: &DaemonContext) -> Result<Reply, ArchonError> {
         disk: Some(disk_status(ctx).await?),
         versions: Some(ops::versions(ctx).await),
         upgrade: ops::phase(ctx).await,
+        merges_waiting: merges.waiting,
+        merge_granted: merges.granted,
     };
     assert!(
         status.spend_today_usd <= status.spend_total_usd + 1e-9,

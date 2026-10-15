@@ -374,7 +374,8 @@ directory to your pipelines and edit its roles.
 A work item ships in one of two modes, set per repository:
 
 - `pr` (the default): opens a PR. Merging requires the item's `merge = auto`
-  knob and permission in your ceiling (`--auto-merge` permits it for a repository).
+  knob and permission in your ceiling (`--auto-merge` permits it for a repository),
+  or your own request ([Merging on request](#merging-on-request)).
 - `local`: commits on the run branch and never pushes.
 
 No agent ships. A stage of the pipeline, usually the last that commits,
@@ -617,8 +618,8 @@ message, and off in shared mode.
 ```
 
 `/upgrade` is `archon daemon upgrade` (or `archon daemon restart`): archond
-installs what you named, holds dispatch while running stage agents finish
-(at most 30 minutes), then hands the restart to a detached
+holds dispatch while running stage agents finish (at most 30 minutes),
+installs what you named while dispatch stays held, then hands the restart to a detached
 `archon daemon relaunch` that outlives it, stops, and is started again with
 Archon's own aetherd. The next archond reports the old and new versions in
 the feed. Without `requeue` a drain that runs out gives the restart up and
@@ -652,7 +653,9 @@ archon repo add ~/code/web --pipeline adaptive
 In `archon chat`, just talk. Slash commands cover the rest: `/questions`,
 `/a [n] <answer>` (the newest open question without `n`),
 `/answer <n> <answer>`, `/status`, `/queue [state …]` (the queue, e.g.
-`/queue running failed`), `/item <id>` (one item), `/progress` (show stage
+`/queue running failed`), `/item <id>` (one item), `/merge <id>
+[--ignore-checks]` (merge its pull request; see
+[Merging on request](#merging-on-request)), `/progress` (show stage
 progress too; also `/verbose`), `/pause` and `/resume` (optionally `hard`,
 `repo <name>` or `pipeline <name>`), `/help` and `/quit`. Start a line with
 `//` to send a message that begins with `/`.
@@ -675,6 +678,7 @@ progress too; also `/verbose`), `/pause` and `/resume` (optionally `hard`,
 | `archon queue refresh <id>` | merge a finished item's base branch, fetched from `origin`, into its branch: a new item resolves any conflicts, runs the checks, is reviewed from the new merge base and updates the same pull request (never a rebase or a second pull request) |
 | `archon queue steer <id> [--note "…"] [--stage <stage>] [--model <provider/model>] [--effort <effort>] [--budget-usd <usd>] [--extend <minutes>] [--abort [--then retry\|skip] [--goto <stage>]] [--remove <stage>] [--insert <stage> [--from <pipeline>] [--after <stage>]] [--switch <pipeline>]` | change an item without cancelling it; see [steering an item](#steering-an-item) |
 | `archon log` | the complete feed; `--item <id>` keeps one item's entries, `--kind <kind>` (repeatable) some kinds, and `--follow` keeps printing new ones |
+| `archon merge <id> [--ignore-checks]` | merge a succeeded item's pull request at its reviewed commit; see [Merging on request](#merging-on-request) |
 | `archon reports` / `archon reports reopen <rpt_…>` | list published reports with their state and URL, or show a closed one again |
 | `archon github-watcher …` | route `@archon` on GitHub issues and PRs to the orchestrator. `operators <LOGIN>...` lets the GitHub accounts you list instruct it with your authority (off by default); see [`docs/github-watcher.md`](github-watcher.md) |
 | `archon pause` / `archon resume` | hold dispatch globally, per repo or per pipeline; `--hard` also pauses running agents |
@@ -967,6 +971,43 @@ repository's own `.archon/config.toml` can only lower them.
 "auto-merge docs-only changes today". `archon autonomy` shows the defaults,
 the ceiling and the directives. See
 [`docs/ARCHITECTURE.md` §18](ARCHITECTURE.md#18-autonomy).
+
+### Merging on request
+
+`merge = manual` leaves a pull request for you to merge, but you can have
+Archon merge one without raising the ceiling:
+
+```sh
+archon merge <item>                  # also /merge <item> in archon chat
+archon merge <item> --ignore-checks  # merge although checks are red or pending
+```
+
+Archon merges only an item that succeeded and whose pull request is open,
+not a draft, mergeable, on the right base, with no unmerged stack parent,
+and still at the commit its review passed. It merges by the first method the
+repository allows, pinned to that commit, never with `--admin`. Checks
+must be green unless you acknowledge them. A refusal says why, is recorded,
+and merges nothing. `archon queue show <item>` prints a `merge:` line.
+
+You can also just tell the orchestrator "merge it", in chat or in a GitHub
+request with operator standing. It cannot merge by itself: it calls
+`request_merge`, and Archon asks you `Merge …?` as a numbered question.
+Answer `/a <n> yes`, `/a <n> yes ignore-checks` or `/a <n> no`. The
+orchestrator cannot answer it for you. A whole-message `/merge <item>` in
+the orchestrator's Aether chat merges at once, in dedicated mode only.
+
+To skip that question for a repository, grant it:
+
+```sh
+archon repo set <repo> --grant-merge true   # false withdraws it
+```
+
+The grant has no expiry and is independent of `merge = auto`. Under it, a
+request for a reviewed item whose checks are all green merges without a
+question. Red checks, or an item with `review = none`, are still asked.
+`archon autonomy` and `archon status` show the grant, and `archon status`
+any merge waiting for you. See
+[`docs/ARCHITECTURE.md` §18.6](ARCHITECTURE.md#186-merges-the-operator-asks-for).
 
 ### Who speaks as you
 

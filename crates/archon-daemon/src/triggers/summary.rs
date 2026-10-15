@@ -103,6 +103,11 @@ fn label(event: &TriggerEvent) -> String {
             let verdict = if *applied { "started" } else { "refused" };
             format!("chat command {verdict}: {command}")
         }
+        TriggerEvent::ChatMergeRefused { .. } => "/merge refused".to_owned(),
+        TriggerEvent::MergeFinished { item, merged, .. } => {
+            let verdict = if *merged { "merged" } else { "not merged" };
+            format!("merge {verdict}: {item}")
+        }
         TriggerEvent::LavishFeedback { report, item, .. } => match item {
             Some(item) => format!("report feedback: {report} ({item})"),
             None => format!("report feedback: {report}"),

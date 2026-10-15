@@ -23,11 +23,13 @@ mod waiting;
 
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
-use archon_core::id::QuestionId;
+use archon_core::id::{QuestionId, QueueItemId};
+use archon_core::merge::MergeAuthority;
 use archon_core::notify::{AnswerVia, Question};
 use archon_core::protocol::{ClientKind, Reply, RepoRef, Request};
 
 use crate::context::DaemonContext;
+use crate::executor::operator_merge;
 use crate::{github, ops, reports, standby, supervisor};
 
 /// Validate and execute one request. Operator-only requests are refused
@@ -153,6 +155,22 @@ async fn route(
         Request::ClearDirective { directive } => {
             autonomy::clear_directive(ctx, directive.as_ref()).await
         }
+        Request::MergeItem {
+            item,
+            ignore_checks,
+            chat,
+        } => {
+            let authority = match chat {
+                true => MergeAuthority::ArchonChat,
+                false => MergeAuthority::Cli,
+            };
+            let merge = operator_merge::merge_now(ctx, &item, authority, ignore_checks).await?;
+            Ok(Reply::Merge(Box::new(merge)))
+        }
+        Request::RequestMerge { item, reason } => {
+            let merge = operator_merge::request(ctx, &item, reason.as_deref()).await?;
+            Ok(Reply::Merge(Box::new(merge)))
+        }
         request => handle_adaptive(ctx, client, request).await,
     }
 }
@@ -204,6 +222,17 @@ pub(crate) async fn answer_question(
 /// Watch a registered repository on GitHub; the `/watch` chat command.
 pub(crate) async fn watch_repo(ctx: &DaemonContext, repo: &RepoRef) -> Result<String, ArchonError> {
     repos::watch(ctx, repo).await
+}
+
+/// The one item whose id starts with `prefix`, as `archon` resolves it.
+pub(crate) async fn resolve_item(
+    ctx: &DaemonContext,
+    prefix: &str,
+) -> Result<QueueItemId, ArchonError> {
+    match item_views::resolve(ctx, prefix).await? {
+        Reply::Item(item) => Ok(item.id),
+        other => unreachable!("an item lookup answers with an item, not {other:?}"),
+    }
 }
 
 async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, ArchonError> {

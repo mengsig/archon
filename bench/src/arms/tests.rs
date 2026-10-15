@@ -300,6 +300,7 @@ fn succeeded(repo: &RepoId, branch: &str, minute: i64) -> ItemDetail {
         gates: Vec::new(),
         delegations: Default::default(),
         switched_to: None,
+        merges: Vec::new(),
     }
 }
 
@@ -472,6 +473,7 @@ fn result_branches_follow_completion_order_per_repo() {
         gates: Vec::new(),
         delegations: Default::default(),
         switched_to: None,
+        merges: Vec::new(),
     };
     let details = [
         succeeded(&api, "archon/late", 5),

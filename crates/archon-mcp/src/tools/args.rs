@@ -97,6 +97,10 @@ pub(super) fn to_request(tool: &str, arguments: Value) -> Result<Request, ToolEr
         "update_initiative" => initiatives::update_initiative(&mut args)?,
         "steer_item" => steer::steer_item(&mut args)?,
         "record_lesson" => lessons::record_lesson(&mut args)?,
+        "request_merge" => Request::RequestMerge {
+            item: args.required("item")?,
+            reason: args.optional_text("reason")?,
+        },
         other => unreachable!("`{other}` has a definition but no mapping"),
     };
     args.finish()?;

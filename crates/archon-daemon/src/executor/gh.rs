@@ -10,6 +10,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use archon_core::error::ArchonError;
+use archon_core::merge::{Check, CheckOutcome, PullRequestFacts};
 use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -31,6 +32,9 @@ const MAX_OF_BRANCH: &str = "20";
 /// Everything archond reads of a pull request.
 const FIELDS: &str =
     "number,url,state,headRefName,headRefOid,baseRefName,body,isDraft,reviewDecision";
+
+/// Everything a merge decision reads of a pull request (§18.6).
+const MERGE_FIELDS: &str = "state,isDraft,headRefOid,baseRefName,mergeable,statusCheckRollup";
 
 /// What git or `gh` says when only a person can let the delivery through.
 const NEEDS_OPERATOR: [&str; 14] = [
@@ -96,6 +100,93 @@ impl PullRequest {
         }
         Ok(())
     }
+}
+
+/// A pull request as `gh pr view` shows it for a merge.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MergeView {
+    state: String,
+    #[serde(default)]
+    is_draft: bool,
+    head_ref_oid: String,
+    base_ref_name: String,
+    #[serde(default)]
+    mergeable: String,
+    #[serde(default)]
+    status_check_rollup: Option<Vec<Rollup>>,
+}
+
+/// One entry of `statusCheckRollup`: a check run, or a commit status.
+#[derive(Debug, Deserialize)]
+struct Rollup {
+    #[serde(rename = "__typename", default)]
+    kind: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    context: String,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    conclusion: Option<String>,
+    #[serde(default)]
+    state: String,
+}
+
+impl Rollup {
+    fn check(&self) -> Check {
+        let status_context =
+            self.kind == "StatusContext" || (self.kind.is_empty() && self.status.is_empty());
+        let outcome = if status_context {
+            match self.state.as_str() {
+                "SUCCESS" => CheckOutcome::Green,
+                "PENDING" | "EXPECTED" => CheckOutcome::Pending,
+                _ => CheckOutcome::Failed,
+            }
+        } else if self.status != "COMPLETED" {
+            CheckOutcome::Pending
+        } else {
+            match self.conclusion.as_deref() {
+                Some("SUCCESS" | "NEUTRAL" | "SKIPPED") => CheckOutcome::Green,
+                _ => CheckOutcome::Failed,
+            }
+        };
+        let name = [&self.name, &self.context]
+            .into_iter()
+            .find(|n| !n.is_empty())
+            .map_or_else(|| "an unnamed check".to_owned(), Clone::clone);
+        Check { name, outcome }
+    }
+}
+
+/// What GitHub says now of the pull request at `url`, for a merge decision.
+pub(crate) async fn merge_facts(
+    binary: &Path,
+    repo: &Path,
+    url: &str,
+) -> Result<PullRequestFacts, ArchonError> {
+    assert!(is_plain_url(url), "a pull request URL archond recorded");
+    let args = ["pr", "view", url, "--json", MERGE_FIELDS];
+    let raw = text(binary, repo, &args).await?;
+    let view: MergeView = serde_json::from_str(&raw)
+        .map_err(|e| ArchonError::Protocol(format!("invalid `gh pr view` response: {e}")))?;
+    let known = matches!(view.state.as_str(), "OPEN" | "CLOSED" | "MERGED");
+    if !known || !is_commit_id(&view.head_ref_oid) || !is_plain_branch(&view.base_ref_name) {
+        return Err(ArchonError::Protocol(format!(
+            "GitHub showed {url} with state {:?}, head {:?} and base {:?}",
+            view.state, view.head_ref_oid, view.base_ref_name
+        )));
+    }
+    let checks = view.status_check_rollup.unwrap_or_default();
+    Ok(PullRequestFacts {
+        state: view.state,
+        is_draft: view.is_draft,
+        head: view.head_ref_oid,
+        base: view.base_ref_name,
+        mergeable: view.mergeable,
+        checks: checks.iter().map(Rollup::check).collect(),
+    })
 }
 
 /// What a finished `gh` printed.
@@ -391,6 +482,39 @@ mod tests {
             other.check(None).is_err(),
             "the URL is another pull request's"
         );
+    }
+
+    #[test]
+    fn checks_are_read_from_check_runs_and_commit_statuses() {
+        let raw = r#"[
+            {"__typename": "CheckRun", "name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            {"__typename": "CheckRun", "name": "lint", "status": "COMPLETED", "conclusion": "SKIPPED"},
+            {"__typename": "CheckRun", "name": "e2e", "status": "IN_PROGRESS", "conclusion": ""},
+            {"__typename": "CheckRun", "name": "fmt", "status": "COMPLETED", "conclusion": "CANCELLED"},
+            {"__typename": "StatusContext", "context": "deploy", "state": "PENDING"},
+            {"__typename": "StatusContext", "context": "sign", "state": "ERROR"},
+            {"__typename": "StatusContext", "context": "cla", "state": "SUCCESS"}
+        ]"#;
+        let rollup: Vec<Rollup> = serde_json::from_str(raw).unwrap();
+        let outcomes: Vec<(String, CheckOutcome)> = rollup
+            .iter()
+            .map(|r| (r.check().name, r.check().outcome))
+            .collect();
+        use CheckOutcome::{Failed, Green, Pending};
+        let expected = [
+            ("ci", Green),
+            ("lint", Green),
+            ("e2e", Pending),
+            ("fmt", Failed),
+            ("deploy", Pending),
+            ("sign", Failed),
+            ("cla", Green),
+        ];
+        let expected: Vec<(String, CheckOutcome)> = expected
+            .iter()
+            .map(|(n, o)| ((*n).to_owned(), *o))
+            .collect();
+        assert_eq!(outcomes, expected);
     }
 
     #[test]

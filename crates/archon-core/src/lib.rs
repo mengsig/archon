@@ -23,6 +23,7 @@ pub mod id;
 pub mod initiative;
 pub mod lesson;
 pub mod mcp_tools;
+pub mod merge;
 pub mod model;
 pub mod model_evidence;
 pub mod notify;

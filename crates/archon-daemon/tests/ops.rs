@@ -362,3 +362,81 @@ async fn status_shows_versions_that_differ_and_check_updates_reads_the_latest() 
         )]
     );
 }
+
+#[tokio::test]
+async fn an_upgrade_installs_only_after_running_work_finishes() {
+    let h = Harness::new().await;
+    h.ops
+        .state
+        .lock()
+        .unwrap()
+        .binaries
+        .insert(Program::Archon, PathBuf::from("/opt/archon/bin/archon"));
+    h.enqueue("finishes with the old tools").await;
+    h.dispatch().await;
+    let worker = worker(&h);
+    let request = UpgradeRequest {
+        archon: Some(UpgradeTarget::Latest),
+        ..restart(60, false)
+    };
+    start(&h, request).await;
+    eventually("the drain holds dispatch", || async {
+        h.ctx.ops.draining()
+    })
+    .await;
+    assert!(
+        h.ops.snapshot().installs.is_empty(),
+        "old binary stays installed during the drain"
+    );
+    h.settle_running(|_| completed("done")).await;
+    handed_off(&h).await;
+    assert_eq!(h.ops.snapshot().installs.len(), 1);
+    assert!(
+        h.ctx.ops.draining(),
+        "dispatch stays held through installation"
+    );
+    worker.abort();
+}
+
+#[tokio::test]
+async fn an_expired_upgrade_drain_installs_nothing() {
+    let h = Harness::new().await;
+    h.ops
+        .state
+        .lock()
+        .unwrap()
+        .binaries
+        .insert(Program::Archon, PathBuf::from("/opt/archon/bin/archon"));
+    h.enqueue("still running").await;
+    h.dispatch().await;
+    let worker = worker(&h);
+    start(
+        &h,
+        UpgradeRequest {
+            archon: Some(UpgradeTarget::Latest),
+            ..restart(1, false)
+        },
+    )
+    .await;
+    eventually("the upgrade gave up", || async {
+        status(&h).await.upgrade.is_none()
+    })
+    .await;
+    assert!(h.ops.snapshot().installs.is_empty());
+    assert!(h.ops.snapshot().restarts.is_empty());
+    assert!(!h.ctx.ops.draining());
+    worker.abort();
+}
+
+#[tokio::test]
+async fn update_checks_start_all_four_probes_concurrently() {
+    let h = Harness::new().await;
+    h.ops.state.lock().unwrap().probe_barrier =
+        Some(std::sync::Arc::new(tokio::sync::Barrier::new(4)));
+    let reply = tokio::time::timeout(Duration::from_secs(2), h.cli(Request::CheckUpdates))
+        .await
+        .expect("all four probes must start together")
+        .unwrap();
+    assert!(matches!(reply, Reply::Versions(_)));
+    assert_eq!(h.ops.snapshot().latest_checks, 2);
+}

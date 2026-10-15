@@ -91,8 +91,10 @@ Commands start `archond` and Archon's own Aether instance when needed.
   not wait for your CI or repair a failing check: ask for a fix, or run
   `archon queue retry <id> --append "…"`, which delivers into the same pull
   request.
-  With `merge = auto` GitHub merges once its checks allow. `local` mode
-  keeps the commits on the run branch.
+  With `merge = auto` GitHub merges once its checks allow. Otherwise
+  `archon merge <item>`, or asking the orchestrator and confirming, merges
+  it at the reviewed commit; a repository's `grant_merge` skips the
+  confirmation. `local` mode keeps the commits on the run branch.
 - **Initiative:** a member item per repository, one shared contract, and
   pull requests linked to each other. An atomic initiative keeps them
   drafts until every member passes, then marks them ready together. That
@@ -124,6 +126,7 @@ a backend and frontend team, an e2e gate and a review.
 | `archon queue steer <id> --note "…"` | Change a running item without cancelling it |
 | `archon queue retry <id>` / `queue cancel <id>` | Run an item again, or stop it |
 | `archon questions` / `archon answer <n> "…"` | Answer what the agents ask you |
+| `archon merge <id>` | Merge a delivered pull request at its reviewed commit |
 | `archon log --item <id> --follow` | Follow one item's events |
 | `archon cost --since 7d --by repo` | Spending by repository |
 

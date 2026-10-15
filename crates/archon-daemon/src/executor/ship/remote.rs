@@ -227,9 +227,9 @@ struct MergeMethods {
     rebase_merge_allowed: bool,
 }
 
-/// Why auto-merge is not on.
+/// Why auto-merge is not on, or a merge method is not known.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum MergeRefusal {
+pub(in crate::executor) enum MergeRefusal {
     /// GitHub or the network failed; another try may pass.
     Retry(String),
     /// The repository or the operator's access rules it out.
@@ -240,6 +240,20 @@ pub(super) enum MergeRefusal {
 /// allow, by the first method the repository permits.
 pub(super) async fn auto_merge(binary: &Path, repo: &Path, url: &str) -> Result<(), MergeRefusal> {
     assert!(url.starts_with("https://"), "a verified pull request URL");
+    let method = merge_method(binary, repo).await?;
+    let merge = ["pr", "merge", url, "--auto", method];
+    gh::text(binary, repo, &merge)
+        .await
+        .map(drop)
+        .map_err(refusal)
+}
+
+/// The `gh pr merge` flag of the first method the repository allows:
+/// squash, then a merge commit, then rebase.
+pub(in crate::executor) async fn merge_method(
+    binary: &Path,
+    repo: &Path,
+) -> Result<&'static str, MergeRefusal> {
     let fields = "squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed";
     let viewed = gh::text(binary, repo, &["repo", "view", "--json", fields])
         .await
@@ -265,11 +279,8 @@ pub(super) async fn auto_merge(binary: &Path, repo: &Path, url: &str) -> Result<
             ));
         }
     };
-    let merge = ["pr", "merge", url, "--auto", method];
-    gh::text(binary, repo, &merge)
-        .await
-        .map(drop)
-        .map_err(refusal)
+    assert!(method.starts_with("--"), "a gh pr merge flag");
+    Ok(method)
 }
 
 /// A `gh` failure as a [`MergeRefusal`]: GitHub refusing the request itself,

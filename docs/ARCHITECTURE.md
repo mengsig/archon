@@ -4312,6 +4312,78 @@ it when it asked or the request came from its chat. `archon queue show`
 prints a `merge:` line. `archon status` shows the merges waiting, and it
 and `archon autonomy` show the repositories with `grant_merge`.
 
+### 18.7 Operator authority
+
+The user-level description is [`operator-authority.md`](operator-authority.md).
+This section records the mechanism. Code: `archon-daemon/src/authority/`,
+`archon_core::authority`, `operator_commands.rs`.
+
+**Provenance.** `archon-aether::events` derives an `OperatorChannel`
+(`AetherChat` or `Github {repository, number, login}`) from the inbox
+envelope. Chat counts only from the `user` actor. A GitHub trigger counts
+only when `kind = external_trigger`, `source = github`, the envelope's
+top-level `operator` flag (Aether protocol 17) is true, and the payload
+carries a valid repository, thread number and requester login. Text markers
+are never read. `authority::evidence::record` stores each message once under
+`operator_message:<agent>:<seq>` with its original event time (a replay keeps
+the first record) and prunes after seven days.
+
+**Entry points.** (1) Whole-message commands, parsed by
+`authority::commands`, `chat_answer` and `chat_merge`, applied by
+`authority::explicit`. (2) `request_authority {utterance, quote, reason,
+action}`, MCP, current orchestrator only, via `authority::request`. A
+citation must be a recorded message, at most 60 minutes old, containing the
+quote; in shared mode only a GitHub one is accepted. `answer` actions are
+limited to proposal and report gates and need the message to be newer than
+the gate.
+
+**Gate order** in `authority::perform`: resolve `undo` into its stored
+inverse; `check_channel` (finite allowlist, no GitHub watcher change, no chat
+in shared mode); snapshot the affected state; if the action loosens
+(`needs_confirmation`; actions that cannot be ordered count as loosening),
+refuse a GitHub source when `authority.github_may_loosen = false`, else ask a
+confirmation for a cited prose request. Explicit commands apply immediately
+through `apply_audited`; the GitHub switch still applies. The allowlist is repository add,
+update and remove, caps, pause and resume, directives, lessons and learning
+corrections, and watcher configuration. Shutdown, setup, update, destructive
+GC and nested requests are outside it.
+
+**Confirmations.** `ask` stores `authority_confirmation:<question id>`
+(action, snapshot, evidence, `first_reply`, state `waiting → executing →
+applied | declined`) before inserting an ordinary numbered `Question`, so
+the question is answered only through `authority::decide`. `yes` is refused
+if the snapshot differs from the current state, and `executing` is persisted
+before effects so a crash cannot replay. A bare yes/no (`bare_reply`) binds
+to the first operator message since the question, only while exactly one
+confirmation waits, from the same channel (same GitHub thread and login).
+`request_authority` refuses to answer a confirmation.
+
+**Audit and undo.** Each step appends a typed `FeedEntry::Authority
+{evidence, action, result, before, after}`: requested, awaiting operator,
+applied, declined or refused. `history::record` writes, in the same
+transaction as the applied entry, `authority_change:<feed seq>` holding a
+concrete inverse (`RepoUpdate` or `SetCaps` built from the *before* snapshot)
+and the *after* snapshot. `/archon undo N` runs the inverse only if the
+current snapshot still equals that *after*, through the same gates, so
+restoring a looser value asks for a cited request. Explicit `/archon undo`
+applies directly. `UndoAuthority` is not a standalone socket command;
+`archon chat` sends `OperatorCommand`, authenticated by the operator socket,
+with `ArchonChat` evidence and no Aether agent citation.
+
+**Storage.** Messages, confirmations and undo records use the existing
+key-value table, not new tables: they are small, keyed, pruned or terminal,
+and read only by key. The feed is the durable, user-visible record.
+
+**Versions.** Archon protocol 12 adds `RequestAuthority`, `UndoAuthority` and
+`Guide`. GitHub operator standing needs Aether protocol 17.
+
+**Prompt budgets.** Core orchestrator prompt ≤ 12 KiB; each on-demand guide
+topic (`guide`: `authority`, `github`) ≤ 4 KiB, enforced by a test; MCP tool
+list ≤ 28 KiB; a new tool ≤ 1.5 KiB.
+
+**Not yet:** a full-auto mode, restarting the orchestrator from the TUI, a
+persistent operator settings overlay, item steering autonomy, and automatic
+merge of a shipped reviewed head.
 
 ## 19. Learning
 

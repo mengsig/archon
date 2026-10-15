@@ -148,7 +148,8 @@ filter, merge driver or fsmonitor that a repository or worktree configures;
 its push and fetch use your global git config and `GIT_SSH_COMMAND`. Budgets
 act on recorded usage, which can arrive late, so they are not prepaid
 limits. The GitHub watcher accepts only human writers, maintainers or
-admins, and only logins you configure carry your authority. Read
+admins, and only logins you configure carry your authority, which archond
+verifies itself ([operator authority](docs/operator-authority.md)). Read
 [SECURITY.md](SECURITY.md) and the
 [GitHub watcher guide](docs/github-watcher.md) before widening access.
 
@@ -157,7 +158,8 @@ admins, and only logins you configure carry your authority. Read
 [User guide](docs/guide.md) · [Install](docs/install.md) ·
 [Configuration](docs/configuration.md) · [Pipelines](docs/PIPELINES.md) ·
 [Queue scripting](docs/queue-scripting.md) ·
-[GitHub watcher](docs/github-watcher.md) · [Architecture](docs/ARCHITECTURE.md)
+[GitHub watcher](docs/github-watcher.md) ·
+[Operator authority](docs/operator-authority.md) · [Architecture](docs/ARCHITECTURE.md)
 
 Project version: **1.2.3**. Licensed under [MIT](LICENSE). For development,
 see [CONTRIBUTING.md](CONTRIBUTING.md).

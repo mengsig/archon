@@ -574,8 +574,10 @@ number picks that option.
   already answered number, or an answer that was refused comes back with the
   reason, in the same chat and as a system notice in `archon log`.
 - Only your own message counts: one Aether authenticated as the `user`
-  actor. An agent's message, a relay, a GitHub request, and a `/answer`
-  quoted inside other text answer nothing. The orchestrator has no tool that
+  actor, or a GitHub request from a listed operator login
+  ([Operator authority](operator-authority.md)). An agent's message, a
+  relay, any other GitHub request, and a `/answer` quoted inside other text
+  answer nothing. The orchestrator has no tool that
   answers a gate.
 - A plain reply to a question the orchestrator asked itself (`ask_operator`)
   works as before, and the orchestrator now records it, so the question
@@ -1002,6 +1004,16 @@ GitHub request, agent or MCP tool can. After an upgrade, run
 while the orchestrator that takes GitHub requests runs older instructions,
 which do not know operator standing. See
 [Operator logins](github-watcher.md#operator-logins).
+
+Authority is checked by archond, not by the model. Whole-message commands
+(`/answer`, `/approve`, `/reject`, `/merge`, `/archon set --repo …`,
+`/archon pause --hard`, `/archon repo remove`, `/archon undo N`) work from
+your chat and from a listed GitHub operator. In prose, the orchestrator
+cites your message with `request_authority`; a change that loosens a limit
+comes back as a question only you can answer, and applies only if nothing
+changed meanwhile. Every use is in the feed as an Authority entry, and
+repository and caps changes can be undone. See
+[Operator authority](operator-authority.md).
 
 
 ## Schedules

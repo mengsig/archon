@@ -132,6 +132,17 @@ Aether config sets `[scheduler] run_budget_usd`, Archon's instance inherits
 it, and it is cumulative: once the orchestrator's run has spent it, Aether
 refuses every delegation until `archon orchestrator restart`.
 
+## Operator authority
+
+```toml
+[authority]
+github_may_loosen = true   # default: a verified GitHub operator may approve a loosening change
+```
+
+With `false`, a request from GitHub can only tighten settings; one that would
+loosen them is refused instead of asked. Chat is unaffected. See
+[operator authority](operator-authority.md).
+
 ## Structural limits
 
 These `[limits]` keys bound shapes rather than spend. Each default is the

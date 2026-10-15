@@ -688,7 +688,7 @@ impl GcReport {
         };
         format!(
             "Gc{why} freed {}: removed {} worktree(s) and set-aside directories, deleted the \
-             build caches of {} worktree(s), {} shared build cache(s) the artifacts of {} item(s), and {} report snapshot(s).",
+             build caches of {} worktree(s), {} shared build cache(s), the artifacts of {} item(s), and {} report snapshot(s).",
             gib(self.bytes_freed),
             self.removed.len(),
             self.reclaimed.len(),

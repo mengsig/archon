@@ -85,19 +85,34 @@ pub(crate) fn parse(message: &str) -> Option<Result<Command, String>> {
 /// Apply `message` if it is an `/answer` command and tell the operator what
 /// happened. Only a store failure is returned: the pump shows a message
 /// here once, so any other refusal is reported, never retried.
-pub(crate) async fn handle(ctx: &DaemonContext, message: &str) -> Result<(), ArchonError> {
+pub(crate) async fn handle(
+    ctx: &DaemonContext,
+    message: &str,
+    evidence: Option<&archon_core::authority::OperatorMessage>,
+) -> Result<(), ArchonError> {
     let Some(parsed) = parse(message) else {
         return Ok(());
     };
     let outcome = match parsed {
-        Ok(command) => apply(ctx, &command).await?,
+        Ok(command) => apply(ctx, &command, evidence).await?,
         Err(usage) => Outcome::refused(None, usage),
     };
     report(ctx, outcome).await
 }
 
-async fn apply(ctx: &DaemonContext, command: &Command) -> Result<Outcome, ArchonError> {
-    if ctx.config.aether.mode != AetherMode::Dedicated {
+async fn apply(
+    ctx: &DaemonContext,
+    command: &Command,
+    evidence: Option<&archon_core::authority::OperatorMessage>,
+) -> Result<Outcome, ArchonError> {
+    if ctx.config.aether.mode != AetherMode::Dedicated
+        && !evidence.is_some_and(|m| {
+            !matches!(
+                m.channel,
+                archon_core::authority::OperatorChannel::AetherChat
+            )
+        })
+    {
         return Ok(Outcome::refused(None, SHARED_REFUSAL));
     }
     let Some(question) = find(ctx, &command.question).await? else {
@@ -107,6 +122,20 @@ async fn apply(ctx: &DaemonContext, command: &Command) -> Result<Outcome, Archon
     if !question.is_open() {
         let why = reports::already_closed(&question).to_string();
         return Ok(Outcome::refused(number, why));
+    }
+    if let Some(evidence) = evidence
+        && let Err(error) = crate::authority::check_answer(
+            ctx,
+            &question.id,
+            evidence,
+            &question.expand_option(&command.text),
+        )
+        .await
+    {
+        if error.is_store() {
+            return Err(error);
+        }
+        return Ok(Outcome::refused(number, error.to_string()));
     }
     let text = question.expand_option(&command.text);
     let via = AnswerVia::ChatCommand;

@@ -19,7 +19,7 @@ use archon_core::id::{FeedItemId, QueueItemId, RepoId};
 use archon_core::model::{Effort, ModelRef};
 use archon_core::notify::{FeedEntry, NotificationKind};
 use archon_core::protocol::{ClientKind, Reply, Request};
-use archon_core::queue::{Caps, NOTIFY_TAG};
+use archon_core::queue::NOTIFY_TAG;
 use archon_core::repo::{Repo, ShipMode};
 use archon_core::run::{StageRun, StageState};
 use archon_daemon::triggers::{self, TriggerEvent};
@@ -1475,11 +1475,13 @@ async fn usage_wakes_the_dispatcher_only_while_a_global_budget_is_set() {
         "no budget this spend could reach"
     );
 
-    let budgeted = Caps {
-        budget_usd_daily: 10.0,
-        ..Caps::default()
+    let budgeted = archon_core::settings::OperatorSettings {
+        budget_usd_daily: Some(10.0),
+        ..Default::default()
     };
-    *harness.ctx.caps_override.lock().await = Some(budgeted);
+    archon_daemon::settings::write(&harness.ctx, None, budgeted)
+        .await
+        .unwrap();
     push(&harness, usage_of(STAGE, 0.5), keys::CURSOR_FLEET).await;
     pump.abort();
     assert!((spent_in_total(&harness).await - 0.5).abs() < 1e-9);
@@ -1699,6 +1701,7 @@ async fn two_mirrored_repos(harness: &Harness) -> (tempfile::TempDir, PathBuf) {
         base_branch: None,
         default_pipeline: None,
         autonomy_max: Default::default(),
+        grant_merge: false,
         added_at: archon_core::now(),
     };
     harness.ctx.store.lock().await.insert_repo(&second).unwrap();

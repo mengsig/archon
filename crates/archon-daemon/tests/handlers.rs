@@ -130,7 +130,7 @@ async fn agents_are_refused_operator_only_requests_through_any_client() {
         repos[0].autonomy_max.is_empty(),
         "the refused update changed nothing"
     );
-    assert!(h.ctx.caps_override.lock().await.is_none());
+    assert!(h.ctx.operator_settings.lock().unwrap().global.is_empty());
     let status = handlers::handle(&h.ctx, ClientKind::ArchonMcp, Request::Status).await;
     assert!(matches!(status, Ok(Reply::Status(_))), "{status:?}");
 }

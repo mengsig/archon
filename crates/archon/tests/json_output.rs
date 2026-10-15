@@ -240,6 +240,7 @@ impl Canned {
                 gates: vec![],
                 delegations: Default::default(),
                 switched_to: None,
+                merges: Vec::new(),
             })),
             Request::CancelItem { .. } | Request::RetryItem { .. } | Request::SteerItem { .. } => {
                 Reply::Item(self.item.clone())

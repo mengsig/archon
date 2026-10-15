@@ -64,7 +64,8 @@ pub(crate) async fn steer_run(
     asked: &Asked<'_>,
     id: &QueueItemId,
 ) -> Result<Option<QueueItem>, ArchonError> {
-    let per_item_cap = crate::resolve::caps(ctx).await.budget_usd_per_item;
+    let repo = ctx.store.lock().await.item(id)?.repo;
+    let per_item_cap = crate::resolve::item_caps(ctx, repo.as_ref()).budget_usd_per_item;
     let (follow, item) = {
         let mut table = ctx.runs.lock().await;
         let Some((run, stages)) = live_run(ctx, id).await? else {

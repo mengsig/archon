@@ -17,18 +17,37 @@ mod lessons;
 mod model_evidence;
 mod operator;
 mod repos;
+mod revise;
+mod settings;
 mod stages;
 mod steer;
 mod waiting;
 
 use archon_core::aether_ids::AetherAgentId;
+use archon_core::autonomy::AutonomyPatch;
 use archon_core::error::ArchonError;
-use archon_core::id::QuestionId;
+use archon_core::id::{QuestionId, QueueItemId};
+use archon_core::merge::MergeAuthority;
 use archon_core::notify::{AnswerVia, Question};
-use archon_core::protocol::{ClientKind, Reply, RepoRef, Request};
+use archon_core::protocol::{ClientKind, ItemPatch, Reply, RepoRef, Request};
 
 use crate::context::DaemonContext;
+use crate::executor::operator_merge;
 use crate::{github, ops, reports, standby, supervisor};
+
+/// `update_item` with only `autonomy`, above the item's ceiling. Only the
+/// operator's confirmed request calls this; no request field reaches it.
+pub async fn update_item_autonomy_above_ceiling(
+    ctx: &DaemonContext,
+    item: &QueueItemId,
+    autonomy: AutonomyPatch,
+) -> Result<Reply, ArchonError> {
+    let patch = ItemPatch {
+        autonomy: Some(autonomy),
+        ..ItemPatch::default()
+    };
+    items::update_within(ctx, item, patch, revise::Ceiling::Waived).await
+}
 
 /// Validate and execute one request. Operator-only requests are refused
 /// with `ErrorCode::Forbidden` over MCP and for any agent, whatever the
@@ -59,6 +78,22 @@ pub async fn handle(
         return Err(refusal);
     }
     check_named_caller(caller.as_ref(), &request)?;
+    // Registration validates and stores the repo before enabling its watcher.
+    // Its optional lifecycle work must precede authority lock acquisition.
+    if let Request::RepoAdd(add) = &request
+        && add.github_watch
+    {
+        return repos::add_from_operator(ctx, add.clone()).await;
+    }
+
+    if let Request::ConfigureGithubWatcher { change } = &request {
+        github::require_dedicated(ctx)?;
+        github::check_storable(ctx, change)?;
+        if github::enables(change) {
+            github::prepare_enable(ctx).await?;
+        }
+    }
+
     // Held to the end of the call: the orchestrator is not replaced under it.
     let _authority = if orchestrators_alone(client, caller.as_ref(), &request) {
         Some(supervisor::authorize(ctx, caller.as_ref()).await?)
@@ -66,6 +101,46 @@ pub async fn handle(
         supervisor::saw_call(ctx, caller.as_ref()).await?;
         None
     };
+    // Serialize the state whose before/after authority confirmations observe.
+    // Lifecycle and chat delivery can replace the orchestrator, so they must
+    // never hold this mutex while waiting for its authority write lock.
+    let _changes = if matches!(
+        request,
+        Request::SetSettings { .. }
+            | Request::ResetSettings { .. }
+            | Request::UpdateItem { .. }
+            | Request::SteerItem { .. }
+            | Request::RepoUpdate { .. }
+            | Request::RepoRemove { .. }
+            | Request::RepoAdd(_)
+            | Request::SetCaps { .. }
+            | Request::Pause(_)
+            | Request::Resume(_)
+            | Request::ConfigureGithubWatcher { .. }
+            | Request::SetDirective { .. }
+            | Request::ClearDirective { .. }
+            | Request::UpdateLesson { .. }
+            | Request::LearningCorrect(_)
+            | Request::LearningUndo { .. }
+            | Request::LearningRestoreMemory { .. }
+            | Request::LearningRetryMemory { .. }
+    ) {
+        Some(ctx.authority_changes.lock().await)
+    } else {
+        None
+    };
+    if client == ClientKind::ArchonCli
+        && caller.is_none()
+        && matches!(
+            request,
+            Request::SetSettings { .. }
+                | Request::ResetSettings { .. }
+                | Request::SetCaps { .. }
+                | Request::RepoUpdate { .. }
+        )
+    {
+        return crate::authority::socket_settings(ctx, request).await;
+    }
     route(ctx, client, request).await
 }
 
@@ -98,7 +173,8 @@ fn check_named_caller(
         Request::MessageOrchestrator { caller, .. }
         | Request::PublishArtifact { caller, .. }
         | Request::AskOperator { caller, .. }
-        | Request::RecordChatAnswer { caller, .. } => caller.as_ref(),
+        | Request::RecordChatAnswer { caller, .. }
+        | Request::RequestAuthority { caller, .. } => caller.as_ref(),
         _ => None,
     };
     match (forwarded_for, named) {
@@ -112,7 +188,7 @@ fn check_named_caller(
 
 /// One function per request. Enqueue validates the pipeline, the model plan in
 /// the effective policy and the dependencies, then pokes the dispatcher.
-async fn route(
+pub(crate) async fn route(
     ctx: &DaemonContext,
     client: ClientKind,
     request: Request,
@@ -140,6 +216,14 @@ async fn route(
         // The server stops once this reply is sent.
         Request::Shutdown => Ok(Reply::Ok),
         Request::RepoAdd(add) => repos::add(ctx, add).await,
+        Request::OperatorCommand { text } => {
+            crate::operator_commands::from_socket(ctx, &text).await
+        }
+        Request::UndoAuthority { .. } => Err(ArchonError::Invalid(
+            "use /archon undo N in verified operator chat, or cite it through request_authority"
+                .into(),
+        )),
+        Request::Guide { topic } => crate::authority::guide(&topic),
         Request::RepoList => repos::list(ctx).await,
         Request::RepoRemove { repo } => repos::remove(ctx, &repo).await,
         Request::RepoUpdate { repo, patch } => repos::update(ctx, &repo, patch).await,
@@ -152,6 +236,32 @@ async fn route(
         } => autonomy::set_directive(ctx, client, &text, expires_in_hours).await,
         Request::ClearDirective { directive } => {
             autonomy::clear_directive(ctx, directive.as_ref()).await
+        }
+        Request::MergeItem {
+            item,
+            ignore_checks,
+            chat,
+        } => {
+            let authority = match chat {
+                true => MergeAuthority::ArchonChat,
+                false => MergeAuthority::Cli,
+            };
+            let merge = operator_merge::merge_now(ctx, &item, authority, ignore_checks).await?;
+            Ok(Reply::Merge(Box::new(merge)))
+        }
+        Request::RequestAuthority {
+            action,
+            utterance,
+            quote,
+            reason,
+            caller,
+        } => {
+            crate::authority::request(ctx, caller.as_ref(), utterance, &quote, &reason, *action)
+                .await
+        }
+        Request::RequestMerge { item, reason } => {
+            let merge = operator_merge::request(ctx, &item, reason.as_deref()).await?;
+            Ok(Reply::Merge(Box::new(merge)))
         }
         request => handle_adaptive(ctx, client, request).await,
     }
@@ -206,6 +316,17 @@ pub(crate) async fn watch_repo(ctx: &DaemonContext, repo: &RepoRef) -> Result<St
     repos::watch(ctx, repo).await
 }
 
+/// The one item whose id starts with `prefix`, as `archon` resolves it.
+pub(crate) async fn resolve_item(
+    ctx: &DaemonContext,
+    prefix: &str,
+) -> Result<QueueItemId, ArchonError> {
+    match item_views::resolve(ctx, prefix).await? {
+        Reply::Item(item) => Ok(item.id),
+        other => unreachable!("an item lookup answers with an item, not {other:?}"),
+    }
+}
+
 async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, ArchonError> {
     match request {
         Request::Enqueue(enqueue) => items::enqueue(ctx, enqueue).await,
@@ -233,6 +354,11 @@ async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, Ar
         Request::RefreshItem { item } => items::refresh(ctx, &item).await,
         Request::Status => control::status(ctx).await,
         Request::SetCaps { caps } => control::set_caps(ctx, caps).await,
+        Request::Settings { repo } => settings::view(ctx, repo.as_ref()).await,
+        Request::SetSettings { repo, settings } => {
+            settings::set(ctx, repo.as_ref(), settings).await
+        }
+        Request::ResetSettings { repo } => settings::reset(ctx, repo.as_ref()).await,
         Request::ListPipelines { repo, pipeline } => {
             control::list_pipelines(ctx, repo.as_ref(), pipeline.as_deref()).await
         }
@@ -293,7 +419,7 @@ async fn handle_operator(ctx: &DaemonContext, request: Request) -> Result<Reply,
         Request::ReopenReport { report } => Ok(Reply::Report(reports::reopen(ctx, &report).await?)),
         Request::GithubWatcher => Ok(Reply::GithubWatcher(Box::new(github::watcher(ctx).await?))),
         Request::ConfigureGithubWatcher { change } => {
-            let view = github::configure(ctx, change).await?;
+            let view = github::configure_existing(ctx, change).await?;
             Ok(Reply::GithubWatcher(Box::new(view)))
         }
         Request::GithubReply { thread, body } => {

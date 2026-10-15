@@ -15,6 +15,10 @@ pub struct DispatchSnapshot {
     /// Per-repository `max_per_repo` from `.archon/config.toml`; it can only
     /// lower `caps.max_per_repo` (0 = no override).
     pub repo_caps: BTreeMap<RepoId, u32>,
+    /// Operator budget switches override the global switch for this repository.
+    pub repo_budgets_enabled: BTreeMap<RepoId, bool>,
+    /// Operator overrides may raise or lower the global per-repository cap.
+    pub repo_max_per_repo: BTreeMap<RepoId, u32>,
     pub pause: PauseState,
     /// The daemon's disk hold: free space below `limits.min_free_gb`, or a
     /// recent failure on a full disk.
@@ -145,9 +149,26 @@ pub fn plan_dispatch(snapshot: &DispatchSnapshot) -> DispatchPlan {
         never_fits: never_fitting(snapshot),
         ..DispatchPlan::default()
     };
-    if let Some(hold) = admission_hold(snapshot) {
-        plan.held_by = Some(hold);
-        return plan;
+    if let Some(hold) = admission_hold(snapshot, None) {
+        plan.held_by = Some(hold.clone());
+        if matches!(hold, Hold::GlobalPause | Hold::LowDisk)
+            || snapshot.repo_budgets_enabled.is_empty()
+        {
+            return plan;
+        }
+    }
+    if plan.held_by.is_none() {
+        plan.held_by = snapshot
+            .queued
+            .iter()
+            .filter_map(|c| admission_hold(snapshot, c.repo.as_ref()))
+            .chain(
+                snapshot
+                    .pending_spawns
+                    .iter()
+                    .filter_map(|p| admission_hold(snapshot, p.repo.as_ref())),
+            )
+            .next();
     }
     let mut slots = Slots::new(snapshot);
     let mut waits = GangWaits::default();
@@ -180,7 +201,7 @@ pub fn waiting_reasons(snapshot: &DispatchSnapshot) -> BTreeMap<QueueItemId, Wai
             let reason = match item.deps {
                 DependencyState::Broken => WaitingReasonCode::DependencyFailed,
                 DependencyState::Waiting => WaitingReasonCode::DependencyWaiting,
-                DependencyState::AllSucceeded => admission_hold(snapshot)
+                DependencyState::AllSucceeded => admission_hold(snapshot, item.repo.as_ref())
                     .map(|hold| match hold {
                         Hold::GlobalPause => WaitingReasonCode::GlobalPause,
                         Hold::Draining => WaitingReasonCode::Draining,
@@ -266,21 +287,38 @@ fn never_fitting(snapshot: &DispatchSnapshot) -> Vec<NeverFits> {
 /// The most agents a gang in `repo` and `pipeline` could ever get at once;
 /// 0 when nothing caps it.
 fn gang_cap(snapshot: &DispatchSnapshot, repo: Option<&RepoId>, pipeline: &str) -> u32 {
-    let repo_cap = repo.map(|r| repo_cap(snapshot, r));
-    effective_agent_cap(&snapshot.caps, repo_cap, pipeline)
+    let repo_cap = repo.map_or(0, |r| repo_cap(snapshot, r));
+    let pipeline_cap = snapshot
+        .caps
+        .max_per_pipeline
+        .get(pipeline)
+        .copied()
+        .unwrap_or(0);
+    [snapshot.caps.max_parallel_agents, repo_cap, pipeline_cap]
+        .into_iter()
+        .fold(0, lower_cap)
 }
 
 /// The repository file may only lower the global per-repo cap.
 fn repo_cap(snapshot: &DispatchSnapshot, repo: &RepoId) -> u32 {
     let own = snapshot.repo_caps.get(repo).copied().unwrap_or(0);
-    lower_cap(snapshot.caps.max_per_repo, own)
+    let base = snapshot
+        .repo_max_per_repo
+        .get(repo)
+        .copied()
+        .unwrap_or(snapshot.caps.max_per_repo);
+    lower_cap(base, own)
 }
 
 /// A budget of 0 is unlimited; any other budget holds once spend reaches
 /// it, unless budgets are switched off.
-fn admission_hold(snapshot: &DispatchSnapshot) -> Option<Hold> {
+fn admission_hold(snapshot: &DispatchSnapshot, repo: Option<&RepoId>) -> Option<Hold> {
     let caps = &snapshot.caps;
-    let reached = |budget: f64, spent: f64| caps.budgets_enabled && budget > 0.0 && spent >= budget;
+    let enabled = repo
+        .and_then(|r| snapshot.repo_budgets_enabled.get(r))
+        .copied()
+        .unwrap_or(caps.budgets_enabled);
+    let reached = |budget: f64, spent: f64| enabled && budget > 0.0 && spent >= budget;
     if snapshot.pause.global {
         Some(Hold::GlobalPause)
     } else if snapshot.draining {
@@ -455,7 +493,10 @@ fn grant_pending_spawns(
     waits: &mut GangWaits,
     granted: &mut Vec<(PipelineRunId, u32)>,
 ) -> bool {
-    let mut order: Vec<&PendingSpawn> = pending.iter().filter(|p| p.wanted > 0).collect();
+    let mut order: Vec<&PendingSpawn> = pending
+        .iter()
+        .filter(|p| p.wanted > 0 && admission_hold(slots.snapshot, p.repo.as_ref()).is_none())
+        .collect();
     order.sort_by(|a, b| {
         (b.priority.cmp(&a.priority))
             .then(a.item_created_seq.cmp(&b.item_created_seq))
@@ -514,7 +555,10 @@ fn start_items(
     waits: &mut GangWaits,
     started: &mut Vec<QueueItemId>,
 ) -> bool {
-    let order = eligible(snapshot);
+    let order: Vec<_> = eligible(snapshot)
+        .into_iter()
+        .filter(|c| admission_hold(snapshot, c.repo.as_ref()).is_none())
+        .collect();
     for item in &order {
         if !slots.run_room() {
             return true;

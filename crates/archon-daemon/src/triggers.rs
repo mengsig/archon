@@ -123,6 +123,19 @@ pub enum TriggerEvent {
         /// What was started, or why nothing was; clipped.
         text: String,
     },
+    /// An operator `/merge` chat command refused before any merge began.
+    ChatMergeRefused {
+        /// Why; clipped.
+        text: String,
+    },
+    /// How a merge the operator asked for ended (§18.6).
+    MergeFinished {
+        item: QueueItemId,
+        pr_url: String,
+        merged: bool,
+        /// What happened, or why nothing was merged.
+        text: String,
+    },
     LavishFeedback {
         report: ReportId,
         item: Option<QueueItemId>,
@@ -222,6 +235,8 @@ impl TriggerEvent {
             Self::GateOpened { .. } => "gate_opened",
             Self::ChatAnswer { .. } => "chat_answer",
             Self::ChatCommand { .. } => "chat_command",
+            Self::ChatMergeRefused { .. } => "chat_merge_refused",
+            Self::MergeFinished { .. } => "merge_finished",
             Self::LavishFeedback { .. } => "lavish_feedback",
             Self::Budget { .. } => "budget",
             Self::PolicyViolation { .. } => "policy_violation",
@@ -241,6 +256,8 @@ impl TriggerEvent {
             Self::OperatorAnswer { .. }
             | Self::ChatAnswer { .. }
             | Self::ChatCommand { .. }
+            | Self::ChatMergeRefused { .. }
+            | Self::MergeFinished { .. }
             | Self::GateOpened { .. }
             | Self::ItemBlocked { .. }
             | Self::LavishFeedback { .. }
@@ -1050,6 +1067,13 @@ mod tests {
                 command: "/upgrade".into(),
                 applied: false,
                 text: "no".into(),
+            },
+            TriggerEvent::ChatMergeRefused { text: "no".into() },
+            TriggerEvent::MergeFinished {
+                item: QueueItemId::new(),
+                pr_url: "https://github.com/o/r/pull/1".into(),
+                merged: true,
+                text: "merged".into(),
             },
             TriggerEvent::lavish_feedback(ReportId::new(), None, "raw", vec![]),
             TriggerEvent::NewsDigest {

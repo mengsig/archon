@@ -10,6 +10,7 @@ use archon_core::autonomy::{AutonomyView, Directive, DirectiveSource};
 use archon_core::catalog::{CatalogListing, Gate, PipelineSource, PipelineSummary};
 use archon_core::github::{GithubWatch, GithubWatcherView, WatchTarget, WatchedRepo};
 use archon_core::id::RepoId;
+use archon_core::merge::MergeRequest;
 use archon_core::notify::Question;
 use archon_core::protocol::{
     AetherLinkStatus, DaemonStatus, DiskStatus, McpHealth, McpStatus, OrchestratorInfo,
@@ -95,6 +96,7 @@ pub fn status(status: &DaemonStatus, names: &RepoNames) -> String {
     for directive in &status.directives {
         let _ = writeln!(out, "directive: {}", directive_line(directive));
     }
+    merge_lines(&mut out, &status.merge_granted, &status.merges_waiting);
     let gates = match status.open_gates {
         0 => String::new(),
         1 => ", 1 gate waiting for approval".to_owned(),
@@ -338,6 +340,9 @@ pub fn repo_line(repo: &Repo) -> String {
     if !repo.autonomy_max.is_empty() {
         let _ = write!(line, ", autonomy max {}", repo.autonomy_max.describe());
     }
+    if repo.grant_merge {
+        line.push_str(", grant_merge on");
+    }
     line
 }
 
@@ -369,6 +374,7 @@ pub fn autonomy(view: &AutonomyView) -> String {
         view.policy.default.describe(),
         view.policy.ceiling.describe_allowed()
     );
+    merge_lines(&mut out, &view.merge_granted, &[]);
     if view.directives.is_empty() {
         out.push_str("directives: none");
         return out;
@@ -630,6 +636,27 @@ fn question_lines(question: &Question) -> String {
     out
 }
 
+/// The repositories with `grant_merge`, then each merge waiting for the operator.
+fn merge_lines(out: &mut String, granted: &[String], waiting: &[MergeRequest]) {
+    if !granted.is_empty() {
+        let names = sanitize_line(&granted.join(", "));
+        let _ = writeln!(out, "grant_merge: on for {names}");
+    }
+    for merge in waiting {
+        let line = sanitize_line(&merge.line());
+        let _ = writeln!(out, "merge waiting: {} {line}", merge.item);
+    }
+}
+
+/// What `archon merge` did, or why it merged nothing.
+pub fn merge(merge: &MergeRequest) -> String {
+    let mut out = format!("{}: {}", merge.item, sanitize_line(&merge.line()));
+    if let Some(checks) = &merge.checks {
+        let _ = write!(out, "\n  checks: {}", sanitize_line(checks));
+    }
+    out
+}
+
 /// What `archon answer` did: the question's number and id, the answer, and
 /// the first line of the question so a wrong target is noticed.
 pub fn answered(question: &Question, answer: &str) -> String {
@@ -756,6 +783,8 @@ pub(crate) mod tests {
             disk: None,
             versions: None,
             upgrade: None,
+            merges_waiting: Vec::new(),
+            merge_granted: Vec::new(),
         }
     }
 
@@ -1233,6 +1262,7 @@ pub(crate) mod tests {
             repo: Some("api".into()),
             policy,
             directives: vec![],
+            merge_granted: Vec::new(),
         };
         let text = autonomy(&view);
         assert!(text.starts_with("autonomy (repo api)\ndefault: review=standard"));

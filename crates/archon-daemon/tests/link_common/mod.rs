@@ -72,6 +72,7 @@ impl Harness {
             runs: Mutex::new(RunTable::default()),
             replies: Mutex::new(ReplyTracker::default()),
             answering: Mutex::new(()),
+            authority_changes: Mutex::new(()),
             learning_memory: Mutex::new(()),
             memory_curation: Mutex::new(()),
             memory_feedback_ready: Notify::new(),
@@ -81,7 +82,7 @@ impl Harness {
             triggers: TriggerQueue::default(),
             mirrors: archon_daemon::mirror::MirrorQueue::default(),
             spawn_recorded: Notify::new(),
-            caps_override: Mutex::new(None),
+            operator_settings: Default::default(),
             lavish,
             started_at: archon_core::now(),
             disk: DiskWatch::new(Arc::new(|_: &Path| Ok(u64::MAX)), Duration::ZERO),
@@ -319,6 +320,7 @@ fn repo_at(path: &Path) -> Repo {
         base_branch: Some("main".into()),
         default_pipeline: Some("direct".into()),
         autonomy_max: Default::default(),
+        grant_merge: false,
         added_at: archon_core::now(),
     }
 }

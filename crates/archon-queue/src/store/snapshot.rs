@@ -143,6 +143,8 @@ pub(super) fn build(conn: &Connection, now: &Timestamp) -> Result<DispatchSnapsh
     let snapshot = DispatchSnapshot {
         caps: Caps::default(),
         repo_caps: BTreeMap::new(),
+        repo_budgets_enabled: BTreeMap::new(),
+        repo_max_per_repo: BTreeMap::new(),
         pause: settings::pause(&tx)?,
         low_disk: false,
         draining: false,

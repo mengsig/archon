@@ -220,6 +220,9 @@ fn run_lines(out: &mut String, detail: &ItemDetail, run: &PipelineRun, full: boo
     if let Some(url) = run::pr_url(stages.iter().copied()) {
         let _ = writeln!(out, "  pr: {}", sanitize_line(url));
     }
+    for merge in detail.merges.iter().filter(|m| m.run == run.id) {
+        let _ = writeln!(out, "  merge: {}", sanitize_line(&merge.line()));
+    }
     for stage in stages {
         let _ = writeln!(out, "  {}", stage_line(stage));
         if let Some(delegation) = detail.delegations.get(&stage.id) {
@@ -572,6 +575,7 @@ mod tests {
             gates: vec![],
             delegations: Default::default(),
             switched_to: None,
+            merges: Vec::new(),
         }
     }
 
@@ -787,6 +791,7 @@ mod tests {
             gates: vec![gate],
             delegations: Default::default(),
             switched_to: None,
+            merges: Vec::new(),
         };
         let text = item_detail(&detail, &RepoNames::new(), true);
         assert_inert(&text);

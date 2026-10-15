@@ -19,6 +19,7 @@ pub(crate) mod gh;
 pub(crate) mod initiative_ship;
 mod lanes;
 mod naming;
+pub(crate) mod operator_merge;
 mod pages;
 pub mod pull_requests;
 mod recover;
@@ -54,12 +55,12 @@ use crate::context::DaemonContext;
 
 pub(crate) use discard::item_stopped;
 pub(crate) use finish::notify;
-pub(crate) use recover::prune_finished_run_vars;
+pub(crate) use recover::{prune_finished_run_vars, set_run_auto_merge};
 pub(crate) use revive::revived;
 pub(crate) use roster::prune_settled_rosters;
 pub(crate) use run_node::recover_message_node;
 pub(crate) use run_node::{is_node_agent, node_run, prune_retired_node_agents};
-pub(crate) use ship::{prune_finished_ships, shipped_commit};
+pub(crate) use ship::{prune_finished_ships, shipped_commit, withdraw_owed_merge};
 pub(crate) use spawn::{load_spawn, prune_settled_requests, runs_awaiting_spawn};
 pub(crate) use start::held_by_stack;
 pub(crate) use sweep::sweep_live_stages;
@@ -117,6 +118,13 @@ pub(crate) struct Cleanup {
     pub snapshot: bool,
 }
 
+/// An item's cargo target directory, owed deletion when the item ends.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct ItemBuild {
+    pub item: QueueItemId,
+    pub repo_name: String,
+}
+
 /// Aether and git work owed after a state change, run without the run
 /// table lock by [`run_follow_up`].
 #[derive(Debug, Default)]
@@ -143,6 +151,9 @@ pub(crate) struct FollowUp {
     /// Runs whose team roster may be owed to their running roles.
     pub roster: Vec<PipelineRunId>,
     pub cleanup: Vec<Cleanup>,
+    /// Items that ended, whose own cargo target directory to delete once
+    /// their agents are stopped.
+    pub release_builds: Vec<ItemBuild>,
     /// Finished runs whose item's experiments directory may be discarded now.
     pub discard: Vec<PipelineRunId>,
     /// Freshly opened operator gates to show and ask about.
@@ -182,6 +193,7 @@ impl FollowUp {
         self.descendant_stops.extend(other.descendant_stops);
         self.roster.extend(other.roster);
         self.cleanup.extend(other.cleanup);
+        self.release_builds.extend(other.release_builds);
         self.discard.extend(other.discard);
         self.gates.extend(other.gates);
         self.publish.extend(other.publish);
@@ -204,6 +216,7 @@ impl FollowUp {
             && self.descendant_stops.is_empty()
             && self.roster.is_empty()
             && self.cleanup.is_empty()
+            && self.release_builds.is_empty()
             && self.discard.is_empty()
             && self.gates.is_empty()
             && self.publish.is_empty()
@@ -338,14 +351,13 @@ pub(crate) async fn check_item_budget(
     unaccounted_usage: bool,
     stage: Option<&StageRunId>,
 ) -> Result<(), ArchonError> {
-    let caps = crate::resolve::caps(ctx).await;
     let follow = {
         let mut table = ctx.runs.lock().await;
         let (run, left, unaccounted_usage) = {
             let store = ctx.store.lock().await;
             let item = store.item(item)?;
             let left =
-                spawn::budget_left(&store, &item, &caps, ctx.config.limits.count_estimated_cost)?;
+                spawn::budget_left(ctx, &store, &item, ctx.config.limits.count_estimated_cost)?;
             let run = store
                 .runs_for_item(&item.id)?
                 .into_iter()
@@ -559,6 +571,9 @@ async fn deliver_and_tidy(ctx: &DaemonContext, round: &mut Round, follow: Follow
     for shipped in lanes::run(ships, |run| async move { ship::deliver(ctx, &run).await }).await {
         round.record(shipped);
     }
+    for build in dedup(follow.release_builds) {
+        round.record(release_item_build(ctx, build).await);
+    }
     let cleanups = lanes::group(follow.cleanup.into_iter().map(|c| (c.repo_path.clone(), c)));
     for removed in lanes::run(cleanups, |cleanup| remove_ended_worktree(ctx, cleanup)).await {
         round.record(removed);
@@ -605,6 +620,60 @@ async fn runs_by_repository(
         }
     }
     lanes::group(keyed)
+}
+
+/// Whether `stage`'s agent, or what it delegated, still owes a stop: until
+/// Aether confirms it, agents of the stage may still build.
+pub(crate) fn stop_owed(
+    store: &archon_queue::Store,
+    stage: &StageRunId,
+) -> Result<bool, ArchonError> {
+    Ok(descendants::owes(store, stage)? || siblings::owes(store, stage)?)
+}
+
+/// Whether `run`'s node is retired: Aether confirmed its agents' turns
+/// ended (an accepted cancel included) and took the node's subtree down.
+pub(crate) fn node_retired(
+    store: &archon_queue::Store,
+    run: &PipelineRunId,
+) -> Result<bool, ArchonError> {
+    Ok(!run_node::has_node(store, run)?)
+}
+
+/// Delete the cargo target directory of an item that ended, once nothing of
+/// it can still build ([`crate::build_cache::is_idle`]). Until then the
+/// release stays owed and each sweep tries again; a retry queueing the item
+/// meanwhile keeps the directory, and its end owes the release anew.
+async fn release_item_build(
+    ctx: &DaemonContext,
+    build: ItemBuild,
+) -> Result<FollowUp, ArchonError> {
+    // Claimed under the run table: a retry starting meanwhile builds into a
+    // fresh directory.
+    let claimed = {
+        let _table = ctx.runs.lock().await;
+        let mut store = ctx.store.lock().await;
+        if !store.item(&build.item)?.state.is_terminal() {
+            crate::build_cache::forget_release(&mut store, &build.item)?;
+            return Ok(FollowUp::default());
+        }
+        if !crate::build_cache::is_idle(&store, &build.item)? {
+            return Ok(FollowUp::default());
+        }
+        let claimed = crate::build_cache::claim_item(&ctx.paths, &build.repo_name, &build.item)?;
+        crate::build_cache::forget_release(&mut store, &build.item)?;
+        claimed
+    };
+    let Some(claimed) = claimed else {
+        return Ok(FollowUp::default());
+    };
+    let freed = tokio::task::spawn_blocking(move || crate::build_cache::delete_claimed(claimed))
+        .await
+        .map_err(|e| {
+            ArchonError::io("build directory deletion task", std::io::Error::other(e))
+        })??;
+    crate::gc::announce_item_release(ctx, &build.item, &freed).await?;
+    Ok(FollowUp::default())
 }
 
 /// Remove the worktree a run left behind; nothing follows from it.

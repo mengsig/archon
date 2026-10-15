@@ -313,6 +313,19 @@ async fn refuse_inbox(
         "Message to passive Archon run node {target} was refused: {refusal}. Use message_orchestrator for bounded stage messages and continue your stage."
     );
     if let MessageSender::Agent { id } = &incoming.sender {
+        // Local-socket send_message is an Aether user message. Never echo
+        // agent-controlled refusals to the orchestrator with that authority.
+        if crate::supervisor::current_orchestrator(ctx).await?.as_ref() == Some(id) {
+            return triggers::push(
+                ctx,
+                triggers::TriggerEvent::ChatCommand {
+                    command: "send_message".into(),
+                    applied: false,
+                    text,
+                },
+            )
+            .await;
+        }
         match ctx
             .backend
             .send_message(id, &text, &format!("message_refusal:{target}:{seq}"))

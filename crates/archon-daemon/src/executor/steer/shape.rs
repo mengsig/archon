@@ -222,7 +222,7 @@ pub(crate) fn within_ceiling(
     if autonomy == had {
         return Ok(autonomy);
     }
-    knobs::check_ceiling(&env.autonomy(&ctx.config), env, spec, autonomy)?;
+    knobs::check_ceiling(&env.autonomy(ctx), env, spec, autonomy)?;
     Ok(autonomy)
 }
 

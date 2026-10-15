@@ -2,7 +2,7 @@
 //! A failed request is reported in the chat and the chat carries on.
 
 use archon_client::ArchonClient;
-use archon_core::protocol::{ItemQuery, PauseTarget};
+use archon_core::protocol::{ItemQuery, PauseTarget, Request};
 
 use super::commands::{ChatInput, HELP, SlashCommand, parse_line};
 use super::{Chat, Flow};
@@ -78,6 +78,10 @@ async fn run_remote(
     command: SlashCommand,
 ) -> anyhow::Result<()> {
     match command {
+        SlashCommand::Authority(text) => {
+            client.request(Request::OperatorCommand { text }).await?;
+            Ok(())
+        }
         SlashCommand::AnswerNewest { text } => {
             let Some(newest) = chat.book.newest_open() else {
                 return chat.note("there is no open question to answer");
@@ -108,6 +112,14 @@ async fn run_remote(
             let item = views::resolve_item(client, &id).await?;
             let text = views::item_text(client, item, false).await?;
             chat.print(&text)
+        }
+        SlashCommand::Merge {
+            item,
+            ignore_checks,
+        } => {
+            let item = views::resolve_item(client, &item).await?;
+            let merge = ops::merge(client, item, ignore_checks, true).await?;
+            chat.print(&format::merge(&merge))
         }
         SlashCommand::Pause(target) => pause(chat, client, target, true).await,
         SlashCommand::Resume(target) => pause(chat, client, target, false).await,

@@ -431,3 +431,53 @@ async fn an_unreachable_refusal_recovers_visibly_in_the_operator_feed() {
         Some("1")
     );
 }
+
+#[tokio::test]
+async fn orchestrator_refusals_are_news_never_operator_messages() {
+    let (h, _) = running().await;
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(
+            archon_queue::store::keys::ORCHESTRATOR_AGENT,
+            common::ORCHESTRATOR,
+        )
+        .unwrap();
+    let node = h.backend.node_ids().remove(0);
+    inbox(
+        &h,
+        &node,
+        1,
+        json!({"actor":"agent","id":common::ORCHESTRATOR}),
+        &"x".repeat(4097),
+    )
+    .await;
+    assert!(
+        h.backend.messages().is_empty(),
+        "no local-socket user message is manufactured"
+    );
+    let news = triggers::held(&h.ctx).await.unwrap();
+    assert!(news.iter().any(|event| matches!(event,
+        TriggerEvent::ChatCommand { command, applied: false, .. } if command == "send_message")));
+    let event = parse_event(json!({"seq":42, "at":archon_core::now(),
+        "agent_id":common::ORCHESTRATOR, "kind":{"type":"inbox.delivered",
+        "item":{"seq":42,"kind":{"kind":"external_trigger", "source":"archon", "payload":news}}}
+    }))
+    .unwrap();
+    pump::handle_orchestrator_event(&h.ctx, &event)
+        .await
+        .unwrap();
+    let result = h
+        .orchestrator(Request::RequestAuthority {
+            action: Box::new(Request::Pause(archon_core::protocol::PauseTarget::Global {
+                hard: true,
+            })),
+            utterance: 42,
+            quote: "Message".into(),
+            reason: "not operator consent".into(),
+            caller: Some(AetherAgentId::parse(common::ORCHESTRATOR).unwrap()),
+        })
+        .await;
+    assert!(matches!(result, Err(ArchonError::Forbidden(_))));
+}

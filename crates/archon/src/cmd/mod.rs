@@ -13,10 +13,12 @@ mod instance;
 pub(crate) mod learning;
 pub(crate) mod lessons;
 mod log;
+mod merge;
 mod pipelines;
 mod queue;
 mod repo;
 mod reports;
+mod settings;
 mod talk;
 mod update;
 
@@ -41,6 +43,10 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::Say { text } => talk::say(&text, json).await,
         Command::Answer { question, text } => talk::answer(&question, &text, json).await,
         Command::Questions => talk::questions(json).await,
+        Command::Merge {
+            item,
+            ignore_checks,
+        } => merge::run(&item, ignore_checks, json).await,
         Command::Log {
             limit,
             item,
@@ -61,6 +67,7 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
             since,
         } => cost::evidence(repo, pipeline, stage, since.as_deref(), json).await,
         Command::Autonomy(args) => autonomy::run(args, json).await,
+        Command::Settings { repo, set, reset } => settings::run(repo, set, reset, json).await,
         Command::GithubWatcher { command } => github_watcher::run(command, json).await,
         Command::Pause(args) => control::pause(args, true, json).await,
         Command::Resume(args) => control::pause(args, false, json).await,
@@ -118,6 +125,7 @@ fn json_refusal(command: Option<&Command>) -> Option<&'static str> {
         | Command::Say { .. }
         | Command::Answer { .. }
         | Command::Questions
+        | Command::Merge { .. }
         | Command::Status { .. }
         | Command::Cost { .. }
         | Command::ModelEvidence { .. }
@@ -129,6 +137,7 @@ fn json_refusal(command: Option<&Command>) -> Option<&'static str> {
         | Command::Learning(_)
         | Command::Pipelines(_)
         | Command::Reports { .. }
+        | Command::Settings { .. }
         | Command::Autonomy(_)
         | Command::GithubWatcher { .. }
         | Command::Pause(_)

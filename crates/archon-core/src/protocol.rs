@@ -21,6 +21,7 @@ use crate::id::{
 };
 use crate::initiative::{ContractChange, EnqueueInitiative, Initiative, InitiativeDetail};
 use crate::lesson::{Lesson, LessonDraft, LessonPatch, LessonQuery, LessonStats, LessonWhy};
+use crate::merge::MergeRequest;
 use crate::model::{Effort, ModelChoice, ModelPlanDraft, ModelReasons, ModelRef};
 use crate::model_evidence::{ModelEvidenceQuery, ModelEvidenceReport};
 use crate::notify::{FeedItem, NotificationKind, Question};
@@ -46,7 +47,10 @@ use crate::steer::Steer;
 /// 10: `refresh_item`; an older archond knows no such request.
 /// 11: `upgrade`, `check_updates` and `repo_add`'s `github_watch`; an older
 /// archond would register a repository and silently leave it unwatched.
-pub const PROTOCOL_VERSION: u32 = 11;
+/// 12: merging on the operator's request (`merge_item`, `request_merge`) and
+/// a repository's `grant_merge`, which an older archond would drop.
+/// 13: daemon-verified operator authority requests and settings.
+pub const PROTOCOL_VERSION: u32 = 13;
 
 /// Said beside an item whose `budget_usd` was set while budgets are off.
 pub const BUDGETS_OFF_NOTE: &str = "Dollar budgets are globally off ([limits] budgets_enabled = \
@@ -139,6 +143,9 @@ pub enum Request {
         client_version: String,
     },
     Status,
+    Guide {
+        topic: String,
+    },
     /// CLI only.
     Shutdown,
 
@@ -197,9 +204,26 @@ pub enum Request {
     },
     Pause(PauseTarget),
     Resume(PauseTarget),
-    /// CLI only; runtime cap overrides until the daemon restarts.
+    /// Operator only; persisted in the global settings overlay.
     SetCaps {
         caps: Caps,
+    },
+    /// The operator settings stored for a repository, or globally, and the
+    /// values in force with their sources.
+    Settings {
+        #[serde(default)]
+        repo: Option<RepoRef>,
+    },
+    /// Operator only: replace the overlay stored at one scope whole.
+    SetSettings {
+        #[serde(default)]
+        repo: Option<RepoRef>,
+        settings: crate::settings::OperatorSettings,
+    },
+    /// Operator only: forget the overlay stored at one scope.
+    ResetSettings {
+        #[serde(default)]
+        repo: Option<RepoRef>,
     },
 
     ListPipelines {
@@ -386,6 +410,40 @@ pub enum Request {
     LearningRetryMemory {
         feedback: FeedbackId,
     },
+
+    /// CLI only: the operator merges an item's delivered pull request now,
+    /// once archond's checks pass (ARCHITECTURE §18.6).
+    MergeItem {
+        item: QueueItemId,
+        /// The operator acknowledges checks that are not all green.
+        #[serde(default)]
+        ignore_checks: bool,
+        /// Sent by `/merge` in `archon chat`, for the audit.
+        #[serde(default)]
+        chat: bool,
+    },
+    /// Whole-message command on the operator socket; never exposed over MCP.
+    OperatorCommand {
+        text: String,
+    },
+    UndoAuthority {
+        change: u64,
+    },
+    /// The orchestrator cites a message observed on archond's own stream.
+    RequestAuthority {
+        action: Box<Request>,
+        utterance: u64,
+        quote: String,
+        reason: String,
+        caller: Option<AetherAgentId>,
+    },
+    /// Request a merge; archond confirms unless `grant_merge` permits it.
+    RequestMerge {
+        item: QueueItemId,
+        /// What the operator said, in a line.
+        #[serde(default)]
+        reason: Option<String>,
+    },
 }
 
 impl Request {
@@ -393,10 +451,14 @@ impl Request {
     /// agent, whichever client forwards them.
     pub fn is_operator_only(&self) -> bool {
         match self {
-            Self::Shutdown
+            Self::OperatorCommand { .. }
+            | Self::UndoAuthority { .. }
+            | Self::Shutdown
             | Self::RepoRemove { .. }
             | Self::RepoUpdate { .. }
             | Self::SetCaps { .. }
+            | Self::SetSettings { .. }
+            | Self::ResetSettings { .. }
             | Self::Say { .. }
             | Self::OrchestratorRestart
             | Self::OrchestratorAttach
@@ -409,6 +471,7 @@ impl Request {
             | Self::LearningUndo { .. }
             | Self::LearningRestoreMemory { .. }
             | Self::LearningRetryMemory { .. }
+            | Self::MergeItem { .. }
             | Self::Answer { .. } => true,
             Self::RepoAdd(add) => add.auto_merge || add.github_watch,
             Self::Pause(target) | Self::Resume(target) => {
@@ -425,6 +488,7 @@ impl Request {
         match self {
             Self::Hello { .. }
             | Self::Status
+            | Self::Guide { .. }
             | Self::RepoList
             | Self::ListItems(_)
             | Self::ListItemSummaries(_)
@@ -441,6 +505,7 @@ impl Request {
             | Self::CostReport(_)
             | Self::ModelEvidence(_)
             | Self::Autonomy { .. }
+            | Self::Settings { .. }
             | Self::GithubWatcher
             | Self::ListInitiatives
             | Self::GetInitiative { .. }
@@ -483,6 +548,9 @@ pub struct RepoPatch {
     pub default_pipeline: Clearable<String>,
     /// Replaces the whole registry ceiling; the empty patch clears it.
     pub autonomy_max: Option<AutonomyPatch>,
+    /// Sets or clears the repository's `grant_merge` (ARCHITECTURE §18.6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_merge: Option<bool>,
 }
 
 /// A patch to an optional setting. Explicit on the wire (`"keep"`,
@@ -570,6 +638,9 @@ pub struct ItemPatch {
     /// item's live agents are sent it (ARCHITECTURE §6.6).
     #[serde(default)]
     pub brief_append: Option<String>,
+    /// Knobs to change, within the item's ceiling (ARCHITECTURE §18.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autonomy: Option<AutonomyPatch>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -593,6 +664,9 @@ pub enum PauseTarget {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "reply", content = "data", rename_all = "snake_case")]
 pub enum Reply {
+    Guide {
+        text: String,
+    },
     MessageReceipt {
         receipt: crate::id::FeedItemId,
     },
@@ -647,6 +721,8 @@ pub enum Reply {
     LessonStats(Box<LessonStats>),
     Feedback(Box<FeedbackReceipt>),
     LearningWhy(Box<LearningWhy>),
+    Merge(Box<MergeRequest>),
+    Settings(Box<crate::settings::SettingsView>),
 }
 
 /// What one gc pass did (ARCHITECTURE §13.2). Paths are real paths.
@@ -667,6 +743,10 @@ pub struct GcReport {
     /// Items' published artifacts deleted after `artifacts.keep_after`.
     #[serde(default)]
     pub artifacts: Vec<Reclaimed>,
+    /// Items' own build target directories deleted: at the item's end, or
+    /// by gc once its item was final or gone.
+    #[serde(default)]
+    pub item_caches: Vec<Reclaimed>,
     /// Owned report snapshots of settled items removed after storage retention.
     #[serde(default)]
     pub reports: Vec<Reclaimed>,
@@ -691,6 +771,7 @@ impl GcReport {
         self.reclaimed.extend(other.reclaimed);
         self.caches.extend(other.caches);
         self.artifacts.extend(other.artifacts);
+        self.item_caches.extend(other.item_caches);
         self.reports.extend(other.reports);
         self.skipped.extend(other.skipped);
         self.failed.extend(other.failed);
@@ -703,6 +784,7 @@ impl GcReport {
             || !self.reclaimed.is_empty()
             || !self.caches.is_empty()
             || !self.artifacts.is_empty()
+            || !self.item_caches.is_empty()
             || !self.reports.is_empty()
     }
 
@@ -715,11 +797,13 @@ impl GcReport {
         };
         format!(
             "Gc{why} freed {}: removed {} worktree(s) and set-aside directories, deleted the \
-             build caches of {} worktree(s), {} shared build cache(s), the artifacts of {} item(s), and {} report snapshot(s).",
+             build caches of {} worktree(s), {} shared build cache(s), the build directories of {} item(s), \
+             the artifacts of {} item(s), and {} report snapshot(s).",
             gib(self.bytes_freed),
             self.removed.len(),
             self.reclaimed.len(),
             self.caches.len(),
+            self.item_caches.len(),
             self.artifacts.len(),
             self.reports.len(),
         )
@@ -810,6 +894,12 @@ pub struct DaemonStatus {
     /// Directives in force.
     pub directives: Vec<Directive>,
     pub open_gates: u32,
+    /// Merge confirmations the operator has not answered, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub merges_waiting: Vec<MergeRequest>,
+    /// The repositories whose `grant_merge` is on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub merge_granted: Vec<String>,
     /// News events (triggers) held until the orchestrator can take them.
     #[serde(default)]
     pub held_news: u32,
@@ -1022,6 +1112,9 @@ pub struct ItemDetail {
     /// As in [`ItemSummary`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub switched_to: Option<String>,
+    /// Requests to merge the item's pull request, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub merges: Vec<MergeRequest>,
 }
 
 /// An agent a stage agent delegated to, itself or through another.

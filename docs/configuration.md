@@ -35,7 +35,9 @@ auto_gc = true                 # archond collects finished runs' worktrees itsel
 cache_after = "1h"             # then deletes their build caches (git-ignored files)
 gc_after = "7d"                # and removes worktrees without uncommitted changes
 cache_dirs = ["target"]        # only these caches; unset = everything git ignores
-shared_cache = true            # stages build into one cargo target dir per repository
+item_cache = true              # each item builds in its own cargo target dir, deleted when it ends
+lean_builds = true             # no incremental state, line-table debuginfo (dev and test)
+shared_cache = false           # true: one cargo target dir per repository instead
 shared_cache_after = "14d"     # idle shared caches go; never while a run is live
 pressure_after = "1d"          # shorter ages while dispatch is held for disk space
 
@@ -49,6 +51,20 @@ retention_days = 14            # settled item reports and daemon log age; 0 disa
 log_max_mb = 10                # rotate detached daemon logs by size; 0 disables size rotation
 log_max_files = 3              # archives in addition to the active log; 0 disables count limit
 ```
+
+Each item's cargo target directory (`<data>/cache/<repo>/items/<item>`) is kept
+across its retries and deleted when the item reaches a final state; `archon
+gc` sweeps ones whose item is final or gone. A repository sets `[cache]
+item = false`, `shared = false` or `lean = false` in `<repo>/.archon/config.toml`
+to opt out of the per-item directory, the shared one or the lean profile. Cargo
+locks a shared target directory, so parallel builds of one profile queue on it.
+
+The lean profile is a `.cargo/config.toml` archond writes above the
+repository's worktrees: `[build] incremental = false` and `debug =
+"line-tables-only"` for `[profile.dev]` and `[profile.test]`. A repository's
+own `.cargo/config.toml` wins for the keys it sets, but archond's `[profile]`
+beats the one in `Cargo.toml`: set `[cache] lean = false` to keep full
+debuginfo. New work already holds below `[limits] min_free_gb`.
 
 Filesystem ages retain the existing duration syntax. Set `gc_after`,
 `cache_after`, `shared_cache_after` or `artifacts.keep_after` to `"0s"` to
@@ -82,10 +98,6 @@ invalidated after GC. Unknown sizes report the read error. Symlinks are counted
 without following them. Bench results live in independently selected output
 roots and are not swept or measured by the daemon.
 
-A repository opts out of the shared cache with `[cache] shared = false` in
-`<repo>/.archon/config.toml`. Cargo locks a shared target directory, so
-parallel builds of one profile queue on it; opt out if that costs more than
-the disk.
 
 To run Archon on your own `aetherd` instead, set `[aether] mode = "shared"`.
 In shared mode, `archon setup` adds the `archon` MCP server to your
@@ -168,6 +180,17 @@ only, so the orchestrator is told to keep its helpers within them. If your
 Aether config sets `[scheduler] run_budget_usd`, Archon's instance inherits
 it, and it is cumulative: once the orchestrator's run has spent it, Aether
 refuses every delegation until `archon orchestrator restart`.
+
+## Operator authority
+
+```toml
+[authority]
+github_may_loosen = true   # default: a verified GitHub operator may approve a loosening change
+```
+
+With `false`, a request from GitHub can only tighten settings; one that would
+loosen them is refused instead of asked. Chat is unaffected. See
+[operator authority](operator-authority.md).
 
 ## Structural limits
 
@@ -349,5 +372,25 @@ Replace `codex/your-available-model` in both examples with an entry from
 `archon aether models`, or remove it from the allowlist if you only use Claude.
 Account access and the installed engine determine model availability.
 Config is loaded when archond starts; restart it after edits when it is safe
-to interrupt your work. `archon queue caps` changes runtime caps without a
+to interrupt your work. `archon queue caps` changes saved operator caps without a
 restart; these overrides last only until the daemon restarts.
+
+
+## Saved operator settings
+
+`archon settings [--repo NAME]` shows the stored overlay and each effective
+value's source. `--set JSON` replaces that scope's overlay; `--reset` clears it.
+The same controls are available through verified TUI/GitHub authority and the
+orchestrator's `request_authority`; its read-only `settings` tool reads them.
+See [operator authority](operator-authority.md) for commands and confirmations.
+
+The order is config.toml, global operator overlay, repository registry and
+operator overlay, then the repository file's autonomy limits (only lowering).
+Global overlays support autonomy defaults/ceiling, all caps, budget switches,
+and a default pipeline. Repository overlays support autonomy defaults/ceiling,
+the budget switch, per-item budget, max_per_repo and default pipeline. Other repository caps
+and full-auto are refused pending their enforcement implementation. Existing
+items retain their saved autonomy; change an item explicitly to update it.
+
+`archon queue caps` now saves its global override across daemon restarts.
+`archon settings --reset` clears that overlay, including its other overrides.

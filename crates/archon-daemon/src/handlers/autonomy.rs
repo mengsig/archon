@@ -3,7 +3,10 @@
 use archon_core::autonomy::{AutonomyView, Directive, DirectiveSource};
 use archon_core::error::ArchonError;
 use archon_core::id::DirectiveId;
+use archon_core::merge::MergeRequest;
 use archon_core::protocol::{ClientKind, Reply, RepoRef};
+
+use archon_queue::Store;
 
 use crate::context::DaemonContext;
 use crate::feed;
@@ -18,8 +21,13 @@ pub(super) async fn view(
         Some(reference) => Some(ctx.store.lock().await.repo(reference)?),
         None => None,
     };
+    let merge_granted = match &repo {
+        Some(repo) if repo.grant_merge => vec![repo.name.clone()],
+        Some(_) => Vec::new(),
+        None => merges_now(&*ctx.store.lock().await)?.granted,
+    };
     let env = RepoEnv::new(repo)?;
-    let policy = env.autonomy(&ctx.config);
+    let policy = env.autonomy(ctx);
     let directives = ctx.store.lock().await.directives(archon_core::now())?;
     assert!(
         policy.default.excess(policy.ceiling).is_empty(),
@@ -29,7 +37,29 @@ pub(super) async fn view(
         repo: env.repo_name().map(str::to_owned),
         policy,
         directives,
+        merge_granted,
     })))
+}
+
+/// Merges the operator may be asked about, and where `grant_merge` is on.
+pub(super) struct MergesNow {
+    pub waiting: Vec<MergeRequest>,
+    pub granted: Vec<String>,
+}
+
+pub(super) fn merges_now(store: &Store) -> Result<MergesNow, ArchonError> {
+    let waiting: Vec<MergeRequest> = store
+        .open_merges()?
+        .into_iter()
+        .filter(|m| m.waiting_on().is_some())
+        .collect();
+    let granted = store
+        .repos()?
+        .into_iter()
+        .filter(|r| r.grant_merge)
+        .map(|r| r.name)
+        .collect();
+    Ok(MergesNow { waiting, granted })
 }
 
 /// The orchestrator records what the operator said in chat; the CLI is

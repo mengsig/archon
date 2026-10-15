@@ -13,12 +13,16 @@ Type a message and press Enter to talk to the orchestrator.
   /status                 daemon, Aether, queue and spend
   /queue [state ...]      the queue, e.g. /queue running failed
   /item <id>              one queue item (its id or the id's start)
+  /merge <id> [--ignore-checks]  merge the item's pull request now
+  /approve [n] [note]      approve a proposal or report gate
+  /reject [n] [reason]     reject a proposal or report gate
+  /archon <command>       change operator settings (see guide authority)
   /pause [hard | repo <name> | pipeline <name>]
   /resume [hard | repo <name> | pipeline <name>]
   /progress               show or hide progress notes (also /verbose)
   /help                   this list
   /quit                   leave (also Ctrl-D, or Ctrl-C twice)
-Start a line with // to send a message that begins with /.";
+Start a line with // to send literal slash text; the escape stays in the message.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChatInput {
@@ -32,6 +36,7 @@ pub enum ChatInput {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SlashCommand {
     Help,
+    Authority(String),
     Quit,
     ToggleProgress,
     Answer { question: QuestionRef, text: String },
@@ -40,6 +45,7 @@ pub enum SlashCommand {
     Status,
     Queue { states: Vec<String> },
     Item(String),
+    Merge { item: String, ignore_checks: bool },
     Pause(PauseTarget),
     Resume(PauseTarget),
 }
@@ -49,8 +55,10 @@ pub fn parse_line(line: &str) -> ChatInput {
     if line.is_empty() {
         return ChatInput::Empty;
     }
-    if let Some(escaped) = line.strip_prefix("//") {
-        return ChatInput::Say(format!("/{escaped}"));
+    if line.starts_with("//") {
+        // Preserve the escape across Aether delivery, whose user messages
+        // also pass through the daemon's operator-command parser.
+        return ChatInput::Say(line.to_owned());
     }
     let Some(command) = line.strip_prefix('/') else {
         return ChatInput::Say(line.to_owned());
@@ -80,6 +88,8 @@ fn parse_command(name: &str, rest: &str) -> Result<SlashCommand, String> {
             (id, "") if !id.is_empty() => Ok(SlashCommand::Item(id.to_owned())),
             _ => Err("usage: /item <id>".to_owned()),
         },
+        "archon" | "approve" | "reject" => Ok(SlashCommand::Authority(format!("/{name} {rest}"))),
+        "merge" => parse_merge(rest),
         "a" => parse_short_answer(rest),
         "answer" => parse_answer(rest),
         "pause" => parse_pause_target(rest, "pause").map(SlashCommand::Pause),
@@ -116,6 +126,23 @@ fn parse_answer(rest: &str) -> Result<SlashCommand, String> {
     Ok(SlashCommand::Answer {
         question,
         text: text.to_owned(),
+    })
+}
+
+fn parse_merge(rest: &str) -> Result<SlashCommand, String> {
+    const FLAG: &str = "--ignore-checks";
+    let words: Vec<&str> = rest.split_whitespace().collect();
+    let (item, ignore_checks) = match words.as_slice() {
+        [item] => (*item, false),
+        [item, FLAG] | [FLAG, item] => (*item, true),
+        _ => ("", false),
+    };
+    if item.is_empty() || item.starts_with('-') {
+        return Err(format!("usage: /merge <id> [{FLAG}]"));
+    }
+    Ok(SlashCommand::Merge {
+        item: item.to_owned(),
+        ignore_checks,
     })
 }
 
@@ -160,7 +187,11 @@ mod tests {
         assert_eq!(parse_line("   "), ChatInput::Empty);
         assert_eq!(
             parse_line("//etc/hosts is odd"),
-            ChatInput::Say("/etc/hosts is odd".into())
+            ChatInput::Say("//etc/hosts is odd".into())
+        );
+        assert_eq!(
+            parse_line("//archon resume --hard"),
+            ChatInput::Say("//archon resume --hard".into())
         );
     }
 
@@ -241,6 +272,16 @@ mod tests {
         );
         assert!(matches!(parse_line("/status now"), ChatInput::Invalid(_)));
         assert!(matches!(parse_line("/item"), ChatInput::Invalid(_)));
+        assert_eq!(
+            parse_line("/merge qi_01 --ignore-checks"),
+            ChatInput::Command(SlashCommand::Merge {
+                item: "qi_01".into(),
+                ignore_checks: true
+            })
+        );
+        for malformed in ["/merge", "/merge --ignore-checks", "/merge qi_01 --admin"] {
+            assert!(matches!(parse_line(malformed), ChatInput::Invalid(_)));
+        }
         let ChatInput::Invalid(message) = parse_line("/frobnicate") else {
             panic!("unknown commands are refused");
         };

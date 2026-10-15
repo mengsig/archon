@@ -173,6 +173,19 @@ fn describe(entry: &FeedEntry, labels: &QuestionLabels) -> Parts {
         reference: None,
     };
     match entry {
+        FeedEntry::Authority {
+            evidence,
+            action,
+            result,
+            ..
+        } => simple(
+            "authority",
+            Style::Dim,
+            &format!(
+                "{:?} inbox {}: {action}: {result}",
+                evidence.channel, evidence.seq
+            ),
+        ),
         FeedEntry::Operator { text } => simple("you", Style::Bold, text),
         FeedEntry::Orchestrator { text } => simple("archon", Style::Cyan, text),
         FeedEntry::System { text } => simple("system", Style::Dim, text),

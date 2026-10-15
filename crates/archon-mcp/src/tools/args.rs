@@ -5,6 +5,7 @@
 use std::num::NonZeroU64;
 use std::path::PathBuf;
 
+use archon_core::autonomy::AutonomyPatch;
 use archon_core::cost::{CostGroup, CostQuery, DayBound};
 use archon_core::error::ArchonError;
 use archon_core::github::{GithubRepo, GithubThread};
@@ -97,6 +98,23 @@ pub(super) fn to_request(tool: &str, arguments: Value) -> Result<Request, ToolEr
         "update_initiative" => initiatives::update_initiative(&mut args)?,
         "steer_item" => steer::steer_item(&mut args)?,
         "record_lesson" => lessons::record_lesson(&mut args)?,
+        "settings" => Request::Settings {
+            repo: args.optional("repo")?,
+        },
+        "guide" => Request::Guide {
+            topic: args.required_text("topic")?,
+        },
+        "request_authority" => Request::RequestAuthority {
+            action: args.required("action")?,
+            utterance: args.required("utterance")?,
+            quote: args.required_text("quote")?,
+            reason: args.required_text("reason")?,
+            caller: None,
+        },
+        "request_merge" => Request::RequestMerge {
+            item: args.required("item")?,
+            reason: args.optional_text("reason")?,
+        },
         other => unreachable!("`{other}` has a definition but no mapping"),
     };
     args.finish()?;
@@ -184,6 +202,17 @@ impl Args {
         match text.trim().is_empty() {
             true => Err(self.error(key, "must not be empty; omit it instead")),
             false => Ok(Some(text)),
+        }
+    }
+
+    /// The knobs `autonomy` names; it names at least one.
+    fn optional_autonomy(&mut self) -> Result<Option<AutonomyPatch>, ToolError> {
+        let knobs = self.optional::<AutonomyPatch>("autonomy")?;
+        match knobs {
+            Some(knobs) if knobs.is_empty() => {
+                Err(self.error("autonomy", "names no knob; omit it instead"))
+            }
+            knobs => Ok(knobs),
         }
     }
 
@@ -483,11 +512,12 @@ fn update_item(args: &mut Args) -> Result<Request, ToolError> {
         budget_usd: args.optional_budget("budget_usd")?,
         stage_timeouts: args.optional("stage_timeouts")?.unwrap_or_default(),
         brief_append: args.optional_text("brief_append")?,
+        autonomy: args.optional_autonomy()?,
     };
     if patch == ItemPatch::default() {
         return Err(ToolError(
             "update_item: nothing to change; pass at least one of priority, model_plan, model_reasons, tags, \
-             add_depends_on, budget_usd, stage_timeouts, brief_append"
+             add_depends_on, budget_usd, stage_timeouts, brief_append, autonomy"
                 .into(),
         ));
     }

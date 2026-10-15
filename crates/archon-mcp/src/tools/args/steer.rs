@@ -29,6 +29,7 @@ pub(super) fn steer_item(args: &mut Args) -> Result<Request, ToolError> {
         abort,
         insert_stage: args.optional("insert_stage")?,
         switch_pipeline: args.optional_text("switch_pipeline")?,
+        autonomy: args.optional_autonomy()?,
     };
     steer.check().map_err(|e| args.refusal(e))?;
     Ok(Request::SteerItem { item, steer })
@@ -57,6 +58,7 @@ fn abort(args: &mut Args) -> Result<Option<Then>, ToolError> {
 
 #[cfg(test)]
 mod tests {
+    use archon_core::autonomy::AutonomyPatch;
     use archon_core::id::QueueItemId;
     use serde_json::{Value, json};
 
@@ -104,6 +106,22 @@ mod tests {
             let error = steer(arguments.clone()).expect_err(&arguments.to_string());
             assert!(error.0.starts_with("steer_item: "), "{error}");
         }
+    }
+
+    #[test]
+    fn autonomy_names_a_knob_and_rides_along_with_other_changes() {
+        let knobs = steer(json!({"autonomy": {"merge": "auto"}}))
+            .unwrap()
+            .autonomy;
+        assert_eq!(
+            knobs,
+            Some(AutonomyPatch::parse_list("merge=auto").unwrap())
+        );
+        let with_note = steer(json!({"note": "Mind the API.", "autonomy": {"tools": "yolo"}}));
+        assert!(with_note.unwrap().autonomy.is_some());
+        let empty = steer(json!({"note": "Mind the API.", "autonomy": {}})).unwrap_err();
+        assert!(empty.0.contains("`autonomy`"), "{}", empty.0);
+        assert!(steer(json!({"autonomy": {"merge": "yes"}})).is_err());
     }
 }
 

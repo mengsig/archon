@@ -16,7 +16,6 @@ use super::{
 };
 use crate::context::DaemonContext;
 use crate::disk::{self, FullDisk};
-use crate::resolve;
 
 pub(super) async fn settle(
     ctx: &DaemonContext,
@@ -345,11 +344,10 @@ async fn replace(
     let Some(plan) = plan else {
         return Ok(None);
     };
-    let caps = resolve::caps(ctx).await;
     let mut store = ctx.store.lock().await;
     // Owed before the replacement exists, so it never starts beside them.
     descendants::owe(&mut store, failed)?;
-    let Some(id) = spawn::reserve_replacement(ctx, &mut store, failed, &plan, nth, &caps)? else {
+    let Some(id) = spawn::reserve_replacement(ctx, &mut store, failed, &plan, nth)? else {
         return Ok(None);
     };
     // Replacement first: a crash in between leaves a superseded live

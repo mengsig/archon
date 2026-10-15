@@ -60,6 +60,16 @@ pub(super) fn owe(
     store.kv_set(&key(run), &serde_json::to_string(&owed)?)
 }
 
+/// Drop the auto-merge `run`'s pull request is still owed: the item no longer
+/// allows it. One GitHub already took is not undone. Returns whether one was owed.
+pub(crate) fn withdraw(store: &mut Store, run: &PipelineRunId) -> Result<bool, ArchonError> {
+    let owed = store.kv_get(&key(run))?.is_some();
+    if owed {
+        store.kv_delete(&key(run))?;
+    }
+    Ok(owed)
+}
+
 /// Try every owed auto-merge that is due once; returns how many GitHub took.
 pub(crate) async fn pay(ctx: &DaemonContext) -> Result<usize, ArchonError> {
     let owed = ctx.store.lock().await.kv_prefix(OWED_PREFIX)?;
@@ -100,7 +110,9 @@ async fn pay_one(
         Err(error) => return Err(error),
     };
     let tried = match &repo {
-        Some(repo) => remote::auto_merge(&ctx.config.github.binary, &repo.path, &owed.url).await,
+        Some(repo) => {
+            remote::auto_merge(&ctx.config.github.binary, &repo.path, &owed.url, None).await
+        }
         None => Err(MergeRefusal::Never(
             "its repository is no longer registered".into(),
         )),

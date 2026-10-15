@@ -23,8 +23,8 @@ const HARD_PAUSE_KEY: &str = "global_pause_hard";
 
 pub(super) async fn status(ctx: &DaemonContext) -> Result<Reply, ArchonError> {
     let caps = resolve::caps(ctx).await;
-    let autonomy = RepoEnv::new(None)?.autonomy(&ctx.config);
-    let (snapshot, blocked, open_questions, directives, open_gates) = {
+    let autonomy = RepoEnv::new(None)?.autonomy(ctx);
+    let (snapshot, blocked, open_questions, directives, open_gates, merges) = {
         let store = ctx.store.lock().await;
         let now = archon_core::now();
         let mut snapshot = store.dispatch_snapshot(now)?;
@@ -39,12 +39,14 @@ pub(super) async fn status(ctx: &DaemonContext) -> Result<Reply, ArchonError> {
         })?;
         let open_gates = store.open_gates()?.len();
         let questions = store.questions(true)?.len();
+        let merges = super::autonomy::merges_now(&store)?;
         (
             snapshot,
             blocked.len(),
             questions,
             store.directives(now)?,
             open_gates,
+            merges,
         )
     };
     let waiting_items = super::item_views::read_summaries(
@@ -85,6 +87,8 @@ pub(super) async fn status(ctx: &DaemonContext) -> Result<Reply, ArchonError> {
         disk: Some(disk_status(ctx).await?),
         versions: Some(ops::versions(ctx).await),
         upgrade: ops::phase(ctx).await,
+        merges_waiting: merges.waiting,
+        merge_granted: merges.granted,
     };
     assert!(
         status.spend_today_usd <= status.spend_total_usd + 1e-9,
@@ -210,7 +214,8 @@ pub(super) async fn orchestrator_restart(ctx: &DaemonContext) -> Result<Reply, A
     Ok(Reply::Orchestrator(info.expect("checked above")))
 }
 
-/// `SetCaps`: a runtime override of `[limits]` until the daemon restarts.
+/// `SetCaps`: persisted in the global settings overlay, so it outlives a
+/// restart; `archon settings reset` returns to `[limits]`.
 pub(super) async fn set_caps(ctx: &DaemonContext, caps: Caps) -> Result<Reply, ArchonError> {
     let budgets = [
         ("budget_usd_total", caps.budget_usd_total),
@@ -229,9 +234,9 @@ pub(super) async fn set_caps(ctx: &DaemonContext, caps: Caps) -> Result<Reply, A
             "max_per_pipeline has an empty name {name:?}"
         )));
     }
-    tracing::info!(?caps, "caps overridden");
-    *ctx.caps_override.lock().await = Some(caps);
-    ctx.dispatch.notify_one();
+    let mut global = crate::settings::read(ctx, None).await?;
+    global.set_caps(&caps);
+    crate::settings::write(ctx, None, global).await?;
     Ok(Reply::Ok)
 }
 

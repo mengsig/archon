@@ -13,10 +13,13 @@ use archon_core::repo::Repo;
 use archon_pipeline::PipelineSpec;
 use archon_queue::dispatch::effective_agent_cap;
 
+use super::revise::{self, Ceiling};
 use crate::context::DaemonContext;
+use crate::executor::operator_merge;
 use crate::resolve::{self, RepoEnv};
 use crate::worktree::WorktreeManager;
 use crate::{executor, knobs, learned};
+use archon_core::autonomy::MergeMode;
 
 pub(super) async fn enqueue(
     ctx: &DaemonContext,
@@ -72,9 +75,9 @@ pub(super) async fn enqueue(
 }
 
 /// `Reply::Item`, or `ItemBudgetsOff` when the change set a budget that
-/// is not enforced while budgets are globally off.
+/// is not enforced while budgets are off for the item's repository.
 pub(super) async fn item_reply(ctx: &DaemonContext, item: QueueItem, set_budget: bool) -> Reply {
-    match set_budget && !resolve::caps(ctx).await.budgets_enabled {
+    match set_budget && !resolve::item_caps(ctx, item.repo.as_ref()).budgets_enabled {
         true => Reply::ItemBudgetsOff(item),
         false => Reply::Item(item),
     }
@@ -94,7 +97,7 @@ async fn enqueue_context(
             "name a pipeline; only repositories have a default one".into(),
         ));
     }
-    let resolved = knobs::resolve(&ctx.config, &env, req.pipeline.clone(), &req.autonomy)?;
+    let resolved = knobs::resolve(ctx, &env, req.pipeline.clone(), &req.autonomy)?;
     check_runs_here(ctx, &env, &resolved.spec).await?;
     assert_eq!(resolved.spec.name(), resolved.pipeline);
     assert!(!resolved.spec.file.stages.is_empty());
@@ -128,6 +131,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
     }
     let spent_usd = store.spend_for_item(id, estimates)?;
     let gates = store.gates_for_item(id)?;
+    let merges = store.merges_for_item(id)?;
     assert!(
         runs.iter().all(|r| r.item == item.id),
         "runs belong to their item"
@@ -152,6 +156,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
         spent_usd,
         gates,
         delegations,
+        merges,
     })))
 }
 
@@ -178,16 +183,42 @@ async fn default_efforts(
 
 /// Priority, tags, budget and dependencies change any time before success;
 /// the model plan and the brief here only while no run is starting or running.
+/// Autonomy knobs change within the ceiling ([`revise`]); after success only
+/// they may change.
 pub(super) async fn update(
     ctx: &DaemonContext,
     id: &QueueItemId,
+    patch: ItemPatch,
+) -> Result<Reply, ArchonError> {
+    update_within(ctx, id, patch, Ceiling::Enforced).await
+}
+
+/// [`update`] with the ceiling `ceiling` says bounds the autonomy knobs.
+pub(super) async fn update_within(
+    ctx: &DaemonContext,
+    id: &QueueItemId,
     mut patch: ItemPatch,
+    ceiling: Ceiling,
 ) -> Result<Reply, ArchonError> {
     check_item_budget(patch.budget_usd)?;
     if let Some(tags) = &patch.tags {
         check_tags(tags)?;
     }
     let current = ctx.store.lock().await.item(id)?;
+    if matches!(current.state, QueueState::Succeeded { .. }) && patch.autonomy.is_some() {
+        return after_success(ctx, current, patch, ceiling).await;
+    }
+    let revision = match patch.autonomy.take() {
+        Some(knobs) => Some(revise::prepare(ctx, &current, &knobs, ceiling).await?),
+        None => None,
+    };
+    if revision.as_ref().is_some_and(|r| r.restages()) && patch.model_plan.is_some() {
+        return Err(ArchonError::Invalid(
+            "autonomy that changes the stages and model_plan are sent apart: the plan is for \
+             the stages the item has when it arrives"
+                .into(),
+        ));
+    }
     let replaces_plan = patch.model_plan.is_some();
     let mut plan = None;
     if replaces_plan || patch.model_reasons.is_some() || !patch.stage_timeouts.is_empty() {
@@ -205,20 +236,85 @@ pub(super) async fn update(
     let set_budget = patch.budget_usd.is_some();
     let item = {
         // Under the run table, so the dispatcher cannot start the item meanwhile.
-        let _table = ctx.runs.lock().await;
+        let table = ctx.runs.lock().await;
         let mut store = ctx.store.lock().await;
         let mut item = store.item(id)?;
         check_patchable(&item, &patch, replaces_plan)?;
+        if let Some(revision) = &revision {
+            revise::apply(&mut store, &table, &mut item, revision)?;
+        }
         apply_patch(&mut item, patch, plan)?;
         item.updated_at = archon_core::now().max(item.updated_at);
-        store.update_item(&item)?;
+        match &revision {
+            Some(revision) => revision.save(&mut store, &item)?,
+            None => store.update_item(&item)?,
+        }
         item
     };
     if let Some(text) = amendment {
         note_amendment(ctx, id, &text, "update_item").await;
     }
+    if let Some(revision) = revision.filter(|r| r.changes()) {
+        let text = format!("Autonomy of {id} changed: {}.", revision.describe());
+        post_note(ctx, id, &text).await;
+    }
     ctx.dispatch.notify_one();
     Ok(item_reply(ctx, item, set_budget).await)
+}
+
+/// A succeeded item takes an autonomy-only patch. `merge = auto` turns on
+/// GitHub's auto-merge of its open pull request, at the reviewed commit
+/// only; `merge = manual` withdraws one still owed.
+async fn after_success(
+    ctx: &DaemonContext,
+    current: QueueItem,
+    patch: ItemPatch,
+    ceiling: Ceiling,
+) -> Result<Reply, ArchonError> {
+    let id = &current.id;
+    let QueueState::Succeeded { run, .. } = &current.state else {
+        unreachable!("the caller checked the state");
+    };
+    let autonomy_only = ItemPatch {
+        autonomy: patch.autonomy,
+        ..ItemPatch::default()
+    };
+    if patch != autonomy_only {
+        return Err(ArchonError::InvalidTransition(format!(
+            "item {id} already succeeded; only its autonomy can change"
+        )));
+    }
+    let knobs = patch.autonomy.expect("the caller checked the patch");
+    let revision = revise::prepare(ctx, &current, &knobs, ceiling).await?;
+    if !revision.changes() {
+        return Ok(Reply::Item(current));
+    }
+    let mut note = format!("Autonomy of {id} changed: {}.", revision.describe());
+    if revision.after.merge == MergeMode::Auto {
+        let (_, enabled) = operator_merge::enable_auto_merge(ctx, id).await?;
+        note = format!("{note} {enabled}.");
+    }
+    let item = {
+        let _table = ctx.runs.lock().await;
+        let mut store = ctx.store.lock().await;
+        let mut item = store.item(id)?;
+        if item.autonomy != revision.before || item.state != current.state {
+            return Err(ArchonError::Unavailable(format!(
+                "item {id} changed while its autonomy was updated; send the update again"
+            )));
+        }
+        if revision.after.merge == MergeMode::Manual
+            && executor::withdraw_owed_merge(&mut store, run)?
+        {
+            note.push_str(" Its owed auto-merge was withdrawn.");
+        }
+        item.autonomy = revision.after;
+        item.updated_at = archon_core::now().max(item.updated_at);
+        revision.save(&mut store, &item)?;
+        item
+    };
+    post_note(ctx, id, &note).await;
+    Ok(Reply::Item(item))
 }
 
 /// Refuse a patch `item`'s state does not allow: nothing after success, and
@@ -656,7 +752,7 @@ pub(super) async fn check_runs_here(
             spec.name()
         )));
     }
-    let caps = resolve::caps(ctx).await;
+    let caps = resolve::item_caps(ctx, env.repo.as_ref().map(|r| &r.id));
     let repo_cap = env
         .repo
         .as_ref()

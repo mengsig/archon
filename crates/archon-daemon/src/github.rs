@@ -368,17 +368,44 @@ pub async fn configure(
 ) -> Result<GithubWatcherView, ArchonError> {
     require_dedicated(ctx)?;
     check_storable(ctx, &change)?;
+    if enables(&change) {
+        prepare_enable(ctx).await?;
+    }
+    configure_existing(ctx, change).await
+}
+
+pub(crate) fn enables(change: &WatcherChange) -> bool {
+    matches!(
+        change,
+        WatcherChange::Add { .. } | WatcherChange::Enable { .. }
+    )
+}
+
+/// Lifecycle changes precede both the orchestrator read guard and the
+/// authority settings mutex; neither may be held while ensuring a root.
+pub(crate) async fn prepare_enable(ctx: &DaemonContext) -> Result<(), ArchonError> {
+    require_dedicated(ctx)?;
+    supervisor::ensure_orchestrator(ctx).await.map(drop)
+}
+
+/// Configure while authority is held, without creating or replacing its root.
+pub(crate) async fn configure_existing(
+    ctx: &DaemonContext,
+    change: WatcherChange,
+) -> Result<GithubWatcherView, ArchonError> {
+    require_dedicated(ctx)?;
+    check_storable(ctx, &change)?;
     let enabling = matches!(
         change,
         WatcherChange::Add { .. } | WatcherChange::Enable { .. }
     );
     let setting_operators = sets_operators(&change);
-    let orchestrator = if enabling {
-        Some(supervisor::ensure_orchestrator(ctx).await?)
-    } else {
-        // Switching things off must work while the orchestrator is down.
-        supervisor::current_orchestrator(ctx).await?
-    };
+    let orchestrator = supervisor::current_orchestrator(ctx).await?;
+    if enabling && orchestrator.is_none() {
+        return Err(ArchonError::Unavailable(
+            "start the orchestrator before enabling its GitHub watcher".into(),
+        ));
+    }
     let _serial = ctx.github.serial.lock().await;
     let client = ctx.aether.client()?;
     let current = client.github_watcher().await?;
@@ -412,7 +439,10 @@ pub async fn configure(
 }
 
 /// Refuse a list this aetherd's protocol cannot store, before any write.
-fn check_storable(ctx: &DaemonContext, change: &WatcherChange) -> Result<(), ArchonError> {
+pub(crate) fn check_storable(
+    ctx: &DaemonContext,
+    change: &WatcherChange,
+) -> Result<(), ArchonError> {
     if sets_allowlist(change) {
         ctx.aether.client()?.check_allowlists()?;
     }

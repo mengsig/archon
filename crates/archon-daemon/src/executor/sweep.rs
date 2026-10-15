@@ -74,6 +74,10 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
         follow.sibling_stops = siblings::owed(&store)?;
         follow.steers = super::steer::owed(&store)?;
         follow.descendant_stops = descendants::owed(&store)?;
+        follow.release_builds = crate::build_cache::owed_releases(&store)?
+            .into_iter()
+            .map(|(item, repo_name)| super::ItemBuild { item, repo_name })
+            .collect();
     }
     run_follow_up(ctx, follow).await
 }

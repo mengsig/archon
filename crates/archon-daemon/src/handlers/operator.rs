@@ -201,7 +201,7 @@ fn recorded_asker(question: &Question) -> String {
 }
 
 /// Who waits on `question`, if it is not one the orchestrator asked with
-/// `ask_operator`: the same three cases `supervisor::route_answer` routes.
+/// `ask_operator`: the other cases `supervisor::route_answer` routes.
 fn other_asker(
     store: &mut Store,
     question: &Question,
@@ -211,6 +211,11 @@ fn other_asker(
     }
     if store.gate_by_question(&question.id)?.is_some() {
         return Ok(Some("an operator gate"));
+    }
+    if store.merge_by_question(&question.id)?.is_some() {
+        return Ok(Some(
+            "a merge confirmation, which only the operator answers",
+        ));
     }
     if reports::asks_to_reopen(store, question)? {
         return Ok(Some("a report's \"Reopen it?\" question"));

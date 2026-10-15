@@ -258,6 +258,7 @@ fn item_detail(stage: StageRun) -> ItemDetail {
         gates: vec![],
         delegations: Default::default(),
         switched_to: None,
+        merges: Vec::new(),
     }
 }
 

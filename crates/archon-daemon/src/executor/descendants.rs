@@ -100,6 +100,11 @@ pub(super) fn owed(store: &Store) -> Result<Vec<StageRunId>, ArchonError> {
     Ok(stages)
 }
 
+/// Whether a stop of what `stage`'s agent delegated is still owed.
+pub(super) fn owes(store: &Store, stage: &StageRunId) -> Result<bool, ArchonError> {
+    Ok(store.kv_get(&stop_key(stage))?.is_some())
+}
+
 /// Whether `run` still owes a stop, so that none of its agents is created.
 pub(super) fn holds(store: &Store, run: &PipelineRunId) -> Result<bool, ArchonError> {
     for (key, raw) in store.kv_prefix(STOP_KEY_PREFIX)? {
@@ -294,7 +299,7 @@ async fn stopped(
         beneath.iter().all(|d| d.state != DescendantState::Live),
         "a stop is done once nothing beneath the agent runs"
     );
-    let (waiting, stage_id) = {
+    let (waiting, stage_id, build) = {
         let mut store = ctx.store.lock().await;
         for ended in beneath {
             store.record_delegated(&ended.agent, &ended.parent, &ended.model, ended.effort)?;
@@ -303,6 +308,7 @@ async fn stopped(
         (
             store.stage_runs(&owed.run)?,
             store.stage_run(stage)?.stage_id,
+            finish::run_build(&store, &owed.run)?,
         )
     };
     if owed.reported {
@@ -318,6 +324,8 @@ async fn stopped(
             .collect(),
         // A delivery archond makes itself waited for the stop as well.
         ship: vec![owed.run.clone()],
+        // Its item's build directory waited for the stop too.
+        release_builds: build.into_iter().collect(),
         discard: vec![owed.run.clone()],
         poke: true,
         ..FollowUp::default()

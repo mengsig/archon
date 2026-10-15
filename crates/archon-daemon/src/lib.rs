@@ -2,8 +2,10 @@
 
 mod agent_messages;
 mod artifacts;
+mod authority;
 mod build_cache;
 mod chat_answer;
+mod chat_merge;
 mod chat_ops;
 pub mod context;
 pub mod disk;
@@ -15,6 +17,7 @@ pub mod gc;
 pub mod github;
 pub mod handlers;
 pub mod mirror;
+mod operator_commands;
 pub mod ops;
 pub mod prune;
 pub mod pump;
@@ -29,6 +32,7 @@ pub mod worktree;
 mod knobs;
 pub mod learned;
 mod resolve;
+pub mod settings;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -304,6 +308,7 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
             .map_err(|e| ArchonError::io(format!("creating {}", dir.display()), e))?;
     }
     let store = open_store(&paths, &config)?;
+    let operator_settings = settings::SettingsBook::load(&store)?;
     let lavish = Lavish::detect(&config.lavish)?;
     let aether = Arc::new(AetherLink::new());
     let backend = Arc::new(AetherBackend::new(aether.clone(), config.models.policy()));
@@ -322,6 +327,7 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
         runs: Mutex::new(executor::RunTable::default()),
         replies: Mutex::new(feed::ReplyTracker::default()),
         answering: Mutex::new(()),
+        authority_changes: Mutex::new(()),
         learning_memory: Mutex::new(()),
         memory_curation: Mutex::new(()),
         memory_feedback_ready: Notify::new(),
@@ -329,7 +335,7 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
         triggers: TriggerQueue::default(),
         mirrors: mirror::MirrorQueue::default(),
         spawn_recorded: Notify::new(),
-        caps_override: Mutex::new(None),
+        operator_settings: std::sync::Mutex::new(operator_settings),
         lavish,
         supervisor: Supervisor::default(),
         github: GithubState::default(),

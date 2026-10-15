@@ -20,6 +20,23 @@ use crate::{feed, github, worktree};
 /// must resolve. With `github_watch` its GitHub origin is also watched,
 /// checked first so that a repository that cannot be watched is not registered.
 pub(super) async fn add(ctx: &DaemonContext, add: RepoAdd) -> Result<Reply, ArchonError> {
+    add_with_watch(ctx, add, false).await
+}
+
+/// The authenticated operator socket can start the watcher root, outside
+/// the authority guards. Delegated authority uses the root it already has.
+pub(super) async fn add_from_operator(
+    ctx: &DaemonContext,
+    add: RepoAdd,
+) -> Result<Reply, ArchonError> {
+    add_with_watch(ctx, add, true).await
+}
+
+async fn add_with_watch(
+    ctx: &DaemonContext,
+    add: RepoAdd,
+    ensure_root: bool,
+) -> Result<Reply, ArchonError> {
     if !add.path.is_absolute() {
         return Err(ArchonError::Invalid(format!(
             "repository path {} must be absolute",
@@ -49,6 +66,7 @@ pub(super) async fn add(ctx: &DaemonContext, add: RepoAdd) -> Result<Reply, Arch
         base_branch: add.base_branch.or(config.repo.base_branch),
         default_pipeline: add.default_pipeline.or(config.repo.default_pipeline),
         autonomy_max: registry_ceiling(add.auto_merge),
+        grant_merge: false,
         added_at: archon_core::now(),
     };
     check_repo(&repo).await?;
@@ -58,7 +76,7 @@ pub(super) async fn add(ctx: &DaemonContext, add: RepoAdd) -> Result<Reply, Arch
     ctx.mirrors.request_repo(&repo.id);
     tracing::info!(repo = %repo.name, path = %repo.path.display(), "repository registered");
     if let Some(repository) = watch {
-        watch_origin(ctx, &repo, repository).await?;
+        watch_origin(ctx, &repo, repository, ensure_root).await?;
     }
     Ok(Reply::Repo(repo))
 }
@@ -67,7 +85,7 @@ pub(super) async fn add(ctx: &DaemonContext, add: RepoAdd) -> Result<Reply, Arch
 pub(super) async fn watch(ctx: &DaemonContext, reference: &RepoRef) -> Result<String, ArchonError> {
     let repo = ctx.store.lock().await.repo(reference)?;
     let repository = github_origin(ctx, &repo.path).await?;
-    watch_origin(ctx, &repo, repository.clone()).await?;
+    watch_origin(ctx, &repo, repository.clone(), true).await?;
     Ok(format!("watching {repository} on GitHub for {}", repo.name))
 }
 
@@ -96,12 +114,18 @@ async fn watch_origin(
     ctx: &DaemonContext,
     repo: &Repo,
     repository: GithubRepo,
+    ensure_root: bool,
 ) -> Result<(), ArchonError> {
     let change = WatcherChange::Add {
         repository: repository.clone(),
         allowed_users: None,
     };
-    if let Err(error) = github::configure(ctx, change).await {
+    let result = if ensure_root {
+        github::configure(ctx, change).await
+    } else {
+        github::configure_existing(ctx, change).await
+    };
+    if let Err(error) = result {
         let detail = format!(
             "{} is registered but not watched; retry with `archon github-watcher add {repository}`",
             repo.name
@@ -165,15 +189,38 @@ pub(super) async fn update(
     if let Some(max) = patch.autonomy_max {
         repo.autonomy_max = max;
     }
+    if let Some(grant) = patch.grant_merge {
+        repo.grant_merge = grant;
+    }
     check_repo(&repo).await?;
     assert_eq!(repo.id, before.id, "a patch never changes identity");
     assert_eq!(repo.path, before.path, "a patch never moves a repository");
     ctx.store.lock().await.update_repo(&repo)?;
+    if repo.grant_merge != before.grant_merge {
+        crate::feed::system(ctx, grant_note(&repo)).await?;
+    }
     // The operator's deliberate update is when a changed git identity is taken.
     repo_identity::record(ctx, &repo).await?;
     // Its base branch may have changed.
     ctx.mirrors.request_repo(&repo.id);
     Ok(Reply::Repo(repo))
+}
+
+/// The feed's record of the operator changing `grant_merge` (§18.6).
+fn grant_note(repo: &Repo) -> String {
+    match repo.grant_merge {
+        true => format!(
+            "grant_merge is on for {}: when you ask the orchestrator to merge an item's pull \
+             request, archond merges it without a confirmation question, if it is reviewed and \
+             green",
+            repo.name
+        ),
+        false => format!(
+            "grant_merge is off for {}: archond asks you to confirm each merge the orchestrator \
+             requests",
+            repo.name
+        ),
+    }
 }
 
 /// The canonical top level of `path` and its repository config. A path

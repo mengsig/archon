@@ -374,7 +374,8 @@ directory to your pipelines and edit its roles.
 A work item ships in one of two modes, set per repository:
 
 - `pr` (the default): opens a PR. Merging requires the item's `merge = auto`
-  knob and permission in your ceiling (`--auto-merge` permits it for a repository).
+  knob and permission in your ceiling (`--auto-merge` permits it for a repository),
+  or your own request ([Merging on request](#merging-on-request)).
 - `local`: commits on the run branch and never pushes.
 
 No agent ships. A stage of the pipeline, usually the last that commits,
@@ -573,8 +574,10 @@ number picks that option.
   already answered number, or an answer that was refused comes back with the
   reason, in the same chat and as a system notice in `archon log`.
 - Only your own message counts: one Aether authenticated as the `user`
-  actor. An agent's message, a relay, a GitHub request, and a `/answer`
-  quoted inside other text answer nothing. The orchestrator has no tool that
+  actor, or a GitHub request from a listed operator login
+  ([Operator authority](operator-authority.md)). An agent's message, a
+  relay, any other GitHub request, and a `/answer` quoted inside other text
+  answer nothing. The orchestrator has no tool that
   answers a gate.
 - A plain reply to a question the orchestrator asked itself (`ask_operator`)
   works as before, and the orchestrator now records it, so the question
@@ -652,7 +655,9 @@ archon repo add ~/code/web --pipeline adaptive
 In `archon chat`, just talk. Slash commands cover the rest: `/questions`,
 `/a [n] <answer>` (the newest open question without `n`),
 `/answer <n> <answer>`, `/status`, `/queue [state …]` (the queue, e.g.
-`/queue running failed`), `/item <id>` (one item), `/progress` (show stage
+`/queue running failed`), `/item <id>` (one item), `/merge <id>
+[--ignore-checks]` (merge its pull request; see
+[Merging on request](#merging-on-request)), `/progress` (show stage
 progress too; also `/verbose`), `/pause` and `/resume` (optionally `hard`,
 `repo <name>` or `pipeline <name>`), `/help` and `/quit`. Start a line with
 `//` to send a message that begins with `/`.
@@ -670,11 +675,12 @@ progress too; also `/verbose`), `/pause` and `/resume` (optionally `hard`,
 | `archon queue wait <id>… [--timeout 30m]` | wait for every item to become terminal, bounded to 30m by default; exit 0 all succeeded, 3 failed/cancelled, 4 timeout, 5 failed/cancelled dependency |
 | `archon queue list` | one line per item: state, current stage, age, cost, title, PR URL and derived waiting reason with one next action |
 | `archon queue show <id> [--full]` | an item's runs and each stage's attempt, slot, state, verdict, model, agent, cost and summary (first lines; `--full` for all), with the PR URL, recorded plan reasons and full waiting explanation when present. A stage that delegated shows how its cost splits (its own agent, then each delegated agent with model, effort and cost), and a stage holding a declared review shows the review on record. Steers made to the item are listed with who made them |
-| `archon queue cancel <id>` / `archon queue caps` | cancel an item, or show and change runtime caps |
+| `archon queue cancel <id>` / `archon queue caps` | cancel an item, or show and change saved operator caps |
 | `archon queue retry <id> [--fresh] [--append "…"]` | queue a finished item again in its worktree and branch (a succeeded one delivers into its pull request again, and the retry counts against the run that passed); `--fresh` starts over from the base branch on a new branch and sets the old worktree aside, which worktree gc deletes, uncommitted work included, `worktrees.gc_after` (7 days) after the item's last run; `--append` adds guidance to the brief |
 | `archon queue refresh <id>` | merge a finished item's base branch, fetched from `origin`, into its branch: a new item resolves any conflicts, runs the checks, is reviewed from the new merge base and updates the same pull request (never a rebase or a second pull request) |
 | `archon queue steer <id> [--note "…"] [--stage <stage>] [--model <provider/model>] [--effort <effort>] [--budget-usd <usd>] [--extend <minutes>] [--abort [--then retry\|skip] [--goto <stage>]] [--remove <stage>] [--insert <stage> [--from <pipeline>] [--after <stage>]] [--switch <pipeline>]` | change an item without cancelling it; see [steering an item](#steering-an-item) |
 | `archon log` | the complete feed; `--item <id>` keeps one item's entries, `--kind <kind>` (repeatable) some kinds, and `--follow` keeps printing new ones |
+| `archon merge <id> [--ignore-checks]` | merge a succeeded item's pull request at its reviewed commit; see [Merging on request](#merging-on-request) |
 | `archon reports` / `archon reports reopen <rpt_…>` | list published reports with their state and URL, or show a closed one again |
 | `archon github-watcher …` | route `@archon` on GitHub issues and PRs to the orchestrator. `operators <LOGIN>...` lets the GitHub accounts you list instruct it with your authority (off by default); see [`docs/github-watcher.md`](github-watcher.md) |
 | `archon pause` / `archon resume` | hold dispatch globally, per repo or per pipeline; `--hard` also pauses running agents |
@@ -757,7 +763,7 @@ means the planner would admit it on the next pass; status separately reports
 Aether disconnection, which stops dispatch.
 
 `archon queue caps --budget-daily <usd>` and `--budget-total <usd>` raise
-runtime budgets until archond restarts (0 removes the limit);
+saved budgets until the global settings overlay is reset (0 removes the limit);
 `--budgets off` stops enforcing every dollar budget until then (set
 `budgets_enabled = false` under `[limits]` to make it permanent), and
 `--budgets on` enforces them again. Spend is recorded either way. Daily budgets
@@ -972,6 +978,43 @@ repository's own `.archon/config.toml` can only lower them.
 the ceiling and the directives. See
 [`docs/ARCHITECTURE.md` §18](ARCHITECTURE.md#18-autonomy).
 
+### Merging on request
+
+`merge = manual` leaves a pull request for you to merge, but you can have
+Archon merge one without raising the ceiling:
+
+```sh
+archon merge <item>                  # also /merge <item> in archon chat
+archon merge <item> --ignore-checks  # merge although checks are red or pending
+```
+
+Archon merges only an item that succeeded and whose pull request is open,
+not a draft, mergeable, on the right base, with no unmerged stack parent,
+and still at the commit its review passed. It merges by the first method the
+repository allows, pinned to that commit, never with `--admin`. Checks
+must be green unless you acknowledge them. A refusal says why, is recorded,
+and merges nothing. `archon queue show <item>` prints a `merge:` line.
+
+You can also just tell the orchestrator "merge it", in chat or in a GitHub
+request with operator standing. It cannot merge by itself: it calls
+`request_merge`, and Archon asks you `Merge …?` as a numbered question.
+Answer `/a <n> yes`, `/a <n> yes ignore-checks` or `/a <n> no`. The
+orchestrator cannot answer it for you. A whole-message `/merge <item>` in
+the orchestrator's Aether chat merges at once, in dedicated mode only.
+
+To skip that question for a repository, grant it:
+
+```sh
+archon repo set <repo> --grant-merge true   # false withdraws it
+```
+
+The grant has no expiry and is independent of `merge = auto`. Under it, a
+request for a reviewed item whose checks are all green merges without a
+question. Red checks, or an item with `review = none`, are still asked.
+`archon autonomy` and `archon status` show the grant, and `archon status`
+any merge waiting for you. See
+[`docs/ARCHITECTURE.md` §18.6](ARCHITECTURE.md#186-merges-the-operator-asks-for).
+
 ### Who speaks as you
 
 The orchestrator takes instructions from you in the terminal UI,
@@ -996,6 +1039,16 @@ GitHub request, agent or MCP tool can. After an upgrade, run
 while the orchestrator that takes GitHub requests runs older instructions,
 which do not know operator standing. See
 [Operator logins](github-watcher.md#operator-logins).
+
+Authority is checked by archond, not by the model. Whole-message commands
+(`/answer`, `/approve`, `/reject`, `/merge`, `/archon set --repo …`,
+`/archon pause --hard`, `/archon repo remove`, `/archon undo N`) work from
+your chat and from a listed GitHub operator. In prose, the orchestrator
+cites your message with `request_authority`; a change that loosens a limit
+comes back as a question only you can answer, and applies only if nothing
+changed meanwhile. Every use is in the feed as an Authority entry, and
+repository and caps changes can be undone. See
+[Operator authority](operator-authority.md).
 
 
 ## Schedules

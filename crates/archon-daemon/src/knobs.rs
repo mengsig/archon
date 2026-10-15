@@ -17,6 +17,7 @@ use archon_pipeline::autonomy::{augment, chosen_review, review_is_chosen, review
 use archon_pipeline::builtin::DEFAULT_PIPELINE;
 use archon_queue::Store;
 
+use crate::context::DaemonContext;
 use crate::learned;
 use crate::resolve::RepoEnv;
 
@@ -33,13 +34,13 @@ pub(crate) struct Resolved {
 
 /// Resolve an enqueue's pipeline and knobs within the ceiling.
 pub(crate) fn resolve(
-    config: &Config,
+    ctx: &DaemonContext,
     env: &RepoEnv,
     pipeline: Option<String>,
     patch: &AutonomyPatch,
 ) -> Result<Resolved, ArchonError> {
-    let policy = env.autonomy(config);
-    let (name, patch) = match pipeline_name(env, pipeline, patch) {
+    let policy = env.autonomy(ctx);
+    let (name, patch) = match pipeline_name(ctx, env, pipeline, patch) {
         Some(name) => (name, *patch),
         None => (
             DEFAULT_PIPELINE.to_owned(),
@@ -59,16 +60,18 @@ pub(crate) fn resolve(
     })
 }
 
-/// An explicit pipeline wins, then a default one; `None` when the enqueue
-/// asks for a review level instead, or nothing names one.
-fn pipeline_name(env: &RepoEnv, pipeline: Option<String>, patch: &AutonomyPatch) -> Option<String> {
+/// An explicit pipeline wins, then a default one (`Layers::default_pipeline`);
+/// `None` when the enqueue asks for a review level instead, or nothing names one.
+fn pipeline_name(
+    ctx: &DaemonContext,
+    env: &RepoEnv,
+    pipeline: Option<String>,
+    patch: &AutonomyPatch,
+) -> Option<String> {
     if pipeline.is_some() || patch.review.is_some() {
         return pipeline;
     }
-    env.repo
-        .as_ref()
-        .and_then(|r| r.default_pipeline.clone())
-        .or_else(|| env.config.repo.default_pipeline.clone())
+    env.default_pipeline(ctx)
 }
 
 /// `patch` on [`DEFAULT_PIPELINE`]: an enqueue that names neither a pipeline
@@ -119,6 +122,18 @@ fn knobs(
             ..patch.over(policy.default)
         });
     }
+    refuse_shipping_only(base, patch)?;
+    Ok(Autonomy {
+        review,
+        proposal: ProposalMode::Off,
+        report: ReportMode::Off,
+        merge: MergeMode::Manual,
+        tools: patch.tools.unwrap_or(policy.default.tools),
+    })
+}
+
+/// A pipeline that does not ship takes no proposal, report or merge.
+fn refuse_shipping_only(base: &PipelineSpec, patch: &AutonomyPatch) -> Result<(), ArchonError> {
     let shipping_only = [
         patch
             .proposal
@@ -133,19 +148,59 @@ fn knobs(
             .filter(|v| *v != MergeMode::Manual)
             .map(|_| "merge"),
     ];
-    if let Some(knob) = shipping_only.into_iter().flatten().next() {
-        return Err(ArchonError::Invalid(format!(
+    match shipping_only.into_iter().flatten().next() {
+        Some(knob) if !ships(base) => Err(ArchonError::Invalid(format!(
             "{knob} applies only to pipelines that ship; {:?} ships nothing",
             base.name()
-        )));
+        ))),
+        _ => Ok(()),
     }
-    Ok(Autonomy {
+}
+
+/// `current` with `patch` over it, for an item that exists already: the
+/// review level only where the pipeline's stage holds it.
+pub(crate) fn revise(
+    base: &PipelineSpec,
+    current: Autonomy,
+    patch: &AutonomyPatch,
+    policy: &AutonomyPolicy,
+) -> Result<Autonomy, ArchonError> {
+    refuse_shipping_only(base, patch)?;
+    let review = match patch.review {
+        Some(_) => review_of(base, patch, policy)?,
+        None => current.review,
+    };
+    let revised = Autonomy {
         review,
-        proposal: ProposalMode::Off,
-        report: ReportMode::Off,
-        merge: MergeMode::Manual,
-        tools: patch.tools.unwrap_or(policy.default.tools),
-    })
+        ..patch.over(current)
+    };
+    assert!(
+        ships(base)
+            || (revised.proposal, revised.report, revised.merge)
+                == (current.proposal, current.report, current.merge),
+        "a pipeline that ships nothing keeps its shipping knobs"
+    );
+    Ok(revised)
+}
+
+/// Refuse the knobs `after` changed from `before` that sit above the
+/// ceiling; a knob already above it (the ceiling was lowered) may stay.
+pub(crate) fn check_raised(
+    policy: &AutonomyPolicy,
+    env: &RepoEnv,
+    base: &PipelineSpec,
+    before: Autonomy,
+    after: Autonomy,
+) -> Result<(), ArchonError> {
+    let kept = before.narrowed(policy.ceiling);
+    let changed = AutonomyPatch {
+        review: (after.review != before.review).then_some(after.review),
+        proposal: (after.proposal != before.proposal).then_some(after.proposal),
+        report: (after.report != before.report).then_some(after.report),
+        merge: (after.merge != before.merge).then_some(after.merge),
+        tools: (after.tools != before.tools).then_some(after.tools),
+    };
+    check_ceiling(policy, env, base, changed.over(kept))
 }
 
 /// Refuse knobs above the ceiling. Only `tools` means anything for a

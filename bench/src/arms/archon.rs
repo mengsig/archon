@@ -569,6 +569,7 @@ pub fn answer_text(feed: &[FeedItem], details: &[ItemDetail]) -> String {
         .filter(|i| i.visible(false))
         .filter_map(|i| match &i.entry {
             FeedEntry::Orchestrator { text } | FeedEntry::System { text } => Some(text.clone()),
+            FeedEntry::Authority { action, result, .. } => Some(format!("{action}: {result}")),
             FeedEntry::Notification(n) => Some(n.text.clone()),
             FeedEntry::Question(q) => Some(q.text.clone()),
             FeedEntry::Report {

@@ -65,7 +65,7 @@ async fn prepare_member(
         }
         patch.merge = Some(MergeMode::Manual);
     }
-    let resolved = knobs::resolve(&ctx.config, &env, member.pipeline.clone(), &patch)?;
+    let resolved = knobs::resolve(ctx, &env, member.pipeline.clone(), &patch)?;
     items::check_runs_here(ctx, &env, &resolved.spec).await?;
     let id = QueueItemId::new();
     let given = member.model_plan.clone().unwrap_or_default();

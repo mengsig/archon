@@ -404,7 +404,49 @@ UPDATE operator_feedback SET data = json_set(data, '$.memory_feedback', NULL)
 WHERE json_type(data, '$.memory_feedback') IS NULL;
 "#;
 
-pub(super) const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12];
+/// Version 13: merges the operator asked for (ARCHITECTURE §18.6). At most
+/// one request per item is open; `question` is its confirmation, if any.
+const V13: &str = r#"
+CREATE TABLE merge_requests (
+    id           TEXT PRIMARY KEY,
+    item         TEXT NOT NULL REFERENCES items (id),
+    run          TEXT NOT NULL REFERENCES runs (id),
+    question     TEXT UNIQUE REFERENCES questions (id),
+    state        TEXT NOT NULL CHECK (state IN
+                     ('awaiting_operator', 'merging', 'merged', 'declined', 'refused')),
+    requested_at TEXT NOT NULL,
+    updated_at   TEXT NOT NULL CHECK (updated_at >= requested_at),
+    data         TEXT NOT NULL CHECK (json_valid(data))
+);
+CREATE UNIQUE INDEX merge_requests_open_per_item ON merge_requests (item)
+    WHERE state IN ('awaiting_operator', 'merging');
+CREATE INDEX merge_requests_by_item ON merge_requests (item, requested_at);
+"#;
+
+/// Version 14: accepted merges may wait in GitHub’s merge queue before settling.
+const V14: &str = r#"
+CREATE TABLE merge_requests_next (
+    id           TEXT PRIMARY KEY,
+    item         TEXT NOT NULL REFERENCES items (id),
+    run          TEXT NOT NULL REFERENCES runs (id),
+    question     TEXT UNIQUE REFERENCES questions (id),
+    state        TEXT NOT NULL CHECK (state IN
+                     ('awaiting_operator', 'queued', 'merging', 'merged', 'declined', 'refused')),
+    requested_at TEXT NOT NULL,
+    updated_at   TEXT NOT NULL CHECK (updated_at >= requested_at),
+    data         TEXT NOT NULL CHECK (json_valid(data))
+);
+INSERT INTO merge_requests_next (id, item, run, question, state, requested_at, updated_at, data)
+SELECT id, item, run, question, state, requested_at, updated_at, data FROM merge_requests;
+DROP TABLE merge_requests;
+ALTER TABLE merge_requests_next RENAME TO merge_requests;
+CREATE UNIQUE INDEX merge_requests_open_per_item ON merge_requests (item)
+    WHERE state IN ('awaiting_operator', 'queued', 'merging');
+CREATE INDEX merge_requests_by_item ON merge_requests (item, requested_at);
+"#;
+
+pub(super) const MIGRATIONS: &[&str] =
+    &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14];
 
 /// Pragmas every connection needs. `on_disk` connections must end up in
 /// WAL mode; in-memory databases report `memory` and stay that way.
@@ -544,6 +586,8 @@ pub(super) fn migrate(conn: &mut Connection) -> Result<usize, ArchonError> {
     Ok(MIGRATIONS.len())
 }
 
+#[cfg(test)]
+mod merge_upgrade;
 #[cfg(test)]
 mod v1_replay;
 
@@ -983,9 +1027,11 @@ mod tests {
         )
         .unwrap();
         insert_feedback(&conn, "fb_old", V11_ROW).unwrap();
-        conn.execute_batch("DELETE FROM schema_migrations WHERE version = 12")
-            .unwrap();
-        assert_eq!(migrate(&mut conn).unwrap(), 12);
+        conn.execute_batch(
+            "DROP TABLE merge_requests; DELETE FROM schema_migrations WHERE version >= 12",
+        )
+        .unwrap();
+        assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
         let (data, reason): (String, String) = conn
             .query_row(
                 "SELECT data, reason FROM operator_feedback WHERE id = 'fb_old'",
@@ -995,6 +1041,6 @@ mod tests {
             .unwrap();
         assert_eq!(data, r#"{"memory_feedback":null}"#);
         assert_eq!(reason, "wrong file");
-        assert_eq!(migrate(&mut conn).unwrap(), 12);
+        assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());
     }
 }

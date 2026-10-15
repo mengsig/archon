@@ -24,7 +24,7 @@ use archon_core::aether_ids::{AetherAgentId, AetherRunId};
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
 use archon_core::model::ModelRef;
-use archon_core::ports::{CreatedNode, NetworkPolicy, RunNodeRequest};
+use archon_core::ports::{CreatedNode, DescendantState, NetworkPolicy, RunNodeRequest};
 use archon_core::run::StageRun;
 use archon_queue::Store;
 use serde::{Deserialize, Serialize};
@@ -40,7 +40,8 @@ const NODE_AGENT_KEY_PREFIX: &str = "run_node_agent:";
 const MESSAGE_NODE_KEY_PREFIX: &str = "message_run_node:";
 
 /// How long after its stage settled an agent may still be ending its turn
-/// before the node is retired regardless. Aether settles a task mid-turn
+/// before the node is cancelled. Retirement still waits for its subtree to end.
+/// Aether settles a task mid-turn
 /// and the agent completes when the turn ends.
 pub(super) const TURN_END_GRACE_SECS: i64 = 60;
 
@@ -726,18 +727,53 @@ pub(super) async fn retire(ctx: &DaemonContext, run: &PipelineRunId) -> Result<(
         Found::Unanswered => return Ok(()),
     };
     if let Some(agent) = agent
-        && !cancel_node(ctx, run, &agent).await?
+        && (!cancel_node(ctx, run, &agent).await? || !subtree_stopped(ctx, &agent).await?)
     {
         return Ok(());
     }
+    // Older node generations may no longer enumerate their stage agents.
+    // Keep the durable node entry until every recorded builder is confirmed
+    // stopped, including kept agents and those beyond the turn-end grace.
+    let stages = ctx.store.lock().await.stage_runs(run)?;
+    for stage in stages {
+        if let Some(agent) = stage.aether_agent
+            && !subtree_stopped(ctx, &agent).await?
+        {
+            return Ok(());
+        }
+    }
     ctx.store.lock().await.kv_delete(&node_key(run))
+}
+
+/// Cancellation is cooperative. An unanswered lookup keeps the durable
+/// retirement obligation; neither a timeout nor acceptance proves a stop.
+async fn subtree_stopped(ctx: &DaemonContext, agent: &AetherAgentId) -> Result<bool, ArchonError> {
+    let stopped = async {
+        if ctx.backend.is_live(agent).await? {
+            return Ok(false);
+        }
+        let descendants = ctx.backend.descendants(agent).await?;
+        Ok(descendants.iter().all(|d| d.state != DescendantState::Live))
+    }
+    .await;
+    match stopped {
+        Err(
+            error @ (ArchonError::Unavailable(_)
+            | ArchonError::Protocol(_)
+            | ArchonError::Io { .. }),
+        ) => {
+            tracing::info!(%agent, %error, "cannot confirm builders stopped; retaining run node");
+            Ok(false)
+        }
+        other => other,
+    }
 }
 
 /// Whether a stage agent of the finished run is still live in Aether: it
 /// settled its task mid-turn and has not ended the turn yet. Only agents
 /// within the grace after their own settlement are asked, newest first,
 /// so the usual case (the last stage still ending) costs one `get_agent`
-/// and a long run's history is never queried. An agent Aether cannot be
+/// before cancellation. An agent Aether cannot be
 /// asked about counts as live, so the wait is repeated.
 async fn turn_still_ending(
     ctx: &DaemonContext,

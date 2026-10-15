@@ -15,6 +15,7 @@ use archon_core::autonomy::{AutonomyView, Directive};
 use archon_core::catalog::{CatalogListing, Gate, PipelineSummary, StageSummary};
 use archon_core::github::GithubWatch;
 use archon_core::id::{PipelineRunId, QueueItemId};
+use archon_core::merge::MergeRequest;
 use archon_core::model::{Effort, ModelPlan, ModelReasons};
 use archon_core::notify::Question;
 use archon_core::policy::ModelPolicy;
@@ -32,6 +33,7 @@ const LINE_CHARS: usize = 200;
 
 pub(super) fn reply(tool: &str, reply: &Reply) -> String {
     match reply {
+        Reply::Guide { text } => text.clone(),
         Reply::MessageReceipt { receipt } => format!(
             "Recorded message {receipt} for delivery to the orchestrator. Keep working on your stage; do not wait for a reply or end your turn."
         ),
@@ -68,6 +70,8 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         Reply::Initiatives(all) => initiatives::list(all),
         Reply::Initiative(detail) => initiatives::detail(tool, detail),
         Reply::Lesson(lesson) => lessons::recorded(lesson),
+        Reply::Merge(request) => merge_text(request),
+        Reply::Settings(view) => view.describe(),
         Reply::Artifacts(listing) => artifacts::listing(listing),
         Reply::ArtifactPage(page) => artifacts::page(page),
         Reply::Questions(_)
@@ -270,6 +274,9 @@ fn item_detail(detail: &ItemDetail) -> String {
     for gate in &detail.gates {
         let _ = write!(text, "\nGate {}", gate_line(gate));
     }
+    if let Some(merge) = detail.merges.last() {
+        let _ = write!(text, "\nMerge: {}", merge.line());
+    }
     let latest = detail.runs.last().map(|r| &r.id);
     for run in &detail.runs {
         let _ = write!(text, "\nRun {}", run_line(run));
@@ -393,6 +400,14 @@ fn autonomy_text(view: &AutonomyView) -> String {
         view.policy.default.describe(),
         view.policy.ceiling.describe_allowed()
     );
+    if !view.merge_granted.is_empty() {
+        let _ = write!(
+            text,
+            "\ngrant_merge is on for {}: request_merge merges there without asking the \
+             operator, when the operator asked you to merge.",
+            view.merge_granted.join(", ")
+        );
+    }
     if view.directives.is_empty() {
         text.push_str("\nNo operator directives.");
     }
@@ -404,6 +419,29 @@ fn autonomy_text(view: &AutonomyView) -> String {
             snake(&directive.source),
             until(directive),
             directive.text
+        );
+    }
+    text
+}
+
+/// Where a merge request stands, and what to tell the operator.
+fn merge_text(request: &MergeRequest) -> String {
+    let mut text = format!(
+        "Merge {} of {}: {}",
+        request.id,
+        request.item,
+        request.line()
+    );
+    if let Some(checks) = &request.checks {
+        let _ = write!(text, "\nChecks: {checks}.");
+    }
+    if let Some(number) = request.waiting_on() {
+        let _ = write!(
+            text,
+            "\nTell the operator: Q{number} asks them to confirm; they answer `archon answer \
+             {number} yes` (or `yes ignore-checks`, or `no`), `/a {number} yes` in archon chat, \
+             or `/answer {number} yes` in this chat when it is dedicated. You cannot answer it. \
+             Its outcome comes as merge_finished."
         );
     }
     text

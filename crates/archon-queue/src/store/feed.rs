@@ -91,7 +91,11 @@ pub(super) fn append_with_kv(
 }
 
 /// Append inside the caller's write transaction `tx`.
-fn append_in(tx: &Connection, entry: FeedEntry, at: Timestamp) -> Result<FeedItem, ArchonError> {
+pub(super) fn append_in(
+    tx: &Connection,
+    entry: FeedEntry,
+    at: Timestamp,
+) -> Result<FeedItem, ArchonError> {
     let seq = last_seq(tx)? + 1;
     let item = FeedItem {
         id: FeedItemId::new(),
@@ -254,8 +258,18 @@ pub(super) fn insert_question(
     conn: &mut Connection,
     question: &Question,
 ) -> Result<Question, ArchonError> {
-    check_question(question)?;
     let tx = write_tx(conn)?;
+    let numbered = insert_question_in(&tx, question)?;
+    tx.commit().ctx("commit question")?;
+    Ok(numbered)
+}
+
+/// Number and insert `question` inside the caller's write transaction `tx`.
+pub(super) fn insert_question_in(
+    tx: &Connection,
+    question: &Question,
+) -> Result<Question, ArchonError> {
+    check_question(question)?;
     let taken: bool = tx
         .query_row(
             "SELECT EXISTS (SELECT 1 FROM questions WHERE id = ?1)",
@@ -270,7 +284,7 @@ pub(super) fn insert_question(
         )));
     }
     if let Some(aether) = &question.aether
-        && let Some(existing) = by_aether(&tx, aether)?
+        && let Some(existing) = by_aether(tx, aether)?
     {
         return Err(ArchonError::Invalid(format!(
             "Aether question {}#{} is already recorded as {}",
@@ -283,11 +297,10 @@ pub(super) fn insert_question(
         question.id
     );
     let numbered = Question {
-        number: next_number(&tx)?,
+        number: next_number(tx)?,
         ..question.clone()
     };
-    write_question(&tx, &numbered, true)?;
-    tx.commit().ctx("commit question")?;
+    write_question(tx, &numbered, true)?;
     Ok(numbered)
 }
 
@@ -300,18 +313,38 @@ pub(super) fn close_withdrawn(
     at: Timestamp,
 ) -> Result<Option<FeedItem>, ArchonError> {
     assert!(!reason.trim().is_empty(), "a withdrawal gives its reason");
+    settle_in(
+        tx,
+        id,
+        &format!("withdrawn: {reason}"),
+        AnswerVia::Archon,
+        at,
+    )
+}
+
+/// Close an open question and append its answer in the caller's transaction.
+/// Previously recorded answers are never overwritten or posted again.
+pub(super) fn settle_in(
+    tx: &Connection,
+    id: &QuestionId,
+    text: &str,
+    via: AnswerVia,
+    at: Timestamp,
+) -> Result<Option<FeedItem>, ArchonError> {
+    if text.trim().is_empty() {
+        return Err(ArchonError::Invalid("an answer needs text".into()));
+    }
     let mut question = load_question(tx, id)?;
     if !question.is_open() {
         return Ok(None);
     }
-    let text = format!("withdrawn: {reason}");
-    question.answer = Some(text.clone());
+    question.answer = Some(text.to_owned());
     question.answered_at = Some(at.max(question.asked_at));
     write_question(tx, &question, false)?;
     let entry = FeedEntry::Answer {
         question: id.clone(),
-        text,
-        via: AnswerVia::Archon,
+        text: text.to_owned(),
+        via,
     };
     let item = append_in(tx, entry, at)?;
     debug_assert!(!load_question(tx, id)?.is_open());

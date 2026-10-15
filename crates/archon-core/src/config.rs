@@ -45,6 +45,7 @@ const PATH_KEYS: [&str; 3] = [
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
+    pub authority: crate::authority::AuthorityConfig,
     pub aether: AetherConfig,
     pub orchestrator: OrchestratorConfig,
     pub models: ModelsConfig,
@@ -415,10 +416,20 @@ pub struct WorktreeConfig {
     /// The caches to delete, relative to a worktree; empty: every file git
     /// ignores.
     pub cache_dirs: Vec<PathBuf>,
-    /// Stages build into one cache per repository under `<data>/cache`
-    /// instead of a target directory per task; `false` turns it off for
-    /// every repository (a repository's `[cache] shared = false` for one).
+    /// Stages of a repository build into one cargo target directory under
+    /// `<data>/cache`, serialising on cargo's build lock. Off by default:
+    /// each item gets its own (`item_cache`). A repository's
+    /// `[cache] shared = false` opts it out.
     pub shared_cache: bool,
+    /// Each item builds into its own cargo target directory under
+    /// `<data>/cache/<repo>/items`, deleted when the item ends; `false`
+    /// leaves agents to build into their worktrees. Ignored where
+    /// `shared_cache` applies.
+    pub item_cache: bool,
+    /// archond's cargo config turns off incremental builds and trims
+    /// debuginfo to line tables; a repository's `[cache] lean = false`
+    /// opts out.
+    pub lean_builds: bool,
     /// A repository's shared cache nobody used for this long, with no live
     /// run on the repository, is deleted.
     pub shared_cache_after: Age,
@@ -437,7 +448,9 @@ impl Default for WorktreeConfig {
             gc_after: Age::from_secs(7 * 86_400),
             cache_after: Age::from_secs(3_600),
             cache_dirs: Vec::new(),
-            shared_cache: true,
+            shared_cache: false,
+            item_cache: true,
+            lean_builds: true,
             shared_cache_after: Age::from_secs(14 * 86_400),
             pressure_after: Age::from_secs(86_400),
         }
@@ -606,13 +619,39 @@ pub struct RepoConfig {
 pub struct RepoCache {
     /// `false` opts the repository out of the shared build cache.
     pub shared: Option<bool>,
+    /// `false` opts the repository out of per-item target directories.
+    pub item: Option<bool>,
+    /// `false` opts the repository out of the lean build profile.
+    pub lean: Option<bool>,
+}
+
+/// Where a repository's stages build with cargo (ARCHITECTURE §13.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildCache {
+    /// One target directory per repository.
+    Shared,
+    /// One target directory per item, deleted when the item ends.
+    Item,
+    /// The agents' own worktrees.
+    Worktree,
 }
 
 impl RepoConfig {
-    /// Whether this repository's stages build into the shared cache: the
-    /// global switch, unless the repository opts out.
-    pub fn shared_cache(&self, worktrees: &WorktreeConfig) -> bool {
-        worktrees.shared_cache && self.cache.shared.unwrap_or(true)
+    /// Where this repository's stages build: the global switches, unless
+    /// the repository opts out. The shared cache wins where both apply.
+    pub fn build_cache(&self, worktrees: &WorktreeConfig) -> BuildCache {
+        if worktrees.shared_cache && self.cache.shared.unwrap_or(true) {
+            BuildCache::Shared
+        } else if worktrees.item_cache && self.cache.item.unwrap_or(true) {
+            BuildCache::Item
+        } else {
+            BuildCache::Worktree
+        }
+    }
+
+    /// Whether archond's cargo config trims builds for this repository.
+    pub fn lean_builds(&self, worktrees: &WorktreeConfig) -> bool {
+        worktrees.lean_builds && self.cache.lean.unwrap_or(true)
     }
 }
 

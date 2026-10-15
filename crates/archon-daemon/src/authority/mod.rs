@@ -5,6 +5,7 @@ pub(crate) mod commands;
 mod confirmations;
 pub(crate) mod evidence;
 mod history;
+pub(crate) mod item_grants;
 mod settings;
 
 use archon_core::aether_ids::AetherAgentId;

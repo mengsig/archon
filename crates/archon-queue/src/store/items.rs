@@ -388,6 +388,14 @@ pub(super) fn transition_in(
 /// Everything but the state (which goes through [`transition`]) and the
 /// identity fields may change. Changed dependencies are re-validated.
 pub(super) fn update(conn: &mut Connection, item: &QueueItem) -> Result<(), ArchonError> {
+    update_with_kv(conn, item, &[])
+}
+
+pub(super) fn update_with_kv(
+    conn: &mut Connection,
+    item: &QueueItem,
+    updates: &[(&str, &str)],
+) -> Result<(), ArchonError> {
     let tx = write_tx(conn)?;
     let stored = load(&tx, &item.id)?;
     if stored.state != item.state {
@@ -418,6 +426,9 @@ pub(super) fn update(conn: &mut Connection, item: &QueueItem) -> Result<(), Arch
     write_columns(&tx, item)?;
     if deps_changed {
         replace_deps(&tx, item)?;
+    }
+    for (key, value) in updates {
+        super::settings::kv_set(&tx, key, value)?;
     }
     tx.commit().ctx("commit item update")
 }

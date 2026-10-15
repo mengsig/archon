@@ -135,7 +135,13 @@ async fn prepare(
     // A steer may have given the item a stage list of its own (§6.6).
     let current = super::steer::shaped(ctx, item, current).await?;
     // The ceiling may have been lowered since the item was enqueued.
-    knobs::check_ceiling(&env.autonomy(ctx), &env, &base, item.autonomy)?;
+    let policy = env.autonomy(ctx);
+    let checked = crate::authority::item_grants::for_ceiling_check(
+        &*ctx.store.lock().await,
+        item,
+        policy.ceiling,
+    )?;
+    knobs::check_ceiling(&policy, &env, &base, checked)?;
     let item = &without_retired_ship(item, &current);
     let spec = Arc::new(frozen::freeze(&ctx.paths.data_dir, &run_id, &current).await?);
     crate::learned::freeze_context(ctx, &run_id, item, &spec).await?;

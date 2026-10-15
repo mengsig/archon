@@ -22,6 +22,34 @@ fn count(store: &Store) -> usize {
 }
 
 #[test]
+fn item_metadata_is_committed_only_with_a_valid_item_update() {
+    let (mut store, repo, _) = seeded(0);
+    let original = item(Some(&repo), "original");
+    store.insert_item(&original, None).unwrap();
+    let mut changed = original.clone();
+    changed.title = "revised".into();
+    store
+        .update_item_with_kv(&changed, &[("item-grant-test", "approved")])
+        .unwrap();
+    assert_eq!(store.item(&changed.id).unwrap().title, "revised");
+    assert_eq!(
+        store.kv_get("item-grant-test").unwrap().as_deref(),
+        Some("approved")
+    );
+    changed.title.clear();
+    assert!(
+        store
+            .update_item_with_kv(&changed, &[("item-grant-test", "revoked")])
+            .is_err()
+    );
+    assert_eq!(store.item(&changed.id).unwrap().title, "revised");
+    assert_eq!(
+        store.kv_get("item-grant-test").unwrap().as_deref(),
+        Some("approved")
+    );
+}
+
+#[test]
 fn the_same_key_and_request_returns_the_first_item() {
     let (mut store, repo, _items) = seeded(0);
     let first = item(Some(&repo), "fix");

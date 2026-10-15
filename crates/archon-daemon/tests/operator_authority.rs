@@ -551,7 +551,7 @@ async fn resetting_a_tighter_overlay_needs_confirmation() {
 async fn item_override_needs_verified_consent_and_preserves_the_repository_ceiling() {
     use archon_core::autonomy::{AutonomyPatch, MergeMode};
     use archon_core::protocol::{EnqueueRequest, ItemPatch};
-    let h = harness(AetherMode::Dedicated).await;
+    let mut h = harness(AetherMode::Dedicated).await;
     let item = match h
         .cli(Request::Enqueue(EnqueueRequest {
             repo: Some(RepoRef(REPO_NAME.into())),
@@ -624,6 +624,99 @@ async fn item_override_needs_verified_consent_and_preserves_the_repository_ceili
             .merge,
         MergeMode::Manual
     );
+    h.restart();
+    h.dispatch().await;
+    assert!(matches!(
+        h.state(&item.id).await,
+        archon_core::queue::QueueState::Running { .. }
+    ));
+    h.cli(Request::CancelItem {
+        item: item.id.clone(),
+        reason: None,
+    })
+    .await
+    .unwrap();
+    h.cli(Request::RetryItem {
+        item: item.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        fresh: false,
+        brief_append: None,
+    })
+    .await
+    .unwrap();
+    h.restart();
+    h.dispatch().await;
+    assert!(matches!(
+        h.state(&item.id).await,
+        archon_core::queue::QueueState::Running { .. }
+    ));
+}
+
+#[tokio::test]
+async fn an_item_grant_neither_survives_a_knob_change_nor_waives_other_knobs() {
+    use archon_core::autonomy::AutonomyPatch;
+    use archon_core::protocol::ItemPatch;
+    use archon_core::queue::QueueState;
+    for knob in ["merge", "tools"] {
+        let mut h = harness(AetherMode::Dedicated).await;
+        let item = h
+            .enqueue_in("direct", "grant scope", Default::default())
+            .await
+            .unwrap();
+        deliver(&h, 1, user(&format!("/archon item {} merge=auto", item.id))).await;
+        if knob == "merge" {
+            h.orchestrator(Request::UpdateItem {
+                item: item.id.clone(),
+                patch: ItemPatch {
+                    autonomy: Some(AutonomyPatch::parse_list("merge=manual").unwrap()),
+                    ..Default::default()
+                },
+            })
+            .await
+            .unwrap();
+        }
+        let (loose, tight) = if knob == "merge" {
+            ("merge=auto", "merge=manual")
+        } else {
+            ("tools=yolo", "tools=guarded")
+        };
+        h.cli(Request::RepoUpdate {
+            repo: RepoRef(REPO_NAME.into()),
+            patch: RepoPatch {
+                autonomy_max: Some(AutonomyPatch::parse_list(loose).unwrap()),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap();
+        h.orchestrator(Request::UpdateItem {
+            item: item.id.clone(),
+            patch: ItemPatch {
+                autonomy: Some(AutonomyPatch::parse_list(loose).unwrap()),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap();
+        h.cli(Request::RepoUpdate {
+            repo: RepoRef(REPO_NAME.into()),
+            patch: RepoPatch {
+                autonomy_max: Some(AutonomyPatch::parse_list(tight).unwrap()),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap();
+        h.restart();
+        h.dispatch().await;
+        let state = h.state(&item.id).await;
+        assert!(
+            matches!(&state, QueueState::Failed { error, .. } if error.contains(knob) && error.contains("ceiling")),
+            "{state:?}"
+        );
+        assert!(h.running().await.is_empty());
+    }
 }
 
 #[tokio::test]

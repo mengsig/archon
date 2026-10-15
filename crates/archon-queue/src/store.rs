@@ -284,6 +284,15 @@ impl Store {
     pub fn update_item(&mut self, item: &QueueItem) -> Result<(), ArchonError> {
         items::update(&mut self.conn, item)
     }
+    /// Update an item's non-state fields and associated metadata atomically.
+    /// The same identity and dependency checks as `update_item` apply.
+    pub fn update_item_with_kv(
+        &mut self,
+        item: &QueueItem,
+        updates: &[(&str, &str)],
+    ) -> Result<(), ArchonError> {
+        items::update_with_kv(&mut self.conn, item, updates)
+    }
     /// The repositories of items in state `kind` (a `QueueState::kind()`
     /// name), each once; `None` for items without a repository.
     pub fn item_repos(&self, kind: &str) -> Result<Vec<Option<RepoId>>, ArchonError> {

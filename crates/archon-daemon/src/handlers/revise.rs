@@ -16,6 +16,7 @@ use archon_pipeline::autonomy::augment;
 use archon_queue::Store;
 
 use super::items;
+use crate::authority::item_grants;
 use crate::context::DaemonContext;
 use crate::executor::{self, RunTable};
 use crate::knobs;
@@ -46,9 +47,13 @@ pub(super) struct Revision {
     pub before: Autonomy,
     pub after: Autonomy,
     restaged: Option<Restaged>,
+    approved: AutonomyPatch,
 }
 
 impl Revision {
+    pub fn save(&self, store: &mut Store, item: &QueueItem) -> Result<(), ArchonError> {
+        item_grants::save(store, item, self.before, self.approved)
+    }
     /// Whether the item's stages and plan change with it.
     pub fn restages(&self) -> bool {
         self.restaged.is_some()
@@ -166,6 +171,10 @@ pub(super) async fn prepare(
         before,
         after,
         restaged,
+        approved: match ceiling {
+            Ceiling::Waived => item_grants::approved(*patch, after, policy.ceiling),
+            Ceiling::Enforced => AutonomyPatch::default(),
+        },
     })
 }
 

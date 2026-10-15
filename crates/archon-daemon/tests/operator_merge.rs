@@ -466,6 +466,84 @@ async fn chat(h: &Harness, seq: u64, text: &str) {
         .expect("the pump handles it");
 }
 
+#[tokio::test]
+async fn verified_github_merge_refuses_unsent_items_and_merges_the_pinned_head() {
+    use archon_aether::{AetherClient, fake::FakeAether};
+    let mut config = Config::default();
+    config.aether.mode = AetherMode::Shared;
+    let (h, gh) = delivering(config).await;
+    let fake = FakeAether::start(&h.dir.path().join("merge-authority.sock"))
+        .await
+        .unwrap();
+    h.ctx
+        .aether
+        .replace(Some(std::sync::Arc::new(
+            AetherClient::connect(&fake.endpoint()).await.unwrap(),
+        )))
+        .unwrap();
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(keys::ORCHESTRATOR_AGENT, ORCHESTRATOR)
+        .unwrap();
+    let item = enqueue(&h, "direct", ReviewLevel::None).await;
+    let command = format!("@archon /merge {}", item.id);
+    let event = |seq, operator| {
+        parse_event(json!({
+        "seq":seq,"at":archon_core::now(),"agent_id":ORCHESTRATOR,
+        "kind":{"type":"inbox.delivered","item":{"seq":seq,"kind":{
+            "kind":"external_trigger","source":"github","operator":operator,
+            "payload":{"operator":true,"repository":"o/r","number":1,"requester":"octocat","text":command}
+        }}}
+    })).unwrap()
+    };
+    pump::handle_orchestrator_event(&h.ctx, &event(1, true))
+        .await
+        .unwrap();
+    assert!(merges(&h, &item).await.is_empty());
+    assert!(
+        triggers::held(&h.ctx)
+            .await
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, TriggerEvent::ChatMergeRefused { .. }))
+    );
+    h.dispatch().await;
+    let stage = h.running().await.remove(0);
+    let outcome = shipped_by(&h, &stage, "Changed it", json!({})).await;
+    h.settle_running(|_| outcome.clone()).await;
+    h.dispatch().await;
+    let (_, head) = delivered(&h, &item).await;
+    gh.show(&head, "MERGEABLE", green());
+    pump::handle_orchestrator_event(&h.ctx, &event(2, false))
+        .await
+        .unwrap();
+    assert!(
+        merge_calls(&gh).is_empty(),
+        "payload flags alone grant no authority"
+    );
+    pump::handle_orchestrator_event(&h.ctx, &event(3, true))
+        .await
+        .unwrap();
+    let [merge]: [MergeRequest; 1] = merges(&h, &item).await.try_into().unwrap();
+    assert_eq!(
+        merge.authority,
+        MergeAuthority::Github {
+            repository: "o/r".into(),
+            number: 1,
+            login: "octocat".into()
+        }
+    );
+    assert!(matches!(merge.state, MergeState::Merged { .. }));
+    assert_eq!(
+        merge_calls(&gh),
+        [format!(
+            "pr merge {PR_ONE} --match-head-commit {head} --squash"
+        )]
+    );
+}
+
 /// The operator's whole-message `/merge` in the orchestrator's chat merges
 /// in dedicated mode; in shared mode it is refused and said so.
 #[tokio::test]

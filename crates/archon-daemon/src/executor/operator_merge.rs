@@ -156,7 +156,10 @@ pub(crate) async fn merge_now(
     assert!(
         matches!(
             authority,
-            MergeAuthority::Cli | MergeAuthority::ArchonChat | MergeAuthority::AetherChat
+            MergeAuthority::Cli
+                | MergeAuthority::ArchonChat
+                | MergeAuthority::AetherChat
+                | MergeAuthority::Github { .. }
         ),
         "only the operator's own command merges without a question"
     );

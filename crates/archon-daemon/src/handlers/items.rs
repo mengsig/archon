@@ -245,7 +245,10 @@ pub(super) async fn update_within(
         }
         apply_patch(&mut item, patch, plan)?;
         item.updated_at = archon_core::now().max(item.updated_at);
-        store.update_item(&item)?;
+        match &revision {
+            Some(revision) => revision.save(&mut store, &item)?,
+            None => store.update_item(&item)?,
+        }
         item
     };
     if let Some(text) = amendment {
@@ -307,7 +310,7 @@ async fn after_success(
         }
         item.autonomy = revision.after;
         item.updated_at = archon_core::now().max(item.updated_at);
-        store.update_item(&item)?;
+        revision.save(&mut store, &item)?;
         item
     };
     post_note(ctx, id, &note).await;

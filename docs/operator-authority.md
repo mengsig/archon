@@ -281,6 +281,14 @@ does **not** disable auto-merge already enabled there. Atomic-initiative
 members remain manual even after success and even with a ceiling override.
 Stage-changing autonomy cannot be combined with `model_plan` in one update.
 
+An item ceiling exception is saved atomically with its knobs. It covers only
+the exact approved values of explicitly named knobs on that item, survives
+daemon restart and retry, and remains valid if the repository ceiling later
+changes. Changing an approved knob revokes its exception; returning to that
+value needs fresh authority if it exceeds the ceiling. Other knobs still
+face the current ceiling at dispatch. These exceptions never transfer to a
+new item or change the repository's ceiling.
+
 Prompt budgets for this feature: core orchestrator prompt ≤ 12 KiB, each
 guide topic ≤ 4 KiB, the MCP tool list ≤ 28 KiB, a new tool ≤ 1.5 KiB.
 

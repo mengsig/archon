@@ -239,6 +239,10 @@ async fn workspace(
         .as_ref()
         .and_then(|r| r.base_branch.clone())
         .or_else(|| env.config.repo.base_branch.clone());
+    if let Some(repo) = &env.repo {
+        let shared = env.config.shared_cache(&ctx.config.worktrees);
+        crate::build_cache::prepare(&ctx.paths, &repo.name, shared)?;
+    }
     match (mode, &env.repo) {
         (WorkspaceMode::Worktree, Some(repo)) => add_worktree(ctx, repo, item, base, team).await,
         (WorkspaceMode::Worktree, None) => Err(ArchonError::Invalid(

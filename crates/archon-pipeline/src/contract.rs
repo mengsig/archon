@@ -11,9 +11,11 @@ use crate::team::TeamSlot;
 
 mod initiative;
 mod lessons;
+mod storage;
 
 pub use initiative::initiative_rules;
 pub use lessons::lesson_rules;
+pub use storage::{artifact_rules, build_cache_rules};
 
 /// Where a stage stands towards its pipeline's team stage.
 #[derive(Debug, Clone, Copy)]
@@ -119,6 +121,9 @@ fn depth_rule(depth: u32) -> String {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Dependency {
     pub item: String,
+    /// The directory of the files it published, if it published any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifacts: Option<String>,
     /// Its branch in the repository of the stage's item, if it has one there.
     pub branch: Option<String>,
     pub pull_request: Option<String>,
@@ -197,7 +202,7 @@ fn contract_header(
          stage (`kind=escalation`) or sends low-priority `info`. It returns at once: keep \
          working, and never wait for a reply, end your turn or complete the stage because \
          you sent one. Use no raw `send_message` to the orchestrator and no other Archon \
-         mutation tool.\n\
+         mutation tool but `publish_artifact`.\n\
          {fan_rule}\n\
          ## Finishing\n\n\
          - When done, call Aether's `complete_task` exactly once. Its `summary` is concise \
@@ -963,11 +968,13 @@ mod tests {
         assert_eq!(dependency_rules("main", &[]), "");
         let stacked = Dependency {
             item: "qi_01".into(),
+            artifacts: Some("/d/artifacts/qi_01".into()),
             branch: Some("archon/first-01".into()),
             pull_request: Some("https://github.com/o/r/pull/1".into()),
         };
         let elsewhere = Dependency {
             item: "qi_02".into(),
+            artifacts: None,
             branch: None,
             pull_request: None,
         };
@@ -980,7 +987,7 @@ mod tests {
             .collect();
         let pull_request = "https://github.com/o/r/pull/1";
         let expected = [
-            serde_json::json!({"item": "qi_01", "branch": "archon/first-01", "pull_request": pull_request}),
+            serde_json::json!({"item": "qi_01", "artifacts": "/d/artifacts/qi_01", "branch": "archon/first-01", "pull_request": pull_request}),
             serde_json::json!({"item": "qi_02", "branch": null, "pull_request": null}),
         ];
         assert_eq!(facts, expected);

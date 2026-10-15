@@ -262,9 +262,29 @@ unchanged.
 `why` lists each correction of an item's runs: whether it is active, revoked,
 expired or informational; the corrected choice's results now; what a new
 default selects; the routing explanation kept when the item was planned; and
-the named memory's origin, scope, date and state. `undo` revokes only the
-model penalty, and the record stays. A memory the correction forgot stays
+the named memory's origin, scope, date and state. It also shows sent, pending,
+skipped and retracted memory feedback, partial context results and failure
+reasons. `undo` revokes the model penalty immediately and queues retraction of
+memory feedback; the record stays. A memory the correction forgot stays
 forgotten.
+
+When Aether supports memory feedback, quality corrections send outcome evidence
+for the memories recalled by the corrected stage's tasks. Other causes send no
+outcome evidence. A named `--forget-memory` sends the operator's judgement of
+that memory for every cause, provided it appeared in the task's context.
+Archon records this delivery intent durably, then delivers it in the background;
+a stalled feedback call does not delay `correct` or `undo`. Pending work resumes
+at daemon start and when Aether reconnects. Replaying a correction or running
+`retry-memory` also resumes delivery. Permanent refusals, missing features and
+instance mismatches are skipped with their reason in `why`.
+
+An interrupted submission is resolved before any resend. Aether's retained
+receipt recovers the feedback id for undo; a proven safe absence permits a
+resend. If Aether cannot tell whether it ran, including after receipt expiry,
+`why` shows delivery unconfirmed and Archon leaves it pending without resending.
+An older Aether that cannot resolve submissions also leaves uncertain work
+pending. `retry-memory` can check for a receipt again; it never forces an
+uncertain resend.
 
 `--forget-memory` forgets that one Aether memory in the Aether instance
 `archond` last connected to, so fresh stage sessions stop recalling it;
@@ -272,10 +292,12 @@ sessions already running keep what they recalled. Archon stores the memory's
 ID and state, never its text, and shows who wrote it as Aether recorded it.
 The correction is recorded first: when Aether is down or the forget fails,
 the command prints "Correction recorded; memory forget pending/failed" and
-exits 1, and `retry-memory` retries only the forget, only in the same
-instance. A forget is refused before anything is recorded when `archond` has
-never connected to Aether or is switching to another instance, and when the
-`aetherd` is older than protocol 15. `restore-memory` brings back a memory this correction forgot; it
+exits 1, and `retry-memory` retries the forget and pending feedback in their bound
+instance. The explicit forget still waits on Aether and can time out; background
+feedback does not delay it. A forget is refused before anything is recorded when
+`archond` has never connected to Aether or is switching to another instance, and
+when `aetherd` is older than protocol 15. `restore-memory` brings back a memory
+this correction forgot; it
 refuses when the memory was already forgotten or superseded before the
 correction, has been restored or forgotten again since, or is superseded now.
 Aether's `/memory` (`u`) restores any memory.

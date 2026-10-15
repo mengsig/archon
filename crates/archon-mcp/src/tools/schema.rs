@@ -5,7 +5,7 @@
 use archon_core::cost::{CostGroup, DEFAULT_DAYS};
 use archon_core::mcp_tools::{TOOLS, ToolClass};
 use archon_core::model::MAX_MODEL_REASON_CHARS;
-use archon_core::protocol::{MAX_STAGE_PAGE_CHARS, STAGE_PAGE_CHARS};
+use archon_core::protocol::{MAX_ARTIFACT_PAGE_BYTES, MAX_STAGE_PAGE_CHARS, STAGE_PAGE_CHARS};
 use archon_core::queue::{NOTIFY_TAG, QueueState};
 use serde_json::{Value, json};
 
@@ -48,6 +48,9 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         steer::steer_item(),
         lessons::record_lesson(),
         refresh_item(),
+        publish_artifact(),
+        list_artifacts(),
+        read_artifact(),
     ]
 }
 
@@ -65,6 +68,53 @@ fn message_orchestrator() -> ToolDefinition {
                 "kind": {"type": "string", "enum": ["relay", "escalation", "info"]}
             }),
             &["text"],
+        ),
+        false,
+    )
+}
+
+fn publish_artifact() -> ToolDefinition {
+    define(
+        "publish_artifact",
+        "Publish artifact",
+        "Stage agents: keep a file or directory of your workspace (evidence, logs, bench \
+         results) in your item's size-bounded artifact store, readable by item id after the \
+         worktree is gone. A name published again is replaced.",
+        object(
+            json!({
+                "path": {"type": "string", "minLength": 1, "description": "Inside your workspace; no symlinks."},
+                "name": {"type": "string", "minLength": 1, "description": "Name in the store. Default: the path's last component."}
+            }),
+            &["path"],
+        ),
+        false,
+    )
+}
+
+fn list_artifacts() -> ToolDefinition {
+    define(
+        "list_artifacts",
+        "List artifacts",
+        "The files an item published with publish_artifact: sizes and the directory they sit in.",
+        object(json!({"item": item_id("")}), &["item"]),
+        false,
+    )
+}
+
+fn read_artifact() -> ToolDefinition {
+    define(
+        "read_artifact",
+        "Read artifact",
+        "An item's published file as UTF-8 text, a page at a time; a page that is not the last \
+         gives the next `offset`.",
+        object(
+            json!({
+                "item": item_id(""),
+                "name": {"type": "string", "minLength": 1, "description": "As listed by list_artifacts."},
+                "offset": {"type": "integer", "minimum": 0, "description": "Bytes to skip."},
+                "limit": {"type": "integer", "minimum": 1, "maximum": MAX_ARTIFACT_PAGE_BYTES, "description": format!("Bytes per page. Default and maximum: {MAX_ARTIFACT_PAGE_BYTES}.")}
+            }),
+            &["item", "name"],
         ),
         false,
     )

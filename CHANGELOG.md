@@ -4,6 +4,13 @@
 
 ### Added
 
+- Workspace hygiene: stages of a repository build into one shared cargo
+  target directory (`<data>/cache/<repo>/cargo-target`, opt out with
+  `[cache] shared = false`), `archon gc` and the periodic pass also remove
+  idle shared caches and expired artifacts and report the bytes freed, and
+  stages publish files (`publish_artifact`, `list_artifacts`,
+  `read_artifact`) to a size-bounded per-item store that outlives the
+  worktree; dependents are told its path.
 - `[limits] budgets_enabled = false` (or `archon queue caps --budgets off`,
   until archond restarts) turns every dollar budget off: item budgets, the
   daily and total admission holds and the distillation reservation stop
@@ -12,6 +19,10 @@
   Spend is still recorded and reported, `archon status` and `queue_status`
   say `budgets: off`, and a `budget_usd` set meanwhile is accepted with a
   note that it is not enforced. The default is unchanged. Daemon protocol 9.
+- Quality corrections tell Aether which recalled memories hurt the corrected
+  stage. Delivery happens in the background and resumes after a restart or
+  reconnect. Undo retracts the feedback, and `learning why` shows delivery
+  progress and reasons for skipped or unconfirmed feedback.
 
 ### Fixes
 

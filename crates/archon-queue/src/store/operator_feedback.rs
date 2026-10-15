@@ -27,6 +27,8 @@ pub struct CorrectionFacts {
     /// The Aether instance a requested forget is bound to; required with one.
     pub aether_instance: Option<String>,
     pub observed_at: Timestamp,
+    /// Delivery intent frozen before the correction's first external call.
+    pub memory_feedback: Option<archon_core::feedback::MemoryFeedback>,
 }
 
 impl Store {
@@ -75,6 +77,44 @@ impl Store {
         load(&self.conn, id)?.ok_or_else(|| ArchonError::NotFound(format!("feedback {id}")))
     }
 
+    /// Corrections with unfinished delivery or evidence still owed a retraction.
+    pub fn pending_memory_feedback(&self) -> Result<Vec<FeedbackId>, ArchonError> {
+        let mut statement = self.conn.prepare(
+            "SELECT data FROM operator_feedback WHERE json_type(data, '$.memory_feedback') = 'object' ORDER BY observed_at, id"
+        ).ctx("prepare pending memory feedback")?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .ctx("query pending memory feedback")?;
+        let mut ids = Vec::new();
+        for raw in rows {
+            let feedback: OperatorFeedback =
+                from_json(&raw.ctx("read memory feedback")?, "feedback")?;
+            feedback.check()?;
+            let ledger = feedback
+                .memory_feedback
+                .as_ref()
+                .expect("selected a ledger");
+            assert!(ledger.check().is_ok());
+            if ledger.skipped.is_some() {
+                continue;
+            }
+            let retract = feedback.revoked_at.is_some()
+                && ledger.tasks.iter().any(|task| {
+                    task.records.iter().any(|entry| {
+                        entry.feedback.is_some() && !entry.retracted && entry.failed.is_none()
+                    })
+                });
+            if ledger.counts().pending > 0 || retract {
+                ids.push(feedback.id);
+            }
+        }
+        assert_eq!(
+            ids.iter().collect::<std::collections::BTreeSet<_>>().len(),
+            ids.len()
+        );
+        Ok(ids)
+    }
+
     /// Every correction of the item's runs, oldest first.
     pub fn item_feedback(&self, item: &QueueItemId) -> Result<Vec<OperatorFeedback>, ArchonError> {
         let mut statement = self
@@ -112,6 +152,38 @@ impl Store {
         feedback.check()?;
         update(&tx, &feedback)?;
         tx.commit().ctx("commit correction undo")?;
+        Ok(feedback)
+    }
+
+    /// Updates the delivery ledger without changing curation or revocation.
+    pub fn update_memory_feedback(
+        &self,
+        id: &FeedbackId,
+        ledger: &archon_core::feedback::MemoryFeedback,
+    ) -> Result<OperatorFeedback, ArchonError> {
+        ledger.check()?;
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .ctx("begin memory feedback")?;
+        let mut feedback =
+            load(&tx, id)?.ok_or_else(|| ArchonError::NotFound(format!("feedback {id}")))?;
+        let current = feedback.memory_feedback.as_ref().ok_or_else(|| {
+            ArchonError::Invalid("correction has no memory feedback ledger".into())
+        })?;
+        assert_eq!(
+            current.instance_id, ledger.instance_id,
+            "instance binding is immutable"
+        );
+        assert_eq!(
+            current.tasks.iter().map(|t| &t.task).collect::<Vec<_>>(),
+            ledger.tasks.iter().map(|t| &t.task).collect::<Vec<_>>(),
+            "task bindings are immutable"
+        );
+        feedback.memory_feedback = Some(ledger.clone());
+        feedback.check()?;
+        update(&tx, &feedback)?;
+        tx.commit().ctx("commit memory feedback")?;
         Ok(feedback)
     }
 

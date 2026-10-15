@@ -57,7 +57,7 @@ async fn collect_offline(older_than: Option<Age>, force: bool) -> anyhow::Result
     let config = Config::load_default()?;
     let paths = DaemonPaths::resolve(&config, archon_bin()?);
     let pass = tokio::task::spawn_blocking(move || {
-        archon_daemon::gc::collect_offline(&config.worktrees, &paths, older_than, force)
+        archon_daemon::gc::collect_offline(&config, &paths, older_than, force)
     });
     match pass.await.context("running gc offline")? {
         Ok(report) => Ok(report),
@@ -85,6 +85,16 @@ fn summary(report: &GcReport) -> String {
         report.reclaimed.len(),
         gib(report.bytes_freed)
     )];
+    if !report.caches.is_empty() || !report.artifacts.is_empty() {
+        lines.push(format!(
+            "Deleted {} shared build cache(s) and the artifacts of {} item(s).",
+            report.caches.len(),
+            report.artifacts.len()
+        ));
+    }
+    if report.pressure {
+        lines.push("Disk pressure: finished runs and idle caches were collected sooner.".into());
+    }
     for (path, reason) in &report.skipped {
         lines.push(format!("skipped {}: {reason}", path.display()));
     }
@@ -115,7 +125,10 @@ mod tests {
                 "it has uncommitted changes".into(),
             )],
             failed: vec![],
+            caches: vec![],
+            artifacts: vec![],
             bytes_freed: 3 << 30,
+            pressure: false,
         };
         let text = summary(&report);
         assert!(text.starts_with("Removed 1 worktree(s)"), "{text}");
@@ -124,7 +137,19 @@ mod tests {
             text.contains("skipped /w/qi_3: it has uncommitted"),
             "{text}"
         );
+        assert!(!text.contains("shared build cache"), "{text}");
         assert_eq!(exit_code(&report), ExitCode::SUCCESS);
+        report.caches.push(Reclaimed {
+            path: PathBuf::from("/d/cache/web"),
+            bytes: 1,
+        });
+        report.pressure = true;
+        let text = summary(&report);
+        assert!(
+            text.contains("Deleted 1 shared build cache(s) and the artifacts of 0 item(s)."),
+            "{text}"
+        );
+        assert!(text.contains("Disk pressure:"), "{text}");
         report
             .failed
             .push((PathBuf::from("/w/qi_4"), "denied".into()));

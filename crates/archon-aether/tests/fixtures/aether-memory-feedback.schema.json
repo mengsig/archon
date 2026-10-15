@@ -1,0 +1,148 @@
+{
+  "$defs": {
+    "ClientFrame": {
+      "oneOf": [
+        {
+          "description": "Record host evidence on a memory a task saw. Needs `memory_feedback`.",
+          "properties": {
+            "cmd": {
+              "const": "record_memory_feedback",
+              "type": "string"
+            },
+            "evidence": {
+              "$ref": "#/$defs/MemoryEvidence"
+            },
+            "idempotency_key": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "invocation": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/InvocationId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "memory": {
+              "$ref": "#/$defs/MemoryId"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "task": {
+              "$ref": "#/$defs/TaskId"
+            },
+            "verdict": {
+              "$ref": "#/$defs/MemoryVerdict"
+            }
+          },
+          "required": [
+            "cmd",
+            "memory",
+            "verdict",
+            "evidence",
+            "task",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Withdraw evidence, preserving the record. Needs `memory_feedback`.",
+          "properties": {
+            "cmd": {
+              "const": "retract_memory_feedback",
+              "type": "string"
+            },
+            "feedback": {
+              "$ref": "#/$defs/MemoryFeedbackId"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cmd",
+            "feedback",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Which stored memories every model call of a task, or one invocation,\nwas given. Name exactly one. Needs `memory_context`.",
+          "properties": {
+            "cmd": {
+              "const": "memories_in_context",
+              "type": "string"
+            },
+            "invocation": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/InvocationId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "task": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TaskId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "cmd"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "InvocationId": {
+      "description": "A inv_ prefixed ULID.",
+      "pattern": "^inv_[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "MemoryEvidence": {
+      "enum": [
+        "operator",
+        "review",
+        "outcome"
+      ],
+      "type": "string"
+    },
+    "MemoryFeedbackId": {
+      "description": "A mfb_ prefixed ULID.",
+      "pattern": "^mfb_[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "MemoryId": {
+      "description": "A mem_ prefixed ULID.",
+      "pattern": "^mem_[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    },
+    "MemoryVerdict": {
+      "enum": [
+        "helped",
+        "hurt",
+        "neutral"
+      ],
+      "type": "string"
+    },
+    "TaskId": {
+      "description": "A tsk_ prefixed ULID.",
+      "pattern": "^tsk_[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    }
+  },
+  "source": "aether pr/52 clients/protocol.schema.json @ efd7a17abc55dcf2dc57ede34845d314805c8fdf"
+}

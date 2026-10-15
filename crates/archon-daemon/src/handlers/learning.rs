@@ -2,6 +2,8 @@
 //! run, and the curation of the one Aether memory it names. The correction
 //! is recorded first; Aether is called without the store lock.
 
+pub(super) mod memory_feedback;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -26,6 +28,11 @@ pub(super) async fn correct(
     request: CorrectionRequest,
 ) -> Result<Reply, ArchonError> {
     request.check()?;
+    let _curation = if request.forget_memory.is_some() {
+        Some(ctx.memory_curation.lock().await)
+    } else {
+        None
+    };
     let aether_instance = match &request.forget_memory {
         Some(memory) => Some(memory_instance(ctx, memory).await?),
         None => None,
@@ -42,6 +49,7 @@ pub(super) async fn correct(
         replayed || bound == facts.aether_instance.as_ref(),
         "a new forget is bound before Aether is called"
     );
+    ctx.memory_feedback_ready.notify_one();
     let feedback = match feedback.curation.as_ref().map(|c| c.state) {
         Some(CurationState::Pending | CurationState::Failed) => forget(ctx, feedback).await?,
         _ => feedback,
@@ -87,31 +95,35 @@ pub(super) async fn undo(ctx: &DaemonContext, id: &FeedbackId) -> Result<Reply, 
         );
         (after, before.revoked_at.is_some())
     };
+    ctx.memory_feedback_ready.notify_one();
     receipt(ctx, feedback, replayed).await
 }
 
-/// Retries only the memory forget of a correction whose forget did not apply.
+/// Resumes pending memory evidence, retractions, and requested forgets.
 pub(super) async fn retry_memory(
     ctx: &DaemonContext,
     id: &FeedbackId,
 ) -> Result<Reply, ArchonError> {
+    let _curation = ctx.memory_curation.lock().await;
+    let _delivery = ctx.learning_memory.lock().await;
     let feedback = ctx.store.lock().await.operator_feedback(id)?;
-    let Some(curation) = &feedback.curation else {
-        return Err(ArchonError::Invalid(format!(
-            "feedback {id} asked for no memory to be forgotten"
-        )));
-    };
-    match curation.state {
-        CurationState::Pending | CurationState::Failed => {
-            let feedback = forget(ctx, feedback).await?;
-            receipt(ctx, feedback, false).await
+    assert_eq!(&feedback.id, id, "retry the requested correction");
+    let revoked = feedback.revoked_at;
+    let feedback = memory_feedback::deliver(ctx, feedback).await?;
+    assert_eq!(
+        feedback.revoked_at, revoked,
+        "delivery never changes the model penalty"
+    );
+    let feedback = match feedback.curation.as_ref().map(|c| c.state) {
+        Some(CurationState::Pending | CurationState::Failed) => forget(ctx, feedback).await?,
+        Some(CurationState::Restored) => {
+            return Err(ArchonError::Invalid(format!(
+                "memory was restored through {id}; forget it again in Aether's /memory"
+            )));
         }
-        CurationState::Applied => receipt(ctx, feedback, true).await,
-        CurationState::Restored => Err(ArchonError::Invalid(format!(
-            "memory {} was restored through {id}; forget it again in Aether's /memory",
-            curation.memory
-        ))),
-    }
+        _ => feedback,
+    };
+    receipt(ctx, feedback, false).await
 }
 
 /// Restores the memory this correction forgot, unless something else
@@ -317,12 +329,16 @@ async fn correction_facts(
     request: &CorrectionRequest,
     aether_instance: Option<String>,
 ) -> Result<CorrectionFacts, ArchonError> {
-    let delivery_commit = {
+    let (delivery_commit, memory_feedback) = {
         let store = ctx.store.lock().await;
-        crate::executor::shipped_commit(&store, &request.run)?
+        (
+            crate::executor::shipped_commit(&store, &request.run)?,
+            Some(memory_feedback::plan(ctx, &store, request)?),
+        )
     };
     Ok(CorrectionFacts {
         delivery_commit,
+        memory_feedback,
         aether_instance,
         observed_at: archon_core::now(),
     })
@@ -370,6 +386,11 @@ async fn view(
         (corrected, selected.filter(|_| enabled), frozen)
     };
     Ok(FeedbackView {
+        memory_feedback: feedback
+            .memory_feedback
+            .as_ref()
+            .map(|l| l.counts())
+            .unwrap_or_default(),
         penalizing: feedback.penalizing(as_of),
         feedback,
         corrected,

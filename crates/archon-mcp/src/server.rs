@@ -286,9 +286,9 @@ fn name_caller(
     caller: Option<&AetherAgentId>,
 ) -> Result<(), tools::ToolError> {
     let (named, required) = match request {
-        Request::MessageOrchestrator { caller, .. } | Request::RecordChatAnswer { caller, .. } => {
-            (caller, true)
-        }
+        Request::MessageOrchestrator { caller, .. }
+        | Request::PublishArtifact { caller, .. }
+        | Request::RecordChatAnswer { caller, .. } => (caller, true),
         // Without it the question is still asked, with no recorded asker.
         Request::AskOperator { caller, .. } => (caller, false),
         _ => return Ok(()),
@@ -425,6 +425,7 @@ fn how_to_check(request: &Request) -> String {
     match request {
         Request::ForAgent { request, .. } => how_to_check(request),
         Request::MessageOrchestrator { .. } => "the message may already be recorded; check the item's archon log before repeating it, and keep working on your stage".into(),
+        Request::PublishArtifact { .. } => "the files may already be stored; list_artifacts for your item shows them, and publishing a name again replaces it".into(),
         Request::GithubReply { thread, .. } => thread.check_before_retry(),
         Request::RecordChatAnswer { .. } => "the answer may already be recorded; a repeat is then refused as already answered, which is the confirmation".into(),
         _ => "the change may already have been applied, so check with list_queue or get_item \
@@ -458,6 +459,23 @@ mod tests {
         );
         let spoof = json!({"text": "hello", "_meta": {"aether/agent_id": "agt_2"}});
         assert!(request_with_caller("message_orchestrator", spoof, &params).is_err());
+    }
+
+    #[test]
+    fn publishing_an_artifact_needs_the_out_of_band_caller() {
+        let args = json!({"path": "out.log"});
+        let refused = request_with_caller("publish_artifact", args.clone(), &json!({}));
+        assert!(
+            refused
+                .unwrap_err()
+                .0
+                .contains("publish_artifact requires Aether caller")
+        );
+        let params = json!({"_meta": {"aether/agent_id": "agt_1"}});
+        let request = request_with_caller("publish_artifact", args, &params).unwrap();
+        assert!(
+            matches!(for_agent_1(request), Request::PublishArtifact { caller: Some(id), .. } if id.as_str() == "agt_1")
+        );
     }
 
     #[test]

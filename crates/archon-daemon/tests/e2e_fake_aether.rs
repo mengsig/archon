@@ -9,7 +9,7 @@ mod common;
 #[path = "e2e_fake_aether/repository_root.rs"]
 mod repository_root;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -36,6 +36,7 @@ struct Fleet {
     nodes_by_key: BTreeMap<String, u32>,
     node_network: BTreeMap<String, Value>,
     status: BTreeMap<String, Value>,
+    cancelled: BTreeSet<String>,
     requests: BTreeMap<String, Value>,
     lose_next_reply: bool,
 }
@@ -76,8 +77,31 @@ impl Fleet {
         parent_network == Some(&json!("denied")) && frame["scope"]["network"] == json!("allowed")
     }
 
+    fn agents(&self) -> Vec<Value> {
+        let nodes = self
+            .nodes_by_key
+            .iter()
+            .map(|(key, n)| (key, node_id(*n), None));
+        let stages = self.by_key.iter().map(|(key, n)| {
+            let (agent, task) = ids(*n);
+            (key, agent, Some(task))
+        });
+        nodes
+            .chain(stages)
+            .map(|(key, id, task)| {
+                let mut agent = fake::agent(&id, task.as_deref());
+                agent["parent"] = self.requests[key]["parent"].clone();
+                agent["status"] = json!({"state": self.agent_state(&id)});
+                agent
+            })
+            .collect()
+    }
+
     /// The task's owner completed with it, as far as the fake knows.
     fn agent_state(&self, agent: &str) -> &'static str {
+        if self.cancelled.contains(agent) {
+            return "cancelled";
+        }
         let task = agent.replace("agt_", "tsk_");
         match self.status.get(&task) {
             Some(status) if status["state"] != json!("active") => "completed",
@@ -133,6 +157,11 @@ fn script_fleet(aether: &FakeAether) -> Arc<Mutex<Fleet>> {
             Scripted::reply("agent", agent)
         }),
     );
+    let listed = fleet.clone();
+    aether.set_responder(
+        "list_agents",
+        Arc::new(move |_| Scripted::reply("agents", json!(listed.lock().expect("fleet").agents()))),
+    );
     let tasks = fleet.clone();
     aether.set_responder(
         "get_task",
@@ -148,10 +177,16 @@ fn script_fleet(aether: &FakeAether) -> Arc<Mutex<Fleet>> {
             Scripted::reply("task", fake::task(&task, Some(&agent), "run_0001", status))
         }),
     );
+    let cancelled = fleet.clone();
     aether.set_responder(
         "cancel",
-        Arc::new(|frame: &Value| {
-            assert!(frame["agent"].is_string(), "cancel names an agent: {frame}");
+        Arc::new(move |frame: &Value| {
+            let agent = frame["agent"].as_str().expect("cancel names an agent");
+            cancelled
+                .lock()
+                .expect("fleet")
+                .cancelled
+                .insert(agent.to_owned());
             Scripted::reply("ok", json!({}))
         }),
     );

@@ -87,6 +87,12 @@ Daemon protocol 13.
 
 ### Fixes
 
+- A review-holding stage whose plan names no reviewer models is told to use
+  the models its item's policy allows other than its own, within the effort
+  cap, or its own model when the policy allows no other. Before, it was told
+  to pick a cost-reporting model, which single-model items (the fast-tier
+  smoke preset, or a repository narrowed to one model) could not follow, and
+  their reviewers were cancelled (#58).
 - A review holder whose plan names no reviewer models is now told to use a
   model its item's policy allows: another than its own where there is one,
   else its own. It was told to find a different priced model, which a

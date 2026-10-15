@@ -2734,7 +2734,7 @@ defined in `archon_core::protocol` and served by `archon-daemon`.
   `"clear"`, or `{"set":value}`. `archon repo set --base ""` or
   `--pipeline ""` sends `"clear"`. `RepoPatch.grant_merge` is a plain
   optional bool: absent keeps the setting.
-- Protocol 11 added `MergeItem`, `RequestMerge`, `Reply::Merge` and
+- Protocol 12 added `MergeItem`, `RequestMerge`, `Reply::Merge` and
   `grant_merge`; an older archond is refused at hello.
 
 The command set is `archon_core::protocol::Request`, and every variant is

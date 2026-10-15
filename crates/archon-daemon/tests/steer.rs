@@ -1119,13 +1119,28 @@ async fn inserting_a_stage_preserves_the_delegated_reviewer_plan() {
     else {
         panic!("item")
     };
-    let updated = steer(&h, &queued.id, insert("verify", Some("implement")))
-        .await
-        .unwrap();
+    let updated = steer(&h, &queued.id, insert("verify", None)).await.unwrap();
     assert_eq!(
         updated.model_plan.0["implement.review"],
         queued.model_plan.0["implement.review"]
     );
     h.dispatch().await;
-    assert!(h.backend.requests()[0].instructions.contains(reviewer));
+    h.cli(Request::UpdateItem {
+        item: queued.id.clone(),
+        patch: ItemPatch {
+            stage_timeouts: [("verify".into(), 75)].into(),
+            ..Default::default()
+        },
+    })
+    .await
+    .expect("timeouts accept an inserted stage on a running item");
+    assert_eq!(h.item(&queued.id).await.stage_timeouts["verify"], 75);
+    h.settle_running(|_| completed("verified")).await;
+    h.dispatch().await;
+    assert!(
+        h.backend
+            .requests()
+            .iter()
+            .any(|r| r.instructions.contains(reviewer))
+    );
 }

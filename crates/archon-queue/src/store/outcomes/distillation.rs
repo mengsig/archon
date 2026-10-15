@@ -12,9 +12,9 @@ impl Store {
     pub fn distillation_available(
         &self,
         repo: &RepoId,
-        daily_budget: f64,
+        daily_budget: Option<f64>,
     ) -> Result<bool, ArchonError> {
-        assert!(daily_budget.is_finite() && daily_budget >= 0.0);
+        assert!(daily_budget.is_none_or(|b| b.is_finite() && b >= 0.0));
         let active: bool = self.conn.query_row(
             "SELECT EXISTS (SELECT 1 FROM items i WHERE repo=?1 AND state IN ('queued','dispatching','running','blocked')
              AND EXISTS (SELECT 1 FROM json_each(i.data,'$.tags') WHERE value='archon:distillation'))",
@@ -32,7 +32,7 @@ impl Store {
             )
             .ctx("check daily distillation reservation")?;
         assert!(reserved.is_finite() && reserved >= 0.0);
-        Ok(!active && reserved + 1.0 <= daily_budget)
+        Ok(!active && daily_budget.is_none_or(|budget| reserved + 1.0 <= budget))
     }
 
     pub fn cancel_queued_distillations(&mut self) -> Result<(), ArchonError> {

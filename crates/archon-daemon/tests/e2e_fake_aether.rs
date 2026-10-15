@@ -867,6 +867,60 @@ async fn missing_subscription_estimates_fail_visibly_only_when_budgeted() {
     }
 }
 
+/// With budgets off, the config's per-item cap and an item's own budget
+/// neither fail unpriced usage nor stop an overspent run, no `cost_budget`
+/// reaches Aether, and the spend is still recorded.
+#[tokio::test]
+async fn budgets_off_enforces_no_item_budget_but_records_spend() {
+    use archon_core::protocol::{ItemPatch, Request};
+    let dir = tempfile::tempdir().unwrap();
+    let aether = start_aether(dir.path()).await;
+    script_fleet(&aether);
+    script_budget_models(&aether);
+    let mut config = Config::default();
+    config.limits.budgets_enabled = false;
+    config.limits.budget_usd_per_item = 2.0;
+    let h = harness_with_config(&aether, ClientOptions::default(), config).await;
+    let mut plan = common::plan();
+    plan.0.get_mut("implement").unwrap()[0] = common::choice(REVIEW_MODEL, Effort::Low);
+    let item = h.enqueue_with("budgets off", plan).await.unwrap();
+    let reply = h
+        .cli(Request::UpdateItem {
+            item: item.id.clone(),
+            patch: ItemPatch {
+                budget_usd: Some(1.0),
+                ..Default::default()
+            },
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        reply,
+        archon_core::protocol::Reply::ItemBudgetsOff(_)
+    ));
+    h.dispatch().await;
+    let stage = h.running().await.remove(0);
+    assert!(aether.received_named("create_agent")[1]["config"]["cost_budget"].is_null());
+    usage_event(
+        &h,
+        &stage,
+        json!({"input_tokens": 100, "output_tokens": 20, "cost_complete": false}),
+    )
+    .await;
+    assert!(matches!(
+        h.state(&item.id).await,
+        QueueState::Running { .. }
+    ));
+    usage_event(&h, &stage, json!({"cost_usd": 5.0, "cost_complete": true})).await;
+    assert!(matches!(
+        h.state(&item.id).await,
+        QueueState::Running { .. }
+    ));
+    assert!(aether.received_named("cancel").is_empty());
+    let spent = h.ctx.store.lock().await.spend_for_item(&item.id, true);
+    assert_eq!(spent.unwrap(), 5.0);
+}
+
 #[tokio::test]
 async fn a_budget_decision_is_persisted_before_create_and_replayed_after_capabilities_change() {
     let dir = tempfile::tempdir().unwrap();

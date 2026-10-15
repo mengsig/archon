@@ -118,7 +118,7 @@ pub enum Hold {
 ///    while admission is held, since blocking starts no work.
 /// 2. Nothing is admitted while globally paused, while the disk hold is
 ///    on, or while total or daily spend has reached its budget (reported
-///    in that order).
+///    in that order; no budget holds while budgets are off).
 /// 3. Pending spawns of running runs come first, by item priority then
 ///    age. Repository and pipeline pauses do not hold them: they stop new
 ///    items, and finishing work beats starting work.
@@ -269,10 +269,11 @@ fn repo_cap(snapshot: &DispatchSnapshot, repo: &RepoId) -> u32 {
     lower_cap(snapshot.caps.max_per_repo, own)
 }
 
-/// A budget of 0 is unlimited; any other budget holds once spend reaches it.
+/// A budget of 0 is unlimited; any other budget holds once spend reaches
+/// it, unless budgets are switched off.
 fn admission_hold(snapshot: &DispatchSnapshot) -> Option<Hold> {
     let caps = &snapshot.caps;
-    let reached = |budget: f64, spent: f64| budget > 0.0 && spent >= budget;
+    let reached = |budget: f64, spent: f64| caps.budgets_enabled && budget > 0.0 && spent >= budget;
     if snapshot.pause.global {
         Some(Hold::GlobalPause)
     } else if snapshot.low_disk {

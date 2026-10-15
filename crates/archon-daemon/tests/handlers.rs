@@ -31,6 +31,41 @@ async fn item_count(h: &Harness) -> usize {
     }
 }
 
+/// A budget set on an item is acknowledged as unenforced only while budgets
+/// are off; the item keeps it either way.
+#[tokio::test]
+async fn setting_a_budget_says_whether_it_is_enforced() {
+    let h = Harness::new().await;
+    let item = h.enqueue("budgeted").await;
+    let patch = |usd| Request::UpdateItem {
+        item: item.id.clone(),
+        patch: ItemPatch {
+            budget_usd: Some(usd),
+            ..ItemPatch::default()
+        },
+    };
+    let Reply::Item(_) = h.cli(patch(2.0)).await.unwrap() else {
+        panic!("budgets are on by default")
+    };
+    let off = Caps {
+        budgets_enabled: false,
+        ..Caps::default()
+    };
+    h.cli(Request::SetCaps { caps: off }).await.unwrap();
+    let Reply::ItemBudgetsOff(stored) = h.cli(patch(3.0)).await.unwrap() else {
+        panic!("a budget set while budgets are off is flagged")
+    };
+    assert_eq!(stored.budget_usd, Some(3.0));
+    let quiet = Request::UpdateItem {
+        item: item.id.clone(),
+        patch: ItemPatch {
+            priority: Some(archon_core::queue::Priority::High),
+            ..ItemPatch::default()
+        },
+    };
+    assert!(matches!(h.cli(quiet).await.unwrap(), Reply::Item(_)));
+}
+
 /// A request of each operator-only kind.
 fn operator_only_requests() -> Vec<Request> {
     vec![

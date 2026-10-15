@@ -222,6 +222,8 @@ impl ModelsConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LimitsConfig {
+    /// `false` turns every dollar budget off (§7.2); spend is still recorded.
+    pub budgets_enabled: bool,
     pub max_parallel_agents: u32,
     pub max_per_repo: u32,
     pub max_active_runs: u32,
@@ -250,6 +252,7 @@ impl Default for LimitsConfig {
     fn default() -> Self {
         let caps = Caps::default();
         Self {
+            budgets_enabled: caps.budgets_enabled,
             max_parallel_agents: caps.max_parallel_agents,
             max_per_repo: caps.max_per_repo,
             max_active_runs: caps.max_active_runs,
@@ -339,6 +342,7 @@ impl LimitsConfig {
 
     pub fn caps(&self) -> Caps {
         Caps {
+            budgets_enabled: self.budgets_enabled,
             max_parallel_agents: self.max_parallel_agents,
             max_per_repo: self.max_per_repo,
             max_per_pipeline: self.per_pipeline.clone(),
@@ -666,6 +670,18 @@ mod tests {
         assert_eq!(config, Config::default());
         assert_eq!(config.limits.caps().max_parallel_agents, 8);
         assert!(config.orchestrator.wake_on_success);
+    }
+
+    #[test]
+    fn budgets_are_on_unless_switched_off() {
+        assert!(Config::default().limits.caps().budgets_enabled);
+        let config: Config = toml::from_str("[limits]\nbudgets_enabled = false").unwrap();
+        config.validate().unwrap();
+        assert!(!config.limits.caps().budgets_enabled);
+        let mut caps = serde_json::to_value(Caps::default()).unwrap();
+        caps.as_object_mut().unwrap().remove("budgets_enabled");
+        let caps: Caps = serde_json::from_value(caps).unwrap();
+        assert!(caps.budgets_enabled, "a Caps without the switch enforces");
     }
 
     #[test]

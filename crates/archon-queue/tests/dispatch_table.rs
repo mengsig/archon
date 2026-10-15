@@ -187,6 +187,11 @@ fn total_reached(fx: &Fx) -> DispatchSnapshot {
 fn both_reached(fx: &Fx) -> DispatchSnapshot {
     spent(80.0, 200.0, 50.0, 100.0)(fx)
 }
+fn budgets_off(fx: &Fx) -> DispatchSnapshot {
+    let mut s = spent(80.0, 200.0, 50.0, 100.0)(fx);
+    s.caps.budgets_enabled = false;
+    s
+}
 fn budgets_unlimited(fx: &Fx) -> DispatchSnapshot {
     spent(1e9, 1e9, 0.0, 0.0)(fx)
 }
@@ -464,6 +469,9 @@ fn hold_cases() -> Vec<Case> {
         ("total budget reported before daily", both_reached, |fx| {
             fx.plan(&[], &[], &[], Some(Hold::TotalBudget))
         }),
+        ("budgets off hold nothing", budgets_off, |fx| {
+            fx.plan(&[(0, 1)], &[0], &[], None)
+        }),
         ("zero budgets are unlimited", budgets_unlimited, |fx| {
             fx.plan(&[(0, 1)], &[0], &[], None)
         }),
@@ -586,7 +594,7 @@ fn gang_cases() -> Vec<Case> {
 fn plan_dispatch_table() {
     let fx = Fx::new();
     let all = [hold_cases(), order_cases(), cap_cases(), gang_cases()].concat();
-    assert_eq!(all.len(), 32);
+    assert_eq!(all.len(), 33);
     for (name, build, expect) in all {
         let snapshot = build(&fx);
         assert_eq!(plan_dispatch(&snapshot), expect(&fx), "case: {name}");
@@ -735,6 +743,20 @@ fn waiting_reason_daily_budget() {
             s.spend_today_usd = 5.0;
         },
         archon_core::protocol::WaitingReasonCode::DailyBudget,
+    );
+}
+
+#[test]
+fn waiting_reason_ignores_reached_budgets_when_off() {
+    waiting_case(
+        |s| {
+            s.caps.budgets_enabled = false;
+            s.caps.budget_usd_total = 5.0;
+            s.caps.budget_usd_daily = 5.0;
+            s.spend_total_usd = 9.0;
+            s.spend_today_usd = 9.0;
+        },
+        archon_core::protocol::WaitingReasonCode::NextInLine,
     );
 }
 

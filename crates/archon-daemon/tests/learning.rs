@@ -610,7 +610,7 @@ async fn distillation_reserves_a_global_daily_budget_and_disabling_cancels_queue
             .store
             .lock()
             .await
-            .distillation_available(&archon_core::id::RepoId::new(), 1.0)
+            .distillation_available(&archon_core::id::RepoId::new(), Some(1.0))
             .unwrap()
     );
     std::sync::Arc::get_mut(&mut h.ctx)
@@ -623,6 +623,23 @@ async fn distillation_reserves_a_global_daily_budget_and_disabling_cancels_queue
     let errands: Vec<_> = items.iter().filter(|i| i.pipeline == "errand").collect();
     assert_eq!(errands.len(), 1);
     assert!(matches!(errands[0].state, QueueState::Cancelled { .. }));
+}
+
+/// The daily reservation holds an errand back only while budgets are on.
+#[tokio::test]
+async fn distillation_reservation_is_lifted_when_budgets_are_off() {
+    for (budgets_enabled, queued) in [(true, 0), (false, 1)] {
+        let mut config = archon_core::config::Config::default();
+        config.learning.distill_every = 1;
+        config.learning.distill_daily_budget_usd = 0.5;
+        config.limits.budgets_enabled = budgets_enabled;
+        let h = Harness::with_config(config).await;
+        samples(&h, "codex/cheap", 0.2, 3).await;
+        archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+        let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
+        let errands = items.iter().filter(|i| i.pipeline == "errand").count();
+        assert_eq!(errands, queued, "budgets_enabled = {budgets_enabled}");
+    }
 }
 
 #[tokio::test]

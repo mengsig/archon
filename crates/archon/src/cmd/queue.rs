@@ -11,7 +11,7 @@ use archon_core::protocol::{ItemQuery, Reply, RepoRef, Request};
 use archon_core::queue::Caps;
 
 use super::{emit, to_json};
-use crate::cli::QueueCommand;
+use crate::cli::{Budgets, QueueCommand};
 use crate::connect::{connect_or_start, connect_running, reply_data, unexpected};
 use crate::format;
 use crate::views;
@@ -39,12 +39,14 @@ pub async fn run(command: QueueCommand, json: bool) -> anyhow::Result<ExitCode> 
             max_per_repo,
             budget_daily,
             budget_total,
+            budgets,
         } => {
             caps(
                 max_parallel_agents,
                 max_per_repo,
                 budget_daily,
                 budget_total,
+                budgets,
                 json,
             )
             .await?
@@ -110,10 +112,18 @@ async fn change(
     json: bool,
 ) -> anyhow::Result<()> {
     let reply = client.request(request).await?;
-    if !matches!(reply, Reply::Item(_) | Reply::Ok) {
+    if !matches!(reply, Reply::Item(_) | Reply::ItemBudgetsOff(_) | Reply::Ok) {
         return Err(unexpected(&reply, "item"));
     }
+    note_budgets_off(&reply);
     emit(json, || reply_data(&reply), done)
+}
+
+/// Say on stderr that a budget just set is not enforced, as stdout is data.
+pub(super) fn note_budgets_off(reply: &Reply) {
+    if matches!(reply, Reply::ItemBudgetsOff(_)) {
+        eprintln!("note: {}", archon_core::protocol::BUDGETS_OFF_NOTE);
+    }
 }
 
 /// Show the caps, or change some of them: `SetCaps` takes the full set, so
@@ -123,16 +133,21 @@ async fn caps(
     per_repo: Option<u32>,
     daily: Option<f64>,
     total: Option<f64>,
+    budgets: Option<Budgets>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let changed = agents.is_some() || per_repo.is_some() || daily.is_some() || total.is_some();
+    let changed = agents.is_some()
+        || per_repo.is_some()
+        || daily.is_some()
+        || total.is_some()
+        || budgets.is_some();
     let client = match changed {
         true => connect_or_start().await?,
         false => connect_running().await?,
     };
     let mut caps = views::fetch_status(&client).await?.caps;
     if changed {
-        apply_caps(&mut caps, agents, per_repo, daily, total)?;
+        apply_caps(&mut caps, agents, per_repo, daily, total, budgets)?;
         set_caps(&client, &caps).await?;
     }
     let text = format!(
@@ -154,6 +169,7 @@ fn apply_caps(
     per_repo: Option<u32>,
     daily: Option<f64>,
     total: Option<f64>,
+    budgets: Option<Budgets>,
 ) -> anyhow::Result<()> {
     if agents == Some(0) {
         return Err(archon_core::ArchonError::Invalid(
@@ -175,6 +191,7 @@ fn apply_caps(
     caps.max_per_repo = per_repo.unwrap_or(caps.max_per_repo);
     caps.budget_usd_daily = daily.unwrap_or(caps.budget_usd_daily);
     caps.budget_usd_total = total.unwrap_or(caps.budget_usd_total);
+    caps.budgets_enabled = budgets.map_or(caps.budgets_enabled, |b| b == Budgets::On);
     Ok(())
 }
 
@@ -196,18 +213,30 @@ mod tests {
             budget_usd_total: 50.0,
             ..Caps::default()
         };
-        apply_caps(&mut caps, Some(5), None, Some(12.5), None).unwrap();
+        apply_caps(&mut caps, Some(5), None, Some(12.5), None, None).unwrap();
         assert_eq!((caps.max_parallel_agents, caps.max_per_repo), (5, 0));
         assert_eq!((caps.budget_usd_daily, caps.budget_usd_total), (12.5, 50.0));
-        assert!(apply_caps(&mut caps, Some(0), None, None, None).is_err());
-        assert!(apply_caps(&mut caps, None, None, Some(f64::NAN), None).is_err());
-        assert!(apply_caps(&mut caps, None, None, Some(-1.0), None).is_err());
-        assert!(apply_caps(&mut caps, None, None, None, Some(f64::INFINITY)).is_err());
-        apply_caps(&mut caps, None, None, None, Some(75.0)).unwrap();
+        assert!(apply_caps(&mut caps, Some(0), None, None, None, None).is_err());
+        assert!(apply_caps(&mut caps, None, None, Some(f64::NAN), None, None).is_err());
+        assert!(apply_caps(&mut caps, None, None, Some(-1.0), None, None).is_err());
+        assert!(apply_caps(&mut caps, None, None, None, Some(f64::INFINITY), None).is_err());
+        apply_caps(&mut caps, None, None, None, Some(75.0), None).unwrap();
         assert_eq!(caps.budget_usd_total, 75.0);
         assert_eq!(
             caps.max_parallel_agents, 5,
             "a refused change changes nothing"
         );
+    }
+
+    #[test]
+    fn budgets_switch_changes_only_the_switch() {
+        let mut caps = Caps::default();
+        assert!(caps.budgets_enabled);
+        apply_caps(&mut caps, None, None, None, None, Some(Budgets::Off)).unwrap();
+        assert!(!caps.budgets_enabled);
+        apply_caps(&mut caps, Some(3), None, None, None, None).unwrap();
+        assert!(!caps.budgets_enabled, "other changes leave the switch");
+        apply_caps(&mut caps, None, None, None, None, Some(Budgets::On)).unwrap();
+        assert!(caps.budgets_enabled);
     }
 }

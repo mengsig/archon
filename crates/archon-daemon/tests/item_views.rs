@@ -306,6 +306,28 @@ async fn budget_reasons_use_dispatch_spend_and_precedence() {
 }
 
 #[tokio::test]
+async fn reached_budgets_hold_nothing_while_budgets_are_off() {
+    let (h, _fake) = connected_harness().await;
+    let active = h.enqueue("active").await;
+    h.dispatch().await;
+    let stage = h.running().await.remove(0);
+    spend(&h, &active.id, &stage, 5.0).await;
+    let item = h.enqueue("budget hold").await;
+    let mut caps = Caps {
+        budget_usd_total: 5.0,
+        budget_usd_daily: 5.0,
+        ..Caps::default()
+    };
+    h.cli(Request::SetCaps { caps: caps.clone() })
+        .await
+        .unwrap();
+    reason(&h, &item.id, Code::TotalBudget).await;
+    caps.budgets_enabled = false;
+    h.cli(Request::SetCaps { caps }).await.unwrap();
+    reason(&h, &item.id, Code::NextInLine).await;
+}
+
+#[tokio::test]
 async fn capacity_reason_includes_live_agents_and_repo_file_overrides() {
     let (h, _fake) = connected_harness().await;
     h.enqueue("active").await;

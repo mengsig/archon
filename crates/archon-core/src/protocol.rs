@@ -40,7 +40,14 @@ use crate::steer::Steer;
 /// 7: initiatives, `steer_item` and lessons; an older archond knows none of
 /// their requests.
 /// 8: `archon learning` corrections, their receipts and memory curation.
-pub const PROTOCOL_VERSION: u32 = 8;
+/// 9: `[limits] budgets_enabled`; `Caps` carries it, and a change that sets an
+/// item's budget while budgets are off answers `ItemBudgetsOff`.
+pub const PROTOCOL_VERSION: u32 = 9;
+
+/// Said beside an item whose `budget_usd` was set while budgets are off.
+pub const BUDGETS_OFF_NOTE: &str = "Dollar budgets are globally off ([limits] budgets_enabled = \
+    false), so this budget_usd is stored but not enforced; spend is still recorded. \
+    `archon queue caps --budgets on` turns enforcement back on.";
 
 /// Longest accepted frame in either direction.
 pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
@@ -544,6 +551,8 @@ pub enum Reply {
     Repo(Repo),
     Repos(Vec<Repo>),
     Item(QueueItem),
+    /// `Item`, for a change that set a dollar budget while budgets are off.
+    ItemBudgetsOff(QueueItem),
     Items(Vec<QueueItem>),
     ItemSummaries(Vec<ItemSummary>),
     ItemDetail(Box<ItemDetail>),

@@ -32,7 +32,8 @@ fn steered_by(client: ClientKind) -> SteeredBy {
     }
 }
 
-/// Replies `Reply::Item` with the item as steered.
+/// Replies `Reply::Item` with the item as steered (`ItemBudgetsOff` when
+/// it set a budget while budgets are off).
 pub(super) async fn steer(
     ctx: &DaemonContext,
     client: ClientKind,
@@ -50,7 +51,8 @@ pub(super) async fn steer(
         steer: &steer,
         plan: None,
     };
-    Ok(Reply::Item(steer_as(ctx, &asked, id).await?))
+    let item = steer_as(ctx, &asked, id).await?;
+    Ok(super::items::item_reply(ctx, item, steer.budget_usd.is_some()).await)
 }
 
 /// Steer the item through its live run or as it waits, whichever it is by

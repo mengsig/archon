@@ -341,12 +341,11 @@ async fn replace(
     let Some(plan) = plan else {
         return Ok(None);
     };
-    let per_item_cap = resolve::caps(ctx).await.budget_usd_per_item;
+    let caps = resolve::caps(ctx).await;
     let mut store = ctx.store.lock().await;
     // Owed before the replacement exists, so it never starts beside them.
     descendants::owe(&mut store, failed)?;
-    let Some(id) = spawn::reserve_replacement(ctx, &mut store, failed, &plan, nth, per_item_cap)?
-    else {
+    let Some(id) = spawn::reserve_replacement(ctx, &mut store, failed, &plan, nth, &caps)? else {
         return Ok(None);
     };
     // Replacement first: a crash in between leaves a superseded live

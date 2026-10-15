@@ -67,8 +67,12 @@ async fn queue(ctx: &DaemonContext, repo: &RepoId) -> Result<(), ArchonError> {
     let env = crate::resolve::RepoEnv::load(ctx, Some(repo)).await?;
     let policy = env.policy(&ctx.config);
     let key = format!("learning/distilled-v2/{repo}");
+    let reservation = crate::resolve::caps(ctx)
+        .await
+        .budgets_enabled
+        .then_some(ctx.config.learning.distill_daily_budget_usd);
     let mut store = ctx.store.lock().await;
-    if !store.distillation_available(repo, ctx.config.learning.distill_daily_budget_usd)? {
+    if !store.distillation_available(repo, reservation)? {
         return Ok(());
     }
     let consumed = store

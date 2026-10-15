@@ -448,6 +448,12 @@ pub enum CostBy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Budgets {
+    On,
+    Off,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Ship {
     Pr,
     Local,
@@ -537,6 +543,10 @@ pub enum QueueCommand {
         /// Dollars to spend in total; 0 means no limit.
         #[arg(long)]
         budget_total: Option<f64>,
+        /// `off` stops enforcing every dollar budget (spend is still
+        /// recorded); `on` enforces them again.
+        #[arg(long, value_enum)]
+        budgets: Option<Budgets>,
     },
 }
 
@@ -973,6 +983,13 @@ mod tests {
             panic!()
         };
         assert_eq!((max_parallel_agents, budget_daily), (Some(4), Some(12.5)));
+        let Command::Queue(QueueCommand::Caps { budgets, .. }) =
+            parse(&["queue", "caps", "--budgets", "off"])
+        else {
+            panic!()
+        };
+        assert_eq!(budgets, Some(Budgets::Off));
+        assert!(Cli::try_parse_from(["archon", "queue", "caps", "--budgets", "maybe"]).is_err());
         let Command::Repo(RepoCommand::Set {
             auto_merge, base, ..
         }) = parse(&["repo", "set", "api", "--auto-merge", "false", "--base", ""])

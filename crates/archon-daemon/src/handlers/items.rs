@@ -73,7 +73,16 @@ pub(super) async fn enqueue(
         "only a key returns an older item"
     );
     ctx.dispatch.notify_one();
-    Ok(Reply::Item(stored))
+    Ok(item_reply(ctx, stored, req.budget_usd.is_some()).await)
+}
+
+/// `Reply::Item`, or `ItemBudgetsOff` when the change set a budget that
+/// is not enforced while budgets are globally off.
+pub(super) async fn item_reply(ctx: &DaemonContext, item: QueueItem, set_budget: bool) -> Reply {
+    match set_budget && !resolve::caps(ctx).await.budgets_enabled {
+        true => Reply::ItemBudgetsOff(item),
+        false => Reply::Item(item),
+    }
 }
 
 async fn enqueue_context(
@@ -171,6 +180,7 @@ pub(super) async fn update(
         check_reasons(&spec, patch.model_reasons.as_ref())?;
     }
     let amendment = patch.brief_append.clone();
+    let set_budget = patch.budget_usd.is_some();
     let item = {
         // Under the run table, so the dispatcher cannot start the item meanwhile.
         let _table = ctx.runs.lock().await;
@@ -186,7 +196,7 @@ pub(super) async fn update(
         note_amendment(ctx, id, &text, "update_item").await;
     }
     ctx.dispatch.notify_one();
-    Ok(Reply::Item(item))
+    Ok(item_reply(ctx, item, set_budget).await)
 }
 
 /// Refuse a patch `item`'s state does not allow: nothing after success, and

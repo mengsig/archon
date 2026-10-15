@@ -48,8 +48,9 @@ pub async fn run(args: QueueAddArgs, json: bool) -> anyhow::Result<()> {
         origin: None,
     };
     let reply = client.request(Request::Enqueue(request)).await?;
-    let Reply::Item(item) = &reply else {
+    let (Reply::Item(item) | Reply::ItemBudgetsOff(item)) = &reply else {
         return Err(unexpected(&reply, "item"));
     };
+    super::note_budgets_off(&reply);
     emit(json, || reply_data(&reply), &item.id.to_string())
 }

@@ -251,6 +251,9 @@ pub fn caps_line(caps: &Caps) -> String {
 }
 
 pub fn budgets_line(caps: &Caps) -> String {
+    if !caps.budgets_enabled {
+        return "off (no dollar budget is enforced; spend is still recorded)".to_owned();
+    }
     format!(
         "{} per item, {} daily, {} total",
         dollars(caps.budget_usd_per_item),
@@ -724,6 +727,19 @@ pub(crate) mod tests {
             github: None,
             disk: None,
         }
+    }
+
+    #[test]
+    fn status_says_when_budgets_are_off() {
+        let mut up = status_with(AetherLinkStatus::Disconnected {
+            error: "x".into(),
+            retry_at: None,
+        });
+        let text = status(&up, &RepoNames::new());
+        assert!(text.contains("\nbudgets: unlimited per item"), "{text}");
+        up.caps.budgets_enabled = false;
+        let text = status(&up, &RepoNames::new());
+        assert!(text.contains("\nbudgets: off (no dollar budget"), "{text}");
     }
 
     #[test]

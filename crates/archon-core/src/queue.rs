@@ -247,6 +247,10 @@ impl QueueItem {
 /// "no limit" for every field, matching the config file's convention.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Caps {
+    /// Master switch for every dollar budget below, the items' own and the
+    /// distillation reservation; spend is still recorded when off.
+    #[serde(default = "budgets_on")]
+    pub budgets_enabled: bool,
     pub max_parallel_agents: u32,
     pub max_per_repo: u32,
     pub max_per_pipeline: BTreeMap<String, u32>,
@@ -257,9 +261,14 @@ pub struct Caps {
     pub budget_usd_per_item: f64,
 }
 
+fn budgets_on() -> bool {
+    true
+}
+
 impl Default for Caps {
     fn default() -> Self {
         Self {
+            budgets_enabled: true,
             max_parallel_agents: 8,
             max_per_repo: 0,
             max_per_pipeline: BTreeMap::new(),

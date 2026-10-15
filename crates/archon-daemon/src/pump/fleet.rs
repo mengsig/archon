@@ -316,7 +316,7 @@ async fn record_usage(
 /// the daily budget (`plan_dispatch`), so only then does new spend wake it.
 async fn recheck_global_budgets(ctx: &DaemonContext) {
     let caps = crate::resolve::caps(ctx).await;
-    if caps.budget_usd_total > 0.0 || caps.budget_usd_daily > 0.0 {
+    if caps.budgets_enabled && (caps.budget_usd_total > 0.0 || caps.budget_usd_daily > 0.0) {
         ctx.dispatch.notify_one();
     }
 }

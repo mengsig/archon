@@ -21,9 +21,10 @@ pub async fn run(args: QueueSteerArgs, json: bool) -> anyhow::Result<()> {
         steer,
     };
     let reply = client.request(request).await?;
-    if !matches!(reply, Reply::Item(_)) {
+    if !matches!(reply, Reply::Item(_) | Reply::ItemBudgetsOff(_)) {
         return Err(unexpected(&reply, "item"));
     }
+    super::note_budgets_off(&reply);
     if json {
         return emit(true, || reply_data(&reply), "");
     }

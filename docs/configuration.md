@@ -25,6 +25,7 @@ max_effort = "high"
 max_parallel_agents = 8        # the hard cap on running stage agents (the default)
 max_per_repo = 2
 budget_usd_daily = 50.0
+# budgets_enabled = false      # no dollar budget is enforced at all; spend is still recorded
 min_free_gb = 10               # nothing new starts below this much free disk; 0 = off
 [limits.per_pipeline]
 adaptive = 3
@@ -180,7 +181,8 @@ the bounds, sample size and context; five wins are not proof of equivalence.
 `distill_every` (1..100) counts new outcomes per repository before a $1 errand.
 At most one distillation is queued or running per repository. Across repositories,
 `distill_daily_budget_usd` reserves the full errand budgets per UTC creation day;
-the default is $3, and 0 disables new distillations. Imported history informs routing
+the default is $3, and 0 disables new distillations. With `budgets_enabled = false`
+the reservation does not limit them. Imported history informs routing
 and statistics but is never distilled, avoiding upgrade spending bursts.
 Proposed lessons and pipelines wait for operator acceptance; inspect pipelines with
 `archon pipelines proposals [name]` before `archon pipelines accept <name>`.

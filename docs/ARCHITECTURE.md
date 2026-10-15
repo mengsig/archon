@@ -1636,6 +1636,22 @@ The orchestrator is not counted, and neither are the agents it delegates to
 | `budget_usd_per_item` | Default item budget (the item's own `budget_usd` wins). | unlimited |
 | `budget_usd_daily` | Spend in the local calendar day. | unlimited |
 | `budget_usd_total` | Lifetime spend recorded in this store. | unlimited |
+| `budgets_enabled` | Master switch for every dollar budget (default `true`). | n/a |
+
+**Turning budgets off.** `[limits] budgets_enabled = false` (or at runtime
+`archon queue caps --budgets off`, until archond restarts) stops enforcing
+every dollar budget at once; the default is unchanged. Off means: an item's own
+or default `budget_usd` is never checked, so neither "budget used up" nor
+"cannot enforce the item's dollar budget" (usage without a dollar cost) fails a
+run; no `cost_budget` is sent to Aether for new or resumed stage agents; the
+daily and total budgets hold no admission; and the distillation daily
+reservation (`distill_daily_budget_usd`) does not limit new errands (one
+errand per repository still runs at a time). Spend is still recorded and
+reported by `cost_report`, `status` and each item. Agents already created with
+an Aether `cost_budget` keep it until they end. `enqueue`, `update_item` and
+`steer_item` still accept `budget_usd`; the reply is `ItemBudgetsOff` (protocol
+9) and says the budget is stored but not enforced. `archon status` and
+`queue_status` show `budgets: off`.
 
 ### 7.3 Dispatch (`archon_queue::plan_dispatch`)
 
@@ -2467,6 +2483,7 @@ deny = []
 # max_effort = "high"          # unset: no cap; else low|medium|high|x_high|max
 
 [limits]
+budgets_enabled = true         # false: no dollar budget is enforced; spend still recorded
 max_parallel_agents = 8
 max_per_repo = 0
 max_active_runs = 0
@@ -4203,7 +4220,7 @@ retention keeps the current generation and nine recent snapshots.
 **Distillation.** Each repository has at most one queued or running distillation.
 Every `distill_every` new outcomes (1..100) may queue a $1 low-priority errand.
 The global UTC daily budget defaults to $3, reserving full budgets at enqueue;
-0 disables new errands. Imported history is never distilled, so an upgrade has no
+0 disables new errands, and `[limits] budgets_enabled = false` lifts the reservation (§7.2). Imported history is never distilled, so an upgrade has no
 paid catch-up burst. It remains available as outcome evidence.
 
 A distillation validates all lessons and its optional proposal before mutation;

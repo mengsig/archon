@@ -278,6 +278,38 @@ async fn a_refresh_that_did_not_merge_the_base_pushes_nothing() {
     );
 }
 
+/// In `local` mode too, a refresh that did not merge the local base is refused.
+#[tokio::test]
+async fn a_local_refresh_that_did_not_merge_the_base_fails() {
+    use archon_core::protocol::RepoPatch;
+    use archon_core::repo::ShipMode;
+    let h = Harness::new().await;
+    let local = Request::RepoUpdate {
+        repo: RepoRef(REPO_NAME.into()),
+        patch: RepoPatch {
+            ship: Some(ShipMode::Local),
+            ..RepoPatch::default()
+        },
+    };
+    h.cli(local).await.unwrap();
+    let (owner, _) = shipped(&h, "the change").await;
+    std::fs::write(h.repo.join("upstream.txt"), "elsewhere\n").unwrap();
+    git(&h.repo, &["add", "upstream.txt"]);
+    git(&h.repo, &["commit", "--quiet", "-m", "Local base moves"]);
+    let moved = git(&h.repo, &["rev-parse", "main"]);
+    let fix = refresh(&h, &owner).await.expect("queued");
+    h.dispatch().await;
+    settle_reviewed(&h, None).await;
+    let error = match h.state(&fix.id).await {
+        QueueState::Failed { error, .. } => error,
+        other => panic!("the refresh fails: {other:?}"),
+    };
+    assert!(
+        error.contains(&format!("has not merged `main` at {moved}")),
+        "{error}"
+    );
+}
+
 /// Only a finished item with a branch of its own is refreshed.
 #[tokio::test]
 async fn a_refresh_is_refused_for_work_that_is_not_finished_or_is_a_refresh() {
@@ -420,4 +452,37 @@ async fn passing_checks_end_the_watch_quietly() {
     executor::coordination::reconcile(&h.ctx).await.unwrap();
     assert_eq!(h.kv(&format!("ship_checks:{}", run.id)).await, None);
     assert!(pr_checks_news(&h).await.is_empty());
+}
+
+/// Past the probes a billing refusal stops the rest too; a probe GitHub
+/// refuses leaves its check failed rather than hiding it.
+#[tokio::test]
+async fn many_unstarted_jobs_and_refused_probes_are_told_right() {
+    let (h, gh) = delivering().await;
+    let (_, run) = shipped(&h, "the change").await;
+    let started = "2026-10-15T09:20:44Z";
+    let jobs: Vec<Value> = (0..10)
+        .map(|i| job(&format!("job{i}"), "fail", started, 20 + i))
+        .collect();
+    gh.set_checks(&json!(jobs));
+    let why = "The job was not started because recent account payments have failed";
+    gh.set_annotations(&json!([{"message": why}]));
+    age_watch(&h, &run, 3).await;
+    executor::coordination::reconcile(&h.ctx).await.unwrap();
+    let news = pr_checks_news(&h).await;
+    assert_eq!(news.len(), 1, "{news:?}");
+    assert_eq!(news[0].0, "not_started");
+    assert!(
+        news[0].1.contains("job9"),
+        "all ten never started: {news:?}"
+    );
+
+    let (_, second) = shipped(&h, "another change").await;
+    gh.set_checks(&json!([job("test", "fail", started, 40)]));
+    gh.set_annotations(&json!("not annotations"));
+    age_watch(&h, &second, 3).await;
+    executor::coordination::reconcile(&h.ctx).await.unwrap();
+    let news = pr_checks_news(&h).await;
+    assert_eq!(news.len(), 2, "{news:?}");
+    assert_eq!(news[1], ("failed".to_owned(), "failed: test".to_owned()));
 }

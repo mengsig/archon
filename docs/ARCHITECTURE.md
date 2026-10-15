@@ -2356,8 +2356,9 @@ same pull request replaces it). The coordination pass reads `gh pr checks
 <url> --json name,bucket,startedAt,link` two minutes after delivery, then
 every ten minutes. A failing or cancelled GitHub Actions job is asked why
 (`gh api repos/<owner>/<repo>/check-runs/<job>/annotations`, at most eight a
-look): GitHub's "The job was not started because …" (billing, a spending
-limit) means the check never ran, and so does a check still queued, never
+look; when all eight never started, neither did the rest, and a refused ask
+leaves its check failed): GitHub's "The job was not started because …"
+(billing, a spending limit) means the check never ran, and so does a check still queued, never
 started, 30 minutes after delivery (no runner). Checks that ran and failed
 are an outcome in the feed and a `pr_checks` event (`state: "failed"`);
 checks that never started are a blocker and a `pr_checks` event (`state:

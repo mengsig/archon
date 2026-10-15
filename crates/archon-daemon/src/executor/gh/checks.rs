@@ -84,10 +84,22 @@ pub(crate) async fn of_pull_request(
     let mut not_started = Vec::new();
     let mut reason = None;
     for check in failing.iter().take(MAX_PROBES) {
-        if let Some(why) = never_started(binary, repo, check).await? {
-            not_started.push(check.name.clone());
-            reason.get_or_insert(why);
+        // A probe GitHub refuses leaves the check failed: a failure is never hidden.
+        match never_started(binary, repo, check).await {
+            Ok(Some(why)) => {
+                not_started.push(check.name.clone());
+                reason.get_or_insert(why);
+            }
+            Ok(None) => {}
+            Err(error) if error.is_store() => return Err(error),
+            Err(error) => {
+                tracing::warn!(check = %check.name, %error, "not asked why the check failed");
+            }
         }
+    }
+    // A refusal such as billing stops every job: past the probes, so are the rest.
+    if not_started.len() == MAX_PROBES {
+        not_started.extend(failing.iter().skip(MAX_PROBES).map(|c| c.name.clone()));
     }
     let queued = if waited_long {
         unstarted(&checks)

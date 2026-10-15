@@ -242,6 +242,12 @@ async fn carry_out(ctx: &DaemonContext, claimed: &Claimed) -> Result<ShipOutcome
     let full = crate::worktree::stack::is_commit_id(&commit);
     assert!(full, "the checks prove a full commit id: {commit:?}");
     if !pushes {
+        // `pr` mode verifies in `deliver_pr`, before its push.
+        match initiative_ship::verify_stack(ctx, run, &commit).await {
+            Ok(()) => {}
+            Err(ArchonError::Invalid(why)) => return refused(why),
+            Err(error) => return Err(error),
+        }
         return Ok(ShipOutcome::Shipped {
             commit,
             pr_url: None,

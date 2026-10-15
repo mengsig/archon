@@ -225,6 +225,8 @@ async fn each_item_builds_lean_in_its_own_directory_that_goes_when_it_ends() {
 
     lock_a_subdirectory(&target);
     cancel(&h, &first).await;
+    // The run node's retirement ends the kept agents, then the release runs.
+    h.dispatch().await;
     assert!(!item_dir(&h, &first.id).exists(), "deleted at its end");
     assert!(other.is_dir(), "the other item's build is untouched");
     let notes = system_notes(&h).await;
@@ -321,6 +323,28 @@ async fn a_build_directory_stays_until_what_a_failed_lead_delegated_has_ended() 
     h.dispatch().await;
     h.dispatch().await;
     assert!(!dir.exists(), "released once the stop is confirmed");
+}
+
+/// A cancel Aether accepts is cooperative: the agent may build on for a
+/// while, so neither the item's end nor gc deletes its directory until Aether
+/// says the agent ended.
+#[tokio::test]
+async fn a_build_directory_stays_until_aether_confirms_a_cancelled_agent_ended() {
+    let h = Harness::new().await;
+    let (item, stage) = start(&h, "slow to stop").await;
+    let agent = stage.aether_agent.unwrap();
+    h.backend.cancel_slowly(&agent);
+    cancel(&h, &item).await;
+    h.dispatch().await;
+    let dir = item_dir(&h, &item.id);
+    assert!(dir.is_dir(), "its agent still runs");
+    let report = gc(&h, None).await;
+    assert!(report.item_caches.is_empty(), "{report:?}");
+    assert!(dir.is_dir());
+
+    h.backend.kill(&agent);
+    h.dispatch().await;
+    assert!(!dir.exists(), "released once Aether says it ended");
 }
 
 /// A symlinked `items` directory leads outside the cache: gc and an item's

@@ -82,12 +82,18 @@ pub(super) async fn finish_run(
     Ok(follow)
 }
 
-/// The build directory a settled item leaves behind, if it has a repository.
+/// The build directory a settled item leaves behind, if it has a repository,
+/// owed its release so that gc leaves it to the item's end.
 async fn item_build(
     ctx: &DaemonContext,
     item: &QueueItem,
 ) -> Result<Option<ItemBuild>, ArchonError> {
-    build_of(&*ctx.store.lock().await, item)
+    let mut store = ctx.store.lock().await;
+    let build = build_of(&store, item)?;
+    if let Some(build) = &build {
+        crate::build_cache::owe_release(&mut store, &build.item, &build.repo_name)?;
+    }
+    Ok(build)
 }
 
 /// The build directory of `run`'s item, if it has a repository.

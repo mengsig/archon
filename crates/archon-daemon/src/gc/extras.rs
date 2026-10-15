@@ -164,7 +164,7 @@ fn claim_orphan_items(
                 continue;
             };
             match store.item(&id) {
-                Ok(_) => crate::build_cache::is_idle(store, &id)?,
+                Ok(_) => crate::build_cache::is_sweepable(store, &id)?,
                 Err(ArchonError::NotFound(_)) => true,
                 Err(error) => return Err(error),
             }
@@ -265,7 +265,7 @@ fn live_repositories(store: &Store) -> Result<HashSet<String>, ArchonError> {
     };
     let mut live = HashSet::new();
     for item in store.items(&query)? {
-        if crate::build_cache::is_idle(store, &item.id)? {
+        if crate::build_cache::is_sweepable(store, &item.id)? {
             continue;
         }
         if let Some(name) = item.repo.as_ref().and_then(|id| names.get(id)) {

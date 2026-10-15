@@ -103,8 +103,10 @@ pub(crate) fn prepare(
 }
 
 /// Whether nothing of `item` can still build: it is final, none of its
-/// stage runs is spawning or running, and no stop of their agents or what
-/// they delegated is still owed. The caller holds the run table.
+/// stage runs is spawning or running, no stop of their agents or what they
+/// delegated is owed, and every run's node is retired, which waits for
+/// Aether to confirm that agents settled or cancelled lately have ended (an
+/// accepted cancel is cooperative). The caller holds the run table.
 pub(crate) fn is_idle(store: &Store, item: &QueueItemId) -> Result<bool, ArchonError> {
     if !store.item(item)?.state.is_terminal() {
         return Ok(false);
@@ -114,7 +116,53 @@ pub(crate) fn is_idle(store: &Store, item: &QueueItemId) -> Result<bool, ArchonE
             return Ok(false);
         }
     }
+    for run in store.runs_for_item(item)? {
+        if !crate::executor::node_retired(store, &run.id)? {
+            return Ok(false);
+        }
+    }
     Ok(true)
+}
+
+/// `kv`: `build_release:<item>` → the repository name, while the item's
+/// directory waits for Aether to confirm its agents ended.
+const RELEASE_KEY_PREFIX: &str = "build_release:";
+
+/// Owe the release of `item`'s build directory: kept until its agents are
+/// confirmed ended, and meanwhile never swept by gc.
+pub(crate) fn owe_release(
+    store: &mut Store,
+    item: &QueueItemId,
+    repo_name: &str,
+) -> Result<(), ArchonError> {
+    store.kv_set(&format!("{RELEASE_KEY_PREFIX}{item}"), repo_name)
+}
+
+pub(crate) fn forget_release(store: &mut Store, item: &QueueItemId) -> Result<(), ArchonError> {
+    store.kv_delete(&format!("{RELEASE_KEY_PREFIX}{item}"))
+}
+
+/// Every owed release, as `(item, repository name)`.
+pub(crate) fn owed_releases(store: &Store) -> Result<Vec<(QueueItemId, String)>, ArchonError> {
+    let mut owed = Vec::new();
+    for (key, repo_name) in store.kv_prefix(RELEASE_KEY_PREFIX)? {
+        let raw = key
+            .strip_prefix(RELEASE_KEY_PREFIX)
+            .expect("ranged by prefix");
+        let item = QueueItemId::parse(raw)
+            .map_err(|e| ArchonError::Store(format!("build release key {key}: {e}")))?;
+        owed.push((item, repo_name));
+    }
+    Ok(owed)
+}
+
+/// Whether gc may sweep `item`'s directory: idle, and no release owed,
+/// which the item's end itself makes once Aether confirms its agents ended.
+pub(crate) fn is_sweepable(store: &Store, item: &QueueItemId) -> Result<bool, ArchonError> {
+    let owed = store
+        .kv_get(&format!("{RELEASE_KEY_PREFIX}{item}"))?
+        .is_some();
+    Ok(!owed && is_idle(store, item)?)
 }
 
 /// A build directory renamed aside, atomically, so a run that starts

@@ -631,21 +631,36 @@ pub(crate) fn stop_owed(
     Ok(descendants::owes(store, stage)? || siblings::owes(store, stage)?)
 }
 
-/// Delete the cargo target directory of an item that ended, unless it was
-/// queued again meanwhile (a retry) or a stack fix still builds in it.
+/// Whether `run`'s node is retired: Aether confirmed its agents' turns
+/// ended (an accepted cancel included) and took the node's subtree down.
+pub(crate) fn node_retired(
+    store: &archon_queue::Store,
+    run: &PipelineRunId,
+) -> Result<bool, ArchonError> {
+    Ok(!run_node::has_node(store, run)?)
+}
+
+/// Delete the cargo target directory of an item that ended, once nothing of
+/// it can still build ([`crate::build_cache::is_idle`]). Until then the
+/// release stays owed and each sweep tries again; a retry queueing the item
+/// meanwhile keeps the directory, and its end owes the release anew.
 async fn release_item_build(
     ctx: &DaemonContext,
     build: ItemBuild,
 ) -> Result<FollowUp, ArchonError> {
     // Claimed under the run table: a retry starting meanwhile builds into a
-    // fresh directory. While an agent of the item lives (a cancel Aether has
-    // not confirmed) the directory stays for gc to sweep once it is gone.
+    // fresh directory.
     let claimed = {
         let _table = ctx.runs.lock().await;
-        let store = ctx.store.lock().await;
+        let mut store = ctx.store.lock().await;
+        if !store.item(&build.item)?.state.is_terminal() {
+            crate::build_cache::forget_release(&mut store, &build.item)?;
+            return Ok(FollowUp::default());
+        }
         if !crate::build_cache::is_idle(&store, &build.item)? {
             return Ok(FollowUp::default());
         }
+        crate::build_cache::forget_release(&mut store, &build.item)?;
         crate::build_cache::claim_item(&ctx.paths, &build.repo_name, &build.item)?
     };
     let Some(claimed) = claimed else {

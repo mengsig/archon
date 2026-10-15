@@ -109,7 +109,7 @@ fn refresh_owner(
     item.autonomy.proposal = ProposalMode::Off;
     item.autonomy.report = ReportMode::Off;
     let (base, spec) = knobs::item_specs(env, &item)?;
-    knobs::check_ceiling(&env.autonomy(&ctx.config), env, &base, item.autonomy)?;
+    knobs::check_ceiling(&env.autonomy(ctx), env, &base, item.autonomy)?;
     let policy = env.policy(&ctx.config);
     let fallback = knobs::default_choice(&ctx.config, &policy, &spec);
     let mut plan = ModelPlan::default();

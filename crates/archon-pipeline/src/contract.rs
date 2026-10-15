@@ -404,7 +404,7 @@ pub fn reviewer_model_rules(named: Option<&[ModelChoice]>) -> String {
                 .collect();
             format!(
                 "- Delegate every reviewer with role `reviewer`, each on one of these models, \
-                 taken in turn: {}. Archon cancels a reviewer on any other.\n",
+                 taken in turn: {}. Archon cancels a child labelled `reviewer` on any other.\n",
                 models.join("; ")
             )
         }
@@ -1076,7 +1076,7 @@ mod tests {
         assert!(
             rules.contains("claude-code/opus at effort medium; claude-code/haiku at effort low")
         );
-        assert!(rules.contains("Archon cancels a reviewer on any other"));
+        assert!(rules.contains("Archon cancels a child labelled `reviewer` on any other"));
         for unnamed in [reviewer_model_rules(None), reviewer_model_rules(Some(&[]))] {
             assert!(unnamed.contains("a model other than yours"), "{unnamed}");
             assert!(unnamed.contains("reports its dollar cost"), "{unnamed}");

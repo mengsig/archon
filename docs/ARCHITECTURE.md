@@ -1878,7 +1878,9 @@ reasons. A stronger model at the default effort often beats a weaker one at
 `{model, effort}` entries as the strict level has reviewers (taken in turn).
 The stage contract tells the lead to delegate reviewers with role `reviewer` on
 those models, and the delegation watchdog (§7.4) cancels a child with such a
-role on another model or a higher effort. With no such key the contract asks
+role on another model or a higher effort. This check relies on the lead using
+the required reviewer role; children with other roles follow the general model
+policy. With no such key the contract asks
 for a model other than the lead's whose cost Aether reports (a Codex reviewer's
 unpriced usage blocks a budgeted item), and the watchdog holds reviewers only to
 the model policy.

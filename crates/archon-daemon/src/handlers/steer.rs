@@ -243,6 +243,11 @@ async fn changed_item(
         None => None,
     };
     let stages = shape.as_ref().map_or(spec, |(_, stages)| stages);
+    items::check_stage_timeouts(ctx, stages, &steer.stage_timeouts)?;
+    if !steer.stage_timeouts.is_empty() {
+        item.stage_timeouts.extend(steer.stage_timeouts.clone());
+        what.push("updated stage timeouts for future spawns".to_owned());
+    }
     what.extend(retune(steer, stages, &mut item)?);
     items::check_plan(ctx, asked.env, stages, &item.model_plan)?;
     assert!(!what.is_empty(), "a checked steer changes something");

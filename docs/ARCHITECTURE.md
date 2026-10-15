@@ -1883,10 +1883,10 @@ for a model other than the lead's whose cost Aether reports (a Codex reviewer's
 unpriced usage blocks a budgeted item), and the watchdog holds reviewers only to
 the model policy.
 
-**Stage timeouts.** `enqueue` and `update_item` take `stage_timeouts`, a
+**Stage timeouts.** `enqueue`, `update_item` and `steer_item` take `stage_timeouts`, a
 `{"<stage-id>": minutes}` map for the item: each stage it names runs with that
 deadline instead of the pipeline's `timeout_minutes`, within
-`[limits] max_stage_timeout_minutes` (default 1440). `update_item` merges the map
+`[limits] max_stage_timeout_minutes` (default 1440). Updates and steers merge the map
 and it applies from the next stage spawned; `steer_item`'s `extend_minutes` still
 moves the deadline of stages running now. `get_item` shows the map.
 

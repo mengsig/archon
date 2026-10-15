@@ -118,6 +118,22 @@ pub(super) async fn plan(
     amend(&mut change, asked.steer, &at)?;
     replan(&mut change, asked, &at);
     reshape_run(ctx, asked, &mut change, &at).await?;
+    crate::handlers::check_stage_timeouts(
+        ctx,
+        &change.blueprint.spec,
+        &asked.steer.stage_timeouts,
+    )?;
+    if !asked.steer.stage_timeouts.is_empty() {
+        change
+            .blueprint
+            .item
+            .stage_timeouts
+            .extend(asked.steer.stage_timeouts.clone());
+        change
+            .what
+            .push("updated stage timeouts for future spawns".to_owned());
+        change.rebuild = true;
+    }
     retune(ctx, asked, &mut change, &at)?;
     rebudget(&mut change, asked.steer, &at, per_item_cap);
     extend(&mut change, asked.steer, &at)?;

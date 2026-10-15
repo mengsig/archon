@@ -164,6 +164,7 @@ async fn default_efforts(
     let item = ctx.store.lock().await.item(id)?;
     let spec = match item_pipeline(ctx, &item).await {
         Ok((_, _, spec)) => spec,
+        Err(error) if error.is_store() => return Err(error),
         Err(error) => {
             tracing::warn!(%id, %error, "default efforts not shown: pipeline unavailable");
             return Ok(BTreeMap::new());

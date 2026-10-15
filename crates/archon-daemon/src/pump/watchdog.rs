@@ -257,7 +257,12 @@ fn reviewer_refusal(named: &[ModelChoice], model: &ModelRef, held: &Value) -> Op
     }
     let effort = match child_effort(held) {
         ChildEffort::Known(effort) => Some(effort),
-        ChildEffort::Unknown | ChildEffort::Unrecognised(_) => None,
+        ChildEffort::Unknown => None,
+        ChildEffort::Unrecognised(raw) => {
+            return Some(format!(
+                "reviewer effort {raw:?} cannot be compared with its reviewer plan"
+            ));
+        }
     };
     let allowed = named
         .iter()
@@ -619,4 +624,27 @@ pub(crate) async fn prune_stage_agents(
         }
     }
     Ok(pruned)
+}
+
+#[cfg(test)]
+mod reviewer_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn named_reviewers_are_held_to_their_model_and_effort() {
+        let model: ModelRef = "claude-code/claude-haiku-5-5".parse().unwrap();
+        let named = [ModelChoice {
+            model: model.clone(),
+            effort: Effort::Medium,
+        }];
+        let reviewer = |effort| json!({"role": "reviewer", "config": {"effort": effort}});
+        assert!(reviewer_refusal(&named, &model, &reviewer("medium")).is_none());
+        assert!(reviewer_refusal(&named, &model, &reviewer("low")).is_none());
+        assert!(reviewer_refusal(&named, &model, &reviewer("high")).is_some());
+        assert!(reviewer_refusal(&named, &model, &reviewer("invalid")).is_some());
+        let other = "codex/gpt-6-luna".parse().unwrap();
+        assert!(reviewer_refusal(&named, &other, &reviewer("low")).is_some());
+        assert!(reviewer_refusal(&named, &other, &json!({"role":"worker"})).is_none());
+    }
 }

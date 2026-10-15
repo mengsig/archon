@@ -412,7 +412,7 @@ fn model_evidence() -> ToolDefinition {
     define(
         "model_evidence",
         "Model evidence",
-        "What stored stage attempts cost and how they fared, by stage, model and effort: sample \
+        "What stored stage attempts cost and how they fared, by stage and (model, effort) for comparison: sample \
          size, median/p90 cost, minutes, pass share of review and test verdicts (max 60 groups). \
          Cost is what budgets count, delegated agents included; fan-out slots count apart.",
         object(

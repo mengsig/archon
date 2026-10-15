@@ -175,7 +175,7 @@ once is set by `[limits]` instead.
 - `timeout_minutes` is between 1 and 43200 (30 days). The stage agent's
   deadline is exactly that long after it starts: a larger value is refused,
   never shortened. An item may override it per stage with `stage_timeouts`
-  (`enqueue`, `update_item`) within `[limits] max_stage_timeout_minutes`.
+  (`enqueue`, `update_item`, `steer_item`) within `[limits] max_stage_timeout_minutes`.
 - Every `{{placeholder}}` in a prompt is a known variable (see below). The
   `team.*` variables are only allowed in a team stage's prompt.
 

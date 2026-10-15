@@ -1969,3 +1969,49 @@ async fn a_compacted_orchestrator_is_told_its_directives_again() {
     };
     assert_eq!(harness.drain_triggers().await, vec![restated]);
 }
+
+#[tokio::test]
+async fn reviewer_spawn_is_checked_against_the_items_named_model_and_effort() {
+    use archon_core::model::ModelChoice;
+    let harness = Harness::with(Config::default(), None).await;
+    let repo = tempfile::tempdir().unwrap();
+    let stage = running_stage(&harness.ctx, repo.path(), STAGE, STAGE_TASK).await;
+    {
+        let mut store = harness.ctx.store.lock().await;
+        let run = store.run(&stage.run).unwrap();
+        let mut item = store.item(&run.item).unwrap();
+        item.model_plan.0.insert(
+            "implement.review".into(),
+            vec![ModelChoice {
+                model: ModelRef::new(ALLOWED.0, ALLOWED.1),
+                effort: Effort::Medium,
+            }],
+        );
+        store.update_item(&item).unwrap();
+    }
+    let (agents, pump) = running_pump(&harness).await;
+    harness.fake.set_default("cancel", Scripted::ok());
+    for (id, model, effort) in [
+        (CHILD, ALLOWED, "medium"),
+        (CHILD_2, ALLOWED, "high"),
+        ("agt_0103", DENIED, "low"),
+    ] {
+        let mut agent = agents.set(id, "running");
+        agent["role"] = json!("reviewer");
+        agent["config"] = json!({"effort": effort});
+        agents.0.lock().unwrap().insert(id.to_owned(), agent);
+        push(&harness, created(id, STAGE, model), keys::CURSOR_FLEET).await;
+    }
+    pump.abort();
+    let cancels = harness.fake.received_named("cancel");
+    let cancelled: Vec<_> = cancels
+        .iter()
+        .map(|c| c["agent"].as_str().unwrap())
+        .collect();
+    assert_eq!(cancelled, [CHILD_2, "agt_0103"]);
+    assert!(
+        cancels
+            .iter()
+            .all(|c| c["reason"].as_str().unwrap().contains("reviewer plan"))
+    );
+}

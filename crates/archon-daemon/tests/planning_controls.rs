@@ -183,3 +183,57 @@ async fn stage_timeouts_stay_within_the_configured_maximum() {
     assert_eq!(h.item(&queued.id).await.stage_timeouts["implement"], 90);
     assert!(refusal(&h, update(most + 1)).await.contains("implement"));
 }
+
+#[tokio::test]
+async fn a_steer_merges_bounded_timeouts_for_future_spawns() {
+    let h = Harness::new().await;
+    let queued = item(&h, with_timeouts(&[("implement", 120)])).await;
+    let steer = |minutes| Request::SteerItem {
+        item: queued.id.clone(),
+        steer: Steer {
+            stage_timeouts: [("implement".to_owned(), minutes)].into(),
+            ..Steer::default()
+        },
+    };
+    h.cli(steer(180)).await.expect("timeout steer accepted");
+    assert_eq!(h.item(&queued.id).await.stage_timeouts["implement"], 180);
+    for minutes in [0, 1441] {
+        assert!(refusal(&h, steer(minutes)).await.contains("implement"));
+    }
+    assert_eq!(h.item(&queued.id).await.stage_timeouts["implement"], 180);
+}
+
+#[tokio::test]
+async fn an_override_is_the_spawned_agents_deadline() {
+    let h = Harness::new().await;
+    item(&h, with_timeouts(&[("implement", 180)])).await;
+    h.dispatch().await;
+    let stage = h.running().await.remove(0);
+    assert_eq!(
+        h.backend.requests()[0].deadline,
+        Some(stage.started_at + chrono::Duration::minutes(180))
+    );
+}
+
+#[tokio::test]
+async fn retrying_with_above_default_effort_requires_a_reason() {
+    let h = Harness::new().await;
+    let queued = item(&h, enqueue(draft("implement", None), None)).await;
+    h.cli(Request::CancelItem {
+        item: queued.id.clone(),
+        reason: None,
+    })
+    .await
+    .unwrap();
+    let retry = |reasons| Request::RetryItem {
+        item: queued.id.clone(),
+        model_plan: Some(draft("implement", Some(Effort::High))),
+        model_reasons: reasons,
+        fresh: false,
+        brief_append: None,
+    };
+    assert!(refusal(&h, retry(None)).await.contains("implement"));
+    h.cli(retry(reason("implement")))
+        .await
+        .expect("reasoned retry");
+}

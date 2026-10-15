@@ -44,6 +44,9 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if let Some(logger) = &logger {
+        logger.install_panic_hook();
+    }
     // The daemon logs its work; everything else stays quiet unless RUST_LOG
     // asks. `archon mcp` speaks JSON-RPC on stdout, so logs go to stderr.
     let default_level = match &cli.command {
@@ -81,11 +84,15 @@ fn main() -> ExitCode {
     match result {
         Ok(code) => code,
         Err(error) => {
-            if let Some(logger) = &logger
-                && let Err(log_error) =
+            if let Some(logger) = &logger {
+                if let Err(log_error) =
                     logger.write_message(format!("archon: {error:#}\n").as_bytes())
-            {
-                eprintln!("archon: {log_error}");
+                {
+                    use std::io::Write as _;
+                    // The detach caller closes this startup pipe on success.
+                    let _closed_startup_pipe = writeln!(std::io::stderr(), "archon: {log_error}");
+                }
+                return ExitCode::FAILURE;
             }
             if json {
                 let code = error

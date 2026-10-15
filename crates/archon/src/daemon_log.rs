@@ -29,6 +29,27 @@ struct State {
 }
 
 impl Logger {
+    pub fn install_panic_hook(&self) {
+        let logger = self.clone();
+        std::panic::set_hook(Box::new(move |info| {
+            let message = format!("archon panicked: {info}\n");
+            // A panic inside logging invokes the hook before its mutex guard
+            // unwinds. Waiting for that guard would deadlock the process.
+            let result = match logger.state.try_lock() {
+                Ok(mut state) => state.log.write_bytes(message.as_bytes(), SystemTime::now()),
+                Err(error) => Err(anyhow::anyhow!(
+                    "daemon log unavailable during panic: {error}"
+                )),
+            };
+            if let Err(error) = result {
+                // A closed startup pipe must not trigger a second panic.
+                // Returning the write result avoids eprintln!'s panic on EPIPE.
+                let diagnostic = format!("archon: recording panic failed: {error}; {info}\n");
+                let _closed_startup_pipe = std::io::stderr().write_all(diagnostic.as_bytes());
+            }
+        }));
+    }
+
     pub fn open(path: &Path, config: &StorageConfig) -> anyhow::Result<Self> {
         let mut log = RotatingLog::open(path, config)?;
         let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
@@ -495,5 +516,29 @@ mod tests {
         assert!(error.to_string().contains("rotating"));
         let error = logger.monitor().await.unwrap_err();
         assert!(error.to_string().contains("writing daemon log"));
+    }
+
+    #[test]
+    fn detached_panics_are_recorded_in_the_log() {
+        const CHILD_PATH: &str = "ARCHON_LOG_PANIC_TEST_PATH";
+        if let Some(path) = std::env::var_os(CHILD_PATH) {
+            let logger = Logger::open(Path::new(&path), &config()).unwrap();
+            logger.install_panic_hook();
+            panic!("test detached panic");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("archond.log");
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "daemon_log::tests::detached_panics_are_recorded_in_the_log",
+            ])
+            .env(CHILD_PATH, &path)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        let text = read(&path);
+        assert!(text.contains("archon panicked:"), "{text}");
+        assert!(text.contains("test detached panic"), "{text}");
     }
 }

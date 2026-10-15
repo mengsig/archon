@@ -117,7 +117,7 @@ mod timeout_tests {
         let request = crate::tools::to_request(
             "steer_item",
             json!({
-                "item": "qi_1", "stage_timeouts": {"implement": 180}
+                "item": archon_core::id::QueueItemId::new(), "stage_timeouts": {"implement": 180}
             }),
         )
         .unwrap();

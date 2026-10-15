@@ -144,7 +144,7 @@ fn adaptive_samples() -> Vec<(&'static str, Value)> {
         ),
         (
             "steer_item",
-            json!({"item": qi(), "note": "Use the v2 client.", "stage": "implement", "model": "codex/astra", "effort": "high", "budget_usd": 12.5, "extend_minutes": 30, "abort_stage": true, "then": "goto", "goto": "review", "insert_stage": {"stage": "review", "from": "refactor", "after": "implement"}}),
+            json!({"item": qi(), "stage_timeouts": {"implement": 180}, "note": "Use the v2 client.", "stage": "implement", "model": "codex/astra", "effort": "high", "budget_usd": 12.5, "extend_minutes": 30, "abort_stage": true, "then": "goto", "goto": "review", "insert_stage": {"stage": "review", "from": "refactor", "after": "implement"}}),
         ),
         (
             "steer_item",

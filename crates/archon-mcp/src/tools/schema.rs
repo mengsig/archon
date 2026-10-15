@@ -198,7 +198,7 @@ fn stage_timeouts() -> Value {
 }
 
 fn model_reasons() -> Value {
-    json!({"type": "object", "description": "Why, one line per stage id (not the pipeline name).",
+    json!({"type": "object", "description": "Why per stage id (not pipeline).",
         "additionalProperties": {"type": "string", "maxLength": MAX_MODEL_REASON_CHARS}})
 }
 
@@ -215,8 +215,8 @@ fn model_plan(what: &str) -> Value {
     json!({
         "type": "object",
         "description": format!(
-            "{what} Stage id (from list_pipelines) to a list of {{model, effort}} within \
-             model_policy: one, or for a fan-out stage one per parallel agent (fewer are cycled). \
+            "{what} Stage id (list_pipelines) to {{model, effort}} lists within model_policy; \
+             fan-out cycles fewer choices. \
              No effort = the stage default; above it needs a model_reasons entry (prefer a stronger \
              model at default effort). `<stage>.review`: reviewers a stage delegates."
         ),

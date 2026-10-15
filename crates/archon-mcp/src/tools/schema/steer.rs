@@ -17,7 +17,7 @@ pub(super) fn steer_item() -> ToolDefinition {
     define(
         "steer_item",
         "Steer item",
-        "Change an item in place; give a change. Live agents take note/model/effort/budget/extra time; started stages keep their shape. insert_stage or switch_pipeline revives failed items on their branch and worktree.",
+        "Change without cancelling it. Live agents take note/model/effort/budget/extra time; stages that already started keep their shape. A failed item given insert_stage or switch_pipeline is queued again on its branch and worktree.",
         object(
             json!({
                 "item": item_id("The item to steer."),

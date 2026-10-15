@@ -37,6 +37,13 @@ async fn start(h: &Harness, title: &str) -> (QueueItem, StageRun) {
     (item, stage)
 }
 
+/// A harness whose repositories share one cargo target directory.
+async fn shared() -> Harness {
+    let mut config = Config::default();
+    config.worktrees.shared_cache = true;
+    Harness::with_config(config).await
+}
+
 async fn cancel(h: &Harness, item: &QueueItem) {
     let cancel = Request::CancelItem {
         item: item.id.clone(),
@@ -92,7 +99,7 @@ fn write(workspace: &Path, name: &str, text: &str) {
 
 #[tokio::test]
 async fn every_stage_agent_is_pointed_at_one_shared_cache_per_repository() {
-    let h = Harness::new().await;
+    let h = shared().await;
     let (item, stage) = start(&h, "builds").await;
     let target = cache_dir(&h).join("cargo-target");
     let told = instructions(&h);
@@ -125,16 +132,18 @@ async fn every_stage_agent_is_pointed_at_one_shared_cache_per_repository() {
 }
 
 #[tokio::test]
-async fn the_shared_cache_can_be_turned_off_for_everyone_or_for_one_repository() {
+async fn the_build_cache_can_be_turned_off_for_everyone_or_for_one_repository() {
     let mut config = Config::default();
     config.worktrees.shared_cache = false;
+    config.worktrees.item_cache = false;
+    config.worktrees.lean_builds = false;
     let h = Harness::with_config(config).await;
     start(&h, "no shared cache").await;
     assert!(!instructions(&h).contains("CARGO_TARGET_DIR"));
     assert!(!cache_dir(&h).exists());
 
-    let h = Harness::new().await;
-    h.repo_config("[cache]\nshared = false\n");
+    let h = shared().await;
+    h.repo_config("[cache]\nshared = false\nitem = false\nlean = false\n");
     start(&h, "repository opted out").await;
     assert!(!instructions(&h).contains("CARGO_TARGET_DIR"));
     assert!(!cache_dir(&h).exists());
@@ -147,9 +156,135 @@ async fn the_shared_cache_can_be_turned_off_for_everyone_or_for_one_repository()
     assert!(!config.exists());
 }
 
+fn item_dir(h: &Harness, item: &QueueItemId) -> PathBuf {
+    cache_dir(h).join("items").join(item.as_str())
+}
+
+/// Leave `dir` the way a test suite can: a subdirectory nobody can enter.
+fn lock_a_subdirectory(dir: &Path) {
+    use std::os::unix::fs::PermissionsExt as _;
+    let locked = dir.join("debug/locked");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::fs::write(locked.join("f"), vec![1u8; 100_000]).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+}
+
+async fn system_notes(h: &Harness) -> Vec<String> {
+    h.ctx
+        .store
+        .lock()
+        .await
+        .feed_after(0, 1000)
+        .unwrap()
+        .into_iter()
+        .filter_map(|f| match f.entry {
+            FeedEntry::System { text } => Some(text),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn each_item_builds_lean_in_its_own_directory_that_goes_when_it_ends() {
+    let h = Harness::new().await;
+    let (first, stage) = start(&h, "builds").await;
+    let target = item_dir(&h, &first.id).join("cargo-target");
+    assert!(
+        instructions(&h).contains(&format!("CARGO_TARGET_DIR={}", target.display())),
+        "{}",
+        instructions(&h)
+    );
+    assert!(target.is_dir());
+    let config = h
+        .ctx
+        .paths
+        .worktrees
+        .join(REPO_NAME)
+        .join(".cargo/config.toml");
+    let text = std::fs::read_to_string(config).unwrap();
+    assert!(text.contains("incremental = false"), "{text}");
+    assert!(text.contains("line-tables-only"), "{text}");
+    assert!(!text.contains("target-dir"), "{text}");
+
+    let second = h.enqueue("builds too").await;
+    h.dispatch().await;
+    let other = item_dir(&h, &second.id);
+    assert!(other.is_dir() && other != item_dir(&h, &first.id));
+
+    // Kept while the item lives: the next stage builds on it.
+    std::fs::write(target.join("warm.o"), b"object").unwrap();
+    let settled = h
+        .settle_running(|_| completed("implemented"))
+        .await
+        .into_iter()
+        .any(|s| s.run == stage.run);
+    assert!(settled);
+    assert!(target.join("warm.o").exists());
+
+    lock_a_subdirectory(&target);
+    cancel(&h, &first).await;
+    assert!(!item_dir(&h, &first.id).exists(), "deleted at its end");
+    assert!(other.is_dir(), "the other item's build is untouched");
+    let notes = system_notes(&h).await;
+    assert!(
+        notes
+            .iter()
+            .any(|n| n.starts_with("Freed") && n.contains(first.id.as_str())),
+        "{notes:?}"
+    );
+    let Ok(Reply::Status(status)) = h.cli(Request::Status).await else {
+        panic!("status");
+    };
+    let last = status.disk.unwrap().gc.expect("the release is shown");
+    assert!(last.bytes_freed >= 100_000, "{last:?}");
+}
+
+#[tokio::test]
+async fn gc_sweeps_item_build_directories_whose_item_is_final_or_gone() {
+    let h = Harness::new().await;
+    let (live, _) = start(&h, "still running").await;
+    let (gone, ended) = (QueueItemId::new(), h.enqueue("ended").await);
+    cancel(&h, &ended).await;
+    for orphan in [item_dir(&h, &gone), item_dir(&h, &ended.id)] {
+        std::fs::create_dir_all(orphan.join("cargo-target")).unwrap();
+        lock_a_subdirectory(&orphan);
+    }
+    let stray = cache_dir(&h).join("items/not-an-item");
+    std::fs::create_dir_all(&stray).unwrap();
+
+    let report = gc(&h, None).await;
+    assert_eq!(report.item_caches.len(), 2, "{report:?}");
+    assert!(report.bytes_freed >= 200_000, "{report:?}");
+    assert!(!item_dir(&h, &gone).exists() && !item_dir(&h, &ended.id).exists());
+    assert!(item_dir(&h, &live.id).is_dir(), "a live item's stays");
+    assert!(stray.is_dir(), "what is not an item's is the operator's");
+    let notes = system_notes(&h).await;
+    assert!(
+        notes
+            .iter()
+            .any(|n| n.starts_with("Gc freed") && n.contains("2 item(s)")),
+        "{notes:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_repository_can_keep_the_default_profile_by_turning_lean_off() {
+    let h = Harness::new().await;
+    h.repo_config("[cache]\nlean = false\n");
+    let (item, _) = start(&h, "full debuginfo").await;
+    assert!(item_dir(&h, &item.id).is_dir(), "still per item");
+    let config = h
+        .ctx
+        .paths
+        .worktrees
+        .join(REPO_NAME)
+        .join(".cargo/config.toml");
+    assert!(!config.exists());
+}
+
 #[tokio::test]
 async fn gc_never_touches_the_cache_of_a_repository_with_a_live_run() {
-    let h = Harness::new().await;
+    let h = shared().await;
     let (_item, _stage) = start(&h, "still running").await;
     age_cache(&h, Duration::from_secs(90 * 86_400));
     let target = cache_dir(&h).join("cargo-target");
@@ -169,7 +304,7 @@ async fn gc_never_touches_the_cache_of_a_repository_with_a_live_run() {
 
 #[tokio::test]
 async fn gc_deletes_an_idle_cache_and_says_what_it_freed() {
-    let h = Harness::new().await;
+    let h = shared().await;
     let (item, _) = start(&h, "finished").await;
     cancel(&h, &item).await;
     let target = cache_dir(&h).join("cargo-target");
@@ -221,7 +356,7 @@ async fn gc_deletes_an_idle_cache_and_says_what_it_freed() {
 
 #[tokio::test]
 async fn disk_pressure_shortens_how_long_an_idle_cache_is_kept() {
-    let h = Harness::new().await;
+    let h = shared().await;
     let (item, _) = start(&h, "finished").await;
     cancel(&h, &item).await;
     age_cache(&h, Duration::from_secs(2 * 86_400));

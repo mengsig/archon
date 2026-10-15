@@ -3493,28 +3493,66 @@ filters never run, the operator's do. Not yet through the shadow: a team's
 worker worktrees, merges and status (§13.1), which run no hook but the
 repository's filters.
 
-### 13.5 Shared build cache and durable artifacts
+### 13.5 Build cache and durable artifacts
 
-**Build cache.** A repository's stages build into one cargo target directory,
-`<data>/cache/<repo>/cargo-target`, never one per task and never `/tmp`.
-Aether cannot set an agent's environment, so archond keeps a
-`.cargo/config.toml` (marked as its own) in `<worktrees>/<repo>/` that
-points cargo at it for every worktree below, and the stage contract names
-the directory (`CARGO_TARGET_DIR=...`) for builds run elsewhere. A
-repository's own `.cargo/config.toml` is nearer a worktree and wins.
-`[worktrees] shared_cache = false`, or `[cache] shared = false` in
-`<repo>/.archon/config.toml`, turns it off; archond then removes the config
-it wrote. Cargo locks the directory, so concurrent builds are safe, but
-builds of one profile queue on that lock: a repository with many parallel
-items trades build time for disk and warm incremental state, and may opt
-out. A pool of target directories is not built; nothing needed it yet.
+**Build cache.** Cargo output of agent builds filled disks (one cold build of
+a mid-size workspace takes ~38 GB, 28 GB of it test-binary debuginfo and 10 GB
+incremental state), so builds are lean and scoped to the item.
 
-**Cache gc.** The gc pass (§13.2) also deletes a repository's cache that no
-run started in for `worktrees.shared_cache_after` (default 14d), unless a run
-of the repository is live (it is listed as skipped). While dispatch is held
-for disk space, `worktrees.pressure_after` applies to caches as to worktrees.
-The pass's feed note and `archon gc` / `archon status` report caches and
-artifacts removed and the bytes freed. Live runs' worktrees are never touched.
+- *Per-item target directory (default).* Each item builds into
+  `<data>/cache/<repo>/items/<item>/cargo-target`, never `/tmp`. Retries and
+  later stages of the item reuse it. When the item reaches a final state
+  (succeeded, failed, cancelled; a retry queues it again and recreates the
+  directory) archond deletes the directory once the run's agents are stopped,
+  after making unreadable subdirectories owner-accessible (test suites leave
+  mode-000 directories plain `rm` cannot enter). The feed and `archon status`
+  say how many bytes it freed. The gc pass (§13.2) sweeps `items/*`
+  directories whose item is final or gone, reporting them as item build
+  directories; a name that is no item id is left alone.
+- *Shared directory (option).* `[worktrees] shared_cache = true` (per
+  repository: `[cache] shared`) builds every item of the repository into
+  `<data>/cache/<repo>/cargo-target`. Cargo's build lock serialises parallel
+  builds of one profile, so items can hit the stage timeout; the idle
+  directory is deleted after `worktrees.shared_cache_after`.
+- *Off.* `[worktrees] item_cache = false` (per repository `[cache] item =
+  false`) with the shared mode off leaves agents building in their worktrees,
+  whose caches the worktree gc deletes.
+- *Lean profile.* Unless `[worktrees] lean_builds = false` (per repository
+  `[cache] lean = false`), archond's `.cargo/config.toml` sets
+  `[build] incremental = false` and `debug = "line-tables-only"` for
+  `[profile.dev]` and `[profile.test]`; backtraces keep file:line. Archond
+  writes it (marked as its own) in `<worktrees>/<repo>/`, above every
+  worktree, and removes it when neither the lean profile nor the shared
+  directory applies.
+
+Aether cannot set an agent's environment and cargo config has no per-item
+templating, so the per-item directory reaches cargo through the stage
+contract (`CARGO_TARGET_DIR=...`, which beats any config once exported); an agent
+that ignores it builds into its worktree, whose caches gc deletes. The shared
+directory is also written into the config as `target-dir`.
+
+*Precedence (checked with cargo 1.98).* Cargo takes each key from the nearest
+config, so a repository's own `.cargo/config.toml` (nearer a worktree) wins
+for any key it sets, including its own `[profile]` and `target-dir`.
+A `[profile]` in config beats the same setting in `Cargo.toml`, so archond's
+lean profile overrides a `debug = 2` in the repository's `Cargo.toml`;
+a repository that needs full debuginfo sets `[cache] lean = false` or its own
+`.cargo/config.toml`. `CARGO_TARGET_DIR` and `CARGO_PROFILE_*` environment
+variables beat all config files.
+
+*Disk floor.* The low-disk hold (§7.3, `limits.min_free_gb`, default 10 GiB)
+already covers builds started by new stages: no item and no stage agent is
+spawned below the floor, and the data directory (where the cache lives) is
+watched. It cannot stop a build a running agent starts; the lean profile and
+the end-of-item deletion keep those small.
+
+**Cache gc.** The gc pass (§13.2) also deletes a repository's shared cache
+that no run started in for `worktrees.shared_cache_after` (default 14d),
+unless a run of the repository is live (it is listed as skipped). While
+dispatch is held for disk space, `worktrees.pressure_after` applies to caches
+as to worktrees. The pass's feed note and `archon gc` / `archon status`
+report caches, item build directories and artifacts removed and the bytes
+freed. Live runs' worktrees are never touched.
 
 **Artifacts.** A stage publishes files with `publish_artifact` (a file or a
 directory of regular files, from inside its workspace). They are copied to

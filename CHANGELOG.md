@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Agent cargo builds are lean and per item: each item builds into
+  `<data>/cache/<repo>/items/<item>/cargo-target`, kept across retries and
+  deleted by archond when the item ends (unreadable subdirectories included);
+  `archon gc` sweeps ones whose item is final or gone, and the feed and
+  `archon status` report the bytes freed. archond's cargo config turns off
+  incremental builds and uses line-table debuginfo for dev and test. The
+  shared per-repository directory is now opt-in (`[worktrees] shared_cache =
+  true`); `[worktrees] item_cache`, `lean_builds` and the per-repository
+  `[cache] item`, `lean` switches turn the rest off. `GcReport` gains
+  `item_caches` (defaulted, so older clients still decode it).
+
 ## 1.2.3
 
 Released 2026-10-15.

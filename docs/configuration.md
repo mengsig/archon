@@ -35,7 +35,9 @@ auto_gc = true                 # archond collects finished runs' worktrees itsel
 cache_after = "1h"             # then deletes their build caches (git-ignored files)
 gc_after = "7d"                # and removes worktrees without uncommitted changes
 cache_dirs = ["target"]        # only these caches; unset = everything git ignores
-shared_cache = true            # stages build into one cargo target dir per repository
+item_cache = true              # each item builds in its own cargo target dir, deleted when it ends
+lean_builds = true             # no incremental state, line-table debuginfo (dev and test)
+shared_cache = false           # true: one cargo target dir per repository instead
 shared_cache_after = "14d"     # idle shared caches go; never while a run is live
 pressure_after = "1d"          # shorter ages while dispatch is held for disk space
 
@@ -45,10 +47,19 @@ max_item_mb = 1024
 keep_after = "30d"             # after the item settled
 ```
 
-A repository opts out of the shared cache with `[cache] shared = false` in
-`<repo>/.archon/config.toml`. Cargo locks a shared target directory, so
-parallel builds of one profile queue on it; opt out if that costs more than
-the disk.
+Each item's cargo target directory (`<data>/cache/<repo>/items/<item>`) is kept
+across its retries and deleted when the item reaches a final state; `archon
+gc` sweeps ones whose item is final or gone. A repository sets `[cache]
+item = false`, `shared = false` or `lean = false` in `<repo>/.archon/config.toml`
+to opt out of the per-item directory, the shared one or the lean profile. Cargo
+locks a shared target directory, so parallel builds of one profile queue on it.
+
+The lean profile is a `.cargo/config.toml` archond writes above the
+repository's worktrees: `[build] incremental = false` and `debug =
+"line-tables-only"` for `[profile.dev]` and `[profile.test]`. A repository's
+own `.cargo/config.toml` wins for the keys it sets, but archond's `[profile]`
+beats the one in `Cargo.toml`: set `[cache] lean = false` to keep full
+debuginfo. New work already holds below `[limits] min_free_gb`.
 
 To run Archon on your own `aetherd` instead, set `[aether] mode = "shared"`.
 In shared mode, `archon setup` adds the `archon` MCP server to your

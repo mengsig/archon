@@ -22,9 +22,10 @@ use crate::id::{
 use crate::initiative::{ContractChange, EnqueueInitiative, Initiative, InitiativeDetail};
 use crate::lesson::{Lesson, LessonDraft, LessonPatch, LessonQuery, LessonStats, LessonWhy};
 use crate::merge::MergeRequest;
-use crate::model::{Effort, ModelChoice, ModelPlan, ModelReasons, ModelRef};
+use crate::model::{Effort, ModelChoice, ModelPlanDraft, ModelReasons, ModelRef};
 use crate::model_evidence::{ModelEvidenceQuery, ModelEvidenceReport};
 use crate::notify::{FeedItem, NotificationKind, Question};
+use crate::ops::{UpgradeRequest, Versions};
 use crate::policy::ModelPolicy;
 use crate::queue::{Caps, PauseState, Priority, QueueItem};
 use crate::repo::{Repo, ShipMode};
@@ -44,10 +45,12 @@ use crate::steer::Steer;
 /// 9: `[limits] budgets_enabled`; `Caps` carries it, and a change that sets an
 /// item's budget while budgets are off answers `ItemBudgetsOff`.
 /// 10: `refresh_item`; an older archond knows no such request.
-/// 11: merging on the operator's request (`merge_item`, `request_merge`) and
+/// 11: `upgrade`, `check_updates` and `repo_add`'s `github_watch`; an older
+/// archond would register a repository and silently leave it unwatched.
+/// 12: merging on the operator's request (`merge_item`, `request_merge`) and
 /// a repository's `grant_merge`, which an older archond would drop.
-/// 12: daemon-verified operator authority requests and settings.
-pub const PROTOCOL_VERSION: u32 = 12;
+/// 13: daemon-verified operator authority requests and settings.
+pub const PROTOCOL_VERSION: u32 = 13;
 
 /// Said beside an item whose `budget_usd` was set while budgets are off.
 pub const BUDGETS_OFF_NOTE: &str = "Dollar budgets are globally off ([limits] budgets_enabled = \
@@ -183,7 +186,7 @@ pub enum Request {
     },
     RetryItem {
         item: QueueItemId,
-        model_plan: Option<ModelPlan>,
+        model_plan: Option<ModelPlanDraft>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model_reasons: Option<ModelReasons>,
         /// Start again from the base branch's head, on a new branch, with
@@ -299,6 +302,12 @@ pub enum Request {
     OrchestratorAttach,
     /// CLI only: cancel and recreate the orchestrator agent.
     OrchestratorRestart,
+    /// Operator only: install, drain, then restart archond and Archon's own
+    /// aetherd. Accepted at once; each step is reported in the feed.
+    Upgrade(UpgradeRequest),
+    /// Operator only, as it asks the network: the latest releases of archon
+    /// and aether, kept for `status` and `queue_status`.
+    CheckUpdates,
 
     /// CLI only: collect what finished runs left (ARCHITECTURE §13.2).
     /// Worktrees go once their runs finished `older_than_secs` ago
@@ -413,10 +422,6 @@ pub enum Request {
         #[serde(default)]
         chat: bool,
     },
-    /// The orchestrator asks to merge an item's pull request because the
-    /// operator asked it to: archond asks the operator to confirm, unless
-    /// the repository's `grant_merge` lets it merge at once.
-    /// The orchestrator cites a message observed on archond's own stream.
     /// Whole-message command on the operator socket; never exposed over MCP.
     OperatorCommand {
         text: String,
@@ -424,6 +429,7 @@ pub enum Request {
     UndoAuthority {
         change: u64,
     },
+    /// The orchestrator cites a message observed on archond's own stream.
     RequestAuthority {
         action: Box<Request>,
         utterance: u64,
@@ -431,6 +437,7 @@ pub enum Request {
         reason: String,
         caller: Option<AetherAgentId>,
     },
+    /// Request a merge; archond confirms unless `grant_merge` permits it.
     RequestMerge {
         item: QueueItemId,
         /// What the operator said, in a line.
@@ -455,6 +462,8 @@ impl Request {
             | Self::Say { .. }
             | Self::OrchestratorRestart
             | Self::OrchestratorAttach
+            | Self::Upgrade(_)
+            | Self::CheckUpdates
             | Self::Gc { .. }
             | Self::ConfigureGithubWatcher { .. }
             | Self::UpdateLesson { .. }
@@ -464,7 +473,7 @@ impl Request {
             | Self::LearningRetryMemory { .. }
             | Self::MergeItem { .. }
             | Self::Answer { .. } => true,
-            Self::RepoAdd(add) => add.auto_merge,
+            Self::RepoAdd(add) => add.auto_merge || add.github_watch,
             Self::Pause(target) | Self::Resume(target) => {
                 matches!(target, PauseTarget::Global { hard: true })
             }
@@ -505,7 +514,8 @@ impl Request {
             | Self::LessonStats { .. }
             | Self::LearningWhy { .. }
             | Self::ListArtifacts { .. }
-            | Self::ReadArtifact { .. } => true,
+            | Self::ReadArtifact { .. }
+            | Self::CheckUpdates => true,
             Self::ForAgent { request, .. } => request.is_read_only(),
             _ => false,
         }
@@ -523,6 +533,10 @@ pub struct RepoAdd {
     /// operator only, as it raises the ceiling. `RepoUpdate` sets the rest.
     #[serde(default)]
     pub auto_merge: bool,
+    /// Also watch the repository's GitHub `origin` with Archon's watcher;
+    /// operator only, as only the operator changes what is watched.
+    #[serde(default)]
+    pub github_watch: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -578,10 +592,13 @@ pub struct EnqueueRequest {
     /// Choices per stage, within the model policy. Optional: a stage left
     /// out gets what was learned for the repository, else a default.
     #[serde(default)]
-    pub model_plan: ModelPlan,
+    pub model_plan: ModelPlanDraft,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_reasons: Option<ModelReasons>,
     pub budget_usd: Option<f64>,
+    /// Stage id to minutes, within `[limits] max_stage_timeout_minutes`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub stage_timeouts: BTreeMap<String, u32>,
     /// Retrying an enqueue with the same key returns the first item.
     pub idempotency_key: Option<String>,
     /// Knobs chosen for this item; the rest come from the defaults. The
@@ -607,13 +624,16 @@ pub struct ItemQuery {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ItemPatch {
     pub priority: Option<Priority>,
-    pub model_plan: Option<ModelPlan>,
+    pub model_plan: Option<ModelPlanDraft>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_reasons: Option<ModelReasons>,
     pub tags: Option<Vec<String>>,
     #[serde(default)]
     pub add_depends_on: Vec<QueueItemId>,
     pub budget_usd: Option<f64>,
+    /// Stage id to minutes, merged into the item's; within the configured maximum.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub stage_timeouts: BTreeMap<String, u32>,
     /// Appended to the brief under a dated "Amendment" heading; a running
     /// item's live agents are sent it (ARCHITECTURE §6.6).
     #[serde(default)]
@@ -683,6 +703,11 @@ pub enum Reply {
     GithubComment {
         url: String,
     },
+    /// An upgrade was accepted; what it will do.
+    UpgradeStarted {
+        text: String,
+    },
+    Versions(Box<Versions>),
     Gc(Box<GcReport>),
     Artifacts(Box<ArtifactListing>),
     ArtifactPage(Box<ArtifactPage>),
@@ -718,6 +743,9 @@ pub struct GcReport {
     /// Items' published artifacts deleted after `artifacts.keep_after`.
     #[serde(default)]
     pub artifacts: Vec<Reclaimed>,
+    /// Owned report snapshots of settled items removed after storage retention.
+    #[serde(default)]
+    pub reports: Vec<Reclaimed>,
     /// Disk space freed by everything above together.
     pub bytes_freed: u64,
     /// The pass ran with the shorter disk-pressure ages.
@@ -739,6 +767,7 @@ impl GcReport {
         self.reclaimed.extend(other.reclaimed);
         self.caches.extend(other.caches);
         self.artifacts.extend(other.artifacts);
+        self.reports.extend(other.reports);
         self.skipped.extend(other.skipped);
         self.failed.extend(other.failed);
         self.bytes_freed = self.bytes_freed.saturating_add(other.bytes_freed);
@@ -750,6 +779,7 @@ impl GcReport {
             || !self.reclaimed.is_empty()
             || !self.caches.is_empty()
             || !self.artifacts.is_empty()
+            || !self.reports.is_empty()
     }
 
     /// What the pass did, in one line, for the feed and `archon status`.
@@ -761,12 +791,13 @@ impl GcReport {
         };
         format!(
             "Gc{why} freed {}: removed {} worktree(s) and set-aside directories, deleted the \
-             build caches of {} worktree(s), {} shared build cache(s) and the artifacts of {} item(s).",
+             build caches of {} worktree(s), {} shared build cache(s), the artifacts of {} item(s), and {} report snapshot(s).",
             gib(self.bytes_freed),
             self.removed.len(),
             self.reclaimed.len(),
             self.caches.len(),
             self.artifacts.len(),
+            self.reports.len(),
         )
     }
 }
@@ -876,6 +907,13 @@ pub struct DaemonStatus {
     /// `None` from an archond that predates the check.
     #[serde(default)]
     pub disk: Option<DiskStatus>,
+    /// Running, installed and latest versions of archon and aether as
+    /// archond last read them. `None` before the first reading.
+    #[serde(default)]
+    pub versions: Option<Versions>,
+    /// The upgrade under way, in one line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upgrade: Option<String>,
 }
 
 /// `DaemonStatus::disk`: the fuller of the filesystems holding the data
@@ -902,6 +940,19 @@ pub struct DiskStatus {
     /// The last gc pass that freed anything.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gc: Option<GcStatus>,
+    /// Sampled at most once a minute; paths are disjoint within each kind.
+    #[serde(default)]
+    pub storage: Vec<StorageUsage>,
+}
+
+/// Allocated bytes for one storage kind, without following symlinks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StorageUsage {
+    pub kind: String,
+    pub path: std::path::PathBuf,
+    pub bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// `bytes` in GiB with one decimal, as `df -h` shows sizes.
@@ -996,6 +1047,8 @@ pub enum WaitingReasonCode {
     DependencyFailed,
     DependencyWaiting,
     GlobalPause,
+    /// An operator's upgrade drains Archon before it restarts.
+    Draining,
     LowDisk,
     TotalBudget,
     DailyBudget,
@@ -1038,6 +1091,9 @@ pub struct ItemDetail {
     /// How the cost of each stage run that delegated splits.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub delegations: BTreeMap<StageRunId, StageDelegation>,
+    /// The default effort of each plan key, to see which choices exceed it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub default_efforts: BTreeMap<String, Effort>,
     /// Every steer of the item, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub steers: Vec<crate::steer::SteerRecord>,
@@ -1474,9 +1530,10 @@ mod tests {
             priority: Priority::Normal,
             dependencies: vec![],
             tags: vec![],
-            model_plan: ModelPlan::default(),
+            model_plan: crate::model::ModelPlan::default(),
             model_reasons: None,
             budget_usd: None,
+            stage_timeouts: BTreeMap::new(),
             autonomy: Default::default(),
             origin: None,
             fresh_retries: 0,
@@ -1560,8 +1617,29 @@ mod tests {
             base_branch: None,
             default_pipeline: None,
             auto_merge: true,
+            github_watch: false,
         };
-        assert!(Request::RepoAdd(merge).is_operator_only());
+        assert!(Request::RepoAdd(merge.clone()).is_operator_only());
+        let watch = RepoAdd {
+            auto_merge: false,
+            github_watch: true,
+            ..merge
+        };
+        assert!(Request::RepoAdd(watch.clone()).is_operator_only());
+        let plain = RepoAdd {
+            github_watch: false,
+            ..watch
+        };
+        assert!(!Request::RepoAdd(plain).is_operator_only());
+        let upgrade = Request::Upgrade(crate::ops::UpgradeRequest {
+            archon: Some(crate::ops::UpgradeTarget::Main),
+            aether: None,
+            drain_secs: 60,
+            requeue: false,
+            keep_aether: false,
+        });
+        assert!(upgrade.is_operator_only() && !upgrade.is_read_only());
+        assert!(Request::CheckUpdates.is_operator_only());
         for operator_users in [None, Some(OperatorUsers::parse(&["octocat"]).unwrap())] {
             let change = WatcherChange::Operators { operator_users };
             let request = Request::ConfigureGithubWatcher { change };

@@ -139,6 +139,7 @@ pub(super) async fn recover(ctx: &DaemonContext) -> Result<FollowUp, ArchonError
     // the questions of gates opened just before a crash run now.
     Ok(FollowUp {
         cleanup: follow.cleanup,
+        discard: follow.discard,
         gates: follow.gates,
         merge: follow.merge,
         poke: true,
@@ -239,8 +240,10 @@ pub(super) async fn driver_of(
     assert_eq!(spec.name(), run.pipeline, "a run keeps its snapshot's name");
     let gates = ctx.store.lock().await.gates_for_run(&run.id)?;
     let operator_gates = OperatorGates::for_run(&spec, &item.autonomy);
-    let mut driver =
-        RunDriver::new(Arc::new(spec), item.model_plan, vars)?.with_gates(operator_gates)?;
+    let experiments = crate::experiments::item_dir(&ctx.paths, &item.id);
+    let mut driver = RunDriver::new(Arc::new(spec), item.model_plan, vars)?
+        .with_gates(operator_gates)?
+        .with_experiments(experiments);
     for gate in gates {
         assert_eq!(gate.run, run.id, "gates_for_run returns the run's gates");
         if let Some(decision) = gate.decision {

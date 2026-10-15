@@ -23,7 +23,10 @@ pub(super) fn check_channel(
             "operator authority from Aether chat is disabled in shared mode".into(),
         ));
     }
-    if message.channel.is_github() && matches!(action, Request::ConfigureGithubWatcher { .. }) {
+    if message.channel.is_github()
+        && (matches!(action, Request::ConfigureGithubWatcher { .. })
+            || matches!(action, Request::RepoAdd(add) if add.github_watch))
+    {
         return Err(ArchonError::Forbidden(
             "GitHub cannot change watcher repositories, allowlists or operators; use operator chat"
                 .into(),

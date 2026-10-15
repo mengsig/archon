@@ -507,6 +507,7 @@ fn item_in(state: QueueState, updated_secs_ago: i64) -> QueueItem {
         budget_usd: None,
         autonomy: archon_core::autonomy::Autonomy::default(),
         origin: None,
+        stage_timeouts: Default::default(),
         fresh_retries: 0,
         initiative: None,
         state,
@@ -853,4 +854,31 @@ fn a_workspace_is_as_recent_as_its_latest_run() {
     assert!(!old(a), "a recent retry keeps the worktree");
     assert!(!old(b), "an unfinished run keeps the worktree");
     assert_eq!(last.len(), 2);
+}
+
+#[test]
+fn configured_zero_disables_each_gc_age_even_under_pressure() {
+    use archon_core::age::Age;
+    use archon_core::config::Config;
+    let mut config = Config::default();
+    config.worktrees.gc_after = Age::from_secs(0);
+    config.worktrees.cache_after = Age::from_secs(0);
+    config.worktrees.shared_cache_after = Age::from_secs(0);
+    config.artifacts.keep_after = Age::from_secs(0);
+    let now = archon_core::now();
+    let policy = Policy::new(&config.worktrees, now, None, false)
+        .unwrap()
+        .under_pressure(&config.worktrees, now)
+        .unwrap();
+    assert_eq!(policy.remove_before, Timestamp::MIN_UTC);
+    assert_eq!(policy.reclaim_before, Timestamp::MIN_UTC);
+    assert!(!policy.owed_cleanup);
+    let extras = super::Extras::new(&config, now, None, true).unwrap();
+    assert_eq!(extras.cache_before, Timestamp::MIN_UTC);
+    assert_eq!(extras.artifacts_before, Timestamp::MIN_UTC);
+    let manual = Policy::new(&config.worktrees, now, Some(Age::from_secs(0)), false).unwrap();
+    assert_eq!(
+        manual.remove_before, now,
+        "an explicit --older-than 0s still collects now"
+    );
 }

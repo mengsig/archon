@@ -81,6 +81,9 @@ pub struct Steer {
     pub budget_usd: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extend_minutes: Option<u32>,
+    /// Timeout overrides for stages spawned after this steer.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub stage_timeouts: std::collections::BTreeMap<String, u32>,
     /// Abort the stage, then do this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub abort: Option<Then>,

@@ -69,6 +69,7 @@ fn steer_of(args: QueueSteerArgs) -> Steer {
         (None, Some(AfterAbort::Retry) | None) => Some(Then::Retry),
     };
     Steer {
+        stage_timeouts: Default::default(),
         note: args.note,
         stage: args.remove.or(args.stage),
         model: args.model,

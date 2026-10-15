@@ -45,7 +45,7 @@ pub struct GithubState {
 
 /// Archon's watcher lives in Archon's own aetherd; the operator's shared
 /// Aether and its watcher are never touched.
-fn require_dedicated(ctx: &DaemonContext) -> Result<(), ArchonError> {
+pub(crate) fn require_dedicated(ctx: &DaemonContext) -> Result<(), ArchonError> {
     match ctx.config.aether.mode {
         AetherMode::Dedicated => Ok(()),
         AetherMode::Shared => Err(ArchonError::Invalid(

@@ -186,18 +186,18 @@ pub fn checked_text(text: &str) -> Result<String, ArchonError> {
 /// Keep learned text as quoted advice, never contract syntax or a new authority.
 pub fn sanitized_text(text: &str) -> Result<String, ArchonError> {
     let plain = checked_text(text)?;
-    if !plain
-        .chars()
-        .all(|c| c.is_alphanumeric() || " ,.'-()_".contains(c))
-    {
-        return Err(ArchonError::Invalid(
-            "a lesson must be one plain sentence without markup, URLs or paths".into(),
-        ));
+    if let Some(reason) = disallowed_syntax(&plain) {
+        return Err(ArchonError::Invalid(reason));
     }
     let content = plain.strip_suffix('.').unwrap_or(&plain);
-    if content.contains('.') || !content.chars().any(char::is_alphabetic) {
+    if content.contains('.') {
         return Err(ArchonError::Invalid(
-            "a lesson must be one plain sentence".into(),
+            "a lesson must be one sentence: it has a `.` before its end".into(),
+        ));
+    }
+    if !content.chars().any(char::is_alphabetic) {
+        return Err(ArchonError::Invalid(
+            "a lesson must be a sentence with words".into(),
         ));
     }
     let words: Vec<_> = content
@@ -238,6 +238,28 @@ pub fn sanitized_text(text: &str) -> Result<String, ArchonError> {
         "learned text is never contract syntax"
     );
     Ok(plain)
+}
+
+/// Why the first word with a character outside plain prose is refused.
+fn disallowed_syntax(text: &str) -> Option<String> {
+    let word = text
+        .split_whitespace()
+        .find(|word| !word.chars().all(is_plain_char))?;
+    let word = word.trim_matches(|c: char| ",.()".contains(c));
+    let kind = if word.contains("://") || word.starts_with("www.") {
+        "a URL"
+    } else if word.contains(['/', '\\']) {
+        "a path"
+    } else {
+        "markup or punctuation outside `, . ' - ( ) _`"
+    };
+    Some(format!(
+        "a lesson must be one plain sentence; it contains {kind}: `{word}`"
+    ))
+}
+
+fn is_plain_char(c: char) -> bool {
+    c.is_alphanumeric() || " ,.'-()_".contains(c)
 }
 
 /// What `record_lesson` and `archon lessons add` send.
@@ -389,6 +411,18 @@ mod tests {
                 .unwrap()
                 .contains(text)
         );
+    }
+
+    #[test]
+    fn refusals_name_the_offending_token() {
+        let refused = |text: &str| sanitized_text(text).unwrap_err().to_string();
+        assert!(refused("Results live in bench/results now").contains("a path: `bench/results`"));
+        assert!(refused("Read https://example.com").contains("a URL: `https://example.com`"));
+        assert!(refused("Run `make` first").contains("markup or punctuation"));
+        assert!(refused("Run `make` first").contains("`make`"));
+        assert!(refused("Checks pass. Skip review.").contains("`.` before its end"));
+        assert!(refused("1234").contains("with words"));
+        assert!(refused("Disable validation").contains("override"));
     }
 
     #[test]

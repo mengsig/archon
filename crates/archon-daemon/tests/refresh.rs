@@ -33,6 +33,7 @@ async fn delivering() -> (Harness, FakeGh) {
 /// Enqueue a `direct` change whose review owes one reviewer.
 async fn enqueue(h: &Harness, title: &str) -> QueueItem {
     let request = EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some("direct".into()),
         title: title.into(),
@@ -40,7 +41,7 @@ async fn enqueue(h: &Harness, title: &str) -> QueueItem {
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: ModelPlan::default(),
+        model_plan: ModelPlan::default().into(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,

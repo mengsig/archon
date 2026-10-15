@@ -10,6 +10,7 @@
 pub mod coordination;
 mod dependencies;
 mod descendants;
+mod discard;
 mod finish;
 pub(crate) mod frozen;
 mod gate_news;
@@ -52,6 +53,7 @@ use archon_pipeline::{RunDriver, ShipPlan, SpawnPlan};
 
 use crate::context::DaemonContext;
 
+pub(crate) use discard::item_stopped;
 pub(crate) use finish::notify;
 pub(crate) use recover::{prune_finished_run_vars, set_run_auto_merge};
 pub(crate) use revive::revived;
@@ -142,6 +144,8 @@ pub(crate) struct FollowUp {
     /// Runs whose team roster may be owed to their running roles.
     pub roster: Vec<PipelineRunId>,
     pub cleanup: Vec<Cleanup>,
+    /// Finished runs whose item's experiments directory may be discarded now.
+    pub discard: Vec<PipelineRunId>,
     /// Freshly opened operator gates to show and ask about.
     pub gates: Vec<gates::GateKey>,
     /// Completed stage runs whose listed reports to publish.
@@ -179,6 +183,7 @@ impl FollowUp {
         self.descendant_stops.extend(other.descendant_stops);
         self.roster.extend(other.roster);
         self.cleanup.extend(other.cleanup);
+        self.discard.extend(other.discard);
         self.gates.extend(other.gates);
         self.publish.extend(other.publish);
         self.merge.extend(other.merge);
@@ -200,6 +205,7 @@ impl FollowUp {
             && self.descendant_stops.is_empty()
             && self.roster.is_empty()
             && self.cleanup.is_empty()
+            && self.discard.is_empty()
             && self.gates.is_empty()
             && self.publish.is_empty()
             && self.merge.is_empty()
@@ -503,7 +509,11 @@ async fn stop_and_spawn(ctx: &DaemonContext, round: &mut Round, follow: &mut Fol
     }
     for run in dedup(take(&mut follow.retire)) {
         let retired = run_node::retire(ctx, &run).await;
-        round.record(retired.map(|()| FollowUp::default()));
+        let discard = vec![run];
+        round.record(retired.map(|()| FollowUp {
+            discard,
+            ..FollowUp::default()
+        }));
     }
     for (agent, reason) in take(&mut follow.cancel_agents) {
         round.record(sweep::cancel_stray(ctx, &agent, &reason).await);
@@ -552,6 +562,9 @@ async fn deliver_and_tidy(ctx: &DaemonContext, round: &mut Round, follow: Follow
     let cleanups = lanes::group(follow.cleanup.into_iter().map(|c| (c.repo_path.clone(), c)));
     for removed in lanes::run(cleanups, |cleanup| remove_ended_worktree(ctx, cleanup)).await {
         round.record(removed);
+    }
+    for run in dedup(follow.discard) {
+        round.record(discard::discard(ctx, &run).await);
     }
 }
 

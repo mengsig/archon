@@ -1,0 +1,14 @@
+ok	ask-cache-invalidation	untouched: pass=false score=Some(0.0)	reference: pass=true score=Some(1.0)
+ok	feature-token-bucket	untouched: pass=false score=None	reference: pass=true score=None
+ok	fix-off-by-one	untouched: pass=false score=None	reference: pass=true score=None
+ok	long-backlog	untouched: pass=false score=Some(0.0)	reference: pass=true score=Some(1.0)
+ok	multi-repo-currency	untouched: pass=false score=None	reference: pass=true score=None
+ok	multi-repo-pagination	untouched: pass=false score=None	reference: pass=true score=None
+ok	quality-ledger-transfer	untouched: pass=false score=None	reference: pass=true score=None
+	naive: pass=false score=None
+ok	quality-retry-budget	untouched: pass=false score=None	reference: pass=true score=None
+	naive: pass=false score=None
+ok	quality-safe-extract	untouched: pass=false score=None	reference: pass=true score=None
+	naive: pass=false score=None
+ok	refactor-order-status	untouched: pass=false score=None	reference: pass=true score=None
+ok	review-seeded-bug	untouched: pass=false score=Some(0.0)	reference: pass=true score=Some(1.0)

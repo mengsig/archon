@@ -331,6 +331,7 @@ async fn a_stage_publishes_files_that_outlive_its_worktree_and_reach_dependents(
 
 async fn depends_on(h: &Harness, title: &str, after: &QueueItem) -> QueueItem {
     let request = EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(PIPELINE.into()),
         title: title.into(),
@@ -338,7 +339,7 @@ async fn depends_on(h: &Harness, title: &str, after: &QueueItem) -> QueueItem {
         priority: Default::default(),
         depends_on: vec![after.id.clone()],
         tags: Vec::new(),
-        model_plan: plan(),
+        model_plan: plan().into(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,
@@ -414,7 +415,7 @@ async fn artifacts_obey_the_configured_size_limits() {
 #[tokio::test]
 async fn gc_deletes_artifacts_only_of_settled_items_past_keep_after() {
     let mut config = Config::default();
-    config.artifacts.keep_after = Age::from_secs(0);
+    config.artifacts.keep_after = Age::from_secs(1);
     let h = Harness::with_config(config).await;
     let (live, live_stage) = start(&h, "still running").await;
     let workspace = h.run(&live.id).await.workspace;
@@ -423,6 +424,12 @@ async fn gc_deletes_artifacts_only_of_settled_items_past_keep_after() {
 
     let done = h.enqueue("settled").await;
     cancel(&h, &done).await;
+    {
+        let mut store = h.ctx.store.lock().await;
+        let mut item = store.item(&done.id).unwrap();
+        item.updated_at -= chrono::Duration::seconds(2);
+        store.update_item(&item).unwrap();
+    }
     let kept = h.ctx.paths.artifacts();
     std::fs::create_dir_all(kept.join(done.id.as_str())).unwrap();
     std::fs::write(kept.join(done.id.as_str()).join("old.txt"), b"old").unwrap();

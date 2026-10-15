@@ -31,6 +31,7 @@ pub(crate) async fn handle(
         }
         // Preserve the existing refusal messages for shared-mode chat.
         chat_answer::handle(ctx, &message.text, None).await?;
+        crate::chat_ops::handle(ctx, &message.text).await?;
         return chat_merge::handle(ctx, &message.text, MergeAuthority::AetherChat).await;
     }
     if github && ctx.aether.client()?.welcome().protocol_version < 17 {
@@ -118,6 +119,10 @@ async fn execute(
             },
         )
         .await;
+    }
+    // Existing upgrade/watch commands remain restricted to authenticated TUI users.
+    if !github {
+        crate::chat_ops::handle(ctx, text).await?;
     }
     let command = match gate_alias(ctx, text).await {
         Ok(Some(command)) => command,

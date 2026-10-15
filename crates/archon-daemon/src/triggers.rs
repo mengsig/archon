@@ -115,6 +115,14 @@ pub enum TriggerEvent {
         /// The answer as recorded, or why nothing was; clipped.
         text: String,
     },
+    /// What the daemon did with an operator's `/upgrade` or `/watch` chat command.
+    ChatCommand {
+        /// The command's name, e.g. `/upgrade`.
+        command: String,
+        applied: bool,
+        /// What was started, or why nothing was; clipped.
+        text: String,
+    },
     /// An operator `/merge` chat command refused before any merge began.
     ChatMergeRefused {
         /// Why; clipped.
@@ -226,6 +234,7 @@ impl TriggerEvent {
             Self::OperatorAnswer { .. } => "operator_answer",
             Self::GateOpened { .. } => "gate_opened",
             Self::ChatAnswer { .. } => "chat_answer",
+            Self::ChatCommand { .. } => "chat_command",
             Self::ChatMergeRefused { .. } => "chat_merge_refused",
             Self::MergeFinished { .. } => "merge_finished",
             Self::LavishFeedback { .. } => "lavish_feedback",
@@ -246,6 +255,7 @@ impl TriggerEvent {
         match self {
             Self::OperatorAnswer { .. }
             | Self::ChatAnswer { .. }
+            | Self::ChatCommand { .. }
             | Self::ChatMergeRefused { .. }
             | Self::MergeFinished { .. }
             | Self::GateOpened { .. }
@@ -1052,6 +1062,11 @@ mod tests {
                 number: Some(4),
                 applied: true,
                 text: "yes".into(),
+            },
+            TriggerEvent::ChatCommand {
+                command: "/upgrade".into(),
+                applied: false,
+                text: "no".into(),
             },
             TriggerEvent::ChatMergeRefused { text: "no".into() },
             TriggerEvent::MergeFinished {

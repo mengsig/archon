@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Drained upgrades and restarts (`archon daemon upgrade`, `daemon restart`
+  and `/upgrade`), running/installed/latest versions in status, and explicit
+  `status --check-updates` release checks (#37, #43). Daemon protocol 11.
+- `repo add --github` and `/watch` register GitHub watching for a repository
+  through Archon's dedicated Aether (#37, #43).
+
+- Sustainable filesystem retention: detached daemon logs rotate by size and
+  age (10 MiB, three archives, 14 days by default), settled item report/Lavish
+  snapshots expire after `[storage] retention_days = 14` with live work, gates
+  and questions protected, and status / `queue_status` report bytes by storage
+  kind and the last GC's freed bytes. SQLite history and spend remain intact.
+
+### Changed
+
+- Artifact retention defaults to 14 days. Existing tighter worktree/cache
+  defaults stay unchanged; zero durations disable their configured expiry.
+
+### Fixes
+
+- Upgrades drain before replacing binaries, keeping the old CLI and agent
+  tools compatible with archond while running stages finish. Dispatch stays
+  held during installation; an expired drain installs nothing unless requeue
+  was requested.
+- Update checks probe both programs' installed and latest versions concurrently,
+  with a 15-second limit per probe within the client's 60-second timeout.
+- The multi-repository currency benchmark runs its ledger through Cargo,
+  honoring worktree configuration and `CARGO_TARGET_DIR`.
+- Reviewers' experiment copies now go in a directory Archon owns on its data
+  disk, `<data>/experiments/<item>`, instead of wherever `mktemp -d` puts
+  them, which is often a small `/tmp` the whole machine shares. Archon creates
+  the directory before a stage that can review starts and names it in the
+  contract. It deletes the directory once the item has finished and its
+  agents, and every agent they started, have stopped. `archon gc` removes any
+  a crash left behind, and never follows a symlink there.
+
 ## 1.2.3
 
 Released 2026-10-15.

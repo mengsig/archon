@@ -289,6 +289,7 @@ fn relevance_of(
         TriggerEvent::OperatorAnswer { .. }
         | TriggerEvent::AgentMessage { .. }
         | TriggerEvent::ChatAnswer { .. }
+        | TriggerEvent::ChatCommand { .. }
         | TriggerEvent::ChatMergeRefused { .. }
         | TriggerEvent::MergeFinished { .. }
         | TriggerEvent::Mirror { .. } => Relevance::Pinned,

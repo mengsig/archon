@@ -607,6 +607,37 @@ Known limitations:
   orchestrator created since starts an empty transcript. `archon questions`
   always lists every open question.
 
+### Upgrading and watching from the orchestrator's chat
+
+Two more whole-message commands are applied by archond as `/answer` is, with
+the same rules: only your own message (the `user` actor), only alone in the
+message, and off in shared mode.
+
+```text
+/upgrade archon|aether|both <version|latest|main> [requeue]
+/upgrade restart [requeue] [keep-aether]
+/watch <registered repository>
+```
+
+`/upgrade` is `archon daemon upgrade` (or `archon daemon restart`): archond
+holds dispatch while running stage agents finish (at most 30 minutes),
+installs what you named while dispatch stays held, then hands the restart to a detached
+`archon daemon relaunch` that outlives it, stops, and is started again with
+Archon's own aetherd. The next archond reports the old and new versions in
+the feed. Without `requeue` a drain that runs out gives the restart up and
+dispatch goes on; with it the restart goes ahead and the stages it stopped
+are retried. `keep-aether` restarts archond alone, so stage agents keep
+running. A binary in cargo's bin directory is rebuilt with
+`cargo install --locked --git … --tag v<version>` (or `--branch main`); an
+installer's binary runs its own `<program> update`. `archon status` shows
+the upgrade's progress, and running against installed versions when they
+differ; `archon status --check-updates` also asks for the latest releases.
+
+`/watch` is `archon github-watcher add` for a registered repository's
+GitHub `origin`, so `github_reply` and GitHub triggers work for it. Agents
+cannot do either: the orchestrator's `register_repo` never watches, and
+both commands are refused for anyone but you.
+
 `archon` starts Archon's `aetherd` and `archond` when they are not running,
 as any command that changes something does; a command that only reads never
 starts either ([which commands start archond](#which-commands-start-archond)).

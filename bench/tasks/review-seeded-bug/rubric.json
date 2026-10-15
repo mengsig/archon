@@ -12,7 +12,7 @@
     {
       "name": "ties that bug to forgery / authentication bypass",
       "all": [
-        ["forg", "bypass", "impersonat", "arbitrary (payload|claims|user|token)", "without (knowing|the) (the )?secret", "any payload"],
+        ["forg", "bypass", "impersonat", "spoof", "counterfeit", "arbitrary (payload|claims|user|token)", "without (knowing|the) (the )?secret", "any payload", "unsigned", "(without|no) (any |a )?(valid |real |correct |matching )?(signature|mac|hmac)"],
         ["startsWith", "prefix", "truncat", "empty signature", "signature is empty", "empty string", "partial signature", "shorter signature", "trailing dot", "signature of length"]
       ]
     }

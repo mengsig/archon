@@ -53,8 +53,9 @@ async fn enqueue(h: &Harness, autonomy: AutonomyPatch) -> QueueItem {
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: ModelPlan::default(),
+        model_plan: ModelPlan::default().into(),
         model_reasons: None,
+        stage_timeouts: Default::default(),
         budget_usd: None,
         idempotency_key: None,
         autonomy,
@@ -344,4 +345,38 @@ async fn steer_item_takes_autonomy_alone_or_with_a_note_and_refuses_above_the_ce
     };
     assert_eq!(both.autonomy.review, ReviewLevel::Strict);
     assert!(both.brief.contains("Mind the API."), "{}", both.brief);
+}
+
+#[tokio::test]
+async fn restaging_keeps_explicit_reviewer_choices_and_reasons() {
+    let (h, _gh) = delivering().await;
+    let item = enqueue(&h, knobs("review=standard")).await;
+    let reviewers = vec![archon_core::model::ModelChoice {
+        model: common::MODEL.parse().unwrap(),
+        effort: archon_core::model::Effort::Low,
+    }];
+    let mut plan = item.model_plan.clone();
+    plan.0.insert("implement.review".into(), reviewers.clone());
+    h.cli(Request::UpdateItem {
+        item: item.id.clone(),
+        patch: ItemPatch {
+            model_plan: Some(plan.into()),
+            model_reasons: Some(
+                [(
+                    "implement.review".into(),
+                    "Use the selected reviewer".into(),
+                )]
+                .into(),
+            ),
+            ..Default::default()
+        },
+    })
+    .await
+    .unwrap();
+    let revised = updated(&h, &item, "proposal=lavish").await;
+    assert_eq!(revised.model_plan.0["implement.review"], reviewers);
+    assert_eq!(
+        revised.model_reasons.unwrap()["implement.review"],
+        "Use the selected reviewer"
+    );
 }

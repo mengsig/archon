@@ -14,4 +14,3 @@ request authority with `{"cmd":"update_item","item":"qi_…","patch":{"autonomy"
 the repository ceiling stays unchanged. A shipped item's merge change checks its
 reviewed PR head. Running items can change only merge/tools; tool changes affect
 future spawns. Undo uses `{"cmd":"undo_authority","change":N}` from the feed.
-

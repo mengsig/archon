@@ -77,7 +77,7 @@ pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(
 }
 
 /// Track one delivery to the orchestrator's inbox and, the first time an
-/// operator's message is seen, apply the `/answer` or `/merge` command it may be.
+/// operator's message is seen, apply any daemon chat command it contains.
 async fn delivered(
     ctx: &DaemonContext,
     event: &AetherEvent,

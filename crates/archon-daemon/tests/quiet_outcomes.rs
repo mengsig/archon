@@ -26,6 +26,7 @@ fn passing(stage: &StageRun) -> StageOutcome {
 
 fn request(title: &str) -> EnqueueRequest {
     EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(PIPELINE.into()),
         title: title.into(),
@@ -33,7 +34,7 @@ fn request(title: &str) -> EnqueueRequest {
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: plan(),
+        model_plan: plan().into(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,

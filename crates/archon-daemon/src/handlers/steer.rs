@@ -165,11 +165,12 @@ async fn running_plan(
     };
     let run = ctx.store.lock().await.run(run)?;
     let spec = frozen::thaw(ctx, &run.id, &run.pipeline).await?;
-    let plan = items::filled_plan(ctx, &run.item, env, &spec, &spec, plan).await?;
-    items::check_plan(ctx, env, &spec, &plan)?;
     let reasons = patch.model_reasons.take();
+    let given = knobs::resolve_plan(&spec, plan, reasons.as_ref())?;
+    let plan = items::filled_plan(ctx, &run.item, env, &spec, &spec, given).await?;
+    items::check_plan(ctx, env, &spec, &plan)?;
     items::check_reasons(&spec, reasons.as_ref())?;
-    assert_eq!(plan.0.len(), spec.file.stages.len(), "a choice per stage");
+    assert!(plan.0.len() >= spec.file.stages.len(), "a choice per stage");
     Ok(Some((plan, reasons)))
 }
 
@@ -273,6 +274,11 @@ async fn changed_item(
         None => None,
     };
     let stages = shape.as_ref().map_or(spec, |(_, stages)| stages);
+    items::check_stage_timeouts(ctx, stages, &steer.stage_timeouts)?;
+    if !steer.stage_timeouts.is_empty() {
+        item.stage_timeouts.extend(steer.stage_timeouts.clone());
+        what.push("updated stage timeouts for future spawns".to_owned());
+    }
     what.extend(retune(steer, stages, &mut item)?);
     items::check_plan(ctx, asked.env, stages, &item.model_plan)?;
     assert!(!what.is_empty(), "a checked steer changes something");
@@ -378,6 +384,9 @@ fn retune(
         )));
     };
     let known = spec.stage(stage).is_some();
+    if let (Some(effort), Some(default)) = (steer.effort, spec.default_effort(stage)) {
+        knobs::check_effort_reason(stage, effort, default, item.model_reasons.as_ref())?;
+    }
     let Some(choices) = item.model_plan.0.get_mut(stage).filter(|_| known) else {
         let ids: Vec<&str> = spec.file.stages.iter().map(|s| s.id.as_str()).collect();
         return Err(ArchonError::Invalid(format!(

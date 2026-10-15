@@ -25,6 +25,7 @@ pub(super) fn steer_item(args: &mut Args) -> Result<Request, ToolError> {
         effort: args.optional("effort")?,
         budget_usd: args.optional_budget("budget_usd")?,
         extend_minutes: args.optional("extend_minutes")?,
+        stage_timeouts: args.optional("stage_timeouts")?.unwrap_or_default(),
         abort,
         insert_stage: args.optional("insert_stage")?,
         switch_pipeline: args.optional_text("switch_pipeline")?,
@@ -121,5 +122,26 @@ mod tests {
         let empty = steer(json!({"note": "Mind the API.", "autonomy": {}})).unwrap_err();
         assert!(empty.0.contains("`autonomy`"), "{}", empty.0);
         assert!(steer(json!({"autonomy": {"merge": "yes"}})).is_err());
+    }
+}
+
+#[cfg(test)]
+mod timeout_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn stage_timeout_overrides_parse_without_other_changes() {
+        let request = crate::tools::to_request(
+            "steer_item",
+            json!({
+                "item": archon_core::id::QueueItemId::new(), "stage_timeouts": {"implement": 180}
+            }),
+        )
+        .unwrap();
+        let Request::SteerItem { steer, .. } = request else {
+            panic!("steer");
+        };
+        assert_eq!(steer.stage_timeouts["implement"], 180);
     }
 }

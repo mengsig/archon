@@ -30,6 +30,11 @@ Aether daemon is never read or changed. In shared mode every
    archon github-watcher            # settings, targets and polling health
    ```
 
+   For a registered repository, `archon repo add <path> --github` (or
+   `/watch <name>` in the orchestrator's chat) watches its `origin`
+   the same way; a repository whose origin is not on github.com is then not
+   registered. Agents cannot turn watching on: `register_repo` never does.
+
    `add` needs the orchestrator running (`archon status`), because it aims
    the repository at it. The first `add` also switches the watcher on and
    replaces Aether's default `@aether` patterns with Archon's:

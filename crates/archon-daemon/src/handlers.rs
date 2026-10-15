@@ -7,6 +7,7 @@ mod cost;
 mod initiatives;
 mod item_views;
 mod items;
+pub(crate) use items::check_stage_timeouts;
 mod learning;
 
 pub use learning::memory_feedback::{
@@ -28,11 +29,11 @@ use archon_core::error::ArchonError;
 use archon_core::id::{QuestionId, QueueItemId};
 use archon_core::merge::MergeAuthority;
 use archon_core::notify::{AnswerVia, Question};
-use archon_core::protocol::{ClientKind, ItemPatch, Reply, Request};
+use archon_core::protocol::{ClientKind, ItemPatch, Reply, RepoRef, Request};
 
 use crate::context::DaemonContext;
 use crate::executor::operator_merge;
-use crate::{github, reports, standby, supervisor};
+use crate::{github, ops, reports, standby, supervisor};
 
 /// `update_item` with only `autonomy`, above the item's ceiling. Only the
 /// operator's confirmed request calls this; no request field reaches it.
@@ -294,6 +295,11 @@ pub(crate) async fn answer_question(
     operator::answer(ctx, question, text, via).await
 }
 
+/// Watch a registered repository on GitHub; the `/watch` chat command.
+pub(crate) async fn watch_repo(ctx: &DaemonContext, repo: &RepoRef) -> Result<String, ArchonError> {
+    repos::watch(ctx, repo).await
+}
+
 /// The one item whose id starts with `prefix`, as `archon` resolves it.
 pub(crate) async fn resolve_item(
     ctx: &DaemonContext,
@@ -348,6 +354,10 @@ async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, Ar
             supervisor::attach_orchestrator(ctx).await?,
         )),
         Request::OrchestratorRestart => control::orchestrator_restart(ctx).await,
+        Request::Upgrade(request) => Ok(Reply::UpgradeStarted {
+            text: ops::start(ctx, request).await?,
+        }),
+        Request::CheckUpdates => Ok(Reply::Versions(Box::new(ops::check_updates(ctx).await?))),
         Request::Gc {
             older_than_secs,
             force,

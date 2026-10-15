@@ -2,16 +2,17 @@
 //! Unsupported lean context may fall back to full before an agent is recorded.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::time::Instant;
 
 use archon_aether::wire;
 use archon_core::Timestamp;
 use archon_core::aether_ids::{AetherAgentId, AetherRunId};
 use archon_core::autonomy::ToolsMode;
-use archon_core::catalog::WorkspaceMode;
+use archon_core::catalog::{StageKind, WorkspaceMode};
 use archon_core::config::Config;
 use archon_core::error::ArchonError;
-use archon_core::id::{PipelineRunId, StageRunId};
+use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::lesson::CONTRACT_LESSONS;
 use archon_core::ports::{SpawnRequest, SpawnedAgent};
 use archon_core::queue::QueueItem;
@@ -29,6 +30,7 @@ use super::{
 };
 use crate::context::DaemonContext;
 use crate::disk::{self, FullDisk};
+use crate::experiments;
 use crate::learned;
 use crate::resolve::{self, RepoEnv};
 
@@ -314,6 +316,7 @@ fn reserve_plans(
         return Ok(Err(Exhausted { stage, error }));
     }
     let sections = run_sections(ctx, store, &run, &item, repo.as_ref(), plans[0].workspace)?;
+    let experiments = experiments::item_dir(&ctx.paths, &item.id);
     let existing = store.stage_runs(run_id)?;
     let mut ids = Vec::new();
     for plan in plans {
@@ -328,6 +331,7 @@ fn reserve_plans(
             repo: repo.as_ref(),
             config: &ctx.config,
             sections: &sections,
+            experiments: &experiments,
         };
         let share = slot_budget(budget, &plan);
         ids.push(reserve_one(
@@ -404,6 +408,8 @@ struct Target<'a> {
     config: &'a Config,
     /// The contract's sections on the run itself ([`run_sections`]).
     sections: &'a str,
+    /// The item's directory for reviewers' experiment copies.
+    experiments: &'a Path,
 }
 
 impl Target<'_> {
@@ -411,6 +417,12 @@ impl Target<'_> {
     /// allows it, or the item's `tools = yolo` withholds nothing.
     fn delegates(&self, plan: &SpawnPlan) -> bool {
         plan.allow_delegation || self.item.autonomy.tools == ToolsMode::Yolo
+    }
+
+    /// Minutes the stage of `plan` may run: the item's override, else the pipeline's.
+    fn timeout_minutes(&self, plan: &SpawnPlan) -> u32 {
+        let own = self.item.stage_timeouts.get(&plan.stage_id);
+        own.copied().unwrap_or(plan.timeout_minutes)
     }
 
     /// The stage contract, with the run's own sections and, when the agent
@@ -427,7 +439,8 @@ impl Target<'_> {
             Err(error) => format!("none: the repository's model policy cannot be read ({error})"),
         };
         let depth = self.config.limits.max_delegation_depth;
-        let rules = contract::delegation_rules(plan.workspace, &models, depth);
+        let rules =
+            contract::delegation_rules(plan.workspace, &models, depth, Some(self.experiments));
         format!("{contract}{rules}")
     }
 }
@@ -453,7 +466,7 @@ fn reserve_one(
     };
     let spawn = StoredSpawn {
         request,
-        timeout_minutes: plan.timeout_minutes,
+        timeout_minutes: target.timeout_minutes(plan),
         parent: ParentBinding::Pending,
         team: plan.team.as_ref().map(|slot| StoredWorker {
             role: slot.role.clone(),
@@ -540,7 +553,7 @@ fn build_request(
         leaf: !target.delegates(plan),
         cost_budget_usd: budget,
         aether_cost_budget: None,
-        deadline: Some(deadline(now, plan.timeout_minutes)),
+        deadline: Some(deadline(now, target.timeout_minutes(plan))),
         attach_run: run.aether_run.clone(),
         parent: None,
         network: None,
@@ -621,12 +634,14 @@ pub(super) fn reserve_replacement(
         .map(|id| store.repo(&resolve::repo_ref(id)))
         .transpose()?;
     let sections = run_sections(ctx, store, &run, &item, repo.as_ref(), plan.workspace)?;
+    let experiments = experiments::item_dir(&ctx.paths, &item.id);
     let target = Target {
         run: &run,
         item: &item,
         repo: repo.as_ref(),
         config: &ctx.config,
         sections: &sections,
+        experiments: &experiments,
     };
     // An earlier grant is not enforced once budgets are off.
     let budget = match resolve::item_caps(ctx, item.repo.as_ref()).budgets_enabled {
@@ -684,6 +699,8 @@ struct Claim {
     run_finished: bool,
     /// A team slot's worktree, made ready before its agent is created.
     worker: Option<team::Worker>,
+    /// The run's item, whose experiments directory a reviewing agent uses.
+    item: QueueItemId,
 }
 
 impl Claim {
@@ -724,18 +741,18 @@ async fn issue_claimed(ctx: &DaemonContext, id: &StageRunId) -> Result<FollowUp,
         spawn,
         allowed,
         worker,
+        item,
         ..
     } = *claim;
     // Only a spawn never sent prepares its worktree: once its request may
     // have reached Aether, a live agent may be working in it.
     let prepare = allowed.is_ok() && !unsent && spawn.parent == ParentBinding::Pending;
-    if let Some(worker) = worker.filter(|_| prepare)
-        && let Err(error) = team::ready_worker(ctx, worker).await
-    {
+    let reviews = allowed.is_ok() && !unsent && can_review(&stage, &spawn);
+    let ready = ready_to_spawn(ctx, id, worker.filter(|_| prepare), reviews, &item).await;
+    if let Err(error) = ready {
         let mut table = ctx.runs.lock().await;
         let was_claimed = table.in_flight.remove(id);
         assert!(was_claimed, "stage run {id} was prepared without a claim");
-        let error = format!("preparing the role's worktree failed: {error}");
         return refuse(ctx, &mut table, &stage, error).await;
     }
     let result = match allowed {
@@ -750,6 +767,38 @@ async fn issue_claimed(ctx: &DaemonContext, id: &StageRunId) -> Result<FollowUp,
         Some(result) => record(ctx, &mut table, &stage, result).await,
         None => cancel_unsent(ctx, &mut table, &stage).await,
     }
+}
+
+/// Whether the agent reviews, or is told how its reviewers work: a review
+/// stage's, or one that can delegate.
+fn can_review(stage: &StageRun, spawn: &StoredSpawn) -> bool {
+    stage.kind == Some(StageKind::Review) || !spawn.request.leaf
+}
+
+/// What must be on disk before claimed stage run `id`'s agent is created: a team
+/// slot's worktree, and the item's experiments directory when the agent `reviews`.
+async fn ready_to_spawn(
+    ctx: &DaemonContext,
+    id: &StageRunId,
+    worker: Option<team::Worker>,
+    reviews: bool,
+    item: &QueueItemId,
+) -> Result<(), String> {
+    if let Some(worker) = worker {
+        assert_eq!(&worker.item, item, "a team slot works for its run's item");
+        team::ready_worker(ctx, worker)
+            .await
+            .map_err(|e| format!("preparing the role's worktree failed: {e}"))?;
+    }
+    if !reviews {
+        return Ok(());
+    }
+    // Made under the table while the claim keeps the item from being
+    // discarded, so a discard never comes between the check and the create.
+    let table = ctx.runs.lock().await;
+    assert!(table.in_flight.contains(id), "prepared under its claim");
+    experiments::prepare(&ctx.paths, item)
+        .map_err(|e| format!("preparing the experiments directory failed: {e}"))
 }
 
 /// What issuing a stage run gave it: a new agent with its task, or the
@@ -932,6 +981,7 @@ async fn claim(ctx: &DaemonContext, id: &StageRunId) -> Result<Claimed, ArchonEr
         allowed,
         run_finished: run.state.is_terminal(),
         worker,
+        item: run.item,
     })))
 }
 

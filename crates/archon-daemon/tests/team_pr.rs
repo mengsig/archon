@@ -25,7 +25,7 @@ fn team_pr_plan() -> ModelPlan {
     for stage in ["plan", "e2e", "review"] {
         stages.insert(stage.to_owned(), vec![choice(MODEL, Effort::Medium)]);
     }
-    stages.insert("build".into(), vec![choice(MODEL, Effort::High); 2]);
+    stages.insert("build".into(), vec![choice(MODEL, Effort::Medium); 2]);
     ModelPlan(stages)
 }
 

@@ -119,6 +119,7 @@ async fn started_after(
     parents: &[&QueueItem],
 ) -> (QueueItem, PipelineRun) {
     let request = EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(pipeline.into()),
         title: format!("a change through {pipeline}"),
@@ -126,7 +127,7 @@ async fn started_after(
         priority: Default::default(),
         depends_on: parents.iter().map(|p| p.id.clone()).collect(),
         tags: Vec::new(),
-        model_plan: ModelPlan::default(),
+        model_plan: ModelPlan::default().into(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,

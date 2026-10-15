@@ -53,7 +53,10 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
             kind,
             follow,
         } => log::log(limit, item.as_deref(), kind, follow, json).await,
-        Command::Status { no_start: _ } => control::status(json).await,
+        Command::Status {
+            no_start: _,
+            check_updates,
+        } => control::status(check_updates, json).await,
         Command::Cost { since, until, by } => {
             cost::run(since.as_deref(), until.as_deref(), by, json).await
         }
@@ -114,7 +117,10 @@ fn json_refusal(command: Option<&Command>) -> Option<&'static str> {
             DaemonCommand::Run { detach: true }
             | DaemonCommand::Start
             | DaemonCommand::Stop { .. }
-            | DaemonCommand::Status,
+            | DaemonCommand::Status
+            | DaemonCommand::Restart { .. }
+            | DaemonCommand::Upgrade { .. }
+            | DaemonCommand::Relaunch { .. },
         )
         | Command::Say { .. }
         | Command::Answer { .. }

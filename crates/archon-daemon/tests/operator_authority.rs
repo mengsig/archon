@@ -301,6 +301,20 @@ async fn github_confirmations_bind_the_thread_and_never_change_the_watcher() {
         .await
         .unwrap_err();
     assert!(result.to_string().contains("GitHub cannot change watcher"));
+    let registration = Request::RepoAdd(archon_core::protocol::RepoAdd {
+        path: std::path::PathBuf::from("/unregistered"),
+        name: None,
+        ship: None,
+        base_branch: None,
+        default_pipeline: None,
+        auto_merge: false,
+        github_watch: true,
+    });
+    let result = h
+        .orchestrator(cited(registration, 1, "grant requested merges"))
+        .await
+        .unwrap_err();
+    assert!(result.to_string().contains("GitHub cannot change watcher"));
 }
 
 #[tokio::test]
@@ -549,6 +563,7 @@ async fn item_override_needs_verified_consent_and_preserves_the_repository_ceili
             tags: vec![],
             model_plan: Default::default(),
             model_reasons: None,
+            stage_timeouts: Default::default(),
             budget_usd: None,
             idempotency_key: None,
             autonomy: Default::default(),
@@ -616,7 +631,7 @@ async fn a_lowering_repo_file_cannot_hide_a_registry_ceiling_raise() {
     let h = harness(AetherMode::Dedicated).await;
     std::fs::write(
         h.repo.join(".archon/config.toml"),
-        "[autonomy]\nmerge = \"manual\"\n",
+        "[autonomy.max]\nmerge = \"manual\"\n",
     )
     .unwrap();
     deliver(&h, 1, user("raise the merge ceiling")).await;

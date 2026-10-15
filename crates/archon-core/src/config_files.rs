@@ -43,7 +43,12 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 
 # [worktrees]
 # auto_gc = true            # archond collects finished runs' worktrees itself
-# gc_after = "7d"
+# gc_after = "7d"           # "0s" disables expiry
+
+# [storage]
+# retention_days = 14       # settled reports and log age; 0 disables age expiry
+# log_max_mb = 10           # 0 disables size rotation
+# log_max_files = 3         # archives beyond the active log; 0 disables count limit
 
 # Archon runs its own aetherd. "shared" uses yours instead.
 # [aether]

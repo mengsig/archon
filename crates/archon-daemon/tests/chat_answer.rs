@@ -167,6 +167,7 @@ async fn set_orchestrator(h: &Harness, agent: &str) {
 
 async fn enqueue(h: &Harness, title: &str, autonomy: AutonomyPatch) -> QueueItem {
     let request = EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(PIPELINE.into()),
         title: title.into(),
@@ -174,7 +175,7 @@ async fn enqueue(h: &Harness, title: &str, autonomy: AutonomyPatch) -> QueueItem
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: plan(),
+        model_plan: plan().into(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,

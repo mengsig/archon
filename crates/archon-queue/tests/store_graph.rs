@@ -54,6 +54,7 @@ fn an_item_keeps_the_github_thread_that_asked_for_it() {
     let (mut store, repo, _items) = seeded(0);
     let first = QueueItem {
         origin: Some(thread()),
+        stage_timeouts: Default::default(),
         fresh_retries: 0,
         initiative: None,
         ..item(Some(&repo), "fix")
@@ -72,6 +73,7 @@ fn an_item_keeps_the_github_thread_that_asked_for_it() {
     let unasked = QueueItem {
         id: QueueItemId::new(),
         origin: None,
+        stage_timeouts: Default::default(),
         fresh_retries: 0,
         initiative: None,
         ..first
@@ -84,6 +86,10 @@ fn an_item_keeps_the_github_thread_that_asked_for_it() {
 fn request_variants(first: &QueueItem) -> Vec<QueueItem> {
     let base = first.clone();
     vec![
+        QueueItem {
+            stage_timeouts: [("implement".into(), 120)].into(),
+            ..base.clone()
+        },
         QueueItem {
             title: "other".into(),
             ..base.clone()
@@ -110,6 +116,7 @@ fn request_variants(first: &QueueItem) -> Vec<QueueItem> {
         },
         QueueItem {
             origin: Some(thread()),
+            stage_timeouts: Default::default(),
             fresh_retries: 0,
             initiative: None,
             ..base.clone()
@@ -486,4 +493,27 @@ fn snapshot_candidates_come_highest_priority_then_oldest_first() {
             .windows(2)
             .all(|w| w[0].created_seq != w[1].created_seq)
     );
+}
+
+#[test]
+fn timeout_overrides_are_part_of_an_idempotent_request() {
+    let (mut store, repo, _) = seeded(0);
+    let mut first = item(Some(&repo), "fix");
+    first.stage_timeouts.insert("implement".into(), 120);
+    store.insert_item(&first, Some("timeout")).unwrap();
+    let mut retry = QueueItem {
+        id: QueueItemId::new(),
+        ..first.clone()
+    };
+    assert_eq!(store.insert_item(&retry, Some("timeout")).unwrap(), first);
+    for minutes in [Some(180), None] {
+        retry.stage_timeouts = minutes
+            .map(|m| [("implement".into(), m)].into())
+            .unwrap_or_default();
+        assert!(matches!(
+            store.insert_item(&retry, Some("timeout")),
+            Err(ArchonError::Invalid(_))
+        ));
+    }
+    assert_eq!(count(&store), 1);
 }

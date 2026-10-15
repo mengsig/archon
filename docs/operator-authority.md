@@ -75,10 +75,11 @@ reached today.
 | Directives (`set_directive`, `clear_directive`) | `archon autonomy direct` / `clear` | `/archon apply` | same | yes | `clear_directive` only |
 | Lessons and learning corrections | `archon learning …` | `/archon apply` | same | `update_lesson`, `learning_*` | always |
 | GitHub watcher configuration | `archon github-watcher` | `/archon watcher JSON` | **refused** | `configure_github_watcher`, operator chat only | always |
-| Undo an authority change | — | `/archon undo N` | same | no | guarded by unchanged state |
+| Undo an authority change | — | `/archon undo N` | same | `undo_authority` | same rules as the inverse change; guarded by unchanged state |
 | Say something as the operator (`say`) | `archon say` | — | — | no | — |
 | Restart / attach the orchestrator | `archon orchestrator restart`, `attach` | not implemented | not implemented | no | — |
-| Shutdown, setup, update, destructive GC | CLI only | no | no | no | — |
+| Drained daemon upgrade / restart | `archon daemon upgrade` | `/upgrade` (existing dedicated-TUI command) | no | no | explicit command only |
+| Shutdown, setup, destructive GC | CLI only | no | no | no | — |
 
 The confirmation column applies to plain-language requests relayed through
 `request_authority`. Explicit whole-message commands apply directly, since
@@ -217,7 +218,7 @@ not asked. Nothing else changes with it. See
 
 ## Versions and provenance
 
-- **Archon protocol 12** adds daemon-verified authority requests
+- **Archon protocol 13** adds daemon-verified authority requests
   (`request_authority`, `undo_authority`) and the `guide` request. Older
   archond versions do not know them.
 - **Aether protocol 17** or newer is needed for GitHub operator standing,

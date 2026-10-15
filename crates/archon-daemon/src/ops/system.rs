@@ -14,8 +14,8 @@ use crate::executor::clip;
 
 /// Most one install may take: `cargo install` builds Archon from source.
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(45 * 60);
-/// Most a `--version` or `update --check` may take.
-const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
+/// Leave room for the reply within the client's 60-second request timeout.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 /// Characters of a failed command's output kept in its error.
 const MAX_DETAIL_CHARS: usize = 1_500;
 /// `<program> update --check` exits with this when a newer release exists.
@@ -231,10 +231,8 @@ mod tests {
     }
 
     fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt as _;
         let path = dir.join(name);
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        archon_core::testing::write_script(&path, &format!("#!/bin/sh\n{body}\n"));
         path
     }
 
@@ -270,6 +268,24 @@ esac"#;
             error.contains("exit 3") && error.contains("no such tag"),
             "{error}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_probe_that_stalls_returns_a_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let ops = ops(dir.path(), script(dir.path(), "stall", "sleep 60"));
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            ops.run(&ops.archon_bin, &["--version"], Duration::from_millis(50)),
+        )
+        .await
+        .expect("the probe must stop promptly");
+        let error = result.err().expect("a stalled probe fails").to_string();
+        assert!(
+            error.contains("--version") && error.contains("timed out"),
+            "{error}"
+        );
+        assert!(PROBE_TIMEOUT < Duration::from_secs(60));
     }
 
     #[tokio::test]

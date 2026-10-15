@@ -62,7 +62,7 @@ impl fmt::Display for UpgradeTarget {
     }
 }
 
-/// An operator's upgrade: install what is named, drain, restart archond
+/// An operator's upgrade: drain, install what is named, restart archond
 /// and, in dedicated mode, Archon's own aetherd. With neither program
 /// named it is a drained restart.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

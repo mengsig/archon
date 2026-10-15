@@ -128,6 +128,21 @@ fn claim_orphan_items(
     claimed: &mut Vec<Claimed>,
     report: &mut GcReport,
 ) -> Result<(), ArchonError> {
+    match crate::build_cache::real_dir(items_root) {
+        Ok(true) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Ok(false) => {
+            let why = "not a directory of archond's (a symlink?); left alone".to_owned();
+            report.failed.push((items_root.to_path_buf(), why));
+            return Ok(());
+        }
+        Err(e) => {
+            report
+                .failed
+                .push((items_root.to_path_buf(), format!("inspecting it: {e}")));
+            return Ok(());
+        }
+    }
     for dir in subdirectories(items_root, report) {
         let name = file_name(&dir);
         let due = if name.starts_with(CLAIMED_PREFIX) {

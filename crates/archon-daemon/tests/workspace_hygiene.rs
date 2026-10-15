@@ -11,11 +11,13 @@ use archon_core::age::Age;
 use archon_core::config::Config;
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
+use archon_core::model::{Effort, ModelPlan};
 use archon_core::notify::FeedEntry;
+use archon_core::ports::DescendantState;
 use archon_core::protocol::{ArtifactListing, EnqueueRequest, GcReport, Reply, RepoRef, Request};
 use archon_core::queue::{QueueItem, QueueState};
-use archon_core::run::StageRun;
-use common::{Harness, PIPELINE, REPO_NAME, completed, git, plan, verdict};
+use archon_core::run::{StageOutcome, StageRun};
+use common::{Harness, MODEL, PIPELINE, REPO_NAME, choice, completed, git, plan, verdict};
 
 fn cache_dir(h: &Harness) -> PathBuf {
     h.ctx.paths.cache().join(REPO_NAME)
@@ -286,6 +288,77 @@ async fn a_build_directory_stays_while_a_cancelled_item_s_agent_may_still_run() 
     assert!(
         dir.is_dir(),
         "an idle repository cache keeps a live agent's"
+    );
+}
+
+/// What a failed lead delegated may still build: its item's directory waits
+/// for Aether to confirm the stop, then goes.
+#[tokio::test]
+async fn a_build_directory_stays_until_what_a_failed_lead_delegated_has_ended() {
+    let h = Harness::new().await;
+    let build = ("build".to_owned(), vec![choice(MODEL, Effort::High)]);
+    let item = h
+        .enqueue_in("adaptive", "a led change", ModelPlan([build].into()))
+        .await
+        .unwrap();
+    h.dispatch().await;
+    let lead = h.running().await.remove(0).aether_agent.unwrap();
+    let helper = h.backend.delegate(&lead, MODEL);
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "the build broke".into(),
+        infra: false,
+    })
+    .await;
+    h.dispatch().await;
+    assert!(matches!(h.state(&item.id).await, QueueState::Failed { .. }));
+    let dir = item_dir(&h, &item.id);
+    assert!(dir.is_dir(), "its helper still runs");
+    let report = gc(&h, None).await;
+    assert!(report.item_caches.is_empty(), "{report:?}");
+    assert!(dir.is_dir());
+
+    h.backend.end_delegated(&helper, DescendantState::Stopped);
+    h.dispatch().await;
+    h.dispatch().await;
+    assert!(!dir.exists(), "released once the stop is confirmed");
+}
+
+/// A symlinked `items` directory leads outside the cache: gc and an item's
+/// end leave both it and what it points at alone.
+#[tokio::test]
+async fn item_build_directories_behind_a_symlink_are_never_deleted() {
+    let h = Harness::new().await;
+    let (_live, _) = start(&h, "keeps the repository live").await;
+    let outside = h.ctx.paths.data_dir.join("outside");
+    let gone = QueueItemId::new();
+    std::fs::create_dir_all(outside.join(gone.as_str())).unwrap();
+    std::fs::write(outside.join(gone.as_str()).join("valuable.txt"), b"keep").unwrap();
+    let items = cache_dir(&h).join("items");
+    std::fs::rename(&items, h.ctx.paths.data_dir.join("real-items")).unwrap();
+    std::os::unix::fs::symlink(&outside, &items).unwrap();
+
+    let report = gc(&h, None).await;
+    assert!(report.item_caches.is_empty(), "{report:?}");
+    assert!(
+        report.failed.iter().any(|(path, _)| path == &items),
+        "{report:?}"
+    );
+    assert!(outside.join(gone.as_str()).join("valuable.txt").exists());
+
+    let ended = h.enqueue("ends behind the symlink").await;
+    std::fs::create_dir_all(outside.join(ended.id.as_str())).unwrap();
+    std::fs::write(
+        outside.join(ended.id.as_str()).join("valuable.txt"),
+        b"keep",
+    )
+    .unwrap();
+    cancel(&h, &ended).await;
+    h.dispatch().await;
+    assert!(
+        outside
+            .join(ended.id.as_str())
+            .join("valuable.txt")
+            .exists()
     );
 }
 

@@ -609,6 +609,15 @@ async fn runs_by_repository(
     lanes::group(keyed)
 }
 
+/// Whether `stage`'s agent, or what it delegated, still owes a stop: until
+/// Aether confirms it, agents of the stage may still build.
+pub(crate) fn stop_owed(
+    store: &archon_queue::Store,
+    stage: &StageRunId,
+) -> Result<bool, ArchonError> {
+    Ok(descendants::owes(store, stage)? || siblings::owes(store, stage)?)
+}
+
 /// Delete the cargo target directory of an item that ended, unless it was
 /// queued again meanwhile (a retry) or a stack fix still builds in it.
 async fn release_item_build(

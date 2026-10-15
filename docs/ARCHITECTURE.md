@@ -3503,12 +3503,14 @@ incremental state), so builds are lean and scoped to the item.
   `<data>/cache/<repo>/items/<item>/cargo-target`, never `/tmp`. Retries and
   later stages of the item reuse it. When the item reaches a final state
   (succeeded, failed, cancelled; a retry queues it again and recreates the
-  directory) archond deletes the directory once the run's agents are stopped,
+  directory) archond deletes the directory once the run's agents, and what
+  they delegated, are confirmed stopped,
   after making unreadable subdirectories owner-accessible (test suites leave
   mode-000 directories plain `rm` cannot enter). The feed and `archon status`
   say how many bytes it freed. The gc pass (§13.2) sweeps `items/*`
   directories whose item is final or gone, reporting them as item build
-  directories; a name that is no item id is left alone.
+  directories; a name that is no item id, and an `items` directory that is a
+  symlink, are left alone.
 - *Shared directory (option).* `[worktrees] shared_cache = true` (per
   repository: `[cache] shared`) builds every item of the repository into
   `<data>/cache/<repo>/cargo-target`. Cargo's build lock serialises parallel

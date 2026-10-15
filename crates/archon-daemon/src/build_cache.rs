@@ -102,16 +102,19 @@ pub(crate) fn prepare(
     write_config(&config, &config_text(shared.as_deref(), lean)?)
 }
 
-/// Whether nothing of `item` can still build: it is final and none of its
-/// stage runs is spawning or running. The caller holds the run table.
+/// Whether nothing of `item` can still build: it is final, none of its
+/// stage runs is spawning or running, and no stop of their agents or what
+/// they delegated is still owed. The caller holds the run table.
 pub(crate) fn is_idle(store: &Store, item: &QueueItemId) -> Result<bool, ArchonError> {
     if !store.item(item)?.state.is_terminal() {
         return Ok(false);
     }
-    Ok(store
-        .stage_runs_for_item(item)?
-        .iter()
-        .all(|stage| stage.state.is_terminal()))
+    for stage in store.stage_runs_for_item(item)? {
+        if !stage.state.is_terminal() || crate::executor::stop_owed(store, &stage.id)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// A build directory renamed aside, atomically, so a run that starts
@@ -131,6 +134,27 @@ pub(crate) fn claim_item(
 ) -> Result<Option<ClaimedBuild>, ArchonError> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let original = item_dir(paths, repo_name, item);
+    let items = original
+        .parent()
+        .expect("an item directory is under items/");
+    for ancestor in [repo_dir(paths, repo_name).as_path(), items] {
+        match real_dir(ancestor) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err(ArchonError::Invalid(format!(
+                    "{} is not a directory of archond's (a symlink?); its build directories are left alone",
+                    ancestor.display()
+                )));
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => {
+                return Err(ArchonError::io(
+                    format!("inspecting {}", ancestor.display()),
+                    e,
+                ));
+            }
+        }
+    }
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
     let name = format!(".gc-{}-{item}-{n}", std::process::id());
     let aside = original.with_file_name(name);
@@ -142,6 +166,12 @@ pub(crate) fn claim_item(
             e,
         )),
     }
+}
+
+/// Whether `dir` is a directory itself, not a symlink to one: a deletion
+/// under the cache must never reach outside it.
+pub(crate) fn real_dir(dir: &Path) -> std::io::Result<bool> {
+    Ok(std::fs::symlink_metadata(dir)?.file_type().is_dir())
 }
 
 /// Delete a claimed build directory, however its tests left it. Blocking.

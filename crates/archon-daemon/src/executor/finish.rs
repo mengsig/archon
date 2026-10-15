@@ -86,10 +86,22 @@ async fn item_build(
     ctx: &DaemonContext,
     item: &QueueItem,
 ) -> Result<Option<ItemBuild>, ArchonError> {
+    build_of(&*ctx.store.lock().await, item)
+}
+
+/// The build directory of `run`'s item, if it has a repository.
+pub(super) fn run_build(
+    store: &Store,
+    run: &PipelineRunId,
+) -> Result<Option<ItemBuild>, ArchonError> {
+    build_of(store, &store.item(&store.run(run)?.item)?)
+}
+
+fn build_of(store: &Store, item: &QueueItem) -> Result<Option<ItemBuild>, ArchonError> {
     let Some(repo_id) = &item.repo else {
         return Ok(None);
     };
-    let repo = ctx.store.lock().await.repo(&resolve::repo_ref(repo_id))?;
+    let repo = store.repo(&resolve::repo_ref(repo_id))?;
     Ok(Some(ItemBuild {
         item: item.id.clone(),
         repo_name: repo.name,

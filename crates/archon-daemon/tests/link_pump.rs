@@ -19,7 +19,7 @@ use archon_core::id::{FeedItemId, QueueItemId, RepoId};
 use archon_core::model::{Effort, ModelRef};
 use archon_core::notify::{FeedEntry, NotificationKind};
 use archon_core::protocol::{ClientKind, Reply, Request};
-use archon_core::queue::{Caps, NOTIFY_TAG};
+use archon_core::queue::NOTIFY_TAG;
 use archon_core::repo::{Repo, ShipMode};
 use archon_core::run::{StageRun, StageState};
 use archon_daemon::triggers::{self, TriggerEvent};

@@ -1,0 +1,35 @@
+{
+  "$defs": {
+    "ClientFrame": {
+      "oneOf": [
+        {
+          "description": "Ask what became of a keyed command whose acknowledgement was lost.\nRead-only, within the caller's own keys; needs `command`'s standing.",
+          "properties": {
+            "cmd": {
+              "const": "resolve_submission",
+              "type": "string"
+            },
+            "command": {
+              "additionalProperties": true,
+              "description": "The keyed command exactly as first sent: its `cmd`, its fields and\nits `idempotency_key`.",
+              "type": "object"
+            },
+            "horizon": {
+              "description": "The `submission_horizon` the client held when it first sent\n`command`. Without one an absent receipt proves nothing.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "cmd",
+            "command"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "protocol_version": 19
+}

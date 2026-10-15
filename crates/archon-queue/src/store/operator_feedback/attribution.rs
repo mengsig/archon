@@ -47,6 +47,7 @@ pub(super) fn feedback(
         observed_at: facts.observed_at,
         revoked_at: None,
         curation,
+        memory_feedback: facts.memory_feedback.clone(),
     };
     feedback.check()?;
     Ok(feedback)

@@ -128,6 +128,7 @@ async fn operator_logins_are_sent_and_read_at_protocol_17() {
         "get_github_watcher",
         Scripted::reply("github_watcher", saved),
     );
+    fake.set_protocol_window(16, 17);
     let client = connect(&fake).await;
     assert_eq!(client.welcome().protocol_version, 17);
     let updated = client

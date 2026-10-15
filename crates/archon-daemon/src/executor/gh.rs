@@ -18,6 +18,8 @@ use super::dependencies::{is_plain_branch, is_plain_url};
 use crate::worktree::daemon_git::no_program_settings;
 use crate::worktree::stack::is_commit_id;
 
+pub(crate) mod checks;
+
 /// Most one `gh` command may take.
 pub(crate) const TIMEOUT: Duration = Duration::from_secs(60);
 /// Characters of a tool's own words kept in an error.

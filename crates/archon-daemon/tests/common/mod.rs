@@ -451,14 +451,7 @@ pub fn context(
         archon_bin: PathBuf::from("/usr/bin/false"),
         data_dir,
     };
-    for dir in [
-        &paths.data_dir,
-        &paths.worktrees,
-        &paths.scratch,
-        &paths.reports,
-    ] {
-        std::fs::create_dir_all(dir).expect("create dir");
-    }
+    create_context_dirs(&paths);
     let store = Store::open(&paths.store).expect("store");
     let (feed, _) = broadcast::channel(1024);
     let dispatch = Arc::new(Notify::new());
@@ -474,6 +467,9 @@ pub fn context(
         runs: Mutex::new(RunTable::default()),
         replies: Mutex::new(ReplyTracker::default()),
         answering: Mutex::new(()),
+        learning_memory: Mutex::new(()),
+        memory_curation: Mutex::new(()),
+        memory_feedback_ready: Notify::new(),
         report_files: Arc::new(Mutex::new(())),
         triggers: TriggerQueue::default(),
         mirrors: archon_daemon::mirror::MirrorQueue::default(),
@@ -488,6 +484,20 @@ pub fn context(
         gc: Mutex::new(None),
         collecting: archon_daemon::gc::Collecting::new(dispatch),
     }
+}
+
+fn create_context_dirs(paths: &DaemonPaths) {
+    assert!(paths.store.starts_with(&paths.data_dir));
+    assert!(paths.reports.starts_with(&paths.data_dir));
+    for dir in [
+        &paths.data_dir,
+        &paths.worktrees,
+        &paths.scratch,
+        &paths.reports,
+    ] {
+        std::fs::create_dir_all(dir).expect("create dir");
+    }
+    assert!(paths.scratch.is_dir() && paths.worktrees.is_dir());
 }
 
 /// A git repository on `main` with one commit and the test pipeline.

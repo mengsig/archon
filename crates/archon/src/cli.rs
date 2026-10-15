@@ -522,6 +522,12 @@ pub enum QueueCommand {
         #[arg(long, value_name = "TEXT")]
         append: Option<String>,
     },
+    /// Merge a finished item's base branch, fetched from `origin`, into its
+    /// branch: a new item resolves conflicts and updates the same pull request.
+    Refresh {
+        /// The item's qi_… id, or enough of its start to name one item.
+        item: String,
+    },
     /// Change an item without cancelling it: its brief, a stage's model, its
     /// budget or deadline, or the stages that have not started.
     #[command(
@@ -1232,6 +1238,17 @@ mod tests {
             !fresh && append.is_none(),
             "a plain retry reuses the worktree"
         );
+    }
+
+    #[test]
+    fn queue_refresh_names_one_item() {
+        let Command::Queue(QueueCommand::Refresh { item }) = parse(&["queue", "refresh", "qi_1"])
+        else {
+            panic!()
+        };
+        assert_eq!(item, "qi_1");
+        let missing = Cli::try_parse_from(["archon", "queue", "refresh"]);
+        assert!(missing.is_err(), "a refresh names its item");
     }
 
     #[test]

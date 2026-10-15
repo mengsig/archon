@@ -32,6 +32,8 @@ pub const DELEGATION_DEPTH_CEILING: u32 = 4;
 /// days, a pipeline stage's own bound).
 pub const DEFAULT_STAGE_TIMEOUT_MINUTES: u32 = 24 * 60;
 pub const STAGE_TIMEOUT_CEILING_MINUTES: u32 = 30 * 24 * 60;
+/// `artifacts.max_item_mb` above this (1 PiB) is surely a typo.
+pub const MAX_ARTIFACT_MB: u64 = 1 << 30;
 
 /// The keys holding filesystem paths, which `Config::load` resolves.
 const PATH_KEYS: [&str; 3] = [
@@ -50,6 +52,7 @@ pub struct Config {
     pub dispatcher: DispatcherConfig,
     pub chat: ChatConfig,
     pub worktrees: WorktreeConfig,
+    pub artifacts: ArtifactsConfig,
     pub lavish: LavishConfig,
     pub github: GithubConfig,
     pub autonomy: AutonomyConfig,
@@ -411,6 +414,16 @@ pub struct WorktreeConfig {
     /// The caches to delete, relative to a worktree; empty: every file git
     /// ignores.
     pub cache_dirs: Vec<PathBuf>,
+    /// Stages build into one cache per repository under `<data>/cache`
+    /// instead of a target directory per task; `false` turns it off for
+    /// every repository (a repository's `[cache] shared = false` for one).
+    pub shared_cache: bool,
+    /// A repository's shared cache nobody used for this long, with no live
+    /// run on the repository, is deleted.
+    pub shared_cache_after: Age,
+    /// While dispatch is held for disk space, finished runs' worktrees and
+    /// idle shared caches go after this instead, if it is shorter.
+    pub pressure_after: Age,
 }
 
 impl Default for WorktreeConfig {
@@ -423,7 +436,58 @@ impl Default for WorktreeConfig {
             gc_after: Age::from_secs(7 * 86_400),
             cache_after: Age::from_secs(3_600),
             cache_dirs: Vec::new(),
+            shared_cache: true,
+            shared_cache_after: Age::from_secs(14 * 86_400),
+            pressure_after: Age::from_secs(86_400),
         }
+    }
+}
+
+/// The durable per-item artifact store (ARCHITECTURE §13.5): files a stage
+/// publishes outlive its worktree, read by item id.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ArtifactsConfig {
+    /// The most one published file may take.
+    pub max_file_mb: u64,
+    /// The most one item's artifacts may take together.
+    pub max_item_mb: u64,
+    /// An item's artifacts are deleted this long after the item settled.
+    pub keep_after: Age,
+}
+
+impl Default for ArtifactsConfig {
+    fn default() -> Self {
+        Self {
+            max_file_mb: 256,
+            max_item_mb: 1024,
+            keep_after: Age::from_secs(30 * 86_400),
+        }
+    }
+}
+
+impl ArtifactsConfig {
+    pub fn max_file_bytes(&self) -> u64 {
+        self.max_file_mb.saturating_mul(1 << 20)
+    }
+
+    pub fn max_item_bytes(&self) -> u64 {
+        self.max_item_mb.saturating_mul(1 << 20)
+    }
+
+    fn validate(&self) -> Result<(), ArchonError> {
+        let sane = |mb: u64| (1..=MAX_ARTIFACT_MB).contains(&mb);
+        if !sane(self.max_file_mb) || !sane(self.max_item_mb) {
+            return Err(ArchonError::Config(format!(
+                "artifacts.max_file_mb and artifacts.max_item_mb must be 1..{MAX_ARTIFACT_MB}"
+            )));
+        }
+        if self.max_file_mb > self.max_item_mb {
+            return Err(ArchonError::Config(
+                "artifacts.max_file_mb must not exceed artifacts.max_item_mb".into(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -498,6 +562,23 @@ pub struct RepoConfig {
     pub pipelines: RepoPipelines,
     /// May only lower the defaults and the ceiling (ARCHITECTURE §18).
     pub autonomy: AutonomyConfig,
+    pub cache: RepoCache,
+}
+
+/// A repository's say over its build cache (ARCHITECTURE §13.5).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RepoCache {
+    /// `false` opts the repository out of the shared build cache.
+    pub shared: Option<bool>,
+}
+
+impl RepoConfig {
+    /// Whether this repository's stages build into the shared cache: the
+    /// global switch, unless the repository opts out.
+    pub fn shared_cache(&self, worktrees: &WorktreeConfig) -> bool {
+        worktrees.shared_cache && self.cache.shared.unwrap_or(true)
+    }
 }
 
 /// Defaults for registry fields; registry values set by the operator win.
@@ -602,6 +683,7 @@ impl Config {
         self.limits.validate()?;
         self.autonomy.validate()?;
         self.worktrees.validate()?;
+        self.artifacts.validate()?;
         let orchestrator = crate::model::ModelChoice {
             model: self.orchestrator.model.clone(),
             effort: self.orchestrator.effort,

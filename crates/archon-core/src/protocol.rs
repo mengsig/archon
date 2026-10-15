@@ -42,7 +42,8 @@ use crate::steer::Steer;
 /// 8: `archon learning` corrections, their receipts and memory curation.
 /// 9: `[limits] budgets_enabled`; `Caps` carries it, and a change that sets an
 /// item's budget while budgets are off answers `ItemBudgetsOff`.
-pub const PROTOCOL_VERSION: u32 = 9;
+/// 10: `refresh_item`; an older archond knows no such request.
+pub const PROTOCOL_VERSION: u32 = 10;
 
 /// Said beside an item whose `budget_usd` was set while budgets are off.
 pub const BUDGETS_OFF_NOTE: &str = "Dollar budgets are globally off ([limits] budgets_enabled = \
@@ -108,6 +109,27 @@ pub enum Request {
         /// Aether's out-of-band MCP caller identity, never a tool argument.
         caller: Option<AetherAgentId>,
     },
+    /// A stage agent keeps files from its workspace in its item's artifact
+    /// store (ARCHITECTURE §13.5).
+    PublishArtifact {
+        /// A file or directory inside the stage's workspace.
+        path: String,
+        /// Where it goes in the store; the path's last component if unset.
+        name: Option<String>,
+        /// Aether's out-of-band MCP caller identity, never a tool argument.
+        caller: Option<AetherAgentId>,
+    },
+    ListArtifacts {
+        item: QueueItemId,
+    },
+    ReadArtifact {
+        item: QueueItemId,
+        name: String,
+        #[serde(default)]
+        offset: u64,
+        /// Bytes to read; at most [`MAX_ARTIFACT_PAGE_BYTES`].
+        limit: Option<u64>,
+    },
     Hello {
         protocol_version: u32,
         client: ClientKind,
@@ -164,6 +186,11 @@ pub enum Request {
         /// Appended to the brief under a dated "Amendment" heading.
         #[serde(default)]
         brief_append: Option<String>,
+    },
+    /// Merge the finished item's base branch, fetched afresh, into its branch:
+    /// a new item on the same branch and pull request (ARCHITECTURE §13).
+    RefreshItem {
+        item: QueueItemId,
     },
     Pause(PauseTarget),
     Resume(PauseTarget),
@@ -409,7 +436,9 @@ impl Request {
             | Self::Lessons(_)
             | Self::LessonsWhy { .. }
             | Self::LessonStats { .. }
-            | Self::LearningWhy { .. } => true,
+            | Self::LearningWhy { .. }
+            | Self::ListArtifacts { .. }
+            | Self::ReadArtifact { .. } => true,
             Self::ForAgent { request, .. } => request.is_read_only(),
             _ => false,
         }
@@ -585,6 +614,8 @@ pub enum Reply {
         url: String,
     },
     Gc(Box<GcReport>),
+    Artifacts(Box<ArtifactListing>),
+    ArtifactPage(Box<ArtifactPage>),
     CostReport(Box<CostReport>),
     ModelEvidence(Box<ModelEvidenceReport>),
     Initiative(Box<InitiativeDetail>),
@@ -609,8 +640,17 @@ pub struct GcReport {
     pub skipped: Vec<(std::path::PathBuf, String)>,
     /// Attempted and failed, or could not be looked into, with why.
     pub failed: Vec<(std::path::PathBuf, String)>,
-    /// Disk space freed by removals and reclaimed caches together.
+    /// Repositories' shared build caches deleted (ARCHITECTURE §13.5).
+    #[serde(default)]
+    pub caches: Vec<Reclaimed>,
+    /// Items' published artifacts deleted after `artifacts.keep_after`.
+    #[serde(default)]
+    pub artifacts: Vec<Reclaimed>,
+    /// Disk space freed by everything above together.
     pub bytes_freed: u64,
+    /// The pass ran with the shorter disk-pressure ages.
+    #[serde(default)]
+    pub pressure: bool,
 }
 
 /// The build caches deleted from one worktree.
@@ -625,6 +665,8 @@ impl GcReport {
     pub fn absorb(&mut self, other: GcReport) {
         self.removed.extend(other.removed);
         self.reclaimed.extend(other.reclaimed);
+        self.caches.extend(other.caches);
+        self.artifacts.extend(other.artifacts);
         self.skipped.extend(other.skipped);
         self.failed.extend(other.failed);
         self.bytes_freed = self.bytes_freed.saturating_add(other.bytes_freed);
@@ -632,8 +674,81 @@ impl GcReport {
 
     /// Whether the pass removed or reclaimed anything.
     pub fn freed_any(&self) -> bool {
-        !self.removed.is_empty() || !self.reclaimed.is_empty()
+        !self.removed.is_empty()
+            || !self.reclaimed.is_empty()
+            || !self.caches.is_empty()
+            || !self.artifacts.is_empty()
     }
+
+    /// What the pass did, in one line, for the feed and `archon status`.
+    pub fn headline(&self) -> String {
+        let why = if self.pressure {
+            " (disk pressure)"
+        } else {
+            ""
+        };
+        format!(
+            "Gc{why} freed {}: removed {} worktree(s) and set-aside directories, deleted the \
+             build caches of {} worktree(s), {} shared build cache(s) and the artifacts of {} item(s).",
+            gib(self.bytes_freed),
+            self.removed.len(),
+            self.reclaimed.len(),
+            self.caches.len(),
+            self.artifacts.len(),
+        )
+    }
+}
+
+/// `DiskStatus::gc`: the last pass that freed anything.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GcStatus {
+    pub at: Timestamp,
+    pub bytes_freed: u64,
+    pub pressure: bool,
+    /// [`GcReport::headline`] of that pass.
+    pub headline: String,
+}
+
+/// The most bytes one `read_artifact` call returns.
+pub const MAX_ARTIFACT_PAGE_BYTES: u64 = 64 * 1024;
+
+/// One file of an item's artifact store, named relative to it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArtifactFile {
+    pub name: String,
+    pub bytes: u64,
+}
+
+/// An item's artifact store: where it is and what it holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArtifactListing {
+    pub item: QueueItemId,
+    /// The directory holding the files, readable by any agent on the host.
+    pub dir: std::path::PathBuf,
+    /// Sorted by name; at most [`MAX_ARTIFACT_LISTED`].
+    pub files: Vec<ArtifactFile>,
+    /// Files beyond those listed.
+    pub omitted: u64,
+    pub total_bytes: u64,
+    /// The files a publish just stored; empty in a plain listing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub published: Vec<ArtifactFile>,
+}
+
+/// The most files one listing names.
+pub const MAX_ARTIFACT_LISTED: usize = 500;
+
+/// A page of one artifact's text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArtifactPage {
+    pub item: QueueItemId,
+    pub name: String,
+    pub path: std::path::PathBuf,
+    pub offset: u64,
+    pub total_bytes: u64,
+    pub text: String,
+    /// Where the next page starts; `None` at the end.
+    pub next_offset: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -706,6 +821,9 @@ pub struct DiskStatus {
     /// restarts: its own store hit a full disk.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub standby: Option<String>,
+    /// The last gc pass that freed anything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gc: Option<GcStatus>,
 }
 
 /// `bytes` in GiB with one decimal, as `df -h` shows sizes.

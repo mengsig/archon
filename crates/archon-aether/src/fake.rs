@@ -83,6 +83,7 @@ struct State {
     instance_id: String,
     serves: (u32, u32),
     idle_timeout_secs: Option<u64>,
+    submission_horizon: Option<String>,
     features: Vec<String>,
     scripts: HashMap<String, VecDeque<Scripted>>,
     responders: HashMap<String, Responder>,
@@ -118,6 +119,7 @@ impl FakeAether {
             instance_id: "fake-instance-1".to_owned(),
             serves: (PROTOCOL_VERSION - 1, PROTOCOL_VERSION),
             idle_timeout_secs: None,
+            submission_horizon: None,
             features: Vec::new(),
             scripts: HashMap::new(),
             responders: HashMap::new(),
@@ -179,6 +181,10 @@ impl FakeAether {
     pub fn set_protocol_window(&self, min: u32, max: u32) {
         assert!(min <= max, "empty protocol window {min}..{max}");
         self.state().serves = (min, max);
+    }
+
+    pub fn set_submission_horizon(&self, horizon: Option<String>) {
+        self.state().submission_horizon = horizon;
     }
 
     pub fn set_features(&self, features: Vec<String>) {
@@ -428,6 +434,7 @@ impl Session {
                     "pid": std::process::id(), "features": state.features,
                     "daemon_protocol_version": max, "min_protocol_version": min,
                     "idle_timeout_secs": state.idle_timeout_secs,
+                    "submission_horizon": state.submission_horizon,
                 }),
             ),
             (true, _) => Scripted::refuse(
@@ -638,4 +645,30 @@ pub fn memory(id: &str, repo: &str, text: &str) -> Value {
         "created_at": "2026-09-01T08:00:00Z", "forgotten_at": null, "superseded_by": null,
         "pinned": false, "tags": [], "retrieval_count": 3,
     })
+}
+
+/// A feedback receipt for a record command, reusable for keyed replay tests.
+pub fn memory_feedback(command: &Value, id: &str) -> Value {
+    assert!(
+        id.starts_with("mfb_"),
+        "feedback receipts have their own ids"
+    );
+    assert_eq!(command["cmd"], "record_memory_feedback");
+    json!({
+        "id": id, "memory": command["memory"], "task": command["task"],
+        "verdict": command["verdict"], "evidence": command["evidence"],
+        "reason": command["reason"], "actor": {"actor": "user"},
+        "created_at": "2026-10-15T09:00:00Z"
+    })
+}
+
+/// One stored snapshot in Aether's context reply; no memory text is exposed.
+pub fn memory_context(task: &str, memories: &[&str], truncated: bool) -> Value {
+    assert!(task.starts_with("tsk_"), "context belongs to a task");
+    assert!(memories.iter().all(|m| m.starts_with("mem_")));
+    json!({"snapshots": [{
+        "snapshot": "snp_01ARZ3NDEKTSV4RRFFQ69G5FAV", "invocations": [],
+        "agent": "agt_01ARZ3NDEKTSV4RRFFQ69G5FAV", "task": task,
+        "turn": 1, "at": "2026-10-15T09:00:00Z", "memories": memories
+    }], "truncated": truncated})
 }

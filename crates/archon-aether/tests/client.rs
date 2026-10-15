@@ -29,11 +29,11 @@ fn quick() -> ClientOptions {
 }
 
 #[tokio::test]
-async fn the_handshake_speaks_v17_and_names_archon() {
+async fn the_handshake_speaks_v18_and_names_archon() {
     let (_dir, fake) = fake_aether().await;
     let client = connect(&fake).await;
-    assert_eq!(client.welcome().protocol_version, 17);
-    assert_eq!(client.welcome().min_protocol_version, Some(16));
+    assert_eq!(client.welcome().protocol_version, 18);
+    assert_eq!(client.welcome().min_protocol_version, Some(17));
     assert_eq!(fake.connections_accepted(), 1, "no fallback needed");
     assert_eq!(client.welcome().instance_id, "fake-instance-1");
     assert!(client.is_connected());
@@ -44,11 +44,11 @@ async fn the_handshake_speaks_v17_and_names_archon() {
 #[tokio::test]
 async fn an_incompatible_daemon_is_reported_with_its_window() {
     let (_dir, fake) = fake_aether().await;
-    fake.set_protocol_window(18, 19);
+    fake.set_protocol_window(19, 20);
     let error = AetherClient::connect(&fake.endpoint()).await.unwrap_err();
     assert_eq!(
         error.to_string(),
-        "aether: Archon speaks Aether protocol 14..17; the daemon serves 18..19"
+        "aether: Archon speaks Aether protocol 14..18; the daemon serves 19..20"
     );
     assert!(
         fake.received().is_empty(),
@@ -87,7 +87,7 @@ async fn an_aetherd_older_than_archon_speaks_is_refused_with_both_windows() {
     let error = AetherClient::connect(&fake.endpoint()).await.unwrap_err();
     assert_eq!(
         error.to_string(),
-        "aether: Archon speaks Aether protocol 14..17; the daemon serves 12..13"
+        "aether: Archon speaks Aether protocol 14..18; the daemon serves 12..13"
     );
     assert_eq!(fake.connections_accepted(), 1, "nothing it serves to retry");
 }
@@ -107,7 +107,7 @@ async fn raw_peer(
         };
         let hello = read_frame().await;
         let welcome = json!({"frame":"reply","id":hello["req"],"result":{"Ok":{"reply":"welcome",
-            "data":{"protocol_version":17,"daemon_version":"x","instance_id":"raw","schema_version":1,"pid":1}}}});
+            "data":{"protocol_version":18,"daemon_version":"x","instance_id":"raw","schema_version":1,"pid":1}}}});
         write
             .write_all(format!("{welcome}\n").as_bytes())
             .await
@@ -467,7 +467,7 @@ async fn stalled_peer(dir: &std::path::Path) -> std::path::PathBuf {
             .unwrap();
         let hello: Value = serde_json::from_str(&hello).unwrap();
         let welcome = json!({"frame":"reply","id":hello["req"],"result":{"Ok":{"reply":"welcome",
-            "data":{"protocol_version":17,"daemon_version":"x","instance_id":"stalled","schema_version":1,"pid":1}}}});
+            "data":{"protocol_version":18,"daemon_version":"x","instance_id":"stalled","schema_version":1,"pid":1}}}});
         write
             .write_all(format!("{welcome}\n").as_bytes())
             .await

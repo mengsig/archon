@@ -262,9 +262,29 @@ unchanged.
 `why` lists each correction of an item's runs: whether it is active, revoked,
 expired or informational; the corrected choice's results now; what a new
 default selects; the routing explanation kept when the item was planned; and
-the named memory's origin, scope, date and state. `undo` revokes only the
-model penalty, and the record stays. A memory the correction forgot stays
+the named memory's origin, scope, date and state. It also shows sent, pending,
+skipped and retracted memory feedback, partial context results and failure
+reasons. `undo` revokes the model penalty immediately and queues retraction of
+memory feedback; the record stays. A memory the correction forgot stays
 forgotten.
+
+When Aether supports memory feedback, quality corrections send outcome evidence
+for the memories recalled by the corrected stage's tasks. Other causes send no
+outcome evidence. A named `--forget-memory` sends the operator's judgement of
+that memory for every cause, provided it appeared in the task's context.
+Archon records this delivery intent durably, then delivers it in the background;
+a stalled feedback call does not delay `correct` or `undo`. Pending work resumes
+at daemon start and when Aether reconnects. Replaying a correction or running
+`retry-memory` also resumes delivery. Permanent refusals, missing features and
+instance mismatches are skipped with their reason in `why`.
+
+An interrupted submission is resolved before any resend. Aether's retained
+receipt recovers the feedback id for undo; a proven safe absence permits a
+resend. If Aether cannot tell whether it ran, including after receipt expiry,
+`why` shows delivery unconfirmed and Archon leaves it pending without resending.
+An older Aether that cannot resolve submissions also leaves uncertain work
+pending. `retry-memory` can check for a receipt again; it never forces an
+uncertain resend.
 
 `--forget-memory` forgets that one Aether memory in the Aether instance
 `archond` last connected to, so fresh stage sessions stop recalling it;
@@ -272,10 +292,12 @@ sessions already running keep what they recalled. Archon stores the memory's
 ID and state, never its text, and shows who wrote it as Aether recorded it.
 The correction is recorded first: when Aether is down or the forget fails,
 the command prints "Correction recorded; memory forget pending/failed" and
-exits 1, and `retry-memory` retries only the forget, only in the same
-instance. A forget is refused before anything is recorded when `archond` has
-never connected to Aether or is switching to another instance, and when the
-`aetherd` is older than protocol 15. `restore-memory` brings back a memory this correction forgot; it
+exits 1, and `retry-memory` retries the forget and pending feedback in their bound
+instance. The explicit forget still waits on Aether and can time out; background
+feedback does not delay it. A forget is refused before anything is recorded when
+`archond` has never connected to Aether or is switching to another instance, and
+when `aetherd` is older than protocol 15. `restore-memory` brings back a memory
+this correction forgot; it
 refuses when the memory was already forgotten or superseded before the
 correction, has been restored or forgotten again since, or is superseded now.
 Aether's `/memory` (`u`) restores any memory.
@@ -619,6 +641,7 @@ progress too; also `/verbose`), `/pause` and `/resume` (optionally `hard`,
 | `archon queue show <id> [--full]` | an item's runs and each stage's attempt, slot, state, verdict, model, agent, cost and summary (first lines; `--full` for all), with the PR URL, recorded plan reasons and full waiting explanation when present. A stage that delegated shows how its cost splits (its own agent, then each delegated agent with model, effort and cost), and a stage holding a declared review shows the review on record. Steers made to the item are listed with who made them |
 | `archon queue cancel <id>` / `archon queue caps` | cancel an item, or show and change runtime caps |
 | `archon queue retry <id> [--fresh] [--append "…"]` | queue a finished item again in its worktree and branch (a succeeded one delivers into its pull request again, and the retry counts against the run that passed); `--fresh` starts over from the base branch on a new branch and sets the old worktree aside, which worktree gc deletes, uncommitted work included, `worktrees.gc_after` (7 days) after the item's last run; `--append` adds guidance to the brief |
+| `archon queue refresh <id>` | merge a finished item's base branch, fetched from `origin`, into its branch: a new item resolves any conflicts, runs the checks, is reviewed from the new merge base and updates the same pull request (never a rebase or a second pull request) |
 | `archon queue steer <id> [--note "…"] [--stage <stage>] [--model <provider/model>] [--effort <effort>] [--budget-usd <usd>] [--extend <minutes>] [--abort [--then retry\|skip] [--goto <stage>]] [--remove <stage>] [--insert <stage> [--from <pipeline>] [--after <stage>]] [--switch <pipeline>]` | change an item without cancelling it; see [steering an item](#steering-an-item) |
 | `archon log` | the complete feed; `--item <id>` keeps one item's entries, `--kind <kind>` (repeatable) some kinds, and `--follow` keeps printing new ones |
 | `archon reports` / `archon reports reopen <rpt_…>` | list published reports with their state and URL, or show a closed one again |

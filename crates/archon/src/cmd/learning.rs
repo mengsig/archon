@@ -39,7 +39,8 @@ pub enum LearningCommand {
         /// The qi_… item.
         item: String,
     },
-    /// Revoke a correction's model penalty; a forgotten memory stays forgotten.
+    /// Revoke a correction's model penalty and memory feedback; a forgotten
+    /// memory stays forgotten.
     Undo {
         /// The fb_… correction.
         feedback: String,
@@ -49,7 +50,7 @@ pub enum LearningCommand {
         /// The fb_… correction.
         feedback: String,
     },
-    /// Retry a correction's memory forget that is pending or failed.
+    /// Retry pending memory feedback, retractions, or a failed memory forget.
     RetryMemory {
         /// The fb_… correction.
         feedback: String,
@@ -161,6 +162,7 @@ fn receipt_text(receipt: &FeedbackReceipt) -> String {
         lines.push("Review requirement unchanged. Applies to newly chosen defaults.".into());
     }
     lines.extend(memory_lines(view));
+    lines.extend(feedback_lines(view));
     lines.join("\n")
 }
 
@@ -261,6 +263,51 @@ fn memory_state(view: &FeedbackView) -> Option<String> {
     ))
 }
 
+fn feedback_lines(view: &FeedbackView) -> Vec<String> {
+    let Some(ledger) = &view.feedback.memory_feedback else {
+        return Vec::new();
+    };
+    let counts = ledger.counts();
+    assert_eq!(counts, view.memory_feedback, "text and JSON share counts");
+    assert!(ledger.check().is_ok());
+    let mut lines = vec![format!(
+        "Memory feedback: {} sent, {} pending, {} skipped, {} retracted; {} partial tasks.",
+        counts.sent, counts.pending, counts.skipped, counts.retracted, counts.partial_tasks
+    )];
+    lines.extend(
+        ledger
+            .skipped
+            .iter()
+            .map(|s| format!("Memory feedback skipped: {s}.")),
+    );
+    for task in &ledger.tasks {
+        if let Some(note) = task.skipped.as_ref().or(task.error.as_ref()) {
+            lines.push(format!("Memory feedback {}: {note}.", task.task));
+        }
+        for entry in &task.records {
+            if let Some(reason) = &entry.failed {
+                lines.push(format!(
+                    "Memory feedback {} / {} skipped: {reason}.",
+                    entry.memory, task.task
+                ));
+            }
+            if let Some(error) = &entry.error {
+                lines.push(format!(
+                    "Memory feedback {} / {} pending: {error}.",
+                    entry.memory, task.task
+                ));
+            }
+        }
+    }
+    if counts.pending > 0 {
+        lines.push(format!(
+            "Retry with `archon learning retry-memory {}`.",
+            view.feedback.id
+        ));
+    }
+    lines
+}
+
 fn why_text(why: &LearningWhy) -> String {
     if why.feedback.is_empty() {
         return format!("No operator corrections for item {}.", why.item);
@@ -288,6 +335,7 @@ fn why_text(why: &LearningWhy) -> String {
             lines.push(format!("  When chosen: {frozen}"));
         }
         lines.extend(memory_lines(view).into_iter().map(|l| format!("  {l}")));
+        lines.extend(feedback_lines(view).into_iter().map(|l| format!("  {l}")));
     }
     lines.join("\n")
 }
@@ -353,8 +401,10 @@ mod tests {
             observed_at: now,
             revoked_at: None,
             curation,
+            memory_feedback: None,
         };
         FeedbackView {
+            memory_feedback: Default::default(),
             feedback,
             penalizing: false,
             corrected: None,
@@ -390,5 +440,83 @@ mod tests {
         let why = "the run has not finished".to_owned();
         let plain = view(Credit::Unavailable { why }, None);
         assert!(!curation_failed(&plain), "no forget asked for, none failed");
+    }
+
+    #[test]
+    fn memory_feedback_text_shows_counts_partial_context_and_retry_errors() {
+        use archon_core::aether_ids::AetherTaskId;
+        use archon_core::feedback::{MemoryFeedback, MemoryFeedbackTask};
+
+        let mut view = view(
+            Credit::Unavailable {
+                why: "no model credit".into(),
+            },
+            None,
+        );
+        let ledger = MemoryFeedback {
+            instance_id: "instance".into(),
+            skipped: None,
+            tasks: vec![MemoryFeedbackTask {
+                task: AetherTaskId::parse("tsk_1").unwrap(),
+                discovered: false,
+                partial: false,
+                skipped: None,
+                error: Some("context unavailable".into()),
+                records: Vec::new(),
+            }],
+        };
+        view.memory_feedback = ledger.counts();
+        view.feedback.memory_feedback = Some(ledger);
+        let lines = feedback_lines(&view).join("\n");
+        assert!(lines.contains("0 sent, 1 pending, 0 skipped, 0 retracted; 0 partial tasks"));
+        assert!(lines.contains("tsk_1: context unavailable"));
+        assert!(lines.contains("archon learning retry-memory fb_"));
+        let why = why_text(&LearningWhy {
+            item: view.feedback.item.clone(),
+            feedback: vec![view.clone()],
+        });
+        assert!(why.contains(lines.lines().next().unwrap()));
+        let ledger = view.feedback.memory_feedback.as_mut().unwrap();
+        ledger.tasks[0].discovered = true;
+        ledger.tasks[0].partial = true;
+        ledger.tasks[0].error = None;
+        ledger.tasks[0].skipped = Some("named memory was not listed".into());
+        view.memory_feedback = ledger.counts();
+        let lines = feedback_lines(&view).join("\n");
+        assert!(lines.contains("0 sent, 0 pending, 1 skipped"));
+        assert!(lines.contains("1 partial tasks"));
+        assert!(!lines.contains("retry-memory"));
+    }
+    #[test]
+    fn terminal_feedback_shows_its_reason_without_pending_or_retry_advice() {
+        use archon_core::aether_ids::AetherTaskId;
+        use archon_core::feedback::{MemoryFeedback, MemoryFeedbackTask};
+        let mut view = view(
+            Credit::Unavailable {
+                why: "informational".into(),
+            },
+            None,
+        );
+        let ledger = MemoryFeedback {
+            instance_id: "instance".into(),
+            skipped: None,
+            tasks: vec![MemoryFeedbackTask {
+                task: AetherTaskId::parse("tsk_1").unwrap(),
+                discovered: false,
+                partial: false,
+                skipped: Some("aether has no such task".into()),
+                error: None,
+                records: Vec::new(),
+            }],
+        };
+        view.memory_feedback = ledger.counts();
+        view.feedback.memory_feedback = Some(ledger);
+        let text = why_text(&LearningWhy {
+            item: view.feedback.item.clone(),
+            feedback: vec![view],
+        });
+        assert!(text.contains("0 pending, 1 skipped"));
+        assert!(text.contains("aether has no such task"));
+        assert!(!text.contains("Retry with"));
     }
 }

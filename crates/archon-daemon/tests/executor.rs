@@ -1968,10 +1968,10 @@ const SCHEDULE_TOOLS: [&str; 3] = ["create_schedule", "update_schedule", "list_s
 
 /// What a guarded stage agent does not see, in a workspace it may write.
 fn guarded_hidden() -> Vec<String> {
-    let messaging = archon_core::mcp_tools::qualified("message_orchestrator");
+    let kept = archon_core::mcp_tools::STAGE_TOOLS.map(archon_core::mcp_tools::qualified);
     archon_core::mcp_tools::qualified_names()
         .into_iter()
-        .filter(|name| name != &messaging)
+        .filter(|name| !kept.contains(name))
         .chain(SCHEDULE_TOOLS.map(str::to_owned))
         .collect()
 }

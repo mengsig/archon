@@ -2,6 +2,10 @@
 //! the model choice it may penalize, frozen when it is recorded, and the
 //! Aether memory it may ask to forget. Archon keeps ids and state, never text.
 
+mod memory;
+
+pub use memory::*;
+
 use serde::{Deserialize, Serialize};
 
 use crate::Timestamp;
@@ -176,7 +180,7 @@ impl MemoryCuration {
     }
 }
 
-/// One recorded correction. Immutable but for `revoked_at` and its curation.
+/// One recorded correction, with mutable revocation, curation and delivery state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OperatorFeedback {
     pub id: FeedbackId,
@@ -190,6 +194,8 @@ pub struct OperatorFeedback {
     pub observed_at: Timestamp,
     pub revoked_at: Option<Timestamp>,
     pub curation: Option<MemoryCuration>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_feedback: Option<MemoryFeedback>,
 }
 
 impl OperatorFeedback {
@@ -234,7 +240,12 @@ impl OperatorFeedback {
                 self.id
             )));
         }
-        self.curation.as_ref().map_or(Ok(()), MemoryCuration::check)
+        self.curation
+            .as_ref()
+            .map_or(Ok(()), MemoryCuration::check)?;
+        self.memory_feedback
+            .as_ref()
+            .map_or(Ok(()), MemoryFeedback::check)
     }
 }
 
@@ -265,6 +276,8 @@ pub struct ChoiceStanding {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FeedbackView {
     pub feedback: OperatorFeedback,
+    #[serde(default)]
+    pub memory_feedback: MemoryFeedbackCounts,
     /// Whether it masks a model sample as of the reply.
     pub penalizing: bool,
     /// The penalized choice's samples in its repository and context.
@@ -323,6 +336,7 @@ mod tests {
             observed_at,
             revoked_at: None,
             curation: None,
+            memory_feedback: None,
         }
     }
 

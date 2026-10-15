@@ -1,6 +1,8 @@
 //! What a stage agent is told about the items its item was queued after
 //! (ARCHITECTURE §8.6).
 
+use std::path::Path;
+
 use archon_core::catalog::WorkspaceMode;
 use archon_core::error::ArchonError;
 use archon_core::id::{QueueItemId, RepoId};
@@ -16,12 +18,14 @@ use super::{recover, restack};
 const MAX_URL_CHARS: usize = 200;
 
 /// The contract's Dependencies section for the agents of `run`, empty when
-/// `item` has no dependency or no branch of its own to stack on one.
+/// `item` has no dependency or no branch of its own to stack on one. A
+/// dependency that published artifacts under `artifacts` says where.
 pub(super) fn section(
     store: &Store,
     run: &PipelineRun,
     item: &QueueItem,
     mode: WorkspaceMode,
+    artifacts: &Path,
 ) -> Result<String, ArchonError> {
     assert_eq!(run.item, item.id, "the run is the item's");
     if item.dependencies.is_empty() || mode != WorkspaceMode::Worktree {
@@ -35,7 +39,12 @@ pub(super) fn section(
     })?;
     let mut found = Vec::with_capacity(item.dependencies.len());
     for id in &item.dependencies {
-        found.push(dependency(store, id, item.repo.as_ref())?);
+        let mut fact = dependency(store, id, item.repo.as_ref())?;
+        if crate::artifacts::has_files(artifacts, id) {
+            let dir = crate::artifacts::item_dir(artifacts, id);
+            fact.artifacts = Some(dir.display().to_string());
+        }
+        found.push(fact);
     }
     let parents = store.stack_parents(&item.id)?;
     let current_base = restack::target_base(store, &item.id)?;
@@ -99,6 +108,7 @@ fn dependency(
     let Some(run) = runs.last() else {
         return Ok(Dependency {
             item: id.to_string(),
+            artifacts: None,
             branch: None,
             pull_request: None,
         });
@@ -109,6 +119,7 @@ fn dependency(
     let branch = (same_repo && is_plain_branch(&run.branch)).then(|| run.branch.clone());
     Ok(Dependency {
         item: id.to_string(),
+        artifacts: None,
         branch,
         pull_request,
     })

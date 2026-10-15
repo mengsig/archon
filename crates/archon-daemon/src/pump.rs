@@ -114,7 +114,8 @@ pub async fn run(ctx: Arc<DaemonContext>, endpoint: Endpoint) -> Result<(), Arch
         supervisor::revive_when_due(ctx.clone()),
         supervisor::sweep_when_owed(ctx.clone()),
         supervisor::watch_mcp(ctx.clone()),
-        github::watch_github(ctx.clone())
+        github::watch_github(ctx.clone()),
+        crate::handlers::deliver_memory_feedback(ctx.clone())
     )?;
     Ok(())
 }
@@ -143,6 +144,7 @@ async fn link_loop(ctx: Arc<DaemonContext>, endpoint: Endpoint) -> Result<(), Ar
                 announce_connected(&ctx, &client, &outage).await?;
                 backoff = BACKOFF_MIN;
                 ctx.aether.replace(Some(client.clone()))?;
+                ctx.memory_feedback_ready.notify_one();
                 supervisor::check_mcp_soon(&ctx);
                 supervisor::sweep_soon(&ctx);
                 github::check_github_soon(&ctx);

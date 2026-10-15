@@ -555,13 +555,13 @@ async fn the_ceiling_refuses_until_the_operator_raises_it() {
 }
 
 /// `archon` tool names as a stage agent has them hidden: all but the one
-/// that reaches the orchestrator, and Aether's scheduling tools.
+/// that reach the orchestrator and the item's artifacts, and Aether's scheduling tools.
 fn stage_hidden(archon: Vec<String>) -> Vec<String> {
-    let messaging = archon_core::mcp_tools::qualified("message_orchestrator");
+    let kept = archon_core::mcp_tools::STAGE_TOOLS.map(archon_core::mcp_tools::qualified);
     let schedules = ["create_schedule", "update_schedule", "list_schedules"];
     archon
         .into_iter()
-        .filter(|name| name != &messaging)
+        .filter(|name| !kept.contains(name))
         .chain(schedules.map(str::to_owned))
         .collect()
 }

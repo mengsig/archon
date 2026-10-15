@@ -2,6 +2,7 @@
 //! half of a tool result, so every id, state and reason the orchestrator
 //! acts on is written out; only long free text is clipped, and says so.
 
+mod artifacts;
 mod cost;
 mod initiatives;
 mod lessons;
@@ -67,6 +68,8 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         Reply::Initiatives(all) => initiatives::list(all),
         Reply::Initiative(detail) => initiatives::detail(tool, detail),
         Reply::Lesson(lesson) => lessons::recorded(lesson),
+        Reply::Artifacts(listing) => artifacts::listing(listing),
+        Reply::ArtifactPage(page) => artifacts::page(page),
         Reply::Questions(_)
         | Reply::Lessons(_)
         | Reply::LessonsWhy(_)
@@ -126,6 +129,7 @@ fn ok(tool: &str) -> &'static str {
         "cancel_item" => "Cancelled.",
         "update_item" => "Updated.",
         "retry_item" => "Re-queued.",
+        "refresh_item" => "Refresh queued.",
         _ => "Done.",
     }
 }
@@ -137,6 +141,7 @@ fn verb(tool: &str) -> &'static str {
         "update_item" => "Updated ",
         "cancel_item" => "Cancelled ",
         "retry_item" => "Re-queued ",
+        "refresh_item" => "Refresh queued as ",
         _ => "",
     }
 }

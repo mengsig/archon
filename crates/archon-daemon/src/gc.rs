@@ -10,8 +10,16 @@
 //! a team run or a fresh retry set aside, are touched, and only for items
 //! still settled. A read-only run's snapshot left behind goes whole, dirty
 //! or locked.
+//!
+//! Beside the workspaces, a pass deletes a repository's shared build cache
+//! once nothing used it for `worktrees.shared_cache_after` and no item of the
+//! repository is live, and an item's published artifacts `artifacts.keep_after`
+//! it settled (`extras`). While dispatch is held for disk space, the ages of
+//! worktrees and caches drop to `worktrees.pressure_after` if that is shorter.
+//! A pass that freed anything leaves a note in the feed and in `archon status`.
 
 pub(crate) mod cache;
+mod extras;
 mod mark;
 mod plan;
 mod snapshot;
@@ -27,15 +35,20 @@ use std::time::{Duration, Instant};
 
 use archon_core::Timestamp;
 use archon_core::age::Age;
-use archon_core::config::WorktreeConfig;
+use archon_core::config::{Config, WorktreeConfig};
 use archon_core::error::ArchonError;
-use archon_core::protocol::GcReport;
+use archon_core::protocol::{GcReport, GcStatus};
 use archon_queue::Store;
 use tokio::sync::MutexGuard;
 
 use crate::context::{DaemonContext, DaemonPaths};
+use crate::feed;
 
+pub use extras::Extras;
 pub use mark::{Collecting, Mark};
+
+/// The kv key of the last pass that freed anything, as a [`GcStatus`].
+const LAST_PASS_KEY: &str = "gc_last_pass";
 
 /// How often archond's own pass runs; the first runs at startup.
 const INTERVAL: Duration = Duration::from_secs(30 * 60);
@@ -86,6 +99,20 @@ impl Policy {
         Ok(policy)
     }
 
+    /// The policy while dispatch is held for disk space: worktrees of
+    /// finished runs go after `worktrees.pressure_after` if that is shorter
+    /// than their age so far.
+    pub fn under_pressure(
+        mut self,
+        config: &WorktreeConfig,
+        now: Timestamp,
+    ) -> Result<Self, ArchonError> {
+        let sooner = now - config.pressure_after.chrono()?;
+        self.remove_before = self.remove_before.max(sooner);
+        assert!(self.remove_before <= now, "ages are not negative");
+        Ok(self)
+    }
+
     /// Items settled before this may hold something to collect.
     fn settled_before(&self) -> Timestamp {
         self.remove_before.max(self.reclaim_before)
@@ -103,6 +130,14 @@ pub struct Roots {
 }
 
 impl Roots {
+    pub fn cache(&self) -> PathBuf {
+        self.data_dir.join(crate::context::CACHE_DIR)
+    }
+
+    pub fn artifacts(&self) -> PathBuf {
+        self.data_dir.join(crate::context::ARTIFACTS_DIR)
+    }
+
     pub fn resolve(paths: &DaemonPaths) -> Result<Self, ArchonError> {
         let roots = Self {
             worktrees: canonical_root(&paths.worktrees)?,
@@ -203,6 +238,8 @@ pub struct Pass<'a> {
     last_pass: MutexGuard<'a, Option<Instant>>,
     policy: Arc<Policy>,
     roots: Arc<Roots>,
+    extras: Extras,
+    pressure: bool,
     plans: Vec<plan::ItemPlan>,
 }
 
@@ -221,7 +258,13 @@ pub async fn plan(
 ) -> Result<Pass<'_>, ArchonError> {
     let last_pass = ctx.gc.lock().await;
     let now = archon_core::now();
-    let policy = Arc::new(Policy::new(&ctx.config.worktrees, now, older_than, force)?);
+    let pressure = ctx.disk.holding();
+    let mut policy = Policy::new(&ctx.config.worktrees, now, older_than, force)?;
+    if pressure && older_than.is_none() {
+        policy = policy.under_pressure(&ctx.config.worktrees, now)?;
+    }
+    let policy = Arc::new(policy);
+    let extras = Extras::new(&ctx.config, now, older_than, pressure)?;
     let roots = Arc::new(Roots::resolve(&ctx.paths)?);
     let settled = plan::settled(&*ctx.store.lock().await, policy.settled_before())?;
     let (r, p) = (roots.clone(), policy.clone());
@@ -230,6 +273,8 @@ pub async fn plan(
         last_pass,
         policy,
         roots,
+        extras,
+        pressure,
         plans,
     })
 }
@@ -244,6 +289,8 @@ pub async fn collect_planned(ctx: &DaemonContext, pass: Pass<'_>) -> Result<GcRe
         mut last_pass,
         policy,
         roots,
+        extras,
+        pressure,
         plans,
     } = pass;
     let mut report = GcReport::default();
@@ -263,8 +310,77 @@ pub async fn collect_planned(ctx: &DaemonContext, pass: Pass<'_>) -> Result<GcRe
         });
         report.absorb(swept.await?);
     }
+    report.absorb(collect_extras(ctx, &roots, &extras).await?);
+    report.pressure = pressure;
     *last_pass = Some(Instant::now());
+    announce(ctx, &report).await?;
     Ok(report)
+}
+
+/// Claim the idle shared caches and expired artifacts holding the run table,
+/// so no item starts using one meanwhile, then delete them without it.
+async fn collect_extras(
+    ctx: &DaemonContext,
+    roots: &Arc<Roots>,
+    extras: &Extras,
+) -> Result<GcReport, ArchonError> {
+    let mut report = GcReport::default();
+    let claimed = {
+        let _table = ctx.runs.lock().await;
+        let store = ctx.store.lock().await;
+        extras::claim(
+            &store,
+            &roots.cache(),
+            &roots.artifacts(),
+            extras,
+            &mut report,
+        )?
+    };
+    report.absorb(blocking(move || extras::delete(claimed)).await?);
+    Ok(report)
+}
+
+/// Tell the operator what a pass that freed something did: a feed note, and
+/// the record `archon status` shows. A note that cannot be posted is logged;
+/// only a store failure fails the pass, whose work is done.
+async fn announce(ctx: &DaemonContext, report: &GcReport) -> Result<(), ArchonError> {
+    if !report.freed_any() {
+        return Ok(());
+    }
+    let status = GcStatus {
+        at: archon_core::now(),
+        bytes_freed: report.bytes_freed,
+        pressure: report.pressure,
+        headline: report.headline(),
+    };
+    let recorded = ctx
+        .store
+        .lock()
+        .await
+        .kv_set(LAST_PASS_KEY, &serde_json::to_string(&status)?);
+    let posted = match recorded {
+        Ok(()) => feed::system(ctx, status.headline).await.map(drop),
+        Err(error) => Err(error),
+    };
+    match posted {
+        Err(error) if error.is_store() => Err(error),
+        Err(error) => {
+            tracing::warn!(%error, "could not tell the operator what worktree gc freed");
+            Ok(())
+        }
+        Ok(()) => Ok(()),
+    }
+}
+
+/// The last pass that freed anything, for `archon status`.
+pub(crate) fn last_pass(store: &Store) -> Result<Option<GcStatus>, ArchonError> {
+    store
+        .kv_get(LAST_PASS_KEY)?
+        .map(|raw| {
+            serde_json::from_str(&raw)
+                .map_err(|e| ArchonError::Store(format!("kv {LAST_PASS_KEY}: {e}")))
+        })
+        .transpose()
 }
 
 /// Whether a pass may collect a planned item now.
@@ -313,7 +429,7 @@ fn held_by_a_sweep(item: &plan::ItemPlan) -> GcReport {
 /// One read-only pass without archond, for a disk too full to start it, holding the daemon lock
 /// and the data dir's lock shared so none runs meanwhile. Fails while an archond holds either.
 pub fn collect_offline(
-    config: &WorktreeConfig,
+    config: &Config,
     paths: &DaemonPaths,
     older_than: Option<Age>,
     force: bool,
@@ -321,13 +437,33 @@ pub fn collect_offline(
     let _data = archon_queue::DataLock::share(&paths.data_dir)?;
     let _lock = crate::server::lock_daemon(&paths.socket)?;
     let store = Store::open_read_only(&paths.store)?;
-    let policy = Policy::new(config, archon_core::now(), older_than, force)?;
+    let now = archon_core::now();
+    let pressure = below_minimum_free(config, paths);
+    let mut policy = Policy::new(&config.worktrees, now, older_than, force)?;
+    if pressure && older_than.is_none() {
+        policy = policy.under_pressure(&config.worktrees, now)?;
+    }
+    let extras = Extras::new(config, now, older_than, pressure)?;
     let roots = Roots::resolve(paths)?;
-    collect_locked(&store, &roots, &policy)
+    let mut report = collect_locked(&store, &roots, &policy, &extras)?;
+    report.pressure = pressure;
+    Ok(report)
+}
+
+/// Whether the data dir has less free than `limits.min_free_gb`, the level
+/// at which archond would hold dispatch. An unreadable disk is not pressure.
+fn below_minimum_free(config: &Config, paths: &DaemonPaths) -> bool {
+    let min = config.limits.min_free_bytes();
+    min > 0 && crate::disk::free_bytes(&paths.data_dir).is_ok_and(|free| free < min)
 }
 
 /// A pass over `store` while the daemon lock is held.
-fn collect_locked(store: &Store, roots: &Roots, policy: &Policy) -> Result<GcReport, ArchonError> {
+fn collect_locked(
+    store: &Store,
+    roots: &Roots,
+    policy: &Policy,
+    extras: &Extras,
+) -> Result<GcReport, ArchonError> {
     let settled = plan::settled(store, policy.settled_before())?;
     let mut report = GcReport::default();
     for item in plan::plan_all(&settled, roots, policy) {
@@ -335,6 +471,14 @@ fn collect_locked(store: &Store, roots: &Roots, policy: &Policy) -> Result<GcRep
             report.absorb(sweep::sweep(item.found, roots, policy));
         }
     }
+    let claimed = extras::claim(
+        store,
+        &roots.cache(),
+        &roots.artifacts(),
+        extras,
+        &mut report,
+    )?;
+    report.absorb(extras::delete(claimed));
     Ok(report)
 }
 

@@ -1,6 +1,8 @@
 //! `archond`, the Archon daemon (ARCHITECTURE §2, §5, §16).
 
 mod agent_messages;
+mod artifacts;
+mod build_cache;
 mod chat_answer;
 pub mod context;
 pub mod disk;
@@ -304,6 +306,9 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
         runs: Mutex::new(executor::RunTable::default()),
         replies: Mutex::new(feed::ReplyTracker::default()),
         answering: Mutex::new(()),
+        learning_memory: Mutex::new(()),
+        memory_curation: Mutex::new(()),
+        memory_feedback_ready: Notify::new(),
         report_files: Arc::new(Mutex::new(())),
         triggers: TriggerQueue::default(),
         mirrors: mirror::MirrorQueue::default(),

@@ -73,7 +73,7 @@ The daemon refuses a knob above the ceiling `autonomy_policy` shows; only
 the operator can raise it, so never work around a refusal. `merge: auto` and
 `tools: yolo` only when the operator said so, now or in a directive.
 
-Manage items with `update_item`, `cancel_item`, `pause` and `resume`;
+Manage items with `update_item`, `cancel_item`, `refresh_item`, `pause` and `resume`;
 `register_repo` only when the operator asks. On a failure read `get_item`,
 then `retry_item`, split the work, or `notify` a `blocker`.
 

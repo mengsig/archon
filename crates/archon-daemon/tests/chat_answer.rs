@@ -942,3 +942,41 @@ async fn github_operator_can_answer_in_shared_mode_but_payload_markers_cannot() 
         if evidence.channel.is_github() && evidence.seq == 2)
     ));
 }
+
+#[tokio::test]
+async fn a_cited_plain_language_gate_answer_must_postdate_the_gate() {
+    let (h, item, asked) = at_proposal_gate(AetherMode::Dedicated).await;
+    let request = |seq| Request::RequestAuthority {
+        action: Box::new(Request::Answer {
+            question: asked.id.clone(),
+            text: "approve".into(),
+        }),
+        utterance: seq,
+        quote: "please approve".into(),
+        reason: "operator approved this gate".into(),
+        caller: Some(AetherAgentId::parse(ORCH).unwrap()),
+    };
+    let mut earlier = delivered(1, operator("please approve"));
+    earlier.at = asked.asked_at - chrono::Duration::seconds(1);
+    pump::handle_orchestrator_event(&h.ctx, &earlier)
+        .await
+        .unwrap();
+    assert!(
+        h.orchestrator(request(1))
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("predates")
+    );
+    let mut event = delivered(2, operator("please approve"));
+    event.at = archon_core::now();
+    pump::handle_orchestrator_event(&h.ctx, &event)
+        .await
+        .unwrap();
+    let result = h.orchestrator(request(2)).await.unwrap();
+    assert!(matches!(result, Reply::Question(q) if !q.is_open()));
+    assert!(matches!(
+        decision(&h, &item.id, "propose").await,
+        Some(GateDecision::Approve { .. })
+    ));
+}

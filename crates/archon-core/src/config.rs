@@ -41,6 +41,7 @@ const PATH_KEYS: [&str; 3] = [
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
+    pub authority: crate::authority::AuthorityConfig,
     pub aether: AetherConfig,
     pub orchestrator: OrchestratorConfig,
     pub models: ModelsConfig,

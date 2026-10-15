@@ -31,3 +31,18 @@ pub struct OperatorMessage {
     pub text: String,
     pub at: Timestamp,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AuthorityConfig {
+    /// Whether verified GitHub operators may approve a loosening change.
+    pub github_may_loosen: bool,
+}
+
+impl Default for AuthorityConfig {
+    fn default() -> Self {
+        Self {
+            github_may_loosen: true,
+        }
+    }
+}

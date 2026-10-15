@@ -92,6 +92,8 @@ pub struct DaemonContext {
     /// Held while an operator answer is delivered and then recorded, so a
     /// question is delivered at most once (see `handlers::operator`).
     pub answering: Mutex<()>,
+    /// Serializes operator settings changes and confirmation application.
+    pub authority_changes: Mutex<()>,
     /// Serializes background evidence delivery with explicit retries.
     pub learning_memory: Mutex<()>,
     /// Explicit forget requests retain their serialization independently of evidence.

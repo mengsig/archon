@@ -288,7 +288,8 @@ fn name_caller(
     let (named, required) = match request {
         Request::MessageOrchestrator { caller, .. }
         | Request::PublishArtifact { caller, .. }
-        | Request::RecordChatAnswer { caller, .. } => (caller, true),
+        | Request::RecordChatAnswer { caller, .. }
+        | Request::RequestAuthority { caller, .. } => (caller, true),
         // Without it the question is still asked, with no recorded asker.
         Request::AskOperator { caller, .. } => (caller, false),
         _ => return Ok(()),

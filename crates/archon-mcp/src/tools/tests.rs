@@ -106,6 +106,11 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
             json!({"title": "E2E run", "path": "/srv/web/.archon/reports/e2e.html", "item": qi()}),
         ),
         ("autonomy_policy", json!({"repo": "web"})),
+        ("guide", json!({"topic": "authority"})),
+        (
+            "request_authority",
+            json!({"utterance": 1, "quote": "pause", "reason": "operator asked", "action": {"cmd":"pause", "scope":"global", "hard":true}}),
+        ),
         (
             "set_directive",
             json!({"text": "merge docs fixes yourself", "expires_in_hours": 12}),
@@ -952,13 +957,12 @@ fn shown_bytes(definition: &ToolDefinition) -> usize {
 }
 
 /// Every orchestrator turn pays for the tool list: 1.0's 25 tools (30,071 bytes
-/// then) stay within 60% of that, and all of them within 26 KiB (25 KiB until
-/// `request_merge`).
+/// then) stay within 60% of that, and all of them within 28 KiB.
 #[test]
 fn the_tool_list_stays_within_its_budget() {
     const FROM_1_0: usize = 25;
     const FROM_1_0_BUDGET_BYTES: usize = 18_087;
-    const BUDGET_BYTES: usize = 26 * 1024;
+    const BUDGET_BYTES: usize = 28 * 1024;
     let definitions = definitions();
     assert_eq!(definitions[FROM_1_0 - 1].name, "message_orchestrator");
     let carried: usize = definitions[..FROM_1_0].iter().map(shown_bytes).sum();
@@ -966,6 +970,16 @@ fn the_tool_list_stays_within_its_budget() {
         carried <= FROM_1_0_BUDGET_BYTES,
         "the tools of 1.0 grew to {carried} bytes"
     );
+    for definition in definitions
+        .iter()
+        .filter(|d| matches!(d.name, "guide" | "request_authority"))
+    {
+        assert!(
+            shown_bytes(definition) <= 1536,
+            "{} exceeds its individual budget",
+            definition.name
+        );
+    }
     let all: usize = definitions.iter().map(shown_bytes).sum();
     assert!(all <= BUDGET_BYTES, "the tool list grew to {all} bytes");
 }

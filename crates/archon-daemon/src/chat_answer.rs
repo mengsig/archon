@@ -88,13 +88,13 @@ pub(crate) fn parse(message: &str) -> Option<Result<Command, String>> {
 pub(crate) async fn handle(
     ctx: &DaemonContext,
     message: &str,
-    github: bool,
+    evidence: Option<&archon_core::authority::OperatorMessage>,
 ) -> Result<(), ArchonError> {
     let Some(parsed) = parse(message) else {
         return Ok(());
     };
     let outcome = match parsed {
-        Ok(command) => apply(ctx, &command, github).await?,
+        Ok(command) => apply(ctx, &command, evidence).await?,
         Err(usage) => Outcome::refused(None, usage),
     };
     report(ctx, outcome).await
@@ -103,9 +103,11 @@ pub(crate) async fn handle(
 async fn apply(
     ctx: &DaemonContext,
     command: &Command,
-    github: bool,
+    evidence: Option<&archon_core::authority::OperatorMessage>,
 ) -> Result<Outcome, ArchonError> {
-    if ctx.config.aether.mode != AetherMode::Dedicated && !github {
+    if ctx.config.aether.mode != AetherMode::Dedicated
+        && !evidence.is_some_and(|m| m.channel.is_github())
+    {
         return Ok(Outcome::refused(None, SHARED_REFUSAL));
     }
     let Some(question) = find(ctx, &command.question).await? else {
@@ -115,6 +117,14 @@ async fn apply(
     if !question.is_open() {
         let why = reports::already_closed(&question).to_string();
         return Ok(Outcome::refused(number, why));
+    }
+    if let Some(evidence) = evidence
+        && let Err(error) = crate::authority::check_answer(ctx, &question.id, evidence).await
+    {
+        if error.is_store() {
+            return Err(error);
+        }
+        return Ok(Outcome::refused(number, error.to_string()));
     }
     let text = question.expand_option(&command.text);
     let via = AnswerVia::ChatCommand;

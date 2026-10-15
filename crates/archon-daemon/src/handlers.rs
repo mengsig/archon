@@ -67,6 +67,11 @@ pub async fn handle(
         supervisor::saw_call(ctx, caller.as_ref()).await?;
         None
     };
+    let _changes = if request.is_operator_only() && !matches!(request, Request::Answer { .. }) {
+        Some(ctx.authority_changes.lock().await)
+    } else {
+        None
+    };
     route(ctx, client, request).await
 }
 
@@ -99,7 +104,8 @@ fn check_named_caller(
         Request::MessageOrchestrator { caller, .. }
         | Request::PublishArtifact { caller, .. }
         | Request::AskOperator { caller, .. }
-        | Request::RecordChatAnswer { caller, .. } => caller.as_ref(),
+        | Request::RecordChatAnswer { caller, .. }
+        | Request::RequestAuthority { caller, .. } => caller.as_ref(),
         _ => None,
     };
     match (forwarded_for, named) {
@@ -113,7 +119,7 @@ fn check_named_caller(
 
 /// One function per request. Enqueue validates the pipeline, the model plan in
 /// the effective policy and the dependencies, then pokes the dispatcher.
-async fn route(
+pub(crate) async fn route(
     ctx: &DaemonContext,
     client: ClientKind,
     request: Request,
@@ -141,6 +147,11 @@ async fn route(
         // The server stops once this reply is sent.
         Request::Shutdown => Ok(Reply::Ok),
         Request::RepoAdd(add) => repos::add(ctx, add).await,
+        Request::UndoAuthority { .. } => Err(ArchonError::Invalid(
+            "use /archon undo N in verified operator chat, or cite it through request_authority"
+                .into(),
+        )),
+        Request::Guide { topic } => crate::authority::guide(&topic),
         Request::RepoList => repos::list(ctx).await,
         Request::RepoRemove { repo } => repos::remove(ctx, &repo).await,
         Request::RepoUpdate { repo, patch } => repos::update(ctx, &repo, patch).await,
@@ -165,6 +176,16 @@ async fn route(
             };
             let merge = operator_merge::merge_now(ctx, &item, authority, ignore_checks).await?;
             Ok(Reply::Merge(Box::new(merge)))
+        }
+        Request::RequestAuthority {
+            action,
+            utterance,
+            quote,
+            reason,
+            caller,
+        } => {
+            crate::authority::request(ctx, caller.as_ref(), utterance, &quote, &reason, *action)
+                .await
         }
         Request::RequestMerge { item, reason } => {
             let merge = operator_merge::request(ctx, &item, reason.as_deref()).await?;

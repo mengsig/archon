@@ -466,6 +466,7 @@ pub fn context(
         runs: Mutex::new(RunTable::default()),
         replies: Mutex::new(ReplyTracker::default()),
         answering: Mutex::new(()),
+        authority_changes: Mutex::new(()),
         learning_memory: Mutex::new(()),
         memory_curation: Mutex::new(()),
         memory_feedback_ready: Notify::new(),

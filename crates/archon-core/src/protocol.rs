@@ -46,7 +46,8 @@ use crate::steer::Steer;
 /// 10: `refresh_item`; an older archond knows no such request.
 /// 11: merging on the operator's request (`merge_item`, `request_merge`) and
 /// a repository's `grant_merge`, which an older archond would drop.
-pub const PROTOCOL_VERSION: u32 = 11;
+/// 12: daemon-verified operator authority requests and settings.
+pub const PROTOCOL_VERSION: u32 = 12;
 
 /// Said beside an item whose `budget_usd` was set while budgets are off.
 pub const BUDGETS_OFF_NOTE: &str = "Dollar budgets are globally off ([limits] budgets_enabled = \
@@ -139,6 +140,9 @@ pub enum Request {
         client_version: String,
     },
     Status,
+    Guide {
+        topic: String,
+    },
     /// CLI only.
     Shutdown,
 
@@ -395,6 +399,17 @@ pub enum Request {
     /// The orchestrator asks to merge an item's pull request because the
     /// operator asked it to: archond asks the operator to confirm, unless
     /// the repository's `grant_merge` lets it merge at once.
+    /// The orchestrator cites a message observed on archond's own stream.
+    UndoAuthority {
+        change: u64,
+    },
+    RequestAuthority {
+        action: Box<Request>,
+        utterance: u64,
+        quote: String,
+        reason: String,
+        caller: Option<AetherAgentId>,
+    },
     RequestMerge {
         item: QueueItemId,
         /// What the operator said, in a line.
@@ -408,7 +423,8 @@ impl Request {
     /// agent, whichever client forwards them.
     pub fn is_operator_only(&self) -> bool {
         match self {
-            Self::Shutdown
+            Self::UndoAuthority { .. }
+            | Self::Shutdown
             | Self::RepoRemove { .. }
             | Self::RepoUpdate { .. }
             | Self::SetCaps { .. }
@@ -439,6 +455,7 @@ impl Request {
         match self {
             Self::Hello { .. }
             | Self::Status
+            | Self::Guide { .. }
             | Self::RepoList
             | Self::ListItems(_)
             | Self::ListItemSummaries(_)
@@ -599,6 +616,9 @@ pub enum PauseTarget {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "reply", content = "data", rename_all = "snake_case")]
 pub enum Reply {
+    Guide {
+        text: String,
+    },
     MessageReceipt {
         receipt: crate::id::FeedItemId,
     },

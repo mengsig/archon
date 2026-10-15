@@ -32,6 +32,7 @@ const LINE_CHARS: usize = 200;
 
 pub(super) fn reply(tool: &str, reply: &Reply) -> String {
     match reply {
+        Reply::Guide { text } => text.clone(),
         Reply::MessageReceipt { receipt } => format!(
             "Recorded message {receipt} for delivery to the orchestrator. Keep working on your stage; do not wait for a reply or end your turn."
         ),

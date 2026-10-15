@@ -23,8 +23,14 @@ pub(crate) async fn handle(
     };
     let github = channel.is_github();
     if !github && ctx.config.aether.mode != AetherMode::Dedicated {
+        if matches!(
+            message.text.split_whitespace().next(),
+            Some("/archon" | "/approve" | "/reject" | "/a")
+        ) {
+            feed::system(ctx, "Operator commands are disabled in shared-mode Aether chat; use Archon's dedicated Aether or the operator socket.").await?;
+        }
         // Preserve the existing refusal messages for shared-mode chat.
-        chat_answer::handle(ctx, &message.text, false).await?;
+        chat_answer::handle(ctx, &message.text, None).await?;
         return chat_merge::handle(ctx, &message.text, MergeAuthority::AetherChat).await;
     }
     if github && ctx.aether.client()?.welcome().protocol_version < 17 {
@@ -50,7 +56,36 @@ pub(crate) async fn handle(
         at: event.at,
     };
     evidence::record(ctx, &evidence).await?;
+    if crate::authority::bare_reply(ctx, &evidence).await? {
+        return Ok(());
+    }
     let text = command_text(&message.text, github);
+    if let Some(action) = crate::authority::commands::parse(ctx, text).await {
+        let result = match action {
+            Ok(action) => crate::authority::explicit(ctx, &evidence, action).await,
+            Err(error) => Err(error),
+        };
+        let (applied, text) = match result {
+            Ok(reply) => (true, serde_json::to_string(&reply)?),
+            Err(error) if error.is_store() => return Err(error),
+            Err(error) => (false, error.to_string()),
+        };
+        feed::system(ctx, format!("Operator command: {text}")).await?;
+        return crate::triggers::push(
+            ctx,
+            crate::triggers::TriggerEvent::ChatAnswer {
+                number: None,
+                applied,
+                text,
+            },
+        )
+        .await;
+    }
+    if text.starts_with('/') && text.chars().count() > evidence::MAX_MESSAGE_CHARS {
+        return feed::system(ctx, "Operator command exceeds the 4000-character limit.")
+            .await
+            .map(drop);
+    }
     let command = match gate_alias(ctx, text).await {
         Ok(Some(command)) => command,
         Ok(None) => text.to_owned(),
@@ -65,7 +100,7 @@ pub(crate) async fn handle(
         feed::append(
             ctx,
             archon_core::notify::FeedEntry::Authority {
-                evidence,
+                evidence: evidence.clone(),
                 action: command.clone(),
                 result: "received; outcome follows".into(),
                 before: serde_json::Value::Null,
@@ -74,7 +109,7 @@ pub(crate) async fn handle(
         )
         .await?;
     }
-    chat_answer::handle(ctx, &command, github).await?;
+    chat_answer::handle(ctx, &command, Some(&evidence)).await?;
     let authority = match channel {
         OperatorChannel::AetherChat => MergeAuthority::AetherChat,
         OperatorChannel::Github {
@@ -91,7 +126,7 @@ pub(crate) async fn handle(
 }
 
 /// GitHub's mention is accepted only at the start, never inside quoted text.
-fn command_text(text: &str, github: bool) -> &str {
+pub(crate) fn command_text(text: &str, github: bool) -> &str {
     let text = text.trim();
     if github
         && text

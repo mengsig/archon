@@ -72,14 +72,14 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
             json!({
                 "repo": "web", "pipeline": "refactor", "title": "Fix login redirect",
                 "brief": "Users land on /404 after login.", "priority": "high", "depends_on": [qi()],
-                "tags": ["auth"], "model_plan": plan(), "model_reasons": {"implement": "Apply supplied fix"}, "budget_usd": 5.0, "idempotency_key": "fix-login-1",
+                "tags": ["auth"], "model_plan": plan(), "model_reasons": {"implement": "Apply supplied fix"}, "budget_usd": 5.0, "stage_timeouts": {"implement": 90}, "idempotency_key": "fix-login-1",
                 "autonomy": {"review": "standard", "proposal": "lavish", "report": "with-pr", "merge": "manual", "tools": "guarded"},
                 "origin": {"repository": "acme/web", "number": 42}
             }),
         ),
         (
             "update_item",
-            json!({"item": qi(), "priority": "low", "model_plan": plan(), "model_reasons": {"implement": "Apply supplied fix"}, "tags": [], "add_depends_on": [qi()], "budget_usd": 2.5, "brief_append": "Do Y."}),
+            json!({"item": qi(), "priority": "low", "model_plan": plan(), "model_reasons": {"implement": "Apply supplied fix"}, "tags": [], "add_depends_on": [qi()], "budget_usd": 2.5, "stage_timeouts": {"implement": 90}, "brief_append": "Do Y."}),
         ),
         ("cancel_item", json!({"item": qi(), "reason": "superseded"})),
         (
@@ -609,7 +609,7 @@ fn rendered_catalog_shows_what_a_model_plan_needs() {
     };
     let text = render("list_pipelines", &Reply::Catalog(catalog));
     assert!(
-        text.contains("stage implement (work, timeout 60m)"),
+        text.contains("stage implement (work, timeout 60m, effort medium)"),
         "{text}"
     );
     assert!(
@@ -617,7 +617,7 @@ fn rendered_catalog_shows_what_a_model_plan_needs() {
         "{text}"
     );
     assert!(
-        text.contains("stage build (team, roles api, ui, timeout 60m)"),
+        text.contains("stage build (team, roles api, ui, timeout 60m, effort medium)"),
         "{text}"
     );
     assert!(text.contains("independent reviewers"), "{text}");
@@ -680,7 +680,7 @@ fn a_rendered_catalog_lists_pipelines_in_a_line_each() {
     };
     let text = render("list_pipelines", &Reply::Catalog(one));
     assert!(
-        text.contains("stage review (work, timeout 60m): a long nudge"),
+        text.contains("stage review (work, timeout 60m, effort medium): a long nudge"),
         "{text}"
     );
     assert!(text.contains("Notes: long notes"), "{text}");

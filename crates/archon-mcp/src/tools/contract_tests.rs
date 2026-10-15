@@ -336,7 +336,6 @@ fn acting_tool_violations() -> Vec<(&'static str, Value)> {
         ),
         plan_with(json!({"model": "codex/m", "effort": "high", "temperature": 1})),
         plan_with(json!({"model": "codex/m", "effort": "extreme"})),
-        plan_with(json!({"model": "codex/m"})),
     ]
 }
 

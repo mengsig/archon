@@ -48,9 +48,8 @@ pub(super) async fn finish_run(
     let now = archon_core::now();
     let finished = {
         let mut store = ctx.store.lock().await;
-        let estimates = ctx.config.limits.count_estimated_cost;
         let stages = store.stage_runs(&run.id)?;
-        run.cost_usd = store.spend_for_run(&run.id, estimates)?;
+        run.cost_usd = store.spend_for_run(&run.id, archon_core::cost::API_EQUIVALENT)?;
         run.shipped = match &proof {
             ShippingProof::Daemon => true,
             ShippingProof::Stage(id) => stages
@@ -280,7 +279,7 @@ pub(super) async fn announce(
         .store
         .lock()
         .await
-        .spend_for_item(&item.id, ctx.config.limits.count_estimated_cost)?;
+        .spend_for_item(&item.id, archon_core::cost::API_EQUIVALENT)?;
     let finished = TriggerEvent::ItemFinished {
         item: item.id.clone(),
         title: item.title.clone(),

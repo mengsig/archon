@@ -18,6 +18,15 @@
 
 ### Changed
 
+- Codex usage is an estimate since Aether 1.0.9: a Codex turn bills $0 and
+  carries its list-price dollars as `estimated_cost_usd`. With the default
+  `count_estimated_cost = true` budgets count it as before, so a Codex-heavy
+  item stays bounded; with it off, Codex counts $0 toward budgets. Learning,
+  model evidence, a finished item's reported cost and benchmark costs now
+  always use the API-equivalent total, billed plus estimated, so a Codex
+  stage never looks free. `archon cost` and `cost_report` add
+  `≈ $X API-equivalent` when budgets leave estimates out. Older records keep
+  their list-price cost and read as before.
 - Artifact retention defaults to 14 days. Existing tighter worktree/cache
   defaults stay unchanged; zero durations disable their configured expiry.
 

@@ -689,6 +689,10 @@ Cost reports distinguish provider-reported billing, list-price estimates, and
 unclassified legacy or mixed-basis amounts. The counted total follows budgets:
 Aether's reported cost always counts, including list-price amounts; only its
 separate API-equivalent estimate depends on `limits.count_estimated_cost`.
+Since Aether 1.0.9 Codex usage is such an estimate (billed $0), so with the
+default setting budgets count Codex as before; with it off, Codex counts $0
+toward budgets and the report adds `≈ $X API-equivalent`. Learning and model
+evidence always compare the API-equivalent total, billed plus estimated.
 Finished run costs in `queue show` sum their own stages' current ledger costs,
 so late usage stays with the correct run after a retry or restart. A stage's
 cost includes the agents it delegated to; a run's and an item's totals count

@@ -417,8 +417,8 @@ pub fn reviewer_model_rules(named: Option<&[ModelChoice]>) -> String {
             )
         }
         _ => "- Delegate every reviewer with role `reviewer`, on a model other than yours \
-              that reports its dollar cost (Claude Code models do; Codex usage arrives \
-              unpriced and blocks a budgeted item).\n"
+              that reports its dollar cost (Claude Code models do; Codex usage is only an \
+              API-equivalent estimate, which Aether's dollar caps do not count).\n"
             .to_owned(),
     }
 }

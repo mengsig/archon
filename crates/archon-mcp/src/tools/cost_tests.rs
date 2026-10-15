@@ -154,6 +154,7 @@ fn rendered_list_prices_and_unknown_amounts_are_not_billed() {
     assert!(text.contains("separate API-equivalent estimates do not count"));
     assert_eq!(
         text.lines().last().unwrap(),
-        "Total: $2.00 (billed $0.00, list-price/API estimate $2.00, unclassified $1.00)."
+        "Total: $2.00 (billed $0.00, list-price/API estimate $2.00, unclassified $1.00; \
+         ≈ $3.00 API-equivalent)."
     );
 }

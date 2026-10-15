@@ -239,8 +239,8 @@ pub struct LimitsConfig {
     pub budget_usd_per_item: f64,
     pub budget_usd_daily: f64,
     pub budget_usd_total: f64,
-    /// Count separate API-equivalent estimates toward budgets. Raw reported
-    /// cost always counts, including amounts with a list-price basis.
+    /// Count separate API-equivalent estimates, such as Codex usage, toward
+    /// budgets. Raw reported cost always counts; learning always counts both.
     pub count_estimated_cost: bool,
     /// Automatic re-spawns after infrastructure failures, per stage run.
     pub infra_retries: u32,

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- A review-holding lead's reviewer-model advice follows the model policy as it
+  stands when the lead spawns, so narrowing a repository's policy mid-run
+  reaches later leads. Recovering a running item no longer reads the
+  repository's config, so a malformed one no longer fails work that was
+  already running.
+
 ## 1.2.4
 
 Released 2026-10-15.

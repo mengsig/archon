@@ -11,8 +11,7 @@ use std::sync::Arc;
 use archon_core::autonomy::{Autonomy, ReviewLevel};
 use archon_core::catalog::{Gate, StageKind, Tier, WorkspaceMode};
 use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
-use archon_core::model::{ModelPlan, ModelRef};
-use archon_core::policy::ModelPolicy;
+use archon_core::model::{Effort, ModelChoice, ModelPlan, reviewers_key};
 use archon_core::run::{RunState, StageRun, StageState};
 use archon_pipeline::autonomy::augment;
 use archon_pipeline::review::Reviewer;
@@ -1598,31 +1597,32 @@ fn reviewed_by(model: &str) -> serde_json::Value {
     result
 }
 
-/// With no reviewer models planned, the lead is advised only models its item's
-/// policy allows: its own when it is the only one.
+/// A review holder's spawn carries the reviewer models its plan names, none
+/// when it names none: the daemon advises within the policy current then.
 #[test]
-fn a_review_holder_is_advised_only_models_its_policy_allows() {
-    let model = |name: &str| -> ModelRef { name.parse().unwrap() };
-    let only = ModelPolicy::from_lists(&[model("claude-code/opus")], &[], None);
-    let both = [model("claude-code/opus"), model("codex/astra")];
-    let wide = ModelPolicy::from_lists(&both, &[], None);
-    let cases = [
-        (
-            only,
-            "on your own model claude-code/opus: this item allows no other",
-        ),
-        (wide, "on one of codex/astra: the models this item allows"),
-    ];
-    for (policy, advice) in cases {
-        let sim = sim("adaptive");
-        assert_eq!(sim.plan.reviewer_choices(), None, "no reviewers planned");
-        let mut driver = RunDriver::new(sim.spec.clone(), sim.plan.clone(), sim.base.clone())
-            .expect("valid driver")
-            .with_policy(policy);
+fn a_review_holder_carries_its_planned_reviewer_models() {
+    let named = ModelChoice {
+        model: "codex/astra".parse().unwrap(),
+        effort: Effort::Low,
+        tier: None,
+    };
+    let sim = sim("adaptive");
+    let mut planned = sim.plan.clone();
+    planned
+        .0
+        .insert(reviewers_key("build"), vec![named.clone()]);
+    for (plan, carried) in [(sim.plan.clone(), Vec::new()), (planned, vec![named])] {
+        let mut driver =
+            RunDriver::new(sim.spec.clone(), plan, sim.base.clone()).expect("valid driver");
         let first = driver.start();
         let lead = spawn_plans(&first)[0];
-        assert_eq!(lead.choice.model, model("claude-code/opus"));
-        assert!(lead.instructions.contains(advice), "{}", lead.instructions);
+        assert_eq!(lead.reviewers.as_ref(), Some(&carried));
+        assert!(lead.allow_delegation, "reviewers are delegated");
+        assert!(
+            !lead.instructions.contains("Delegate every reviewer"),
+            "{}",
+            lead.instructions
+        );
     }
 }
 

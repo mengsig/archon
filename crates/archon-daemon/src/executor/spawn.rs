@@ -14,6 +14,7 @@ use archon_core::config::{BuildCache, Config};
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::lesson::CONTRACT_LESSONS;
+use archon_core::policy::ModelPolicy;
 use archon_core::ports::{SpawnRequest, SpawnedAgent};
 use archon_core::queue::QueueItem;
 use archon_core::repo::Repo;
@@ -432,17 +433,19 @@ impl Target<'_> {
         own.copied().unwrap_or(plan.timeout_minutes)
     }
 
-    /// The stage contract, with the run's own sections and, when the agent
-    /// can delegate, the rules and model policy for that.
+    /// The stage contract, with its reviewers' models, the run's own sections
+    /// and, when the agent can delegate, the rules and model policy for that.
     fn instructions(&self, plan: &SpawnPlan) -> String {
         assert!(!plan.instructions.is_empty(), "every stage has a contract");
-        let contract = format!("{}{}", plan.instructions, self.sections);
+        // An unreadable policy refuses this spawn when it is issued (`claim`).
+        let policy = RepoEnv::new(self.repo.cloned()).map(|env| env.policy(self.config));
+        let reviewers = reviewer_rules(plan, &policy);
+        let contract = format!("{}{reviewers}{}", plan.instructions, self.sections);
         if !self.delegates(plan) {
             return contract;
         }
-        // An unreadable policy refuses this spawn when it is issued (`claim`).
-        let models = match RepoEnv::new(self.repo.cloned()) {
-            Ok(env) => env.policy(self.config).describe(),
+        let models = match &policy {
+            Ok(policy) => policy.describe(),
             Err(error) => format!("none: the repository's model policy cannot be read ({error})"),
         };
         let depth = self.config.limits.max_delegation_depth;
@@ -450,6 +453,29 @@ impl Target<'_> {
             contract::delegation_rules(plan.workspace, &models, depth, Some(self.experiments));
         format!("{contract}{rules}")
     }
+}
+
+/// The models `plan`'s agent may delegate the reviewers it owes to, within
+/// `policy` as it stands at this spawn rather than when the run began.
+fn reviewer_rules(plan: &SpawnPlan, policy: &Result<ModelPolicy, ArchonError>) -> String {
+    let Some(named) = plan.reviewers.as_deref() else {
+        return String::new();
+    };
+    assert!(
+        plan.allow_delegation,
+        "an agent owing reviewers delegates them"
+    );
+    let rules = match policy {
+        Ok(policy) => contract::reviewer_model_rules(Some(named), &plan.choice.model, policy),
+        Err(error) => format!(
+            "- Delegate no reviewer: the repository's model policy cannot be read ({error}).\n"
+        ),
+    };
+    assert!(
+        rules.ends_with('\n'),
+        "contract sections end with a newline"
+    );
+    rules
 }
 
 /// Persist the exact request, then the `spawning` stage run that owns it,

@@ -323,6 +323,33 @@ async fn running_run_resumes_without_duplicate_spawns() {
     );
 }
 
+/// A repository config broken while the daemon was down does not fail work
+/// under way: recovery needs no model policy, only a later spawn does.
+#[tokio::test]
+async fn a_malformed_repo_config_at_restart_keeps_a_running_item() {
+    let mut h = Harness::new().await;
+    let item = h.enqueue("restart over a broken config").await;
+    h.dispatch().await;
+    let running = h.running().await;
+    assert_eq!(running.len(), 1);
+    h.repo_config("[models\nallow = ");
+
+    h.restart();
+    executor::recover(&h.ctx).await.expect("recover");
+    h.dispatch().await;
+    let state = h.state(&item.id).await;
+    assert!(matches!(state, QueueState::Running { .. }), "{state:?}");
+    let still: Vec<StageRunId> = h.running().await.into_iter().map(|s| s.id).collect();
+    assert_eq!(still, [running[0].id.clone()]);
+
+    // Mended, the config lets the run spawn its next stage.
+    h.repo_config("");
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let next: Vec<String> = h.running().await.into_iter().map(|s| s.stage_id).collect();
+    assert_eq!(next, ["review", "review"]);
+}
+
 /// Aether lost the run node (a wipe, an operator cancel in its TUI) while
 /// the daemon was down: the next stage gets a replacement under the next
 /// generation's key, and the run goes on.

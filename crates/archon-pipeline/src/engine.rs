@@ -11,7 +11,6 @@ use archon_core::catalog::{StageKind, WorkspaceMode};
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
 use archon_core::model::{ModelChoice, ModelPlan};
-use archon_core::policy::ModelPolicy;
 use archon_core::run::{
     GateDecision, GateSubject, PipelineRun, RunState, StageOutcome, StageRun, StageState,
 };
@@ -84,6 +83,9 @@ pub struct SpawnPlan {
     /// What the kept agent of the slot's previous attempt is told instead of
     /// spawning anew; `None` when only a fresh agent will do.
     pub resume: Option<String>,
+    /// Set when the agent owes reviewers: the models the plan names for them,
+    /// empty when the item's current model policy alone bounds them.
+    pub reviewers: Option<Vec<ModelChoice>>,
 }
 
 /// Errors carried into `RunState::Failed` are capped; the full feedback
@@ -124,8 +126,6 @@ pub struct RunDriver {
     /// The item's directory for reviewers' experiment copies, which the
     /// contract names; `None` leaves them to `mktemp -d`.
     experiments: Option<PathBuf>,
-    /// The item's effective model policy, which reviewer advice keeps to.
-    policy: ModelPolicy,
 }
 
 /// A live role of a team group another role already failed, and why it is
@@ -234,7 +234,6 @@ impl RunDriver {
             cancelling: BTreeSet::new(),
             aborts: BTreeMap::new(),
             experiments: None,
-            policy: ModelPolicy::default(),
         };
         driver.check_prompts_render()?;
         Ok(driver)
@@ -272,17 +271,6 @@ impl RunDriver {
         );
         assert!(dir.is_absolute(), "the experiments directory is absolute");
         self.experiments = Some(dir);
-        self
-    }
-
-    /// Keep reviewer advice within `policy` when the plan names no reviewer
-    /// models; without it any model is taken to be allowed.
-    pub fn with_policy(mut self, policy: ModelPolicy) -> Self {
-        assert!(
-            self.emitted.is_empty() && !self.finished,
-            "the policy is set before the driver acts"
-        );
-        self.policy = policy;
         self
     }
 
@@ -1165,6 +1153,11 @@ impl RunDriver {
         let owed = self.spec.owed(stage);
         let resume = (keep && at.attempt > 1 && !at.feedback.trim().is_empty())
             .then(|| sections::resume_message(stage, at.attempt, &at.feedback, owed));
+        // The daemon advises within the policy current when it spawns.
+        let reviewers = owed
+            .review
+            .is_some_and(|duty| duty.reviewers > 0)
+            .then(|| self.plan.reviewer_choices().unwrap_or_default().to_vec());
         fans.iter()
             .map(|&fan| {
                 assert!(fan < stage.fan_out, "slot {fan} outside fan_out");
@@ -1179,31 +1172,25 @@ impl RunDriver {
                 let part = self.team_part(team.as_ref());
                 let workspace = &vars["workspace"];
                 let experiments = self.experiments.as_deref();
-                let choice = &choices[fan as usize % choices.len()];
-                let mut instructions =
+                let instructions =
                     contract::instructions(stage, mode, workspace, part, owed, experiments);
-                if owed.review.is_some_and(|duty| duty.reviewers > 0) {
-                    let named = self.plan.reviewer_choices();
-                    let rules = contract::reviewer_model_rules(named, &choice.model, &self.policy);
-                    instructions.push_str(&rules);
-                }
                 EngineAction::Spawn(SpawnPlan {
                     stage_id: stage.id.clone(),
                     kind: stage.kind,
                     attempt: at.attempt,
                     fan_index: fan,
                     fan_count: stage.fan_out,
-                    choice: choice.clone(),
+                    choice: choices[fan as usize % choices.len()].clone(),
                     prompt,
                     instructions,
                     timeout_minutes: stage.timeout_minutes,
                     // The run's reviewers are agents the stage delegates to.
-                    allow_delegation: stage.allow_delegation
-                        || owed.review.is_some_and(|duty| duty.reviewers > 0),
+                    allow_delegation: stage.allow_delegation || reviewers.is_some(),
                     workspace: mode,
                     team,
                     keep,
                     resume: resume.clone(),
+                    reviewers: reviewers.clone(),
                 })
             })
             .collect()

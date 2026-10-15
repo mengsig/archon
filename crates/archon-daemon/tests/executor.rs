@@ -2037,6 +2037,55 @@ async fn led_item(h: &Harness) -> archon_core::queue::QueueItem {
     planned_item(h, "led", &["build", "ship"]).await
 }
 
+/// A draft, then a lead that holds the review: the lead's contract is built
+/// only once the draft settles.
+const DRAFTED_THEN_LED: &str = r#"[pipeline]
+name = "drafted"
+description = "an agent drafts, then a lead builds and reviews"
+version = 1
+workspace = "worktree"
+requires_repo = true
+
+[pipeline.review]
+level = "standard"
+stage = "build"
+
+[[stage]]
+id = "draft"
+kind = "work"
+prompt = "implement.md"
+
+[[stage]]
+id = "build"
+kind = "work"
+prompt = "implement.md"
+allow_delegation = true
+"#;
+
+/// The repository narrows its policy mid-run: the later lead is advised the
+/// reviewer models allowed when it spawns, not those allowed at the start.
+#[tokio::test]
+async fn a_policy_narrowed_mid_run_bounds_the_next_lead_s_reviewers() {
+    let mut config = Config::default();
+    config.models.allow = vec![MODEL.parse().unwrap(), REVIEW_MODEL.parse().unwrap()];
+    let h = Harness::with_config(config).await;
+    h.add_pipeline("drafted", DRAFTED_THEN_LED);
+    planned_item(&h, "drafted", &["draft", "build"]).await;
+    let draft = h.backend.requests()[0].clone();
+    assert_eq!(draft.labels["archon.stage"], "draft");
+    assert!(!draft.instructions.contains("Delegate every reviewer"));
+
+    h.repo_config(&format!("[models]\ndeny = [\"{REVIEW_MODEL}\"]\n"));
+    h.settle_running(|_| completed("drafted")).await;
+    h.dispatch().await;
+    let build = h.backend.requests().last().unwrap().clone();
+    assert_eq!(build.labels["archon.stage"], "build");
+    let own = format!("on your own model {MODEL}: this item allows no other");
+    assert!(build.instructions.contains(&own), "{}", build.instructions);
+    let named = build.instructions.matches(REVIEW_MODEL).count();
+    assert_eq!(named, 0, "{}", build.instructions);
+}
+
 /// The running lead's result: its change committed, the ship record for it,
 /// and a pass by one reviewer it delegated to, which passed that commit.
 async fn reviewed(h: &Harness, summary: &str) -> StageOutcome {

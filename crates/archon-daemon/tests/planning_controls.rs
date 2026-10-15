@@ -307,15 +307,19 @@ async fn a_running_runs_timeout_steer_applies_to_the_next_spawn() {
     assert_eq!(h.backend.requests()[0].deadline, deadline);
     h.settle_running(|_| common::completed("implemented")).await;
     h.dispatch().await;
-    let review = h.running().await.remove(0);
-    let request = h
-        .backend
-        .requests()
-        .into_iter()
-        .find(|r| r.name.contains("review"))
-        .expect("review spawn");
-    assert_eq!(
-        request.deadline,
-        Some(review.started_at + chrono::Duration::minutes(75))
-    );
+    let reviews = h.running().await;
+    assert_eq!(reviews.len(), 2, "both review slots are running");
+    let requests = h.backend.requests();
+    for review in reviews {
+        assert_eq!(review.stage_id, "review");
+        // Fan-out requests can reach the backend in either order.
+        let request = requests
+            .iter()
+            .find(|r| r.idempotency_key == review.id.as_str())
+            .expect("this review's spawn");
+        assert_eq!(
+            request.deadline,
+            Some(review.started_at + chrono::Duration::minutes(75))
+        );
+    }
 }

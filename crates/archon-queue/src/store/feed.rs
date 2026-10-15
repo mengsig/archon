@@ -91,7 +91,11 @@ pub(super) fn append_with_kv(
 }
 
 /// Append inside the caller's write transaction `tx`.
-fn append_in(tx: &Connection, entry: FeedEntry, at: Timestamp) -> Result<FeedItem, ArchonError> {
+pub(super) fn append_in(
+    tx: &Connection,
+    entry: FeedEntry,
+    at: Timestamp,
+) -> Result<FeedItem, ArchonError> {
     let seq = last_seq(tx)? + 1;
     let item = FeedItem {
         id: FeedItemId::new(),
@@ -254,8 +258,18 @@ pub(super) fn insert_question(
     conn: &mut Connection,
     question: &Question,
 ) -> Result<Question, ArchonError> {
-    check_question(question)?;
     let tx = write_tx(conn)?;
+    let numbered = insert_question_in(&tx, question)?;
+    tx.commit().ctx("commit question")?;
+    Ok(numbered)
+}
+
+/// Number and insert `question` inside the caller's write transaction `tx`.
+pub(super) fn insert_question_in(
+    tx: &Connection,
+    question: &Question,
+) -> Result<Question, ArchonError> {
+    check_question(question)?;
     let taken: bool = tx
         .query_row(
             "SELECT EXISTS (SELECT 1 FROM questions WHERE id = ?1)",
@@ -270,7 +284,7 @@ pub(super) fn insert_question(
         )));
     }
     if let Some(aether) = &question.aether
-        && let Some(existing) = by_aether(&tx, aether)?
+        && let Some(existing) = by_aether(tx, aether)?
     {
         return Err(ArchonError::Invalid(format!(
             "Aether question {}#{} is already recorded as {}",
@@ -283,11 +297,10 @@ pub(super) fn insert_question(
         question.id
     );
     let numbered = Question {
-        number: next_number(&tx)?,
+        number: next_number(tx)?,
         ..question.clone()
     };
-    write_question(&tx, &numbered, true)?;
-    tx.commit().ctx("commit question")?;
+    write_question(tx, &numbered, true)?;
     Ok(numbered)
 }
 

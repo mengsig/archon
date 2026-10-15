@@ -49,6 +49,7 @@ pub(super) async fn add(ctx: &DaemonContext, add: RepoAdd) -> Result<Reply, Arch
         base_branch: add.base_branch.or(config.repo.base_branch),
         default_pipeline: add.default_pipeline.or(config.repo.default_pipeline),
         autonomy_max: registry_ceiling(add.auto_merge),
+        grant_merge: false,
         added_at: archon_core::now(),
     };
     check_repo(&repo).await?;
@@ -165,15 +166,38 @@ pub(super) async fn update(
     if let Some(max) = patch.autonomy_max {
         repo.autonomy_max = max;
     }
+    if let Some(grant) = patch.grant_merge {
+        repo.grant_merge = grant;
+    }
     check_repo(&repo).await?;
     assert_eq!(repo.id, before.id, "a patch never changes identity");
     assert_eq!(repo.path, before.path, "a patch never moves a repository");
     ctx.store.lock().await.update_repo(&repo)?;
+    if repo.grant_merge != before.grant_merge {
+        crate::feed::system(ctx, grant_note(&repo)).await?;
+    }
     // The operator's deliberate update is when a changed git identity is taken.
     repo_identity::record(ctx, &repo).await?;
     // Its base branch may have changed.
     ctx.mirrors.request_repo(&repo.id);
     Ok(Reply::Repo(repo))
+}
+
+/// The feed's record of the operator changing `grant_merge` (§18.6).
+fn grant_note(repo: &Repo) -> String {
+    match repo.grant_merge {
+        true => format!(
+            "grant_merge is on for {}: when you ask the orchestrator to merge an item's pull \
+             request, archond merges it without a confirmation question, if it is reviewed and \
+             green",
+            repo.name
+        ),
+        false => format!(
+            "grant_merge is off for {}: archond asks you to confirm each merge the orchestrator \
+             requests",
+            repo.name
+        ),
+    }
 }
 
 /// The canonical top level of `path` and its repository config. A path

@@ -30,6 +30,7 @@ fn repo(name: &str) -> Repo {
         base_branch: None,
         default_pipeline: None,
         autonomy_max: AutonomyPatch::default(),
+        grant_merge: false,
         added_at: v1_time(),
     }
 }

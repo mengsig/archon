@@ -21,6 +21,7 @@ use crate::id::{
 };
 use crate::initiative::{ContractChange, EnqueueInitiative, Initiative, InitiativeDetail};
 use crate::lesson::{Lesson, LessonDraft, LessonPatch, LessonQuery, LessonStats, LessonWhy};
+use crate::merge::MergeRequest;
 use crate::model::{Effort, ModelChoice, ModelPlanDraft, ModelReasons, ModelRef};
 use crate::model_evidence::{ModelEvidenceQuery, ModelEvidenceReport};
 use crate::notify::{FeedItem, NotificationKind, Question};
@@ -46,7 +47,9 @@ use crate::steer::Steer;
 /// 10: `refresh_item`; an older archond knows no such request.
 /// 11: `upgrade`, `check_updates` and `repo_add`'s `github_watch`; an older
 /// archond would register a repository and silently leave it unwatched.
-pub const PROTOCOL_VERSION: u32 = 11;
+/// 12: merging on the operator's request (`merge_item`, `request_merge`) and
+/// a repository's `grant_merge`, which an older archond would drop.
+pub const PROTOCOL_VERSION: u32 = 12;
 
 /// Said beside an item whose `budget_usd` was set while budgets are off.
 pub const BUDGETS_OFF_NOTE: &str = "Dollar budgets are globally off ([limits] budgets_enabled = \
@@ -386,6 +389,27 @@ pub enum Request {
     LearningRetryMemory {
         feedback: FeedbackId,
     },
+
+    /// CLI only: the operator merges an item's delivered pull request now,
+    /// once archond's checks pass (ARCHITECTURE §18.6).
+    MergeItem {
+        item: QueueItemId,
+        /// The operator acknowledges checks that are not all green.
+        #[serde(default)]
+        ignore_checks: bool,
+        /// Sent by `/merge` in `archon chat`, for the audit.
+        #[serde(default)]
+        chat: bool,
+    },
+    /// The orchestrator asks to merge an item's pull request because the
+    /// operator asked it to: archond asks the operator to confirm, unless
+    /// the repository's `grant_merge` lets it merge at once.
+    RequestMerge {
+        item: QueueItemId,
+        /// What the operator said, in a line.
+        #[serde(default)]
+        reason: Option<String>,
+    },
 }
 
 impl Request {
@@ -409,6 +433,7 @@ impl Request {
             | Self::LearningUndo { .. }
             | Self::LearningRestoreMemory { .. }
             | Self::LearningRetryMemory { .. }
+            | Self::MergeItem { .. }
             | Self::Answer { .. } => true,
             Self::RepoAdd(add) => add.auto_merge || add.github_watch,
             Self::Pause(target) | Self::Resume(target) => {
@@ -483,6 +508,9 @@ pub struct RepoPatch {
     pub default_pipeline: Clearable<String>,
     /// Replaces the whole registry ceiling; the empty patch clears it.
     pub autonomy_max: Option<AutonomyPatch>,
+    /// Sets or clears the repository's `grant_merge` (ARCHITECTURE §18.6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant_merge: Option<bool>,
 }
 
 /// A patch to an optional setting. Explicit on the wire (`"keep"`,
@@ -647,6 +675,7 @@ pub enum Reply {
     LessonStats(Box<LessonStats>),
     Feedback(Box<FeedbackReceipt>),
     LearningWhy(Box<LearningWhy>),
+    Merge(Box<MergeRequest>),
 }
 
 /// What one gc pass did (ARCHITECTURE §13.2). Paths are real paths.
@@ -810,6 +839,12 @@ pub struct DaemonStatus {
     /// Directives in force.
     pub directives: Vec<Directive>,
     pub open_gates: u32,
+    /// Merge confirmations the operator has not answered, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub merges_waiting: Vec<MergeRequest>,
+    /// The repositories whose `grant_merge` is on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub merge_granted: Vec<String>,
     /// News events (triggers) held until the orchestrator can take them.
     #[serde(default)]
     pub held_news: u32,
@@ -1022,6 +1057,9 @@ pub struct ItemDetail {
     /// As in [`ItemSummary`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub switched_to: Option<String>,
+    /// Requests to merge the item's pull request, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub merges: Vec<MergeRequest>,
 }
 
 /// An agent a stage agent delegated to, itself or through another.

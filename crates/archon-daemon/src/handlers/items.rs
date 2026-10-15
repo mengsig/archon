@@ -128,6 +128,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
     }
     let spent_usd = store.spend_for_item(id, estimates)?;
     let gates = store.gates_for_item(id)?;
+    let merges = store.merges_for_item(id)?;
     assert!(
         runs.iter().all(|r| r.item == item.id),
         "runs belong to their item"
@@ -152,6 +153,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
         spent_usd,
         gates,
         delegations,
+        merges,
     })))
 }
 

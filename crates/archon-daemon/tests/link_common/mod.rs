@@ -319,6 +319,7 @@ fn repo_at(path: &Path) -> Repo {
         base_branch: Some("main".into()),
         default_pipeline: Some("direct".into()),
         autonomy_max: Default::default(),
+        grant_merge: false,
         added_at: archon_core::now(),
     }
 }

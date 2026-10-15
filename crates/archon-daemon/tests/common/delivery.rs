@@ -14,6 +14,7 @@ use super::{Harness, git};
 /// A `gh` keeping a file per head branch's pull request and logging calls;
 /// `fail-<command>` fails it once, `lose-create-reply` loses a create's reply,
 /// `checks` and `annotations` are what `pr checks` and the annotations API say.
+/// `pr view` shows the `view-*` files; a merge at that head marks it merged.
 const STATEFUL_GH: &str = r#"#!/bin/sh
 state="$(dirname "$0")/gh-state"
 printf '%s\n' "$*" >> "$state/calls"
@@ -71,8 +72,26 @@ case "$1 $2" in
 "repo view")
     printf '{"squashMergeAllowed":true,"mergeCommitAllowed":true,"rebaseMergeAllowed":false}'
     ;;
+"pr view")
+    [ "$4 $5" = "--json state,isDraft,headRefOid,baseRefName,mergeable,statusCheckRollup" ] || exit 2
+    [ -f "$state/view-head" ] || { echo "no pull request at $3" >&2; exit 1; }
+    shown=OPEN
+    [ -f "$state/merged" ] && shown=MERGED
+    printf '{"state":"%s","isDraft":false,"headRefOid":"%s","baseRefName":"main","mergeable":"%s","statusCheckRollup":%s}' \
+        "$shown" "$(cat "$state/view-head")" "$(cat "$state/view-mergeable")" "$(cat "$state/view-checks")"
+    ;;
 "pr merge")
-    [ "$4 $5" = "--auto --squash" ] || exit 2
+    if [ "$4" = "--auto" ]; then
+        [ "$4 $5" = "--auto --squash" ] || exit 2
+        exit 0
+    fi
+    [ "$# $4 $6" = "6 --match-head-commit --squash" ] || exit 2
+    [ "$5" = "$(cat "$state/view-head")" ] || { echo "Head branch was modified" >&2; exit 1; }
+    touch "$state/merged"
+    if [ -f "$state/lose-merge-reply" ]; then
+        rm "$state/lose-merge-reply"
+        echo "HTTP 502: Bad Gateway" > "$state/fail-pr-view"
+    fi
     ;;
 "pr checks")
     [ "$4 $5" = "--json name,bucket,startedAt,link" ] || exit 2
@@ -134,6 +153,27 @@ impl FakeGh {
         let file = format!("pr-{}", branch.replace('/', "_"));
         std::fs::write(self.state.join(file), format!("7 {base} {branch}\n"))
             .expect("pull request");
+    }
+
+    /// What `gh pr view` shows of every pull request from now on: its head,
+    /// `mergeable` (e.g. `MERGEABLE`) and its `statusCheckRollup`.
+    pub fn show(&self, head: &str, mergeable: &str, checks: Value) {
+        let write = |name: &str, text: &str| {
+            std::fs::write(self.state.join(name), text).expect(name);
+        };
+        write("view-head", head);
+        write("view-mergeable", mergeable);
+        write("view-checks", &checks.to_string());
+    }
+
+    /// Whether a `gh pr merge` merged the pull request shown.
+    pub fn merged(&self) -> bool {
+        self.state.join("merged").exists()
+    }
+
+    /// The next merge goes through, but GitHub cannot be read just after.
+    pub fn lose_next_merge_reply(&self) {
+        std::fs::write(self.state.join("lose-merge-reply"), "").expect("marker");
     }
 
     /// What `gh pr checks --json` prints from now on.

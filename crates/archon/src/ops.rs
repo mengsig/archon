@@ -3,6 +3,8 @@
 //! and the caller says what happened in its own words.
 
 use archon_client::ArchonClient;
+use archon_core::id::QueueItemId;
+use archon_core::merge::MergeRequest;
 use archon_core::notify::Question;
 use archon_core::protocol::{PauseTarget, Reply, Request};
 
@@ -53,5 +55,24 @@ pub async fn pause(client: &ArchonClient, target: PauseTarget, pause: bool) -> a
     match client.request(request).await? {
         Reply::Ok => Ok(()),
         other => Err(unexpected(&other, "ok")),
+    }
+}
+
+/// Have archond merge `item`'s pull request now; `chat` records that the
+/// chat's `/merge` asked. The request comes back however it ended.
+pub async fn merge(
+    client: &ArchonClient,
+    item: QueueItemId,
+    ignore_checks: bool,
+    chat: bool,
+) -> anyhow::Result<MergeRequest> {
+    let request = Request::MergeItem {
+        item,
+        ignore_checks,
+        chat,
+    };
+    match client.request(request).await? {
+        Reply::Merge(merge) => Ok(*merge),
+        other => Err(unexpected(&other, "merge")),
     }
 }

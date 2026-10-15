@@ -508,6 +508,10 @@ pub struct AutonomyView {
     pub repo: Option<String>,
     pub policy: AutonomyPolicy,
     pub directives: Vec<Directive>,
+    /// The repositories whose `grant_merge` is on: the one asked about, or
+    /// every one for the global view (ARCHITECTURE §18.6).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub merge_granted: Vec<String>,
 }
 
 #[cfg(test)]

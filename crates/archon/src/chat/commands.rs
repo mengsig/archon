@@ -13,6 +13,7 @@ Type a message and press Enter to talk to the orchestrator.
   /status                 daemon, Aether, queue and spend
   /queue [state ...]      the queue, e.g. /queue running failed
   /item <id>              one queue item (its id or the id's start)
+  /merge <id> [--ignore-checks]  merge the item's pull request now
   /pause [hard | repo <name> | pipeline <name>]
   /resume [hard | repo <name> | pipeline <name>]
   /progress               show or hide progress notes (also /verbose)
@@ -40,6 +41,7 @@ pub enum SlashCommand {
     Status,
     Queue { states: Vec<String> },
     Item(String),
+    Merge { item: String, ignore_checks: bool },
     Pause(PauseTarget),
     Resume(PauseTarget),
 }
@@ -80,6 +82,7 @@ fn parse_command(name: &str, rest: &str) -> Result<SlashCommand, String> {
             (id, "") if !id.is_empty() => Ok(SlashCommand::Item(id.to_owned())),
             _ => Err("usage: /item <id>".to_owned()),
         },
+        "merge" => parse_merge(rest),
         "a" => parse_short_answer(rest),
         "answer" => parse_answer(rest),
         "pause" => parse_pause_target(rest, "pause").map(SlashCommand::Pause),
@@ -116,6 +119,23 @@ fn parse_answer(rest: &str) -> Result<SlashCommand, String> {
     Ok(SlashCommand::Answer {
         question,
         text: text.to_owned(),
+    })
+}
+
+fn parse_merge(rest: &str) -> Result<SlashCommand, String> {
+    const FLAG: &str = "--ignore-checks";
+    let words: Vec<&str> = rest.split_whitespace().collect();
+    let (item, ignore_checks) = match words.as_slice() {
+        [item] => (*item, false),
+        [item, FLAG] | [FLAG, item] => (*item, true),
+        _ => ("", false),
+    };
+    if item.is_empty() || item.starts_with('-') {
+        return Err(format!("usage: /merge <id> [{FLAG}]"));
+    }
+    Ok(SlashCommand::Merge {
+        item: item.to_owned(),
+        ignore_checks,
     })
 }
 
@@ -241,6 +261,16 @@ mod tests {
         );
         assert!(matches!(parse_line("/status now"), ChatInput::Invalid(_)));
         assert!(matches!(parse_line("/item"), ChatInput::Invalid(_)));
+        assert_eq!(
+            parse_line("/merge qi_01 --ignore-checks"),
+            ChatInput::Command(SlashCommand::Merge {
+                item: "qi_01".into(),
+                ignore_checks: true
+            })
+        );
+        for malformed in ["/merge", "/merge --ignore-checks", "/merge qi_01 --admin"] {
+            assert!(matches!(parse_line(malformed), ChatInput::Invalid(_)));
+        }
         let ChatInput::Invalid(message) = parse_line("/frobnicate") else {
             panic!("unknown commands are refused");
         };

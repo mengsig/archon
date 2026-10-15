@@ -94,6 +94,7 @@ prefixed_id!(DirectiveId, "dir");
 prefixed_id!(InitiativeId, "ini");
 prefixed_id!(LessonId, "lsn");
 prefixed_id!(FeedbackId, "fb");
+prefixed_id!(MergeRequestId, "mr");
 // One Archon store's identity. Keeps Archon's idempotency keys distinct
 // across stores, since a fresh store restarts its counters.
 prefixed_id!(StoreId, "store");

@@ -65,6 +65,11 @@ pub struct Repo {
     /// replace the global `[autonomy] max` (ARCHITECTURE §18.2).
     #[serde(default)]
     pub autonomy_max: AutonomyPatch,
+    /// The operator lets the orchestrator merge an item's pull request when
+    /// the operator asks it to, without a confirmation question; the
+    /// `merge` knob and its ceiling are separate (ARCHITECTURE §18.6).
+    #[serde(default)]
+    pub grant_merge: bool,
     pub added_at: Timestamp,
 }
 

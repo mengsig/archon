@@ -795,6 +795,10 @@ orchestrator sees all of Archon's tools. Guarded stages now expose only
   `reply_to_question`.
 - An operator gate (§18.3) asks a `Question` too. `archond` decides the gate
   from the answer itself and does not trigger the orchestrator.
+- So does a merge confirmation (§18.6). `archond` merges or declines from
+  the answer itself, and the orchestrator hears `merge_finished`, not
+  `operator_answer`. An answer that is not one of its options is refused,
+  and the question stays open.
 
 An answer is delivered first and recorded after. `archond` closes the
 question and echoes the answer to the feed only once the reply, the gate
@@ -847,6 +851,11 @@ answer from there too. There is one answer path, `handlers::answer_question`;
   operator role. In `mode = "shared"` the token would widen who can pass a
   gate, so the command is refused there with that reason, and `gate_opened`
   names `archon answer` instead. No setting changes this.
+- A whole-message `/merge <item> [--ignore-checks]` is taken the same way,
+  by `chat_merge`, also in dedicated mode only and at most once. It merges
+  through the path `archon merge` uses (§18.6). A refusal before any merge
+  began is a `System` entry and a `chat_merge_refused` event; a merge that
+  began ends in `merge_finished`.
 
 `record_chat_answer` (MCP, the orchestrator only) closes a question the
 orchestrator asked with `ask_operator` once the operator's plain chat reply
@@ -860,8 +869,8 @@ one an earlier orchestrator generation asked, and one with no recorded asker
 (asked without caller metadata, or stored before `asked_by` existed) are
 `forbidden`; unknown ownership never authorises closing. So is a question
 anyone else waits on: an Aether `ask_user` question, an operator gate's
-question, and a report's "Reopen it?" question, the three cases the answer
-path routes elsewhere. The orchestrator therefore has no way to answer a
+question, a report's "Reopen it?" question, and a merge confirmation, the
+cases the answer path routes elsewhere. The orchestrator therefore has no way to answer a
 gate, and the operator's `/answer` or `archon answer` closes what it cannot.
 
 ### 5.3 Spend
@@ -975,8 +984,9 @@ news waiting in the window survives an `archond` stop or crash. The outbox
 also keeps the keyed batch, so a restart resumes it under the same key.
 After a quiet spell, delivery waits the window from the first event. News
 the operator waits on or must act on ends the window at once: an
-`operator_answer`, a `chat_answer`, a `gate_opened`, an `item_blocked`,
-`lavish_feedback`, a `budget` and a stage's escalation
+`operator_answer`, a `chat_answer`, a `chat_merge_refused`, a
+`merge_finished`, a `gate_opened`, an `item_blocked`, `lavish_feedback`, a
+`budget` and a stage's escalation
 (`TriggerEvent::is_urgent`). So does the waking outcome of the last item
 queued, dispatching or running (`triggers::hold_at_once`): no other outcome
 is coming to share its turn. News pushed while a batch is delivered has
@@ -1013,9 +1023,11 @@ it is done or failed (§8.9), carrying each finished member's state, summary
 and cost as `results`.
 
 Every other event wakes: `agent_message`, `item_blocked`, `gate_opened`,
-`operator_answer`, `chat_answer`, `lavish_feedback`, `budget`,
+`operator_answer`, `chat_answer`, `chat_merge_refused`, `lavish_feedback`, `budget`,
 `policy_violation`, `directives_restated`, `initiative_finished`, `pr_checks` (§8.7). A mirror's change of state
-(§13.3) is quiet. Quiet news is saved in the outbox like any other and makes
+(§13.3) is quiet. `merge_finished` (§18.6) wakes when the orchestrator asked
+for the merge or it came from the orchestrator's chat, and is quiet after
+`archon merge` or `archon chat`'s `/merge`. Quiet news is saved in the outbox like any other and makes
 no trigger by itself. It leaves with the next trigger there is, and an
 operator message sends it at once, without the coalescing window
 (`triggers::flush_quiet`, called before the message is delivered), deferred
@@ -1047,7 +1059,8 @@ was created is news to it and is compacted only as usual. Adopting
 Aether's successor or waking the agent in place keeps its context, so
 neither forces compaction. Compaction:
 
-- always keeps every `operator_answer`, `agent_message` and `chat_answer`,
+- always keeps every `operator_answer`, `agent_message`, `chat_answer`,
+  `chat_merge_refused` and `merge_finished`,
   every `lavish_feedback` whose report is still `open` in Lavish, every
   `gate_opened` whose question is still open, and every current
   `item_finished` with an `origin`, whose GitHub thread awaits the outcome;
@@ -1085,6 +1098,9 @@ into its own, so one batch never carries two digests.
    "page": "http://127.0.0.1:4455/session/…",
    "reply": "`/answer 7 approve` (a note may follow), `/answer 7 reject` to cancel the item, or …"},
   {"type": "chat_answer", "number": 7, "applied": true, "text": "approve"},
+  {"type": "chat_merge_refused", "text": "…why the `/merge` was not applied…"},
+  {"type": "merge_finished", "item": "qi_…", "pr_url": "https://github.com/…/pull/7",
+   "merged": true, "text": "Merged … at 1a2b3c4 (squash) on …"},
   {"type": "lavish_feedback", "report": "rpt_…", "item": "qi_…",
    "prompts": ["…"], "text": "…the poll output without its dom_snapshot…"},
   {"type": "budget", "scope": "daily", "spent_usd": 51.0, "limit_usd": 50.0},
@@ -1147,7 +1163,9 @@ machine, and `reply` spells the answers out in the vocabulary of
 characters, `summary` to 600 and `page` to 300. `chat_answer` reports what
 `archond` did with an operator `/answer` (§5.2): `number` is absent when the
 command named no recorded question, and `text` is the answer applied or the
-reason it was not, at most 500 characters.
+reason it was not, at most 500 characters. `merge_finished` says how a
+merge the operator asked for ended (§18.6), with the text of its feed
+entry, and `chat_merge_refused` why an operator `/merge` began none.
 
 Stage-level progress never triggers the orchestrator. It stays in the store
 and is visible with `get_item` and `get_stage`.
@@ -2271,7 +2289,8 @@ How a change leaves a run is the repository's ship mode:
 
 - `pr` (default): the run branch is pushed and a pull request opened
   against the base. It is merged only when `ship.auto_merge` is true (the
-  item's `merge = auto`), by GitHub once its checks allow.
+  item's `merge = auto`), by GitHub once its checks allow, or when the
+  operator asks archond to merge it (§18.6).
 - `local`: the commits stay on the run branch and nothing is pushed. The
   worktree is kept.
 
@@ -2693,10 +2712,12 @@ defined in `archon_core::protocol` and served by `archon-daemon`.
 - `ClientKind` is recorded per connection. The socket's file mode is the
   security boundary. `ClientKind` guards against mistakes, not attacks.
   Every `Request::is_operator_only()` request (`Say`, `Answer`,
-  `RepoUpdate`, a `RepoAdd` with `auto_merge`, a hard pause, the
-  `archon learning` mutations, ...) is refused for `archon-mcp`, and inside
-  a `ForAgent` from any client. `RecordChatAnswer` is not one of them: it is the
+  `RepoUpdate`, a `RepoAdd` with `auto_merge`, a hard pause, `MergeItem`,
+  the `archon learning` mutations, ...) is refused for `archon-mcp`, and
+  inside a `ForAgent` from any client. `RecordChatAnswer` is not one of them: it is the
   orchestrator's, checked by caller identity, and cannot answer a gate (§5.2).
+  Nor is `RequestMerge`: only the orchestrator may send it, and it merges
+  only on the operator's answer or a repository's `grant_merge` (§18.6).
 - `ForAgent {caller, request}` carries a tool call `archon mcp` forwards
   for the agent Aether named as making it. `archond` authorizes the caller
   and applies the inner request as one step (§11). A request from
@@ -2711,7 +2732,10 @@ defined in `archon_core::protocol` and served by `archon-daemon`.
 - A clearable setting in a patch (`RepoPatch.base_branch` and
   `default_pipeline`) is a `Clearable`: `"keep"` (the default when absent),
   `"clear"`, or `{"set":value}`. `archon repo set --base ""` or
-  `--pipeline ""` sends `"clear"`.
+  `--pipeline ""` sends `"clear"`. `RepoPatch.grant_merge` is a plain
+  optional bool: absent keeps the setting.
+- Protocol 11 added `MergeItem`, `RequestMerge`, `Reply::Merge` and
+  `grant_merge`; an older archond is refused at hello.
 
 The command set is `archon_core::protocol::Request`, and every variant is
 documented there. Reply kinds are `archon_core::protocol::Reply`. Error codes
@@ -2836,6 +2860,7 @@ can reach the socket (§5.5).
 | `clear_directive` | `{directive?, all?}` | `ClearDirective` |
 | `github_reply` | `{repository, number, body}` | `GithubReply` (Archon's watched repositories only; see `docs/github-watcher.md`) |
 | `record_lesson` | `{kind: routing\|practice\|pitfall\|pipeline, text, repo?, pipeline?, item?}` | `RecordLesson` (§19; active at once, advice only) |
+| `request_merge` | `{item, reason?}` | `RequestMerge` (the orchestrator only, for the operator's own request; archond asks the operator to confirm unless `grant_merge` covers it; §18.6) |
 
 `get_stage` reads the item's latest run, or the one `run` names; attempts
 restart at 1 in each run. Without `stage` it lists every
@@ -2884,7 +2909,8 @@ appears there only as far as the orchestrator restates it; see
 - Input lines are sent with `Say`. Slash commands: `/progress` (toggle
   verbose), `/a <n> <text>` or `/answer <n> <text>` (a bare `/a <text>`
   answers the newest open question), `/status`, `/queue [state …]`,
-  `/item <id>`, `/pause`, `/resume`, `/help`, `/quit`. An operator gate's
+  `/item <id>`, `/merge <id> [--ignore-checks]` (§18.6), `/pause`,
+  `/resume`, `/help`, `/quit`. An operator gate's
   question (§18.3) reads `/a 3 yes`, `/a 3 <feedback>` or `/a 3 reject`.
   Question numbers are archond's permanent ones (§5.2).
 - Text that agents or repositories wrote (feed entries, questions and their
@@ -4099,7 +4125,7 @@ can raise. The types are in `archon_core::autonomy`.
 | `review` | `strict`, `standard`, `none` | With no pipeline named, the item runs `direct` at that level. A pipeline that holds its own review (`adaptive`, `direct`; §8.2) runs at the level asked: three, one or no independent reviewers, verified. One with gated review and test stages fixes the level from them, and a `review` that contradicts it is refused. |
 | `proposal` | `lavish`, `off` | `lavish`: a `propose` stage first writes `.archon/reports/proposal/index.html`, and the run waits for the operator (§18.3). The approved proposal, with the operator's note, goes into every later stage's prompt. |
 | `report` | `before-pr`, `with-pr`, `off` | `with-pr`: a report stage before shipping writes `.archon/reports/change/index.html`. The page is published, the report goes into the PR body, and nothing waits. `before-pr` also waits for the operator before shipping (§18.3). |
-| `merge` | `manual`, `auto` | `auto` sets `{{ship.auto_merge}}`: archond asks GitHub to merge the PR once its checks allow (§8.7), and a ship stage of a pipeline that has one merges its own. |
+| `merge` | `manual`, `auto` | `auto` sets `{{ship.auto_merge}}`: archond asks GitHub to merge the PR once its checks allow (§8.7), and a ship stage of a pipeline that has one merges its own. Under `manual`, the operator can still have one merged on request (§18.6). |
 | `tools` | `guarded`, `yolo` | What the item's agents may use (§18.4). |
 
 The defaults are `review = standard`, `proposal = off`, `report = off`,
@@ -4133,6 +4159,7 @@ repository in three steps:
    `archon repo set api --autonomy-max review=none,merge=auto`.
    `archon repo add --auto-merge` sets `merge=auto`, and
    `repo set --auto-merge true|false` changes only that knob.
+   `repo set --grant-merge` is no part of the ceiling (§18.6).
 3. The repository's `.archon/config.toml` `[autonomy]`. Its `max` and
    `default` can only lower.
 
@@ -4314,6 +4341,68 @@ directives. `archon status` adds the global policy and the gates that are
 waiting, and `archon queue show` shows an item's knobs and gates. The
 orchestrator states the knobs it chose, with a reason, in the `decision` it
 notifies for each item.
+
+
+### 18.6 Merges the operator asks for
+
+`merge = manual` keeps an item's pull request open for a person to merge.
+The operator may still have archond merge one, without raising the ceiling,
+by asking for it. archond merges at once only on the operator's own
+command; for the orchestrator's `request_merge` it asks the operator, unless
+the repository's `grant_merge` lets it take the orchestrator's word that the
+operator asked (in shared mode a `[listen]` client can also be that
+operator). The types are in
+`archon_core::merge`, and `executor::operator_merge` is the one merge path.
+
+**Who may ask.**
+
+- `archon merge <item> [--ignore-checks]` on the operator's socket, or
+  `/merge <item> [--ignore-checks]` in `archon chat`. Both merge at once.
+  The request is operator-only, so `archon mcp` and agents are refused it.
+- A whole-message `/merge <item> [--ignore-checks]` from the `user` actor in
+  the orchestrator's Aether chat merges at once, in dedicated mode only
+  (§5.2): in shared mode a `[listen]` client is the same actor. A refusal
+  before anything began comes to the orchestrator as `chat_merge_refused`.
+- The orchestrator's `request_merge {item, reason}`, for an operator's plain
+  request in chat or in a GitHub request with operator standing. archond
+  asks its own question, "Merge … ?" with the options `yes`,
+  `yes ignore-checks` and `no`. Only the operator answers it: `/a`,
+  `archon answer` or Aether's `/answer`. `record_chat_answer` is refused for
+  it, and an answer that is not an option leaves it open.
+- `grant_merge = true` on a repository (`archon repo set R --grant-merge
+  true`) stands in for that question. It has no expiry and is independent of
+  the ceiling. Under it, a `request_merge` for an item reviewed at
+  `standard` or `strict` whose checks are all green merges with no question;
+  red checks or `review = none` are still asked. A change to the grant posts
+  a `System` note.
+
+**What a merge needs.** Each is checked just before `gh pr merge`, and
+for `request_merge` also before asking, against what `gh pr view --json
+state,isDraft,headRefOid,baseRefName,mergeable,statusCheckRollup` shows:
+
+- The item succeeded and archond delivered its pull request (§8.7).
+- The pull request is open, not a draft, and `MERGEABLE`.
+- Its head is the commit the run's checks and review passed.
+- Its base is the item's base, and no stack parent is unmerged. A child
+  restacked after its parent merged has a new head, so it needs a retry.
+- Every check is green, unless the operator acknowledged them with
+  `--ignore-checks` or `yes ignore-checks`.
+
+**The merge.** A `merge_requests` row (store V13) is written before any
+GitHub write, and an item has at most one open. archond then runs `gh pr
+merge <url> --match-head-commit <sha>` with the first method the repository
+allows (`--squash`, `--merge`, `--rebase`), never `--admin` or `--auto`, and
+reads the pull request back. Only `MERGED` at that head counts as merged.
+If GitHub cannot be read back, the row stays `merging`. The coordination
+pass settles a row left `merging` by a restart or for 10 minutes: `merged`
+when GitHub shows the merge at that head, otherwise `refused` ("ask again").
+It is never sent twice.
+
+**Audit.** Each end posts an `Outcome` to the feed (a refusal posts a
+`Blocker`) and `merge_finished` news to the orchestrator. That news wakes
+it when it asked or the request came from its chat. `archon queue show`
+prints a `merge:` line. `archon status` shows the merges waiting, and it
+and `archon autonomy` show the repositories with `grant_merge`.
 
 
 ## 19. Learning

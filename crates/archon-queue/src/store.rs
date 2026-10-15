@@ -19,6 +19,7 @@ mod handoffs;
 pub mod initiatives;
 mod items;
 mod lessons;
+mod merges;
 mod model_evidence;
 mod operator_feedback;
 mod outcomes;
@@ -41,6 +42,7 @@ use archon_core::error::ArchonError;
 use archon_core::id::{
     DirectiveId, PipelineRunId, QuestionId, QueueItemId, RepoId, ReportId, StageRunId,
 };
+use archon_core::merge::MergeRequest;
 use archon_core::notify::{FeedEntry, FeedItem, Question};
 use archon_core::protocol::{ItemQuery, RepoRef};
 use archon_core::queue::{PauseState, QueueItem, QueueState};
@@ -522,6 +524,39 @@ impl Store {
     /// One directive, or all with `None`; returns how many were cleared.
     pub fn clear_directives(&mut self, id: Option<&DirectiveId>) -> Result<u32, ArchonError> {
         directives::clear(&mut self.conn, id)
+    }
+
+    // ----- merge requests --------------------------------------------------------
+    /// Refused while another request for the item is open.
+    pub fn insert_merge(&mut self, merge: &MergeRequest) -> Result<(), ArchonError> {
+        merges::insert(&mut self.conn, merge)
+    }
+    /// Ask the confirmation question and record the request waiting on it,
+    /// atomically; returns both, the question's feed item for broadcasting.
+    pub fn ask_merge(
+        &mut self,
+        question: &Question,
+        merge: MergeRequest,
+    ) -> Result<(MergeRequest, FeedItem), ArchonError> {
+        merges::ask(&mut self.conn, question, merge)
+    }
+    /// Refused once the request ended.
+    pub fn update_merge(&mut self, merge: &MergeRequest) -> Result<(), ArchonError> {
+        merges::update(&mut self.conn, merge)
+    }
+    pub fn merge_by_question(
+        &self,
+        question: &QuestionId,
+    ) -> Result<Option<MergeRequest>, ArchonError> {
+        merges::by_question(&self.conn, question)
+    }
+    /// Oldest first.
+    pub fn merges_for_item(&self, item: &QueueItemId) -> Result<Vec<MergeRequest>, ArchonError> {
+        merges::for_item(&self.conn, item)
+    }
+    /// Waiting for the operator or merging, oldest first.
+    pub fn open_merges(&self) -> Result<Vec<MergeRequest>, ArchonError> {
+        merges::open(&self.conn)
     }
 
     // ----- spend ---------------------------------------------------------------

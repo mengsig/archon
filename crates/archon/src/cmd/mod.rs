@@ -13,6 +13,7 @@ mod instance;
 pub(crate) mod learning;
 pub(crate) mod lessons;
 mod log;
+mod merge;
 mod pipelines;
 mod queue;
 mod repo;
@@ -41,6 +42,10 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::Say { text } => talk::say(&text, json).await,
         Command::Answer { question, text } => talk::answer(&question, &text, json).await,
         Command::Questions => talk::questions(json).await,
+        Command::Merge {
+            item,
+            ignore_checks,
+        } => merge::run(&item, ignore_checks, json).await,
         Command::Log {
             limit,
             item,
@@ -118,6 +123,7 @@ fn json_refusal(command: Option<&Command>) -> Option<&'static str> {
         | Command::Say { .. }
         | Command::Answer { .. }
         | Command::Questions
+        | Command::Merge { .. }
         | Command::Status { .. }
         | Command::Cost { .. }
         | Command::ModelEvidence { .. }

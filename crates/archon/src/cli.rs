@@ -71,6 +71,16 @@ pub enum Command {
     },
     /// List open questions.
     Questions,
+    /// Merge a succeeded item's pull request now. archond merges only an
+    /// open, mergeable pull request at the reviewed commit, on its base,
+    /// with green checks; never with --admin or --auto.
+    Merge {
+        /// The item's qi_… id, or enough of its start to name one item.
+        item: String,
+        /// Merge although checks are failing, pending or missing.
+        #[arg(long)]
+        ignore_checks: bool,
+    },
     /// Daemon, orchestrator, caps, spend and Aether link status. Never
     /// starts Archon or Aether.
     Status {
@@ -290,6 +300,10 @@ pub enum RepoCommand {
         /// at manual.
         #[arg(long)]
         auto_merge: Option<bool>,
+        /// Whether the orchestrator merges on your plain request without a
+        /// confirmation question; independent of the ceiling.
+        #[arg(long)]
+        grant_merge: Option<bool>,
     },
 }
 
@@ -1076,6 +1090,40 @@ mod tests {
             "true",
         ];
         assert!(Cli::try_parse_from([&["archon"], both.as_slice()].concat()).is_err());
+        let Command::Repo(RepoCommand::Set { grant_merge, .. }) = parse(&[
+            "repo",
+            "set",
+            "api",
+            "--grant-merge",
+            "true",
+            "--autonomy-max",
+            "merge=manual",
+        ]) else {
+            panic!("a merge grant is independent of the ceiling")
+        };
+        assert_eq!(grant_merge, Some(true));
+    }
+
+    #[test]
+    fn merge_names_one_item_and_may_acknowledge_the_checks() {
+        let Command::Merge {
+            item,
+            ignore_checks,
+        } = parse(&["merge", "qi_01", "--ignore-checks"])
+        else {
+            panic!()
+        };
+        assert_eq!((item.as_str(), ignore_checks), ("qi_01", true));
+        assert!(matches!(
+            parse(&["merge", "qi_01"]),
+            Command::Merge {
+                ignore_checks: false,
+                ..
+            }
+        ));
+        for bad in [&["merge"][..], &["merge", "qi_01", "--admin"]] {
+            assert!(Cli::try_parse_from([&["archon"], bad].concat()).is_err());
+        }
     }
 
     #[test]

@@ -14,7 +14,7 @@
 //! Beside the workspaces, a pass deletes a repository's shared build cache
 //! once nothing used it for `worktrees.shared_cache_after` and no item of the
 //! repository is live, and an item's published artifacts `artifacts.keep_after`
-//! it settled ([`extras`]). While dispatch is held for disk space, the ages of
+//! it settled (`extras`). While dispatch is held for disk space, the ages of
 //! worktrees and caches drop to `worktrees.pressure_after` if that is shorter.
 //! A pass that freed anything leaves a note in the feed and in `archon status`.
 

@@ -27,6 +27,12 @@ fn caches_due_at_once() -> Config {
     config
 }
 
+/// The report without the live repository cache pass notes it skipped.
+fn untouched(mut report: GcReport) -> GcReport {
+    report.skipped.clear();
+    report
+}
+
 /// A harness whose repository ignores `target/` and `*.log`.
 async fn harness(config: Config) -> Harness {
     let h = Harness::with_config(config).await;
@@ -144,7 +150,7 @@ async fn a_retry_after_a_pass_planned_keeps_the_worktree_it_reuses() {
     retry(&h, &item).await;
 
     let report = gc::collect_planned(&h.ctx, pass).await.expect("pass");
-    assert_eq!(report, GcReport::default());
+    assert_eq!(untouched(report), GcReport::default());
     assert!(
         tree.join("target/debug/app").exists(),
         "nothing was deleted"
@@ -175,7 +181,11 @@ async fn a_retry_while_a_pass_collects_waits_for_it() {
     assert_eq!(runs.len(), 2, "the retry started once the pass let go");
     assert_eq!(runs[1].workspace, tree);
     let report = gc_request(&h, Some(0), true).await;
-    assert_eq!(report, GcReport::default(), "the live run is left alone");
+    assert_eq!(
+        untouched(report),
+        GcReport::default(),
+        "the live run is left alone"
+    );
 }
 
 /// A pass aborted mid-sweep (supervise stops the workers on a full disk,
@@ -226,7 +236,7 @@ async fn a_live_run_is_never_touched() {
     std::fs::write(tree.join("wip.rs"), "fn main() {}\n").expect("source");
 
     let report = gc_request(&h, Some(0), true).await;
-    assert_eq!(report, GcReport::default());
+    assert_eq!(untouched(report), GcReport::default());
     assert!(tree.join("target/debug/app").exists() && tree.join("wip.rs").exists());
     assert!(matches!(
         h.state(&item.id).await,

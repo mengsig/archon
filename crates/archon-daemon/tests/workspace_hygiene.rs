@@ -231,6 +231,7 @@ async fn disk_pressure_shortens_how_long_an_idle_cache_is_kept() {
 
     // The dispatch held for low disk runs the pass.
     h.set_free_bytes(1 << 30);
+    *h.ctx.gc.lock().await = None;
     h.dispatch().await;
     assert!(!cache_dir(&h).exists());
     let Ok(Reply::Status(status)) = h.cli(Request::Status).await else {

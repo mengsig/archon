@@ -1,4 +1,4 @@
-//! What gc collects outside a run's workspace (ARCHITECTURE §13.3): a
+//! What gc collects outside a run's workspace (ARCHITECTURE §13.5): a
 //! repository's shared build cache once nobody used it for a while, and an
 //! item's published artifacts `artifacts.keep_after` it settled. Both are
 //! claimed under the run table by renaming them aside, atomically, so a run

@@ -431,7 +431,7 @@ impl Default for WorktreeConfig {
     }
 }
 
-/// The durable per-item artifact store (ARCHITECTURE §13.3): files a stage
+/// The durable per-item artifact store (ARCHITECTURE §13.5): files a stage
 /// publishes outlive its worktree, read by item id.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -553,7 +553,7 @@ pub struct RepoConfig {
     pub cache: RepoCache,
 }
 
-/// A repository's say over its build cache (ARCHITECTURE §13.3).
+/// A repository's say over its build cache (ARCHITECTURE §13.5).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct RepoCache {

@@ -1,5 +1,5 @@
 //! Where a stage keeps what outlives its worktree: the repository's shared
-//! build cache, and the item's artifact store (ARCHITECTURE §13.3).
+//! build cache, and the item's artifact store (ARCHITECTURE §13.5).
 
 use std::path::Path;
 

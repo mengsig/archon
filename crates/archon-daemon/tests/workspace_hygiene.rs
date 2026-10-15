@@ -1,4 +1,4 @@
-//! Workspace hygiene (ARCHITECTURE §13.3): the shared build cache agents are
+//! Workspace hygiene (ARCHITECTURE §13.5): the shared build cache agents are
 //! pointed at, gc of idle caches and expired artifacts that never touches a
 //! live repository, and the durable per-item artifact store.
 

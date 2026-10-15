@@ -109,7 +109,7 @@ pub enum Request {
         caller: Option<AetherAgentId>,
     },
     /// A stage agent keeps files from its workspace in its item's artifact
-    /// store (ARCHITECTURE §13.3).
+    /// store (ARCHITECTURE §13.5).
     PublishArtifact {
         /// A file or directory inside the stage's workspace.
         path: String,
@@ -628,7 +628,7 @@ pub struct GcReport {
     pub skipped: Vec<(std::path::PathBuf, String)>,
     /// Attempted and failed, or could not be looked into, with why.
     pub failed: Vec<(std::path::PathBuf, String)>,
-    /// Repositories' shared build caches deleted (ARCHITECTURE §13.3).
+    /// Repositories' shared build caches deleted (ARCHITECTURE §13.5).
     #[serde(default)]
     pub caches: Vec<Reclaimed>,
     /// Items' published artifacts deleted after `artifacts.keep_after`.

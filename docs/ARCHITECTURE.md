@@ -3448,6 +3448,38 @@ filters never run, the operator's do. Not yet through the shadow: a team's
 worker worktrees, merges and status (§13.1), which run no hook but the
 repository's filters.
 
+### 13.5 Shared build cache and durable artifacts
+
+**Build cache.** A repository's stages build into one cargo target directory,
+`<data>/cache/<repo>/cargo-target`, never one per task and never `/tmp`.
+Aether cannot set an agent's environment, so archond keeps a
+`.cargo/config.toml` (marked as its own) in `<worktrees>/<repo>/` that
+points cargo at it for every worktree below, and the stage contract names
+the directory (`CARGO_TARGET_DIR=...`) for builds run elsewhere. A
+repository's own `.cargo/config.toml` is nearer a worktree and wins.
+`[worktrees] shared_cache = false`, or `[cache] shared = false` in
+`<repo>/.archon/config.toml`, turns it off; archond then removes the config
+it wrote. Cargo locks the directory, so concurrent builds are safe, but
+builds of one profile queue on that lock: a repository with many parallel
+items trades build time for disk and warm incremental state, and may opt
+out. A pool of target directories is not built; nothing needed it yet.
+
+**Cache gc.** The gc pass (§13.2) also deletes a repository's cache that no
+run started in for `worktrees.shared_cache_after` (default 14d), unless a run
+of the repository is live (it is listed as skipped). While dispatch is held
+for disk space, `worktrees.pressure_after` applies to caches as to worktrees.
+The pass's feed note and `archon gc` / `archon status` report caches and
+artifacts removed and the bytes freed. Live runs' worktrees are never touched.
+
+**Artifacts.** A stage publishes files with `publish_artifact` (a file or a
+directory of regular files, from inside its workspace). They are copied to
+`<data>/artifacts/<item>/` under `[artifacts] max_file_mb` and `max_item_mb`
+(a publish over either is refused, naming the limit), and read with
+`list_artifacts` and `read_artifact` by item id after the worktree is gone.
+A dependent stage's contract names its dependencies' artifact directories.
+The gc pass deletes an item's artifacts `[artifacts] keep_after` (30d) after
+the item settled.
+
 ## 14. Lavish plugin
 
 `archon-lavish` wraps the `lavish-axi` CLI. It is optional and degrades

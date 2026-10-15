@@ -1,4 +1,4 @@
-//! The shared build cache (ARCHITECTURE §13.3): one cargo target directory
+//! The shared build cache (ARCHITECTURE §13.5): one cargo target directory
 //! per repository under `<data>/cache/<repo>/`, never one per task. Aether
 //! cannot set an agent's environment, so cargo finds the directory through
 //! a `.cargo/config.toml` archond keeps above the repository's worktrees,

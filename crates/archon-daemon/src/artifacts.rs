@@ -1,4 +1,4 @@
-//! The durable per-item artifact store (ARCHITECTURE §13.3): files a stage
+//! The durable per-item artifact store (ARCHITECTURE §13.5): files a stage
 //! publishes from its worktree (evidence, logs, gitignored results) are
 //! copied to `<data>/artifacts/<item id>/`, where later stages and items
 //! read them by item id after the worktree is gone. Size-bounded by

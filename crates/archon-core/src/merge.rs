@@ -73,9 +73,17 @@ pub enum MergeState {
     AwaitingOperator,
     /// archond is checking and merging; the GitHub write may have happened.
     Merging,
+    /// GitHub accepted the request but has not merged it yet.
+    Queued,
     Merged {
-        /// `squash`, `merge` or `rebase`.
+        /// Merge method, or a description when confirmed later.
         method: String,
+        /// GitHub's merging actor, never inferred from the requester.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        actor: Option<String>,
+        /// Discovered by reconciliation rather than confirmed during execution.
+        #[serde(default)]
+        observed: bool,
     },
     /// The operator answered no.
     Declined,
@@ -93,6 +101,7 @@ impl MergeState {
         match self {
             Self::AwaitingOperator => "awaiting_operator",
             Self::Merging => "merging",
+            Self::Queued => "queued",
             Self::Merged { .. } => "merged",
             Self::Declined => "declined",
             Self::Refused { .. } => "refused",
@@ -101,7 +110,7 @@ impl MergeState {
 
     /// Whether the request is still in flight: at most one per item is.
     pub fn is_open(&self) -> bool {
-        matches!(self, Self::AwaitingOperator | Self::Merging)
+        matches!(self, Self::AwaitingOperator | Self::Merging | Self::Queued)
     }
 }
 
@@ -154,16 +163,33 @@ impl MergeRequest {
                 self.waiting_on().unwrap_or_default()
             ),
             MergeState::Merging => format!("{} at {head} is being merged", self.pr_url),
-            MergeState::Merged { method } => format!(
+            MergeState::Queued => format!("{} at {head} is queued at GitHub", self.pr_url),
+            MergeState::Merged {
+                method,
+                actor,
+                observed,
+            } => format!(
                 "{} merged at {head} ({method}) on {}",
                 self.pr_url,
-                self.authority.describe()
+                merged_attribution(actor.as_deref(), *observed)
             ),
             MergeState::Declined => format!("{} not merged: the operator said no", self.pr_url),
             MergeState::Refused { reason } => {
                 format!("{} not merged: {reason}", self.pr_url)
             }
         }
+    }
+}
+
+/// Attribute execution separately from the authority that requested it.
+pub fn merged_attribution(actor: Option<&str>, observed: bool) -> String {
+    let actor = actor.unwrap_or("an unknown GitHub actor");
+    if observed {
+        format!(
+            "GitHub reports merged by {actor}; confirmed later (possibly merged outside Archon)"
+        )
+    } else {
+        format!("GitHub confirmation by {actor}")
     }
 }
 
@@ -200,6 +226,8 @@ pub struct PullRequestFacts {
     /// `MERGEABLE`, `CONFLICTING` or `UNKNOWN`.
     pub mergeable: String,
     pub checks: Vec<Check>,
+    pub merged_by: Option<String>,
+    pub auto_merge: bool,
 }
 
 /// What a merge must find.
@@ -367,6 +395,8 @@ mod tests {
             base: "main".into(),
             mergeable: "MERGEABLE".into(),
             checks: vec![green("test"), green("lint")],
+            merged_by: None,
+            auto_merge: false,
         }
     }
 
@@ -451,6 +481,9 @@ mod tests {
             ("yes", yes),
             (" Y ", yes),
             ("merge", yes),
+            ("ok", yes),
+            ("approve", yes),
+            ("lgtm", yes),
             ("yes.", yes),
             ("yes ignore-checks", ignoring),
             ("yes --ignore-checks", ignoring),
@@ -464,6 +497,10 @@ mod tests {
             "",
             "maybe",
             "yes but later",
+            "ok I will review this later",
+            "this looks ok to me",
+            "approve after tests",
+            "lgtm except the migration",
             "no thanks",
             "sure",
             "ignore-checks",
@@ -505,6 +542,8 @@ mod tests {
         assert_eq!(back, request);
         let merged = MergeRequest {
             state: MergeState::Merged {
+                actor: None,
+                observed: false,
                 method: "squash".into(),
             },
             ..request

@@ -34,7 +34,8 @@ const FIELDS: &str =
     "number,url,state,headRefName,headRefOid,baseRefName,body,isDraft,reviewDecision";
 
 /// Everything a merge decision reads of a pull request (§18.6).
-const MERGE_FIELDS: &str = "state,isDraft,headRefOid,baseRefName,mergeable,statusCheckRollup";
+const MERGE_FIELDS: &str =
+    "state,isDraft,headRefOid,baseRefName,mergeable,statusCheckRollup,mergedBy,autoMergeRequest";
 
 /// What git or `gh` says when only a person can let the delivery through.
 const NEEDS_OPERATOR: [&str; 14] = [
@@ -115,6 +116,13 @@ struct MergeView {
     mergeable: String,
     #[serde(default)]
     status_check_rollup: Option<Vec<Rollup>>,
+    merged_by: Option<MergeActor>,
+    auto_merge_request: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MergeActor {
+    login: String,
 }
 
 /// One entry of `statusCheckRollup`: a check run, or a commit status.
@@ -180,6 +188,8 @@ pub(crate) async fn merge_facts(
     }
     let checks = view.status_check_rollup.unwrap_or_default();
     Ok(PullRequestFacts {
+        merged_by: view.merged_by.map(|actor| actor.login),
+        auto_merge: view.auto_merge_request.is_some(),
         state: view.state,
         is_draft: view.is_draft,
         head: view.head_ref_oid,

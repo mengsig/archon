@@ -73,12 +73,17 @@ case "$1 $2" in
     printf '{"squashMergeAllowed":true,"mergeCommitAllowed":true,"rebaseMergeAllowed":false}'
     ;;
 "pr view")
-    [ "$4 $5" = "--json state,isDraft,headRefOid,baseRefName,mergeable,statusCheckRollup" ] || exit 2
+    [ "$4 $5" = "--json state,isDraft,headRefOid,baseRefName,mergeable,statusCheckRollup,mergedBy,autoMergeRequest" ] || exit 2
     [ -f "$state/view-head" ] || { echo "no pull request at $3" >&2; exit 1; }
     shown=OPEN
     [ -f "$state/merged" ] && shown=MERGED
-    printf '{"state":"%s","isDraft":false,"headRefOid":"%s","baseRefName":"main","mergeable":"%s","statusCheckRollup":%s}' \
-        "$shown" "$(cat "$state/view-head")" "$(cat "$state/view-mergeable")" "$(cat "$state/view-checks")"
+    [ -f "$state/closed" ] && shown=CLOSED
+    actor=null
+    [ -f "$state/actor" ] && actor=$(cat "$state/actor")
+    auto=null
+    [ -f "$state/queued" ] && auto='{}'
+    printf '{"state":"%s","isDraft":false,"headRefOid":"%s","baseRefName":"main","mergeable":"%s","statusCheckRollup":%s,"mergedBy":%s,"autoMergeRequest":%s}' \
+        "$shown" "$(cat "$state/view-head")" "$(cat "$state/view-mergeable")" "$(cat "$state/view-checks")" "$actor" "$auto"
     ;;
 "pr merge")
     if [ "$4" = "--auto" ]; then
@@ -87,6 +92,7 @@ case "$1 $2" in
     fi
     [ "$# $4 $6" = "6 --match-head-commit --squash" ] || exit 2
     [ "$5" = "$(cat "$state/view-head")" ] || { echo "Head branch was modified" >&2; exit 1; }
+    [ -f "$state/queue-next" ] && { touch "$state/queued"; exit 0; }
     touch "$state/merged"
     if [ -f "$state/lose-merge-reply" ]; then
         rm "$state/lose-merge-reply"
@@ -174,6 +180,22 @@ impl FakeGh {
     /// The next merge goes through, but GitHub cannot be read just after.
     pub fn lose_next_merge_reply(&self) {
         std::fs::write(self.state.join("lose-merge-reply"), "").expect("marker");
+    }
+
+    pub fn queue_next_merge(&self) {
+        std::fs::write(self.state.join("queue-next"), "").unwrap();
+    }
+
+    pub fn finish_queued(&self, actor: Option<&str>) {
+        let marker = if actor.is_some() { "merged" } else { "closed" };
+        std::fs::write(self.state.join(marker), "").unwrap();
+        if let Some(actor) = actor {
+            std::fs::write(
+                self.state.join("actor"),
+                json!({"login": actor}).to_string(),
+            )
+            .unwrap();
+        }
     }
 
     /// What `gh pr checks --json` prints from now on.

@@ -549,7 +549,22 @@ impl Store {
     ) -> Result<(MergeRequest, FeedItem), ArchonError> {
         merges::ask(&mut self.conn, question, merge)
     }
-    /// Refused once the request ended.
+    /// Save the decision, close its question and append the answer atomically.
+    /// Returns newly appended answers for broadcasting; recorded answers are kept.
+    pub fn decide_merge(
+        &mut self,
+        merge: &MergeRequest,
+        answer: &str,
+        via: archon_core::notify::AnswerVia,
+    ) -> Result<Vec<FeedItem>, ArchonError> {
+        merges::decide(&mut self.conn, merge, answer, via)
+    }
+    /// Close legacy confirmation questions whose requests no longer await an answer.
+    pub fn reconcile_merge_questions(&mut self) -> Result<(), ArchonError> {
+        merges::reconcile_questions(&mut self.conn)
+    }
+    /// Refused once the request ended. Leaving awaiting_operator also closes
+    /// any still-open confirmation question and appends its settlement answer.
     pub fn update_merge(&mut self, merge: &MergeRequest) -> Result<(), ArchonError> {
         merges::update(&mut self.conn, merge)
     }
@@ -563,7 +578,7 @@ impl Store {
     pub fn merges_for_item(&self, item: &QueueItemId) -> Result<Vec<MergeRequest>, ArchonError> {
         merges::for_item(&self.conn, item)
     }
-    /// Waiting for the operator or merging, oldest first.
+    /// Waiting for the operator, queued or merging, oldest first.
     pub fn open_merges(&self) -> Result<Vec<MergeRequest>, ArchonError> {
         merges::open(&self.conn)
     }

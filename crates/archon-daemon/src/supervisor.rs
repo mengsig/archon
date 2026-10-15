@@ -638,8 +638,8 @@ pub async fn route_answer(
                 merge.state.kind()
             )));
         }
-        crate::executor::operator_merge::decide(ctx, merge, text).await?;
-        return Ok(None);
+        crate::executor::operator_merge::decide(ctx, merge, text, via).await?;
+        return ctx.store.lock().await.question(&question.id).map(Some);
     }
     if let Some(recorded) = crate::reports::answer_reopen(ctx, &question.id, text, via).await? {
         return Ok(Some(recorded));

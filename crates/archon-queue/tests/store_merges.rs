@@ -62,9 +62,15 @@ fn one_request_per_item_stays_open_and_an_ended_one_is_final() {
     );
     assert_eq!(store.open_merges().unwrap(), vec![first.clone()]);
 
-    first.state = MergeState::Merged {
-        method: "squash".into(),
-    };
+    first.state = MergeState::Queued;
+    store.update_merge(&first).unwrap();
+    assert_eq!(store.open_merges().unwrap(), vec![first.clone()]);
+    assert!(store.insert_merge(&second).is_err());
+
+    first.state = serde_json::from_value(serde_json::json!({
+        "state": "merged", "method": "squash"
+    }))
+    .unwrap();
     first.updated_at = t(31);
     store.update_merge(&first).unwrap();
     assert!(store.open_merges().unwrap().is_empty());
@@ -120,4 +126,173 @@ fn a_confirmation_question_is_recorded_with_its_request() {
         open.iter().all(|q| q.id != another.id),
         "a refused request leaves no question behind"
     );
+}
+
+#[test]
+fn deciding_a_merge_records_its_answer_and_feed_atomically() {
+    let (mut store, repo, items) = seeded(1);
+    let run = start(&mut store, &items[0].id);
+    let question = confirmation(&run);
+    let (mut request, _) = store
+        .ask_merge(&question, merge(&run, &repo, MergeState::AwaitingOperator))
+        .unwrap();
+    request.state = MergeState::Merging;
+    request.updated_at = t(31);
+    let via = archon_core::notify::AnswerVia::ChatCommand;
+    let answers = store
+        .decide_merge(&request, "yes ignore-checks", via)
+        .unwrap();
+    assert_eq!(answers.len(), 1);
+    assert!(
+        matches!(&answers[0].entry, FeedEntry::Answer { question: id, text, via: source }
+        if id == &question.id && text == "yes ignore-checks" && *source == via)
+    );
+    assert_eq!(
+        store.question(&question.id).unwrap().answer.as_deref(),
+        Some("yes ignore-checks")
+    );
+    assert_eq!(
+        store.merge_by_question(&question.id).unwrap(),
+        Some(request.clone())
+    );
+    let seq = store.last_feed_seq().unwrap();
+    assert!(store.decide_merge(&request, "no", via).is_err());
+    request.state = MergeState::Refused {
+        reason: "head moved".into(),
+    };
+    store.update_merge(&request).unwrap();
+    assert_eq!(
+        store.last_feed_seq().unwrap(),
+        seq,
+        "the recorded answer stays unchanged"
+    );
+    assert_eq!(
+        store.question(&question.id).unwrap().answer.as_deref(),
+        Some("yes ignore-checks")
+    );
+}
+
+#[test]
+fn a_failed_decision_rolls_back_the_answer_and_feed() {
+    let (mut store, repo, items) = seeded(1);
+    let run = start(&mut store, &items[0].id);
+    let question = confirmation(&run);
+    let (waiting, _) = store
+        .ask_merge(&question, merge(&run, &repo, MergeState::AwaitingOperator))
+        .unwrap();
+    let mut decision = waiting.clone();
+    decision.state = MergeState::Declined;
+    decision.updated_at = t(29); // Violates the merge table's timestamp constraint.
+    let seq = store.last_feed_seq().unwrap();
+    assert!(
+        store
+            .decide_merge(&decision, "no", Default::default())
+            .is_err()
+    );
+    assert!(store.question(&question.id).unwrap().is_open());
+    assert_eq!(store.last_feed_seq().unwrap(), seq);
+    assert_eq!(
+        store.merge_by_question(&question.id).unwrap(),
+        Some(waiting)
+    );
+    decision.updated_at = t(31);
+    assert!(
+        store
+            .decide_merge(&decision, " ", Default::default())
+            .is_err()
+    );
+    assert!(store.question(&question.id).unwrap().is_open());
+}
+
+#[test]
+fn settlement_closes_a_confirmation_with_its_reason() {
+    let (mut store, repo, items) = seeded(1);
+    let run = start(&mut store, &items[0].id);
+    let question = confirmation(&run);
+    let (mut request, _) = store
+        .ask_merge(&question, merge(&run, &repo, MergeState::AwaitingOperator))
+        .unwrap();
+    request.state = MergeState::Refused {
+        reason: "the reviewed head moved".into(),
+    };
+    request.updated_at = t(31);
+    store.update_merge(&request).unwrap();
+    let answered = store.question(&question.id).unwrap();
+    assert!(answered.answer.unwrap().contains("the reviewed head moved"));
+    assert_eq!(answered.answered_at, Some(t(31)));
+    assert!(matches!(
+        store.feed_after(1, 10).unwrap()[0].entry,
+        FeedEntry::Answer { .. }
+    ));
+}
+
+#[test]
+fn legacy_questions_are_reconciled_idempotently_and_closure_failures_roll_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("archon.db");
+    let mut store = archon_queue::Store::open(&path).unwrap();
+    let repo = repo("legacy");
+    store.insert_repo(&repo).unwrap();
+    let item = store
+        .insert_item(&item(Some(&repo), "legacy"), None)
+        .unwrap();
+    let run = start(&mut store, &item.id);
+    let question = confirmation(&run);
+    let (waiting, _) = store
+        .ask_merge(&question, merge(&run, &repo, MergeState::AwaitingOperator))
+        .unwrap();
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "CREATE TRIGGER fail_answer BEFORE INSERT ON feed
+        BEGIN SELECT RAISE(ABORT, 'answer refused'); END;",
+    )
+    .unwrap();
+    let mut settled = waiting.clone();
+    settled.state = MergeState::Declined;
+    settled.updated_at = t(31);
+    assert!(store.update_merge(&settled).is_err());
+    assert_eq!(
+        store.merge_by_question(&question.id).unwrap(),
+        Some(waiting)
+    );
+    assert!(store.question(&question.id).unwrap().is_open());
+    conn.execute(
+        "UPDATE merge_requests SET state = 'declined', updated_at = ?1, data = ?2",
+        rusqlite::params![
+            t(31).to_rfc3339_opts(chrono::SecondsFormat::Nanos, true),
+            serde_json::to_string(&settled).unwrap()
+        ],
+    )
+    .unwrap();
+    assert!(store.reconcile_merge_questions().is_err());
+    assert!(store.question(&question.id).unwrap().is_open());
+    conn.execute_batch("DROP TRIGGER fail_answer").unwrap();
+    store.reconcile_merge_questions().unwrap();
+    assert!(!store.question(&question.id).unwrap().is_open());
+    let seq = store.last_feed_seq().unwrap();
+    store.reconcile_merge_questions().unwrap();
+    assert_eq!(store.last_feed_seq().unwrap(), seq);
+}
+
+#[test]
+fn recorded_answers_survive_legacy_decisions_and_reconciliation_keeps_waiting_questions() {
+    let (mut store, repo, items) = seeded(1);
+    let run = start(&mut store, &items[0].id);
+    let question = confirmation(&run);
+    let (mut request, _) = store
+        .ask_merge(&question, merge(&run, &repo, MergeState::AwaitingOperator))
+        .unwrap();
+    store.reconcile_merge_questions().unwrap();
+    assert!(store.question(&question.id).unwrap().is_open());
+    let answered = store.answer_question(&question.id, "no", t(31)).unwrap();
+    request.state = MergeState::Declined;
+    request.updated_at = t(32);
+    let seq = store.last_feed_seq().unwrap();
+    let posted = store
+        .decide_merge(&request, "no", Default::default())
+        .unwrap();
+    assert!(posted.is_empty(), "an existing answer is not posted twice");
+    assert_eq!(store.question(&question.id).unwrap(), answered);
+    store.reconcile_merge_questions().unwrap();
+    assert_eq!(store.last_feed_seq().unwrap(), seq);
 }

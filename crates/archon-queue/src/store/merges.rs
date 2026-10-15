@@ -4,7 +4,7 @@
 use archon_core::error::ArchonError;
 use archon_core::id::{QuestionId, QueueItemId};
 use archon_core::merge::{MergeAuthority, MergeRequest, MergeState};
-use archon_core::notify::{FeedEntry, FeedItem, Question};
+use archon_core::notify::{AnswerVia, FeedEntry, FeedItem, Question};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use super::codec::{SqlContext, from_json, to_json, ts, write_tx};
@@ -40,7 +40,7 @@ fn open_for(conn: &Connection, item: &QueueItemId) -> Result<Option<MergeRequest
     let open = load(
         conn,
         "SELECT data FROM merge_requests
-         WHERE item = ?1 AND state IN ('awaiting_operator', 'merging')",
+         WHERE item = ?1 AND state IN ('awaiting_operator', 'queued', 'merging')",
         [item.as_str()],
     )?;
     assert!(open.len() <= 1, "an index keeps one open request per item");
@@ -117,7 +117,19 @@ pub(super) fn ask(
 /// Identity is fixed, and a request that ended never changes again.
 pub(super) fn update(conn: &mut Connection, merge: &MergeRequest) -> Result<(), ArchonError> {
     let tx = write_tx(conn)?;
-    let stored = by_id(&tx, merge)?;
+    update_in(&tx, merge)?;
+    settle_question(&tx, merge)?;
+    tx.commit().ctx("commit merge request update")
+}
+
+fn update_in(tx: &Connection, merge: &MergeRequest) -> Result<(), ArchonError> {
+    let stored = by_id(tx, merge)?;
+    if stored.authority != merge.authority {
+        return Err(ArchonError::Invalid(format!(
+            "the authority of merge request {} cannot change",
+            merge.id
+        )));
+    }
     if stored.item != merge.item || stored.run != merge.run || stored.pr_url != merge.pr_url {
         return Err(ArchonError::Invalid(format!(
             "the item, run and pull request of merge request {} cannot change",
@@ -143,7 +155,59 @@ pub(super) fn update(conn: &mut Connection, merge: &MergeRequest) -> Result<(), 
         )
         .ctx("update merge request")?;
     assert_eq!(updated, 1, "the request was just read");
-    tx.commit().ctx("commit merge request update")
+    Ok(())
+}
+
+fn settle_question(tx: &Connection, merge: &MergeRequest) -> Result<(), ArchonError> {
+    if merge.state != MergeState::AwaitingOperator
+        && let Some(question) = question_of(merge)
+    {
+        let text = format!("merge confirmation closed: {}", merge.line());
+        feed::settle_in(tx, question, &text, AnswerVia::Archon, merge.updated_at)?;
+    }
+    Ok(())
+}
+
+pub(super) fn decide(
+    conn: &mut Connection,
+    merge: &MergeRequest,
+    answer: &str,
+    via: AnswerVia,
+) -> Result<Vec<FeedItem>, ArchonError> {
+    let tx = write_tx(conn)?;
+    let stored = by_id(&tx, merge)?;
+    if stored.state != MergeState::AwaitingOperator || merge.state == MergeState::AwaitingOperator {
+        return Err(ArchonError::InvalidTransition(format!(
+            "merge request {} must leave awaiting_operator when decided",
+            merge.id
+        )));
+    }
+    let question = question_of(&stored).ok_or_else(|| {
+        ArchonError::Invalid(format!(
+            "merge request {} has no confirmation question",
+            merge.id
+        ))
+    })?;
+    let answers = feed::settle_in(&tx, question, answer, via, merge.updated_at)?
+        .into_iter()
+        .collect();
+    update_in(&tx, merge)?;
+    tx.commit().ctx("commit merge decision")?;
+    Ok(answers)
+}
+
+pub(super) fn reconcile_questions(conn: &mut Connection) -> Result<(), ArchonError> {
+    let tx = write_tx(conn)?;
+    let merges = load(
+        &tx,
+        "SELECT m.data FROM merge_requests m JOIN questions q ON q.id = m.question
+         WHERE m.state != 'awaiting_operator' AND q.open = 1 ORDER BY m.requested_at, m.id",
+        [],
+    )?;
+    for merge in merges {
+        settle_question(&tx, &merge)?;
+    }
+    tx.commit().ctx("commit merge question reconciliation")
 }
 
 fn by_id(conn: &Connection, merge: &MergeRequest) -> Result<MergeRequest, ArchonError> {
@@ -184,12 +248,12 @@ pub(super) fn for_item(
     )
 }
 
-/// Every request still waiting or merging, oldest first.
+/// Every request still waiting, queued or merging, oldest first.
 pub(super) fn open(conn: &Connection) -> Result<Vec<MergeRequest>, ArchonError> {
     let open = load(
         conn,
         "SELECT data FROM merge_requests
-         WHERE state IN ('awaiting_operator', 'merging') ORDER BY requested_at, id",
+         WHERE state IN ('awaiting_operator', 'queued', 'merging') ORDER BY requested_at, id",
         [],
     )?;
     debug_assert!(open.iter().all(|m| m.state.is_open()));

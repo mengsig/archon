@@ -313,18 +313,38 @@ pub(super) fn close_withdrawn(
     at: Timestamp,
 ) -> Result<Option<FeedItem>, ArchonError> {
     assert!(!reason.trim().is_empty(), "a withdrawal gives its reason");
+    settle_in(
+        tx,
+        id,
+        &format!("withdrawn: {reason}"),
+        AnswerVia::Archon,
+        at,
+    )
+}
+
+/// Close an open question and append its answer in the caller's transaction.
+/// Previously recorded answers are never overwritten or posted again.
+pub(super) fn settle_in(
+    tx: &Connection,
+    id: &QuestionId,
+    text: &str,
+    via: AnswerVia,
+    at: Timestamp,
+) -> Result<Option<FeedItem>, ArchonError> {
+    if text.trim().is_empty() {
+        return Err(ArchonError::Invalid("an answer needs text".into()));
+    }
     let mut question = load_question(tx, id)?;
     if !question.is_open() {
         return Ok(None);
     }
-    let text = format!("withdrawn: {reason}");
-    question.answer = Some(text.clone());
+    question.answer = Some(text.to_owned());
     question.answered_at = Some(at.max(question.asked_at));
     write_question(tx, &question, false)?;
     let entry = FeedEntry::Answer {
         question: id.clone(),
-        text,
-        via: AnswerVia::Archon,
+        text: text.to_owned(),
+        via,
     };
     let item = append_in(tx, entry, at)?;
     debug_assert!(!load_question(tx, id)?.is_open());

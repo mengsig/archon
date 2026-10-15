@@ -14,7 +14,7 @@ use archon_core::error::ArchonError;
 use archon_core::id::QuestionId;
 use archon_core::merge::{MergeAuthority, MergeRequest, MergeState};
 use archon_core::model::ModelPlan;
-use archon_core::notify::NotificationKind;
+use archon_core::notify::{FeedEntry, NotificationKind};
 use archon_core::protocol::{ClientKind, EnqueueRequest, Reply, RepoPatch, RepoRef, Request};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_daemon::executor::coordination;
@@ -179,6 +179,8 @@ async fn the_operators_merge_merges_the_delivered_head_once() {
     assert_eq!(
         merge.state,
         MergeState::Merged {
+            actor: None,
+            observed: false,
             method: "squash".into()
         }
     );
@@ -351,6 +353,8 @@ async fn a_request_waits_for_the_operator_and_merges_on_yes() {
     assert_eq!(
         merge.state,
         MergeState::Merged {
+            actor: None,
+            observed: false,
             method: "squash".into()
         }
     );
@@ -424,6 +428,8 @@ async fn a_grant_merges_a_reviewed_green_request_directly() {
     assert_eq!(
         merge.state,
         MergeState::Merged {
+            actor: None,
+            observed: false,
             method: "squash".into()
         }
     );
@@ -585,9 +591,34 @@ async fn an_interrupted_merge_is_settled_from_github() {
     let (mut h, gh) = delivering(Config::default()).await;
     let (item, head) = shipped(&h).await;
     gh.show(&head, "MERGEABLE", green());
+    let asked = merge_of(h.orchestrator(request_merge(&item)).await);
+    let MergeAuthority::Confirmed { question, .. } = asked.authority else {
+        panic!("confirmation")
+    };
     gh.lose_next_merge_reply();
-    let merge = merge_of(h.cli(merge_item(&item, false)).await);
-    assert_eq!(merge.state, MergeState::Merging, "not known to have merged");
+    h.cli(Request::Answer {
+        question: question.clone(),
+        text: "yes".into(),
+    })
+    .await
+    .unwrap();
+    let requests = merges(&h, &item).await;
+    assert_eq!(
+        requests[0].state,
+        MergeState::Merging,
+        "not known to have merged"
+    );
+    assert_eq!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .question(&question)
+            .unwrap()
+            .answer
+            .as_deref(),
+        Some("yes")
+    );
     let refused = h.cli(merge_item(&item, false)).await;
     assert!(
         matches!(refused, Err(ArchonError::InvalidTransition(_))),
@@ -597,10 +628,10 @@ async fn an_interrupted_merge_is_settled_from_github() {
     h.restart();
     coordination::reconcile(&h.ctx).await.unwrap();
     let [merge] = merges(&h, &item).await.try_into().expect("one request");
-    let MergeState::Merged { method } = &merge.state else {
+    let MergeState::Merged { method, .. } = &merge.state else {
         panic!("settled as merged: {merge:?}")
     };
-    assert!(method.contains("lost track"), "{method}");
+    assert!(method.contains("confirmed later"), "{method}");
     assert_eq!(merge_calls(&gh).len(), 1, "never sent twice");
 }
 
@@ -686,4 +717,80 @@ async fn a_stage_agent_or_its_child_cannot_request_a_merge() {
     }
     assert!(merges(&h, &item).await.is_empty());
     assert!(merge_calls(&gh).is_empty() && !gh.merged());
+}
+
+#[tokio::test]
+async fn queued_merges_stay_open_until_github_merges_or_closes_them() {
+    for actor in [Some("actual-merger"), None] {
+        let (mut h, gh) = delivering(Config::default()).await;
+        let (item, head) = shipped(&h).await;
+        gh.show(&head, "MERGEABLE", green());
+        gh.queue_next_merge();
+        let request = merge_of(h.cli(merge_item(&item, false)).await);
+        assert_eq!(request.state, MergeState::Queued);
+        assert!(merge_news(&h).await.is_empty());
+        h.restart();
+        coordination::reconcile(&h.ctx).await.unwrap();
+        assert_eq!(merges(&h, &item).await[0].state, MergeState::Queued);
+        assert!(h.cli(merge_item(&item, false)).await.is_err());
+        gh.finish_queued(actor);
+        coordination::reconcile(&h.ctx).await.unwrap();
+        let requests = merges(&h, &item).await;
+        match (&requests[0].state, actor) {
+            (
+                MergeState::Merged {
+                    actor: actual,
+                    observed: true,
+                    ..
+                },
+                Some(expected),
+            ) => {
+                assert_eq!(actual.as_deref(), Some(expected));
+                let notes = h.notices(NotificationKind::Outcome).await;
+                assert!(notes.iter().any(|n| n.contains("merged by actual-merger")));
+            }
+            (MergeState::Refused { .. }, None) => {}
+            other => panic!("unexpected settlement: {other:?}"),
+        }
+        assert_eq!(merge_calls(&gh).len(), 1);
+        assert_eq!(merge_news(&h).await.len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn non_user_aether_messages_cannot_merge() {
+    let (h, gh) = delivering(Config::default()).await;
+    let (item, head) = shipped(&h).await;
+    gh.show(&head, "MERGEABLE", green());
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(keys::ORCHESTRATOR_AGENT, ORCHESTRATOR)
+        .unwrap();
+    for (seq, actor) in [
+        (1, json!({"actor":"agent", "agent_id":"agt_other"})),
+        (2, json!({"actor":"system"})),
+    ] {
+        let mut raw =
+            serde_json::to_value(operator_says(seq, &format!("/merge {}", item.id))).unwrap();
+        raw["kind"]["item"]["kind"]["from"] = actor;
+        let event = parse_event(raw).unwrap();
+        pump::handle_orchestrator_event(&h.ctx, &event)
+            .await
+            .unwrap();
+    }
+    assert!(merges(&h, &item).await.is_empty());
+    assert!(merge_calls(&gh).is_empty());
+}
+
+#[tokio::test]
+async fn changing_grant_merge_posts_the_feed_note() {
+    let (h, _) = delivering(Config::default()).await;
+    set_grant(&h, true).await;
+    set_grant(&h, false).await;
+    let feed = h.ctx.store.lock().await.feed_after(0, 10_000).unwrap();
+    for expected in ["grant_merge is on", "grant_merge is off"] {
+        assert!(feed.iter().any(|entry| matches!(&entry.entry, FeedEntry::System { text } if text.contains(expected))), "{expected}: {feed:?}");
+    }
 }

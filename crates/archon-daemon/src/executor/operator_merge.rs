@@ -17,7 +17,7 @@ use archon_core::merge::{
     self, ChecksSeen, Expected, MERGE_OPTIONS, MergeAnswer, MergeAuthority, MergeRequest,
     MergeState,
 };
-use archon_core::notify::{NotificationKind, Question};
+use archon_core::notify::{AnswerVia, NotificationKind, Question};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::Repo;
 use archon_core::run::{StageRun, StageState};
@@ -354,6 +354,7 @@ pub(crate) async fn decide(
     ctx: &DaemonContext,
     mut merge: MergeRequest,
     text: &str,
+    via: AnswerVia,
 ) -> Result<(), ArchonError> {
     assert!(
         merge.waiting_on().is_some(),
@@ -364,13 +365,15 @@ pub(crate) async fn decide(
     match answer {
         MergeAnswer::No => {
             merge.state = MergeState::Declined;
-            ctx.store.lock().await.update_merge(&merge)?;
+            let feed = ctx.store.lock().await.decide_merge(&merge, text, via)?;
+            crate::feed::publish(ctx, feed);
             report(ctx, &merge).await
         }
         MergeAnswer::Yes { ignore_checks } => {
             merge.ignore_checks = ignore_checks;
             merge.state = MergeState::Merging;
-            ctx.store.lock().await.update_merge(&merge)?;
+            let feed = ctx.store.lock().await.decide_merge(&merge, text, via)?;
+            crate::feed::publish(ctx, feed);
             execute(ctx, merge).await.map(drop)
         }
     }
@@ -508,7 +511,12 @@ fn settled(
     if after.state == "MERGED" && after.head == merge.head {
         return MergeState::Merged {
             method: method.to_owned(),
+            actor: after.merged_by.clone(),
+            observed: said.is_some(),
         };
+    }
+    if after.state == "OPEN" && after.head == merge.head && (said.is_none() || after.auto_merge) {
+        return MergeState::Queued;
     }
     let reason = match said {
         Some(said) => format!("GitHub refused the merge: {said}"),
@@ -525,7 +533,10 @@ async fn finish_merge(
     ctx: &DaemonContext,
     mut merge: MergeRequest,
 ) -> Result<MergeRequest, ArchonError> {
-    assert!(!merge.state.is_open(), "only an ended request is reported");
+    assert!(
+        merge.state != MergeState::AwaitingOperator && merge.state != MergeState::Merging,
+        "only a known outcome is reported"
+    );
     merge.updated_at = archon_core::now();
     ctx.store.lock().await.update_merge(&merge)?;
     report(ctx, &merge).await?;
@@ -536,7 +547,11 @@ async fn finish_merge(
 async fn report(ctx: &DaemonContext, merge: &MergeRequest) -> Result<(), ArchonError> {
     let who = merge.authority.describe();
     let (kind, text) = match &merge.state {
-        MergeState::Merged { method } => {
+        MergeState::Merged {
+            method,
+            actor,
+            observed,
+        } => {
             let checks = match (merge.ignore_checks, &merge.checks) {
                 (true, Some(checks)) => {
                     format!("; the operator acknowledged the checks ({checks})")
@@ -545,13 +560,21 @@ async fn report(ctx: &DaemonContext, merge: &MergeRequest) -> Result<(), ArchonE
                 (_, None) => String::new(),
             };
             let text = format!(
-                "Merged {} of {} at {} ({method}) on {who}{checks}.",
+                "Merged {} of {} at {} ({method}); {}; requested on {who}{checks}.",
                 merge.pr_url,
                 merge.item,
-                merge::short(&merge.head)
+                merge::short(&merge.head),
+                merge::merged_attribution(actor.as_deref(), *observed)
             );
             (NotificationKind::Outcome, text)
         }
+        MergeState::Queued => (
+            NotificationKind::Outcome,
+            format!(
+                "Queued {} of {} at GitHub on {who}; waiting for it to merge or close.",
+                merge.pr_url, merge.item
+            ),
+        ),
         MergeState::Declined => {
             let text = format!(
                 "Not merged: the operator declined {} of {}.",
@@ -569,6 +592,9 @@ async fn report(ctx: &DaemonContext, merge: &MergeRequest) -> Result<(), ArchonE
         MergeState::AwaitingOperator | MergeState::Merging => unreachable!("an open request"),
     };
     finish::notify(ctx, kind, &text, Some(&merge.item), Some(&merge.run)).await?;
+    if merge.state == MergeState::Queued {
+        return Ok(());
+    }
     let news = TriggerEvent::MergeFinished {
         item: merge.item.clone(),
         pr_url: merge.pr_url.clone(),
@@ -581,27 +607,30 @@ async fn report(ctx: &DaemonContext, merge: &MergeRequest) -> Result<(), ArchonE
     }
 }
 
-/// Settle each request left `merging` by a stop or a lost confirmation,
-/// from what GitHub shows now. Returns how many ended.
+/// Reconcile queued and interrupted requests from GitHub, closing any
+/// legacy confirmation left open. Returns how many requests ended.
 pub(crate) async fn settle_stale(ctx: &DaemonContext) -> Result<usize, ArchonError> {
+    ctx.store.lock().await.reconcile_merge_questions()?;
     let cutoff = archon_core::now() - STALE_AFTER;
     let open = ctx.store.lock().await.open_merges()?;
     let mut ended = 0;
     for merge in open {
         let stale = merge.updated_at < ctx.started_at || merge.updated_at < cutoff;
-        if merge.state != MergeState::Merging || !stale {
+        if merge.state != MergeState::Queued && (merge.state != MergeState::Merging || !stale) {
             continue;
         }
         let (subject, item) = (format!("merge:{}", merge.id), merge.item.clone());
         let result = settle_one(ctx, merge).await;
-        ended += usize::from(result.is_ok());
+        if let Ok(settled) = &result {
+            ended += usize::from(*settled);
+        }
         let what = format!("Settling the interrupted merge of {item}");
-        coordination::isolate(ctx, &subject, Some(&item), &what, result).await?;
+        coordination::isolate(ctx, &subject, Some(&item), &what, result.map(drop)).await?;
     }
     Ok(ended)
 }
 
-async fn settle_one(ctx: &DaemonContext, mut merge: MergeRequest) -> Result<(), ArchonError> {
+async fn settle_one(ctx: &DaemonContext, mut merge: MergeRequest) -> Result<bool, ArchonError> {
     let repo = ctx
         .store
         .lock()
@@ -611,18 +640,29 @@ async fn settle_one(ctx: &DaemonContext, mut merge: MergeRequest) -> Result<(), 
     let after = gh::merge_facts(binary, &repo.path, &merge.pr_url).await?;
     merge.state = match (after.state.as_str(), after.head == merge.head) {
         ("MERGED", true) => MergeState::Merged {
-            method: "confirmed after archond lost track of it".into(),
+            method: "confirmed later by GitHub".into(),
+            actor: after.merged_by.clone(),
+            observed: true,
         },
+        // An interrupted send may have entered a merge queue even when
+        // autoMergeRequest is absent. Keep ownership until GitHub settles it.
+        ("OPEN", true) => {
+            if merge.state != MergeState::Queued {
+                merge.state = MergeState::Queued;
+                finish_merge(ctx, merge).await?;
+            }
+            return Ok(false);
+        }
         (state, _) => MergeState::Refused {
             reason: format!(
-                "archond was interrupted while merging, and GitHub lists the pull request as \
+                "GitHub lists the requested pull request as \
                  {} at {}; ask again",
                 state.to_lowercase(),
                 merge::short(&after.head)
             ),
         },
     };
-    finish_merge(ctx, merge).await.map(drop)
+    finish_merge(ctx, merge).await.map(|_| true)
 }
 
 #[cfg(test)]
@@ -657,6 +697,8 @@ mod tests {
             base: "main".into(),
             mergeable: "UNKNOWN".into(),
             checks: vec![],
+            merged_by: None,
+            auto_merge: false,
         }
     }
 
@@ -667,6 +709,8 @@ mod tests {
         assert_eq!(
             merged,
             MergeState::Merged {
+                actor: None,
+                observed: false,
                 method: "squash".into()
             }
         );
@@ -677,10 +721,7 @@ mod tests {
             "merged at another commit is not this merge"
         );
         let queued = settled(&after("OPEN", &merge.head), &merge, "squash", None);
-        let MergeState::Refused { reason } = queued else {
-            panic!("an open pull request is not merged");
-        };
-        assert!(reason.contains("may still merge"), "{reason}");
+        assert_eq!(queued, MergeState::Queued);
         let said = Some("Head branch was modified".to_owned());
         let MergeState::Refused { reason } =
             settled(&after("OPEN", &merge.head), &merge, "squash", said)

@@ -1002,11 +1002,10 @@ async fn retirement_waits_for_a_stage_agent_still_ending_its_turn() {
     assert_eq!(h.kv(&key).await, None, "retired and forgotten");
 }
 
-/// A stage agent that never ends its turn does not keep its node forever:
-/// once the grace after the run's last settlement is over, the node is
-/// retired regardless.
+/// Past the grace, cancellation ends a stuck turn. Retirement then waits
+/// for confirmation that the node and its builders stopped.
 #[tokio::test]
-async fn retirement_waits_no_longer_than_the_grace() {
+async fn retirement_cancels_after_the_grace_and_confirms_the_stop() {
     let h = Harness::new().await;
     let item = h.enqueue("stuck ending").await;
     drive_to_ship(&h).await;
@@ -1067,9 +1066,9 @@ fn long_plan() -> archon_core::model::ModelPlan {
 /// Retirement asks Aether only about the agents that settled recently,
 /// newest first: with the ship agent still ending its turn, one
 /// `get_agent` per sweep, not one per historical agent; and once it ended,
-/// only the agents still within their grace are asked.
+/// all builders are checked once before discarding their build output.
 #[tokio::test]
-async fn retirement_never_asks_about_a_long_runs_history() {
+async fn retirement_checks_history_only_after_the_last_turn_ends() {
     let h = Harness::new().await;
     h.add_pipeline(LONG_PIPELINE, &long_pipeline_toml());
     let item = h
@@ -1109,7 +1108,14 @@ async fn retirement_never_asks_about_a_long_runs_history() {
     common::age_settlements_except(&h, &run.id, 2, &["ship"]).await;
     h.backend.end_turn(&agent);
     h.dispatch().await;
-    assert_eq!(h.backend.take_live_checks(), vec![agent]);
+    let checked = h.backend.take_live_checks();
+    assert_eq!(checked.first(), Some(&agent));
+    for stage in h.ctx.store.lock().await.stage_runs(&run.id).unwrap() {
+        assert!(
+            checked.contains(&stage.aether_agent.unwrap()),
+            "every builder confirmed stopped"
+        );
+    }
     assert_eq!(h.backend.cancelled(), h.backend.node_ids());
     assert_eq!(h.kv(&format!("run_node:{}", run.id)).await, None);
     assert_eq!(h.backend.requests().len(), 32);

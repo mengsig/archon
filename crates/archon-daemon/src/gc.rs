@@ -391,6 +391,7 @@ pub(crate) async fn announce_item_release(
     item: &QueueItemId,
     freed: &Reclaimed,
 ) -> Result<(), ArchonError> {
+    *ctx.storage.lock().await = None;
     let status = GcStatus {
         at: archon_core::now(),
         bytes_freed: freed.bytes,

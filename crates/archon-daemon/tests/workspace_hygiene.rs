@@ -298,7 +298,7 @@ async fn a_build_directory_stays_while_a_cancelled_item_s_agent_may_still_run() 
 #[tokio::test]
 async fn a_build_directory_stays_until_what_a_failed_lead_delegated_has_ended() {
     let h = Harness::new().await;
-    let build = ("build".to_owned(), vec![choice(MODEL, Effort::High)]);
+    let build = ("build".to_owned(), vec![choice(MODEL, Effort::Medium)]);
     let item = h
         .enqueue_in("adaptive", "a led change", ModelPlan([build].into()))
         .await
@@ -345,6 +345,33 @@ async fn a_build_directory_stays_until_aether_confirms_a_cancelled_agent_ended()
     h.backend.kill(&agent);
     h.dispatch().await;
     assert!(!dir.exists(), "released once Aether says it ended");
+}
+
+#[tokio::test]
+async fn a_build_directory_stays_past_the_grace_until_a_slow_node_and_its_builders_end() {
+    let h = Harness::new().await;
+    let (item, stage) = start(&h, "slow subtree").await;
+    let agent = stage.aether_agent.unwrap();
+    let node = h.backend.node_ids().remove(0);
+    h.backend.cancel_slowly(&agent);
+    h.backend.cancel_slowly(&node);
+    cancel(&h, &item).await;
+    common::age_settlements(&h, &stage.run, 2).await;
+    h.dispatch().await;
+    let dir = item_dir(&h, &item.id);
+    assert!(dir.is_dir(), "grace expiry does not prove termination");
+    assert!(gc(&h, Some(0)).await.caches.is_empty());
+    assert!(dir.is_dir());
+
+    h.backend.kill(&node);
+    h.dispatch().await;
+    assert!(
+        dir.is_dir(),
+        "the builder still runs after its parent ended"
+    );
+    h.backend.kill(&agent);
+    h.dispatch().await;
+    assert!(!dir.exists(), "released after the entire subtree stopped");
 }
 
 /// A symlinked `items` directory leads outside the cache: gc and an item's
@@ -426,6 +453,7 @@ async fn gc_deletes_an_idle_cache_and_says_what_it_freed() {
     let h = shared().await;
     let (item, _) = start(&h, "finished").await;
     cancel(&h, &item).await;
+    h.dispatch().await;
     let target = cache_dir(&h).join("cargo-target");
     std::fs::write(target.join("artifact.o"), vec![1u8; 100_000]).unwrap();
 
@@ -478,6 +506,7 @@ async fn disk_pressure_shortens_how_long_an_idle_cache_is_kept() {
     let h = shared().await;
     let (item, _) = start(&h, "finished").await;
     cancel(&h, &item).await;
+    h.dispatch().await;
     age_cache(&h, Duration::from_secs(2 * 86_400));
 
     let report = gc(&h, None).await;
@@ -537,6 +566,10 @@ async fn a_stage_publishes_files_that_outlive_its_worktree_and_reach_dependents(
         h.state(&first.id).await,
         QueueState::Succeeded { .. }
     ));
+    assert!(
+        !item_dir(&h, &first.id).exists(),
+        "success releases build output"
+    );
     // Unpublished files keep archond from removing the worktree itself.
     git(
         &h.repo,

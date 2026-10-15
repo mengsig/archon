@@ -660,8 +660,9 @@ async fn release_item_build(
         if !crate::build_cache::is_idle(&store, &build.item)? {
             return Ok(FollowUp::default());
         }
+        let claimed = crate::build_cache::claim_item(&ctx.paths, &build.repo_name, &build.item)?;
         crate::build_cache::forget_release(&mut store, &build.item)?;
-        crate::build_cache::claim_item(&ctx.paths, &build.repo_name, &build.item)?
+        claimed
     };
     let Some(claimed) = claimed else {
         return Ok(FollowUp::default());

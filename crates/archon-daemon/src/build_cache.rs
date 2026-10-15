@@ -105,7 +105,7 @@ pub(crate) fn prepare(
 /// Whether nothing of `item` can still build: it is final, none of its
 /// stage runs is spawning or running, no stop of their agents or what they
 /// delegated is owed, and every run's node is retired, which waits for
-/// Aether to confirm that agents settled or cancelled lately have ended (an
+/// Aether to confirm that all recorded builders and descendants have ended (an
 /// accepted cancel is cooperative). The caller holds the run table.
 pub(crate) fn is_idle(store: &Store, item: &QueueItemId) -> Result<bool, ArchonError> {
     if !store.item(item)?.state.is_terminal() {
@@ -117,7 +117,7 @@ pub(crate) fn is_idle(store: &Store, item: &QueueItemId) -> Result<bool, ArchonE
         }
     }
     for run in store.runs_for_item(item)? {
-        if !crate::executor::node_retired(store, &run.id)? {
+        if !run.state.is_terminal() || !crate::executor::node_retired(store, &run.id)? {
             return Ok(false);
         }
     }

@@ -1132,6 +1132,22 @@ impl AgentBackend for FakeBackend {
         }
         state.dead.insert(agent.clone());
         state.in_turn.remove(agent);
+        if state.is_node(agent) {
+            let children: Vec<_> = state
+                .by_key
+                .iter()
+                .filter_map(|(key, child)| {
+                    (state.recorded[key].parent.as_ref() == Some(agent))
+                        .then_some(child.agent.clone())
+                })
+                .collect();
+            for child in children {
+                if !state.slow_cancels.contains(&child) {
+                    state.dead.insert(child.clone());
+                    state.in_turn.remove(&child);
+                }
+            }
+        }
         Ok(())
     }
 

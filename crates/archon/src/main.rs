@@ -17,12 +17,17 @@ mod views;
 mod wrap;
 
 use std::process::ExitCode;
+use std::time::{Duration, Instant};
 
 use clap::Parser as _;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::filter::LevelFilter;
 
 use crate::cli::{Cli, Command, DaemonCommand};
+
+/// Most the runtime waits at exit for blocking work still running, such as
+/// a daemon git that may take minutes; the process exits without it.
+const RUNTIME_STOP: Duration = Duration::from_secs(5);
 
 fn main() -> ExitCode {
     let cli = match Cli::try_parse() {
@@ -45,7 +50,11 @@ fn main() -> ExitCode {
         .init();
     let result = tokio::runtime::Runtime::new()
         .map_err(anyhow::Error::from)
-        .and_then(|runtime| runtime.block_on(cmd::dispatch(cli)));
+        .and_then(|runtime| {
+            let result = runtime.block_on(cmd::dispatch(cli));
+            stop_runtime(runtime);
+            result
+        });
     match result {
         Ok(code) => code,
         Err(error) => {
@@ -62,6 +71,15 @@ fn main() -> ExitCode {
             }
             ExitCode::FAILURE
         }
+    }
+}
+
+/// Dropping a runtime would wait for its blocking tasks without limit.
+fn stop_runtime(runtime: tokio::runtime::Runtime) {
+    let started = Instant::now();
+    runtime.shutdown_timeout(RUNTIME_STOP);
+    if started.elapsed() >= RUNTIME_STOP {
+        tracing::warn!(limit = ?RUNTIME_STOP, "blocking work still running at exit; exiting without it");
     }
 }
 

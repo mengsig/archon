@@ -24,8 +24,10 @@ mod knobs;
 pub mod learned;
 mod resolve;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use archon_aether::AetherLink;
 use archon_aether::backend::AetherBackend;
@@ -37,7 +39,7 @@ use archon_lavish::Lavish;
 use archon_queue::Store;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::{Mutex, Notify, broadcast};
-use tokio::task::JoinSet;
+use tokio::task::{JoinError, JoinSet};
 
 use crate::context::{DaemonContext, DaemonPaths};
 use crate::github::GithubState;
@@ -47,6 +49,9 @@ use crate::triggers::TriggerQueue;
 /// Feed items buffered per subscriber before it lags (and catches up from
 /// the store).
 const FEED_BROADCAST_CAPACITY: usize = 1024;
+/// Most the daemon waits for its aborted workers to stop; a supervisor's
+/// grace period (the bench's is 20 s) must cover it.
+const WORKER_STOP: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub struct DaemonOptions {
@@ -78,8 +83,9 @@ pub async fn run(options: DaemonOptions) -> Result<(), ArchonError> {
     };
     remove_socket(&ctx.paths.socket);
     drop(lock);
-    if let Err(error) = &result {
-        tracing::error!(%error, "archond stopped");
+    match &result {
+        Ok(()) => tracing::info!("archond stopped"),
+        Err(error) => tracing::error!(%error, "archond stopped"),
     }
     result
 }
@@ -145,6 +151,55 @@ impl Signals {
 
 type TaskResult = (&'static str, Result<(), ArchonError>);
 
+/// The daemon's worker tasks, each known by name until it has ended.
+#[derive(Default)]
+struct Workers {
+    tasks: JoinSet<TaskResult>,
+    names: HashMap<tokio::task::Id, &'static str>,
+}
+
+impl Workers {
+    fn spawn<F>(&mut self, name: &'static str, work: F)
+    where
+        F: Future<Output = Result<(), ArchonError>> + Send + 'static,
+    {
+        let handle = self.tasks.spawn(async move { (name, work.await) });
+        let earlier = self.names.insert(handle.id(), name);
+        assert!(earlier.is_none(), "task ids are unique");
+    }
+
+    /// The next worker to end; `None` once none is left.
+    async fn join_next(&mut self) -> Option<Result<TaskResult, JoinError>> {
+        let done = self.tasks.join_next_with_id().await?;
+        let id = match &done {
+            Ok((id, _)) => *id,
+            Err(error) => error.id(),
+        };
+        assert!(self.names.remove(&id).is_some(), "a worker ends once");
+        Some(done.map(|(_, result)| result))
+    }
+
+    /// Abort every worker and wait up to `limit` for them to end. One busy
+    /// outside any `.await` cannot be aborted: it is named, left behind and
+    /// returned.
+    async fn stop(mut self, limit: Duration) -> Vec<&'static str> {
+        self.tasks.abort_all();
+        let deadline = tokio::time::Instant::now() + limit;
+        while let Ok(Some(_)) = tokio::time::timeout_at(deadline, self.join_next()).await {}
+        let left: Vec<&'static str> = self.names.into_values().collect();
+        for task in &left {
+            tracing::warn!(
+                task,
+                ?limit,
+                "daemon task still running after abort; exiting without it"
+            );
+        }
+        assert_eq!(left.len(), self.tasks.len(), "every running task is named");
+        self.tasks.detach_all();
+        left
+    }
+}
+
 /// The server and every worker task; the first to end stops the daemon.
 /// Only the server ends cleanly (on `Shutdown`); a worker ending is a
 /// failure, and one on a full disk turns the daemon to standby.
@@ -155,28 +210,20 @@ async fn supervise(
     signals: &mut Signals,
 ) -> Result<(), ArchonError> {
     let mut server: standby::Server = tokio::spawn(server::serve(ctx.clone(), listener));
-    let mut workers: JoinSet<TaskResult> = JoinSet::new();
-    let c = ctx.clone();
-    workers.spawn(async move { ("event pump", pump::run(c, endpoint).await) });
-    let c = ctx.clone();
-    workers.spawn(async move { ("dispatcher", dispatcher::run(c).await) });
-    let c = ctx.clone();
-    workers.spawn(async move { ("coordination", executor::coordination::run(c).await) });
-    let c = ctx.clone();
-    workers.spawn(async move { ("trigger delivery", triggers::deliver_loop(c).await) });
-    let c = ctx.clone();
-    workers.spawn(async move { ("store pruning", prune::run(c).await) });
-    let c = ctx.clone();
-    workers.spawn(async move { ("repository mirrors", mirror::run(c).await) });
-    let c = ctx.clone();
-    workers.spawn(async move { ("learning", learned::run(c).await) });
+    let mut workers = Workers::default();
+    workers.spawn("event pump", pump::run(ctx.clone(), endpoint));
+    workers.spawn("dispatcher", dispatcher::run(ctx.clone()));
+    workers.spawn("coordination", executor::coordination::run(ctx.clone()));
+    workers.spawn("trigger delivery", triggers::deliver_loop(ctx.clone()));
+    workers.spawn("store pruning", prune::run(ctx.clone()));
+    workers.spawn("repository mirrors", mirror::run(ctx.clone()));
+    workers.spawn("learning", learned::run(ctx.clone()));
     let auto_gc = ctx.config.worktrees.auto_gc;
     if auto_gc {
-        let c = ctx.clone();
-        workers.spawn(async move { ("worktree gc", gc::run(c).await) });
+        workers.spawn("worktree gc", gc::run(ctx.clone()));
     }
     assert_eq!(
-        workers.len(),
+        workers.names.len(),
         7 + usize::from(auto_gc),
         "every daemon worker is supervised"
     );
@@ -185,7 +232,7 @@ async fn supervise(
         served = &mut server => server_ended(served),
         Some(done) = workers.join_next() => task_ended(done),
     };
-    workers.shutdown().await;
+    workers.stop(WORKER_STOP).await;
     match result {
         Err(error @ ArchonError::DiskFull(_)) if !server.is_finished() => {
             standby::enter(&ctx, &error);
@@ -329,5 +376,32 @@ fn remove_socket(socket: &Path) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => tracing::warn!(path = %path.display(), %error, "not removed at exit"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stopping_leaves_a_worker_that_never_yields_behind() {
+        let (started, running) = tokio::sync::oneshot::channel();
+        let (release, blocked) = std::sync::mpsc::channel::<()>();
+        let mut workers = Workers::default();
+        workers.spawn("waits", std::future::pending());
+        workers.spawn("blocks", async move {
+            started.send(()).expect("the test waits for the start");
+            // Blocks its thread outside any `.await`, so an abort cannot land.
+            let _released = blocked.recv();
+            Ok(())
+        });
+        running.await.expect("the blocking worker started");
+
+        let stop = workers.stop(Duration::from_millis(200));
+        let stopped = tokio::time::timeout(Duration::from_secs(2), stop).await;
+        release.send(()).expect("the blocked worker still waits");
+
+        let left = stopped.expect("the stop is bounded");
+        assert_eq!(left, ["blocks"], "only the blocked worker is left behind");
     }
 }

@@ -71,7 +71,10 @@ fn orchestrators_alone(
     caller: Option<&AetherAgentId>,
     request: &Request,
 ) -> bool {
-    let stage_message = matches!(request, Request::MessageOrchestrator { .. });
+    let stage_message = matches!(
+        request,
+        Request::MessageOrchestrator { .. } | Request::PublishArtifact { .. }
+    );
     for_an_agent(client, caller) && !request.is_read_only() && !stage_message
 }
 
@@ -88,6 +91,7 @@ fn check_named_caller(
 ) -> Result<(), ArchonError> {
     let named = match request {
         Request::MessageOrchestrator { caller, .. }
+        | Request::PublishArtifact { caller, .. }
         | Request::AskOperator { caller, .. }
         | Request::RecordChatAnswer { caller, .. } => caller.as_ref(),
         _ => None,
@@ -112,6 +116,16 @@ async fn route(
         Request::MessageOrchestrator { text, kind, caller } => {
             crate::agent_messages::send(ctx, caller.as_ref(), kind, text).await
         }
+        Request::PublishArtifact { path, name, caller } => {
+            crate::artifacts::publish_for(ctx, caller.as_ref(), path, name).await
+        }
+        Request::ListArtifacts { item } => crate::artifacts::list_for(ctx, &item).await,
+        Request::ReadArtifact {
+            item,
+            name,
+            offset,
+            limit,
+        } => crate::artifacts::read_for(ctx, &item, name, offset, limit).await,
         Request::Hello { .. } => Err(ArchonError::Invalid(
             "hello is only valid as a connection's first frame".into(),
         )),

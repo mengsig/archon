@@ -260,7 +260,7 @@ async fn a_worktree_of_an_unregistered_repository_is_still_collected() {
 async fn offline_gc_collects_only_while_no_archond_holds_the_lock() {
     let h = harness(Config::default()).await;
     let (item, tree) = cancelled_run(&h, "collected offline").await;
-    let (config, paths) = (&h.ctx.config.worktrees, &h.ctx.paths);
+    let (config, paths) = (&h.ctx.config, &h.ctx.paths);
     let older_than = Some(Age::from_secs(0));
 
     let report = gc::collect_offline(config, paths, older_than, false).expect("offline gc");

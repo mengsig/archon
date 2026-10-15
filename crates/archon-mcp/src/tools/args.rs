@@ -32,6 +32,20 @@ pub(super) fn to_request(tool: &str, arguments: Value) -> Result<Request, ToolEr
     let mut args = Args::new(definition, arguments)?;
     let request = match tool {
         "message_orchestrator" => message_orchestrator(&mut args)?,
+        "publish_artifact" => Request::PublishArtifact {
+            path: args.required_text("path")?,
+            name: args.optional_text("name")?,
+            caller: None,
+        },
+        "list_artifacts" => Request::ListArtifacts {
+            item: args.required("item")?,
+        },
+        "read_artifact" => Request::ReadArtifact {
+            item: args.required("item")?,
+            name: args.required_text("name")?,
+            offset: args.optional("offset")?.unwrap_or(0),
+            limit: args.optional("limit")?,
+        },
         "list_pipelines" => Request::ListPipelines {
             repo: args.optional("repo")?,
             pipeline: args.optional_text("pipeline")?,

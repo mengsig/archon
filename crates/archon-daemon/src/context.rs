@@ -21,6 +21,10 @@ use crate::mirror::MirrorQueue;
 use crate::supervisor::Supervisor;
 use crate::triggers::TriggerQueue;
 
+/// Under the data dir: shared build caches, and published artifacts.
+pub const CACHE_DIR: &str = "cache";
+pub const ARTIFACTS_DIR: &str = "artifacts";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DaemonPaths {
     pub socket: PathBuf,
@@ -54,6 +58,16 @@ impl DaemonPaths {
             archon_bin,
             data_dir,
         }
+    }
+
+    /// Shared build caches, one directory per repository.
+    pub fn cache(&self) -> PathBuf {
+        self.data_dir.join(CACHE_DIR)
+    }
+
+    /// Published artifacts, one directory per item.
+    pub fn artifacts(&self) -> PathBuf {
+        self.data_dir.join(ARTIFACTS_DIR)
     }
 }
 

@@ -151,6 +151,14 @@ pub fn disk_line(disk: &DiskStatus) -> String {
     } else if disk.held {
         let _ = write!(line, "; dispatch HELD for low disk space{gc}");
     }
+    if let Some(last) = &disk.gc {
+        let ago = duration((archon_core::now() - last.at).num_seconds());
+        let _ = write!(
+            line,
+            "; last gc {ago} ago: {}",
+            sanitize_line(&last.headline)
+        );
+    }
     line
 }
 
@@ -698,6 +706,7 @@ pub fn problems(listing: &CatalogListing) -> Vec<String> {
 #[cfg(test)]
 pub(crate) mod tests {
     use archon_core::autonomy::{AutonomyConfig, AutonomyPolicy};
+    use archon_core::protocol::GcStatus;
 
     use super::*;
 
@@ -753,6 +762,7 @@ pub(crate) mod tests {
             held: false,
             disk_full: None,
             standby: None,
+            gc: None,
         };
         let mut with_disk = status_with(AetherLinkStatus::Disconnected {
             error: "down".into(),
@@ -771,6 +781,19 @@ pub(crate) mod tests {
         assert!(disk_line(&disk).contains("HELD after a full disk: database or disk is full"));
         disk.standby = Some("store: disk full: x".into());
         assert!(disk_line(&disk).contains("STANDBY, reads only: store: disk full: x"));
+        disk.gc = Some(GcStatus {
+            at: archon_core::now() - chrono::TimeDelta::minutes(3),
+            bytes_freed: 5 * gib,
+            pressure: true,
+            headline: "Gc (disk pressure) freed 5.0 GiB: removed 2 worktree(s)".into(),
+        });
+        assert!(
+            disk_line(&disk).contains(
+                "; last gc 3m ago: Gc (disk pressure) freed 5.0 GiB: removed 2 worktree(s)"
+            ),
+            "{}",
+            disk_line(&disk)
+        );
         disk.free_bytes = None;
         disk.error = Some("permission denied".into());
         disk.min_free_bytes = 0;

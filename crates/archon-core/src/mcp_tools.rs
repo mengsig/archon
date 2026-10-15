@@ -67,6 +67,18 @@ pub const TOOLS: &[ToolName] = &[
     tool("update_initiative", ToolClass::Mutation),
     tool("steer_item", ToolClass::Mutation),
     tool("record_lesson", ToolClass::Mutation),
+    tool("publish_artifact", ToolClass::Mutation),
+    tool("list_artifacts", ToolClass::ReadOnly),
+    tool("read_artifact", ToolClass::ReadOnly),
+];
+
+/// The tools a stage agent keeps whatever its item's `tools` mode: its
+/// messages to the orchestrator and its item's artifacts.
+pub const STAGE_TOOLS: [&str; 4] = [
+    "message_orchestrator",
+    "publish_artifact",
+    "list_artifacts",
+    "read_artifact",
 ];
 
 const fn tool(name: &'static str, class: ToolClass) -> ToolName {

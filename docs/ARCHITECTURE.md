@@ -1863,6 +1863,33 @@ stores it whole, so a run never depends on what the defaults are later. A
 policy that allows no model leaves nothing to default to, and the enqueue
 is refused naming the stage that has no choice.
 
+**Effort.** Each stage declares a default `effort` (`medium` unless the pipeline
+says more). A `model_plan` entry that omits `effort` gets it. An effort above
+the default needs a `model_reasons` entry for the stage in the same request,
+or `enqueue`, `update_item`, `retry_item` and `steer_item` refuse it naming
+the stage and its default; a lower one needs none. `steer_item` takes the
+reason from the item's recorded `model_reasons`. `get_item` marks each choice
+above its default. Plans the daemon fills (learned, tier) are not asked for
+reasons. A stronger model at the default effort often beats a weaker one at
+`high`, and `model_evidence` groups by `(stage, model, effort)` for comparing.
+
+**Reviewers.** A pipeline with a declared review (§8.2) takes the key
+`<stage>.review` in `model_plan` and `model_reasons`, with at most as many
+`{model, effort}` entries as the strict level has reviewers (taken in turn).
+The stage contract tells the lead to delegate reviewers with role `reviewer` on
+those models, and the delegation watchdog (§7.4) cancels a child with such a
+role on another model or a higher effort. With no such key the contract asks
+for a model other than the lead's whose cost Aether reports (a Codex reviewer's
+unpriced usage blocks a budgeted item), and the watchdog holds reviewers only to
+the model policy.
+
+**Stage timeouts.** `enqueue` and `update_item` take `stage_timeouts`, a
+`{"<stage-id>": minutes}` map for the item: each stage it names runs with that
+deadline instead of the pipeline's `timeout_minutes`, within
+`[limits] max_stage_timeout_minutes` (default 1440). `update_item` merges the map
+and it applies from the next stage spawned; `steer_item`'s `extend_minutes` still
+moves the deadline of stages running now. `get_item` shows the map.
+
 `model_evidence` (`archon model-evidence`) computes observations on demand from
 existing stage runs and the spend ledger, with optional repo, pipeline, stage
 and `since` filters. `since` accepts the same local day syntax as `cost_report`,
@@ -2500,6 +2527,7 @@ count_estimated_cost = true
 infra_retries = 1
 min_free_gb = 10               # hold dispatch below this much free disk; 0 = off
 max_delegation_depth = 2       # delegations below a stage agent or the orchestrator; 1..=4
+max_stage_timeout_minutes = 1440  # longest per-stage timeout an item may ask for; 1..=43200
 max_agent_messages = 20        # message_orchestrator calls per agent, lifetime; 1..=200
 initiative_members = 16        # 1..=64
 initiative_contract_bytes = 2048  # 1..=16384
@@ -2759,11 +2787,11 @@ can reach the socket (§5.5).
 | `list_repos` | `{}` | `RepoList` |
 | `model_policy` | `{repo?}` | `ModelPolicy` |
 | `register_repo` | `{path, name?, ship?, base_branch?, default_pipeline?}` | `RepoAdd` (never raises a ceiling) |
-| `enqueue` | `{repo?, pipeline?, title, brief, priority?, depends_on?, tags?, model_plan?, model_reasons?, budget_usd?, idempotency_key?, autonomy?, origin?}` | `Enqueue` |
+| `enqueue` | `{repo?, pipeline?, title, brief, priority?, depends_on?, tags?, model_plan?, model_reasons?, budget_usd?, stage_timeouts?, idempotency_key?, autonomy?, origin?}` | `Enqueue` |
 | `list_queue` | `{states?, repo?, pipeline?, tag?, limit?}` | `ListItems` |
 | `get_item` | `{item}` | `GetItem` (stage summaries and errors clipped at 1500 characters, naming `get_stage`, and the run unless it is the latest) |
 | `get_stage` | `{item, run?, stage?, attempt?, slot?, offset?, limit?}` | `GetStage` |
-| `update_item` | `{item, priority?, model_plan?, model_reasons?, tags?, add_depends_on?, budget_usd?, brief_append?}` | `UpdateItem` (not after success; on a running item `model_plan` and `brief_append` are steered into its run, §6.6; neither while dispatching) |
+| `update_item` | `{item, priority?, model_plan?, model_reasons?, tags?, add_depends_on?, budget_usd?, stage_timeouts?, brief_append?}` | `UpdateItem` (not after success; on a running item `model_plan` and `brief_append` are steered into its run, §6.6; neither while dispatching) |
 | `steer_item` | `{item, note?, stage?, model?, effort?, budget_usd?, extend_minutes?, abort_stage?, then?: retry\|skip\|goto, goto?, insert_stage?: {stage, from?, after?}, switch_pipeline?}` | `SteerItem` (§6.6; at least one change) |
 | `enqueue_initiative` | `{title, contract, atomic?, members: [{repo, brief, title?, pipeline?, model_plan?, autonomy?, after?}], idempotency_key?}` | `EnqueueInitiative` (§8.9; members validated as enqueues, created together) |
 | `update_initiative` | `{initiative, contract_append \| contract}` | `UpdateInitiative` (§8.9) |
@@ -2797,7 +2825,8 @@ run, or a missing attempt or slot is `NotFound`, naming what exists. A result
 over the MCP message limit is refused with a hint for the tool called: for
 `get_stage`, a smaller `limit`, `offset` and `slot`.
 
-`model_plan` is `{"<stage-id>": [{"model":"provider/model","effort":"high"}, …]}`.
+`model_plan` is `{"<stage-id>": [{"model":"provider/model","effort":"high"}, …]}`;
+`effort` may be left out (stage default, see "Effort").
 It is optional at `enqueue`, whole or per stage: Archon fills the stages it
 leaves out (§7.4), and the item shows the filled plan.
 `model_reasons` is an optional `{"<stage-id>": "one-line reason"}` object,

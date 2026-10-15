@@ -21,7 +21,7 @@ use crate::id::{
 };
 use crate::initiative::{ContractChange, EnqueueInitiative, Initiative, InitiativeDetail};
 use crate::lesson::{Lesson, LessonDraft, LessonPatch, LessonQuery, LessonStats, LessonWhy};
-use crate::model::{Effort, ModelChoice, ModelPlan, ModelReasons, ModelRef};
+use crate::model::{Effort, ModelChoice, ModelPlanDraft, ModelReasons, ModelRef};
 use crate::model_evidence::{ModelEvidenceQuery, ModelEvidenceReport};
 use crate::notify::{FeedItem, NotificationKind, Question};
 use crate::policy::ModelPolicy;
@@ -154,7 +154,7 @@ pub enum Request {
     },
     RetryItem {
         item: QueueItemId,
-        model_plan: Option<ModelPlan>,
+        model_plan: Option<ModelPlanDraft>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model_reasons: Option<ModelReasons>,
         /// Start again from the base branch's head, on a new branch, with
@@ -479,10 +479,13 @@ pub struct EnqueueRequest {
     /// Choices per stage, within the model policy. Optional: a stage left
     /// out gets what was learned for the repository, else a default.
     #[serde(default)]
-    pub model_plan: ModelPlan,
+    pub model_plan: ModelPlanDraft,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_reasons: Option<ModelReasons>,
     pub budget_usd: Option<f64>,
+    /// Stage id to minutes, within `[limits] max_stage_timeout_minutes`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub stage_timeouts: BTreeMap<String, u32>,
     /// Retrying an enqueue with the same key returns the first item.
     pub idempotency_key: Option<String>,
     /// Knobs chosen for this item; the rest come from the defaults. The
@@ -508,13 +511,16 @@ pub struct ItemQuery {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ItemPatch {
     pub priority: Option<Priority>,
-    pub model_plan: Option<ModelPlan>,
+    pub model_plan: Option<ModelPlanDraft>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_reasons: Option<ModelReasons>,
     pub tags: Option<Vec<String>>,
     #[serde(default)]
     pub add_depends_on: Vec<QueueItemId>,
     pub budget_usd: Option<f64>,
+    /// Stage id to minutes, merged into the item's; within the configured maximum.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub stage_timeouts: BTreeMap<String, u32>,
     /// Appended to the brief under a dated "Amendment" heading; a running
     /// item's live agents are sent it (ARCHITECTURE §6.6).
     #[serde(default)]
@@ -836,6 +842,9 @@ pub struct ItemDetail {
     /// How the cost of each stage run that delegated splits.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub delegations: BTreeMap<StageRunId, StageDelegation>,
+    /// The default effort of each plan key, to see which choices exceed it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub default_efforts: BTreeMap<String, Effort>,
     /// Every steer of the item, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub steers: Vec<crate::steer::SteerRecord>,
@@ -1269,9 +1278,10 @@ mod tests {
             priority: Priority::Normal,
             dependencies: vec![],
             tags: vec![],
-            model_plan: ModelPlan::default(),
+            model_plan: crate::model::ModelPlan::default(),
             model_reasons: None,
             budget_usd: None,
+            stage_timeouts: BTreeMap::new(),
             autonomy: Default::default(),
             origin: None,
             fresh_retries: 0,

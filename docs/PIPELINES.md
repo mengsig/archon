@@ -106,6 +106,7 @@ prompt = "review.md"         # required; a file directly in this directory
 fan_out = 2                  # default 1; parallel agents, 1..=16 (a team's is its roles)
 gate = "all_pass"            # default none; none | all_pass | majority | any
 timeout_minutes = 60         # default 120, 1..=43200 (30 days); Archon cancels the agent after this
+effort = "medium"            # default medium; what a model_plan gets without an effort, above it needs a model_reasons entry
 allow_delegation = false     # true lets the stage agent delegate, whatever the item's tools
 nudge = "Advice for this stage's model choice."
 on_fail = { goto = "fix", max_loops = 2 }   # optional fix loop
@@ -173,7 +174,8 @@ once is set by `[limits]` instead.
   `none`, `standard` or `strict`.
 - `timeout_minutes` is between 1 and 43200 (30 days). The stage agent's
   deadline is exactly that long after it starts: a larger value is refused,
-  never shortened.
+  never shortened. An item may override it per stage with `stage_timeouts`
+  (`enqueue`, `update_item`) within `[limits] max_stage_timeout_minutes`.
 - Every `{{placeholder}}` in a prompt is a known variable (see below). The
   `team.*` variables are only allowed in a team stage's prompt.
 
@@ -259,6 +261,12 @@ agent's stage has no such gate, so it declares the review instead:
 level = "standard"
 stage = "build"
 ```
+
+A `model_plan` (and `model_reasons`) may name the reviewers with the key
+`<stage>.review`, here `build.review`: up to three `{model, effort}` entries, the
+reviewers taking them in turn. Archon cancels a delegated child whose role
+contains `review` on any other model or a higher effort. Without the key the
+lead is told to use a model other than its own whose cost Aether reports.
 
 Such a pipeline takes its review level from the item, not from its
 manifest. An item's `review` knob chooses `none`, `standard` or `strict`,
@@ -942,6 +950,12 @@ choice per agent:
  "review": [{"model": "claude-code/claude-opus-5-5", "effort": "high"},
             {"model": "codex/gpt-6-astra", "effort": "high"}]}
 ```
+
+A choice that leaves out `effort` gets the stage's default `effort` (`medium`
+unless the stage sets one). An effort above it needs a `model_reasons` entry
+for that stage, or the request is refused with the stage and its default; a
+lower effort needs none. A stronger model at the default effort often beats a
+weaker one at a higher effort.
 
 A stage the plan leaves out, here `reproduce`, gets Archon's default: the
 choice learned for that pipeline and stage where there is one, else the

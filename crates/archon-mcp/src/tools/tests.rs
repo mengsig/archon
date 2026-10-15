@@ -284,12 +284,9 @@ fn enqueue_maps_its_fields_and_both_model_spellings() {
     };
     assert_eq!(request.pipeline.as_deref(), Some("refactor"));
     assert_eq!(request.priority, Priority::High);
-    let review = request
-        .model_plan
-        .choices_for("review")
-        .expect("review stage");
+    let review = request.model_plan.0.get("review").expect("review stage");
     assert_eq!(review[0].model.to_string(), "codex/gpt-6-sol");
-    assert_eq!(review[0].effort, Effort::XHigh);
+    assert_eq!(review[0].effort, Some(Effort::XHigh));
     assert_eq!(request.idempotency_key.as_deref(), Some("fix-login-1"));
     let origin = request.origin.expect("the GitHub thread is kept");
     assert_eq!(origin.to_string(), "acme/web#42");
@@ -503,6 +500,7 @@ pub(super) fn item(state: QueueState) -> QueueItem {
         budget_usd: None,
         autonomy: Default::default(),
         origin: None,
+        stage_timeouts: Default::default(),
         fresh_retries: 0,
         initiative: None,
         state,
@@ -569,6 +567,7 @@ fn the_status_text_says_when_budgets_are_off() {
 #[test]
 fn rendered_catalog_shows_what_a_model_plan_needs() {
     let stage = |id: &str, kind, fan_out, gate| StageSummary {
+        effort: archon_core::model::Effort::Medium,
         id: id.into(),
         kind,
         fan_out,
@@ -595,6 +594,7 @@ fn rendered_catalog_shows_what_a_model_plan_needs() {
                 stage("implement", StageKind::Work, 1, Gate::None),
                 stage("review", StageKind::Review, 3, Gate::AllPass),
                 StageSummary {
+                    effort: archon_core::model::Effort::Medium,
                     roles: vec!["api".into(), "ui".into()],
                     ..stage("build", StageKind::Team, 2, Gate::None)
                 },
@@ -631,6 +631,7 @@ fn rendered_catalog_shows_what_a_model_plan_needs() {
 #[test]
 fn a_rendered_catalog_lists_pipelines_in_a_line_each() {
     let stage = |id: &str| StageSummary {
+        effort: archon_core::model::Effort::Medium,
         id: id.into(),
         kind: StageKind::Work,
         fan_out: 1,
@@ -737,6 +738,7 @@ fn get_item_shows_recorded_reasons_next_to_choices_and_omits_missing_reasons() {
     item.model_plan = serde_json::from_value(plan()).unwrap();
     item.model_reasons = Some([("implement".into(), "Apply supplied fix".into())].into());
     let mut detail = ItemDetail {
+        default_efforts: Default::default(),
         steers: Vec::new(),
         waiting_on: None,
         waiting_reason: None,
@@ -768,6 +770,7 @@ fn get_item_lists_the_steers_made_to_the_item() {
     use archon_core::steer::{SteerRecord, SteeredBy};
     let at = archon_core::now();
     let mut detail = ItemDetail {
+        default_efforts: Default::default(),
         steers: vec![SteerRecord {
             at,
             by: SteeredBy::Operator,
@@ -846,6 +849,7 @@ fn list_queue_and_get_item_expose_stable_waiting_reasons_in_text_and_json() {
         (
             "get_item",
             Reply::ItemDetail(Box::new(ItemDetail {
+                default_efforts: Default::default(),
                 steers: Vec::new(),
                 item,
                 runs: vec![],
@@ -901,6 +905,7 @@ fn dependency_titles_are_escaped_in_waiting_text() {
         (
             "get_item",
             Reply::ItemDetail(Box::new(ItemDetail {
+                default_efforts: Default::default(),
                 steers: Vec::new(),
                 item,
                 runs: vec![],

@@ -3,6 +3,7 @@
 //! omit it. The stage prompt says *what* to do; this says *how to finish*.
 
 use archon_core::catalog::{Gate, StageKind, WorkspaceMode};
+use archon_core::model::ModelChoice;
 use archon_core::run::StageOutcome;
 use serde::Serialize;
 
@@ -387,6 +388,28 @@ fn review_rules(duty: ReviewDuty) -> String {
     rules
 }
 
+/// Which models the review-holding stage delegates its reviewers to: the
+/// plan's, which the daemon enforces, or advice when the plan names none.
+pub fn reviewer_model_rules(named: Option<&[ModelChoice]>) -> String {
+    match named {
+        Some(choices) if !choices.is_empty() => {
+            let models: Vec<String> = choices
+                .iter()
+                .map(|c| format!("{} at effort {}", c.model, c.effort))
+                .collect();
+            format!(
+                "- Delegate every reviewer with role `reviewer`, each on one of these models, \
+                 taken in turn: {}. Archon cancels a reviewer on any other.\n",
+                models.join("; ")
+            )
+        }
+        _ => "- Delegate every reviewer with role `reviewer`, on a model other than yours \
+              that reports its dollar cost (Claude Code models do; Codex usage arrives \
+              unpriced and blocks a budgeted item).\n"
+            .to_owned(),
+    }
+}
+
 const NO_REVIEW_RULES: &str = "\n## Review on record\n\n\
 - This item's review level is `none`: delegate no reviewer and record no review, \
 whatever the stage prompt says about one. Your own verification is all this change \
@@ -562,6 +585,7 @@ mod tests {
             fan_out,
             gate,
             timeout_minutes: 10,
+            effort: archon_core::model::Effort::Medium,
             allow_delegation: false,
             nudge: None,
             on_fail: None,
@@ -1028,6 +1052,28 @@ mod tests {
     fn work_contract(owed: Owed) -> String {
         let work = stage(StageKind::Work, Gate::None, 1);
         instructions(&work, WorkspaceMode::Worktree, "/w", TeamPart::Solo, owed)
+    }
+
+    #[test]
+    fn reviewers_get_the_plan_s_models_or_advice_for_a_different_priced_one() {
+        let choice = |model: &str, effort| ModelChoice {
+            model: model.parse().unwrap(),
+            effort,
+        };
+        let named = [
+            choice("claude-code/opus", archon_core::model::Effort::Medium),
+            choice("claude-code/haiku", archon_core::model::Effort::Low),
+        ];
+        let rules = reviewer_model_rules(Some(&named));
+        assert!(rules.contains("role `reviewer`"), "{rules}");
+        assert!(
+            rules.contains("claude-code/opus at effort medium; claude-code/haiku at effort low")
+        );
+        assert!(rules.contains("Archon cancels a reviewer on any other"));
+        for unnamed in [reviewer_model_rules(None), reviewer_model_rules(Some(&[]))] {
+            assert!(unnamed.contains("a model other than yours"), "{unnamed}");
+            assert!(unnamed.contains("reports its dollar cost"), "{unnamed}");
+        }
     }
 
     #[test]

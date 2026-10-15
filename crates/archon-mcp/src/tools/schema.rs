@@ -141,6 +141,11 @@ fn budget() -> Value {
     })
 }
 
+fn stage_timeouts() -> Value {
+    json!({"type": "object", "description": "Stage id to minutes it may run (replaces the pipeline's; max `[limits]`).",
+        "additionalProperties": {"type": "integer", "minimum": 1}})
+}
+
 fn model_reasons() -> Value {
     json!({"type": "object", "description": "Why, one line per stage id (not the pipeline name).",
         "additionalProperties": {"type": "string", "maxLength": MAX_MODEL_REASON_CHARS}})
@@ -153,14 +158,17 @@ fn model_plan(what: &str) -> Value {
             "model": model_ref(),
             "effort": {"type": "string", "enum": ["low", "medium", "high", "x_high", "xhigh", "max"]},
         },
-        "required": ["model", "effort"],
+        "required": ["model"],
         "additionalProperties": false,
     });
     json!({
         "type": "object",
         "description": format!(
             "{what} Stage id (from list_pipelines) to a list of {{model, effort}} within \
-             model_policy: one, or for a fan-out stage one per parallel agent (fewer are cycled)."
+             model_policy: one, or for a fan-out stage one per parallel agent (fewer are cycled). \
+             No effort = the stage's default; above it needs a model_reasons entry for the stage: \
+             prefer a stronger model at default effort before raising a weaker one's. \
+             `<stage>.review` sets the reviewers a stage delegates (direct, adaptive)."
         ),
         "minProperties": 1,
         "additionalProperties": {"type": "array", "minItems": 1, "items": choice},
@@ -411,6 +419,7 @@ fn enqueue() -> ToolDefinition {
                 "model_reasons": model_reasons(),
                 "model_plan": model_plan("Model and effort for the stages you have a reason to choose; Archon fills the rest within model_policy."),
                 "budget_usd": budget(),
+                "stage_timeouts": stage_timeouts(),
                 "idempotency_key": {"type": "string", "description": "A repeat with the same key and arguments returns the first item."},
                 "autonomy": autonomy(),
                 "origin": {
@@ -446,6 +455,7 @@ fn update_item() -> ToolDefinition {
                 "tags": string_list("Replaces the tags."),
                 "add_depends_on": string_list("More items that must succeed first."),
                 "budget_usd": budget(),
+                "stage_timeouts": stage_timeouts(),
                 "brief_append": brief_append(),
             }),
             &["item"],

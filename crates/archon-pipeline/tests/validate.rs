@@ -619,7 +619,7 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
     );
     assert!(!spec.prompts.contains_key("ship.md"), "no agent ships");
     let nudge = spec.stage("build").unwrap().nudge.as_deref().unwrap();
-    assert!(nudge.contains("at high effort; medium for a bounded change"));
+    assert!(nudge.contains("at medium effort (the default); high for hard multi-file work"));
     assert!(nudge.contains("x_high or max only for a reasoning problem you can name"));
 }
 

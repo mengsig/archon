@@ -171,6 +171,7 @@ impl Canned {
             budget_usd: None,
             autonomy: archon_core::autonomy::Autonomy::default(),
             origin: None,
+            stage_timeouts: Default::default(),
             fresh_retries: 0,
             initiative: None,
             state: QueueState::Queued,
@@ -223,6 +224,7 @@ impl Canned {
             Request::Say { .. } | Request::Answer { .. } => Reply::Ok,
             Request::ListQuestions { .. } => Reply::Questions(vec![self.question.clone()]),
             Request::GetItem { .. } => Reply::ItemDetail(Box::new(ItemDetail {
+                default_efforts: Default::default(),
                 steers: vec![SteerRecord {
                     at: self.item.created_at,
                     by: SteeredBy::Operator,

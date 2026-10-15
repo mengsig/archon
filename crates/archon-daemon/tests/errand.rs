@@ -18,6 +18,7 @@ async fn text_errand(with_repo: bool) {
     let before_status = git(&h.repo, &["status", "--porcelain"]);
     let before_worktrees = git(&h.repo, &["worktree", "list", "--porcelain"]);
     let request = EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: with_repo.then(|| RepoRef(REPO_NAME.into())),
         pipeline: Some("errand".into()),
         title: "summarize the options".into(),
@@ -28,7 +29,8 @@ async fn text_errand(with_repo: bool) {
         model_plan: ModelPlan(BTreeMap::from([(
             "errand".into(),
             vec![choice(MODEL, Effort::Medium)],
-        )])),
+        )]))
+        .into(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,

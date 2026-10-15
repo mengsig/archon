@@ -19,6 +19,7 @@ id = "measure"
 kind = "work"
 prompt = "measure.md"
 timeout_minutes = 120
+effort = "high"
 nudge = "Strongest tier, high effort; establish a reproducible baseline and profile the actual hotspot."
 
 [[stage]]
@@ -26,6 +27,7 @@ id = "optimize"
 kind = "work"
 prompt = "optimize.md"
 timeout_minutes = 180
+effort = "high"
 nudge = "Strongest tier, high effort; preserve behavior while changing only the measured hotspot."
 
 [[stage]]
@@ -34,6 +36,7 @@ kind = "test"
 prompt = "verify.md"
 gate = "all_pass"
 timeout_minutes = 120
+effort = "high"
 nudge = "Strongest tier, high effort; independently reproduce the measurements and run the full test suite."
 on_fail = { goto = "optimize", max_loops = 3 }
 

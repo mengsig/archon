@@ -216,14 +216,63 @@ async fn violation(
         return helper_violation(ctx, agent, model).await;
     };
     let policy = item_policy(ctx, item).await?;
-    let of_model = || model_refusal(&policy, model).map(|refusal| refusal.to_string());
+    let reviewers = ctx.store.lock().await.item(item)?.model_plan;
+    let Some(named) = reviewers.reviewer_choices() else {
+        return policy_violation(ctx, agent, model, &policy).await;
+    };
+    let held = held_by_aether(ctx, agent).await?;
+    let refusal = match &held {
+        Some(held) => policy_refusal(&policy, model, held),
+        None => model_refusal(&policy, model),
+    };
+    Ok(match refusal {
+        Some(refusal) => Some(refusal.to_string()),
+        None => held.and_then(|held| reviewer_refusal(named, model, &held)),
+    })
+}
+
+/// Why a child of an item with no reviewer plan breaks the model policy.
+async fn policy_violation(
+    ctx: &DaemonContext,
+    agent: &AetherAgentId,
+    model: &ModelRef,
+    policy: &ModelPolicy,
+) -> Result<Option<String>, ArchonError> {
+    let of_model = || model_refusal(policy, model).map(|refusal| refusal.to_string());
     if policy.max_effort.is_none() {
         return Ok(of_model());
     }
     let Some(held) = held_by_aether(ctx, agent).await? else {
         return Ok(of_model());
     };
-    Ok(policy_refusal(&policy, model, &held).map(|refusal| refusal.to_string()))
+    Ok(policy_refusal(policy, model, &held).map(|refusal| refusal.to_string()))
+}
+
+/// Why a reviewer child runs on neither a model nor an effort the plan names
+/// for reviewers. A child whose role is no reviewer's is not held to it.
+fn reviewer_refusal(named: &[ModelChoice], model: &ModelRef, held: &Value) -> Option<String> {
+    let role = held.get("role").and_then(Value::as_str).unwrap_or_default();
+    if !role.to_ascii_lowercase().contains("review") {
+        return None;
+    }
+    let effort = match child_effort(held) {
+        ChildEffort::Known(effort) => Some(effort),
+        ChildEffort::Unknown | ChildEffort::Unrecognised(_) => None,
+    };
+    let allowed = named
+        .iter()
+        .any(|c| c.model == *model && effort.is_none_or(|e| e <= c.effort));
+    if allowed {
+        return None;
+    }
+    let listed: Vec<String> = named
+        .iter()
+        .map(|c| format!("{} at effort up to {}", c.model, c.effort))
+        .collect();
+    Some(format!(
+        "reviewer on {model} breaks the item's reviewer plan; reviewers run on: {}",
+        listed.join(", ")
+    ))
 }
 
 /// Global policy narrowed by the item's repository, as for its stages.

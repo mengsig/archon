@@ -783,7 +783,7 @@ async fn update_item_on_a_running_item_is_steered_into_its_run() {
         item: item.id.clone(),
         patch: ItemPatch {
             brief_append: Some(NOTE.into()),
-            model_plan: Some(replaced.clone()),
+            model_plan: Some(replaced.clone().into()),
             tags: Some(vec!["steered".into()]),
             ..ItemPatch::default()
         },
@@ -969,6 +969,7 @@ async fn a_failed_item_is_revived_on_its_branch_by_a_shape_steer() {
 /// it: the run then waits for the operator.
 async fn at_proposal_gate(h: &Harness, title: &str) -> QueueItem {
     let request = EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(PIPELINE.into()),
         title: title.into(),
@@ -976,7 +977,7 @@ async fn at_proposal_gate(h: &Harness, title: &str) -> QueueItem {
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: plan(),
+        model_plan: plan().into(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,

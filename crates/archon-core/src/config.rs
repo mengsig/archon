@@ -28,6 +28,11 @@ pub const MAX_MIN_FREE_GB: u64 = 1 << 20;
 pub const DEFAULT_DELEGATION_DEPTH: u32 = 2;
 pub const DELEGATION_DEPTH_CEILING: u32 = 4;
 
+/// `limits.max_stage_timeout_minutes` by default, and the most it may be (30
+/// days, a pipeline stage's own bound).
+pub const DEFAULT_STAGE_TIMEOUT_MINUTES: u32 = 24 * 60;
+pub const STAGE_TIMEOUT_CEILING_MINUTES: u32 = 30 * 24 * 60;
+
 /// The keys holding filesystem paths, which `Config::load` resolves.
 const PATH_KEYS: [&str; 3] = [
     "[aether] socket",
@@ -241,6 +246,8 @@ pub struct LimitsConfig {
     pub per_pipeline: BTreeMap<String, u32>,
     /// Most delegations below a stage agent or the orchestrator (§7.4).
     pub max_delegation_depth: u32,
+    /// Longest per-stage timeout an item may ask for (`stage_timeouts`).
+    pub max_stage_timeout_minutes: u32,
     /// Messages one agent may send the orchestrator, and one run node's
     /// inbox may relay, over its lifetime.
     pub max_agent_messages: u32,
@@ -264,6 +271,7 @@ impl Default for LimitsConfig {
             min_free_gb: 10,
             per_pipeline: BTreeMap::new(),
             max_delegation_depth: DEFAULT_DELEGATION_DEPTH,
+            max_stage_timeout_minutes: DEFAULT_STAGE_TIMEOUT_MINUTES,
             max_agent_messages: DEFAULT_AGENT_MESSAGES,
             initiative_members: InitiativeLimits::DEFAULT.members as u32,
             initiative_contract_bytes: InitiativeLimits::DEFAULT.contract_bytes as u32,
@@ -313,6 +321,11 @@ impl LimitsConfig {
                 "max_delegation_depth",
                 self.max_delegation_depth,
                 DELEGATION_DEPTH_CEILING,
+            ),
+            (
+                "max_stage_timeout_minutes",
+                self.max_stage_timeout_minutes,
+                STAGE_TIMEOUT_CEILING_MINUTES,
             ),
             (
                 "max_agent_messages",
@@ -771,6 +784,7 @@ mod tests {
         let limits = Config::default().limits;
         assert_eq!(limits.max_delegation_depth, 2);
         assert_eq!(limits.max_agent_messages, 20);
+        assert_eq!(limits.max_stage_timeout_minutes, 1440);
         assert_eq!(
             limits.initiatives(),
             InitiativeLimits {
@@ -788,6 +802,8 @@ mod tests {
         for wrong in [
             "max_delegation_depth = 0",
             "max_delegation_depth = 5",
+            "max_stage_timeout_minutes = 0",
+            "max_stage_timeout_minutes = 43201",
             "max_agent_messages = 0",
             "initiative_members = 65",
             "initiative_contract_bytes = 16385",

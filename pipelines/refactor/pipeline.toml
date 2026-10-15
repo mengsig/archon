@@ -19,6 +19,7 @@ id = "baseline"
 kind = "work"
 prompt = "baseline.md"
 timeout_minutes = 120
+effort = "high"
 nudge = "A strong coding model at high effort; characterize current behaviour before changing structure."
 
 [[stage]]
@@ -26,6 +27,7 @@ id = "refactor"
 kind = "work"
 prompt = "refactor.md"
 timeout_minutes = 120
+effort = "high"
 nudge = "A strong coding model at high effort; keep changes small and behaviour intact."
 
 [[stage]]
@@ -34,6 +36,7 @@ kind = "test"
 prompt = "verify.md"
 gate = "all_pass"
 timeout_minutes = 90
+effort = "high"
 nudge = "A capable model at high effort; independently check behaviour and public-surface preservation."
 on_fail = { goto = "refactor", max_loops = 3 }
 

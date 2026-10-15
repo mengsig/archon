@@ -1147,7 +1147,11 @@ impl RunDriver {
                 }
                 let part = self.team_part(team.as_ref());
                 let workspace = &vars["workspace"];
-                let instructions = contract::instructions(stage, mode, workspace, part, owed);
+                let mut instructions = contract::instructions(stage, mode, workspace, part, owed);
+                if owed.review.is_some_and(|duty| duty.reviewers > 0) {
+                    let named = self.plan.reviewer_choices();
+                    instructions.push_str(&contract::reviewer_model_rules(named));
+                }
                 EngineAction::Spawn(SpawnPlan {
                     stage_id: stage.id.clone(),
                     kind: stage.kind,
@@ -1315,15 +1319,7 @@ fn check_plan(spec: &PipelineSpec, plan: &ModelPlan) -> Result<(), ArchonError> 
             )));
         }
     }
-    if let Some(extra) = plan.0.keys().find(|id| spec.stage(id).is_none()) {
-        let ids: Vec<&str> = spec.file.stages.iter().map(|s| s.id.as_str()).collect();
-        return Err(ArchonError::Invalid(format!(
-            "model_plan names stage {extra:?}, which pipeline {:?} does not have (stages: {})",
-            spec.name(),
-            ids.join(", ")
-        )));
-    }
-    Ok(())
+    spec.check_plan_keys(plan)
 }
 
 fn check_base_vars(base_vars: &BTreeMap<String, String>) -> Result<(), ArchonError> {

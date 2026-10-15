@@ -72,6 +72,7 @@ pub async fn enqueue_team(h: &Harness, title: &str) -> QueueItem {
 /// The enqueue of a team item titled `title` in the harness repository.
 pub fn team_request(title: &str) -> Request {
     Request::Enqueue(EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(TEAM_PIPELINE.into()),
         title: title.into(),
@@ -79,7 +80,7 @@ pub fn team_request(title: &str) -> Request {
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: team_plan(),
+        model_plan: team_plan().into(),
         model_reasons: None,
         budget_usd: Some(BUDGET_USD),
         idempotency_key: None,

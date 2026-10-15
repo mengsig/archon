@@ -267,6 +267,7 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         model_plan: ModelPlan,
     ) -> Result<QueueItem, ArchonError> {
         let request = EnqueueRequest {
+            stage_timeouts: Default::default(),
             repo: Some(RepoRef(REPO_NAME.into())),
             pipeline: Some(pipeline.into()),
             title: title.into(),
@@ -274,7 +275,7 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
             priority: Default::default(),
             depends_on: Vec::new(),
             tags: Vec::new(),
-            model_plan,
+            model_plan: model_plan.into(),
             model_reasons: None,
             budget_usd: None,
             idempotency_key: None,

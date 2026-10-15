@@ -54,6 +54,7 @@ fn an_item_keeps_the_github_thread_that_asked_for_it() {
     let (mut store, repo, _items) = seeded(0);
     let first = QueueItem {
         origin: Some(thread()),
+        stage_timeouts: Default::default(),
         fresh_retries: 0,
         initiative: None,
         ..item(Some(&repo), "fix")
@@ -72,6 +73,7 @@ fn an_item_keeps_the_github_thread_that_asked_for_it() {
     let unasked = QueueItem {
         id: QueueItemId::new(),
         origin: None,
+        stage_timeouts: Default::default(),
         fresh_retries: 0,
         initiative: None,
         ..first
@@ -110,6 +112,7 @@ fn request_variants(first: &QueueItem) -> Vec<QueueItem> {
         },
         QueueItem {
             origin: Some(thread()),
+            stage_timeouts: Default::default(),
             fresh_retries: 0,
             initiative: None,
             ..base.clone()

@@ -17,6 +17,7 @@ use archon_pipeline::{PipelineSpec, reshape};
 use super::{Asked, shape};
 use crate::context::DaemonContext;
 use crate::executor::recover::{self, Blueprint};
+use crate::knobs;
 
 /// The template variable every stage prompt reads the brief from.
 const BRIEF_VARIABLE: &str = "task.brief";
@@ -324,6 +325,11 @@ fn retune(
     let blueprint = &mut change.blueprint;
     if blueprint.spec.stage(at.target).is_none() {
         return Err(no_stage(&blueprint.spec, at.target));
+    }
+    if let (Some(effort), Some(default)) = (steer.effort, blueprint.spec.default_effort(at.target))
+    {
+        let reasons = blueprint.item.model_reasons.as_ref();
+        knobs::check_effort_reason(at.target, effort, default, reasons)?;
     }
     let plan = &mut blueprint.item.model_plan;
     let choices = plan.0.get_mut(at.target).filter(|c| !c.is_empty());

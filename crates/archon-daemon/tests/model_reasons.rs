@@ -12,6 +12,7 @@ fn reasons(stage: &str, reason: &str) -> Option<ModelReasons> {
 
 fn enqueue(model_reasons: Option<ModelReasons>) -> Request {
     Request::Enqueue(EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(PIPELINE.into()),
         title: "Record choices".into(),
@@ -19,7 +20,7 @@ fn enqueue(model_reasons: Option<ModelReasons>) -> Request {
         priority: Default::default(),
         depends_on: vec![],
         tags: vec![],
-        model_plan: plan(),
+        model_plan: plan().into(),
         model_reasons,
         budget_usd: None,
         idempotency_key: None,
@@ -59,7 +60,7 @@ async fn reasons_persist_get_item_and_clear_only_when_the_plan_is_replaced() {
     assert_eq!(h.item(&item.id).await.model_reasons, expected);
     let replacement = reasons("review", "Independent check of the supplied fix");
     h.cli(update(ItemPatch {
-        model_plan: Some(plan()),
+        model_plan: Some(plan().into()),
         model_reasons: replacement.clone(),
         ..Default::default()
     }))
@@ -67,7 +68,7 @@ async fn reasons_persist_get_item_and_clear_only_when_the_plan_is_replaced() {
     .unwrap();
     assert_eq!(h.item(&item.id).await.model_reasons, replacement);
     h.cli(update(ItemPatch {
-        model_plan: Some(plan()),
+        model_plan: Some(plan().into()),
         ..Default::default()
     }))
     .await
@@ -103,7 +104,7 @@ async fn reasons_persist_get_item_and_clear_only_when_the_plan_is_replaced() {
     .unwrap();
     h.cli(Request::RetryItem {
         item: item.id.clone(),
-        model_plan: Some(plan()),
+        model_plan: Some(plan().into()),
         model_reasons: replacement.clone(),
         fresh: false,
         brief_append: None,
@@ -119,7 +120,7 @@ async fn reasons_persist_get_item_and_clear_only_when_the_plan_is_replaced() {
     .unwrap();
     h.cli(Request::RetryItem {
         item: item.id.clone(),
-        model_plan: Some(plan()),
+        model_plan: Some(plan().into()),
         model_reasons: None,
         fresh: false,
         brief_append: None,

@@ -393,6 +393,12 @@ impl Target<'_> {
         plan.allow_delegation || self.item.autonomy.tools == ToolsMode::Yolo
     }
 
+    /// Minutes the stage of `plan` may run: the item's override, else the pipeline's.
+    fn timeout_minutes(&self, plan: &SpawnPlan) -> u32 {
+        let own = self.item.stage_timeouts.get(&plan.stage_id);
+        own.copied().unwrap_or(plan.timeout_minutes)
+    }
+
     /// The stage contract, with the run's own sections and, when the agent
     /// can delegate, the rules and model policy for that.
     fn instructions(&self, plan: &SpawnPlan) -> String {
@@ -433,7 +439,7 @@ fn reserve_one(
     };
     let spawn = StoredSpawn {
         request,
-        timeout_minutes: plan.timeout_minutes,
+        timeout_minutes: target.timeout_minutes(plan),
         parent: ParentBinding::Pending,
         team: plan.team.as_ref().map(|slot| StoredWorker {
             role: slot.role.clone(),
@@ -520,7 +526,7 @@ fn build_request(
         leaf: !target.delegates(plan),
         cost_budget_usd: budget,
         aether_cost_budget: None,
-        deadline: Some(deadline(now, plan.timeout_minutes)),
+        deadline: Some(deadline(now, target.timeout_minutes(plan))),
         attach_run: run.aether_run.clone(),
         parent: None,
         network: None,

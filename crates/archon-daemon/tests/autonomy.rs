@@ -45,6 +45,7 @@ async fn enqueue_into(
     autonomy: AutonomyPatch,
 ) -> Result<QueueItem, ArchonError> {
     let request = EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(pipeline.into()),
         title: title.into(),
@@ -52,7 +53,7 @@ async fn enqueue_into(
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: plan(),
+        model_plan: plan().into(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,
@@ -1152,6 +1153,7 @@ async fn enqueue_reviewing(
 ) -> Result<QueueItem, ArchonError> {
     let stages = [(stage.to_owned(), plan().0["implement"].clone())];
     let request = EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(pipeline.into()),
         title: format!("a change for {pipeline}"),
@@ -1159,7 +1161,7 @@ async fn enqueue_reviewing(
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: archon_core::model::ModelPlan(stages.into()),
+        model_plan: archon_core::model::ModelPlan(stages.into()).into(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,
@@ -1219,6 +1221,7 @@ async fn a_pipeline_with_review_stages_refuses_another_level() {
     let stages =
         ["implement", "review", "ship"].map(|s| (s.to_owned(), plan().0["implement"].clone()));
     let request = |review| EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(common::PIPELINE.into()),
         title: "a change".into(),
@@ -1226,7 +1229,7 @@ async fn a_pipeline_with_review_stages_refuses_another_level() {
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: archon_core::model::ModelPlan(stages.clone().into()),
+        model_plan: archon_core::model::ModelPlan(stages.clone().into()).into(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,

@@ -206,6 +206,7 @@ fn errand(
         budget_usd: Some(1.0),
         autonomy: Default::default(),
         origin: None,
+        stage_timeouts: Default::default(),
         fresh_retries: 0,
         initiative: None,
         state: QueueState::Queued,

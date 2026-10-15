@@ -276,7 +276,7 @@ async fn a_running_item_is_steered_onto_a_new_model_plan() {
     let update = |plan: ModelPlan| Request::UpdateItem {
         item: item.id.clone(),
         patch: ItemPatch {
-            model_plan: Some(plan),
+            model_plan: Some(plan.into()),
             ..ItemPatch::default()
         },
     };
@@ -307,7 +307,7 @@ async fn a_retry_takes_a_new_plan_and_keeps_the_worktree() {
     h.dispatch().await;
     let retry = |plan: Option<ModelPlan>| Request::RetryItem {
         item: item.id.clone(),
-        model_plan: plan,
+        model_plan: plan.map(Into::into),
         model_reasons: None,
         fresh: false,
         brief_append: None,
@@ -594,6 +594,7 @@ async fn an_item_asked_for_on_github_reports_back_to_its_thread() {
         serde_json::from_value(serde_json::json!({"repository": "Owner/Repo", "number": 12}))
             .unwrap();
     let request = EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: Some(repo_ref()),
         pipeline: None,
         title: "fix the flaky test".into(),
@@ -601,7 +602,7 @@ async fn an_item_asked_for_on_github_reports_back_to_its_thread() {
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: plan(),
+        model_plan: plan().into(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,
@@ -754,6 +755,7 @@ async fn only_open_blocking_questions_for_live_stage_agents_derive_a_wait() {
 async fn mcp_enqueue_and_updates_refuse_invalid_queue_inputs() {
     let h = Harness::new().await;
     let base = EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: Some(repo_ref()),
         pipeline: Some(common::PIPELINE.into()),
         title: "valid".into(),
@@ -761,7 +763,7 @@ async fn mcp_enqueue_and_updates_refuse_invalid_queue_inputs() {
         priority: Default::default(),
         depends_on: vec![],
         tags: vec![],
-        model_plan: plan(),
+        model_plan: plan().into(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,

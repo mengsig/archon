@@ -1,0 +1,37 @@
+{
+  "stamp": "20261015T130836Z",
+  "started_at": "2026-10-15T13:08:36.071963150Z",
+  "finished_at": "2026-10-15T13:27:44.754597141Z",
+  "archon_commit": "c6f34c81e5efc86851d644737cd5f28c1b68615d",
+  "versions": {
+    "aetherd": "1.0.8",
+    "archon": "archon 1.2.3"
+  },
+  "models": {
+    "aether": "codex/gpt-6-luna",
+    "archon": "codex/gpt-6-luna"
+  },
+  "effort": "medium",
+  "arms": [
+    "archon",
+    "aether"
+  ],
+  "tasks": [
+    "fix-off-by-one",
+    "quality-ledger-transfer",
+    "quality-retry-budget",
+    "review-seeded-bug"
+  ],
+  "trials": 1,
+  "parallel": 1,
+  "timeout_factor": 1.0,
+  "max_usd": 7.0,
+  "max_trials": 8,
+  "planned": 8,
+  "completed": 8,
+  "skipped": 0,
+  "spent_usd": 0.0905031,
+  "spent_bound": "floor",
+  "unpriced_trials": 0,
+  "stopped_reason": null
+}

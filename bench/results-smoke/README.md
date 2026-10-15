@@ -29,6 +29,35 @@ commits, binary hashes and versions.
 One trial per cell is a cheap regression signal, not a reliability estimate:
 4/4 says Archon lost no pass on this run, not that each task always passes.
 
+## Codex Luna medium baseline
+
+[`baseline-luna.json`](baseline-luna.json) records run `20261015T130836Z`,
+`codex/gpt-6-luna` at **medium** effort with the same $7 admission limit:
+**Archon 4/4, Aether 4/4**, no timeouts or infrastructure failures. The separate
+[`luna-medium-20261015/`](luna-medium-20261015/summary.md) snapshot holds its
+results, reports, grader output, solution patches, review answers, fixture
+verification and binary provenance. The Claude baseline above is unchanged.
+
+| Task | Archon | Aether |
+|---|---|---|
+| fix-off-by-one | pass · 220 s · ≥ $0.0154 | pass · 25 s · $0.0037 |
+| quality-ledger-transfer | pass · 252 s · ≥ $0.0371 | pass · 68 s · $0.0040 |
+| quality-retry-budget | pass · 207 s · ≥ $0.0185 | pass · 56 s · $0.0050 |
+| review-seeded-bug | pass · 58 s · $0.0050 | pass · 25 s · $0.0019 |
+
+Reported total spend **≥ $0.0905031** (Archon ≥ $0.07597724, Aether
+$0.01452586), 19.1 min end to end; trial wall totals 737 s and 174 s.
+The three Archon code trials have `cost_gap = interrupted`, so their costs
+and the total are floors. Both review answers scored 1.0 on the original
+rubric. This baseline **predates the review-seeded-bug rubric fix (#45)**,
+which was still open before the run; no grader changes or offline regrading
+were applied. The build used Archon 1.2.3 and private Aether 1.0.8.
+
+All three code tasks used `direct`, ledger with strict review and the others
+with standard review. The review answer came from the orchestrator with an
+empty queue. One trial per cell remains a regression signal, not a reliability
+estimate or a controlled cost comparison with the older Claude run.
+
 ## Other evidence from the same session
 
 - [`calibration-high-20261015/`](calibration-high-20261015/summary.md): the
@@ -37,7 +66,8 @@ One trial per cell is a cheap regression signal, not a reliability estimate:
   (strict review) against 155 s at medium. Calibration only, not a baseline.
 - [`luna-no-baseline-20261015/`](luna-no-baseline-20261015/summary.md):
   `--model codex/gpt-6-luna --effort medium`, ≥ $0.1228, 18 min. Bootstrap
-  refused a candidate, so there is **no Luna baseline**. Archon 2/4 with one
+  refused a candidate, so that attempt produced **no Luna baseline**. A later successful run is
+  documented above. Archon 2/4 with one
   infrastructure error, Aether 3/4:
   - fix-off-by-one/archon passed its grader, but archond did not exit within
     the 20 s grace after the shutdown request and was killed. The trial counts
@@ -52,8 +82,8 @@ One trial per cell is a cheap regression signal, not a reliability estimate:
     such as "forg", "bypass" or "any payload"; this looks like a lexical false
     negative. The grader is unchanged here.
 
-  These are open follow-ups; a Luna baseline needs a new, separately
-  authorized run after them.
+  These were open follow-ups from that attempt; the later measurement above
+  completed successfully without the rubric change.
 - [`incomplete-20261014/`](incomplete-20261014/README.md): the first,
   interrupted Haiku attempt (three of eight cells), its Opus calibration and
   the isolation incident account. Nothing there is a baseline.
@@ -127,18 +157,36 @@ Always compare a run with a baseline measured on the same model and effort.
 For the committed Claude baseline, use the private environment above:
 
 ```sh
-"$sandbox/sx" archon-bench smoke --model claude-code/claude-haiku-5-5 \
+"$sandbox/sx" "$PWD/target/debug/archon-bench" smoke --model claude-code/claude-haiku-5-5 \
   --effort medium --baseline bench/results-smoke/baseline.json \
-  --archon-bin "$sandbox/bin/archon" --aether-socket "$AETHER_SOCKET"
+  --archon-bin "$sandbox/bin/archon" --aether-socket "$sandbox/run/aetherd.sock"
 ```
 
 For a new Codex measurement, bootstrap separately without overwriting the
 Claude baseline:
 
 ```sh
-"$sandbox/sx" archon-bench smoke --bootstrap --model codex/gpt-6-luna \
+"$sandbox/sx" "$PWD/target/debug/archon-bench" smoke --bootstrap --model codex/gpt-6-luna \
   --effort medium --archon-bin "$sandbox/bin/archon" \
-  --aether-socket "$AETHER_SOCKET"
+  --aether-socket "$sandbox/run/aetherd.sock"
+```
+
+Use the separate Codex baseline for subsequent private live runs:
+
+```sh
+"$sandbox/sx" "$PWD/target/debug/archon-bench" smoke \
+  --model codex/gpt-6-luna --effort medium \
+  --baseline bench/results-smoke/baseline-luna.json \
+  --archon-bin "$sandbox/bin/archon" --aether-socket "$sandbox/run/aetherd.sock"
+```
+
+Compare saved evidence without starting any daemon or making model calls:
+
+```sh
+target/debug/archon-bench smoke --check-results bench/results-smoke \
+  --baseline bench/results-smoke/baseline.json
+target/debug/archon-bench smoke --check-results bench/results-smoke/luna-medium-20261015 \
+  --baseline bench/results-smoke/baseline-luna.json
 ```
 
 Promote only a valid candidate after reviewing its complete evidence. A failed

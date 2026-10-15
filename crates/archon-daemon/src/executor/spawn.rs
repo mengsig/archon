@@ -605,7 +605,12 @@ pub(super) fn reserve_replacement(
         config: &ctx.config,
         sections: &sections,
     };
-    let Some(budget) = replacement_budget(store, failed, plan, budget, estimates)? else {
+    // An earlier grant is not enforced once budgets are off.
+    let budget = match caps.budgets_enabled {
+        true => replacement_budget(store, failed, plan, budget, estimates)?,
+        false => Some(None),
+    };
+    let Some(budget) = budget else {
         return Ok(None);
     };
     let started = archon_core::now().max(failed.started_at + chrono::Duration::microseconds(1));

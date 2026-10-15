@@ -182,7 +182,7 @@ the bounds, sample size and context; five wins are not proof of equivalence.
 At most one distillation is queued or running per repository. Across repositories,
 `distill_daily_budget_usd` reserves the full errand budgets per UTC creation day;
 the default is $3, and 0 disables new distillations. With `budgets_enabled = false`
-the reservation does not limit them. Imported history informs routing
+a positive reservation does not limit them; 0 still disables them. Imported history informs routing
 and statistics but is never distilled, avoiding upgrade spending bursts.
 Proposed lessons and pipelines wait for operator acceptance; inspect pipelines with
 `archon pipelines proposals [name]` before `archon pipelines accept <name>`.

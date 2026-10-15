@@ -1645,10 +1645,11 @@ or default `budget_usd` is never checked, so neither "budget used up" nor
 "cannot enforce the item's dollar budget" (usage without a dollar cost) fails a
 run; no `cost_budget` is sent to Aether for new or resumed stage agents; the
 daily and total budgets hold no admission; and the distillation daily
-reservation (`distill_daily_budget_usd`) does not limit new errands (one
-errand per repository still runs at a time). Spend is still recorded and
+reservation (`distill_daily_budget_usd`) does not limit new errands, though 0
+still disables them (one errand per repository still runs at a time). Spend is still recorded and
 reported by `cost_report`, `status` and each item. Agents already created with
-an Aether `cost_budget` keep it until they end. `enqueue`, `update_item` and
+an Aether `cost_budget` keep it until they end, and `steer_item` can still
+move it. `enqueue`, `update_item` and
 `steer_item` still accept `budget_usd`; the reply is `ItemBudgetsOff` (protocol
 9) and says the budget is stored but not enforced. `archon status` and
 `queue_status` show `budgets: off`.

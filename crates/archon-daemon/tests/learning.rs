@@ -628,17 +628,17 @@ async fn distillation_reserves_a_global_daily_budget_and_disabling_cancels_queue
 /// The daily reservation holds an errand back only while budgets are on.
 #[tokio::test]
 async fn distillation_reservation_is_lifted_when_budgets_are_off() {
-    for (budgets_enabled, queued) in [(true, 0), (false, 1)] {
+    for (budgets_enabled, daily, queued) in [(true, 0.5, 0), (false, 0.5, 1), (false, 0.0, 0)] {
         let mut config = archon_core::config::Config::default();
         config.learning.distill_every = 1;
-        config.learning.distill_daily_budget_usd = 0.5;
+        config.learning.distill_daily_budget_usd = daily;
         config.limits.budgets_enabled = budgets_enabled;
         let h = Harness::with_config(config).await;
         samples(&h, "codex/cheap", 0.2, 3).await;
         archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
         let items = h.ctx.store.lock().await.items(&Default::default()).unwrap();
         let errands = items.iter().filter(|i| i.pipeline == "errand").count();
-        assert_eq!(errands, queued, "budgets_enabled = {budgets_enabled}");
+        assert_eq!(errands, queued, "enabled {budgets_enabled}, daily {daily}");
     }
 }
 

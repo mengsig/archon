@@ -67,10 +67,10 @@ async fn queue(ctx: &DaemonContext, repo: &RepoId) -> Result<(), ArchonError> {
     let env = crate::resolve::RepoEnv::load(ctx, Some(repo)).await?;
     let policy = env.policy(&ctx.config);
     let key = format!("learning/distilled-v2/{repo}");
-    let reservation = crate::resolve::caps(ctx)
-        .await
-        .budgets_enabled
-        .then_some(ctx.config.learning.distill_daily_budget_usd);
+    // 0 still disables errands: only a positive reservation is lifted.
+    let daily = ctx.config.learning.distill_daily_budget_usd;
+    let budgets_enabled = crate::resolve::caps(ctx).await.budgets_enabled;
+    let reservation = (budgets_enabled || daily == 0.0).then_some(daily);
     let mut store = ctx.store.lock().await;
     if !store.distillation_available(repo, reservation)? {
         return Ok(());

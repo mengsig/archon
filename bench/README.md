@@ -273,8 +273,9 @@ diagnostics replace the operator's home path with `$HOME`.
 total ≥ $0.18, 11.5 min end to end (trial wall 370 s Archon, 139 s Aether).
 The separate `results-smoke/baseline-luna.json` comes from run
 `20261015T130836Z` (`codex/gpt-6-luna`, medium): both arms 4/4,
-total ≥ $0.0905031, 19.1 min end to end. It predates the review-seeded-bug
-rubric fix (#45). See [the evidence, calibration and open findings](results-smoke/README.md).
+total ≥ $0.0905031, 19.1 min end to end. Its stored review answers were
+regraded offline with the merged review-seeded-bug rubric fix (#45); both
+scores remain 1.0. See [the evidence, calibration and open findings](results-smoke/README.md).
 
 Run this before merging changes to routing, prompts or review. It fixes the
 suite to `fix-off-by-one`, `quality-ledger-transfer`, `quality-retry-budget`

@@ -49,9 +49,16 @@ Reported total spend **≥ $0.0905031** (Archon ≥ $0.07597724, Aether
 $0.01452586), 19.1 min end to end; trial wall totals 737 s and 174 s.
 The three Archon code trials have `cost_gap = interrupted`, so their costs
 and the total are floors. Both review answers scored 1.0 on the original
-rubric. This baseline **predates the review-seeded-bug rubric fix (#45)**,
-which was still open before the run; no grader changes or offline regrading
-were applied. The build used Archon 1.2.3 and private Aether 1.0.8.
+rubric. After merging `origin/main` (including **#45, `1ffff47`**), both
+stored review answers were **regraded offline with the fixed rubric** and
+still score 1.0. The baseline therefore retains its 4/4 threshold under the
+current rubric. See [`regrade-current-rubric/regrade.json`](luna-medium-20261015/regrade-current-rubric/regrade.json)
+for the command, rubric and answer hashes, and old/new scores; that directory
+also retains the fixed rubric and grader output. No new model run was made.
+The original results, cost, grade logs and measured build provenance remain
+unchanged: Archon 1.2.3 and private Aether 1.0.8, before the main merge.
+This is a current-rubric baseline of that earlier build, not a measurement of
+the other code subsequently merged from main.
 
 All three code tasks used `direct`, ledger with strict review and the others
 with standard review. The review answer came from the orchestrator with an

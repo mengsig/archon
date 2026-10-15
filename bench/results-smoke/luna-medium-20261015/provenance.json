@@ -7,8 +7,8 @@
     "archon-bench": "70130ed3bf053a252fa20d46c7a684458447ceb3b28fbc8e3b40e00a17683430"
   },
   "command": "archon-bench smoke --bootstrap --model codex/gpt-6-luna --effort medium --archon-bin <sandbox>/bin/archon --aether-socket <sandbox>/run/aetherd.sock --results-dir <workspace>/bench/results/luna-followup/runs",
-  "rubric_fix": "PR #45 was open and unmerged before the run; this baseline predates that fix.",
   "isolation": "Fresh private sandbox; env -i with HOME, USER, LANG, private-first PATH, TMPDIR and six private AETHER_*/ARCHON_* variables. The sandbox daemon was stopped after the run.",
   "operator_daemons_touched": false,
-  "cost_note": "Archon cost_gap=interrupted makes its reported costs and the total floors."
+  "cost_note": "Archon cost_gap=interrupted makes its reported costs and the total floors.",
+  "rubric_regrade": "The live run predates #45; after merging origin/main, the original stored answers were regraded offline with rubric fix 1ffff47. Both scores remain 1.0. See regrade-current-rubric/regrade.json. No new model run; measured binary, run commit and costs are preserved."
 }

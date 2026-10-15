@@ -23,7 +23,7 @@ use super::super::{
     FollowUp, RunTable, ShipRetry, descendants, initiative_ship, recover, repo_identity, restack,
     settle,
 };
-use super::{auto_merge, checks, remote};
+use super::{auto_merge, checks, pr_checks, remote};
 use crate::context::DaemonContext;
 use crate::resolve;
 
@@ -184,19 +184,19 @@ async fn fresh(ctx: &DaemonContext, claimed: &Claimed) -> Result<ShipOutcome, Ar
     let (run, plan) = (&claimed.run, &claimed.plan);
     let mut store = ctx.store.lock().await;
     let owes_merge = claimed.vars.get("ship.auto_merge").map(String::as_str) == Some("true");
-    if let (
-        ShipOutcome::Shipped {
-            pr_url: Some(url), ..
-        },
-        true,
-    ) = (&outcome, owes_merge)
+    if let ShipOutcome::Shipped {
+        pr_url: Some(url), ..
+    } = &outcome
     {
         let repo = claimed
             .repo
             .as_ref()
             .expect("a pull request is of a registered repository");
-        auto_merge::owe(&mut store, &run.id, &run.item, &repo.id, url)?;
-        ctx.coordination.changed.notify_one();
+        pr_checks::owe(&mut store, &run.id, &run.item, &repo.id, url)?;
+        if owes_merge {
+            auto_merge::owe(&mut store, &run.id, &run.item, &repo.id, url)?;
+            ctx.coordination.changed.notify_one();
+        }
     }
     persist(&mut store, run, plan, &outcome)?;
     store.kv_delete(&retry_key(&run.id))?;

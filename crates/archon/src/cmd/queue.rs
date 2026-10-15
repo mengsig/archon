@@ -34,6 +34,7 @@ pub async fn run(command: QueueCommand, json: bool) -> anyhow::Result<ExitCode> 
             fresh,
             append,
         } => retry(&item, fresh, append, json).await?,
+        QueueCommand::Refresh { item } => refresh(&item, json).await?,
         QueueCommand::Caps {
             max_parallel_agents,
             max_per_repo,
@@ -102,6 +103,22 @@ async fn retry(item: &str, fresh: bool, append: Option<String>, json: bool) -> a
         brief_append: append,
     };
     change(&client, request, &done, json).await
+}
+
+async fn refresh(item: &str, json: bool) -> anyhow::Result<()> {
+    let client = connect_or_start().await?;
+    let item = views::resolve_item(&client, item).await?;
+    let reply = client
+        .request(Request::RefreshItem { item: item.clone() })
+        .await?;
+    let Reply::Item(refresh) = &reply else {
+        return Err(unexpected(&reply, "item"));
+    };
+    let done = format!(
+        "Queued {} to merge the base branch into {item}.",
+        refresh.id
+    );
+    emit(json, || reply_data(&reply), &done)
 }
 
 /// Send an item change that answers with the item (or `ok`).

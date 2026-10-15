@@ -56,6 +56,9 @@ pub(super) fn to_request(tool: &str, arguments: Value) -> Result<Request, ToolEr
             reason: args.optional_text("reason")?,
         },
         "retry_item" => retry_item(&mut args)?,
+        "refresh_item" => Request::RefreshItem {
+            item: args.required("item")?,
+        },
         "pause" => Request::Pause(pause_target(&mut args)?),
         "resume" => Request::Resume(pause_target(&mut args)?),
         "notify" => Request::Notify {

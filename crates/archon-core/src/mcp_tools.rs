@@ -67,6 +67,7 @@ pub const TOOLS: &[ToolName] = &[
     tool("update_initiative", ToolClass::Mutation),
     tool("steer_item", ToolClass::Mutation),
     tool("record_lesson", ToolClass::Mutation),
+    tool("refresh_item", ToolClass::Mutation),
 ];
 
 const fn tool(name: &'static str, class: ToolClass) -> ToolName {

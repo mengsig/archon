@@ -86,6 +86,7 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
             "retry_item",
             json!({"item": qi(), "model_plan": plan(), "model_reasons": {"implement": "Retry with more reasoning"}, "fresh": true, "brief_append": "Do Y."}),
         ),
+        ("refresh_item", json!({"item": qi()})),
         ("pause", json!({"scope": "repo", "name": "web"})),
         ("resume", json!({"scope": "pipeline", "name": "direct"})),
         (
@@ -964,6 +965,11 @@ const DESCRIBED_RULES: &[(&str, &str)] = &[
     (
         "retry_item",
         "counts against the run that passed: enqueue new work instead",
+    ),
+    ("refresh_item", "updates the same pull request"),
+    (
+        "refresh_item",
+        "reads from the new merge base, conflict resolutions included",
     ),
     ("update_item", "steered into its run without cancelling it"),
     ("steer_item", "stages that already started keep their shape"),

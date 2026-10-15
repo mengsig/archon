@@ -120,6 +120,9 @@ fn label(event: &TriggerEvent) -> String {
         }
         TriggerEvent::Mirror { repo, state, .. } => format!("mirror of {repo}: {state}"),
         TriggerEvent::DirectivesRestated { .. } => "directives restated".to_owned(),
+        TriggerEvent::PrChecks {
+            item, url, state, ..
+        } => format!("pull request checks {state}: {url} ({item})"),
     }
 }
 

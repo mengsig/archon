@@ -6,6 +6,7 @@
 mod auto_merge;
 mod checks;
 mod deliver;
+mod pr_checks;
 mod remote;
 
 use archon_core::catalog::StageKind;
@@ -19,6 +20,7 @@ use crate::context::DaemonContext;
 pub(crate) use auto_merge::pay as pay_owed_merges;
 pub(super) use deliver::{deliver, delivering, queue, replay, stalled};
 pub(crate) use deliver::{prune_finished_ships, shipped_commit};
+pub(crate) use pr_checks::look as look_at_checks;
 
 /// `outcome` with the pull request GitHub lists for a ship agent's stage, or
 /// failed without one; nothing to check when archond ships (`daemon_ships`).

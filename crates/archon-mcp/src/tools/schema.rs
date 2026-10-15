@@ -47,6 +47,7 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         initiatives::update_initiative(),
         steer::steer_item(),
         lessons::record_lesson(),
+        refresh_item(),
     ]
 }
 
@@ -485,6 +486,20 @@ fn retry_item() -> ToolDefinition {
             }),
             &["item"],
         ),
+        false,
+    )
+}
+
+fn refresh_item() -> ToolDefinition {
+    define(
+        "refresh_item",
+        "Refresh item onto its base",
+        "For a finished item whose branch is behind its base or its pull request conflicts: \
+         fetch the base from origin and queue a new item that merges it into the same branch, \
+         resolves conflicts, runs the checks and updates the same pull request. Its review reads \
+         from the new merge base, conflict resolutions included. Never rebases or opens a second \
+         pull request; use retry_item `fresh` to start over instead.",
+        object(json!({"item": item_id("")}), &["item"]),
         false,
     )
 }

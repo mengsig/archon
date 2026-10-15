@@ -444,7 +444,7 @@ pub(crate) fn head(tree: &Path) -> Result<Head, ArchonError> {
     })
 }
 
-fn branch_exists(repo: &Path, branch: &str) -> Result<bool, ArchonError> {
+pub(crate) fn branch_exists(repo: &Path, branch: &str) -> Result<bool, ArchonError> {
     let reference = format!("refs/heads/{branch}");
     let output = git_output(repo, &["show-ref", "--verify", "--quiet", &reference])?;
     // `show-ref --verify --quiet` exits 1 exactly when the ref is missing.
@@ -498,9 +498,17 @@ pub(crate) fn is_ancestor(dir: &Path, ancestor: &str, of: &str) -> Result<bool, 
     Ok(git_exit(dir, &args)?.is_some())
 }
 
-/// The best common ancestor of commits `a` and `b`; `None` when they share none.
-pub(crate) fn merge_base(dir: &Path, a: &str, b: &str) -> Result<Option<String>, ArchonError> {
-    git_exit(dir, &["merge-base", a, b])
+/// The best common ancestor of `head` and any of `bases`, the newest such commit
+/// `head` holds; `None` when they share none.
+pub(crate) fn merge_base(
+    dir: &Path,
+    head: &str,
+    bases: &[String],
+) -> Result<Option<String>, ArchonError> {
+    assert!(!bases.is_empty(), "a merge base is of at least two commits");
+    let mut args = vec!["merge-base", head];
+    args.extend(bases.iter().map(String::as_str));
+    git_exit(dir, &args)
 }
 
 /// `git` whose exit 1 answers no (`None`) rather than failing; stdout on success.

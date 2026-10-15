@@ -1014,7 +1014,7 @@ and cost as `results`.
 
 Every other event wakes: `agent_message`, `item_blocked`, `gate_opened`,
 `operator_answer`, `chat_answer`, `lavish_feedback`, `budget`,
-`policy_violation`, `directives_restated`, `initiative_finished`. A mirror's change of state
+`policy_violation`, `directives_restated`, `initiative_finished`, `pr_checks` (§8.7). A mirror's change of state
 (§13.3) is quiet. Quiet news is saved in the outbox like any other and makes
 no trigger by itself. It leaves with the next trigger there is, and an
 operator message sends it at once, without the coalescing window
@@ -2047,7 +2047,10 @@ cancelled, failed or running child, a grandchild, or a child that returned
 no verdict (a builder) is refused. The verdicts are then placed on the
 branch in the run's workspace (`executor/review/coverage.rs`): every `head`
 must be a commit the branch holds; a `base` at or before the fork from the
-base branch, or none, means the whole change was read; a delta's `base`
+base branch, or none, means the whole change was read. The fork is the merge
+base of the head with the local base branch and `refs/remotes/origin/<base>`
+together, so after a refresh (§13) merged a newer base the change is read
+from that base, conflict resolutions included; a delta's `base`
 must be a head another named reviewer read. If none is, the lead's other
 direct children that completed a task are read and placed too, those not on
 the branch left out; the ones anchored with the named reads join the check,
@@ -2346,6 +2349,22 @@ check. `executor/pull_requests.rs` later reads only whether the pull request
 merged, closed or had changes requested, for learning (§19). A red check is
 the operator's to act on: a fix item, or `archon queue retry --append`,
 which delivers into the same pull request (§6.1).
+
+**Checks are watched, not waited for.** Each delivered pull request is owed
+a look at its checks, in `kv` `ship_checks:<run>` (a later delivery into the
+same pull request replaces it). The coordination pass reads `gh pr checks
+<url> --json name,bucket,startedAt,link` two minutes after delivery, then
+every ten minutes. A failing or cancelled GitHub Actions job is asked why
+(`gh api repos/<owner>/<repo>/check-runs/<job>/annotations`, at most eight a
+look): GitHub's "The job was not started because …" (billing, a spending
+limit) means the check never ran, and so does a check still queued, never
+started, 30 minutes after delivery (no runner). Checks that ran and failed
+are an outcome in the feed and a `pr_checks` event (`state: "failed"`);
+checks that never started are a blocker and a `pr_checks` event (`state:
+"not_started"` with GitHub's reason), never reported as the change failing.
+Either is told once and ends the watch. Passing checks, no checks 30 minutes
+after delivery, or a day without an answer end it quietly; a `gh` failure is
+logged and the next look tries again.
 
 **A ship stage.** A pipeline may instead end in one `kind = "ship"` stage,
 as every built-in did before archond shipped. Its agent delivers with git
@@ -2769,6 +2788,7 @@ can reach the socket (§5.5).
 | `update_initiative` | `{initiative, contract_append \| contract}` | `UpdateInitiative` (§8.9) |
 | `cancel_item` | `{item, reason?}` | `CancelItem` |
 | `retry_item` | `{item, model_plan?, model_reasons?, fresh?, brief_append?}` | `RetryItem` (§13: `fresh` starts again from the base branch) |
+| `refresh_item` | `{item}` | `RefreshItem` (§13: a finished item's base, fetched from `origin`, merged into the same branch and pull request) |
 | `queue_status` | `{}` | `Status` |
 | `model_evidence` | `{repo?, pipeline?, stage?, since?}` | `ModelEvidence` (30 local days by default; stage attempt observations, at most 60 groups) |
 | `cost_report` | `{since?, until?, by?: day\|repo\|pipeline\|model\|item\|stage}` | `CostReport` (§5.3) |
@@ -2889,7 +2909,14 @@ object per line under `--json`).
   `<branch_prefix><item-short>-<slug(title)>`, created with
   `git -C <repo> worktree add -b <branch> <path> <base>`, checked out
   through the shadow (§13.4). The base is
-  `repo.base_branch`, or the repo's current `HEAD` commit.
+  `repo.base_branch`, or the repo's current `HEAD` commit. In `pr` mode a new
+  branch forks from `origin`'s head of the base, fetched through the shadow
+  just before (`ls-remote`, then the objects), with
+  `refs/remotes/origin/<base>` moved to it; the operator's local base branch
+  and checkout are never touched. A repository without `origin` forks from
+  the local base silently; a fetch that fails forks from it with a warning
+  (a `decision` in the item's feed), and `refresh_item` can merge the newer
+  base in later. The run's `base_branch` stays the branch name.
   **Uncommitted changes in the operator's checkout are not included**, unlike
   Aether's isolated-delegation snapshot.
 - `workspace = "repo-readonly"` runs the stage in a snapshot, never in the
@@ -2935,6 +2962,21 @@ object per line under `--json`).
   `worktrees.gc_after` (default 7d) after the item's last run, with no check
   for uncommitted changes, which `archon queue retry --fresh`, `retry_item`
   and the progress note say.
+- A refresh (`refresh_item`, `archon queue refresh <id>`) brings a finished
+  item's branch up to its base once the base moved on or its pull request
+  conflicts. It never rebases or force-pushes: archond fetches the base's
+  head (`origin`'s in `pr` mode, else the local branch) and queues a new
+  item, titled `Refresh <item> onto <base>`, that runs the owner's pipeline
+  on the owner's branch and worktree like a restack fix (§8.8): its agent
+  merges that commit with `git merge`, resolves conflicts, commits and runs
+  the checks; its review must cover the change from the new merge base
+  (conflict resolutions included: the review fork of §8.2 counts `origin`'s
+  base), and it delivers into the same pull request. Delivery refuses until the branch
+  holds the fetched commit. A refresh is refused for an item that is not
+  finished, is itself a fix, is stacked on an unmerged parent, has a
+  restack fix or refresh pending, whose branch already holds the base head,
+  or (delivered in `pr` mode) whose pull request merged or closed. Asking
+  again for the same base commit returns the refresh already queued.
 - A brief amendment (`brief_append` on `retry_item` or `update_item`, a
   `note` on `steer_item`, `archon queue retry --append`) is appended to the
   brief under a dated `## Amendment (<UTC time>)` heading, so every later
@@ -3427,7 +3469,9 @@ insteadOf`, `http.*` and `credential.helper` apply, and a push or fetch
 keeps `GIT_SSH_COMMAND`, `GIT_SSH` and `GIT_SSH_VARIANT` from the daemon's
 environment. Only https, ssh and local `origin` URLs are used; a local
 remote's `receive-pack` and `upload-pack` run with no hook. A fetch writes
-no ref and no `FETCH_HEAD` in the repository, only the objects it lacks.
+no ref and no `FETCH_HEAD` in the repository, only the objects it lacks; a
+base fetched to fork from or refresh onto (§13) then moves only
+`refs/remotes/origin/<base>`, with a `Sealed` `update-ref`.
 
 Removing a worktree asks the shadow what `git worktree remove` would: a
 populated submodule or the worktree's own `modules`, a tracked change

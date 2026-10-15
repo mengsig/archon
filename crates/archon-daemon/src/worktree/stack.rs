@@ -348,6 +348,42 @@ pub(crate) fn fetch(
     Ok(())
 }
 
+/// `origin`'s head of `branch`, its objects fetched into `repo` and recorded as
+/// `refs/remotes/origin/<branch>`, as `git fetch` would; no other ref or work tree
+/// is touched. `None` when the repository has no `origin`.
+pub(crate) fn fetch_head(
+    shadow: &Shadow,
+    repo: &Path,
+    branch: &str,
+) -> Result<Option<String>, ArchonError> {
+    super::check_branch(branch)?;
+    let Some(url) = origin_url(repo)? else {
+        return Ok(None);
+    };
+    let wanted = format!("refs/heads/{branch}");
+    let args = ["ls-remote", "--upload-pack=git-upload-pack", &url, &wanted];
+    let listed = shadow
+        .git(None, Config::Operator)?
+        .network()
+        .args(args)
+        .text()?;
+    let head = listed.lines().find_map(|line| {
+        let (sha, name) = line.split_once('\t')?;
+        (name == wanted && is_commit_id(sha)).then(|| sha.to_owned())
+    });
+    let Some(sha) = head else {
+        return Err(ArchonError::Invalid(format!(
+            "`origin` has no branch `{branch}`"
+        )));
+    };
+    fetch(shadow, repo, branch, &sha)?;
+    let tracking = format!("refs/remotes/origin/{branch}");
+    let update = ["update-ref", "-m", "archon: fetch", &tracking, &sha];
+    DaemonGit::sealed_in(repo).args(update).text()?;
+    assert!(is_commit_id(&sha), "ls-remote names a full commit id");
+    Ok(Some(sha))
+}
+
 /// Up to a few commits `repo`'s branches name, for a fetch to negotiate with.
 fn local_heads(repo: &Path) -> Result<Vec<String>, ArchonError> {
     const MAX_TIPS: usize = 64;

@@ -126,16 +126,24 @@ pub(super) fn holds_tree(
     )))
 }
 
-/// Where the run's branch left `base_branch`; `None` when that branch is
-/// gone, so only a review stating no base counts as reading the whole change.
+/// Where the run's branch last took in `base_branch`, local or as fetched from
+/// `origin`: after a refresh merged the remote base, the newer of the two. `None`
+/// when neither is there, so only a review stating no base reads the whole change.
 fn fork_point(dir: &Path, base_branch: &str, head: &str) -> Result<Option<String>, ArchonError> {
     if base_branch.is_empty() {
         return Ok(None);
     }
-    let Some(base) = worktree::commit_id(dir, base_branch)? else {
+    let remote = format!("refs/remotes/origin/{base_branch}");
+    let mut bases = Vec::with_capacity(2);
+    for name in [base_branch, remote.as_str()] {
+        if let Some(base) = worktree::commit_id(dir, name)? {
+            bases.push(base);
+        }
+    }
+    if bases.is_empty() {
         return Ok(None);
-    };
-    worktree::merge_base(dir, &base, head)
+    }
+    worktree::merge_base(dir, head, &bases)
 }
 
 /// `agent`'s verdict with its head and base as full commit ids, the base
@@ -801,5 +809,61 @@ mod tests {
             failed[2].clone(),
         ];
         assert_eq!(count(&rereviewed, "c4", 1).unwrap(), [0]);
+    }
+
+    /// Git in `dir` with no config but the repository's own and a throwaway identity.
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let who = ["-c", "user.name=t", "-c", "user.email=t@example.invalid"];
+        let git = worktree::daemon_git::DaemonGit::sealed_in(dir).args(who);
+        git.args(args.iter().copied()).text().unwrap()
+    }
+
+    /// Commit `file` in `dir`; the new commit.
+    fn commit(dir: &Path, file: &str) -> String {
+        std::fs::write(dir.join(file), file).unwrap();
+        git(dir, &["add", file]);
+        git(dir, &["commit", "-q", "-m", file]);
+        git(dir, &["rev-parse", "HEAD"])
+    }
+
+    #[test]
+    fn a_review_from_the_fetched_base_a_refresh_merged_reads_the_whole_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().canonicalize().unwrap();
+        git(&repo, &["init", "-q", "--initial-branch=main"]);
+        let fork = commit(&repo, "base.txt");
+        git(&repo, &["checkout", "-q", "-b", "run"]);
+        commit(&repo, "change.txt");
+        git(&repo, &["checkout", "-q", "--detach", &fork]);
+        let upstream = commit(&repo, "upstream.txt");
+        git(
+            &repo,
+            &["update-ref", "refs/remotes/origin/main", &upstream],
+        );
+        git(&repo, &["checkout", "-q", "run"]);
+        git(&repo, &["merge", "-q", "--no-edit", &upstream]);
+        let head = git(&repo, &["rev-parse", "HEAD"]);
+        let verdict = Verdict {
+            pass: true,
+            head: head.clone(),
+            base: Some(upstream.clone()),
+        };
+        let named = [("agt_r".to_owned(), verdict)];
+
+        let mut history = History::new(&repo);
+        let (at, placed) = place(&mut history, "main", &named, &[]).unwrap().unwrap();
+        assert_eq!(at, head);
+        assert_eq!(
+            placed[0].base, None,
+            "the local `main` is stale at {fork}; the fetched base is where the change starts"
+        );
+
+        git(&repo, &["update-ref", "-d", "refs/remotes/origin/main"]);
+        let (_, placed) = place(&mut history, "main", &named, &[]).unwrap().unwrap();
+        assert_eq!(
+            placed[0].base.as_deref(),
+            Some(upstream.as_str()),
+            "without the fetched base the same read is only a delta"
+        );
     }
 }

@@ -125,6 +125,7 @@ fn ok(tool: &str) -> &'static str {
         "cancel_item" => "Cancelled.",
         "update_item" => "Updated.",
         "retry_item" => "Re-queued.",
+        "refresh_item" => "Refresh queued.",
         _ => "Done.",
     }
 }
@@ -136,6 +137,7 @@ fn verb(tool: &str) -> &'static str {
         "update_item" => "Updated ",
         "cancel_item" => "Cancelled ",
         "retry_item" => "Re-queued ",
+        "refresh_item" => "Refresh queued as ",
         _ => "",
     }
 }

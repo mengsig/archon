@@ -1078,3 +1078,54 @@ async fn states_that_cannot_be_steered_say_so() {
         .expect_err("no such item");
     assert!(matches!(missing, ArchonError::NotFound(_)), "{missing:?}");
 }
+
+#[tokio::test]
+async fn inserting_a_stage_preserves_the_delegated_reviewer_plan() {
+    let h = harness().await;
+    let reviewer = "claude-code/claude-haiku-5-5";
+    let mut model_plan: archon_core::model::ModelPlanDraft = archon_core::model::ModelPlan(
+        [("implement".to_owned(), vec![choice(MODEL, Effort::Medium)])].into(),
+    )
+    .into();
+    model_plan.0.insert(
+        "implement.review".into(),
+        vec![archon_core::model::ModelChoiceDraft {
+            model: reviewer.parse().unwrap(),
+            effort: Some(Effort::Low),
+        }],
+    );
+    let Reply::Item(queued) = h
+        .cli(Request::Enqueue(EnqueueRequest {
+            repo: Some(RepoRef(REPO_NAME.into())),
+            pipeline: Some("direct".into()),
+            title: "Keep reviewer".into(),
+            brief: "Apply the fix".into(),
+            priority: Default::default(),
+            depends_on: vec![],
+            tags: vec![],
+            model_plan,
+            model_reasons: None,
+            budget_usd: None,
+            idempotency_key: None,
+            autonomy: AutonomyPatch {
+                review: Some(archon_core::autonomy::ReviewLevel::Standard),
+                ..Default::default()
+            },
+            origin: None,
+            stage_timeouts: Default::default(),
+        }))
+        .await
+        .unwrap()
+    else {
+        panic!("item")
+    };
+    let updated = steer(&h, &queued.id, insert("verify", Some("implement")))
+        .await
+        .unwrap();
+    assert_eq!(
+        updated.model_plan.0["implement.review"],
+        queued.model_plan.0["implement.review"]
+    );
+    h.dispatch().await;
+    assert!(h.backend.requests()[0].instructions.contains(reviewer));
+}

@@ -1880,7 +1880,10 @@ The stage contract tells the lead to delegate reviewers with role `reviewer` on
 those models, and the delegation watchdog (§7.4) cancels a child with such a
 role on another model or a higher effort. This check relies on the lead using
 the required reviewer role; children with other roles follow the general model
-policy. With no such key the contract asks
+policy. The role matches `reviewer` exactly (case-insensitively); a reviewer
+with missing or unrecognised effort is refused. If Aether no longer has the
+child when the watchdog reads it, only its event model can be checked: its role
+and effort are unavailable. With no such key the contract asks
 for a model other than the lead's whose cost Aether reports (a Codex reviewer's
 unpriced usage blocks a budgeted item), and the watchdog holds reviewers only to
 the model policy.

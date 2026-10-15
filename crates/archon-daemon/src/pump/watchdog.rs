@@ -252,12 +252,16 @@ async fn policy_violation(
 /// for reviewers. A child whose role is no reviewer's is not held to it.
 fn reviewer_refusal(named: &[ModelChoice], model: &ModelRef, held: &Value) -> Option<String> {
     let role = held.get("role").and_then(Value::as_str).unwrap_or_default();
-    if !role.to_ascii_lowercase().contains("review") {
+    if !role.eq_ignore_ascii_case("reviewer") {
         return None;
     }
     let effort = match child_effort(held) {
-        ChildEffort::Known(effort) => Some(effort),
-        ChildEffort::Unknown => None,
+        ChildEffort::Known(effort) => effort,
+        ChildEffort::Unknown => {
+            return Some(
+                "reviewer effort is missing; cannot compare with its reviewer plan".into(),
+            );
+        }
         ChildEffort::Unrecognised(raw) => {
             return Some(format!(
                 "reviewer effort {raw:?} cannot be compared with its reviewer plan"
@@ -266,7 +270,7 @@ fn reviewer_refusal(named: &[ModelChoice], model: &ModelRef, held: &Value) -> Op
     };
     let allowed = named
         .iter()
-        .any(|c| c.model == *model && effort.is_none_or(|e| e <= c.effort));
+        .any(|c| c.model == *model && effort <= c.effort);
     if allowed {
         return None;
     }
@@ -643,8 +647,11 @@ mod reviewer_tests {
         assert!(reviewer_refusal(&named, &model, &reviewer("low")).is_none());
         assert!(reviewer_refusal(&named, &model, &reviewer("high")).is_some());
         assert!(reviewer_refusal(&named, &model, &reviewer("invalid")).is_some());
+        assert!(reviewer_refusal(&named, &model, &json!({"role":"reviewer"})).is_some());
         let other = "codex/gpt-6-luna".parse().unwrap();
         assert!(reviewer_refusal(&named, &other, &reviewer("low")).is_some());
-        assert!(reviewer_refusal(&named, &other, &json!({"role":"worker"})).is_none());
+        for role in ["worker", "preview-builder", "review-assistant"] {
+            assert!(reviewer_refusal(&named, &other, &json!({"role":role})).is_none());
+        }
     }
 }

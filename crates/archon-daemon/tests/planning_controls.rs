@@ -237,3 +237,84 @@ async fn retrying_with_above_default_effort_requires_a_reason() {
         .await
         .expect("reasoned retry");
 }
+
+const REVIEWER: &str = "claude-code/claude-haiku-5-5";
+
+fn reviewer_enqueue() -> Request {
+    let Request::Enqueue(mut request) = enqueue(draft("implement", None), None) else {
+        unreachable!()
+    };
+    request.pipeline = Some("direct".into());
+    request.autonomy.review = Some(archon_core::autonomy::ReviewLevel::Standard);
+    request.model_plan.0.insert(
+        "implement.review".into(),
+        vec![ModelChoiceDraft {
+            model: REVIEWER.parse().unwrap(),
+            effort: Some(Effort::Low),
+        }],
+    );
+    Request::Enqueue(request)
+}
+
+#[tokio::test]
+async fn reviewer_keys_pass_through_enqueue_and_reach_the_stage_contract() {
+    let h = Harness::new().await;
+    let queued = item(&h, reviewer_enqueue()).await;
+    assert_eq!(
+        queued.model_plan.0["implement.review"][0].model.to_string(),
+        REVIEWER
+    );
+    h.dispatch().await;
+    let request = &h.backend.requests()[0];
+    assert!(
+        request.instructions.contains(REVIEWER),
+        "{}",
+        request.instructions
+    );
+}
+
+#[tokio::test]
+async fn enqueue_refuses_a_reviewer_outside_the_model_policy() {
+    let mut config = archon_core::config::Config::default();
+    config.models.deny.push(REVIEWER.parse().unwrap());
+    let h = Harness::with_config(config).await;
+    let error = refusal(&h, reviewer_enqueue()).await;
+    assert!(error.contains(REVIEWER), "{error}");
+    assert!(h.running().await.is_empty());
+}
+
+#[tokio::test]
+async fn a_running_runs_timeout_steer_applies_to_the_next_spawn() {
+    let h = Harness::new().await;
+    let queued = item(&h, with_timeouts(&[("implement", 120)])).await;
+    h.dispatch().await;
+    let deadline = h.backend.requests()[0].deadline;
+    h.cli(Request::SteerItem {
+        item: queued.id.clone(),
+        steer: Steer {
+            stage_timeouts: [("implement".into(), 180), ("review".into(), 75)].into(),
+            ..Default::default()
+        },
+    })
+    .await
+    .expect("running timeout steer");
+    assert_eq!(h.item(&queued.id).await.stage_timeouts["implement"], 180);
+    assert!(
+        h.backend.updates().is_empty(),
+        "the current deadline stays put"
+    );
+    assert_eq!(h.backend.requests()[0].deadline, deadline);
+    h.settle_running(|_| common::completed("implemented")).await;
+    h.dispatch().await;
+    let review = h.running().await.remove(0);
+    let request = h
+        .backend
+        .requests()
+        .into_iter()
+        .find(|r| r.name.contains("review"))
+        .expect("review spawn");
+    assert_eq!(
+        request.deadline,
+        Some(review.started_at + chrono::Duration::minutes(75))
+    );
+}

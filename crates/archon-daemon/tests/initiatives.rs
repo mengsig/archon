@@ -402,3 +402,62 @@ async fn a_member_takes_its_own_knobs_but_never_merges_an_atomic_set_alone() {
     let manual = |m: &archon_core::queue::QueueItem| m.autonomy.merge == MergeMode::Manual;
     assert!(detail.members.iter().all(manual));
 }
+
+#[tokio::test]
+async fn atomic_members_keep_manual_merge_after_enqueue_and_success() {
+    use archon_core::autonomy::AutonomyPatch;
+    use archon_core::protocol::{ItemPatch, RepoPatch};
+    use archon_core::steer::Steer;
+    let h = setup().await;
+    let mut req = request();
+    req.members.truncate(1);
+    let detail = enqueue(&h, req).await;
+    let id = &detail.members[0].id;
+    let auto = AutonomyPatch::parse_list("merge=auto").unwrap();
+    h.cli(Request::RepoUpdate {
+        repo: RepoRef(REPO_NAME.into()),
+        patch: RepoPatch {
+            autonomy_max: Some(auto),
+            ..Default::default()
+        },
+    })
+    .await
+    .unwrap();
+    for succeeded in [false, true] {
+        if succeeded {
+            h.dispatch().await;
+            finish_item(&h, id).await;
+            h.dispatch().await;
+            assert!(matches!(h.state(id).await, QueueState::Succeeded { .. }));
+        }
+        let update = Request::UpdateItem {
+            item: id.clone(),
+            patch: ItemPatch {
+                autonomy: Some(auto),
+                ..Default::default()
+            },
+        };
+        let steer = Request::SteerItem {
+            item: id.clone(),
+            steer: Steer {
+                autonomy: Some(auto),
+                ..Default::default()
+            },
+        };
+        for request in [update, steer] {
+            let error = h.orchestrator(request).await.unwrap_err();
+            assert!(
+                error.to_string().contains("merged by hand, together"),
+                "{error}"
+            );
+        }
+        let error = archon_daemon::handlers::update_item_autonomy_above_ceiling(&h.ctx, id, auto)
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("merged by hand, together"),
+            "{error}"
+        );
+        assert_eq!(h.item(id).await.autonomy.merge, MergeMode::Manual);
+    }
+}

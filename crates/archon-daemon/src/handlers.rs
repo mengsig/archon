@@ -86,12 +86,12 @@ pub async fn handle(
         return repos::add_from_operator(ctx, add.clone()).await;
     }
 
-    let enables_watcher = match &request {
-        Request::ConfigureGithubWatcher { change } => github::enables(change),
-        _ => false,
-    };
-    if enables_watcher {
-        github::prepare_enable(ctx).await?;
+    if let Request::ConfigureGithubWatcher { change } = &request {
+        github::require_dedicated(ctx)?;
+        github::check_storable(ctx, change)?;
+        if github::enables(change) {
+            github::prepare_enable(ctx).await?;
+        }
     }
 
     // Held to the end of the call: the orchestrator is not replaced under it.

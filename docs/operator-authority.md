@@ -201,7 +201,10 @@ change. A cited undo asks when it restores a looser value; an explicit
 `/archon undo` applies directly. Undo is not offered for pause, directives,
 removals or watcher changes.
 
-GitHub replies never include private settings, spend or other repositories.
+The orchestrator is instructed to omit private settings, spend, paths and
+other repositories from GitHub replies. Confirmation details returned to it
+include local state: public reply redaction currently relies on that prompt,
+not a daemon-enforced output filter.
 
 ## Configuration
 
@@ -241,8 +244,8 @@ feed is the durable, user-visible record; the key-value rows serve it.
 - **Not implemented:** restarting the orchestrator from the terminal UI,
   and a full-auto mode (`archon` acting on the operator's standing intent
   across repositories). Both remain follow-ups.
-- Shutdown, setup, update and destructive GC are CLI only and have no chat
-  or GitHub form.
+- Shutdown, setup and destructive GC remain CLI only. Existing dedicated-TUI
+  `/upgrade` commands remain available; GitHub cannot invoke them.
 - `request_authority` depends on the orchestrator following its
   instructions to cite and to restate. archond enforces the checks above
   regardless, but cannot make the orchestrator ask.
@@ -273,8 +276,25 @@ ran can change all knobs; a running item can change only merge/tools, and tools
 affect future spawns. A succeeded item accepts only merge changes. `merge=auto`
 requires an open PR at the delivered, reviewed commit and expected base; the
 GitHub call uses `--match-head-commit`. `merge=manual` withdraws an auto-merge
-still owed locally; it does **not** disable auto-merge already enabled on GitHub.
+still owed locally; an attempt already in flight can still reach GitHub. It
+does **not** disable auto-merge already enabled there. Atomic-initiative
+members remain manual even after success and even with a ceiling override.
 Stage-changing autonomy cannot be combined with `model_plan` in one update.
 
 Prompt budgets for this feature: core orchestrator prompt ≤ 12 KiB, each
 guide topic ≤ 4 KiB, the MCP tool list ≤ 28 KiB, a new tool ≤ 1.5 KiB.
+
+The dedicated Aether socket trusts the Unix account. Its local connections,
+including archond, send messages with the `user` actor. Only genuine operator
+`Say` messages may be forwarded to the orchestrator with `send_message`;
+daemon notices influenced by agents must use Archon triggers. Stage relays
+and refusal notices then remain non-authoritative.
+
+A failed authority operation can have an ambiguous outcome when an external
+write succeeded but local persistence or audit failed. Confirmations stay in
+`Executing` to prevent replay: inspect the affected state, answer `no` to close
+the question, then request a new change if needed. Closing it undoes nothing.
+Likewise, a steer combining autonomy with other fields applies those fields
+before autonomy; a later refusal may leave the earlier steer applied. Send
+an autonomy-only change when that distinction matters. Repository removal
+currently leaves an inactive overlay keyed to its former unique repository ID.

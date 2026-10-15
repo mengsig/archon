@@ -439,7 +439,10 @@ pub(crate) async fn configure_existing(
 }
 
 /// Refuse a list this aetherd's protocol cannot store, before any write.
-fn check_storable(ctx: &DaemonContext, change: &WatcherChange) -> Result<(), ArchonError> {
+pub(crate) fn check_storable(
+    ctx: &DaemonContext,
+    change: &WatcherChange,
+) -> Result<(), ArchonError> {
     if sets_allowlist(change) {
         ctx.aether.client()?.check_allowlists()?;
     }

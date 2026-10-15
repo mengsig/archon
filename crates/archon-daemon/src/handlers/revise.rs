@@ -145,6 +145,14 @@ pub(super) async fn prepare(
         item.autonomy,
         knobs::revise(&base, item.autonomy, patch, &policy)?,
     );
+    if after.merge == MergeMode::Auto
+        && let Some(id) = &item.initiative
+        && ctx.store.lock().await.initiative(id)?.initiative.atomic
+    {
+        return Err(ArchonError::Invalid(
+            "an atomic initiative's members are merged by hand, together".into(),
+        ));
+    }
     if ceiling == Ceiling::Enforced {
         knobs::check_raised(&policy, &env, &base, before, after)?;
     }

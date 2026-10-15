@@ -89,7 +89,11 @@ pub async fn handle(
     // never hold this mutex while waiting for its authority write lock.
     let _changes = if matches!(
         request,
-        Request::RepoUpdate { .. }
+        Request::SetSettings { .. }
+            | Request::ResetSettings { .. }
+            | Request::UpdateItem { .. }
+            | Request::SteerItem { .. }
+            | Request::RepoUpdate { .. }
             | Request::RepoRemove { .. }
             | Request::RepoAdd(_)
             | Request::SetCaps { .. }
@@ -108,6 +112,18 @@ pub async fn handle(
     } else {
         None
     };
+    if client == ClientKind::ArchonCli
+        && caller.is_none()
+        && matches!(
+            request,
+            Request::SetSettings { .. }
+                | Request::ResetSettings { .. }
+                | Request::SetCaps { .. }
+                | Request::RepoUpdate { .. }
+        )
+    {
+        return crate::authority::socket_settings(ctx, request).await;
+    }
     route(ctx, client, request).await
 }
 

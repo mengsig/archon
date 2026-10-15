@@ -54,6 +54,7 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         request_merge(),
         request_authority(),
         guide(),
+        settings(),
     ]
 }
 
@@ -789,9 +790,19 @@ fn guide() -> ToolDefinition {
         "Read an Archon guide",
         "Read action formats and workflows when needed; core safety rules always apply.",
         object(
-            json!({"topic":{"type":"string","enum":["authority","github"]}}),
+            json!({"topic":{"type":"string","enum":["authority","settings","github"]}}),
             &["topic"],
         ),
+        false,
+    )
+}
+
+fn settings() -> ToolDefinition {
+    define(
+        "settings",
+        "Show operator settings",
+        "Read the saved global or repository operator overlay and effective values with their sources. Preserve unrelated scoped fields when requesting set_settings through request_authority.",
+        object(json!({"repo": repo_ref("Omit for global settings.")}), &[]),
         false,
     )
 }

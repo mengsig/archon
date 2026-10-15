@@ -319,5 +319,25 @@ Replace `codex/your-available-model` in both examples with an entry from
 `archon aether models`, or remove it from the allowlist if you only use Claude.
 Account access and the installed engine determine model availability.
 Config is loaded when archond starts; restart it after edits when it is safe
-to interrupt your work. `archon queue caps` changes runtime caps without a
+to interrupt your work. `archon queue caps` changes saved operator caps without a
 restart; these overrides last only until the daemon restarts.
+
+
+## Saved operator settings
+
+`archon settings [--repo NAME]` shows the stored overlay and each effective
+value's source. `--set JSON` replaces that scope's overlay; `--reset` clears it.
+The same controls are available through verified TUI/GitHub authority and the
+orchestrator's `request_authority`; its read-only `settings` tool reads them.
+See [operator authority](operator-authority.md) for commands and confirmations.
+
+The order is config.toml, global operator overlay, repository registry and
+operator overlay, then the repository file's autonomy limits (only lowering).
+Global overlays support autonomy defaults/ceiling, all caps, budget switches,
+and a default pipeline. Repository overlays support autonomy defaults/ceiling,
+the budget switch, per-item budget, max_per_repo and default pipeline. Other repository caps
+and full-auto are refused pending their enforcement implementation. Existing
+items retain their saved autonomy; change an item explicitly to update it.
+
+`archon queue caps` now saves its global override across daemon restarts.
+`archon settings --reset` clears that overlay, including its other overrides.

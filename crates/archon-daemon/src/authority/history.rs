@@ -47,6 +47,20 @@ pub(super) async fn record(
     after: Value,
 ) -> Result<(), ArchonError> {
     let restore = match action {
+        Request::SetSettings { repo, .. } | Request::ResetSettings { repo } => {
+            let old: archon_core::settings::SettingsView = serde_json::from_value(before.clone())?;
+            Some(Request::SetSettings {
+                repo: repo.clone(),
+                settings: old.scoped,
+            })
+        }
+        Request::UpdateItem { item, .. } => Some(Request::UpdateItem {
+            item: item.clone(),
+            patch: archon_core::protocol::ItemPatch {
+                autonomy: Some(serde_json::from_value(before["autonomy"].clone())?),
+                ..Default::default()
+            },
+        }),
         Request::RepoUpdate { repo, .. } => {
             let old: Repo = serde_json::from_value(before.clone())?;
             Some(Request::RepoUpdate {
@@ -60,9 +74,13 @@ pub(super) async fn record(
                 },
             })
         }
-        Request::SetCaps { .. } => Some(Request::SetCaps {
-            caps: serde_json::from_value(before.clone())?,
-        }),
+        Request::SetCaps { .. } => {
+            let old: archon_core::settings::SettingsView = serde_json::from_value(before.clone())?;
+            Some(Request::SetSettings {
+                repo: None,
+                settings: old.scoped,
+            })
+        }
         _ => None,
     };
     let mut store = ctx.store.lock().await;

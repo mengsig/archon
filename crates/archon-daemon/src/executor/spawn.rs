@@ -768,9 +768,14 @@ async fn resume_or_spawn(
 ) -> Result<Issued, ArchonError> {
     // A grant reserved while budgets were on is dropped once they are off.
     let granted = spawn.request.cost_budget_usd.is_some();
+    let repo = {
+        let store = ctx.store.lock().await;
+        let run = store.run(&stage.run)?;
+        store.item(&run.item)?.repo
+    };
     if granted
         && spawn.parent == ParentBinding::Pending
-        && !resolve::caps(ctx).await.budgets_enabled
+        && !resolve::item_caps(ctx, repo.as_ref()).budgets_enabled
     {
         spawn.request.cost_budget_usd = None;
         spawn.request.aether_cost_budget = None;

@@ -107,6 +107,7 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
         ),
         ("autonomy_policy", json!({"repo": "web"})),
         ("guide", json!({"topic": "authority"})),
+        ("settings", json!({"repo":"web"})),
         (
             "request_authority",
             json!({"utterance": 1, "quote": "pause", "reason": "operator asked", "action": {"cmd":"pause", "scope":"global", "hard":true}}),
@@ -996,7 +997,7 @@ fn the_tool_list_stays_within_its_budget() {
     );
     for definition in definitions
         .iter()
-        .filter(|d| matches!(d.name, "guide" | "request_authority"))
+        .filter(|d| matches!(d.name, "guide" | "request_authority" | "settings"))
     {
         assert!(
             shown_bytes(definition) <= 1536,

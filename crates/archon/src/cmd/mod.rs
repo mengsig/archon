@@ -18,6 +18,7 @@ mod pipelines;
 mod queue;
 mod repo;
 mod reports;
+mod settings;
 mod talk;
 mod update;
 
@@ -63,6 +64,7 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
             since,
         } => cost::evidence(repo, pipeline, stage, since.as_deref(), json).await,
         Command::Autonomy(args) => autonomy::run(args, json).await,
+        Command::Settings { repo, set, reset } => settings::run(repo, set, reset, json).await,
         Command::GithubWatcher { command } => github_watcher::run(command, json).await,
         Command::Pause(args) => control::pause(args, true, json).await,
         Command::Resume(args) => control::pause(args, false, json).await,
@@ -129,6 +131,7 @@ fn json_refusal(command: Option<&Command>) -> Option<&'static str> {
         | Command::Learning(_)
         | Command::Pipelines(_)
         | Command::Reports { .. }
+        | Command::Settings { .. }
         | Command::Autonomy(_)
         | Command::GithubWatcher { .. }
         | Command::Pause(_)

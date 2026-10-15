@@ -154,6 +154,17 @@ pub enum Command {
     Pipelines(PipelineCommand),
     /// Autonomy defaults and ceilings, and the operator's standing directives.
     Autonomy(AutonomyArgs),
+    /// Saved operator overrides and effective values with their sources.
+    Settings {
+        #[arg(long)]
+        repo: Option<String>,
+        /// Replace this scope's overlay with a JSON object.
+        #[arg(long, conflicts_with = "reset")]
+        set: Option<String>,
+        /// Clear this scope's overlay and restore inheritance.
+        #[arg(long)]
+        reset: bool,
+    },
     /// Published reports with their state and where they were shown.
     ///
     /// A disconnected or ended report can be reopened, so it is kept while its

@@ -5,6 +5,7 @@ pub(crate) mod commands;
 mod confirmations;
 pub(crate) mod evidence;
 mod history;
+mod settings;
 
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::authority::OperatorMessage;
@@ -44,13 +45,37 @@ pub(crate) async fn request(
     perform(ctx, &message, action, false).await
 }
 
-pub(crate) async fn explicit(
+pub(crate) async fn command(
     ctx: &DaemonContext,
     message: &OperatorMessage,
+    text: &str,
+) -> Option<Result<Reply, ArchonError>> {
+    // Parsing a partial settings command reads its scope's current overlay.
+    // Keep that read and the replacement together, avoiding lost updates.
+    let _changes = ctx.authority_changes.lock().await;
+    let action = commands::parse(ctx, text).await?;
+    Some(match action {
+        Ok(action) => perform(ctx, message, action, true).await,
+        Err(error) => Err(error),
+    })
+}
+
+/// Called with authority_changes held by the authenticated operator socket.
+pub(crate) async fn socket_settings(
+    ctx: &DaemonContext,
     action: Request,
 ) -> Result<Reply, ArchonError> {
-    let _changes = ctx.authority_changes.lock().await;
-    perform(ctx, message, action, true).await
+    let text = serde_json::to_string(&action)?;
+    let entry = feed::append(ctx, FeedEntry::Operator { text: text.clone() }).await?;
+    let evidence = OperatorMessage {
+        agent: None,
+        seq: entry.seq,
+        channel: archon_core::authority::OperatorChannel::Cli,
+        text,
+        at: entry.at,
+    };
+    let before = actions::snapshot(ctx, &action).await?;
+    apply_audited(ctx, &evidence, action, before).await
 }
 
 async fn perform(
@@ -216,10 +241,11 @@ pub(crate) async fn bare_reply(
 pub(crate) fn guide(topic: &str) -> Result<Reply, ArchonError> {
     let text = match topic {
         "authority" => include_str!("../../prompts/topics/authority.md"),
+        "settings" => include_str!("../../prompts/topics/settings.md"),
         "github" => include_str!("../../prompts/topics/github.md"),
         _ => {
             return Err(ArchonError::Invalid(
-                "unknown guide topic; choose authority or github".into(),
+                "unknown guide topic; choose authority, settings or github".into(),
             ));
         }
     };
@@ -230,7 +256,7 @@ pub(crate) fn guide(topic: &str) -> Result<Reply, ArchonError> {
 mod tests {
     #[test]
     fn topics_stay_within_their_individual_budget() {
-        for topic in ["authority", "github"] {
+        for topic in ["authority", "settings", "github"] {
             let archon_core::protocol::Reply::Guide { text } = super::guide(topic).unwrap() else {
                 panic!("guide reply")
             };

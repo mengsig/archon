@@ -45,6 +45,20 @@ pub(super) async fn build(
         envs.read_late(ctx, spawn.repo.as_ref(), false).await?;
     }
     snapshot.repo_caps = envs.repo_caps();
+    snapshot.repo_max_per_repo = crate::settings::mirror(ctx)
+        .repos
+        .iter()
+        .filter_map(|(id, settings)| settings.max_per_repo.map(|limit| (id.clone(), limit)))
+        .collect();
+    snapshot.repo_budgets_enabled = crate::settings::mirror(ctx)
+        .repos
+        .iter()
+        .filter_map(|(id, settings)| {
+            settings
+                .budgets_enabled
+                .map(|enabled| (id.clone(), enabled))
+        })
+        .collect();
     assert!(snapshot.queued.iter().all(|q| q.first_stage_agents > 0));
     Ok(snapshot)
 }

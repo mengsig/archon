@@ -691,7 +691,7 @@ pub(super) async fn check_runs_here(
             spec.name()
         )));
     }
-    let caps = resolve::caps(ctx).await;
+    let caps = resolve::item_caps(ctx, env.repo.as_ref().map(|r| &r.id));
     let repo_cap = env
         .repo
         .as_ref()

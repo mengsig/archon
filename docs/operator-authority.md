@@ -62,9 +62,11 @@ reached today.
 | --- | --- | --- | --- | --- | --- |
 | Answer a question or gate (`answer`) | `archon answer` | `/answer`, `/a`, `/approve`, `/reject` | same | proposal/report gates only | none for gates; authority and merge confirmations are answered only by your own reply |
 | Merge an item (`merge_item`) | `archon merge` | `/merge ITEM [--ignore-checks]` | same | no (the orchestrator has `request_merge`, a question you answer) | — |
-| Repository ceiling `autonomy_max` | `archon repo set --autonomy-max` | `/archon set --repo R max.K=V` | same | `repo_update` | when it raises any knob |
+| Repository ceiling `autonomy_max` | `archon repo set --autonomy-max` | `/archon set --repo R max.K=V` | same | `repo_update` or `set_settings` | when it raises any knob |
 | `grant_merge` | `archon repo set --grant-merge` | `/archon set --repo R grant_merge=true` | same | `repo_update` | when set to true |
 | `ship`, `base_branch`, `default_pipeline` | `archon repo set` | `/archon set --repo R ship=pr …` | same | `repo_update` | `ship` local→pr, and any `base_branch` or `default_pipeline` change |
+| Saved defaults, ceiling, budgets and pipeline | `archon settings [--repo R] --set JSON` / `--reset` | `/archon set [--repo R] key=value` / `reset` | same | `set_settings`, `reset_settings` | when effective or stored permission rises, a budget loosens, or the default pipeline changes |
+| Item autonomy after enqueue / delivery | socket `update_item` | `/archon item qi_… merge=auto` | same | autonomy-only `update_item` | when a changed knob exceeds its ceiling |
 | Caps and budgets (`set_caps`) | `archon queue caps` | `/archon apply {…}` | same | `set_caps` | when any limit rises, is cleared (zero) or budgets are turned off |
 | Hard pause | `archon pause --hard` | `/archon pause --hard` | same | `pause` | no |
 | Hard resume | `archon resume --hard` | `/archon resume --hard` | same | `resume` | always |
@@ -93,7 +95,11 @@ A message that is exactly one of these is applied by archond. On GitHub put
 /answer N <answer>            /a N <answer>
 /approve [N]                  /reject [N] [reason]
 /merge ITEM [--ignore-checks]
-/archon set --repo NAME max.merge=auto grant_merge=true ship=pr base_branch=main default_pipeline=adaptive
+/archon set --repo NAME default.merge=auto max.merge=auto default_pipeline=adaptive
+/archon set --repo NAME grant_merge=true ship=pr base_branch=main
+/archon set budgets_enabled=false
+/archon reset [--repo NAME]
+/archon item qi_… merge=auto
 /archon pause --hard          /archon resume --hard
 /archon repo remove NAME
 /archon watcher <change JSON>        # operator chat only
@@ -103,16 +109,21 @@ A message that is exactly one of these is applied by archond. On GitHub put
 
 Details:
 
-- `/archon set --repo` takes `max.<knob>=<value>` (the same values as
-  `archon autonomy`), `grant_merge`, `ship`, `base_branch`,
-  `default_pipeline`. It replaces that repository's whole ceiling override
-  with the current one plus your change, so other knobs stay as they were.
+- `/archon set` edits the global overlay, or a repository's with `--repo`.
+  `default.<knob>` and `max.<knob>` change defaults and ceilings. Other keys
+  match `OperatorSettings`, including `budgets_enabled`, `budget_usd_per_item`
+  and `default_pipeline`. Omitted fields are preserved.
+- Registry settings `grant_merge`, `ship` and `base_branch` use a separate
+  `/archon set --repo` message; mixing them with overlay fields is refused.
+- `/archon reset [--repo NAME]` clears the scope's overlay. Registry settings
+  are separate and remain until explicitly changed.
 - `/archon apply` accepts only a finite allowlist: repository add, update and
-  remove; caps; pause and resume; directives; lessons and learning
+  remove; settings set/reset; autonomy-only item patches; caps; pause and resume; directives; lessons and learning
   corrections; watcher configuration. Shutdown, setup, update, destructive
   GC, nested authority requests and everything else are refused.
 - A command is limited to 4000 characters.
-- Caps set this way, like `archon queue caps`, last until archond restarts.
+- Settings and `archon queue caps` changes now survive daemon restarts. Reset
+  the global settings overlay to return caps to the configuration file.
 - Explicit commands apply directly, including loosening. The GitHub
   `github_may_loosen` switch and watcher exclusion still apply.
 - `archon chat` preserves a leading `//` escape when forwarding literal text
@@ -180,9 +191,10 @@ before and after, and the outcome. The outcomes you will see are
 **requested**, **awaiting operator**, **applied**, **declined** and
 **refused: reason**.
 
-A repository setting or a caps change that was applied ends with
+An overlay, repository setting, item-autonomy or caps change that was applied ends with
 `undo with /archon undo N`. Undo restores the previous repository settings
-(ceiling, `grant_merge`, `ship`, base branch, default pipeline) or caps. It
+(ceiling, `grant_merge`, `ship`, base branch, default pipeline) or the previous saved overlay. Item autonomy restores the previous knobs
+subject to current item-state rules. It
 is refused if those settings have changed since: it never overwrites a newer
 change. A cited undo asks when it restores a looser value; an explicit
 `/archon undo` applies directly. Undo is not offered for pause, directives,
@@ -237,11 +249,31 @@ feed is the durable, user-visible record; the key-value rows serve it.
   actions above. List only accounts you would hand it to
   ([Operator logins](github-watcher.md#operator-logins)).
 
-Planned, **not shipped** (pending the parent change set): a persistent
-global and per-repository operator settings overlay with a `settings` CLI;
-`update_item` / `steer_item` autonomy for the orchestrator; and automatic
-merging of a shipped item at its reviewed head. This page will describe them
-when they land.
+Saved settings are available through `archon settings [--repo R]`, its `--set`
+JSON and `--reset` options, and the read-only MCP `settings` tool. Precedence is
+configuration file < global overlay < registry and repository overlay < the
+repository's `.archon/config.toml` autonomy limits, which can only lower.
+Repository defaults and ceilings may raise or lower the global values. Values
+are resolved for new items; existing items use their saved knobs. Per-field
+sources are shown by `settings`; status and autonomy show effective values.
+
+Per-repository limits support the budget switch, per-item cap and
+`max_per_repo` agent limit (which may raise or lower the global per-repo default). Daily/total budgets
+and other concurrency settings remain global; attempts to set them per repository are
+refused. These broader per-repository controls are a follow-up. Global daily and
+total amounts still use global spend; a repository's switch controls whether
+those holds apply to it. Already running Aether agents retain their granted
+budgets; switching off applies to future spawns and pending unbound grants.
+
+`update_item` and `steer_item` accept `autonomy` within the effective ceiling.
+An above-ceiling override uses `request_authority` with an autonomy-only
+`update_item`, or an explicit `/archon item` command. Queued items that never
+ran can change all knobs; a running item can change only merge/tools, and tools
+affect future spawns. A succeeded item accepts only merge changes. `merge=auto`
+requires an open PR at the delivered, reviewed commit and expected base; the
+GitHub call uses `--match-head-commit`. `merge=manual` withdraws an auto-merge
+still owed locally; it does **not** disable auto-merge already enabled on GitHub.
+Stage-changing autonomy cannot be combined with `model_plan` in one update.
 
 Prompt budgets for this feature: core orchestrator prompt ≤ 12 KiB, each
 guide topic ≤ 4 KiB, the MCP tool list ≤ 28 KiB, a new tool ≤ 1.5 KiB.

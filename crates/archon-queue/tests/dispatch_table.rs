@@ -33,6 +33,8 @@ impl Fx {
                 ..Caps::default()
             },
             repo_caps: BTreeMap::new(),
+            repo_budgets_enabled: BTreeMap::new(),
+            repo_max_per_repo: BTreeMap::new(),
             pause: PauseState::default(),
             low_disk: false,
             running_total: 0,
@@ -886,4 +888,60 @@ fn waiting_capacity_accounts_for_gang_fairness_and_never_fitting_teams() {
     );
     s.queued.clear();
     assert!(archon_queue::dispatch::waiting_reasons(&s).is_empty());
+}
+
+#[test]
+fn repository_budget_switch_controls_starts_and_pending_spawns() {
+    let fx = Fx::new();
+    let mut snapshot = fx.base();
+    snapshot.caps.budget_usd_total = 1.0;
+    snapshot.spend_total_usd = 2.0;
+    snapshot.queued = vec![
+        fx.item(0, 0, Priority::Normal, 0),
+        fx.item(1, 1, Priority::Normal, 1),
+    ];
+    snapshot.pending_spawns = vec![
+        fx.pending(2, 0, 0, Priority::Normal, 0, 1),
+        fx.pending(3, 1, 1, Priority::Normal, 1, 1),
+    ];
+    snapshot
+        .repo_budgets_enabled
+        .insert(fx.repos[0].clone(), false);
+    let plan = plan_dispatch(&snapshot);
+    assert_eq!(plan.start, vec![fx.items[0].clone()]);
+    assert_eq!(plan.spawn, vec![(fx.runs[2].clone(), 1)]);
+    let reasons = archon_queue::dispatch::waiting_reasons(&snapshot);
+    assert_eq!(
+        reasons[&fx.items[1]],
+        archon_core::protocol::WaitingReasonCode::TotalBudget
+    );
+    snapshot.caps.budgets_enabled = false;
+    snapshot
+        .repo_budgets_enabled
+        .insert(fx.repos[1].clone(), true);
+    assert_eq!(plan_dispatch(&snapshot).start, vec![fx.items[0].clone()]);
+    snapshot.pause.global = true;
+    assert!(plan_dispatch(&snapshot).start.is_empty());
+    assert!(plan_dispatch(&snapshot).spawn.is_empty());
+}
+
+#[test]
+fn operator_repo_cap_can_raise_the_default_but_the_file_can_still_lower_it() {
+    let fx = Fx::new();
+    let mut snapshot = fx.base();
+    snapshot.caps.max_per_repo = 1;
+    snapshot.running_by_repo.insert(fx.repos[0].clone(), 1);
+    snapshot.queued = vec![fx.item(0, 0, Priority::Normal, 0)];
+    assert!(plan_dispatch(&snapshot).start.is_empty());
+    snapshot.repo_max_per_repo.insert(fx.repos[0].clone(), 2);
+    assert_eq!(plan_dispatch(&snapshot).start, vec![fx.items[0].clone()]);
+    snapshot.repo_caps.insert(fx.repos[0].clone(), 1);
+    assert!(plan_dispatch(&snapshot).start.is_empty());
+    snapshot.repo_caps.clear();
+    snapshot.running_by_repo.clear();
+    snapshot.queued[0].first_stage_agents = 2;
+    snapshot.queued[0].gang = true;
+    let plan = plan_dispatch(&snapshot);
+    assert_eq!(plan.start, vec![fx.items[0].clone()]);
+    assert!(plan.never_fits.is_empty());
 }

@@ -644,7 +644,7 @@ progress too; also `/verbose`), `/pause` and `/resume` (optionally `hard`,
 | `archon queue wait <id>… [--timeout 30m]` | wait for every item to become terminal, bounded to 30m by default; exit 0 all succeeded, 3 failed/cancelled, 4 timeout, 5 failed/cancelled dependency |
 | `archon queue list` | one line per item: state, current stage, age, cost, title, PR URL and derived waiting reason with one next action |
 | `archon queue show <id> [--full]` | an item's runs and each stage's attempt, slot, state, verdict, model, agent, cost and summary (first lines; `--full` for all), with the PR URL, recorded plan reasons and full waiting explanation when present. A stage that delegated shows how its cost splits (its own agent, then each delegated agent with model, effort and cost), and a stage holding a declared review shows the review on record. Steers made to the item are listed with who made them |
-| `archon queue cancel <id>` / `archon queue caps` | cancel an item, or show and change runtime caps |
+| `archon queue cancel <id>` / `archon queue caps` | cancel an item, or show and change saved operator caps |
 | `archon queue retry <id> [--fresh] [--append "…"]` | queue a finished item again in its worktree and branch (a succeeded one delivers into its pull request again, and the retry counts against the run that passed); `--fresh` starts over from the base branch on a new branch and sets the old worktree aside, which worktree gc deletes, uncommitted work included, `worktrees.gc_after` (7 days) after the item's last run; `--append` adds guidance to the brief |
 | `archon queue refresh <id>` | merge a finished item's base branch, fetched from `origin`, into its branch: a new item resolves any conflicts, runs the checks, is reviewed from the new merge base and updates the same pull request (never a rebase or a second pull request) |
 | `archon queue steer <id> [--note "…"] [--stage <stage>] [--model <provider/model>] [--effort <effort>] [--budget-usd <usd>] [--extend <minutes>] [--abort [--then retry\|skip] [--goto <stage>]] [--remove <stage>] [--insert <stage> [--from <pipeline>] [--after <stage>]] [--switch <pipeline>]` | change an item without cancelling it; see [steering an item](#steering-an-item) |
@@ -728,7 +728,7 @@ means the planner would admit it on the next pass; status separately reports
 Aether disconnection, which stops dispatch.
 
 `archon queue caps --budget-daily <usd>` and `--budget-total <usd>` raise
-runtime budgets until archond restarts (0 removes the limit);
+saved budgets until the global settings overlay is reset (0 removes the limit);
 `--budgets off` stops enforcing every dollar budget until then (set
 `budgets_enabled = false` under `[limits]` to make it permanent), and
 `--budgets on` enforces them again. Spend is recorded either way. Daily budgets

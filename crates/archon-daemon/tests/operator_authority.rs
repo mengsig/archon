@@ -455,3 +455,222 @@ async fn interrupted_confirmation_can_be_closed_but_never_replayed() {
     );
     assert!(!granted(&h).await);
 }
+
+async fn setting(h: &Harness, repo: Option<&str>) -> archon_core::settings::SettingsView {
+    match h
+        .cli(Request::Settings {
+            repo: repo.map(|r| RepoRef(r.into())),
+        })
+        .await
+        .unwrap()
+    {
+        Reply::Settings(view) => *view,
+        other => panic!("expected settings, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn overlay_commands_preserve_fields_reset_and_undo() {
+    let h = harness(AetherMode::Dedicated).await;
+    deliver(&h, 1, user("/archon set budget_usd_per_item=12")).await;
+    deliver(&h, 2, user("/archon set budgets_enabled=false")).await;
+    let global = setting(&h, None).await;
+    assert_eq!(global.scoped.budget_usd_per_item, Some(12.0));
+    assert!(!global.effective.caps.budgets_enabled);
+    deliver(
+        &h,
+        3,
+        user(&format!(
+            "/archon set --repo {REPO_NAME} budgets_enabled=true default.tools=yolo max.tools=yolo"
+        )),
+    )
+    .await;
+    assert!(
+        setting(&h, Some(REPO_NAME))
+            .await
+            .effective
+            .caps
+            .budgets_enabled
+    );
+    deliver(&h, 4, user(&format!("/archon reset --repo {REPO_NAME}"))).await;
+    assert!(
+        !setting(&h, Some(REPO_NAME))
+            .await
+            .effective
+            .caps
+            .budgets_enabled
+    );
+    let change = h.ctx.store.lock().await.feed_after(0, 100).unwrap().into_iter().rev().find(|i| matches!(&i.entry,
+        archon_core::notify::FeedEntry::Authority { result, .. } if result.starts_with("applied; undo"))).unwrap().seq;
+    deliver(&h, 5, user(&format!("/archon undo {change}"))).await;
+    assert!(
+        setting(&h, Some(REPO_NAME))
+            .await
+            .effective
+            .caps
+            .budgets_enabled
+    );
+    deliver(&h, 6, user("/archon set full_auto=true")).await;
+    assert_ne!(setting(&h, None).await.scoped.full_auto, Some(true));
+}
+
+#[tokio::test]
+async fn resetting_a_tighter_overlay_needs_confirmation() {
+    let h = harness(AetherMode::Dedicated).await;
+    deliver(&h, 1, user("/archon set budget_usd_per_item=0.01")).await;
+    deliver(&h, 2, user("reset global settings")).await;
+    let action = Request::ResetSettings { repo: None };
+    let reply = h
+        .orchestrator(cited(action, 2, "reset global settings"))
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Question(_)));
+    assert_eq!(
+        setting(&h, None).await.scoped.budget_usd_per_item,
+        Some(0.01)
+    );
+    deliver(&h, 3, user("yes")).await;
+    assert!(setting(&h, None).await.scoped.is_empty());
+}
+
+#[tokio::test]
+async fn item_override_needs_verified_consent_and_preserves_the_repository_ceiling() {
+    use archon_core::autonomy::{AutonomyPatch, MergeMode};
+    use archon_core::protocol::{EnqueueRequest, ItemPatch};
+    let h = harness(AetherMode::Dedicated).await;
+    let item = match h
+        .cli(Request::Enqueue(EnqueueRequest {
+            repo: Some(RepoRef(REPO_NAME.into())),
+            pipeline: Some("direct".into()),
+            title: "change".into(),
+            brief: "brief".into(),
+            priority: Default::default(),
+            depends_on: vec![],
+            tags: vec![],
+            model_plan: Default::default(),
+            model_reasons: None,
+            budget_usd: None,
+            idempotency_key: None,
+            autonomy: Default::default(),
+            origin: None,
+        }))
+        .await
+        .unwrap()
+    {
+        Reply::Item(item) => item,
+        other => panic!("{other:?}"),
+    };
+    let action = Request::UpdateItem {
+        item: item.id.clone(),
+        patch: ItemPatch {
+            autonomy: Some(AutonomyPatch::parse_list("merge=auto").unwrap()),
+            ..Default::default()
+        },
+    };
+    assert!(h.orchestrator(action.clone()).await.is_err());
+    deliver(&h, 1, user("let this item merge automatically")).await;
+    let reply = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        h.orchestrator(cited(action, 1, "this item merge automatically")),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(matches!(reply, Reply::Question(_)));
+    assert_eq!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .item(&item.id)
+            .unwrap()
+            .autonomy
+            .merge,
+        MergeMode::Manual
+    );
+    deliver(&h, 2, user("yes")).await;
+    assert_eq!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .item(&item.id)
+            .unwrap()
+            .autonomy
+            .merge,
+        MergeMode::Auto
+    );
+    assert_eq!(
+        setting(&h, Some(REPO_NAME))
+            .await
+            .effective
+            .autonomy
+            .ceiling
+            .merge,
+        MergeMode::Manual
+    );
+}
+
+#[tokio::test]
+async fn a_lowering_repo_file_cannot_hide_a_registry_ceiling_raise() {
+    let h = harness(AetherMode::Dedicated).await;
+    std::fs::write(
+        h.repo.join(".archon/config.toml"),
+        "[autonomy]\nmerge = \"manual\"\n",
+    )
+    .unwrap();
+    deliver(&h, 1, user("raise the merge ceiling")).await;
+    let action = Request::RepoUpdate {
+        repo: RepoRef(REPO_NAME.into()),
+        patch: RepoPatch {
+            autonomy_max: Some(
+                archon_core::autonomy::AutonomyPatch::parse_list("merge=auto").unwrap(),
+            ),
+            ..Default::default()
+        },
+    };
+    let result = h
+        .orchestrator(cited(action, 1, "raise the merge ceiling"))
+        .await
+        .unwrap();
+    assert!(matches!(result, Reply::Question(_)));
+}
+
+#[tokio::test]
+async fn github_operator_can_confirm_a_repository_budget_override() {
+    use archon_aether::{AetherClient, fake::FakeAether};
+    let h = harness(AetherMode::Shared).await;
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeAether::start(&dir.path().join("settings.sock"))
+        .await
+        .unwrap();
+    h.ctx
+        .aether
+        .replace(Some(std::sync::Arc::new(
+            AetherClient::connect(&fake.endpoint()).await.unwrap(),
+        )))
+        .unwrap();
+    deliver(&h, 1, github("turn off budgets for demo", 9)).await;
+    let action = Request::SetSettings {
+        repo: Some(RepoRef(REPO_NAME.into())),
+        settings: archon_core::settings::OperatorSettings {
+            budgets_enabled: Some(false),
+            ..Default::default()
+        },
+    };
+    assert!(matches!(
+        h.orchestrator(cited(action, 1, "turn off budgets for demo"))
+            .await
+            .unwrap(),
+        Reply::Question(_)
+    ));
+    deliver(&h, 2, github("yes", 9)).await;
+    assert!(
+        !setting(&h, Some(REPO_NAME))
+            .await
+            .effective
+            .caps
+            .budgets_enabled
+    );
+    assert!(setting(&h, None).await.effective.caps.budgets_enabled);
+}

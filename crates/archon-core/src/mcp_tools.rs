@@ -74,6 +74,7 @@ pub const TOOLS: &[ToolName] = &[
     tool("request_merge", ToolClass::Mutation),
     tool("request_authority", ToolClass::Mutation),
     tool("guide", ToolClass::ReadOnly),
+    tool("settings", ToolClass::ReadOnly),
 ];
 
 /// The tools a stage agent keeps whatever its item's `tools` mode: its

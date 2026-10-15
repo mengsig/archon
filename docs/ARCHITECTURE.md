@@ -4330,7 +4330,7 @@ the first record) and prunes after seven days.
 
 **Entry points.** (1) Whole-message commands, parsed by
 `authority::commands`, `chat_answer` and `chat_merge`, applied by
-`authority::explicit`. (2) `request_authority {utterance, quote, reason,
+`authority::command`. (2) `request_authority {utterance, quote, reason,
 action}`, MCP, current orchestrator only, via `authority::request`. A
 citation must be a recorded message, at most 60 minutes old, containing the
 quote; in shared mode only a GitHub one is accepted. `answer` actions are
@@ -4362,7 +4362,7 @@ confirmation waits, from the same channel (same GitHub thread and login).
 {evidence, action, result, before, after}`: requested, awaiting operator,
 applied, declined or refused. `history::record` writes, in the same
 transaction as the applied entry, `authority_change:<feed seq>` holding a
-concrete inverse (`RepoUpdate` or `SetCaps` built from the *before* snapshot)
+concrete inverse (settings, registry or item patch built from the *before* snapshot)
 and the *after* snapshot. `/archon undo N` runs the inverse only if the
 current snapshot still equals that *after*, through the same gates, so
 restoring a looser value asks for a cited request. Explicit `/archon undo`
@@ -4381,9 +4381,17 @@ and read only by key. The feed is the durable, user-visible record.
 topic (`guide`: `authority`, `github`) ≤ 4 KiB, enforced by a test; MCP tool
 list ≤ 28 KiB; a new tool ≤ 1.5 KiB.
 
-**Not yet:** a full-auto mode, restarting the orchestrator from the TUI, a
-persistent operator settings overlay, item steering autonomy, and automatic
-merge of a shipped reviewed head.
+**Settings and items.** `operator_settings/global` and `operator_settings/repo/<id>`
+store validated overlays, mirrored in memory after persistence. Config < global
+layer < registry + repo layer < lowering repo file. `settings` shows sources;
+`SetCaps` persists in the global layer. `SetSettings` and `ResetSettings` use
+previews for confirmation and guarded inverses for undo. Item autonomy is mutable
+within the ceiling; verified authority may waive only that ceiling, preserving
+pipeline/state invariants and the shipped-head guard. See
+[operator-authority.md](operator-authority.md) for supported fields and limits.
+
+**Not yet:** full-auto, TUI orchestrator restart, per-repo daily/total budgets
+and concurrency limits. Unsupported settings are refused.
 
 ## 19. Learning
 

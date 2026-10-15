@@ -101,6 +101,8 @@ fn random_snapshot(rng: &mut Rng) -> DispatchSnapshot {
     let mut s = DispatchSnapshot {
         caps,
         repo_caps,
+        repo_budgets_enabled: BTreeMap::new(),
+        repo_max_per_repo: BTreeMap::new(),
         pause: PauseState {
             global: rng.below(10) == 0,
             repos: repos

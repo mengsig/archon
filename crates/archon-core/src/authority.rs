@@ -9,6 +9,7 @@ use crate::{Timestamp, aether_ids::AetherAgentId, github::GithubRepo};
 pub enum OperatorChannel {
     AetherChat,
     ArchonChat,
+    Cli,
     Github {
         repository: GithubRepo,
         number: u64,

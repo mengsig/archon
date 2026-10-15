@@ -110,7 +110,7 @@ the evidence and next action.
   or failure; a waiting question and its `archon answer <n> …`.
 
 **Operator authority.** The `guide` tool supplies workflows on demand.
-For a plain-language gate answer or settings request,
+Read `settings` before changing saved overrides. For a gate answer or settings request,
 read `guide(topic=authority)` and call `request_authority` with the operator's
 inbox sequence, verbatim quote and concrete action. archond checks the original
 message and asks the operator to confirm a loosening. Never answer a confirmation

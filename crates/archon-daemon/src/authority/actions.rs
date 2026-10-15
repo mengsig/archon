@@ -30,27 +30,46 @@ pub(super) fn check_channel(
         ));
     }
     match action {
-        Request::RepoUpdate { .. } | Request::RepoRemove { .. } | Request::RepoAdd(_)
+        Request::SetSettings { .. } | Request::ResetSettings { .. } | Request::RepoUpdate { .. } | Request::RepoRemove { .. } | Request::RepoAdd(_)
         | Request::SetCaps { .. } | Request::Pause(_) | Request::Resume(_)
         | Request::ConfigureGithubWatcher { .. }
         | Request::SetDirective { .. } | Request::ClearDirective { .. }
         | Request::UpdateLesson { .. } | Request::LearningCorrect(_)
         | Request::LearningUndo { .. } | Request::LearningRestoreMemory { .. }
         | Request::LearningRetryMemory { .. } => Ok(()),
+        Request::UpdateItem { patch, .. } if patch.autonomy.is_some() && {
+            let mut only = patch.clone(); only.autonomy = None;
+            only == Default::default()
+        } => Ok(()),
         _ => Err(ArchonError::Forbidden("this action is not available through operator authority; host lifecycle, destructive GC and nested requests stay excluded".into())),
     }
 }
 
 pub(super) async fn snapshot(ctx: &DaemonContext, action: &Request) -> Result<Value, ArchonError> {
     match action {
+        Request::SetSettings { repo, .. } | Request::ResetSettings { repo } => {
+            super::settings::snapshot(ctx, repo).await
+        }
+        Request::UpdateItem { item, .. } => {
+            let item = ctx.store.lock().await.item(item)?;
+            let policy = RepoEnv::load(ctx, item.repo.as_ref()).await?.autonomy(ctx);
+            Ok(
+                json!({"item":item.id,"autonomy":item.autonomy,"state":item.state,"ceiling":policy.ceiling}),
+            )
+        }
         Request::RepoUpdate { repo, .. } | Request::RepoRemove { repo } => {
             match ctx.store.lock().await.repo(repo) {
-                Ok(repo) => Ok(serde_json::to_value(repo)?),
+                Ok(repo) => {
+                    let policy = RepoEnv::new(Some(repo.clone()))?.autonomy(ctx);
+                    let mut value = serde_json::to_value(repo)?;
+                    value["effective_autonomy"] = serde_json::to_value(policy)?;
+                    Ok(value)
+                }
                 Err(ArchonError::NotFound(_)) => Ok(Value::Null),
                 Err(error) => Err(error),
             }
         }
-        Request::SetCaps { .. } => Ok(serde_json::to_value(crate::resolve::caps(ctx).await)?),
+        Request::SetCaps { .. } => super::settings::snapshot(ctx, &None).await,
         Request::Pause(_) | Request::Resume(_) => {
             Ok(serde_json::to_value(ctx.store.lock().await.pause_state()?)?)
         }
@@ -73,24 +92,24 @@ pub(super) async fn needs_confirmation(
 ) -> Result<bool, ArchonError> {
     match action {
         Request::Pause(_) | Request::SetDirective { .. } => Ok(false),
+        Request::SetSettings { repo, settings } => {
+            super::settings::loosens(ctx, repo, settings, before).await
+        }
+        Request::ResetSettings { repo } => {
+            super::settings::loosens(ctx, repo, &Default::default(), before).await
+        }
+        Request::UpdateItem { item, patch } => {
+            let item = ctx.store.lock().await.item(item)?;
+            let env = RepoEnv::load(ctx, item.repo.as_ref()).await?;
+            let (base, _) = crate::knobs::item_specs(&env, &item)?;
+            let policy = env.autonomy(ctx);
+            let autonomy = patch.autonomy.as_ref().expect("allowlisted autonomy patch");
+            let after = crate::knobs::revise(&base, item.autonomy, autonomy, &policy)?;
+            Ok(crate::knobs::check_raised(&policy, &env, &base, item.autonomy, after).is_err())
+        }
         Request::SetCaps { caps } => {
-            let old: Caps = serde_json::from_value(before.clone())?;
-            Ok((old.budgets_enabled && !caps.budgets_enabled)
-                || higher(old.budget_usd_total, caps.budget_usd_total)
-                || higher(old.budget_usd_daily, caps.budget_usd_daily)
-                || higher(old.budget_usd_per_item, caps.budget_usd_per_item)
-                || higher(
-                    old.max_parallel_agents.into(),
-                    caps.max_parallel_agents.into(),
-                )
-                || higher(old.max_per_repo.into(), caps.max_per_repo.into())
-                || higher(old.max_active_runs.into(), caps.max_active_runs.into())
-                || old.max_per_pipeline.iter().any(|(key, old)| {
-                    higher(
-                        (*old).into(),
-                        (*caps.max_per_pipeline.get(key).unwrap_or(&0)).into(),
-                    )
-                }))
+            let old: archon_core::settings::SettingsView = serde_json::from_value(before.clone())?;
+            Ok(caps_loosen(&old.effective.caps, caps))
         }
         Request::RepoUpdate { patch, .. } => {
             let repo: Repo = serde_json::from_value(before.clone())?;
@@ -103,10 +122,19 @@ pub(super) async fn needs_confirmation(
             }
             if let Some(max) = &patch.autonomy_max {
                 let old = RepoEnv::new(Some(repo.clone()))?.autonomy(ctx);
+                let global = crate::settings::mirror(ctx).global.autonomy_max.over(
+                    ctx.config
+                        .autonomy
+                        .max
+                        .over(archon_core::autonomy::Autonomy::default_ceiling()),
+                );
+                let old_raw = repo.autonomy_max.over(global);
+                let new_raw = max.over(global);
                 let mut after = repo;
                 after.autonomy_max = *max;
                 let new = RepoEnv::new(Some(after))?.autonomy(ctx);
-                return Ok(!new.ceiling.excess(old.ceiling).is_empty());
+                return Ok(!new.ceiling.excess(old.ceiling).is_empty()
+                    || !new_raw.excess(old_raw).is_empty());
             }
             Ok(false)
         }
@@ -116,11 +144,38 @@ pub(super) async fn needs_confirmation(
     }
 }
 
+pub(super) fn caps_loosen(old: &Caps, new: &Caps) -> bool {
+    (old.budgets_enabled && !new.budgets_enabled)
+        || higher(old.budget_usd_total, new.budget_usd_total)
+        || higher(old.budget_usd_daily, new.budget_usd_daily)
+        || higher(old.budget_usd_per_item, new.budget_usd_per_item)
+        || higher(
+            old.max_parallel_agents.into(),
+            new.max_parallel_agents.into(),
+        )
+        || higher(old.max_per_repo.into(), new.max_per_repo.into())
+        || higher(old.max_active_runs.into(), new.max_active_runs.into())
+        || old.max_per_pipeline.iter().any(|(key, old)| {
+            higher(
+                (*old).into(),
+                (*new.max_per_pipeline.get(key).unwrap_or(&0)).into(),
+            )
+        })
+}
+
 fn higher(old: f64, new: f64) -> bool {
     old != 0.0 && (new == 0.0 || new > old)
 }
 
 pub(super) async fn apply(ctx: &DaemonContext, action: Request) -> Result<Reply, ArchonError> {
+    if let Request::UpdateItem { item, patch } = action {
+        return handlers::update_item_autonomy_above_ceiling(
+            ctx,
+            &item,
+            patch.autonomy.expect("allowlisted autonomy patch"),
+        )
+        .await;
+    }
     // Only callers that checked the finite allowlist and verified authority
     // reach this internal router. No socket identity is fabricated.
     Box::pin(handlers::route(ctx, ClientKind::ArchonCli, action)).await

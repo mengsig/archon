@@ -24,23 +24,23 @@ Actions use Archon's command JSON. Examples:
   work still prevents removal.
 - `set_caps` takes the complete `caps` object from `queue_status`; zero limits mean
   unbounded. `configure_github_watcher` takes `change` and is operator-chat only.
-- Existing `repo_add`, `set_directive`, `clear_directive`, `update_lesson`,
-  `learning_correct`, `learning_undo`, `learning_restore_memory` and
-  `learning_retry_memory` commands use their existing daemon argument shapes.
+
+Read `guide(topic=settings)` for saved overlays, reset and item-autonomy changes.
 
 Tightening changes apply directly. Loosening or unordered changes return an exact
 confirmation question. Restate it and wait for the operator; never claim success
 before the daemon reports it. A bare yes/no works only for exactly one waiting
-authority confirmation, as the first operator message since that question, in the
+confirmation, as the first operator message since that question, in the
 same channel (same GitHub thread and login). `/answer N yes` is explicit.
 The daemon refuses an approval if the relevant state changed since it asked.
 
 Whole-message commands are applied by archond: `/answer N …`, `/a N …`,
 `/approve [N]`, `/reject [N] [reason]`, `/merge ITEM [--ignore-checks]`,
-`/archon set --repo NAME max.merge=auto grant_merge=true`,
+`/archon set --repo NAME max.merge=auto`, `/archon set --repo NAME grant_merge=true`,
 `/archon pause --hard`, `/archon resume --hard`, `/archon repo remove NAME`.
 For less common actions use `/archon apply {"cmd":…, …}`; watcher changes also
-accept `/archon watcher <change JSON>`. On GitHub put `@archon` first.
+accept `/archon watcher <change JSON>`. `/archon reset [--repo NAME]` restores
+inheritance; `/archon item qi_… merge=auto` changes an item. On GitHub put `@archon` first.
 No command grants authority to an unverified sender. Shared Aether user messages
 are not accepted. Shutdown, setup, update and destructive GC remain host-only.
 

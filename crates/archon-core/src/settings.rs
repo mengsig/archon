@@ -39,7 +39,7 @@ pub struct OperatorSettings {
     /// Global only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_parallel_agents: Option<u32>,
-    /// Global only; a repository lowers it in its `.archon/config.toml`.
+    /// Repository agent limit; the repository file may still lower it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_per_repo: Option<u32>,
     /// Global only.
@@ -111,7 +111,6 @@ impl OperatorSettings {
             ("budget_usd_daily", self.budget_usd_daily.is_some()),
             ("budget_usd_total", self.budget_usd_total.is_some()),
             ("max_parallel_agents", self.max_parallel_agents.is_some()),
-            ("max_per_repo", self.max_per_repo.is_some()),
             ("max_active_runs", self.max_active_runs.is_some()),
             ("max_per_pipeline", self.max_per_pipeline.is_some()),
         ];
@@ -257,7 +256,15 @@ impl Layers<'_> {
     pub fn caps(&self) -> Caps {
         let global = self.global_caps();
         match &self.repo {
-            Some(repo) => repo.overlay.caps_over(global),
+            Some(repo) => {
+                let mut caps = repo.overlay.caps_over(global);
+                if let Some(file) = repo.file.limits.max_per_repo.filter(|n| *n > 0)
+                    && (caps.max_per_repo == 0 || file < caps.max_per_repo)
+                {
+                    caps.max_per_repo = file;
+                }
+                caps
+            }
             None => global,
         }
     }
@@ -318,6 +325,17 @@ impl Layers<'_> {
                 SettingSource::Config
             };
             sources.insert(format!("caps.{name}"), source);
+        }
+        if let Some(repo) = &self.repo {
+            let cap = repo.overlay.caps_over(self.global_caps()).max_per_repo;
+            if repo
+                .file
+                .limits
+                .max_per_repo
+                .is_some_and(|file| file > 0 && (cap == 0 || file < cap))
+            {
+                sources.insert("caps.max_per_repo".into(), SettingSource::RepoFile);
+            }
         }
     }
 
@@ -811,8 +829,10 @@ mod tests {
         };
         let mut overlay = OperatorSettings::default();
         overlay.set_caps(&caps);
-        let mut other_base = Caps::default();
-        other_base.max_per_repo = 7;
+        let other_base = Caps {
+            max_per_repo: 7,
+            ..Caps::default()
+        };
         assert_eq!(overlay.caps_over(other_base), caps);
     }
 }

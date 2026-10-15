@@ -98,6 +98,9 @@ pub(super) fn to_request(tool: &str, arguments: Value) -> Result<Request, ToolEr
         "update_initiative" => initiatives::update_initiative(&mut args)?,
         "steer_item" => steer::steer_item(&mut args)?,
         "record_lesson" => lessons::record_lesson(&mut args)?,
+        "settings" => Request::Settings {
+            repo: args.optional("repo")?,
+        },
         "guide" => Request::Guide {
             topic: args.required_text("topic")?,
         },

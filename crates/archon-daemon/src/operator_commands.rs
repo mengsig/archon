@@ -102,11 +102,7 @@ async fn execute(
             .await
             .map(drop);
     }
-    if let Some(action) = crate::authority::commands::parse(ctx, text).await {
-        let result = match action {
-            Ok(action) => crate::authority::explicit(ctx, &evidence, action).await,
-            Err(error) => Err(error),
-        };
+    if let Some(result) = crate::authority::command(ctx, &evidence, text).await {
         let (applied, text) = match result {
             Ok(reply) => (true, serde_json::to_string(&reply)?),
             Err(error) if error.is_store() => return Err(error),
@@ -150,6 +146,7 @@ async fn execute(
     let authority = match channel {
         OperatorChannel::AetherChat => MergeAuthority::AetherChat,
         OperatorChannel::ArchonChat => MergeAuthority::ArchonChat,
+        OperatorChannel::Cli => MergeAuthority::Cli,
         OperatorChannel::Github {
             repository,
             number,

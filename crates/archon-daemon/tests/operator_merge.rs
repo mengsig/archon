@@ -448,13 +448,17 @@ async fn a_grant_merges_a_reviewed_green_request_directly() {
 
 /// An `inbox.delivered` of the operator's chat `text` to the orchestrator.
 fn operator_says(seq: u64, text: &str) -> AetherEvent {
+    message_from(seq, text, json!({"actor": "user"}))
+}
+
+fn message_from(seq: u64, text: &str, actor: Value) -> AetherEvent {
     let event = json!({
         "id": format!("evt_{seq}"), "seq": seq, "at": "2026-10-12T10:00:00Z",
         "actor": {"type": "system"}, "agent_id": ORCHESTRATOR,
         "kind": {"type": "inbox.delivered", "item": {
             "id": format!("inb_{seq}"), "agent_id": ORCHESTRATOR, "seq": seq,
             "delivered_at": "2026-10-12T10:00:00Z", "kind": {
-                "kind": "message", "message_id": "msg_1", "from": {"actor": "user"},
+                "kind": "message", "message_id": "msg_1", "from": actor,
                 "content": [{"type": "text", "text": text}]}}}
     });
     parse_event(event).expect("a valid event")
@@ -769,13 +773,10 @@ async fn non_user_aether_messages_cannot_merge() {
         .kv_set(keys::ORCHESTRATOR_AGENT, ORCHESTRATOR)
         .unwrap();
     for (seq, actor) in [
-        (1, json!({"actor":"agent", "agent_id":"agt_other"})),
+        (1, json!({"actor":"agent", "id":"agt_other"})),
         (2, json!({"actor":"system"})),
     ] {
-        let mut raw =
-            serde_json::to_value(operator_says(seq, &format!("/merge {}", item.id))).unwrap();
-        raw["kind"]["item"]["kind"]["from"] = actor;
-        let event = parse_event(raw).unwrap();
+        let event = message_from(seq, &format!("/merge {}", item.id), actor);
         pump::handle_orchestrator_event(&h.ctx, &event)
             .await
             .unwrap();

@@ -121,6 +121,29 @@ evidence without a daemon or model call:
 target/debug/archon-bench smoke --check-results bench/results-smoke
 ```
 
+## Compare vendor baselines
+
+Always compare a run with a baseline measured on the same model and effort.
+For the committed Claude baseline, use the private environment above:
+
+```sh
+"$sandbox/sx" archon-bench smoke --model claude-code/claude-haiku-5-5 \
+  --effort medium --baseline bench/results-smoke/baseline.json \
+  --archon-bin "$sandbox/bin/archon" --aether-socket "$AETHER_SOCKET"
+```
+
+For a new Codex measurement, bootstrap separately without overwriting the
+Claude baseline:
+
+```sh
+"$sandbox/sx" archon-bench smoke --bootstrap --model codex/gpt-6-luna \
+  --effort medium --archon-bin "$sandbox/bin/archon" \
+  --aether-socket "$AETHER_SOCKET"
+```
+
+Promote only a valid candidate after reviewing its complete evidence. A failed
+bootstrap is diagnostic evidence and cannot establish a vendor baseline.
+
 ## What the adversarial fixtures establish
 
 All 11 graders reject untouched fixtures and accept their references

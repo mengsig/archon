@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Drained upgrades and restarts (`archon daemon upgrade`, `daemon restart`
+  and `/upgrade`), running/installed/latest versions in status, and explicit
+  `status --check-updates` release checks (#37, #43). Daemon protocol 11.
+- `repo add --github` and `/watch` register GitHub watching for a repository
+  through Archon's dedicated Aether (#37, #43).
+
+### Fixes
+
+- Upgrades drain before replacing binaries, keeping the old CLI and agent
+  tools compatible with archond while running stages finish. Dispatch stays
+  held during installation; an expired drain installs nothing unless requeue
+  was requested.
+- Update checks probe both programs' installed and latest versions concurrently,
+  with a 15-second limit per probe within the client's 60-second timeout.
+- The multi-repository currency benchmark runs its ledger through Cargo,
+  honoring worktree configuration and `CARGO_TARGET_DIR`.
+
 ## 1.2.3
 
 Released 2026-10-15.

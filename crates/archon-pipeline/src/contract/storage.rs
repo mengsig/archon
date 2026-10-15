@@ -15,12 +15,10 @@ pub fn build_cache_rules(cargo_target: Option<&Path>) -> String {
     format!(
         "\n## Build cache\n\n\
          - Build into this repository's shared cache, never a target directory of your \
-         own and never `/tmp`: `CARGO_TARGET_DIR={dir}`. Archon points cargo at it for \
-         builds inside the worktree; `export` it yourself for builds anywhere else. \
-         Concurrent cargo builds on one target directory are safe: cargo locks it.\n\
-         - Archon deletes the cache once no run of the repository used it for a while, \
-         and the worktree's own build output when the run is long finished: publish what \
-         you need later (see Artifacts) instead of leaving it there.\n",
+         own or `/tmp`: `CARGO_TARGET_DIR={dir}`. Archon sets it for cargo inside the \
+         worktree; `export` it elsewhere. Concurrent builds are safe: cargo locks it.\n\
+         - Archon deletes the cache once idle, and the worktree's build output after the \
+         run is long finished: publish what you need later (see Artifacts).\n",
         dir = dir.display()
     )
 }
@@ -30,16 +28,14 @@ pub fn artifact_rules(limits: &ArtifactsConfig) -> String {
     format!(
         "\n## Artifacts\n\n\
          - Files that must outlive your worktree (evidence, logs, benchmark results, \
-         gitignored output a later item needs) go through \
-         `mcp__archon__publish_artifact` with a `path` inside your workspace: a file or \
-         a directory of regular files, stored under `name` (default: its last component). \
-         It is the one Archon mutation tool you may use besides `message_orchestrator`. \
-         Archon stores it by item id, at most {file} MB a file and {item} MB an item, \
-         and keeps it {keep} after the item settles.\n\
+         gitignored output a later item needs): `mcp__archon__publish_artifact` with a \
+         `path` in your workspace (a file or a directory of regular files), stored under \
+         `name` (default: its last component). Besides `message_orchestrator`, the only \
+         Archon mutation tool you may use. Limits: {file} MB a file, {item} MB an item; \
+         kept {keep} after the item settles.\n\
          - `mcp__archon__list_artifacts` and `mcp__archon__read_artifact` read any \
-         item's artifacts by its id after its worktree is gone; a dependency's \
-         directory is named under Dependencies. Publish before you finish: nothing \
-         can be published after your stage settles.\n",
+         item's artifacts by id once its worktree is gone; a dependency's directory is \
+         named under Dependencies. Publish before you finish.\n",
         file = limits.max_file_mb,
         item = limits.max_item_mb,
         keep = limits.keep_after,
@@ -58,17 +54,14 @@ mod tests {
             text.contains("CARGO_TARGET_DIR=/d/cache/r/cargo-target"),
             "{text}"
         );
-        assert!(text.contains("never `/tmp`"), "{text}");
+        assert!(text.contains("or `/tmp`"), "{text}");
     }
 
     #[test]
     fn the_artifact_section_states_the_limits() {
         let text = artifact_rules(&ArtifactsConfig::default());
         assert!(text.contains("mcp__archon__publish_artifact"), "{text}");
-        assert!(
-            text.contains("at most 256 MB a file and 1024 MB an item"),
-            "{text}"
-        );
-        assert!(text.contains("keeps it 30d after"), "{text}");
+        assert!(text.contains("256 MB a file, 1024 MB an item"), "{text}");
+        assert!(text.contains("kept 30d after"), "{text}");
     }
 }

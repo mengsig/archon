@@ -201,8 +201,8 @@ fn contract_header(
          orchestrator (`kind=relay`, their exact text), reports a blocker outside your \
          stage (`kind=escalation`) or sends low-priority `info`. It returns at once: keep \
          working, and never wait for a reply, end your turn or complete the stage because \
-         you sent one. Use no raw `send_message` to the orchestrator and no Archon mutation \
-         tool but `mcp__archon__publish_artifact` (see Artifacts).\n\
+         you sent one. Use no raw `send_message` to the orchestrator and no other Archon \
+         mutation tool but `publish_artifact`.\n\
          {fan_rule}\n\
          ## Finishing\n\n\
          - When done, call Aether's `complete_task` exactly once. Its `summary` is concise \

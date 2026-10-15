@@ -115,5 +115,28 @@ To try the build without a release:
 gh workflow run release.yml -f dry_run=true
 ```
 
+When Actions cannot run, build from an existing tag locally with Rust/rustup,
+`cargo-zigbuild` (`cargo install cargo-zigbuild --locked`), Zig, `file`, GNU
+`sha256sum` and `tar` on PATH. Install all four workflow targets with
+`rustup target add`; Darwin cross builds may also need an Apple SDK via
+`SDKROOT`. Missing compilers, libraries or SDKs fail the build; no substitute
+assets are produced.
+
+```sh
+CARGO_TARGET_DIR="$HOME/.cache/cargo-target/archon-release" \
+  sh scripts/build-release-local.sh v1.2.5 "$HOME/.cache/archon-release-assets/v1.2.5"
+gh release upload v1.2.5 "$HOME/.cache/archon-release-assets/v1.2.5/"*
+```
+
+The output directory must be empty. The script uses a temporary detached
+worktree under `${XDG_CACHE_HOME:-$HOME/.cache}`, removes it on exit, and
+keeps a supplied `CARGO_TARGET_DIR` for reuse. It packages each successful
+target but writes `SHA256SUMS` and `VERSION` only after all four succeed
+and their checksums verify. After a failure, keep any needed diagnostics
+and choose a new empty output directory for a retry. Before uploading,
+run the workflow's isolated installer smoke test against a local server
+and verify the four-line `SHA256SUMS` with `sha256sum --check --strict`.
+Publish or mark the release Latest only once its complete assets are uploaded.
+
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for live tests, the benchmark and the
 commit conventions.

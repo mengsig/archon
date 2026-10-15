@@ -55,10 +55,9 @@ fn measure(paths: &DaemonPaths) -> Vec<StorageUsage> {
         .find(|u| u.kind == "store")
         .expect("store reading");
     for suffix in ["-wal", "-shm"] {
-        add(
-            store,
-            &PathBuf::from(format!("{}{suffix}", paths.store.display())),
-        );
+        let mut sidecar = paths.store.as_os_str().to_os_string();
+        sidecar.push(suffix);
+        add(store, &PathBuf::from(sidecar));
     }
     usage
 }

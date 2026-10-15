@@ -108,7 +108,7 @@ impl Policy {
         config: &WorktreeConfig,
         now: Timestamp,
     ) -> Result<Self, ArchonError> {
-        let sooner = now - config.pressure_after.chrono()?;
+        let sooner = cutoff(now, config.pressure_after, false)?;
         if config.gc_after.secs() != 0 && config.pressure_after.secs() != 0 {
             self.remove_before = self.remove_before.max(sooner);
         }

@@ -295,13 +295,19 @@ impl RotatingLog {
 }
 
 fn private_file(path: &Path) -> anyhow::Result<File> {
-    OpenOptions::new()
+    let file = OpenOptions::new()
         .create(true)
         .append(true)
         .mode(0o600)
-        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as _)
+        .custom_flags((rustix::fs::OFlags::NOFOLLOW | rustix::fs::OFlags::NONBLOCK).bits() as _)
         .open(path)
-        .with_context(|| format!("opening {}", path.display()))
+        .with_context(|| format!("opening {}", path.display()))?;
+    anyhow::ensure!(
+        file.metadata()?.is_file(),
+        "{} is not a regular file",
+        path.display()
+    );
+    Ok(file)
 }
 
 #[cfg(test)]
@@ -477,6 +483,26 @@ mod tests {
         std::os::unix::fs::symlink(&outside, dir.path().join("archond.log.1")).unwrap();
         assert!(Logger::open(&path, &config()).is_err());
         assert_eq!(read(outside), "keep");
+    }
+
+    #[test]
+    fn special_log_files_are_refused_without_waiting_for_a_reader() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("archond.log");
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            &path,
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+            0,
+        )
+        .unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || tx.send(Logger::open(&path, &config()).is_err()).unwrap());
+        assert!(
+            rx.recv_timeout(Duration::from_secs(2))
+                .expect("special files must not block")
+        );
     }
 
     #[test]

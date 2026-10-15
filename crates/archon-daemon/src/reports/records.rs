@@ -142,7 +142,10 @@ pub fn prune(store: &mut Store, root: &Path, cutoff: Timestamp) -> Result<usize,
                 .as_ref()
                 .is_some_and(|source| source != &record.html)
                 && record.html.starts_with(root.join(report.as_str()))
-                && record.html.exists();
+                && record
+                    .html
+                    .try_exists()
+                    .map_err(|error| ArchonError::io("checking archived report", error))?;
             if protected || owned_file || store.open_gate_by_report(&report)?.is_some() {
                 continue;
             }

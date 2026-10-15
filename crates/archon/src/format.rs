@@ -815,6 +815,26 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn status_shows_allocated_bytes_by_storage_kind() {
+        let mut up = status_with(AetherLinkStatus::Disconnected {
+            error: "down".into(),
+            retry_at: None,
+        });
+        up.disk = Some(
+            serde_json::from_value(serde_json::json!({
+                "path": "/data", "free_bytes": 1000000, "min_free_bytes": 0, "held": false,
+                "storage": [{"kind": "reports_lavish", "path": "/data/reports", "bytes": 8192}]
+            }))
+            .unwrap(),
+        );
+        let text = status(&up, &RepoNames::new());
+        assert!(
+            text.contains("storage reports_lavish: 8192 bytes"),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn status_shows_the_mcp_servers_health_and_last_heal() {
         let mut down = status_with(AetherLinkStatus::Disconnected {
             error: "down".into(),

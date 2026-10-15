@@ -7,7 +7,7 @@
     "review-seeded-bug"
   ],
   "model": "claude-code/claude-haiku-5-5",
-  "effort": "high",
+  "effort": "medium",
   "archon_successes": 4,
   "archon_trials": 4,
   "source_run": "pending",

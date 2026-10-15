@@ -6,7 +6,7 @@ fn evidence() -> (Baseline, RunManifest, Vec<TrialResult>) {
         suite_version: 1,
         tasks: TASKS.map(str::to_owned).to_vec(),
         model: "claude-code/claude-haiku-5-5".into(),
-        effort: "high".into(),
+        effort: "medium".into(),
         max_usd: DEFAULT_MAX_USD,
         candidate: false,
         archon_successes: 4,

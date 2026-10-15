@@ -13,7 +13,7 @@ use super::RunArgs;
 pub struct SmokeArgs {
     #[arg(long, default_value = "claude-code/claude-haiku-5-5")]
     model: ModelRef,
-    #[arg(long, default_value = "high")]
+    #[arg(long, default_value = "medium")]
     effort: Effort,
     /// Admission stop and final cost check; an in-flight trial may overshoot.
     #[arg(long, default_value_t = smoke::DEFAULT_MAX_USD)]
@@ -191,6 +191,7 @@ mod tests {
         assert_eq!((run.trials, run.parallel, run.max_trials), (1, 1, 8));
         assert_eq!(run.max_usd, 7.0);
         assert_eq!(run.model.to_string(), "claude-code/claude-haiku-5-5");
+        assert_eq!(run.effort, Effort::Medium);
         assert!(
             crate::Cli::try_parse_from(["archon-bench", "smoke", "--only", "fix-off-by-one"])
                 .is_err()

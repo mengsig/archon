@@ -278,8 +278,9 @@ async fn enqueue_refuses_a_reviewer_outside_the_model_policy() {
     let mut config = archon_core::config::Config::default();
     config.models.deny.push(REVIEWER.parse().unwrap());
     let h = Harness::with_config(config).await;
-    let error = refusal(&h, reviewer_enqueue()).await;
-    assert!(error.contains(REVIEWER), "{error}");
+    let error = h.cli(reviewer_enqueue()).await.expect_err("policy refusal");
+    assert!(matches!(error, ArchonError::Policy(_)), "{error}");
+    assert!(error.to_string().contains(REVIEWER), "{error}");
     assert!(h.running().await.is_empty());
 }
 

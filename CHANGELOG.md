@@ -1,6 +1,21 @@
 # Changelog
 
-## Unreleased
+## 1.2.5
+
+Released 2026-10-16.
+
+Review-holding leads now get reviewer-model advice based on the repository's
+policy when they spawn, and recovery of running work no longer depends on
+reading repository configuration. Local release builds can now produce the
+tagged archives and checksums without GitHub Actions. Daemon protocol remains
+18, and no store migrations changed.
+
+### Added
+
+- `scripts/build-release-local.sh <tag> <outdir>` builds release archives,
+  `SHA256SUMS` and `VERSION` from a tag without GitHub Actions. Darwin targets
+  need `SDKROOT` pointing at an Apple SDK; see [development](docs/development.md)
+  (#62).
 
 ### Fixes
 
@@ -8,7 +23,7 @@
   stands when the lead spawns, so narrowing a repository's policy mid-run
   reaches later leads. Recovering a running item no longer reads the
   repository's config, so a malformed one no longer fails work that was
-  already running.
+  already running (#61).
 
 ## 1.2.4
 

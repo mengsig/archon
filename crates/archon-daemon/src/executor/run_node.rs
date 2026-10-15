@@ -726,10 +726,10 @@ pub(super) async fn retire(ctx: &DaemonContext, run: &PipelineRunId) -> Result<(
         Found::Nothing => None,
         Found::Unanswered => return Ok(()),
     };
-    if let Some(agent) = agent {
-        if !cancel_node(ctx, run, &agent).await? || !subtree_stopped(ctx, &agent).await? {
-            return Ok(());
-        }
+    if let Some(agent) = agent
+        && (!cancel_node(ctx, run, &agent).await? || !subtree_stopped(ctx, &agent).await?)
+    {
+        return Ok(());
     }
     // Older node generations may no longer enumerate their stage agents.
     // Keep the durable node entry until every recorded builder is confirmed

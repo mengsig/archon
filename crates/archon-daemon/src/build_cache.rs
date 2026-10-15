@@ -8,12 +8,14 @@
 //! names the directory for any shell cargo runs elsewhere.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use archon_core::config::BuildCache;
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::protocol::Reclaimed;
 use archon_core::repo::Repo;
+use archon_queue::Store;
 
 use crate::context::DaemonPaths;
 use crate::gc::cache::remove_tree;
@@ -100,19 +102,67 @@ pub(crate) fn prepare(
     write_config(&config, &config_text(shared.as_deref(), lean)?)
 }
 
-/// Delete `item`'s build directory, however its tests left it. `None` when
-/// it had none.
+/// Whether nothing of `item` can still build: it is final and none of its
+/// stage runs is spawning or running. The caller holds the run table.
+pub(crate) fn is_idle(store: &Store, item: &QueueItemId) -> Result<bool, ArchonError> {
+    if !store.item(item)?.state.is_terminal() {
+        return Ok(false);
+    }
+    Ok(store
+        .stage_runs_for_item(item)?
+        .iter()
+        .all(|stage| stage.state.is_terminal()))
+}
+
+/// A build directory renamed aside, atomically, so a run that starts
+/// meanwhile builds into a fresh one; [`delete_claimed`] removes it.
+#[derive(Debug)]
+pub(crate) struct ClaimedBuild {
+    original: PathBuf,
+    aside: PathBuf,
+}
+
+/// Set `item`'s build directory aside, under the run table. `None` when it
+/// had none. A leftover `.gc-` name is found and deleted by the next gc pass.
+pub(crate) fn claim_item(
+    paths: &DaemonPaths,
+    repo_name: &str,
+    item: &QueueItemId,
+) -> Result<Option<ClaimedBuild>, ArchonError> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let original = item_dir(paths, repo_name, item);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let name = format!(".gc-{}-{item}-{n}", std::process::id());
+    let aside = original.with_file_name(name);
+    match std::fs::rename(&original, &aside) {
+        Ok(()) => Ok(Some(ClaimedBuild { original, aside })),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(ArchonError::io(
+            format!("setting {} aside", original.display()),
+            e,
+        )),
+    }
+}
+
+/// Delete a claimed build directory, however its tests left it. Blocking.
+pub(crate) fn delete_claimed(claimed: ClaimedBuild) -> Result<Reclaimed, ArchonError> {
+    let bytes = remove_tree(&claimed.aside)?;
+    Ok(Reclaimed {
+        path: claimed.original,
+        bytes,
+    })
+}
+
+/// Claim and delete `item`'s build directory. `None` when it had none.
+#[cfg(test)]
 pub(crate) fn release_item(
     paths: &DaemonPaths,
     repo_name: &str,
     item: &QueueItemId,
 ) -> Result<Option<Reclaimed>, ArchonError> {
-    let dir = item_dir(paths, repo_name, item);
-    if !dir.exists() {
-        return Ok(None);
-    }
-    let bytes = remove_tree(&dir)?;
-    Ok(Some(Reclaimed { path: dir, bytes }))
+    claim_item(paths, repo_name, item)?
+        .map(delete_claimed)
+        .transpose()
 }
 
 fn create_dir(dir: &Path) -> Result<(), ArchonError> {

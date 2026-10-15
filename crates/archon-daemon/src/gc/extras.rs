@@ -137,7 +137,7 @@ fn claim_orphan_items(
                 continue;
             };
             match store.item(&id) {
-                Ok(item) => item.state.is_terminal(),
+                Ok(_) => crate::build_cache::is_idle(store, &id)?,
                 Err(ArchonError::NotFound(_)) => true,
                 Err(error) => return Err(error),
             }

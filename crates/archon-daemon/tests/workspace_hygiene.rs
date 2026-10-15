@@ -268,6 +268,20 @@ async fn gc_sweeps_item_build_directories_whose_item_is_final_or_gone() {
 }
 
 #[tokio::test]
+async fn a_build_directory_stays_while_a_cancelled_item_s_agent_may_still_run() {
+    let h = Harness::new().await;
+    let (item, _) = start(&h, "unreachable agent").await;
+    h.backend
+        .fail_next_cancel(ArchonError::Unavailable("aether is away".into()));
+    cancel(&h, &item).await;
+    let dir = item_dir(&h, &item.id);
+    assert!(dir.is_dir(), "its agent was not confirmed stopped");
+    let report = gc(&h, None).await;
+    assert!(report.item_caches.is_empty(), "{report:?}");
+    assert!(dir.is_dir());
+}
+
+#[tokio::test]
 async fn a_repository_can_keep_the_default_profile_by_turning_lean_off() {
     let h = Harness::new().await;
     h.repo_config("[cache]\nlean = false\n");

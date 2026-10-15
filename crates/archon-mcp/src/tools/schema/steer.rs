@@ -3,7 +3,7 @@
 use archon_core::steer::MAX_EXTEND_MINUTES;
 use serde_json::json;
 
-use super::{ToolDefinition, define, item_id, model_ref, object};
+use super::{ToolDefinition, autonomy_change, define, item_id, model_ref, object};
 
 pub(super) fn steer_item() -> ToolDefinition {
     let insert = object(
@@ -32,6 +32,7 @@ pub(super) fn steer_item() -> ToolDefinition {
                 "goto": {"type": "string", "minLength": 1, "description": "Stage `then: goto` continues at."},
                 "insert_stage": insert,
                 "switch_pipeline": {"type": "string", "minLength": 1, "description": "Pipeline whose stages replace the item's unstarted ones."},
+                "autonomy": autonomy_change(),
             }),
             &["item"],
         ),

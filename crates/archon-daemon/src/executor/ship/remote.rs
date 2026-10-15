@@ -237,11 +237,21 @@ pub(in crate::executor) enum MergeRefusal {
 }
 
 /// Ask GitHub to merge the pull request at `url` once its checks and reviews
-/// allow, by the first method the repository permits.
-pub(super) async fn auto_merge(binary: &Path, repo: &Path, url: &str) -> Result<(), MergeRefusal> {
+/// allow, by the first method the repository permits. With `head`, only
+/// that commit: GitHub refuses when the branch moved on.
+pub(in crate::executor) async fn auto_merge(
+    binary: &Path,
+    repo: &Path,
+    url: &str,
+    head: Option<&str>,
+) -> Result<(), MergeRefusal> {
     assert!(url.starts_with("https://"), "a verified pull request URL");
     let method = merge_method(binary, repo).await?;
-    let merge = ["pr", "merge", url, "--auto", method];
+    let mut merge = vec!["pr", "merge", url, "--auto", method];
+    if let Some(head) = head {
+        assert!(!head.is_empty(), "a pinned commit is named");
+        merge.extend(["--match-head-commit", head]);
+    }
     gh::text(binary, repo, &merge)
         .await
         .map(drop)

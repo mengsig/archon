@@ -618,6 +618,9 @@ pub struct ItemPatch {
     /// item's live agents are sent it (ARCHITECTURE §6.6).
     #[serde(default)]
     pub brief_append: Option<String>,
+    /// Knobs to change, within the item's ceiling (ARCHITECTURE §18.1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autonomy: Option<AutonomyPatch>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

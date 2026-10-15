@@ -5,6 +5,7 @@
 use std::num::NonZeroU64;
 use std::path::PathBuf;
 
+use archon_core::autonomy::AutonomyPatch;
 use archon_core::cost::{CostGroup, CostQuery, DayBound};
 use archon_core::error::ArchonError;
 use archon_core::github::{GithubRepo, GithubThread};
@@ -198,6 +199,17 @@ impl Args {
         match text.trim().is_empty() {
             true => Err(self.error(key, "must not be empty; omit it instead")),
             false => Ok(Some(text)),
+        }
+    }
+
+    /// The knobs `autonomy` names; it names at least one.
+    fn optional_autonomy(&mut self) -> Result<Option<AutonomyPatch>, ToolError> {
+        let knobs = self.optional::<AutonomyPatch>("autonomy")?;
+        match knobs {
+            Some(knobs) if knobs.is_empty() => {
+                Err(self.error("autonomy", "names no knob; omit it instead"))
+            }
+            knobs => Ok(knobs),
         }
     }
 
@@ -494,11 +506,12 @@ fn update_item(args: &mut Args) -> Result<Request, ToolError> {
         add_depends_on: args.optional("add_depends_on")?.unwrap_or_default(),
         budget_usd: args.optional_budget("budget_usd")?,
         brief_append: args.optional_text("brief_append")?,
+        autonomy: args.optional_autonomy()?,
     };
     if patch == ItemPatch::default() {
         return Err(ToolError(
             "update_item: nothing to change; pass at least one of priority, model_plan, model_reasons, tags, \
-             add_depends_on, budget_usd, brief_append"
+             add_depends_on, budget_usd, brief_append, autonomy"
                 .into(),
         ));
     }

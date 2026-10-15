@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Timestamp;
+use crate::autonomy::AutonomyPatch;
 use crate::error::ArchonError;
 use crate::model::{Effort, ModelRef};
 use crate::queue::check_item_budget;
@@ -87,6 +88,10 @@ pub struct Steer {
     pub insert_stage: Option<InsertStage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub switch_pipeline: Option<String>,
+    /// Knobs to change, within the item's ceiling; for a running item the
+    /// stages already started keep theirs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autonomy: Option<AutonomyPatch>,
 }
 
 impl Steer {
@@ -101,6 +106,9 @@ impl Steer {
             return Err(ArchonError::Invalid("note is empty".into()));
         }
         check_item_budget(self.budget_usd)?;
+        if self.autonomy.is_some_and(|a| a.is_empty()) {
+            return Err(ArchonError::Invalid("autonomy names no knob".into()));
+        }
         if self
             .extend_minutes
             .is_some_and(|m| m == 0 || m > MAX_EXTEND_MINUTES)
@@ -193,6 +201,12 @@ mod tests {
         };
         assert!(note("Use the v2 client.").check().is_ok());
         assert!(note("  ").check().is_err());
+        let knobs = |list: &str| Steer {
+            autonomy: Some(AutonomyPatch::parse_list(list).unwrap()),
+            ..Steer::default()
+        };
+        assert!(knobs("merge=auto").check().is_ok());
+        assert!(knobs("").check().is_err(), "autonomy names a knob");
         let extend = |minutes| Steer {
             extend_minutes: Some(minutes),
             ..Steer::default()

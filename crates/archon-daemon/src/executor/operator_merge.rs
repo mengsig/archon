@@ -23,7 +23,7 @@ use archon_core::repo::Repo;
 use archon_core::run::{StageRun, StageState};
 use archon_queue::Store;
 
-use super::ship::{MergeRefusal, merge_method};
+use super::ship::{MergeRefusal, merge_method, pin_auto_merge};
 use super::{clip, coordination, finish, gh, recover};
 use crate::context::DaemonContext;
 use crate::triggers::{self, TriggerEvent};
@@ -220,6 +220,59 @@ pub(crate) async fn request(
         return execute(ctx, request).await;
     }
     ask(ctx, &shipped, reason, &seen).await
+}
+
+/// Turn on GitHub's auto-merge of a succeeded item's pull request, pinned to
+/// the commit its delivery reviewed. Nothing is written unless the pull
+/// request is open, targets the branch its change is for, and still shows
+/// that commit; `Err` says why not. GitHub merges it once its checks allow.
+pub(crate) async fn enable_auto_merge(
+    ctx: &DaemonContext,
+    item: &QueueItemId,
+) -> Result<(QueueItem, String), ArchonError> {
+    let (shipped, base) = {
+        let store = ctx.store.lock().await;
+        let shipped = shipped(&store, item)?;
+        let base = expected_base(&store, &shipped)?;
+        (shipped, base)
+    };
+    let refused = |why: &str| {
+        assert!(!why.is_empty(), "a refusal gives its reason");
+        ArchonError::InvalidTransition(format!(
+            "auto-merge of {} of {item} cannot be turned on: {why}",
+            shipped.pr_url
+        ))
+    };
+    let base = base.map_err(|why| refused(&why))?;
+    let binary = &ctx.config.github.binary;
+    let facts = gh::merge_facts(binary, &shipped.repo.path, &shipped.pr_url).await?;
+    // Checks may be pending: auto-merge waits for them.
+    let expected = Expected {
+        head: &shipped.head,
+        base: &base,
+        ignore_checks: true,
+    };
+    merge::evaluate(&facts, expected).map_err(|why| refused(&why))?;
+    let pinned = pin_auto_merge(
+        binary,
+        &shipped.repo.path,
+        &shipped.pr_url,
+        Some(&shipped.head),
+    );
+    pinned.await.map_err(|why| match why {
+        MergeRefusal::Retry(why) => ArchonError::Unavailable(format!(
+            "GitHub did not take auto-merge of {}: {why}; try again",
+            shipped.pr_url
+        )),
+        MergeRefusal::Never(why) => refused(&format!("GitHub refused it: {why}")),
+    })?;
+    let note = format!(
+        "Auto-merge is on for {} at {}: it is delivered, not merged yet; GitHub merges it once \
+         its checks and reviews pass",
+        shipped.pr_url,
+        merge::short(&shipped.head)
+    );
+    Ok((shipped.item, note))
 }
 
 /// A request refused before anything was asked or written: the orchestrator

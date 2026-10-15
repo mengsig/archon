@@ -14,6 +14,7 @@ use archon_core::steer::{RunEdit, Steer, SteerRecord, SteeredBy};
 use archon_pipeline::PipelineSpec;
 
 use super::items;
+use super::revise::{self, Ceiling};
 use crate::context::DaemonContext;
 use crate::executor::steer::{self as live, Asked, Current, Sources};
 use crate::executor::{frozen, revived};
@@ -33,14 +34,41 @@ fn steered_by(client: ClientKind) -> SteeredBy {
 }
 
 /// Replies `Reply::Item` with the item as steered (`ItemBudgetsOff` when
-/// it set a budget while budgets are off).
+/// it set a budget while budgets are off). Its `autonomy` is checked first
+/// and applied after the rest, as `update_item` would.
 pub(super) async fn steer(
+    ctx: &DaemonContext,
+    client: ClientKind,
+    id: &QueueItemId,
+    mut steer: Steer,
+) -> Result<Reply, ArchonError> {
+    steer.check()?;
+    let Some(knobs) = steer.autonomy.take() else {
+        return steer_run_or_waiting(ctx, client, id, steer).await;
+    };
+    let patch = ItemPatch {
+        autonomy: Some(knobs),
+        ..ItemPatch::default()
+    };
+    if steer == Steer::default() {
+        return items::update(ctx, id, patch).await;
+    }
+    let item = ctx.store.lock().await.item(id)?;
+    revise::prepare(ctx, &item, &knobs, Ceiling::Enforced).await?;
+    let steered = steer_run_or_waiting(ctx, client, id, steer).await?;
+    let revised = items::update(ctx, id, patch).await?;
+    Ok(match (steered, revised) {
+        (Reply::ItemBudgetsOff(_), Reply::Item(item)) => Reply::ItemBudgetsOff(item),
+        (_, revised) => revised,
+    })
+}
+
+async fn steer_run_or_waiting(
     ctx: &DaemonContext,
     client: ClientKind,
     id: &QueueItemId,
     steer: Steer,
 ) -> Result<Reply, ArchonError> {
-    steer.check()?;
     let item = ctx.store.lock().await.item(id)?;
     let env = RepoEnv::load(ctx, item.repo.as_ref()).await?;
     let sources = Sources::read(&env, &item, &steer)?;
@@ -94,6 +122,9 @@ pub(super) async fn update(
     };
     if !steers {
         return items::update(ctx, id, patch).await;
+    }
+    if let Some(knobs) = &patch.autonomy {
+        revise::prepare(ctx, &item, knobs, Ceiling::Enforced).await?;
     }
     let env = RepoEnv::load(ctx, item.repo.as_ref()).await?;
     let steer = Steer {

@@ -16,21 +16,37 @@ mod lessons;
 mod model_evidence;
 mod operator;
 mod repos;
+mod revise;
 mod settings;
 mod stages;
 mod steer;
 mod waiting;
 
 use archon_core::aether_ids::AetherAgentId;
+use archon_core::autonomy::AutonomyPatch;
 use archon_core::error::ArchonError;
 use archon_core::id::{QuestionId, QueueItemId};
 use archon_core::merge::MergeAuthority;
 use archon_core::notify::{AnswerVia, Question};
-use archon_core::protocol::{ClientKind, Reply, Request};
+use archon_core::protocol::{ClientKind, ItemPatch, Reply, Request};
 
 use crate::context::DaemonContext;
 use crate::executor::operator_merge;
 use crate::{github, reports, standby, supervisor};
+
+/// `update_item` with only `autonomy`, above the item's ceiling. Only the
+/// operator's confirmed request calls this; no request field reaches it.
+pub async fn update_item_autonomy_above_ceiling(
+    ctx: &DaemonContext,
+    item: &QueueItemId,
+    autonomy: AutonomyPatch,
+) -> Result<Reply, ArchonError> {
+    let patch = ItemPatch {
+        autonomy: Some(autonomy),
+        ..ItemPatch::default()
+    };
+    items::update_within(ctx, item, patch, revise::Ceiling::Waived).await
+}
 
 /// Validate and execute one request. Operator-only requests are refused
 /// with `ErrorCode::Forbidden` over MCP and for any agent, whatever the

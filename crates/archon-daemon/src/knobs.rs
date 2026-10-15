@@ -122,6 +122,18 @@ fn knobs(
             ..patch.over(policy.default)
         });
     }
+    refuse_shipping_only(base, patch)?;
+    Ok(Autonomy {
+        review,
+        proposal: ProposalMode::Off,
+        report: ReportMode::Off,
+        merge: MergeMode::Manual,
+        tools: patch.tools.unwrap_or(policy.default.tools),
+    })
+}
+
+/// A pipeline that does not ship takes no proposal, report or merge.
+fn refuse_shipping_only(base: &PipelineSpec, patch: &AutonomyPatch) -> Result<(), ArchonError> {
     let shipping_only = [
         patch
             .proposal
@@ -136,19 +148,59 @@ fn knobs(
             .filter(|v| *v != MergeMode::Manual)
             .map(|_| "merge"),
     ];
-    if let Some(knob) = shipping_only.into_iter().flatten().next() {
-        return Err(ArchonError::Invalid(format!(
+    match shipping_only.into_iter().flatten().next() {
+        Some(knob) if !ships(base) => Err(ArchonError::Invalid(format!(
             "{knob} applies only to pipelines that ship; {:?} ships nothing",
             base.name()
-        )));
+        ))),
+        _ => Ok(()),
     }
-    Ok(Autonomy {
+}
+
+/// `current` with `patch` over it, for an item that exists already: the
+/// review level only where the pipeline's stage holds it.
+pub(crate) fn revise(
+    base: &PipelineSpec,
+    current: Autonomy,
+    patch: &AutonomyPatch,
+    policy: &AutonomyPolicy,
+) -> Result<Autonomy, ArchonError> {
+    refuse_shipping_only(base, patch)?;
+    let review = match patch.review {
+        Some(_) => review_of(base, patch, policy)?,
+        None => current.review,
+    };
+    let revised = Autonomy {
         review,
-        proposal: ProposalMode::Off,
-        report: ReportMode::Off,
-        merge: MergeMode::Manual,
-        tools: patch.tools.unwrap_or(policy.default.tools),
-    })
+        ..patch.over(current)
+    };
+    assert!(
+        ships(base)
+            || (revised.proposal, revised.report, revised.merge)
+                == (current.proposal, current.report, current.merge),
+        "a pipeline that ships nothing keeps its shipping knobs"
+    );
+    Ok(revised)
+}
+
+/// Refuse the knobs `after` changed from `before` that sit above the
+/// ceiling; a knob already above it (the ceiling was lowered) may stay.
+pub(crate) fn check_raised(
+    policy: &AutonomyPolicy,
+    env: &RepoEnv,
+    base: &PipelineSpec,
+    before: Autonomy,
+    after: Autonomy,
+) -> Result<(), ArchonError> {
+    let kept = before.narrowed(policy.ceiling);
+    let changed = AutonomyPatch {
+        review: (after.review != before.review).then_some(after.review),
+        proposal: (after.proposal != before.proposal).then_some(after.proposal),
+        report: (after.report != before.report).then_some(after.report),
+        merge: (after.merge != before.merge).then_some(after.merge),
+        tools: (after.tools != before.tools).then_some(after.tools),
+    };
+    check_ceiling(policy, env, base, changed.over(kept))
 }
 
 /// Refuse knobs above the ceiling. Only `tools` means anything for a

@@ -53,12 +53,12 @@ use archon_pipeline::{RunDriver, ShipPlan, SpawnPlan};
 use crate::context::DaemonContext;
 
 pub(crate) use finish::notify;
-pub(crate) use recover::prune_finished_run_vars;
+pub(crate) use recover::{prune_finished_run_vars, set_run_auto_merge};
 pub(crate) use revive::revived;
 pub(crate) use roster::prune_settled_rosters;
 pub(crate) use run_node::recover_message_node;
 pub(crate) use run_node::{is_node_agent, node_run, prune_retired_node_agents};
-pub(crate) use ship::{prune_finished_ships, shipped_commit};
+pub(crate) use ship::{prune_finished_ships, shipped_commit, withdraw_owed_merge};
 pub(crate) use spawn::{load_spawn, prune_settled_requests, runs_awaiting_spawn};
 pub(crate) use start::held_by_stack;
 pub(crate) use sweep::sweep_live_stages;

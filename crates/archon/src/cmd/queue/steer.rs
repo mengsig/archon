@@ -82,6 +82,7 @@ fn steer_of(args: QueueSteerArgs) -> Steer {
             after: args.after,
         }),
         switch_pipeline: args.switch,
+        autonomy: None,
     }
 }
 

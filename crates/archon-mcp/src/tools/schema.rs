@@ -282,6 +282,20 @@ fn autonomy() -> Value {
     })
 }
 
+/// The `autonomy` property of `update_item` and `steer_item`: knobs to change.
+pub(super) fn autonomy_change() -> Value {
+    let knob = json!({"type": "string"});
+    json!({
+        "type": "object",
+        "description": "Knobs as in enqueue, within the ceiling. Running: merge, tools only. \
+            Succeeded: `merge: auto` queues GitHub auto-merge at the reviewed head.",
+        "properties": {
+            "review": knob, "proposal": knob, "report": knob, "merge": knob, "tools": knob,
+        },
+        "additionalProperties": false,
+    })
+}
+
 fn string_list(description: &str) -> Value {
     json!({
         "type": "array",
@@ -521,6 +535,7 @@ fn update_item() -> ToolDefinition {
                 "add_depends_on": string_list("More items that must succeed first."),
                 "budget_usd": budget(),
                 "brief_append": brief_append(),
+                "autonomy": {"type": "object", "description": "As in steer_item; all a succeeded item takes."},
             }),
             &["item"],
         ),

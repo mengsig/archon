@@ -32,6 +32,21 @@ pub(super) fn save_run_vars(
     store.kv_set(&run_vars_key(run), &serde_json::to_string(vars)?)
 }
 
+/// Whether `run` delivers with auto-merge on, as its item's `merge` knob now says.
+pub(crate) fn set_run_auto_merge(
+    store: &mut Store,
+    run: &PipelineRunId,
+    on: bool,
+) -> Result<(), ArchonError> {
+    let mut vars = load_run_vars(store, run)?;
+    assert!(
+        vars.contains_key("ship.auto_merge"),
+        "a run's variables name its auto-merge"
+    );
+    vars.insert("ship.auto_merge".into(), on.to_string());
+    save_run_vars(store, run, &vars)
+}
+
 pub(super) fn load_run_vars(
     store: &Store,
     run: &PipelineRunId,

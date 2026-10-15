@@ -372,12 +372,21 @@ async fn a_vanished_locked_snapshot_does_not_block_the_next_run() {
 #[tokio::test]
 async fn gc_collects_a_leftover_snapshot() {
     let mut config = Config::default();
-    config.worktrees.cache_after = Age::from_secs(0);
+    config.worktrees.cache_after = Age::from_secs(1);
     let h = harness_with(config).await;
     let before = checkout_state(&h.repo);
     let item = ask(&h, "left behind").await;
     h.dispatch().await;
     h.settle_running(|_| completed("answered")).await;
+    {
+        let mut store = h.ctx.store.lock().await;
+        let mut item = store.item(&item.id).unwrap();
+        item.updated_at -= chrono::Duration::seconds(2);
+        store.update_item(&item).unwrap();
+        let mut run = store.runs_for_item(&item.id).unwrap().remove(0);
+        run.finished_at = run.finished_at.map(|at| at - chrono::Duration::seconds(2));
+        store.update_run(&run).unwrap();
+    }
     let snapshot = snapshot_of(&h, &item);
     assert_snapshot_removed(&h, &snapshot);
     let manager = WorktreeManager::new(h.ctx.paths.worktrees.clone(), "archon/".into());

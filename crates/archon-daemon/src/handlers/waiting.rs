@@ -117,6 +117,10 @@ impl WaitingView {
                     higher_budget(self.snapshot.spend_today_usd)
                 ),
             ),
+            Code::Draining => (
+                "Dispatch held while an upgrade drains Archon before it restarts".into(),
+                "archon status".into(),
+            ),
             Code::LowDisk => (
                 "Dispatch held by low disk space or a recent disk-full failure".into(),
                 "archon gc".into(),

@@ -43,6 +43,16 @@ pub fn data_lock_path_for(data_dir: &Path) -> PathBuf {
     data_dir.join(DATA_LOCK_FILE_NAME)
 }
 
+/// Where `cargo install` puts binaries: `$CARGO_HOME/bin`, else `~/.cargo/bin`.
+pub fn cargo_bin_dir() -> Option<PathBuf> {
+    let home = match std::env::var_os("CARGO_HOME") {
+        Some(home) if !home.is_empty() => PathBuf::from(home),
+        _ => dirs::home_dir()?.join(".cargo"),
+    };
+    // Compared with a canonical executable path; a missing one matches nothing.
+    home.join("bin").canonicalize().ok()
+}
+
 pub fn log_dir() -> PathBuf {
     data_dir().join("logs")
 }

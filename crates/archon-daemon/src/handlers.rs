@@ -24,10 +24,10 @@ use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::id::QuestionId;
 use archon_core::notify::{AnswerVia, Question};
-use archon_core::protocol::{ClientKind, Reply, Request};
+use archon_core::protocol::{ClientKind, Reply, RepoRef, Request};
 
 use crate::context::DaemonContext;
-use crate::{github, reports, standby, supervisor};
+use crate::{github, ops, reports, standby, supervisor};
 
 /// Validate and execute one request. Operator-only requests are refused
 /// with `ErrorCode::Forbidden` over MCP and for any agent, whatever the
@@ -200,6 +200,11 @@ pub(crate) async fn answer_question(
     operator::answer(ctx, question, text, via).await
 }
 
+/// Watch a registered repository on GitHub; the `/watch` chat command.
+pub(crate) async fn watch_repo(ctx: &DaemonContext, repo: &RepoRef) -> Result<String, ArchonError> {
+    repos::watch(ctx, repo).await
+}
+
 async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, ArchonError> {
     match request {
         Request::Enqueue(enqueue) => items::enqueue(ctx, enqueue).await,
@@ -238,6 +243,10 @@ async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, Ar
             supervisor::attach_orchestrator(ctx).await?,
         )),
         Request::OrchestratorRestart => control::orchestrator_restart(ctx).await,
+        Request::Upgrade(request) => Ok(Reply::UpgradeStarted {
+            text: ops::start(ctx, request).await?,
+        }),
+        Request::CheckUpdates => Ok(Reply::Versions(Box::new(ops::check_updates(ctx).await?))),
         Request::Gc {
             older_than_secs,
             force,

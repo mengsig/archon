@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 pub mod delivery;
+pub mod fake_ops;
 pub mod team;
 pub mod team_worktree;
 
@@ -132,6 +133,8 @@ pub struct Harness {
     /// What the context's disk probe reads as free, on every path; plenty
     /// unless a test fills the fake disk.
     pub free_bytes: Arc<AtomicU64>,
+    /// The installer and restart helper an upgrade uses.
+    pub ops: Arc<fake_ops::FakeOps>,
 }
 
 impl Harness {
@@ -196,13 +199,15 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         let backend = make(aether.clone());
         let free_bytes = Arc::new(AtomicU64::new(u64::MAX));
         let disk = fake_disk(&free_bytes);
-        let ctx = context(&root, config, aether, backend, lavish, disk);
+        let ops = Arc::new(fake_ops::FakeOps::default());
+        let ctx = context(&root, config, aether, backend, lavish, disk, &ops);
         let harness = Self {
             ctx: Arc::new(ctx),
             backend: fake,
             repo,
             dir,
             free_bytes,
+            ops,
         };
         harness.add_repo().await;
         harness
@@ -216,6 +221,7 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
             base_branch: Some("main".into()),
             default_pipeline: Some(PIPELINE.into()),
             auto_merge: false,
+            github_watch: false,
         };
         match self.cli(Request::RepoAdd(add)).await {
             Ok(Reply::Repo(repo)) => repo,
@@ -375,7 +381,7 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         let lavish = self.ctx.lavish.clone();
         let disk = fake_disk(&self.free_bytes);
         let link = Arc::new(AetherLink::new());
-        let ctx = context(&root, config, link, backend, lavish, disk);
+        let ctx = context(&root, config, link, backend, lavish, disk, &self.ops);
         self.ctx = Arc::new(ctx);
     }
 
@@ -437,6 +443,7 @@ pub fn context(
     backend: Arc<dyn AgentBackend>,
     lavish: Option<Lavish>,
     disk: DiskWatch,
+    ops: &Arc<fake_ops::FakeOps>,
 ) -> DaemonContext {
     let data_dir = root.join("data");
     let paths = DaemonPaths {
@@ -455,6 +462,7 @@ pub fn context(
     let (feed, _) = broadcast::channel(1024);
     let dispatch = Arc::new(Notify::new());
     DaemonContext {
+        storage: Default::default(),
         config,
         paths,
         store: Mutex::new(store),
@@ -482,6 +490,7 @@ pub fn context(
         standby: OnceLock::new(),
         gc: Mutex::new(None),
         collecting: archon_daemon::gc::Collecting::new(dispatch),
+        ops: ops.ops_state(),
     }
 }
 

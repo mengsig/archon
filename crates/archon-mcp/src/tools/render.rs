@@ -81,6 +81,8 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         | Reply::Feed(_)
         | Reply::Orchestrator(_)
         | Reply::GithubWatcher(_)
+        | Reply::UpgradeStarted { .. }
+        | Reply::Versions(_)
         | Reply::Gc(_) => serde_json::to_string(reply)
             .unwrap_or_else(|e| format!("(reply could not be encoded: {e})")),
     }
@@ -584,7 +586,7 @@ fn daemon_status(status: &DaemonStatus) -> String {
         "archond {} (pid {}), up since {}. Aether: {aether}. Orchestrator: {orchestrator}.\n\
          Paused: {}.\nAgents running {} (max {}), active runs {} (max {}), queued {}, blocked {}, \
          open questions {}, operator gates waiting {}.\n{} Lavish {}.\nAutonomy defaults {}; the ceiling allows {}; {} \
-         directive(s) in force (autonomy_policy lists them).{}{}",
+         directive(s) in force (autonomy_policy lists them).{}{}{}",
         status.daemon_version,
         status.pid,
         status.started_at.to_rfc3339(),
@@ -607,8 +609,24 @@ fn daemon_status(status: &DaemonStatus) -> String {
         status.autonomy.ceiling.describe_allowed(),
         status.directives.len(),
         status.github.as_ref().map_or(String::new(), github_text),
-        status.disk.as_ref().map_or(String::new(), disk_text)
+        status.disk.as_ref().map_or(String::new(), disk_text),
+        upkeep_text(status)
     )
+}
+
+/// An upgrade under way, and versions that differ: running against
+/// installed, or against the latest release once the operator checked.
+fn upkeep_text(status: &DaemonStatus) -> String {
+    let mut text = String::new();
+    if let Some(upgrade) = &status.upgrade {
+        text.push_str(&format!(
+            "\nUpgrade under way (dispatch held while it drains): {upgrade}."
+        ));
+    }
+    for line in status.versions.iter().flat_map(|versions| versions.lines()) {
+        text.push_str(&format!("\nVersions: {line}."));
+    }
+    text
 }
 
 /// Spend against the budgets, or that the budgets are off.
@@ -637,20 +655,44 @@ fn disk_text(disk: &DiskStatus) -> String {
         (Some(free), _) => gib(free),
         (None, error) => format!("unknown ({})", error.as_deref().unwrap_or("no reading")),
     };
+    let mut text = format!("\nDisk: {free} free at {}.", disk.path.display());
     let state = if let Some(why) = &disk.standby {
-        format!("archond is in STANDBY and serves reads only ({why})")
+        Some(format!(
+            "archond is in STANDBY and serves reads only ({why})"
+        ))
     } else if let Some(error) = &disk.disk_full {
-        format!("dispatch is HELD after a write failed on a full disk ({error})")
+        Some(format!(
+            "dispatch is HELD after a write failed on a full disk ({error})"
+        ))
     } else if disk.held {
-        "dispatch is HELD for low disk space".to_owned()
+        Some("dispatch is HELD for low disk space".to_owned())
     } else {
-        return format!("\nDisk: {free} free at {}.", disk.path.display());
+        None
     };
-    format!(
-        "\nDisk: {free} free at {}; {state}. Nothing new starts until the operator frees \
-         space (`archon gc`).",
-        disk.path.display()
-    )
+    if let Some(state) = state {
+        text.push_str(&format!(
+            " {state}. Nothing new starts until the operator frees space (`archon gc`)."
+        ));
+    }
+    for usage in &disk.storage {
+        let size = usage.bytes.map_or_else(
+            || {
+                format!(
+                    "unknown ({})",
+                    usage.error.as_deref().unwrap_or("no reading")
+                )
+            },
+            |bytes| format!("{bytes} bytes"),
+        );
+        text.push_str(&format!("\nStorage {}: {size}.", usage.kind));
+    }
+    if let Some(gc) = &disk.gc {
+        text.push_str(&format!(
+            "\nLast GC at {} freed {} bytes: {}",
+            gc.at, gc.bytes_freed, gc.headline
+        ));
+    }
+    text
 }
 
 fn github_text(watch: &GithubWatch) -> String {
@@ -759,4 +801,24 @@ fn clip_noting(text: &str, max: usize, note: &str) -> String {
     }
     let kept: String = text.chars().take(max).collect();
     format!("{kept}… [clipped: {total} chars in full{note}]")
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+
+    #[test]
+    fn queue_status_includes_storage_and_last_gc_even_without_disk_pressure() {
+        let disk: DiskStatus = serde_json::from_value(serde_json::json!({
+            "path": "/data", "free_bytes": 1000000, "min_free_bytes": 0, "held": false,
+            "storage": [{"kind": "reports_lavish", "path": "/data/reports", "bytes": 8192}],
+            "gc": {"at": archon_core::now(), "bytes_freed": 4096, "pressure": false, "headline": "one report"}
+        })).unwrap();
+        let text = disk_text(&disk);
+        assert!(
+            text.contains("Storage reports_lavish: 8192 bytes"),
+            "{text}"
+        );
+        assert!(text.contains("freed 4096 bytes: one report"), "{text}");
+    }
 }

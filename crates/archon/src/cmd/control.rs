@@ -15,7 +15,8 @@ use crate::views;
 
 /// Never starts archond or Aether: without archond, its link to Aether
 /// cannot be observed either.
-pub async fn status(json: bool) -> anyhow::Result<ExitCode> {
+/// `check_updates` first has archond ask the network for the latest releases.
+pub async fn status(check_updates: bool, json: bool) -> anyhow::Result<ExitCode> {
     let Some(client) = connect_existing().await? else {
         return Err(archon_core::error::ArchonError::Unavailable(format!(
             "{}; aether: disconnected (cannot observe its link without archond)",
@@ -23,6 +24,13 @@ pub async fn status(json: bool) -> anyhow::Result<ExitCode> {
         ))
         .into());
     };
+    if check_updates {
+        match client.call(Request::CheckUpdates).await? {
+            Ok(Reply::Versions(_)) => {}
+            Ok(other) => return Err(unexpected(&other, "versions")),
+            Err(refusal) => return Err(archon_client::refusal_error(refusal).into()),
+        }
+    }
     if json {
         let status = views::fetch_status(&client).await?;
         emit(true, || to_json(&status), "")?;

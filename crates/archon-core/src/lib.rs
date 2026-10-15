@@ -26,6 +26,7 @@ pub mod mcp_tools;
 pub mod model;
 pub mod model_evidence;
 pub mod notify;
+pub mod ops;
 pub mod outcome;
 pub mod paths;
 pub mod policy;

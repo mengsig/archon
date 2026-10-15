@@ -115,6 +115,7 @@ fn random_snapshot(rng: &mut Rng) -> DispatchSnapshot {
                 .collect(),
         },
         low_disk: rng.below(12) == 0,
+        draining: rng.below(12) == 0,
         running_total: 0,
         running_by_repo: BTreeMap::new(),
         running_by_pipeline: BTreeMap::new(),
@@ -234,7 +235,13 @@ fn check_rules(s: &DispatchSnapshot, plan: &DispatchPlan) {
         "starts out of order"
     );
     match plan.held_by {
-        Some(Hold::GlobalPause | Hold::LowDisk | Hold::DailyBudget | Hold::TotalBudget) => {
+        Some(
+            Hold::GlobalPause
+            | Hold::Draining
+            | Hold::LowDisk
+            | Hold::DailyBudget
+            | Hold::TotalBudget,
+        ) => {
             assert!(plan.spawn.is_empty() && plan.start.is_empty());
         }
         None => {
@@ -251,8 +258,12 @@ fn check_rules(s: &DispatchSnapshot, plan: &DispatchPlan) {
     }
     assert_eq!(plan.held_by == Some(Hold::GlobalPause), s.pause.global);
     assert_eq!(
+        plan.held_by == Some(Hold::Draining),
+        s.draining && !s.pause.global
+    );
+    assert_eq!(
         plan.held_by == Some(Hold::LowDisk),
-        s.low_disk && !s.pause.global
+        s.low_disk && !s.draining && !s.pause.global
     );
 }
 
@@ -267,7 +278,7 @@ fn random_plans_respect_caps_and_rules() {
         check_rules(&s, &plan);
         *held.entry(format!("{:?}", plan.held_by)).or_insert(0) += 1;
     }
-    assert_eq!(held.len(), 5, "every outcome is exercised: {held:?}");
+    assert_eq!(held.len(), 6, "every outcome is exercised: {held:?}");
 }
 
 /// Admission order depends on priority and age, never on input order.

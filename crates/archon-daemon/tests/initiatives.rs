@@ -46,6 +46,7 @@ async fn setup() -> Harness {
             base_branch: Some("main".into()),
             default_pipeline: Some(PIPELINE.into()),
             auto_merge: false,
+            github_watch: false,
         }))
         .await
         .unwrap();
@@ -171,6 +172,7 @@ async fn a_contract_is_revised_within_the_configured_limits() {
         base_branch: Some("main".into()),
         default_pipeline: Some(PIPELINE.into()),
         auto_merge: false,
+        github_watch: false,
     }))
     .await
     .unwrap();

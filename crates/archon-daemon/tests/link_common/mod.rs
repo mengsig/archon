@@ -78,7 +78,7 @@ impl Harness {
             triggers: TriggerQueue::default(),
             mirrors: archon_daemon::mirror::MirrorQueue::default(),
             spawn_recorded: Notify::new(),
-            caps_override: Mutex::new(None),
+            operator_settings: Default::default(),
             lavish,
             started_at: archon_core::now(),
             disk: DiskWatch::new(Arc::new(|_: &Path| Ok(u64::MAX)), Duration::ZERO),

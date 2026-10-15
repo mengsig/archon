@@ -102,10 +102,10 @@ pub(super) async fn needs_confirmation(
                 return Ok(true);
             }
             if let Some(max) = &patch.autonomy_max {
-                let old = RepoEnv::new(Some(repo.clone()))?.autonomy(&ctx.config);
+                let old = RepoEnv::new(Some(repo.clone()))?.autonomy(ctx);
                 let mut after = repo;
                 after.autonomy_max = *max;
-                let new = RepoEnv::new(Some(after))?.autonomy(&ctx.config);
+                let new = RepoEnv::new(Some(after))?.autonomy(ctx);
                 return Ok(!new.ceiling.excess(old.ceiling).is_empty());
             }
             Ok(false)

@@ -16,6 +16,7 @@ mod lessons;
 mod model_evidence;
 mod operator;
 mod repos;
+mod settings;
 mod stages;
 mod steer;
 mod waiting;
@@ -299,6 +300,11 @@ async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, Ar
         Request::RefreshItem { item } => items::refresh(ctx, &item).await,
         Request::Status => control::status(ctx).await,
         Request::SetCaps { caps } => control::set_caps(ctx, caps).await,
+        Request::Settings { repo } => settings::view(ctx, repo.as_ref()).await,
+        Request::SetSettings { repo, settings } => {
+            settings::set(ctx, repo.as_ref(), settings).await
+        }
+        Request::ResetSettings { repo } => settings::reset(ctx, repo.as_ref()).await,
         Request::ListPipelines { repo, pipeline } => {
             control::list_pipelines(ctx, repo.as_ref(), pipeline.as_deref()).await
         }

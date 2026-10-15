@@ -8,7 +8,6 @@ use archon_aether::AetherLink;
 use archon_core::config::Config;
 use archon_core::notify::FeedItem;
 use archon_core::ports::AgentBackend;
-use archon_core::queue::Caps;
 use archon_lavish::Lavish;
 use archon_queue::Store;
 use tokio::sync::{Mutex, Notify, broadcast};
@@ -112,8 +111,9 @@ pub struct DaemonContext {
     /// Signalled when a spawn's outcome is recorded, for a fleet event of the
     /// new agent that arrived before it (`pump::fleet`).
     pub spawn_recorded: Notify,
-    /// Runtime override from `SetCaps`; `None` uses `config.limits`.
-    pub caps_override: Mutex<Option<Caps>>,
+    /// The operator's settings overlays, mirrored from the store
+    /// (`settings`); `SetCaps` writes the global one.
+    pub operator_settings: std::sync::Mutex<crate::settings::SettingsBook>,
     pub lavish: Option<Lavish>,
     pub started_at: archon_core::Timestamp,
     /// Free disk space and the dispatch hold it drives.

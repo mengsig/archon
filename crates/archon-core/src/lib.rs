@@ -36,6 +36,7 @@ pub mod protocol;
 pub mod queue;
 pub mod repo;
 pub mod run;
+pub mod settings;
 pub mod steer;
 #[cfg(feature = "testing")]
 pub mod testing;

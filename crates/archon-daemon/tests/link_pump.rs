@@ -1475,11 +1475,13 @@ async fn usage_wakes_the_dispatcher_only_while_a_global_budget_is_set() {
         "no budget this spend could reach"
     );
 
-    let budgeted = Caps {
-        budget_usd_daily: 10.0,
-        ..Caps::default()
+    let budgeted = archon_core::settings::OperatorSettings {
+        budget_usd_daily: Some(10.0),
+        ..Default::default()
     };
-    *harness.ctx.caps_override.lock().await = Some(budgeted);
+    archon_daemon::settings::write(&harness.ctx, None, budgeted)
+        .await
+        .unwrap();
     push(&harness, usage_of(STAGE, 0.5), keys::CURSOR_FLEET).await;
     pump.abort();
     assert!((spent_in_total(&harness).await - 0.5).abs() < 1e-9);

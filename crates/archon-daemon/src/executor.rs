@@ -333,14 +333,13 @@ pub(crate) async fn check_item_budget(
     unaccounted_usage: bool,
     stage: Option<&StageRunId>,
 ) -> Result<(), ArchonError> {
-    let caps = crate::resolve::caps(ctx).await;
     let follow = {
         let mut table = ctx.runs.lock().await;
         let (run, left, unaccounted_usage) = {
             let store = ctx.store.lock().await;
             let item = store.item(item)?;
             let left =
-                spawn::budget_left(&store, &item, &caps, ctx.config.limits.count_estimated_cost)?;
+                spawn::budget_left(ctx, &store, &item, ctx.config.limits.count_estimated_cost)?;
             let run = store
                 .runs_for_item(&item.id)?
                 .into_iter()

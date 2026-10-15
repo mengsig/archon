@@ -1,6 +1,6 @@
 //! What applies to one repository: its `.archon/config.toml`, the model
 //! policy narrowed by it, its autonomy policy, its pipeline catalog, and
-//! the daemon's caps.
+//! the daemon's caps, each through the operator's settings overlays.
 
 use archon_core::autonomy::AutonomyPolicy;
 use archon_core::config::{Config, RepoConfig};
@@ -10,15 +10,26 @@ use archon_core::policy::ModelPolicy;
 use archon_core::protocol::RepoRef;
 use archon_core::queue::Caps;
 use archon_core::repo::Repo;
+use archon_core::settings::{EffectiveSettings, Layers, OperatorSettings, RepoLayers};
 use archon_pipeline::{Catalog, CatalogSources};
 
 use crate::context::DaemonContext;
 
-/// The caps in force: the `SetCaps` override, else `[limits]`.
+/// The global caps in force: `[limits]` under the global settings overlay,
+/// where `SetCaps` persists.
 pub(crate) async fn caps(ctx: &DaemonContext) -> Caps {
-    match &*ctx.caps_override.lock().await {
-        Some(caps) => caps.clone(),
-        None => ctx.config.limits.caps(),
+    let global = crate::settings::mirror(ctx).global.clone();
+    global.caps_over(ctx.config.limits.caps())
+}
+
+/// The caps for an item in `repo`: the global ones with the repository
+/// overlay's budgets and per-repo cap.
+pub(crate) fn item_caps(ctx: &DaemonContext, repo: Option<&RepoId>) -> Caps {
+    let book = crate::settings::mirror(ctx);
+    let global = book.global.caps_over(ctx.config.limits.caps());
+    match repo.and_then(|id| book.repos.get(id)) {
+        Some(overlay) => overlay.caps_over(global),
+        None => global,
     }
 }
 
@@ -62,12 +73,68 @@ impl RepoEnv {
             .narrowed_by(&self.config.models.policy())
     }
 
-    /// Global `[autonomy]`, the registry ceiling, then the repository's own
-    /// file, which may only lower (ARCHITECTURE §18.2).
-    pub fn autonomy(&self, config: &Config) -> AutonomyPolicy {
-        let registry = self.repo.as_ref().map(|r| &r.autonomy_max);
-        let file = self.repo.as_ref().map(|_| &self.config.autonomy);
-        AutonomyPolicy::resolve(&config.autonomy, registry, file)
+    /// Global `[autonomy]` and overlay, the registry ceiling and repository
+    /// overlay, then the repository's own file, which may only lower
+    /// (ARCHITECTURE §18.2).
+    pub fn autonomy(&self, ctx: &DaemonContext) -> AutonomyPolicy {
+        self.with_layers(ctx, |layers| layers.autonomy())
+    }
+
+    /// The pipeline an enqueue naming none gets.
+    pub fn default_pipeline(&self, ctx: &DaemonContext) -> Option<String> {
+        self.with_layers(ctx, |layers| {
+            layers.default_pipeline().map(|(name, _)| name)
+        })
+    }
+
+    /// Every value in force for this scope, with its source.
+    pub fn effective(&self, ctx: &DaemonContext) -> EffectiveSettings {
+        self.with_layers(ctx, |layers| layers.effective())
+    }
+
+    /// What `effective` would be with `settings` stored at this env's scope.
+    pub fn effective_with(
+        &self,
+        ctx: &DaemonContext,
+        settings: &OperatorSettings,
+    ) -> EffectiveSettings {
+        self.layers_over(ctx, Some(settings), |layers| layers.effective())
+    }
+
+    fn with_layers<R>(&self, ctx: &DaemonContext, f: impl FnOnce(&Layers<'_>) -> R) -> R {
+        self.layers_over(ctx, None, f)
+    }
+
+    /// The overlays copied out of the mirror, so none is held while `f` runs;
+    /// `scoped` stands in for the one stored at this env's scope.
+    fn layers_over<R>(
+        &self,
+        ctx: &DaemonContext,
+        scoped: Option<&OperatorSettings>,
+        f: impl FnOnce(&Layers<'_>) -> R,
+    ) -> R {
+        let (mut global, mut overlay) = {
+            let book = crate::settings::mirror(ctx);
+            let overlay = self.repo.as_ref().map(|r| book.get(Some(&r.id)));
+            (book.global.clone(), overlay)
+        };
+        match (scoped, overlay.as_mut()) {
+            (Some(settings), Some(overlay)) => *overlay = settings.clone(),
+            (Some(settings), None) => global = settings.clone(),
+            (None, _) => {}
+        }
+        let empty = OperatorSettings::default();
+        let repo = self.repo.as_ref().map(|r| RepoLayers {
+            registry_max: &r.autonomy_max,
+            registry_pipeline: r.default_pipeline.as_deref(),
+            overlay: overlay.as_ref().unwrap_or(&empty),
+            file: &self.config,
+        });
+        f(&Layers {
+            config: &ctx.config,
+            global: &global,
+            repo,
+        })
     }
 
     /// How ceiling refusals name where the ceiling applies.

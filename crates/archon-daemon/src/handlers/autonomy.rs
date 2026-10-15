@@ -27,7 +27,7 @@ pub(super) async fn view(
         None => merges_now(&*ctx.store.lock().await)?.granted,
     };
     let env = RepoEnv::new(repo)?;
-    let policy = env.autonomy(&ctx.config);
+    let policy = env.autonomy(ctx);
     let directives = ctx.store.lock().await.directives(archon_core::now())?;
     assert!(
         policy.default.excess(policy.ceiling).is_empty(),

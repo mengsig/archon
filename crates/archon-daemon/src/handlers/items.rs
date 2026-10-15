@@ -77,9 +77,9 @@ pub(super) async fn enqueue(
 }
 
 /// `Reply::Item`, or `ItemBudgetsOff` when the change set a budget that
-/// is not enforced while budgets are globally off.
+/// is not enforced while budgets are off for the item's repository.
 pub(super) async fn item_reply(ctx: &DaemonContext, item: QueueItem, set_budget: bool) -> Reply {
-    match set_budget && !resolve::caps(ctx).await.budgets_enabled {
+    match set_budget && !resolve::item_caps(ctx, item.repo.as_ref()).budgets_enabled {
         true => Reply::ItemBudgetsOff(item),
         false => Reply::Item(item),
     }
@@ -99,7 +99,7 @@ async fn enqueue_context(
             "name a pipeline; only repositories have a default one".into(),
         ));
     }
-    let resolved = knobs::resolve(&ctx.config, &env, req.pipeline.clone(), &req.autonomy)?;
+    let resolved = knobs::resolve(ctx, &env, req.pipeline.clone(), &req.autonomy)?;
     check_runs_here(ctx, &env, &resolved.spec).await?;
     assert_eq!(resolved.spec.name(), resolved.pipeline);
     assert!(!resolved.spec.file.stages.is_empty());

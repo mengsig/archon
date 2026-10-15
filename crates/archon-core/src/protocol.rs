@@ -201,9 +201,26 @@ pub enum Request {
     },
     Pause(PauseTarget),
     Resume(PauseTarget),
-    /// CLI only; runtime cap overrides until the daemon restarts.
+    /// Operator only; persisted in the global settings overlay.
     SetCaps {
         caps: Caps,
+    },
+    /// The operator settings stored for a repository, or globally, and the
+    /// values in force with their sources.
+    Settings {
+        #[serde(default)]
+        repo: Option<RepoRef>,
+    },
+    /// Operator only: replace the overlay stored at one scope whole.
+    SetSettings {
+        #[serde(default)]
+        repo: Option<RepoRef>,
+        settings: crate::settings::OperatorSettings,
+    },
+    /// Operator only: forget the overlay stored at one scope.
+    ResetSettings {
+        #[serde(default)]
+        repo: Option<RepoRef>,
     },
 
     ListPipelines {
@@ -433,6 +450,8 @@ impl Request {
             | Self::RepoRemove { .. }
             | Self::RepoUpdate { .. }
             | Self::SetCaps { .. }
+            | Self::SetSettings { .. }
+            | Self::ResetSettings { .. }
             | Self::Say { .. }
             | Self::OrchestratorRestart
             | Self::OrchestratorAttach
@@ -477,6 +496,7 @@ impl Request {
             | Self::CostReport(_)
             | Self::ModelEvidence(_)
             | Self::Autonomy { .. }
+            | Self::Settings { .. }
             | Self::GithubWatcher
             | Self::ListInitiatives
             | Self::GetInitiative { .. }
@@ -674,6 +694,7 @@ pub enum Reply {
     Feedback(Box<FeedbackReceipt>),
     LearningWhy(Box<LearningWhy>),
     Merge(Box<MergeRequest>),
+    Settings(Box<crate::settings::SettingsView>),
 }
 
 /// What one gc pass did (ARCHITECTURE §13.2). Paths are real paths.

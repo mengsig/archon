@@ -17,6 +17,7 @@ use archon_pipeline::autonomy::{augment, chosen_review, review_is_chosen, review
 use archon_pipeline::builtin::DEFAULT_PIPELINE;
 use archon_queue::Store;
 
+use crate::context::DaemonContext;
 use crate::learned;
 use crate::resolve::RepoEnv;
 
@@ -33,13 +34,13 @@ pub(crate) struct Resolved {
 
 /// Resolve an enqueue's pipeline and knobs within the ceiling.
 pub(crate) fn resolve(
-    config: &Config,
+    ctx: &DaemonContext,
     env: &RepoEnv,
     pipeline: Option<String>,
     patch: &AutonomyPatch,
 ) -> Result<Resolved, ArchonError> {
-    let policy = env.autonomy(config);
-    let (name, patch) = match pipeline_name(env, pipeline, patch) {
+    let policy = env.autonomy(ctx);
+    let (name, patch) = match pipeline_name(ctx, env, pipeline, patch) {
         Some(name) => (name, *patch),
         None => (
             DEFAULT_PIPELINE.to_owned(),
@@ -59,16 +60,18 @@ pub(crate) fn resolve(
     })
 }
 
-/// An explicit pipeline wins, then a default one; `None` when the enqueue
-/// asks for a review level instead, or nothing names one.
-fn pipeline_name(env: &RepoEnv, pipeline: Option<String>, patch: &AutonomyPatch) -> Option<String> {
+/// An explicit pipeline wins, then a default one (`Layers::default_pipeline`);
+/// `None` when the enqueue asks for a review level instead, or nothing names one.
+fn pipeline_name(
+    ctx: &DaemonContext,
+    env: &RepoEnv,
+    pipeline: Option<String>,
+    patch: &AutonomyPatch,
+) -> Option<String> {
     if pipeline.is_some() || patch.review.is_some() {
         return pipeline;
     }
-    env.repo
-        .as_ref()
-        .and_then(|r| r.default_pipeline.clone())
-        .or_else(|| env.config.repo.default_pipeline.clone())
+    env.default_pipeline(ctx)
 }
 
 /// `patch` on [`DEFAULT_PIPELINE`]: an enqueue that names neither a pipeline

@@ -70,6 +70,7 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         Reply::Initiative(detail) => initiatives::detail(tool, detail),
         Reply::Lesson(lesson) => lessons::recorded(lesson),
         Reply::Merge(request) => merge_text(request),
+        Reply::Settings(view) => view.describe(),
         Reply::Artifacts(listing) => artifacts::listing(listing),
         Reply::ArtifactPage(page) => artifacts::page(page),
         Reply::Questions(_)

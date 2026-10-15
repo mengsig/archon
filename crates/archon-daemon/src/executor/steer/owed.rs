@@ -207,7 +207,7 @@ async fn update_choice(
                 &delivery.key,
                 choice,
                 archon_core::now(),
-                ctx.config.limits.count_estimated_cost,
+                archon_core::cost::API_EQUIVALENT,
             )?;
         }
     }

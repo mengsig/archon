@@ -968,6 +968,26 @@ are preserved, and new growth is classified using its observed basis.
 These labels do not change enforcement: raw `cost_usd` counts regardless
 of basis, even with estimates disabled; only the separate API-equivalent
 `estimated_cost_usd` is controlled by `limits.count_estimated_cost`.
+
+Since Aether 1.0.9 a Codex (subscription) turn reports `cost_usd = 0`,
+`cost_complete = false`, `cost_gap = "unpriced"` and its list-price dollars as
+`estimated_cost_usd`, with a `list_price` basis; older records keep those
+dollars in `cost_usd`. Archon reads the estimate as 0 when Aether omits it.
+With the default `count_estimated_cost = true` budgets count both shapes alike,
+so a Codex-heavy item stays bounded exactly as before. With it off, budgets
+count billed dollars only: Codex adds $0 to the daily and total budgets, a
+budgeted Codex stage is refused at spawn, and Codex usage on a budgeted item
+stops its run as unaccounted. `budgets_enabled = false` overrides both: no
+budget is enforced and spend is still recorded.
+
+Learning and reports of what work cost do not follow that setting. Outcome
+capture, model segments, model evidence, the finished item's cost told to the
+orchestrator, initiative member costs and the finish-time run cost use the
+API-equivalent total, `cost_usd + estimated_cost_usd` (`cost::API_EQUIVALENT`),
+so model selection never sees a subscription model as free. `GetItem`, item
+lists, `GetStage` and the status spend lines count as the budgets do. When the
+budgets leave estimates out, the cost report also gives the API-equivalent
+total as `≈ $X API-equivalent`, Aether's wording.
 CLI status and MCP `queue_status` spend lines name these budget-counted totals.
 A day's counted amount is what the daily budget counts for that day, and over
 every day the total is what the total budget counts. Rows that do not add up to the total
@@ -1936,8 +1956,8 @@ with missing or unrecognised effort is refused. If Aether no longer has the
 child when the watchdog reads it, only its event model can be checked: its role
 and effort are unavailable. With no such key the contract asks
 for a model other than the lead's whose cost Aether reports (a Codex reviewer's
-unpriced usage blocks a budgeted item), and the watchdog holds reviewers only to
-the model policy.
+usage is only an estimate, which Aether's dollar caps do not count), and the
+watchdog holds reviewers only to the model policy.
 
 **Stage timeouts.** `enqueue`, `update_item` and `steer_item` take `stage_timeouts`, a
 `{"<stage-id>": minutes}` map for the item: each stage it names runs with that
@@ -1955,8 +1975,8 @@ sorted by stage then median completed cost, with model/effort tie breakers and
 uncompleted groups last within a stage. Each line shows attempts, completed
 attempts, median and nearest-rank p90 cost per completed attempt, median minutes
 of completed attempts with finish times, and review/test recorded verdict pass
-share (unknown verdicts do not pass). Costs use the budget's estimate setting
-and latest agent ledger totals, falling back to stored stage cost when there is
+share (unknown verdicts do not pass). Costs are API-equivalent totals from the
+latest agent ledger totals, whatever the budgets count, falling back to stored stage cost when there is
 no ledger row. Completed n below five is marked as a small sample. Output is
 limited to 60 groups and states the omitted count. This evidence recommends
 nothing and introduces no persistent cache, background job, price list or storage table.
@@ -2601,7 +2621,7 @@ max_active_runs = 0
 budget_usd_per_item = 0.0
 budget_usd_daily = 0.0
 budget_usd_total = 0.0
-count_estimated_cost = true
+count_estimated_cost = true    # budgets count API-equivalent estimates, e.g. Codex usage
 infra_retries = 1
 min_free_gb = 10               # hold dispatch below this much free disk; 0 = off
 max_delegation_depth = 2       # delegations below a stage agent or the orchestrator; 1..=4
@@ -3918,7 +3938,8 @@ Workspaces are deleted after grading unless `--keep-workspaces` is passed.
 
 Metrics per trial: `success` (grader exit status), `score` (optional grader
 JSON), `wall_secs`, `input_tokens`, `output_tokens`, `cost_usd`,
-`estimated_cost_usd`, `operator_messages`, `error`. Results go to
+`estimated_cost_usd`, `operator_messages`, `error`. Arms are compared by the
+API-equivalent total, `cost_usd + estimated_cost_usd`. Results go to
 `results.jsonl`, one JSON object per trial. A failed trial with an `error`
 (a provider limit, a crash, a grading failure) is an infrastructure failure:
 `summary.md` leaves it out of every aggregate and lists it on its own. Over

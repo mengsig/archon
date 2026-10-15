@@ -35,12 +35,19 @@ pub(super) fn report(report: &CostReport) -> String {
     text
 }
 
+/// Uncounted estimates also give the API-equivalent total, so unbilled
+/// subscription usage, such as Codex, never reads as free.
 fn amounts(amounts: &CostAmounts) -> String {
+    let uncounted = amounts
+        .uncounted_api_equivalent_usd()
+        .map_or_else(String::new, |total| {
+            format!("; ≈ {} API-equivalent", usd(total))
+        });
     format!(
-        "{} (billed {}, list-price/API estimate {}, unclassified {})",
+        "{} (billed {}, list-price/API estimate {}, unclassified {}{uncounted})",
         usd(amounts.counted_usd),
         usd(amounts.cost_usd),
         usd(amounts.estimated_cost_usd),
-        usd(amounts.unclassified_cost_usd)
+        usd(amounts.unclassified_cost_usd),
     )
 }

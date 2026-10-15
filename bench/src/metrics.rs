@@ -78,6 +78,7 @@ pub struct TrialResult {
     /// Subscription estimates, or `--price` applied to the token counts.
     pub estimated_cost_usd: Option<f64>,
     /// Why Aether called `cost_usd` incomplete; present means it is a floor.
+    /// An unpriced gap that the same agent's estimate covers is left out.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_gap: Option<String>,
     /// Messages the operator would have had to read.
@@ -130,33 +131,31 @@ impl TrialResult {
         !self.success && self.error.is_some()
     }
 
-    /// The cost to compare arms by: billed dollars when any were reported,
-    /// else the estimate. `None` means nobody could price the trial.
+    /// The cost to compare arms by: the API-equivalent total, billed dollars
+    /// plus the estimate of unbilled usage. `None` means nobody priced the trial.
     pub fn effective_cost_usd(&self) -> Option<f64> {
-        match (self.cost_usd, self.estimated_cost_usd) {
-            (Some(billed), _) if billed > 0.0 => Some(billed),
-            (billed, Some(estimate)) => Some(estimate.max(billed.unwrap_or(0.0))),
-            (billed, None) => billed,
+        if self.cost_usd.is_none() && self.estimated_cost_usd.is_none() {
+            return None;
         }
+        let (billed, estimate) = (
+            self.cost_usd.unwrap_or(0.0),
+            self.estimated_cost_usd.unwrap_or(0.0),
+        );
+        assert!(billed >= 0.0 && estimate >= 0.0, "costs are never negative");
+        Some(billed + estimate)
     }
 
-    /// Aether reported this trial's billed cost as incomplete, so that cost
-    /// is a lower bound. A substituted estimate is no bound at all.
+    /// Aether reported work this trial's cost leaves out, so it is a lower bound.
+    /// Gaps covered by an agent's own estimate never get here (`usage::aether_usage`).
     pub fn cost_is_floor(&self) -> bool {
-        match (self.cost_gap.as_ref(), self.cost_usd) {
-            (Some(_), Some(billed)) => self.effective_cost_usd() == Some(billed),
-            _ => false,
-        }
+        self.cost_gap.is_some() && self.effective_cost_usd().is_some()
     }
 
-    /// The effective cost is an estimate standing in for a missing or zero
-    /// billed cost, so it bounds nothing.
+    /// Some of the effective cost is an estimate of unbilled usage (Codex,
+    /// subscriptions or `--price`), so it bounds nothing.
     pub fn cost_is_estimate(&self) -> bool {
-        match (self.cost_usd, self.estimated_cost_usd) {
-            (Some(billed), _) if billed > 0.0 => false,
-            (billed, Some(estimate)) => estimate > billed.unwrap_or(0.0),
-            (_, None) => false,
-        }
+        self.estimated_cost_usd
+            .is_some_and(|estimate| estimate > 0.0)
     }
 }
 
@@ -269,10 +268,11 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn only_a_substituted_estimate_is_an_estimate() {
+    fn any_estimated_dollar_makes_the_cost_an_estimate() {
         assert!(result(None, Some(2.0)).cost_is_estimate());
         assert!(result(Some(0.0), Some(2.0)).cost_is_estimate());
-        assert!(!result(Some(1.0), Some(2.0)).cost_is_estimate());
+        assert!(result(Some(1.0), Some(2.0)).cost_is_estimate());
+        assert!(!result(Some(1.0), Some(0.0)).cost_is_estimate());
         assert!(!result(Some(2.0), None).cost_is_estimate());
         assert!(!result(None, None).cost_is_estimate());
     }
@@ -315,8 +315,9 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn effective_cost_prefers_billed_then_estimate() {
-        assert_eq!(result(Some(2.0), Some(5.0)).effective_cost_usd(), Some(2.0));
+    fn effective_cost_is_billed_plus_estimated_dollars() {
+        // A Claude lead billed $2 and its Codex reviewer was estimated at $5.
+        assert_eq!(result(Some(2.0), Some(5.0)).effective_cost_usd(), Some(7.0));
         assert_eq!(result(Some(0.0), Some(5.0)).effective_cost_usd(), Some(5.0));
         assert_eq!(result(None, Some(1.5)).effective_cost_usd(), Some(1.5));
         assert_eq!(result(Some(0.0), None).effective_cost_usd(), Some(0.0));
@@ -324,16 +325,23 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn only_a_reported_cost_with_a_gap_is_a_floor() {
+    fn a_gap_left_at_the_trial_is_a_floor_whatever_the_estimate() {
+        // Covered gaps were dropped per agent, so any left mark unpriced work.
         let gapped = |cost, estimate| {
             let mut r = result(cost, estimate);
             r.cost_gap = Some("unpriced".into());
             r
         };
+        let mut interrupted = result(Some(2.0), Some(5.0));
+        interrupted.cost_gap = Some("interrupted".into());
+        assert!(interrupted.cost_is_floor() && interrupted.cost_is_estimate());
+        assert_eq!(CostBound::of([&interrupted]), CostBound::Incomplete);
         assert!(gapped(Some(2.0), Some(5.0)).cost_is_floor());
-        assert!(gapped(Some(0.0), None).cost_is_floor());
-        assert!(!gapped(Some(0.0), Some(5.0)).cost_is_floor());
-        assert!(!gapped(None, Some(5.0)).cost_is_floor());
+        assert_eq!(
+            CostBound::of([&gapped(None, Some(5.0))]),
+            CostBound::Incomplete
+        );
+        assert_eq!(CostBound::of([&gapped(Some(0.0), None)]), CostBound::Floor);
         assert!(!gapped(None, None).cost_is_floor());
         assert!(!result(Some(2.0), None).cost_is_floor());
     }

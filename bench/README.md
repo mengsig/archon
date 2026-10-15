@@ -92,8 +92,9 @@ below describe earlier runs, not the current test defaults.
 - **Tokens** are input (including cache reads and writes) and output tokens
   over every agent of the trial. For `archon` that includes the orchestrator
   and all stage agents.
-- **Cost** is billed dollars when the harness reports them. Otherwise it is
-  Aether's estimate, or list prices given with `--price`.
+- **Cost** is the API-equivalent total: billed dollars plus Aether's
+  estimate of unbilled usage, such as Codex turns since Aether 1.0.9. An arm
+  that reports neither is priced at the list prices given with `--price`.
 - **Operator messages** count what the operator has to read:
   - one final result for `claude` and `codex`;
   - the assistant messages of the `aether` agent;

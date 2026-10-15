@@ -356,7 +356,7 @@ fn summaries_without_timeout_grades_keep_their_layout() {
 }
 
 #[test]
-fn a_floor_needs_a_reported_cost_among_the_trials_that_priced_the_arm() {
+fn only_priced_trials_with_an_uncovered_gap_mark_the_arm_cost() {
     let mut substituted = result(Some(0.0), Some(5.0));
     substituted.cost_gap = Some("unpriced".into());
     let mut unpriced = result(None, None);
@@ -365,7 +365,9 @@ fn a_floor_needs_a_reported_cost_among_the_trials_that_priced_the_arm() {
 
     let estimated = Summary::build(&[substituted], None).unwrap();
     assert_eq!(estimated.arms[0].cost_usd.as_ref().unwrap().mean, 5.0);
-    assert_eq!(estimated.arms[0].cost_bound, CostBound::Exact);
+    assert_eq!(estimated.arms[0].cost_bound, CostBound::Incomplete);
+    let covered = Summary::build(&[result(Some(0.0), Some(5.0))], None).unwrap();
+    assert_eq!(covered.arms[0].cost_bound, CostBound::Exact);
     let with_unpriced = Summary::build(&[exact, unpriced], None).unwrap();
     assert_eq!(with_unpriced.arms[0].cost_usd.as_ref().unwrap().n, 1);
     assert_eq!(with_unpriced.arms[0].cost_bound, CostBound::Exact);

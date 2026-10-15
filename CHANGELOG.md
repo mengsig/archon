@@ -18,6 +18,17 @@
 
 ### Changed
 
+- Codex usage is an estimate since Aether 1.0.9: a Codex turn bills $0 and
+  carries its list-price dollars as `estimated_cost_usd`. With the default
+  `count_estimated_cost = true` budgets count it as before, so a Codex-heavy
+  item stays bounded; with it off, Codex counts $0 toward budgets. Learning,
+  model evidence, a finished item's reported cost and benchmark costs now
+  always use the API-equivalent total, billed plus estimated, so a Codex
+  stage never looks free. `archon cost` and `cost_report` add
+  `≈ $X API-equivalent` when budgets leave estimates out. Older records keep
+  their list-price cost and read as before, and outcomes captured while
+  budgets left estimates out are re-priced with them when learning reads them.
+  A benchmark cost stays marked when unpriced work has no estimate covering it.
 - Agent cargo builds are lean and per item: each item builds into
   `<data>/cache/<repo>/items/<item>/cargo-target`, kept across retries and
   deleted by archond when the item ends (unreadable subdirectories included);

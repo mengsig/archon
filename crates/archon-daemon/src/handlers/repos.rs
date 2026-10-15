@@ -20,6 +20,23 @@ use crate::{feed, github, worktree};
 /// must resolve. With `github_watch` its GitHub origin is also watched,
 /// checked first so that a repository that cannot be watched is not registered.
 pub(super) async fn add(ctx: &DaemonContext, add: RepoAdd) -> Result<Reply, ArchonError> {
+    add_with_watch(ctx, add, false).await
+}
+
+/// The authenticated operator socket can start the watcher root, outside
+/// the authority guards. Delegated authority uses the root it already has.
+pub(super) async fn add_from_operator(
+    ctx: &DaemonContext,
+    add: RepoAdd,
+) -> Result<Reply, ArchonError> {
+    add_with_watch(ctx, add, true).await
+}
+
+async fn add_with_watch(
+    ctx: &DaemonContext,
+    add: RepoAdd,
+    ensure_root: bool,
+) -> Result<Reply, ArchonError> {
     if !add.path.is_absolute() {
         return Err(ArchonError::Invalid(format!(
             "repository path {} must be absolute",
@@ -59,7 +76,7 @@ pub(super) async fn add(ctx: &DaemonContext, add: RepoAdd) -> Result<Reply, Arch
     ctx.mirrors.request_repo(&repo.id);
     tracing::info!(repo = %repo.name, path = %repo.path.display(), "repository registered");
     if let Some(repository) = watch {
-        watch_origin(ctx, &repo, repository).await?;
+        watch_origin(ctx, &repo, repository, ensure_root).await?;
     }
     Ok(Reply::Repo(repo))
 }
@@ -68,7 +85,7 @@ pub(super) async fn add(ctx: &DaemonContext, add: RepoAdd) -> Result<Reply, Arch
 pub(super) async fn watch(ctx: &DaemonContext, reference: &RepoRef) -> Result<String, ArchonError> {
     let repo = ctx.store.lock().await.repo(reference)?;
     let repository = github_origin(ctx, &repo.path).await?;
-    watch_origin(ctx, &repo, repository.clone()).await?;
+    watch_origin(ctx, &repo, repository.clone(), true).await?;
     Ok(format!("watching {repository} on GitHub for {}", repo.name))
 }
 
@@ -97,12 +114,18 @@ async fn watch_origin(
     ctx: &DaemonContext,
     repo: &Repo,
     repository: GithubRepo,
+    ensure_root: bool,
 ) -> Result<(), ArchonError> {
     let change = WatcherChange::Add {
         repository: repository.clone(),
         allowed_users: None,
     };
-    if let Err(error) = github::configure(ctx, change).await {
+    let result = if ensure_root {
+        github::configure(ctx, change).await
+    } else {
+        github::configure_existing(ctx, change).await
+    };
+    if let Err(error) = result {
         let detail = format!(
             "{} is registered but not watched; retry with `archon github-watcher add {repository}`",
             repo.name

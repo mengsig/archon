@@ -33,13 +33,31 @@ pub(super) async fn loosens(
         None => None,
     };
     let new = crate::settings::preview(ctx, id.as_ref(), next).await?;
+    // Removing an explicit lowering can expose inherited permissions even
+    // when the repository file currently masks both effective values.
+    let mut raw_env = crate::resolve::RepoEnv::load(ctx, id.as_ref()).await?;
+    raw_env.config = Default::default();
+    let raw_old = raw_env.effective_with(ctx, &old.scoped);
+    let raw_new = raw_env.effective_with(ctx, next);
+
     // Compare both effective policy and explicit knobs: a lowering repository
     // file must not hide a raise that would surface when that file is removed.
-    Ok(!new
+    Ok(!raw_new
         .autonomy
         .default
-        .excess(old.effective.autonomy.default)
+        .excess(raw_old.autonomy.default)
         .is_empty()
+        || !raw_new
+            .autonomy
+            .ceiling
+            .excess(raw_old.autonomy.ceiling)
+            .is_empty()
+        || super::actions::caps_loosen(&raw_old.caps, &raw_new.caps)
+        || !new
+            .autonomy
+            .default
+            .excess(old.effective.autonomy.default)
+            .is_empty()
         || !new
             .autonomy
             .ceiling

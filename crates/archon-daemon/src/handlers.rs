@@ -78,6 +78,22 @@ pub async fn handle(
         return Err(refusal);
     }
     check_named_caller(caller.as_ref(), &request)?;
+    // Registration validates and stores the repo before enabling its watcher.
+    // Its optional lifecycle work must precede authority lock acquisition.
+    if let Request::RepoAdd(add) = &request
+        && add.github_watch
+    {
+        return repos::add_from_operator(ctx, add.clone()).await;
+    }
+
+    let enables_watcher = match &request {
+        Request::ConfigureGithubWatcher { change } => github::enables(change),
+        _ => false,
+    };
+    if enables_watcher {
+        github::prepare_enable(ctx).await?;
+    }
+
     // Held to the end of the call: the orchestrator is not replaced under it.
     let _authority = if orchestrators_alone(client, caller.as_ref(), &request) {
         Some(supervisor::authorize(ctx, caller.as_ref()).await?)
@@ -403,7 +419,7 @@ async fn handle_operator(ctx: &DaemonContext, request: Request) -> Result<Reply,
         Request::ReopenReport { report } => Ok(Reply::Report(reports::reopen(ctx, &report).await?)),
         Request::GithubWatcher => Ok(Reply::GithubWatcher(Box::new(github::watcher(ctx).await?))),
         Request::ConfigureGithubWatcher { change } => {
-            let view = github::configure(ctx, change).await?;
+            let view = github::configure_existing(ctx, change).await?;
             Ok(Reply::GithubWatcher(Box::new(view)))
         }
         Request::GithubReply { thread, body } => {

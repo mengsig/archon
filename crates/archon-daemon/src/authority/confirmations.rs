@@ -109,11 +109,31 @@ pub(super) async fn check_answer(
     ctx: &DaemonContext,
     id: &QuestionId,
     evidence: &OperatorMessage,
+    answer: &str,
 ) -> Result<(), ArchonError> {
     let Some(pending) = load(ctx, id).await? else {
         return Ok(());
     };
     actions::check_channel(ctx, evidence, &pending.action)?;
+    use archon_core::authority::OperatorChannel;
+    if !matches!(
+        evidence.channel,
+        OperatorChannel::Cli | OperatorChannel::ArchonChat
+    ) && evidence.channel != pending.evidence.channel
+    {
+        return Err(ArchonError::Forbidden(
+            "answer this confirmation in its original channel and GitHub thread".into(),
+        ));
+    }
+    if evidence.channel.is_github()
+        && !ctx.config.authority.github_may_loosen
+        && yes_no(answer) == Some(true)
+    {
+        return Err(ArchonError::Forbidden(
+            "GitHub loosening is disabled by authority.github_may_loosen".into(),
+        ));
+    }
+
     if evidence.at < pending.asked_at {
         return Err(ArchonError::Forbidden(
             "the operator answer predates the confirmation".into(),
@@ -248,7 +268,7 @@ pub(super) async fn bare_reply(
         return Ok(false);
     };
     drop(changes);
-    check_answer(ctx, &question.id, evidence).await?;
+    check_answer(ctx, &question.id, evidence, if yes { "yes" } else { "no" }).await?;
     super::audit(
         ctx,
         evidence,

@@ -160,6 +160,7 @@ pub enum Command {
     Autonomy(AutonomyArgs),
     /// Saved operator overrides and effective values with their sources.
     Settings {
+        /// Repository name or id; omit for global settings.
         #[arg(long)]
         repo: Option<String>,
         /// Replace this scope's overlay with a JSON object.

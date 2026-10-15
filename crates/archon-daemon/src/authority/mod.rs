@@ -227,8 +227,9 @@ pub(crate) async fn check_answer(
     ctx: &DaemonContext,
     id: &archon_core::id::QuestionId,
     message: &OperatorMessage,
+    answer: &str,
 ) -> Result<(), ArchonError> {
-    confirmations::check_answer(ctx, id, message).await
+    confirmations::check_answer(ctx, id, message, answer).await
 }
 
 pub(crate) async fn bare_reply(

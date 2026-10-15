@@ -689,3 +689,89 @@ async fn github_operator_can_confirm_a_repository_budget_override() {
     );
     assert!(setting(&h, None).await.effective.caps.budgets_enabled);
 }
+
+#[tokio::test]
+async fn github_numbered_answers_cannot_cross_channels_or_threads() {
+    use archon_aether::{AetherClient, fake::FakeAether};
+    for may_loosen in [true, false] {
+        let mut config = Config::default();
+        config.authority.github_may_loosen = may_loosen;
+        let h = Harness::with_config(config).await;
+        h.ctx
+            .store
+            .lock()
+            .await
+            .kv_set(keys::ORCHESTRATOR_AGENT, ORCHESTRATOR)
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let fake = FakeAether::start(&dir.path().join("authority.sock"))
+            .await
+            .unwrap();
+        h.ctx
+            .aether
+            .replace(Some(std::sync::Arc::new(
+                AetherClient::connect(&fake.endpoint()).await.unwrap(),
+            )))
+            .unwrap();
+        deliver(&h, 1, user("grant requested merges")).await;
+        let q = confirmation(&h, 1).await;
+        let answer = format!("/answer {} yes", q.number);
+        deliver(&h, 2, github(&answer, 1)).await;
+        assert!(
+            !granted(&h).await,
+            "GitHub cannot answer a TUI confirmation"
+        );
+        deliver(&h, 3, user(&answer)).await;
+        assert!(granted(&h).await);
+        if may_loosen {
+            h.cli(grant(false)).await.unwrap();
+            deliver(&h, 4, github("grant requested merges", 1)).await;
+            let q = confirmation(&h, 4).await;
+            let answer = format!("/answer {} yes", q.number);
+            deliver(&h, 5, github(&answer, 2)).await;
+            assert!(
+                !granted(&h).await,
+                "numbered replies still bind their thread"
+            );
+            deliver(&h, 6, github(&answer, 1)).await;
+            assert!(granted(&h).await);
+        }
+    }
+}
+
+#[tokio::test]
+async fn resetting_a_masked_lowering_still_requires_confirmation() {
+    let h = harness(AetherMode::Dedicated).await;
+    h.cli(Request::SetSettings {
+        repo: None,
+        settings: serde_json::from_value(json!({
+            "autonomy_max":{"merge":"auto"}, "autonomy_default":{"merge":"auto"}
+        }))
+        .unwrap(),
+    })
+    .await
+    .unwrap();
+    h.cli(Request::SetSettings {
+        repo: Some(RepoRef(REPO_NAME.into())),
+        settings: serde_json::from_value(json!({"autonomy_max":{"merge":"manual"}})).unwrap(),
+    })
+    .await
+    .unwrap();
+    std::fs::write(
+        h.repo.join(".archon/config.toml"),
+        "[autonomy.max]\nmerge = \"manual\"\n",
+    )
+    .unwrap();
+    deliver(&h, 1, user("reset this repository's settings")).await;
+    let result = h
+        .orchestrator(cited(
+            Request::ResetSettings {
+                repo: Some(RepoRef(REPO_NAME.into())),
+            },
+            1,
+            "reset this repository's settings",
+        ))
+        .await
+        .unwrap();
+    assert!(matches!(result, Reply::Question(_)));
+}

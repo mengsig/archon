@@ -31,6 +31,13 @@
   with a 15-second limit per probe within the client's 60-second timeout.
 - The multi-repository currency benchmark runs its ledger through Cargo,
   honoring worktree configuration and `CARGO_TARGET_DIR`.
+- Reviewers' experiment copies now go in a directory Archon owns on its data
+  disk, `<data>/experiments/<item>`, instead of wherever `mktemp -d` puts
+  them, which is often a small `/tmp` the whole machine shares. Archon creates
+  the directory before a stage that can review starts and names it in the
+  contract. It deletes the directory once the item has finished and its
+  agents, and every agent they started, have stopped. `archon gc` removes any
+  a crash left behind, and never follows a symlink there.
 
 ## 1.2.3
 

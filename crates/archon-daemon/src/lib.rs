@@ -9,6 +9,7 @@ pub mod context;
 pub mod disk;
 pub mod dispatcher;
 pub mod executor;
+mod experiments;
 pub mod feed;
 pub mod gc;
 pub mod github;

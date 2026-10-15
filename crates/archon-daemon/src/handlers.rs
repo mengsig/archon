@@ -7,6 +7,7 @@ mod cost;
 mod initiatives;
 mod item_views;
 mod items;
+pub(crate) use items::check_stage_timeouts;
 mod learning;
 
 pub use learning::memory_feedback::{

@@ -8,13 +8,14 @@ mod initiatives;
 mod lessons;
 mod stages;
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use archon_core::autonomy::{AutonomyView, Directive};
 use archon_core::catalog::{CatalogListing, Gate, PipelineSummary, StageSummary};
 use archon_core::github::GithubWatch;
 use archon_core::id::{PipelineRunId, QueueItemId};
-use archon_core::model::{ModelPlan, ModelReasons};
+use archon_core::model::{Effort, ModelPlan, ModelReasons};
 use archon_core::notify::Question;
 use archon_core::policy::ModelPolicy;
 use archon_core::protocol::{
@@ -253,9 +254,19 @@ fn item_detail(detail: &ItemDetail) -> String {
         item.created_at.to_rfc3339(),
         item.updated_at.to_rfc3339(),
         clip(&item.brief, CLIP_CHARS),
-        plan_text(&item.model_plan, item.model_reasons.as_ref()),
+        plan_text(
+            &item.model_plan,
+            item.model_reasons.as_ref(),
+            &detail.default_efforts
+        ),
         item.autonomy.describe()
     );
+    if !item.stage_timeouts.is_empty() {
+        let timeouts: Vec<String> = (item.stage_timeouts.iter())
+            .map(|(stage, minutes)| format!("{stage} {minutes}m"))
+            .collect();
+        let _ = write!(text, "\nStage timeouts: {}", timeouts.join(", "));
+    }
     for gate in &detail.gates {
         let _ = write!(text, "\nGate {}", gate_line(gate));
     }
@@ -284,7 +295,11 @@ fn item_detail(detail: &ItemDetail) -> String {
     text
 }
 
-fn plan_text(plan: &ModelPlan, reasons: Option<&ModelReasons>) -> String {
+fn plan_text(
+    plan: &ModelPlan,
+    reasons: Option<&ModelReasons>,
+    defaults: &BTreeMap<String, Effort>,
+) -> String {
     if plan.0.is_empty() {
         return "(empty)".to_owned();
     }
@@ -299,7 +314,13 @@ fn plan_text(plan: &ModelPlan, reasons: Option<&ModelReasons>) -> String {
             let reason = reasons
                 .and_then(|r| r.get(stage))
                 .map_or(String::new(), |r| format!(" ({r})"));
-            format!("{stage} = {}{reason}", picks.join(" + "))
+            let above = defaults
+                .get(stage)
+                .filter(|default| choices.iter().any(|c| c.effort > **default))
+                .map_or(String::new(), |default| {
+                    format!(" [above default {default}]")
+                });
+            format!("{stage} = {}{above}{reason}", picks.join(" + "))
         })
         .collect();
     stages.join("; ")
@@ -542,7 +563,11 @@ fn stage_summary(stage: &StageSummary) -> String {
             stage.max_loops
         );
     }
-    let _ = write!(text, ", timeout {}m)", stage.timeout_minutes);
+    let _ = write!(
+        text,
+        ", timeout {}m, effort {})",
+        stage.timeout_minutes, stage.effort
+    );
     if let Some(nudge) = &stage.nudge {
         let _ = write!(text, ": {nudge}");
     }

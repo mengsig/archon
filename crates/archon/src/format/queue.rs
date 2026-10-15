@@ -390,6 +390,7 @@ mod tests {
             state: QueueState::Queued,
             autonomy: Autonomy::default(),
             origin: None,
+            stage_timeouts: Default::default(),
             fresh_retries: 0,
             initiative: None,
             created_at: archon_core::now(),
@@ -560,6 +561,7 @@ mod tests {
         ship.aether_agent = None;
         ship.structured = Some(serde_json::json!({"pr_url": "https://github.com/o/r/pull/12"}));
         ItemDetail {
+            default_efforts: Default::default(),
             steers: Vec::new(),
             waiting_on: None,
             waiting_reason: None,
@@ -774,6 +776,7 @@ mod tests {
         stage.structured = Some(serde_json::json!({"pr_url": "https://x\x1b[2K\n/1"}));
         let gate = rejected_with_escapes(&run);
         let detail = ItemDetail {
+            default_efforts: Default::default(),
             steers: Vec::new(),
             waiting_on: None,
             waiting_reason: None,

@@ -331,6 +331,7 @@ async fn a_stage_publishes_files_that_outlive_its_worktree_and_reach_dependents(
 
 async fn depends_on(h: &Harness, title: &str, after: &QueueItem) -> QueueItem {
     let request = EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(PIPELINE.into()),
         title: title.into(),
@@ -338,7 +339,7 @@ async fn depends_on(h: &Harness, title: &str, after: &QueueItem) -> QueueItem {
         priority: Default::default(),
         depends_on: vec![after.id.clone()],
         tags: Vec::new(),
-        model_plan: plan(),
+        model_plan: plan().into(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,

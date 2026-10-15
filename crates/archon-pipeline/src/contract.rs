@@ -2,7 +2,10 @@
 //! and report, passed as `config.instructions` so pipeline authors cannot
 //! omit it. The stage prompt says *what* to do; this says *how to finish*.
 
+use std::path::Path;
+
 use archon_core::catalog::{Gate, StageKind, WorkspaceMode};
+use archon_core::model::ModelChoice;
 use archon_core::run::StageOutcome;
 use serde::Serialize;
 
@@ -28,21 +31,22 @@ pub enum TeamPart<'a> {
     Role(&'a TeamSlot),
 }
 
-/// The contract for one stage agent working in `workspace`, with what its
-/// stage `owed` its run on record. See [`delegation_rules`] for delegators.
+/// The contract for one stage agent in `workspace`, with what its stage `owed` its run on
+/// record and the item's `experiments` directory. See [`delegation_rules`] for delegators.
 pub fn instructions(
     stage: &StageSpec,
     mode: WorkspaceMode,
     workspace: &str,
     team: TeamPart<'_>,
     owed: Owed,
+    experiments: Option<&Path>,
 ) -> String {
     assert!(!workspace.is_empty(), "a stage always has a workspace");
     assert!(stage.fan_out >= 1, "validated specs have fan_out >= 1");
     let mut out = contract_header(stage, mode, workspace, team);
     out.push_str(kind_rules(stage.kind));
     if stage.kind == StageKind::Review {
-        out.push_str(REVIEW_BOUNDS);
+        out.push_str(&review_bounds(experiments));
     }
     if let TeamPart::RunTree { branch } = team
         && stage.kind == StageKind::Work
@@ -65,16 +69,21 @@ pub fn instructions(
     out
 }
 
-/// The contract's section for a stage agent that can delegate. `models` is the
-/// policy its children are held to, in words (`ModelPolicy::describe`), and
-/// `depth` is `[limits] max_delegation_depth`.
-pub fn delegation_rules(mode: WorkspaceMode, models: &str, depth: u32) -> String {
+/// The section for an agent that can delegate: `models` is its children's policy in words,
+/// `depth` is `[limits] max_delegation_depth`, `experiments` as for [`instructions`].
+pub fn delegation_rules(
+    mode: WorkspaceMode,
+    models: &str,
+    depth: u32,
+    experiments: Option<&Path>,
+) -> String {
     assert!(!models.trim().is_empty(), "the policy is always stated");
     let workspaces = match mode {
         WorkspaceMode::Worktree | WorkspaceMode::Scratch => DELEGATE_WRITABLE,
         WorkspaceMode::RepoReadonly => DELEGATE_READ_ONLY,
     };
     let depth = depth_rule(depth);
+    let bounds = review_bounds(experiments);
     format!(
         "\n## Delegation\n\n\
          - Aether's `delegate` hands a scoped part of this stage to a child agent. \
@@ -89,7 +98,7 @@ pub fn delegation_rules(mode: WorkspaceMode, models: &str, depth: u32) -> String
          delegate a new one.\n\
          {DELEGATE_HAND_OFF}\
          {DELEGATE_CHILD_RULES}\
-         {REVIEW_BOUNDS}"
+         {bounds}"
     )
 }
 
@@ -392,6 +401,28 @@ fn review_rules(duty: ReviewDuty) -> String {
     rules
 }
 
+/// Which models the review-holding stage delegates its reviewers to: the
+/// plan's, which the daemon enforces, or advice when the plan names none.
+pub fn reviewer_model_rules(named: Option<&[ModelChoice]>) -> String {
+    match named {
+        Some(choices) if !choices.is_empty() => {
+            let models: Vec<String> = choices
+                .iter()
+                .map(|c| format!("{} at effort {}", c.model, c.effort))
+                .collect();
+            format!(
+                "- Delegate every reviewer with role `reviewer`, each on one of these models, \
+                 taken in turn: {}. Archon cancels a child labelled `reviewer` on any other.\n",
+                models.join("; ")
+            )
+        }
+        _ => "- Delegate every reviewer with role `reviewer`, on a model other than yours \
+              that reports its dollar cost (Claude Code models do; Codex usage arrives \
+              unpriced and blocks a budgeted item).\n"
+            .to_owned(),
+    }
+}
+
 const NO_REVIEW_RULES: &str = "\n## Review on record\n\n\
 - This item's review level is `none`: delegate no reviewer and record no review, \
 whatever the stage prompt says about one. Your own verification is all this change \
@@ -505,14 +536,49 @@ const REVIEW_RULES: &str = "\n## Review stage\n\n\
 verbatim if the gate fails, so make each one actionable: where (path and line), what \
 is wrong, why it matters, and what a fix looks like.\n";
 
-const REVIEW_BOUNDS: &str = "\
+const REVIEW_BOUNDS_LEAD: &str = "\
 - Reviewers: read the code and run the checks the review needs. Run each ad-hoc \
-experiment (mutant, probe, repro) in a `mktemp -d` copy of tracked files only \
-(no build outputs, no literal /tmp; delete it after) under one `timeout 30s` for all its repeats (`timeout 30s sh -c '…'` for loops \
-and pipes); a hang or timeout counts as detected. Run the project's own build and \
-tests normally, uncapped. \
+experiment (mutant, probe, repro) in a ";
+
+/// Where an experiment copy goes when Archon names no directory for it.
+const REVIEW_BOUNDS_FALLBACK: &str = "`mktemp -d` copy of tracked files only \
+(no build outputs, no literal /tmp; delete it after)";
+
+const REVIEW_BOUNDS_TAIL: &str = " under one `timeout 30s` for all its repeats \
+(`timeout 30s sh -c '…'` for loops and pipes); a hang or timeout counts as detected. \
+Run the project's own build and tests normally, uncapped. \
 No long hang proofs or background waits. Report incomplete checks; never pass \
 without the evidence the review requires.\n";
+
+/// The reviewers' bounds, with experiment copies in the item's `experiments`
+/// directory, or wherever `mktemp -d` puts them when there is none.
+fn review_bounds(experiments: Option<&Path>) -> String {
+    let copy = match experiments {
+        Some(dir) => {
+            assert!(dir.is_absolute(), "the experiments directory is absolute");
+            let dir = shell_word(&dir.display().to_string());
+            format!(
+                "`mktemp -d -p {dir}` copy of tracked files only (no build outputs; delete it \
+                 after)"
+            )
+        }
+        None => REVIEW_BOUNDS_FALLBACK.to_owned(),
+    };
+    format!("{REVIEW_BOUNDS_LEAD}{copy}{REVIEW_BOUNDS_TAIL}")
+}
+
+/// `text` as one POSIX shell word: bare when every character is plainly
+/// safe, otherwise single-quoted.
+fn shell_word(text: &str) -> String {
+    assert!(!text.is_empty(), "an empty word names nothing");
+    let plain = |c: char| c.is_ascii_alphanumeric() || "/._-+:@%,=".contains(c);
+    if text.chars().all(plain) {
+        return text.to_owned();
+    }
+    let quoted = format!("'{}'", text.replace('\'', r"'\''"));
+    assert!(quoted.len() > text.len(), "quoting only adds characters");
+    quoted
+}
 
 const TEST_RULES: &str = "\n## Test stage\n\n\
 - Verify by running things, not by reading alone. Do not edit tracked files to make a \
@@ -567,6 +633,7 @@ mod tests {
             fan_out,
             gate,
             timeout_minutes: 10,
+            effort: archon_core::model::Effort::Medium,
             allow_delegation: false,
             nudge: None,
             on_fail: None,
@@ -591,6 +658,7 @@ mod tests {
                 "/w",
                 TeamPart::Solo,
                 Owed::default(),
+                None,
             );
             assert!(text.contains("Work only in `/w`"), "{kind:?}");
             assert!(text.contains("`BLOCKED:`"), "{kind:?}");
@@ -623,6 +691,7 @@ mod tests {
                 "/w",
                 TeamPart::Solo,
                 Owed::default(),
+                None,
             );
             assert!(text.contains("VERDICT: PASS"), "{kind:?}");
             assert!(text.contains("\"verdict\""), "{kind:?}");
@@ -635,35 +704,87 @@ mod tests {
             "/w",
             TeamPart::Solo,
             Owed::default(),
+            None,
         );
         assert!(!work.contains("VERDICT: PASS"));
     }
 
-    #[test]
-    fn reviewers_bound_commands_and_reporting_without_skipping_checks() {
+    /// A review stage's contract and a delegator's rules, given `experiments`.
+    fn bounded(experiments: Option<&Path>) -> [String; 2] {
         let review = instructions(
             &stage(StageKind::Review, Gate::AllPass, 1),
             WorkspaceMode::Worktree,
             "/w",
             TeamPart::Solo,
             Owed::default(),
+            experiments,
         );
-        let delegated = delegation_rules(WorkspaceMode::Worktree, "a/one", 1);
-        for text in [&review, &delegated] {
-            for said in [
-                "read the code and run the checks the review needs",
-                "`mktemp -d` copy of tracked files only",
-                "no build outputs, no literal /tmp; delete it after) under one `timeout 30s` for all its repeats",
-                "Run the project's own build and tests normally, uncapped.",
-                "`timeout 30s sh -c '…'` for loops and pipes",
-                "a hang or timeout counts as detected",
-                "No long hang proofs or background waits",
-                "never pass without the evidence the review requires",
-            ] {
-                assert!(text.contains(said), "missing {said:?} in {text}");
+        let delegated = delegation_rules(WorkspaceMode::Worktree, "a/one", 1, experiments);
+        [review, delegated]
+    }
+
+    #[test]
+    fn reviewers_bound_commands_and_reporting_without_skipping_checks() {
+        let dir = Path::new("/data/experiments/itm_1");
+        for (experiments, copy) in [
+            (None, "`mktemp -d` copy of tracked files only"),
+            (
+                Some(dir),
+                "`mktemp -d -p /data/experiments/itm_1` copy of tracked files only",
+            ),
+        ] {
+            for text in bounded(experiments) {
+                for said in [
+                    "read the code and run the checks the review needs",
+                    copy,
+                    "delete it after) under one `timeout 30s` for all its repeats",
+                    "Run the project's own build and tests normally, uncapped.",
+                    "`timeout 30s sh -c '…'` for loops and pipes",
+                    "a hang or timeout counts as detected",
+                    "No long hang proofs or background waits",
+                    "never pass without the evidence the review requires",
+                ] {
+                    assert!(text.contains(said), "missing {said:?} in {text}");
+                }
+                assert_eq!(text.matches(&review_bounds(experiments)).count(), 1);
             }
-            assert_eq!(text.matches(REVIEW_BOUNDS).count(), 1);
         }
+    }
+
+    #[test]
+    fn without_a_directory_reviewers_fall_back_to_mktemp_and_no_literal_tmp() {
+        let fallback = "- Reviewers: read the code and run the checks the review needs. Run each \
+            ad-hoc experiment (mutant, probe, repro) in a `mktemp -d` copy of tracked files only \
+            (no build outputs, no literal /tmp; delete it after) under one `timeout 30s` for all \
+            its repeats (`timeout 30s sh -c '…'` for loops and pipes); a hang or timeout counts \
+            as detected. Run the project's own build and tests normally, uncapped. No long hang \
+            proofs or background waits. Report incomplete checks; never pass without the \
+            evidence the review requires.\n";
+        assert_eq!(review_bounds(None), fallback);
+        for text in bounded(None) {
+            assert!(!text.contains("mktemp -d -p"), "{text}");
+        }
+        let named = review_bounds(Some(Path::new("/data/experiments/itm_1")));
+        assert!(!named.contains("literal /tmp"), "{named}");
+        assert!(!named.contains("`mktemp -d` "), "{named}");
+    }
+
+    #[test]
+    fn an_experiments_directory_with_spaces_or_quotes_is_one_shell_word() {
+        let spaced = Path::new("/home/a b/archon data/experiments/itm_1");
+        for text in bounded(Some(spaced)) {
+            assert!(
+                text.contains("`mktemp -d -p '/home/a b/archon data/experiments/itm_1'` copy"),
+                "{text}"
+            );
+        }
+        let quote = review_bounds(Some(Path::new("/d/it's/x")));
+        assert!(
+            quote.contains(r"`mktemp -d -p '/d/it'\''s/x'` copy"),
+            "{quote}"
+        );
+        assert_eq!(shell_word("/plain/path_1.2-x"), "/plain/path_1.2-x");
+        assert_eq!(shell_word("/a$b"), "'/a$b'");
     }
 
     #[test]
@@ -685,7 +806,7 @@ mod tests {
                 assert!(text.contains(said), "missing {said:?} in {text}");
             }
         }
-        let delegation = delegation_rules(WorkspaceMode::Worktree, "a/one", 1);
+        let delegation = delegation_rules(WorkspaceMode::Worktree, "a/one", 1, None);
         assert!(
             delegation.contains("Wait for every child (`wait_for`) or cancel it (`cancel_agent`)")
         );
@@ -701,6 +822,7 @@ mod tests {
             "/w",
             TeamPart::Solo,
             Owed::default(),
+            None,
         );
         assert!(text.contains("\"reports\""));
         assert!(text.contains("one of 2 agents"));
@@ -711,7 +833,8 @@ mod tests {
                 WorkspaceMode::Worktree,
                 "/w",
                 TeamPart::Solo,
-                Owed::default()
+                Owed::default(),
+                None
             )
             .contains("VERDICT: PASS")
         );
@@ -725,6 +848,7 @@ mod tests {
             "/w",
             TeamPart::Solo,
             Owed::default(),
+            None,
         );
         assert!(text.contains("\"pr_url\""));
         assert!(text.contains("\"commit\""));
@@ -742,6 +866,7 @@ mod tests {
                 "/w",
                 TeamPart::Solo,
                 Owed::default(),
+                None,
             )
         };
         let ship = of(StageKind::Ship);
@@ -769,6 +894,7 @@ mod tests {
             "/w",
             TeamPart::Solo,
             Owed::default(),
+            None,
         );
         assert!(text.contains("kind `propose`"));
         assert!(text.contains(".archon/reports/proposal/index.html"));
@@ -791,6 +917,7 @@ mod tests {
             "/t/s-ui",
             part,
             Owed::default(),
+            None,
         );
         assert!(text.contains("kind `team`"));
         assert!(text.contains("role `ui` of roles [api, ui]"), "{text}");
@@ -814,6 +941,7 @@ mod tests {
             "/t/s-api",
             TeamPart::Role(&slot),
             Owed::default(),
+            None,
         );
         for rule in [
             "Archon sends you one roster message",
@@ -835,6 +963,7 @@ mod tests {
             "/w",
             TeamPart::Solo,
             Owed::default(),
+            None,
         );
         assert!(!solo.contains("roster"), "only team roles get a roster");
     }
@@ -853,6 +982,7 @@ mod tests {
                 "/t/main",
                 part,
                 Owed::default(),
+                None,
             );
             let rule = text.contains("Commit your changes on `archon/x` before you finish");
             assert_eq!(rule, kind == StageKind::Work, "{kind:?}");
@@ -865,6 +995,7 @@ mod tests {
             "/w",
             TeamPart::Solo,
             Owed::default(),
+            None,
         );
         assert!(!solo.contains("team stage"));
     }
@@ -881,10 +1012,11 @@ mod tests {
             "/w",
             TeamPart::Solo,
             Owed::default(),
+            None,
         );
         assert_eq!(contract.matches("delegate").count(), 0, "{contract}");
 
-        let writable = delegation_rules(WorkspaceMode::Worktree, "a/one, b/two", 2);
+        let writable = delegation_rules(WorkspaceMode::Worktree, "a/one, b/two", 2, None);
         assert!(writable.starts_with("\n## Delegation\n"), "{writable}");
         for said in [
             "A child may delegate once more when its part splits further",
@@ -901,10 +1033,10 @@ mod tests {
         }
         assert_eq!(
             writable,
-            delegation_rules(WorkspaceMode::Scratch, "a/one, b/two", 2)
+            delegation_rules(WorkspaceMode::Scratch, "a/one, b/two", 2, None)
         );
 
-        let read_only = delegation_rules(WorkspaceMode::RepoReadonly, "a/one", 2);
+        let read_only = delegation_rules(WorkspaceMode::RepoReadonly, "a/one", 2, None);
         assert!(read_only.contains("Your workspace is READ-ONLY, and so is every child's"));
         assert!(read_only.contains("Do not pass `workspace_mode: \"isolated\"`"));
         assert_eq!(
@@ -919,11 +1051,11 @@ mod tests {
     /// they may delegate, and where Archon cancels.
     #[test]
     fn delegation_rules_follow_the_configured_depth() {
-        let only_children = delegation_rules(WorkspaceMode::Worktree, "a/one", 1);
+        let only_children = delegation_rules(WorkspaceMode::Worktree, "a/one", 1, None);
         assert!(only_children.contains("Pass `leaf: true` for every child"));
         assert!(only_children.contains("Archon cancels an agent a second level down."));
         assert!(!only_children.contains("delegate once more"));
-        let deeper = delegation_rules(WorkspaceMode::Worktree, "a/one", 3);
+        let deeper = delegation_rules(WorkspaceMode::Worktree, "a/one", 3, None);
         for said in [
             "down to 3 levels below you",
             "an agent at level 2 to pass `leaf: true` for its own children",
@@ -938,7 +1070,7 @@ mod tests {
     #[test]
     fn delegation_rules_say_what_a_child_and_a_reviewer_are_handed() {
         for mode in [WorkspaceMode::Worktree, WorkspaceMode::RepoReadonly] {
-            let rules = delegation_rules(mode, "a/one", 2);
+            let rules = delegation_rules(mode, "a/one", 2, None);
             for said in [
                 "A child starts cold and pays to read whatever you do not tell it",
                 "Never your conversation or the project's history",
@@ -1000,7 +1132,7 @@ mod tests {
     #[test]
     fn a_delegating_agent_must_pass_its_rules_on_in_each_childs_instructions() {
         for mode in [WorkspaceMode::Worktree, WorkspaceMode::RepoReadonly] {
-            let rules = delegation_rules(mode, "a/one", 2);
+            let rules = delegation_rules(mode, "a/one", 2, None);
             for said in [
                 "A child inherits none of this contract or of the stage prompt",
                 "only the `objective` and `instructions` you pass to `delegate`",
@@ -1034,7 +1166,36 @@ mod tests {
 
     fn work_contract(owed: Owed) -> String {
         let work = stage(StageKind::Work, Gate::None, 1);
-        instructions(&work, WorkspaceMode::Worktree, "/w", TeamPart::Solo, owed)
+        instructions(
+            &work,
+            WorkspaceMode::Worktree,
+            "/w",
+            TeamPart::Solo,
+            owed,
+            None,
+        )
+    }
+
+    #[test]
+    fn reviewers_get_the_plan_s_models_or_advice_for_a_different_priced_one() {
+        let choice = |model: &str, effort| ModelChoice {
+            model: model.parse().unwrap(),
+            effort,
+        };
+        let named = [
+            choice("claude-code/opus", archon_core::model::Effort::Medium),
+            choice("claude-code/haiku", archon_core::model::Effort::Low),
+        ];
+        let rules = reviewer_model_rules(Some(&named));
+        assert!(rules.contains("role `reviewer`"), "{rules}");
+        assert!(
+            rules.contains("claude-code/opus at effort medium; claude-code/haiku at effort low")
+        );
+        assert!(rules.contains("Archon cancels a child labelled `reviewer` on any other"));
+        for unnamed in [reviewer_model_rules(None), reviewer_model_rules(Some(&[]))] {
+            assert!(unnamed.contains("a model other than yours"), "{unnamed}");
+            assert!(unnamed.contains("reports its dollar cost"), "{unnamed}");
+        }
     }
 
     #[test]
@@ -1075,7 +1236,14 @@ mod tests {
         let mut lead = stage(StageKind::Work, Gate::None, 1);
         lead.allow_delegation = true;
         let owed = owing(0, false);
-        let none = instructions(&lead, WorkspaceMode::Worktree, "/w", TeamPart::Solo, owed);
+        let none = instructions(
+            &lead,
+            WorkspaceMode::Worktree,
+            "/w",
+            TeamPart::Solo,
+            owed,
+            None,
+        );
         assert!(none.contains("review level is `none`: delegate no reviewer"));
         assert_eq!(none.matches("\"verdict\"").count(), 0, "{none}");
         let one = work_contract(owing(1, false));
@@ -1122,7 +1290,14 @@ mod tests {
             assert!(recording.contains(said), "missing {said:?} in {recording}");
         }
         let review = stage(StageKind::Review, Gate::AllPass, 1);
-        let judged = instructions(&review, WorkspaceMode::Worktree, "/w", TeamPart::Solo, owed);
+        let judged = instructions(
+            &review,
+            WorkspaceMode::Worktree,
+            "/w",
+            TeamPart::Solo,
+            owed,
+            None,
+        );
         assert!(judged.contains("You commit nothing: the record names the commit you judged"));
         assert_eq!(judged.matches("untracked").count(), 0, "{judged}");
     }
@@ -1143,6 +1318,7 @@ mod tests {
                 "/w",
                 TeamPart::Solo,
                 Owed::default(),
+                None,
             );
             assert!(
                 text.contains("- `ESCALATE:` when the task does not fit this pipeline"),
@@ -1163,6 +1339,7 @@ mod tests {
             "/r",
             TeamPart::Solo,
             Owed::default(),
+            None,
         );
         assert!(text.contains("READ-ONLY"));
         assert!(

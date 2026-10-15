@@ -7,6 +7,11 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::id::QueueItemId;
+use crate::model::Effort;
+
+fn default_effort() -> Effort {
+    Effort::Medium
+}
 
 /// Where a pipeline was found. Later sources replace earlier ones by name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -104,6 +109,9 @@ pub struct StageSummary {
     pub fan_out: u32,
     pub gate: Gate,
     pub timeout_minutes: u32,
+    /// The effort a plan gets for this stage when it names none.
+    #[serde(default = "default_effort")]
+    pub effort: Effort,
     pub nudge: Option<String>,
     /// `on_fail.goto` target and its bound, when the stage loops back.
     pub loops_to: Option<String>,

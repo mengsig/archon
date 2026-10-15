@@ -282,6 +282,7 @@ mod tests {
             budget_usd: None,
             autonomy: Default::default(),
             origin: None,
+            stage_timeouts: Default::default(),
             fresh_retries: 0,
             initiative: None,
             state: QueueState::Queued,

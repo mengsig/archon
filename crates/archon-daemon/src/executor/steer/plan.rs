@@ -17,6 +17,7 @@ use archon_pipeline::{PipelineSpec, reshape};
 use super::{Asked, shape};
 use crate::context::DaemonContext;
 use crate::executor::recover::{self, Blueprint};
+use crate::knobs;
 
 /// The template variable every stage prompt reads the brief from.
 const BRIEF_VARIABLE: &str = "task.brief";
@@ -117,6 +118,22 @@ pub(super) async fn plan(
     amend(&mut change, asked.steer, &at)?;
     replan(&mut change, asked, &at);
     reshape_run(ctx, asked, &mut change, &at).await?;
+    crate::handlers::check_stage_timeouts(
+        ctx,
+        &change.blueprint.spec,
+        &asked.steer.stage_timeouts,
+    )?;
+    if !asked.steer.stage_timeouts.is_empty() {
+        change
+            .blueprint
+            .item
+            .stage_timeouts
+            .extend(asked.steer.stage_timeouts.clone());
+        change
+            .what
+            .push("updated stage timeouts for future spawns".to_owned());
+        change.rebuild = true;
+    }
     retune(ctx, asked, &mut change, &at)?;
     rebudget(&mut change, asked.steer, &at, per_item_cap);
     extend(&mut change, asked.steer, &at)?;
@@ -324,6 +341,11 @@ fn retune(
     let blueprint = &mut change.blueprint;
     if blueprint.spec.stage(at.target).is_none() {
         return Err(no_stage(&blueprint.spec, at.target));
+    }
+    if let (Some(effort), Some(default)) = (steer.effort, blueprint.spec.default_effort(at.target))
+    {
+        let reasons = blueprint.item.model_reasons.as_ref();
+        knobs::check_effort_reason(at.target, effort, default, reasons)?;
     }
     let plan = &mut blueprint.item.model_plan;
     let choices = plan.0.get_mut(at.target).filter(|c| !c.is_empty());

@@ -231,7 +231,7 @@ timeout_minutes = 30
     );
     let mut plan = ModelPlan::default();
     plan.0
-        .insert("implement".into(), vec![choice(MODEL, Effort::High)]);
+        .insert("implement".into(), vec![choice(MODEL, Effort::Medium)]);
     let item = h
         .enqueue_in("scratch-note", "no branch", plan)
         .await

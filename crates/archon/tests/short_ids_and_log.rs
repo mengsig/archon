@@ -52,6 +52,7 @@ fn item(id: &str, title: &str) -> QueueItem {
         budget_usd: None,
         autonomy: archon_core::autonomy::Autonomy::default(),
         origin: None,
+        stage_timeouts: Default::default(),
         fresh_retries: 0,
         initiative: None,
         state: QueueState::Queued,
@@ -138,6 +139,7 @@ impl Fake {
             }),
             Request::ResolveItem { prefix } => return self.resolve(prefix),
             Request::GetItem { item } => Reply::ItemDetail(Box::new(ItemDetail {
+                default_efforts: Default::default(),
                 steers: Vec::new(),
                 waiting_on: None,
                 waiting_reason: None,

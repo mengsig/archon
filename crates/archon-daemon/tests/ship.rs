@@ -46,6 +46,7 @@ async fn enqueue(
     autonomy: AutonomyPatch,
 ) -> Result<QueueItem, ArchonError> {
     let request = EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(pipeline.into()),
         title: format!("a change through {pipeline}"),
@@ -53,7 +54,7 @@ async fn enqueue(
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: ModelPlan::default(),
+        model_plan: ModelPlan::default().into(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,

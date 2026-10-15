@@ -145,7 +145,7 @@ async fn enqueue_refuses_models_outside_the_repository_policy() {
         .expect_err("denied");
     assert!(matches!(refused, ArchonError::Policy(_)), "{refused:?}");
 
-    h.repo_config("[models]\nmax_effort = \"medium\"\n");
+    h.repo_config("[models]\nmax_effort = \"low\"\n");
     let refused = h
         .enqueue_with("too much effort", plan())
         .await
@@ -156,7 +156,10 @@ async fn enqueue_refuses_models_outside_the_repository_policy() {
     let mut modest = plan();
     modest
         .0
-        .insert("implement".into(), vec![choice(MODEL, Effort::Medium)]);
+        .insert("implement".into(), vec![choice(MODEL, Effort::Low)]);
+    modest
+        .0
+        .insert("review".into(), vec![choice(MODEL, Effort::Low)]);
     h.enqueue_with("within policy", modest)
         .await
         .expect("allowed");
@@ -187,7 +190,7 @@ async fn enqueue_validates_the_plan_against_the_pipeline() {
     let mut too_many = plan();
     too_many
         .0
-        .insert("implement".into(), vec![choice(MODEL, Effort::High); 2]);
+        .insert("implement".into(), vec![choice(MODEL, Effort::Medium); 2]);
     let mut unknown = plan();
     unknown
         .0
@@ -276,7 +279,7 @@ async fn a_running_item_is_steered_onto_a_new_model_plan() {
     let update = |plan: ModelPlan| Request::UpdateItem {
         item: item.id.clone(),
         patch: ItemPatch {
-            model_plan: Some(plan),
+            model_plan: Some(plan.into()),
             ..ItemPatch::default()
         },
     };
@@ -295,7 +298,7 @@ async fn a_running_item_is_steered_onto_a_new_model_plan() {
         .into_iter()
         .filter_map(|(agent, update)| update.choice.map(|choice| (agent, choice)))
         .collect();
-    assert_eq!(retuned, vec![(implementer, choice(MODEL, Effort::High))]);
+    assert_eq!(retuned, vec![(implementer, choice(MODEL, Effort::Medium))]);
     assert_eq!(h.item(&item.id).await.model_plan, plan());
     assert!(h.backend.cancelled().is_empty(), "nothing was cancelled");
 }
@@ -307,7 +310,7 @@ async fn a_retry_takes_a_new_plan_and_keeps_the_worktree() {
     h.dispatch().await;
     let retry = |plan: Option<ModelPlan>| Request::RetryItem {
         item: item.id.clone(),
-        model_plan: plan,
+        model_plan: plan.map(Into::into),
         model_reasons: None,
         fresh: false,
         brief_append: None,
@@ -595,6 +598,7 @@ async fn an_item_asked_for_on_github_reports_back_to_its_thread() {
         serde_json::from_value(serde_json::json!({"repository": "Owner/Repo", "number": 12}))
             .unwrap();
     let request = EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: Some(repo_ref()),
         pipeline: None,
         title: "fix the flaky test".into(),
@@ -602,7 +606,7 @@ async fn an_item_asked_for_on_github_reports_back_to_its_thread() {
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: plan(),
+        model_plan: plan().into(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,
@@ -755,6 +759,7 @@ async fn only_open_blocking_questions_for_live_stage_agents_derive_a_wait() {
 async fn mcp_enqueue_and_updates_refuse_invalid_queue_inputs() {
     let h = Harness::new().await;
     let base = EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: Some(repo_ref()),
         pipeline: Some(common::PIPELINE.into()),
         title: "valid".into(),
@@ -762,7 +767,7 @@ async fn mcp_enqueue_and_updates_refuse_invalid_queue_inputs() {
         priority: Default::default(),
         depends_on: vec![],
         tags: vec![],
-        model_plan: plan(),
+        model_plan: plan().into(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,

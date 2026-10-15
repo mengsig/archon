@@ -32,6 +32,10 @@ fn request_value(item: &QueueItem) -> serde_json::Value {
         "budget_usd": item.budget_usd,
         "autonomy": item.autonomy,
     });
+    // Omit empty overrides so fingerprints written before this field still match.
+    if !item.stage_timeouts.is_empty() {
+        value["stage_timeouts"] = serde_json::json!(item.stage_timeouts);
+    }
     if let Some(origin) = &item.origin {
         value["origin"] = serde_json::json!(origin);
     }

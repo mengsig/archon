@@ -127,6 +127,67 @@ pub struct ModelChoice {
     pub effort: Effort,
 }
 
+/// A [`ModelChoice`] as a request gives it: `effort` may be left out, and the
+/// stage's default effort stands in.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModelChoiceDraft {
+    pub model: ModelRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<Effort>,
+}
+
+impl From<ModelChoice> for ModelChoiceDraft {
+    fn from(choice: ModelChoice) -> Self {
+        Self {
+            model: choice.model,
+            effort: Some(choice.effort),
+        }
+    }
+}
+
+/// A [`ModelPlan`] as a request gives it, keyed like it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ModelPlanDraft(pub std::collections::BTreeMap<String, Vec<ModelChoiceDraft>>);
+
+impl From<ModelPlan> for ModelPlanDraft {
+    fn from(plan: ModelPlan) -> Self {
+        Self(
+            plan.0
+                .into_iter()
+                .map(|(stage, choices)| (stage, choices.into_iter().map(Into::into).collect()))
+                .collect(),
+        )
+    }
+}
+
+impl ModelPlanDraft {
+    /// The plan with each missing effort set to `default_for(key)`; `None`
+    /// from it names a key the caller already found to be no stage.
+    pub fn resolve(self, default_for: impl Fn(&str) -> Option<Effort>) -> ModelPlan {
+        let resolve = |stage: &str, draft: ModelChoiceDraft| {
+            let effort = draft
+                .effort
+                .or_else(|| default_for(stage))
+                .unwrap_or(Effort::Medium);
+            ModelChoice {
+                model: draft.model,
+                effort,
+            }
+        };
+        ModelPlan(
+            self.0
+                .into_iter()
+                .map(|(stage, drafts)| {
+                    let choices = drafts.into_iter().map(|d| resolve(&stage, d)).collect();
+                    (stage, choices)
+                })
+                .collect(),
+        )
+    }
+}
+
 /// Optional explanations of the orchestrator's per-stage choices.
 pub type ModelReasons = std::collections::BTreeMap<String, String>;
 
@@ -150,7 +211,24 @@ pub fn check_reason_lengths(reasons: &ModelReasons) -> Result<(), crate::ArchonE
 #[serde(transparent)]
 pub struct ModelPlan(pub std::collections::BTreeMap<String, Vec<ModelChoice>>);
 
+/// Ends the `model_plan` and `model_reasons` key (`<stage>.review`) naming the
+/// reviewers a stage delegates; stage ids hold no `.`.
+pub const REVIEWERS_KEY_SUFFIX: &str = ".review";
+
+/// The key naming the reviewers `stage` delegates.
+pub fn reviewers_key(stage: &str) -> String {
+    format!("{stage}{REVIEWERS_KEY_SUFFIX}")
+}
+
 impl ModelPlan {
+    /// The models the plan lets delegated reviewers run on; `None` leaves them free.
+    pub fn reviewer_choices(&self) -> Option<&[ModelChoice]> {
+        self.0
+            .iter()
+            .find(|(key, _)| key.ends_with(REVIEWERS_KEY_SUFFIX))
+            .map(|(_, choices)| choices.as_slice())
+    }
+
     pub fn choices_for(&self, stage_id: &str) -> Option<&[ModelChoice]> {
         self.0.get(stage_id).map(Vec::as_slice)
     }
@@ -200,6 +278,20 @@ mod tests {
             serde_json::json!({"provider": "codex", "model": "astra"})
         );
         assert!(serde_json::from_str::<ModelRef>("\"astra\"").is_err());
+    }
+
+    #[test]
+    fn a_plan_finds_the_reviewers_it_names() {
+        let choice = |model: &str| ModelChoice {
+            model: model.parse().unwrap(),
+            effort: Effort::Low,
+        };
+        let mut plan = ModelPlan::default();
+        plan.0.insert("implement".into(), vec![choice("a/one")]);
+        assert_eq!(plan.reviewer_choices(), None);
+        plan.0
+            .insert(reviewers_key("implement"), vec![choice("b/two")]);
+        assert_eq!(plan.reviewer_choices(), Some(&[choice("b/two")][..]));
     }
 
     #[test]

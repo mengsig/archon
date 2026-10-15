@@ -28,6 +28,7 @@ fn measure(paths: &DaemonPaths) -> Vec<StorageUsage> {
     let roots = [
         ("worktrees", paths.worktrees.clone()),
         ("scratch", paths.scratch.clone()),
+        ("experiments", paths.experiments()),
         ("build_cache", paths.cache()),
         ("artifacts", paths.artifacts()),
         ("reports_lavish", paths.reports.clone()),

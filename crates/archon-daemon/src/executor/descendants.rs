@@ -318,6 +318,7 @@ async fn stopped(
             .collect(),
         // A delivery archond makes itself waited for the stop as well.
         ship: vec![owed.run.clone()],
+        discard: vec![owed.run.clone()],
         poke: true,
         ..FollowUp::default()
     })

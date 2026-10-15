@@ -77,6 +77,7 @@ pub(super) async fn finish_run(
     let mut follow = FollowUp::poke();
     follow.stop.push(run.id.clone());
     follow.cleanup.extend(cleanup_for(ctx, &item, &run).await?);
+    follow.discard.push(run.id.clone());
     Ok(follow)
 }
 

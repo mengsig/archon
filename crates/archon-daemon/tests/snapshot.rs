@@ -415,6 +415,7 @@ async fn gc_collects_a_leftover_snapshot() {
 async fn a_repo_less_ask_works_in_scratch() {
     let h = Harness::new().await;
     let request = EnqueueRequest {
+        stage_timeouts: Default::default(),
         repo: None,
         pipeline: Some("ask".into()),
         title: "what is a monad?".into(),
@@ -422,7 +423,7 @@ async fn a_repo_less_ask_works_in_scratch() {
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: answer_plan(),
+        model_plan: answer_plan().into(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,

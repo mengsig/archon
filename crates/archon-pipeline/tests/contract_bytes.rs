@@ -4,12 +4,16 @@
 //! `cargo test -p archon-pipeline --test contract_bytes -- --nocapture`
 //! prints the table.
 
+use std::path::Path;
+
 use archon_core::catalog::StageKind;
 use archon_pipeline::Catalog;
 use archon_pipeline::contract::{self, TeamPart};
 use archon_pipeline::spec::{PipelineSpec, StageSpec};
 
 const WORKSPACE: &str = "/worktree";
+/// The item's directory for reviewers' experiment copies, as terse as `WORKSPACE`.
+const EXPERIMENTS: &str = "/experiments";
 /// A model policy in words, about as long as a real allowlist's.
 const POLICY: &str = "any model the policy allows";
 
@@ -38,7 +42,8 @@ fn contract_of(spec: &PipelineSpec, stage: &StageSpec) -> String {
         false => TeamPart::Solo,
     };
     let mode = spec.file.pipeline.workspace;
-    contract::instructions(stage, mode, WORKSPACE, part, spec.owed(stage))
+    let experiments = Some(Path::new(EXPERIMENTS));
+    contract::instructions(stage, mode, WORKSPACE, part, spec.owed(stage), experiments)
 }
 
 /// Every built-in stage but a team's roles, whose contract needs a slot.
@@ -59,7 +64,9 @@ fn costs() -> Vec<Cost> {
                     .review_duty(stage)
                     .is_some_and(|duty| duty.reviewers > 0);
             let delegation = match delegates {
-                true => contract::delegation_rules(mode, POLICY, 2).len(),
+                true => {
+                    contract::delegation_rules(mode, POLICY, 2, Some(Path::new(EXPERIMENTS))).len()
+                }
                 false => 0,
             };
             out.push(Cost {

@@ -90,22 +90,30 @@ fn enqueue_files_policy_idempotency_and_dependencies() {
     );
     assert_eq!(parsed(&output(&env, &extra))["id"], item["id"]);
     let id = item["id"].as_str().unwrap();
-    let dependent = output(&env, &["--depends-on", id]);
+    let dependent = output(
+        &env,
+        &[
+            "--depends-on",
+            id,
+            "--model-reasons-file",
+            reasons.to_str().unwrap(),
+        ],
+    );
     assert!(dependent.status.success(), "{dependent:?}");
     assert_eq!(parsed(&dependent)["dependencies"], json!([id]));
 
     for (bad, code) in [
         (
-            json!({"wrong": [{"model": "codex/test", "effort": "high"}]}),
+            json!({"wrong": [{"model": "codex/test", "effort": "medium"}]}),
             "invalid_argument",
         ),
         (json!({"answer": []}), "invalid_argument"),
         (
-            json!({"answer": [{"model": "codex/test", "effort": "high", "typo": true}]}),
+            json!({"answer": [{"model": "codex/test", "effort": "medium", "typo": true}]}),
             "invalid_argument",
         ),
         (
-            json!({"answer": [{"model": "codex/denied", "effort": "high"}]}),
+            json!({"answer": [{"model": "codex/denied", "effort": "medium"}]}),
             "policy",
         ),
     ] {
@@ -116,7 +124,7 @@ fn enqueue_files_policy_idempotency_and_dependencies() {
     }
     plan(
         &env,
-        json!({"answer": [{"model": "codex/test", "effort": "high"}]}),
+        json!({"answer": [{"model": "codex/test", "effort": "medium"}]}),
     );
     let out = output(&env, &["--merge", "auto"]);
     assert_eq!(out.status.code(), Some(1));
@@ -178,7 +186,11 @@ fn stdin_brief_toml_plan_repo_defaults_and_text_id() {
     git_repo(&repo);
     env.run(&["repo", "add", repo.to_str().unwrap(), "--pipeline", "ask"]);
     let plan = env.path("plan.toml");
-    std::fs::write(&plan, "[[answer]]\nmodel = 'codex/test'\neffort = 'high'\n").unwrap();
+    std::fs::write(
+        &plan,
+        "[[answer]]\nmodel = 'codex/test'\neffort = 'medium'\n",
+    )
+    .unwrap();
     let mut child = env
         .command(&[
             "queue",

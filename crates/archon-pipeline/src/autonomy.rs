@@ -5,6 +5,7 @@
 use archon_core::autonomy::{Autonomy, Knob, ProposalMode, ReportMode, ReviewLevel};
 use archon_core::catalog::{Gate, StageKind};
 use archon_core::error::ArchonError;
+use archon_core::model::Effort;
 use archon_core::run::GateSubject;
 
 use crate::spec::{PipelineSpec, StageSpec};
@@ -135,6 +136,7 @@ fn inserted(id: &str, kind: StageKind, prompt: &str) -> StageSpec {
         fan_out: 1,
         gate: Gate::None,
         timeout_minutes: INSERTED_TIMEOUT_MINUTES,
+        effort: Effort::Medium,
         allow_delegation: false,
         nudge: None,
         on_fail: None,

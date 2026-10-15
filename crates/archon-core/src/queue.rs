@@ -177,6 +177,9 @@ pub struct QueueItem {
     pub model_reasons: Option<ModelReasons>,
     /// Dollar cap for this item's whole run; `None` falls back to config.
     pub budget_usd: Option<f64>,
+    /// Stage id to the minutes that stage may run, instead of the pipeline's.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub stage_timeouts: BTreeMap<String, u32>,
     /// Resolved at enqueue, within the ceiling (ARCHITECTURE §18).
     #[serde(default)]
     pub autonomy: Autonomy,
@@ -306,6 +309,7 @@ mod tests {
             model_plan: ModelPlan::default(),
             model_reasons: None,
             budget_usd: None,
+            stage_timeouts: BTreeMap::new(),
             autonomy: Autonomy::default(),
             origin: None,
             fresh_retries: 0,

@@ -849,6 +849,10 @@ async fn expiry_requires_old_settled_items_and_quiet_reports_and_keeps_sources_a
                     .iter()
                     .any(|usage| usage.kind == "reports_lavish" && usage.bytes.is_some())
             );
+            assert!(
+                disk.storage.iter().any(|usage| usage.kind == "experiments"),
+                "reviewers' experiment copies are accounted"
+            );
         } else {
             assert!(stored.exists(), "{case}: {pass:?}");
             assert!(pass.reports.is_empty(), "{case}: {pass:?}");

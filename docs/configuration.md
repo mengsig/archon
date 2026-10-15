@@ -178,6 +178,7 @@ go past:
 ```toml
 [limits]
 max_delegation_depth = 2         # 1..=4
+max_stage_timeout_minutes = 1440 # 1..=43200
 max_agent_messages = 20          # 1..=200
 initiative_members = 16          # 1..=64
 initiative_contract_bytes = 2048 # 1..=16384
@@ -188,6 +189,9 @@ initiative_contract_bytes = 2048 # 1..=16384
   every child a leaf. Every level adds agents that run outside
   `max_parallel_agents`. The orchestrator's prompt and each delegating
   stage's contract state the configured depth.
+- `max_stage_timeout_minutes`: the longest per-stage timeout an item may
+  ask for with `stage_timeouts` at `enqueue`, `update_item` or `steer_item`. A pipeline's
+  own `timeout_minutes` is not capped by it.
 - `max_agent_messages`: the `message_orchestrator` calls one stage agent
   may make in its lifetime, and the messages one run node's inbox may
   relay. Each message is an orchestrator turn.

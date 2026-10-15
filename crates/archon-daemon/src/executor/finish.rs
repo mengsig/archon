@@ -15,7 +15,7 @@ use archon_core::run::{PipelineRun, RunState, StageOutcome, StageRun, StageState
 use archon_queue::Store;
 use chrono::TimeDelta;
 
-use super::{Cleanup, FollowUp, RunTable, clip, frozen};
+use super::{Cleanup, FollowUp, ItemBuild, RunTable, clip, frozen};
 use crate::context::DaemonContext;
 use crate::resolve;
 use crate::triggers::{self, TriggerEvent};
@@ -77,7 +77,23 @@ pub(super) async fn finish_run(
     let mut follow = FollowUp::poke();
     follow.stop.push(run.id.clone());
     follow.cleanup.extend(cleanup_for(ctx, &item, &run).await?);
+    follow.release_builds.extend(item_build(ctx, &item).await?);
     Ok(follow)
+}
+
+/// The build directory a settled item leaves behind, if it has a repository.
+async fn item_build(
+    ctx: &DaemonContext,
+    item: &QueueItem,
+) -> Result<Option<ItemBuild>, ArchonError> {
+    let Some(repo_id) = &item.repo else {
+        return Ok(None);
+    };
+    let repo = ctx.store.lock().await.repo(&resolve::repo_ref(repo_id))?;
+    Ok(Some(ItemBuild {
+        item: item.id.clone(),
+        repo_name: repo.name,
+    }))
 }
 
 /// What shows that a succeeded run shipped.

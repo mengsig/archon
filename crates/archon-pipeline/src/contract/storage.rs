@@ -6,19 +6,31 @@ use std::path::Path;
 use archon_core::config::ArtifactsConfig;
 
 /// The contract's Build cache section. Empty when the repository builds
-/// into per-task directories, or the run has no repository.
-pub fn build_cache_rules(cargo_target: Option<&Path>) -> String {
+/// into its worktrees, or the run has no repository. `shared`: the directory
+/// is the repository's, not the item's.
+pub fn build_cache_rules(cargo_target: Option<&Path>, shared: bool) -> String {
     let Some(dir) = cargo_target else {
         return String::new();
     };
     assert!(dir.is_absolute(), "the cache is an absolute path");
+    let (whose, ends) = if shared {
+        (
+            "this repository's shared cache",
+            "Archon deletes the cache once idle",
+        )
+    } else {
+        (
+            "this item's own cache, kept across its retries",
+            "Archon deletes it the moment the item ends",
+        )
+    };
     format!(
         "\n## Build cache\n\n\
-         - Build into this repository's shared cache, never a target directory of your \
-         own or `/tmp`: `CARGO_TARGET_DIR={dir}`. Archon sets it for cargo inside the \
-         worktree; `export` it elsewhere. Concurrent builds are safe: cargo locks it.\n\
-         - Archon deletes the cache once idle, and the worktree's build output after the \
-         run is long finished: publish what you need later (see Artifacts).\n",
+         - Build into {whose}, never a target directory of your own or `/tmp`: \
+         `CARGO_TARGET_DIR={dir}`. `export` it for every cargo you run. Concurrent \
+         builds are safe: cargo locks it.\n\
+         - {ends}, and the worktree's build output after the run is long finished: \
+         publish what you need later (see Artifacts).\n",
         dir = dir.display()
     )
 }
@@ -48,13 +60,18 @@ mod tests {
 
     #[test]
     fn the_build_cache_section_names_the_directory_or_is_empty() {
-        assert_eq!(build_cache_rules(None), "");
-        let text = build_cache_rules(Some(Path::new("/d/cache/r/cargo-target")));
+        assert_eq!(build_cache_rules(None, false), "");
+        let dir = Path::new("/d/cache/r/items/qi_1/cargo-target");
+        let text = build_cache_rules(Some(dir), false);
         assert!(
-            text.contains("CARGO_TARGET_DIR=/d/cache/r/cargo-target"),
+            text.contains(&format!("CARGO_TARGET_DIR={}", dir.display())),
             "{text}"
         );
         assert!(text.contains("or `/tmp`"), "{text}");
+        assert!(text.contains("this item's own cache"), "{text}");
+        assert!(text.contains("the moment the item ends"), "{text}");
+        let shared = build_cache_rules(Some(dir), true);
+        assert!(shared.contains("shared cache"), "{shared}");
     }
 
     #[test]

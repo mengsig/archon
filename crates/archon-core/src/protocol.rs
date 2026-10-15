@@ -640,6 +640,10 @@ pub struct GcReport {
     /// Items' published artifacts deleted after `artifacts.keep_after`.
     #[serde(default)]
     pub artifacts: Vec<Reclaimed>,
+    /// Items' own build target directories deleted: at the item's end, or
+    /// by gc once its item was final or gone.
+    #[serde(default)]
+    pub item_caches: Vec<Reclaimed>,
     /// Disk space freed by everything above together.
     pub bytes_freed: u64,
     /// The pass ran with the shorter disk-pressure ages.
@@ -661,6 +665,7 @@ impl GcReport {
         self.reclaimed.extend(other.reclaimed);
         self.caches.extend(other.caches);
         self.artifacts.extend(other.artifacts);
+        self.item_caches.extend(other.item_caches);
         self.skipped.extend(other.skipped);
         self.failed.extend(other.failed);
         self.bytes_freed = self.bytes_freed.saturating_add(other.bytes_freed);
@@ -672,6 +677,7 @@ impl GcReport {
             || !self.reclaimed.is_empty()
             || !self.caches.is_empty()
             || !self.artifacts.is_empty()
+            || !self.item_caches.is_empty()
     }
 
     /// What the pass did, in one line, for the feed and `archon status`.
@@ -683,11 +689,13 @@ impl GcReport {
         };
         format!(
             "Gc{why} freed {}: removed {} worktree(s) and set-aside directories, deleted the \
-             build caches of {} worktree(s), {} shared build cache(s) and the artifacts of {} item(s).",
+             build caches of {} worktree(s), {} shared build cache(s), the build directories of {} item(s) \
+             and the artifacts of {} item(s).",
             gib(self.bytes_freed),
             self.removed.len(),
             self.reclaimed.len(),
             self.caches.len(),
+            self.item_caches.len(),
             self.artifacts.len(),
         )
     }

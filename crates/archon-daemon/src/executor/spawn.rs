@@ -9,9 +9,9 @@ use archon_core::Timestamp;
 use archon_core::aether_ids::{AetherAgentId, AetherRunId};
 use archon_core::autonomy::ToolsMode;
 use archon_core::catalog::WorkspaceMode;
-use archon_core::config::Config;
+use archon_core::config::{BuildCache, Config};
 use archon_core::error::ArchonError;
-use archon_core::id::{PipelineRunId, StageRunId};
+use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::lesson::CONTRACT_LESSONS;
 use archon_core::ports::{SpawnRequest, SpawnedAgent};
 use archon_core::queue::{Caps, QueueItem};
@@ -363,22 +363,29 @@ fn run_sections(
     );
     let initiative = contract::initiative_rules(initiative.as_ref());
     let lessons = contract::lesson_rules(&lessons)?;
-    let cache = build_cache_section(ctx, repo)?;
+    let cache = build_cache_section(ctx, repo, &item.id)?;
     let storage = contract::artifact_rules(&ctx.config.artifacts);
     Ok([dependencies, initiative, lessons, cache, storage].concat())
 }
 
 /// The Build cache section, unless the repository (or none) builds into
-/// per-task directories.
-fn build_cache_section(ctx: &DaemonContext, repo: Option<&Repo>) -> Result<String, ArchonError> {
+/// its worktrees.
+fn build_cache_section(
+    ctx: &DaemonContext,
+    repo: Option<&Repo>,
+    item: &QueueItemId,
+) -> Result<String, ArchonError> {
     let Some(repo) = repo else {
         return Ok(String::new());
     };
-    let shared = RepoEnv::new(Some(repo.clone()))?
+    let mode = RepoEnv::new(Some(repo.clone()))?
         .config
-        .shared_cache(&ctx.config.worktrees);
-    let target = shared.then(|| crate::build_cache::cargo_target(&ctx.paths, &repo.name));
-    Ok(contract::build_cache_rules(target.as_deref()))
+        .build_cache(&ctx.config.worktrees);
+    let target = crate::build_cache::target_dir(&ctx.paths, &repo.name, item, mode);
+    Ok(contract::build_cache_rules(
+        target.as_deref(),
+        mode == BuildCache::Shared,
+    ))
 }
 
 fn same_slot(stage: &StageRun, plan: &SpawnPlan) -> bool {

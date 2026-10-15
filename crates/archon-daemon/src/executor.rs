@@ -115,6 +115,13 @@ pub(crate) struct Cleanup {
     pub snapshot: bool,
 }
 
+/// An item's cargo target directory, owed deletion when the item ends.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct ItemBuild {
+    pub item: QueueItemId,
+    pub repo_name: String,
+}
+
 /// Aether and git work owed after a state change, run without the run
 /// table lock by [`run_follow_up`].
 #[derive(Debug, Default)]
@@ -141,6 +148,9 @@ pub(crate) struct FollowUp {
     /// Runs whose team roster may be owed to their running roles.
     pub roster: Vec<PipelineRunId>,
     pub cleanup: Vec<Cleanup>,
+    /// Items that ended, whose own cargo target directory to delete once
+    /// their agents are stopped.
+    pub release_builds: Vec<ItemBuild>,
     /// Freshly opened operator gates to show and ask about.
     pub gates: Vec<gates::GateKey>,
     /// Completed stage runs whose listed reports to publish.
@@ -178,6 +188,7 @@ impl FollowUp {
         self.descendant_stops.extend(other.descendant_stops);
         self.roster.extend(other.roster);
         self.cleanup.extend(other.cleanup);
+        self.release_builds.extend(other.release_builds);
         self.gates.extend(other.gates);
         self.publish.extend(other.publish);
         self.merge.extend(other.merge);
@@ -199,6 +210,7 @@ impl FollowUp {
             && self.descendant_stops.is_empty()
             && self.roster.is_empty()
             && self.cleanup.is_empty()
+            && self.release_builds.is_empty()
             && self.gates.is_empty()
             && self.publish.is_empty()
             && self.merge.is_empty()
@@ -549,6 +561,9 @@ async fn deliver_and_tidy(ctx: &DaemonContext, round: &mut Round, follow: Follow
     for shipped in lanes::run(ships, |run| async move { ship::deliver(ctx, &run).await }).await {
         round.record(shipped);
     }
+    for build in dedup(follow.release_builds) {
+        round.record(release_item_build(ctx, build).await);
+    }
     let cleanups = lanes::group(follow.cleanup.into_iter().map(|c| (c.repo_path.clone(), c)));
     for removed in lanes::run(cleanups, |cleanup| remove_ended_worktree(ctx, cleanup)).await {
         round.record(removed);
@@ -592,6 +607,32 @@ async fn runs_by_repository(
         }
     }
     lanes::group(keyed)
+}
+
+/// Delete the cargo target directory of an item that ended, unless it was
+/// queued again meanwhile (a retry) or a stack fix still builds in it.
+async fn release_item_build(
+    ctx: &DaemonContext,
+    build: ItemBuild,
+) -> Result<FollowUp, ArchonError> {
+    {
+        let _table = ctx.runs.lock().await;
+        let store = ctx.store.lock().await;
+        if !store.item(&build.item)?.state.is_terminal() {
+            return Ok(FollowUp::default());
+        }
+    }
+    let paths = ctx.paths.clone();
+    let (item, repo_name) = (build.item.clone(), build.repo_name);
+    let freed = tokio::task::spawn_blocking(move || {
+        crate::build_cache::release_item(&paths, &repo_name, &item)
+    })
+    .await
+    .map_err(|e| ArchonError::io("build directory deletion task", std::io::Error::other(e)))??;
+    if let Some(freed) = freed {
+        crate::gc::announce_item_release(ctx, &build.item, &freed).await?;
+    }
+    Ok(FollowUp::default())
 }
 
 /// Remove the worktree a run left behind; nothing follows from it.

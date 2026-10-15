@@ -37,7 +37,8 @@ use archon_core::Timestamp;
 use archon_core::age::Age;
 use archon_core::config::{Config, WorktreeConfig};
 use archon_core::error::ArchonError;
-use archon_core::protocol::{GcReport, GcStatus};
+use archon_core::id::QueueItemId;
+use archon_core::protocol::{GcReport, GcStatus, Reclaimed, gib};
 use archon_queue::Store;
 use tokio::sync::MutexGuard;
 
@@ -353,6 +354,28 @@ async fn announce(ctx: &DaemonContext, report: &GcReport) -> Result<(), ArchonEr
         pressure: report.pressure,
         headline: report.headline(),
     };
+    record(ctx, status).await
+}
+
+/// Tell the operator an item's build directory went when the item ended.
+pub(crate) async fn announce_item_release(
+    ctx: &DaemonContext,
+    item: &QueueItemId,
+    freed: &Reclaimed,
+) -> Result<(), ArchonError> {
+    let status = GcStatus {
+        at: archon_core::now(),
+        bytes_freed: freed.bytes,
+        pressure: false,
+        headline: format!(
+            "Freed {} of build output: item {item} ended and its cargo target directory went.",
+            gib(freed.bytes)
+        ),
+    };
+    record(ctx, status).await
+}
+
+async fn record(ctx: &DaemonContext, status: GcStatus) -> Result<(), ArchonError> {
     let recorded = ctx
         .store
         .lock()

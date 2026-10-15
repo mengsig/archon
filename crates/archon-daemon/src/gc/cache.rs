@@ -3,7 +3,7 @@
 //! `worktrees.cache_dirs`, and measuring the space that frees.
 
 use std::io::ErrorKind;
-use std::os::unix::fs::MetadataExt as _;
+use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 
 use archon_core::error::ArchonError;
@@ -81,6 +81,39 @@ pub(crate) fn reclaim_kept(
         freed = Some(freed.unwrap_or(0u64).saturating_add(bytes));
     }
     Ok(freed)
+}
+
+/// Delete the tree at `path` and return the space it took. Test suites leave
+/// directories without rwx for the owner, which `remove_dir_all` cannot enter,
+/// so each is made owner-accessible first. Symlinks are never followed.
+pub(crate) fn remove_tree(path: &Path) -> Result<u64, ArchonError> {
+    let mut pending = vec![path.to_path_buf()];
+    while let Some(next) = pending.pop() {
+        let meta = match std::fs::symlink_metadata(&next) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == ErrorKind::NotFound => continue,
+            Err(e) => return Err(ArchonError::io(format!("inspecting {}", next.display()), e)),
+        };
+        if !meta.file_type().is_dir() {
+            continue;
+        }
+        let mode = meta.permissions().mode();
+        if mode & 0o700 != 0o700 {
+            let opened = std::fs::Permissions::from_mode(mode | 0o700);
+            std::fs::set_permissions(&next, opened)
+                .map_err(|e| ArchonError::io(format!("making {} accessible", next.display()), e))?;
+        }
+        let reading = |e| ArchonError::io(format!("reading {}", next.display()), e);
+        for entry in std::fs::read_dir(&next).map_err(reading)? {
+            pending.push(entry.map_err(reading)?.path());
+        }
+    }
+    let bytes = disk_usage(path)?;
+    match std::fs::remove_dir_all(path) {
+        Ok(()) => Ok(bytes),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(0),
+        Err(e) => Err(ArchonError::io(format!("removing {}", path.display()), e)),
+    }
 }
 
 /// The disk space the files under `path` take, following no symlink. What

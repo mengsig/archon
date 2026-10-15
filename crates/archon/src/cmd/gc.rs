@@ -85,10 +85,12 @@ fn summary(report: &GcReport) -> String {
         report.reclaimed.len(),
         gib(report.bytes_freed)
     )];
-    if !report.caches.is_empty() || !report.artifacts.is_empty() {
+    if !report.caches.is_empty() || !report.item_caches.is_empty() || !report.artifacts.is_empty() {
         lines.push(format!(
-            "Deleted {} shared build cache(s) and the artifacts of {} item(s).",
+            "Deleted {} shared build cache(s), the build directories of {} item(s) and the \
+             artifacts of {} item(s).",
             report.caches.len(),
+            report.item_caches.len(),
             report.artifacts.len()
         ));
     }
@@ -127,6 +129,7 @@ mod tests {
             failed: vec![],
             caches: vec![],
             artifacts: vec![],
+            item_caches: vec![],
             bytes_freed: 3 << 30,
             pressure: false,
         };
@@ -146,7 +149,10 @@ mod tests {
         report.pressure = true;
         let text = summary(&report);
         assert!(
-            text.contains("Deleted 1 shared build cache(s) and the artifacts of 0 item(s)."),
+            text.contains(
+                "Deleted 1 shared build cache(s), the build directories of 0 item(s) and the \
+                 artifacts of 0 item(s)."
+            ),
             "{text}"
         );
         assert!(text.contains("Disk pressure:"), "{text}");

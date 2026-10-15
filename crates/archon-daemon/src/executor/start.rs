@@ -240,8 +240,9 @@ async fn workspace(
         .and_then(|r| r.base_branch.clone())
         .or_else(|| env.config.repo.base_branch.clone());
     if let Some(repo) = &env.repo {
-        let shared = env.config.shared_cache(&ctx.config.worktrees);
-        crate::build_cache::prepare(&ctx.paths, &repo.name, shared)?;
+        let mode = env.config.build_cache(&ctx.config.worktrees);
+        let lean = env.config.lean_builds(&ctx.config.worktrees);
+        crate::build_cache::prepare(&ctx.paths, &repo.name, &item.id, mode, lean)?;
     }
     match (mode, &env.repo) {
         (WorkspaceMode::Worktree, Some(repo)) => add_worktree(ctx, repo, item, base, team).await,

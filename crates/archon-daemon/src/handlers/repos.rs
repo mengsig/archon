@@ -68,6 +68,7 @@ async fn add_with_watch(
         autonomy_max: registry_ceiling(add.auto_merge),
         grant_merge: false,
         attribution: Default::default(),
+        tiers: Default::default(),
         added_at: archon_core::now(),
     };
     check_repo(&repo).await?;
@@ -196,6 +197,7 @@ pub(super) async fn update(
     if let Some(attribution) = patch.attribution {
         repo.attribution = attribution;
     }
+    repo.tiers = patch.tiers.apply(repo.tiers);
     check_repo(&repo).await?;
     assert_eq!(repo.id, before.id, "a patch never changes identity");
     assert_eq!(repo.path, before.path, "a patch never moves a repository");
@@ -249,9 +251,11 @@ fn inspect_repo(path: &Path) -> Result<(PathBuf, RepoConfig), ArchonError> {
     Ok((top, config))
 }
 
-/// The base branch resolves to a commit and the default pipeline loads.
+/// The base branch resolves to a commit, the tiers are well formed and the
+/// default pipeline loads. A missing integration branch is created on use.
 async fn check_repo(repo: &Repo) -> Result<(), ArchonError> {
     assert!(repo.path.is_absolute(), "registered paths are canonical");
+    repo.tiers.validate()?;
     if let Some(base) = repo.base_branch.clone() {
         let root = repo.path.clone();
         blocking(move || {

@@ -310,6 +310,41 @@ async fn only_the_operator_changes_a_repositorys_attribution() {
     assert_eq!(attribution(&h).await, Attribution::ItemId);
 }
 
+/// A relayed change to the verification tiers waits for the operator's own
+/// reply, like any change to where items fork and deliver.
+#[tokio::test]
+async fn a_relayed_tiers_change_waits_for_the_operator() {
+    use archon_core::protocol::{Clearable, TiersPatch};
+    let h = harness(AetherMode::Dedicated).await;
+    let integration = |h: &Harness| {
+        let h = h.ctx.clone();
+        async move {
+            let store = h.store.lock().await;
+            let repo = store.repo(&RepoRef(REPO_NAME.into())).unwrap();
+            repo.tiers.integration_branch
+        }
+    };
+    let change = Request::RepoUpdate {
+        repo: RepoRef(REPO_NAME.into()),
+        patch: RepoPatch {
+            tiers: TiersPatch {
+                integration_branch: Clearable::Set("next".into()),
+                ..TiersPatch::default()
+            },
+            ..Default::default()
+        },
+    };
+    deliver(&h, 1, user("integrate into next")).await;
+    let asked = h
+        .orchestrator(cited(change, 1, "integrate into next"))
+        .await
+        .unwrap();
+    assert!(matches!(asked, Reply::Question(_)), "{asked:?}");
+    assert_eq!(integration(&h).await, None);
+    deliver(&h, 2, user("yes")).await;
+    assert_eq!(integration(&h).await.as_deref(), Some("next"));
+}
+
 fn github(text: &str, number: u64) -> Value {
     json!({"kind":"external_trigger", "source":"github", "operator":true,
         "payload":{"repository":"o/r", "number":number,"requester":"octocat","operator":true,"text":text}})

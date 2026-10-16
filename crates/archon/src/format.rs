@@ -348,6 +348,9 @@ pub fn repo_line(repo: &Repo) -> String {
     if let Some(base) = &repo.base_branch {
         let _ = write!(line, ", base {base}");
     }
+    if let Some(integration) = &repo.tiers.integration_branch {
+        let _ = write!(line, ", integration {integration}");
+    }
     if let Some(pipeline) = &repo.default_pipeline {
         let _ = write!(line, ", pipeline {pipeline}");
     }

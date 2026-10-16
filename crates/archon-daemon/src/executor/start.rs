@@ -303,18 +303,22 @@ async fn workspace(
         !team || mode == WorkspaceMode::Worktree,
         "validated: team pipelines use worktrees"
     );
-    let base = env
-        .repo
+    let tiers = env.tiers()?;
+    let base = env.fork_base(&tiers);
+    // Only an integration branch is created when it is missing.
+    let release = tiers
+        .integration_branch
         .as_ref()
-        .and_then(|r| r.base_branch.clone())
-        .or_else(|| env.config.repo.base_branch.clone());
+        .map(|_| tiers.release_branch().to_owned());
     if let Some(repo) = &env.repo {
         let mode = env.config.build_cache(&ctx.config.worktrees);
         let lean = env.config.lean_builds(&ctx.config.worktrees);
         crate::build_cache::prepare(&ctx.paths, &repo.name, &item.id, mode, lean)?;
     }
     match (mode, &env.repo) {
-        (WorkspaceMode::Worktree, Some(repo)) => add_worktree(ctx, repo, item, base, team).await,
+        (WorkspaceMode::Worktree, Some(repo)) => {
+            add_worktree(ctx, repo, item, (base, release), team).await
+        }
         (WorkspaceMode::Worktree, None) => Err(ArchonError::Invalid(
             "a worktree pipeline needs a repository".into(),
         )),
@@ -337,12 +341,13 @@ async fn workspace(
 
 /// The item's worktree, added now or reused from an earlier run; a team
 /// run's is `main` under the item's directory. Each fresh retry of the
-/// item gives it a new branch.
+/// item gives it a new branch. With a `release` branch, `base` is the
+/// integration branch, created from it when missing.
 async fn add_worktree(
     ctx: &DaemonContext,
     repo: &Repo,
     item: &QueueItem,
-    base: Option<String>,
+    (base, release): (Option<String>, Option<String>),
     team: bool,
 ) -> Result<Workspace, ArchonError> {
     let manager = WorktreeManager::new(
@@ -359,9 +364,9 @@ async fn add_worktree(
         .as_ref()
         .map(|t| t.branch.clone())
         .unwrap_or_else(|| manager.branch_name(&item.id, &item.title, item.fresh_retries));
-    let fork = match (&target, stacked_on, base.as_deref(), repo.ship) {
-        (None, None, Some(base), ShipMode::Pr) => {
-            remote_fork(ctx, repo, item, base, &branch).await?
+    let fork = match (&target, stacked_on, base.as_deref()) {
+        (None, None, Some(base)) => {
+            fork_point(ctx, repo, item, (base, release.as_deref()), &branch).await?
         }
         _ => None,
     };
@@ -399,15 +404,75 @@ async fn add_worktree(
     Ok(workspace)
 }
 
+/// Where a new, unstacked branch of `item` starts: `origin`'s head of `base` in
+/// `pr` mode, else the local `base` (`None`). With `release`, `base` is the
+/// integration branch, created from `release` where it is missing.
+async fn fork_point(
+    ctx: &DaemonContext,
+    repo: &Repo,
+    item: &QueueItem,
+    (base, release): (&str, Option<&str>),
+    branch: &str,
+) -> Result<Option<String>, ArchonError> {
+    let fork = match repo.ship {
+        ShipMode::Pr => remote_fork(ctx, repo, item, (base, release), branch).await?,
+        ShipMode::Local => None,
+    };
+    if let (None, Some(release)) = (&fork, release) {
+        let (path, base, release) = (repo.path.clone(), base.to_owned(), release.to_owned());
+        let created = tokio::task::spawn_blocking(move || local_branch(&path, &base, &release))
+            .await
+            .map_err(|e| ArchonError::io("integration branch task", std::io::Error::other(e)))??;
+        if let Some(text) = created {
+            tracing::info!(item = %item.id, repo = %repo.name, "{text}");
+        }
+    }
+    Ok(fork)
+}
+
+/// Create the local `branch` at `from` when it is missing; what was done, if anything.
+fn local_branch(
+    repo: &std::path::Path,
+    branch: &str,
+    from: &str,
+) -> Result<Option<String>, ArchonError> {
+    if crate::worktree::branch_exists(repo, branch)? {
+        return Ok(None);
+    }
+    let Some(sha) = crate::worktree::commit_id(repo, from)? else {
+        return Err(ArchonError::Invalid(format!(
+            "neither the integration branch `{branch}` nor the release branch `{from}` exists \
+             in {}",
+            repo.display()
+        )));
+    };
+    assert!(stack::is_commit_id(&sha), "commit_id names a full commit");
+    let reference = format!("refs/heads/{branch}");
+    // The empty old value refuses to move a branch made meanwhile.
+    let args = [
+        "update-ref",
+        "-m",
+        "archon: integration branch",
+        &reference,
+        &sha,
+        "",
+    ];
+    crate::worktree::git(repo, &args)?;
+    Ok(Some(format!(
+        "created the integration branch `{branch}` from `{from}`"
+    )))
+}
+
 /// The commit a new branch of `item` forks from in `pr` mode: `origin`'s head of
-/// `base`, fetched now, as the local `base` may be behind what GitHub merged.
-/// `None` keeps the local `base`: the branch exists already, the repository has
+/// `base`, fetched now, as the local `base` may be behind what GitHub merged; with
+/// `release`, an integration `base` missing on `origin` is first pushed there from
+/// it. `None` keeps the local `base`: the branch exists already, the repository has
 /// no `origin`, or the fetch failed, which the item's feed says.
 async fn remote_fork(
     ctx: &DaemonContext,
     repo: &Repo,
     item: &QueueItem,
-    base: &str,
+    (base, release): (&str, Option<&str>),
     branch: &str,
 ) -> Result<Option<String>, ArchonError> {
     assert_eq!(
@@ -417,17 +482,29 @@ async fn remote_fork(
     );
     let (data_dir, path) = (ctx.paths.data_dir.clone(), repo.path.clone());
     let (base_name, branch) = (base.to_owned(), branch.to_owned());
+    let from = release.map(str::to_owned);
     let fetched = tokio::task::spawn_blocking(move || -> Result<_, ArchonError> {
         if crate::worktree::branch_exists(&path, &branch)? {
-            return Ok(Ok(None));
+            return Ok(Ok((false, None)));
         }
         let shadow = Shadow::of(&data_dir, &path)?;
-        Ok(stack::fetch_head(&shadow, &path, &base_name))
+        let created = match &from {
+            Some(from) => stack::ensure_remote_branch(&shadow, &path, &base_name, from),
+            None => Ok(false),
+        };
+        Ok(created.and_then(|created| {
+            stack::fetch_head(&shadow, &path, &base_name).map(|fork| (created, fork))
+        }))
     })
     .await
     .map_err(|e| ArchonError::io("base fetch task", std::io::Error::other(e)))??;
     let error = match fetched {
-        Ok(fork) => return Ok(fork),
+        Ok((created, fork)) => {
+            if created {
+                created_notice(ctx, item, base, release).await?;
+            }
+            return Ok(fork);
+        }
         Err(error) => error,
     };
     tracing::warn!(item = %item.id, %base, %error, "base not fetched; forking from the local branch");
@@ -438,6 +515,23 @@ async fn remote_fork(
     );
     super::finish::notify(ctx, NotificationKind::Decision, &text, Some(&item.id), None).await?;
     Ok(None)
+}
+
+/// The operator hears that Archon made the integration branch `base` on `origin`.
+async fn created_notice(
+    ctx: &DaemonContext,
+    item: &QueueItem,
+    base: &str,
+    release: Option<&str>,
+) -> Result<(), ArchonError> {
+    let release = release.expect("only an integration branch is created");
+    assert_ne!(base, release, "validated: distinct branches");
+    let text = format!(
+        "Created the integration branch `origin/{base}` from `origin/{release}` for {}: \
+         items fork from it and their pull requests target it.",
+        item.id
+    );
+    super::finish::notify(ctx, NotificationKind::Decision, &text, Some(&item.id), None).await
 }
 
 async fn merge_stack(

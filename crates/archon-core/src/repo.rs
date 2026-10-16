@@ -9,6 +9,10 @@ use crate::Timestamp;
 use crate::autonomy::AutonomyPatch;
 use crate::id::RepoId;
 
+mod tiers;
+
+pub use tiers::{Checks, DEFAULT_RELEASE_BRANCH, REPO_FILE_NAME, RepoTiers};
+
 /// How finished work leaves a repository. Nothing merges unless
 /// the item's `merge = auto` knob is within the operator's ceiling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Default)]
@@ -121,6 +125,9 @@ pub struct Repo {
     /// What its pull requests say of Archon and the tools; operator only.
     #[serde(default)]
     pub attribution: Attribution,
+    /// The operator's verification tiers, over the committed `.archon/repo.toml`.
+    #[serde(default, skip_serializing_if = "RepoTiers::is_empty")]
+    pub tiers: RepoTiers,
     pub added_at: Timestamp,
 }
 
@@ -192,6 +199,7 @@ mod tests {
             autonomy_max: AutonomyPatch::default(),
             grant_merge: false,
             attribution: Attribution::None,
+            tiers: RepoTiers::default(),
             added_at: crate::now(),
         };
         let mut stored = serde_json::to_value(&repo).unwrap();

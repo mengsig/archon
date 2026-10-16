@@ -360,18 +360,7 @@ pub(crate) fn fetch_head(
     let Some(url) = origin_url(repo)? else {
         return Ok(None);
     };
-    let wanted = format!("refs/heads/{branch}");
-    let args = ["ls-remote", "--upload-pack=git-upload-pack", &url, &wanted];
-    let listed = shadow
-        .git(None, Config::Operator)?
-        .network()
-        .args(args)
-        .text()?;
-    let head = listed.lines().find_map(|line| {
-        let (sha, name) = line.split_once('\t')?;
-        (name == wanted && is_commit_id(sha)).then(|| sha.to_owned())
-    });
-    let Some(sha) = head else {
+    let Some(sha) = remote_head(shadow, &url, branch)? else {
         return Err(ArchonError::Invalid(format!(
             "`origin` has no branch `{branch}`"
         )));
@@ -382,6 +371,57 @@ pub(crate) fn fetch_head(
     DaemonGit::sealed_in(repo).args(update).text()?;
     assert!(is_commit_id(&sha), "ls-remote names a full commit id");
     Ok(Some(sha))
+}
+
+/// The commit `url` names as the head of `branch`; `None` when it has no such branch.
+fn remote_head(shadow: &Shadow, url: &str, branch: &str) -> Result<Option<String>, ArchonError> {
+    super::check_branch(branch)?;
+    let wanted = format!("refs/heads/{branch}");
+    let args = ["ls-remote", "--upload-pack=git-upload-pack", url, &wanted];
+    let listed = shadow
+        .git(None, Config::Operator)?
+        .network()
+        .args(args)
+        .text()?;
+    let head = listed.lines().find_map(|line| {
+        let (sha, name) = line.split_once('\t')?;
+        (name == wanted && is_commit_id(sha)).then(|| sha.to_owned())
+    });
+    debug_assert!(head.as_deref().is_none_or(is_commit_id));
+    Ok(head)
+}
+
+/// Create `branch` on `origin` at `origin`'s head of `from` when `origin` has
+/// no `branch`, never forced. `false`: it had one, or there is no `origin`.
+pub(crate) fn ensure_remote_branch(
+    shadow: &Shadow,
+    repo: &Path,
+    branch: &str,
+    from: &str,
+) -> Result<bool, ArchonError> {
+    super::check_branch(from)?;
+    assert_ne!(
+        branch, from,
+        "validated: the integration branch is not the release branch"
+    );
+    let Some(url) = origin_url(repo)? else {
+        return Ok(false);
+    };
+    if remote_head(shadow, &url, branch)?.is_some() {
+        return Ok(false);
+    }
+    let Some(sha) = remote_head(shadow, &url, from)? else {
+        return Err(ArchonError::Invalid(format!(
+            "`origin` has neither `{branch}` nor `{from}` to create it from"
+        )));
+    };
+    // The local `from` may be behind: the push needs `origin`'s commit here.
+    fetch(shadow, repo, from, &sha)?;
+    let pushed = push(shadow, &url, branch, &sha)?;
+    if !pushed.status.success() {
+        return Err(pushed.failure());
+    }
+    Ok(true)
 }
 
 /// Up to a few commits `repo`'s branches name, for a fetch to negotiate with.

@@ -320,7 +320,28 @@ pub enum RepoCommand {
         /// `Archon item:` line; `none` omits it and refuses attribution lines.
         #[arg(long)]
         attribution: Option<archon_core::repo::Attribution>,
+        /// Verification tiers over the repository's `.archon/repo.toml`.
+        #[command(flatten)]
+        tiers: TierArgs,
     },
+}
+
+/// `archon repo set`'s verification tiers; an empty value clears one.
+#[derive(Debug, Clone, Default, Args)]
+pub struct TierArgs {
+    /// Branch items fork from and deliver to, created from the release
+    /// branch when missing; unset uses the base branch.
+    #[arg(long)]
+    pub integration_branch: Option<String>,
+    /// Branch the integration branch is promoted into (default `main`).
+    #[arg(long)]
+    pub release_branch: Option<String>,
+    /// Command every item runs before it commits.
+    #[arg(long)]
+    pub fast_check: Option<String>,
+    /// The whole suite, which items never run (e.g. `make ci`).
+    #[arg(long)]
+    pub full_check: Option<String>,
 }
 
 #[derive(Debug, Args)]

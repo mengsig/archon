@@ -122,6 +122,7 @@ pub(super) async fn needs_confirmation(
                 || patch.ship == Some(ShipMode::Pr) && repo.ship == ShipMode::Local
                 || patch.base_branch != Default::default()
                 || patch.default_pipeline != Default::default()
+                || !patch.tiers.is_keep()
             {
                 return Ok(true);
             }

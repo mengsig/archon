@@ -222,6 +222,7 @@ mod tests {
             autonomy_max: Default::default(),
             grant_merge: false,
             attribution: Default::default(),
+            tiers: Default::default(),
             added_at: archon_core::now(),
         }
     }

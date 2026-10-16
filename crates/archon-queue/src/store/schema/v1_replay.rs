@@ -32,6 +32,7 @@ fn repo(name: &str) -> Repo {
         autonomy_max: AutonomyPatch::default(),
         grant_merge: false,
         attribution: Default::default(),
+        tiers: Default::default(),
         added_at: v1_time(),
     }
 }

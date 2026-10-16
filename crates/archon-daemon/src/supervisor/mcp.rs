@@ -416,7 +416,7 @@ async fn relink_failed(
     Ok(())
 }
 
-/// `DaemonStatus::mcp`: Aether's view of the server now, and the latest heal.
+/// Aether's view of the server now, asked live, and the latest heal.
 pub async fn mcp_status(ctx: &DaemonContext) -> McpStatus {
     let health = match ctx.aether.client() {
         Ok(client) => client.mcp_health(SERVER_NAME).await,
@@ -425,6 +425,11 @@ pub async fn mcp_status(ctx: &DaemonContext) -> McpStatus {
     let health = health.unwrap_or_else(|error| McpHealth::Unreachable {
         error: error.to_string(),
     });
+    heal_status(ctx, health).await
+}
+
+/// `DaemonStatus::mcp`: `health` as last read, and the latest heal.
+pub async fn heal_status(ctx: &DaemonContext, health: McpHealth) -> McpStatus {
     let state = ctx.supervisor.mcp.lock().await;
     state.assert_consistent();
     McpStatus {

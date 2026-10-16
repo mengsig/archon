@@ -55,6 +55,13 @@ pub fn status(status: &DaemonStatus, names: &RepoNames) -> String {
             items(&status.waiting_items, names, archon_core::now())
         );
     }
+    if let Some(next) = status.waiting_next_offset {
+        let more = status.waiting_total.saturating_sub(next);
+        let _ = writeln!(
+            out,
+            "{more} more waiting item(s) not shown; `archon queue list` lists every item\n"
+        );
+    }
     let uptime = archon_core::now() - status.started_at;
     let _ = writeln!(
         out,
@@ -122,6 +129,10 @@ fn link_lines(out: &mut String, status: &DaemonStatus) {
     let _ = writeln!(out, "orchestrator: {orchestrator}");
     if let Some(mcp) = &status.mcp {
         let _ = writeln!(out, "mcp: {}", mcp_line(mcp, archon_core::now()));
+    }
+    let stale = status.health.as_ref().map(|h| h.stale(archon_core::now()));
+    if let Some(stale) = stale.filter(|s| !s.is_empty()) {
+        let _ = writeln!(out, "health: STALE {}", sanitize_line(&stale.join("; ")));
     }
     if status.held_news > 0 {
         let _ = writeln!(out, "news: {}", held_news_line(status.held_news));
@@ -788,6 +799,9 @@ pub(crate) mod tests {
             upgrade: None,
             merges_waiting: Vec::new(),
             merge_granted: Vec::new(),
+            waiting_total: 0,
+            waiting_next_offset: None,
+            health: None,
         }
     }
 
@@ -817,6 +831,41 @@ pub(crate) mod tests {
             text.contains("\nupgrade: a drained restart: draining"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn status_marks_stale_sections_and_the_waiting_items_left_out() {
+        let mut up = status_with(AetherLinkStatus::Disconnected {
+            error: "x".into(),
+            retry_at: None,
+        });
+        let fresh = archon_core::protocol::ProbeHealth {
+            as_of: Some(archon_core::now()),
+            last_error: None,
+            stale: false,
+        };
+        let mut health = archon_core::protocol::StatusHealth {
+            aether: fresh.clone(),
+            mcp: fresh.clone(),
+            github: None,
+        };
+        up.health = Some(health.clone());
+        let text = status(&up, &RepoNames::new());
+        assert!(!text.contains("health:"), "{text}");
+        assert!(!text.contains("more waiting"), "{text}");
+
+        health.aether = archon_core::protocol::ProbeHealth {
+            stale: true,
+            ..fresh
+        };
+        up.health = Some(health);
+        (up.waiting_total, up.waiting_next_offset) = (75, Some(50));
+        let text = status(&up, &RepoNames::new());
+        assert!(
+            text.contains("\nhealth: STALE aether: last answer 0s ago, still asking\n"),
+            "{text}"
+        );
+        assert!(text.contains("25 more waiting item(s) not shown"), "{text}");
     }
 
     #[test]

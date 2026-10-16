@@ -76,7 +76,7 @@ mod tests {
     async fn frames_round_trip_and_eof_is_clean() {
         let frame = ClientFrame {
             id: 1,
-            request: Request::Status,
+            request: Request::Status(Default::default()),
         };
         let mut buf = Vec::new();
         write_frame(&mut buf, &frame).await.unwrap();

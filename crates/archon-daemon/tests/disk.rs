@@ -28,7 +28,7 @@ fn without_low_disk_hold() -> Config {
 }
 
 async fn disk_status(h: &Harness) -> DiskStatus {
-    match h.cli(Request::Status).await {
+    match h.cli(Request::Status(Default::default())).await {
         Ok(Reply::Status(status)) => status.disk.expect("archond reports its disk"),
         other => panic!("status: {other:?}"),
     }

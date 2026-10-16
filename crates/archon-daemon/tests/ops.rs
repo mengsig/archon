@@ -42,7 +42,7 @@ async fn start(h: &Harness, request: UpgradeRequest) -> String {
 }
 
 async fn status(h: &Harness) -> DaemonStatus {
-    match h.cli(Request::Status).await {
+    match h.cli(Request::Status(Default::default())).await {
         Ok(Reply::Status(status)) => *status,
         other => panic!("status replied {other:?}"),
     }

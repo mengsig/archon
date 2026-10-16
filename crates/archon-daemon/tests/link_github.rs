@@ -710,7 +710,12 @@ async fn archons_repositories_follow_the_orchestrator_and_others_stay() {
     harness.connect().await;
     harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH_2).await;
     let watcher = serve_watcher(&harness, json!([fixed("o/a", ORCH), thread_mode("o/t")]));
-    let status = handlers::handle(&harness.ctx, ClientKind::ArchonMcp, Request::Status).await;
+    let status = handlers::handle(
+        &harness.ctx,
+        ClientKind::ArchonMcp,
+        Request::Status(Default::default()),
+    )
+    .await;
     let Ok(Reply::Status(status)) = status else {
         panic!("status replied {status:?}");
     };
@@ -773,7 +778,12 @@ async fn shared_mode_leaves_the_operators_aether_alone() {
 }
 
 async fn harness_status(harness: &Harness) -> Result<Reply, ArchonError> {
-    handlers::handle(&harness.ctx, ClientKind::ArchonCli, Request::Status).await
+    handlers::handle(
+        &harness.ctx,
+        ClientKind::ArchonCli,
+        Request::Status(Default::default()),
+    )
+    .await
 }
 
 /// A `gh` that records its arguments and stdin beside itself and answers

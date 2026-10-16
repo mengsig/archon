@@ -530,9 +530,13 @@ fn item_finished(title: &str) -> TriggerEvent {
 }
 
 async fn held_news(harness: &Harness) -> u32 {
-    let reply = handlers::handle(&harness.ctx, ClientKind::ArchonCli, Request::Status)
-        .await
-        .unwrap();
+    let reply = handlers::handle(
+        &harness.ctx,
+        ClientKind::ArchonCli,
+        Request::Status(Default::default()),
+    )
+    .await
+    .unwrap();
     let Reply::Status(status) = reply else {
         panic!("expected the status, got {reply:?}");
     };

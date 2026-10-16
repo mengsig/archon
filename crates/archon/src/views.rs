@@ -57,7 +57,7 @@ pub async fn resolve_item(client: &ArchonClient, text: &str) -> anyhow::Result<Q
 }
 
 pub async fn fetch_status(client: &ArchonClient) -> anyhow::Result<DaemonStatus> {
-    match client.request(Request::Status).await? {
+    match client.request(Request::Status(Default::default())).await? {
         Reply::Status(status) => Ok(*status),
         other => Err(unexpected(&other, "status")),
     }

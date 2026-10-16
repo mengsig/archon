@@ -207,7 +207,7 @@ impl Canned {
                 pid: std::process::id(),
             }),
             Request::RepoList => Reply::Repos(vec![]),
-            Request::Status if self.status.is_some() => {
+            Request::Status(_) if self.status.is_some() => {
                 Reply::Status(Box::new(self.status.clone().unwrap()))
             }
             Request::ListItemSummaries(_) => {

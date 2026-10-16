@@ -3,12 +3,16 @@
 
 use std::collections::BTreeSet;
 
+use archon_aether::wire::Agent;
 use archon_core::aether_ids::AetherAgentId;
-use archon_core::config::RepoConfig;
+use archon_core::autonomy::Directive;
+use archon_core::config::{AetherMode, RepoConfig};
 use archon_core::error::ArchonError;
+use archon_core::github::GithubWatch;
 use archon_core::protocol::{
-    AetherLinkStatus, ClientKind, DaemonStatus, DiskStatus, ItemQuery, OrchestratorInfo,
-    PauseTarget, Reply, RepoRef,
+    AetherLinkStatus, ClientKind, DaemonStatus, DiskStatus, ItemQuery, ItemSummary,
+    MAX_WAITING_PAGE, McpHealth, McpStatus, OrchestratorInfo, PauseTarget, Reply, RepoRef,
+    StatusHealth, StatusQuery, WAITING_PAGE,
 };
 use archon_core::queue::{Caps, PauseState};
 use archon_core::run::StageState;
@@ -16,15 +20,70 @@ use archon_queue::store::keys;
 
 use crate::context::DaemonContext;
 use crate::resolve::{self, RepoEnv};
+use crate::status_health::{Probe, Targets};
 use crate::{dispatcher, github, ops, supervisor, triggers};
 
 /// Set while `pause --hard` holds running stage agents paused in Aether.
 const HARD_PAUSE_KEY: &str = "global_pause_hard";
 
-pub(super) async fn status(ctx: &DaemonContext) -> Result<Reply, ArchonError> {
+pub(super) async fn status(ctx: &DaemonContext, query: StatusQuery) -> Result<Reply, ArchonError> {
+    let waiting = waiting_page(ctx, query).await?;
     let caps = resolve::caps(ctx).await;
     let autonomy = RepoEnv::new(None)?.autonomy(ctx);
-    let (snapshot, blocked, open_questions, directives, open_gates, merges) = {
+    let counts = StoreCounts::read(ctx).await?;
+    let aether = AetherSections::read(ctx).await?;
+    let snapshot = counts.snapshot;
+    let status = DaemonStatus {
+        waiting_items: waiting.items,
+        waiting_total: count(waiting.total),
+        waiting_next_offset: waiting.next_offset.map(count),
+        daemon_version: env!("CARGO_PKG_VERSION").to_owned(),
+        pid: std::process::id(),
+        started_at: ctx.started_at,
+        aether: link_status(ctx),
+        orchestrator: aether.orchestrator,
+        caps,
+        pause: snapshot.pause,
+        running_agents: snapshot.running_total,
+        active_runs: snapshot.active_runs,
+        queued_items: count(snapshot.queued.len()),
+        blocked_items: count(counts.blocked),
+        open_questions: count(counts.open_questions),
+        spend_today_usd: snapshot.spend_today_usd,
+        spend_total_usd: snapshot.spend_total_usd,
+        lavish_available: ctx.lavish.is_some(),
+        autonomy,
+        directives: counts.directives,
+        open_gates: count(counts.open_gates),
+        held_news: count(triggers::held_news(ctx).await?),
+        mcp: Some(aether.mcp),
+        github: aether.github,
+        disk: Some(disk_status(ctx).await?),
+        versions: Some(ops::versions(ctx).await),
+        upgrade: ops::phase(ctx).await,
+        merges_waiting: counts.merges.waiting,
+        merge_granted: counts.merges.granted,
+        health: Some(aether.health),
+    };
+    assert!(
+        status.spend_today_usd <= status.spend_total_usd + 1e-9,
+        "today is part of the total"
+    );
+    Ok(Reply::Status(Box::new(status)))
+}
+
+/// What `status` counts in the store, under one lock.
+struct StoreCounts {
+    snapshot: archon_queue::dispatch::DispatchSnapshot,
+    blocked: usize,
+    open_questions: usize,
+    directives: Vec<Directive>,
+    open_gates: usize,
+    merges: super::autonomy::MergesNow,
+}
+
+impl StoreCounts {
+    async fn read(ctx: &DaemonContext) -> Result<Self, ArchonError> {
         let store = ctx.store.lock().await;
         let now = archon_core::now();
         let mut snapshot = store.dispatch_snapshot(now)?;
@@ -37,64 +96,113 @@ pub(super) async fn status(ctx: &DaemonContext) -> Result<Reply, ArchonError> {
             limit: Some(usize::MAX),
             ..ItemQuery::default()
         })?;
-        let open_gates = store.open_gates()?.len();
-        let questions = store.questions(true)?.len();
-        let merges = super::autonomy::merges_now(&store)?;
-        (
+        Ok(Self {
             snapshot,
-            blocked.len(),
-            questions,
-            store.directives(now)?,
-            open_gates,
-            merges,
-        )
+            blocked: blocked.len(),
+            open_questions: store.questions(true)?.len(),
+            directives: store.directives(now)?,
+            open_gates: store.open_gates()?.len(),
+            merges: super::autonomy::merges_now(&store)?,
+        })
+    }
+}
+
+/// One page of the items with a waiting reason.
+struct WaitingPage {
+    items: Vec<ItemSummary>,
+    total: usize,
+    next_offset: Option<usize>,
+}
+
+async fn waiting_page(ctx: &DaemonContext, query: StatusQuery) -> Result<WaitingPage, ArchonError> {
+    let limit = query.waiting_limit.unwrap_or(WAITING_PAGE);
+    if !(1..=MAX_WAITING_PAGE).contains(&limit) {
+        return Err(ArchonError::Invalid(format!(
+            "waiting_limit must be 1 to {MAX_WAITING_PAGE}, not {limit}"
+        )));
+    }
+    let candidates = ItemQuery {
+        states: vec!["queued".into(), "blocked".into(), "running".into()],
+        limit: Some(usize::MAX),
+        ..ItemQuery::default()
     };
-    let waiting_items = super::item_views::read_summaries(
-        ctx,
-        &ItemQuery {
-            states: vec!["queued".into(), "blocked".into(), "running".into()],
-            limit: Some(usize::MAX),
-            ..ItemQuery::default()
-        },
-    )
-    .await?
-    .into_iter()
-    .filter(|row| row.waiting_reason.is_some())
-    .collect();
-    let status = DaemonStatus {
-        waiting_items,
-        daemon_version: env!("CARGO_PKG_VERSION").to_owned(),
-        pid: std::process::id(),
-        started_at: ctx.started_at,
-        aether: link_status(ctx),
-        orchestrator: orchestrator_info(ctx).await?,
-        caps,
-        pause: snapshot.pause,
-        running_agents: snapshot.running_total,
-        active_runs: snapshot.active_runs,
-        queued_items: count(snapshot.queued.len()),
-        blocked_items: count(blocked),
-        open_questions: count(open_questions),
-        spend_today_usd: snapshot.spend_today_usd,
-        spend_total_usd: snapshot.spend_total_usd,
-        lavish_available: ctx.lavish.is_some(),
-        autonomy,
-        directives,
-        open_gates: count(open_gates),
-        held_news: count(triggers::held_news(ctx).await?),
-        mcp: Some(supervisor::mcp_status(ctx).await),
-        github: github::status(ctx).await,
-        disk: Some(disk_status(ctx).await?),
-        versions: Some(ops::versions(ctx).await),
-        upgrade: ops::phase(ctx).await,
-        merges_waiting: merges.waiting,
-        merge_granted: merges.granted,
-    };
+    let waiting: Vec<ItemSummary> = super::item_views::read_summaries(ctx, &candidates)
+        .await?
+        .into_iter()
+        .filter(|row| row.waiting_reason.is_some())
+        .collect();
+    let total = waiting.len();
+    let items: Vec<ItemSummary> = waiting
+        .into_iter()
+        .skip(query.waiting_offset)
+        .take(limit)
+        .collect();
+    let end = query.waiting_offset.saturating_add(items.len());
+    assert!(items.len() <= limit, "a page holds at most its limit");
     assert!(
-        status.spend_today_usd <= status.spend_total_usd + 1e-9,
-        "today is part of the total"
+        items.is_empty() || end <= total,
+        "a page ends within the list"
     );
-    Ok(Reply::Status(Box::new(status)))
+    Ok(WaitingPage {
+        items,
+        total,
+        next_offset: (end < total).then_some(end),
+    })
+}
+
+/// The sections `status` reads from Aether's latest answers, never live.
+struct AetherSections {
+    orchestrator: Option<OrchestratorInfo>,
+    mcp: McpStatus,
+    github: Option<GithubWatch>,
+    health: StatusHealth,
+}
+
+impl AetherSections {
+    async fn read(ctx: &DaemonContext) -> Result<Self, ArchonError> {
+        let recorded = recorded_orchestrator(ctx).await?;
+        let targets = Targets {
+            orchestrator: recorded.as_ref().map(|(agent, _)| agent.clone()),
+            github: ctx.config.aether.mode == AetherMode::Dedicated,
+        };
+        let answers = ctx
+            .status_probes
+            .read(ctx.aether.client(), targets.clone())
+            .await;
+        let orchestrator = recorded.map(|(agent, generation)| {
+            let found = cached_agent(&answers.aether, &agent);
+            orchestrator_view(ctx, agent, generation, found)
+        });
+        let mcp_health = match (&answers.mcp.last_error, &answers.mcp.value) {
+            (Some(error), _) => McpHealth::Unreachable {
+                error: error.clone(),
+            },
+            (None, Some(health)) => health.clone(),
+            (None, None) => McpHealth::Unreachable {
+                error: NOT_ANSWERED.to_owned(),
+            },
+        };
+        Ok(Self {
+            orchestrator,
+            mcp: supervisor::heal_status(ctx, mcp_health).await,
+            github: github::status(ctx, &answers.github).await?,
+            health: answers.health(targets.github),
+        })
+    }
+}
+
+/// Said for a section before Aether ever answered for it.
+const NOT_ANSWERED: &str = "Aether has not answered yet";
+
+/// The orchestrator's record as Aether last gave it, or why it is unknown.
+fn cached_agent(reading: &Probe<Option<Agent>>, agent: &AetherAgentId) -> Result<Agent, String> {
+    if let Some(error) = &reading.last_error {
+        return Err(error.clone());
+    }
+    match &reading.value {
+        Some(Some(found)) if found.id == *agent => Ok(found.clone()),
+        _ => Err(NOT_ANSWERED.to_owned()),
+    }
 }
 
 /// Free space where archond writes, read now, with the disk hold.
@@ -143,9 +251,11 @@ fn link_status(ctx: &DaemonContext) -> AetherLinkStatus {
     }
 }
 
-/// The recorded orchestrator with Aether's view of it; `None` before it
-/// was ever created. `restarts` counts generations after the first.
-async fn orchestrator_info(ctx: &DaemonContext) -> Result<Option<OrchestratorInfo>, ArchonError> {
+/// The recorded orchestrator and its generation; `None` before it was
+/// ever created.
+async fn recorded_orchestrator(
+    ctx: &DaemonContext,
+) -> Result<Option<(AetherAgentId, u64)>, ArchonError> {
     let (agent, generation) = {
         let store = ctx.store.lock().await;
         let agent = store.kv_get(keys::ORCHESTRATOR_AGENT)?;
@@ -162,26 +272,47 @@ async fn orchestrator_info(ctx: &DaemonContext) -> Result<Option<OrchestratorInf
         .unwrap_or("0")
         .parse()
         .map_err(|e| ArchonError::Store(format!("stored orchestrator generation: {e}")))?;
-    let (model, status) = match ctx.aether.client() {
-        Ok(client) => match client.get_agent(&agent).await {
-            Ok(found) => (found.model, status_kind(&found.status)),
-            Err(error) => (
-                ctx.config.orchestrator.model.clone(),
-                format!("unknown ({error})"),
-            ),
-        },
-        Err(_) => (
+    Ok(Some((agent, generation)))
+}
+
+/// The recorded orchestrator with Aether's view of it, asked now; `None`
+/// before it was ever created.
+async fn orchestrator_info(ctx: &DaemonContext) -> Result<Option<OrchestratorInfo>, ArchonError> {
+    let Some((agent, generation)) = recorded_orchestrator(ctx).await? else {
+        return Ok(None);
+    };
+    let found = match ctx.aether.client() {
+        Ok(client) => client.get_agent(&agent).await.map_err(|e| e.to_string()),
+        Err(_) => Err("aether disconnected".to_owned()),
+    };
+    Ok(Some(orchestrator_view(ctx, agent, generation, found)))
+}
+
+/// `agent` as `found` in Aether, or with the configured model and why its
+/// status is unknown. `restarts` counts generations after the first.
+fn orchestrator_view(
+    ctx: &DaemonContext,
+    agent: AetherAgentId,
+    generation: u64,
+    found: Result<Agent, String>,
+) -> OrchestratorInfo {
+    let (model, status) = match found {
+        Ok(found) => {
+            assert_eq!(found.id, agent, "Aether's record is the orchestrator's");
+            (found.model, status_kind(&found.status))
+        }
+        Err(why) => (
             ctx.config.orchestrator.model.clone(),
-            "unknown (aether disconnected)".into(),
+            format!("unknown ({why})"),
         ),
     };
-    Ok(Some(OrchestratorInfo {
+    OrchestratorInfo {
         agent,
         model,
         effort: ctx.config.orchestrator.effort,
         status,
         restarts: u32::try_from(generation.saturating_sub(1)).unwrap_or(u32::MAX),
-    }))
+    }
 }
 
 /// Aether's status kind (`{"state":"ready"}` → `ready`).

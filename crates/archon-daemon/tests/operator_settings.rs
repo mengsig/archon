@@ -79,7 +79,7 @@ async fn settings_and_set_caps_survive_a_restart_until_reset() {
         after.effective.sources["autonomy.max.merge"],
         SettingSource::Global
     );
-    let Ok(Reply::Status(status)) = h.cli(Request::Status).await else {
+    let Ok(Reply::Status(status)) = h.cli(Request::Status(Default::default())).await else {
         panic!("status");
     };
     assert_eq!(status.caps.max_parallel_agents, 3);

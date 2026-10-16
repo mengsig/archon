@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn requests_encode_with_req_and_cmd_on_one_line() {
-        let (cmd, line) = encode_request(3, Request::Status).unwrap();
+        let (cmd, line) = encode_request(3, Request::Status(Default::default())).unwrap();
         assert_eq!(cmd, "status");
         assert_eq!(line, b"{\"req\":3,\"cmd\":\"status\"}\n");
     }

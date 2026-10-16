@@ -622,11 +622,11 @@ async fn results_stay_under_aethers_message_and_structured_caps() {
 }
 
 fn withhold_status(request: &Request) -> bool {
-    matches!(request, Request::Status)
+    matches!(request, Request::Status(_))
 }
 
 fn withhold_status_and_replies(request: &Request) -> bool {
-    matches!(request, Request::Status | Request::GithubReply { .. })
+    matches!(request, Request::Status(_) | Request::GithubReply { .. })
 }
 
 fn ids(responses: &[Value]) -> BTreeSet<u64> {

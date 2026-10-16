@@ -465,6 +465,7 @@ pub fn context(
     let dispatch = Arc::new(Notify::new());
     DaemonContext {
         storage: Default::default(),
+        status_probes: Default::default(),
         config,
         paths,
         store: Mutex::new(store),

@@ -101,7 +101,9 @@ fn operator_only_requests() -> Vec<Request> {
 #[tokio::test]
 async fn agents_are_refused_operator_only_requests_through_any_client() {
     let h = Harness::new().await;
-    h.orchestrator(Request::Status).await.unwrap();
+    h.orchestrator(Request::Status(Default::default()))
+        .await
+        .unwrap();
     for request in operator_only_requests() {
         assert!(request.is_operator_only(), "{request:?}");
         let forwarded = Request::ForAgent {
@@ -131,7 +133,12 @@ async fn agents_are_refused_operator_only_requests_through_any_client() {
         "the refused update changed nothing"
     );
     assert!(h.ctx.operator_settings.lock().unwrap().global.is_empty());
-    let status = handlers::handle(&h.ctx, ClientKind::ArchonMcp, Request::Status).await;
+    let status = handlers::handle(
+        &h.ctx,
+        ClientKind::ArchonMcp,
+        Request::Status(Default::default()),
+    )
+    .await;
     assert!(matches!(status, Ok(Reply::Status(_))), "{status:?}");
 }
 
@@ -401,7 +408,7 @@ async fn pausing_an_unknown_repository_is_an_error() {
         .await
         .expect_err("unknown repo");
     assert!(matches!(refused, ArchonError::NotFound(_)), "{refused:?}");
-    let Ok(Reply::Status(status)) = h.cli(Request::Status).await else {
+    let Ok(Reply::Status(status)) = h.cli(Request::Status(Default::default())).await else {
         panic!("status");
     };
     assert!(!status.pause.global && status.pause.repos.is_empty());
@@ -430,7 +437,7 @@ async fn a_hard_pause_without_aether_still_pauses_dispatch_and_says_so() {
             && text.contains(&format!("{running} of {running} running stage agent(s)")),
         "{text}"
     );
-    let Ok(Reply::Status(status)) = h.cli(Request::Status).await else {
+    let Ok(Reply::Status(status)) = h.cli(Request::Status(Default::default())).await else {
         panic!("status");
     };
     assert!(status.pause.global, "the soft part of the pause holds");
@@ -463,7 +470,7 @@ async fn pausing_an_unknown_pipeline_is_refused_with_the_known_ones() {
     h.cli(Request::Pause(known))
         .await
         .expect("a repository pipeline");
-    let Ok(Reply::Status(status)) = h.cli(Request::Status).await else {
+    let Ok(Reply::Status(status)) = h.cli(Request::Status(Default::default())).await else {
         panic!("status");
     };
     assert_eq!(status.pause.pipelines, vec![common::PIPELINE.to_owned()]);
@@ -484,7 +491,7 @@ async fn mcp_clients_cannot_lift_the_operators_hard_pause() {
         matches!(&refused, ArchonError::Forbidden(why) if why.contains("hard")),
         "{refused:?}"
     );
-    let Ok(Reply::Status(status)) = h.cli(Request::Status).await else {
+    let Ok(Reply::Status(status)) = h.cli(Request::Status(Default::default())).await else {
         panic!("status");
     };
     assert!(status.pause.global, "the hard pause holds");
@@ -572,7 +579,7 @@ async fn cost_reports_count_the_ledger_as_the_budgets_do() {
             assert_eq!(report.total.counted_usd, counted, "estimates {estimates}");
             assert_eq!(report.estimates_counted, estimates);
         }
-        let Ok(Reply::Status(status)) = h.cli(Request::Status).await else {
+        let Ok(Reply::Status(status)) = h.cli(Request::Status(Default::default())).await else {
             panic!("status");
         };
         assert_eq!(status.spend_today_usd, counted, "the daily budget agrees");

@@ -352,7 +352,7 @@ async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, Ar
             items::retry(ctx, &item, retry).await
         }
         Request::RefreshItem { item } => items::refresh(ctx, &item).await,
-        Request::Status => control::status(ctx).await,
+        Request::Status(query) => control::status(ctx, query).await,
         Request::SetCaps { caps } => control::set_caps(ctx, caps).await,
         Request::Settings { repo } => settings::view(ctx, repo.as_ref()).await,
         Request::SetSettings { repo, settings } => {

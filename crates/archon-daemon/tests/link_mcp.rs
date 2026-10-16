@@ -667,9 +667,13 @@ async fn status_reports_the_mcp_servers_health() {
     let status = |harness: &Harness| {
         let ctx = harness.ctx.clone();
         async move {
-            let reply = handlers::handle(&ctx, ClientKind::ArchonCli, Request::Status)
-                .await
-                .unwrap();
+            let reply = handlers::handle(
+                &ctx,
+                ClientKind::ArchonCli,
+                Request::Status(Default::default()),
+            )
+            .await
+            .unwrap();
             let Reply::Status(status) = reply else {
                 panic!("expected a status, got {reply:?}");
             };

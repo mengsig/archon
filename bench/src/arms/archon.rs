@@ -316,7 +316,8 @@ async fn session(input: &TrialInput<'_>, client: &ArchonClient) -> anyhow::Resul
 async fn wait_until_ready(client: &ArchonClient) -> anyhow::Result<()> {
     let deadline = Instant::now() + READY_TIMEOUT;
     loop {
-        let Reply::Status(status) = client.request(Request::Status).await? else {
+        let Reply::Status(status) = client.request(Request::Status(Default::default())).await?
+        else {
             bail!("status returned another reply kind");
         };
         let linked = matches!(
@@ -537,7 +538,7 @@ async fn fleet_usage(
     if let Some(usage) = aether_usage(&events)? {
         return Ok(usage);
     }
-    let Reply::Status(status) = client.request(Request::Status).await? else {
+    let Reply::Status(status) = client.request(Request::Status(Default::default())).await? else {
         bail!("status returned another reply kind");
     };
     Ok(Usage {

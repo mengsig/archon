@@ -128,7 +128,7 @@ async fn await_link(client: &ArchonClient, limit: Duration) -> anyhow::Result<()
     assert!(LINK_POLL < LINK_WAIT, "the wait allows a second look");
     let deadline = Instant::now() + limit;
     loop {
-        let status = match client.request(Request::Status).await? {
+        let status = match client.request(Request::Status(Default::default())).await? {
             Reply::Status(status) => status,
             other => return Err(unexpected(&other, "status")),
         };
@@ -227,7 +227,7 @@ mod tests {
                         daemon_version: "test".into(),
                         pid: 1,
                     }),
-                    Request::Status => {
+                    Request::Status(_) => {
                         answered += 1;
                         let status = crate::format::tests::status_with(link(answered > gaps));
                         Reply::Status(Box::new(status))

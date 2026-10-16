@@ -23,7 +23,12 @@ fn pause() -> Request {
 }
 
 async fn paused(harness: &Harness) -> bool {
-    let status = handlers::handle(&harness.ctx, ClientKind::ArchonCli, Request::Status).await;
+    let status = handlers::handle(
+        &harness.ctx,
+        ClientKind::ArchonCli,
+        Request::Status(Default::default()),
+    )
+    .await;
     let Ok(Reply::Status(status)) = status else {
         panic!("status replied {status:?}")
     };
@@ -63,7 +68,12 @@ async fn only_the_stored_orchestrator_changes_archon_and_aether_is_never_asked()
         matches!(read, Ok(Reply::Repos(_))),
         "reading is open: {read:?}"
     );
-    let unnamed_read = handlers::handle(&harness.ctx, ClientKind::ArchonMcp, Request::Status).await;
+    let unnamed_read = handlers::handle(
+        &harness.ctx,
+        ClientKind::ArchonMcp,
+        Request::Status(Default::default()),
+    )
+    .await;
     assert!(unnamed_read.is_ok(), "{unnamed_read:?}");
 
     harness
@@ -186,7 +196,7 @@ async fn a_named_read_from_the_orchestrator_shows_that_aether_names_callers_agai
 
     let helper_read = harness.mcp_as("agt_0404", Request::RepoList).await;
     assert!(helper_read.is_ok(), "{helper_read:?}");
-    let unnamed_read = unnamed(&harness, Request::Status).await;
+    let unnamed_read = unnamed(&harness, Request::Status(Default::default())).await;
     assert!(unnamed_read.is_ok(), "{unnamed_read:?}");
     assert_eq!(said_again().await, 0, "neither is the orchestrator's word");
 

@@ -89,7 +89,7 @@ fn allows(request: &Request) -> bool {
     matches!(
         request,
         Request::Shutdown
-            | Request::Status
+            | Request::Status(_)
             | Request::ListItems(_)
             | Request::ListItemSummaries(_)
             | Request::GetItem { .. }

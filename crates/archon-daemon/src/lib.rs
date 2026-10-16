@@ -24,6 +24,7 @@ pub mod pump;
 pub mod reports;
 pub mod server;
 mod standby;
+pub mod status_health;
 mod storage;
 pub mod supervisor;
 pub mod triggers;
@@ -316,6 +317,7 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
     let dispatch = Arc::new(Notify::new());
     let ctx = DaemonContext {
         storage: Default::default(),
+        status_probes: Default::default(),
         config,
         paths,
         store: Mutex::new(store),

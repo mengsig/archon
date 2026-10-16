@@ -753,6 +753,15 @@ Aether, including in dedicated mode. A running archond reports
 the command returns an `unavailable` error (exit 1): its Aether link cannot
 be observed. `--no-start` is still accepted, and changes nothing.
 
+Status never waits long on Aether. archond asks Aether for the orchestrator,
+the `archon` MCP server and the GitHub watcher in the background and waits
+at most a second for the answer; past that, status shows the last answers
+and a `health: STALE …` line names each stale section with the age of its
+last answer and the latest error. In JSON, `health` holds `as_of`,
+`last_error` and `stale` per section. Status shows the first 50 waiting
+items; `waiting_total` counts them all and `waiting_next_offset` says where
+the next page starts (`archon queue list` lists every item).
+
 Queue detail and list views put `awaiting approval` first when the current
 run needs a proposal/report decision or a blocking Aether question, with
 the prompt and `archon answer …` command. Status shows these items before

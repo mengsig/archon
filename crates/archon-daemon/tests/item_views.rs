@@ -5,7 +5,9 @@ mod common;
 
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
-use archon_core::protocol::{ItemQuery, ItemSummary, Reply, Request};
+use archon_core::protocol::{
+    ItemQuery, ItemSummary, MAX_WAITING_PAGE, Reply, Request, StatusQuery,
+};
 use archon_core::queue::QueueItem;
 use archon_core::run::{StageOutcome, StageRun};
 use archon_queue::store::SpendRow;
@@ -201,7 +203,7 @@ async fn reason(h: &Harness, id: &QueueItemId, code: Code) -> WaitingReason {
         .find(|row| &row.item.id == id)
         .unwrap();
     assert_eq!(row.waiting_reason.as_ref(), Some(&wait));
-    let Reply::Status(status) = h.cli(Request::Status).await.unwrap() else {
+    let Reply::Status(status) = h.cli(Request::Status(Default::default())).await.unwrap() else {
         panic!("status")
     };
     let status_row = status
@@ -229,7 +231,7 @@ async fn reason(h: &Harness, id: &QueueItemId, code: Code) -> WaitingReason {
 #[tokio::test]
 async fn next_in_line_and_empty_status_are_derived_without_dispatching() {
     let (h, _fake) = connected_harness().await;
-    let Reply::Status(status) = h.cli(Request::Status).await.unwrap() else {
+    let Reply::Status(status) = h.cli(Request::Status(Default::default())).await.unwrap() else {
         panic!("status")
     };
     assert!(status.waiting_items.is_empty());
@@ -653,7 +655,8 @@ async fn real_wire_cost_bases_reach_reports_without_changing_budget_totals() {
         assert_eq!(report.total.unclassified_cost_usd, 0.0);
         assert_eq!(report.total.counted_usd, expected);
         assert_eq!(detail(&h, &item.id).await.spent_usd, expected);
-        let Reply::Status(status) = h.cli(Request::Status).await.unwrap() else {
+        let Reply::Status(status) = h.cli(Request::Status(Default::default())).await.unwrap()
+        else {
             panic!("status expected")
         };
         assert_eq!(status.spend_today_usd, expected);
@@ -877,4 +880,63 @@ async fn delegated_descendant_cost_stays_with_its_run_after_retry_and_restart() 
             .unwrap(),
         2.75
     );
+}
+
+async fn status_page(
+    h: &Harness,
+    offset: usize,
+    limit: Option<usize>,
+) -> Result<Reply, ArchonError> {
+    let query = StatusQuery {
+        waiting_offset: offset,
+        waiting_limit: limit,
+    };
+    h.cli(Request::Status(query)).await
+}
+
+fn waiting_ids(reply: &Reply) -> (Vec<QueueItemId>, u32, Option<u32>) {
+    let Reply::Status(status) = reply else {
+        panic!("status: {reply:?}")
+    };
+    let ids = status.waiting_items.iter().map(|row| row.item.id.clone());
+    (
+        ids.collect(),
+        status.waiting_total,
+        status.waiting_next_offset,
+    )
+}
+
+#[tokio::test]
+async fn status_pages_its_waiting_items_with_a_next_offset() {
+    let (h, _fake) = connected_harness().await;
+    let mut queued = Vec::new();
+    for title in ["first", "second", "third"] {
+        queued.push(h.enqueue(title).await.id);
+    }
+    let whole = status_page(&h, 0, None).await.unwrap();
+    let (all, total, next) = waiting_ids(&whole);
+    assert_eq!(
+        (all.len(), total, next),
+        (3, 3, None),
+        "one default page holds them"
+    );
+    let (first, total, next) = waiting_ids(&status_page(&h, 0, Some(2)).await.unwrap());
+    assert_eq!((first.len(), total, next), (2, 3, Some(2)));
+    let (last, total, next) = waiting_ids(&status_page(&h, 2, Some(2)).await.unwrap());
+    assert_eq!((last.len(), total, next), (1, 3, None));
+    let paged: Vec<QueueItemId> = first.into_iter().chain(last).collect();
+    assert_eq!(paged, all, "the pages split the list in order");
+    let mut sorted = paged.clone();
+    sorted.sort();
+    queued.sort();
+    assert_eq!(sorted, queued);
+    let (past, total, next) = waiting_ids(&status_page(&h, 9, Some(2)).await.unwrap());
+    assert_eq!((past.len(), total, next), (0, 3, None));
+    for limit in [0, MAX_WAITING_PAGE + 1] {
+        let refused = status_page(&h, 0, Some(limit)).await;
+        assert!(
+            matches!(refused, Err(ArchonError::Invalid(_))),
+            "{refused:?}"
+        );
+    }
 }

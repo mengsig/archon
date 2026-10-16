@@ -136,7 +136,9 @@ async fn hello_requests_feed_and_shutdown_over_a_socket() {
 
     let mut cli = Client::hello(&socket, ClientKind::ArchonCli).await;
     let mut feed = Vec::new();
-    let status = cli.call(Request::Status, &mut feed).await;
+    let status = cli
+        .call(Request::Status(Default::default()), &mut feed)
+        .await;
     assert!(matches!(status, Ok(Reply::Status(_))), "{status:?}");
     cli.call(notify("before subscribing"), &mut feed)
         .await
@@ -214,7 +216,7 @@ async fn first_frame_must_be_hello_at_our_version() {
     let serving = tokio::spawn(server::serve(h.ctx.clone(), listener));
 
     let mut early = Client::connect(&socket).await;
-    early.send(Request::Status).await;
+    early.send(Request::Status(Default::default())).await;
     match early.frame().await {
         Some(ServerFrame::Reply {
             id: 0,
@@ -263,7 +265,9 @@ async fn first_frame_must_be_hello_at_our_version() {
         }) => assert_eq!(e.code, ErrorCode::InvalidArgument),
         other => panic!("expected an error for req 42, got {other:?}"),
     }
-    let status = cli.call(Request::Status, &mut Vec::new()).await;
+    let status = cli
+        .call(Request::Status(Default::default()), &mut Vec::new())
+        .await;
     assert!(status.is_ok(), "{status:?}");
     serving.abort();
 }

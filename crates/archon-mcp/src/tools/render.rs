@@ -20,7 +20,8 @@ use archon_core::model::{Effort, ModelPlan, ModelReasons};
 use archon_core::notify::Question;
 use archon_core::policy::ModelPolicy;
 use archon_core::protocol::{
-    AetherLinkStatus, DaemonStatus, DiskStatus, ItemDetail, Reply, ReportPublished, gib,
+    AetherLinkStatus, DaemonStatus, DiskStatus, ItemDetail, Reply, ReportPublished, StatusHealth,
+    gib,
 };
 use archon_core::queue::{Caps, QueueItem, QueueState};
 use archon_core::repo::Repo;
@@ -671,7 +672,19 @@ fn daemon_status(status: &DaemonStatus) -> String {
         status.github.as_ref().map_or(String::new(), github_text),
         status.disk.as_ref().map_or(String::new(), disk_text),
         upkeep_text(status)
-    )
+    ) + &stale_text(status.health.as_ref())
+}
+
+/// The sections that show Aether's last answer rather than its latest.
+fn stale_text(health: Option<&StatusHealth>) -> String {
+    let stale = health.map(|h| h.stale(archon_core::now()));
+    match stale.filter(|s| !s.is_empty()) {
+        Some(stale) => format!(
+            "\nSTALE (Aether's last answers, not current): {}.",
+            stale.join("; ")
+        ),
+        None => String::new(),
+    }
 }
 
 /// An upgrade under way, and versions that differ: running against
@@ -880,5 +893,35 @@ mod storage_tests {
             "{text}"
         );
         assert!(text.contains("freed 4096 bytes: one report"), "{text}");
+    }
+
+    #[test]
+    fn queue_status_names_stale_sections_with_their_age_and_says_nothing_when_fresh() {
+        let probe = |as_of: Option<archon_core::Timestamp>, error: Option<&str>, stale| {
+            archon_core::protocol::ProbeHealth {
+                as_of,
+                last_error: error.map(str::to_owned),
+                stale,
+            }
+        };
+        let earlier =
+            archon_core::Timestamp::from_timestamp(archon_core::now().timestamp() - 42, 0).unwrap();
+        let mut health = StatusHealth {
+            aether: probe(Some(earlier), None, true),
+            mcp: probe(None, Some("unavailable: not connected"), true),
+            github: None,
+        };
+        let text = stale_text(Some(&health));
+        assert!(text.contains("STALE"), "{text}");
+        assert!(text.contains("aether: last answer 4"), "{text}");
+        assert!(text.contains("still asking"), "{text}");
+        assert!(
+            text.contains("mcp: never answered, latest ask failed: unavailable"),
+            "{text}"
+        );
+        health.aether.stale = false;
+        health.mcp = probe(Some(earlier), None, false);
+        assert_eq!(stale_text(Some(&health)), "");
+        assert_eq!(stale_text(None), "");
     }
 }

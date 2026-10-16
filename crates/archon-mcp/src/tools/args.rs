@@ -60,7 +60,7 @@ pub(super) fn to_request(tool: &str, arguments: Value) -> Result<Request, ToolEr
             item: args.required("item")?,
         },
         "get_stage" => get_stage(&mut args)?,
-        "queue_status" => Request::Status,
+        "queue_status" => Request::Status(Default::default()),
         "cost_report" => cost_report(&mut args)?,
         "model_evidence" => model_evidence(&mut args)?,
         "register_repo" => register_repo(&mut args)?,

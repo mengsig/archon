@@ -157,8 +157,8 @@ async fn refusals_keep_their_code_and_message() {
         }
     };
     let (raw, flattened, ()) = tokio::join!(
-        client.call(Request::Status),
-        client.request(Request::Status),
+        client.call(Request::Status(Default::default())),
+        client.request(Request::Status(Default::default())),
         server
     );
     assert_eq!(raw.expect("the transport is fine"), Err(refusal));
@@ -216,13 +216,13 @@ async fn a_disconnect_fails_waiters_with_the_daemons_notice() {
         conn.reply(0, Err(notice)).await;
         drop(conn);
     };
-    let (answer, ()) = tokio::join!(client.request(Request::Status), server);
+    let (answer, ()) = tokio::join!(client.request(Request::Status(Default::default())), server);
     let error = answer.expect_err("the connection dropped");
     assert!(matches!(error, ArchonError::Unavailable(_)), "{error:?}");
     assert!(error.to_string().contains("shutting down"), "{error}");
     assert!(client.is_closed());
     let later = client
-        .request(Request::Status)
+        .request(Request::Status(Default::default()))
         .await
         .expect_err("still dead");
     assert!(later.to_string().contains("shutting down"), "{later}");
@@ -261,7 +261,7 @@ async fn a_notice_on_an_open_socket_ends_every_subscription_and_waiter() {
     // `conn` stays open: archond ends the feed without closing the socket.
     let within = Duration::from_secs(5);
     let (answer, ()) = tokio::join!(
-        tokio::time::timeout(within, client.request(Request::Status)),
+        tokio::time::timeout(within, client.request(Request::Status(Default::default()))),
         server
     );
     let error = answer
@@ -282,7 +282,7 @@ async fn a_notice_on_an_open_socket_ends_every_subscription_and_waiter() {
     }
     assert!(client.is_closed(), "callers see they must reconnect");
     let later = client
-        .request(Request::Status)
+        .request(Request::Status(Default::default()))
         .await
         .expect_err("still dead");
     assert!(later.to_string().contains(notice), "{later}");
@@ -377,7 +377,10 @@ async fn a_silent_daemon_times_out_the_request_not_the_client() {
     let dir = tempfile::tempdir().unwrap();
     let (client, mut conn, _listener) = pair(dir.path()).await;
     let quick = Duration::from_millis(50);
-    let answer = client.shared.call(Request::Status, None, quick).await;
+    let answer = client
+        .shared
+        .call(Request::Status(Default::default()), None, quick)
+        .await;
     let error = answer.expect_err("nobody answered");
     assert!(error.to_string().contains("`status`"), "{error}");
     // The late reply is dropped as an orphan; the next request still works.
@@ -387,7 +390,7 @@ async fn a_silent_daemon_times_out_the_request_not_the_client() {
         let frame = conn.recv().await;
         conn.reply(frame.id, Ok(Reply::Ok)).await;
     };
-    let (answer, ()) = tokio::join!(client.request(Request::Status), server);
+    let (answer, ()) = tokio::join!(client.request(Request::Status(Default::default())), server);
     assert_eq!(answer.unwrap(), Reply::Ok);
 }
 
@@ -406,14 +409,20 @@ async fn a_daemon_that_stops_reading_times_out_queued_requests() {
     // ...and these fill the write queue behind it.
     for _ in 0..=connection::WRITE_QUEUE {
         let shared = client.shared.clone();
-        stalled.spawn(async move { shared.call(Request::Status, None, patient).await });
+        stalled.spawn(async move {
+            shared
+                .call(Request::Status(Default::default()), None, patient)
+                .await
+        });
     }
     // Every task, the writer included, runs until it blocks.
     for _ in 0..1_000 {
         tokio::task::yield_now().await;
     }
     let quick = Duration::from_millis(100);
-    let queued = client.shared.call(Request::Status, None, quick);
+    let queued = client
+        .shared
+        .call(Request::Status(Default::default()), None, quick);
     let answer = tokio::time::timeout(Duration::from_secs(5), queued)
         .await
         .expect("the request's own timeout covers queueing");

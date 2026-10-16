@@ -21,6 +21,7 @@ use archon_core::github::{
 use tokio::sync::{Mutex, Notify};
 
 use crate::context::DaemonContext;
+use crate::status_health::Probe;
 use crate::supervisor;
 
 pub use reply::{post_reply, reply_body};
@@ -279,20 +280,29 @@ pub async fn watcher(ctx: &DaemonContext) -> Result<GithubWatcherView, ArchonErr
     Ok(view(&status, orchestrator.as_ref()))
 }
 
-/// The watcher for `archon status`: `None` in shared mode, while no
-/// repository is watched, and while Aether's link (shown already) is down.
-pub async fn status(ctx: &DaemonContext) -> Option<GithubWatch> {
+/// The watcher for `archon status`, as Aether last described it: `None`
+/// in shared mode, while no repository is watched, and while Aether's link
+/// (shown already) is down.
+pub async fn status(
+    ctx: &DaemonContext,
+    reading: &Probe<WatcherStatus>,
+) -> Result<Option<GithubWatch>, ArchonError> {
     if ctx.config.aether.mode == AetherMode::Shared {
-        return None;
+        return Ok(None);
     }
-    match watcher(ctx).await {
-        Ok(view) if view.repositories.is_empty() => None,
-        Ok(view) => Some(GithubWatch::Watching(Box::new(view))),
-        Err(_) if !ctx.aether.is_connected() => None,
-        Err(error) => Some(GithubWatch::Unreachable {
-            error: error.to_string(),
-        }),
-    }
+    let unread = match (&reading.last_error, &reading.value) {
+        (Some(error), _) => error.clone(),
+        (None, Some(status)) => {
+            let orchestrator = supervisor::current_orchestrator(ctx).await?;
+            let view = view(status, orchestrator.as_ref());
+            let watched = !view.repositories.is_empty();
+            return Ok(watched.then(|| GithubWatch::Watching(Box::new(view))));
+        }
+        (None, None) => "Aether has not answered yet".to_owned(),
+    };
+    assert!(!unread.is_empty(), "an unread watcher says why");
+    let connected = ctx.aether.is_connected();
+    Ok(connected.then_some(GithubWatch::Unreachable { error: unread }))
 }
 
 /// The routes (repository, target) `config` delivers on: enabled

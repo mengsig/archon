@@ -838,7 +838,7 @@ async fn expiry_requires_old_settled_items_and_quiet_reports_and_keeps_sources_a
                 "already expired files do not count twice"
             );
             let archon_core::protocol::Reply::Status(status) =
-                h.cli(Request::Status).await.unwrap()
+                h.cli(Request::Status(Default::default())).await.unwrap()
             else {
                 panic!("status")
             };

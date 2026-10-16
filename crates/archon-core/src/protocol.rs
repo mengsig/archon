@@ -143,7 +143,7 @@ pub enum Request {
         client: ClientKind,
         client_version: String,
     },
-    Status,
+    Status(StatusQuery),
     Guide {
         topic: String,
     },
@@ -488,7 +488,7 @@ impl Request {
     pub fn is_read_only(&self) -> bool {
         match self {
             Self::Hello { .. }
-            | Self::Status
+            | Self::Status(_)
             | Self::Guide { .. }
             | Self::RepoList
             | Self::ListItems(_)
@@ -866,6 +866,28 @@ pub struct ArtifactPage {
     pub next_offset: Option<u64>,
 }
 
+/// `Status`'s page of waiting items. The default encodes as a bare
+/// `{"cmd":"status"}`, which every archond reads.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StatusQuery {
+    /// Waiting items to skip.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub waiting_offset: usize,
+    /// Waiting items per page; `None`: [`WAITING_PAGE`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub waiting_limit: Option<usize>,
+}
+
+/// Waiting items a status page holds unless asked otherwise.
+pub const WAITING_PAGE: usize = 50;
+/// The most waiting items one status page may ask for.
+pub const MAX_WAITING_PAGE: usize = 500;
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Welcome {
     pub protocol_version: u32,
@@ -875,9 +897,16 @@ pub struct Welcome {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DaemonStatus {
-    /// Read-time explanations for queued, blocked and operator-waiting items.
+    /// Read-time explanations for queued, blocked and operator-waiting
+    /// items: the page `StatusQuery` asked for.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub waiting_items: Vec<ItemSummary>,
+    /// Waiting items on every page; `0` from an archond that predates pages.
+    #[serde(default)]
+    pub waiting_total: u32,
+    /// Where the next page of waiting items starts; `None` at the end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting_next_offset: Option<u32>,
     pub daemon_version: String,
     pub pid: u32,
     pub started_at: Timestamp,
@@ -926,6 +955,71 @@ pub struct DaemonStatus {
     /// The upgrade under way, in one line.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upgrade: Option<String>,
+    /// How fresh the sections archond asks Aether for are. `None` from an
+    /// archond that asked Aether while answering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health: Option<StatusHealth>,
+}
+
+/// `DaemonStatus::health`. archond asks Aether off the request path and
+/// shows its latest answers, so status never waits on a slow aetherd.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatusHealth {
+    /// Aether itself, through the orchestrator's agent record.
+    pub aether: ProbeHealth,
+    /// The `archon` MCP server in Aether (`DaemonStatus::mcp`).
+    pub mcp: ProbeHealth,
+    /// Archon's GitHub watcher; `None` in shared mode, where it is not read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github: Option<ProbeHealth>,
+}
+
+/// How fresh one status section is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProbeHealth {
+    /// When Aether last answered for this section; `None`: it never has.
+    pub as_of: Option<Timestamp>,
+    /// Why the latest ask failed; `None` when it answered or still runs.
+    pub last_error: Option<String>,
+    /// The section is not the latest answer: the ask failed, or it was
+    /// still running when status answered.
+    pub stale: bool,
+}
+
+impl StatusHealth {
+    /// One phrase per stale section, e.g. `aether: last answer 42s ago,
+    /// still asking`; empty while every section is fresh.
+    pub fn stale(&self, now: Timestamp) -> Vec<String> {
+        let sections = [
+            ("aether", Some(&self.aether)),
+            ("mcp", Some(&self.mcp)),
+            ("github", self.github.as_ref()),
+        ];
+        sections
+            .into_iter()
+            .filter_map(|(name, probe)| probe.filter(|p| p.stale).map(|p| (name, p)))
+            .map(|(name, probe)| format!("{name}: {}", probe.describe(now)))
+            .collect()
+    }
+}
+
+impl ProbeHealth {
+    /// Seconds since Aether last answered, at `now`.
+    pub fn age_secs(&self, now: Timestamp) -> Option<i64> {
+        self.as_of.map(|at| (now - at).num_seconds().max(0))
+    }
+
+    fn describe(&self, now: Timestamp) -> String {
+        let answered = self.age_secs(now).map_or_else(
+            || "never answered".to_owned(),
+            |age| format!("last answer {age}s ago"),
+        );
+        let latest = self.last_error.as_deref().map_or_else(
+            || "still asking".to_owned(),
+            |error| format!("latest ask failed: {error}"),
+        );
+        format!("{answered}, {latest}")
+    }
 }
 
 /// `DaemonStatus::disk`: the fuller of the filesystems holding the data
@@ -1595,7 +1689,7 @@ mod tests {
             caller: caller.clone(),
             request: Box::new(request),
         };
-        assert!(wrap(Request::Status).is_read_only());
+        assert!(wrap(Request::Status(StatusQuery::default())).is_read_only());
         assert!(!wrap(Request::Say { text: "hi".into() }).is_read_only());
         assert!(wrap(Request::Say { text: "hi".into() }).is_operator_only());
         let pause = wrap(Request::Pause(PauseTarget::Global { hard: false }));
@@ -1614,9 +1708,30 @@ mod tests {
     }
 
     #[test]
+    fn a_first_status_page_keeps_the_bare_status_command() {
+        let first = Request::Status(StatusQuery::default());
+        assert_eq!(
+            serde_json::to_value(&first).unwrap(),
+            serde_json::json!({"cmd": "status"})
+        );
+        let bare: Request = serde_json::from_value(serde_json::json!({"cmd": "status"})).unwrap();
+        assert_eq!(bare, first);
+        let later = Request::Status(StatusQuery {
+            waiting_offset: 50,
+            waiting_limit: Some(10),
+        });
+        let value = serde_json::to_value(&later).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({"cmd": "status", "waiting_offset": 50, "waiting_limit": 10})
+        );
+        assert_eq!(serde_json::from_value::<Request>(value).unwrap(), later);
+    }
+
+    #[test]
     fn operator_only_requests_are_flagged() {
         assert!(Request::Say { text: "hi".into() }.is_operator_only());
-        assert!(!Request::Status.is_operator_only());
+        assert!(!Request::Status(StatusQuery::default()).is_operator_only());
         let edit = Request::UpdateLesson {
             lesson: LessonId::new(),
             patch: LessonPatch::default(),

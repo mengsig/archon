@@ -229,7 +229,7 @@ impl Chat {
     /// One calm line on where things stand, plus a warning when Aether is
     /// down (the orchestrator cannot hear the operator then).
     async fn header(&mut self, client: &ArchonClient) -> anyhow::Result<()> {
-        let status = match client.request(Request::Status).await? {
+        let status = match client.request(Request::Status(Default::default())).await? {
             Reply::Status(status) => status,
             other => return Err(unexpected(&other, "status")),
         };

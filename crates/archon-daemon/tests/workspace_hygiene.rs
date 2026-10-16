@@ -236,7 +236,7 @@ async fn each_item_builds_lean_in_its_own_directory_that_goes_when_it_ends() {
             .any(|n| n.starts_with("Freed") && n.contains(first.id.as_str())),
         "{notes:?}"
     );
-    let Ok(Reply::Status(status)) = h.cli(Request::Status).await else {
+    let Ok(Reply::Status(status)) = h.cli(Request::Status(Default::default())).await else {
         panic!("status");
     };
     let last = status.disk.unwrap().gc.expect("the release is shown");
@@ -487,7 +487,7 @@ async fn gc_deletes_an_idle_cache_and_says_what_it_freed() {
             .any(|n| n.starts_with("Gc freed") && n.contains("1 shared build cache")),
         "{notes:?}"
     );
-    let Ok(Reply::Status(status)) = h.cli(Request::Status).await else {
+    let Ok(Reply::Status(status)) = h.cli(Request::Status(Default::default())).await else {
         panic!("status");
     };
     let last = status.disk.unwrap().gc.expect("the last pass is shown");
@@ -517,7 +517,7 @@ async fn disk_pressure_shortens_how_long_an_idle_cache_is_kept() {
     *h.ctx.gc.lock().await = None;
     h.dispatch().await;
     assert!(!cache_dir(&h).exists());
-    let Ok(Reply::Status(status)) = h.cli(Request::Status).await else {
+    let Ok(Reply::Status(status)) = h.cli(Request::Status(Default::default())).await else {
         panic!("status");
     };
     let last = status.disk.unwrap().gc.expect("the pass is shown");

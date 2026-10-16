@@ -5,7 +5,7 @@ use archon_core::error::ArchonError;
 use archon_core::integration::short;
 use archon_core::model::ModelPlan;
 use archon_core::notify::NotificationKind;
-use archon_core::protocol::{EnqueueRequest, RepoRef};
+use archon_core::protocol::{EnqueueRequest, ItemQuery, RepoRef};
 use archon_core::queue::{Priority, QueueItem};
 use archon_core::repo::Repo;
 
@@ -15,6 +15,8 @@ use crate::feed;
 
 /// The tag every integration fix item carries.
 pub const FIX_TAG: &str = "integration-fix";
+/// The item states a fix is still open in.
+const OPEN_STATES: [&str; 4] = ["queued", "dispatching", "running", "blocked"];
 /// Most characters of an item title.
 const MAX_TITLE_CHARS: usize = 200;
 
@@ -45,7 +47,7 @@ pub(crate) async fn repair(
         Some(&red.head),
         "the red head was read"
     );
-    if !needs_fix(ctx, state, &red.head).await? {
+    if !needs_fix(ctx, repo, state, &red.head).await? {
         return Ok(None);
     }
     let request = request(repo, state, red);
@@ -87,21 +89,29 @@ pub(crate) async fn repair(
 /// No fix item is queued while the last one is open, nor twice for one head.
 async fn needs_fix(
     ctx: &DaemonContext,
+    repo: &Repo,
     state: &BranchState,
     head: &str,
 ) -> Result<bool, ArchonError> {
-    let Some(fix) = &state.fix else {
-        return Ok(true);
-    };
-    if fix.head == head {
+    if state.fix.as_ref().is_some_and(|fix| fix.head == head) {
         return Ok(false);
     }
-    let open = match ctx.store.lock().await.item(&fix.item) {
-        Ok(item) => !item.state.is_terminal(),
-        Err(ArchonError::NotFound(_)) => false,
-        Err(error) => return Err(error),
+    // The store, not `state.fix`, is asked: a restart between the enqueue and
+    // the state's save loses the reference but not the open item.
+    let query = ItemQuery {
+        states: OPEN_STATES.map(String::from).to_vec(),
+        repo: Some(RepoRef(repo.id.as_str().to_owned())),
+        tag: Some(FIX_TAG.to_owned()),
+        limit: Some(1),
+        ..ItemQuery::default()
     };
-    Ok(!open)
+    let open = ctx.store.lock().await.items(&query)?;
+    assert!(open.len() <= 1, "the query is limited to one");
+    assert!(
+        open.iter().all(|item| item.repo.as_ref() == Some(&repo.id)),
+        "only this repository's fix items"
+    );
+    Ok(open.is_empty())
 }
 
 /// The fix item: in the repository's default pipeline, forked from the

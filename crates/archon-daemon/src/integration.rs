@@ -187,9 +187,15 @@ async fn examine(ctx: &DaemonContext, repo: &Repo) -> Result<(), ArchonError> {
     let Some(watch) = Watch::of(ctx, repo)? else {
         return state::forget(&mut *ctx.store.lock().await, &repo.id);
     };
-    let mut state = match state::load(&*ctx.store.lock().await, &repo.id)? {
+    let loaded = state::load(&*ctx.store.lock().await, &repo.id)?;
+    let mut state = match loaded {
         Some(state) if state.branch == watch.branch => state,
-        _ => BranchState::new(&watch.branch),
+        // Saved first, so a failing first read is shown on this branch.
+        _ => {
+            let fresh = BranchState::new(&watch.branch);
+            state::save(&mut *ctx.store.lock().await, &repo.id, &fresh)?;
+            fresh
+        }
     };
     let told = state.problem.clone();
     let reading = {

@@ -186,6 +186,10 @@ impl AetherSections {
             let found = cached_agent(&answers.aether, &agent);
             orchestrator_view(ctx, agent, generation, found)
         });
+        let orchestrator = match orchestrator {
+            Some(info) => Some(with_freshness(ctx, info).await?),
+            None => None,
+        };
         let mcp_health = match (&answers.mcp.last_error, &answers.mcp.value) {
             (Some(error), _) => McpHealth::Unreachable {
                 error: error.clone(),
@@ -310,7 +314,17 @@ async fn orchestrator_info(ctx: &DaemonContext) -> Result<Option<OrchestratorInf
         Ok(client) => client.get_agent(&agent).await.map_err(|e| e.to_string()),
         Err(_) => Err("aether disconnected".to_owned()),
     };
-    Ok(Some(orchestrator_view(ctx, agent, generation, found)))
+    let info = orchestrator_view(ctx, agent, generation, found);
+    with_freshness(ctx, info).await.map(Some)
+}
+
+async fn with_freshness(
+    ctx: &DaemonContext,
+    mut info: OrchestratorInfo,
+) -> Result<OrchestratorInfo, ArchonError> {
+    assert!(info.freshness.is_none(), "freshness is read once");
+    info.freshness = supervisor::freshness(ctx, info.generation).await?;
+    Ok(info)
 }
 
 /// `agent` as `found` in Aether, or with the configured model and why its
@@ -337,6 +351,8 @@ fn orchestrator_view(
         effort: ctx.config.orchestrator.effort,
         status,
         restarts: u32::try_from(generation.saturating_sub(1)).unwrap_or(u32::MAX),
+        generation,
+        freshness: None,
     }
 }
 

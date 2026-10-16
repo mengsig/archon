@@ -253,6 +253,8 @@ impl Canned {
                 effort: Effort::High,
                 status: "ready".into(),
                 restarts: 1,
+                generation: 2,
+                freshness: None,
             }),
             other => {
                 return Err(ErrorReply {

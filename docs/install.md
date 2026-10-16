@@ -154,6 +154,10 @@ archon orchestrator restart
 It also reports whether your Aether serves what the new version needs, and
 prints `aether update` when it does not.
 
+`archon status`, `archon doctor` and the orchestrator's `queue_status` say
+when the running orchestrator is behind: for example `generation 7, created
+by 1.2.3; prompt outdated; 3 new lessons`. A restart catches it up.
+
 Or let archond do all of it without interrupting work:
 
 ```sh

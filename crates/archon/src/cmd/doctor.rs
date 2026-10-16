@@ -2,6 +2,7 @@
 //! `archon setup` registers the MCP server and then runs the MCP checks.
 
 mod mcp_tools;
+mod orchestrator;
 mod registry;
 
 use std::path::{Path, PathBuf};
@@ -102,6 +103,7 @@ pub async fn run(json: bool) -> anyhow::Result<ExitCode> {
     checks.push(check_locations(&archon_client::default_socket()));
     let archond = connect_existing().await;
     checks.push(check_archond(&archond));
+    checks.push(orchestrator::check_orchestrator(&archond).await);
     let registry = Registry::read(&archond, config.aether.mode).await;
     checks.push(check_disk(&config)?);
     checks.push(check_git().await);

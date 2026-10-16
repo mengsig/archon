@@ -380,7 +380,9 @@ now. It opens or reuses the pull request from the integration branch to the
 release branch, merges it with a merge commit (only at that head, and only
 while none of the pull request's own checks fails or runs), then
 fast-forwards the integration branch to the release branch, never forced.
-The merge commit has the verified tree, so it is not verified again. An
+When the merge commit's tree is the verified one it keeps the green verdict
+and is not verified again; a release-side change that alters it is verified
+anew. An
 orchestrator's call merges only under the repository's `grant_merge`;
 otherwise it stops at the open pull request and asks you to run
 `archon promote`. The release hook, for example a tag command, then runs once

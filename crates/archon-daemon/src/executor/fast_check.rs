@@ -52,11 +52,13 @@ pub(crate) fn trusted(repo: &Repo) -> Result<Option<String>, ArchonError> {
 /// `HEAD` commit; an untracked or edited copy of the file counts for nothing.
 fn committed_fast_check(root: &Path) -> Result<Option<String>, ArchonError> {
     assert!(root.is_absolute(), "registered paths are absolute");
-    let spec = format!("HEAD:.archon/{REPO_FILE_NAME}");
-    let present = DaemonGit::sealed_in(root).args(["cat-file", "-e", &spec]);
-    if !present.output()?.status.success() {
+    let file = format!(".archon/{REPO_FILE_NAME}");
+    // An empty listing proves the file absent; a failed read is an error.
+    let listed = DaemonGit::sealed_in(root).args(["ls-tree", "HEAD", "--", &file]);
+    if listed.text()?.is_empty() {
         return Ok(None);
     }
+    let spec = format!("HEAD:{file}");
     let text = DaemonGit::sealed_in(root).args(["cat-file", "blob", &spec]);
     let tiers = RepoTiers::parse(&text.text()?, &format!("{} {spec}", root.display()))?;
     Ok(tiers.checks.fast)

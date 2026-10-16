@@ -80,17 +80,18 @@ async fn an_overrunning_run_is_killed_with_all_it_started() {
     let (_keep, tree) = dir();
     let started = Instant::now();
     let command = "sleep 30 & echo $! > pid; wait";
-    let ran = run(command, &tree, &[], Duration::from_secs(1))
+    // Room for a loaded host's shell to start the child and record it.
+    let ran = run(command, &tree, &[], Duration::from_secs(3))
         .await
         .unwrap();
     assert!(
-        started.elapsed() < Duration::from_secs(10),
+        started.elapsed() < Duration::from_secs(15),
         "{:?}",
         started.elapsed()
     );
     assert_eq!(
         ran.ended,
-        Ended::Failed("it did not finish within 1 seconds".into())
+        Ended::Failed("it did not finish within 3 seconds".into())
     );
     let pid: i32 = std::fs::read_to_string(tree.join("pid"))
         .unwrap()
@@ -145,6 +146,10 @@ fn repo(path: &Path, fast: Option<&str>, confirmed: Option<&str>) -> Repo {
 fn only_the_registry_s_or_a_confirmed_committed_check_is_trusted() {
     let (_keep, root) = dir();
     git(&root, &["init", "--quiet", "--initial-branch=main"]);
+    git(
+        &root,
+        &["commit", "--quiet", "--allow-empty", "-m", "start"],
+    );
     write(
         &root,
         ".archon/repo.toml",
@@ -172,6 +177,9 @@ fn only_the_registry_s_or_a_confirmed_committed_check_is_trusted() {
     assert_eq!(trusted(&edited).unwrap(), None, "nor confirms an edit");
     git(&root, &["commit", "--quiet", "-am", "changed"]);
     assert_eq!(trusted(&confirmed).unwrap(), None, "the commit changed it");
+    std::fs::write(root.join(".git/config"), "[broken\n").unwrap();
+    let unreadable = repo(&root, None, Some("true"));
+    assert!(trusted(&unreadable).is_err(), "a failed read is no absence");
 }
 
 fn git(tree: &Path, args: &[&str]) {

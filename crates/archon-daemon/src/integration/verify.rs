@@ -51,42 +51,50 @@ pub(super) async fn head(
     state: &mut BranchState,
     reading: &Reading,
 ) -> Result<(), ArchonError> {
-    let commit = reading.head.commit.clone();
-    assert_eq!(state.head.as_ref(), Some(&commit), "the head was observed");
-    let known_red = known_red(state, reading);
-    let culprit_stands = state.bisecting.is_none()
-        && known_red.is_some()
-        && state
-            .culprit
-            .as_ref()
-            .is_some_and(|c| reading.since_green.contains(&c.commit));
+    let commit = &reading.head.commit;
+    assert_eq!(state.head.as_ref(), Some(commit), "the head was observed");
     let mut session = Session::new(ctx, watch, &reading.head);
-    let verdict = |green, via: &str, excerpt| Verdict {
-        commit: commit.clone(),
-        green,
-        at: archon_core::now(),
-        via: via.to_owned(),
-        excerpt,
+    let outcome = session.verify(state, commit).await?;
+    session.judge(state, reading, outcome).await
+}
+
+/// Read GitHub's checks again on a head they judged, as a rerun may turn
+/// them: a turned verdict is judged afresh, a running rerun shown.
+pub(super) async fn recheck(
+    ctx: &DaemonContext,
+    watch: &Watch,
+    state: &mut BranchState,
+    reading: &Reading,
+) -> Result<(), ArchonError> {
+    let held = state
+        .verdict_on_head()
+        .cloned()
+        .expect("a verdict on the head");
+    assert_eq!(
+        held.via, VIA_GITHUB,
+        "only GitHub's verdicts are read again"
+    );
+    assert!(
+        state.bisecting.is_none(),
+        "an owed bisection is resumed instead"
+    );
+    let Some(github) = &watch.github else {
+        return Ok(());
     };
-    match session.verify(state, &commit).await? {
-        Outcome::Pending => Ok(()),
-        Outcome::Unverifiable(why) => {
-            state.set_problem(&why);
-            Ok(())
-        }
-        Outcome::Green(via) => {
-            super::turned_green(ctx, watch, state, verdict(true, via, String::new())).await
-        }
-        Outcome::Red { via, excerpt } => {
-            state.verdict = Some(verdict(false, via, excerpt));
-            if culprit_stands {
-                return Ok(());
-            }
-            state.culprit = None;
-            state.bisecting = Some(known_red.unwrap_or(commit));
-            session.bisect(state, reading).await
-        }
-    }
+    let (binary, repo) = (&ctx.config.github.binary, &watch.repo);
+    let outcome = match github::commit_checks(binary, repo, github, &held.commit).await? {
+        CommitChecks::Passed if !held.green => Outcome::Green(VIA_GITHUB),
+        // Only a turned verdict reads the failing job's log.
+        CommitChecks::Failed(failed) if held.green => Outcome::Red {
+            via: VIA_GITHUB,
+            excerpt: github::failure_excerpt(binary, repo, github, &failed).await,
+        },
+        CommitChecks::Pending => Outcome::Pending,
+        CommitChecks::Passed | CommitChecks::Failed(_) | CommitChecks::None => return Ok(()),
+    };
+    Session::new(ctx, watch, &reading.head)
+        .judge(state, reading, outcome)
+        .await
 }
 
 /// Go on with the bisection the red head still owes.
@@ -143,6 +151,55 @@ impl<'a> Session<'a> {
             watch,
             head,
             checkout: None,
+        }
+    }
+
+    /// Take the head's `outcome`: a red head is bisected unless the culprit
+    /// an earlier look found still stands; running GitHub checks show as verifying.
+    async fn judge(
+        &mut self,
+        state: &mut BranchState,
+        reading: &Reading,
+        outcome: Outcome,
+    ) -> Result<(), ArchonError> {
+        let commit = reading.head.commit.clone();
+        assert_eq!(state.head.as_ref(), Some(&commit), "the head was observed");
+        let known_red = known_red(state, reading);
+        let culprit_stands = state.bisecting.is_none()
+            && known_red.is_some()
+            && state
+                .culprit
+                .as_ref()
+                .is_some_and(|c| reading.since_green.contains(&c.commit));
+        let verdict = |green, via: &str, excerpt| Verdict {
+            commit: commit.clone(),
+            green,
+            at: archon_core::now(),
+            via: via.to_owned(),
+            excerpt,
+        };
+        match outcome {
+            Outcome::Pending => {
+                state.verifying = Some(commit.clone());
+                Ok(())
+            }
+            Outcome::Unverifiable(why) => {
+                state.set_problem(&why);
+                Ok(())
+            }
+            Outcome::Green(via) => {
+                let green = verdict(true, via, String::new());
+                super::turned_green(self.ctx, self.watch, state, green).await
+            }
+            Outcome::Red { via, excerpt } => {
+                state.verdict = Some(verdict(false, via, excerpt));
+                if culprit_stands {
+                    return Ok(());
+                }
+                state.culprit = None;
+                state.bisecting = Some(known_red.unwrap_or(commit));
+                self.bisect(state, reading).await
+            }
         }
     }
 

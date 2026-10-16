@@ -14,7 +14,7 @@ pub enum IntegrationHealth {
     Green,
     /// Its head failed the full check.
     Red,
-    /// The full check runs on its head now.
+    /// The full check, or GitHub's checks, run on its head now.
     Verifying,
     /// Merges since the last verdict wait for their batch.
     Pending,

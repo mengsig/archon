@@ -445,12 +445,18 @@ pub(crate) fn rewritten(shadow: &Shadow, url: &str) -> Result<[String; 2], Archo
 }
 
 /// `url` with the longest of `rules`' prefixes it starts with replaced by
-/// that rule's base, as git rewrites it; `None` when no prefix matches.
+/// that rule's base, the first of equally long ones as git takes; `None` when
+/// no prefix matches.
 fn rewrite(url: &str, rules: &[(&str, &str)]) -> Option<String> {
-    let (base, prefix) = rules
-        .iter()
-        .filter(|(_, prefix)| !prefix.is_empty() && url.starts_with(prefix))
-        .max_by_key(|(_, prefix)| prefix.len())?;
+    let mut chosen: Option<&(&str, &str)> = None;
+    for rule in rules {
+        let (_, prefix) = rule;
+        let longer = chosen.is_none_or(|(_, best)| prefix.len() > best.len());
+        if !prefix.is_empty() && url.starts_with(prefix) && longer {
+            chosen = Some(rule);
+        }
+    }
+    let (base, prefix) = chosen?;
     Some(format!("{base}{}", &url[prefix.len()..]))
 }
 
@@ -697,5 +703,14 @@ mod tests {
             Some("git@github.com:x/r.git")
         );
         assert_eq!(rewrite("/srv/origin.git", &rules), None);
+        let tied = [
+            ("https://github.com/fork/", "https://github.com/o/"),
+            ("https://github.com/o/", "https://github.com/o/"),
+        ];
+        assert_eq!(
+            rewrite("https://github.com/o/r.git", &tied).as_deref(),
+            Some("https://github.com/fork/r.git"),
+            "the first of equally long prefixes wins"
+        );
     }
 }

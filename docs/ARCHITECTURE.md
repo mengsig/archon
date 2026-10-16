@@ -2442,6 +2442,25 @@ table and delivers it off every lock:
    `restack::target_base` reads from the stack (§8.8): the branch of the
    item's first unmerged parent, the repository's base once every parent
    merged, and the run variable `base_branch` for an item that is not stacked.
+
+   **The fast check gate** (`ship::gate`) follows a proof, where the
+   repository has a trusted fast check: the registry's `checks.fast`, or
+   the file in the registered repository's `HEAD` commit, read with sealed
+   git, while it equals, word for word, what the operator confirmed with
+   `archon repo set --confirm-fast-check`. A command from
+   the run's worktree never runs as the daemon. The units the change
+   affects are read from `git diff` between its merge base with the base
+   and `HEAD` (`repo::affected`, below) and substituted for the command's
+   placeholders; a selecting command with no unit affected has nothing to
+   run. The check runs off the executor's path in its own task, one at a
+   time on the host: `sh -c` in the worktree with the item's
+   `CARGO_TARGET_DIR`, in its own process group, killed with everything it
+   started after 30 minutes or when its run ends; the last 16 KiB of each
+   stream are kept. The delivery stays queued meanwhile, and the verdict,
+   kept for the tree it checked, wakes the dispatcher. The worktree is then
+   proved again, so a check that changed it is refused, before the verdict
+   is read: a failed check refuses the item with the command, how it ended
+   and the last lines of its output. Restarting archond runs it again.
 3. **Push**, `pr` mode only: `git push --porcelain <origin url>
    <commit>:refs/heads/<branch>` of the checked commit, not the branch tip,
    run from the repository's shadow (§13.4), so no hook, filter or ssh
@@ -2767,9 +2786,30 @@ integration_branch = "next"    # items fork from origin/next; their PRs target i
 release_branch = "main"        # the default; next is created from it when missing
 
 [checks]
-fast = "cargo test -p mycrate" # every stage agent's contract says: run before you commit
+fast = "cargo clippy {packages:-p} && cargo test {packages:-p}" # run before every commit
 full = "make ci"               # the contract forbids it: it runs off the item's path
 ```
+
+`{packages}` in the fast check becomes the units the change affects, and
+`{packages:-p}` becomes `-p <unit>` for each (`repo::affected`). In a Cargo
+workspace a unit is a crate: those whose files the change touches and every
+workspace crate depending on them through a path or `workspace = true`
+dependency; path dependencies under the root are members, as Cargo makes
+them. Member patterns take Cargo's `*`, `?` and `[...]`; a `**` pattern, or
+a member without a `Cargo.toml`, refuses the selection rather than skip the
+crates it would hold. Elsewhere it is a changed top-level directory. A unit is substituted
+only when it is a plain name (letters, digits, `_`, `-`, `.`, `+`, not
+leading `-` or `.`), which no shell context can read as code or an option;
+any other unit refuses the check. A change to a root manifest or lockfile
+(`Cargo.toml`, `Cargo.lock`, `package.json`, …), a toolchain pin, the
+`Makefile`, or a file under `.github/`, `.cargo/` or `.archon/` affects every
+unit. Each stage agent's contract names the command for the change as
+committed when it starts and the rule for its final change; archond runs it
+again at delivery (§8.7) when it is trusted: the registry's, or the file's
+once the operator confirmed its exact text with `archon repo set
+--confirm-fast-check '<command>'`, until the file changes. The file is read
+from the registered repository's `HEAD` commit: an untracked or uncommitted
+copy neither confirms nor stops a check.
 
 `archond` verifies the integration branch off the items' path
 (`archon_daemon::integration`): one worker reads each branch's head every

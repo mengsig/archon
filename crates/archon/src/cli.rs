@@ -342,6 +342,10 @@ pub struct TierArgs {
     /// The whole suite, which items never run (e.g. `make ci`).
     #[arg(long)]
     pub full_check: Option<String>,
+    /// Confirm the committed `.archon/repo.toml` fast check, word for word,
+    /// so the ship gate runs it; it stops running once the file differs.
+    #[arg(long)]
+    pub confirm_fast_check: Option<String>,
 }
 
 #[derive(Debug, Args)]

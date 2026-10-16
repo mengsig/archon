@@ -569,6 +569,8 @@ pub struct TiersPatch {
     pub release_branch: Clearable<String>,
     pub fast_check: Clearable<String>,
     pub full_check: Clearable<String>,
+    /// The committed file's fast check the operator confirms, word for word.
+    pub confirmed_fast_check: Clearable<String>,
 }
 
 impl TiersPatch {
@@ -576,7 +578,8 @@ impl TiersPatch {
         *self == Self::default()
     }
 
-    /// `current` after the patch.
+    /// `current` after the patch; [`Self::confirmed_fast_check`] is the
+    /// repository's own and not applied here.
     pub fn apply(self, current: RepoTiers) -> RepoTiers {
         RepoTiers {
             integration_branch: self.integration_branch.apply(current.integration_branch),

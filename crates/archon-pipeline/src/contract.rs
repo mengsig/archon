@@ -18,7 +18,7 @@ mod initiative;
 mod lessons;
 mod storage;
 
-pub use checks::check_rules;
+pub use checks::{FastCheck, check_rules};
 pub use initiative::initiative_rules;
 pub use lessons::lesson_rules;
 pub use storage::{artifact_rules, build_cache_rules};

@@ -54,6 +54,7 @@ fn item(repo: &Repo, pipeline: &str) -> QueueItem {
         stage_timeouts: Default::default(),
         fresh_retries: 0,
         routed_provider: None,
+        provider_switch: None,
         initiative: None,
         state: QueueState::Queued,
         created_at: v1_time(),

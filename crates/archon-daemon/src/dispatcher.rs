@@ -138,6 +138,11 @@ struct Admission {
 async fn admit(ctx: &DaemonContext) -> Result<Admission, ArchonError> {
     let caps = resolve::caps(ctx).await;
     let envs = snapshot::Envs::prefetch(ctx).await?;
+    if envs.weighted(&ctx.config)
+        && let Err(error) = crate::quota::refresh(ctx).await
+    {
+        tracing::warn!(%error, "provider quota refresh failed; using the last reading");
+    }
     let mut table = ctx.runs.lock().await;
     let snapshot = snapshot::build(ctx, &table, caps.clone(), envs).await?;
     let plan = archon_queue::plan_dispatch(&snapshot);
@@ -147,6 +152,7 @@ async fn admit(ctx: &DaemonContext) -> Result<Admission, ArchonError> {
         total_usd: snapshot.spend_total_usd,
     };
     block_items(ctx, &plan.block).await?;
+    crate::quota::note_waits(ctx, &snapshot.pending_spawns).await?;
     let mut follow = FollowUp::default();
     for (run, slots) in &plan.spawn {
         follow.merge(executor::reserve(ctx, &mut table, run, *slots).await?);

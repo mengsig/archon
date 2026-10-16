@@ -151,6 +151,9 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
     if let Some(provider) = &item.routed_provider {
         let _ = writeln!(out, "routed provider: {}", sanitize_line(provider));
     }
+    if let Some(switch) = &item.provider_switch {
+        let _ = writeln!(out, "provider switch: {}", sanitize_line(switch));
+    }
     plan_lines(&mut out, item);
     for run in &detail.runs {
         run_lines(&mut out, detail, run, full);
@@ -404,6 +407,7 @@ mod tests {
             stage_timeouts: Default::default(),
             fresh_retries: 0,
             routed_provider: None,
+            provider_switch: None,
             initiative: None,
             created_at: archon_core::now(),
             updated_at: archon_core::now(),
@@ -738,6 +742,12 @@ mod tests {
         detail.item.routed_provider = Some("codex".into());
         let text = item_detail(&detail, &RepoNames::new(), false);
         assert!(text.contains("\nrouted provider: codex\n"), "{text}");
+        detail.item.provider_switch = Some("stage review moved from claude-code to codex".into());
+        let text = item_detail(&detail, &RepoNames::new(), false);
+        assert!(
+            text.contains("\nprovider switch: stage review moved from claude-code to codex\n"),
+            "{text}"
+        );
     }
 
     #[test]

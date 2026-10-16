@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use archon_core::id::{PipelineRunId, QueueItemId, RepoId};
 use archon_core::protocol::WaitingReasonCode;
 use archon_core::queue::{Caps, PauseState, Priority};
+use archon_core::quota::QuotaHold;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DispatchSnapshot {
@@ -52,6 +53,8 @@ pub struct PendingSpawn {
     pub wanted: u32,
     /// A team stage: all `wanted` agents are admitted together or none.
     pub gang: bool,
+    /// Every provider some wanted stage may use is out of quota: no slot.
+    pub quota_hold: Option<QuotaHold>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -67,6 +70,9 @@ pub struct QueuedCandidate {
     pub first_stage_agents: u32,
     /// The first stage is a team stage: its agents fit together or it waits.
     pub gang: bool,
+    /// Set when every provider one of its tier-only stages may use is out
+    /// of quota: it waits, like an unmet dependency, until one has quota.
+    pub quota_hold: Option<QuotaHold>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,6 +125,8 @@ pub enum Hold {
     DailyBudget,
     TotalBudget,
     Capacity,
+    /// Items that would start wait for a provider's quota to come back.
+    ProviderQuota,
 }
 
 /// Decide what to admit now (ARCHITECTURE §7.3):
@@ -131,9 +139,10 @@ pub enum Hold {
 ///    are off).
 /// 3. Pending spawns of running runs come first, by item priority then
 ///    age. Repository and pipeline pauses do not hold them: they stop new
-///    items, and finishing work beats starting work.
+///    items, and finishing work beats starting work. Quota-held ones wait.
 /// 4. Then queued items whose dependencies all succeeded, by priority then
-///    age, skipping paused repositories and pipelines.
+///    age, skipping paused repositories and pipelines and items a provider's
+///    quota holds (`held_by` is then `ProviderQuota` unless another hold is).
 ///
 /// Every agent slot fits the global, per-repo and per-pipeline caps, and
 /// every started item fits `max_active_runs` (0 = unlimited everywhere). A
@@ -182,6 +191,13 @@ pub fn plan_dispatch(snapshot: &DispatchSnapshot) -> DispatchPlan {
     if spawns_held || starts_held {
         plan.held_by = Some(Hold::Capacity);
     }
+    let spawn_waits = snapshot
+        .pending_spawns
+        .iter()
+        .any(|p| p.quota_hold.is_some());
+    if plan.held_by.is_none() && (spawn_waits || quota_held(snapshot).next().is_some()) {
+        plan.held_by = Some(Hold::ProviderQuota);
+    }
     debug_assert!(plan.start.iter().all(|id| !plan.block.contains(id)));
     debug_assert!(plan.spawn.iter().all(|(_, n)| *n > 0));
     plan
@@ -190,7 +206,8 @@ pub fn plan_dispatch(snapshot: &DispatchSnapshot) -> DispatchPlan {
 /// Explain the same admission pass the dispatcher would execute, including
 /// pending spawns, reservations for earlier items, and gang fairness.
 /// Dependencies take precedence, then global admission holds (pause, drain,
-/// disk, total budget, daily budget), slice pauses, capacity, and next in line.
+/// disk, total budget, daily budget), slice pauses, provider quota, capacity,
+/// and next in line.
 pub fn waiting_reasons(snapshot: &DispatchSnapshot) -> BTreeMap<QueueItemId, WaitingReasonCode> {
     let plan = plan_dispatch(snapshot);
     let started: BTreeSet<_> = plan.start.iter().collect();
@@ -208,9 +225,16 @@ pub fn waiting_reasons(snapshot: &DispatchSnapshot) -> BTreeMap<QueueItemId, Wai
                         Hold::LowDisk => WaitingReasonCode::LowDisk,
                         Hold::TotalBudget => WaitingReasonCode::TotalBudget,
                         Hold::DailyBudget => WaitingReasonCode::DailyBudget,
-                        Hold::Capacity => unreachable!("capacity is decided by the admission plan"),
+                        Hold::Capacity | Hold::ProviderQuota => {
+                            unreachable!("decided per item by the admission plan")
+                        }
                     })
                     .or_else(|| slice_pause(snapshot, item))
+                    .or_else(|| {
+                        item.quota_hold
+                            .as_ref()
+                            .map(|_| WaitingReasonCode::ProviderQuota)
+                    })
                     .unwrap_or_else(|| {
                         if started.contains(&item.item) {
                             WaitingReasonCode::NextInLine
@@ -495,7 +519,8 @@ fn grant_pending_spawns(
 ) -> bool {
     let mut order: Vec<&PendingSpawn> = pending
         .iter()
-        .filter(|p| p.wanted > 0 && admission_hold(slots.snapshot, p.repo.as_ref()).is_none())
+        .filter(|p| p.wanted > 0 && p.quota_hold.is_none())
+        .filter(|p| admission_hold(slots.snapshot, p.repo.as_ref()).is_none())
         .collect();
     order.sort_by(|a, b| {
         (b.priority.cmp(&a.priority))
@@ -506,6 +531,7 @@ fn grant_pending_spawns(
         order.windows(2).all(|w| w[0].run != w[1].run),
         "run listed twice"
     );
+    debug_assert!(order.iter().all(|p| p.quota_hold.is_none()));
     let mut held = false;
     for spawn in order {
         let (repo, pipeline) = (spawn.repo.as_ref(), spawn.pipeline.as_str());
@@ -533,11 +559,21 @@ fn grant_pending_spawns(
     held
 }
 
+/// Items that could start but for a provider's quota.
+fn quota_held(snapshot: &DispatchSnapshot) -> impl Iterator<Item = &QueuedCandidate> {
+    snapshot.queued.iter().filter(|c| {
+        c.deps == DependencyState::AllSucceeded
+            && c.quota_hold.is_some()
+            && slice_pause(snapshot, c).is_none()
+    })
+}
+
 fn eligible(snapshot: &DispatchSnapshot) -> Vec<&QueuedCandidate> {
     let mut order: Vec<&QueuedCandidate> = snapshot
         .queued
         .iter()
         .filter(|c| c.deps == DependencyState::AllSucceeded)
+        .filter(|c| c.quota_hold.is_none())
         .filter(|c| slice_pause(snapshot, c).is_none())
         .collect();
     order.sort_by(|a, b| {

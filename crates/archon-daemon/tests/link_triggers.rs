@@ -416,6 +416,11 @@ async fn a_long_backlog_is_compacted_behind_an_untouched_batch_in_flight() {
     let first = harness.fake.wait_for("trigger", 1, WAIT).await[0].clone();
     let answer = TriggerEvent::OperatorAnswer {
         question: QuestionId::new(),
+        number: None,
+        question_text: String::new(),
+        options: vec![],
+        item: None,
+        asked_at: None,
         text: "ship it".into(),
     };
     triggers::push(&harness.ctx, answer).await.unwrap();
@@ -539,6 +544,11 @@ async fn news_held_behind_a_stuck_batch_stays_bounded() {
     live_orchestrator(&harness);
     let answer = TriggerEvent::OperatorAnswer {
         question: QuestionId::new(),
+        number: None,
+        question_text: String::new(),
+        options: vec![],
+        item: None,
+        asked_at: None,
         text: "ship it".into(),
     };
     triggers::push(&harness.ctx, answer.clone()).await.unwrap();
@@ -710,6 +720,11 @@ async fn news_the_operator_waits_on_skips_the_coalesce_window() {
 
     let answer = TriggerEvent::OperatorAnswer {
         question: archon_core::id::QuestionId::new(),
+        number: None,
+        question_text: String::new(),
+        options: vec![],
+        item: None,
+        asked_at: None,
         text: "use the staging database".into(),
     };
     triggers::push(&harness.ctx, answer).await.unwrap();

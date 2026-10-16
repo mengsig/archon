@@ -1,11 +1,12 @@
-//! Provider weights for tier-only choices (`[models] provider_weights`):
-//! each item holds one provider, picked once by weight from a hash of its
-//! id, and a stage moves off it only when its capability floor rules it out.
+//! Provider weights for tier-only choices: each item holds one provider,
+//! picked by weight × quota headroom, until a floor or its quota rules it out.
 
 use std::collections::BTreeMap;
 
+use crate::Timestamp;
 use crate::model_tier::{ModelCatalog, Tier};
 use crate::policy::ModelPolicy;
+use crate::quota::QuotaView;
 
 /// The weight of a provider the table leaves out, unless configured.
 pub const DEFAULT_PROVIDER_WEIGHT: u32 = 1;
@@ -33,12 +34,26 @@ impl ProviderWeights {
 }
 
 /// What routes one item's tier-only choices: the weights, the key its pick
-/// hashes (the item id) and the provider it already holds, if any.
+/// hashes (the item id), its held provider and Aether's quota headroom.
 #[derive(Debug, Clone, Copy)]
 pub struct ProviderRoute<'a> {
     pub weights: &'a ProviderWeights,
     pub key: &'a str,
     pub held: Option<&'a str>,
+    pub quota: Option<&'a QuotaView>,
+}
+
+/// Where a quota-aware route sends a tier-only choice.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Routed<'a> {
+    To(&'a str),
+    /// Every weighted provider that meets the floor is out of quota; the
+    /// earliest of their resets, when one is known.
+    Exhausted {
+        until: Option<Timestamp>,
+    },
+    /// No weighted provider meets the floor within the policy.
+    Nowhere,
 }
 
 /// A point in `[0, 1)` fixed by `key`: FNV-1a, then the SplitMix64
@@ -84,6 +99,19 @@ pub fn weighted_pick<'a>(point: f64, weighted: &[(&'a str, f64)]) -> Option<&'a 
     positive.last().map(|(entry, _)| *entry)
 }
 
+/// The highest scored entry; the first of equals, in the order given.
+fn best<'a>(scored: &[(&'a str, f64)]) -> &'a str {
+    assert!(!scored.is_empty(), "a best of none");
+    let mut top = scored[0];
+    for entry in &scored[1..] {
+        if entry.1 > top.1 {
+            top = *entry;
+        }
+    }
+    debug_assert!(top.1 > 0.0, "the best has quota left");
+    top.0
+}
+
 impl ModelCatalog {
     /// Each provider's best allowed tier at or below `requested`.
     pub fn best_tiers(&self, requested: Tier, policy: &ModelPolicy) -> BTreeMap<&str, Tier> {
@@ -101,35 +129,78 @@ impl ModelCatalog {
         best
     }
 
-    /// The provider a tier-only choice of `route`'s item resolves on: the one
-    /// it holds while that meets `floor`, else a weighted pick among those
-    /// whose best allowed model does. `None` when no weighted provider does.
-    pub fn routed_provider(
+    /// Positive-weight providers whose best allowed model up to `requested`
+    /// reaches `floor`, each scored weight × headroom (1 while unknown).
+    fn scored(
         &self,
         (requested, floor): (Tier, Tier),
         route: ProviderRoute<'_>,
         policy: &ModelPolicy,
-    ) -> Option<&str> {
+    ) -> Vec<(&str, f64)> {
         assert!(
             floor <= requested,
             "a floor never exceeds the tier asked for"
         );
-        let eligible: Vec<(&str, f64)> = self
+        let scored: Vec<(&str, f64)> = self
             .best_tiers(requested, policy)
             .into_iter()
             .filter(|(_, best)| *best >= floor)
             .map(|(provider, _)| (provider, f64::from(route.weights.weight(provider))))
             .filter(|(_, weight)| *weight > 0.0)
+            .map(|(p, weight)| (p, weight * route.quota.map_or(1.0, |q| q.factor(p))))
             .collect();
+        debug_assert!(scored.iter().all(|(_, s)| s.is_finite() && *s >= 0.0));
+        scored
+    }
+
+    /// The held provider while it meets `floor` and has quota; when it ran
+    /// out, the best scored of the rest; else a pick weighted by score.
+    pub fn route(
+        &self,
+        tiers: (Tier, Tier),
+        route: ProviderRoute<'_>,
+        policy: &ModelPolicy,
+    ) -> Routed<'_> {
+        let scored = self.scored(tiers, route, policy);
+        if scored.is_empty() {
+            return Routed::Nowhere;
+        }
+        if scored.iter().all(|(_, score)| *score <= 0.0) {
+            let quota = route.quota.expect("only quota zeroes a positive weight");
+            let until = quota.earliest_reset(scored.iter().map(|(p, _)| *p));
+            return Routed::Exhausted { until };
+        }
         let held = route
             .held
-            .and_then(|held| eligible.iter().find(|(p, _)| *p == held));
-        if let Some((provider, _)) = held {
-            return Some(provider);
+            .and_then(|held| scored.iter().find(|(p, _)| *p == held));
+        let picked = match held {
+            Some((provider, score)) if *score > 0.0 => *provider,
+            Some(_) => best(&scored),
+            None => weighted_pick(route_point(route.key), &scored).expect("a positive score"),
+        };
+        debug_assert!(scored.iter().any(|(p, s)| *p == picked && *s > 0.0));
+        Routed::To(picked)
+    }
+
+    /// [`Self::route`]'s provider; with every one out of quota, as if quota
+    /// were unknown (the dispatcher holds such work), so never below `floor`.
+    pub fn routed_provider(
+        &self,
+        tiers: (Tier, Tier),
+        route: ProviderRoute<'_>,
+        policy: &ModelPolicy,
+    ) -> Option<&str> {
+        match self.route(tiers, route, policy) {
+            Routed::To(provider) => Some(provider),
+            Routed::Nowhere => None,
+            Routed::Exhausted { .. } => {
+                let blind = ProviderRoute {
+                    quota: None,
+                    ..route
+                };
+                self.routed_provider(tiers, blind, policy)
+            }
         }
-        let picked = weighted_pick(route_point(route.key), &eligible);
-        debug_assert!(picked.is_none_or(|p| eligible.iter().any(|(e, _)| *e == p)));
-        picked
     }
 
     /// The provider an item holds: the one it held while the policy still
@@ -143,6 +214,7 @@ impl ModelCatalog {
 mod tests {
     use super::*;
     use crate::model_tier::CatalogModel;
+    use crate::quota::{ProviderHeadroom, QuotaWindow, Reserves};
 
     fn weights(pairs: &[(&str, u32)], default: u32) -> ProviderWeights {
         let table = pairs.iter().map(|(p, w)| ((*p).to_owned(), *w)).collect();
@@ -182,6 +254,7 @@ mod tests {
             weights,
             key,
             held: None,
+            quota: None,
         }
     }
 
@@ -266,6 +339,182 @@ mod tests {
             ids.iter()
                 .all(|id| three.item_provider(route(&silent, id), &open) == Some("claude-code")),
             "a zero default leaves the others out"
+        );
+    }
+
+    /// A reading of one 5-hour window with `used` percent spent, resetting
+    /// in two hours.
+    fn five_hour(used: u64, now: crate::Timestamp) -> ProviderHeadroom {
+        ProviderHeadroom {
+            windows: vec![QuotaWindow {
+                name: "five_hour".into(),
+                window_minutes: Some(300),
+                remaining_percent: 100 - used,
+                resets_at: Some(now + chrono::TimeDelta::hours(2)),
+                resets_in_seconds: Some(7200),
+            }],
+            observed_at: Some(now),
+            age_seconds: Some(0),
+            stale: false,
+        }
+    }
+
+    fn reserves(orchestrator: u8) -> Reserves {
+        Reserves {
+            orchestrator_provider: "claude-code".into(),
+            orchestrator,
+            interactive_providers: Default::default(),
+            interactive: 0,
+        }
+    }
+
+    fn view(used: &[(&str, u64)], orchestrator_reserve: u8) -> QuotaView {
+        let now: crate::Timestamp = "2026-10-16T12:00:00Z".parse().unwrap();
+        let readings: Vec<(&str, ProviderHeadroom)> =
+            used.iter().map(|(p, u)| (*p, five_hour(*u, now))).collect();
+        let readings = readings.iter().map(|(p, r)| (*p, r));
+        QuotaView::new(readings, &reserves(orchestrator_reserve), now, now)
+    }
+
+    fn quota_route<'a>(
+        weights: &'a ProviderWeights,
+        key: &'a str,
+        quota: &'a QuotaView,
+    ) -> ProviderRoute<'a> {
+        ProviderRoute {
+            quota: Some(quota),
+            ..route(weights, key)
+        }
+    }
+
+    /// The percent of `ids` whose item provider is `provider`.
+    fn share<'a>(
+        catalog: &ModelCatalog,
+        provider: &str,
+        ids: &'a [String],
+        route: impl Fn(&'a str) -> ProviderRoute<'a>,
+    ) -> f64 {
+        let open = ModelPolicy::default();
+        let hits = ids
+            .iter()
+            .filter(|id| catalog.item_provider(route(id), &open) == Some(provider))
+            .count();
+        hits as f64 / ids.len() as f64 * 100.0
+    }
+
+    #[test]
+    fn a_nearly_spent_claude_window_sends_new_items_to_codex_despite_seven_to_three() {
+        let ids = synthetic_ids(1000);
+        let both = catalog(&[
+            ("claude-code/opus", Tier::Frontier),
+            ("codex/sol", Tier::Frontier),
+        ]);
+        let table = weights(&[("claude-code", 7), ("codex", 3)], 1);
+        let reserved = view(&[("claude-code", 95), ("codex", 20)], 15);
+        let codex = share(&both, "codex", &ids, |id| {
+            quota_route(&table, id, &reserved)
+        });
+        assert_eq!(
+            codex, 100.0,
+            "5% left is under the orchestrator's 15% reserve"
+        );
+        let unreserved = view(&[("claude-code", 95), ("codex", 20)], 0);
+        let codex = share(&both, "codex", &ids, |id| {
+            quota_route(&table, id, &unreserved)
+        });
+        assert!(
+            codex > 80.0,
+            "headroom outweighs 7:3 even with no reserve: {codex}%"
+        );
+    }
+
+    #[test]
+    fn the_orchestrators_reserve_is_never_routed_to_and_holds_when_alone() {
+        let both = catalog(&[
+            ("claude-code/opus", Tier::Frontier),
+            ("codex/sol", Tier::Strong),
+        ]);
+        let table = weights(&[("claude-code", 1000), ("codex", 1)], 1);
+        let quota = view(&[("claude-code", 86), ("codex", 0)], 15);
+        let open = ModelPolicy::default();
+        for id in synthetic_ids(200) {
+            let held = ProviderRoute {
+                held: Some("claude-code"),
+                ..quota_route(&table, &id, &quota)
+            };
+            let strong = both.route((Tier::Frontier, Tier::Strong), held, &open);
+            assert_eq!(strong, Routed::To("codex"), "{id}: 14% left is the reserve");
+        }
+        let alone = both.route(
+            (Tier::Frontier, Tier::Frontier),
+            quota_route(&table, "qi_x", &quota),
+            &open,
+        );
+        let reset = quota.get("claude-code").unwrap().resets_at;
+        assert!(reset.is_some());
+        assert_eq!(
+            alone,
+            Routed::Exhausted { until: reset },
+            "never below the floor"
+        );
+        assert_eq!(
+            both.routed_provider(
+                (Tier::Frontier, Tier::Frontier),
+                quota_route(&table, "qi_x", &quota),
+                &open
+            ),
+            Some("claude-code"),
+            "a resolution made anyway stays at the floor"
+        );
+    }
+
+    #[test]
+    fn an_item_keeps_its_provider_until_that_runs_out_then_takes_the_best() {
+        let three = catalog(&[
+            ("claude-code/opus", Tier::Strong),
+            ("codex/sol", Tier::Strong),
+            ("gemini/pro", Tier::Strong),
+        ]);
+        let table = weights(&[("claude-code", 1), ("codex", 1)], 1);
+        let open = ModelPolicy::default();
+        let healthy = view(&[("claude-code", 90), ("codex", 10), ("gemini", 50)], 0);
+        let held = |quota| ProviderRoute {
+            held: Some("claude-code"),
+            ..quota_route(&table, "qi_a", quota)
+        };
+        let kept = three.route((Tier::Strong, Tier::Strong), held(&healthy), &open);
+        assert_eq!(kept, Routed::To("claude-code"), "low but not out keeps it");
+        let spent = view(&[("claude-code", 100), ("codex", 10), ("gemini", 50)], 0);
+        let moved = three.route((Tier::Strong, Tier::Strong), held(&spent), &open);
+        assert_eq!(
+            moved,
+            Routed::To("codex"),
+            "the most headroom wins the switch"
+        );
+    }
+
+    #[test]
+    fn a_third_provider_is_scored_from_its_report_alone_and_unknown_changes_nothing() {
+        let ids = synthetic_ids(1000);
+        let three = catalog(&[
+            ("claude-code/opus", Tier::Strong),
+            ("codex/sol", Tier::Strong),
+            ("gemini/pro", Tier::Strong),
+        ]);
+        let table = weights(&[("claude-code", 1), ("codex", 1)], 1);
+        let plain = share(&three, "gemini", &ids, |id| route(&table, id));
+        let unknown = QuotaView::default();
+        assert_eq!(
+            plain,
+            share(&three, "gemini", &ids, |id| quota_route(
+                &table, id, &unknown
+            ))
+        );
+        let fresh = view(&[("claude-code", 90), ("codex", 90), ("gemini", 0)], 0);
+        let scored = share(&three, "gemini", &ids, |id| quota_route(&table, id, &fresh));
+        assert!(
+            scored > 80.0,
+            "gemini's full window wins most items: {scored}%"
         );
     }
 

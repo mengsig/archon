@@ -114,7 +114,8 @@ fn refresh_owner(
     knobs::check_ceiling(&env.autonomy(ctx), env, &base, item.autonomy)?;
     let policy = env.policy(&ctx.config);
     let weights = env.provider_weights(&ctx.config);
-    let route = knobs::ItemRoute::new(owner).by(weights.as_ref());
+    let quota = crate::quota::view(ctx);
+    let route = knobs::ItemRoute::new(owner).by(weights.as_ref(), quota.as_ref());
     let tiers = knobs::TierScope::new(&ctx.config, &policy, catalog).routed(route);
     let max_tier = env.max_default_tier(&ctx.config);
     let fallback = knobs::default_choice(&ctx.config, tiers, max_tier, &spec);

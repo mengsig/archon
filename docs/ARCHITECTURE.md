@@ -1109,13 +1109,20 @@ push takes it past 40 events, so the outbox stays bounded however long the
 batch in flight is retried. A later compaction folds that digest's counts
 into its own, so one batch never carries two digests.
 
+An `operator_answer` includes the stored question context, with `question_text`
+clipped to 512 characters (including an ellipsis). Its summary starts with
+`Q<number> answered:` and includes the answer and question excerpt. Older queued
+answers without context remain readable and use their question id in the summary.
+
 ```json
 {"archon": 1, "events": [
   {"type": "item_finished", "item": "qi_…", "title": "…", "state": "succeeded",
    "summary": "PR #42 opened: …", "pr_url": "…", "cost_usd": 3.12,
    "origin": {"repository": "owner/name", "number": 7}},
   {"type": "item_blocked", "item": "qi_…", "reason": "dependency qi_… failed"},
-  {"type": "operator_answer", "question": "q_…", "text": "…"},
+  {"type": "operator_answer", "question": "q_…", "text": "yes", "number": 12,
+   "question_text": "Ship to prod?", "options": ["yes", "no"], "item": "qi_…",
+   "asked_at": "2026-10-16T09:00:00Z"},
   {"type": "gate_opened", "question": "q_…", "number": 7, "item": "qi_…", "title": "…",
    "subject": "proposal", "asks": "Approve the direction proposed for this item?",
    "summary": "…the stage's summary, at most 600 characters…",
@@ -1704,7 +1711,8 @@ repo and pipeline, pause state, spend) plus `Caps`, and returns a
 `DispatchPlan`:
 
 1. Pending spawns of **already running** runs come first, in item priority
-   order and then by item age. Finishing work beats starting work.
+   order and then by item age. Finishing work beats starting work. One
+   waiting for provider quota (`PendingSpawn.quota_hold`) takes no slot.
 2. Then queued items whose dependencies all `succeeded`, ordered by `priority`
    descending and then by `created_at`, skipping paused repos and pipelines.
 3. A spawn is admitted only if the global, repo and pipeline caps all have a
@@ -1918,8 +1926,29 @@ on the item (`QueueItem.routed_provider`) at enqueue, retry and dispatch, and a
 held provider is kept while it stays eligible. With no eligible provider the
 choice is refused rather than sent below the floor or to a provider weighted 0;
 a stage default then falls back as it does for any unresolved tier. Exact pins and named
-providers are never rerouted. Weights are plain multipliers, so live quota
-headroom can scale them later without a format change.
+providers are never rerouted.
+
+**Quota headroom.** With weights set, the daemon reads `headroom` from Aether's
+`providers` reply at most every 30 seconds (`quota::QuotaCache`; trusted for 10
+minutes) and scores each provider weight × headroom (`archon_core::quota`). A
+window's headroom is `((remaining − reserve) / seconds to reset) ÷ (100 /
+window length)`, clamped to [0, 2]; a provider's is its lowest. The reserve is
+`[models] reserve_percent`: `orchestrator` on the orchestrator's provider,
+`interactive` on `interactive_providers`, the larger where both apply. A missing
+or stale report, or one whose window has reset since, leaves the plain weight,
+so an older aetherd routes exactly as without quota; Aether has no refresh
+command, so a stale report is waited out. An item keeps its routed provider
+while its headroom is above 0. At 0, a dispatch moves it to the best-scoring
+provider meeting each floor (`tiers_at_dispatch`), and a running item's
+fresh tier-only stages move as they are reserved (`quota::reroute_spawns`),
+its stored plan following; both record why in `QueueItem.provider_switch`.
+A running item's stage whose every eligible provider is at 0 stays pending,
+noted there too, and is reserved once one resets. Each admission snapshot
+marks such pending spawns (`quota::spawn_hold`) and queued items with such a
+stage (`quota::item_hold`); the planner gives them no slot, under
+`Hold::ProviderQuota`, so other work takes the capacity and they start once
+a window resets. `status` and `queue_status` show each provider's headroom,
+reserve and next reset.
 
 **Stages the plan leaves out.** A `model_plan` is optional, whole or per
 stage, so an enqueue that has nothing to say about a model says nothing.
@@ -2641,6 +2670,8 @@ deny = []
 # max_default_tier = "strong"  # the highest tier a default picks; a plan may name any
 provider_weights = {}          # e.g. { "claude-code" = 7, codex = 3 }; {} = orchestrator's provider
 # default_provider_weight = 1  # a provider the table omits; 0 never routes to it
+# reserve_percent = { orchestrator = 15, interactive = 10 }   # quota stages leave; global only
+interactive_providers = []     # providers also used by hand; they keep the interactive reserve
 
 [limits]
 budgets_enabled = true         # false: no dollar budget is enforced; spend still recorded

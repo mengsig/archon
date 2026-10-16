@@ -19,9 +19,9 @@ use archon_core::ports::{SpawnRequest, SpawnedAgent};
 use archon_core::queue::QueueItem;
 use archon_core::repo::Repo;
 use archon_core::run::{PipelineRun, StageOutcome, StageRun, StageState};
-use archon_pipeline::SpawnPlan;
 use archon_pipeline::contract;
 use archon_pipeline::spec::MAX_TIMEOUT_MINUTES;
+use archon_pipeline::{PipelineSpec, SpawnPlan};
 use archon_queue::Store;
 use serde::{Deserialize, Serialize};
 
@@ -258,6 +258,14 @@ struct Exhausted {
     error: String,
 }
 
+/// What became of a run's pending spawns.
+enum Reserved {
+    Spawned(Vec<StageRunId>),
+    /// Every provider a stage may use is out of quota: they stay pending.
+    Waiting(Vec<SpawnPlan>),
+    Blocked(Exhausted),
+}
+
 /// Move up to `slots` pending spawns of `run` into `spawning` stage runs.
 pub(super) async fn reserve(
     ctx: &DaemonContext,
@@ -274,38 +282,53 @@ pub(super) async fn reserve(
     if queue.is_empty() {
         table.pending.remove(run);
     }
+    let spec = table.drivers.get(run).map(|driver| driver.spec().clone());
     let reserved = {
         let mut store = ctx.store.lock().await;
-        reserve_plans(ctx, &mut store, run, plans)?
+        reserve_plans(ctx, &mut store, (run, spec.as_deref()), plans)?
     };
     match reserved {
-        Ok(ids) => Ok(FollowUp {
+        Reserved::Spawned(ids) => Ok(FollowUp {
             issue: ids,
             ..FollowUp::default()
         }),
-        Err(exhausted) => {
+        Reserved::Waiting(plans) => {
+            let queue = table.pending.entry(run.clone()).or_default();
+            queue.splice(0..0, plans);
+            Ok(FollowUp::default())
+        }
+        Reserved::Blocked(exhausted) => {
             let run = ctx.store.lock().await.run(run)?;
             finish::fail_run(ctx, table, run, exhausted.stage, exhausted.error, true).await
         }
     }
 }
 
+/// `spec` is the run's pipeline, `None` once its driver is gone; with it,
+/// stages are routed by quota first (`quota::reroute_spawns`).
 fn reserve_plans(
     ctx: &DaemonContext,
     store: &mut Store,
-    run_id: &PipelineRunId,
-    plans: Vec<SpawnPlan>,
-) -> Result<Result<Vec<StageRunId>, Exhausted>, ArchonError> {
+    (run_id, spec): (&PipelineRunId, Option<&PipelineSpec>),
+    mut plans: Vec<SpawnPlan>,
+) -> Result<Reserved, ArchonError> {
     let run = store.run(run_id)?;
     if run.state.is_terminal() || plans.is_empty() {
-        return Ok(Ok(Vec::new()));
+        return Ok(Reserved::Spawned(Vec::new()));
     }
-    let item = store.item(&run.item)?;
+    let mut item = store.item(&run.item)?;
     let repo = item
         .repo
         .as_ref()
         .map(|id| store.repo(&resolve::repo_ref(id)))
         .transpose()?;
+    if let Some(spec) = spec {
+        let target = (&mut item, spec);
+        let routed = crate::quota::reroute_spawns(ctx, store, target, &mut plans, repo.as_ref())?;
+        if routed == crate::quota::Reserve::Wait {
+            return Ok(Reserved::Waiting(plans));
+        }
+    }
     let estimates = ctx.config.limits.count_estimated_cost;
     let budget = budget_left(ctx, store, &item, estimates)?;
     if let Some(left) = budget.filter(|left| *left <= 0.0) {
@@ -314,37 +337,46 @@ fn reserve_plans(
             archon_core::cost::format_usd(-left)
         );
         let stage = plans[0].stage_id.clone();
-        return Ok(Err(Exhausted { stage, error }));
+        return Ok(Reserved::Blocked(Exhausted { stage, error }));
     }
-    let sections = run_sections(ctx, store, &run, &item, repo.as_ref(), plans[0].workspace)?;
+    let ids = reserve_each(ctx, store, (&run, &item, repo.as_ref()), plans, budget)?;
+    Ok(Reserved::Spawned(ids))
+}
+
+/// Reserve each of `plans` of `run` as a `spawning` stage run with its
+/// share of `budget`; a slot already filled is skipped.
+fn reserve_each(
+    ctx: &DaemonContext,
+    store: &mut Store,
+    (run, item, repo): (&PipelineRun, &QueueItem, Option<&Repo>),
+    plans: Vec<SpawnPlan>,
+    budget: Option<f64>,
+) -> Result<Vec<StageRunId>, ArchonError> {
+    assert_eq!(run.item, item.id, "the run is the item's");
+    assert!(!plans.is_empty(), "a reservation has plans");
+    let sections = run_sections(ctx, store, run, item, repo, plans[0].workspace)?;
     let experiments = experiments::item_dir(&ctx.paths, &item.id);
-    let existing = store.stage_runs(run_id)?;
+    let existing = store.stage_runs(&run.id)?;
     let mut ids = Vec::new();
     for plan in plans {
         // The driver only emits empty slots; a filled one means a bug upstream.
         if existing.iter().any(|s| same_slot(s, &plan)) {
-            tracing::error!(run = %run_id, stage = plan.stage_id, fan = plan.fan_index, "slot already has a stage run; not spawning it twice");
+            tracing::error!(run = %run.id, stage = plan.stage_id, fan = plan.fan_index, "slot already has a stage run; not spawning it twice");
             continue;
         }
         let target = Target {
-            run: &run,
-            item: &item,
-            repo: repo.as_ref(),
+            run,
+            item,
+            repo,
             config: &ctx.config,
             sections: &sections,
             experiments: &experiments,
         };
         let share = slot_budget(budget, &plan);
-        ids.push(reserve_one(
-            store,
-            &target,
-            &plan,
-            share,
-            archon_core::now(),
-            None,
-        )?);
+        let now = archon_core::now();
+        ids.push(reserve_one(store, &target, &plan, share, now, None)?);
     }
-    Ok(Ok(ids))
+    Ok(ids)
 }
 
 /// What the store adds to the contract of every agent of `run`: where the

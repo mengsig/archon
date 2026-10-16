@@ -63,6 +63,7 @@ impl Harness {
         let ctx = DaemonContext {
             storage: Default::default(),
             status_probes: Default::default(),
+            quota: Default::default(),
             paths: paths(dir.path()),
             config,
             store: Mutex::new(Store::open_in_memory().expect("in-memory store")),
@@ -398,6 +399,7 @@ fn queue_item(repo: &Repo) -> QueueItem {
         stage_timeouts: Default::default(),
         fresh_retries: 0,
         routed_provider: None,
+        provider_switch: None,
         initiative: None,
         state: QueueState::Queued,
         created_at: archon_core::now(),

@@ -12,8 +12,9 @@ use archon_core::id::{QueueItemId, RepoId};
 use archon_core::model::{Effort, ModelChoice, ModelPlan, ModelPlanDraft, ModelReasons, ModelRef};
 use archon_core::model_tier::{ModelCatalog, TierChoice};
 use archon_core::policy::ModelPolicy;
-use archon_core::provider_route::{ProviderRoute, ProviderWeights};
+use archon_core::provider_route::{ProviderRoute, ProviderWeights, Routed};
 use archon_core::queue::QueueItem;
+use archon_core::quota::{QuotaHold, QuotaView};
 use archon_pipeline::PipelineSpec;
 use archon_pipeline::autonomy::{augment, chosen_review, review_is_chosen, review_level, ships};
 use archon_pipeline::builtin::DEFAULT_PIPELINE;
@@ -335,27 +336,32 @@ impl<'a> ItemRoute<'a> {
         }
     }
 
-    /// How a [`TierScope`] routes for this item under `weights`, if any.
-    pub fn by(self, weights: Option<&'a ProviderWeights>) -> Option<ProviderRoute<'a>> {
+    /// How a [`TierScope`] routes for this item under `weights`, if any,
+    /// scaled by `quota` headroom when Aether reports it.
+    pub fn by(
+        self,
+        weights: Option<&'a ProviderWeights>,
+        quota: Option<&'a QuotaView>,
+    ) -> Option<ProviderRoute<'a>> {
         Some(ProviderRoute {
             weights: weights?,
             key: self.id.as_str(),
             held: self.held,
+            quota,
         })
     }
 }
 
-/// The provider `item` holds under `weights`: the one it held while the
-/// policy still allows a tiered model there, else its weighted pick. With
-/// no weights or no catalog read yet, what it held stands.
+/// The provider `item` holds: the one it held while allowed and with quota,
+/// else its pick by weight × headroom; without weights or catalog, it stands.
 pub(crate) fn item_provider(
-    weights: Option<&ProviderWeights>,
+    (weights, quota): (Option<&ProviderWeights>, Option<&QuotaView>),
     catalog: &ModelCatalog,
     policy: &ModelPolicy,
     item: ItemRoute<'_>,
 ) -> Option<String> {
     let held = item.held.map(str::to_owned);
-    let Some(route) = item.by(weights) else {
+    let Some(route) = item.by(weights, quota) else {
         return held;
     };
     if catalog.is_empty() {
@@ -369,6 +375,32 @@ pub(crate) fn item_provider(
         "an item is routed to a provider of the catalog"
     );
     picked.or(held)
+}
+
+/// The first tier-only choice of `plan` whose every provider meeting its
+/// floor in `spec` is out of quota; `None` while each has somewhere to run.
+pub(crate) fn quota_hold(
+    plan: &ModelPlan,
+    spec: &PipelineSpec,
+    (catalog, policy): (&ModelCatalog, &ModelPolicy),
+    route: ProviderRoute<'_>,
+) -> Option<QuotaHold> {
+    assert!(route.quota.is_some(), "a quota hold needs a quota reading");
+    let tiered = plan.0.iter().flat_map(|(key, choices)| {
+        choices
+            .iter()
+            .filter_map(move |c| c.tier.as_ref().map(|tier| (key, tier)))
+    });
+    for (key, tier) in tiered.filter(|(_, tier)| tier.provider.is_none()) {
+        let floor = spec.tier_floor(key, tier.requested);
+        if let Routed::Exhausted { until } = catalog.route((tier.requested, floor), route, policy) {
+            return Some(QuotaHold {
+                stage: key.clone(),
+                until,
+            });
+        }
+    }
+    None
 }
 
 /// A stage's choice when nothing names one, at the pipeline tier's effort

@@ -192,20 +192,26 @@ async fn tiers_at_dispatch(
     }
     let policy = env.policy(&ctx.config);
     let weights = env.provider_weights(&ctx.config);
+    let quota = crate::quota::current(ctx, weights.as_ref()).await;
+    let routing = (weights.as_ref(), quota.as_ref());
     let mut store = ctx.store.lock().await;
     let mut stored = store.item(&item.id)?;
     let (plan_before, held_before) = (stored.model_plan.clone(), stored.routed_provider.clone());
-    let held = knobs::item_provider(weights.as_ref(), &catalog, &policy, ItemRoute::new(&stored));
+    let held = knobs::item_provider(routing, &catalog, &policy, ItemRoute::new(&stored));
     let route = ItemRoute {
         id: &item.id,
         held: held.as_deref(),
     };
-    let tiers =
-        knobs::TierScope::new(&ctx.config, &policy, &catalog).routed(route.by(weights.as_ref()));
+    let tiers = knobs::TierScope::new(&ctx.config, &policy, &catalog)
+        .routed(route.by(routing.0, routing.1));
     stored.model_plan.resolve_tiers(|key, tier, provider| {
         tiers.resolve((tier, spec.tier_floor(key, tier)), provider)
     })?;
     stored.routed_provider = held.clone();
+    let moved = (held_before.as_deref(), held.as_deref());
+    if let Some(note) = crate::quota::switch_note(moved, quota.as_ref(), "its run") {
+        stored.provider_switch = Some(note);
+    }
     if stored.model_plan != plan_before || stored.routed_provider != held_before {
         tracing::info!(item = %item.id, provider = ?held, "re-resolved tiered model choices at dispatch");
         stored.updated_at = archon_core::now();
@@ -215,6 +221,7 @@ async fn tiers_at_dispatch(
     Ok(QueueItem {
         model_plan: stored.model_plan,
         routed_provider: stored.routed_provider,
+        provider_switch: stored.provider_switch,
         ..item.clone()
     })
 }

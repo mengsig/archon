@@ -108,6 +108,7 @@ fn queued(conn: &Connection) -> Result<Vec<QueuedCandidate>, ArchonError> {
             deps: dependency_state(broken, unmet),
             first_stage_agents: 1,
             gang: false,
+            quota_hold: None,
         });
     }
     Ok(out)

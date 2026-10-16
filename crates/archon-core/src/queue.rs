@@ -195,6 +195,10 @@ pub struct QueueItem {
     /// it out. `None` while no weights are set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routed_provider: Option<String>,
+    /// Why its tier-only choices last moved off the provider it held, and
+    /// when: its quota ran out. `None` while it never moved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_switch: Option<String>,
     /// The initiative it is a member of.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initiative: Option<InitiativeId>,
@@ -319,6 +323,7 @@ mod tests {
             origin: None,
             fresh_retries: 0,
             routed_provider: None,
+            provider_switch: None,
             initiative: None,
             state: QueueState::Queued,
             created_at: crate::now(),

@@ -39,6 +39,7 @@ pub mod protocol;
 pub mod provider_route;
 pub mod pull_request;
 pub mod queue;
+pub mod quota;
 pub mod repo;
 pub mod run;
 pub mod settings;

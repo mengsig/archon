@@ -84,7 +84,16 @@ fn label(event: &TriggerEvent) -> String {
             let source = message.stage.as_deref().unwrap_or("run node");
             format!("stage {kind} from {source} ({})", message.item)
         }
-        TriggerEvent::OperatorAnswer { question, .. } => format!("operator answered {question}"),
+        TriggerEvent::OperatorAnswer {
+            question,
+            number,
+            question_text,
+            text,
+            ..
+        } => match number {
+            Some(number) => format!("Q{number} answered: {text} (re: {question_text})"),
+            None => format!("operator answered {question}: {text}"),
+        },
         TriggerEvent::GateOpened {
             number,
             item,

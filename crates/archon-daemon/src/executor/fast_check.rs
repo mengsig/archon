@@ -44,6 +44,15 @@ pub(crate) fn trusted_full(repo: &Repo) -> Result<Option<String>, ArchonError> {
     })
 }
 
+/// The release hook archond may run itself in `repo` after a promotion,
+/// trusted as [`trusted`] trusts the fast check.
+pub(crate) fn trusted_release(repo: &Repo) -> Result<Option<String>, ArchonError> {
+    let registry = repo.tiers.checks.release.as_ref();
+    trusted_check(repo, registry, repo.confirmed_release_check.as_ref(), |c| {
+        c.release
+    })
+}
+
 /// `registry`, else the check `pick` takes from the committed file while it
 /// equals `confirmed`.
 fn trusted_check(

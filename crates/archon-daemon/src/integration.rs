@@ -70,7 +70,7 @@ impl Watch {
             repo: repo.clone(),
             release: tiers.release_branch().to_owned(),
             full: crate::executor::fast_check::trusted_full(repo)?,
-            release_hook: tiers.checks.release.clone(),
+            release_hook: crate::executor::fast_check::trusted_release(repo)?,
             branch,
             github,
             source,

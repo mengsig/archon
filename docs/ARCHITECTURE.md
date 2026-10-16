@@ -2840,7 +2840,9 @@ release branch's new head, never forced, and the verdict is carried to the
 merge commit when its tree is the verified one. The operator's socket call
 merges; an agent's merges only under `grant_merge`, else it stops at the
 pull request with a blocker notification. `checks.release` then runs in the
-integration checkout at the merged commit, under the build slot.
+integration checkout at the merged commit, under the build slot, trusted as
+`checks.full` is: the registry's, or the committed file's while it equals what
+the operator confirmed with `archon repo set --confirm-release-check`.
 
 Precedence for repository settings: registry flags from `archon repo add` or
 `archon repo set`, then `.archon/config.toml`, then global defaults.

@@ -52,8 +52,8 @@ use crate::steer::Steer;
 /// a repository's `grant_merge`, which an older archond would drop.
 /// 13: daemon-verified operator authority requests and settings.
 /// 14: a repository's `attribution`, which an older archond would drop.
-/// 15: `promote` and a repository's `release_hook`; an older archond knows
-/// no such request and would drop the hook.
+/// 15: `promote`, a repository's `release_hook` and its confirmed full and
+/// release checks; an older archond knows no such request and would drop them.
 pub const PROTOCOL_VERSION: u32 = 15;
 
 /// Said beside an item whose `budget_usd` was set while budgets are off.
@@ -581,6 +581,8 @@ pub struct TiersPatch {
     pub confirmed_fast_check: Clearable<String>,
     /// The committed file's full check the operator confirms, word for word.
     pub confirmed_full_check: Clearable<String>,
+    /// The committed file's release hook the operator confirms, word for word.
+    pub confirmed_release_check: Clearable<String>,
 }
 
 impl TiersPatch {

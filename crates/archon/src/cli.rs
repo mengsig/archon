@@ -380,6 +380,10 @@ pub struct TierArgs {
     /// so the integration branch is verified by it while the file reads so.
     #[arg(long)]
     pub confirm_full_check: Option<String>,
+    /// Confirm the committed `.archon/repo.toml` release hook, word for word,
+    /// so a promotion runs it; it stops running once the file differs.
+    #[arg(long)]
+    pub confirm_release_check: Option<String>,
 }
 
 #[derive(Debug, Args)]

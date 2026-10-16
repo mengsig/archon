@@ -137,6 +137,10 @@ pub struct Repo {
     /// word: the integration branch's verification runs it only while so.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confirmed_full_check: Option<String>,
+    /// The committed file's release hook the operator confirmed, word for
+    /// word: a promotion runs it only while the file reads so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirmed_release_check: Option<String>,
     pub added_at: Timestamp,
 }
 
@@ -211,6 +215,7 @@ mod tests {
             tiers: RepoTiers::default(),
             confirmed_fast_check: None,
             confirmed_full_check: None,
+            confirmed_release_check: None,
             added_at: crate::now(),
         };
         let mut stored = serde_json::to_value(&repo).unwrap();

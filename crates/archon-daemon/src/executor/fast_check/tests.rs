@@ -140,6 +140,7 @@ fn repo(path: &Path, fast: Option<&str>, confirmed: Option<&str>) -> Repo {
         },
         confirmed_fast_check: confirmed.map(str::to_owned),
         confirmed_full_check: None,
+        confirmed_release_check: None,
         added_at: archon_core::now(),
     }
 }
@@ -215,6 +216,44 @@ fn only_the_registry_s_or_a_confirmed_committed_full_check_is_trusted() {
     assert_eq!(full(None, Some("make ci")).as_deref(), Some("make ci"));
     git(&root, &["commit", "--quiet", "-am", "changed"]);
     assert_eq!(full(None, Some("make ci")), None, "the commit changed it");
+}
+
+/// The release hook is trusted as the full check is, by its own confirmation.
+#[test]
+fn only_the_registry_s_or_a_confirmed_committed_release_hook_is_trusted() {
+    let (_keep, root) = dir();
+    git(&root, &["init", "--quiet", "--initial-branch=main"]);
+    git(
+        &root,
+        &["commit", "--quiet", "--allow-empty", "-m", "start"],
+    );
+    let file = "[checks]\nfull = \"make ci\"\nrelease = \"make tag\"\n";
+    write(&root, ".archon/repo.toml", file);
+    let hook = |registry: Option<&str>, confirmed: Option<&str>| {
+        let mut repo = repo(&root, None, None);
+        repo.tiers.checks.release = registry.map(str::to_owned);
+        repo.confirmed_full_check = Some("make ci".into());
+        repo.confirmed_release_check = confirmed.map(str::to_owned);
+        trusted_release(&repo).unwrap()
+    };
+    assert_eq!(hook(None, Some("make tag")), None, "an untracked file");
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "--quiet", "-m", "checks"]);
+    assert_eq!(hook(Some("make mine"), None).as_deref(), Some("make mine"));
+    assert_eq!(
+        hook(None, None),
+        None,
+        "the full confirmation is not the release one"
+    );
+    assert_eq!(hook(None, Some("make tag")).as_deref(), Some("make tag"));
+    write(&root, ".archon/repo.toml", "[checks]\nrelease = \"true\"\n");
+    assert_eq!(
+        hook(None, Some("true")),
+        None,
+        "an uncommitted edit confirms nothing"
+    );
+    git(&root, &["commit", "--quiet", "-am", "changed"]);
+    assert_eq!(hook(None, Some("make tag")), None, "the commit changed it");
 }
 
 fn git(tree: &Path, args: &[&str]) {

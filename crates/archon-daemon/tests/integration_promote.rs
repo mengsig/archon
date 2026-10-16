@@ -462,3 +462,39 @@ async fn a_queued_merge_is_finished_only_for_its_own_release_branch() {
     );
     assert!(file(&h, "released").exists(), "the owed hook ran");
 }
+
+/// A release hook in the registered checkout's committed `.archon/repo.toml`
+/// never runs as the daemon while the operator has not confirmed its text.
+#[tokio::test]
+async fn an_unconfirmed_committed_release_hook_never_runs() {
+    let (h, _gh, _slot) = promoting().await;
+    let hook = format!("touch '{}'", file(&h, "unconfirmed").display());
+    let text = format!("[checks]\nrelease = \"{}\"\n", hook.replace('"', "\\\""));
+    std::fs::create_dir_all(h.repo.join(".archon")).unwrap();
+    std::fs::write(h.repo.join(".archon/repo.toml"), text).unwrap();
+    git(&h.repo, &["add", ".archon/repo.toml"]);
+    git(&h.repo, &["commit", "--quiet", "-m", "Name a release hook"]);
+    let unset = TiersPatch {
+        release_hook: Clearable::Clear,
+        ..TiersPatch::default()
+    };
+    update(
+        &h,
+        RepoPatch {
+            tiers: unset,
+            ..RepoPatch::default()
+        },
+    )
+    .await;
+    land(&h, "one");
+    integration::pass(&h.ctx).await.expect("green pass");
+    assert_eq!(health(&h).await, IntegrationHealth::Green);
+
+    let done = promotion(h.cli(promote()).await);
+    let PromotionOutcome::Merged { hook, .. } = &done.outcome else {
+        panic!("not merged: {done:?}");
+    };
+    assert!(hook.is_none(), "no trusted hook to run: {hook:?}");
+    assert!(!file(&h, "unconfirmed").exists(), "the hook never ran");
+    assert!(!file(&h, "released").exists(), "nor the cleared one");
+}

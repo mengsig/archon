@@ -80,6 +80,7 @@ pub(super) async fn record(
                         release_hook: optional(old.tiers.checks.release),
                         confirmed_fast_check: optional(old.confirmed_fast_check),
                         confirmed_full_check: optional(old.confirmed_full_check),
+                        confirmed_release_check: optional(old.confirmed_release_check),
                     },
                 },
             })

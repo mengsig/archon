@@ -207,9 +207,14 @@ impl Discovery<'_> {
         if out || !self.seen.insert(dir.clone()) {
             return Ok(());
         }
-        if let Some(found) = manifest(self.root, &dir)? {
-            self.members.extend(member(&found, &dir, &self.shared));
-        }
+        // Cargo refuses a workspace whose member has no manifest; so do we,
+        // rather than skip the check for every crate the member held.
+        let Some(found) = manifest(self.root, &dir)? else {
+            return Err(ArchonError::Config(format!(
+                "the workspace member `{dir}` has no Cargo.toml"
+            )));
+        };
+        self.members.extend(member(&found, &dir, &self.shared));
         debug_assert!(self.seen.contains(&dir));
         Ok(())
     }
@@ -319,13 +324,18 @@ fn joined(base: &str, relative: &str) -> Option<String> {
 }
 
 /// The directories under `root` that `pattern` names; a component may hold
-/// `*`, which matches any run of characters.
+/// Cargo's glob syntax but `**`: `*`, `?` and `[...]` sets.
 fn expand_glob(root: &Path, pattern: &str) -> Result<Vec<String>, ArchonError> {
+    if pattern.contains("**") {
+        return Err(ArchonError::Config(format!(
+            "the workspace member pattern `{pattern}` holds `**`, which no check selection reads"
+        )));
+    }
     let mut found = vec![String::new()];
     for part in pattern.split('/').filter(|p| !p.is_empty() && *p != ".") {
         let mut next = Vec::new();
         for dir in &found {
-            if !part.contains('*') {
+            if !part.contains(['*', '?', '[']) {
                 next.push(joined(dir, part).unwrap_or_default());
                 continue;
             }
@@ -336,7 +346,7 @@ fn expand_glob(root: &Path, pattern: &str) -> Result<Vec<String>, ArchonError> {
                 let entry =
                     entry.map_err(|e| ArchonError::io(format!("listing {}", at.display()), e))?;
                 let name = entry.file_name().to_string_lossy().into_owned();
-                if entry.path().is_dir() && wildcard(part, &name) {
+                if entry.path().is_dir() && wildcard(part, &name)? {
                     next.push(joined(dir, &name).unwrap_or_default());
                 }
             }
@@ -348,22 +358,101 @@ fn expand_glob(root: &Path, pattern: &str) -> Result<Vec<String>, ArchonError> {
     Ok(found)
 }
 
-/// Whether `name` matches `pattern`, whose `*` matches any run of characters.
-fn wildcard(pattern: &str, name: &str) -> bool {
-    let pieces: Vec<&str> = pattern.split('*').collect();
-    assert!(pieces.len() >= 2, "only a pattern with `*` is matched");
-    let (first, last) = (pieces[0], pieces[pieces.len() - 1]);
-    if !name.starts_with(first) || name.len() < first.len() + last.len() || !name.ends_with(last) {
-        return false;
+/// One element of a glob component.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Glob {
+    Literal(char),
+    /// `?`: any one character.
+    One,
+    /// `*`: any run of characters.
+    Any,
+    /// `[...]`: one character in (or with `[!...]`, not in) the ranges.
+    Set {
+        negated: bool,
+        ranges: Vec<(char, char)>,
+    },
+}
+
+/// `pattern`'s elements, or why it is malformed.
+fn glob_elements(pattern: &str) -> Result<Vec<Glob>, ArchonError> {
+    let malformed = || ArchonError::Config(format!("the member pattern `{pattern}` is malformed"));
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut elements = Vec::with_capacity(chars.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let element = match chars[i] {
+            '*' => Glob::Any,
+            '?' => Glob::One,
+            '[' => {
+                let negated = chars.get(i + 1) == Some(&'!');
+                let start = i + 1 + usize::from(negated);
+                // A `]` first in the set is a member of it, as in Cargo's globs.
+                let close = (start + 1..chars.len())
+                    .find(|&at| chars[at] == ']')
+                    .ok_or_else(malformed)?;
+                let ranges = set_ranges(&chars[start..close]);
+                i = close;
+                Glob::Set { negated, ranges }
+            }
+            c => Glob::Literal(c),
+        };
+        elements.push(element);
+        i += 1;
     }
-    let mut rest = &name[first.len()..name.len() - last.len()];
-    for piece in &pieces[1..pieces.len() - 1] {
-        match rest.find(piece) {
-            Some(at) => rest = &rest[at + piece.len()..],
-            None => return false,
+    assert!(
+        elements.len() <= chars.len(),
+        "each element takes a character"
+    );
+    Ok(elements)
+}
+
+/// The ranges `inner` (between `[` and `]`) lists: `a-z` or a single `c`.
+fn set_ranges(inner: &[char]) -> Vec<(char, char)> {
+    assert!(!inner.is_empty(), "a set lists a character");
+    let mut ranges = Vec::new();
+    let mut i = 0;
+    while i < inner.len() {
+        if i + 2 < inner.len() && inner[i + 1] == '-' {
+            ranges.push((inner[i], inner[i + 2]));
+            i += 3;
+        } else {
+            ranges.push((inner[i], inner[i]));
+            i += 1;
         }
     }
-    true
+    ranges
+}
+
+/// Whether `name` matches the glob component `pattern`.
+fn wildcard(pattern: &str, name: &str) -> Result<bool, ArchonError> {
+    let elements = glob_elements(pattern)?;
+    let name: Vec<char> = name.chars().collect();
+    // matched[j]: whether the elements so far match the first j characters.
+    let mut matched = vec![false; name.len() + 1];
+    matched[0] = true;
+    for element in &elements {
+        let mut next = vec![false; name.len() + 1];
+        for j in 0..=name.len() {
+            next[j] = match element {
+                Glob::Any => matched[j] || (j > 0 && next[j - 1]),
+                _ => j > 0 && matched[j - 1] && one_matches(element, name[j - 1]),
+            };
+        }
+        matched = next;
+    }
+    debug_assert_eq!(matched.len(), name.len() + 1);
+    Ok(matched[name.len()])
+}
+
+fn one_matches(element: &Glob, c: char) -> bool {
+    match element {
+        Glob::Literal(want) => *want == c,
+        Glob::One => true,
+        Glob::Any => unreachable!("`*` spans characters"),
+        Glob::Set { negated, ranges } => {
+            ranges.iter().any(|&(low, high)| low <= c && c <= high) != *negated
+        }
+    }
 }
 
 /// One `{packages}` or `{packages:<flag>}` in a check command.

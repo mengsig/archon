@@ -144,23 +144,34 @@ fn repo(path: &Path, fast: Option<&str>, confirmed: Option<&str>) -> Repo {
 #[test]
 fn only_the_registry_s_or_a_confirmed_committed_check_is_trusted() {
     let (_keep, root) = dir();
-    std::fs::create_dir_all(root.join(".archon")).unwrap();
-    std::fs::write(
-        root.join(".archon/repo.toml"),
+    git(&root, &["init", "--quiet", "--initial-branch=main"]);
+    write(
+        &root,
+        ".archon/repo.toml",
         "[checks]\nfast = \"make quick\"\n",
-    )
-    .unwrap();
+    );
     let registry = repo(&root, Some("make mine"), None);
     assert_eq!(trusted(&registry).unwrap().as_deref(), Some("make mine"));
+    let confirmed = repo(&root, None, Some("make quick"));
+    assert_eq!(trusted(&confirmed).unwrap(), None, "an untracked file");
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "--quiet", "-m", "check"]);
     assert_eq!(
         trusted(&repo(&root, None, None)).unwrap(),
         None,
         "unconfirmed"
     );
-    let confirmed = repo(&root, None, Some("make quick"));
     assert_eq!(trusted(&confirmed).unwrap().as_deref(), Some("make quick"));
-    let stale = repo(&root, None, Some("make old"));
-    assert_eq!(trusted(&stale).unwrap(), None, "the file changed since");
+    write(&root, ".archon/repo.toml", "[checks]\nfast = \"true\"\n");
+    assert_eq!(
+        trusted(&confirmed).unwrap().as_deref(),
+        Some("make quick"),
+        "an uncommitted edit counts for nothing"
+    );
+    let edited = repo(&root, None, Some("true"));
+    assert_eq!(trusted(&edited).unwrap(), None, "nor confirms an edit");
+    git(&root, &["commit", "--quiet", "-am", "changed"]);
+    assert_eq!(trusted(&confirmed).unwrap(), None, "the commit changed it");
 }
 
 fn git(tree: &Path, args: &[&str]) {

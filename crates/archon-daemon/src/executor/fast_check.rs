@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use archon_core::error::ArchonError;
 use archon_core::repo::affected::{self, Affected};
-use archon_core::repo::{Repo, RepoTiers};
+use archon_core::repo::{REPO_FILE_NAME, Repo, RepoTiers};
 use tokio::io::{AsyncRead, AsyncReadExt as _};
 use tokio::process::Command;
 
@@ -36,7 +36,7 @@ pub(crate) fn trusted(repo: &Repo) -> Result<Option<String>, ArchonError> {
     let Some(confirmed) = &repo.confirmed_fast_check else {
         return Ok(None);
     };
-    let committed = RepoTiers::load(&repo.path)?.checks.fast;
+    let committed = committed_fast_check(&repo.path)?;
     if committed.as_ref() != Some(confirmed) {
         tracing::warn!(
             repo = %repo.name,
@@ -46,6 +46,20 @@ pub(crate) fn trusted(repo: &Repo) -> Result<Option<String>, ArchonError> {
         return Ok(None);
     }
     Ok(committed)
+}
+
+/// The fast check `.archon/repo.toml` names in the registered repository's
+/// `HEAD` commit; an untracked or edited copy of the file counts for nothing.
+fn committed_fast_check(root: &Path) -> Result<Option<String>, ArchonError> {
+    assert!(root.is_absolute(), "registered paths are absolute");
+    let spec = format!("HEAD:.archon/{REPO_FILE_NAME}");
+    let present = DaemonGit::sealed_in(root).args(["cat-file", "-e", &spec]);
+    if !present.output()?.status.success() {
+        return Ok(None);
+    }
+    let text = DaemonGit::sealed_in(root).args(["cat-file", "blob", &spec]);
+    let tiers = RepoTiers::parse(&text.text()?, &format!("{} {spec}", root.display()))?;
+    Ok(tiers.checks.fast)
 }
 
 /// What the change in the work tree `tree` affects: the files its `HEAD`

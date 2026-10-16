@@ -223,6 +223,8 @@ async fn a_committed_check_runs_only_once_the_operator_confirmed_it() {
     let command = format!("echo ran >> '{}'", marker.display());
     let file = format!("[checks]\nfast = \"{command}\"\n");
     std::fs::write(h.repo.join(".archon/repo.toml"), file).unwrap();
+    git(&h.repo, &["add", ".archon/repo.toml"]);
+    git(&h.repo, &["commit", "--quiet", "-m", "Name the fast check"]);
 
     let (first, run) = started(&h, "direct").await;
     let state = settled(&h, &first.id, change(&run.workspace)).await;

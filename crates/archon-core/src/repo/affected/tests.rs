@@ -241,15 +241,68 @@ fn malformed_placeholders_are_refused() {
 }
 
 #[test]
-fn wildcards_match_any_run_of_characters() {
-    assert!(wildcard("*", "anything"));
-    assert!(wildcard("archon-*", "archon-core"));
-    assert!(wildcard("a*c*e", "abcde"));
-    assert!(!wildcard("a*c*e", "abde"));
-    assert!(!wildcard("ab*ba", "aba"));
+fn wildcards_match_cargo_s_glob_syntax() {
+    let matches = |pattern: &str, name: &str| wildcard(pattern, name).unwrap();
+    assert!(matches("*", "anything"));
+    assert!(matches("archon-*", "archon-core"));
+    assert!(matches("a*c*e", "abcde"));
+    assert!(!matches("a*c*e", "abde"));
+    assert!(!matches("ab*ba", "aba"));
+    assert!(matches("?", "a") && !matches("?", "ab"));
+    assert!(matches("[ab]", "b") && !matches("[ab]", "c"));
+    assert!(matches("x[0-9]?", "x7z") && !matches("x[0-9]?", "xaz"));
+    assert!(matches("[!ab]*", "core") && !matches("[!ab]*", "app"));
+    assert!(matches("[]]", "]"), "a leading `]` is in the set");
+    assert!(wildcard("crate[ab", "crateab").is_err(), "an unclosed set");
     assert_eq!(
         joined("crates/app", "../lib").as_deref(),
         Some("crates/lib")
     );
     assert_eq!(joined("", "../outside"), None);
+}
+
+#[test]
+fn members_named_by_any_glob_syntax_are_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(
+        root,
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"crates/[ab]\", \"tools/?\"]\n",
+    );
+    for name in ["a", "b"] {
+        write(
+            root,
+            &format!("crates/{name}/Cargo.toml"),
+            &package(name, ""),
+        );
+    }
+    write(root, "tools/t/Cargo.toml", &package("t", ""));
+    write(root, "crates/c/notes.md", "not a member\n");
+    assert_eq!(units(root, &["crates/b/src/lib.rs"]).units, ["b"]);
+    assert_eq!(units(root, &["Cargo.lock"]).units, ["a", "b", "t"]);
+    write(
+        root,
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"crates/**\"]\n",
+    );
+    let refused = affected(root, &["crates/a/src/lib.rs".to_owned()]);
+    assert!(refused.unwrap_err().to_string().contains("**"));
+}
+
+#[test]
+fn a_member_without_a_manifest_refuses_the_selection() {
+    let dir = fixture();
+    let root = dir.path();
+    std::fs::remove_file(root.join("crates/tool/Cargo.toml")).unwrap();
+    let refused = affected(root, &["crates/tool/Cargo.toml".to_owned()]);
+    let error = refused.unwrap_err().to_string();
+    assert!(error.contains("crates/tool"), "{error}");
+    write(root, "crates/tool/Cargo.toml", &package("tool", ""));
+    std::fs::remove_file(root.join("bench/Cargo.toml")).unwrap();
+    let listed = affected(root, &["docs/guide.md".to_owned()]);
+    assert!(
+        listed.unwrap_err().to_string().contains("bench"),
+        "a listed one"
+    );
 }

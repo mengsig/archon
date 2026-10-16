@@ -2445,8 +2445,9 @@ table and delivers it off every lock:
 
    **The fast check gate** (`ship::gate`) follows a proof, where the
    repository has a trusted fast check: the registry's `checks.fast`, or
-   the committed file's while it equals, word for word, what the operator
-   confirmed with `archon repo set --confirm-fast-check`. A command from
+   the file in the registered repository's `HEAD` commit, read with sealed
+   git, while it equals, word for word, what the operator confirmed with
+   `archon repo set --confirm-fast-check`. A command from
    the run's worktree never runs as the daemon. The units the change
    affects are read from `git diff` between its merge base with the base
    and `HEAD` (`repo::affected`, below) and substituted for the command's
@@ -2794,7 +2795,9 @@ full = "make ci"               # the contract forbids it: it runs off the item's
 workspace a unit is a crate: those whose files the change touches and every
 workspace crate depending on them through a path or `workspace = true`
 dependency; path dependencies under the root are members, as Cargo makes
-them. Elsewhere it is a changed top-level directory. A unit is substituted
+them. Member patterns take Cargo's `*`, `?` and `[...]`; a `**` pattern, or
+a member without a `Cargo.toml`, refuses the selection rather than skip the
+crates it would hold. Elsewhere it is a changed top-level directory. A unit is substituted
 only when it is a plain name (letters, digits, `_`, `-`, `.`, `+`, not
 leading `-` or `.`), which no shell context can read as code or an option;
 any other unit refuses the check. A change to a root manifest or lockfile
@@ -2804,7 +2807,9 @@ unit. Each stage agent's contract names the command for the change as
 committed when it starts and the rule for its final change; archond runs it
 again at delivery (§8.7) when it is trusted: the registry's, or the file's
 once the operator confirmed its exact text with `archon repo set
---confirm-fast-check '<command>'`, until the file changes.
+--confirm-fast-check '<command>'`, until the file changes. The file is read
+from the registered repository's `HEAD` commit: an untracked or uncommitted
+copy neither confirms nor stops a check.
 
 Precedence for repository settings: registry flags from `archon repo add` or
 `archon repo set`, then `.archon/config.toml`, then global defaults.

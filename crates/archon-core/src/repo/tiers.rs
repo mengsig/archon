@@ -121,11 +121,17 @@ impl RepoTiers {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(e) => return Err(ArchonError::io(format!("reading {}", path.display()), e)),
         };
-        let tiers: Self = toml::from_str(&text)
-            .map_err(|e| ArchonError::Config(format!("{}: {e}", path.display())))?;
+        Self::parse(&text, &path.display().to_string())
+    }
+
+    /// The `.archon/repo.toml` text read from `origin`, which errors name.
+    pub fn parse(text: &str, origin: &str) -> Result<Self, ArchonError> {
+        assert!(!origin.is_empty(), "errors name where the text came from");
+        let tiers: Self =
+            toml::from_str(text).map_err(|e| ArchonError::Config(format!("{origin}: {e}")))?;
         tiers
             .validate_fields()
-            .map_err(|e| ArchonError::Config(format!("{}: {e}", path.display())))?;
+            .map_err(|e| ArchonError::Config(format!("{origin}: {e}")))?;
         Ok(tiers)
     }
 }

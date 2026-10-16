@@ -4,11 +4,11 @@ use std::process::ExitCode;
 
 use anyhow::Context as _;
 use archon_core::autonomy::{AutonomyPatch, MergeMode};
-use archon_core::protocol::{Clearable, Reply, RepoAdd, RepoPatch, RepoRef, Request};
+use archon_core::protocol::{Clearable, Reply, RepoAdd, RepoPatch, RepoRef, Request, TiersPatch};
 use archon_core::repo::{GhUser, ShipMode};
 
 use super::{emit, to_json};
-use crate::cli::{RepoCommand, Ship};
+use crate::cli::{RepoCommand, Ship, TierArgs};
 use crate::connect::{connect_or_start, connect_running, unexpected};
 use crate::format;
 use crate::views;
@@ -65,12 +65,14 @@ pub async fn run(command: RepoCommand, json: bool) -> anyhow::Result<ExitCode> {
             grant_merge,
             attribution,
             gh_user,
+            tiers,
         } => {
             let ceiling = ceiling(&repo, autonomy_max, auto_merge).await?;
             let patch = RepoPatch {
                 grant_merge,
                 attribution,
                 gh_user: gh_user_patch(gh_user)?,
+                tiers: tiers_patch(tiers),
                 ..repo_patch(ship, base, pipeline, ceiling)
             };
             set(repo, patch, json).await?;
@@ -149,11 +151,6 @@ fn repo_patch(
     pipeline: Option<String>,
     autonomy_max: Option<AutonomyPatch>,
 ) -> RepoPatch {
-    let clearable = |value: Option<String>| match value.as_deref().map(str::trim) {
-        None => Clearable::Keep,
-        Some("") => Clearable::Clear,
-        Some(v) => Clearable::Set(v.to_owned()),
-    };
     RepoPatch {
         ship: ship.map(ship_mode),
         base_branch: clearable(base),
@@ -162,6 +159,24 @@ fn repo_patch(
         grant_merge: None,
         attribution: None,
         gh_user: Clearable::Keep,
+        tiers: TiersPatch::default(),
+    }
+}
+
+fn tiers_patch(args: TierArgs) -> TiersPatch {
+    TiersPatch {
+        integration_branch: clearable(args.integration_branch),
+        release_branch: clearable(args.release_branch),
+        fast_check: clearable(args.fast_check),
+        full_check: clearable(args.full_check),
+    }
+}
+
+fn clearable(value: Option<String>) -> Clearable<String> {
+    match value.as_deref().map(str::trim) {
+        None => Clearable::Keep,
+        Some("") => Clearable::Clear,
+        Some(v) => Clearable::Set(v.to_owned()),
     }
 }
 
@@ -209,6 +224,20 @@ mod tests {
         assert_eq!(set, Clearable::Set("devGunnin".parse().unwrap()));
         let refused = gh_user_patch(Some("--user=x".into())).unwrap_err();
         assert!(refused.to_string().contains("no GitHub login"), "{refused}");
+    }
+
+    #[test]
+    fn tier_flags_set_or_clear_and_absent_ones_keep() {
+        let args = TierArgs {
+            integration_branch: Some("next".into()),
+            fast_check: Some(" ".into()),
+            ..TierArgs::default()
+        };
+        let patch = tiers_patch(args);
+        assert_eq!(patch.integration_branch, Clearable::Set("next".into()));
+        assert_eq!(patch.fast_check, Clearable::Clear);
+        assert_eq!(patch.release_branch, Clearable::Keep);
+        assert!(tiers_patch(TierArgs::default()).is_keep());
     }
 
     #[test]

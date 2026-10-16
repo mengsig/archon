@@ -381,7 +381,7 @@ fn reserve_each(
 
 /// What the store adds to the contract of every agent of `run`: where the
 /// item's dependencies left their work, its initiative, and the run's lessons,
-/// then the build cache and the artifact store.
+/// then the repository's checks, the build cache and the artifact store.
 fn run_sections(
     ctx: &DaemonContext,
     store: &Store,
@@ -401,29 +401,22 @@ fn run_sections(
     );
     let initiative = contract::initiative_rules(initiative.as_ref());
     let lessons = contract::lesson_rules(&lessons)?;
-    let cache = build_cache_section(ctx, repo, &item.id)?;
+    let env = RepoEnv::new(repo.cloned())?;
+    let checks = contract::check_rules(&env.tiers()?.checks);
+    let cache = build_cache_section(ctx, &env, &item.id);
     let storage = contract::artifact_rules(&ctx.config.artifacts);
-    Ok([dependencies, initiative, lessons, cache, storage].concat())
+    Ok([dependencies, initiative, lessons, checks, cache, storage].concat())
 }
 
 /// The Build cache section, unless the repository (or none) builds into
 /// its worktrees.
-fn build_cache_section(
-    ctx: &DaemonContext,
-    repo: Option<&Repo>,
-    item: &QueueItemId,
-) -> Result<String, ArchonError> {
-    let Some(repo) = repo else {
-        return Ok(String::new());
+fn build_cache_section(ctx: &DaemonContext, env: &RepoEnv, item: &QueueItemId) -> String {
+    let Some(repo) = &env.repo else {
+        return String::new();
     };
-    let mode = RepoEnv::new(Some(repo.clone()))?
-        .config
-        .build_cache(&ctx.config.worktrees);
+    let mode = env.config.build_cache(&ctx.config.worktrees);
     let target = crate::build_cache::target_dir(&ctx.paths, &repo.name, item, mode);
-    Ok(contract::build_cache_rules(
-        target.as_deref(),
-        mode == BuildCache::Shared,
-    ))
+    contract::build_cache_rules(target.as_deref(), mode == BuildCache::Shared)
 }
 
 fn same_slot(stage: &StageRun, plan: &SpawnPlan) -> bool {

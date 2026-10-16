@@ -2786,6 +2786,20 @@ disabled = ["performance"]
 tools = "guarded"
 ```
 
+Per-repository verification tiers, committed in `<repo>/.archon/repo.toml` so
+every machine reads the same values. `archon repo set --integration-branch`,
+`--release-branch`, `--fast-check` and `--full-check` set them in the registry,
+whose values win field by field (an empty value clears one):
+
+```toml
+integration_branch = "next"    # items fork from origin/next; their PRs target it
+release_branch = "main"        # the default; next is created from it when missing
+
+[checks]
+fast = "cargo test -p mycrate" # every stage agent's contract says: run before you commit
+full = "make ci"               # the contract forbids it: it runs off the item's path
+```
+
 Precedence for repository settings: registry flags from `archon repo add` or
 `archon repo set`, then `.archon/config.toml`, then global defaults.
 **Only the operator can raise an autonomy ceiling**, through the global
@@ -3115,8 +3129,12 @@ object per line under `--json`).
   `<worktrees.root>/<repo>/<item-id>` on branch
   `<branch_prefix><item-short>-<slug(title)>`, created with
   `git -C <repo> worktree add -b <branch> <path> <base>`, checked out
-  through the shadow (§13.4). The base is
-  `repo.base_branch`, or the repo's current `HEAD` commit. In `pr` mode a new
+  through the shadow (§13.4). The base is the integration branch of the
+  repository's tiers, else `repo.base_branch`, or the repo's current `HEAD`
+  commit. A missing integration branch is first created from the release
+  branch: pushed to `origin` in `pr` mode (a `decision` in the item's feed),
+  as the repository's GitHub login when it has one, else made locally. In
+  `pr` mode a new
   branch forks from `origin`'s head of the base, fetched through the shadow
   just before (`ls-remote`, then the objects), with
   `refs/remotes/origin/<base>` moved to it; the operator's local base branch

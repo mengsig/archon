@@ -3,7 +3,7 @@
 use archon_core::authority::OperatorMessage;
 use archon_core::error::ArchonError;
 use archon_core::notify::FeedEntry;
-use archon_core::protocol::{Clearable, RepoPatch, Request};
+use archon_core::protocol::{Clearable, RepoPatch, Request, TiersPatch};
 use archon_core::repo::Repo;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -72,9 +72,12 @@ pub(super) async fn record(
                     autonomy_max: Some(old.autonomy_max),
                     grant_merge: Some(old.grant_merge),
                     attribution: Some(old.attribution),
-                    gh_user: match old.gh_user {
-                        Some(user) => Clearable::Set(user),
-                        None => Clearable::Clear,
+                    gh_user: optional(old.gh_user),
+                    tiers: TiersPatch {
+                        integration_branch: optional(old.tiers.integration_branch),
+                        release_branch: optional(old.tiers.release_branch),
+                        fast_check: optional(old.tiers.checks.fast),
+                        full_check: optional(old.tiers.checks.full),
                     },
                 },
             })
@@ -114,7 +117,7 @@ pub(super) async fn record(
     Ok(())
 }
 
-fn optional(value: Option<String>) -> Clearable<String> {
+fn optional<T>(value: Option<T>) -> Clearable<T> {
     match value {
         Some(value) => Clearable::Set(value),
         None => Clearable::Clear,

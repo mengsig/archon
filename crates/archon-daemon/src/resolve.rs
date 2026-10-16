@@ -11,7 +11,7 @@ use archon_core::policy::ModelPolicy;
 use archon_core::protocol::RepoRef;
 use archon_core::provider_route::ProviderWeights;
 use archon_core::queue::Caps;
-use archon_core::repo::Repo;
+use archon_core::repo::{Repo, RepoTiers};
 use archon_core::settings::{EffectiveSettings, Layers, OperatorSettings, RepoLayers};
 use archon_pipeline::{Catalog, CatalogSources};
 
@@ -169,5 +169,30 @@ impl RepoEnv {
 
     pub fn repo_name(&self) -> Option<&str> {
         self.repo.as_ref().map(|r| r.name.as_str())
+    }
+
+    /// The registry's verification tiers over the committed
+    /// `.archon/repo.toml`; none for a repo-less item.
+    pub fn tiers(&self) -> Result<RepoTiers, ArchonError> {
+        let Some(repo) = &self.repo else {
+            return Ok(RepoTiers::default());
+        };
+        let tiers = repo.tiers.clone().over(RepoTiers::load(&repo.path)?);
+        tiers.validate()?;
+        Ok(tiers)
+    }
+
+    /// The branch new work forks from and delivers to: the integration
+    /// branch in `tiers`, else the registry's base branch, else the file's.
+    pub fn fork_base(&self, tiers: &RepoTiers) -> Option<String> {
+        assert!(
+            self.repo.is_some() || tiers.is_empty(),
+            "only a repository has tiers"
+        );
+        tiers
+            .integration_branch
+            .clone()
+            .or_else(|| self.repo.as_ref().and_then(|r| r.base_branch.clone()))
+            .or_else(|| self.config.repo.base_branch.clone())
     }
 }

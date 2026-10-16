@@ -768,6 +768,7 @@ echo "GH_TOKEN=${GH_TOKEN-unset} GH_HOST=${GH_HOST-unset} GITHUB_TOKEN=${GITHUB_
                 grant_merge: false,
                 attribution: Default::default(),
                 gh_user: gh_user.map(|user| user.parse().unwrap()),
+                tiers: Default::default(),
                 added_at: archon_core::now(),
             };
             Self {

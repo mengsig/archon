@@ -29,7 +29,7 @@ use crate::notify::{FeedItem, NotificationKind, Question};
 use crate::ops::{UpgradeRequest, Versions};
 use crate::policy::ModelPolicy;
 use crate::queue::{Caps, PauseState, Priority, QueueItem};
-use crate::repo::{Attribution, GhUser, Repo, ShipMode};
+use crate::repo::{Attribution, Checks, GhUser, Repo, RepoTiers, ShipMode};
 use crate::run::{OperatorGate, PipelineRun, StageRun, StageState, Verdict};
 use crate::steer::Steer;
 
@@ -561,6 +561,37 @@ pub struct RepoPatch {
     /// operator only.
     #[serde(default, skip_serializing_if = "Clearable::is_keep")]
     pub gh_user: Clearable<GhUser>,
+    /// Changes the registry's verification tiers; operator only.
+    #[serde(default, skip_serializing_if = "TiersPatch::is_keep")]
+    pub tiers: TiersPatch,
+}
+
+/// A patch to the registry's [`RepoTiers`], field by field.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TiersPatch {
+    pub integration_branch: Clearable<String>,
+    pub release_branch: Clearable<String>,
+    pub fast_check: Clearable<String>,
+    pub full_check: Clearable<String>,
+}
+
+impl TiersPatch {
+    pub fn is_keep(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// `current` after the patch.
+    pub fn apply(self, current: RepoTiers) -> RepoTiers {
+        RepoTiers {
+            integration_branch: self.integration_branch.apply(current.integration_branch),
+            release_branch: self.release_branch.apply(current.release_branch),
+            checks: Checks {
+                fast: self.fast_check.apply(current.checks.fast),
+                full: self.full_check.apply(current.checks.full),
+            },
+        }
+    }
 }
 
 /// A patch to an optional setting. Explicit on the wire (`"keep"`,

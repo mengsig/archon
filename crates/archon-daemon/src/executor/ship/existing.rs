@@ -115,21 +115,11 @@ fn fast_forward_now(
     if let Some(refusal) = elsewhere(&url, onto) {
         return Ok(Err(refusal));
     }
-    // Read through `origin` as configured; only the push goes as `token`'s login.
-    let push_to = match token {
-        Some(token) => match gh_account::push_url(repo, token.user())? {
-            Ok(push_to) => push_to,
-            Err(why) => return Ok(Err(format!("BLOCKED: {why}"))),
-        },
-        None => url.clone(),
-    };
     let shadow = Shadow::of(data_dir, repo)?;
-    // Without a token the push reads the operator's config: check where git sends it.
-    if token.is_none()
-        && let Some(refusal) = elsewhere(&stack::pinned_url(&shadow, &push_to)?, onto)
-    {
-        return Ok(Err(refusal));
-    }
+    let push_to = match push_destination(repo, &shadow, &url, onto, token)? {
+        Ok(push_to) => push_to,
+        Err(refusal) => return Ok(Err(refusal)),
+    };
     let branch = onto.head_ref.as_str();
     match stack::remote_head(&shadow, &url, branch)? {
         // An earlier try pushed it and failed after.
@@ -148,6 +138,34 @@ fn fast_forward_now(
         None => Ok(Err(gone(onto))),
         Some(_) => Ok(Err(push_refused(branch, &pushed, token)?)),
     }
+}
+
+/// Where the push of `onto`'s branch goes: `url` read through `origin` as
+/// configured, or `token`'s login's URL of `origin`, which `repo`'s config is
+/// read again for. Refused unless git sends it to `onto`'s head repository.
+fn push_destination(
+    repo: &Path,
+    shadow: &Shadow,
+    url: &str,
+    onto: &OntoPullRequest,
+    token: Option<&Token>,
+) -> Result<Result<String, String>, ArchonError> {
+    assert!(!url.is_empty(), "a checked origin URL");
+    let Some(token) = token else {
+        // The push reads the operator's config: check where git sends it.
+        let sent_to = stack::pinned_url(shadow, url)?;
+        return Ok(elsewhere(&sent_to, onto).map_or(Ok(url.to_owned()), Err));
+    };
+    let push_to = match gh_account::push_url(repo, token.user())? {
+        Ok(push_to) => push_to,
+        Err(why) => return Ok(Err(format!("BLOCKED: {why}"))),
+    };
+    assert!(
+        push_to.starts_with("https://github.com/"),
+        "only github.com"
+    );
+    // `origin` may have changed since `url` was read and checked.
+    Ok(elsewhere(&push_to, onto).map_or(Ok(push_to), Err))
 }
 
 /// Why `origin`, still at the frozen head, refused the push: a rule or access
@@ -388,5 +406,33 @@ mod tests {
             said.contains("never force-pushes") && said.contains("Refresh"),
             "{said}"
         );
+    }
+
+    /// `origin` turned to a fork after its URL was checked: the URL the
+    /// token's push would take is checked again, so nothing goes to the fork.
+    #[test]
+    fn a_token_push_is_refused_when_origin_moved_to_another_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().canonicalize().unwrap().join("repo");
+        let git = |args: &[&str]| {
+            let mut ran = std::process::Command::new("git");
+            let ran = ran.arg("-C").arg(&repo).args(args);
+            assert!(ran.status().unwrap().success(), "git {args:?}");
+        };
+        std::fs::create_dir(&repo).unwrap();
+        git(&["init", "--quiet"]);
+        let checked = "https://github.com/o/r.git";
+        git(&["remote", "add", "origin", "https://github.com/fork/r.git"]);
+        let shadow = Shadow::of(&dir.path().join("data"), &repo).unwrap();
+        let user = "devfake".parse().unwrap();
+        let token = Token::read(&user, &"t".repeat(40)).unwrap();
+        let onto = frozen();
+
+        let moved = push_destination(&repo, &shadow, checked, &onto, Some(&token)).unwrap();
+        let refusal = moved.expect_err("the fork is refused");
+        assert!(refusal.contains("`fork/r`"), "{refusal}");
+        git(&["remote", "set-url", "origin", checked]);
+        let back = push_destination(&repo, &shadow, checked, &onto, Some(&token)).unwrap();
+        assert_eq!(back, Ok(checked.to_owned()));
     }
 }

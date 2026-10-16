@@ -152,6 +152,7 @@ async fn admit(ctx: &DaemonContext) -> Result<Admission, ArchonError> {
         total_usd: snapshot.spend_total_usd,
     };
     block_items(ctx, &plan.block).await?;
+    crate::quota::note_waits(ctx, &snapshot.pending_spawns).await?;
     let mut follow = FollowUp::default();
     for (run, slots) in &plan.spawn {
         follow.merge(executor::reserve(ctx, &mut table, run, *slots).await?);

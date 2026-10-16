@@ -53,6 +53,8 @@ pub struct PendingSpawn {
     pub wanted: u32,
     /// A team stage: all `wanted` agents are admitted together or none.
     pub gang: bool,
+    /// Every provider some wanted stage may use is out of quota: no slot.
+    pub quota_hold: Option<QuotaHold>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -137,7 +139,7 @@ pub enum Hold {
 ///    are off).
 /// 3. Pending spawns of running runs come first, by item priority then
 ///    age. Repository and pipeline pauses do not hold them: they stop new
-///    items, and finishing work beats starting work.
+///    items, and finishing work beats starting work. Quota-held ones wait.
 /// 4. Then queued items whose dependencies all succeeded, by priority then
 ///    age, skipping paused repositories and pipelines and items a provider's
 ///    quota holds (`held_by` is then `ProviderQuota` unless another hold is).
@@ -189,7 +191,11 @@ pub fn plan_dispatch(snapshot: &DispatchSnapshot) -> DispatchPlan {
     if spawns_held || starts_held {
         plan.held_by = Some(Hold::Capacity);
     }
-    if plan.held_by.is_none() && quota_held(snapshot).next().is_some() {
+    let spawn_waits = snapshot
+        .pending_spawns
+        .iter()
+        .any(|p| p.quota_hold.is_some());
+    if plan.held_by.is_none() && (spawn_waits || quota_held(snapshot).next().is_some()) {
         plan.held_by = Some(Hold::ProviderQuota);
     }
     debug_assert!(plan.start.iter().all(|id| !plan.block.contains(id)));
@@ -513,7 +519,8 @@ fn grant_pending_spawns(
 ) -> bool {
     let mut order: Vec<&PendingSpawn> = pending
         .iter()
-        .filter(|p| p.wanted > 0 && admission_hold(slots.snapshot, p.repo.as_ref()).is_none())
+        .filter(|p| p.wanted > 0 && p.quota_hold.is_none())
+        .filter(|p| admission_hold(slots.snapshot, p.repo.as_ref()).is_none())
         .collect();
     order.sort_by(|a, b| {
         (b.priority.cmp(&a.priority))
@@ -524,6 +531,7 @@ fn grant_pending_spawns(
         order.windows(2).all(|w| w[0].run != w[1].run),
         "run listed twice"
     );
+    debug_assert!(order.iter().all(|p| p.quota_hold.is_none()));
     let mut held = false;
     for spawn in order {
         let (repo, pipeline) = (spawn.repo.as_ref(), spawn.pipeline.as_str());

@@ -4,8 +4,8 @@
 mod holds;
 mod reroute;
 
-pub(crate) use holds::item_hold;
-pub(crate) use reroute::{Reserve, reroute_spawns, switch_note};
+pub(crate) use holds::{item_hold, spawn_hold};
+pub(crate) use reroute::{Reserve, note_waits, reroute_spawns, switch_note};
 
 use archon_core::Timestamp;
 use archon_core::error::ArchonError;

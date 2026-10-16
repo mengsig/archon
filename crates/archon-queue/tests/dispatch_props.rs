@@ -76,6 +76,7 @@ fn random_pending(rng: &mut Rng, repos: &[RepoId], seq: u64) -> PendingSpawn {
         item_created_seq: seq,
         wanted: rng.below(4) as u32,
         gang: rng.below(3) == 0,
+        quota_hold: None,
     }
 }
 

@@ -596,3 +596,38 @@ async fn a_repository_s_own_weights_hold_its_items_when_every_provider_is_out() 
     let reason = waiting_reason(&status(&h).await, &item);
     assert_eq!(reason.code, WaitingReasonCode::ProviderQuota);
 }
+
+#[tokio::test]
+async fn a_stage_waiting_for_quota_takes_no_agent_slot_from_other_work() {
+    let mut config = weighted(&[("claude-code", 1), ("codex", 1)]);
+    config.limits.max_parallel_agents = 1;
+    let h = harness(config).await;
+    let frontier = ROUTED_TOML.replace("min_tier = \"strong\"", "min_tier = \"frontier\"");
+    h.add_pipeline(ROUTED, &frontier);
+    let fresh = |claude| {
+        vec![
+            ("claude-code", window(claude, TimeDelta::hours(4))),
+            ("codex", window(80, TimeDelta::hours(4))),
+        ]
+    };
+    read(&h, TimeDelta::zero(), fresh(80));
+    let waiting = enqueue(&h, ROUTED, "waits", tier_plan()).await;
+    h.dispatch().await;
+    assert_eq!(h.stages(&waiting.id).await.len(), 1, "the implementer runs");
+    read(&h, TimeDelta::zero(), fresh(0));
+    h.settle_running(|_| completed("implemented")).await;
+    let pins = serde_json::from_value(serde_json::json!({
+        "implement": [{"model": "codex/sol"}],
+        "review": [{"model": "codex/sol"}, {"model": "codex/sol"}],
+        "ship": [{"model": "codex/sol"}],
+    }))
+    .unwrap();
+    let pinned = enqueue(&h, ROUTED, "pinned", pins).await;
+    h.dispatch().await;
+    assert_eq!(h.stages(&waiting.id).await.len(), 1, "the review waits");
+    assert_eq!(
+        h.stages(&pinned.id).await.len(),
+        1,
+        "the free slot goes to work that can run"
+    );
+}

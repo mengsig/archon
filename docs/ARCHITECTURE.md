@@ -1711,7 +1711,8 @@ repo and pipeline, pause state, spend) plus `Caps`, and returns a
 `DispatchPlan`:
 
 1. Pending spawns of **already running** runs come first, in item priority
-   order and then by item age. Finishing work beats starting work.
+   order and then by item age. Finishing work beats starting work. One
+   waiting for provider quota (`PendingSpawn.quota_hold`) takes no slot.
 2. Then queued items whose dependencies all `succeeded`, ordered by `priority`
    descending and then by `created_at`, skipping paused repos and pipelines.
 3. A spawn is admitted only if the global, repo and pipeline caps all have a
@@ -1943,8 +1944,9 @@ fresh tier-only stages move as they are reserved (`quota::reroute_spawns`),
 its stored plan following; both record why in `QueueItem.provider_switch`.
 A running item's stage whose every eligible provider is at 0 stays pending,
 noted there too, and is reserved once one resets. Each admission snapshot
-marks queued items with such a stage (`quota::item_hold`); the planner skips
-them with `Hold::ProviderQuota`, naming the earliest reset, so they start once
+marks such pending spawns (`quota::spawn_hold`) and queued items with such a
+stage (`quota::item_hold`); the planner gives them no slot, under
+`Hold::ProviderQuota`, so other work takes the capacity and they start once
 a window resets. `status` and `queue_status` show each provider's headroom,
 reserve and next reset.
 

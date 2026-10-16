@@ -2,6 +2,7 @@
 //! of quota, follow the item's new provider, or wait while every one is out.
 
 use archon_core::error::ArchonError;
+use archon_core::id::QueueItemId;
 use archon_core::model_tier::ModelCatalog;
 use archon_core::policy::ModelPolicy;
 use archon_core::provider_route::{ProviderRoute, ProviderWeights, Routed};
@@ -10,6 +11,7 @@ use archon_core::quota::{Headroom, QuotaHold, QuotaView};
 use archon_core::repo::Repo;
 use archon_pipeline::{PipelineSpec, SpawnPlan};
 use archon_queue::Store;
+use archon_queue::dispatch::PendingSpawn;
 
 use crate::context::DaemonContext;
 use crate::knobs::{self, ItemRoute, TierScope};
@@ -83,6 +85,12 @@ pub(crate) fn reroute_spawns(
     if catalog.is_empty() {
         return Ok(Reserve::Go);
     }
+    if let Some(spent) = view.as_ref().filter(|v| v.any_exhausted())
+        && let Some(hold) = first_hold(item, (spec, plans), (&weights, &policy), (&catalog, spent))
+    {
+        record_wait(store, item, &hold)?;
+        return Ok(Reserve::Wait);
+    }
     let quota = (Some(&weights), view.as_ref());
     let held = knobs::item_provider(quota, &catalog, &policy, ItemRoute::new(item));
     let id = item.id.clone();
@@ -92,13 +100,6 @@ pub(crate) fn reroute_spawns(
     }
     .by(quota.0, quota.1);
     let route = route.expect("weights route the item");
-    if let Some(hold) = plans
-        .iter()
-        .find_map(|p| plan_hold(p, spec, (&catalog, &policy), route))
-    {
-        record_wait(store, item, &hold)?;
-        return Ok(Reserve::Wait);
-    }
     let tiers = TierScope::new(&ctx.config, &policy, &catalog).routed(Some(route));
     let first = move_plans(plans, (spec, tiers), (held.as_deref(), view.as_ref()));
     if first.is_none() && item.routed_provider == held {
@@ -137,6 +138,48 @@ fn routing(
     };
     let weights = env.provider_weights(&ctx.config)?;
     Some((weights, env.policy(&ctx.config)))
+}
+
+/// The first of `plans` of `item` in `spec` that waits for quota, routed as
+/// the item is; the planner gives such a run no slot.
+pub(super) fn first_hold(
+    item: &QueueItem,
+    (spec, plans): (&PipelineSpec, &[SpawnPlan]),
+    (weights, policy): (&ProviderWeights, &ModelPolicy),
+    (catalog, view): (&ModelCatalog, &QuotaView),
+) -> Option<QuotaHold> {
+    assert!(!plans.is_empty(), "a run with pending spawns");
+    assert!(!catalog.is_empty(), "tiers resolve against a catalog");
+    let quota = (Some(weights), Some(view));
+    let held = knobs::item_provider(quota, catalog, policy, ItemRoute::new(item));
+    let route = ItemRoute {
+        id: &item.id,
+        held: held.as_deref(),
+    }
+    .by(quota.0, quota.1)?;
+    plans
+        .iter()
+        .find_map(|p| plan_hold(p, spec, (catalog, policy), route))
+}
+
+/// Note on each item the planner held a pending spawn of that it waits.
+pub(crate) async fn note_waits(
+    ctx: &DaemonContext,
+    spawns: &[PendingSpawn],
+) -> Result<(), ArchonError> {
+    let held: Vec<(&QueueItemId, &QuotaHold)> = (spawns.iter())
+        .filter_map(|s| Some((&s.item, s.quota_hold.as_ref()?)))
+        .collect();
+    if held.is_empty() {
+        return Ok(());
+    }
+    let mut store = ctx.store.lock().await;
+    for (id, hold) in held {
+        let mut item = store.item(id)?;
+        assert_eq!(&item.id, id, "the store returns the item asked for");
+        record_wait(&mut store, &mut item, hold)?;
+    }
+    Ok(())
 }
 
 /// `plan`'s hold when it starts by tier alone and every provider meeting its

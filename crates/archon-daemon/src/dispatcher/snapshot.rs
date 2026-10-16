@@ -6,9 +6,10 @@ use std::collections::BTreeMap;
 use archon_core::catalog::StageKind;
 use archon_core::config::Config;
 use archon_core::error::ArchonError;
-use archon_core::id::RepoId;
+use archon_core::id::{QueueItemId, RepoId};
+use archon_core::model_tier::ModelCatalog;
 use archon_core::protocol::ItemQuery;
-use archon_core::queue::Caps;
+use archon_core::queue::{Caps, QueueItem};
 use archon_core::quota::QuotaView;
 use archon_core::repo::Repo;
 use archon_pipeline::Catalog;
@@ -48,7 +49,7 @@ pub(super) async fn build(
     for spawn in &snapshot.pending_spawns {
         envs.read_late(ctx, spawn.repo.as_ref(), false).await?;
     }
-    quota_holds(ctx, &mut snapshot, &envs).await?;
+    quota_holds(ctx, table, &mut snapshot, &envs).await?;
     snapshot.repo_caps = envs.repo_caps();
     snapshot.repo_max_per_repo = crate::settings::mirror(ctx)
         .repos
@@ -68,48 +69,77 @@ pub(super) async fn build(
     Ok(snapshot)
 }
 
-/// Each queued candidate's quota hold, from the configs and pipelines this
-/// pass read; none unless some provider is out of quota.
+/// Each queued candidate's and pending spawn's quota hold, from the configs
+/// and pipelines this pass read; none unless some provider is out of quota.
 async fn quota_holds(
     ctx: &DaemonContext,
+    table: &RunTable,
     snapshot: &mut DispatchSnapshot,
     envs: &Envs,
 ) -> Result<(), ArchonError> {
     let Some(view) = crate::quota::view(ctx).filter(QuotaView::any_exhausted) else {
         return Ok(());
     };
-    let (catalog, queued) = {
-        let store = ctx.store.lock().await;
-        let query = ItemQuery {
-            states: vec!["queued".into()],
-            ..ItemQuery::default()
-        };
-        (store.model_catalog(), store.items(&query)?)
-    };
-    let queued: BTreeMap<_, _> = queued.into_iter().map(|i| (i.id.clone(), i)).collect();
+    let (catalog, items) = holdable(ctx, &snapshot.pending_spawns).await?;
     let global = RepoEnv::new(None)?;
+    let env_of = |repo: Option<&RepoId>| match repo {
+        Some(id) => envs.configs.get(id).and_then(Option::as_ref),
+        None => Some(&global),
+    };
+    let read = (&catalog, &view);
     for candidate in &mut snapshot.queued {
-        let env = match &candidate.repo {
-            Some(id) => envs.configs.get(id).and_then(Option::as_ref),
-            None => Some(&global),
-        };
         let pipelines = envs.catalogs.get(&candidate.repo).and_then(Option::as_ref);
+        let item = items
+            .get(&candidate.item)
+            .filter(|i| i.state.kind() == "queued");
         // An item no longer queued, or whose files do not load, is not held.
         let (Some(item), Some(env), Some(pipelines)) =
-            (queued.get(&candidate.item), env, pipelines)
+            (item, env_of(candidate.repo.as_ref()), pipelines)
         else {
             continue;
         };
-        let read = (&catalog, &view);
         candidate.quota_hold = crate::quota::item_hold(ctx, (env, pipelines), item, read);
+    }
+    for spawn in &mut snapshot.pending_spawns {
+        let (Some(item), Some(env), Some(driver), Some(plans)) = (
+            items.get(&spawn.item),
+            env_of(spawn.repo.as_ref()),
+            table.drivers.get(&spawn.run),
+            table.pending.get(&spawn.run),
+        ) else {
+            continue;
+        };
+        let pending = (item, driver.spec().as_ref(), plans.as_slice());
+        spawn.quota_hold = crate::quota::spawn_hold(ctx, env, pending, read);
     }
     debug_assert!(
         (snapshot.queued.iter())
             .filter(|c| c.quota_hold.is_some())
-            .all(|c| queued.contains_key(&c.item)),
+            .all(|c| items
+                .get(&c.item)
+                .is_some_and(|i| i.state.kind() == "queued")),
         "only queued items are held"
     );
     Ok(())
+}
+
+/// The model catalog, and every queued item and each of `spawns`' items by id.
+async fn holdable(
+    ctx: &DaemonContext,
+    spawns: &[PendingSpawn],
+) -> Result<(ModelCatalog, BTreeMap<QueueItemId, QueueItem>), ArchonError> {
+    let store = ctx.store.lock().await;
+    let query = ItemQuery {
+        states: vec!["queued".into()],
+        ..ItemQuery::default()
+    };
+    let mut items = store.items(&query)?;
+    for spawn in spawns {
+        items.push(store.item(&spawn.item)?);
+    }
+    let by_id: BTreeMap<_, _> = items.into_iter().map(|i| (i.id.clone(), i)).collect();
+    debug_assert!(spawns.iter().all(|s| by_id.contains_key(&s.item)));
+    Ok((store.model_catalog(), by_id))
 }
 
 /// Spawns drivers emitted that the dispatcher has not admitted yet.
@@ -144,6 +174,7 @@ fn pending_spawns(
             item_created_seq: micros as u64,
             wanted: u32::try_from(plans.len()).expect("a fan-out fits in u32"),
             gang: plans.iter().any(|p| p.team.is_some()),
+            quota_hold: None,
         });
     }
     Ok(out)

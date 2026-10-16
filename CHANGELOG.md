@@ -90,9 +90,10 @@ binaries refuse the migrated store. Daemon protocol 16.
   capability floor; `get_item` shows the routed provider, and `archon cost
   --by provider` and `model_evidence` report each provider's share (#78). The
   weight is scaled by the live quota headroom Aether reports; `[models]
-  reserve_percent` and `interactive_providers` keep part of each window back. An item out of headroom moves to another provider
-  (recorded as `provider_switch`), and when every provider is out it is held
-  until the earliest reset. `status` and `queue_status` show each provider's
+  reserve_percent` and `interactive_providers` keep part of each window back.
+  An item out of headroom moves to another provider (recorded as
+  `provider_switch`), and when every provider is out it is held until the
+  earliest reset. `status` and `queue_status` show each provider's
   headroom, reserve and next reset (#80).
 - Push notifications: a `[notify]` section sends gate, question, failure,
   blocked, pr_checks and budget events through a command (such as `ntfy`) or

@@ -254,7 +254,10 @@ async fn a_failing_notifier_is_logged_and_does_not_affect_the_item() {
 /// A one-request HTTP server on loopback that hands back the body it got.
 async fn fake_webhook() -> (String, tokio::task::JoinHandle<(String, String)>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}/hook?token=abc", listener.local_addr().unwrap());
+    let url = format!(
+        "http://{}/hook?f[k]=1&token=abc",
+        listener.local_addr().unwrap()
+    );
     let server = tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
         let mut raw = Vec::new();
@@ -301,7 +304,7 @@ async fn a_gate_opening_posts_the_event_to_the_webhook() {
         .await
         .expect("the webhook was called")
         .unwrap();
-    assert!(head.starts_with("POST /hook?token=abc "), "{head}");
+    assert!(head.starts_with("POST /hook?f[k]=1&token=abc "), "{head}");
     assert!(
         head.to_ascii_lowercase()
             .contains("content-type: application/json"),
@@ -310,4 +313,29 @@ async fn a_gate_opening_posts_the_event_to_the_webhook() {
     let event: Value = serde_json::from_str(&body).expect("the body is the event JSON");
     assert_eq!(event["kind"], "gate");
     assert_eq!(event["id"], item.id.as_str());
+}
+
+#[tokio::test]
+async fn a_failing_webhook_is_logged_without_its_url() {
+    let warnings = Warnings::capture();
+    let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!(
+        "http://{}/hook?f[k]=1&token=s3cret",
+        closed.local_addr().unwrap()
+    );
+    drop(closed);
+    let h = Harness::with_config(config(|n| n.webhook = Some(url))).await;
+    let item = open_gate(&h, "Rename a flag").await;
+    let logged = warnings.wait_for("push notification failed").await;
+    assert!(logged.contains("curl"), "{logged}");
+    assert!(
+        !logged.contains("s3cret") && !logged.contains("/hook"),
+        "{logged}"
+    );
+    let run = h.run(&item.id).await;
+    assert!(
+        matches!(run.state, RunState::AwaitingOperator { .. }),
+        "{:?}",
+        run.state
+    );
 }

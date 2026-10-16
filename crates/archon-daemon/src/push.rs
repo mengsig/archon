@@ -209,6 +209,8 @@ struct Delivery {
     program: String,
     args: Vec<String>,
     stdin: Vec<u8>,
+    /// Off for curl, whose diagnostics may quote the webhook URL and its token.
+    log_stderr: bool,
 }
 
 impl Delivery {
@@ -219,6 +221,7 @@ impl Delivery {
                 program: program.clone(),
                 args: args.to_vec(),
                 stdin: json.into_bytes(),
+                log_stderr: true,
             };
         }
         let url = config.webhook.as_deref().expect("a sink is configured");
@@ -227,6 +230,7 @@ impl Delivery {
             program: "curl".into(),
             args: vec!["-q".into(), "--config".into(), "-".into()],
             stdin: curl_config(url, &json).into_bytes(),
+            log_stderr: false,
         }
     }
 
@@ -262,6 +266,9 @@ impl Delivery {
         if output.status.success() {
             return Ok(());
         }
+        if !self.log_stderr {
+            return Err(format!("{} (its stderr is not logged)", output.status));
+        }
         let stderr = String::from_utf8_lossy(&output.stderr);
         Err(format!("{}: {}", output.status, clip(stderr.trim(), 500)))
     }
@@ -273,7 +280,7 @@ fn curl_config(url: &str, json: &str) -> String {
     assert!(!json.contains('\n'), "compact JSON is one line");
     format!(
         "url = \"{}\"\nrequest = \"POST\"\nheader = \"Content-Type: application/json\"\n\
-         data-binary = \"{}\"\nproto = \"=http,https\"\nfail\nsilent\nshow-error\nmax-time = 20\n",
+         data-binary = \"{}\"\nproto = \"=http,https\"\ngloboff\nfail\nsilent\nshow-error\nmax-time = 20\n",
         curl_quote(url),
         curl_quote(json)
     )
@@ -313,6 +320,6 @@ mod tests {
             config.contains(r#"data-binary = "{\"title\":\"say \\\"hi\\\" \\\\n\"}""#),
             "{config}"
         );
-        assert_eq!(config.lines().count(), 9, "one option a line: {config}");
+        assert_eq!(config.lines().count(), 10, "one option a line: {config}");
     }
 }

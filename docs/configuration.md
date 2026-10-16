@@ -333,7 +333,9 @@ is the item (a question about no item gives its `q_…` id, a budget hold
 never carries a brief, a stage summary, a question's text or a secret.
 `command` runs without a shell with the event on stdin; `webhook` POSTs it as
 `application/json` through `curl`, which must be on `PATH`, with the URL
-passed on curl's stdin so no process listing shows it. At most one event of a
+passed on curl's stdin, taken literally (no `[]` globbing), so no process
+listing shows it; curl's own error output is not logged, since it may quote
+the URL. At most one event of a
 kind goes out per `min_gap_secs` (0 to 86400); later ones are skipped and
 logged. A notifier that fails or runs over 30 seconds is logged as a warning
 in `archond`'s log and changes nothing else.

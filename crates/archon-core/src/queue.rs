@@ -11,6 +11,7 @@ use crate::error::ArchonError;
 use crate::github::GithubThread;
 use crate::id::{InitiativeId, PipelineRunId, QueueItemId, RepoId};
 use crate::model::{ModelPlan, ModelReasons};
+use crate::pull_request::OntoPullRequest;
 
 /// Input checks shared by the CLI and daemon enqueue boundaries.
 pub fn check_enqueue(
@@ -202,6 +203,9 @@ pub struct QueueItem {
     /// The initiative it is a member of.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initiative: Option<InitiativeId>,
+    /// The existing pull request it delivers into, frozen at enqueue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub onto: Option<Box<OntoPullRequest>>,
     pub state: QueueState,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -307,6 +311,7 @@ mod tests {
 
     fn item() -> QueueItem {
         QueueItem {
+            onto: None,
             id: QueueItemId::new(),
             repo: Some(RepoId::new()),
             pipeline: "direct".into(),

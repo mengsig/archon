@@ -179,6 +179,9 @@ fn item_line(store: &Store, item: &QueueItem) -> Result<String, ArchonError> {
     if matches!(item.state, QueueState::Queued) && details.is_empty() {
         details.push("waits=dispatch capacity/pause".into());
     }
+    if let Some(onto) = &item.onto {
+        details.push(format!("onto={}", onto.pr.url()));
+    }
     Ok(format!(
         "{} {} {} | {}",
         item.id,

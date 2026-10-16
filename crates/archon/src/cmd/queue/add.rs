@@ -1,8 +1,11 @@
 //! Decode files and send the same enqueue request as MCP.
 
+use archon_client::ArchonClient;
 use archon_core::ArchonError;
 use archon_core::autonomy::AutonomyPatch;
+use archon_core::id::QueueItemId;
 use archon_core::protocol::{EnqueueRequest, Reply, RepoRef, Request};
+use archon_core::pull_request::OntoTarget;
 
 use crate::cli::QueueAddArgs;
 use crate::cmd::{emit, read_map, read_text};
@@ -26,7 +29,12 @@ pub async fn run(args: QueueAddArgs, json: bool) -> anyhow::Result<()> {
     for dependency in args.depends_on {
         depends_on.push(views::resolve_item(&client, &dependency).await?);
     }
+    let onto = match args.onto.as_deref() {
+        Some(text) => Some(onto_target(&client, text).await?),
+        None => None,
+    };
     let request = EnqueueRequest {
+        onto,
         stage_timeouts: Default::default(),
         title: args.title,
         repo: args.repo.map(RepoRef),
@@ -54,4 +62,49 @@ pub async fn run(args: QueueAddArgs, json: bool) -> anyhow::Result<()> {
     };
     super::note_budgets_off(&reply);
     emit(json, || reply_data(&reply), &item.id.to_string())
+}
+
+/// `--onto`: an item id or prefix, resolved now, else a number or a branch.
+async fn onto_target(client: &ArchonClient, text: &str) -> anyhow::Result<OntoTarget> {
+    let text = text.trim();
+    if text.starts_with(QueueItemId::PREFIX) {
+        return Ok(OntoTarget::Item(views::resolve_item(client, text).await?));
+    }
+    Ok(number_or_branch(text)?)
+}
+
+/// A pull request number, `123` or `#123`, else the head branch `text` names.
+fn number_or_branch(text: &str) -> Result<OntoTarget, ArchonError> {
+    if text.is_empty() {
+        return Err(ArchonError::Invalid(
+            "--onto names an item, a pull request number or a branch".into(),
+        ));
+    }
+    let digits = text.strip_prefix('#').unwrap_or(text);
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Ok(OntoTarget::Branch(text.to_owned()));
+    }
+    let number = digits
+        .parse()
+        .map_err(|e| ArchonError::Invalid(format!("--onto {text}: {e}")))?;
+    Ok(OntoTarget::Pr(number))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn onto_reads_a_number_with_or_without_hash_and_any_other_text_as_a_branch() {
+        assert_eq!(number_or_branch("100").unwrap(), OntoTarget::Pr(100));
+        assert_eq!(number_or_branch("#7").unwrap(), OntoTarget::Pr(7));
+        let branch = number_or_branch("feat/x").unwrap();
+        assert_eq!(branch, OntoTarget::Branch("feat/x".into()));
+        assert_eq!(
+            number_or_branch("#").unwrap(),
+            OntoTarget::Branch("#".into())
+        );
+        assert!(number_or_branch("").is_err());
+        assert!(number_or_branch("99999999999999999999999").is_err());
+    }
 }

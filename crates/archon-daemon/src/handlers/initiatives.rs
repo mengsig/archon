@@ -86,6 +86,14 @@ async fn prepare_member(
         .unwrap_or_else(|| member_title(&member.brief));
     check_enqueue(&title, &member.brief, &[], None)?;
     assert!(member.after.iter().all(|&i| i < earlier.len()));
+    let onto = items::freeze_onto(
+        ctx,
+        &env,
+        &resolved.spec,
+        member.onto.as_ref(),
+        !member.after.is_empty(),
+    )
+    .await?;
     let dependencies = member
         .after
         .iter()
@@ -93,6 +101,7 @@ async fn prepare_member(
         .collect();
     assert!(!title.trim().is_empty());
     Ok(QueueItem {
+        onto: onto.map(Box::new),
         id,
         repo: env.repo.as_ref().map(|r| r.id.clone()),
         pipeline: resolved.pipeline,

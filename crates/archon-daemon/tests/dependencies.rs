@@ -53,6 +53,7 @@ async fn enqueue_after(
         _ => plan(),
     };
     let request = EnqueueRequest {
+        onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(pipeline.into()),

@@ -3,12 +3,18 @@
 
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
+use crate::id::QueueItemId;
+
 /// Longest pull request number accepted, in digits; `u64` holds 19.
 const MAX_NUMBER_DIGITS: usize = 18;
 
 /// One pull request, as `https://<host>/<owner>/<name>/pull/<number>` names
-/// it. Host and repository are lowercase, as GitHub matches them.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// it. Host and repository are lowercase, as GitHub matches them. Stored as
+/// that URL, read back only when it is one.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct PullRequestRef {
     /// `github.com`, or a GitHub Enterprise host.
     pub host: String,
@@ -46,6 +52,70 @@ impl PullRequestRef {
         format!(
             "https://{}/{}/pull/{}",
             self.host, self.repository, self.number
+        )
+    }
+}
+
+impl TryFrom<String> for PullRequestRef {
+    type Error = String;
+
+    fn try_from(url: String) -> Result<Self, Self::Error> {
+        Self::from_url(&url).ok_or_else(|| format!("{url:?} is no pull request URL"))
+    }
+}
+
+impl From<PullRequestRef> for String {
+    fn from(pr: PullRequestRef) -> Self {
+        pr.url()
+    }
+}
+
+/// The pull request an item delivers into instead of opening its own, as
+/// enqueue's `onto` names it: another item's, a number, or an open branch's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OntoTarget {
+    Item(QueueItemId),
+    Pr(u64),
+    Branch(String),
+}
+
+impl fmt::Display for OntoTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Item(id) => write!(f, "item {id}"),
+            Self::Pr(number) => write!(f, "pull request #{number}"),
+            Self::Branch(branch) => write!(f, "branch `{branch}`"),
+        }
+    }
+}
+
+/// An `onto` target's pull request as GitHub showed it at enqueue, frozen:
+/// later work starts from `head_sha` and expects the head still there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OntoPullRequest {
+    /// What enqueue was asked for.
+    pub target: OntoTarget,
+    pub pr: PullRequestRef,
+    /// GitHub's node id, when `gh` gave one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    /// `owner/name` of the repository holding `head_ref`.
+    pub head_repository: String,
+    pub head_ref: String,
+    pub base_ref: String,
+    pub head_sha: String,
+}
+
+impl fmt::Display for OntoPullRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let short = self.head_sha.get(..12).unwrap_or(&self.head_sha);
+        write!(
+            f,
+            "{} (`{}` into `{}`, head {short})",
+            self.pr.url(),
+            self.head_ref,
+            self.base_ref
         )
     }
 }
@@ -89,6 +159,26 @@ mod tests {
         assert_eq!(pr.to_string(), "github.com/mengsig/archon#69");
         let enterprise = PullRequestRef::from_url("https://ghe.example:8443/o/r/pull/1").unwrap();
         assert_eq!(enterprise.host, "ghe.example:8443");
+    }
+
+    #[test]
+    fn a_pull_request_is_stored_as_its_url_and_read_back_only_from_one() {
+        let pr = PullRequestRef::from_url("https://github.com/o/r/pull/7").unwrap();
+        let json = serde_json::to_string(&pr).unwrap();
+        assert_eq!(json, "\"https://github.com/o/r/pull/7\"");
+        assert_eq!(serde_json::from_str::<PullRequestRef>(&json).unwrap(), pr);
+        let bad = serde_json::from_str::<PullRequestRef>("\"https://github.com/o/r/pull/0\"");
+        assert!(bad.is_err());
+    }
+
+    #[test]
+    fn an_onto_target_names_one_kind_on_the_wire() {
+        let pr: OntoTarget = serde_json::from_str(r#"{"pr":100}"#).unwrap();
+        assert_eq!(pr, OntoTarget::Pr(100));
+        let branch: OntoTarget = serde_json::from_str(r#"{"branch":"feat/x"}"#).unwrap();
+        assert_eq!(branch, OntoTarget::Branch("feat/x".into()));
+        assert!(serde_json::from_str::<OntoTarget>(r#"{"pr":1,"branch":"b"}"#).is_err());
+        assert!(serde_json::from_str::<OntoTarget>(r#"{"tag":"v1"}"#).is_err());
     }
 
     #[test]

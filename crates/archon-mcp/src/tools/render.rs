@@ -276,6 +276,13 @@ fn item_detail(detail: &ItemDetail) -> String {
     if let Some(switch) = &item.provider_switch {
         let _ = write!(text, "\nProvider switch: {switch}");
     }
+    if let Some(onto) = &item.onto {
+        let _ = write!(
+            text,
+            "\nOnto: {onto}, frozen at enqueue from {}",
+            onto.target
+        );
+    }
     if !item.stage_timeouts.is_empty() {
         let timeouts: Vec<String> = (item.stage_timeouts.iter())
             .map(|(stage, minutes)| format!("{stage} {minutes}m"))

@@ -533,6 +533,7 @@ async fn a_knob_above_the_ceiling_is_refused_with_what_is_allowed() {
 
 fn queued_item(title: String, brief: String) -> QueueItem {
     QueueItem {
+        onto: None,
         id: QueueItemId::new(),
         repo: None,
         pipeline: "ask".into(),

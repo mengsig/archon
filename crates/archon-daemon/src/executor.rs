@@ -20,6 +20,7 @@ pub(crate) mod gh;
 pub(crate) mod initiative_ship;
 mod lanes;
 mod naming;
+pub(crate) mod onto;
 pub(crate) mod operator_merge;
 mod pages;
 pub mod pull_requests;

@@ -191,6 +191,7 @@ fn errand(
     assert!(outcomes.iter().all(|o| o.repo.as_ref() == Some(repo)));
     let now = archon_core::now();
     Ok(QueueItem {
+        onto: None,
         id: archon_core::id::QueueItemId::new(),
         repo: Some(repo.clone()),
         pipeline: "errand".into(),

@@ -8,6 +8,7 @@ use archon_core::id::QueueItemId;
 use archon_core::model::{Effort, ModelPlan, ModelPlanDraft, ModelReasons, check_reason_lengths};
 use archon_core::notify::NotificationKind;
 use archon_core::protocol::{EnqueueRequest, ItemDetail, ItemPatch, ItemQuery, Reply};
+use archon_core::pull_request::{OntoPullRequest, OntoTarget};
 use archon_core::queue::{QueueItem, QueueState, check_enqueue, check_item_budget, check_tags};
 use archon_core::repo::Repo;
 use archon_pipeline::PipelineSpec;
@@ -52,8 +53,15 @@ pub(super) async fn enqueue(
     let plan = filled_plan(ctx, route, &env, &resolved.base, &resolved.spec, given).await?;
     check_plan(ctx, &env, &resolved.spec, &plan)?;
     check_reasons(&resolved.spec, req.model_reasons.as_ref())?;
+    let key = req
+        .idempotency_key
+        .as_deref()
+        .filter(|k| !k.trim().is_empty());
+    let asked = (req.onto.as_ref(), !req.depends_on.is_empty());
+    let onto = enqueue_onto(ctx, &env, &resolved.spec, asked, key).await?;
     let now = archon_core::now();
     let item = QueueItem {
+        onto: onto.map(Box::new),
         id,
         repo: env.repo.as_ref().map(|r| r.id.clone()),
         pipeline: resolved.pipeline,
@@ -76,10 +84,6 @@ pub(super) async fn enqueue(
         created_at: now,
         updated_at: now,
     };
-    let key = req
-        .idempotency_key
-        .as_deref()
-        .filter(|k| !k.trim().is_empty());
     let stored = ctx
         .store
         .lock()
@@ -121,6 +125,82 @@ async fn enqueue_context(
     assert_eq!(resolved.spec.name(), resolved.pipeline);
     assert!(!resolved.spec.file.stages.is_empty());
     Ok((env, resolved))
+}
+
+/// The `onto` record of an enqueue asking for `target`, with or without
+/// dependencies: the one its idempotency `key` already froze, else frozen now.
+async fn enqueue_onto(
+    ctx: &DaemonContext,
+    env: &RepoEnv,
+    spec: &PipelineSpec,
+    (target, has_dependencies): (Option<&OntoTarget>, bool),
+    key: Option<&str>,
+) -> Result<Option<OntoPullRequest>, ArchonError> {
+    if let Some(frozen) = replayed_onto(ctx, key, target).await? {
+        return Ok(Some(frozen));
+    }
+    freeze_onto(ctx, env, spec, target, has_dependencies).await
+}
+
+/// The `onto` record an earlier enqueue with idempotency `key` froze for
+/// `target`, so a replay returns that item even once the pull request moved on.
+async fn replayed_onto(
+    ctx: &DaemonContext,
+    key: Option<&str>,
+    target: Option<&OntoTarget>,
+) -> Result<Option<OntoPullRequest>, ArchonError> {
+    let (Some(key), Some(target)) = (key, target) else {
+        return Ok(None);
+    };
+    let Some(first) = ctx.store.lock().await.item_by_key(key)? else {
+        return Ok(None);
+    };
+    // Another target is no replay: freezing it and the store refuse the key.
+    Ok(first
+        .onto
+        .filter(|onto| onto.target == *target)
+        .map(|onto| *onto))
+}
+
+/// The pull request `target` names, frozen; `None` without a target. An
+/// item that delivers into one is stacked on nothing else, and its pipeline
+/// works in a worktree, which starts from the frozen head.
+pub(super) async fn freeze_onto(
+    ctx: &DaemonContext,
+    env: &RepoEnv,
+    spec: &PipelineSpec,
+    target: Option<&OntoTarget>,
+    has_dependencies: bool,
+) -> Result<Option<OntoPullRequest>, ArchonError> {
+    let Some(target) = target else {
+        return Ok(None);
+    };
+    if has_dependencies {
+        return Err(onto_with_dependencies());
+    }
+    if spec.file.pipeline.workspace != WorkspaceMode::Worktree {
+        return Err(ArchonError::Invalid(format!(
+            "pipeline {:?} does not work in a worktree, so it cannot start from the head of \
+             the pull request `onto` names; pick a pipeline that does",
+            spec.name()
+        )));
+    }
+    let Some(repo) = &env.repo else {
+        return Err(ArchonError::Invalid(
+            "`onto` needs a repository whose pull request it updates".into(),
+        ));
+    };
+    let frozen = executor::onto::freeze(ctx, repo, target).await?;
+    assert_eq!(&frozen.target, target, "frozen as asked");
+    Ok(Some(frozen))
+}
+
+fn onto_with_dependencies() -> ArchonError {
+    ArchonError::Invalid(
+        "an item queued `onto` a pull request starts from its head, so it cannot also stack on \
+         dependencies; queue it once they have succeeded"
+            .into(),
+    )
 }
 
 pub(super) async fn list(ctx: &DaemonContext, query: &ItemQuery) -> Result<Reply, ArchonError> {
@@ -368,6 +448,9 @@ fn apply_patch(
     plan: Option<ModelPlan>,
 ) -> Result<(), ArchonError> {
     // First: an empty amendment is refused before anything changes.
+    if item.onto.is_some() && !patch.add_depends_on.is_empty() {
+        return Err(onto_with_dependencies());
+    }
     if let Some(text) = &patch.brief_append {
         item.amend_brief(text, archon_core::now())?;
     }

@@ -5,6 +5,7 @@ name: ci
 # in these lists.
 on:
   pull_request:
+    branches: [main, next]
     paths-ignore:
       - "*.md"
       - "docs/*.md"
@@ -14,7 +15,7 @@ on:
       - ".github/PULL_REQUEST_TEMPLATE.md"
       - ".github/CODEOWNERS"
   push:
-    branches: [main]
+    branches: [main, next]
     paths-ignore:
       - "*.md"
       - "docs/*.md"
@@ -68,6 +69,7 @@ jobs:
         run: make fmt-check lint doc
 
   test:
+    if: github.event_name != 'pull_request' || github.base_ref == 'main'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:

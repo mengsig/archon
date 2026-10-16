@@ -345,6 +345,7 @@ fn enqueue(args: &mut Args) -> Result<EnqueueRequest, ToolError> {
     }
     let model_plan = args.optional_plan("model_plan")?.unwrap_or_default();
     let request = EnqueueRequest {
+        onto: args.optional("onto")?,
         repo: args.optional("repo")?,
         pipeline: args.optional_text("pipeline")?,
         title,

@@ -46,6 +46,7 @@ async fn ceiling(h: &Harness, list: &str) {
 
 async fn enqueue(h: &Harness, autonomy: AutonomyPatch) -> QueueItem {
     let request = EnqueueRequest {
+        onto: None,
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some("direct".into()),
         title: "a change".into(),

@@ -16,6 +16,7 @@ use serde_json::Value;
 
 fn item(state: QueueState) -> QueueItem {
     QueueItem {
+        onto: None,
         id: QueueItemId::new(),
         repo: None,
         pipeline: "ask".into(),

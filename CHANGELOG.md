@@ -79,16 +79,18 @@ binaries refuse the migrated store. Daemon protocol 16.
   quoting each line (#75).
 - `archon release check [owner/repo]` audits release health: version tags,
   each platform's archive and `.sha256`, `SHA256SUMS`, `VERSION`, the highest
-  stable version as Latest and whether the latest CI run got a runner;
-  `--json` is supported and `archon doctor` runs it for Archon and Aether.
-  The release workflow runs it with `--pending-tag` and `--assets` before
-  creating the draft, so a broken release history blocks publishing (#92).
+  stable version as Latest and whether the latest completed CI run got a
+  runner; `--json` is supported and `archon doctor` runs it for Archon and
+  Aether. The release workflow runs it with `--pending-tag` and `--assets`
+  before creating the draft, so a broken release history blocks publishing
+  (#92).
 - Provider routing for tier-only stages: `[models] provider_weights` (with a
   per-repository overlay and `default_provider_weight`) picks one provider per
   item by a deterministic weighted draw, kept while it meets each stage's
-  capability floor (#78). The weight is scaled by the live quota headroom
-  Aether reports; `[models] reserve_percent` and `interactive_providers` keep
-  part of each window back. An item out of headroom moves to another provider
+  capability floor; `get_item` shows the routed provider, and `archon cost
+  --by provider` and `model_evidence` report each provider's share (#78). The
+  weight is scaled by the live quota headroom Aether reports; `[models]
+  reserve_percent` and `interactive_providers` keep part of each window back. An item out of headroom moves to another provider
   (recorded as `provider_switch`), and when every provider is out it is held
   until the earliest reset. `status` and `queue_status` show each provider's
   headroom, reserve and next reset (#80).

@@ -137,6 +137,7 @@ fn inserted(id: &str, kind: StageKind, prompt: &str) -> StageSpec {
         gate: Gate::None,
         timeout_minutes: INSERTED_TIMEOUT_MINUTES,
         effort: Effort::Medium,
+        min_tier: None,
         allow_delegation: false,
         nudge: None,
         on_fail: None,

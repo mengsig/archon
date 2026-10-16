@@ -687,7 +687,7 @@ progress too; also `/verbose`), `/pause` and `/resume` (optionally `hard`,
 | `archon say "…"` | send one message to the orchestrator and exit |
 | `archon questions` / `archon answer <n> "…"` | list or answer open questions; `Q<n>` is permanent and the same in the chat |
 | `archon status` | waiting items and their next action, daemon, orchestrator, `archon` MCP server health, caps, spend and Aether link |
-| `archon cost [--since <date\|7d>] [--until <date\|1d>] [--by day\|repo\|pipeline\|model\|item\|stage]` | spend as the budgets count it, grouped (by day over the last 7 days by default), with a total; spend with no owner in the grouping, such as the orchestrator's under `--by model`, is the `-` row |
+| `archon cost [--since <date\|7d>] [--until <date\|1d>] [--by day\|repo\|pipeline\|model\|provider\|item\|stage]` | spend as the budgets count it, grouped (by day over the last 7 days by default), with a total; spend with no owner in the grouping, such as the orchestrator's under `--by model`, is the `-` row |
 | `archon model-evidence [--repo <name\|id>] [--pipeline <name>] [--stage <id>] [--since <date\|30d>]` | recorded stage attempts, completed cost median/p90, median minutes and review/test pass shares; small samples marked, at most 60 groups; evidence only |
 | `archon queue add --title … --brief-file <path\|-> [--model-plan-file <json\|toml>]` | enqueue scripted work through the daemon's MCP-equivalent policy checks; stages the plan leaves out get Archon's default model; prints the id or the item with `--json` |
 | `archon queue wait <id>… [--timeout 30m]` | wait for every item to become terminal, bounded to 30m by default; exit 0 all succeeded, 3 failed/cancelled, 4 timeout, 5 failed/cancelled dependency |

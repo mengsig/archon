@@ -148,6 +148,9 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
         archon_core::cost::format_usd(detail.spent_usd)
     );
     let _ = writeln!(out, "autonomy: {}", item.autonomy.describe());
+    if let Some(provider) = &item.routed_provider {
+        let _ = writeln!(out, "routed provider: {}", sanitize_line(provider));
+    }
     plan_lines(&mut out, item);
     for run in &detail.runs {
         run_lines(&mut out, detail, run, full);
@@ -400,6 +403,7 @@ mod tests {
             origin: None,
             stage_timeouts: Default::default(),
             fresh_retries: 0,
+            routed_provider: None,
             initiative: None,
             created_at: archon_core::now(),
             updated_at: archon_core::now(),
@@ -730,6 +734,10 @@ mod tests {
             "{text}"
         );
         assert_eq!(text.matches("Check supplied fix").count(), 1);
+        assert!(!text.contains("routed provider"), "{text}");
+        detail.item.routed_provider = Some("codex".into());
+        let text = item_detail(&detail, &RepoNames::new(), false);
+        assert!(text.contains("\nrouted provider: codex\n"), "{text}");
     }
 
     #[test]

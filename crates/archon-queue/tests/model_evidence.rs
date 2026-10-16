@@ -133,6 +133,20 @@ fn groups_by_stage_model_effort_and_measures_completed_attempts_only() {
         "{text}"
     );
     assert_eq!(text.matches("small sample").count(), 4);
+    let providers: Vec<_> = (report.providers.iter())
+        .map(|p| (p.provider.as_str(), p.attempts, p.completed, p.cost_usd))
+        .collect();
+    assert_eq!(
+        providers,
+        [("claude-code", 10, 7, 38.5), ("codex", 1, 1, 1.0)],
+        "the split by provider"
+    );
+    assert!(
+        text.contains(
+            "Provider claude-code n=10 (91% of attempts) completed=7 cost=$38.5000 (97% of cost)"
+        ),
+        "{text}"
+    );
 }
 
 #[test]

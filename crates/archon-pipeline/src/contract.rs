@@ -680,6 +680,7 @@ mod tests {
             gate,
             timeout_minutes: 10,
             effort: archon_core::model::Effort::Medium,
+            min_tier: None,
             allow_delegation: false,
             nudge: None,
             on_fail: None,

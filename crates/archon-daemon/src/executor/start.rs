@@ -17,7 +17,7 @@ use archon_pipeline::{PipelineSpec, RunDriver, RunVars};
 
 use super::{Cleanup, FollowUp, RunTable, finish, frozen, recover, settle};
 use crate::context::DaemonContext;
-use crate::knobs;
+use crate::knobs::{self, ItemRoute};
 use crate::resolve::RepoEnv;
 use crate::worktree::WorktreeManager;
 use crate::worktree::shadow::Shadow;
@@ -142,7 +142,7 @@ async fn prepare(
         policy.ceiling,
     )?;
     knobs::check_ceiling(&policy, &env, &base, checked)?;
-    let item = &tiers_at_dispatch(ctx, &env, item).await?;
+    let item = &tiers_at_dispatch(ctx, &env, item, &current).await?;
     let item = &without_retired_ship(item, &current);
     let spec = Arc::new(frozen::freeze(&ctx.paths.data_dir, &run_id, &current).await?);
     crate::learned::freeze_context(ctx, &run_id, item, &spec).await?;
@@ -168,12 +168,14 @@ async fn prepare(
 }
 
 /// `item` with each tiered choice resolved again from Aether's catalog as it
-/// is now, and stored so a recovered run keeps it. With no catalog read
-/// yet, the last resolution stands.
+/// is now, for `spec`'s floors and routed to the provider the item holds, and
+/// stored so a recovered run keeps it. With no catalog read yet, the last
+/// resolution stands.
 async fn tiers_at_dispatch(
     ctx: &DaemonContext,
     env: &RepoEnv,
     item: &QueueItem,
+    spec: &PipelineSpec,
 ) -> Result<QueueItem, ArchonError> {
     let tiered = item
         .model_plan
@@ -189,20 +191,30 @@ async fn tiers_at_dispatch(
         return Ok(item.clone());
     }
     let policy = env.policy(&ctx.config);
-    let tiers = knobs::TierScope::new(&ctx.config, &policy, &catalog);
+    let weights = env.provider_weights(&ctx.config);
     let mut store = ctx.store.lock().await;
     let mut stored = store.item(&item.id)?;
-    let before = stored.model_plan.clone();
-    stored
-        .model_plan
-        .resolve_tiers(|tier, provider| tiers.resolve(tier, provider))?;
-    if stored.model_plan != before {
-        tracing::info!(item = %item.id, "re-resolved tiered model choices at dispatch");
+    let (plan_before, held_before) = (stored.model_plan.clone(), stored.routed_provider.clone());
+    let held = knobs::item_provider(weights.as_ref(), &catalog, &policy, ItemRoute::new(&stored));
+    let route = ItemRoute {
+        id: &item.id,
+        held: held.as_deref(),
+    };
+    let tiers =
+        knobs::TierScope::new(&ctx.config, &policy, &catalog).routed(route.by(weights.as_ref()));
+    stored.model_plan.resolve_tiers(|key, tier, provider| {
+        tiers.resolve((tier, spec.tier_floor(key, tier)), provider)
+    })?;
+    stored.routed_provider = held.clone();
+    if stored.model_plan != plan_before || stored.routed_provider != held_before {
+        tracing::info!(item = %item.id, provider = ?held, "re-resolved tiered model choices at dispatch");
         stored.updated_at = archon_core::now();
         store.update_item(&stored)?;
     }
+    assert_eq!(stored.id, item.id, "the dispatched item's own record");
     Ok(QueueItem {
         model_plan: stored.model_plan,
+        routed_provider: stored.routed_provider,
         ..item.clone()
     })
 }

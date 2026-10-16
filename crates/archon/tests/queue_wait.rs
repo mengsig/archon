@@ -31,6 +31,7 @@ fn item(state: QueueState) -> QueueItem {
         origin: None,
         stage_timeouts: Default::default(),
         fresh_retries: 0,
+        routed_provider: None,
         initiative: None,
         state,
         created_at: archon_core::now(),

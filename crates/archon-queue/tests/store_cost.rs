@@ -143,6 +143,11 @@ fn each_grouping_splits_the_same_total() {
             (None, 1.75)
         ]
     );
+    assert_eq!(
+        rows(&report(CostGroup::Provider)),
+        vec![(key("codex"), 4.0), (key("claude-code"), 3.0), (None, 1.75)],
+        "the model rows summed by provider"
+    );
     let ids = [a, b, c].map(|i| key(i.id.as_str()));
     assert_eq!(
         rows(&report(CostGroup::Item)),

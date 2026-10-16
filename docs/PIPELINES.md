@@ -107,6 +107,7 @@ fan_out = 2                  # default 1; parallel agents, 1..=16 (a team's is i
 gate = "all_pass"            # default none; none | all_pass | majority | any
 timeout_minutes = 60         # default 120, 1..=43200 (30 days); Archon cancels the agent after this
 effort = "medium"            # default medium; what a model_plan gets without an effort, above it needs a model_reasons entry
+min_tier = "strong"          # default: the tier asked for; the lowest tier a weighted provider may offer here
 allow_delegation = false     # true lets the stage agent delegate, whatever the item's tools
 nudge = "Advice for this stage's model choice."
 on_fail = { goto = "fix", max_loops = 2 }   # optional fix loop
@@ -963,6 +964,9 @@ it) or a `tier`, optionally with a `provider`. Archon resolves a tier from
 Aether's catalog within the model policy, on the orchestrator's provider
 unless the choice names one, and falls back to a lower tier where the
 provider has none. `get_item` shows the tier and the model it resolved to.
+With `[models] provider_weights` set, the item's routed provider takes the
+orchestrator's place, as long as its best model reaches the stage's floor:
+the tier asked for, or the stage's `min_tier` when that is lower.
 
 A choice that leaves out `effort` gets the stage's default `effort` (`medium`
 unless the stage sets one). An effort above it needs a `model_reasons` entry

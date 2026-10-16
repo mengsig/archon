@@ -35,6 +35,7 @@ pub mod paths;
 pub mod policy;
 pub mod ports;
 pub mod protocol;
+pub mod provider_route;
 pub mod queue;
 pub mod repo;
 pub mod run;

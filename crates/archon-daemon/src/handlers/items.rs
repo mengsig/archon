@@ -16,6 +16,7 @@ use archon_queue::dispatch::effective_agent_cap;
 use super::revise::{self, Ceiling};
 use crate::context::DaemonContext;
 use crate::executor::operator_merge;
+use crate::knobs::ItemRoute;
 use crate::resolve::{self, RepoEnv};
 use crate::worktree::WorktreeManager;
 use crate::{executor, knobs, learned};
@@ -30,16 +31,25 @@ pub(super) async fn enqueue(
     let (env, resolved) = enqueue_context(ctx, &req).await?;
     let id = QueueItemId::new();
     crate::learned::prepare_routing(ctx, &id, &resolved, &req.tags).await?;
+    let unrouted = ItemRoute {
+        id: &id,
+        held: None,
+    };
+    let routed_provider = routed_provider(ctx, &env, unrouted).await?;
+    let route = ItemRoute {
+        held: routed_provider.as_deref(),
+        ..unrouted
+    };
     let given = resolve_draft(
         ctx,
-        &env,
+        (&env, route),
         &resolved.spec,
         req.model_plan,
         req.model_reasons.as_ref(),
     )
     .await?;
     check_stage_timeouts(ctx, &resolved.spec, &req.stage_timeouts)?;
-    let plan = filled_plan(ctx, &id, &env, &resolved.base, &resolved.spec, given).await?;
+    let plan = filled_plan(ctx, route, &env, &resolved.base, &resolved.spec, given).await?;
     check_plan(ctx, &env, &resolved.spec, &plan)?;
     check_reasons(&resolved.spec, req.model_reasons.as_ref())?;
     let now = archon_core::now();
@@ -59,6 +69,7 @@ pub(super) async fn enqueue(
         autonomy: resolved.autonomy,
         origin: req.origin.clone(),
         fresh_retries: 0,
+        routed_provider,
         initiative: None,
         state: QueueState::Queued,
         created_at: now,
@@ -231,9 +242,10 @@ pub(super) async fn update_within(
     if replaces_plan || patch.model_reasons.is_some() || !patch.stage_timeouts.is_empty() {
         let (env, base, spec) = item_pipeline(ctx, &current).await?;
         if let Some(draft) = patch.model_plan.take() {
-            let given =
-                resolve_draft(ctx, &env, &spec, draft, patch.model_reasons.as_ref()).await?;
-            let filled = filled_plan(ctx, id, &env, &base, &spec, given).await?;
+            let route = ItemRoute::new(&current);
+            let reasons = patch.model_reasons.as_ref();
+            let given = resolve_draft(ctx, (&env, route), &spec, draft, reasons).await?;
+            let filled = filled_plan(ctx, route, &env, &base, &spec, given).await?;
             check_plan(ctx, &env, &spec, &filled)?;
             plan = Some(filled);
         }
@@ -421,11 +433,19 @@ pub(super) async fn retry(
     // A 1.0 item names the ship agent its built-in no longer has; the retry stores the repair.
     let mut kept_plan = current.model_plan.clone();
     spec.drop_retired_ship(&mut kept_plan, None);
+    let provider = routed_provider(ctx, &env, ItemRoute::new(&current)).await?;
+    let route = ItemRoute {
+        id,
+        held: provider.as_deref(),
+    };
     let plan = match retry.model_plan {
-        Some(draft) => resolve_draft(ctx, &env, &spec, draft, retry.model_reasons.as_ref()).await?,
+        Some(draft) => {
+            let reasons = retry.model_reasons.as_ref();
+            resolve_draft(ctx, (&env, route), &spec, draft, reasons).await?
+        }
         None => kept_plan,
     };
-    let plan = filled_plan(ctx, id, &env, &base, &spec, plan).await?;
+    let plan = filled_plan(ctx, route, &env, &base, &spec, plan).await?;
     check_plan(ctx, &env, &spec, &plan)?;
     check_reasons(&spec, retry.model_reasons.as_ref())?;
     check_runs_here(ctx, &env, &spec).await?;
@@ -439,6 +459,7 @@ pub(super) async fn retry(
         check_retryable(&*ctx.store.lock().await, &loaded)?;
         let mut item = loaded.clone();
         item.model_plan = plan;
+        item.routed_provider = provider;
         if replaces_plan || retry.model_reasons.is_some() {
             item.model_reasons = retry.model_reasons;
         }
@@ -648,33 +669,59 @@ async fn item_pipeline(
     Ok((env, base, spec))
 }
 
-/// `draft` as [`knobs::resolve_plan`] gives it, its tiers resolved from
-/// Aether's catalog within `env`'s model policy.
-pub(super) async fn resolve_draft(
+/// The provider `item` holds under `env`'s provider weights; see
+/// [`knobs::item_provider`].
+pub(crate) async fn routed_provider(
     ctx: &DaemonContext,
     env: &RepoEnv,
+    item: ItemRoute<'_>,
+) -> Result<Option<String>, ArchonError> {
+    let Some(weights) = env.provider_weights(&ctx.config) else {
+        return Ok(item.held.map(str::to_owned));
+    };
+    let catalog = learned::catalog(ctx).await?;
+    let policy = env.policy(&ctx.config);
+    Ok(knobs::item_provider(
+        Some(&weights),
+        &catalog,
+        &policy,
+        item,
+    ))
+}
+
+/// `draft` as [`knobs::resolve_plan`] gives it, its tiers resolved from
+/// Aether's catalog within `env`'s model policy and routed for `item`.
+pub(super) async fn resolve_draft(
+    ctx: &DaemonContext,
+    (env, item): (&RepoEnv, ItemRoute<'_>),
     spec: &PipelineSpec,
     draft: ModelPlanDraft,
     reasons: Option<&ModelReasons>,
 ) -> Result<ModelPlan, ArchonError> {
     let catalog = learned::catalog(ctx).await?;
     let policy = env.policy(&ctx.config);
-    let tiers = knobs::TierScope::new(&ctx.config, &policy, &catalog);
+    let weights = env.provider_weights(&ctx.config);
+    let tiers =
+        knobs::TierScope::new(&ctx.config, &policy, &catalog).routed(item.by(weights.as_ref()));
     knobs::resolve_plan(spec, draft, reasons, tiers)
 }
 
-/// `plan` with what it leaves out filled for `env`'s repository.
+/// `plan` with what it leaves out filled for `env`'s repository and routed
+/// for `item`.
 pub(super) async fn filled_plan(
     ctx: &DaemonContext,
-    id: &QueueItemId,
+    item: ItemRoute<'_>,
     env: &RepoEnv,
     base: &PipelineSpec,
     spec: &PipelineSpec,
     plan: ModelPlan,
 ) -> Result<ModelPlan, ArchonError> {
+    let id = item.id;
     let policy = env.policy(&ctx.config);
     let catalog = learned::catalog(ctx).await?;
-    let tiers = knobs::TierScope::new(&ctx.config, &policy, &catalog);
+    let weights = env.provider_weights(&ctx.config);
+    let tiers =
+        knobs::TierScope::new(&ctx.config, &policy, &catalog).routed(item.by(weights.as_ref()));
     let max_tier = env.max_default_tier(&ctx.config);
     let fallback = knobs::default_choice(&ctx.config, tiers, max_tier, spec);
     let store = ctx.store.lock().await;

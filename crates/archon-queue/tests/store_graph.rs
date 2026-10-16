@@ -84,6 +84,7 @@ fn an_item_keeps_the_github_thread_that_asked_for_it() {
         origin: Some(thread()),
         stage_timeouts: Default::default(),
         fresh_retries: 0,
+        routed_provider: None,
         initiative: None,
         ..item(Some(&repo), "fix")
     };
@@ -103,6 +104,7 @@ fn an_item_keeps_the_github_thread_that_asked_for_it() {
         origin: None,
         stage_timeouts: Default::default(),
         fresh_retries: 0,
+        routed_provider: None,
         initiative: None,
         ..first
     };
@@ -146,6 +148,7 @@ fn request_variants(first: &QueueItem) -> Vec<QueueItem> {
             origin: Some(thread()),
             stage_timeouts: Default::default(),
             fresh_retries: 0,
+            routed_provider: None,
             initiative: None,
             ..base.clone()
         },

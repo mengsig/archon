@@ -19,11 +19,24 @@ and the orchestrator picks a model and effort for each stage of each item.
 instead of a model and a new model release needs no Archon change. Defaults
 never pick above `max_default_tier`; set it to `"frontier"` to let them.
 
+A tier without a provider runs on the orchestrator's provider, unless
+`provider_weights` is set. Then each item is given one provider, picked by
+weight from a hash of its id, and all of its tier-only choices run there,
+through every stage and retry; `get_item` names it. A provider whose best
+allowed model is below a stage's floor (the tier asked for, or the stage's
+`min_tier`) is skipped for that stage, and with none left the orchestrator's
+provider serves it as before. A provider Aether lists but the table leaves out
+gets `default_provider_weight`. A repository's table replaces the global one.
+An exact `model` or a named `provider` always wins. `archon cost --by provider`
+and `model_evidence` show the share each provider got.
+
 ```toml
 [models]                       # optional: leave it out to allow every ready model
 allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-sol"]
 max_effort = "high"
 # max_default_tier = "strong"  # the highest tier a default picks (the default)
+# provider_weights = { "claude-code" = 7, codex = 3 }   # route tier-only choices by share
+# default_provider_weight = 1  # a provider the table leaves out (the default; 0 = never)
 
 [limits]
 max_parallel_agents = 8        # the hard cap on running stage agents (the default)

@@ -190,6 +190,11 @@ pub struct QueueItem {
     /// branch, on a branch of its own (ARCHITECTURE §13).
     #[serde(default)]
     pub fresh_retries: u32,
+    /// The provider `[models] provider_weights` routed its tier-only choices
+    /// to, chosen once from its id; stages keep it unless their floor rules
+    /// it out. `None` while no weights are set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routed_provider: Option<String>,
     /// The initiative it is a member of.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initiative: Option<InitiativeId>,
@@ -313,6 +318,7 @@ mod tests {
             autonomy: Autonomy::default(),
             origin: None,
             fresh_retries: 0,
+            routed_provider: None,
             initiative: None,
             state: QueueState::Queued,
             created_at: crate::now(),

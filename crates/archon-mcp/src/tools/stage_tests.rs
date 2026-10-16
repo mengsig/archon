@@ -349,3 +349,16 @@ fn get_item_names_the_choice_a_retuned_stage_runs_now() {
     assert!(text.contains(&line), "{text}");
     assert!(!text.contains(&choice().model.to_string()), "{text}");
 }
+
+#[test]
+fn get_item_names_the_provider_weights_routed_the_item_to() {
+    let mut detail = item_detail(long_review(PipelineRunId::new()));
+    let text = render("get_item", &Reply::ItemDetail(Box::new(detail.clone())));
+    assert!(!text.contains("Routed provider"), "{text}");
+    detail.item.routed_provider = Some("codex".into());
+    let text = render("get_item", &Reply::ItemDetail(Box::new(detail)));
+    assert!(
+        text.contains("\nRouted provider: codex (tier-only choices"),
+        "{text}"
+    );
+}

@@ -15,6 +15,7 @@ use crate::initiative::InitiativeLimits;
 use crate::model::{Effort, ModelRef};
 use crate::model_tier::Tier;
 use crate::policy::ModelPolicy;
+use crate::provider_route::{DEFAULT_PROVIDER_WEIGHT, ProviderWeights};
 use crate::queue::Caps;
 use crate::repo::ShipMode;
 
@@ -225,6 +226,12 @@ pub struct ModelsConfig {
     /// The highest tier a default picks on its own ([`DEFAULT_MAX_TIER`]
     /// when unset); a plan may name any. A repository may only lower it.
     pub max_default_tier: Option<Tier>,
+    /// Each provider's share of tier-only items; empty keeps them on the
+    /// orchestrator's provider. A repository's entries replace the global ones.
+    pub provider_weights: BTreeMap<String, u32>,
+    /// The weight of a provider `provider_weights` leaves out
+    /// ([`DEFAULT_PROVIDER_WEIGHT`] when unset).
+    pub default_provider_weight: Option<u32>,
 }
 
 /// Defaults stop below the frontier tier unless the operator raises them.
@@ -233,6 +240,37 @@ pub const DEFAULT_MAX_TIER: Tier = Tier::Strong;
 impl ModelsConfig {
     pub fn policy(&self) -> ModelPolicy {
         ModelPolicy::from_lists(&self.allow, &self.deny, self.max_effort)
+    }
+
+    /// The weights in force for `repo`: its entries and default over the
+    /// global ones. `None` when neither names a provider, so routing is off.
+    pub fn provider_weights(&self, repo: &ModelsConfig) -> Option<ProviderWeights> {
+        if self.provider_weights.is_empty() && repo.provider_weights.is_empty() {
+            return None;
+        }
+        let mut table = self.provider_weights.clone();
+        table.extend(repo.provider_weights.clone());
+        let default = repo
+            .default_provider_weight
+            .or(self.default_provider_weight)
+            .unwrap_or(DEFAULT_PROVIDER_WEIGHT);
+        debug_assert!(!table.is_empty(), "routing is on only with a table");
+        Some(ProviderWeights::new(table, default))
+    }
+
+    /// `provider_weights` names providers, not models.
+    pub fn check_weights(&self) -> Result<(), ArchonError> {
+        let bad = self
+            .provider_weights
+            .keys()
+            .find(|p| p.trim().is_empty() || p.contains('/'));
+        match bad {
+            Some(bad) => Err(ArchonError::Config(format!(
+                "models.provider_weights key {bad:?} must name a provider, such as \"codex\", \
+                 not a model"
+            ))),
+            None => Ok(()),
+        }
     }
 
     /// The global cap on a default's tier, lowered by `repo`'s.
@@ -773,6 +811,7 @@ impl Config {
         self.worktrees.validate()?;
         self.artifacts.validate()?;
         self.storage.validate()?;
+        self.models.check_weights()?;
         let orchestrator = crate::model::ModelChoice {
             model: self.orchestrator.model.clone(),
             effort: self.orchestrator.effort,
@@ -788,7 +827,9 @@ impl Config {
 impl RepoConfig {
     pub fn load(repo_root: &Path) -> Result<Self, ArchonError> {
         let path = crate::paths::repo_archon_dir(repo_root).join(CONFIG_FILE_NAME);
-        Ok(read_toml(&path)?.unwrap_or_default())
+        let config: Self = read_toml(&path)?.unwrap_or_default();
+        config.models.check_weights()?;
+        Ok(config)
     }
 
     /// Global caps with this repository's narrowing applied.
@@ -892,6 +933,37 @@ mod tests {
         assert_eq!(config.limits.per_pipeline["adaptive"], 3);
         assert_eq!(config.github.binary, PathBuf::from("/usr/bin/gh"));
         assert!(toml::from_str::<Config>("[limits]\nmax_paralel_agents = 3").is_err());
+    }
+
+    #[test]
+    fn provider_weights_overlay_per_repository_and_name_providers_only() {
+        let global: Config =
+            toml::from_str("[models]\nprovider_weights = { \"claude-code\" = 7, \"codex\" = 3 }")
+                .unwrap();
+        global.validate().unwrap();
+        let none = ModelsConfig::default();
+        assert_eq!(
+            none.provider_weights(&none),
+            None,
+            "unset keeps routing off"
+        );
+        let weights = global.models.provider_weights(&none).unwrap();
+        assert_eq!(
+            (weights.weight("claude-code"), weights.weight("codex")),
+            (7, 3)
+        );
+        assert_eq!(weights.weight("gemini"), DEFAULT_PROVIDER_WEIGHT);
+        let repo: RepoConfig = toml::from_str(
+            "[models]\nprovider_weights = { codex = 5 }\ndefault_provider_weight = 0",
+        )
+        .unwrap();
+        let local = global.models.provider_weights(&repo.models).unwrap();
+        assert_eq!((local.weight("claude-code"), local.weight("codex")), (7, 5));
+        assert_eq!(local.weight("gemini"), 0);
+        let model: Config =
+            toml::from_str("[models]\nprovider_weights = { \"codex/sol\" = 1 }").unwrap();
+        let refused = model.validate().unwrap_err().to_string();
+        assert!(refused.contains("must name a provider"), "{refused}");
     }
 
     #[test]

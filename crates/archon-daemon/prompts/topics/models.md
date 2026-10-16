@@ -2,7 +2,8 @@
 
 Choose a `model_plan` entry by `tier` (fast, balanced, strong, frontier) and
 effort, not by model name. Archon resolves the tier from Aether's catalog at
-dispatch, within model_policy, on the provider you name or else on yours; a
+dispatch, within model_policy, on the provider you name or else on the item's
+routed provider (`provider_weights`, shown by `get_item`) or yours; a
 provider without that tier falls back to its next tier down, and the attempt
 records the model it ran. Pin `model` only when the operator names one.
 Defaults stop at `strong`; ask for `frontier` only when the operator does.

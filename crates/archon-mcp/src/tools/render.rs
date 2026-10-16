@@ -265,6 +265,12 @@ fn item_detail(detail: &ItemDetail) -> String {
         ),
         item.autonomy.describe()
     );
+    if let Some(provider) = &item.routed_provider {
+        let _ = write!(
+            text,
+            "\nRouted provider: {provider} (tier-only choices, by provider weights)"
+        );
+    }
     if !item.stage_timeouts.is_empty() {
         let timeouts: Vec<String> = (item.stage_timeouts.iter())
             .map(|(stage, minutes)| format!("{stage} {minutes}m"))

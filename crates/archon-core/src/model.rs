@@ -244,12 +244,16 @@ impl From<ModelPlan> for ModelPlanDraft {
 
 impl ModelPlanDraft {
     /// The plan with each missing effort set to `default_for(key)` and each
-    /// tier resolved by `tier_model`; `None` from `default_for` names a key
-    /// the caller already found to be no stage.
+    /// tier resolved by `tier_model(key, tier, provider)`; `None` from
+    /// `default_for` names a key the caller already found to be no stage.
     pub fn resolve(
         self,
         default_for: impl Fn(&str) -> Option<Effort>,
-        mut tier_model: impl FnMut(Tier, Option<&str>) -> Result<(ModelRef, TierChoice), ArchonError>,
+        mut tier_model: impl FnMut(
+            &str,
+            Tier,
+            Option<&str>,
+        ) -> Result<(ModelRef, TierChoice), ArchonError>,
     ) -> Result<ModelPlan, ArchonError> {
         let mut plan = ModelPlan::default();
         for (stage, drafts) in self.0 {
@@ -262,7 +266,7 @@ impl ModelPlanDraft {
                 choices.push(match pick {
                     Pick::Model(model) => ModelChoice::pinned(model, effort),
                     Pick::Tier(tier, provider) => {
-                        let (model, tier) = tier_model(tier, provider.as_deref())?;
+                        let (model, tier) = tier_model(&stage, tier, provider.as_deref())?;
                         ModelChoice {
                             model,
                             effort,
@@ -322,17 +326,25 @@ impl ModelPlan {
         self.0.get(stage_id).map(Vec::as_slice)
     }
 
-    /// Each tiered choice resolved again by `tier_model`, as at dispatch;
-    /// exact pins stay as they are.
+    /// Each tiered choice resolved again by `tier_model(key, tier, provider)`,
+    /// as at dispatch; exact pins stay as they are.
     pub fn resolve_tiers(
         &mut self,
-        mut tier_model: impl FnMut(Tier, Option<&str>) -> Result<(ModelRef, TierChoice), ArchonError>,
+        mut tier_model: impl FnMut(
+            &str,
+            Tier,
+            Option<&str>,
+        ) -> Result<(ModelRef, TierChoice), ArchonError>,
     ) -> Result<(), ArchonError> {
-        for choice in self.0.values_mut().flatten() {
+        let choices = self
+            .0
+            .iter_mut()
+            .flat_map(|(key, c)| c.iter_mut().map(move |c| (key, c)));
+        for (key, choice) in choices {
             let Some(asked) = &choice.tier else {
                 continue;
             };
-            let (model, tier) = tier_model(asked.requested, asked.provider.as_deref())?;
+            let (model, tier) = tier_model(key, asked.requested, asked.provider.as_deref())?;
             debug_assert_eq!(tier.requested, asked.requested);
             choice.model = model;
             choice.tier = Some(tier);
@@ -413,7 +425,7 @@ mod tests {
         let plan = draft
             .resolve(
                 |_| Some(Effort::Low),
-                |tier, provider| {
+                |_, tier, provider| {
                     asked.push((tier, provider.map(str::to_owned)));
                     let tier = TierChoice {
                         requested: tier,
@@ -447,7 +459,7 @@ mod tests {
             serde_json::json!({"s": [{"model": "a/one", "provider": "a"}]}),
         ] {
             let draft: ModelPlanDraft = serde_json::from_value(bad).unwrap();
-            let refused = draft.resolve(|_| None, |_, _| unreachable!());
+            let refused = draft.resolve(|_| None, |_, _, _| unreachable!());
             assert!(refused.is_err());
         }
     }
@@ -474,7 +486,7 @@ mod tests {
     fn a_stored_pinned_plan_reads_back_unchanged() {
         let stored = serde_json::json!({"build": [{"model": {"provider": "a", "model": "one"}, "effort": "low"}]});
         let mut plan: ModelPlan = serde_json::from_value(stored.clone()).unwrap();
-        plan.resolve_tiers(|_, _| unreachable!("a pin is not resolved"))
+        plan.resolve_tiers(|_, _, _| unreachable!("a pin is not resolved"))
             .unwrap();
         assert_eq!(serde_json::to_value(&plan).unwrap(), stored);
     }

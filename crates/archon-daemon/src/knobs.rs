@@ -8,10 +8,11 @@ use archon_core::autonomy::{
 use archon_core::catalog::Tier;
 use archon_core::config::Config;
 use archon_core::error::ArchonError;
-use archon_core::id::RepoId;
+use archon_core::id::{QueueItemId, RepoId};
 use archon_core::model::{Effort, ModelChoice, ModelPlan, ModelPlanDraft, ModelReasons, ModelRef};
 use archon_core::model_tier::{ModelCatalog, TierChoice};
 use archon_core::policy::ModelPolicy;
+use archon_core::provider_route::{ProviderRoute, ProviderWeights};
 use archon_core::queue::QueueItem;
 use archon_pipeline::PipelineSpec;
 use archon_pipeline::autonomy::{augment, chosen_review, review_is_chosen, review_level, ships};
@@ -233,12 +234,14 @@ pub(crate) fn item_specs(
 }
 
 /// What a tier resolves against: Aether's catalog within the item's model
-/// policy, preferring the orchestrator's provider.
+/// policy, on the provider the item's route picks, else the orchestrator's.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TierScope<'a> {
     pub catalog: &'a ModelCatalog,
     pub policy: &'a ModelPolicy,
     pub prefer: &'a str,
+    /// Set while `[models] provider_weights` routes tier-only choices.
+    pub route: Option<ProviderRoute<'a>>,
 }
 
 impl<'a> TierScope<'a> {
@@ -247,17 +250,93 @@ impl<'a> TierScope<'a> {
             catalog,
             policy,
             prefer: &config.orchestrator.model.provider,
+            route: None,
         }
     }
 
+    /// This scope with tier-only choices routed by `route`, when there is one.
+    pub fn routed(self, route: Option<ProviderRoute<'a>>) -> Self {
+        Self { route, ..self }
+    }
+
+    /// `tier` on `provider` when given; else on the routed provider that
+    /// meets `floor`, or the orchestrator's when weights route nothing.
     pub fn resolve(
         &self,
-        tier: Tier,
+        (tier, floor): (Tier, Tier),
         provider: Option<&str>,
     ) -> Result<(ModelRef, TierChoice), ArchonError> {
-        self.catalog
-            .resolve(tier, provider, Some(self.prefer), self.policy)
+        assert!(floor <= tier, "a floor never exceeds the tier asked for");
+        let routed = match (provider, self.route) {
+            (None, Some(route)) => self
+                .catalog
+                .routed_provider((tier, floor), route, self.policy),
+            _ => None,
+        };
+        let resolved = self.catalog.resolve(
+            tier,
+            provider,
+            Some(routed.unwrap_or(self.prefer)),
+            self.policy,
+        )?;
+        debug_assert!(
+            routed.is_none_or(|p| resolved.0.provider == p && resolved.1.resolved >= floor),
+            "a routed choice stays on its provider, at or above the floor"
+        );
+        Ok(resolved)
     }
+}
+
+/// The item a plan's tier-only choices are routed for, and the provider it
+/// holds already, if any.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ItemRoute<'a> {
+    pub id: &'a QueueItemId,
+    pub held: Option<&'a str>,
+}
+
+impl<'a> ItemRoute<'a> {
+    pub fn new(item: &'a QueueItem) -> Self {
+        Self {
+            id: &item.id,
+            held: item.routed_provider.as_deref(),
+        }
+    }
+
+    /// How a [`TierScope`] routes for this item under `weights`, if any.
+    pub fn by(self, weights: Option<&'a ProviderWeights>) -> Option<ProviderRoute<'a>> {
+        Some(ProviderRoute {
+            weights: weights?,
+            key: self.id.as_str(),
+            held: self.held,
+        })
+    }
+}
+
+/// The provider `item` holds under `weights`: the one it held while the
+/// policy still allows a tiered model there, else its weighted pick. With
+/// no weights or no catalog read yet, what it held stands.
+pub(crate) fn item_provider(
+    weights: Option<&ProviderWeights>,
+    catalog: &ModelCatalog,
+    policy: &ModelPolicy,
+    item: ItemRoute<'_>,
+) -> Option<String> {
+    let held = item.held.map(str::to_owned);
+    let Some(route) = item.by(weights) else {
+        return held;
+    };
+    if catalog.is_empty() {
+        return held;
+    }
+    let picked = catalog.item_provider(route, policy).map(str::to_owned);
+    debug_assert!(
+        picked
+            .as_deref()
+            .is_none_or(|p| catalog.models().iter().any(|m| m.model.provider == p)),
+        "an item is routed to a provider of the catalog"
+    );
+    picked.or(held)
 }
 
 /// A stage's choice when nothing names one, at the pipeline tier's effort
@@ -282,7 +361,8 @@ pub(crate) fn default_choice(
         .max_effort
         .map_or(suggested, |cap| suggested.min(cap));
     let tiered = |tier: Tier| {
-        let (model, tier) = scope.resolve(tier.min(max_tier), None).ok()?;
+        let tier = tier.min(max_tier);
+        let (model, tier) = scope.resolve((tier, tier), None).ok()?;
         Some(ModelChoice {
             model,
             effort,
@@ -383,7 +463,7 @@ pub(crate) fn resolve_plan(
 ) -> Result<ModelPlan, ArchonError> {
     let plan = draft.resolve(
         |key| spec.default_effort(key),
-        |tier, provider| tiers.resolve(tier, provider),
+        |key, tier, provider| tiers.resolve((tier, spec.tier_floor(key, tier)), provider),
     )?;
     for (key, choices) in &plan.0 {
         let top = choices.iter().map(|c| c.effort).max();

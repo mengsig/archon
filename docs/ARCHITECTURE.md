@@ -1897,7 +1897,8 @@ everywhere as the legacy spelling of `strong`. A `model_plan` entry is an exact
 pin `{model, effort}`, unchanged, or `{tier, effort}` with an optional
 `provider`. Archon resolves a tier against the connected models within the
 item's model policy (`model_tier::ModelCatalog::resolve`): on `provider` when
-given, else on the orchestrator's provider first, then any other; within that
+given, else on the item's routed provider (below), else on the orchestrator's
+provider first, then any other; within that
 provider the highest tier at or below the one asked for, Aether's default model
 first, then catalog order. A provider without the tier falls back downward
 (Codex `frontier` resolves to `strong`). Nothing at or below it refuses the
@@ -1906,6 +1907,18 @@ when the run starts, from Aether's catalog as it is then; the resolved model,
 the tier asked for and any fallback are stored on the plan and on every attempt
 (`ModelChoice.tier`), and `get_item` shows both. The daemon caches the catalog
 for five minutes; with none read yet, a stored resolution stands.
+
+**Provider weights.** With `[models] provider_weights` set (a repository's
+table replaces the global one), each item is routed to one provider
+(`provider_route`): eligible are providers with a positive weight, a table
+entry or `default_provider_weight`, whose best allowed model is at or above the
+floor, the tier asked for or the stage's lower `min_tier`. The pick is a
+weighted draw from a hash of the item id, so it is deterministic; it is stored
+on the item (`QueueItem.routed_provider`) at enqueue, retry and dispatch, and a
+held provider is kept while it stays eligible. With no eligible provider the
+orchestrator's provider serves the stage as before. Exact pins and named
+providers are never rerouted. Weights are plain multipliers, so live quota
+headroom can scale them later without a format change.
 
 **Stages the plan leaves out.** A `model_plan` is optional, whole or per
 stage, so an enqueue that has nothing to say about a model says nothing.
@@ -2617,6 +2630,8 @@ allow = []                     # e.g. ["claude-code/claude-opus-5-5"]; [] = any
 deny = []
 # max_effort = "high"          # unset: no cap; else low|medium|high|x_high|max
 # max_default_tier = "strong"  # the highest tier a default picks; a plan may name any
+provider_weights = {}          # e.g. { "claude-code" = 7, codex = 3 }; {} = orchestrator's provider
+# default_provider_weight = 1  # a provider the table omits; 0 never routes to it
 
 [limits]
 budgets_enabled = true         # false: no dollar budget is enforced; spend still recorded

@@ -9,6 +9,7 @@ use archon_core::id::RepoId;
 use archon_core::model_tier::Tier;
 use archon_core::policy::ModelPolicy;
 use archon_core::protocol::RepoRef;
+use archon_core::provider_route::ProviderWeights;
 use archon_core::queue::Caps;
 use archon_core::repo::Repo;
 use archon_core::settings::{EffectiveSettings, Layers, OperatorSettings, RepoLayers};
@@ -72,6 +73,12 @@ impl RepoEnv {
             .models
             .policy()
             .narrowed_by(&self.config.models.policy())
+    }
+
+    /// The provider weights routing this repository's tier-only choices;
+    /// `None` when neither `[models]` sets any.
+    pub fn provider_weights(&self, config: &Config) -> Option<ProviderWeights> {
+        config.models.provider_weights(&self.config.models)
     }
 
     /// The highest tier a default picks for this repository.

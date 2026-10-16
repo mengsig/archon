@@ -50,6 +50,7 @@ fn key_sql(by: CostGroup) -> &'static str {
             "json_extract(st.data, '$.choice.model.provider') || '/' || \
              json_extract(st.data, '$.choice.model.model')"
         }
+        CostGroup::Provider => "json_extract(st.data, '$.choice.model.provider')",
         CostGroup::Item => "s.item",
         CostGroup::Stage => "st.stage_id",
     }

@@ -12,7 +12,7 @@ use archon_core::queue::{QueueItem, QueueState, check_enqueue};
 use super::items;
 use crate::context::DaemonContext;
 use crate::executor::initiative_ship;
-use crate::knobs;
+use crate::knobs::{self, ItemRoute};
 use crate::resolve::RepoEnv;
 
 pub(super) async fn enqueue(
@@ -68,8 +68,17 @@ async fn prepare_member(
     let resolved = knobs::resolve(ctx, &env, member.pipeline.clone(), &patch)?;
     items::check_runs_here(ctx, &env, &resolved.spec).await?;
     let id = QueueItemId::new();
+    let unrouted = ItemRoute {
+        id: &id,
+        held: None,
+    };
+    let routed_provider = items::routed_provider(ctx, &env, unrouted).await?;
+    let route = ItemRoute {
+        held: routed_provider.as_deref(),
+        ..unrouted
+    };
     let given = member.model_plan.clone().unwrap_or_default();
-    let plan = items::filled_plan(ctx, &id, &env, &resolved.base, &resolved.spec, given).await?;
+    let plan = items::filled_plan(ctx, route, &env, &resolved.base, &resolved.spec, given).await?;
     items::check_plan(ctx, &env, &resolved.spec, &plan)?;
     let title = member
         .title
@@ -99,6 +108,7 @@ async fn prepare_member(
         origin: None,
         stage_timeouts: Default::default(),
         fresh_retries: 0,
+        routed_provider,
         initiative: Some(initiative.id.clone()),
         state: QueueState::Queued,
         created_at: initiative.created_at,

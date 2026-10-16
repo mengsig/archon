@@ -29,6 +29,7 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 # allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-sol"]
 # max_effort = "high"
 # max_default_tier = "strong"   # the most a default picks; a plan may ask higher
+# provider_weights = { "claude-code" = 7, codex = 3 }   # share of tier-only items
 
 # [limits]
 # max_parallel_agents = 8   # the hard cap on running stage agents

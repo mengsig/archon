@@ -65,6 +65,16 @@ pub struct TierEvidenceRow {
     pub passed: usize,
 }
 
+/// One provider's attempts and completed cost: the split provider weights
+/// achieved over the range.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProviderEvidenceRow {
+    pub provider: String,
+    pub attempts: usize,
+    pub completed: usize,
+    pub cost_usd: f64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelEvidenceReport {
     pub range: DayRange,
@@ -74,6 +84,9 @@ pub struct ModelEvidenceReport {
     /// By (stage, tier, effort); attempts on a model Aether places in no tier are left out.
     #[serde(default)]
     pub tiers: Vec<TierEvidenceRow>,
+    /// By provider, most attempts first.
+    #[serde(default)]
+    pub providers: Vec<ProviderEvidenceRow>,
     #[serde(default)]
     pub pipelines: Vec<crate::lesson::PipelineEvidence>,
 }
@@ -154,8 +167,30 @@ impl ModelEvidenceReport {
                 row.stage, row.tier, row.effort, row.attempts,
             );
         }
+        self.provider_text(&mut text);
         self.pipeline_text(&mut text);
         text.trim_end().to_owned()
+    }
+
+    fn provider_text(&self, text: &mut String) {
+        let attempts: usize = self.providers.iter().map(|p| p.attempts).sum();
+        let cost: f64 = self.providers.iter().map(|p| p.cost_usd).sum();
+        let share = |part: f64, whole: f64| match whole > 0.0 {
+            true => format!("{:.0}%", 100.0 * part / whole),
+            false => "-".to_owned(),
+        };
+        for p in &self.providers {
+            let _ = writeln!(
+                text,
+                "Provider {} n={} ({} of attempts) completed={} cost=${:.4} ({} of cost)",
+                p.provider,
+                p.attempts,
+                share(p.attempts as f64, attempts as f64),
+                p.completed,
+                p.cost_usd,
+                share(p.cost_usd, cost)
+            );
+        }
     }
     fn pipeline_text(&self, text: &mut String) {
         for p in &self.pipelines {

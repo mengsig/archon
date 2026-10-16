@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use archon_core::autonomy::ReviewLevel;
 use archon_core::catalog::{
-    Gate, Nudges, PipelineSource, PipelineSummary, StageKind, StageSummary, WorkspaceMode,
+    Gate, Nudges, PipelineSource, PipelineSummary, StageKind, StageSummary, Tier, WorkspaceMode,
 };
 use archon_core::error::ArchonError;
 use archon_core::model::{Effort, ModelPlan, ModelReasons};
@@ -126,6 +126,10 @@ pub struct StageSpec {
     /// The effort a plan gets for this stage when it names none; a higher one
     /// needs a stated reason.
     pub effort: Effort,
+    /// The lowest tier a tier-only choice for this stage may be routed to;
+    /// unset, the tier the choice asks for is the floor.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_tier: Option<Tier>,
     /// Allows child delegation even with guarded tools; Archon tool exposure
     /// still follows the item’s tools mode.
     pub allow_delegation: bool,
@@ -158,6 +162,8 @@ struct StageToml {
     #[serde(default = "default_effort")]
     effort: Effort,
     #[serde(default)]
+    min_tier: Option<Tier>,
+    #[serde(default)]
     allow_delegation: bool,
     #[serde(default)]
     nudge: Option<String>,
@@ -183,6 +189,7 @@ impl From<StageToml> for StageSpec {
             gate: raw.gate,
             timeout_minutes: raw.timeout_minutes,
             effort: raw.effort,
+            min_tier: raw.min_tier,
             allow_delegation: raw.allow_delegation,
             nudge: raw.nudge,
             on_fail: raw.on_fail,
@@ -291,6 +298,21 @@ impl PipelineSpec {
         let holder = key.strip_suffix(archon_core::model::REVIEWERS_KEY_SUFFIX)?;
         let declared = self.file.pipeline.review.as_ref()?;
         (declared.stage == holder).then(|| self.stage(holder).map(|s| s.effort))?
+    }
+
+    /// The lowest tier a tier-only choice for plan key `key` asking for
+    /// `requested` may be routed to: the stage's `min_tier`, never above
+    /// `requested`. A reviewers key and an unknown one get `requested`.
+    pub fn tier_floor(&self, key: &str, requested: Tier) -> Tier {
+        let floor = self
+            .stage(key)
+            .and_then(|stage| stage.min_tier)
+            .map_or(requested, |min| min.min(requested));
+        debug_assert!(
+            floor <= requested,
+            "a floor never exceeds the tier asked for"
+        );
+        floor
     }
 
     /// Refuse a `plan` key that is neither a stage nor the reviewers key, and
@@ -790,5 +812,31 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_stage_s_min_tier_lowers_its_floor_but_never_raises_it() {
+        let stage: StageSpec = toml::from_str(
+            "id = \"review\"\nkind = \"review\"\nprompt = \"review.md\"\nmin_tier = \"balanced\"",
+        )
+        .unwrap();
+        assert_eq!(stage.min_tier, Some(Tier::Balanced));
+        let mut spec = crate::Catalog::builtin().get("direct").unwrap().clone();
+        let id = spec.file.stages[0].id.clone();
+        assert_eq!(
+            spec.tier_floor(&id, Tier::Frontier),
+            Tier::Frontier,
+            "unset: the tier asked for"
+        );
+        spec.file.stages[0].min_tier = Some(Tier::Balanced);
+        assert_eq!(spec.tier_floor(&id, Tier::Frontier), Tier::Balanced);
+        assert_eq!(
+            spec.tier_floor(&id, Tier::Fast),
+            Tier::Fast,
+            "never above the request"
+        );
+        let reviewers = archon_core::model::reviewers_key(&id);
+        assert_eq!(spec.tier_floor(&reviewers, Tier::Strong), Tier::Strong);
+        assert!(toml::from_str::<PipelineFile>(&spec.manifest().unwrap()).is_ok());
     }
 }

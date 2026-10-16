@@ -45,6 +45,7 @@ fn group(by: CostBy) -> CostGroup {
         CostBy::Repo => CostGroup::Repo,
         CostBy::Pipeline => CostGroup::Pipeline,
         CostBy::Model => CostGroup::Model,
+        CostBy::Provider => CostGroup::Provider,
         CostBy::Item => CostGroup::Item,
         CostBy::Stage => CostGroup::Stage,
     }

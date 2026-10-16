@@ -59,16 +59,19 @@ pub enum CostGroup {
     Repo,
     Pipeline,
     Model,
+    /// The provider of the model a stage ran, as provider weights route it.
+    Provider,
     Item,
     Stage,
 }
 
 impl CostGroup {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Day,
         Self::Repo,
         Self::Pipeline,
         Self::Model,
+        Self::Provider,
         Self::Item,
         Self::Stage,
     ];
@@ -80,6 +83,7 @@ impl CostGroup {
             Self::Repo => "repo",
             Self::Pipeline => "pipeline",
             Self::Model => "model",
+            Self::Provider => "provider",
             Self::Item => "item",
             Self::Stage => "stage",
         }

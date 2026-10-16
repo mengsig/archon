@@ -163,11 +163,17 @@ async fn running_plan(
     let Some(plan) = patch.model_plan.take() else {
         return Ok(None);
     };
-    let run = ctx.store.lock().await.run(run)?;
+    let (run, item) = {
+        let store = ctx.store.lock().await;
+        let run = store.run(run)?;
+        let item = store.item(&run.item)?;
+        (run, item)
+    };
     let spec = frozen::thaw(ctx, &run.id, &run.pipeline).await?;
     let reasons = patch.model_reasons.take();
-    let given = items::resolve_draft(ctx, env, &spec, plan, reasons.as_ref()).await?;
-    let plan = items::filled_plan(ctx, &run.item, env, &spec, &spec, given).await?;
+    let route = crate::knobs::ItemRoute::new(&item);
+    let given = items::resolve_draft(ctx, (env, route), &spec, plan, reasons.as_ref()).await?;
+    let plan = items::filled_plan(ctx, route, env, &spec, &spec, given).await?;
     items::check_plan(ctx, env, &spec, &plan)?;
     items::check_reasons(&spec, reasons.as_ref())?;
     assert!(plan.0.len() >= spec.file.stages.len(), "a choice per stage");

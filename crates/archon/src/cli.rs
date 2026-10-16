@@ -481,6 +481,7 @@ pub enum CostBy {
     Repo,
     Pipeline,
     Model,
+    Provider,
     Item,
     Stage,
 }

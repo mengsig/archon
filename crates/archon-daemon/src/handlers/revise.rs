@@ -194,7 +194,8 @@ async fn restage(
     let reviewers = spec.reviewers_key();
     plan.0
         .retain(|stage, _| spec.stage(stage).is_some() || Some(stage) == reviewers.as_ref());
-    let plan = items::filled_plan(ctx, &item.id, env, base, &spec, plan).await?;
+    let route = crate::knobs::ItemRoute::new(item);
+    let plan = items::filled_plan(ctx, route, env, base, &spec, plan).await?;
     items::check_plan(ctx, env, &spec, &plan)?;
     let reasons = item.model_reasons.clone().map(|mut reasons| {
         reasons.retain(|stage, _| spec.stage(stage).is_some() || Some(stage) == reviewers.as_ref());

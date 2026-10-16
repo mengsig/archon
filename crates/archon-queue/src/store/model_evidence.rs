@@ -9,7 +9,8 @@ use archon_core::feedback::feedback_window;
 use archon_core::id::{FeedbackId, PipelineRunId, RepoId};
 use archon_core::model::{Effort, ModelChoice};
 use archon_core::model_evidence::{
-    MAX_ROWS, ModelEvidenceQuery, ModelEvidenceReport, ModelEvidenceRow, TierEvidenceRow,
+    MAX_ROWS, ModelEvidenceQuery, ModelEvidenceReport, ModelEvidenceRow, ProviderEvidenceRow,
+    TierEvidenceRow,
 };
 use archon_core::model_tier::{ModelCatalog, Tier};
 use archon_core::outcome::{
@@ -139,10 +140,12 @@ impl ModelEvidenceSnapshot {
         let mut groups: HashMap<(String, ModelChoice, archon_core::config::HostContext), Samples> =
             HashMap::new();
         let mut tiers: HashMap<(String, Tier, Effort), Samples> = HashMap::new();
+        let mut providers: BTreeMap<String, ProviderEvidenceRow> = BTreeMap::new();
         for attempt in self.attempts {
             let stage = &attempt.stage;
             let choice = stage.current_choice();
             let sample = sample(&attempt, self.estimates, &mut is_verdict_stage)?;
+            add_provider(&mut providers, &choice.model.provider, sample);
             let key = (
                 stage.stage_id.clone(),
                 choice.without_tier(),
@@ -158,8 +161,40 @@ impl ModelEvidenceSnapshot {
                 tiers.entry(key).or_default().add(sample);
             }
         }
-        Ok(finish(groups, tiers, self.range, self.estimates))
+        let mut report = finish(groups, tiers, self.range, self.estimates);
+        report.providers = provider_rows(providers);
+        Ok(report)
     }
+}
+
+fn add_provider(rows: &mut BTreeMap<String, ProviderEvidenceRow>, provider: &str, sample: Sample) {
+    assert!(!provider.is_empty(), "a model names its provider");
+    let row = rows
+        .entry(provider.to_owned())
+        .or_insert_with(|| ProviderEvidenceRow {
+            provider: provider.to_owned(),
+            attempts: 0,
+            completed: 0,
+            cost_usd: 0.0,
+        });
+    row.attempts += 1;
+    if let Some(done) = sample.completed {
+        row.completed += 1;
+        row.cost_usd += done.cost;
+    }
+    debug_assert!(row.completed <= row.attempts && row.cost_usd.is_finite());
+}
+
+/// Most attempts first, then by name.
+fn provider_rows(rows: BTreeMap<String, ProviderEvidenceRow>) -> Vec<ProviderEvidenceRow> {
+    let mut rows: Vec<_> = rows.into_values().collect();
+    rows.sort_by(|a, b| {
+        b.attempts
+            .cmp(&a.attempts)
+            .then_with(|| a.provider.cmp(&b.provider))
+    });
+    debug_assert!(rows.windows(2).all(|w| w[0].attempts >= w[1].attempts));
+    rows
 }
 
 /// What one attempt adds to its groups; only a completed one is measured.
@@ -340,6 +375,7 @@ fn finish(
         rows,
         omitted,
         tiers,
+        providers: Vec::new(),
         pipelines: Vec::new(),
     }
 }

@@ -113,7 +113,9 @@ fn refresh_owner(
     let (base, spec) = knobs::item_specs(env, &item)?;
     knobs::check_ceiling(&env.autonomy(ctx), env, &base, item.autonomy)?;
     let policy = env.policy(&ctx.config);
-    let tiers = knobs::TierScope::new(&ctx.config, &policy, catalog);
+    let weights = env.provider_weights(&ctx.config);
+    let route = knobs::ItemRoute::new(owner).by(weights.as_ref());
+    let tiers = knobs::TierScope::new(&ctx.config, &policy, catalog).routed(route);
     let max_tier = env.max_default_tier(&ctx.config);
     let fallback = knobs::default_choice(&ctx.config, tiers, max_tier, &spec);
     let mut plan = ModelPlan::default();

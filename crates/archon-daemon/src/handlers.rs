@@ -321,6 +321,18 @@ pub(crate) async fn watch_repo(ctx: &DaemonContext, repo: &RepoRef) -> Result<St
     repos::watch(ctx, repo).await
 }
 
+/// Enqueue an item archond itself asks for, such as an integration fix,
+/// validated as any enqueue is.
+pub(crate) async fn enqueue_for_archond(
+    ctx: &DaemonContext,
+    request: archon_core::protocol::EnqueueRequest,
+) -> Result<archon_core::queue::QueueItem, ArchonError> {
+    match items::enqueue(ctx, request).await? {
+        Reply::Item(item) | Reply::ItemBudgetsOff(item) => Ok(item),
+        other => unreachable!("an enqueue answers with its item, not {other:?}"),
+    }
+}
+
 /// The one item whose id starts with `prefix`, as `archon` resolves it.
 pub(crate) async fn resolve_item(
     ctx: &DaemonContext,

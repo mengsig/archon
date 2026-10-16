@@ -330,6 +330,7 @@ fn repo_at(path: &Path) -> Repo {
         gh_user: None,
         tiers: Default::default(),
         confirmed_fast_check: None,
+        confirmed_full_check: None,
         added_at: archon_core::now(),
     }
 }

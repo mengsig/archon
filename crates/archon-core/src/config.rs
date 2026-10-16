@@ -39,10 +39,11 @@ pub const STAGE_TIMEOUT_CEILING_MINUTES: u32 = 30 * 24 * 60;
 pub const MAX_ARTIFACT_MB: u64 = 1 << 30;
 
 /// The keys holding filesystem paths, which `Config::load` resolves.
-const PATH_KEYS: [&str; 3] = [
+const PATH_KEYS: [&str; 4] = [
     "[aether] socket",
     "[orchestrator] instructions_file",
     "[worktrees] root",
+    "[integration] slot_lock",
 ];
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -63,7 +64,57 @@ pub struct Config {
     pub github: GithubConfig,
     pub autonomy: AutonomyConfig,
     pub learning: LearningConfig,
+    pub integration: IntegrationConfig,
     pub notify: crate::push::NotifyConfig,
+}
+
+/// How archond verifies each repository's integration branch off the items'
+/// path (issue #82): it batches merges, then runs the full check once.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct IntegrationConfig {
+    /// `false`: no integration branch is watched.
+    pub enabled: bool,
+    /// How often each integration branch's head is read.
+    pub poll_every: Age,
+    /// A head this many merges past the last verified one is verified at once.
+    pub batch_merges: u32,
+    /// A head that stood still this long is verified however few merges it adds.
+    pub idle_after: Age,
+    /// A full check running longer is ended and counts as failed.
+    pub full_timeout: Age,
+    /// The lock file full checks take, one at a time; unset:
+    /// `/tmp/archon-full-check-<uid>.lock`, shared by every archond of the user.
+    pub slot_lock: Option<PathBuf>,
+}
+
+impl Default for IntegrationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            poll_every: Age::from_secs(60),
+            batch_merges: 3,
+            idle_after: Age::from_secs(10 * 60),
+            full_timeout: Age::from_secs(2 * 3_600),
+            slot_lock: None,
+        }
+    }
+}
+
+impl IntegrationConfig {
+    fn validate(&self) -> Result<(), ArchonError> {
+        if self.poll_every.secs() == 0 || self.full_timeout.secs() == 0 {
+            return Err(ArchonError::Config(
+                "integration.poll_every and integration.full_timeout must be > 0s".into(),
+            ));
+        }
+        if self.batch_merges == 0 {
+            return Err(ArchonError::Config(
+                "integration.batch_merges must be at least 1".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Defaults for reviewers an item's model plan leaves unnamed.
@@ -940,19 +991,21 @@ impl Config {
     }
 
     /// In `PATH_KEYS` order.
-    fn paths(&self) -> [&Option<PathBuf>; 3] {
+    fn paths(&self) -> [&Option<PathBuf>; 4] {
         [
             &self.aether.socket,
             &self.orchestrator.instructions_file,
             &self.worktrees.root,
+            &self.integration.slot_lock,
         ]
     }
 
-    fn paths_mut(&mut self) -> [&mut Option<PathBuf>; 3] {
+    fn paths_mut(&mut self) -> [&mut Option<PathBuf>; 4] {
         [
             &mut self.aether.socket,
             &mut self.orchestrator.instructions_file,
             &mut self.worktrees.root,
+            &mut self.integration.slot_lock,
         ]
     }
 
@@ -984,6 +1037,7 @@ impl Config {
         self.worktrees.validate()?;
         self.artifacts.validate()?;
         self.storage.validate()?;
+        self.integration.validate()?;
         self.notify.validate()?;
         self.models.check_weights()?;
         let orchestrator = crate::model::ModelChoice {
@@ -1137,6 +1191,24 @@ mod tests {
         assert_eq!(config.limits.per_pipeline["adaptive"], 3);
         assert_eq!(config.github.binary, PathBuf::from("/usr/bin/gh"));
         assert!(toml::from_str::<Config>("[limits]\nmax_paralel_agents = 3").is_err());
+    }
+
+    #[test]
+    fn integration_batches_are_read_and_checked() {
+        let text = "[integration]\nbatch_merges = 5\nidle_after = \"30m\"\n";
+        let config: Config = toml::from_str(text).unwrap();
+        config.validate().unwrap();
+        assert_eq!(config.integration.batch_merges, 5);
+        assert_eq!(config.integration.idle_after.secs(), 1_800);
+        assert_eq!(config.integration.poll_every.secs(), 60, "the default");
+        for bad in [
+            "batch_merges = 0",
+            "poll_every = \"0s\"",
+            "full_timeout = \"0s\"",
+        ] {
+            let config: Config = toml::from_str(&format!("[integration]\n{bad}\n")).unwrap();
+            assert!(config.validate().is_err(), "{bad}");
+        }
     }
 
     #[test]

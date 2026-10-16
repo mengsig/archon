@@ -39,6 +39,7 @@ pub(super) async fn status(ctx: &DaemonContext, query: StatusQuery) -> Result<Re
         disk_status(ctx, deadline)
     )?;
     let snapshot = counts.snapshot;
+    let integration = crate::integration::status(ctx).await?;
     let status = DaemonStatus {
         waiting_items: waiting.items,
         waiting_total: count(waiting.total),
@@ -72,6 +73,7 @@ pub(super) async fn status(ctx: &DaemonContext, query: StatusQuery) -> Result<Re
         health: Some(aether.health),
         quota: crate::quota::status(ctx),
         recovery: ctx.recovery.progress(),
+        integration,
     };
     assert!(
         status.spend_today_usd <= status.spend_total_usd + 1e-9,

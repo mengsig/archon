@@ -17,6 +17,7 @@ pub mod gc;
 mod gh_account;
 pub mod github;
 pub mod handlers;
+pub mod integration;
 pub mod mirror;
 mod operator_commands;
 pub mod ops;
@@ -251,9 +252,13 @@ async fn supervise(
     if auto_gc {
         workers.spawn("worktree gc", gc::run(ctx.clone()));
     }
+    let verifies = ctx.config.integration.enabled;
+    if verifies {
+        workers.spawn("integration verification", integration::run(ctx.clone()));
+    }
     assert_eq!(
         workers.names.len(),
-        8 + usize::from(auto_gc),
+        8 + usize::from(auto_gc) + usize::from(verifies),
         "every daemon worker is supervised"
     );
     let result = tokio::select! {

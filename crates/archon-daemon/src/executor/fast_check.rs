@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use archon_core::error::ArchonError;
 use archon_core::repo::affected::{self, Affected};
-use archon_core::repo::{REPO_FILE_NAME, Repo, RepoTiers};
+use archon_core::repo::{Checks, REPO_FILE_NAME, Repo, RepoTiers};
 use tokio::io::{AsyncRead, AsyncReadExt as _};
 use tokio::process::Command;
 
@@ -29,28 +29,56 @@ const DRAIN_LIMIT: Duration = Duration::from_secs(5);
 /// committed file's while the operator's confirmation names it word for
 /// word. Never one read from an item's worktree.
 pub(crate) fn trusted(repo: &Repo) -> Result<Option<String>, ArchonError> {
+    let registry = repo.tiers.checks.fast.as_ref();
+    trusted_check(repo, registry, repo.confirmed_fast_check.as_ref(), |c| {
+        c.fast
+    })
+}
+
+/// The full check archond may run itself in `repo`, trusted as [`trusted`]
+/// trusts the fast one: an untracked or edited file names no command.
+pub(crate) fn trusted_full(repo: &Repo) -> Result<Option<String>, ArchonError> {
+    let registry = repo.tiers.checks.full.as_ref();
+    trusted_check(repo, registry, repo.confirmed_full_check.as_ref(), |c| {
+        c.full
+    })
+}
+
+/// `registry`, else the check `pick` takes from the committed file while it
+/// equals `confirmed`.
+fn trusted_check(
+    repo: &Repo,
+    registry: Option<&String>,
+    confirmed: Option<&String>,
+    pick: fn(Checks) -> Option<String>,
+) -> Result<Option<String>, ArchonError> {
     assert!(repo.path.is_absolute(), "registered paths are absolute");
-    if let Some(fast) = &repo.tiers.checks.fast {
-        return Ok(Some(fast.clone()));
+    assert!(
+        confirmed.is_none_or(|text| !text.trim().is_empty()),
+        "a confirmation is a validated command"
+    );
+    if let Some(registry) = registry {
+        return Ok(Some(registry.clone()));
     }
-    let Some(confirmed) = &repo.confirmed_fast_check else {
+    let Some(confirmed) = confirmed else {
         return Ok(None);
     };
-    let committed = committed_fast_check(&repo.path)?;
+    let committed = committed_checks(&repo.path)?.and_then(pick);
     if committed.as_ref() != Some(confirmed) {
         tracing::warn!(
             repo = %repo.name,
             ?committed,
-            "the committed fast check differs from the confirmed one; the ship gate skips it"
+            ?confirmed,
+            "the committed check differs from the confirmed one; archond does not run it"
         );
         return Ok(None);
     }
     Ok(committed)
 }
 
-/// The fast check `.archon/repo.toml` names in the registered repository's
+/// The checks `.archon/repo.toml` names in the registered repository's
 /// `HEAD` commit; an untracked or edited copy of the file counts for nothing.
-fn committed_fast_check(root: &Path) -> Result<Option<String>, ArchonError> {
+fn committed_checks(root: &Path) -> Result<Option<Checks>, ArchonError> {
     assert!(root.is_absolute(), "registered paths are absolute");
     let file = format!(".archon/{REPO_FILE_NAME}");
     // An empty listing proves the file absent; a failed read is an error.
@@ -61,7 +89,7 @@ fn committed_fast_check(root: &Path) -> Result<Option<String>, ArchonError> {
     let spec = format!("HEAD:{file}");
     let text = DaemonGit::sealed_in(root).args(["cat-file", "blob", &spec]);
     let tiers = RepoTiers::parse(&text.text()?, &format!("{} {spec}", root.display()))?;
-    Ok(tiers.checks.fast)
+    Ok(Some(tiers.checks))
 }
 
 /// What the change in the work tree `tree` affects: the files its `HEAD`

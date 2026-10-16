@@ -15,6 +15,7 @@ use archon_core::autonomy::{AutonomyView, Directive, MAX_DIRECTIVES};
 use archon_core::catalog::{CatalogListing, Gate, PipelineSummary, StageSummary};
 use archon_core::github::GithubWatch;
 use archon_core::id::{PipelineRunId, QueueItemId};
+use archon_core::integration::IntegrationStatus;
 use archon_core::merge::MergeRequest;
 use archon_core::model::{Effort, ModelPlan, ModelReasons};
 use archon_core::notify::Question;
@@ -709,6 +710,7 @@ fn daemon_status(status: &DaemonStatus) -> String {
         status.disk.as_ref().map_or(String::new(), disk_text),
         upkeep_text(status)
     ) + &quota_text(status.quota.as_ref())
+        + &integration_text(&status.integration)
         + &stale_text(status.health.as_ref())
 }
 
@@ -724,6 +726,15 @@ pub(super) fn quota_text(quota: Option<&QuotaStatus>) -> String {
         quota.as_of.to_rfc3339(),
         providers.join(" | ")
     )
+}
+
+/// Each watched integration branch: its health, last green commit and the
+/// merges since.
+pub(super) fn integration_text(branches: &[IntegrationStatus]) -> String {
+    branches
+        .iter()
+        .map(|branch| format!("\nIntegration branch {}.", branch.describe()))
+        .collect()
 }
 
 /// The sections that show Aether's last answer rather than its latest.

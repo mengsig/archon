@@ -2856,6 +2856,24 @@ once the operator confirmed its exact text with `archon repo set
 from the registered repository's `HEAD` commit: an untracked or uncommitted
 copy neither confirms nor stops a check.
 
+`archond` verifies the integration branch off the items' path
+(`archon_daemon::integration`): one worker reads each branch's head every
+`[integration] poll_every` (fetched from `origin` in `pr` mode) and, after
+`batch_merges` merges or `idle_after` without one, verifies it by the
+commit's GitHub check runs when CI covers it, else by `checks.full` in a
+daemon-owned checkout sealed as the mirrors are (§13.3), trusted as the fast
+check is: the registry's, or the committed file's while it equals what the
+operator confirmed with `archon repo set --confirm-full-check`. Full runs take the
+host's build slot, an in-process mutex plus an exclusive `flock` on
+`[integration] slot_lock`, so they never overlap across daemons; the run's
+process group is killed before the slot is released, even when the daemon
+drops the run. A red head is bisected over the first-parent commits since
+the last green one, the unfinished bound kept in `bisecting` so a restart or
+a waiting probe resumes it, and no fix is queued before it ends; the
+culprit, the failing excerpt and the fix item (one per red head, none while
+one is open, idempotency key `integration-fix-<repo>-<head>`) are kept in
+the store's `integration_<repo>` key, and `status` reports each branch.
+
 Precedence for repository settings: registry flags from `archon repo add` or
 `archon repo set`, then `.archon/config.toml`, then global defaults.
 **Only the operator can raise an autonomy ceiling**, through the global

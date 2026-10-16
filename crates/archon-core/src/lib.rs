@@ -23,6 +23,7 @@ pub mod feedback;
 pub mod github;
 pub mod id;
 pub mod initiative;
+pub mod integration;
 pub mod lesson;
 pub mod mcp_tools;
 pub mod merge;

@@ -146,10 +146,14 @@ pub(super) async fn recover(ctx: &DaemonContext) -> Result<FollowUp, ArchonError
     };
     crate::feed::publish(ctx, answers);
     crate::reports::close_stale_questions(ctx).await?;
+    ctx.recovery.count(runs.len());
     let mut follow = FollowUp::poke();
+    // One run at a time, each under the store's lock only briefly, so
+    // `status` and other reads are answered between them.
     for run in runs {
         let stages = ctx.store.lock().await.stage_runs(&run.id)?;
         follow.merge(resume_run(ctx, &mut table, run, &stages).await?);
+        ctx.recovery.advance();
     }
     // Aether calls wait for the dispatcher; local cleanup, team merges and
     // the questions of gates opened just before a crash run now.

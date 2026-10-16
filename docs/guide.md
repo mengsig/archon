@@ -739,7 +739,8 @@ After `--json` has been parsed, command failures print one JSON envelope on
 stdout, for example `{"error":{"code":"not_found","message":"…"}}`, and
 keep exit status 1. Text-mode errors still go to stderr. Codes use the daemon
 and MCP vocabulary: `invalid_argument`, `not_found`, `invalid_transition`,
-`policy`, `forbidden`, `unavailable`, `incompatible`, and `internal`.
+`policy`, `forbidden`, `unavailable`, `recovering`, `incompatible`, and
+`internal`.
 Unclassified CLI failures use `internal`; argument-parser errors (before a
 command is parsed) retain clap's stderr output and exit status 2. Commands
 such as `doctor` that return a failed check report keep their existing JSON
@@ -752,6 +753,12 @@ Aether, including in dedicated mode. A running archond reports
 `aether: disconnected` during an Aether outage. If archond is also down,
 the command returns an `unavailable` error (exit 1): its Aether link cannot
 be observed. `--no-start` is still accepted, and changes nothing.
+
+archond answers from the moment it starts, while it still recovers its runs:
+status then shows a `recovery: recovering 40/120 runs` line (`recovery` in
+JSON). Until recovery is done, reads are served, nothing is dispatched, and
+a command that changes something waits up to 2 seconds for it, then fails
+with a `recovering` error that says to retry in a few seconds.
 
 Status never waits long on Aether. archond asks Aether for the orchestrator,
 the `archon` MCP server and the GitHub watcher in the background and waits

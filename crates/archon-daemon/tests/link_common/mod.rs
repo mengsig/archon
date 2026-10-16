@@ -90,6 +90,7 @@ impl Harness {
             started_at: archon_core::now(),
             disk: DiskWatch::new(Arc::new(|_: &Path| Ok(u64::MAX)), Duration::ZERO),
             standby: OnceLock::new(),
+            recovery: Default::default(),
             gc: Mutex::new(None),
             collecting: archon_daemon::gc::Collecting::new(dispatch),
             ops: Arc::new(fake_ops::FakeOps::default()).ops_state(),

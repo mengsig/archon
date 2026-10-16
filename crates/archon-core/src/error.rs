@@ -30,6 +30,10 @@ pub enum ArchonError {
     /// the MCP proxy).
     #[error("forbidden: {0}")]
     Forbidden(String),
+    /// archond is still recovering its runs after a start and refuses
+    /// changes until it is done; the same request succeeds once it is.
+    #[error("recovering: {0}")]
+    Recovering(String),
     /// The cause is part of the text and deliberately not `source()`: a
     /// chain printer (`{:#}`) would otherwise print it twice.
     #[error("io: {context}: {cause}")]
@@ -75,6 +79,7 @@ impl ArchonError {
             Self::Policy(m) => Self::Policy(add(m)),
             Self::Unavailable(m) => Self::Unavailable(add(m)),
             Self::Forbidden(m) => Self::Forbidden(add(m)),
+            Self::Recovering(m) => Self::Recovering(add(m)),
             Self::Io { context, cause } => Self::Io {
                 context: add(context),
                 cause,

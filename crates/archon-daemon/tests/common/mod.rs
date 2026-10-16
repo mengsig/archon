@@ -504,6 +504,7 @@ pub fn context(
         started_at: archon_core::now(),
         disk,
         standby: OnceLock::new(),
+        recovery: Default::default(),
         gc: Mutex::new(None),
         collecting: archon_daemon::gc::Collecting::new(dispatch),
         ops: ops.ops_state(),

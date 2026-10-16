@@ -964,6 +964,30 @@ pub struct DaemonStatus {
     /// read it from Aether. `None` before a reading or from an older archond.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota: Option<QuotaStatus>,
+    /// Start-up recovery under way; `None` once it is done or from an
+    /// older archond.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<RecoveryProgress>,
+}
+
+/// `DaemonStatus::recovery`: how far archond is in recovering its runs.
+/// Until it is done, changes are refused and nothing is dispatched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecoveryProgress {
+    pub runs_done: u32,
+    /// Live runs to recover; `None` until they are counted.
+    pub runs_total: Option<u32>,
+}
+
+impl RecoveryProgress {
+    /// `recovering 40/120 runs`, as `status` and `queue_status` show it.
+    /// Clients show what archond sent, so this checks nothing.
+    pub fn describe(&self) -> String {
+        match self.runs_total {
+            Some(total) => format!("recovering {}/{total} runs", self.runs_done),
+            None => "recovering, counting runs".to_owned(),
+        }
+    }
 }
 
 /// `DaemonStatus::quota`.
@@ -1529,6 +1553,8 @@ pub enum ErrorCode {
     InvalidTransition,
     Policy,
     Unavailable,
+    /// archond is recovering its runs after a start; retry once it is done.
+    Recovering,
     Internal,
 }
 
@@ -1549,6 +1575,7 @@ impl From<&ArchonError> for ErrorReply {
             ArchonError::InvalidTransition(_) => ErrorCode::InvalidTransition,
             ArchonError::Policy(_) => ErrorCode::Policy,
             ArchonError::Forbidden(_) => ErrorCode::Forbidden,
+            ArchonError::Recovering(_) => ErrorCode::Recovering,
             ArchonError::Unavailable(_) | ArchonError::Aether(_) => ErrorCode::Unavailable,
             ArchonError::Store(_)
             | ArchonError::DiskFull(_)

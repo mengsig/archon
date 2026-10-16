@@ -24,28 +24,47 @@ struct Origin {
     lessons: Vec<LessonId>,
 }
 
-/// Record what generation `generation` starts with, unless it is already
-/// recorded: a retried creation keeps the lessons its first attempt chose.
-pub(super) fn record(
-    store: &mut Store,
-    generation: u64,
-    instructions: &str,
-) -> Result<(), ArchonError> {
+/// Record the lessons generation `generation` is chosen, unless already
+/// recorded: a retried creation sends the lessons its first attempt chose.
+pub(super) fn record_lessons(store: &mut Store, generation: u64) -> Result<(), ArchonError> {
     assert!(generation > 0, "generations start at 1");
-    assert!(
-        !instructions.trim().is_empty(),
-        "the orchestrator has instructions"
-    );
     if read(store)?.is_some_and(|origin| origin.generation == generation) {
         return Ok(());
     }
     let origin = Origin {
         generation,
         archon_version: env!("CARGO_PKG_VERSION").to_owned(),
-        prompt: fingerprint(instructions),
+        prompt: String::new(),
         tools: tools_fingerprint(),
         lessons: chosen_lessons(store)?,
     };
+    assert!(origin.lessons.len() <= archon_core::lesson::ORCHESTRATOR_LESSONS);
+    store.kv_set(ORIGIN_KEY, &serde_json::to_string(&origin)?)
+}
+
+/// Record what Aether created generation `generation` with: `prompt`, as
+/// this attempt built it, unless `created` (the agent's instructions, when
+/// Aether returns them) shows a replay of an earlier attempt's text.
+pub(super) fn record_created(
+    store: &mut Store,
+    generation: u64,
+    prompt: &str,
+    created: Option<&str>,
+) -> Result<(), ArchonError> {
+    assert!(
+        !prompt.trim().is_empty(),
+        "the orchestrator has instructions"
+    );
+    let mut origin = read(store)?
+        .filter(|origin| origin.generation == generation)
+        .expect("record_lessons ran for this generation");
+    let sent = match created {
+        Some(text) if !text.starts_with(prompt) => text,
+        _ => prompt,
+    };
+    origin.archon_version = env!("CARGO_PKG_VERSION").to_owned();
+    origin.prompt = fingerprint(sent);
+    origin.tools = tools_fingerprint();
     store.kv_set(ORIGIN_KEY, &serde_json::to_string(&origin)?)
 }
 

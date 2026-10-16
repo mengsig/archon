@@ -167,12 +167,7 @@ async fn lessons_recorded_since_creation_are_counted_until_a_restart() {
 #[tokio::test]
 async fn an_edited_instructions_file_makes_the_prompt_outdated() {
     let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("orchestrator.md");
-    std::fs::write(&file, "Prefer small changes.").unwrap();
-    let mut config = Config::default();
-    config.orchestrator.instructions_file = Some(file.clone());
-    let harness = Harness::with(config, None).await;
-    harness.connect().await;
+    let (harness, file) = with_instructions(dir.path(), "Prefer small changes.").await;
     let states = agent_table(&harness);
     create(&harness, &states, ORCH).await;
     let fresh = orchestrator_status(&harness).await.freshness.unwrap();
@@ -202,4 +197,53 @@ async fn an_orchestrator_created_before_archon_recorded_it_has_no_freshness() {
         "{}",
         info.describe_freshness()
     );
+}
+
+/// A harness whose `[orchestrator] instructions_file` holds `text`.
+async fn with_instructions(dir: &std::path::Path, text: &str) -> (Harness, std::path::PathBuf) {
+    let file = dir.join("orchestrator.md");
+    std::fs::write(&file, text).unwrap();
+    let mut config = Config::default();
+    config.orchestrator.instructions_file = Some(file.clone());
+    let harness = Harness::with(config, None).await;
+    harness.connect().await;
+    (harness, file)
+}
+
+#[tokio::test]
+async fn a_retried_creation_records_the_prompt_it_sent() {
+    let dir = tempfile::tempdir().unwrap();
+    let (harness, file) = with_instructions(dir.path(), "Prefer small changes.").await;
+    let states = agent_table(&harness);
+    let refused = Scripted::refuse("internal", "store busy");
+    harness.fake.script("create_agent", refused);
+    supervisor::ensure_orchestrator(&harness.ctx)
+        .await
+        .expect_err("the first create is refused");
+    std::fs::write(&file, "Prefer large changes.").unwrap();
+    create(&harness, &states, ORCH).await;
+    let fresh = orchestrator_status(&harness).await.freshness.unwrap();
+    assert_eq!(fresh.prompt_outdated, Some(false), "the retry sent today's");
+
+    std::fs::write(&file, "Prefer small changes.").unwrap();
+    let reverted = orchestrator_status(&harness).await.freshness.unwrap();
+    assert_eq!(reverted.prompt_outdated, Some(true));
+}
+
+/// Aether answers a reused creation key with the agent the earlier attempt
+/// created, whose instructions are not the ones this attempt built.
+#[tokio::test]
+async fn a_replayed_creation_with_older_instructions_is_outdated() {
+    let dir = tempfile::tempdir().unwrap();
+    let (harness, _file) = with_instructions(dir.path(), "Prefer large changes.").await;
+    let states = agent_table(&harness);
+    states.lock().unwrap().insert(ORCH.into(), "ready".into());
+    let mut replayed = agent_in(ORCH, "ready");
+    replayed["config"] = json!({ "instructions": "Prefer small changes." });
+    harness
+        .fake
+        .script("create_agent", Scripted::reply("agent", replayed));
+    supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    let stale = orchestrator_status(&harness).await.freshness.unwrap();
+    assert_eq!(stale.prompt_outdated, Some(true));
 }

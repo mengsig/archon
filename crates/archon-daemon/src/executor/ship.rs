@@ -6,6 +6,7 @@
 mod auto_merge;
 mod checks;
 mod deliver;
+mod existing;
 mod gate;
 mod pr_checks;
 mod remote;
@@ -22,6 +23,7 @@ pub(crate) use auto_merge::pay as pay_owed_merges;
 pub(crate) use auto_merge::withdraw as withdraw_owed_merge;
 pub(super) use deliver::{base_of, deliver, delivering, queue, replay, stalled};
 pub(crate) use deliver::{prune_finished_ships, shipped_commit};
+pub(super) use existing::Locks as OntoLocks;
 pub use gate::Gates;
 pub(crate) use pr_checks::look as look_at_checks;
 pub(super) use remote::{MergeRefusal, auto_merge as pin_auto_merge, merge_method};

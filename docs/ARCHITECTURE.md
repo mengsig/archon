@@ -2474,6 +2474,19 @@ table and delivers it off every lock:
    `gh pr create`; several are a refusal. After creating, the list is read
    again and only what GitHub lists counts, so a creation whose reply was
    lost is found, not repeated.
+
+   **Onto an existing pull request** (`ship::existing`): an item queued
+   `onto` one (frozen at enqueue) replaces steps 3 and 4. Its own commits
+   are those past the frozen head, which the run branch must hold. Under
+   a lock per pull request, `git ls-remote` reads the head branch's tip
+   on `origin`: the frozen head is pushed onto by fast-forward as in
+   step 3, the checked commit itself means an earlier try pushed it, and
+   any other commit is a refusal naming both, never a force-push.
+   `gh pr view` must then show the checked commit as the head of that open
+   pull request; GitHub still showing the frozen head is retried. Its
+   title, body and base are left alone, the initiative step is skipped,
+   and nothing is merged or owed auto-merge. The run ends with
+   `SHIPPED: updated #<n> to <sha> (<url>)`.
 5. **Persist, then finish.** The `ShipOutcome` is written to `kv`
    `ship:<run>`, a pull request's URL to the record stage run's
    `structured.pr_url` and its identity (host, repository, number) to

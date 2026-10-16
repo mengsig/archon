@@ -97,11 +97,14 @@ pub struct ShipPlan {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum ShipOutcome {
-    /// `commit` is on the run branch and, in `pr` mode, behind `pr_url`.
+    /// `commit` is on the run branch and, in `pr` mode, behind `pr_url`;
+    /// `updated` when that pull request existed and `commit` was pushed into it.
     Shipped {
         commit: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pr_url: Option<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        updated: bool,
     },
     /// Nothing more is delivered; `error` says exactly why.
     Failed { error: String },
@@ -114,10 +117,21 @@ impl ShipOutcome {
             Self::Shipped {
                 commit,
                 pr_url: Some(url),
+                updated: true,
+            } => {
+                let pr = archon_core::pull_request::PullRequestRef::from_url(url);
+                let number = pr.map_or_else(|| url.clone(), |pr| pr.number.to_string());
+                Some(format!("SHIPPED: updated #{number} to {commit} ({url})"))
+            }
+            Self::Shipped {
+                commit,
+                pr_url: Some(url),
+                updated: false,
             } => Some(format!("SHIPPED: {url} (commit {commit})")),
             Self::Shipped {
                 commit,
                 pr_url: None,
+                ..
             } => Some(format!("SHIPPED: commit {commit} on the run branch")),
             Self::Failed { .. } => None,
         }
@@ -359,17 +373,32 @@ mod tests {
         let pr = ShipOutcome::Shipped {
             commit: COMMIT.into(),
             pr_url: Some("https://github.com/o/r/pull/7".into()),
+            updated: false,
         };
         let text = serde_json::to_string(&pr).unwrap();
+        assert!(!text.contains("updated"), "{text}");
         assert_eq!(serde_json::from_str::<ShipOutcome>(&text).unwrap(), pr);
         assert!(
             pr.line()
                 .unwrap()
                 .starts_with("SHIPPED: https://github.com/o/r/pull/7")
         );
+        let updated = ShipOutcome::Shipped {
+            commit: COMMIT.into(),
+            pr_url: Some("https://github.com/o/r/pull/7".into()),
+            updated: true,
+        };
+        let text = serde_json::to_string(&updated).unwrap();
+        assert_eq!(serde_json::from_str::<ShipOutcome>(&text).unwrap(), updated);
+        let line = updated.line().unwrap();
+        assert!(
+            line.starts_with(&format!("SHIPPED: updated #7 to {COMMIT}")),
+            "{line}"
+        );
         let local = ShipOutcome::Shipped {
             commit: COMMIT.into(),
             pr_url: None,
+            updated: false,
         };
         assert!(local.line().unwrap().contains("on the run branch"));
         let failed = ShipOutcome::Failed { error: "e".into() };

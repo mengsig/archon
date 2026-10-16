@@ -383,7 +383,11 @@ pub(crate) fn fetch_head(
 }
 
 /// The commit `url` names as the head of `branch`; `None` when it has no such branch.
-fn remote_head(shadow: &Shadow, url: &str, branch: &str) -> Result<Option<String>, ArchonError> {
+pub(crate) fn remote_head(
+    shadow: &Shadow,
+    url: &str,
+    branch: &str,
+) -> Result<Option<String>, ArchonError> {
     super::check_branch(branch)?;
     let wanted = format!("refs/heads/{branch}");
     let args = ["ls-remote", "--upload-pack=git-upload-pack", url, &wanted];

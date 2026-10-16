@@ -928,8 +928,15 @@ reason, as is `onto` together with `depends_on` or with a pipeline that does
 not work in a worktree. The item's branch starts from the frozen head commit,
 and its agents are told to review against it. A replay with the same
 idempotency key returns the item as first frozen, without asking GitHub again.
-Delivery into the pull request is not there yet: such an item still ships
-through its own branch as any other.
+
+At ship, `archond` pushes the reviewed commit onto the pull request's head
+branch by fast-forward only, one item per pull request at a time, and the
+item succeeds once GitHub shows that commit as the head: its summary ends
+`SHIPPED: updated #100 to <sha> (<url>)`. The pull request's title, body and
+base stay as its owner left them, and nothing is merged. When the head moved
+since enqueue (someone else pushed), delivery fails naming both commits
+instead of force-pushing; queue the work again `onto` it to start from the
+new head.
 
 ### Coordinated changes across repositories
 

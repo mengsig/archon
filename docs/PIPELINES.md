@@ -417,7 +417,9 @@ never handed to auto-merge: archond readies the drafts together once every
 member passed, and you merge them.
 
 The run's summary ends `SHIPPED: <url> (commit <sha>)`, or
-`SHIPPED: commit <sha> on the run branch` in `local` mode. A refused
+`SHIPPED: commit <sha> on the run branch` in `local` mode. An item queued
+`onto` an existing pull request is pushed onto that pull request's branch by
+fast-forward instead, and ends `SHIPPED: updated #<n> to <sha> (<url>)`. A refused
 delivery fails the item as `stage ship: <why>`, and names what to change:
 the dirty paths, the commits under another identity, the remote branch that
 holds other commits. What only a person can fix (no `origin`, a lapsed

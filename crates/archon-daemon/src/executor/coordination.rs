@@ -18,6 +18,8 @@ use crate::context::DaemonContext;
 pub struct Coordination {
     pub changed: Notify,
     pub(super) serial: Mutex<()>,
+    /// Held while a delivery pushes into an existing pull request.
+    pub(super) onto: super::ship::OntoLocks,
 }
 
 /// How often GitHub is asked what became of the pull requests of finished runs.

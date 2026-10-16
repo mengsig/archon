@@ -30,6 +30,9 @@ pub(super) struct Target {
     pub branch: String,
     /// The branch the change is for: the stack parent's, else the repository's.
     pub base: String,
+    /// The commit the run's own commits start after, when not `base`: the
+    /// frozen head of the pull request an `onto` item delivers into.
+    pub since: Option<String>,
     /// The addresses a commit the run adds may carry, recorded at registration.
     pub allowed: Vec<String>,
     /// The repository's attribution policy at delivery.
@@ -78,17 +81,16 @@ pub(super) fn check(
             record.tree, record.commit
         )));
     }
-    let Some(base) = base_ref(tree, &target.base)? else {
-        return Ok(Err(format!(
-            "the base branch `{}` exists neither in the repository nor on `origin`",
-            target.base
-        )));
+    let base = match floor(tree, target)? {
+        Ok(base) => base,
+        Err(refusal) => return Ok(Err(refusal)),
     };
     let ahead = git(tree, &["rev-list", "--count", &format!("{base}..HEAD")])?;
     if ahead == "0" {
+        let since = target.since.as_deref().unwrap_or(&target.base);
         return Ok(Err(format!(
-            "nothing to ship: `{}` has no commit beyond `{}`",
-            target.branch, target.base
+            "nothing to ship: `{}` has no commit beyond `{since}`",
+            target.branch
         )));
     }
     if let Err(refusal) = foreign_commits(tree, &base, &target.allowed)? {
@@ -166,6 +168,36 @@ fn own_worktree(target: &Target) -> Result<Result<(), String>, ArchonError> {
     }
 }
 
+/// Where the run's own commits start: `target.since` when it is an ancestor
+/// of the run's head, else the ref of `target.base`.
+fn floor(tree: &Path, target: &Target) -> Result<Result<String, String>, ArchonError> {
+    let Some(since) = &target.since else {
+        return Ok(base_ref(tree, &target.base)?.ok_or_else(|| {
+            format!(
+                "the base branch `{}` exists neither in the repository nor on `origin`",
+                target.base
+            )
+        }));
+    };
+    assert!(
+        crate::worktree::stack::is_commit_id(since),
+        "a frozen commit id"
+    );
+    let held = DaemonGit::sealed_in(tree)
+        .args(["merge-base", "--is-ancestor", since, "HEAD"])
+        .output()?;
+    // `merge-base --is-ancestor` exits 1 exactly when it is not one.
+    match held.status.code() {
+        Some(0) => Ok(Ok(since.clone())),
+        Some(1) => Ok(Err(format!(
+            "the run branch `{}` does not hold {since}, the head of the pull request it \
+             delivers into, so it cannot be pushed there by fast-forward",
+            target.branch
+        ))),
+        _ => Err(held.failure()),
+    }
+}
+
 /// The ref `base` names: the local branch, else `origin`'s.
 fn base_ref(tree: &Path, base: &str) -> Result<Option<String>, ArchonError> {
     assert!(!base.is_empty(), "a run has a base branch");
@@ -192,7 +224,7 @@ fn foreign_commits(
         !allowed.is_empty(),
         "the daemon's own address is always allowed"
     );
-    assert!(base.starts_with("refs/"), "a full ref name");
+    assert!(is_floor(base), "a full ref name or a commit id");
     let format = "--format=%H%x09%ae%x09%ce";
     let log = git(tree, &["log", format, "HEAD", "--not", base, "--remotes"])?;
     let mut foreign = Vec::new();
@@ -231,7 +263,7 @@ fn unattributed(
     base: &str,
     record: &ShipRecord,
 ) -> Result<Result<(), String>, ArchonError> {
-    assert!(base.starts_with("refs/"), "a full ref name");
+    assert!(is_floor(base), "a full ref name or a commit id");
     assert!(!record.body.trim().is_empty(), "a read record has a body");
     let mut found: Vec<String> = attribution_lines(&record.body)
         .into_iter()
@@ -273,6 +305,11 @@ fn unattributed(
         found.len(),
         found.join("; ")
     )))
+}
+
+/// Whether `base` is what [`floor`] gives: a full ref name or a commit id.
+fn is_floor(base: &str) -> bool {
+    base.starts_with("refs/") || crate::worktree::stack::is_commit_id(base)
 }
 
 /// The first few of `items` on one line, saying how many more there are.

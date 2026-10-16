@@ -1,6 +1,7 @@
 //! Work queued `onto` an existing pull request: enqueue resolves the target
-//! with `gh` and freezes it, refuses one Archon could not push to, and the
-//! item's branch starts from the frozen head. A bare `origin` and a fake `gh`.
+//! with `gh` and freezes it, refuses one Archon could not push to, the
+//! item's branch starts from the frozen head, and delivery fast-forwards the
+//! pull request's branch. A bare `origin` and a fake `gh`.
 
 mod common;
 
@@ -10,13 +11,14 @@ use std::path::{Path, PathBuf};
 use archon_core::error::ArchonError;
 use archon_core::protocol::{EnqueueRequest, ItemPatch, Reply, RepoRef, Request};
 use archon_core::pull_request::{OntoPullRequest, OntoTarget, PullRequestRef};
-use archon_core::queue::QueueItem;
-use common::delivery::{add_origin, origin_of};
+use archon_core::queue::{QueueItem, QueueState};
+use common::delivery::{add_origin, origin_of, pushed, shipped_by};
 use common::{Harness, PIPELINE, REPO_NAME, git, plan};
 use serde_json::{Value, json};
 
-/// `pr view <number|url>` shows `pr-<number>.json`; `pr list --head <branch>`
-/// lists `branch-<branch>.json`, else none.
+/// `pr view <number|url>` shows `pr-<number>.json`, its head the commit
+/// `origin` holds for `feature` once `origin` names that repository;
+/// `pr list --head <branch>` lists `branch-<branch>.json`, else none.
 const GH: &str = r#"#!/bin/sh
 state="$(dirname "$0")/gh-onto"
 printf '%s\n' "$*" >> "$state/calls"
@@ -25,7 +27,12 @@ case "$1 $2" in
     [ "$4" = "--json" ] || exit 2
     shown="$state/pr-${3##*/}.json"
     [ -f "$shown" ] || { echo "GraphQL: Could not resolve to a PullRequest" >&2; exit 1; }
-    cat "$shown"
+    if [ -f "$state/origin" ]; then
+        live=$(git --git-dir="$(cat "$state/origin")" rev-parse --verify -q refs/heads/feature)
+        sed "s/\"headRefOid\":\"[0-9a-f]*\"/\"headRefOid\":\"$live\"/" "$shown"
+    else
+        cat "$shown"
+    fi
     ;;
 "pr list")
     if [ "$3 $4 $5 $6 $7" = "--state open --limit 1000 --json" ]; then printf '[]'; exit 0; fi
@@ -74,6 +81,15 @@ impl Gh {
         shown
     }
 
+    /// GitHub shows the head `origin` holds for `feature` from now on.
+    fn follow_origin(&self, origin: &Path) {
+        std::fs::write(self.state.join("origin"), origin.to_str().unwrap()).expect("origin");
+    }
+
+    fn calls(&self) -> String {
+        std::fs::read_to_string(self.state.join("calls")).unwrap_or_default()
+    }
+
     /// GitHub lists `prs` as the open pull requests of `branch`.
     fn list(&self, branch: &str, prs: &[Value]) {
         let file = format!("branch-{}.json", branch.replace('/', "_"));
@@ -98,6 +114,18 @@ fn feature_on_origin(h: &Harness) -> String {
     std::fs::write(clone.join("feature.txt"), "feature\n").unwrap();
     git(&clone, &["add", "feature.txt"]);
     git(&clone, &["commit", "--quiet", "-m", "Feature"]);
+    git(&clone, &["push", "--quiet", "origin", "HEAD:feature"]);
+    git(&clone, &["rev-parse", "HEAD"])
+}
+
+/// Someone else pushes one more commit onto `feature` on `origin`; returns it.
+fn move_feature(h: &Harness) -> String {
+    let clone = h.dir.path().join("upstream");
+    std::fs::write(clone.join("feature.txt"), "moved on\n").unwrap();
+    git(
+        &clone,
+        &["commit", "--quiet", "-am", "Someone else's change"],
+    );
     git(&clone, &["push", "--quiet", "origin", "HEAD:feature"]);
     git(&clone, &["rev-parse", "HEAD"])
 }
@@ -395,4 +423,75 @@ async fn an_onto_items_worktree_starts_from_the_frozen_head_and_its_agents_are_t
     assert!(told.contains("\n## Existing pull request\n"), "{told}");
     assert!(told.contains("https://github.com/o/r/pull/100"), "{told}");
     assert!(told.contains(&head), "{told}");
+}
+
+/// An item onto #100 through `direct`, dispatched, whose one stage commits a
+/// change; returns the item and that change's commit once delivery ran.
+async fn delivered_onto(h: &Harness, before_settle: impl FnOnce()) -> (QueueItem, String) {
+    let mut asked = request("onto 100", Some(OntoTarget::Pr(100)), &[]);
+    asked.pipeline = Some("direct".into());
+    asked.model_plan = archon_core::model::ModelPlan::default().into();
+    let Reply::Item(item) = h.cli(Request::Enqueue(asked)).await.unwrap() else {
+        panic!("enqueue replied no item");
+    };
+    h.dispatch().await;
+    before_settle();
+    let stage = h.running().await.remove(0);
+    let outcome = shipped_by(h, &stage, "Changed it; cargo test passes", json!({})).await;
+    let commit = head_of(&h.run(&item.id).await.workspace);
+    h.settle_running(|_| outcome.clone()).await;
+    h.dispatch().await;
+    (item, commit)
+}
+
+#[tokio::test]
+async fn an_onto_item_fast_forwards_the_pull_request_and_leaves_its_text_alone() {
+    let (h, gh, head) = setup().await;
+    gh.show(100, &head, json!({}));
+    let origin = origin_of(&h);
+    gh.follow_origin(&origin);
+
+    let (item, commit) = delivered_onto(&h, || {}).await;
+
+    let QueueState::Succeeded { summary, .. } = h.state(&item.id).await else {
+        panic!("the item ships: {:?}", h.state(&item.id).await);
+    };
+    let url = "https://github.com/o/r/pull/100";
+    let line = format!("SHIPPED: updated #100 to {commit} ({url})");
+    assert!(summary.ends_with(&line), "{summary}");
+    assert_eq!(pushed(&origin, "feature"), Some(commit.clone()));
+    let ancestry = [
+        "merge-base",
+        "--is-ancestor",
+        head.as_str(),
+        commit.as_str(),
+    ];
+    git(&origin, &ancestry);
+    let run = h.run(&item.id).await;
+    assert_eq!(pushed(&origin, &run.branch), None, "no branch of its own");
+    let calls = gh.calls();
+    for untouched in ["pr create", "pr edit", "pr merge", "pr ready"] {
+        assert!(!calls.contains(untouched), "{untouched}: {calls}");
+    }
+    let stages = h.stages(&item.id).await;
+    assert_eq!(archon_core::run::pr_url(stages.iter()), Some(url));
+}
+
+#[tokio::test]
+async fn a_head_that_moved_since_enqueue_fails_delivery_without_a_force_push() {
+    let (h, gh, head) = setup().await;
+    gh.show(100, &head, json!({}));
+    gh.follow_origin(&origin_of(&h));
+    let mut moved = String::new();
+
+    let (item, commit) = delivered_onto(&h, || moved = move_feature(&h)).await;
+
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!("the item fails: {:?}", h.state(&item.id).await);
+    };
+    assert!(error.contains(&head) && error.contains(&moved), "{error}");
+    assert!(error.contains("never force-pushes"), "{error}");
+    assert_eq!(pushed(&origin_of(&h), "feature"), Some(moved), "kept");
+    assert_ne!(commit, head, "the item had a change of its own");
+    assert!(!gh.calls().contains("pr edit"));
 }

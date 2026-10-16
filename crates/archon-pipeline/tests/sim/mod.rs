@@ -265,6 +265,7 @@ impl Sim {
         let outcome = ShipOutcome::Shipped {
             commit: plan.record.commit.clone(),
             pr_url: Some(url.to_owned()),
+            updated: false,
         };
         self.ship(outcome)
     }

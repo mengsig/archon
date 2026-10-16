@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 
 use archon_core::error::ArchonError;
 use archon_core::id::PipelineRunId;
+use archon_core::pull_request::OntoPullRequest;
 use archon_core::repo::Repo;
 use archon_core::run::{PipelineRun, StageState};
 use archon_pipeline::{RunDriver, ShipOutcome, ShipPlan};
@@ -24,7 +25,7 @@ use super::super::{
     FollowUp, RunTable, ShipRetry, descendants, fast_check, initiative_ship, recover,
     repo_identity, restack, settle,
 };
-use super::{auto_merge, checks, gate, pr_checks, remote};
+use super::{auto_merge, checks, existing, gate, pr_checks, remote};
 use crate::context::DaemonContext;
 use crate::resolve;
 
@@ -73,6 +74,8 @@ struct Claimed {
     run: PipelineRun,
     /// `None` when the item's repository is no longer registered.
     repo: Option<Repo>,
+    /// The existing pull request the item delivers into, if any.
+    onto: Option<Box<OntoPullRequest>>,
     vars: BTreeMap<String, String>,
     /// The outcome persisted already, if any.
     recorded: Option<ShipOutcome>,
@@ -170,6 +173,7 @@ async fn claim(
     let claimed = Claimed {
         plan,
         repo: repo_of(&store, &run)?,
+        onto: store.item(&run.item)?.onto,
         vars: recover::load_run_vars(&store, run_id)?,
         recorded,
         gate,
@@ -217,7 +221,9 @@ async fn fresh(
     };
     let (run, plan) = (&claimed.run, &claimed.plan);
     let mut store = ctx.store.lock().await;
-    let owes_merge = claimed.vars.get("ship.auto_merge").map(String::as_str) == Some("true");
+    // Delivery into an existing pull request never merges it.
+    let owes_merge = claimed.vars.get("ship.auto_merge").map(String::as_str) == Some("true")
+        && claimed.onto.is_none();
     if let ShipOutcome::Shipped {
         pr_url: Some(url), ..
     } = &outcome
@@ -276,8 +282,12 @@ async fn carry_out(
         let shipped = ShipOutcome::Shipped {
             commit,
             pr_url: None,
+            updated: false,
         };
         return Ok(Carried::Done(shipped));
+    }
+    if let Some(onto) = &claimed.onto {
+        return into_existing(ctx, &repo, onto, commit).await;
     }
     // The operator's policy as it stands at delivery, as the checks applied it.
     let body = archon_pipeline::pr_body(&plan.body, run.item.as_str(), repo.attribution);
@@ -292,9 +302,37 @@ async fn carry_out(
         Ok(url) => Ok(Carried::Done(ShipOutcome::Shipped {
             commit,
             pr_url: Some(url),
+            updated: false,
         })),
         Err(refusal) => refused(refusal),
     }
+}
+
+/// Push `commit` into the existing pull request `onto` names, by fast-forward,
+/// leaving its title, body and base as they are.
+async fn into_existing(
+    ctx: &DaemonContext,
+    repo: &Repo,
+    onto: &OntoPullRequest,
+    commit: String,
+) -> Result<Carried, ArchonError> {
+    assert!(
+        crate::worktree::stack::is_commit_id(&commit),
+        "the checked commit"
+    );
+    let outcome = match existing::deliver(ctx, repo, onto, &commit).await? {
+        Ok(url) => ShipOutcome::Shipped {
+            commit,
+            pr_url: Some(url),
+            updated: true,
+        },
+        Err(error) => ShipOutcome::Failed { error },
+    };
+    assert!(
+        !matches!(&outcome, ShipOutcome::Shipped { pr_url: Some(url), .. } if *url != onto.pr.url()),
+        "only the frozen pull request is updated"
+    );
+    Ok(Carried::Done(outcome))
 }
 
 /// The run branch's head once the worktree holds what the record names
@@ -313,6 +351,7 @@ async fn prove(
         workspace: run.workspace.clone(),
         branch: run.branch.clone(),
         base: base.to_owned(),
+        since: claimed.onto.as_ref().map(|onto| onto.head_sha.clone()),
         allowed: repo_identity::RepoIdentity::allowed(identity.as_ref()),
         attribution: repo.attribution,
     };
@@ -490,7 +529,7 @@ async fn apply(
 ) -> Result<FollowUp, ArchonError> {
     assert!(!table.shipping.contains(&run.id), "the delivery has ended");
     match &outcome {
-        ShipOutcome::Shipped { commit, pr_url } => {
+        ShipOutcome::Shipped { commit, pr_url, .. } => {
             tracing::info!(run = %run.id, %commit, pr = ?pr_url, "run delivered");
         }
         ShipOutcome::Failed { error } => {

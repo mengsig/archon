@@ -3,6 +3,7 @@
 
 Without `gh-explicit` a pull request exists as soon as its branch is asked
 about, as if a ship agent had opened it; with it, only `pr create` opens one.
+Every call in a repository named in `gh-down` fails.
 """
 import json
 import pathlib
@@ -15,6 +16,9 @@ explicit = (root / 'gh-explicit').exists()
 args = sys.argv[1:]
 with (root / 'gh-calls.jsonl').open('a') as log:
     log.write(json.dumps(args) + '\n')
+down = root / 'gh-down'
+if down.exists() and pathlib.Path.cwd().name in down.read_text().split():
+    sys.exit('HTTP 502: Bad Gateway')
 
 
 def flag(name):

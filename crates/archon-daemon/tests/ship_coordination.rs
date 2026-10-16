@@ -22,6 +22,7 @@ use common::delivery::{add_origin, origin_of, pushed, shipped_by};
 use common::initiative::{gh_calls, install_explicit_gh, prs, set_pr};
 use common::{Harness, REPO_NAME, git};
 use serde_json::json;
+use std::sync::{Arc, Mutex};
 
 const PIPELINE: &str = "direct";
 
@@ -36,9 +37,13 @@ async fn delivering() -> Harness {
 
 /// Enqueue a change on [`PIPELINE`] with no model plan, after `parents`.
 async fn enqueue(h: &Harness, title: &str, parents: &[&QueueItem]) -> QueueItem {
+    enqueue_in(h, REPO_NAME, title, parents).await
+}
+
+async fn enqueue_in(h: &Harness, repo: &str, title: &str, parents: &[&QueueItem]) -> QueueItem {
     let request = EnqueueRequest {
         stage_timeouts: Default::default(),
-        repo: Some(RepoRef(REPO_NAME.into())),
+        repo: Some(RepoRef(repo.into())),
         pipeline: Some(PIPELINE.into()),
         title: title.into(),
         brief: "brief".into(),
@@ -271,4 +276,83 @@ async fn what_became_of_a_delivered_pull_request_is_learned_from_github() {
     let settled = pull_requests::observe(&h.ctx).await.unwrap();
     assert_eq!(settled, pull_requests::Observed::default());
     assert_eq!(calls(&h), before, "neither is asked about again");
+}
+
+/// Everything logged at `WARN` or above while it is held, on this thread.
+struct Warnings {
+    lines: Arc<Mutex<Vec<u8>>>,
+    _guard: tracing::subscriber::DefaultGuard,
+}
+
+struct Captured(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for Captured {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Warnings {
+    fn capture() -> Self {
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&lines);
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
+            .with_writer(move || Captured(Arc::clone(&sink)))
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        Self { lines, _guard }
+    }
+
+    fn lines(&self) -> Vec<String> {
+        let raw = String::from_utf8(self.lines.lock().unwrap().clone()).unwrap();
+        raw.lines().map(str::to_owned).collect()
+    }
+}
+
+/// A repository GitHub cannot list is asked once per pass, its runs skipped
+/// and counted unanswered with one warning, while another is still observed.
+#[tokio::test]
+async fn a_repository_that_cannot_be_listed_is_asked_once_and_warned_about_once() {
+    let h = delivering().await;
+    add_client(&h).await;
+    let mine = enqueue(&h, "the change that merges", &[]).await;
+    let first = enqueue_in(&h, "client", "a client change", &[]).await;
+    let second = enqueue_in(&h, "client", "another client change", &[]).await;
+    let mine = ship(&h, &mine.id).await;
+    ship(&h, &first.id).await;
+    ship(&h, &second.id).await;
+    set_pr(&h, &mine.branch, "state", json!("MERGED"));
+    let down = h.ctx.config.github.binary.with_file_name("gh-down");
+    std::fs::write(down, "client").unwrap();
+
+    let before = gh_calls(&h).len();
+    let warnings = Warnings::capture();
+    let seen = pull_requests::observe(&h.ctx).await.unwrap();
+    let logged = warnings.lines();
+    drop(warnings);
+    assert_eq!((seen.merged, seen.unanswered), (1, 2), "{seen:?}");
+    assert_eq!(
+        outcome(&h, &mine).await.merged,
+        Some(true),
+        "still observed"
+    );
+    let calls = &gh_calls(&h)[before..];
+    let whole = |call: &&Vec<String>| call[1] == "list" && !call.contains(&"--head".to_owned());
+    let listed: Vec<_> = calls.iter().filter(whole).collect();
+    assert_eq!(listed.len(), 2, "one listing per repository: {calls:?}");
+    assert_eq!(
+        logged.len(),
+        1,
+        "one warning for the repository: {logged:?}"
+    );
+    assert!(logged[0].contains("2 runs not observed"), "{logged:?}");
+    assert!(logged[0].contains("repo=client"), "{logged:?}");
+    assert!(logged[0].contains("502"), "the cause is kept: {logged:?}");
 }

@@ -395,6 +395,8 @@ pub(crate) async fn view(
 #[derive(Debug, Default)]
 pub(crate) struct Pass {
     open: HashMap<PathBuf, Vec<PullRequest>>,
+    /// Repositories whose listing failed this pass, with why.
+    unlisted: HashMap<PathBuf, String>,
 }
 
 impl Pass {
@@ -408,8 +410,16 @@ impl Pass {
         if !self.open.contains_key(repo) {
             let filter = ["--state", "open", "--limit", MAX_OPEN];
             let doing = "listing the open pull requests";
-            let listed = list(binary, repo, &filter, None, doing).await?;
-            self.open.insert(repo.to_owned(), listed);
+            match list(binary, repo, &filter, None, doing).await {
+                Ok(listed) => {
+                    self.unlisted.remove(repo);
+                    self.open.insert(repo.to_owned(), listed);
+                }
+                Err(error) => {
+                    self.unlisted.insert(repo.to_owned(), error.to_string());
+                    return Err(error);
+                }
+            }
         }
         let listed = self.open.get(repo).expect("listed above");
         assert!(listed.iter().all(PullRequest::is_open), "an open listing");
@@ -420,6 +430,16 @@ impl Pass {
             return Ok(pr.clone());
         }
         view(binary, repo, branch).await
+    }
+
+    /// Why the listing of `repo` failed this pass, if it did.
+    pub(crate) fn unlisted(&self, repo: &Path) -> Option<&str> {
+        let why = self.unlisted.get(repo).map(String::as_str);
+        assert!(
+            why.is_none() || !self.open.contains_key(repo),
+            "a repository is either listed or not"
+        );
+        why
     }
 }
 

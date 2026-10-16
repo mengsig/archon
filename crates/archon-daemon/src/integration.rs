@@ -66,7 +66,7 @@ impl Watch {
         Ok(Some(Self {
             repo: repo.clone(),
             release: tiers.release_branch().to_owned(),
-            full: tiers.checks.full.clone(),
+            full: crate::executor::fast_check::trusted_full(repo)?,
             branch,
             github,
             source,

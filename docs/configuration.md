@@ -344,7 +344,12 @@ landed since the last verified head, or once the head has stood still for
 `idle_after`. When the repository ships pull requests and GitHub runs check
 runs on the commit, those decide. Otherwise `archond` runs `[checks] full`
 in its own checkout of the branch (`<data>/integration/<repo>`, its output
-in `<repo>.log` beside it), under `nice`, one run at a time per host.
+in `<repo>.log` beside it), under `nice`, one run at a time per host. It
+runs the registry's full check (`archon repo set --full-check`), or the one
+in the registered repository's committed `.archon/repo.toml` once the
+operator confirmed its exact text with `archon repo set --confirm-full-check
+'<command>'`, until the file changes; an untracked or uncommitted copy runs
+nothing.
 
 ```toml
 [integration]

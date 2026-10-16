@@ -138,6 +138,7 @@ fn repo(path: &Path, fast: Option<&str>, confirmed: Option<&str>) -> Repo {
             ..RepoTiers::default()
         },
         confirmed_fast_check: confirmed.map(str::to_owned),
+        confirmed_full_check: None,
         added_at: archon_core::now(),
     }
 }
@@ -180,6 +181,39 @@ fn only_the_registry_s_or_a_confirmed_committed_check_is_trusted() {
     std::fs::write(root.join(".git/config"), "[broken\n").unwrap();
     let unreadable = repo(&root, None, Some("true"));
     assert!(trusted(&unreadable).is_err(), "a failed read is no absence");
+}
+
+/// The full check is trusted as the fast one is, by its own confirmation.
+#[test]
+fn only_the_registry_s_or_a_confirmed_committed_full_check_is_trusted() {
+    let (_keep, root) = dir();
+    git(&root, &["init", "--quiet", "--initial-branch=main"]);
+    let file = "[checks]\nfast = \"make quick\"\nfull = \"make ci\"\n";
+    write(&root, ".archon/repo.toml", file);
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "--quiet", "-m", "checks"]);
+    let full = |registry: Option<&str>, confirmed: Option<&str>| {
+        let mut repo = repo(&root, None, Some("make ci"));
+        repo.tiers.checks.full = registry.map(str::to_owned);
+        repo.confirmed_full_check = confirmed.map(str::to_owned);
+        trusted_full(&repo).unwrap()
+    };
+    assert_eq!(full(Some("make all"), None).as_deref(), Some("make all"));
+    assert_eq!(
+        full(None, None),
+        None,
+        "the fast confirmation is not the full one"
+    );
+    assert_eq!(full(None, Some("make ci")).as_deref(), Some("make ci"));
+    write(&root, ".archon/repo.toml", "[checks]\nfull = \"true\"\n");
+    assert_eq!(
+        full(None, Some("true")),
+        None,
+        "an uncommitted edit confirms nothing"
+    );
+    assert_eq!(full(None, Some("make ci")).as_deref(), Some("make ci"));
+    git(&root, &["commit", "--quiet", "-am", "changed"]);
+    assert_eq!(full(None, Some("make ci")), None, "the commit changed it");
 }
 
 fn git(tree: &Path, args: &[&str]) {

@@ -365,6 +365,10 @@ pub struct TierArgs {
     /// so the ship gate runs it; it stops running once the file differs.
     #[arg(long)]
     pub confirm_fast_check: Option<String>,
+    /// Confirm the committed `.archon/repo.toml` full check, word for word,
+    /// so the integration branch is verified by it while the file reads so.
+    #[arg(long)]
+    pub confirm_full_check: Option<String>,
 }
 
 #[derive(Debug, Args)]

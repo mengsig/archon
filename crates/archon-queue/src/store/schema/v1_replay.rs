@@ -34,6 +34,7 @@ fn repo(name: &str) -> Repo {
         attribution: Default::default(),
         tiers: Default::default(),
         confirmed_fast_check: None,
+        confirmed_full_check: None,
         added_at: v1_time(),
     }
 }

@@ -167,6 +167,7 @@ fn tiers_patch(args: TierArgs) -> TiersPatch {
         fast_check: clearable(args.fast_check),
         full_check: clearable(args.full_check),
         confirmed_fast_check: clearable(args.confirm_fast_check),
+        confirmed_full_check: clearable(args.confirm_full_check),
     }
 }
 

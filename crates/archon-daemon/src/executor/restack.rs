@@ -73,16 +73,26 @@ pub(super) async fn parents(
     let mut pass = Pass::default();
     let mut parents = Vec::new();
     for id in &item.dependencies {
-        let run = {
+        let (parent, run) = {
             let store = ctx.store.lock().await;
-            if store.item(id)?.repo != item.repo {
+            let parent = store.item(id)?;
+            if parent.repo != item.repo {
                 continue;
             }
-            store.runs_for_item(id)?.last().cloned()
+            let run = store.runs_for_item(id)?.last().cloned();
+            (parent, run)
         };
         let Some(run) = run.filter(|r| r.shipped && is_plain_branch(&r.branch)) else {
             continue;
         };
+        if let (Some(onto), ShipMode::Pr) = (&parent.onto, repo.ship) {
+            return Err(ArchonError::Invalid(format!(
+                "{id} went into the pull request {}, not a branch of its own, so {} cannot \
+                 stack on it: queue the work `onto` {id} instead",
+                onto.pr.url(),
+                item.id
+            )));
+        }
         let head = match repo.ship {
             ShipMode::Local => None,
             ShipMode::Pr => {

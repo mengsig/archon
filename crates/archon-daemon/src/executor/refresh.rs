@@ -96,6 +96,13 @@ async fn target(
             parent.parent_branch
         )));
     }
+    if let (Some(onto), ShipMode::Pr, true) = (&item.onto, repo.ship, run.shipped) {
+        return Err(ArchonError::Invalid(format!(
+            "{id} went into the pull request {}, not a branch of its own: queue the \
+             refresh `onto` {id} instead",
+            onto.pr.url()
+        )));
+    }
     assert_eq!(run.item, item.id, "the item's own run");
     Ok((item, run, repo))
 }

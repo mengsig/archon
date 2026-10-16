@@ -506,3 +506,35 @@ async fn a_head_that_moved_since_enqueue_fails_delivery_without_a_force_push() {
     assert_ne!(commit, head, "the item had a change of its own");
     assert!(!gh.calls().contains("pr edit"));
 }
+
+/// A delivered onto item has no branch of its own on `origin`: a child is
+/// not stacked on it and it is not refreshed, both told to queue `onto` it.
+#[tokio::test]
+async fn a_delivered_onto_item_is_neither_stacked_on_nor_refreshed() {
+    let (h, gh, head) = setup().await;
+    gh.show(100, &head, json!({}));
+    gh.follow_origin(&origin_of(&h));
+    let (parent, _) = delivered_onto(&h, || {}).await;
+    assert!(matches!(
+        h.state(&parent.id).await,
+        QueueState::Succeeded { .. }
+    ));
+
+    let refresh = Request::RefreshItem {
+        item: parent.id.clone(),
+    };
+    let refused = h.orchestrator(refresh).await.unwrap_err().to_string();
+    let advice = format!("`onto` {}", parent.id);
+    assert!(refused.contains(&advice), "{refused}");
+    let asked = request("child", None, &[&parent]);
+    let Reply::Item(child) = h.cli(Request::Enqueue(asked)).await.unwrap() else {
+        panic!("enqueue replied no item");
+    };
+    h.dispatch().await;
+
+    let QueueState::Failed { error, .. } = h.state(&child.id).await else {
+        panic!("the child does not start: {:?}", h.state(&child.id).await);
+    };
+    assert!(error.contains(&advice), "{error}");
+    assert!(error.contains("https://github.com/o/r/pull/100"), "{error}");
+}

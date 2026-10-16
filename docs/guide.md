@@ -947,7 +947,10 @@ since enqueue (someone else pushed), delivery fails naming both commits
 instead of force-pushing; queue the work again `onto` it to start from the
 new head. The push goes only to the repository holding that head: an
 `origin` naming another one, after your `insteadOf` rewrites, is refused,
-and `pushInsteadOf` does not apply to it.
+and `pushInsteadOf` does not apply to it. A delivered `onto` item has no
+branch of its own on `origin`, so it is not refreshed and an item depending
+on it in the same repository does not start: queue that work `onto` the
+item instead.
 
 ### Coordinated changes across repositories
 

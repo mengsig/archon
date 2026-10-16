@@ -34,9 +34,8 @@ pub(super) fn insert(conn: &mut Connection, directive: &Directive) -> Result<(),
     let tx = write_tx(conn)?;
     prune(&tx, &directive.set_at)?;
     if count(&tx)? >= MAX_DIRECTIVES {
-        return Err(ArchonError::Invalid(format!(
-            "{MAX_DIRECTIVES} directives are already in force; clear one first"
-        )));
+        let in_force = active(&tx, &directive.set_at)?;
+        return Err(ArchonError::Invalid(refusal(&in_force)));
     }
     let inserted = tx
         .execute(
@@ -55,6 +54,53 @@ pub(super) fn insert(conn: &mut Connection, directive: &Directive) -> Result<(),
         "the cap holds after inserting"
     );
     tx.commit().ctx("commit directive")
+}
+
+/// Directives listed per group in the refusal.
+const NAMED: usize = 3;
+
+/// Why a directive was refused at the cap, naming which ones to clear:
+/// the oldest and the soonest to lapse. `in_force` is oldest first.
+fn refusal(in_force: &[Directive]) -> String {
+    assert!(in_force.len() >= MAX_DIRECTIVES, "refused only at the cap");
+    debug_assert!(in_force.is_sorted_by_key(|d| (d.set_at, d.id.as_str().to_owned())));
+    let oldest: Vec<String> = in_force
+        .iter()
+        .take(NAMED)
+        .map(|d| format!("{} \"{}\" (set {})", d.id, snippet(&d.text), utc(&d.set_at)))
+        .collect();
+    let mut lapsing: Vec<&Directive> = in_force.iter().filter(|d| d.expires_at.is_some()).collect();
+    lapsing.sort_by_key(|d| d.expires_at);
+    let lapsing: Vec<String> = lapsing
+        .iter()
+        .take(NAMED)
+        .filter_map(|d| Some(format!("{} (until {})", d.id, utc(d.expires_at.as_ref()?))))
+        .collect();
+    let lapsing = if lapsing.is_empty() {
+        "none lapses on its own".to_owned()
+    } else {
+        format!("soonest to lapse: {}", lapsing.join(", "))
+    };
+    format!(
+        "{} directives are in force, the most at once (MAX_DIRECTIVES = {MAX_DIRECTIVES}); \
+         clear one first with `archon autonomy clear <id>` or clear_directive. \
+         Oldest: {}; {lapsing}",
+        in_force.len(),
+        oldest.join(", ")
+    )
+}
+
+fn utc(at: &Timestamp) -> String {
+    at.format("%Y-%m-%d %H:%M UTC").to_string()
+}
+
+/// The first words of a directive, enough to recognise it.
+fn snippet(text: &str) -> String {
+    const CHARS: usize = 40;
+    match text.char_indices().nth(CHARS) {
+        Some((end, _)) => format!("{}…", &text[..end]),
+        None => text.to_owned(),
+    }
 }
 
 /// The directives in force at `now`, oldest first.

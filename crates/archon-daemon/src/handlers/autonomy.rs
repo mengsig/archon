@@ -38,6 +38,7 @@ pub(super) async fn view(
         policy,
         directives,
         merge_granted,
+        limits: ctx.config.limits.structural(),
     })))
 }
 

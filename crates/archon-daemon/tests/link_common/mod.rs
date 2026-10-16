@@ -64,6 +64,7 @@ impl Harness {
             storage: Default::default(),
             status_probes: Default::default(),
             quota: Default::default(),
+            push: Default::default(),
             paths: paths(dir.path()),
             config,
             store: Mutex::new(Store::open_in_memory().expect("in-memory store")),

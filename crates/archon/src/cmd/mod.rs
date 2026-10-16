@@ -16,6 +16,7 @@ mod log;
 mod merge;
 mod pipelines;
 mod queue;
+mod release;
 mod repo;
 mod reports;
 mod settings;
@@ -80,6 +81,7 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::Pipelines(command) => pipelines::run(command, json).await,
         Command::Reports { command } => reports::run(command, json).await,
         Command::Setup { print, resync } => instance::setup(print, resync, json).await,
+        Command::Release(command) => release::run(command, json).await,
         Command::Doctor => doctor::run(json).await,
         Command::Tui(args) => instance::tui(args).await,
         Command::Aether { args } => instance::passthrough(&args),
@@ -144,6 +146,7 @@ fn json_refusal(command: Option<&Command>) -> Option<&'static str> {
         | Command::Resume(_)
         | Command::Setup { .. }
         | Command::Doctor
+        | Command::Release(_)
         | Command::Gc { .. }
         | Command::Orchestrator(_)
         | Command::Update(_) => None,

@@ -13,6 +13,9 @@ const KEY_PREFIX: &str = "promoting_";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Pending {
+    /// The integration branch and the release branch it was merged into.
+    pub branch: String,
+    pub release: String,
     /// The verified integration head the merge was sent for.
     pub head: String,
     pub pull_request: String,
@@ -31,12 +34,14 @@ pub(super) fn load(store: &Store, repo: &RepoId) -> Result<Option<Pending>, Arch
         .map_err(|e| ArchonError::Store(format!("kv {key} = {raw:?}: {e}")))?;
     assert!(stack::is_commit_id(&pending.head), "a saved verified head");
     assert!(!pending.pull_request.is_empty(), "a saved pull request");
+    assert_ne!(pending.branch, pending.release, "a saved pair of branches");
     Ok(Some(pending))
 }
 
 pub(super) fn save(store: &mut Store, repo: &RepoId, pending: &Pending) -> Result<(), ArchonError> {
     assert!(stack::is_commit_id(&pending.head), "a verified head");
     assert!(!pending.pull_request.is_empty(), "the pull request merged");
+    assert_ne!(pending.branch, pending.release, "two branches");
     store.kv_set(&key(repo), &serde_json::to_string(pending)?)
 }
 

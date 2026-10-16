@@ -425,3 +425,40 @@ async fn a_queued_merge_is_finished_by_the_next_promotion() {
     );
     assert!(!file(&h, "released").exists(), "the hook ran once");
 }
+
+/// A queued promotion is finished only between the branches it was sent for:
+/// another release branch holding the head neither finishes nor drops it.
+#[tokio::test]
+async fn a_queued_merge_is_finished_only_for_its_own_release_branch() {
+    let (h, gh, _slot) = promoting().await;
+    let landed = land(&h, "one");
+    integration::pass(&h.ctx).await.expect("green pass");
+    gh.queue_merges();
+    assert!(h.cli(promote()).await.is_err(), "the merge is queued");
+
+    let origin = origin_of(&h);
+    git(&origin, &["branch", "staging", &landed]);
+    let release = |name: &str| RepoPatch {
+        tiers: TiersPatch {
+            release_branch: Clearable::Set(name.into()),
+            ..TiersPatch::default()
+        },
+        ..RepoPatch::default()
+    };
+    update(&h, release("staging")).await;
+    let elsewhere = promotion(h.cli(promote()).await);
+    assert!(
+        matches!(elsewhere.outcome, PromotionOutcome::UpToDate { .. }),
+        "{elsewhere:?}"
+    );
+    assert!(!file(&h, "released").exists(), "not the queued promotion");
+
+    update(&h, release("main")).await;
+    gh.land_queued(&h.ctx.config.github.binary);
+    let done = promotion(h.cli(promote()).await);
+    assert!(
+        matches!(done.outcome, PromotionOutcome::Merged { .. }),
+        "{done:?}"
+    );
+    assert!(file(&h, "released").exists(), "the owed hook ran");
+}

@@ -97,6 +97,8 @@ pub async fn promote(
         return Ok(promotion);
     }
     let sent = Pending {
+        branch: watch.branch.clone(),
+        release: watch.release.clone(),
         head: head.clone(),
         pull_request: url.clone(),
     };
@@ -117,7 +119,8 @@ fn promotion_of(watch: &Watch, head: &str, pull_request: Option<String>) -> Prom
 }
 
 /// Finish a promotion whose merge was sent earlier and has since landed, as
-/// through a merge queue; `None` when none waits or it has not landed yet.
+/// through a merge queue; `None` when none waits, it has not landed yet, or
+/// it was between other branches than the ones configured now.
 async fn resume(
     ctx: &DaemonContext,
     watch: &Watch,
@@ -126,6 +129,9 @@ async fn resume(
     let Some(sent) = pending::load(&*ctx.store.lock().await, &watch.repo.id)? else {
         return Ok(None);
     };
+    if (sent.branch.as_str(), sent.release.as_str()) != (&watch.branch, &watch.release) {
+        return Ok(None);
+    }
     if !contains(watch, &heads.release.commit, &sent.head).await? {
         return Ok(None);
     }

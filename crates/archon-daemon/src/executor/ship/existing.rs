@@ -121,7 +121,9 @@ fn fast_forward_now(
         Err(refusal) => return Ok(Err(refusal)),
     };
     let branch = onto.head_ref.as_str();
-    match stack::remote_head(&shadow, &url, branch)? {
+    // Read where and as whom the push goes.
+    let head = || stack::remote_head_as(&shadow, &push_to, branch, token);
+    match head()? {
         // An earlier try pushed it and failed after.
         Some(head) if head == commit => return Ok(Ok(())),
         Some(head) if head == *frozen => {}
@@ -132,7 +134,7 @@ fn fast_forward_now(
     if pushed.status.success() {
         return Ok(Ok(()));
     }
-    match stack::remote_head(&shadow, &url, branch)? {
+    match head()? {
         Some(head) if head == commit => Ok(Ok(())),
         Some(head) if head != *frozen => Ok(Err(moved(onto, &head))),
         None => Ok(Err(gone(onto))),

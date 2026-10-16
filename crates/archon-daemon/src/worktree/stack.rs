@@ -470,14 +470,41 @@ pub(crate) fn remote_head(
     url: &str,
     branch: &str,
 ) -> Result<Option<String>, ArchonError> {
+    remote_head_as(shadow, url, branch, None)
+}
+
+/// [`remote_head`], read as `token`'s login when given, with none of the
+/// operator's config, as [`push`] with that token goes.
+pub(crate) fn remote_head_as(
+    shadow: &Shadow,
+    url: &str,
+    branch: &str,
+    token: Option<&Token>,
+) -> Result<Option<String>, ArchonError> {
     super::check_branch(branch)?;
     let wanted = format!("refs/heads/{branch}");
     let args = ["ls-remote", "--upload-pack=git-upload-pack", url, &wanted];
-    let listed = shadow
-        .git(None, Config::Operator)?
-        .network()
-        .args(args)
-        .text()?;
+    let listed = match token {
+        None => shadow
+            .git(None, Config::Operator)?
+            .network()
+            .args(args)
+            .text()?,
+        Some(token) => {
+            assert!(url.starts_with("https://github.com/"), "only github.com");
+            let git = shadow.git(None, Config::Sealed)?.network();
+            let ran = git
+                .secret_config(&token.push_settings())
+                .args(args)
+                .output()?;
+            if !ran.status.success() {
+                let said = token.redact(&ran.stderr_text());
+                let what = format!("git ls-remote of `{branch}` as {}", token.user());
+                return Err(ArchonError::io(what, std::io::Error::other(said)));
+            }
+            ran.stdout_text()?
+        }
+    };
     let head = listed.lines().find_map(|line| {
         let (sha, name) = line.split_once('\t')?;
         (name == wanted && is_commit_id(sha)).then(|| sha.to_owned())

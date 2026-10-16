@@ -57,3 +57,14 @@ fn corrupt_frozen_state_is_visible_instead_of_replaced() {
         Some("not json")
     );
 }
+
+#[test]
+fn a_generation_reset_reports_corrupt_state_without_overwriting_the_briefing() {
+    let mut store = Store::open_in_memory().unwrap();
+    frozen(&mut store, 2).unwrap();
+    let before = store.kv_get(FROZEN_KEY).unwrap();
+    let error = frozen(&mut store, 1).unwrap_err();
+    assert!(matches!(error, ArchonError::Store(_)));
+    assert!(error.to_string().contains("ahead of current generation 1"));
+    assert_eq!(store.kv_get(FROZEN_KEY).unwrap(), before);
+}

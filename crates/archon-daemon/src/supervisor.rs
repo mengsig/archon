@@ -840,14 +840,16 @@ async fn replace_generation(
     ctx: &DaemonContext,
     client: &AetherClient,
 ) -> Result<AetherAgentId, ArchonError> {
-    {
-        let mut store = ctx.store.lock().await;
-        let generation = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?;
-        store.kv_set(keys::ORCHESTRATOR_GENERATION, &(generation + 1).to_string())?;
-        store.kv_delete(keys::ORCHESTRATOR_AGENT)?;
-        store.kv_delete(HOST_CONTEXT_KEY)?;
-    }
+    advance_generation(ctx).await?;
     create_generation(ctx, client).await
+}
+
+async fn advance_generation(ctx: &DaemonContext) -> Result<(), ArchonError> {
+    let mut store = ctx.store.lock().await;
+    let generation = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?;
+    store.kv_set(keys::ORCHESTRATOR_GENERATION, &(generation + 1).to_string())?;
+    store.kv_delete(keys::ORCHESTRATOR_AGENT)?;
+    store.kv_delete(HOST_CONTEXT_KEY)
 }
 
 /// `create_agent` under the stored generation's idempotency key, after the
@@ -896,9 +898,45 @@ async fn create_generation(
     );
     let agent = create_orchestrator(ctx, client, request).await?;
     tracing::info!(agent = %agent.id, generation, delegation, "orchestrator created");
-    crate::triggers::briefing::deliver(ctx, client, &agent.id, generation).await?;
+    brief_created_orchestrator(ctx, client, &agent.id, generation).await?;
     crate::triggers::collapse_for_new_orchestrator(ctx).await?;
     Ok(agent.id)
+}
+
+/// A stopped, unadopted agent cannot be revived by `ensure_locked`: retire it
+/// and give the next creation attempt a fresh key, after cancelling its subtree.
+async fn brief_created_orchestrator(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    agent: &AetherAgentId,
+    generation: u64,
+) -> Result<(), ArchonError> {
+    let Err(error) = crate::triggers::briefing::deliver(ctx, client, agent, generation).await
+    else {
+        return Ok(());
+    };
+    if error.is_store() {
+        return Err(error);
+    }
+    let live = match is_live(client, agent).await {
+        Ok(live) => live,
+        Err(ArchonError::NotFound(_)) => false,
+        Err(probe) => return Err(probe.with_detail(&format!("after briefing failed: {error}"))),
+    };
+    if live {
+        return Err(error);
+    }
+    assert!(
+        current_orchestrator(ctx).await?.is_none(),
+        "the unbriefed agent was not adopted"
+    );
+    cancel_orphans(client, agent)
+        .await
+        .map_err(|cleanup| cleanup.with_detail(&format!("after briefing failed: {error}")))?;
+    retired::retire(ctx, std::slice::from_ref(agent), Sweep::Done).await?;
+    advance_generation(ctx).await?;
+    Err(error
+        .with_detail("the stopped agent was retired; the next attempt creates a fresh generation"))
 }
 
 async fn create_orchestrator(

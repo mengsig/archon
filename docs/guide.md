@@ -478,7 +478,9 @@ items with their stages, pull requests and waits, outcomes since the last
 batch, open questions and gates with their Q numbers, open initiatives, and
 up to eight recent chat feed entries. The briefing event is at most 4 KB;
 `+N more` counts show omitted entries. Normal news follows it, and retries
-reuse the saved briefing. Existing generations keep their conversations.
+reuse the saved briefing. If the agent stops before accepting it, the daemon
+cancels its remaining children and retries with a fresh generation. Existing
+generations keep their conversations.
 
 The orchestrator is instructed to echo every stage→orchestrator `agent_message`
 with stage/sender, kind, item and full message text, including info and coalesced

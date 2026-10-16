@@ -62,7 +62,12 @@ fn frozen(store: &mut Store, generation: u64) -> Result<TriggerPayload, ArchonEr
         if saved.generation == generation {
             return Ok(saved.payload);
         }
-        assert!(saved.generation < generation, "generations advance");
+        if saved.generation > generation {
+            return Err(ArchonError::Store(format!(
+                "kv {FROZEN_KEY} belongs to generation {}, ahead of current generation {generation}",
+                saved.generation
+            )));
+        }
     }
     let directives = store.directives(archon_core::now())?;
     let payload = TriggerPayload {
@@ -126,15 +131,20 @@ fn queue_lines(store: &Store) -> Result<(Vec<String>, Vec<String>), ArchonError>
         if !item.state.is_terminal() {
             active.push(item_line(store, &item)?);
         } else if since.is_none_or(|at| item.updated_at >= at) {
-            finished.push(format!(
+            let line = format!(
                 "{} {} {}",
                 item.id,
                 item.state.kind(),
                 clip(&item.title, 100)
-            ));
+            );
+            finished.push((std::cmp::Reverse(item.updated_at), item.id, line));
         }
     }
-    Ok((active, finished))
+    finished.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
+    Ok((
+        active,
+        finished.into_iter().map(|(_, _, line)| line).collect(),
+    ))
 }
 
 fn item_line(store: &Store, item: &QueueItem) -> Result<String, ArchonError> {

@@ -357,3 +357,112 @@ async fn a_refused_briefing_does_not_discard_the_batch_waiting_for_creation() {
     assert_eq!(sent[2]["payload"]["events"][0]["type"], "budget");
     assert_eq!(harness.fake.received_named("create_agent").len(), 2);
 }
+
+#[tokio::test]
+async fn a_stopped_unbriefed_agent_is_swept_before_a_fresh_generation_is_created() {
+    let harness = harness().await;
+    harness.fake.script(
+        "create_agent",
+        Scripted::reply("agent", fake::agent("agt_dead", None)),
+    );
+    let mut dead = fake::agent("agt_dead", None);
+    dead["status"] = json!({"state": "failed"});
+    harness
+        .fake
+        .script("get_agent", Scripted::reply("agent", dead));
+    harness.fake.script(
+        "trigger",
+        Scripted::refuse("invalid_argument", "agent stopped"),
+    );
+    let first = tokio::time::timeout(WAIT, supervisor::ensure_orchestrator(&harness.ctx))
+        .await
+        .unwrap();
+    assert!(first.is_err());
+    assert!(harness.kv(keys::ORCHESTRATOR_AGENT).await.is_none());
+    assert_eq!(
+        harness.kv(keys::ORCHESTRATOR_GENERATION).await.as_deref(),
+        Some("2")
+    );
+    assert_eq!(harness.fake.received_named("cancel").len(), 1);
+    assert!(
+        harness
+            .kv("orchestrator_retired")
+            .await
+            .unwrap()
+            .contains("agt_dead")
+    );
+    let second = tokio::time::timeout(WAIT, supervisor::ensure_orchestrator(&harness.ctx))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(second, agent_id("agt_new"));
+    let creates = harness.fake.received_named("create_agent");
+    assert_ne!(creates[0]["idempotency_key"], creates[1]["idempotency_key"]);
+    assert_eq!(
+        harness.fake.received_named("trigger")[1]["agent"],
+        "agt_new"
+    );
+    briefing(&harness, 1);
+}
+
+#[tokio::test]
+async fn a_briefing_without_a_batch_cutoff_prioritizes_the_newest_finished_items() {
+    let harness = harness().await;
+    let mut items = Vec::new();
+    for _ in 0..12 {
+        items.push(link_common::cancelled_item(&harness.ctx, harness.dir.path()).await);
+    }
+    supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    let text = briefing(&harness, 0);
+    let finished = text.split("Finished since last batch:\n").nth(1).unwrap();
+    assert!(
+        finished.starts_with(items.last().unwrap().as_str()),
+        "{finished}"
+    );
+    assert!(!finished.contains(items[0].as_str()), "{finished}");
+    assert!(finished.contains(" more"));
+}
+
+#[tokio::test]
+async fn an_unbriefed_generation_is_not_replaced_until_its_subtree_is_cancelled() {
+    let harness = harness().await;
+    let mut dead = fake::agent("agt_dead", None);
+    dead["status"] = json!({"state": "failed"});
+    harness
+        .fake
+        .set_default("create_agent", Scripted::reply("agent", dead.clone()));
+    for _ in 0..2 {
+        harness
+            .fake
+            .script("get_agent", Scripted::reply("agent", dead.clone()));
+        harness.fake.script(
+            "trigger",
+            Scripted::refuse("invalid_argument", "agent stopped"),
+        );
+    }
+    harness.fake.script(
+        "cancel",
+        Scripted::refuse("internal", "cleanup unavailable"),
+    );
+    let first = tokio::time::timeout(WAIT, supervisor::ensure_orchestrator(&harness.ctx))
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(first.to_string().contains("cleanup unavailable"));
+    assert_eq!(
+        harness.kv(keys::ORCHESTRATOR_GENERATION).await.as_deref(),
+        Some("1")
+    );
+    assert!(harness.kv("orchestrator_retired").await.is_none());
+    let second = tokio::time::timeout(WAIT, supervisor::ensure_orchestrator(&harness.ctx))
+        .await
+        .unwrap();
+    assert!(second.is_err());
+    assert_eq!(
+        harness.kv(keys::ORCHESTRATOR_GENERATION).await.as_deref(),
+        Some("2")
+    );
+    let creates = harness.fake.received_named("create_agent");
+    assert_eq!(creates[0]["idempotency_key"], creates[1]["idempotency_key"]);
+    assert_eq!(harness.fake.received_named("cancel").len(), 2);
+}

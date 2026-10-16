@@ -2872,8 +2872,10 @@ pull request with a blocker notification. `checks.release` then runs in the
 integration checkout at the merge commit (where the verified head entered the
 release branch's first-parent line, never a release commit that landed after
 it), under the build slot, trusted as
-`checks.full` is: the registry's, or the committed file's while it equals what
-the operator confirmed with `archon repo set --confirm-release-check`.
+`checks.full` is but resolved at that moment: the registry's as it stands
+then, or the file the merge commit holds while it equals what the operator
+confirmed with `archon repo set --confirm-release-check`, never the
+registered checkout's `HEAD`.
 
 Precedence for repository settings: registry flags from `archon repo add` or
 `archon repo set`, then `.archon/config.toml`, then global defaults.

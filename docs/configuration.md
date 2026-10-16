@@ -390,11 +390,12 @@ otherwise it stops at the open pull request and asks you to run
 `archon promote`. The release hook, for example a tag command, then runs once
 in `archond`'s checkout at the merged commit, in the host's build slot; how it
 ended is part of the result, and a failing hook undoes nothing. It is trusted
-as the full check is: the registry's (`archon repo set --release-hook`), or
-`[checks] release` in the registered repository's committed
-`.archon/repo.toml` once the operator confirmed its exact text with
-`archon repo set --confirm-release-check '<command>'`, until the file changes;
-an untracked or uncommitted copy runs nothing.
+as the full check is, but decided just before it runs: the registry's
+(`archon repo set --release-hook`), or `[checks] release` in the
+`.archon/repo.toml` the merge commit itself holds once the operator confirmed
+its exact text with `archon repo set --confirm-release-check '<command>'`.
+The registered checkout's `HEAD` never speaks for the merge, and an untracked
+or uncommitted copy runs nothing.
 When a merge queue or branch rule holds the merge, promote again once it
 landed: that call finishes the promotion, realigning and running the hook.
 

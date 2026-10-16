@@ -219,42 +219,86 @@ fn only_the_registry_s_or_a_confirmed_committed_full_check_is_trusted() {
     assert_eq!(full(None, Some("make ci")), None, "the commit changed it");
 }
 
-/// The release hook is trusted as the full check is, by its own confirmation.
+/// The release hook is trusted as the full check is, by its own confirmation,
+/// read from the merge commit it runs at and never from `HEAD`.
 #[test]
-fn only_the_registry_s_or_a_confirmed_committed_release_hook_is_trusted() {
+fn only_the_registry_s_or_a_confirmed_release_hook_at_the_merge_is_trusted() {
     let (_keep, root) = dir();
     git(&root, &["init", "--quiet", "--initial-branch=main"]);
     git(
         &root,
         &["commit", "--quiet", "--allow-empty", "-m", "start"],
     );
+    let bare = head(&root);
     let file = "[checks]\nfull = \"make ci\"\nrelease = \"make tag\"\n";
     write(&root, ".archon/repo.toml", file);
-    let hook = |registry: Option<&str>, confirmed: Option<&str>| {
+    let hook = |registry: Option<&str>, confirmed: Option<&str>, merge: &str| {
         let mut repo = repo(&root, None, None);
         repo.tiers.checks.release = registry.map(str::to_owned);
         repo.confirmed_full_check = Some("make ci".into());
         repo.confirmed_release_check = confirmed.map(str::to_owned);
-        trusted_release(&repo).unwrap()
+        trusted_release(&repo, merge).unwrap()
     };
-    assert_eq!(hook(None, Some("make tag")), None, "an untracked file");
+    assert_eq!(
+        hook(None, Some("make tag"), &bare),
+        None,
+        "an untracked file"
+    );
     git(&root, &["add", "."]);
     git(&root, &["commit", "--quiet", "-m", "checks"]);
-    assert_eq!(hook(Some("make mine"), None).as_deref(), Some("make mine"));
+    let named = head(&root);
     assert_eq!(
-        hook(None, None),
+        hook(Some("make mine"), None, &bare).as_deref(),
+        Some("make mine")
+    );
+    assert_eq!(
+        hook(None, None, &named),
         None,
         "the full confirmation is not the release one"
     );
-    assert_eq!(hook(None, Some("make tag")).as_deref(), Some("make tag"));
+    assert_eq!(
+        hook(None, Some("make tag"), &named).as_deref(),
+        Some("make tag")
+    );
+    assert_eq!(
+        hook(None, Some("make tag"), &bare),
+        None,
+        "HEAD's file does not speak for a merge without it"
+    );
     write(&root, ".archon/repo.toml", "[checks]\nrelease = \"true\"\n");
     assert_eq!(
-        hook(None, Some("true")),
+        hook(None, Some("true"), &named),
         None,
         "an uncommitted edit confirms nothing"
     );
     git(&root, &["commit", "--quiet", "-am", "changed"]);
-    assert_eq!(hook(None, Some("make tag")), None, "the commit changed it");
+    let changed = head(&root);
+    assert_eq!(
+        hook(None, Some("make tag"), &changed),
+        None,
+        "the commit changed it"
+    );
+    assert_eq!(
+        hook(None, Some("true"), &named),
+        None,
+        "HEAD's confirmed file does not speak for an older merge"
+    );
+    assert_eq!(
+        hook(None, Some("make tag"), &named).as_deref(),
+        Some("make tag"),
+        "the merge's own file still matches"
+    );
+}
+
+fn head(tree: &Path) -> String {
+    let out = Std::new("git")
+        .arg("-C")
+        .arg(tree)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "rev-parse HEAD");
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
 }
 
 fn git(tree: &Path, args: &[&str]) {

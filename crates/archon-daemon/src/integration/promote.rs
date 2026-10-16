@@ -378,10 +378,7 @@ async fn after_merge(
     if realign_problem.is_none() {
         carry_green(ctx, watch, head, &release.commit).await?;
     }
-    let hook = match watch.release_hook.clone() {
-        Some(command) => Some(hook_at_merge(ctx, watch, &release, head, command).await?),
-        None => None,
-    };
+    let hook = hook_at_merge(ctx, watch, &release, head).await?;
     Ok(PromotionOutcome::Merged {
         release_head: release.commit,
         realign_problem,
@@ -490,14 +487,14 @@ async fn carry_green(
 }
 
 /// Run the release hook at the commit that merged `head`, never at a later
-/// release commit that landed before a queued promotion was finished.
+/// release commit that landed before a queued promotion was finished; `None`
+/// when no hook is trusted there.
 async fn hook_at_merge(
     ctx: &DaemonContext,
     watch: &Watch,
     release: &Head,
     head: &str,
-    command: String,
-) -> Result<ReleaseHook, ArchonError> {
+) -> Result<Option<ReleaseHook>, ArchonError> {
     let entered = {
         let (source, tip, head) = (
             watch.source.clone(),
@@ -514,11 +511,29 @@ async fn hook_at_merge(
             short(head)
         )));
     };
+    let Some(command) = trusted_hook(ctx, watch, &merged).await? else {
+        return Ok(None);
+    };
     let at = Head {
         commit: merged,
         source_ref: release.source_ref.clone(),
     };
-    Ok(run_hook(ctx, watch, &at, command).await)
+    Ok(Some(run_hook(ctx, watch, &at, command).await))
+}
+
+/// The release hook trusted at `merged`, decided by the registry as it is
+/// now and the file `merged` commits, never one read before the wait.
+async fn trusted_hook(
+    ctx: &DaemonContext,
+    watch: &Watch,
+    merged: &str,
+) -> Result<Option<String>, ArchonError> {
+    assert!(stack::is_commit_id(merged), "a pinned merge commit");
+    let reference = RepoRef(watch.repo.id.to_string());
+    let repo = ctx.store.lock().await.repo(&reference)?;
+    assert_eq!(repo.id, watch.repo.id, "the promoted repository");
+    let merged = merged.to_owned();
+    blocking(move || crate::executor::fast_check::trusted_release(&repo, &merged)).await
 }
 
 /// Run the release hook in the daemon's checkout at the merged `release`

@@ -167,6 +167,11 @@ fn full_runs(h: &Harness) -> usize {
 
 /// Land one merge of a branch adding `name` on `origin`'s `next`; returns it.
 fn land(h: &Harness, name: &str) -> String {
+    land_file(h, name, name, "landed\n")
+}
+
+/// Land one merge, named `name`, of a branch writing `text` to `path`.
+fn land_file(h: &Harness, name: &str, path: &str, text: &str) -> String {
     let clone = h.dir.path().join(format!("upstream-{name}"));
     let origin = origin_of(h);
     let to = clone.to_str().unwrap();
@@ -178,8 +183,10 @@ fn land(h: &Harness, name: &str) -> String {
         &clone,
         &["checkout", "--quiet", "-b", "feature", "origin/next"],
     );
-    std::fs::write(clone.join(name), "landed\n").unwrap();
-    git(&clone, &["add", name]);
+    let written = clone.join(path);
+    std::fs::create_dir_all(written.parent().unwrap()).unwrap();
+    std::fs::write(written, text).unwrap();
+    git(&clone, &["add", path]);
     git(&clone, &["commit", "--quiet", "-m", &format!("Add {name}")]);
     git(
         &clone,
@@ -463,29 +470,44 @@ async fn a_queued_merge_is_finished_only_for_its_own_release_branch() {
     assert!(file(&h, "released").exists(), "the owed hook ran");
 }
 
+/// `.archon/repo.toml` naming `hook` as the release hook.
+fn release_file(hook: &str) -> String {
+    format!("[checks]\nrelease = \"{}\"\n", hook.replace('"', "\\\""))
+}
+
+/// Commit `.archon/repo.toml` naming `hook` in the registered checkout.
+fn commit_release_file(h: &Harness, hook: &str) {
+    std::fs::create_dir_all(h.repo.join(".archon")).unwrap();
+    std::fs::write(h.repo.join(".archon/repo.toml"), release_file(hook)).unwrap();
+    git(&h.repo, &["add", ".archon/repo.toml"]);
+    git(&h.repo, &["commit", "--quiet", "-m", "Name a release hook"]);
+}
+
+/// Drop the registry's release hook and set the release confirmation.
+async fn confirm_release(h: &Harness, confirmed: Option<&str>) {
+    let tiers = TiersPatch {
+        release_hook: Clearable::Clear,
+        confirmed_release_check: confirmed.map_or(Clearable::Clear, |c| Clearable::Set(c.into())),
+        ..TiersPatch::default()
+    };
+    update(
+        h,
+        RepoPatch {
+            tiers,
+            ..RepoPatch::default()
+        },
+    )
+    .await;
+}
+
 /// A release hook in the registered checkout's committed `.archon/repo.toml`
 /// never runs as the daemon while the operator has not confirmed its text.
 #[tokio::test]
 async fn an_unconfirmed_committed_release_hook_never_runs() {
     let (h, _gh, _slot) = promoting().await;
     let hook = format!("touch '{}'", file(&h, "unconfirmed").display());
-    let text = format!("[checks]\nrelease = \"{}\"\n", hook.replace('"', "\\\""));
-    std::fs::create_dir_all(h.repo.join(".archon")).unwrap();
-    std::fs::write(h.repo.join(".archon/repo.toml"), text).unwrap();
-    git(&h.repo, &["add", ".archon/repo.toml"]);
-    git(&h.repo, &["commit", "--quiet", "-m", "Name a release hook"]);
-    let unset = TiersPatch {
-        release_hook: Clearable::Clear,
-        ..TiersPatch::default()
-    };
-    update(
-        &h,
-        RepoPatch {
-            tiers: unset,
-            ..RepoPatch::default()
-        },
-    )
-    .await;
+    commit_release_file(&h, &hook);
+    confirm_release(&h, None).await;
     land(&h, "one");
     integration::pass(&h.ctx).await.expect("green pass");
     assert_eq!(health(&h).await, IntegrationHealth::Green);
@@ -542,4 +564,61 @@ async fn a_finished_queued_merge_runs_the_hook_at_its_merge_commit() {
     assert!(hook.as_ref().is_some_and(|hook| hook.passed), "{hook:?}");
     let released = std::fs::read_to_string(file(&h, "released")).expect("hook output");
     assert_eq!(released.trim(), merged, "the hook ran at the merge commit");
+}
+
+/// The hook the promotion's merge commits runs when it is the confirmed one,
+/// whatever the registered checkout's `HEAD` names instead.
+#[tokio::test]
+async fn the_hook_the_merge_commits_is_the_one_confirmed_and_run() {
+    let (h, _gh, _slot) = promoting().await;
+    let merged = format!("git rev-parse HEAD > '{}'", file(&h, "merged").display());
+    let local = format!("touch '{}'", file(&h, "local").display());
+    commit_release_file(&h, &local);
+    confirm_release(&h, Some(&merged)).await;
+    land_file(&h, "one", ".archon/repo.toml", &release_file(&merged));
+    integration::pass(&h.ctx).await.expect("green pass");
+
+    let done = promotion(h.cli(promote()).await);
+    let PromotionOutcome::Merged {
+        release_head, hook, ..
+    } = &done.outcome
+    else {
+        panic!("not merged: {done:?}");
+    };
+    assert!(hook.as_ref().is_some_and(|hook| hook.passed), "{hook:?}");
+    assert_eq!(hook.as_ref().unwrap().command, merged, "the merge's hook");
+    let released = std::fs::read_to_string(file(&h, "merged")).expect("hook output");
+    assert_eq!(released.trim(), release_head, "the hook ran at the merge");
+    assert!(!file(&h, "local").exists(), "HEAD's hook never ran");
+}
+
+/// While a queued merge waits, the registered checkout commits and the
+/// operator confirms another hook: the merge's own hook no longer matches,
+/// and neither runs.
+#[tokio::test]
+async fn a_hook_changed_during_the_wait_does_not_run_at_the_merge() {
+    let (h, gh, _slot) = promoting().await;
+    let first = format!("touch '{}'", file(&h, "first").display());
+    let second = format!("touch '{}'", file(&h, "second").display());
+    commit_release_file(&h, &first);
+    confirm_release(&h, Some(&first)).await;
+    land_file(&h, "one", ".archon/repo.toml", &release_file(&first));
+    integration::pass(&h.ctx).await.expect("green pass");
+    gh.queue_merges();
+    let held = h.cli(promote()).await;
+    assert!(
+        matches!(&held, Err(ArchonError::Unavailable(_))),
+        "{held:?}"
+    );
+
+    commit_release_file(&h, &second);
+    confirm_release(&h, Some(&second)).await;
+    gh.land_queued(&h.ctx.config.github.binary);
+    let done = promotion(h.cli(promote()).await);
+    let PromotionOutcome::Merged { hook, .. } = &done.outcome else {
+        panic!("not finished: {done:?}");
+    };
+    assert!(hook.is_none(), "no hook is trusted at the merge: {hook:?}");
+    assert!(!file(&h, "first").exists(), "the unconfirmed one never ran");
+    assert!(!file(&h, "second").exists(), "nor the one the merge lacks");
 }

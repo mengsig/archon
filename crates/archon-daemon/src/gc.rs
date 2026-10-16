@@ -335,7 +335,7 @@ pub async fn collect_planned(ctx: &DaemonContext, pass: Pass<'_>) -> Result<GcRe
     report.absorb(collect_reports(ctx).await?);
     report.pressure = pressure;
     *last_pass = Some(Instant::now());
-    *ctx.storage.lock().await = None;
+    ctx.storage.forget();
     announce(ctx, &report).await?;
     Ok(report)
 }
@@ -391,7 +391,7 @@ pub(crate) async fn announce_item_release(
     item: &QueueItemId,
     freed: &Reclaimed,
 ) -> Result<(), ArchonError> {
-    *ctx.storage.lock().await = None;
+    ctx.storage.forget();
     let status = GcStatus {
         at: archon_core::now(),
         bytes_freed: freed.bytes,

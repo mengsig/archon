@@ -80,7 +80,7 @@ impl DaemonPaths {
 pub struct DaemonContext {
     pub config: Config,
     /// Cached filesystem accounting keeps status polling from repeatedly walking trees.
-    pub storage: Mutex<Option<(std::time::Instant, Vec<archon_core::protocol::StorageUsage>)>>,
+    pub storage: crate::storage::StorageCache,
     /// Aether's latest answers for `status`; shown, never trusted.
     pub status_probes: crate::status_health::StatusProbes,
     pub paths: DaemonPaths,

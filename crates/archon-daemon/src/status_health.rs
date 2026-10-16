@@ -17,8 +17,8 @@ use archon_core::mcp_tools::SERVER_NAME;
 use archon_core::protocol::{McpHealth, ProbeHealth, StatusHealth};
 use tokio::sync::watch;
 
-/// How long a status request waits for the refresh it started; well under
-/// the MCP bridge's 15 s budget for a whole request.
+/// How long a status request waits for Aether and the disk probes; well
+/// under the MCP bridge's 15 s budget for a whole request.
 pub const STATUS_WAIT: Duration = Duration::from_secs(1);
 /// The deadline every ask of one refresh shares.
 pub const PROBE_DEADLINE: Duration = Duration::from_secs(10);
@@ -53,7 +53,7 @@ impl<T> Default for Probe<T> {
 }
 
 impl<T> Probe<T> {
-    fn record(&mut self, result: Result<T, ArchonError>, at: Timestamp) {
+    fn record(&mut self, (result, at): Stamped<T>) {
         match result {
             Ok(value) => {
                 self.value = Some(value);
@@ -120,13 +120,14 @@ pub struct StatusProbes {
 }
 
 impl StatusProbes {
-    /// Ask Aether through `link` (unless it is down) and wait up to
-    /// [`STATUS_WAIT`] for the answers; past that, the asks go on and the
-    /// last answers are shown, marked stale.
+    /// Ask Aether through `link` (unless it is down) and wait until
+    /// `deadline` for the answers; past that, the asks go on and the last
+    /// answers are shown, marked stale.
     pub async fn read(
         &self,
         link: Result<Arc<AetherClient>, ArchonError>,
         targets: Targets,
+        deadline: tokio::time::Instant,
     ) -> Snapshot {
         let mut done = match link {
             Ok(client) => self.refresh(client, targets),
@@ -140,9 +141,9 @@ impl StatusProbes {
             }
         };
         // A refresh that panicked closed its channel: it is over all the same.
-        let ended = tokio::time::timeout(STATUS_WAIT, done.wait_for(|ended| *ended)).await;
+        let ended = tokio::time::timeout_at(deadline, done.wait_for(|ended| *ended)).await;
         if ended.is_err() {
-            tracing::debug!(wait = ?STATUS_WAIT, "status answers before Aether does");
+            tracing::debug!("status answers before Aether does");
         }
         let state = lock(&self.state);
         Snapshot {
@@ -165,14 +166,12 @@ impl StatusProbes {
         state.running = Some(done.clone());
         let cache = self.state.clone();
         tokio::spawn(async move {
-            let answers = ask(&client, &targets).await;
+            let (aether, mcp, github) = ask(&client, &targets).await;
             let mut state = lock(&cache);
-            let at = archon_core::now();
-            let (aether, mcp, github) = answers;
-            state.answers.aether.record(aether, at);
-            state.answers.mcp.record(mcp, at);
+            state.answers.aether.record(aether);
+            state.answers.mcp.record(mcp);
             if let Some(github) = github {
-                state.answers.github.record(github, at);
+                state.answers.github.record(github);
             }
             state.running = None;
             ended.send_replace(true);
@@ -181,10 +180,13 @@ impl StatusProbes {
     }
 }
 
+/// An ask's result with when it came back.
+type Stamped<T> = (Result<T, ArchonError>, Timestamp);
+
 type Answers = (
-    Result<Option<Agent>, ArchonError>,
-    Result<McpHealth, ArchonError>,
-    Option<Result<WatcherStatus, ArchonError>>,
+    Stamped<Option<Agent>>,
+    Stamped<McpHealth>,
+    Option<Stamped<WatcherStatus>>,
 );
 
 /// Every ask of one refresh, together, under one deadline.
@@ -200,13 +202,18 @@ async fn ask(client: &AetherClient, targets: &Targets) -> Answers {
         if !targets.github {
             return None;
         }
-        Some(within(deadline, client.github_watcher()).await)
+        Some(stamped(within(deadline, client.github_watcher())).await)
     };
     tokio::join!(
-        within(deadline, aether),
-        within(deadline, client.mcp_health(SERVER_NAME)),
+        stamped(within(deadline, aether)),
+        stamped(within(deadline, client.mcp_health(SERVER_NAME))),
         github,
     )
+}
+
+async fn stamped<T>(ask: impl Future<Output = Result<T, ArchonError>>) -> Stamped<T> {
+    let result = ask.await;
+    (result, archon_core::now())
 }
 
 async fn within<T>(

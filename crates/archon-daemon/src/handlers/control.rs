@@ -20,18 +20,24 @@ use archon_queue::store::keys;
 
 use crate::context::DaemonContext;
 use crate::resolve::{self, RepoEnv};
-use crate::status_health::{Probe, Targets};
+use crate::status_health::{Probe, STATUS_WAIT, Targets};
 use crate::{dispatcher, github, ops, supervisor, triggers};
 
 /// Set while `pause --hard` holds running stage agents paused in Aether.
 const HARD_PAUSE_KEY: &str = "global_pause_hard";
 
+/// Store reads take what they take; Aether and the disk probes share one
+/// deadline of [`STATUS_WAIT`], past which their last readings stand.
 pub(super) async fn status(ctx: &DaemonContext, query: StatusQuery) -> Result<Reply, ArchonError> {
+    let deadline = tokio::time::Instant::now() + STATUS_WAIT;
     let waiting = waiting_page(ctx, query).await?;
     let caps = resolve::caps(ctx).await;
     let autonomy = RepoEnv::new(None)?.autonomy(ctx);
     let counts = StoreCounts::read(ctx).await?;
-    let aether = AetherSections::read(ctx).await?;
+    let (aether, disk) = tokio::try_join!(
+        AetherSections::read(ctx, deadline),
+        disk_status(ctx, deadline)
+    )?;
     let snapshot = counts.snapshot;
     let status = DaemonStatus {
         waiting_items: waiting.items,
@@ -58,7 +64,7 @@ pub(super) async fn status(ctx: &DaemonContext, query: StatusQuery) -> Result<Re
         held_news: count(triggers::held_news(ctx).await?),
         mcp: Some(aether.mcp),
         github: aether.github,
-        disk: Some(disk_status(ctx).await?),
+        disk: Some(disk),
         versions: Some(ops::versions(ctx).await),
         upgrade: ops::phase(ctx).await,
         merges_waiting: counts.merges.waiting,
@@ -159,7 +165,10 @@ struct AetherSections {
 }
 
 impl AetherSections {
-    async fn read(ctx: &DaemonContext) -> Result<Self, ArchonError> {
+    async fn read(
+        ctx: &DaemonContext,
+        deadline: tokio::time::Instant,
+    ) -> Result<Self, ArchonError> {
         let recorded = recorded_orchestrator(ctx).await?;
         let targets = Targets {
             orchestrator: recorded.as_ref().map(|(agent, _)| agent.clone()),
@@ -167,7 +176,7 @@ impl AetherSections {
         };
         let answers = ctx
             .status_probes
-            .read(ctx.aether.client(), targets.clone())
+            .read(ctx.aether.client(), targets.clone(), deadline)
             .await;
         let orchestrator = recorded.map(|(agent, generation)| {
             let found = cached_agent(&answers.aether, &agent);
@@ -205,9 +214,21 @@ fn cached_agent(reading: &Probe<Option<Agent>>, agent: &AetherAgentId) -> Result
     }
 }
 
-/// Free space where archond writes, read now, with the disk hold.
-async fn disk_status(ctx: &DaemonContext) -> Result<DiskStatus, ArchonError> {
-    let (path, free_bytes, error) = match dispatcher::read_disk(ctx).await {
+/// Free space where archond writes, read now, with the disk hold; a check
+/// still running at `deadline` is reported unread.
+async fn disk_status(
+    ctx: &DaemonContext,
+    deadline: tokio::time::Instant,
+) -> Result<DiskStatus, ArchonError> {
+    let reading = tokio::time::timeout_at(deadline, dispatcher::read_disk(ctx))
+        .await
+        .unwrap_or_else(|_| {
+            Err(ArchonError::Unavailable(format!(
+                "the free space check did not finish within {}s",
+                STATUS_WAIT.as_secs()
+            )))
+        });
+    let (path, free_bytes, error) = match reading {
         Ok(reading) => (reading.path, Some(reading.free_bytes), None),
         Err(error) => (ctx.paths.data_dir.clone(), None, Some(error.to_string())),
     };
@@ -220,7 +241,7 @@ async fn disk_status(ctx: &DaemonContext) -> Result<DiskStatus, ArchonError> {
         disk_full: ctx.disk.disk_full(),
         standby: ctx.standby.get().cloned(),
         gc: crate::gc::last_pass(&*ctx.store.lock().await)?,
-        storage: crate::storage::usage(ctx).await?,
+        storage: ctx.storage.usage(&ctx.paths, deadline).await?,
     };
     assert_ne!(status.free_bytes.is_some(), status.error.is_some());
     assert!(

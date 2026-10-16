@@ -613,3 +613,20 @@ async fn standby_serves_reads_and_refuses_the_rest_naming_the_full_disk() {
         "{why}"
     );
 }
+
+#[tokio::test]
+async fn a_stalled_disk_probe_leaves_status_prompt_and_says_it_was_not_read() {
+    let h = Harness::new().await;
+    h.set_free_bytes(common::STALLED_DISK);
+    let started = Instant::now();
+    let disk = disk_status(&h).await;
+    let took = started.elapsed();
+    assert!(
+        took < std::time::Duration::from_secs(2),
+        "status took {took:?}"
+    );
+    assert!(took < common::STALL, "status did not wait for the probe");
+    assert_eq!(disk.free_bytes, None);
+    let error = disk.error.expect("the unread disk says why");
+    assert!(error.contains("did not finish within"), "{error}");
+}

@@ -428,11 +428,22 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
     }
 }
 
+/// Free bytes that make the fake disk's probe hang for [`STALL`] first,
+/// like a filesystem that stopped answering.
+pub const STALLED_DISK: u64 = u64::MAX - 1;
+pub const STALL: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// A disk watch whose every path has `free` bytes free; a disk-full hold
 /// ends as soon as space is back.
 pub fn fake_disk(free: &Arc<AtomicU64>) -> DiskWatch {
     let free = free.clone();
-    let probe = Arc::new(move |_: &Path| Ok(free.load(Ordering::SeqCst)));
+    let probe = Arc::new(move |_: &Path| {
+        let bytes = free.load(Ordering::SeqCst);
+        if bytes == STALLED_DISK {
+            std::thread::sleep(STALL);
+        }
+        Ok(bytes)
+    });
     DiskWatch::new(probe, std::time::Duration::ZERO)
 }
 

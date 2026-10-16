@@ -80,19 +80,6 @@ impl Shadow {
         Ok(DaemonGit::owned(&self.git_dir, work_tree, config).objects(&self.objects))
     }
 
-    /// Where git fetches from and pushes to for `url` once the operator's
-    /// `insteadOf` and `pushInsteadOf` apply, as git itself resolves them for a remote.
-    pub(crate) fn rewritten(&self, url: &str) -> Result<[String; 2], ArchonError> {
-        assert!(!url.is_empty() && !url.contains('\n'), "a checked URL");
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        let parent = self.git_dir.parent().expect("a git directory has a parent");
-        let scratch = parent.join(format!("rewritten-{}-{n}", std::process::id()));
-        let resolved = resolve_in(&scratch, url);
-        remove_entry(&scratch)?;
-        resolved
-    }
-
     /// An index file of the shadow's own for one command, not yet created.
     pub(crate) fn scratch_index(&self) -> PathBuf {
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -139,36 +126,6 @@ pub(crate) fn sealed_config(format: &str, bare: bool, hooks: Option<&Path>) -> S
         text.push_str("[extensions]\n\tobjectformat = sha256\n");
     }
     text
-}
-
-/// [`Shadow::rewritten`] through a fresh repository at `scratch` whose only
-/// remote is `url`; the operator's config brings the rewrites.
-fn resolve_in(scratch: &Path, url: &str) -> Result<[String; 2], ArchonError> {
-    let parent = scratch.parent().expect("a scratch directory has a parent");
-    let path = scratch
-        .to_str()
-        .ok_or_else(|| ArchonError::Invalid(format!("{} is not UTF-8", scratch.display())))?;
-    remove_entry(scratch)?;
-    DaemonGit::sealed_in(parent)
-        .args(["init", "--quiet", "--bare", "--template=", path])
-        .text()?;
-    DaemonGit::owned(scratch, None, Config::Sealed)
-        .args(["config", "remote.archon-rewritten.url", url])
-        .text()?;
-    let get = |push: bool| -> Result<String, ArchonError> {
-        let mut args = vec!["remote", "get-url"];
-        args.extend(push.then_some("--push"));
-        args.push("archon-rewritten");
-        DaemonGit::owned(scratch, None, Config::Operator)
-            .args(args)
-            .text()
-    };
-    let urls = [get(false)?, get(true)?];
-    assert!(
-        urls.iter().all(|u| !u.is_empty() && !u.contains('\n')),
-        "one URL each"
-    );
-    Ok(urls)
 }
 
 /// Make the git directory `git_dir` of object `format` if it is missing,
@@ -258,24 +215,6 @@ pub(crate) fn remove_entry(path: &Path) -> Result<(), ArchonError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Without a rewrite of the operator's, git fetches from and pushes to the
-    /// URL itself, and the scratch repository asked is gone after.
-    #[test]
-    fn a_url_nobody_rewrites_is_where_git_goes() {
-        let dir = tempfile::tempdir().unwrap();
-        let git_dir = dir.path().canonicalize().unwrap().join("sha1");
-        make(&git_dir, "sha1").unwrap();
-        let shadow = Shadow {
-            objects: git_dir.join("objects"),
-            config: sealed_config("sha1", true, None),
-            git_dir,
-        };
-        let url = "/nowhere/rewritten/origin.git";
-        assert_eq!(shadow.rewritten(url).unwrap(), [url, url]);
-        let left: Vec<_> = std::fs::read_dir(dir.path()).unwrap().collect();
-        assert_eq!(left.len(), 1, "only the shadow: {left:?}");
-    }
 
     #[test]
     fn a_planted_config_or_attributes_file_is_gone_before_the_next_command() {

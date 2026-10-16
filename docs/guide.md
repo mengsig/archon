@@ -945,7 +945,9 @@ item succeeds once GitHub shows that commit as the head: its summary ends
 base stay as its owner left them, and nothing is merged. When the head moved
 since enqueue (someone else pushed), delivery fails naming both commits
 instead of force-pushing; queue the work again `onto` it to start from the
-new head.
+new head. The push goes only to the repository holding that head: an
+`origin` naming another one, after your `insteadOf` rewrites, is refused,
+and `pushInsteadOf` does not apply to it.
 
 ### Coordinated changes across repositories
 

@@ -124,8 +124,10 @@ fn fast_forward_now(
         None => url.clone(),
     };
     let shadow = Shadow::of(data_dir, repo)?;
-    let rewritten = shadow.rewritten(&url)?;
-    if let Some(refusal) = rewritten.iter().find_map(|url| elsewhere(url, onto)) {
+    // Without a token the push reads the operator's config: check where git sends it.
+    if token.is_none()
+        && let Some(refusal) = elsewhere(&stack::pinned_url(&shadow, &push_to)?, onto)
+    {
         return Ok(Err(refusal));
     }
     let branch = onto.head_ref.as_str();

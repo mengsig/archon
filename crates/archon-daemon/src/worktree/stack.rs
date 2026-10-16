@@ -271,12 +271,37 @@ pub(crate) fn push(
     commit: &str,
     token: Option<&Token>,
 ) -> Result<Ran, ArchonError> {
-    push_with(shadow, url, (branch, commit), None, token)
+    push_with(shadow, url, (branch, commit), (None, false), token)
+}
+
+/// The remote [`push_from`] pushes through: `url` as its push URL too, so
+/// git applies no `pushInsteadOf`, only the `insteadOf` [`pinned_url`] reports.
+const PINNED: &str = "archon-pinned";
+
+/// `-c` arguments defining [`PINNED`] as `url`.
+fn pinned(url: &str) -> [String; 4] {
+    assert!(!url.contains('\n'), "a checked URL");
+    let url_setting = format!("remote.{PINNED}.url={url}");
+    let push_setting = format!("remote.{PINNED}.pushurl={url}");
+    ["-c".into(), url_setting, "-c".into(), push_setting]
+}
+
+/// Where [`push_from`] to `url` without a token goes, as git resolves it with
+/// the operator's config in the same shadow: `url` after their `insteadOf`.
+pub(crate) fn pinned_url(shadow: &Shadow, url: &str) -> Result<String, ArchonError> {
+    let url = check_url(url)?;
+    let defined = pinned(&url);
+    let mut args: Vec<&str> = defined.iter().map(String::as_str).collect();
+    args.extend(["ls-remote", "--get-url", PINNED]);
+    let resolved = shadow.git(None, Config::Operator)?.args(args).text()?;
+    assert!(!resolved.is_empty() && !resolved.contains('\n'), "one URL");
+    Ok(resolved)
 }
 
 /// [`push`] of `commit` to `branch` only while `url` holds `expected` there,
 /// which the receiver checks in the same update. The caller proves `commit`
-/// descends from `expected`, so the update is a fast-forward.
+/// descends from `expected`, so the update is a fast-forward. It goes where
+/// [`pinned_url`] says.
 pub(crate) fn push_from(
     shadow: &Shadow,
     url: &str,
@@ -287,15 +312,16 @@ pub(crate) fn push_from(
     assert!(is_commit_id(expected), "a lease names a commit");
     assert_ne!(expected, commit, "an update moves the branch");
     let lease = format!("--force-with-lease=refs/heads/{branch}:{expected}");
-    push_with(shadow, url, (branch, commit), Some(&lease), token)
+    push_with(shadow, url, (branch, commit), (Some(&lease), true), token)
 }
 
-/// [`push`], with `lease` the extra `--force-with-lease` argument, if any.
+/// [`push`], with `lease` the extra `--force-with-lease` argument, if any,
+/// through the [`PINNED`] remote when `pin`.
 fn push_with(
     shadow: &Shadow,
     url: &str,
     (branch, commit): (&str, &str),
-    lease: Option<&str>,
+    (lease, pin): (Option<&str>, bool),
     token: Option<&Token>,
 ) -> Result<Ran, ArchonError> {
     super::check_branch(branch)?;
@@ -315,9 +341,14 @@ fn push_with(
     );
     let refspec = format!("{commit}:refs/heads/{branch}");
     let receive_pack = format!("--receive-pack={receive_pack}");
-    let mut args = vec!["push", "--porcelain", "--no-verify", &receive_pack];
+    let defined = pinned(&url);
+    let mut args: Vec<&str> = match pin {
+        true => defined.iter().map(String::as_str).collect(),
+        false => Vec::new(),
+    };
+    args.extend(["push", "--porcelain", "--no-verify", &receive_pack]);
     args.extend(lease);
-    args.extend([url.as_str(), &refspec]);
+    args.extend([if pin { PINNED } else { url.as_str() }, &refspec]);
     let Some(token) = token else {
         let git = shadow.git(None, Config::Operator)?.network();
         return git.args(args).output();
@@ -480,7 +511,13 @@ fn create_remote_branch(
     );
     // An empty expected value refuses a branch that exists, even a fast-forward.
     let lease = format!("--force-with-lease=refs/heads/{branch}:");
-    let pushed = push_with(shadow, push_to, (branch, commit), Some(&lease), token)?;
+    let pushed = push_with(
+        shadow,
+        push_to,
+        (branch, commit),
+        (Some(&lease), false),
+        token,
+    )?;
     if pushed.status.success() {
         return Ok(true);
     }
@@ -605,6 +642,11 @@ mod tests {
         run_git(&repo, &["push", "--quiet", url, &tip(between)]);
         let shadow = Shadow::of(&dir.path().join("data"), &repo).unwrap();
 
+        assert_eq!(
+            pinned_url(&shadow, url).unwrap(),
+            url,
+            "nothing rewrites it"
+        );
         let moved = push_from(&shadow, url, ("feature", ours), frozen, None).unwrap();
         assert!(!moved.status.success(), "the lease refuses it");
         assert_eq!(

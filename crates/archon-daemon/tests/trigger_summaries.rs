@@ -121,8 +121,8 @@ fn all_other_event_types_have_human_labels() {
             format!("item blocked: {item} — dependency failed"),
         ),
         (
-            json!({"type": "operator_answer", "question": question, "text": "yes"}),
-            format!("operator answered {question}"),
+            json!({"type": "operator_answer", "question": question, "text": "yes", "number": null, "question_text": "", "options": [], "item": null, "asked_at": null}),
+            format!("operator answered {question}: yes"),
         ),
         (
             json!({"type": "lavish_feedback", "report": report, "item": item, "text": "raw", "prompts": []}),
@@ -181,4 +181,33 @@ fn display_summary_strips_unicode_format_controls_and_keeps_the_body() {
     let output = serialize(vec![finished(&QueueItemId::new(), &title)]);
     assert!(output["summary"].as_str().unwrap().ends_with("beforeafter"));
     assert_eq!(output["events"][0]["title"], title);
+}
+
+#[test]
+fn operator_answer_summary_identifies_the_question_and_answer() {
+    let event = json!({
+        "type": "operator_answer", "question": QuestionId::new(), "text": "yes",
+        "number": 12, "question_text": "Ship to prod?", "options": ["yes", "no"],
+        "item": null, "asked_at": "2026-10-16T09:00:00Z"
+    });
+    let output = serialize(vec![event.clone()]);
+    assert_eq!(output["summary"], "Q12 answered: yes (re: Ship to prod?)");
+    assert_eq!(output["events"][0], event);
+}
+
+#[test]
+fn legacy_operator_answers_remain_readable() {
+    let question = QuestionId::new();
+    let payload: TriggerPayload = serde_json::from_value(json!({
+        "archon": 1, "events": [{"type": "operator_answer", "question": question, "text": "yes"}],
+        "directives_in_force": 0
+    }))
+    .unwrap();
+    let output = serde_json::to_value(payload).unwrap();
+    assert_eq!(output["events"][0]["question"], json!(question));
+    assert_eq!(
+        output["summary"],
+        format!("operator answered {question}: yes")
+    );
+    assert!(output["events"][0]["asked_at"].is_null());
 }

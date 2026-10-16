@@ -297,6 +297,11 @@ async fn an_operator_command_answers_an_ask_operator_question() {
     assert_eq!(answers(&h, &asked.id).await, recorded);
     let routed = TriggerEvent::OperatorAnswer {
         question: asked.id.clone(),
+        number: Some(asked.number),
+        question_text: asked.text.clone(),
+        options: asked.options.clone(),
+        item: asked.item.clone(),
+        asked_at: Some(asked.asked_at),
         text: "wait a day".into(),
     };
     assert!(held(&h).await.contains(&routed), "the orchestrator gets it");

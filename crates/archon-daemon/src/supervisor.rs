@@ -647,6 +647,11 @@ pub async fn route_answer(
     }
     let answer = TriggerEvent::OperatorAnswer {
         question: question.id.clone(),
+        number: Some(question.number),
+        question_text: crate::executor::clip(&question.text, 512),
+        options: question.options.clone(),
+        item: question.item.clone(),
+        asked_at: Some(question.asked_at),
         text: text.to_owned(),
     };
     crate::triggers::push(ctx, answer).await.map(|()| None)

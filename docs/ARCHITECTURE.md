@@ -1109,13 +1109,20 @@ push takes it past 40 events, so the outbox stays bounded however long the
 batch in flight is retried. A later compaction folds that digest's counts
 into its own, so one batch never carries two digests.
 
+An `operator_answer` includes the stored question context, with `question_text`
+clipped to 512 characters (including an ellipsis). Its summary starts with
+`Q<number> answered:` and includes the answer and question excerpt. Older queued
+answers without context remain readable and use their question id in the summary.
+
 ```json
 {"archon": 1, "events": [
   {"type": "item_finished", "item": "qi_…", "title": "…", "state": "succeeded",
    "summary": "PR #42 opened: …", "pr_url": "…", "cost_usd": 3.12,
    "origin": {"repository": "owner/name", "number": 7}},
   {"type": "item_blocked", "item": "qi_…", "reason": "dependency qi_… failed"},
-  {"type": "operator_answer", "question": "q_…", "text": "…"},
+  {"type": "operator_answer", "question": "q_…", "text": "yes", "number": 12,
+   "question_text": "Ship to prod?", "options": ["yes", "no"], "item": "qi_…",
+   "asked_at": "2026-10-16T09:00:00Z"},
   {"type": "gate_opened", "question": "q_…", "number": 7, "item": "qi_…", "title": "…",
    "subject": "proposal", "asks": "Approve the direction proposed for this item?",
    "summary": "…the stage's summary, at most 600 characters…",

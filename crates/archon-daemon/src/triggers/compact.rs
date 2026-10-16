@@ -382,6 +382,11 @@ mod tests {
     fn answer() -> TriggerEvent {
         TriggerEvent::OperatorAnswer {
             question: QuestionId::new(),
+            number: None,
+            question_text: String::new(),
+            options: vec![],
+            item: None,
+            asked_at: None,
             text: "yes".into(),
         }
     }

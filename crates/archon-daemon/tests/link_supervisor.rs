@@ -1123,6 +1123,11 @@ async fn answers_go_to_aether_or_to_the_orchestrator_by_question_origin() {
     );
     let answer = TriggerEvent::OperatorAnswer {
         question: from_archon.id.clone(),
+        number: Some(from_archon.number),
+        question_text: from_archon.text.clone(),
+        options: from_archon.options.clone(),
+        item: from_archon.item.clone(),
+        asked_at: Some(from_archon.asked_at),
         text: "yes".into(),
     };
     assert_eq!(harness.drain_triggers().await, vec![answer]);
@@ -1203,6 +1208,11 @@ async fn an_answered_or_unknown_question_is_refused_without_delivery() {
 
     let delivered = TriggerEvent::OperatorAnswer {
         question: asked.id.clone(),
+        number: Some(asked.number),
+        question_text: asked.text.clone(),
+        options: asked.options.clone(),
+        item: asked.item.clone(),
+        asked_at: Some(asked.asked_at),
         text: "yes".into(),
     };
     assert_eq!(harness.drain_triggers().await, vec![delivered]);
@@ -1429,4 +1439,41 @@ async fn an_operator_message_brings_the_quiet_news_and_a_current_mirror() {
         .await;
     delivery.abort();
     mirrors.abort();
+}
+
+#[tokio::test]
+async fn operator_answer_carries_clipped_question_context() {
+    let mut harness = Harness::new().await;
+    let item = archon_core::id::QueueItemId::new();
+    let text = "界".repeat(513);
+    let asked = archon_daemon::feed::question(
+        &harness.ctx,
+        text.clone(),
+        vec!["yes".into(), "later".into()],
+        Some(item.clone()),
+    )
+    .await
+    .unwrap();
+    answer(&harness, &asked.id, "yes").await.unwrap();
+    let events = harness.drain_triggers().await;
+    assert_eq!(events.len(), 1);
+    let event = serde_json::to_value(&events[0]).unwrap();
+    assert_eq!(event["question"], json!(asked.id));
+    assert_eq!(event["number"], asked.number);
+    assert_eq!(event["text"], "yes");
+    assert_eq!(event["question_text"], format!("{}…", "界".repeat(511)));
+    assert_eq!(event["options"], json!(["yes", "later"]));
+    assert_eq!(event["item"], json!(item));
+    assert_eq!(event["asked_at"], json!(asked.asked_at));
+    assert_eq!(
+        harness
+            .ctx
+            .store
+            .lock()
+            .await
+            .question(&asked.id)
+            .unwrap()
+            .text,
+        text
+    );
 }

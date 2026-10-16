@@ -94,6 +94,17 @@ pub enum TriggerEvent {
     OperatorAnswer {
         question: QuestionId,
         text: String,
+        /// Absent only in answers queued before question context was recorded.
+        #[serde(default)]
+        number: Option<u64>,
+        #[serde(default)]
+        question_text: String,
+        #[serde(default)]
+        options: Vec<String>,
+        #[serde(default)]
+        item: Option<QueueItemId>,
+        #[serde(default)]
+        asked_at: Option<Timestamp>,
     },
     /// A proposal or report gate opened and waits for the operator.
     GateOpened {
@@ -1058,6 +1069,11 @@ mod tests {
             },
             TriggerEvent::OperatorAnswer {
                 question: QuestionId::new(),
+                number: None,
+                question_text: String::new(),
+                options: vec![],
+                item: None,
+                asked_at: None,
                 text: "t".into(),
             },
             TriggerEvent::GateOpened {

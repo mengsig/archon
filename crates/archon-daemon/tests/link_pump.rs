@@ -505,6 +505,11 @@ async fn an_operator_chat_command_is_applied_once_through_the_pump() {
     let expected = vec![
         TriggerEvent::OperatorAnswer {
             question: asked.id.clone(),
+            number: Some(asked.number),
+            question_text: asked.text.clone(),
+            options: asked.options.clone(),
+            item: asked.item.clone(),
+            asked_at: Some(asked.asked_at),
             text: "yes".into(),
         },
         TriggerEvent::ChatAnswer {

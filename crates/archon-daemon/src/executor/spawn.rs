@@ -280,6 +280,13 @@ pub(super) async fn reserve(
         return Ok(FollowUp::default());
     };
     let take = queue.len().min(slots as usize);
+    if queue
+        .iter()
+        .take(take)
+        .any(|plan| plan.reviewers.as_ref().is_some_and(Vec::is_empty))
+    {
+        learned::catalog(ctx).await?;
+    }
     let plans: Vec<SpawnPlan> = queue.drain(..take).collect();
     if queue.is_empty() {
         table.pending.remove(run);
@@ -359,6 +366,7 @@ fn reserve_each(
     let sections = run_sections(ctx, store, run, item, repo, plans[0].workspace)?;
     let experiments = experiments::item_dir(&ctx.paths, &item.id);
     let existing = store.stage_runs(&run.id)?;
+    let catalog = store.model_catalog();
     let mut ids = Vec::new();
     for plan in plans {
         // The driver only emits empty slots; a filled one means a bug upstream.
@@ -371,6 +379,7 @@ fn reserve_each(
             item,
             repo,
             config: &ctx.config,
+            catalog: &catalog,
             sections: &sections,
             experiments: &experiments,
         };
@@ -477,6 +486,7 @@ struct Target<'a> {
     repo: Option<&'a Repo>,
     /// The global `[models]` policy, which the repository's narrows.
     config: &'a Config,
+    catalog: &'a archon_core::model_tier::ModelCatalog,
     /// The contract's sections on the run itself ([`run_sections`]).
     sections: &'a str,
     /// The item's directory for reviewers' experiment copies.
@@ -502,7 +512,7 @@ impl Target<'_> {
         assert!(!plan.instructions.is_empty(), "every stage has a contract");
         // An unreadable policy refuses this spawn when it is issued (`claim`).
         let policy = RepoEnv::new(self.repo.cloned()).map(|env| env.policy(self.config));
-        let reviewers = reviewer_rules(plan, &policy);
+        let reviewers = reviewer_rules(plan, &policy, &self.config.review, self.catalog);
         let contract = format!("{}{reviewers}{}", plan.instructions, self.sections);
         if !self.delegates(plan) {
             return contract;
@@ -520,7 +530,12 @@ impl Target<'_> {
 
 /// The models `plan`'s agent may delegate the reviewers it owes to, within
 /// `policy` as it stands at this spawn rather than when the run began.
-fn reviewer_rules(plan: &SpawnPlan, policy: &Result<ModelPolicy, ArchonError>) -> String {
+fn reviewer_rules(
+    plan: &SpawnPlan,
+    policy: &Result<ModelPolicy, ArchonError>,
+    profile: &archon_core::config::ReviewConfig,
+    catalog: &archon_core::model_tier::ModelCatalog,
+) -> String {
     let Some(named) = plan.reviewers.as_deref() else {
         return String::new();
     };
@@ -529,7 +544,13 @@ fn reviewer_rules(plan: &SpawnPlan, policy: &Result<ModelPolicy, ArchonError>) -
         "an agent owing reviewers delegates them"
     );
     let rules = match policy {
-        Ok(policy) => contract::reviewer_model_rules(Some(named), &plan.choice.model, policy),
+        Ok(policy) => contract::reviewer_profile_rules(
+            Some(named),
+            &plan.choice.model,
+            policy,
+            profile,
+            catalog,
+        ),
         Err(error) => format!(
             "- Delegate no reviewer: the repository's model policy cannot be read ({error}).\n"
         ),
@@ -736,6 +757,7 @@ pub(super) fn reserve_replacement(
         item: &item,
         repo: repo.as_ref(),
         config: &ctx.config,
+        catalog: &store.model_catalog(),
         sections: &sections,
         experiments: &experiments,
     };

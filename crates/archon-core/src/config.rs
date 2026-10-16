@@ -52,6 +52,7 @@ pub struct Config {
     pub aether: AetherConfig,
     pub orchestrator: OrchestratorConfig,
     pub models: ModelsConfig,
+    pub review: ReviewConfig,
     pub limits: LimitsConfig,
     pub dispatcher: DispatcherConfig,
     pub chat: ChatConfig,
@@ -62,6 +63,25 @@ pub struct Config {
     pub github: GithubConfig,
     pub autonomy: AutonomyConfig,
     pub learning: LearningConfig,
+}
+
+/// Defaults for reviewers an item's model plan leaves unnamed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ReviewConfig {
+    pub default_tier: Tier,
+    pub default_effort: Effort,
+    pub prefer_other_provider: bool,
+}
+
+impl Default for ReviewConfig {
+    fn default() -> Self {
+        Self {
+            default_tier: Tier::Balanced,
+            default_effort: Effort::Low,
+            prefer_other_provider: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -956,6 +976,27 @@ fn read_toml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, A
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_defaults_and_overrides_are_validated() {
+        let default: Config = toml::from_str("").unwrap();
+        assert_eq!(default.review.default_tier, Tier::Balanced);
+        assert_eq!(default.review.default_effort, Effort::Low);
+        assert!(default.review.prefer_other_provider);
+        let configured: Config = toml::from_str(
+            "[review]\ndefault_tier = 'strong'\ndefault_effort = 'medium'\nprefer_other_provider = false",
+        ).unwrap();
+        assert_eq!(configured.review.default_tier, Tier::Strong);
+        assert_eq!(configured.review.default_effort, Effort::Medium);
+        assert!(!configured.review.prefer_other_provider);
+        for invalid in [
+            "default_tier = 'typo'",
+            "default_effort = 'typo'",
+            "unknown = true",
+        ] {
+            assert!(toml::from_str::<Config>(&format!("[review]\n{invalid}")).is_err());
+        }
+    }
 
     #[test]
     fn missing_file_is_default_config() {

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::age::Age;
 use crate::agent_message::{AGENT_MESSAGES_CEILING, DEFAULT_AGENT_MESSAGES};
-use crate::autonomy::AutonomyConfig;
+use crate::autonomy::{AutonomyConfig, MAX_DIRECTIVE_CHARS, MAX_DIRECTIVES};
 use crate::error::ArchonError;
 use crate::initiative::InitiativeLimits;
 use crate::model::{Effort, ModelRef};
@@ -52,6 +52,7 @@ pub struct Config {
     pub aether: AetherConfig,
     pub orchestrator: OrchestratorConfig,
     pub models: ModelsConfig,
+    pub review: ReviewConfig,
     pub limits: LimitsConfig,
     pub dispatcher: DispatcherConfig,
     pub chat: ChatConfig,
@@ -62,6 +63,26 @@ pub struct Config {
     pub github: GithubConfig,
     pub autonomy: AutonomyConfig,
     pub learning: LearningConfig,
+    pub notify: crate::push::NotifyConfig,
+}
+
+/// Defaults for reviewers an item's model plan leaves unnamed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ReviewConfig {
+    pub default_tier: Tier,
+    pub default_effort: Effort,
+    pub prefer_other_provider: bool,
+}
+
+impl Default for ReviewConfig {
+    fn default() -> Self {
+        Self {
+            default_tier: Tier::Balanced,
+            default_effort: Effort::Low,
+            prefer_other_provider: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -340,6 +361,55 @@ impl ModelsConfig {
     }
 }
 
+/// Where a structural limit's value comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LimitSource {
+    /// Not set in `[limits]`, or set to its default.
+    Default,
+    /// Set in config.toml's `[limits]`.
+    Config,
+    /// Built in; no configuration changes it.
+    Fixed,
+}
+
+/// One structural limit as in force, for `archon autonomy` and the
+/// `autonomy_policy` tool.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StructuralLimit {
+    pub key: String,
+    pub value: u64,
+    pub default: u64,
+    /// The most `[limits]` may raise it to.
+    pub ceiling: u64,
+    pub source: LimitSource,
+}
+
+impl StructuralLimit {
+    fn fixed(key: &str, value: u64) -> Self {
+        Self {
+            key: key.to_owned(),
+            value,
+            default: value,
+            ceiling: value,
+            source: LimitSource::Fixed,
+        }
+    }
+
+    /// `max_agent_messages = 20 (default 20, ceiling 200; default)`.
+    pub fn describe(&self) -> String {
+        let source = match self.source {
+            LimitSource::Default => "default",
+            LimitSource::Config => "set in config.toml [limits]",
+            LimitSource::Fixed => return format!("{} = {} (fixed)", self.key, self.value),
+        };
+        format!(
+            "{} = {} (default {}, ceiling {}; {source})",
+            self.key, self.value, self.default, self.ceiling
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LimitsConfig {
@@ -431,35 +501,7 @@ impl LimitsConfig {
                 "limits.min_free_gb must be at most {MAX_MIN_FREE_GB} (0 = no disk hold)"
             )));
         }
-        let ceiling = InitiativeLimits::CEILING;
-        let structural = [
-            (
-                "max_delegation_depth",
-                self.max_delegation_depth,
-                DELEGATION_DEPTH_CEILING,
-            ),
-            (
-                "max_stage_timeout_minutes",
-                self.max_stage_timeout_minutes,
-                STAGE_TIMEOUT_CEILING_MINUTES,
-            ),
-            (
-                "max_agent_messages",
-                self.max_agent_messages,
-                AGENT_MESSAGES_CEILING,
-            ),
-            (
-                "initiative_members",
-                self.initiative_members,
-                ceiling.members as u32,
-            ),
-            (
-                "initiative_contract_bytes",
-                self.initiative_contract_bytes,
-                ceiling.contract_bytes as u32,
-            ),
-        ];
-        for (key, value, most) in structural {
+        for (key, value, _, most) in self.configurable() {
             if !(1..=most).contains(&value) {
                 return Err(ArchonError::Config(format!(
                     "limits.{key} must be between 1 and {most}, not {value}"
@@ -467,6 +509,78 @@ impl LimitsConfig {
             }
         }
         Ok(())
+    }
+
+    /// The structural limits `[limits]` may set: key, value, default, ceiling.
+    fn configurable(&self) -> [(&'static str, u32, u32, u32); 5] {
+        let default = Self::default();
+        let ceiling = InitiativeLimits::CEILING;
+        [
+            (
+                "max_delegation_depth",
+                self.max_delegation_depth,
+                default.max_delegation_depth,
+                DELEGATION_DEPTH_CEILING,
+            ),
+            (
+                "max_stage_timeout_minutes",
+                self.max_stage_timeout_minutes,
+                default.max_stage_timeout_minutes,
+                STAGE_TIMEOUT_CEILING_MINUTES,
+            ),
+            (
+                "max_agent_messages",
+                self.max_agent_messages,
+                default.max_agent_messages,
+                AGENT_MESSAGES_CEILING,
+            ),
+            (
+                "initiative_members",
+                self.initiative_members,
+                default.initiative_members,
+                ceiling.members as u32,
+            ),
+            (
+                "initiative_contract_bytes",
+                self.initiative_contract_bytes,
+                default.initiative_contract_bytes,
+                ceiling.contract_bytes as u32,
+            ),
+        ]
+    }
+
+    /// Every structural limit in force, configurable ones first, then the
+    /// fixed directive bounds.
+    pub fn structural(&self) -> Vec<StructuralLimit> {
+        let mut limits: Vec<StructuralLimit> = self
+            .configurable()
+            .into_iter()
+            .map(|(key, value, default, ceiling)| {
+                assert!(
+                    default <= ceiling,
+                    "{key}: the default sits within the ceiling"
+                );
+                StructuralLimit {
+                    key: key.to_owned(),
+                    value: u64::from(value),
+                    default: u64::from(default),
+                    ceiling: u64::from(ceiling),
+                    source: if value == default {
+                        LimitSource::Default
+                    } else {
+                        LimitSource::Config
+                    },
+                }
+            })
+            .collect();
+        for (key, value) in [
+            ("max_directives", MAX_DIRECTIVES),
+            ("max_directive_chars", MAX_DIRECTIVE_CHARS),
+        ] {
+            limits.push(StructuralLimit::fixed(key, value as u64));
+        }
+        debug_assert!(limits.iter().all(|l| l.value <= l.ceiling));
+        limits
     }
 
     pub fn caps(&self) -> Caps {
@@ -870,6 +984,7 @@ impl Config {
         self.worktrees.validate()?;
         self.artifacts.validate()?;
         self.storage.validate()?;
+        self.notify.validate()?;
         self.models.check_weights()?;
         let orchestrator = crate::model::ModelChoice {
             model: self.orchestrator.model.clone(),
@@ -956,6 +1071,27 @@ fn read_toml<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, A
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_defaults_and_overrides_are_validated() {
+        let default: Config = toml::from_str("").unwrap();
+        assert_eq!(default.review.default_tier, Tier::Balanced);
+        assert_eq!(default.review.default_effort, Effort::Low);
+        assert!(default.review.prefer_other_provider);
+        let configured: Config = toml::from_str(
+            "[review]\ndefault_tier = 'strong'\ndefault_effort = 'medium'\nprefer_other_provider = false",
+        ).unwrap();
+        assert_eq!(configured.review.default_tier, Tier::Strong);
+        assert_eq!(configured.review.default_effort, Effort::Medium);
+        assert!(!configured.review.prefer_other_provider);
+        for invalid in [
+            "default_tier = 'typo'",
+            "default_effort = 'typo'",
+            "unknown = true",
+        ] {
+            assert!(toml::from_str::<Config>(&format!("[review]\n{invalid}")).is_err());
+        }
+    }
 
     #[test]
     fn missing_file_is_default_config() {
@@ -1188,6 +1324,37 @@ mod tests {
                 "{error}"
             );
         }
+    }
+
+    #[test]
+    fn structural_limits_name_value_default_ceiling_and_source() {
+        let raised: Config =
+            toml::from_str("[limits]\ninitiative_contract_bytes = 8192\nmax_agent_messages = 20")
+                .unwrap();
+        let limits = raised.limits.structural();
+        let keys: Vec<&str> = limits.iter().map(|l| l.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            [
+                "max_delegation_depth",
+                "max_stage_timeout_minutes",
+                "max_agent_messages",
+                "initiative_members",
+                "initiative_contract_bytes",
+                "max_directives",
+                "max_directive_chars",
+            ]
+        );
+        let describe = |key: &str| limits.iter().find(|l| l.key == key).unwrap().describe();
+        assert_eq!(
+            describe("initiative_contract_bytes"),
+            "initiative_contract_bytes = 8192 (default 2048, ceiling 16384; set in config.toml [limits])"
+        );
+        assert_eq!(
+            describe("max_agent_messages"),
+            "max_agent_messages = 20 (default 20, ceiling 200; default)"
+        );
+        assert_eq!(describe("max_directives"), "max_directives = 20 (fixed)");
     }
 
     #[test]

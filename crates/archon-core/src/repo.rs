@@ -9,9 +9,10 @@ use crate::Timestamp;
 use crate::autonomy::AutonomyPatch;
 use crate::id::RepoId;
 
+pub mod affected;
 mod tiers;
 
-pub use tiers::{Checks, DEFAULT_RELEASE_BRANCH, REPO_FILE_NAME, RepoTiers};
+pub use tiers::{Checks, DEFAULT_RELEASE_BRANCH, REPO_FILE_NAME, RepoTiers, check_command};
 
 /// How finished work leaves a repository. Nothing merges unless
 /// the item's `merge = auto` knob is within the operator's ceiling.
@@ -217,6 +218,10 @@ pub struct Repo {
     /// The operator's verification tiers, over the committed `.archon/repo.toml`.
     #[serde(default, skip_serializing_if = "RepoTiers::is_empty")]
     pub tiers: RepoTiers,
+    /// The committed file's fast check the operator confirmed, word for
+    /// word: the ship gate runs that file's check only while it reads so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirmed_fast_check: Option<String>,
     pub added_at: Timestamp,
 }
 
@@ -290,6 +295,7 @@ mod tests {
             attribution: Attribution::None,
             gh_user: None,
             tiers: RepoTiers::default(),
+            confirmed_fast_check: None,
             added_at: crate::now(),
         };
         let mut stored = serde_json::to_value(&repo).unwrap();

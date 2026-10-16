@@ -3,7 +3,8 @@
 
 mod gh_users;
 mod mcp_tools;
-mod registry;
+mod orchestrator;
+pub(super) mod registry;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -103,12 +104,14 @@ pub async fn run(json: bool) -> anyhow::Result<ExitCode> {
     checks.push(check_locations(&archon_client::default_socket()));
     let archond = connect_existing().await;
     checks.push(check_archond(&archond));
+    checks.push(orchestrator::check_orchestrator(&archond).await);
     let registry = Registry::read(&archond, config.aether.mode).await;
     checks.push(check_disk(&config)?);
     checks.push(check_git().await);
     checks.push(registry::check_gh(&config.github.binary, &registry).await);
     checks.push(gh_users::check_gh_users(&config.github.binary, &registry).await);
     checks.push(registry::check_repos(&registry).await);
+    checks.extend(release_checks(&config.github.binary).await);
     checks.push(check_lavish(&config));
     checks.push(check_agent_cli("claude"));
     checks.push(check_agent_cli("codex"));
@@ -754,6 +757,21 @@ pub(super) fn find_program(program: &Path) -> Option<PathBuf> {
     std::env::split_paths(&path)
         .map(|dir| dir.join(program))
         .find(|candidate| executable(candidate))
+}
+
+async fn release_checks(binary: &Path) -> Vec<Check> {
+    let mut checks = Vec::new();
+    for repo in ["mengsig/archon", "mengsig/aether"] {
+        let (level, detail) = match super::release::inspect(binary, repo, None).await {
+            Ok(problems) if problems.is_empty() => (Level::Ok, format!("{repo}: healthy")),
+            Ok(problems) => (Level::Fail, format!("{repo}: {}", problems.join("; "))),
+            Err(error) => (Level::Warn, format!("{repo}: could not check: {error:#}")),
+        };
+        checks.push(check("releases", level, detail));
+    }
+    assert_eq!(checks.len(), 2);
+    assert!(checks.iter().all(|check| !check.detail.is_empty()));
+    checks
 }
 
 #[cfg(test)]

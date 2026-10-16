@@ -69,6 +69,7 @@ pub(super) async fn finish_run(
     table.merges.remove(&run.id);
     table.ships.remove(&run.id);
     table.ship_retries.remove(&run.id);
+    table.gates.forget(&run.id);
     crate::feed::publish(ctx, finished.answers);
     crate::reports::close_stale_questions(ctx).await?;
     let pr_url = pr_url(ctx, &run).await?;
@@ -304,6 +305,7 @@ pub(super) async fn announce(
         NotificationKind::Outcome
     };
     notify(ctx, kind, &notice, Some(&item.id), run).await?;
+    crate::push::finished(ctx, item, needs_operator);
     ctx.coordination.changed.notify_one();
     if item.initiative.is_some() {
         ctx.dispatch.notify_one();

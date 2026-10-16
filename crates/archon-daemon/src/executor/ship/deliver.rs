@@ -8,6 +8,7 @@
 //! the pull request GitHub lists. An auto-merge it owes is recorded first.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use archon_core::error::ArchonError;
@@ -20,10 +21,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::super::{
-    FollowUp, RunTable, ShipRetry, descendants, initiative_ship, recover, repo_identity, restack,
-    settle,
+    FollowUp, RunTable, ShipRetry, descendants, fast_check, initiative_ship, recover,
+    repo_identity, restack, settle,
 };
-use super::{auto_merge, checks, pr_checks, remote};
+use super::{auto_merge, checks, gate, pr_checks, remote};
 use crate::context::DaemonContext;
 use crate::resolve;
 
@@ -75,6 +76,15 @@ struct Claimed {
     vars: BTreeMap<String, String>,
     /// The outcome persisted already, if any.
     recorded: Option<ShipOutcome>,
+    /// The fast check's verdict or failure, once it finished.
+    gate: Option<Result<gate::Verdict, ArchonError>>,
+}
+
+/// How far one delivery got: done, or waiting for its fast check to run.
+#[derive(Debug)]
+enum Carried {
+    Done(ShipOutcome),
+    Gate(gate::Check),
 }
 
 /// Run `run`'s queued delivery once and let its driver finish the run; a
@@ -83,12 +93,13 @@ pub(in crate::executor) async fn deliver(
     ctx: &DaemonContext,
     run_id: &PipelineRunId,
 ) -> Result<FollowUp, ArchonError> {
-    let Some(claimed) = claim(ctx, run_id).await? else {
+    let Some(mut claimed) = claim(ctx, run_id).await? else {
         return Ok(FollowUp::default());
     };
+    let gate = claimed.gate.take();
     let delivered = match claimed.recorded.clone() {
-        Some(outcome) => Ok(outcome),
-        None => fresh(ctx, &claimed).await,
+        Some(outcome) => Ok(Carried::Done(outcome)),
+        None => fresh(ctx, &claimed, gate).await,
     };
     let Claimed { plan, run, .. } = claimed;
     let mut table = ctx.runs.lock().await;
@@ -98,6 +109,15 @@ pub(in crate::executor) async fn deliver(
         // The run finished or was resumed meanwhile; its replay owns it now.
         return Ok(FollowUp::poke());
     }
+    let delivered = match delivered {
+        Ok(Carried::Gate(check)) => {
+            // Still queued: the gate's verdict wakes the sweep that delivers it.
+            table.gates.start(run_id, check, Arc::clone(&ctx.dispatch));
+            return Ok(FollowUp::default());
+        }
+        Ok(Carried::Done(outcome)) => Ok(outcome),
+        Err(error) => Err(error),
+    };
     table.ships.remove(run_id);
     let result = match delivered {
         Ok(outcome) => apply(ctx, &mut table, run, outcome).await,
@@ -137,6 +157,11 @@ async fn claim(
     if descendants::holds(&store, run_id)? {
         return Ok(None);
     }
+    let gate = match table.gates.status(run_id) {
+        gate::Status::Running => return Ok(None),
+        gate::Status::Idle => None,
+        gate::Status::Finished(verdict) => Some(verdict),
+    };
     let recorded = store
         .kv_get(&ship_key(run_id))?
         .map(|raw| serde_json::from_str::<ShipOutcome>(&raw))
@@ -147,6 +172,7 @@ async fn claim(
         repo: repo_of(&store, &run)?,
         vars: recover::load_run_vars(&store, run_id)?,
         recorded,
+        gate,
         run,
     };
     assert!(
@@ -174,13 +200,21 @@ fn repo_of(store: &Store, run: &PipelineRun) -> Result<Option<Repo>, ArchonError
 }
 
 /// Deliver `claimed` now and persist how it ended, before anything acts on
-/// it. `Err` is a failure another try may pass; nothing is persisted then.
-async fn fresh(ctx: &DaemonContext, claimed: &Claimed) -> Result<ShipOutcome, ArchonError> {
+/// it, unless its fast check is to run first. `Err` is a failure another
+/// try may pass; nothing is persisted then.
+async fn fresh(
+    ctx: &DaemonContext,
+    claimed: &Claimed,
+    gate: Option<Result<gate::Verdict, ArchonError>>,
+) -> Result<Carried, ArchonError> {
     assert!(
         claimed.recorded.is_none(),
         "a recorded delivery is not repeated"
     );
-    let outcome = carry_out(ctx, claimed).await?;
+    let outcome = match carry_out(ctx, claimed, gate).await? {
+        Carried::Done(outcome) => outcome,
+        Carried::Gate(check) => return Ok(Carried::Gate(check)),
+    };
     let (run, plan) = (&claimed.run, &claimed.plan);
     let mut store = ctx.store.lock().await;
     let owes_merge = claimed.vars.get("ship.auto_merge").map(String::as_str) == Some("true");
@@ -200,48 +234,38 @@ async fn fresh(ctx: &DaemonContext, claimed: &Claimed) -> Result<ShipOutcome, Ar
     }
     persist(&mut store, run, plan, &outcome)?;
     store.kv_delete(&retry_key(&run.id))?;
-    Ok(outcome)
+    Ok(Carried::Done(outcome))
 }
 
-/// Prove the worktree, then in `pr` mode push the checked commit and find
-/// or open its pull request. A refusal is the `Failed` outcome, never an `Err`.
-async fn carry_out(ctx: &DaemonContext, claimed: &Claimed) -> Result<ShipOutcome, ArchonError> {
-    let refused = |error: String| Ok(ShipOutcome::Failed { error });
+/// Prove the worktree and pass its fast check, then in `pr` mode push the
+/// checked commit and find or open its pull request. A refusal is the
+/// `Failed` outcome, never an `Err`.
+async fn carry_out(
+    ctx: &DaemonContext,
+    claimed: &Claimed,
+    gate: Option<Result<gate::Verdict, ArchonError>>,
+) -> Result<Carried, ArchonError> {
+    let refused = |error: String| Ok(Carried::Done(ShipOutcome::Failed { error }));
     let (run, plan) = (&claimed.run, &claimed.plan);
     let Some(repo) = claimed.repo.clone() else {
         return refused("the item's repository is no longer registered with Archon".into());
     };
     let pushes = pushes(&claimed.vars)?;
-    let identity = repo_identity::of(ctx, &repo).await?;
     let (base, draft) = {
         let store = ctx.store.lock().await;
         let base = base_of(&store, run, &claimed.vars)?;
         (base, initiative_ship::opens_as_draft(&store, &run.item)?)
     };
-    let target = checks::Target {
-        data_dir: ctx.paths.data_dir.clone(),
-        repo_path: repo.path.clone(),
-        workspace: run.workspace.clone(),
-        branch: run.branch.clone(),
-        base: base.clone(),
-        allowed: repo_identity::RepoIdentity::allowed(identity.as_ref()),
-        attribution: repo.attribution,
-    };
-    let own = repo_identity::DAEMON_EMAIL;
-    assert!(
-        target.allowed.iter().any(|e| e == own),
-        "archond's own merges always ship"
-    );
-    let record = plan.record.clone();
-    let checked = tokio::task::spawn_blocking(move || checks::check(&target, &record))
-        .await
-        .map_err(|e| ArchonError::io("delivery check task", std::io::Error::other(e)))??;
-    let commit = match checked {
-        Ok(checked) => checked.commit,
+    // Proved again after a fast check ran: it may have changed the worktree.
+    let commit = match prove(ctx, claimed, &repo, &base).await? {
+        Ok(commit) => commit,
         Err(refusal) => return refused(refusal),
     };
-    let full = crate::worktree::stack::is_commit_id(&commit);
-    assert!(full, "the checks prove a full commit id: {commit:?}");
+    match gate_step(ctx, claimed, &repo, &base, gate)? {
+        GateStep::Pass => {}
+        GateStep::Refuse(refusal) => return refused(refusal),
+        GateStep::Run(check) => return Ok(Carried::Gate(check)),
+    }
     if !pushes {
         // `pr` mode verifies in `deliver_pr`, before its push.
         match initiative_ship::verify_stack(ctx, run, &commit).await {
@@ -249,10 +273,11 @@ async fn carry_out(ctx: &DaemonContext, claimed: &Claimed) -> Result<ShipOutcome
             Err(ArchonError::Invalid(why)) => return refused(why),
             Err(error) => return Err(error),
         }
-        return Ok(ShipOutcome::Shipped {
+        let shipped = ShipOutcome::Shipped {
             commit,
             pr_url: None,
-        });
+        };
+        return Ok(Carried::Done(shipped));
     }
     // The operator's policy as it stands at delivery, as the checks applied it.
     let body = archon_pipeline::pr_body(&plan.body, run.item.as_str(), repo.attribution);
@@ -264,12 +289,93 @@ async fn carry_out(ctx: &DaemonContext, claimed: &Claimed) -> Result<ShipOutcome
         draft,
     };
     match deliver_pr(ctx, run, &repo, &commit, request).await? {
-        Ok(url) => Ok(ShipOutcome::Shipped {
+        Ok(url) => Ok(Carried::Done(ShipOutcome::Shipped {
             commit,
             pr_url: Some(url),
-        }),
+        })),
         Err(refusal) => refused(refusal),
     }
+}
+
+/// The run branch's head once the worktree holds what the record names
+/// ([`checks::check`]), or why it does not.
+async fn prove(
+    ctx: &DaemonContext,
+    claimed: &Claimed,
+    repo: &Repo,
+    base: &str,
+) -> Result<Result<String, String>, ArchonError> {
+    let identity = repo_identity::of(ctx, repo).await?;
+    let run = &claimed.run;
+    let target = checks::Target {
+        data_dir: ctx.paths.data_dir.clone(),
+        repo_path: repo.path.clone(),
+        workspace: run.workspace.clone(),
+        branch: run.branch.clone(),
+        base: base.to_owned(),
+        allowed: repo_identity::RepoIdentity::allowed(identity.as_ref()),
+        attribution: repo.attribution,
+    };
+    let own = repo_identity::DAEMON_EMAIL;
+    assert!(
+        target.allowed.iter().any(|e| e == own),
+        "archond's own merges always ship"
+    );
+    let record = claimed.plan.record.clone();
+    let checked = tokio::task::spawn_blocking(move || checks::check(&target, &record))
+        .await
+        .map_err(|e| ArchonError::io("delivery check task", std::io::Error::other(e)))??;
+    let commit = match checked {
+        Ok(checked) => checked.commit,
+        Err(refusal) => return Ok(Err(refusal)),
+    };
+    let full = crate::worktree::stack::is_commit_id(&commit);
+    assert!(full, "the checks prove a full commit id: {commit:?}");
+    Ok(Ok(commit))
+}
+
+/// What the ship gate says of the proved tree.
+#[derive(Debug)]
+enum GateStep {
+    /// Its check passed, or the repository has no trusted one.
+    Pass,
+    Refuse(String),
+    /// Its check is to run before the delivery goes on.
+    Run(gate::Check),
+}
+
+/// The ship gate's say on the tree `claimed` records: the verdict on that
+/// tree, else the trusted fast check to run on it, if the repository has one.
+fn gate_step(
+    ctx: &DaemonContext,
+    claimed: &Claimed,
+    repo: &Repo,
+    base: &str,
+    gate: Option<Result<gate::Verdict, ArchonError>>,
+) -> Result<GateStep, ArchonError> {
+    let tree = &claimed.plan.record.tree;
+    assert!(!tree.is_empty() && !base.is_empty(), "a proved delivery");
+    match gate {
+        Some(Err(error)) => return Err(error),
+        Some(Ok(verdict)) if verdict.tree == *tree => {
+            return Ok(verdict.refusal.map_or(GateStep::Pass, GateStep::Refuse));
+        }
+        Some(Ok(_)) | None => {}
+    }
+    let Some(template) = fast_check::trusted(repo)? else {
+        return Ok(GateStep::Pass);
+    };
+    let env = crate::resolve::RepoEnv::new(Some(repo.clone()))?;
+    let mode = env.config.build_cache(&ctx.config.worktrees);
+    let run = &claimed.run;
+    let target_dir = crate::build_cache::target_dir(&ctx.paths, &repo.name, &run.item, mode);
+    Ok(GateStep::Run(gate::Check {
+        tree: tree.clone(),
+        workspace: run.workspace.clone(),
+        base: base.to_owned(),
+        template,
+        target_dir,
+    }))
 }
 
 /// Push `commit` once it holds the stack it is on, then find or open its
@@ -320,7 +426,7 @@ fn pushes(vars: &BTreeMap<String, String>) -> Result<bool, ArchonError> {
 
 /// The branch the run's change is for: the one its item is stacked on now
 /// (§8.8), which moves as parents merge, else the base its worktree forked from.
-fn base_of(
+pub(in crate::executor) fn base_of(
     store: &Store,
     run: &PipelineRun,
     vars: &BTreeMap<String, String>,

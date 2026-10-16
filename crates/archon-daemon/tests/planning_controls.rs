@@ -276,6 +276,40 @@ async fn reviewer_keys_pass_through_enqueue_and_reach_the_stage_contract() {
 }
 
 #[tokio::test]
+async fn unnamed_reviewers_receive_the_profile_in_the_spawn_contract() {
+    use archon_core::model_tier::{CatalogModel, ModelCatalog, Tier};
+    let mut config = archon_core::config::Config::default();
+    config.review.default_tier = Tier::Strong;
+    config.review.default_effort = Effort::Medium;
+    let h = Harness::with_config(config).await;
+    h.ctx
+        .store
+        .lock()
+        .await
+        .set_model_catalog(ModelCatalog::new(vec![CatalogModel {
+            model: "codex/reviewer".parse().unwrap(),
+            tier: Some(Tier::Strong),
+            is_default: true,
+        }]));
+    let Request::Enqueue(mut request) = reviewer_enqueue() else {
+        unreachable!()
+    };
+    request.model_plan.0.remove("implement.review");
+    let queued = item(&h, Request::Enqueue(request)).await;
+    assert!(!queued.model_plan.0.contains_key("implement.review"));
+    h.dispatch().await;
+    let requests = h.backend.requests();
+    assert_eq!(requests.len(), 1);
+    assert!(
+        requests[0]
+            .instructions
+            .contains("codex/reviewer at tier strong and effort medium"),
+        "{}",
+        requests[0].instructions
+    );
+}
+
+#[tokio::test]
 async fn enqueue_refuses_a_reviewer_outside_the_model_policy() {
     let mut config = archon_core::config::Config::default();
     config.models.deny.push(REVIEWER.parse().unwrap());

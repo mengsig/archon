@@ -17,7 +17,8 @@ use archon_core::lesson::CONTRACT_LESSONS;
 use archon_core::policy::ModelPolicy;
 use archon_core::ports::{SpawnRequest, SpawnedAgent};
 use archon_core::queue::QueueItem;
-use archon_core::repo::Repo;
+use archon_core::repo::affected::{Affected, selects};
+use archon_core::repo::{Repo, RepoTiers};
 use archon_core::run::{PipelineRun, StageOutcome, StageRun, StageState};
 use archon_pipeline::contract;
 use archon_pipeline::spec::MAX_TIMEOUT_MINUTES;
@@ -27,7 +28,8 @@ use serde::{Deserialize, Serialize};
 
 use super::resume::Takeover;
 use super::{
-    FollowUp, RunTable, dependencies, descendants, finish, naming, resume, run_node, settle, team,
+    FollowUp, RunTable, dependencies, descendants, fast_check, finish, naming, resume, run_node,
+    settle, team,
 };
 use crate::context::DaemonContext;
 use crate::disk::{self, FullDisk};
@@ -278,6 +280,13 @@ pub(super) async fn reserve(
         return Ok(FollowUp::default());
     };
     let take = queue.len().min(slots as usize);
+    if queue
+        .iter()
+        .take(take)
+        .any(|plan| plan.reviewers.as_ref().is_some_and(Vec::is_empty))
+    {
+        learned::catalog(ctx).await?;
+    }
     let plans: Vec<SpawnPlan> = queue.drain(..take).collect();
     if queue.is_empty() {
         table.pending.remove(run);
@@ -357,6 +366,7 @@ fn reserve_each(
     let sections = run_sections(ctx, store, run, item, repo, plans[0].workspace)?;
     let experiments = experiments::item_dir(&ctx.paths, &item.id);
     let existing = store.stage_runs(&run.id)?;
+    let catalog = store.model_catalog();
     let mut ids = Vec::new();
     for plan in plans {
         // The driver only emits empty slots; a filled one means a bug upstream.
@@ -369,6 +379,7 @@ fn reserve_each(
             item,
             repo,
             config: &ctx.config,
+            catalog: &catalog,
             sections: &sections,
             experiments: &experiments,
         };
@@ -402,10 +413,46 @@ fn run_sections(
     let initiative = contract::initiative_rules(initiative.as_ref());
     let lessons = contract::lesson_rules(&lessons)?;
     let env = RepoEnv::new(repo.cloned())?;
-    let checks = contract::check_rules(&env.tiers()?.checks);
+    let tiers = env.tiers()?;
+    let (affected, gated) = fast_check_now(store, run, &env, &tiers, mode)?;
+    let fast = contract::FastCheck {
+        affected: affected.as_ref(),
+        gated,
+    };
+    let checks = contract::check_rules(&tiers.checks, fast);
     let cache = build_cache_section(ctx, &env, &item.id);
     let storage = contract::artifact_rules(&ctx.config.artifacts);
     Ok([dependencies, initiative, lessons, checks, cache, storage].concat())
+}
+
+/// What the run's change as committed affects, where its fast check selects
+/// units and the run has a worktree, and whether ship runs that check again.
+/// The selection only informs the agent: when git cannot read it, the
+/// contract states the rule without it.
+fn fast_check_now(
+    store: &Store,
+    run: &PipelineRun,
+    env: &RepoEnv,
+    tiers: &RepoTiers,
+    mode: WorkspaceMode,
+) -> Result<(Option<Affected>, bool), ArchonError> {
+    let (Some(repo), Some(template)) = (&env.repo, tiers.checks.fast.as_deref()) else {
+        return Ok((None, false));
+    };
+    assert!(run.workspace.is_absolute(), "run workspaces are absolute");
+    let gated = fast_check::trusted(repo)?.is_some();
+    if mode != WorkspaceMode::Worktree || !selects(template) {
+        return Ok((None, gated));
+    }
+    let vars = super::recover::load_run_vars(store, &run.id)?;
+    let base = super::ship::base_of(store, run, &vars)?;
+    match fast_check::affected_by(&run.workspace, &base) {
+        Ok(affected) => Ok((Some(affected), gated)),
+        Err(error) => {
+            tracing::warn!(run = %run.id, %error, "the change's packages are unknown; the contract omits them");
+            Ok((None, gated))
+        }
+    }
 }
 
 /// The Build cache section, unless the repository (or none) builds into
@@ -439,6 +486,7 @@ struct Target<'a> {
     repo: Option<&'a Repo>,
     /// The global `[models]` policy, which the repository's narrows.
     config: &'a Config,
+    catalog: &'a archon_core::model_tier::ModelCatalog,
     /// The contract's sections on the run itself ([`run_sections`]).
     sections: &'a str,
     /// The item's directory for reviewers' experiment copies.
@@ -464,7 +512,7 @@ impl Target<'_> {
         assert!(!plan.instructions.is_empty(), "every stage has a contract");
         // An unreadable policy refuses this spawn when it is issued (`claim`).
         let policy = RepoEnv::new(self.repo.cloned()).map(|env| env.policy(self.config));
-        let reviewers = reviewer_rules(plan, &policy);
+        let reviewers = reviewer_rules(plan, &policy, &self.config.review, self.catalog);
         let contract = format!("{}{reviewers}{}", plan.instructions, self.sections);
         if !self.delegates(plan) {
             return contract;
@@ -482,7 +530,12 @@ impl Target<'_> {
 
 /// The models `plan`'s agent may delegate the reviewers it owes to, within
 /// `policy` as it stands at this spawn rather than when the run began.
-fn reviewer_rules(plan: &SpawnPlan, policy: &Result<ModelPolicy, ArchonError>) -> String {
+fn reviewer_rules(
+    plan: &SpawnPlan,
+    policy: &Result<ModelPolicy, ArchonError>,
+    profile: &archon_core::config::ReviewConfig,
+    catalog: &archon_core::model_tier::ModelCatalog,
+) -> String {
     let Some(named) = plan.reviewers.as_deref() else {
         return String::new();
     };
@@ -491,7 +544,13 @@ fn reviewer_rules(plan: &SpawnPlan, policy: &Result<ModelPolicy, ArchonError>) -
         "an agent owing reviewers delegates them"
     );
     let rules = match policy {
-        Ok(policy) => contract::reviewer_model_rules(Some(named), &plan.choice.model, policy),
+        Ok(policy) => contract::reviewer_profile_rules(
+            Some(named),
+            &plan.choice.model,
+            policy,
+            profile,
+            catalog,
+        ),
         Err(error) => format!(
             "- Delegate no reviewer: the repository's model policy cannot be read ({error}).\n"
         ),
@@ -698,6 +757,7 @@ pub(super) fn reserve_replacement(
         item: &item,
         repo: repo.as_ref(),
         config: &ctx.config,
+        catalog: &store.model_catalog(),
         sections: &sections,
         experiments: &experiments,
     };

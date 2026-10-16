@@ -96,6 +96,7 @@ pub(super) async fn ask(
         recorded
     };
     feed::append(ctx, FeedEntry::Question(question.clone())).await?;
+    crate::push::question(ctx, &question).await;
     Ok(Reply::Question(question))
 }
 

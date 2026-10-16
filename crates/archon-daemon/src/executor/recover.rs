@@ -193,6 +193,7 @@ pub(super) async fn resume_run(
     table.pending.remove(&run.id);
     table.merges.remove(&run.id);
     table.ships.remove(&run.id);
+    table.gates.forget(&run.id);
     table.drivers.insert(run.id.clone(), driver);
     settle::apply(ctx, table, run, actions).await
 }

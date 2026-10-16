@@ -22,6 +22,7 @@ mod operator_commands;
 pub mod ops;
 pub mod prune;
 pub mod pump;
+pub mod push;
 pub mod quota;
 pub mod recovery;
 pub mod reports;
@@ -334,6 +335,7 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
         storage: Default::default(),
         status_probes: Default::default(),
         quota: Default::default(),
+        push: Default::default(),
         config,
         paths,
         store: Mutex::new(store),

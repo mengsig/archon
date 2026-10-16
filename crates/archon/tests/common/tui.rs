@@ -20,6 +20,8 @@ pub fn orchestrator() -> Reply {
         effort: Effort::High,
         status: "ready".into(),
         restarts: 0,
+        generation: 1,
+        freshness: None,
     })
 }
 

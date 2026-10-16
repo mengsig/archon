@@ -67,7 +67,7 @@ reached today.
 | `attribution` | `archon repo set --attribution` | `/archon set --repo R attribution=none` | same | `repo_update` | any change |
 | `gh_user` | `archon repo set --gh-user` | `/archon set --repo R gh_user=LOGIN` (empty clears) | same | `repo_update` | any change |
 | `ship`, `base_branch`, `default_pipeline` | `archon repo set` | `/archon set --repo R ship=pr …` | same | `repo_update` | `ship` local→pr, and any `base_branch` or `default_pipeline` change |
-| Verification tiers (`integration_branch`, `release_branch`, fast and full checks) | `archon repo set --integration-branch …` | — | — | `repo_update` | any change |
+| Verification tiers (`integration_branch`, `release_branch`, fast and full checks, the confirmed committed fast check) | `archon repo set --integration-branch …` | — | — | `repo_update` | any change |
 | Saved defaults, ceiling, budgets and pipeline | `archon settings [--repo R] --set JSON` / `--reset` | `/archon set [--repo R] key=value` / `reset` | same | `set_settings`, `reset_settings` | when effective or stored permission rises, a budget loosens, or the default pipeline changes |
 | Item autonomy after enqueue / delivery | socket `update_item` | `/archon item qi_… merge=auto` | same | autonomy-only `update_item` | when a changed knob exceeds its ceiling |
 | Caps and budgets (`set_caps`) | `archon queue caps` | `/archon apply {…}` | same | `set_caps` | when any limit rises, is cleared (zero) or budgets are turned off |

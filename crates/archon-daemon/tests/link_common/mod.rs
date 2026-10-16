@@ -64,6 +64,7 @@ impl Harness {
             storage: Default::default(),
             status_probes: Default::default(),
             quota: Default::default(),
+            push: Default::default(),
             paths: paths(dir.path()),
             config,
             store: Mutex::new(Store::open_in_memory().expect("in-memory store")),
@@ -328,6 +329,7 @@ fn repo_at(path: &Path) -> Repo {
         attribution: Default::default(),
         gh_user: None,
         tiers: Default::default(),
+        confirmed_fast_check: None,
         added_at: archon_core::now(),
     }
 }

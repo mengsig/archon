@@ -366,6 +366,7 @@ mod tests {
             attribution: Default::default(),
             gh_user: None,
             tiers: Default::default(),
+            confirmed_fast_check: None,
             added_at: archon_core::now(),
         }
     }

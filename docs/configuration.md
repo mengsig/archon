@@ -50,7 +50,19 @@ stays on its provider. `status` and `queue_status`
 show each provider's headroom, reserve and next reset. Reserves and interactive
 providers are global settings only.
 
+Unnamed reviewers use the global `[review]` profile. Archon prefers a different
+provider from the lead when an allowed model meets the configured tier; otherwise
+it uses an eligible provider from the catalog. The model policy's effort cap still
+applies. An explicit `<stage>.review` plan is unchanged. If the catalog has no model
+at the tier, the contract asks the lead to refresh it and report a blocker if none
+is available, rather than silently choosing a weaker model.
+
 ```toml
+[review]                       # reviewers with no explicit <stage>.review plan
+default_tier = "balanced"
+default_effort = "low"
+prefer_other_provider = true
+
 [models]                       # optional: leave it out to allow every ready model
 allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-sol"]
 max_effort = "high"
@@ -261,7 +273,18 @@ initiative_contract_bytes = 2048 # 1..=16384
   size. The contract is in every member's stage contract, and is sent
   whole to running members whenever it changes.
 
-Others stay fixed. The pipeline format's own bounds (32 stages, `fan_out`
+Others stay fixed. `MAX_DIRECTIVES` caps the operator directives in force
+at once at 20, each at most 500 characters (`MAX_DIRECTIVE_CHARS`); expired
+ones do not count. A directive past the cap is refused with the ids of the
+oldest ones and of those that lapse soonest, so you can clear one with
+`archon autonomy clear <id>`. `archon status` shows the count as
+`directives: 17/20 in force`.
+
+`archon autonomy` (and the orchestrator's `autonomy_policy` tool) lists
+every structural limit with its value, default, ceiling and source:
+`default`, `set in config.toml [limits]`, or `fixed`.
+
+The pipeline format's own bounds (32 stages, `fan_out`
 16, `max_loops` 10) are the same everywhere, so a pipeline that loads on
 one installation loads on all ([pipelines](PIPELINES.md)). The git-identity
 rules, workspace placement, model policy, budgets, review evidence and
@@ -310,6 +333,35 @@ Outcome costs are provisional at finish and read from the current spend ledger,
 including later provider settlement. Missing outcomes are reconciled in recurring
 bounded scans; malformed history gets a diagnostic skip marker instead of blocking
 later runs.
+
+## Push notifications
+
+```toml
+[notify]
+on = ["gate", "question", "failure", "blocked", "pr_checks", "budget"]
+command = ["ntfy", "publish", "--title", "archon", "mytopic"]
+# or: webhook = "https://ntfy.sh/mytopic"
+min_gap_secs = 60
+```
+
+Nothing is sent until `command` or `webhook` is set; set one, not both. `on`
+lists the kinds sent and defaults to all six: an operator gate opening, a
+question waiting, an item failing, an item blocked or ending in need of you,
+a delivered pull request's checks failing or never starting, and a budget
+holding new work.
+
+Each event is one JSON object: `{"kind", "id", "title", "line", "at"}`. `id`
+is the item (a question about no item gives its `q_…` id, a budget hold
+`budget`), `title` the item's title and `line` a sentence Archon writes. It
+never carries a brief, a stage summary, a question's text or a secret.
+`command` runs without a shell with the event on stdin; `webhook` POSTs it as
+`application/json` through `curl`, which must be on `PATH`, with the URL
+passed on curl's stdin, taken literally (no `[]` globbing), so no process
+listing shows it; curl's own error output is not logged, since it may quote
+the URL. At most one event of a
+kind goes out per `min_gap_secs` (0 to 86400); later ones are skipped and
+logged. A notifier that fails or runs over 30 seconds is logged as a warning
+in `archond`'s log and changes nothing else.
 
 ## Disk use
 

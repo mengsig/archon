@@ -16,11 +16,13 @@ use crate::team::TeamSlot;
 mod checks;
 mod initiative;
 mod lessons;
+mod reviewers;
 mod storage;
 
-pub use checks::check_rules;
+pub use checks::{FastCheck, check_rules};
 pub use initiative::initiative_rules;
 pub use lessons::lesson_rules;
+pub use reviewers::reviewer_profile_rules;
 pub use storage::{artifact_rules, build_cache_rules};
 
 /// Where a stage stands towards its pipeline's team stage.

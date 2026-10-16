@@ -36,15 +36,15 @@ pub(crate) async fn freeze(
                 "pull request #0 does not exist".into(),
             ));
         }
-        OntoTarget::Pr(number) => gh::view_headed(binary, &repo.path, &number.to_string()).await?,
+        OntoTarget::Pr(number) => gh::view_headed(binary, repo, &number.to_string()).await?,
         OntoTarget::Item(id) => {
             let pr = item_pull_request(&*ctx.store.lock().await, repo, id)?;
-            gh::view_headed(binary, &repo.path, &pr.url()).await?
+            gh::view_headed(binary, repo, &pr.url()).await?
         }
-        OntoTarget::Branch(branch) => branch_pull_request(binary, &repo.path, branch).await?,
+        OntoTarget::Branch(branch) => branch_pull_request(binary, repo, branch).await?,
     };
     let frozen = frozen(target, headed)?;
-    if !gh::can_push(binary, &repo.path, &frozen.head_repository).await? {
+    if !gh::can_push(binary, repo, &frozen.head_repository).await? {
         let why = format!("you have no write access to `{}`", frozen.head_repository);
         return Err(refused(&frozen.pr.url(), &why));
     }
@@ -84,7 +84,7 @@ fn item_pull_request(
 /// The one open pull request whose head is `branch`.
 async fn branch_pull_request(
     binary: &Path,
-    repo: &Path,
+    repo: &Repo,
     branch: &str,
 ) -> Result<Headed, ArchonError> {
     if !is_plain_branch(branch) {

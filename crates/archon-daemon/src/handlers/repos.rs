@@ -68,6 +68,7 @@ async fn add_with_watch(
         autonomy_max: registry_ceiling(add.auto_merge),
         grant_merge: false,
         attribution: Default::default(),
+        gh_user: None,
         tiers: Default::default(),
         confirmed_fast_check: None,
         added_at: archon_core::now(),
@@ -198,6 +199,7 @@ pub(super) async fn update(
     if let Some(attribution) = patch.attribution {
         repo.attribution = attribution;
     }
+    repo.gh_user = patch.gh_user.apply(repo.gh_user);
     let confirmed = patch.tiers.confirmed_fast_check.clone();
     repo.confirmed_fast_check = confirmed.apply(repo.confirmed_fast_check);
     repo.tiers = patch.tiers.apply(repo.tiers);
@@ -207,6 +209,9 @@ pub(super) async fn update(
     ctx.store.lock().await.update_repo(&repo)?;
     if repo.grant_merge != before.grant_merge {
         crate::feed::system(ctx, grant_note(&repo)).await?;
+    }
+    if repo.gh_user != before.gh_user {
+        crate::feed::system(ctx, gh_user_note(&repo)).await?;
     }
     // The operator's deliberate update is when a changed git identity is taken.
     repo_identity::record(ctx, &repo).await?;
@@ -227,6 +232,21 @@ fn grant_note(repo: &Repo) -> String {
         false => format!(
             "grant_merge is off for {}: archond asks you to confirm each merge the orchestrator \
              requests",
+            repo.name
+        ),
+    }
+}
+
+/// The feed's record of the operator changing `gh_user`.
+fn gh_user_note(repo: &Repo) -> String {
+    match &repo.gh_user {
+        Some(user) => format!(
+            "{} now runs `gh` and pushes as the GitHub login {user}, with the token `gh auth \
+             token --user {user}` gives for each call",
+            repo.name
+        ),
+        None => format!(
+            "{} runs `gh` and pushes as archond's own GitHub login again",
             repo.name
         ),
     }

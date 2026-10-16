@@ -83,7 +83,7 @@ pub async fn observe(ctx: &DaemonContext) -> Result<Observed, ArchonError> {
         let repo = &shipped.repo;
         let asked = match pass.unlisted(&repo.path) {
             Some(_) => None,
-            None => Some(pass.by_number(binary, &repo.path, &shipped.pr).await),
+            None => Some(pass.by_number(binary, repo, &shipped.pr).await),
         };
         match asked {
             Some(Ok(pr)) => learn(ctx, outcome, &shipped, &pr, &mut seen).await?,

@@ -11,13 +11,19 @@ use serde_json::{Value, json};
 
 use super::{Harness, git};
 
-/// A `gh` keeping a file per head branch's pull request and logging calls;
+/// The token the fake `gh` keeps for [`FAKE_LOGIN`]; no real account's.
+pub const FAKE_TOKEN: &str = "gho_FAKEdevfakeFAKE0123456789";
+pub const FAKE_LOGIN: &str = "devfake";
+
+/// A `gh` keeping a file per head branch's pull request and logging calls
+/// and the `GH_TOKEN` and `GH_HOST` each had; it knows [`FAKE_LOGIN`]'s token;
 /// `fail-<command>` fails it once, `lose-create-reply` loses a create's reply,
 /// `checks` and `annotations` are what `pr checks` and the annotations API say.
 /// `pr view` shows the `view-*` files; a merge at that head marks it merged.
 const STATEFUL_GH: &str = r#"#!/bin/sh
 state="$(dirname "$0")/gh-state"
 printf '%s\n' "$*" >> "$state/calls"
+printf '%s %s\n' "${GH_TOKEN-unset}" "${GH_HOST-unset}" >> "$state/tokens"
 failing="$state/fail-$1-$2"
 if [ -f "$failing" ]; then
     cat "$failing" >&2
@@ -26,6 +32,13 @@ if [ -f "$failing" ]; then
 fi
 slot() { printf '%s/pr-%s' "$state" "$(printf '%s' "$1" | tr '/' '_')"; }
 case "$1 $2" in
+"auth token")
+    [ "$3 $4 $5 $6" = "--hostname github.com --user @LOGIN@" ] || {
+        echo "no oauth token found for github.com account $6" >&2
+        exit 1
+    }
+    echo "@TOKEN@"
+    ;;
 "pr list")
     if [ "$3 $4 $5 $6 $7" = "--state open --limit 1000 --json" ]; then
         sep=''
@@ -125,7 +138,10 @@ impl FakeGh {
         let binary = &h.ctx.config.github.binary;
         let state = binary.parent().expect("beside the binary").join("gh-state");
         std::fs::create_dir_all(&state).expect("gh state");
-        std::fs::write(binary, STATEFUL_GH).expect("gh script");
+        let script = STATEFUL_GH
+            .replace("@LOGIN@", FAKE_LOGIN)
+            .replace("@TOKEN@", FAKE_TOKEN);
+        std::fs::write(binary, script).expect("gh script");
         std::fs::set_permissions(binary, std::fs::Permissions::from_mode(0o755)).expect("mode");
         Self { state }
     }
@@ -134,6 +150,16 @@ impl FakeGh {
     pub fn calls(&self) -> Vec<String> {
         let calls = std::fs::read_to_string(self.state.join("calls")).unwrap_or_default();
         calls.lines().map(str::to_owned).collect()
+    }
+
+    /// The `GH_TOKEN` and `GH_HOST` of every call so far, `unset` if not
+    /// set, beside its arguments.
+    pub fn calls_as(&self) -> Vec<(String, String)> {
+        let tokens = std::fs::read_to_string(self.state.join("tokens")).unwrap_or_default();
+        let tokens: Vec<String> = tokens.lines().map(str::to_owned).collect();
+        let calls = self.calls();
+        assert_eq!(tokens.len(), calls.len(), "one line of each per call");
+        tokens.into_iter().zip(calls).collect()
     }
 
     /// How many calls so far began with `command`, e.g. `pr create`.

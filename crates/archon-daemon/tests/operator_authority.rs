@@ -5,8 +5,8 @@ use archon_aether::events::parse_event;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::config::{AetherMode, Config};
 use archon_core::notify::Question;
-use archon_core::protocol::{ClientKind, Reply, RepoPatch, RepoRef, Request};
-use archon_core::repo::Attribution;
+use archon_core::protocol::{Clearable, ClientKind, Reply, RepoPatch, RepoRef, Request};
+use archon_core::repo::{Attribution, GhUser};
 use archon_daemon::{handlers, pump};
 use archon_queue::store::keys;
 use common::{Harness, ORCHESTRATOR, REPO_NAME};
@@ -308,6 +308,46 @@ async fn only_the_operator_changes_a_repositorys_attribution() {
     let command = format!("/archon set --repo {REPO_NAME} attribution=item-id");
     deliver(&h, 4, user(&command)).await;
     assert_eq!(attribution(&h).await, Attribution::ItemId);
+}
+
+async fn gh_user(h: &Harness) -> Option<String> {
+    let store = h.ctx.store.lock().await;
+    let repo = store.repo(&RepoRef(REPO_NAME.into())).unwrap();
+    repo.gh_user.map(|user| user.to_string())
+}
+
+fn run_as(user: Clearable<GhUser>) -> Request {
+    Request::RepoUpdate {
+        repo: RepoRef(REPO_NAME.into()),
+        patch: RepoPatch {
+            gh_user: user,
+            ..Default::default()
+        },
+    }
+}
+
+/// Which GitHub login a repository publishes as is the operator's: the agent
+/// cannot set it, a change it relays waits for the operator's own reply, and
+/// the operator's command applies and clears it.
+#[tokio::test]
+async fn only_the_operator_changes_the_github_login_a_repository_runs_as() {
+    let h = harness(AetherMode::Dedicated).await;
+    let devfake = || Clearable::Set("devfake".parse().unwrap());
+    let alone = h.orchestrator(run_as(devfake())).await;
+    assert!(alone.is_err(), "{alone:?}");
+    assert_eq!(gh_user(&h).await, None);
+    deliver(&h, 1, user("publish as devfake")).await;
+    let asked = h
+        .orchestrator(cited(run_as(devfake()), 1, "publish as devfake"))
+        .await
+        .unwrap();
+    assert!(matches!(asked, Reply::Question(_)), "{asked:?}");
+    assert_eq!(gh_user(&h).await, None, "nothing changes before the reply");
+    deliver(&h, 2, user("yes")).await;
+    assert_eq!(gh_user(&h).await.as_deref(), Some("devfake"));
+    let command = format!("/archon set --repo {REPO_NAME} gh_user=");
+    deliver(&h, 3, user(&command)).await;
+    assert_eq!(gh_user(&h).await, None);
 }
 
 /// A relayed change to the verification tiers waits for the operator's own

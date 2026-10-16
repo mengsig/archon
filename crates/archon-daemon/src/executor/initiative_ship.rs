@@ -81,14 +81,9 @@ async fn check_stack_base(ctx: &DaemonContext, run: &PipelineRun) -> Result<(), 
     };
     assert!(is_plain_branch(&base), "recorded at the fork");
     let binary = &ctx.config.github.binary;
-    let pr = gh::view(binary, &repo.path, &run.branch).await?;
+    let pr = gh::view(binary, &repo, &run.branch).await?;
     if pr.base_ref_name != base {
-        gh::text(
-            binary,
-            &repo.path,
-            &["pr", "edit", &pr.url, "--base", &base],
-        )
-        .await?;
+        gh::text(binary, &repo, &["pr", "edit", &pr.url, "--base", &base]).await?;
     }
     tracing::debug!(item = %owner, %base, "verified stack PR base");
     Ok(())
@@ -376,7 +371,7 @@ async fn sync_member(
         return Ok(());
     }
     let binary = &ctx.config.github.binary;
-    let pr = pass.by_number(binary, &member.repo.path, &identity).await?;
+    let pr = pass.by_number(binary, &member.repo, &identity).await?;
     if !pr.is_open() {
         return gh::settle(&mut *ctx.store.lock().await, &pr);
     }
@@ -404,7 +399,7 @@ async fn sync_member(
         if !ready {
             args.push("--undo");
         }
-        gh::text(binary, &member.repo.path, &args).await?;
+        gh::text(binary, &member.repo, &args).await?;
     }
     Ok(())
 }
@@ -438,7 +433,7 @@ async fn edit_body(ctx: &DaemonContext, member: &MemberPr, body: &str) -> Result
         .to_str()
         .ok_or_else(|| ArchonError::Invalid("PR body path is not UTF-8".into()))?;
     let args = ["pr", "edit", &member.url, "--body-file", path];
-    gh::text(&ctx.config.github.binary, &member.repo.path, &args).await?;
+    gh::text(&ctx.config.github.binary, &member.repo, &args).await?;
     Ok(())
 }
 

@@ -10,6 +10,7 @@ use archon_core::error::ArchonError;
 use super::clean;
 use super::daemon_git::{Config, DaemonGit, Ran, no_programs};
 use super::shadow::Shadow;
+use crate::gh_account::Token;
 
 /// Who the daemon's merge commits are made by.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -261,14 +262,16 @@ fn is_local(url: &str) -> bool {
 }
 
 /// Push `commit` to `refs/heads/<branch>` of `url`, never forced, from the
-/// shadow with the operator's credentials; a local receiver runs no hook.
+/// shadow with the operator's credentials, or only `token`'s when given; a
+/// local receiver runs no hook.
 pub(crate) fn push(
     shadow: &Shadow,
     url: &str,
     branch: &str,
     commit: &str,
+    token: Option<&Token>,
 ) -> Result<Ran, ArchonError> {
-    push_with(shadow, url, (branch, commit), None)
+    push_with(shadow, url, (branch, commit), None, token)
 }
 
 /// [`push`] of `commit` to `branch` only while `url` holds `expected` there,
@@ -292,6 +295,7 @@ fn push_with(
     url: &str,
     (branch, commit): (&str, &str),
     lease: Option<&str>,
+    token: Option<&Token>,
 ) -> Result<Ran, ArchonError> {
     super::check_branch(branch)?;
     assert!(
@@ -313,9 +317,14 @@ fn push_with(
     let mut args = vec!["push", "--porcelain", "--no-verify", &receive_pack];
     args.extend(lease);
     args.extend([url.as_str(), &refspec]);
-    shadow
-        .git(None, Config::Operator)?
-        .network()
+    let Some(token) = token else {
+        let git = shadow.git(None, Config::Operator)?.network();
+        return git.args(args).output();
+    };
+    // No operator config: no credential helper, URL rewrite or proxy of theirs.
+    assert!(url.starts_with("https://github.com/"), "only github.com");
+    let git = shadow.git(None, Config::Sealed)?.network();
+    git.secret_config(&token.push_settings())
         .args(args)
         .output()
 }
@@ -420,12 +429,13 @@ pub(crate) fn remote_head(
 }
 
 /// Create `branch` on `origin` at `origin`'s head of `from` when `origin` has
-/// no `branch`, never forced. `false`: it had one, or there is no `origin`.
+/// no `branch`, never forced, as `token`'s login when given. `false`: it had
+/// one, or there is no `origin`.
 pub(crate) fn ensure_remote_branch(
     shadow: &Shadow,
     repo: &Path,
-    branch: &str,
-    from: &str,
+    (branch, from): (&str, &str),
+    token: Option<&Token>,
 ) -> Result<bool, ArchonError> {
     super::check_branch(from)?;
     assert_ne!(
@@ -445,28 +455,43 @@ pub(crate) fn ensure_remote_branch(
     };
     // The local `from` may be behind: the push needs `origin`'s commit here.
     fetch(shadow, repo, from, &sha)?;
-    create_remote_branch(shadow, &url, branch, &sha)
+    let push_to = match token {
+        Some(token) => crate::gh_account::push_url(repo, token.user())?
+            .map_err(|why| ArchonError::Invalid(format!("BLOCKED: {why}")))?,
+        None => url.clone(),
+    };
+    create_remote_branch(shadow, (&push_to, &url), (branch, &sha), token)
 }
 
-/// Push `commit` as `branch`, which `url` must not have yet. `false`: another
-/// creator made it first, and its branch is left as it is.
+/// Push `commit` as `branch` to `push_to`, which must not have it yet, as
+/// `token`'s login when given; `read` is where to look for it after a failed
+/// push. `false`: another creator made it first, and its branch is left as it is.
 fn create_remote_branch(
     shadow: &Shadow,
-    url: &str,
-    branch: &str,
-    commit: &str,
+    (push_to, read): (&str, &str),
+    (branch, commit): (&str, &str),
+    token: Option<&Token>,
 ) -> Result<bool, ArchonError> {
     assert!(is_commit_id(commit), "a commit id");
+    assert!(
+        token.is_none() || push_to.starts_with("https://github.com/"),
+        "a token only goes to github.com"
+    );
     // An empty expected value refuses a branch that exists, even a fast-forward.
     let lease = format!("--force-with-lease=refs/heads/{branch}:");
-    let pushed = push_with(shadow, url, (branch, commit), Some(&lease))?;
+    let pushed = push_with(shadow, push_to, (branch, commit), Some(&lease), token)?;
     if pushed.status.success() {
         return Ok(true);
     }
-    if remote_head(shadow, url, branch)?.is_some() {
+    if remote_head(shadow, read, branch)?.is_some() {
         return Ok(false);
     }
-    Err(pushed.failure())
+    let Some(token) = token else {
+        return Err(pushed.failure());
+    };
+    let said = token.redact(&pushed.stderr_text());
+    let what = format!("git push creating `{branch}` as {}", token.user());
+    Err(ArchonError::io(what, std::io::Error::other(said)))
 }
 
 /// Up to a few commits `repo`'s branches name, for a fetch to negotiate with.
@@ -549,9 +574,9 @@ mod tests {
         );
         let shadow = Shadow::of(&dir.path().join("data"), &repo).unwrap();
 
-        assert!(!create_remote_branch(&shadow, url, "next", &second).unwrap());
+        assert!(!create_remote_branch(&shadow, (url, url), ("next", &second), None).unwrap());
         assert_eq!(remote_head(&shadow, url, "next").unwrap(), Some(first));
-        assert!(create_remote_branch(&shadow, url, "fresh", &second).unwrap());
+        assert!(create_remote_branch(&shadow, (url, url), ("fresh", &second), None).unwrap());
         assert_eq!(remote_head(&shadow, url, "fresh").unwrap(), Some(second));
     }
 

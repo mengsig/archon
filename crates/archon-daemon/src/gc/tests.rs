@@ -652,6 +652,7 @@ fn settled(item: QueueItem, runs: Vec<PipelineRun>, repo: Option<&Path>) -> Sett
         autonomy_max: Default::default(),
         grant_merge: false,
         attribution: Default::default(),
+        gh_user: None,
         tiers: Default::default(),
         confirmed_fast_check: None,
         added_at: archon_core::now(),

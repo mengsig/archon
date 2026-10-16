@@ -110,9 +110,7 @@ async fn pay_one(
         Err(error) => return Err(error),
     };
     let tried = match &repo {
-        Some(repo) => {
-            remote::auto_merge(&ctx.config.github.binary, &repo.path, &owed.url, None).await
-        }
+        Some(repo) => remote::auto_merge(&ctx.config.github.binary, repo, &owed.url, None).await,
         None => Err(MergeRefusal::Never(
             "its repository is no longer registered".into(),
         )),

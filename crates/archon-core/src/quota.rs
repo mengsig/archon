@@ -1,6 +1,5 @@
-//! Live quota headroom for tier-only routing. Aether reports, per provider,
-//! how much of each usage window is left and when it resets; the paced
-//! headroom of the tightest window scales the provider's routing weight.
+//! Live quota headroom for tier-only routing: the paced headroom of each
+//! provider's tightest usage window scales its routing weight.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -24,6 +23,18 @@ pub struct QuotaWindow {
     /// Counted from when aetherd answered, which `resets_at` is not.
     #[serde(default)]
     pub resets_in_seconds: Option<u64>,
+}
+
+impl QuotaWindow {
+    /// When it resets, by its reset time, else by the countdown aetherd gave
+    /// at `read_at`; `None` when it named neither.
+    pub fn reset_at(&self, read_at: Timestamp) -> Option<Timestamp> {
+        if self.resets_at.is_some() {
+            return self.resets_at;
+        }
+        let countdown = i64::try_from(self.resets_in_seconds?).ok()?;
+        read_at.checked_add_signed(chrono::TimeDelta::try_seconds(countdown)?)
+    }
 }
 
 /// A provider's latest usage report (aetherd's `ProviderHeadroom`). A stale
@@ -73,22 +84,14 @@ impl Reserves {
     }
 }
 
-/// Seconds until `window` resets at `now`, by its reset time, else by the
-/// countdown aetherd gave at `read_at`. `None` when it named neither.
+/// Seconds from `now` until `window`, read at `read_at`, resets.
 fn seconds_to_reset(window: &QuotaWindow, read_at: Timestamp, now: Timestamp) -> Option<i64> {
     assert!(now >= read_at, "a reading is never from the future");
-    if let Some(at) = window.resets_at {
-        return Some((at - now).num_seconds());
-    }
-    let countdown = i64::try_from(window.resets_in_seconds?).ok()?;
-    Some(countdown - (now - read_at).num_seconds())
+    Some((window.reset_at(read_at)? - now).num_seconds())
 }
 
-/// `window`'s paced headroom with `reserve` percent held back: what is left
-/// per second until it resets, over the even rate `100 / window length`,
-/// clamped to `[0, MAX_HEADROOM]`. With no reset or length known, the whole
-/// window is taken to lie ahead. `None` once the reset passed: the reading
-/// no longer binds.
+/// `((remaining − reserve) / time to reset) ÷ (100 / window length)`, in
+/// `[0, MAX_HEADROOM]`; `None` once the reset passed (docs/configuration.md).
 pub fn paced_headroom(window: &QuotaWindow, reserve: u8, until_reset: Option<i64>) -> Option<f64> {
     assert!(reserve <= 100, "a reserve is a percentage");
     if until_reset.is_some_and(|seconds| seconds <= 0) {

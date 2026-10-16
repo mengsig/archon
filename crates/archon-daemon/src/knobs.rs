@@ -352,10 +352,8 @@ impl<'a> ItemRoute<'a> {
     }
 }
 
-/// The provider `item` holds under `weights`: the one it held while the
-/// policy still allows a tiered model there and it has quota, else its pick
-/// by weight and headroom. With no weights or no catalog read yet, what it
-/// held stands.
+/// The provider `item` holds: the one it held while allowed and with quota,
+/// else its pick by weight × headroom; without weights or catalog, it stands.
 pub(crate) fn item_provider(
     (weights, quota): (Option<&ProviderWeights>, Option<&QuotaView>),
     catalog: &ModelCatalog,
@@ -379,9 +377,8 @@ pub(crate) fn item_provider(
     picked.or(held)
 }
 
-/// The first tier-only choice of `plan` that no provider can take: each
-/// one meeting its floor in `spec` is out of quota. `None` while every such
-/// choice has somewhere to run.
+/// The first tier-only choice of `plan` whose every provider meeting its
+/// floor in `spec` is out of quota; `None` while each has somewhere to run.
 pub(crate) fn quota_hold(
     plan: &ModelPlan,
     spec: &PipelineSpec,

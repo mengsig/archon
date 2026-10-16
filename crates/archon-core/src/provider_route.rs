@@ -1,7 +1,5 @@
-//! Provider weights for tier-only choices (`[models] provider_weights`):
-//! each item holds one provider, picked once by weight (scaled by live quota
-//! headroom) from a hash of its id, and a stage moves off it only when its
-//! capability floor rules it out or its quota runs out.
+//! Provider weights for tier-only choices: each item holds one provider,
+//! picked by weight × quota headroom, until a floor or its quota rules it out.
 
 use std::collections::BTreeMap;
 
@@ -36,8 +34,7 @@ impl ProviderWeights {
 }
 
 /// What routes one item's tier-only choices: the weights, the key its pick
-/// hashes (the item id), the provider it already holds, if any, and the
-/// providers' quota headroom, when Aether reports it.
+/// hashes (the item id), its held provider and Aether's quota headroom.
 #[derive(Debug, Clone, Copy)]
 pub struct ProviderRoute<'a> {
     pub weights: &'a ProviderWeights,
@@ -132,9 +129,8 @@ impl ModelCatalog {
         best
     }
 
-    /// The providers with a positive weight whose best allowed model at or
-    /// below `requested` reaches `floor`, each with its weight times its
-    /// quota headroom (1 while unknown).
+    /// Positive-weight providers whose best allowed model up to `requested`
+    /// reaches `floor`, each scored weight × headroom (1 while unknown).
     fn scored(
         &self,
         (requested, floor): (Tier, Tier),
@@ -157,9 +153,8 @@ impl ModelCatalog {
         scored
     }
 
-    /// Where a tier-only choice of `route`'s item goes: the provider it holds
-    /// while that meets `floor` and has quota; when that one ran out, the
-    /// best scored of the rest; else a pick weighted by score.
+    /// The held provider while it meets `floor` and has quota; when it ran
+    /// out, the best scored of the rest; else a pick weighted by score.
     pub fn route(
         &self,
         tiers: (Tier, Tier),
@@ -187,11 +182,8 @@ impl ModelCatalog {
         Routed::To(picked)
     }
 
-    /// The provider a tier-only choice of `route`'s item resolves on, as
-    /// [`Self::route`] has it. When every provider meeting `floor` is out of
-    /// quota it routes as if quota were unknown: the dispatcher holds such an
-    /// item, so a choice made anyway never falls below the floor. `None` when
-    /// no weighted provider meets the floor.
+    /// [`Self::route`]'s provider; with every one out of quota, as if quota
+    /// were unknown (the dispatcher holds such work), so never below `floor`.
     pub fn routed_provider(
         &self,
         tiers: (Tier, Tier),

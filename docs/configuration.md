@@ -43,8 +43,10 @@ provider with no report, a stale one, or a reset already passed keeps its plain
 weight. An item keeps its provider until that one has no headroom left; its
 stages not yet started then move to the best provider that meets their floor,
 and `get_item` records the switch. While every provider a stage may use is out,
-the item waits (`provider_quota`, naming the earliest reset) and starts once
-one resets; a stage is never sent below its floor. `status` and `queue_status`
+a queued item waits (`provider_quota`, naming the earliest reset) and a running
+one's next stage stays pending (`get_item` says so); each starts once a window
+resets, and a stage is never sent below its floor. A kept agent resuming a loop
+stays on its provider. `status` and `queue_status`
 show each provider's headroom, reserve and next reset. Reserves and interactive
 providers are global settings only.
 

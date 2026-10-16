@@ -1939,12 +1939,14 @@ so an older aetherd routes exactly as without quota; Aether has no refresh
 command, so a stale report is waited out. An item keeps its routed provider
 while its headroom is above 0. At 0, a dispatch moves it to the best-scoring
 provider meeting each floor (`tiers_at_dispatch`), and a running item's
-unstarted tier-only stages move when they are reserved (`quota::reroute_spawns`);
-both record why in `QueueItem.provider_switch`. Each dispatch pass recomputes
-which queued items have a tier-only stage whose every eligible provider is at 0
-(`quota::refresh_holds`); the planner skips them with `Hold::ProviderQuota`,
-naming the earliest reset, so they start once a window resets. `status` and
-`queue_status` show each provider's headroom, reserve and next reset.
+fresh tier-only stages move as they are reserved (`quota::reroute_spawns`),
+its stored plan following; both record why in `QueueItem.provider_switch`.
+A running item's stage whose every eligible provider is at 0 stays pending,
+noted there too, and is reserved once one resets. Each admission snapshot
+marks queued items with such a stage (`quota::item_hold`); the planner skips
+them with `Hold::ProviderQuota`, naming the earliest reset, so they start once
+a window resets. `status` and `queue_status` show each provider's headroom,
+reserve and next reset.
 
 **Stages the plan leaves out.** A `model_plan` is optional, whole or per
 stage, so an enqueue that has nothing to say about a model says nothing.

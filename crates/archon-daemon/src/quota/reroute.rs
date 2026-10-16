@@ -1,13 +1,12 @@
-//! A running item's unstarted stages leave a provider whose quota ran out:
-//! each tier-only choice still on it moves to the item's next provider that
-//! meets the stage's floor, and the item records why.
+//! A running item's stages, as they are reserved: they leave a provider out
+//! of quota, follow the item's new provider, or wait while every one is out.
 
 use archon_core::error::ArchonError;
-use archon_core::model::ModelChoice;
+use archon_core::model_tier::ModelCatalog;
 use archon_core::policy::ModelPolicy;
-use archon_core::provider_route::ProviderWeights;
+use archon_core::provider_route::{ProviderRoute, ProviderWeights, Routed};
 use archon_core::queue::QueueItem;
-use archon_core::quota::{Headroom, QuotaView};
+use archon_core::quota::{Headroom, QuotaHold, QuotaView};
 use archon_core::repo::Repo;
 use archon_pipeline::{PipelineSpec, SpawnPlan};
 use archon_queue::Store;
@@ -15,6 +14,13 @@ use archon_queue::Store;
 use crate::context::DaemonContext;
 use crate::knobs::{self, ItemRoute, TierScope};
 use crate::resolve::RepoEnv;
+
+/// Whether a run's pending spawns are reserved now or wait for quota.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Reserve {
+    Go,
+    Wait,
+}
 
 /// One line for `get_item`: when `scope` moved from `from` to `to` and why.
 /// `None` unless it moved off a provider `quota` has out of quota.
@@ -28,90 +34,86 @@ pub(crate) fn switch_note(
     if from == to {
         return None;
     }
-    let reset = spent.resets_at.map_or("names no reset".to_owned(), |at| {
-        format!("resets {}", at.format("%Y-%m-%d %H:%M UTC"))
-    });
     let reserve = match spent.reserve {
         0 => String::new(),
         percent => format!(" above its {percent}% reserve"),
     };
-    let now = archon_core::now().format("%Y-%m-%d %H:%M UTC");
+    let now = minute(archon_core::now());
     let note = format!(
-        "{now}: {scope} moved from {from} to {to}: {from} has no quota{reserve} (it {reset})"
+        "{now}: {scope} moved from {from} to {to}: {from} has no quota{reserve} ({})",
+        reset_text(spent.resets_at)
     );
     debug_assert!(!note.contains('\n'), "one line");
     Some(note)
 }
 
-/// A stage moved off a provider out of quota, and the choice it moved to.
-struct Moved {
-    stage: String,
-    fan: u32,
-    from: String,
-    choice: ModelChoice,
+fn minute(at: archon_core::Timestamp) -> String {
+    at.format("%Y-%m-%d %H:%M UTC").to_string()
 }
 
-/// Move `plans` whose tier-only choice sits on a provider out of quota to
-/// the item's next provider meeting each stage's floor in `spec`, and store
-/// the item with its new provider, plan and switch. A kept agent resumes
-/// where it is; a stage that finds no provider with quota starts where it was.
+fn reset_text(at: Option<archon_core::Timestamp>) -> String {
+    at.map_or("no reset reported".to_owned(), |at| {
+        format!("resets {}", minute(at))
+    })
+}
+
+/// Route `plans` of `item`'s run in `spec` by quota before they are reserved,
+/// storing the item when its provider, plan or note changed.
 pub(crate) fn reroute_spawns(
     ctx: &DaemonContext,
     store: &mut Store,
     (item, spec): (&mut QueueItem, &PipelineSpec),
     plans: &mut [SpawnPlan],
     repo: Option<&Repo>,
-) -> Result<(), ArchonError> {
-    let Some(view) = super::view(ctx).filter(QuotaView::any_exhausted) else {
-        return Ok(());
-    };
-    if !plans.iter().any(|plan| stranded(plan, &view)) {
-        return Ok(());
+) -> Result<Reserve, ArchonError> {
+    assert!(!plans.is_empty(), "only pending spawns are routed");
+    assert!(
+        (plans.iter()).all(|p| spec.file.stages.iter().any(|s| s.id == p.stage_id)),
+        "the plans are stages of the run's pipeline"
+    );
+    let view = super::view(ctx);
+    let spent = view.as_ref().is_some_and(QuotaView::any_exhausted);
+    if !spent && item.provider_switch.is_none() {
+        return Ok(Reserve::Go);
     }
     let Some((weights, policy)) = routing(ctx, item, repo) else {
-        return Ok(());
+        return Ok(Reserve::Go);
     };
-    let (catalog, id) = (store.model_catalog(), item.id.clone());
-    let quota = (Some(&weights), Some(&view));
+    let catalog = store.model_catalog();
+    if catalog.is_empty() {
+        return Ok(Reserve::Go);
+    }
+    let quota = (Some(&weights), view.as_ref());
     let held = knobs::item_provider(quota, &catalog, &policy, ItemRoute::new(item));
+    let id = item.id.clone();
     let route = ItemRoute {
         id: &id,
         held: held.as_deref(),
-    };
-    let tiers = TierScope::new(&ctx.config, &policy, &catalog).routed(route.by(quota.0, quota.1));
-    let mut moved = Vec::new();
-    for plan in plans.iter_mut().filter(|plan| stranded(plan, &view)) {
-        let from = plan.choice.model.provider.clone();
-        if move_plan(plan, spec, tiers) {
-            let (stage, fan) = (plan.stage_id.clone(), plan.fan_index);
-            let choice = plan.choice.clone();
-            moved.push(Moved {
-                stage,
-                fan,
-                from,
-                choice,
-            });
-        }
     }
-    if moved.is_empty() {
-        return Ok(());
+    .by(quota.0, quota.1);
+    let route = route.expect("weights route the item");
+    if let Some(hold) = plans
+        .iter()
+        .find_map(|p| plan_hold(p, spec, (&catalog, &policy), route))
+    {
+        record_wait(store, item, &hold)?;
+        return Ok(Reserve::Wait);
     }
-    item.routed_provider = held;
-    record(store, item, &view, moved)
-}
-
-/// Whether `plan` starts a fresh agent by tier alone on a provider `view`
-/// has out of quota: the only spawns that move.
-fn stranded(plan: &SpawnPlan, view: &QuotaView) -> bool {
-    let tier_only = plan
-        .choice
-        .tier
-        .as_ref()
-        .is_some_and(|t| t.provider.is_none());
-    let spent = view
-        .get(&plan.choice.model.provider)
-        .is_some_and(Headroom::exhausted);
-    plan.resume.is_none() && tier_only && spent
+    let tiers = TierScope::new(&ctx.config, &policy, &catalog).routed(Some(route));
+    let first = move_plans(plans, (spec, tiers), (held.as_deref(), view.as_ref()));
+    if first.is_none() && item.routed_provider == held {
+        return Ok(Reserve::Go);
+    }
+    item.routed_provider = held.clone();
+    if let Some((stage, from, to)) = first {
+        let scope = format!("stage {stage}");
+        let note = switch_note((Some(&from), Some(&to)), view.as_ref(), &scope);
+        item.provider_switch = note.or(item.provider_switch.take());
+    }
+    follow_plan(item, spec, tiers);
+    item.updated_at = archon_core::now();
+    store.update_item(item)?;
+    Ok(Reserve::Go)
 }
 
 /// The weights and policy `item` routes by in `repo`; `None` when weights
@@ -137,74 +139,105 @@ fn routing(
     Some((weights, env.policy(&ctx.config)))
 }
 
-/// Store `item` with the choices `moved` took and why the first one moved.
-fn record(
+/// `plan`'s hold when it starts by tier alone and every provider meeting its
+/// floor is out of quota; a kept agent's resume waits likewise.
+fn plan_hold(
+    plan: &SpawnPlan,
+    spec: &PipelineSpec,
+    (catalog, policy): (&ModelCatalog, &ModelPolicy),
+    route: ProviderRoute<'_>,
+) -> Option<QuotaHold> {
+    let tier = plan.choice.tier.as_ref().filter(|t| t.provider.is_none())?;
+    route.quota?;
+    let floor = spec.tier_floor(&plan.stage_id, tier.requested);
+    match catalog.route((tier.requested, floor), route, policy) {
+        Routed::Exhausted { until } => Some(QuotaHold {
+            stage: plan.stage_id.clone(),
+            until,
+        }),
+        Routed::To(_) | Routed::Nowhere => None,
+    }
+}
+
+/// Note on `item` that `hold`'s stage waits for quota, once per stage.
+fn record_wait(
     store: &mut Store,
     item: &mut QueueItem,
-    view: &QuotaView,
-    moved: Vec<Moved>,
+    hold: &QuotaHold,
 ) -> Result<(), ArchonError> {
-    let first = moved.first().expect("only a move is recorded");
-    let to = Some(first.choice.model.provider.as_str());
-    let scope = format!("stage {}", first.stage);
-    item.provider_switch = switch_note((Some(&first.from), to), Some(view), &scope);
-    debug_assert!(
-        item.provider_switch.is_some(),
-        "it moved off a spent provider"
-    );
-    for Moved {
-        stage, fan, choice, ..
-    } in moved
+    let waits = format!("stage {} waits for provider quota", hold.stage);
+    if item
+        .provider_switch
+        .as_deref()
+        .is_some_and(|n| n.contains(&waits))
     {
-        replace_choice(item, &stage, fan, choice);
+        return Ok(());
     }
+    let now = minute(archon_core::now());
+    let reset = reset_text(hold.until);
+    item.provider_switch = Some(format!(
+        "{now}: {waits}: every provider meeting its floor is out ({reset})"
+    ));
+    tracing::info!(item = %item.id, stage = %hold.stage, until = ?hold.until, "a stage waits for provider quota");
     item.updated_at = archon_core::now();
     store.update_item(item)
 }
 
-/// `plan`'s tier resolved again by `tiers` at its stage's floor; whether it
-/// moved to another provider.
-fn move_plan(plan: &mut SpawnPlan, spec: &PipelineSpec, tiers: TierScope<'_>) -> bool {
-    let asked = plan
-        .choice
-        .tier
-        .as_ref()
-        .expect("only tier-only choices move")
-        .requested;
-    let floor = spec.tier_floor(&plan.stage_id, asked);
-    match tiers.resolve((asked, floor), None) {
-        Ok((model, tier)) if model.provider != plan.choice.model.provider => {
-            tracing::info!(stage = %plan.stage_id, from = %plan.choice.model, to = %model, "moved an unstarted stage off a provider out of quota");
-            plan.choice.model = model;
-            plan.choice.tier = Some(tier);
-            debug_assert!(
-                plan.choice
-                    .tier
-                    .as_ref()
-                    .is_some_and(|t| t.resolved >= floor)
-            );
-            true
+/// Move each fresh tier-only plan that sits on a provider out of quota, or
+/// off the item's `held` one, as `tiers` resolve it; the first move made.
+fn move_plans(
+    plans: &mut [SpawnPlan],
+    (spec, tiers): (&PipelineSpec, TierScope<'_>),
+    (held, view): (Option<&str>, Option<&QuotaView>),
+) -> Option<(String, String, String)> {
+    let mut first = None;
+    for plan in plans.iter_mut() {
+        let Some(tier) = plan.choice.tier.as_ref().filter(|t| t.provider.is_none()) else {
+            continue;
+        };
+        let on = plan.choice.model.provider.as_str();
+        let spent = view
+            .and_then(|v| v.get(on))
+            .is_some_and(Headroom::exhausted);
+        if plan.resume.is_some() || (!spent && held.is_none_or(|h| h == on)) {
+            continue;
         }
-        // Every provider meeting the floor is out too: it starts where it was.
-        Ok(_) => false,
-        Err(error) => {
-            tracing::warn!(stage = %plan.stage_id, %error, "no provider to move a stage to; it keeps its own");
-            false
+        let floor = spec.tier_floor(&plan.stage_id, tier.requested);
+        let (model, tier) = match tiers.resolve((tier.requested, floor), None) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                tracing::warn!(stage = %plan.stage_id, %error, "no provider to move a stage to; it keeps its own");
+                continue;
+            }
+        };
+        if model.provider == on {
+            continue;
         }
+        tracing::info!(stage = %plan.stage_id, from = %plan.choice.model, to = %model, "moved an unstarted stage to the item's provider");
+        let from = std::mem::replace(&mut plan.choice.model, model);
+        debug_assert!(tier.resolved >= floor, "never below the floor");
+        plan.choice.tier = Some(tier);
+        let to = plan.choice.model.provider.clone();
+        first.get_or_insert((plan.stage_id.clone(), from.provider, to));
     }
+    first
 }
 
-/// The item's stored plan with `stage`'s slot `fan` set to `choice`, so
-/// `get_item` and a recovered run see the model it moved to.
-fn replace_choice(item: &mut QueueItem, stage: &str, fan: u32, choice: ModelChoice) {
-    assert!(choice.tier.is_some(), "only tier-only choices move");
-    let slot = item
-        .model_plan
-        .0
-        .get_mut(stage)
-        .and_then(|choices| choices.get_mut(fan as usize))
-        .filter(|held| held.tier.is_some());
-    if let Some(held) = slot {
-        *held = choice;
+/// Resolve `item`'s stored tier-only choices again, so its later stages and
+/// a recovered run follow the provider it moved to.
+fn follow_plan(item: &mut QueueItem, spec: &PipelineSpec, tiers: TierScope<'_>) {
+    let before = item.model_plan.clone();
+    let resolved = item.model_plan.resolve_tiers(|key, tier, provider| {
+        tiers.resolve((tier, spec.tier_floor(key, tier)), provider)
+    });
+    if let Err(error) = resolved {
+        tracing::warn!(item = %item.id, %error, "the stored plan keeps its models");
+        item.model_plan = before;
+        return;
     }
+    debug_assert_eq!(
+        item.model_plan.0.keys().collect::<Vec<_>>(),
+        before.0.keys().collect::<Vec<_>>(),
+        "only models change"
+    );
 }

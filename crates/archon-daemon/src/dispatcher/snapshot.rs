@@ -4,9 +4,12 @@
 use std::collections::BTreeMap;
 
 use archon_core::catalog::StageKind;
+use archon_core::config::Config;
 use archon_core::error::ArchonError;
 use archon_core::id::RepoId;
+use archon_core::protocol::ItemQuery;
 use archon_core::queue::Caps;
+use archon_core::quota::QuotaView;
 use archon_core::repo::Repo;
 use archon_pipeline::Catalog;
 use archon_queue::DispatchSnapshot;
@@ -41,11 +44,11 @@ pub(super) async fn build(
     for candidate in &mut snapshot.queued {
         envs.read_late(ctx, candidate.repo.as_ref(), true).await?;
         (candidate.first_stage_agents, candidate.gang) = envs.first_stage(candidate);
-        candidate.quota_hold = ctx.quota.hold(&candidate.item);
     }
     for spawn in &snapshot.pending_spawns {
         envs.read_late(ctx, spawn.repo.as_ref(), false).await?;
     }
+    quota_holds(ctx, &mut snapshot, &envs).await?;
     snapshot.repo_caps = envs.repo_caps();
     snapshot.repo_max_per_repo = crate::settings::mirror(ctx)
         .repos
@@ -63,6 +66,50 @@ pub(super) async fn build(
         .collect();
     assert!(snapshot.queued.iter().all(|q| q.first_stage_agents > 0));
     Ok(snapshot)
+}
+
+/// Each queued candidate's quota hold, from the configs and pipelines this
+/// pass read; none unless some provider is out of quota.
+async fn quota_holds(
+    ctx: &DaemonContext,
+    snapshot: &mut DispatchSnapshot,
+    envs: &Envs,
+) -> Result<(), ArchonError> {
+    let Some(view) = crate::quota::view(ctx).filter(QuotaView::any_exhausted) else {
+        return Ok(());
+    };
+    let (catalog, queued) = {
+        let store = ctx.store.lock().await;
+        let query = ItemQuery {
+            states: vec!["queued".into()],
+            ..ItemQuery::default()
+        };
+        (store.model_catalog(), store.items(&query)?)
+    };
+    let queued: BTreeMap<_, _> = queued.into_iter().map(|i| (i.id.clone(), i)).collect();
+    let global = RepoEnv::new(None)?;
+    for candidate in &mut snapshot.queued {
+        let env = match &candidate.repo {
+            Some(id) => envs.configs.get(id).and_then(Option::as_ref),
+            None => Some(&global),
+        };
+        let pipelines = envs.catalogs.get(&candidate.repo).and_then(Option::as_ref);
+        // An item no longer queued, or whose files do not load, is not held.
+        let (Some(item), Some(env), Some(pipelines)) =
+            (queued.get(&candidate.item), env, pipelines)
+        else {
+            continue;
+        };
+        let read = (&catalog, &view);
+        candidate.quota_hold = crate::quota::item_hold(ctx, (env, pipelines), item, read);
+    }
+    debug_assert!(
+        (snapshot.queued.iter())
+            .filter(|c| c.quota_hold.is_some())
+            .all(|c| queued.contains_key(&c.item)),
+        "only queued items are held"
+    );
+    Ok(())
 }
 
 /// Spawns drivers emitted that the dispatcher has not admitted yet.
@@ -232,6 +279,14 @@ impl Envs {
                 (1, false)
             }
         }
+    }
+
+    /// Whether provider weights route any item this pass reads, so its
+    /// routing wants a quota reading.
+    pub(super) fn weighted(&self, config: &Config) -> bool {
+        let none = Default::default();
+        config.models.provider_weights(&none).is_some()
+            || (self.configs.values().flatten()).any(|env| env.provider_weights(config).is_some())
     }
 
     /// `max_per_repo` from each repository's config (0 = no override).

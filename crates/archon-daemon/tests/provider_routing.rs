@@ -472,3 +472,127 @@ async fn an_aetherd_without_headroom_or_with_a_stale_one_routes_by_weight_alone(
         );
     }
 }
+
+#[tokio::test]
+async fn a_running_item_s_next_stages_wait_while_every_provider_is_out_then_start() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(80, TimeDelta::hours(4))),
+            ("codex", window(0, TimeDelta::hours(1))),
+        ],
+    );
+    let item = enqueue(&h, ROUTED, "waits", tier_plan()).await;
+    h.dispatch().await;
+    assert_eq!(h.stages(&item.id).await.len(), 1, "the implementer runs");
+    let codex_reset = archon_core::now() + TimeDelta::hours(1);
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(10, TimeDelta::hours(3))),
+            ("codex", window(0, TimeDelta::hours(1))),
+        ],
+    );
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    h.dispatch().await;
+    assert_eq!(
+        h.stages(&item.id).await.len(),
+        1,
+        "no reviewer spends a reserve"
+    );
+    let note = h
+        .item(&item.id)
+        .await
+        .provider_switch
+        .expect("the wait is recorded");
+    assert!(
+        note.contains("stage review waits for provider quota"),
+        "{note}"
+    );
+    assert!(note.contains(&minute(codex_reset)), "{note}");
+
+    read(
+        &h,
+        TimeDelta::minutes(1),
+        vec![
+            ("claude-code", window(10, TimeDelta::hours(3))),
+            ("codex", window(0, TimeDelta::seconds(-10))),
+        ],
+    );
+    h.dispatch().await;
+    let reviews: Vec<_> = (h.stages(&item.id).await.into_iter())
+        .filter(|s| s.stage_id == "review")
+        .collect();
+    assert_eq!(reviews.len(), 2, "both reviewers start on reset");
+    assert!(reviews.iter().all(|s| s.choice.model.provider == "codex"));
+}
+
+#[tokio::test]
+async fn a_switch_moves_the_item_s_later_stages_too() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(80, TimeDelta::hours(4))),
+            ("codex", window(0, TimeDelta::hours(1))),
+        ],
+    );
+    let item = enqueue(&h, ROUTED, "follows", tier_plan()).await;
+    h.dispatch().await;
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(10, TimeDelta::hours(3))),
+            ("codex", window(90, TimeDelta::hours(4))),
+        ],
+    );
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let stored = h.item(&item.id).await;
+    assert_eq!(stored.routed_provider.as_deref(), Some("codex"));
+    assert_eq!(
+        providers(&stored.model_plan),
+        expected("codex", "codex"),
+        "every tier-only choice follows the item"
+    );
+}
+
+#[tokio::test]
+async fn a_countdown_only_reset_shows_in_status() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    let mut countdown = window(0, TimeDelta::minutes(40));
+    countdown.windows[0].resets_at = None;
+    countdown.windows[0].resets_in_seconds = Some(2400);
+    read(&h, TimeDelta::zero(), vec![("codex", countdown)]);
+    let quota = status(&h).await.quota.expect("status shows the reading");
+    let reset = quota.providers[0]
+        .next_reset
+        .expect("the countdown names it");
+    let expected = quota.as_of + TimeDelta::seconds(2400);
+    assert_eq!(reset, expected);
+}
+
+#[tokio::test]
+async fn a_repository_s_own_weights_hold_its_items_when_every_provider_is_out() {
+    let h = harness(Config::default()).await;
+    h.repo_config("[models]\nprovider_weights = { codex = 1, \"claude-code\" = 1 }\n");
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(0, TimeDelta::hours(2))),
+            ("codex", window(0, TimeDelta::hours(1))),
+        ],
+    );
+    let item = enqueue(&h, ROUTED, "repo held", tier_plan()).await;
+    h.dispatch().await;
+    assert!(h.stages(&item.id).await.is_empty(), "nothing spawned");
+    let reason = waiting_reason(&status(&h).await, &item);
+    assert_eq!(reason.code, WaitingReasonCode::ProviderQuota);
+}

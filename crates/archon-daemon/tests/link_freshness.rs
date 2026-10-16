@@ -243,6 +243,7 @@ async fn a_replayed_creation_with_older_instructions_is_outdated() {
     let built = supervisor::orchestrator_instructions(
         &harness.ctx.config,
         &harness.ctx.paths.orchestrator_workspace,
+        true,
     )
     .unwrap();
     std::fs::write(&file, "Prefer small changes.").unwrap();
@@ -254,4 +255,27 @@ async fn a_replayed_creation_with_older_instructions_is_outdated() {
     supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
     let stale = orchestrator_status(&harness).await.freshness.unwrap();
     assert_eq!(stale.prompt_outdated, Some(true));
+}
+
+/// An upgrade from before the GitHub choice was recorded: the orchestrator
+/// was started with the GitHub section, which the next one may keep, so
+/// that alone owes no restart; once the choice is recorded it counts.
+#[tokio::test]
+async fn an_unrecorded_github_choice_accepts_either_prompt() {
+    const GITHUB_WANTED_KEY: &str = "orchestrator_github";
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let states = agent_table(&harness);
+    create(&harness, &states, ORCH).await;
+    assert!(
+        harness.kv(GITHUB_WANTED_KEY).await.is_some(),
+        "watcher unread"
+    );
+    harness.set_kv(GITHUB_WANTED_KEY, "").await;
+    let upgraded = orchestrator_status(&harness).await.freshness.unwrap();
+    assert_eq!(upgraded.prompt_outdated, Some(false));
+
+    as_if_created_by_an_older_build(&harness).await;
+    let older = orchestrator_status(&harness).await.freshness.unwrap();
+    assert_eq!(older.prompt_outdated, Some(true), "matches neither prompt");
 }

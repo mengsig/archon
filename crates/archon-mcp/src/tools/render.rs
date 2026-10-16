@@ -11,7 +11,7 @@ mod stages;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use archon_core::autonomy::{AutonomyView, Directive};
+use archon_core::autonomy::{AutonomyView, Directive, MAX_DIRECTIVES};
 use archon_core::catalog::{CatalogListing, Gate, PipelineSummary, StageSummary};
 use archon_core::github::GithubWatch;
 use archon_core::id::{PipelineRunId, QueueItemId};
@@ -422,9 +422,17 @@ fn autonomy_text(view: &AutonomyView) -> String {
             view.merge_granted.join(", ")
         );
     }
-    if view.directives.is_empty() {
-        text.push_str("\nNo operator directives.");
+    if !view.limits.is_empty() {
+        text.push_str("\nStructural limits:");
     }
+    for limit in &view.limits {
+        let _ = write!(text, "\n  {}", limit.describe());
+    }
+    let _ = write!(
+        text,
+        "\nDirectives {}/{MAX_DIRECTIVES} in force.",
+        view.directives.len()
+    );
     for directive in &view.directives {
         let _ = write!(
             text,
@@ -674,8 +682,8 @@ fn daemon_status(status: &DaemonStatus) -> String {
     format!(
         "archond {} (pid {}), up since {}. Aether: {aether}. Orchestrator: {orchestrator}.\n\
          Paused: {}.\nAgents running {} (max {}), active runs {} (max {}), queued {}, blocked {}, \
-         open questions {}, operator gates waiting {}.\n{} Lavish {}.\nAutonomy defaults {}; the ceiling allows {}; {} \
-         directive(s) in force (autonomy_policy lists them).{}{}{}",
+         open questions {}, operator gates waiting {}.\n{} Lavish {}.\nAutonomy defaults {}; the ceiling allows {}; directives {}/{MAX_DIRECTIVES} \
+         in force (autonomy_policy lists them).{}{}{}",
         status.daemon_version,
         status.pid,
         status.started_at.to_rfc3339(),

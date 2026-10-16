@@ -923,8 +923,8 @@ CLI takes `queue add --onto <item|number|branch>`, and initiative members
 take it too. `archond` resolves it at enqueue and freezes the pull request's
 identity, head repository, head and base branches and head commit, which
 `get_item`, `queue show` and the orchestrator's briefing show. A closed or
-merged pull request, or one whose head is in a fork, is refused then with the
-reason, as is `onto` together with `depends_on` or with a pipeline that does
+merged pull request, or one whose head is in a fork or in a repository your
+`gh` cannot push to, is refused then with the reason, as is `onto` together with `depends_on` or with a pipeline that does
 not work in a worktree. The item's branch starts from the frozen head commit,
 and its agents are told to review against it. A replay with the same
 idempotency key returns the item as first frozen, without asking GitHub again.
@@ -999,8 +999,9 @@ What works from the app, because it is all text in the orchestrator's chat:
 
 What does not: the Lavish page of a gate is a link to `127.0.0.1` on
 Archon's machine and does not open on a phone; the `archon` CLI, its line
-chat and `archon questions` are not in the app; there are no Archon views
-and no push notifications for gates. Chat answers need the default
+chat and `archon questions` are not in the app; there are no Archon views.
+For a push to the phone when a gate opens, set `[notify]`
+([push notifications](configuration.md#push-notifications)). Chat answers need the default
 dedicated mode (see
 [Answering in the orchestrator's chat](#answering-in-the-orchestrators-chat)).
 A device paired as an observer cannot answer: Aether does not treat it as

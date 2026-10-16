@@ -504,6 +504,33 @@ pub(crate) async fn view_headed(
     Ok(viewed)
 }
 
+/// Whether the operator's `gh` may push to `full_name`, an `owner/name`:
+/// GitHub grants it from the write role up.
+pub(crate) async fn can_push(
+    binary: &Path,
+    repo: &Path,
+    full_name: &str,
+) -> Result<bool, ArchonError> {
+    assert!(
+        full_name.split('/').count() == 2 && !full_name.starts_with('/'),
+        "an owner/name"
+    );
+    let args = ["repo", "view", full_name, "--json", "viewerPermission"];
+    let raw = text(binary, repo, &args).await?;
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Viewed {
+        viewer_permission: Option<String>,
+    }
+    let viewed: Viewed = serde_json::from_str(&raw)
+        .map_err(|e| ArchonError::Protocol(format!("invalid `gh repo view` response: {e}")))?;
+    let permission = viewed.viewer_permission.unwrap_or_default();
+    Ok(matches!(
+        permission.as_str(),
+        "ADMIN" | "MAINTAIN" | "WRITE"
+    ))
+}
+
 /// One pass's reading of GitHub: one listing of each repository's open pull
 /// requests, then one lookup for each pull request asked about that it lacks.
 #[derive(Debug, Default)]

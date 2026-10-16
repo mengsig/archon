@@ -174,10 +174,33 @@ fn directives_expire_clear_and_are_capped() {
         store.insert_directive(&directive).unwrap();
     }
     let extra = Directive::new("one more", DirectiveSource::Operator, None, t(6)).unwrap();
-    assert!(matches!(
-        store.insert_directive(&extra),
-        Err(ArchonError::Invalid(_))
-    ));
+    let Err(ArchonError::Invalid(refusal)) = store.insert_directive(&extra) else {
+        panic!("a directive past the cap was accepted");
+    };
+    assert!(
+        refusal.starts_with("20 directives are in force, the most at once (MAX_DIRECTIVES = 20)"),
+        "{refusal}"
+    );
+    assert!(
+        refusal.contains("`archon autonomy clear <id>`"),
+        "{refusal}"
+    );
+    let (oldest, lapsing) = refusal.split_once("; soonest to lapse: ").unwrap();
+    let by_age = store.directives(t(6)).unwrap();
+    assert_eq!(by_age[0], today, "the oldest in force");
+    for directive in &by_age[..3] {
+        assert!(oldest.contains(&directive.id.to_string()), "{refusal}");
+    }
+    assert!(
+        oldest.contains(&format!("{} \"merge freely\"", today.id)),
+        "{refusal}"
+    );
+    assert!(
+        !oldest.contains(&by_age[3].id.to_string()),
+        "three named: {refusal}"
+    );
+    let until = today.expires_at.unwrap().format("%Y-%m-%d %H:%M UTC");
+    assert_eq!(lapsing, format!("{} (until {until})", today.id));
     // The expired one is pruned on insert, which makes room.
     let later = Directive::new("one more", DirectiveSource::Operator, None, t(2 + 3600)).unwrap();
     store.insert_directive(&later).unwrap();

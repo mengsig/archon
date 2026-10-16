@@ -95,6 +95,7 @@ pub async fn question(
     assert!(question.number > 0, "a recorded question is numbered");
     // No receivers is normal (nobody has chat open); not an error.
     let _ = ctx.feed.send(feed_item);
+    crate::push::question(ctx, &question).await;
     Ok(question)
 }
 
@@ -133,6 +134,7 @@ pub async fn aether_question(
     let question = question.clone();
     // No receivers is normal (nobody has chat open); not an error.
     let _ = ctx.feed.send(feed_item);
+    crate::push::question(ctx, &question).await;
     Ok(Some(question))
 }
 

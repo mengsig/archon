@@ -195,6 +195,22 @@ fn every_tool_name_has_exactly_one_definition() {
     }
 }
 
+/// The directive cap a tool states is the one the store enforces.
+#[test]
+fn directive_tools_state_the_directive_limits() {
+    let set = definition("set_directive").unwrap();
+    let cap = format!("At most {} in force", archon_core::autonomy::MAX_DIRECTIVES);
+    assert!(set.description.contains(&cap), "{}", set.description);
+    let chars = &set.input_schema["properties"]["text"]["description"];
+    let most = format!(
+        "At most {} characters.",
+        archon_core::autonomy::MAX_DIRECTIVE_CHARS
+    );
+    assert_eq!(chars, &json!(most));
+    let policy = definition("autonomy_policy").unwrap().description;
+    assert!(policy.contains("each structural limit"), "{policy}");
+}
+
 /// Tool text speaks of tiers, so a new model release needs no change to it.
 #[test]
 fn tool_text_names_tiers_not_models() {
@@ -828,8 +844,17 @@ fn rendered_autonomy_names_defaults_ceiling_and_directives() {
         },
         directives: vec![directive.clone()],
         merge_granted: Vec::new(),
+        limits: archon_core::config::LimitsConfig::default().structural(),
     };
     let text = render("autonomy_policy", &Reply::Autonomy(Box::new(view)));
+    assert!(text.contains("\nDirectives 1/20 in force."), "{text}");
+    assert!(
+        text.contains(
+            "\nStructural limits:\n  max_delegation_depth = 2 (default 2, ceiling 4; default)"
+        ),
+        "{text}"
+    );
+    assert!(text.contains("\n  max_directives = 20 (fixed)"), "{text}");
     assert!(
         text.starts_with("Autonomy for repo web: defaults "),
         "{text}"
@@ -1064,12 +1089,12 @@ fn shown_bytes(definition: &ToolDefinition) -> usize {
 
 /// Every orchestrator turn pays for the tool list: 1.0's 25 tools (30,071 bytes
 /// then) stay within 62% of that (61% before model_plan tiers), and all of
-/// them within 28 KiB.
+/// them within 29 KiB.
 #[test]
 fn the_tool_list_stays_within_its_budget() {
     const FROM_1_0: usize = 25;
-    const FROM_1_0_BUDGET_BYTES: usize = 18_400;
-    const BUDGET_BYTES: usize = 28 * 1024;
+    const FROM_1_0_BUDGET_BYTES: usize = 18_500;
+    const BUDGET_BYTES: usize = 29 * 1024;
     let definitions = definitions();
     assert_eq!(definitions[FROM_1_0 - 1].name, "message_orchestrator");
     let carried: usize = definitions[..FROM_1_0].iter().map(shown_bytes).sum();

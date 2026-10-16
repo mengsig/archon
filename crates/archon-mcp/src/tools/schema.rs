@@ -2,6 +2,7 @@
 //! Schema of its arguments. Written for a model: when to call the tool, what
 //! each field means, and which fields are required.
 
+use archon_core::autonomy::MAX_DIRECTIVE_CHARS;
 use archon_core::cost::{CostGroup, DEFAULT_DAYS};
 use archon_core::mcp_tools::{TOOLS, ToolClass};
 use archon_core::model::MAX_MODEL_REASON_CHARS;
@@ -721,8 +722,8 @@ fn autonomy_policy() -> ToolDefinition {
     define(
         "autonomy_policy",
         "Show autonomy policy",
-        "The autonomy defaults and ceiling, and the operator directives in force. A knob above \
-         the ceiling is refused.",
+        "The autonomy defaults and ceiling, each structural limit and its source, and the \
+         directives in force. A knob above the ceiling is refused.",
         object(
             json!({"repo": repo_ref("Its effective defaults and ceiling.")}),
             &[],
@@ -737,10 +738,11 @@ fn set_directive() -> ToolDefinition {
         "Record operator directive",
         "Record a standing instruction the operator gave you, in chat or in a GitHub request \
          with operator standing (\"propose first for anything in auth/\"): only what they \
-         said, in their words. It survives restarts and shows in `archon status`. It never raises the autonomy ceiling.",
+         said, in their words. It survives restarts and shows in `archon status`. It never \
+         raises the autonomy ceiling. At most 20 in force; a refusal names which to clear.",
         object(
             json!({
-                "text": {"type": "string", "description": "At most 500 characters."},
+                "text": {"type": "string", "description": format!("At most {MAX_DIRECTIVE_CHARS} characters.")},
                 "expires_in_hours": {"type": "integer", "minimum": 1, "maximum": 720, "description": "When it lapses, if the operator gave a time frame (\"today\" is about 12)."},
             }),
             &["text"],

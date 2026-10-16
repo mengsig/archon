@@ -143,6 +143,8 @@ pub struct DaemonContext {
     pub ops: crate::ops::OpsState,
     /// Aether's last provider quota reading and the holds drawn from it.
     pub quota: crate::quota::QuotaCache,
+    /// The per-kind rate limit of push notifications (`[notify]`).
+    pub push: crate::push::Pusher,
 }
 
 impl DaemonContext {

@@ -258,6 +258,7 @@ async fn block_items(ctx: &DaemonContext, items: &[QueueItemId]) -> Result<(), A
             None,
         )
         .await?;
+        crate::push::blocked_by_dependency(ctx, &blocked);
         let news = TriggerEvent::ItemBlocked {
             item: blocked.id.clone(),
             reason: reason.clone(),
@@ -304,6 +305,7 @@ async fn announce_budget_hold(
         archon_core::cost::format_usd(spent)
     );
     executor::notify(ctx, NotificationKind::Blocker, &text, None, None).await?;
+    crate::push::budget(ctx, scope, &archon_core::cost::format_usd(limit));
     let news = TriggerEvent::Budget {
         scope: scope.to_owned(),
         spent_usd: spent,

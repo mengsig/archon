@@ -305,6 +305,7 @@ pub(super) async fn announce(
         NotificationKind::Outcome
     };
     notify(ctx, kind, &notice, Some(&item.id), run).await?;
+    crate::push::finished(ctx, item, needs_operator);
     ctx.coordination.changed.notify_one();
     if item.initiative.is_some() {
         ctx.dispatch.notify_one();

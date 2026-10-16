@@ -4,7 +4,7 @@
 //! shows it as that pull request's head. Its title and body stay its
 //! owner's, and nothing is merged.
 //!
-//! As in [`super::remote`], an inner `Err(String)` is a refusal no retry
+//! As in `super::remote`, an inner `Err(String)` is a refusal no retry
 //! changes; the outer error is a failure worth trying again.
 
 use std::collections::BTreeMap;
@@ -17,8 +17,8 @@ use archon_core::repo::Repo;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use super::super::gh;
-use super::remote;
 use crate::context::DaemonContext;
+use crate::worktree::daemon_git::{DaemonGit, Ran};
 use crate::worktree::shadow::Shadow;
 use crate::worktree::stack;
 
@@ -74,58 +74,104 @@ async fn fast_forward(
     onto: &OntoPullRequest,
     commit: &str,
 ) -> Result<Result<(), String>, ArchonError> {
-    let branch = &onto.head_ref;
-    match remote_head(data_dir, repo, branch).await? {
-        Err(refusal) => return Ok(Err(refusal)),
-        // An earlier try pushed it and failed after.
-        Ok(Some(head)) if head == commit => return Ok(Ok(())),
-        Ok(Some(head)) if head == onto.head_sha => {}
-        Ok(Some(head)) => return Ok(Err(moved(onto, &head))),
-        Ok(None) => {
-            return Ok(Err(format!(
-                "`origin` has no branch `{branch}` any more, the head of {}; nothing was pushed",
-                onto.pr.url()
-            )));
-        }
+    let (data_dir, repo) = (data_dir.to_owned(), repo.to_owned());
+    let (onto, commit) = (onto.clone(), commit.to_owned());
+    tokio::task::spawn_blocking(move || fast_forward_now(&data_dir, &repo, &onto, &commit))
+        .await
+        .map_err(|e| ArchonError::io("the push task", std::io::Error::other(e)))?
+}
+
+/// [`fast_forward`], blocking. The push carries a lease on the frozen head,
+/// so `origin` refuses it when its tip moved after it was read here.
+fn fast_forward_now(
+    data_dir: &Path,
+    repo: &Path,
+    onto: &OntoPullRequest,
+    commit: &str,
+) -> Result<Result<(), String>, ArchonError> {
+    let frozen = &onto.head_sha;
+    if !descends(repo, frozen, commit)? {
+        return Ok(Err(format!(
+            "{commit} does not descend from {frozen}, the frozen head of {}, so it is no \
+             fast-forward of it",
+            onto.pr.url()
+        )));
     }
-    let pushed = remote::push(data_dir, repo, branch, commit).await?;
-    let Err(refusal) = pushed else {
-        return Ok(Ok(()));
+    let url = match origin(repo)? {
+        Ok(url) => url,
+        Err(refusal) => return Ok(Err(refusal)),
     };
-    // Someone may have pushed between the look and the push.
-    match remote_head(data_dir, repo, branch).await? {
-        Ok(Some(head)) if head != onto.head_sha && head != commit => Ok(Err(moved(onto, &head))),
-        _ => Ok(Err(refusal)),
+    let shadow = Shadow::of(data_dir, repo)?;
+    let branch = onto.head_ref.as_str();
+    match stack::remote_head(&shadow, &url, branch)? {
+        // An earlier try pushed it and failed after.
+        Some(head) if head == commit => return Ok(Ok(())),
+        Some(head) if head == *frozen => {}
+        Some(head) => return Ok(Err(moved(onto, &head))),
+        None => return Ok(Err(gone(onto))),
+    }
+    let pushed = stack::push_from(&shadow, &url, (branch, commit), frozen)?;
+    if pushed.status.success() {
+        return Ok(Ok(()));
+    }
+    match stack::remote_head(&shadow, &url, branch)? {
+        Some(head) if head == commit => Ok(Ok(())),
+        Some(head) if head != *frozen => Ok(Err(moved(onto, &head))),
+        None => Ok(Err(gone(onto))),
+        Some(_) => Ok(Err(push_refused(branch, &pushed)?)),
     }
 }
 
-/// The commit `origin` holds as `branch`, read now; a refusal when the
-/// repository has no `origin` archond may use.
-async fn remote_head(
-    data_dir: &Path,
-    repo: &Path,
-    branch: &str,
-) -> Result<Result<Option<String>, String>, ArchonError> {
-    let (data_dir, repo, branch) = (data_dir.to_owned(), repo.to_owned(), branch.to_owned());
-    let read = move || -> Result<Result<Option<String>, String>, ArchonError> {
-        let url = match stack::origin_url(&repo) {
-            Ok(Some(url)) => url,
-            Ok(None) => {
-                return Ok(Err(
-                    "BLOCKED: the repository has no `origin` remote to push to".into(),
-                ));
-            }
-            Err(ArchonError::Invalid(why)) => return Ok(Err(format!("BLOCKED: {why}"))),
-            Err(error) => return Err(error),
-        };
-        let shadow = Shadow::of(&data_dir, &repo)?;
-        let head = stack::remote_head(&shadow, &url, &branch)?;
-        assert!(head.as_deref().is_none_or(stack::is_commit_id));
-        Ok(Ok(head))
-    };
-    tokio::task::spawn_blocking(read)
-        .await
-        .map_err(|e| ArchonError::io("the remote head task", std::io::Error::other(e)))?
+/// Why `origin`, still at the frozen head, refused the push: a rule or access
+/// only the operator can change, else a failure worth trying again.
+fn push_refused(branch: &str, pushed: &Ran) -> Result<String, ArchonError> {
+    assert!(!pushed.status.success(), "only a refused push");
+    let said = pushed.stderr_text();
+    let stdout = String::from_utf8_lossy(&pushed.stdout);
+    let doing = format!("pushing `{branch}` to `origin`");
+    if let Some(line) = stdout
+        .lines()
+        .find(|line| line.contains("[remote rejected]"))
+    {
+        return Ok(format!(
+            "BLOCKED: `origin` refused the push of `{branch}`: {line}"
+        ));
+    }
+    match gh::needs_operator(&doing, &said) {
+        Some(blocked) => Ok(blocked),
+        None => Err(ArchonError::Unavailable(format!(
+            "git push of `{branch}` failed: {said}"
+        ))),
+    }
+}
+
+/// Whether `commit` holds `ancestor`, as `repo` knows them.
+fn descends(repo: &Path, ancestor: &str, commit: &str) -> Result<bool, ArchonError> {
+    assert!(stack::is_commit_id(ancestor) && stack::is_commit_id(commit));
+    let ran = DaemonGit::sealed_in(repo)
+        .args(["merge-base", "--is-ancestor", ancestor, commit])
+        .output()?;
+    // `merge-base --is-ancestor` exits 1 exactly when it is not one.
+    match ran.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => Err(ran.failure()),
+    }
+}
+
+/// `origin`'s URL, or a refusal when the repository has none archond may use.
+fn origin(repo: &Path) -> Result<Result<String, String>, ArchonError> {
+    match stack::origin_url(repo) {
+        Ok(Some(url)) => {
+            assert!(!url.is_empty(), "checked by origin_url");
+            Ok(Ok(url))
+        }
+        Ok(None) => Ok(Err(
+            "BLOCKED: the repository has no `origin` remote to push to".into(),
+        )),
+        Err(ArchonError::Invalid(why)) => Ok(Err(format!("BLOCKED: {why}"))),
+        Err(error) => Err(error),
+    }
 }
 
 /// `onto`'s URL once GitHub shows `commit` as the head of that open pull
@@ -163,6 +209,15 @@ async fn confirm(
             "GitHub gave no head commit for {url}"
         ))),
     }
+}
+
+/// Why `onto`'s pull request is not updated: its head branch is gone.
+fn gone(onto: &OntoPullRequest) -> String {
+    format!(
+        "`origin` has no branch `{}` any more, the head of {}; nothing was pushed",
+        onto.head_ref,
+        onto.pr.url()
+    )
 }
 
 /// Why `onto`'s pull request is not updated: its head left the frozen one.

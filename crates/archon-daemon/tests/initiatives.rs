@@ -7,6 +7,7 @@ use archon_core::initiative::{
     ContractChange, EnqueueInitiative, InitiativeDetail, InitiativeMember, InitiativeState,
 };
 use archon_core::protocol::{Reply, RepoAdd, RepoRef, Request};
+use archon_core::pull_request::{OntoPullRequest, OntoTarget, PullRequestRef};
 use archon_core::queue::QueueState;
 use archon_core::repo::ShipMode;
 use common::initiative::{finish_item, install_gh, prs};
@@ -106,6 +107,54 @@ async fn three_repositories_link_drafts_and_emit_one_finish_across_restart() {
     let outbox = h.kv("trigger_outbox").await.unwrap();
     assert_eq!(outbox.matches("initiative_finished").count(), 1);
     assert!(!outbox.contains("item_finished"));
+}
+
+/// A member queued `onto` a pull request leaves that pull request's body and
+/// draft state as its owner set them; the others still link to it.
+#[tokio::test]
+async fn an_onto_members_pull_request_keeps_its_body_and_draft_state() {
+    let h = setup().await;
+    let detail = enqueue(&h, request()).await;
+    let first = &detail.members[0];
+    let mut onto = h.item(&first.id).await;
+    let head = common::git(&h.repo, &["rev-parse", "main"]);
+    onto.onto = Some(Box::new(OntoPullRequest {
+        target: OntoTarget::Pr(100),
+        pr: PullRequestRef::from_url("https://github.com/o/r/pull/100").unwrap(),
+        node_id: None,
+        head_repository: "o/r".into(),
+        head_ref: "feature".into(),
+        base_ref: "main".into(),
+        head_sha: head,
+    }));
+    h.ctx.store.lock().await.update_item(&onto).unwrap();
+    h.dispatch().await;
+    for member in &detail.members {
+        finish_item(&h, &member.id).await;
+    }
+    h.dispatch().await;
+
+    let branch = h.run(&first.id).await.branch;
+    let all = prs(&h);
+    let delivered_into = &all[&branch];
+    assert_eq!(
+        delivered_into["body"], "Change details.",
+        "{delivered_into}"
+    );
+    assert_eq!(delivered_into["isDraft"], true, "{delivered_into}");
+    let url = delivered_into["url"].as_str().unwrap();
+    for (other, pr) in all
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(b, _)| **b != branch)
+    {
+        let body = pr["body"].as_str().unwrap();
+        assert!(body.contains(url), "{other}: {body}");
+    }
+    let calls = common::initiative::gh_calls(&h);
+    let touched = |call: &&Vec<String>| call.iter().any(|arg| arg == url) && call[1] != "view";
+    assert!(!calls.iter().any(|c| touched(&c)), "{calls:?}");
 }
 
 #[tokio::test]

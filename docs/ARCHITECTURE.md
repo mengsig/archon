@@ -2480,12 +2480,15 @@ table and delivers it off every lock:
    are those past the frozen head, which the run branch must hold. Under
    a lock per pull request, `git ls-remote` reads the head branch's tip
    on `origin`: the frozen head is pushed onto by fast-forward as in
-   step 3, the checked commit itself means an earlier try pushed it, and
-   any other commit is a refusal naming both, never a force-push.
+   step 3, with `--force-with-lease=refs/heads/<head>:<frozen>` so that
+   `origin` refuses the update when its tip moved after that read; the
+   checked commit itself means an earlier try pushed it, and any other
+   commit is a refusal naming both, never a force-push.
    `gh pr view` must then show the checked commit as the head of that open
    pull request; GitHub still showing the frozen head is retried. Its
-   title, body and base are left alone, the initiative step is skipped,
-   and nothing is merged or owed auto-merge. The run ends with
+   title, body and base are left alone (an initiative links to it from
+   its other members but never edits it or its draft state), and nothing
+   is merged or owed auto-merge. The run ends with
    `SHIPPED: updated #<n> to <sha> (<url>)`.
 5. **Persist, then finish.** The `ShipOutcome` is written to `kv`
    `ship:<run>`, a pull request's URL to the record stage run's

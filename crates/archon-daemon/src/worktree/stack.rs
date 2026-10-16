@@ -271,6 +271,21 @@ pub(crate) fn push(
     push_with(shadow, url, (branch, commit), None)
 }
 
+/// [`push`] of `commit` to `branch` only while `url` holds `expected` there,
+/// which the receiver checks in the same update. The caller proves `commit`
+/// descends from `expected`, so the update is a fast-forward.
+pub(crate) fn push_from(
+    shadow: &Shadow,
+    url: &str,
+    (branch, commit): (&str, &str),
+    expected: &str,
+) -> Result<Ran, ArchonError> {
+    assert!(is_commit_id(expected), "a lease names a commit");
+    assert_ne!(expected, commit, "an update moves the branch");
+    let lease = format!("--force-with-lease=refs/heads/{branch}:{expected}");
+    push_with(shadow, url, (branch, commit), Some(&lease))
+}
+
 /// [`push`], with `lease` the extra `--force-with-lease` argument, if any.
 fn push_with(
     shadow: &Shadow,
@@ -538,5 +553,44 @@ mod tests {
         assert_eq!(remote_head(&shadow, url, "next").unwrap(), Some(first));
         assert!(create_remote_branch(&shadow, url, "fresh", &second).unwrap());
         assert_eq!(remote_head(&shadow, url, "fresh").unwrap(), Some(second));
+    }
+
+    /// A tip that moved off the expected commit after it was read, even to
+    /// an ancestor of the pushed one, refuses the update and is kept.
+    #[test]
+    fn a_push_from_a_commit_refuses_a_tip_that_moved_meanwhile() {
+        let dir = tempfile::tempdir().unwrap();
+        let (repo, origin) = (dir.path().join("repo"), dir.path().join("origin.git"));
+        run_git(dir.path(), &["init", "--quiet", "--bare", "origin.git"]);
+        run_git(dir.path(), &["init", "--quiet", "-b", "main", "repo"]);
+        let mut commits = Vec::new();
+        for message in ["frozen", "between", "ours"] {
+            run_git(
+                &repo,
+                &["commit", "--quiet", "--allow-empty", "-m", message],
+            );
+            commits.push(run_git(&repo, &["rev-parse", "HEAD"]));
+        }
+        let [frozen, between, ours] = commits.as_slice() else {
+            unreachable!("three commits")
+        };
+        let url = origin.to_str().unwrap();
+        let tip = |sha: &str| format!("{sha}:refs/heads/feature");
+        run_git(&repo, &["push", "--quiet", url, &tip(between)]);
+        let shadow = Shadow::of(&dir.path().join("data"), &repo).unwrap();
+
+        let moved = push_from(&shadow, url, ("feature", ours), frozen).unwrap();
+        assert!(!moved.status.success(), "the lease refuses it");
+        assert_eq!(
+            remote_head(&shadow, url, "feature").unwrap().as_ref(),
+            Some(between)
+        );
+        run_git(&repo, &["push", "--quiet", "--force", url, &tip(frozen)]);
+        let pushed = push_from(&shadow, url, ("feature", ours), frozen).unwrap();
+        assert!(pushed.status.success(), "{pushed:?}");
+        assert_eq!(
+            remote_head(&shadow, url, "feature").unwrap().as_ref(),
+            Some(ours)
+        );
     }
 }

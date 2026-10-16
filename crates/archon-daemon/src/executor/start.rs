@@ -372,6 +372,7 @@ async fn add_worktree(
         (None, None, None, Some(base)) => {
             fork_point(ctx, repo, item, (base, release.as_deref()), &branch).await?
         }
+        (None, None, Some(parent), _) => onto_parent_fork(ctx, repo, parent, &branch).await?,
         _ => None,
     };
     let base = stacked_on.map(|p| p.parent_branch.clone()).or(base);
@@ -449,6 +450,28 @@ async fn onto_fork(
     .map_err(|e| ArchonError::io("onto head fetch task", std::io::Error::other(e)))??;
     assert!(head.as_deref().is_none_or(stack::is_commit_id));
     Ok(head)
+}
+
+/// Where a new `branch` stacked on `parent` starts when `parent` went into an
+/// `onto` pull request: its fetched head, as that branch is `origin`'s, not a
+/// local one. `None` forks from the parent's branch, or keeps an existing `branch`.
+async fn onto_parent_fork(
+    ctx: &DaemonContext,
+    repo: &Repo,
+    parent: &StackParent,
+    branch: &str,
+) -> Result<Option<String>, ArchonError> {
+    assert!(stack::is_commit_id(&parent.parent_sha), "read at the fork");
+    let onto = ctx.store.lock().await.item(&parent.parent_item)?.onto;
+    if repo.ship != ShipMode::Pr || onto.is_none() {
+        return Ok(None);
+    }
+    let (path, branch) = (repo.path.clone(), branch.to_owned());
+    let exists =
+        tokio::task::spawn_blocking(move || crate::worktree::branch_exists(&path, &branch))
+            .await
+            .map_err(|e| ArchonError::io("branch check task", std::io::Error::other(e)))??;
+    Ok((!exists).then(|| parent.parent_sha.clone()))
 }
 
 /// Where a new, unstacked branch of `item` starts: `origin`'s head of `base` in

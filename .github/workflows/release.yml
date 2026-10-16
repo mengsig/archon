@@ -229,6 +229,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      actions: read
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
@@ -242,6 +243,14 @@ jobs:
       # The body is this version's section of CHANGELOG.md, then how to install.
       - name: write the release notes
         run: sh scripts/release-notes.sh "$VERSION" > "$RUNNER_TEMP/notes.md"
+      - name: gate the release on release health
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/release-check"
+          tar -xzf dist/archon-x86_64-unknown-linux-musl.tar.gz -C "$RUNNER_TEMP/release-check"
+          "$RUNNER_TEMP/release-check/archon" release check "$GITHUB_REPOSITORY" \
+            --pending-tag "$GITHUB_REF_NAME" --assets dist
       # A draft: its assets are not public until the owner publishes it.
       - name: create the draft release
         env:

@@ -166,11 +166,18 @@ fn ledger_transfer_has_one_twenty_minute_deadline_for_both_arms() {
     assert!(section.contains("timeout 600s"), "{section}");
     let (archon, aether) = (section.find("[archon]"), section.find("[aether]"));
     assert!(archon.is_some() && aether.is_some(), "{section}");
-    assert_eq!(
-        text.matches("timeout ").count(),
-        1,
-        "one shared deadline: {text}"
-    );
+    assert_eq!(task_deadlines(&text), 1, "one shared deadline: {text}");
+}
+
+/// Counts per-task deadlines (`timeout <N>s`), not config keys such as `full_timeout`.
+fn task_deadlines(text: &str) -> usize {
+    text.match_indices("timeout ")
+        .filter(|(at, word)| {
+            let rest = &text[at + word.len()..];
+            let digits = rest.chars().take_while(char::is_ascii_digit).count();
+            digits > 0 && rest[digits..].starts_with('s')
+        })
+        .count()
 }
 
 #[test]

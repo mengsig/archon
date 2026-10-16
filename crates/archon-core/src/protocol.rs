@@ -1204,6 +1204,75 @@ pub struct OrchestratorInfo {
     /// Aether's agent status kind, verbatim (`ready`, `running`, ...).
     pub status: String,
     pub restarts: u32,
+    /// `0` from an archond that predates it.
+    #[serde(default)]
+    pub generation: u64,
+    /// `None` when its creation was not recorded: an older Archon created it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freshness: Option<OrchestratorFreshness>,
+}
+
+impl OrchestratorInfo {
+    /// `generation 7, created by 1.2.3; prompt outdated; 3 new lessons`, as
+    /// `status`, `doctor` and `queue_status` show it.
+    pub fn describe_freshness(&self) -> String {
+        let Some(fresh) = &self.freshness else {
+            return format!(
+                "generation {}, created before Archon recorded its prompt; a restart starts \
+                 one it tracks",
+                self.generation
+            );
+        };
+        assert!(
+            !fresh.created_by.is_empty(),
+            "a recorded creator has a version"
+        );
+        let mut line = format!(
+            "generation {}, created by {}",
+            self.generation, fresh.created_by
+        );
+        match fresh.prompt_outdated {
+            Some(true) => line.push_str("; prompt outdated"),
+            Some(false) => {}
+            None => line.push_str("; prompt unknown (the instructions file cannot be read)"),
+        }
+        if fresh.tools_outdated {
+            line.push_str("; tools outdated");
+        }
+        match fresh.new_lessons {
+            0 => {}
+            1 => line.push_str("; 1 new lesson"),
+            n => {
+                let _ = write!(line, "; {n} new lessons");
+            }
+        }
+        if !fresh.is_stale() {
+            line.push_str("; up to date");
+        }
+        line
+    }
+}
+
+/// How the running orchestrator generation compares with the one archond
+/// would start now. A restart (`archon orchestrator restart`) catches it up.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OrchestratorFreshness {
+    /// The Archon version that created it.
+    pub created_by: String,
+    /// Its instructions differ from today's; `None` when today's cannot be
+    /// built, as with an unreadable `[orchestrator] instructions_file`.
+    pub prompt_outdated: Option<bool>,
+    /// Archon's tool set changed since it was created.
+    pub tools_outdated: bool,
+    /// Lessons a new generation would be given that it was not.
+    pub new_lessons: u32,
+}
+
+impl OrchestratorFreshness {
+    /// Whether a restart is owed, or may be when the prompt is unknown.
+    pub fn is_stale(&self) -> bool {
+        self.prompt_outdated != Some(false) || self.tools_outdated || self.new_lessons > 0
+    }
 }
 
 /// A queue item with what `archon queue list` shows about its runs. The

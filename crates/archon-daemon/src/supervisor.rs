@@ -5,6 +5,7 @@ mod authority;
 mod callers;
 mod lineage;
 mod mcp;
+mod origin;
 mod retired;
 mod revival;
 
@@ -24,7 +25,7 @@ use archon_core::error::ArchonError;
 use archon_core::id::{FeedItemId, StoreId};
 use archon_core::model::ModelChoice;
 use archon_core::notify::{AnswerVia, NotificationKind, Question};
-use archon_core::protocol::OrchestratorInfo;
+use archon_core::protocol::{OrchestratorFreshness, OrchestratorInfo};
 use archon_core::run::GateDecision;
 use archon_queue::store::keys;
 
@@ -569,13 +570,31 @@ async fn info_for(
         raw.parse::<u32>()
             .map_err(|e| ArchonError::Store(format!("kv {RESTARTS_KEY} = {raw:?}: {e}")))
     })?;
+    let generation = parse_generation(kv(ctx, keys::ORCHESTRATOR_GENERATION).await?)?;
     Ok(OrchestratorInfo {
         status: state_of(&agent),
         agent: agent.id,
         model: agent.model,
         effort: ctx.config.orchestrator.effort,
         restarts,
+        generation,
+        freshness: freshness(ctx, generation).await?,
     })
+}
+
+/// How generation `generation` compares with one this archond would start
+/// now; `None` when an Archon that recorded no origin created it.
+pub async fn freshness(
+    ctx: &DaemonContext,
+    generation: u64,
+) -> Result<Option<OrchestratorFreshness>, ArchonError> {
+    let instructions = orchestrator_instructions(&ctx.config, &ctx.paths.orchestrator_workspace)
+        .inspect_err(|error| {
+            tracing::warn!(%error, "today's orchestrator instructions cannot be built");
+        })
+        .ok();
+    let store = ctx.store.lock().await;
+    origin::freshness(&store, generation, instructions.as_deref())
 }
 
 /// Deliver an operator chat line (`Say`), keyed by its feed item id. The
@@ -880,6 +899,7 @@ async fn create_generation(
         .map_err(|e| ArchonError::io(format!("creating {}", workspace.display()), e))?;
     let delegation = callers::are_named(ctx).await?;
     let mut instructions = orchestrator_instructions(config, workspace)?;
+    let prompt = instructions.clone();
     if !delegation {
         instructions.push_str(callers::NO_DELEGATION_NOTE);
     }
@@ -887,6 +907,7 @@ async fn create_generation(
         let mut store = ctx.store.lock().await;
         let generation = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?.max(1);
         store.kv_set(keys::ORCHESTRATOR_GENERATION, &generation.to_string())?;
+        origin::record(&mut store, generation, &prompt)?;
         // Chosen once per generation, so a retried create sends the same text.
         instructions.push_str(&crate::learned::lessons_for_orchestrator(&store)?);
         generation

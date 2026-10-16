@@ -250,7 +250,7 @@ fn check_url(url: &str) -> Result<String, ArchonError> {
 
 /// Whether git reaches `url` as a repository on this machine, where its
 /// receive-pack would run that repository's hooks.
-fn is_local(url: &str) -> bool {
+pub(crate) fn is_local(url: &str) -> bool {
     if let Some((scheme, _)) = url.split_once("://") {
         return scheme == "file";
     }

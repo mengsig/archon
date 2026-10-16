@@ -238,11 +238,23 @@ async fn confirm(
     }
 }
 
-/// Why `onto`'s pull request is not updated: `origin` names another github.com
-/// repository than the one holding its head. Other hosts are not GitHub's to name.
+/// Why `onto`'s pull request is not updated: `origin` is not provably the
+/// github.com repository holding its head. A path on this machine is trusted.
 fn elsewhere(url: &str, onto: &OntoPullRequest) -> Option<String> {
     assert!(!onto.head_repository.is_empty(), "frozen at enqueue");
-    let slug = github_slug(url)?;
+    let Some(slug) = github_slug(url) else {
+        if stack::is_local(url) {
+            return None;
+        }
+        // The URL itself is not shown: it may carry credentials.
+        return Some(format!(
+            "BLOCKED: `origin` is no plain github.com URL (https://github.com/{0}.git or \
+             git@github.com:{0}.git), so Archon cannot tell it holds the head of {1}; nothing \
+             was pushed",
+            onto.head_repository,
+            onto.pr.url()
+        ));
+    };
     if slug.eq_ignore_ascii_case(&onto.head_repository) {
         return None;
     }
@@ -341,6 +353,18 @@ mod tests {
             let said = elsewhere(fork, &onto).expect(fork);
             assert!(
                 said.starts_with("BLOCKED:") && said.contains("`o/r`"),
+                "{said}"
+            );
+        }
+        let unparsed = [
+            "https://github.com:443/fork/r.git",
+            "https://user:secret@github.com/o/r.git",
+            "github-alias:o/r.git",
+        ];
+        for url in unparsed {
+            let said = elsewhere(url, &onto).expect(url);
+            assert!(
+                said.starts_with("BLOCKED:") && !said.contains("secret"),
                 "{said}"
             );
         }

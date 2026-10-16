@@ -38,6 +38,7 @@ pub fn repo(name: &str) -> Repo {
         autonomy_max: AutonomyPatch::default(),
         grant_merge: false,
         attribution: Default::default(),
+        gh_user: None,
         tiers: Default::default(),
         confirmed_fast_check: None,
         added_at: t(0),

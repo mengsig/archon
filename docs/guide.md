@@ -398,6 +398,15 @@ and from then on a delivery whose PR body or commit messages carry a
 `--attribution item-id` is the default. Only you change it: a change the
 orchestrator relays waits for your confirmation.
 
+`archon repo set <repo> --gh-user LOGIN` makes every `gh` call and push for
+the repository run as that GitHub login instead of the one `gh` is logged
+in as; `--gh-user ""` goes back. Log the login in once with `gh auth login
+--hostname github.com`: archond reads its token from `gh` for each call and
+gives it only to that call, never to an agent, a log or a worktree. The
+repository's `origin` must be on github.com. Commits must still carry the
+repository's own git identity. `archon doctor` checks that each login has a
+token and can push. As with attribution, only you change it.
+
 ## Aether setup
 
 `archon setup` creates Archon's own Aether instance in

@@ -19,6 +19,9 @@ Actions use Archon's command JSON. Examples:
 - Attribution policy: `{"cmd":"repo_update","repo":"web","patch":{"attribution":"none"}}`
   drops the `Archon item:` line and refuses attribution lines at delivery;
   `item-id` is the default. Every change waits for the operator's confirmation.
+- GitHub login: `{"cmd":"repo_update","repo":"web","patch":{"gh_user":{"set":"LOGIN"}}}`
+  runs the repository's `gh` calls and pushes as that login; `"clear"` returns to
+  archond's own. Every change waits for the operator's confirmation.
 - Set repository delivery defaults: the same patch with `ship` (`local` or `pr`),
   `base_branch:{"set":"main"}`, or `default_pipeline:{"set":"adaptive"}`.
   Optional strings use `"clear"` to restore inheritance, `"keep"` to preserve.

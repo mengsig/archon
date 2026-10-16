@@ -7,7 +7,7 @@
 //! `gh` runs without a lock; a request left `merging` by a stop or a lost
 //! confirmation is settled from GitHub by the coordination pass.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use archon_core::autonomy::ReviewLevel;
 use archon_core::config::RepoConfig;
@@ -199,11 +199,7 @@ pub(crate) async fn request(
         (shipped, base)
     };
     let base = base.map_err(|why| refused_early(&shipped, &why))?;
-    let facts = gh::merge_facts(
-        &ctx.config.github.binary,
-        &shipped.repo.path,
-        &shipped.pr_url,
-    );
+    let facts = gh::merge_facts(&ctx.config.github.binary, &shipped.repo, &shipped.pr_url);
     let expected = Expected {
         head: &shipped.head,
         base: &base,
@@ -248,7 +244,7 @@ pub(crate) async fn enable_auto_merge(
     };
     let base = base.map_err(|why| refused(&why))?;
     let binary = &ctx.config.github.binary;
-    let facts = gh::merge_facts(binary, &shipped.repo.path, &shipped.pr_url).await?;
+    let facts = gh::merge_facts(binary, &shipped.repo, &shipped.pr_url).await?;
     // Checks may be pending: auto-merge waits for them.
     let expected = Expected {
         head: &shipped.head,
@@ -256,12 +252,7 @@ pub(crate) async fn enable_auto_merge(
         ignore_checks: true,
     };
     merge::evaluate(&facts, expected).map_err(|why| refused(&why))?;
-    let pinned = pin_auto_merge(
-        binary,
-        &shipped.repo.path,
-        &shipped.pr_url,
-        Some(&shipped.head),
-    );
+    let pinned = pin_auto_merge(binary, &shipped.repo, &shipped.pr_url, Some(&shipped.head));
     pinned.await.map_err(|why| match why {
         MergeRefusal::Retry(why) => ArchonError::Unavailable(format!(
             "GitHub did not take auto-merge of {}: {why}; try again",
@@ -395,7 +386,7 @@ async fn execute(
     };
     merge.checks = Some(ready.seen.describe());
     let binary = &ctx.config.github.binary;
-    let method = match merge_method(binary, &ready.path).await {
+    let method = match merge_method(binary, &ready.repo).await {
         Ok(method) => method,
         Err(MergeRefusal::Retry(why) | MergeRefusal::Never(why)) => {
             merge.state = MergeState::Refused { reason: why };
@@ -410,8 +401,8 @@ async fn execute(
         &merge.head,
         method,
     ];
-    let sent = gh::run(binary, &ready.path, &args, None).await;
-    match confirm(binary, &ready.path, &merge, method, sent).await {
+    let sent = gh::run(binary, &ready.repo, &args, None).await;
+    match confirm(binary, &ready.repo, &merge, method, sent).await {
         Some(state) => {
             merge.state = state;
             finish_merge(ctx, merge).await
@@ -423,7 +414,7 @@ async fn execute(
 
 /// A request whose pull request may be merged now.
 struct Ready {
-    path: PathBuf,
+    repo: Repo,
     seen: ChecksSeen,
 }
 
@@ -456,7 +447,7 @@ async fn ready(
         Err(why) => return Ok(Err(why)),
     };
     let binary = &ctx.config.github.binary;
-    let facts = match gh::merge_facts(binary, &shipped.repo.path, &merge.pr_url).await {
+    let facts = match gh::merge_facts(binary, &shipped.repo, &merge.pr_url).await {
         Ok(facts) => facts,
         Err(error) => return Ok(Err(format!("GitHub could not be read: {error}"))),
     };
@@ -466,7 +457,7 @@ async fn ready(
         ignore_checks: merge.ignore_checks,
     };
     Ok(merge::evaluate(&facts, expected).map(|seen| Ready {
-        path: shipped.repo.path.clone(),
+        repo: shipped.repo.clone(),
         seen,
     }))
 }
@@ -475,7 +466,7 @@ async fn ready(
 /// read, after a `gh pr merge` that may have merged.
 async fn confirm(
     binary: &Path,
-    repo: &Path,
+    repo: &Repo,
     merge: &MergeRequest,
     method: &str,
     sent: Result<gh::Ran, ArchonError>,
@@ -637,7 +628,7 @@ async fn settle_one(ctx: &DaemonContext, mut merge: MergeRequest) -> Result<bool
         .await
         .repo(&crate::resolve::repo_ref(&merge.repo))?;
     let binary = &ctx.config.github.binary;
-    let after = gh::merge_facts(binary, &repo.path, &merge.pr_url).await?;
+    let after = gh::merge_facts(binary, &repo, &merge.pr_url).await?;
     merge.state = match (after.state.as_str(), after.head == merge.head) {
         ("MERGED", true) => MergeState::Merged {
             method: "confirmed later by GitHub".into(),

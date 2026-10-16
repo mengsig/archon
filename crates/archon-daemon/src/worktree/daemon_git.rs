@@ -121,12 +121,22 @@ pub(crate) enum Config {
 }
 
 /// One daemon git command, built then run once.
-#[derive(Debug)]
 pub(crate) struct DaemonGit {
     command: Command,
     shown: Vec<String>,
     place: PathBuf,
     limit: Duration,
+}
+
+/// Not derived: the command's environment can carry a secret.
+impl std::fmt::Debug for DaemonGit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DaemonGit")
+            .field("args", &self.shown)
+            .field("place", &self.place)
+            .field("limit", &self.limit)
+            .finish_non_exhaustive()
+    }
 }
 
 impl DaemonGit {
@@ -222,6 +232,24 @@ impl DaemonGit {
     pub(crate) fn limit(mut self, limit: Duration) -> Self {
         assert!(!limit.is_zero(), "a time limit is positive");
         self.limit = limit;
+        self
+    }
+
+    /// Read `settings` as config given on the command line, through the
+    /// environment: shown in no argument list, error or debug output.
+    pub(crate) fn secret_config(mut self, settings: &[(String, String)]) -> Self {
+        assert!(!settings.is_empty(), "something to set");
+        assert!(
+            settings.iter().all(|(key, _)| key.contains('.')),
+            "section.key"
+        );
+        for (n, (key, value)) in settings.iter().enumerate() {
+            self.command
+                .env(format!("GIT_CONFIG_KEY_{n}"), key)
+                .env(format!("GIT_CONFIG_VALUE_{n}"), value);
+        }
+        self.command
+            .env("GIT_CONFIG_COUNT", settings.len().to_string());
         self
     }
 

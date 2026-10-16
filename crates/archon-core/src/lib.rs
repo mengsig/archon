@@ -2,9 +2,10 @@
 //!
 //! Everything more than one crate needs lives here: identifiers, the
 //! configuration schema, the domain records (repositories, queue items,
-//! pipeline runs, notifications, initiatives, steers, outcomes, lessons), the
-//! model policy, the pipeline catalog vocabulary, the GitHub watcher
-//! vocabulary, the `AgentBackend` port, and the Archon daemon wire protocol.
+//! pipeline runs, notifications, initiatives, steers, outcomes, lessons, the
+//! pull requests runs delivered to), the model policy, the pipeline catalog
+//! vocabulary, the GitHub watcher vocabulary, the `AgentBackend` port, and the
+//! Archon daemon wire protocol.
 //! This crate has no I/O beyond reading configuration files; with the
 //! `testing` feature, `testing` holds helpers for the workspace's tests.
 
@@ -36,6 +37,7 @@ pub mod policy;
 pub mod ports;
 pub mod protocol;
 pub mod provider_route;
+pub mod pull_request;
 pub mod queue;
 pub mod repo;
 pub mod run;

@@ -2427,8 +2427,10 @@ table and delivers it off every lock:
    again and only what GitHub lists counts, so a creation whose reply was
    lost is found, not repeated.
 5. **Persist, then finish.** The `ShipOutcome` is written to `kv`
-   `ship:<run>`, and a pull request's URL to the record stage run's
-   `structured.pr_url`, before the driver acts. `on_shipped` then ends the
+   `ship:<run>`, a pull request's URL to the record stage run's
+   `structured.pr_url` and its identity (host, repository, number) to
+   `run_pull_requests`, before the driver acts. Several runs may name one
+   pull request. `on_shipped` then ends the
    run: `succeeded` with a last summary line `SHIPPED: <url> (commit <sha>)`
    or `SHIPPED: commit <sha> on the run branch`, or
    `failed{stage_id: "ship", error}`.
@@ -2526,9 +2528,13 @@ whose record stage a steer removed, has no branch to stack on.
 A pass asks GitHub once per repository, `gh pr list --state open --limit
 1000`, and looks up with `gh pr list --head <branch> --state all` only a
 branch the listing lacks. A pull request found merged or closed is kept in
-`kv` `pr_settled:<repo>:<branch>` and never asked about again, so a pass
-over settled stacks makes no GitHub call. The pull requests of finished
-runs, which learning watches, are read the same way every 10 minutes.
+`kv` `pr_settled:<host>/<owner>/<name>#<number>` and never asked about
+again; a branch counts as settled once the pull request its run recorded
+is, so a pass over settled stacks makes no GitHub call. The pull requests
+of finished runs, which learning watches, are read from the same listing
+every 10 minutes, but by number: one it lacks is shown with `gh pr view
+<url>`, so a newer pull request of the same branch never stands in for a
+run's.
 
 A merged parent has the child's pull request moved with `gh pr edit
 --base` to the next unmerged parent or the repository's base. Commits a

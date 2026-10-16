@@ -1,14 +1,16 @@
 //! What became of the pull requests of finished runs: merged, closed, or sent
-//! back by a reviewer. Learning counts it for or against the run (§19).
+//! back by a reviewer. Learning counts it for or against the run (§19). Each
+//! is asked about by its number, never by the branch a newer one may carry.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use archon_core::error::ArchonError;
+use archon_core::id::PipelineRunId;
 use archon_core::outcome::{Correction, Outcome};
+use archon_core::pull_request::PullRequestRef;
 use archon_core::repo::{Repo, ShipMode};
 
-use super::dependencies::{is_plain_branch, is_plain_url};
 use super::gh::{self, Pass, PullRequest};
 use crate::context::DaemonContext;
 
@@ -27,8 +29,29 @@ pub struct Observed {
 
 struct ShippedPr {
     repo: Repo,
-    branch: String,
-    url: String,
+    pr: PullRequestRef,
+    /// GitHub's node id, once recorded.
+    node_id: Option<String>,
+}
+
+/// What GitHub said a pull request is now.
+struct Seen<'a> {
+    state: &'a str,
+    review_decision: Option<&'a str>,
+}
+
+/// Record that `run` delivered to the pull request at `url`, as GitHub listed it.
+pub(super) fn record_delivery(
+    store: &mut archon_queue::Store,
+    run: &PipelineRunId,
+    url: &str,
+) -> Result<(), ArchonError> {
+    let Some(pr) = PullRequestRef::from_url(url) else {
+        return Err(ArchonError::Protocol(format!(
+            "run {run} delivered to {url:?}, which names no pull request"
+        )));
+    };
+    store.record_run_pull_request(run, &pr, None)
 }
 
 /// Record what changed in the watched pull requests, one GitHub listing per repository;
@@ -48,18 +71,22 @@ pub async fn observe(ctx: &DaemonContext) -> Result<Observed, ArchonError> {
         let Some(shipped) = shipped_pr(ctx, outcome).await? else {
             continue;
         };
-        let (repo, branch) = (&shipped.repo, &shipped.branch);
+        let settled = gh::settled(&*ctx.store.lock().await, &shipped.pr)?;
+        if let Some(state) = settled {
+            let ended = Seen {
+                state: &state,
+                review_decision: None,
+            };
+            record(ctx, outcome, &ended, &mut seen).await?;
+            continue;
+        }
+        let repo = &shipped.repo;
         let asked = match pass.unlisted(&repo.path) {
             Some(_) => None,
-            None => Some(pass.pull_request(binary, &repo.path, branch).await),
+            None => Some(pass.by_number(binary, &repo.path, &shipped.pr).await),
         };
         match asked {
-            // The branch may carry a newer pull request than the run's.
-            Some(Ok(pr)) if pr.url == shipped.url => {
-                gh::settle(&mut *ctx.store.lock().await, &repo.id, &pr)?;
-                record(ctx, outcome, &pr, &mut seen).await?;
-            }
-            Some(Ok(_)) => {}
+            Some(Ok(pr)) => learn(ctx, outcome, &shipped, &pr, &mut seen).await?,
             Some(Err(error)) if error.is_store() => return Err(error),
             Some(Err(error)) if pass.unlisted(&repo.path).is_none() => {
                 tracing::warn!(run = %outcome.run, %error, "pull request not observed");
@@ -78,6 +105,31 @@ pub async fn observe(ctx: &DaemonContext) -> Result<Observed, ArchonError> {
         "each watched run is counted once"
     );
     Ok(seen)
+}
+
+/// Keep what GitHub said of `shipped`'s pull request `pr`, and what it means for `outcome`.
+async fn learn(
+    ctx: &DaemonContext,
+    outcome: &Outcome,
+    shipped: &ShippedPr,
+    pr: &PullRequest,
+    seen: &mut Observed,
+) -> Result<(), ArchonError> {
+    assert_eq!(pr.identity(), shipped.pr, "asked for by its number");
+    {
+        let mut store = ctx.store.lock().await;
+        if shipped.node_id.is_none()
+            && let Some(node_id) = pr.node_id()
+        {
+            store.record_run_pull_request(&outcome.run, &shipped.pr, Some(node_id))?;
+        }
+        gh::settle(&mut store, pr)?;
+    }
+    let now = Seen {
+        state: &pr.state,
+        review_decision: pr.review_decision.as_deref(),
+    };
+    record(ctx, outcome, &now, seen).await
 }
 
 /// The runs of one repository not asked about because its listing failed.
@@ -131,22 +183,21 @@ async fn shipped_pr(
         Err(ArchonError::NotFound(_)) => return Ok(None),
         Err(error) => return Err(error),
     };
-    if repo.ship != ShipMode::Pr || !is_plain_branch(&run.branch) {
+    if repo.ship != ShipMode::Pr {
         return Ok(None);
     }
-    let stages = store.stage_runs(&run.id)?;
-    let url = archon_core::run::pr_url(stages.iter()).filter(|url| is_plain_url(url));
-    Ok(url.map(|url| ShippedPr {
+    let recorded = store.run_pull_request(&run.id)?;
+    Ok(recorded.map(|recorded| ShippedPr {
         repo,
-        branch: run.branch,
-        url: url.to_owned(),
+        pr: recorded.pr,
+        node_id: recorded.node_id,
     }))
 }
 
 async fn record(
     ctx: &DaemonContext,
     outcome: &Outcome,
-    pr: &PullRequest,
+    pr: &Seen<'_>,
     seen: &mut Observed,
 ) -> Result<(), ArchonError> {
     assert!(
@@ -154,8 +205,8 @@ async fn record(
         "a settled pull request is not asked about"
     );
     let store = ctx.store.lock().await;
-    let sent_back = pr.review_decision.as_deref() == Some("CHANGES_REQUESTED");
-    match pr.state.as_str() {
+    let sent_back = pr.review_decision == Some("CHANGES_REQUESTED");
+    match pr.state {
         "MERGED" => {
             store.outcome_merged(&outcome.run, true)?;
             seen.merged += 1;

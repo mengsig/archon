@@ -18,6 +18,7 @@ use archon_core::repo::ShipMode;
 use archon_core::run::PipelineRun;
 use archon_daemon::executor::{self, pull_requests};
 use archon_daemon::triggers::{self, TriggerEvent};
+use archon_queue::RunPullRequest;
 use common::delivery::{add_origin, origin_of, pushed, shipped_by};
 use common::initiative::{gh_calls, install_explicit_gh, prs, set_pr};
 use common::{Harness, REPO_NAME, git};
@@ -276,6 +277,85 @@ async fn what_became_of_a_delivered_pull_request_is_learned_from_github() {
     let settled = pull_requests::observe(&h.ctx).await.unwrap();
     assert_eq!(settled, pull_requests::Observed::default());
     assert_eq!(calls(&h), before, "neither is asked about again");
+}
+
+/// The pull request `run` delivered to, as the store records it.
+async fn delivered_to(h: &Harness, run: &PipelineRun) -> RunPullRequest {
+    let recorded = h.ctx.store.lock().await.run_pull_request(&run.id);
+    recorded
+        .expect("readable")
+        .expect("a delivered run records its PR")
+}
+
+/// The `gh pr view` calls made since the `before`th call.
+fn views_since(h: &Harness, before: usize) -> Vec<Vec<String>> {
+    let calls = gh_calls(h);
+    let viewed = |call: &&Vec<String>| call[1] == "view";
+    calls[before..].iter().filter(viewed).cloned().collect()
+}
+
+/// A run's pull request closed and its branch now carries a newer, open one:
+/// the run's is asked for by its number and its close is learned.
+#[tokio::test]
+async fn a_run_s_pull_request_is_observed_by_number_after_its_branch_moved_on() {
+    let h = delivering().await;
+    let item = enqueue(&h, "the change that was redone", &[]).await;
+    let run = ship(&h, &item.id).await;
+    let first = delivered_to(&h, &run).await;
+    assert_eq!(first.pr.url(), "https://github.com/o/r/pull/1");
+    assert_eq!(first.node_id, None, "gh pr create gives no node id");
+
+    let mut state = prs(&h);
+    let mut old = state[&run.branch].take();
+    old["state"] = json!("CLOSED");
+    old["id"] = json!("PR_node1");
+    let mut newer = old.clone();
+    newer["url"] = json!("https://github.com/o/r/pull/2");
+    newer["number"] = json!(2);
+    newer["state"] = json!("OPEN");
+    newer["id"] = json!("PR_node2");
+    state["closed-before"] = old;
+    state[&run.branch] = newer;
+    std::fs::write(h.dir.path().join("prs.json"), state.to_string()).unwrap();
+
+    let before = gh_calls(&h).len();
+    let seen = pull_requests::observe(&h.ctx).await.unwrap();
+    assert_eq!((seen.closed, seen.unanswered), (1, 0), "{seen:?}");
+    assert_eq!(outcome(&h, &run).await.merged, Some(false));
+    let views = views_since(&h, before);
+    assert_eq!(views.len(), 1, "{views:?}");
+    assert_eq!(
+        views[0][2], "https://github.com/o/r/pull/1",
+        "by its number"
+    );
+    let known = delivered_to(&h, &run).await;
+    assert_eq!(
+        (known.pr, known.node_id.as_deref()),
+        (first.pr, Some("PR_node1"))
+    );
+}
+
+/// Two runs delivered to one pull request: both learn that it merged, and
+/// GitHub is asked about it once.
+#[tokio::test]
+async fn two_runs_delivered_to_one_pull_request_both_see_its_outcome() {
+    let h = delivering().await;
+    let first = enqueue(&h, "the change", &[]).await;
+    let second = enqueue(&h, "its follow-up", &[]).await;
+    let first = ship(&h, &first.id).await;
+    let second = ship(&h, &second.id).await;
+    let shared = delivered_to(&h, &first).await.pr;
+    let recorded = (h.ctx.store.lock().await).record_run_pull_request(&second.id, &shared, None);
+    recorded.unwrap();
+    set_pr(&h, &first.branch, "state", json!("MERGED"));
+
+    let before = gh_calls(&h).len();
+    let seen = pull_requests::observe(&h.ctx).await.unwrap();
+    assert_eq!((seen.merged, seen.unanswered), (2, 0), "{seen:?}");
+    for run in [&first, &second] {
+        assert_eq!(outcome(&h, run).await.merged, Some(true), "{}", run.id);
+    }
+    assert_eq!(views_since(&h, before).len(), 1, "settled once, then known");
 }
 
 /// Everything logged at `WARN` or above while it is held, on this thread.

@@ -180,6 +180,11 @@ impl Harness {
                 &config.github.binary,
                 r#"#!/bin/sh
 if [ "$1 $2" = "pr edit" ]; then exit 0; fi
+# GitHub shows the pull request a URL names as open.
+if [ "$1 $2 $4" = "pr view --json" ]; then
+  printf '{"url":"%s","number":%s,"headRefName":"shown","state":"OPEN","baseRefName":"main"}' "$3" "${3##*/}"
+  exit 0
+fi
 [ "$1 $2" = "pr list" ] || exit 2
 # GitHub lists a repository's open pull requests as none, a branch's as one.
 if [ "$3 $4 $5 $6 $7" = "--state open --limit 1000 --json" ]; then printf '[]'; exit 0; fi

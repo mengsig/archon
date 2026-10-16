@@ -8,6 +8,7 @@ use crate::worktree::stack;
 use archon_core::error::ArchonError;
 use archon_core::id::{InitiativeId, QueueItemId};
 use archon_core::initiative::{Initiative, InitiativeDetail, InitiativeState};
+use archon_core::pull_request::PullRequestRef;
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::Repo;
 use archon_core::run::PipelineRun;
@@ -362,21 +363,19 @@ async fn sync_member(
         prs.iter().any(|p| p.item == member.item),
         "one of the members"
     );
-    let settled = gh::settled(&*ctx.store.lock().await, &member.repo.id, &member.branch)?;
-    if settled.is_some() {
+    let Some(identity) = PullRequestRef::from_url(&member.url) else {
+        return Err(ArchonError::Protocol(format!(
+            "initiative member {} delivered to {}, which names no pull request",
+            member.item, member.url
+        )));
+    };
+    if gh::settled(&*ctx.store.lock().await, &identity)?.is_some() {
         return Ok(());
     }
     let binary = &ctx.config.github.binary;
-    let pr = pass
-        .pull_request(binary, &member.repo.path, &member.branch)
-        .await?;
-    if pr.url != member.url {
-        return Err(ArchonError::Protocol(
-            "initiative PR changed identity".into(),
-        ));
-    }
+    let pr = pass.by_number(binary, &member.repo.path, &identity).await?;
     if !pr.is_open() {
-        return gh::settle(&mut *ctx.store.lock().await, &member.repo.id, &pr);
+        return gh::settle(&mut *ctx.store.lock().await, &pr);
     }
     let links = prs
         .iter()
@@ -394,7 +393,7 @@ async fn sync_member(
         edit_body(ctx, member, &body).await?;
     }
     if detail.initiative.atomic && pr.is_draft == ready {
-        let mut args = vec!["pr", "ready", &member.branch];
+        let mut args = vec!["pr", "ready", &member.url];
         if !ready {
             args.push("--undo");
         }
@@ -431,7 +430,7 @@ async fn edit_body(ctx: &DaemonContext, member: &MemberPr, body: &str) -> Result
     let path = file
         .to_str()
         .ok_or_else(|| ArchonError::Invalid("PR body path is not UTF-8".into()))?;
-    let args = ["pr", "edit", &member.branch, "--body-file", path];
+    let args = ["pr", "edit", &member.url, "--body-file", path];
     gh::text(&ctx.config.github.binary, &member.repo.path, &args).await?;
     Ok(())
 }

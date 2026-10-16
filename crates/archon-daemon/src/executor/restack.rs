@@ -12,7 +12,7 @@ use crate::context::DaemonContext;
 use crate::worktree::shadow::Shadow;
 use crate::worktree::stack::{self, Identity, Merge};
 use archon_core::error::ArchonError;
-use archon_core::id::QueueItemId;
+use archon_core::id::{PipelineRunId, QueueItemId};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::{Repo, ShipMode};
 use archon_core::run::PipelineRun;
@@ -20,7 +20,7 @@ use archon_queue::store::stacks::StackParent;
 
 /// A branch's pull request as one pass sees it.
 enum Pr {
-    Open(PullRequest),
+    Open(Box<PullRequest>),
     /// Merged or closed: recorded, and never asked about again.
     Settled {
         merged: bool,
@@ -84,11 +84,13 @@ pub(super) async fn parents(
         };
         let head = match repo.ship {
             ShipMode::Local => None,
-            ShipMode::Pr => match pull_request(ctx, &mut pass, repo, &run.branch).await? {
-                Pr::Settled { merged: true } => continue,
-                Pr::Settled { merged: false } => None,
-                Pr::Open(pr) => pr.head_ref_oid,
-            },
+            ShipMode::Pr => {
+                match pull_request(ctx, &mut pass, repo, &run.branch, Some(&run.id)).await? {
+                    Pr::Settled { merged: true } => continue,
+                    Pr::Settled { merged: false } => None,
+                    Pr::Open(pr) => pr.head_ref_oid,
+                }
+            }
         };
         let sha = parent_sha(ctx, repo, &run.branch, head).await?;
         parents.push(StackParent {
@@ -111,20 +113,44 @@ pub(super) async fn parents(
     Ok(parents)
 }
 
-/// The pull request of `branch` in `repo`: a settled one from the store,
-/// else as the pass lists it, recorded once it merged or closed.
+/// The pull request of `parent`'s branch, by the one its newest run on that
+/// branch delivered to.
+async fn parent_pr(
+    ctx: &DaemonContext,
+    pass: &mut Pass,
+    repo: &Repo,
+    parent: &StackParent,
+) -> Result<Pr, ArchonError> {
+    let runs = ctx.store.lock().await.runs_for_item(&parent.parent_item)?;
+    let delivered = runs.iter().rev().find(|r| r.branch == parent.parent_branch);
+    let branch = &parent.parent_branch;
+    pull_request(ctx, pass, repo, branch, delivered.map(|r| &r.id)).await
+}
+
+/// The pull request of `branch` in `repo`: settled when the one `run`
+/// delivered to is, else as the pass lists it, recorded once it merged or closed.
 async fn pull_request(
     ctx: &DaemonContext,
     pass: &mut Pass,
     repo: &Repo,
     branch: &str,
+    run: Option<&PipelineRunId>,
 ) -> Result<Pr, ArchonError> {
     assert_eq!(
         repo.ship,
         ShipMode::Pr,
         "only a pr repository has pull requests"
     );
-    if let Some(state) = gh::settled(&*ctx.store.lock().await, &repo.id, branch)? {
+    assert!(!branch.is_empty(), "a delivered branch");
+    let settled = {
+        let store = ctx.store.lock().await;
+        let recorded = run.map(|run| store.run_pull_request(run)).transpose()?;
+        match recorded.flatten() {
+            Some(recorded) => gh::settled(&store, &recorded.pr)?,
+            None => None,
+        }
+    };
+    if let Some(state) = settled {
         return Ok(Pr::Settled {
             merged: state == "MERGED",
         });
@@ -134,9 +160,9 @@ async fn pull_request(
         .await?;
     assert_eq!(pr.head_ref_name, branch, "checked by the gh module");
     if pr.is_open() {
-        return Ok(Pr::Open(pr));
+        return Ok(Pr::Open(Box::new(pr)));
     }
-    gh::settle(&mut *ctx.store.lock().await, &repo.id, &pr)?;
+    gh::settle(&mut *ctx.store.lock().await, &pr)?;
     Ok(Pr::Settled {
         merged: pr.state == "MERGED",
     })
@@ -304,8 +330,8 @@ async fn reconcile_item(
     assert_eq!(item.id, run.item);
     assert!(!run.branch.is_empty());
     let pr = match run.shipped && repo.ship == ShipMode::Pr {
-        true => match pull_request(ctx, pass, &repo, &run.branch).await? {
-            Pr::Open(pr) => Some(pr),
+        true => match pull_request(ctx, pass, &repo, &run.branch, Some(&run.id)).await? {
+            Pr::Open(pr) => Some(*pr),
             Pr::Settled { .. } => return Ok(()),
         },
         false => None,
@@ -331,7 +357,7 @@ async fn update_parents(
     for mut parent in parents.into_iter().filter(|p| !p.merged) {
         let head = match repo.ship {
             ShipMode::Local => None,
-            ShipMode::Pr => match pull_request(ctx, pass, repo, &parent.parent_branch).await? {
+            ShipMode::Pr => match parent_pr(ctx, pass, repo, &parent).await? {
                 Pr::Settled { merged: true } => {
                     parent.merged = true;
                     ctx.store.lock().await.save_stack_parent(&parent)?;

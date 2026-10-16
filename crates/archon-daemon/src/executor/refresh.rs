@@ -35,7 +35,7 @@ pub(crate) async fn refresh_item(
     let catalog = crate::learned::catalog(ctx).await?;
     let prepared = refresh_owner(ctx, &owner, &env, &catalog)?;
     if repo.ship == ShipMode::Pr && run.shipped {
-        check_pr_open(ctx, &repo, &run.branch).await?;
+        check_pr_open(ctx, &repo, &run).await?;
     }
     let sha = base_head(ctx, &repo, &base, &run.branch).await?;
     let refresh = Refresh { base, sha };
@@ -208,8 +208,19 @@ async fn base_of(
 
 /// Refuse a refresh of a delivered branch whose pull request merged or closed:
 /// it would only open a new one.
-async fn check_pr_open(ctx: &DaemonContext, repo: &Repo, branch: &str) -> Result<(), ArchonError> {
-    let settled = gh::settled(&*ctx.store.lock().await, &repo.id, branch)?;
+async fn check_pr_open(
+    ctx: &DaemonContext,
+    repo: &Repo,
+    run: &PipelineRun,
+) -> Result<(), ArchonError> {
+    let branch = &run.branch;
+    let settled = {
+        let store = ctx.store.lock().await;
+        match store.run_pull_request(&run.id)? {
+            Some(recorded) => gh::settled(&store, &recorded.pr)?,
+            None => None,
+        }
+    };
     let open = match settled {
         Some(_) => Vec::new(),
         None => gh::of_branch(&ctx.config.github.binary, &repo.path, branch, true).await?,

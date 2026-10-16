@@ -8,4 +8,4 @@ pub mod store;
 
 pub use data_lock::DataLock;
 pub use dispatch::{DispatchPlan, DispatchSnapshot, plan_dispatch};
-pub use store::Store;
+pub use store::{RunPullRequest, Store};

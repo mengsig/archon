@@ -266,8 +266,12 @@ pub fn orchestrator_line(info: &OrchestratorInfo) -> String {
         n => format!(", restarted {n} times"),
     };
     format!(
-        "{} on {} ({} effort), {}{restarts}",
-        info.agent, info.model, info.effort, info.status
+        "{} on {} ({} effort), {}{restarts}; {}",
+        info.agent,
+        info.model,
+        info.effort,
+        info.status,
+        info.describe_freshness()
     )
 }
 
@@ -818,6 +822,31 @@ pub(crate) mod tests {
             quota: None,
             recovery: None,
         }
+    }
+
+    #[test]
+    fn status_says_when_the_orchestrator_runs_a_stale_prompt() {
+        let mut up = status_with(AetherLinkStatus::Disconnected {
+            error: "x".into(),
+            retry_at: None,
+        });
+        up.orchestrator = Some(
+            serde_json::from_value(serde_json::json!({
+                "agent": "agt_0001", "model": "claude-code/opus", "effort": "high",
+                "status": "ready", "restarts": 6, "generation": 7,
+                "freshness": {"created_by": "1.2.3", "prompt_outdated": true,
+                              "tools_outdated": true, "new_lessons": 1},
+            }))
+            .unwrap(),
+        );
+        let text = status(&up, &RepoNames::new());
+        assert!(
+            text.contains(
+                "restarted 6 times; generation 7, created by 1.2.3; prompt outdated; \
+                 tools outdated; 1 new lesson\n"
+            ),
+            "{text}"
+        );
     }
 
     #[test]

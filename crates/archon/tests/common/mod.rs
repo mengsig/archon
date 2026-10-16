@@ -39,6 +39,19 @@ impl Env {
             .env("AETHER_SOCKET", self.path("no-aether.sock"))
             .env("AETHER_CONFIG_DIR", self.path("aether"))
             .env("NO_COLOR", "1");
+        if args.contains(&"doctor") {
+            let bin = self.path("offline-gh");
+            std::fs::create_dir_all(&bin).unwrap();
+            archon_core::testing::write_script(
+                &bin.join("gh"),
+                "#!/bin/sh\necho offline >&2\nexit 1\n",
+            );
+            let path = std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(
+                &std::env::var_os("PATH").unwrap_or_default(),
+            )))
+            .unwrap();
+            command.env("PATH", path);
+        }
         command
     }
 

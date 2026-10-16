@@ -33,6 +33,7 @@ fn repo(name: &str) -> Repo {
         grant_merge: false,
         attribution: Default::default(),
         tiers: Default::default(),
+        confirmed_fast_check: None,
         added_at: v1_time(),
     }
 }

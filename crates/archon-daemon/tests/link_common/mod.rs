@@ -327,6 +327,7 @@ fn repo_at(path: &Path) -> Repo {
         grant_merge: false,
         attribution: Default::default(),
         tiers: Default::default(),
+        confirmed_fast_check: None,
         added_at: archon_core::now(),
     }
 }

@@ -101,6 +101,24 @@ archive with `install.sh` and runs it, then opens a **draft** release with
 the archives, their checksums, `SHA256SUMS` and `VERSION`; publishing the
 draft makes it the release the installer and `archon update` download.
 
+`archon release check [owner/repo]` audits release health (default:
+`mengsig/archon`). It checks all version tags, the four platform archives and
+their `.sha256` files, `SHA256SUMS`, `VERSION`, the highest stable SemVer as
+Latest, and whether the latest completed `ci.yml` run assigned a job to a runner.
+Queued or waiting runs are not treated as failures to start.
+Pre-releases are checked for assets but do not compete for Latest. This uses
+the configured `github.binary` and its GitHub authentication; `--json` emits
+`repo`, `ok` and `problems`. An unhealthy release or an API failure exits 1.
+Doctor runs this for Archon and Aether, warning if GitHub is unavailable.
+
+Before creating the draft, the workflow runs the same check using the newly
+built binary with `--pending-tag "$GITHUB_REF_NAME" --assets dist`. Only that
+tag is exempt from already having a published release; its local assets
+must exist, be nonempty, and have a matching `VERSION`. Other historical
+release problems block the gate until the operator repairs them. The
+existing checksum job verifies archive digests. The gate precedes draft
+creation; publishing remains an operator action in GitHub.
+
 Write the version's section in `CHANGELOG.md` before you tag: the text of the
 draft is that section followed by the install command, and the workflow
 fails in its first job when there is no `## <version>` section. To read the

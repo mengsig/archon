@@ -5,6 +5,7 @@ mod authority;
 mod callers;
 mod lineage;
 mod mcp;
+mod origin;
 mod retired;
 mod revival;
 
@@ -19,12 +20,12 @@ use archon_aether::wire::{
 use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::autonomy::{AutonomyPolicy, ToolsMode};
-use archon_core::config::{Config, HostContext};
+use archon_core::config::{AetherMode, Config, HostContext};
 use archon_core::error::ArchonError;
 use archon_core::id::{FeedItemId, StoreId};
 use archon_core::model::ModelChoice;
 use archon_core::notify::{AnswerVia, NotificationKind, Question};
-use archon_core::protocol::OrchestratorInfo;
+use archon_core::protocol::{OrchestratorFreshness, OrchestratorInfo};
 use archon_core::run::GateDecision;
 use archon_queue::store::keys;
 
@@ -59,6 +60,10 @@ pub const ORCHESTRATOR_HIDDEN_TOOLS: &[&str] = &["integrate_workspace"];
 const DELEGATE_TOOL: &str = "delegate";
 
 const BUILTIN_PROMPT: &str = include_str!("../prompts/orchestrator.md");
+/// Paid for on every turn, so only an orchestrator that may take GitHub
+/// requests gets it, ahead of the built-in prompt's `## Principles`.
+const GITHUB_SECTION: &str = include_str!("../prompts/orchestrator_github.md");
+const GITHUB_SECTION_BEFORE: &str = "\n## Principles\n";
 
 /// How long a cancelled orchestrator gets to end the turn it was in before
 /// its restart is put off: Aether restarts only a stopped agent.
@@ -70,6 +75,8 @@ const RESTARTS_KEY: &str = "orchestrator_restarts";
 const BLOCKER_KEY: &str = "orchestrator_blocker";
 const STORE_ID_KEY: &str = "store_id";
 const HOST_CONTEXT_KEY: &str = "orchestrator_host_context";
+/// Set once the GitHub watcher is wanted; never cleared by archond.
+const GITHUB_WANTED_KEY: &str = "orchestrator_github";
 
 /// Orchestrator lifecycle state that must not live in `kv`: the locks for its
 /// creation and for ordering its replacement with its calls, a channel
@@ -114,15 +121,20 @@ impl Supervisor {
     }
 }
 
-/// Built-in prompt, this installation's paths, and `[orchestrator]
-/// instructions_file`, if set. `workspace` is the orchestrator's own.
-pub fn orchestrator_instructions(config: &Config, workspace: &Path) -> Result<String, ArchonError> {
+/// Built-in prompt, with the GitHub section when `github`, this
+/// installation's paths, and `[orchestrator] instructions_file`, if set.
+/// `workspace` is the orchestrator's own.
+pub fn orchestrator_instructions(
+    config: &Config,
+    workspace: &Path,
+    github: bool,
+) -> Result<String, ArchonError> {
     assert!(
         workspace.is_absolute(),
         "orchestrator workspace must be absolute"
     );
     let user_pipelines = archon_core::paths::config_dir().join("pipelines");
-    let mut text = BUILTIN_PROMPT.to_owned();
+    let mut text = builtin_prompt(github);
     let depth = config.limits.max_delegation_depth;
     text.push_str(&installation(workspace, &user_pipelines, depth));
     if let Some(path) = &config.orchestrator.instructions_file {
@@ -132,6 +144,25 @@ pub fn orchestrator_instructions(config: &Config, workspace: &Path) -> Result<St
         text.push_str(&extra);
     }
     Ok(text)
+}
+
+fn builtin_prompt(github: bool) -> String {
+    if !github {
+        return BUILTIN_PROMPT.to_owned();
+    }
+    let at = BUILTIN_PROMPT
+        .find(GITHUB_SECTION_BEFORE)
+        .expect("the built-in prompt has a Principles section")
+        + 1;
+    let text = [
+        &BUILTIN_PROMPT[..at],
+        GITHUB_SECTION,
+        "\n",
+        &BUILTIN_PROMPT[at..],
+    ]
+    .concat();
+    assert_eq!(text.len(), BUILTIN_PROMPT.len() + GITHUB_SECTION.len() + 1);
+    text
 }
 
 /// What the built-in prompt refers to but cannot know: paths, and how deep
@@ -160,18 +191,59 @@ fn installation(workspace: &Path, user_pipelines: &Path, depth: u32) -> String {
     )
 }
 
-/// The built-in prompt's `## GitHub requests` section, verbatim. The
-/// orchestrator takes GitHub requests only with it in its instructions.
+/// The prompt's `## GitHub requests` section, verbatim. The orchestrator
+/// takes GitHub requests only with it in its instructions.
 pub fn github_policy() -> &'static str {
-    const HEADING: &str = "\n## GitHub requests\n";
-    let start = BUILTIN_PROMPT
-        .find(HEADING)
-        .expect("the built-in prompt has a GitHub section")
-        + 1;
-    let end = BUILTIN_PROMPT[start + HEADING.len()..]
-        .find("\n## ")
-        .map_or(BUILTIN_PROMPT.len(), |at| start + HEADING.len() + at);
-    &BUILTIN_PROMPT[start..end]
+    assert!(GITHUB_SECTION.starts_with("## GitHub requests\n"));
+    assert!(
+        GITHUB_SECTION.ends_with(".\n"),
+        "one section, no blank tail"
+    );
+    GITHUB_SECTION
+}
+
+/// Have every orchestrator created from now on carry the GitHub policy:
+/// enabling the watcher needs one, so this precedes the check for it.
+pub async fn want_github_policy(ctx: &DaemonContext) -> Result<(), ArchonError> {
+    let mut store = ctx.store.lock().await;
+    if store
+        .kv_get(GITHUB_WANTED_KEY)?
+        .is_none_or(|v| v.is_empty())
+    {
+        store.kv_set(GITHUB_WANTED_KEY, "1")?;
+        tracing::info!("orchestrators from the next generation on get the GitHub policy");
+    }
+    Ok(())
+}
+
+/// Whether an orchestrator created now gets the GitHub policy, as the
+/// store says; `None` when Aether's watcher must be asked (see `wants_github`).
+async fn github_recorded(ctx: &DaemonContext) -> Result<Option<bool>, ArchonError> {
+    if ctx.config.aether.mode == AetherMode::Shared {
+        return Ok(Some(false));
+    }
+    let wanted = kv(ctx, GITHUB_WANTED_KEY).await?.is_some();
+    Ok(wanted.then_some(true))
+}
+
+/// Whether the generation about to be created gets the GitHub policy. A
+/// watcher holding repositories (one set up before this was recorded) or
+/// one that cannot be read gets it: missing it would stop requests.
+async fn wants_github(ctx: &DaemonContext, client: &AetherClient) -> Result<bool, ArchonError> {
+    if let Some(recorded) = github_recorded(ctx).await? {
+        return Ok(recorded);
+    }
+    let watching = match client.github_watcher().await {
+        Ok(status) => !status.config.repositories.is_empty(),
+        Err(error) => {
+            tracing::warn!(%error, "the GitHub watcher could not be read; keeping its policy");
+            true
+        }
+    };
+    if watching {
+        want_github_policy(ctx).await?;
+    }
+    Ok(watching)
 }
 
 /// Whether `agent` runs with this build's GitHub policy.
@@ -569,13 +641,43 @@ async fn info_for(
         raw.parse::<u32>()
             .map_err(|e| ArchonError::Store(format!("kv {RESTARTS_KEY} = {raw:?}: {e}")))
     })?;
+    let generation = parse_generation(kv(ctx, keys::ORCHESTRATOR_GENERATION).await?)?;
     Ok(OrchestratorInfo {
         status: state_of(&agent),
         agent: agent.id,
         model: agent.model,
         effort: ctx.config.orchestrator.effort,
         restarts,
+        generation,
+        freshness: freshness(ctx, generation).await?,
     })
+}
+
+/// How generation `generation` compares with one this archond would start
+/// now; `None` when an Archon that recorded no origin created it. Until the
+/// GitHub choice is recorded (an upgrade), either choice counts as current.
+pub async fn freshness(
+    ctx: &DaemonContext,
+    generation: u64,
+) -> Result<Option<OrchestratorFreshness>, ArchonError> {
+    let choices = match github_recorded(ctx).await? {
+        Some(github) => vec![github],
+        None => vec![false, true],
+    };
+    let workspace = &ctx.paths.orchestrator_workspace;
+    let mut candidates = Vec::with_capacity(choices.len());
+    for github in choices {
+        match orchestrator_instructions(&ctx.config, workspace, github) {
+            Ok(text) => candidates.push(text),
+            Err(error) => {
+                tracing::warn!(%error, "today's orchestrator instructions cannot be built");
+                candidates.clear();
+                break;
+            }
+        }
+    }
+    let store = ctx.store.lock().await;
+    origin::freshness(&store, generation, &candidates)
 }
 
 /// Deliver an operator chat line (`Say`), keyed by its feed item id. The
@@ -879,7 +981,9 @@ async fn create_generation(
     std::fs::create_dir_all(workspace)
         .map_err(|e| ArchonError::io(format!("creating {}", workspace.display()), e))?;
     let delegation = callers::are_named(ctx).await?;
-    let mut instructions = orchestrator_instructions(config, workspace)?;
+    let github = wants_github(ctx, client).await?;
+    let mut instructions = orchestrator_instructions(config, workspace, github)?;
+    let prompt = instructions.clone();
     if !delegation {
         instructions.push_str(callers::NO_DELEGATION_NOTE);
     }
@@ -887,12 +991,14 @@ async fn create_generation(
         let mut store = ctx.store.lock().await;
         let generation = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?.max(1);
         store.kv_set(keys::ORCHESTRATOR_GENERATION, &generation.to_string())?;
+        origin::record_lessons(&mut store, generation)?;
         // Chosen once per generation, so a retried create sends the same text.
         instructions.push_str(&crate::learned::lessons_for_orchestrator(&store)?);
         generation
     };
     let store = store_id(ctx).await?;
     let network = client.daemon_defaults().await?.network_default;
+    let sent = instructions.clone();
     let request = orchestrator_create_agent(
         config,
         instructions,
@@ -903,7 +1009,11 @@ async fn create_generation(
         delegation,
     );
     let agent = create_orchestrator(ctx, client, request).await?;
-    tracing::info!(agent = %agent.id, generation, delegation, "orchestrator created");
+    let created = agent.config.instructions.as_deref();
+    let mut store = ctx.store.lock().await;
+    origin::record_created(&mut store, generation, &prompt, &sent, created)?;
+    drop(store);
+    tracing::info!(agent = %agent.id, generation, delegation, github, "orchestrator created");
     brief_created_orchestrator(ctx, client, &agent.id, generation).await?;
     crate::triggers::collapse_for_new_orchestrator(ctx).await?;
     Ok(agent.id)
@@ -1022,7 +1132,8 @@ mod tests {
 
     /// The built-in prompt with this installation's paths, as created.
     fn prompt() -> String {
-        orchestrator_instructions(&Config::default(), Path::new("/data/orchestrator")).unwrap()
+        orchestrator_instructions(&Config::default(), Path::new("/data/orchestrator"), true)
+            .unwrap()
     }
 
     /// The orchestrator stays a root while stage agents sit under run nodes
@@ -1140,6 +1251,30 @@ mod tests {
     /// prompt still matches.
     fn unwrapped(text: &str) -> String {
         text.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    /// Without the watcher no GitHub request can arrive, so no turn pays for
+    /// its rules; with it the section sits where it always did.
+    #[test]
+    fn only_a_watching_orchestrator_gets_the_github_section() {
+        let workspace = Path::new("/data/orchestrator");
+        let config = Config::default();
+        let without = orchestrator_instructions(&config, workspace, false).unwrap();
+        let with = orchestrator_instructions(&config, workspace, true).unwrap();
+        assert!(!without.contains("## GitHub requests"), "{without}");
+        assert!(!without.contains("External trigger from github"));
+        assert!(
+            with.len() >= without.len() + 3 * 1024,
+            "{} bytes",
+            with.len()
+        );
+        let policy = with.find(github_policy()).expect("the policy, verbatim");
+        assert!(with[..policy].ends_with("operator does.\n\n"), "after Kept");
+        assert!(with[policy..].contains("\n\n## Principles\n"));
+        assert_eq!(
+            with.replacen(&format!("{}\n", github_policy()), "", 1),
+            without
+        );
     }
 
     #[test]
@@ -1556,7 +1691,7 @@ mod tests {
         let said = |depth| {
             let mut config = Config::default();
             config.limits.max_delegation_depth = depth;
-            let text = orchestrator_instructions(&config, Path::new("/data/orchestrator"));
+            let text = orchestrator_instructions(&config, Path::new("/data/orchestrator"), true);
             unwrapped(&text.unwrap())
         };
         assert!(said(2).contains(
@@ -1615,9 +1750,10 @@ mod tests {
             "the built-in prompt grew to {} bytes",
             BUILTIN_PROMPT.len()
         );
+        let watching = builtin_prompt(true).len();
         assert!(
-            github_policy().len() < BUILTIN_PROMPT.len() / 2,
-            "the GitHub policy is one section of it"
+            watching <= BUDGET_BYTES,
+            "with the GitHub policy it grew to {watching} bytes"
         );
     }
 }

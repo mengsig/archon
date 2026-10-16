@@ -407,59 +407,6 @@ pub(crate) fn fetch_head(
     Ok(Some(sha))
 }
 
-/// Where git fetches from and pushes to for `url` once the operator's
-/// `insteadOf` and `pushInsteadOf` rewrites apply, as in [`remote_head`] and [`push`].
-pub(crate) fn rewritten(shadow: &Shadow, url: &str) -> Result<[String; 2], ArchonError> {
-    let url = check_url(url)?;
-    let pattern = r"^url\..*\.(insteadof|pushinsteadof)$";
-    let ran = shadow
-        .git(None, Config::Operator)?
-        .args(["config", "-z", "--get-regexp", pattern])
-        .output()?;
-    // `git config --get-regexp` exits 1 exactly when nothing matches.
-    let listed = match ran.status.code() {
-        Some(0) => String::from_utf8_lossy(&ran.stdout).into_owned(),
-        Some(1) => String::new(),
-        _ => return Err(ran.failure()),
-    };
-    let mut fetch = Vec::new();
-    let mut push = Vec::new();
-    for entry in listed.split('\0').filter(|entry| !entry.is_empty()) {
-        let parsed = entry
-            .split_once('\n')
-            .and_then(|(key, prefix)| Some((key.strip_prefix("url.")?.rsplit_once('.')?, prefix)));
-        match parsed {
-            Some(((base, "insteadof"), prefix)) => fetch.push((base, prefix)),
-            Some(((base, "pushinsteadof"), prefix)) => push.push((base, prefix)),
-            _ => {
-                return Err(ArchonError::Protocol(format!(
-                    "git config listed {entry:?}"
-                )));
-            }
-        }
-    }
-    let fetched = rewrite(&url, &fetch).unwrap_or_else(|| url.clone());
-    let pushed = rewrite(&url, &push).unwrap_or_else(|| fetched.clone());
-    assert!(!fetched.is_empty() && !pushed.is_empty(), "one URL each");
-    Ok([fetched, pushed])
-}
-
-/// `url` with the longest of `rules`' prefixes it starts with replaced by
-/// that rule's base, the first of equally long ones as git takes; `None` when
-/// no prefix matches.
-fn rewrite(url: &str, rules: &[(&str, &str)]) -> Option<String> {
-    let mut chosen: Option<&(&str, &str)> = None;
-    for rule in rules {
-        let (_, prefix) = rule;
-        let longer = chosen.is_none_or(|(_, best)| prefix.len() > best.len());
-        if !prefix.is_empty() && url.starts_with(prefix) && longer {
-            chosen = Some(rule);
-        }
-    }
-    let (base, prefix) = chosen?;
-    Some(format!("{base}{}", &url[prefix.len()..]))
-}
-
 /// The commit `url` names as the head of `branch`; `None` when it has no such branch.
 pub(crate) fn remote_head(
     shadow: &Shadow,
@@ -670,47 +617,6 @@ mod tests {
         assert_eq!(
             remote_head(&shadow, url, "feature").unwrap().as_ref(),
             Some(ours)
-        );
-    }
-
-    /// Without a rewrite of the operator's, git fetches from and pushes to `url` itself.
-    #[test]
-    fn a_url_nobody_rewrites_is_where_git_goes() {
-        let dir = tempfile::tempdir().unwrap();
-        let repo = dir.path().join("repo");
-        run_git(dir.path(), &["init", "--quiet", "-b", "main", "repo"]);
-        let shadow = Shadow::of(&dir.path().join("data"), &repo).unwrap();
-        let url = "/nowhere/rewritten/origin.git";
-        assert_eq!(rewritten(&shadow, url).unwrap(), [url, url]);
-        assert!(
-            rewritten(&shadow, "ext::sh -c x").is_err(),
-            "a helper is refused"
-        );
-    }
-
-    #[test]
-    fn the_longest_prefix_rewrites_a_url_as_git_does() {
-        let rules = [
-            ("https://github.com/fork/", "https://github.com/o/"),
-            ("git@github.com:", "https://github.com/"),
-        ];
-        assert_eq!(
-            rewrite("https://github.com/o/r.git", &rules).as_deref(),
-            Some("https://github.com/fork/r.git")
-        );
-        assert_eq!(
-            rewrite("https://github.com/x/r.git", &rules).as_deref(),
-            Some("git@github.com:x/r.git")
-        );
-        assert_eq!(rewrite("/srv/origin.git", &rules), None);
-        let tied = [
-            ("https://github.com/fork/", "https://github.com/o/"),
-            ("https://github.com/o/", "https://github.com/o/"),
-        ];
-        assert_eq!(
-            rewrite("https://github.com/o/r.git", &tied).as_deref(),
-            Some("https://github.com/fork/r.git"),
-            "the first of equally long prefixes wins"
         );
     }
 }

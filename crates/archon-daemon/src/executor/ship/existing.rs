@@ -124,7 +124,7 @@ fn fast_forward_now(
         None => url.clone(),
     };
     let shadow = Shadow::of(data_dir, repo)?;
-    let rewritten = stack::rewritten(&shadow, &url)?;
+    let rewritten = shadow.rewritten(&url)?;
     if let Some(refusal) = rewritten.iter().find_map(|url| elsewhere(url, onto)) {
         return Ok(Err(refusal));
     }

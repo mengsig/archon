@@ -70,9 +70,21 @@ impl RepoTiers {
             .unwrap_or(DEFAULT_RELEASE_BRANCH)
     }
 
-    /// Refuse a branch name git would read as an option or a revision
-    /// range, and a command that is blank or spans lines.
+    /// The tiers in force, after every layer is merged: each field as in
+    /// [`Self::validate_fields`], and two distinct branches.
     pub fn validate(&self) -> Result<(), ArchonError> {
+        self.validate_fields()?;
+        if self.integration_branch.as_deref() == Some(self.release_branch()) {
+            return Err(ArchonError::Invalid(
+                "integration_branch must differ from release_branch".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// One layer on its own: refuse a branch name git would read as an
+    /// option or a revision range, and a command that is blank or spans lines.
+    pub fn validate_fields(&self) -> Result<(), ArchonError> {
         let branches = [
             ("integration_branch", &self.integration_branch),
             ("release_branch", &self.release_branch),
@@ -95,18 +107,12 @@ impl RepoTiers {
                 )));
             }
         }
-        if self.integration_branch.is_some()
-            && self.integration_branch.as_deref() == Some(self.release_branch())
-        {
-            return Err(ArchonError::Invalid(
-                "integration_branch must differ from release_branch".into(),
-            ));
-        }
         Ok(())
     }
 
     /// `<repo>/.archon/repo.toml`; a missing file sets nothing, and a
-    /// malformed or invalid one is an error naming the file.
+    /// malformed one or a bad field is an error naming the file. The two
+    /// branches are compared only once the registry's layer is over it.
     pub fn load(repo_root: &Path) -> Result<Self, ArchonError> {
         assert!(repo_root.is_absolute(), "registered paths are absolute");
         let path = crate::paths::repo_archon_dir(repo_root).join(REPO_FILE_NAME);
@@ -118,7 +124,7 @@ impl RepoTiers {
         let tiers: Self = toml::from_str(&text)
             .map_err(|e| ArchonError::Config(format!("{}: {e}", path.display())))?;
         tiers
-            .validate()
+            .validate_fields()
             .map_err(|e| ArchonError::Config(format!("{}: {e}", path.display())))?;
         Ok(tiers)
     }
@@ -171,6 +177,21 @@ mod tests {
     }
 
     #[test]
+    fn the_two_branches_are_compared_only_in_the_merged_tiers() {
+        let file = RepoTiers {
+            release_branch: Some("trunk".into()),
+            ..RepoTiers::default()
+        };
+        let registry = tiers(Some("main"), None);
+        assert!(registry.validate().is_err(), "alone, main is the release");
+        assert!(registry.validate_fields().is_ok());
+        assert!(registry.over(file.clone()).validate().is_ok());
+        let folded = tiers(Some("trunk"), None).over(file);
+        assert!(folded.validate().is_err());
+        assert!(folded.validate_fields().is_ok());
+    }
+
+    #[test]
     fn a_missing_file_sets_nothing_and_a_committed_one_is_read() {
         let dir = tempfile::tempdir().unwrap();
         assert!(RepoTiers::load(dir.path()).unwrap().is_empty());
@@ -194,7 +215,6 @@ mod tests {
         for text in [
             "integration = \"next\"\n",
             "integration_branch = \"--force\"\n",
-            "integration_branch = \"main\"\n",
             "[checks]\nfast = \"  \"\n",
         ] {
             std::fs::write(&file, text).unwrap();

@@ -334,3 +334,19 @@ async fn the_registry_refuses_malformed_tiers() {
         assert!(h.cli(request).await.is_err(), "{tiers:?}");
     }
 }
+
+/// The two branches are compared in the tiers in force: the registry may
+/// name `main` as its integration branch over a file releasing `trunk`.
+#[tokio::test]
+async fn the_registry_is_validated_over_the_committed_file() {
+    let h = Harness::new().await;
+    write_repo_file(&h, "release_branch = \"trunk\"\n");
+    integrate_into(&h, "main").await;
+    write_repo_file(&h, "");
+    let folded = Request::RepoUpdate {
+        repo: RepoRef(REPO_NAME.into()),
+        patch: RepoPatch::default(),
+    };
+    let refused = h.cli(folded).await.unwrap_err().to_string();
+    assert!(refused.contains("must differ"), "{refused}");
+}

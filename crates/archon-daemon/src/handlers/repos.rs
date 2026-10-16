@@ -255,7 +255,8 @@ fn inspect_repo(path: &Path) -> Result<(PathBuf, RepoConfig), ArchonError> {
 /// default pipeline loads. A missing integration branch is created on use.
 async fn check_repo(repo: &Repo) -> Result<(), ArchonError> {
     assert!(repo.path.is_absolute(), "registered paths are canonical");
-    repo.tiers.validate()?;
+    repo.tiers.validate_fields()?;
+    RepoEnv::new(Some(repo.clone()))?.tiers()?;
     if let Some(base) = repo.base_branch.clone() {
         let root = repo.path.clone();
         blocking(move || {

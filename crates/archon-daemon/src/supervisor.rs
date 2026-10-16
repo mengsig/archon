@@ -914,6 +914,7 @@ async fn create_generation(
     };
     let store = store_id(ctx).await?;
     let network = client.daemon_defaults().await?.network_default;
+    let sent = instructions.clone();
     let request = orchestrator_create_agent(
         config,
         instructions,
@@ -925,7 +926,9 @@ async fn create_generation(
     );
     let agent = create_orchestrator(ctx, client, request).await?;
     let created = agent.config.instructions.as_deref();
-    origin::record_created(&mut *ctx.store.lock().await, generation, &prompt, created)?;
+    let mut store = ctx.store.lock().await;
+    origin::record_created(&mut store, generation, &prompt, &sent, created)?;
+    drop(store);
     tracing::info!(agent = %agent.id, generation, delegation, "orchestrator created");
     brief_created_orchestrator(ctx, client, &agent.id, generation).await?;
     crate::triggers::collapse_for_new_orchestrator(ctx).await?;

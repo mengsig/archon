@@ -42,28 +42,31 @@ pub(super) fn record_lessons(store: &mut Store, generation: u64) -> Result<(), A
     store.kv_set(ORIGIN_KEY, &serde_json::to_string(&origin)?)
 }
 
-/// Record what Aether created generation `generation` with: `prompt`, as
-/// this attempt built it, unless `created` (the agent's instructions, when
-/// Aether returns them) shows a replay of an earlier attempt's text.
+/// Record what Aether created generation `generation` with: `prompt`, the
+/// part of `sent` before the lessons, unless `created` (the agent's
+/// instructions, when Aether returns them) differs from `sent`, as when it
+/// replays an earlier attempt's creation; then that text is recorded.
 pub(super) fn record_created(
     store: &mut Store,
     generation: u64,
     prompt: &str,
+    sent: &str,
     created: Option<&str>,
 ) -> Result<(), ArchonError> {
     assert!(
         !prompt.trim().is_empty(),
         "the orchestrator has instructions"
     );
+    assert!(sent.starts_with(prompt), "the lessons follow the prompt");
     let mut origin = read(store)?
         .filter(|origin| origin.generation == generation)
         .expect("record_lessons ran for this generation");
-    let sent = match created {
-        Some(text) if !text.starts_with(prompt) => text,
+    let received = match created {
+        Some(text) if text != sent => text,
         _ => prompt,
     };
     origin.archon_version = env!("CARGO_PKG_VERSION").to_owned();
-    origin.prompt = fingerprint(sent);
+    origin.prompt = fingerprint(received);
     origin.tools = tools_fingerprint();
     store.kv_set(ORIGIN_KEY, &serde_json::to_string(&origin)?)
 }

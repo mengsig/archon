@@ -231,15 +231,23 @@ async fn a_retried_creation_records_the_prompt_it_sent() {
 }
 
 /// Aether answers a reused creation key with the agent the earlier attempt
-/// created, whose instructions are not the ones this attempt built.
+/// created, whose instructions are not the ones this attempt sent: here the
+/// operator since removed a trailing instruction.
 #[tokio::test]
 async fn a_replayed_creation_with_older_instructions_is_outdated() {
     let dir = tempfile::tempdir().unwrap();
-    let (harness, _file) = with_instructions(dir.path(), "Prefer large changes.").await;
+    let older = "Prefer small changes.\nRun the old check.";
+    let (harness, file) = with_instructions(dir.path(), older).await;
     let states = agent_table(&harness);
     states.lock().unwrap().insert(ORCH.into(), "ready".into());
+    let built = supervisor::orchestrator_instructions(
+        &harness.ctx.config,
+        &harness.ctx.paths.orchestrator_workspace,
+    )
+    .unwrap();
+    std::fs::write(&file, "Prefer small changes.").unwrap();
     let mut replayed = agent_in(ORCH, "ready");
-    replayed["config"] = json!({ "instructions": "Prefer small changes." });
+    replayed["config"] = json!({ "instructions": built });
     harness
         .fake
         .script("create_agent", Scripted::reply("agent", replayed));

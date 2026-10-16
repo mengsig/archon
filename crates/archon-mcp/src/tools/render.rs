@@ -21,8 +21,8 @@ use archon_core::model::{Effort, ModelPlan, ModelReasons};
 use archon_core::notify::Question;
 use archon_core::policy::ModelPolicy;
 use archon_core::protocol::{
-    AetherLinkStatus, DaemonStatus, DiskStatus, ItemDetail, QuotaStatus, Reply, ReportPublished,
-    StatusHealth, gib,
+    AetherLinkStatus, DaemonStatus, DiskStatus, ItemDetail, OrchestratorInfo, QuotaStatus, Reply,
+    ReportPublished, StatusHealth, gib,
 };
 use archon_core::queue::{Caps, QueueItem, QueueState};
 use archon_core::repo::Repo;
@@ -635,6 +635,20 @@ fn policy_text(policy: &ModelPolicy) -> String {
     )
 }
 
+/// The orchestrator, and whether a restart is owed for its prompt, tools
+/// or lessons.
+fn orchestrator_text(o: &OrchestratorInfo) -> String {
+    format!(
+        "{} {} {} [{}], restarts {}; {}",
+        o.agent,
+        o.model,
+        o.effort,
+        o.status,
+        o.restarts,
+        o.describe_freshness()
+    )
+}
+
 fn daemon_status(status: &DaemonStatus) -> String {
     let aether = match &status.aether {
         AetherLinkStatus::Connected {
@@ -646,12 +660,10 @@ fn daemon_status(status: &DaemonStatus) -> String {
             format!("DISCONNECTED ({error}); nothing dispatches until it reconnects")
         }
     };
-    let orchestrator = status.orchestrator.as_ref().map_or("none".to_owned(), |o| {
-        format!(
-            "{} {} {} [{}], restarts {}",
-            o.agent, o.model, o.effort, o.status, o.restarts
-        )
-    });
+    let orchestrator = status
+        .orchestrator
+        .as_ref()
+        .map_or("none".to_owned(), orchestrator_text);
     let caps = &status.caps;
     format!(
         "archond {} (pid {}), up since {}. Aether: {aether}. Orchestrator: {orchestrator}.\n\
@@ -920,6 +932,28 @@ fn clip_noting(text: &str, max: usize, note: &str) -> String {
 #[cfg(test)]
 mod storage_tests {
     use super::*;
+
+    #[test]
+    fn queue_status_says_when_the_orchestrator_is_stale() {
+        let mut info: OrchestratorInfo = serde_json::from_value(serde_json::json!({
+            "agent": "agt_0001", "model": "claude-code/opus", "effort": "high",
+            "status": "ready", "restarts": 6, "generation": 7,
+            "freshness": {"created_by": "1.2.3", "prompt_outdated": true,
+                          "tools_outdated": false, "new_lessons": 3},
+        }))
+        .unwrap();
+        let text = orchestrator_text(&info);
+        assert!(
+            text.ends_with("generation 7, created by 1.2.3; prompt outdated; 3 new lessons"),
+            "{text}"
+        );
+        info.freshness = None;
+        let text = orchestrator_text(&info);
+        assert!(
+            text.contains("created before Archon recorded its prompt"),
+            "{text}"
+        );
+    }
 
     #[test]
     fn queue_status_includes_storage_and_last_gc_even_without_disk_pressure() {

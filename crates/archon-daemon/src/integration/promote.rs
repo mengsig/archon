@@ -378,7 +378,7 @@ async fn after_merge(
         carry_green(ctx, watch, head, &release.commit).await?;
     }
     let hook = match watch.release_hook.clone() {
-        Some(command) => Some(run_hook(ctx, watch, &release, command).await),
+        Some(command) => Some(hook_at_merge(ctx, watch, &release, head, command).await?),
         None => None,
     };
     Ok(PromotionOutcome::Merged {
@@ -475,8 +475,40 @@ async fn carry_green(
     state::save(&mut store, &watch.repo.id, &state)
 }
 
+/// Run the release hook at the commit that merged `head`, never at a later
+/// release commit that landed before a queued promotion was finished.
+async fn hook_at_merge(
+    ctx: &DaemonContext,
+    watch: &Watch,
+    release: &Head,
+    head: &str,
+    command: String,
+) -> Result<ReleaseHook, ArchonError> {
+    let entered = {
+        let (source, tip, head) = (
+            watch.source.clone(),
+            release.commit.clone(),
+            head.to_owned(),
+        );
+        blocking(move || source.entered_at(&tip, &head)).await?
+    };
+    let Some(merged) = entered else {
+        return Err(ArchonError::Unavailable(format!(
+            "`origin`'s `{}` at {} no longer holds {}",
+            watch.release,
+            short(&release.commit),
+            short(head)
+        )));
+    };
+    let at = Head {
+        commit: merged,
+        source_ref: release.source_ref.clone(),
+    };
+    Ok(run_hook(ctx, watch, &at, command).await)
+}
+
 /// Run the release hook in the daemon's checkout at the merged `release`
-/// head, in the host's build slot; how it ended, never an error.
+/// commit, in the host's build slot; how it ended, never an error.
 async fn run_hook(
     ctx: &DaemonContext,
     watch: &Watch,

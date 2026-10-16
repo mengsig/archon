@@ -498,3 +498,48 @@ async fn an_unconfirmed_committed_release_hook_never_runs() {
     assert!(!file(&h, "unconfirmed").exists(), "the hook never ran");
     assert!(!file(&h, "released").exists(), "nor the cleared one");
 }
+
+/// A release commit landing after the queued merge and before the promotion
+/// is finished is not released: the hook runs at the merge commit.
+#[tokio::test]
+async fn a_finished_queued_merge_runs_the_hook_at_its_merge_commit() {
+    let (h, gh, _slot) = promoting().await;
+    let landed = land(&h, "one");
+    integration::pass(&h.ctx).await.expect("green pass");
+    gh.queue_merges();
+    let held = h.cli(promote()).await;
+    assert!(
+        matches!(&held, Err(ArchonError::Unavailable(_))),
+        "{held:?}"
+    );
+    gh.land_queued(&h.ctx.config.github.binary);
+    let origin = origin_of(&h);
+    let merged = pushed(&origin, "main").expect("the queued merge landed");
+    let parents = git(&origin, &["rev-list", "--parents", "-n", "1", &merged]);
+    assert!(parents.ends_with(&landed), "a merge of the head: {parents}");
+
+    let clone = h.dir.path().join("upstream-later");
+    let to = clone.to_str().unwrap();
+    git(
+        h.dir.path(),
+        &["clone", "--quiet", origin.to_str().unwrap(), to],
+    );
+    git(&clone, &["checkout", "--quiet", "main"]);
+    std::fs::write(clone.join("later"), "not promoted\n").unwrap();
+    git(&clone, &["add", "later"]);
+    git(&clone, &["commit", "--quiet", "-m", "Add later"]);
+    git(&clone, &["push", "--quiet", "origin", "main"]);
+    let later = git(&clone, &["rev-parse", "HEAD"]);
+
+    let done = promotion(h.cli(promote()).await);
+    let PromotionOutcome::Merged {
+        release_head, hook, ..
+    } = &done.outcome
+    else {
+        panic!("not finished: {done:?}");
+    };
+    assert_eq!(release_head, &later, "the release branch's head now");
+    assert!(hook.as_ref().is_some_and(|hook| hook.passed), "{hook:?}");
+    let released = std::fs::read_to_string(file(&h, "released")).expect("hook output");
+    assert_eq!(released.trim(), merged, "the hook ran at the merge commit");
+}

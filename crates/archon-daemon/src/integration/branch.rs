@@ -80,6 +80,32 @@ impl Source {
         crate::worktree::is_ancestor(&self.repo, commit, head)
     }
 
+    /// The commit on `release`'s first-parent line where `head` entered it:
+    /// the promotion's merge commit, or `head` itself after a fast-forward.
+    /// `None` when `release` does not hold `head`.
+    pub fn entered_at(&self, release: &str, head: &str) -> Result<Option<String>, ArchonError> {
+        assert!(
+            is_commit_id(release) && is_commit_id(head),
+            "full commit ids"
+        );
+        if !self.contains(release, head)? {
+            return Ok(None);
+        }
+        let range = format!("{head}..{release}");
+        let args = ["rev-list", "--first-parent", "--ancestry-path", "--reverse"];
+        let listed = crate::worktree::git(&self.repo, &[&args[..], &[range.as_str()]].concat())?;
+        let Some(oldest) = listed.lines().next() else {
+            assert_eq!(release, head, "only the head itself lists nothing");
+            return Ok(Some(head.to_owned()));
+        };
+        assert!(is_commit_id(oldest), "rev-list lists commit ids");
+        let parent = crate::worktree::git(&self.repo, &["rev-parse", &format!("{oldest}^1")])?;
+        if parent == head {
+            return Ok(Some(head.to_owned()));
+        }
+        Ok(Some(oldest.to_owned()))
+    }
+
     /// Where `head` left the release branch: the commit assumed green when
     /// none was recorded. `None` when the release branch is missing.
     pub fn fork_point(&self, release: &str, head: &str) -> Result<Option<String>, ArchonError> {

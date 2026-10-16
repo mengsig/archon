@@ -30,9 +30,11 @@ pub struct RepoTiers {
     pub checks: Checks,
 }
 
-/// The check tiers: `fast` runs in every item before it commits; `full`
-/// is the whole suite, which items never run; `release` runs once a
-/// promotion merged the integration branch into the release branch.
+/// The check tiers: `fast` runs in every item before it commits, for the
+/// units the change affects where it names `{packages}` or
+/// `{packages:<flag>}` ([`super::affected`]); `full` is the whole suite,
+/// which items never run; `release` runs once a promotion merged the
+/// integration branch into the release branch.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Checks {
@@ -106,10 +108,8 @@ impl RepoTiers {
             ("checks.release", &self.checks.release),
         ];
         for (key, command) in commands {
-            if let Some(text) = command.as_deref().filter(|c| !one_line(c)) {
-                return Err(ArchonError::Invalid(format!(
-                    "{key} {text:?} must be one non-empty line"
-                )));
+            if let Some(text) = command.as_deref() {
+                check_command(key, text)?;
             }
         }
         Ok(())
@@ -126,13 +126,31 @@ impl RepoTiers {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(e) => return Err(ArchonError::io(format!("reading {}", path.display()), e)),
         };
-        let tiers: Self = toml::from_str(&text)
-            .map_err(|e| ArchonError::Config(format!("{}: {e}", path.display())))?;
+        Self::parse(&text, &path.display().to_string())
+    }
+
+    /// The `.archon/repo.toml` text read from `origin`, which errors name.
+    pub fn parse(text: &str, origin: &str) -> Result<Self, ArchonError> {
+        assert!(!origin.is_empty(), "errors name where the text came from");
+        let tiers: Self =
+            toml::from_str(text).map_err(|e| ArchonError::Config(format!("{origin}: {e}")))?;
         tiers
             .validate_fields()
-            .map_err(|e| ArchonError::Config(format!("{}: {e}", path.display())))?;
+            .map_err(|e| ArchonError::Config(format!("{origin}: {e}")))?;
         Ok(tiers)
     }
+}
+
+/// Refuse a check command `key` names that is blank, spans lines or holds
+/// a malformed `{packages}` placeholder.
+pub fn check_command(key: &str, text: &str) -> Result<(), ArchonError> {
+    if !one_line(text) {
+        return Err(ArchonError::Invalid(format!(
+            "{key} {text:?} must be one non-empty line"
+        )));
+    }
+    super::affected::check_placeholders(text)
+        .map_err(|why| ArchonError::Invalid(format!("{key} {text:?}: {why}")))
 }
 
 fn plain_branch(name: &str) -> bool {
@@ -242,5 +260,25 @@ mod tests {
         }
         assert!(tiers(None, Some("make test")).validate().is_ok());
         assert!(tiers(None, Some("a\nb")).validate().is_err());
+        assert!(
+            tiers(None, Some("cargo test {packages:-p}"))
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            tiers(None, Some("cargo test {packages:-p"))
+                .validate()
+                .is_err()
+        );
+        assert!(
+            tiers(None, Some("cargo test {packagez}"))
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            tiers(None, Some("cargo test {packages-p}"))
+                .validate()
+                .is_err()
+        );
     }
 }

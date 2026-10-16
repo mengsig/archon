@@ -11,6 +11,7 @@ pub mod coordination;
 mod dependencies;
 mod descendants;
 mod discard;
+mod fast_check;
 mod finish;
 pub(crate) mod frozen;
 mod gate_news;
@@ -88,6 +89,8 @@ pub struct RunTable {
     pub shipping: BTreeSet<PipelineRunId>,
     /// Deliveries that failed in a way another try may pass, and their wait.
     pub ship_retries: BTreeMap<PipelineRunId, ShipRetry>,
+    /// The fast checks deliveries wait for, and their verdicts.
+    pub gates: ship::Gates,
 }
 
 /// The failed tries of one run's delivery.

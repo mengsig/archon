@@ -69,6 +69,7 @@ pub(super) async fn finish_run(
     table.merges.remove(&run.id);
     table.ships.remove(&run.id);
     table.ship_retries.remove(&run.id);
+    table.gates.forget(&run.id);
     crate::feed::publish(ctx, finished.answers);
     crate::reports::close_stale_questions(ctx).await?;
     let pr_url = pr_url(ctx, &run).await?;

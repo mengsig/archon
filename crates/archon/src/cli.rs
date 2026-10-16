@@ -353,6 +353,10 @@ pub struct TierArgs {
     /// (e.g. a tag command), in a checkout at the merged commit.
     #[arg(long)]
     pub release_hook: Option<String>,
+    /// Confirm the committed `.archon/repo.toml` fast check, word for word,
+    /// so the ship gate runs it; it stops running once the file differs.
+    #[arg(long)]
+    pub confirm_fast_check: Option<String>,
 }
 
 #[derive(Debug, Args)]

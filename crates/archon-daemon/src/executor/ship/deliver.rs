@@ -225,7 +225,7 @@ async fn carry_out(ctx: &DaemonContext, claimed: &Claimed) -> Result<ShipOutcome
         branch: run.branch.clone(),
         base: base.clone(),
         allowed: repo_identity::RepoIdentity::allowed(identity.as_ref()),
-        attribution: plan.attribution,
+        attribution: repo.attribution,
     };
     let own = repo_identity::DAEMON_EMAIL;
     assert!(
@@ -254,11 +254,13 @@ async fn carry_out(ctx: &DaemonContext, claimed: &Claimed) -> Result<ShipOutcome
             pr_url: None,
         });
     }
+    // The operator's policy as it stands at delivery, as the checks applied it.
+    let body = archon_pipeline::pr_body(&plan.body, run.item.as_str(), repo.attribution);
     let request = remote::Request {
         branch: &run.branch,
         base: &base,
         title: &plan.record.title,
-        body: &plan.body,
+        body: &body,
         draft,
     };
     match deliver_pr(ctx, run, &repo, &commit, request).await? {
@@ -613,7 +615,6 @@ mod tests {
             },
             body: "b".into(),
             summary: "s".into(),
-            attribution: Default::default(),
         };
         let mut table = RunTable::default();
         for run in [&waiting, &ready, &running] {

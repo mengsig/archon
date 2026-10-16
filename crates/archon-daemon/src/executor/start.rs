@@ -10,7 +10,7 @@ use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId};
 use archon_core::notify::NotificationKind;
 use archon_core::queue::{QueueItem, QueueState};
-use archon_core::repo::{Attribution, Repo, ShipMode};
+use archon_core::repo::{Repo, ShipMode};
 use archon_core::run::{PipelineRun, RunState};
 use archon_pipeline::autonomy::OperatorGates;
 use archon_pipeline::{PipelineSpec, RunDriver, RunVars};
@@ -247,8 +247,7 @@ fn assemble(
     let gates = OperatorGates::for_run(&spec, &item.autonomy);
     let driver = RunDriver::new(spec.clone(), item.model_plan.clone(), base_vars.clone())?
         .with_gates(gates)?
-        .with_experiments(experiments)
-        .with_attribution(repo.map_or_else(Attribution::default, |r| r.attribution));
+        .with_experiments(experiments);
     let run = PipelineRun {
         id: run_id,
         item: item.id.clone(),

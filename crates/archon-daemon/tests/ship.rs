@@ -350,13 +350,20 @@ fn attribute(policy: Attribution) -> RepoPatch {
     }
 }
 
-/// A change committed with a model's trailer, and a record whose body ends
-/// with a tool's footer.
+/// The trailers of a commit `attributed` makes.
+const CO_AUTHORS: [&str; 6] = ["a", "b", "c", "d", "e", "Claude"];
+
+/// A change committed with six models' trailers, and a record whose body
+/// ends with a tool's footer.
 fn attributed(workspace: &Path) -> Value {
     std::fs::write(workspace.join("change.txt"), "a change\n").unwrap();
     git(workspace, &["add", "change.txt"]);
-    let message = "Change the thing\n\nCo-Authored-By: Claude <noreply@anthropic.com>";
-    git(workspace, &["commit", "--quiet", "-m", message]);
+    let trailers: Vec<String> = CO_AUTHORS
+        .iter()
+        .map(|name| format!("Co-Authored-By: {name} <noreply@anthropic.com>"))
+        .collect();
+    let message = format!("Change the thing\n\n{}", trailers.join("\n"));
+    git(workspace, &["commit", "--quiet", "-m", &message]);
     let mut record = record(workspace);
     record["pr"]["body"] = json!(
         "Why, and how it was verified.\n\n\u{1f916} Generated with [Claude Code](https://claude.com/claude-code)"
@@ -364,15 +371,13 @@ fn attributed(workspace: &Path) -> Value {
     record
 }
 
-/// Under `none` the pull request body ends with the record's own text, also
-/// for a run whose driver a restart rebuilt.
+/// Under `none`, set while the run was under way, the pull request body ends
+/// with the record's own text.
 #[tokio::test]
 async fn without_attribution_the_pull_request_names_no_item() {
-    let (mut h, gh) = delivering().await;
-    update_repo(&h, attribute(Attribution::None)).await;
+    let (h, gh) = delivering().await;
     let (item, _) = started(&h, "direct").await;
-    h.restart();
-    executor::recover(&h.ctx).await.unwrap();
+    update_repo(&h, attribute(Attribution::None)).await;
     settle_changed(&h, json!({})).await;
 
     succeeded(&h, &item).await;
@@ -382,29 +387,31 @@ async fn without_attribution_the_pull_request_names_no_item() {
     assert!(!body.contains(item.id.as_str()), "{body}");
 }
 
-/// Under `none` a trailer or footer refuses the delivery, each line quoted,
-/// and nothing leaves the machine.
+/// Under `none`, set while the run was under way, trailers and a footer
+/// refuse the delivery, every line quoted, and nothing leaves the machine.
 #[tokio::test]
 async fn an_attribution_line_refuses_the_delivery_under_none() {
     let (h, gh) = delivering().await;
-    update_repo(&h, attribute(Attribution::None)).await;
     let (item, run) = started(&h, "direct").await;
+    update_repo(&h, attribute(Attribution::None)).await;
     settle_with(&h, attributed(&run.workspace)).await;
 
     let error = failed(&h, &item).await;
     assert!(error.contains("attribution policy is `none`"), "{error}");
-    assert!(error.contains("2 line(s) do"), "{error}");
+    assert!(error.contains("7 line(s) do"), "{error}");
     let footer = "Generated with [Claude Code](https://claude.com/claude-code)";
     assert!(
         error.contains(&format!("`pr.body` has {footer:?}")),
         "{error}"
     );
     let commit = git(&run.workspace, &["rev-parse", "HEAD"]);
-    let trailer = format!(
-        "commit {} has \"Co-Authored-By: Claude <noreply@anthropic.com>\"",
-        &commit[..12]
-    );
-    assert!(error.contains(&trailer), "{error}");
+    for name in CO_AUTHORS {
+        let trailer = format!(
+            "commit {} has \"Co-Authored-By: {name} <noreply@anthropic.com>\"",
+            &commit[..12]
+        );
+        assert!(error.contains(&trailer), "{error}");
+    }
     assert!(error.contains("Retry the item"), "{error}");
     assert_eq!(pushed(&origin_of(&h), &run.branch), None);
     assert!(gh.calls().is_empty(), "{:?}", gh.calls());

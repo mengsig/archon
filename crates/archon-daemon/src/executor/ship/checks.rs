@@ -32,7 +32,7 @@ pub(super) struct Target {
     pub base: String,
     /// The addresses a commit the run adds may carry, recorded at registration.
     pub allowed: Vec<String>,
-    /// The policy the pull request body was written under.
+    /// The repository's attribution policy at delivery.
     pub attribution: Attribution,
 }
 
@@ -264,13 +264,14 @@ fn unattributed(
     if found.is_empty() {
         return Ok(Ok(()));
     }
+    // Every line is quoted, not `listed`: each is one the stage must remove.
     Ok(Err(format!(
         "this repository's attribution policy is `none`, so nothing that ships may credit a \
          model or a tool, and {} line(s) do: {}. Retry the item so its stage writes `pr.body` \
          without them and rewords those commits (no `Co-Authored-By:` trailer, no \
          `Generated with` line), then records the new `commit` and `tree`",
         found.len(),
-        listed(found.iter().map(String::as_str))
+        found.join("; ")
     )))
 }
 

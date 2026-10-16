@@ -85,10 +85,13 @@ fn linear_pipeline_runs_each_stage_once_and_succeeds() {
     assert_eq!(plan.record.tree, sim::TREE);
     let summary = format!("Changed parse() to accept empty input.{NO_REVIEW}");
     assert_eq!(plan.summary, summary);
+    assert_eq!(plan.body, format!("What changed and why.{NO_REVIEW}"));
     let item = format!("Archon item: {}\n", sim.run.item);
+    let delivered = archon_pipeline::pr_body(&plan.body, sim.run.item.as_str(), Default::default());
     assert_eq!(
-        plan.body,
-        format!("What changed and why.{NO_REVIEW}\n\n{item}")
+        delivered,
+        format!("{}\n\n{item}", plan.body),
+        "delivery names the item"
     );
     assert!(sim.finished().is_none(), "the run waits for its delivery");
 
@@ -1664,7 +1667,7 @@ fn adaptive_keeps_one_build_lead_and_archond_ships_its_reviewed_change() {
     );
     assert!(
         plan.body
-            .starts_with(&format!("What changed and why.\n\n{review}\n\n")),
+            .starts_with(&format!("What changed and why.\n\n{review}")),
         "{}",
         plan.body
     );

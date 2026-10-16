@@ -2363,13 +2363,12 @@ ever asked for without it. Stages after the record stage cannot commit
 (§8.2), so what they verified is that tree.
 
 When the last stage passes, the driver emits `Ship(ShipPlan)`: the record,
-its stage, the run summary, and the pull request body (the record's, then
+its stage, the run summary, and the pull request text (the record's, then
 the `REVIEW:` line, the summaries of the stages that passed after the
-record stage under `## Review and verification`, the change report under
-`## Change report`, and `Archon item: <id>` unless the repository's
-`attribution` is `none`; each part clipped so the whole stays under GitHub's
-limit). The plan carries that policy, which the driver took from the
-registry when the run started or was rebuilt. `executor::ship` queues the plan in the run
+record stage under `## Review and verification`, and the change report
+under `## Change report`; each part clipped to leave room under GitHub's
+limit). Delivery ends it with `Archon item: <id>` unless the repository's
+`attribution` is `none` at that moment (`ship::pr_body`). `executor::ship` queues the plan in the run
 table and delivers it off every lock:
 
 1. **Wait for the worktree to be quiet.** While the run owes a descendant

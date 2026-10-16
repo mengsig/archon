@@ -7,7 +7,6 @@ use std::sync::Arc;
 use archon_core::error::ArchonError;
 use archon_core::id::PipelineRunId;
 use archon_core::queue::{QueueItem, QueueState};
-use archon_core::repo::Attribution;
 use archon_core::run::{PipelineRun, StageRun};
 use archon_core::steer::{RunEdit, Then};
 use archon_pipeline::autonomy::OperatorGates;
@@ -241,22 +240,6 @@ pub(super) async fn blueprint(
     })
 }
 
-/// The attribution policy of `item`'s repository as the operator set it now;
-/// the default for an item without a registered repository.
-fn attribution_of(store: &Store, item: &QueueItem) -> Result<Attribution, ArchonError> {
-    let Some(repo) = &item.repo else {
-        return Ok(Attribution::default());
-    };
-    match store.repo(&crate::resolve::repo_ref(repo)) {
-        Ok(found) => {
-            assert_eq!(&found.id, repo, "a repository is found by its id");
-            Ok(found.attribution)
-        }
-        Err(ArchonError::NotFound(_)) => Ok(Attribution::default()),
-        Err(error) => Err(error),
-    }
-}
-
 /// The driver `blueprint` describes, with every decision, merge outcome and
 /// delivery recorded so far. Errors when its parts do not fit together.
 pub(super) async fn driver_of(
@@ -271,19 +254,12 @@ pub(super) async fn driver_of(
         aborts,
     } = blueprint;
     assert_eq!(spec.name(), run.pipeline, "a run keeps its snapshot's name");
-    let (gates, attribution) = {
-        let store = ctx.store.lock().await;
-        (
-            store.gates_for_run(&run.id)?,
-            attribution_of(&store, &item)?,
-        )
-    };
+    let gates = ctx.store.lock().await.gates_for_run(&run.id)?;
     let operator_gates = OperatorGates::for_run(&spec, &item.autonomy);
     let experiments = crate::experiments::item_dir(&ctx.paths, &item.id);
     let mut driver = RunDriver::new(Arc::new(spec), item.model_plan, vars)?
         .with_gates(operator_gates)?
-        .with_experiments(experiments)
-        .with_attribution(attribution);
+        .with_experiments(experiments);
     for gate in gates {
         assert_eq!(gate.run, run.id, "gates_for_run returns the run's gates");
         if let Some(decision) = gate.decision {

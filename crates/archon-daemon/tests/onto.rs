@@ -16,7 +16,8 @@ use common::{Harness, PIPELINE, REPO_NAME, git, plan};
 use serde_json::{Value, json};
 
 /// `pr view <number|url>` shows `pr-<number>.json`; `pr list --head <branch>`
-/// lists `branch-<branch>.json`, else none.
+/// lists `branch-<branch>.json`, else none; `repo view <owner/name>` grants
+/// the permission in `permission-<owner>_<name>`, else WRITE.
 const GH: &str = r#"#!/bin/sh
 state="$(dirname "$0")/gh-onto"
 printf '%s\n' "$*" >> "$state/calls"
@@ -32,6 +33,12 @@ case "$1 $2" in
     [ "$3 $5 $6 $7 $8 $9" = "--head --state open --limit 20 --json" ] || exit 2
     listed="$state/branch-$(printf '%s' "$4" | tr '/' '_').json"
     if [ -f "$listed" ]; then cat "$listed"; else printf '[]'; fi
+    ;;
+"repo view")
+    [ "$4 $5" = "--json viewerPermission" ] || exit 2
+    granted="$state/permission-$(printf '%s' "$3" | tr '/' '_')"
+    if [ -f "$granted" ]; then permission="$(cat "$granted")"; else permission=WRITE; fi
+    printf '{"viewerPermission":"%s"}' "$permission"
     ;;
 "pr edit") ;;
 *) exit 2 ;;
@@ -196,7 +203,7 @@ async fn onto_a_number_freezes_its_identity_head_and_base_and_get_item_shows_it(
 }
 
 #[tokio::test]
-async fn a_closed_merged_or_fork_target_is_refused_at_enqueue_with_the_reason() {
+async fn a_closed_merged_fork_or_unpushable_target_is_refused_at_enqueue_with_the_reason() {
     let (h, gh, head) = setup().await;
     gh.show(101, &head, json!({"state": "CLOSED"}));
     gh.show(102, &head, json!({"state": "MERGED"}));
@@ -206,6 +213,8 @@ async fn a_closed_merged_or_fork_target_is_refused_at_enqueue_with_the_reason() 
         json!({"isCrossRepository": true, "headRepositoryOwner": {"login": "fork"}}),
     );
     gh.show(104, &head, json!({"headRepository": null}));
+    gh.show(106, &head, json!({"headRepository": {"name": "ro"}}));
+    std::fs::write(gh.state.join("permission-o_ro"), "READ").unwrap();
 
     for (number, reason) in [
         (101, "it is closed"),
@@ -213,6 +222,7 @@ async fn a_closed_merged_or_fork_target_is_refused_at_enqueue_with_the_reason() 
         (103, "its head `fork/r` is a fork"),
         (104, "its head repository is gone"),
         (105, "Could not resolve to a PullRequest"),
+        (106, "no write access to `o/ro`"),
     ] {
         let refused = enqueue_onto(&h, "refused", OntoTarget::Pr(number)).await;
         let error = refused.expect_err("refused").to_string();

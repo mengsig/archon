@@ -16,7 +16,8 @@ use crate::worktree::shadow::Shadow;
 use crate::worktree::stack;
 
 /// The open pull request `target` names in `repo`, frozen as GitHub shows it
-/// now. Refused when it is closed or merged, or its head is in a fork.
+/// now. Refused when it is closed or merged, or its head is in a fork or a
+/// repository the operator cannot push to.
 pub(crate) async fn freeze(
     ctx: &DaemonContext,
     repo: &Repo,
@@ -43,6 +44,10 @@ pub(crate) async fn freeze(
         OntoTarget::Branch(branch) => branch_pull_request(binary, &repo.path, branch).await?,
     };
     let frozen = frozen(target, headed)?;
+    if !gh::can_push(binary, &repo.path, &frozen.head_repository).await? {
+        let why = format!("you have no write access to `{}`", frozen.head_repository);
+        return Err(refused(&frozen.pr.url(), &why));
+    }
     assert!(stack::is_commit_id(&frozen.head_sha), "checked by frozen");
     assert!(is_plain_branch(&frozen.head_ref), "checked by gh");
     Ok(frozen)

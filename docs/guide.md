@@ -923,8 +923,8 @@ CLI takes `queue add --onto <item|number|branch>`, and initiative members
 take it too. `archond` resolves it at enqueue and freezes the pull request's
 identity, head repository, head and base branches and head commit, which
 `get_item`, `queue show` and the orchestrator's briefing show. A closed or
-merged pull request, or one whose head is in a fork, is refused then with the
-reason, as is `onto` together with `depends_on` or with a pipeline that does
+merged pull request, or one whose head is in a fork or in a repository your
+`gh` cannot push to, is refused then with the reason, as is `onto` together with `depends_on` or with a pipeline that does
 not work in a worktree. The item's branch starts from the frozen head commit,
 and its agents are told to review against it. A replay with the same
 idempotency key returns the item as first frozen, without asking GitHub again.

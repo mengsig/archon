@@ -116,9 +116,11 @@ pub(super) async fn needs_confirmation(
         }
         Request::RepoUpdate { patch, .. } => {
             let repo: Repo = serde_json::from_value(before.clone())?;
-            // The operator alone decides what a repository's pull requests attribute.
+            // The operator alone decides what a repository's pull requests attribute,
+            // and which GitHub login publishes them.
             if patch.grant_merge == Some(true) && !repo.grant_merge
                 || patch.attribution.is_some_and(|a| a != repo.attribution)
+                || patch.gh_user.clone().apply(repo.gh_user.clone()) != repo.gh_user
                 || patch.ship == Some(ShipMode::Pr) && repo.ship == ShipMode::Local
                 || patch.base_branch != Default::default()
                 || patch.default_pipeline != Default::default()

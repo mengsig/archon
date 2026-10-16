@@ -10,6 +10,7 @@ use archon_core::error::ArchonError;
 use super::clean;
 use super::daemon_git::{Config, DaemonGit, Ran, no_programs};
 use super::shadow::Shadow;
+use crate::gh_account::Token;
 
 /// Who the daemon's merge commits are made by.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -261,12 +262,14 @@ fn is_local(url: &str) -> bool {
 }
 
 /// Push `commit` to `refs/heads/<branch>` of `url`, never forced, from the
-/// shadow with the operator's credentials; a local receiver runs no hook.
+/// shadow with the operator's credentials, or only `token`'s when given; a
+/// local receiver runs no hook.
 pub(crate) fn push(
     shadow: &Shadow,
     url: &str,
     branch: &str,
     commit: &str,
+    token: Option<&Token>,
 ) -> Result<Ran, ArchonError> {
     super::check_branch(branch)?;
     assert!(is_commit_id(commit), "the checked commit is pushed");
@@ -289,9 +292,14 @@ pub(crate) fn push(
         &url,
         &refspec,
     ];
-    shadow
-        .git(None, Config::Operator)?
-        .network()
+    let Some(token) = token else {
+        let git = shadow.git(None, Config::Operator)?.network();
+        return git.args(args).output();
+    };
+    // No operator config: no credential helper, URL rewrite or proxy of theirs.
+    assert!(url.starts_with("https://github.com/"), "only github.com");
+    let git = shadow.git(None, Config::Sealed)?.network();
+    git.secret_config(&token.push_settings())
         .args(args)
         .output()
 }

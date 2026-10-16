@@ -320,6 +320,10 @@ pub enum RepoCommand {
         /// `Archon item:` line; `none` omits it and refuses attribution lines.
         #[arg(long)]
         attribution: Option<archon_core::repo::Attribution>,
+        /// The github.com login its `gh` calls and pushes run as, with the
+        /// token `gh auth token --user` gives; an empty value clears it.
+        #[arg(long)]
+        gh_user: Option<String>,
     },
 }
 
@@ -1218,6 +1222,12 @@ mod tests {
         assert_eq!(attribution, Some(archon_core::repo::Attribution::None));
         let full = ["archon", "repo", "set", "api", "--attribution", "full"];
         assert!(Cli::try_parse_from(full).is_err());
+        let Command::Repo(RepoCommand::Set { gh_user, .. }) =
+            parse(&["repo", "set", "api", "--gh-user", "devGunnin"])
+        else {
+            panic!("a GitHub login is a repository setting")
+        };
+        assert_eq!(gh_user.as_deref(), Some("devGunnin"));
     }
 
     #[test]

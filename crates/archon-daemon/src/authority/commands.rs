@@ -2,7 +2,7 @@
 
 use archon_core::autonomy::AutonomyPatch;
 use archon_core::error::ArchonError;
-use archon_core::protocol::{PauseTarget, RepoPatch, RepoRef, Request};
+use archon_core::protocol::{Clearable, PauseTarget, RepoPatch, RepoRef, Request};
 
 use crate::context::DaemonContext;
 
@@ -34,7 +34,7 @@ async fn command(ctx: &DaemonContext, text: &str) -> Result<Request, ArchonError
             },
         }),
         ("set", ["--repo", name, settings @ ..]) if !settings.is_empty() => {
-            let registry = ["grant_merge=", "ship=", "base_branch=", "attribution="];
+            let registry = ["grant_merge=", "ship=", "base_branch=", "attribution=", "gh_user="];
             if settings.iter().any(|s| registry.iter().any(|key| s.starts_with(key))) {
                 repo_settings(ctx, name, settings).await
             } else { overlay_settings(ctx, Some(name), settings).await }
@@ -64,13 +64,13 @@ async fn repo_settings(
             }
             "ship" => patch.ship = Some(value.parse()?),
             "attribution" => patch.attribution = Some(value.parse()?),
-            "base_branch" => {
-                patch.base_branch = archon_core::protocol::Clearable::Set(value.into())
-            }
+            "gh_user" if value.is_empty() => patch.gh_user = Clearable::Clear,
+            "gh_user" => patch.gh_user = Clearable::Set(value.parse()?),
+            "base_branch" => patch.base_branch = Clearable::Set(value.into()),
             _ => {
                 return Err(ArchonError::Invalid(
-                    "set grant_merge, ship, base_branch and attribution separately from saved \
-                     overlay settings"
+                    "set grant_merge, ship, base_branch, attribution and gh_user separately from \
+                     saved overlay settings"
                         .into(),
                 ));
             }

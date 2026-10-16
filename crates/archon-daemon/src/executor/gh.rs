@@ -16,7 +16,10 @@ use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
+use archon_core::repo::{GH_HOST, Repo};
+
 use super::dependencies::{is_plain_branch, is_plain_url};
+use crate::gh_account::{self, Token};
 use crate::worktree::daemon_git::no_program_settings;
 use crate::worktree::stack::is_commit_id;
 
@@ -192,7 +195,7 @@ impl Rollup {
 /// What GitHub says now of the pull request at `url`, for a merge decision.
 pub(crate) async fn merge_facts(
     binary: &Path,
-    repo: &Path,
+    repo: &Repo,
     url: &str,
 ) -> Result<PullRequestFacts, ArchonError> {
     assert!(is_plain_url(url), "a pull request URL archond recorded");
@@ -229,6 +232,15 @@ pub(crate) struct Ran {
 }
 
 impl Ran {
+    /// What it printed, with `token` redacted wherever it shows.
+    fn redacted(self, token: &Token) -> Self {
+        Self {
+            ok: self.ok,
+            stdout: token.redact(&self.stdout),
+            stderr: token.redact(&self.stderr),
+        }
+    }
+
     /// The command's own account of a failure, for an error.
     pub(crate) fn detail(&self) -> String {
         let said = match self.stderr.trim() {
@@ -246,12 +258,74 @@ pub(crate) fn needs_operator(doing: &str, said: &str) -> Option<String> {
     blocked.then(|| format!("BLOCKED: {doing} was refused for want of access: {said}"))
 }
 
-/// `gh <args>` in `repo` with `input` on its stdin, for at most [`TIMEOUT`].
+/// `gh <args>` in `repo` with `input` on its stdin, for at most [`TIMEOUT`],
+/// as the repository's GitHub login when the operator named one.
 pub(crate) async fn run(
+    binary: &Path,
+    repo: &Repo,
+    args: &[&str],
+    input: Option<&str>,
+) -> Result<Ran, ArchonError> {
+    let Some(token) = token(binary, repo).await? else {
+        return spawn(binary, &repo.path, args, input, Auth::Ambient).await;
+    };
+    let ran = spawn(binary, &repo.path, args, input, Auth::As(&token)).await?;
+    Ok(ran.redacted(&token))
+}
+
+/// The token of `repo`'s GitHub login, read now; `None` when it runs as
+/// the daemon's own. A login `gh` cannot give, or an `origin` that is not
+/// github.com's, is a `BLOCKED:` refusal.
+pub(crate) async fn token(binary: &Path, repo: &Repo) -> Result<Option<Token>, ArchonError> {
+    let Some(user) = &repo.gh_user else {
+        return Ok(None);
+    };
+    let (path, owner) = (repo.path.clone(), user.clone());
+    let reachable = tokio::task::spawn_blocking(move || gh_account::push_url(&path, &owner))
+        .await
+        .map_err(|e| ArchonError::io("reading `origin`", std::io::Error::other(e)))??;
+    if let Err(why) = reachable {
+        return Err(ArchonError::Invalid(format!("BLOCKED: {why}")));
+    }
+    let lookup = spawn(binary, &repo.path, &user.token_args(), None, Auth::Lookup).await?;
+    if !lookup.ok {
+        // Only stderr: what a failed lookup printed on stdout is not shown.
+        let said: String = lookup
+            .stderr
+            .trim()
+            .chars()
+            .take(MAX_DETAIL_CHARS)
+            .collect();
+        return Err(ArchonError::Invalid(format!(
+            "BLOCKED: `gh` has no token for {user}, the GitHub login `{}` runs as: {said}. Log \
+             it in with `gh auth login --hostname {GH_HOST}`, or change the repository's \
+             `--gh-user`",
+            repo.name
+        )));
+    }
+    let token = Token::read(user, &lookup.stdout)?;
+    assert_eq!(token.user(), user, "the login asked for");
+    Ok(Some(token))
+}
+
+/// Whose credentials a `gh` uses.
+#[derive(Debug, Clone, Copy)]
+enum Auth<'a> {
+    /// The daemon's own login, as its environment and `gh` config say.
+    Ambient,
+    /// None: it reads a login's token from `gh`'s own config.
+    Lookup,
+    /// This token only.
+    As(&'a Token),
+}
+
+/// `gh <args>` in `repo` with `input` on its stdin, for at most [`TIMEOUT`].
+async fn spawn(
     binary: &Path,
     repo: &Path,
     args: &[&str],
     input: Option<&str>,
+    auth: Auth<'_>,
 ) -> Result<Ran, ArchonError> {
     assert!(repo.is_absolute(), "gh runs in a registered repository");
     assert!(!args.is_empty(), "a gh command has arguments");
@@ -259,7 +333,7 @@ pub(crate) async fn run(
         "gh {}",
         args.iter().take(2).copied().collect::<Vec<_>>().join(" ")
     );
-    let mut command = command(binary, repo, args);
+    let mut command = command(binary, repo, args, auth);
     command.stdin(if input.is_some() {
         Stdio::piped()
     } else {
@@ -290,7 +364,7 @@ pub(crate) async fn run(
     })
 }
 
-fn command(binary: &Path, repo: &Path, args: &[&str]) -> Command {
+fn command(binary: &Path, repo: &Path, args: &[&str], auth: Auth<'_>) -> Command {
     let mut command = Command::new(binary);
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("GIT_") {
@@ -315,6 +389,14 @@ fn command(binary: &Path, repo: &Path, args: &[&str]) -> Command {
         .stderr(Stdio::piped())
         .process_group(0)
         .kill_on_drop(true);
+    if !matches!(auth, Auth::Ambient) {
+        for name in gh_account::AMBIENT {
+            command.env_remove(name);
+        }
+    }
+    if let Auth::As(token) = auth {
+        command.envs(token.gh_env());
+    }
     command
 }
 
@@ -329,7 +411,7 @@ fn kill_group(group: Option<i32>) {
 
 /// `gh <args>`, which must succeed: its stdout. A failure is worth another
 /// try unless it shows that only the operator can help.
-pub(crate) async fn text(binary: &Path, repo: &Path, args: &[&str]) -> Result<String, ArchonError> {
+pub(crate) async fn text(binary: &Path, repo: &Repo, args: &[&str]) -> Result<String, ArchonError> {
     let ran = run(binary, repo, args, None).await?;
     succeeded(ran, &format!("gh {}", args.join(" ")))
 }
@@ -350,7 +432,7 @@ fn succeeded(ran: Ran, doing: &str) -> Result<String, ArchonError> {
 /// `gh pr list <filter>`, which is `doing`, each pull request checked.
 async fn list(
     binary: &Path,
-    repo: &Path,
+    repo: &Repo,
     filter: &[&str],
     branch: Option<&str>,
     doing: &str,
@@ -377,7 +459,7 @@ async fn list(
 /// or of every state.
 pub(crate) async fn of_branch(
     binary: &Path,
-    repo: &Path,
+    repo: &Repo,
     branch: &str,
     only_open: bool,
 ) -> Result<Vec<PullRequest>, ArchonError> {
@@ -397,7 +479,7 @@ pub(crate) async fn of_branch(
 /// The pull request of `branch`: its open one, else its newest.
 pub(crate) async fn view(
     binary: &Path,
-    repo: &Path,
+    repo: &Repo,
     branch: &str,
 ) -> Result<PullRequest, ArchonError> {
     let prs = of_branch(binary, repo, branch, false).await?;
@@ -414,7 +496,7 @@ pub(crate) async fn view(
 /// The pull request `pr` names, of any state, asked for by its number.
 pub(crate) async fn view_number(
     binary: &Path,
-    repo: &Path,
+    repo: &Repo,
     pr: &PullRequestRef,
 ) -> Result<PullRequest, ArchonError> {
     let url = pr.url();
@@ -447,7 +529,7 @@ impl Pass {
     pub(crate) async fn pull_request(
         &mut self,
         binary: &Path,
-        repo: &Path,
+        repo: &Repo,
         branch: &str,
     ) -> Result<PullRequest, ArchonError> {
         let listed = self.open_in(binary, repo).await?;
@@ -461,7 +543,7 @@ impl Pass {
     pub(crate) async fn by_number(
         &mut self,
         binary: &Path,
-        repo: &Path,
+        repo: &Repo,
         pr: &PullRequestRef,
     ) -> Result<PullRequest, ArchonError> {
         let listed = self.open_in(binary, repo).await?;
@@ -472,22 +554,22 @@ impl Pass {
     }
 
     /// The open pull requests of `repo`, listed once a pass.
-    async fn open_in(&mut self, binary: &Path, repo: &Path) -> Result<&[PullRequest], ArchonError> {
-        if !self.open.contains_key(repo) {
+    async fn open_in(&mut self, binary: &Path, repo: &Repo) -> Result<&[PullRequest], ArchonError> {
+        if !self.open.contains_key(&repo.path) {
             let filter = ["--state", "open", "--limit", MAX_OPEN];
             let doing = "listing the open pull requests";
             match list(binary, repo, &filter, None, doing).await {
                 Ok(listed) => {
-                    self.unlisted.remove(repo);
-                    self.open.insert(repo.to_owned(), listed);
+                    self.unlisted.remove(&repo.path);
+                    self.open.insert(repo.path.clone(), listed);
                 }
                 Err(error) => {
-                    self.unlisted.insert(repo.to_owned(), error.to_string());
+                    self.unlisted.insert(repo.path.clone(), error.to_string());
                     return Err(error);
                 }
             }
         }
-        let listed = self.open.get(repo).expect("listed above");
+        let listed = self.open.get(&repo.path).expect("listed above");
         assert!(listed.iter().all(PullRequest::is_open), "an open listing");
         Ok(listed)
     }
@@ -633,5 +715,137 @@ mod tests {
         );
         let long = ran("", &"x".repeat(MAX_DETAIL_CHARS * 2));
         assert_eq!(long.detail().chars().count(), MAX_DETAIL_CHARS);
+    }
+
+    const SECRET: &str = "gho_FAKEfakeFAKE0123456789";
+
+    /// A `gh` that knows one login, `devfake`, logs each call and prints
+    /// the account variables it was given.
+    const FAKE_GH: &str = r#"#!/bin/sh
+echo "$*" >> "$(dirname "$0")/calls"
+case "$*" in
+"auth token --hostname github.com --user devfake")
+    [ -z "$GH_TOKEN$GITHUB_TOKEN$GH_HOST" ] || exit 9
+    echo "@SECRET@"; exit 0 ;;
+"auth token "*) echo "no oauth token found for github.com account" >&2; exit 1 ;;
+"api echo") echo "HTTP 401: Bad credentials ($GH_TOKEN)" >&2; exit 1 ;;
+esac
+echo "GH_TOKEN=${GH_TOKEN-unset} GH_HOST=${GH_HOST-unset} GITHUB_TOKEN=${GITHUB_TOKEN-unset}"
+"#;
+
+    struct Fake {
+        _dir: tempfile::TempDir,
+        gh: PathBuf,
+        repo: Repo,
+    }
+
+    impl Fake {
+        fn new(origin: &str, gh_user: Option<&str>) -> Self {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().canonicalize().unwrap();
+            let gh = root.join("gh");
+            std::fs::write(&gh, FAKE_GH.replace("@SECRET@", SECRET)).unwrap();
+            std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let path = root.join("repo");
+            std::fs::create_dir(&path).unwrap();
+            let git = |args: &[&str]| {
+                crate::worktree::daemon_git::DaemonGit::sealed_in(&path)
+                    .args(args.iter().copied())
+                    .text()
+                    .unwrap()
+            };
+            git(&["init", "--quiet"]);
+            git(&["remote", "add", "origin", origin]);
+            let repo = Repo {
+                id: archon_core::id::RepoId::new(),
+                name: "r".into(),
+                path,
+                ship: archon_core::repo::ShipMode::Pr,
+                base_branch: None,
+                default_pipeline: None,
+                autonomy_max: Default::default(),
+                grant_merge: false,
+                attribution: Default::default(),
+                gh_user: gh_user.map(|user| user.parse().unwrap()),
+                added_at: archon_core::now(),
+            };
+            Self {
+                _dir: dir,
+                gh,
+                repo,
+            }
+        }
+
+        fn calls(&self) -> String {
+            std::fs::read_to_string(self.gh.with_file_name("calls")).unwrap_or_default()
+        }
+    }
+
+    #[tokio::test]
+    async fn every_gh_call_of_a_repository_with_a_login_carries_its_token_alone() {
+        let fake = Fake::new("git@github.com:o/r.git", Some("devfake"));
+        let said = text(&fake.gh, &fake.repo, &["pr", "list"]).await.unwrap();
+        assert_eq!(
+            said.trim(),
+            "GH_TOKEN=[token] GH_HOST=github.com GITHUB_TOKEN=unset",
+            "the token is set for gh and redacted from what it printed"
+        );
+        let calls = fake.calls();
+        assert_eq!(
+            calls,
+            "auth token --hostname github.com --user devfake\npr list\n"
+        );
+        assert!(std::env::vars().all(|(_, value)| !value.contains(SECRET)));
+    }
+
+    #[tokio::test]
+    async fn a_repository_without_a_login_runs_as_the_daemon_s() {
+        let fake = Fake::new("https://github.com/o/r.git", None);
+        let said = text(&fake.gh, &fake.repo, &["pr", "list"]).await.unwrap();
+        assert!(!said.contains(SECRET), "{said}");
+        assert_eq!(fake.calls(), "pr list\n", "no token is looked up");
+    }
+
+    #[tokio::test]
+    async fn a_failure_never_shows_the_token() {
+        let fake = Fake::new("https://github.com/o/r.git", Some("devfake"));
+        let error = text(&fake.gh, &fake.repo, &["api", "echo"])
+            .await
+            .unwrap_err();
+        let shown = format!("{error} {error:?}");
+        assert!(!shown.contains(SECRET), "{shown}");
+        assert!(
+            shown.contains("BLOCKED") && shown.contains("[token]"),
+            "{shown}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_login_gh_has_no_token_for_blocks_with_the_login_named() {
+        let fake = Fake::new("https://github.com/o/r.git", Some("someone-else"));
+        let error = text(&fake.gh, &fake.repo, &["pr", "list"])
+            .await
+            .unwrap_err();
+        let shown = error.to_string();
+        assert!(
+            shown.contains("BLOCKED: `gh` has no token for someone-else"),
+            "{shown}"
+        );
+        assert!(
+            !fake.calls().contains("pr list"),
+            "nothing ran as another login"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_login_is_used_only_for_a_github_com_origin() {
+        let fake = Fake::new("https://ghe.example.com/o/r.git", Some("devfake"));
+        let error = text(&fake.gh, &fake.repo, &["pr", "list"])
+            .await
+            .unwrap_err();
+        let shown = error.to_string();
+        assert!(shown.contains("BLOCKED: `origin` is") && shown.contains("devfake"));
+        assert_eq!(fake.calls(), "", "gh never ran: no token was read");
     }
 }

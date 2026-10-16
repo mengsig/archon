@@ -14,6 +14,7 @@ pub mod executor;
 mod experiments;
 pub mod feed;
 pub mod gc;
+mod gh_account;
 pub mod github;
 pub mod handlers;
 pub mod mirror;

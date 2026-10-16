@@ -326,6 +326,7 @@ fn repo_at(path: &Path) -> Repo {
         autonomy_max: Default::default(),
         grant_merge: false,
         attribution: Default::default(),
+        gh_user: None,
         added_at: archon_core::now(),
     }
 }

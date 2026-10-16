@@ -72,6 +72,10 @@ pub(super) async fn record(
                     autonomy_max: Some(old.autonomy_max),
                     grant_merge: Some(old.grant_merge),
                     attribution: Some(old.attribution),
+                    gh_user: match old.gh_user {
+                        Some(user) => Clearable::Set(user),
+                        None => Clearable::Clear,
+                    },
                 },
             })
         }

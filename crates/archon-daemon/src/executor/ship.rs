@@ -118,5 +118,5 @@ async fn agent_pr(
         store.repo(&crate::resolve::repo_ref(&repo))?
     };
     let gh = &ctx.config.github.binary;
-    remote::open_pr(gh, &repo.path, &run.branch).await.map(Some)
+    remote::open_pr(gh, &repo, &run.branch).await.map(Some)
 }

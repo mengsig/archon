@@ -1,6 +1,7 @@
 //! `archon doctor` checks the pieces Archon depends on; in shared mode
 //! `archon setup` registers the MCP server and then runs the MCP checks.
 
+mod gh_users;
 mod mcp_tools;
 mod registry;
 
@@ -106,6 +107,7 @@ pub async fn run(json: bool) -> anyhow::Result<ExitCode> {
     checks.push(check_disk(&config)?);
     checks.push(check_git().await);
     checks.push(registry::check_gh(&config.github.binary, &registry).await);
+    checks.push(gh_users::check_gh_users(&config.github.binary, &registry).await);
     checks.push(registry::check_repos(&registry).await);
     checks.push(check_lavish(&config));
     checks.push(check_agent_cli("claude"));

@@ -117,7 +117,7 @@ async fn look_once(
         Err(error) => return Err(error),
     };
     let binary = &ctx.config.github.binary;
-    let read = checks::of_pull_request(binary, &repo.path, &watch.url, waited(QUEUED_LIMIT)).await;
+    let read = checks::of_pull_request(binary, &repo, &watch.url, waited(QUEUED_LIMIT)).await;
     let checks = match read {
         Ok(checks) => checks,
         Err(error) if error.is_store() => return Err(error),

@@ -1,5 +1,153 @@
 # Changelog
 
+## 1.3.0
+
+Released 2026-10-17.
+
+Repositories can work in tiers: items fork from an integration branch and run
+a fast check limited to what they change, archond verifies the integration
+branch in the background, bisects a red run to the merge that broke it and
+queues one fix, and `archon promote` moves a fully green integration branch
+into the release branch and runs a confirmed release hook. Work can be queued
+`onto` an existing pull request and is delivered into it with a fast-forward
+push. Pull requests are tracked by number, a repository can run `gh` and its
+pushes as its own GitHub user and refuse attribution lines, and `archon
+release check` gates publishing. Tier-only stages are routed across providers
+by weight and live quota headroom, and push notifications reach the operator.
+The store migrates automatically on first start (migration 15); older Archon
+binaries refuse the migrated store. Daemon protocol 16.
+
+### Added
+
+- Verification tiers per repository: `integration_branch`, `release_branch`
+  (default `main`) and `[checks] fast` / `full`, read from a committed
+  `.archon/repo.toml` or set with `archon repo set --integration-branch`,
+  `--release-branch`, `--fast-check` and `--full-check` (registry values win
+  field by field; any change needs the operator). New items fork from
+  `origin`'s freshly fetched integration branch and their pull requests target
+  it; a missing integration branch is created from the release branch. Every
+  stage contract names the fast command and forbids the full suite.
+  Repositories without tiers behave as before (#84).
+- Affected-only fast checks: the fast check may name `{packages}` or
+  `{packages:<flag>}`, filled with the Cargo workspace crates a change touches
+  and their dependents (elsewhere, the top-level directories it changes).
+  Before delivery archond runs the trusted check again on the committed tree,
+  one at a time per host with a 30 minute limit, and refuses the item with the
+  output's tail when it fails. Only the registry's command runs, or a
+  committed `.archon/repo.toml` command the operator confirmed word for word
+  with `archon repo set --confirm-fast-check` (#89).
+- Integration branch verification: a new archond worker verifies each
+  integration branch's head after a batch of merges or once it is idle, from
+  the commit's GitHub check runs when CI covers it, else by running
+  `checks.full` in a sealed daemon-owned checkout under one build slot per
+  host. A red head is bisected over the first-parent merges since the last
+  green commit, one fix item naming the culprit is queued onto the integration
+  branch, and the operator is notified. `status` and `queue_status` show each
+  branch's health, last green commit and the merges since. A committed full
+  check runs only once confirmed with `archon repo set --confirm-full-check`
+  (#88).
+- Promotion: `archon promote <repo>` and the `promote` tool merge the
+  integration branch into the release branch with a merge commit once the
+  full check is green on its exact head, then fast-forward the integration
+  branch. A red, verifying, unverified or moved branch is refused with the
+  reason; an orchestrator without `grant_merge` stops at the open pull
+  request. An optional release hook (`archon repo set --release-hook`, or
+  `[checks] release` confirmed with `archon repo set --confirm-release-check`)
+  runs at the merge commit. A promotion a merge queue held is finished by
+  promoting again once it landed (#90).
+- `onto` work for an existing pull request: `enqueue`, `queue add --onto` and
+  initiative members take `onto: {item | pr | branch}`. archond freezes the
+  pull request's identity, head and base at enqueue and refuses closed, merged
+  or fork pull requests, ones the operator cannot push to, local-ship
+  repositories and `onto` with dependencies (#96). Delivery pushes the
+  reviewed commit onto the pull request's head branch as a leased
+  fast-forward, never forced, to a destination proved to be the head
+  repository, and confirms the new head; the run ends `SHIPPED: updated #<n>
+  to <sha>`. The pull request's title, body and base are left alone, and
+  stacking on or refreshing a delivered `onto` item is refused (#97).
+- Per-repository GitHub user: `archon repo set NAME --gh-user LOGIN`
+  (operator only; `--gh-user ""` clears it) runs that repository's `gh` calls
+  and pushes with the login's token from `gh auth token`, given only to that
+  call and never logged or stored. A login without a token or a non-github.com
+  origin is BLOCKED, with no fallback to the daemon's account. `archon doctor`
+  checks each login. Fetches and the GitHub watcher keep the daemon's login
+  (#85).
+- Attribution policy: `archon repo set --attribution` (or `/archon set --repo
+  R attribution=...`) takes `item-id` (the default) or `none`. Under `none`
+  the PR body has no `Archon item:` line and delivery refuses a PR body or
+  commit carrying a `Generated with` footer or `Co-Authored-By:` trailer,
+  quoting each line (#75).
+- `archon release check [owner/repo]` audits release health: version tags,
+  each platform's archive and `.sha256`, `SHA256SUMS`, `VERSION`, the highest
+  stable version as Latest and whether the latest CI run got a runner;
+  `--json` is supported and `archon doctor` runs it for Archon and Aether.
+  The release workflow runs it with `--pending-tag` and `--assets` before
+  creating the draft, so a broken release history blocks publishing (#92).
+- Provider routing for tier-only stages: `[models] provider_weights` (with a
+  per-repository overlay and `default_provider_weight`) picks one provider per
+  item by a deterministic weighted draw, kept while it meets each stage's
+  capability floor (#78). The weight is scaled by the live quota headroom
+  Aether reports; `[models] reserve_percent` and `interactive_providers` keep
+  part of each window back. An item out of headroom moves to another provider
+  (recorded as `provider_switch`), and when every provider is out it is held
+  until the earliest reset. `status` and `queue_status` show each provider's
+  headroom, reserve and next reset (#80).
+- Push notifications: a `[notify]` section sends gate, question, failure,
+  blocked, pr_checks and budget events through a command (such as `ntfy`) or
+  a webhook, rate-limited by `min_gap_secs`. Events carry only an id, the item
+  title and a line Archon writes (#93).
+- Default reviewers: reviewers with no `<stage>.review` plan use the
+  `[review]` profile (`default_tier = "balanced"`, `default_effort = "low"`,
+  `prefer_other_provider = true` by default), resolved from the catalog at
+  spawn under model policy (#95).
+- Every new orchestrator generation first receives an `orchestrator_briefing`
+  built by the daemon from its store: unfinished items, recent outcomes, open
+  questions and gates, initiatives and recent chat (#76).
+- Orchestrator freshness: `archon status`, `archon orchestrator status`,
+  `queue_status` and a new `doctor` check show the generation and whether its
+  prompt, tools or lessons are outdated, so an owed restart is visible (#87).
+- `archon autonomy` and the `autonomy_policy` tool list every structural
+  limit with its value, default, ceiling and source, and the directives in
+  force as n/20; a refused directive names the oldest and soonest-to-lapse
+  ones to clear (#94).
+- `operator_answer` triggers carry the question they answer, labelled with its
+  number, so a delayed answer stays understandable (#79).
+
+### Changed
+
+- Pull requests are tracked by number and repository instead of branch name,
+  in a new `run_pull_requests` table; settled state is keyed
+  `pr_settled:<host>/<owner>/<name>#<number>`. Restack and refresh act only on
+  the run's own pull request (#81).
+- archond serves hello, reads and status (with a `recovery` progress section)
+  while recovery runs; a change waits up to 2 s for recovery and is then
+  refused with a typed `recovering` error to retry (#83).
+- The orchestrator prompt carries its 3.6 KB GitHub section only when the
+  watcher is wanted (#91).
+- CI runs on pushes to `main` and `next`; pull requests into `next` run only
+  lint, those into `main` the full suite; runners are pinned to
+  `ubuntu-24.04` (#64, #86).
+
+### Fixes
+
+- `queue_status` answers from a bounded local snapshot: Aether's sections and
+  the disk probes share one deadline and stale sections are named with their
+  age, so a slow aetherd or filesystem no longer stalls status. The waiting
+  list is paged (50 by default, 500 at most) (#77).
+- A repository whose open pull requests cannot be listed is asked once per
+  observation pass, with one coalesced warning (#74).
+
+### Upgrading
+
+The store migrates to schema 15, which adds `run_pull_requests` and converts
+each run's verified pull request URL into a number-based identity; legacy
+branch-keyed settled entries are rekeyed when the branch maps to exactly one
+pull request, and the rest are asked again. The migration is one-way: a 1.2.5
+`archond` refuses the migrated store. Back up `archon.db` first, and stop the
+1.2.5 `archond` before updating, since the daemon protocol is now 16; see
+"Back up before a release that migrates the store" in
+[docs/install.md](docs/install.md).
+
 ## 1.2.5
 
 Released 2026-10-16.

@@ -280,10 +280,12 @@ async fn delivery_creates_the_orchestrator_when_none_exists() {
     triggers::push(&harness.ctx, blocked("first news"))
         .await
         .unwrap();
-    let sent = harness.fake.wait_for("trigger", 1, WAIT).await;
+    let sent = harness.fake.wait_for("trigger", 2, WAIT).await;
     delivery.abort();
     assert_eq!(harness.fake.received_named("create_agent").len(), 1);
     assert_eq!(sent[0]["agent"], ORCH);
+    assert_eq!(types(&sent[0]), ["orchestrator_briefing"]);
+    assert_eq!(reasons(&sent[1]), ["first news"]);
 }
 
 #[tokio::test]
@@ -472,16 +474,16 @@ async fn a_fresh_orchestrator_generation_gets_its_held_news_collapsed() {
     };
     triggers::push(&harness.ctx, stale).await.unwrap();
     triggers::push(&harness.ctx, budget("daily")).await.unwrap();
-    let sent = fake.wait_for("trigger", 2, WAIT).await;
+    let sent = fake.wait_for("trigger", 3, WAIT).await;
     delivery.abort();
     assert_eq!(fake.received_named("create_agent").len(), 2);
     assert_eq!(
-        reasons(&sent[0]),
+        reasons(&sent[1]),
         ["in flight"],
         "the keyed batch is untouched"
     );
-    assert_eq!(types(&sent[1]), ["news_digest", "budget"]);
-    let digest = &sent[1]["payload"]["events"][0];
+    assert_eq!(types(&sent[2]), ["news_digest", "budget"]);
+    let digest = &sent[2]["payload"]["events"][0];
     assert_eq!(digest["dropped"], json!({"item_blocked": 1}));
     assert!(
         harness
@@ -506,11 +508,12 @@ async fn news_after_a_fresh_generation_started_is_not_collapsed() {
     harness
         .fake
         .set_default("trigger", Scripted::refuse("internal", "busy"));
+    harness.fake.script("trigger", Scripted::ok());
     let delivery = tokio::spawn(triggers::deliver_loop(harness.ctx.clone()));
     triggers::push(&harness.ctx, blocked("in flight"))
         .await
         .unwrap();
-    let first = harness.fake.wait_for("trigger", 1, WAIT).await[0].clone();
+    let first = harness.fake.wait_for("trigger", 2, WAIT).await[1].clone();
     assert_eq!(harness.fake.received_named("create_agent").len(), 1);
     let settled = cancelled_item(&harness.ctx, harness.dir.path()).await;
     let stale = TriggerEvent::ItemBlocked {

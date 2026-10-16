@@ -896,6 +896,7 @@ async fn create_generation(
     );
     let agent = create_orchestrator(ctx, client, request).await?;
     tracing::info!(agent = %agent.id, generation, delegation, "orchestrator created");
+    crate::triggers::briefing::deliver(ctx, client, &agent.id, generation).await?;
     crate::triggers::collapse_for_new_orchestrator(ctx).await?;
     Ok(agent.id)
 }

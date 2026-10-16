@@ -286,7 +286,8 @@ fn relevance_of(
     finished_later: &mut HashSet<QueueItemId>,
 ) -> Relevance {
     match event {
-        TriggerEvent::OperatorAnswer { .. }
+        TriggerEvent::OrchestratorBriefing { .. }
+        | TriggerEvent::OperatorAnswer { .. }
         | TriggerEvent::AgentMessage { .. }
         | TriggerEvent::ChatAnswer { .. }
         | TriggerEvent::ChatCommand { .. }

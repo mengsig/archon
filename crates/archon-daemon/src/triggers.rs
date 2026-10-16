@@ -4,6 +4,7 @@
 //! routine news that waits for the orchestrator's next turn; a long or stale
 //! backlog is compacted as it is keyed (see `compact`).
 
+pub(crate) mod briefing;
 mod compact;
 mod directives;
 mod flush;
@@ -54,6 +55,10 @@ pub const FEEDBACK_EXCERPT_BYTES: usize = 4096;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TriggerEvent {
+    /// Store-built continuity, delivered before ordinary news to a fresh generation.
+    OrchestratorBriefing {
+        text: String,
+    },
     AgentMessage {
         #[serde(flatten)]
         message: Box<archon_core::agent_message::AgentMessage>,
@@ -227,6 +232,7 @@ impl TriggerEvent {
     /// Its `type` in the payload.
     pub fn kind(&self) -> &'static str {
         match self {
+            Self::OrchestratorBriefing { .. } => "orchestrator_briefing",
             Self::AgentMessage { .. } => "agent_message",
             Self::ItemFinished { .. } => "item_finished",
             Self::InitiativeFinished { .. } => "initiative_finished",
@@ -253,7 +259,8 @@ impl TriggerEvent {
     fn is_urgent(&self) -> bool {
         use archon_core::agent_message::MessageKind;
         match self {
-            Self::OperatorAnswer { .. }
+            Self::OrchestratorBriefing { .. }
+            | Self::OperatorAnswer { .. }
             | Self::ChatAnswer { .. }
             | Self::ChatCommand { .. }
             | Self::ChatMergeRefused { .. }
@@ -355,6 +362,8 @@ pub struct TriggerPayload {
 /// read-modify-write under the store lock, so none is lost or re-keyed.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Outbox {
+    #[serde(default)]
+    last_batch_at: Option<Timestamp>,
     in_flight: Option<Batch>,
     /// Pushed since `in_flight` was keyed, oldest first.
     pending: Vec<Held>,
@@ -392,6 +401,8 @@ impl Outbox {
 /// directive news decided when it was keyed, so a retry sends the same payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Batch {
+    #[serde(default)]
+    keyed_at: Option<Timestamp>,
     key: String,
     events: Vec<TriggerEvent>,
     #[serde(flatten)]
@@ -688,6 +699,7 @@ async fn key_pending(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let key = batch_key(&mut store, &store_id, events.len())?;
     let directives = directives::for_batch(&mut store, generation, archon_core::now())?;
     outbox.in_flight = Some(Batch {
+        keyed_at: Some(archon_core::now()),
         key,
         events,
         directives,
@@ -778,9 +790,10 @@ async fn forget_delivered(ctx: &DaemonContext, key: &str) -> Result<(), ArchonEr
     let mut outbox = read_outbox(&store)?;
     let delivered = outbox.in_flight.take();
     assert!(
-        delivered.is_some_and(|batch| batch.key == key),
+        delivered.as_ref().is_some_and(|batch| batch.key == key),
         "only the batch in flight is delivered"
     );
+    outbox.last_batch_at = delivered.and_then(|batch| batch.keyed_at);
     write_outbox(&mut store, &outbox)?;
     ctx.triggers.settle_one();
     Ok(())

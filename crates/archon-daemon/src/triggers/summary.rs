@@ -67,6 +67,7 @@ fn summary(events: &[TriggerEvent]) -> String {
 
 fn label(event: &TriggerEvent) -> String {
     match event {
+        TriggerEvent::OrchestratorBriefing { .. } => "orchestrator briefing".to_owned(),
         TriggerEvent::ItemFinished { item, state, .. } => {
             format!("item finished: {item} {state}")
         }

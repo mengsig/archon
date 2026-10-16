@@ -176,21 +176,28 @@ pub fn pr_body(text: &str, item: &str, attribution: Attribution) -> String {
 /// The lines of `text` that attribute it to a model or a tool: a
 /// `Co-Authored-By:` trailer or a `Generated with` footer, each trimmed.
 /// A line is matched from its start, past leading space and emoji, so prose
-/// that mentions such a line in passing or in backticks is not one; the
-/// phrase must end a word, so "Generated without" is prose too.
+/// that mentions such a line in passing or in backticks is not one. The
+/// trailer is matched as git parses it (`Co-Authored-By :x` too); the footer
+/// phrase must end a word, so "Generated without" is prose.
 pub fn attribution_lines(text: &str) -> Vec<&str> {
-    let starts = |line: &str, prefix: &str| {
-        let head = line.get(..prefix.len());
-        let next = line
-            .get(prefix.len()..)
-            .and_then(|rest| rest.chars().next());
-        head.is_some_and(|head| head.eq_ignore_ascii_case(prefix))
-            && next.is_none_or(|c| !c.is_alphanumeric())
+    fn after<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
+        let rest = line.get(prefix.len()..)?;
+        line[..prefix.len()]
+            .eq_ignore_ascii_case(prefix)
+            .then_some(rest)
+    }
+    let is_trailer = |line: &str| {
+        after(line, "co-authored-by")
+            .is_some_and(|rest| rest.trim_start_matches([' ', '\t']).starts_with(':'))
+    };
+    let is_footer = |line: &str| {
+        after(line, "generated with")
+            .is_some_and(|rest| rest.chars().next().is_none_or(|c| !c.is_alphanumeric()))
     };
     let found: Vec<&str> = text
         .lines()
         .map(|line| line.trim_start_matches(|c: char| c.is_whitespace() || !c.is_ascii()))
-        .filter(|line| starts(line, "co-authored-by:") || starts(line, "generated with"))
+        .filter(|line| is_trailer(line) || is_footer(line))
         .map(str::trim_end)
         .collect();
     debug_assert!(found.iter().all(|line| !line.contains('\n')));
@@ -331,6 +338,13 @@ mod tests {
             ]
         );
         assert!(attribution_lines("Why and how.\nCo-authored by people.").is_empty());
+        assert_eq!(
+            attribution_lines(
+                "Co-Authored-By:Claude <c@a>\nCo-authored-by\t: x <y>\nCo-authored-byline"
+            ),
+            ["Co-Authored-By:Claude <c@a>", "Co-authored-by\t: x <y>"],
+            "every trailer git parses, glued to its value or spaced from its colon"
+        );
         let prose = "Generated without changing the public API.\nGenerated within budget.";
         assert!(attribution_lines(prose).is_empty(), "words, not the footer");
         assert_eq!(

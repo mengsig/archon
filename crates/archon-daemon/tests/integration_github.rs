@@ -174,6 +174,19 @@ fn a_head_rerun_green_ends_the_bisection_it_owed() {
     run_inner("a_rerun_green_head_under_the_operator_s_git_config");
 }
 
+/// A green full check that stood in for unread GitHub checks is read again
+/// on GitHub, whose failure on the same head turns it red and repairs it.
+#[test]
+fn github_failure_turns_a_full_check_green_red_after_an_unread_lookup() {
+    run_inner("unread_github_under_the_operator_s_git_config");
+}
+
+/// As above, when GitHub first had no check runs on the head.
+#[test]
+fn github_failure_turns_a_full_check_green_red_after_no_runs() {
+    run_inner("no_github_runs_under_the_operator_s_git_config");
+}
+
 /// Run only by [`github_checks_are_followed_through_reruns_on_the_same_head`].
 #[tokio::test]
 #[ignore = "run by github_checks_are_followed_through_reruns_on_the_same_head"]
@@ -256,4 +269,75 @@ async fn a_rerun_green_head_under_the_operator_s_git_config() {
         fix_items(&h).await.is_empty(),
         "a green head is not repaired"
     );
+}
+
+/// Run only by [`github_failure_turns_a_full_check_green_red_after_an_unread_lookup`].
+#[tokio::test]
+#[ignore = "run by github_failure_turns_a_full_check_green_red_after_an_unread_lookup"]
+async fn unread_github_under_the_operator_s_git_config() {
+    let (h, tools, checks) = inner_harness().await;
+    assert!(
+        !checks.exists(),
+        "the fake `gh` fails while no checks are written"
+    );
+    full_check_green_turned_red(&h, &tools, &checks).await;
+}
+
+/// Run only by [`github_failure_turns_a_full_check_green_red_after_no_runs`].
+#[tokio::test]
+#[ignore = "run by github_failure_turns_a_full_check_green_red_after_no_runs"]
+async fn no_github_runs_under_the_operator_s_git_config() {
+    let (h, tools, checks) = inner_harness().await;
+    std::fs::write(&checks, r#"{"total_count":0,"check_runs":[]}"#).unwrap();
+    full_check_green_turned_red(&h, &tools, &checks).await;
+}
+
+/// The full check passes the head GitHub did not judge; GitHub's running
+/// or absent checks leave that green, and its failure turns it red.
+async fn full_check_green_turned_red(h: &Harness, tools: &Path, checks: &Path) {
+    let runs = tools.join("full-runs");
+    set_full_check(h, &format!("echo run >> '{}'", runs.display())).await;
+    let full_runs = || std::fs::read_to_string(&runs).map_or(0, |text| text.lines().count());
+    let head = git(&h.repo, &["rev-parse", "next"]);
+
+    integration::pass(&h.ctx)
+        .await
+        .expect("the full check's pass");
+    let green = branch_status(h).await;
+    assert_eq!(green.health, IntegrationHealth::Green, "{green:?}");
+    assert_eq!(green.head.as_deref(), Some(head.as_str()));
+    assert_eq!(full_runs(), 1, "the full check stood in for GitHub");
+
+    let running = look(h, checks, "in_progress", None).await;
+    assert_eq!(running.health, IntegrationHealth::Green, "{running:?}");
+    std::fs::write(checks, r#"{"total_count":0,"check_runs":[]}"#).unwrap();
+    integration::pass(&h.ctx)
+        .await
+        .expect("a pass with no runs");
+    let unjudged = branch_status(h).await;
+    assert_eq!(unjudged.health, IntegrationHealth::Green, "{unjudged:?}");
+
+    let red = look(h, checks, "completed", Some("failure")).await;
+    assert_eq!(red.health, IntegrationHealth::Red, "{red:?}");
+    assert_eq!(red.head.as_deref(), Some(head.as_str()));
+    integration::pass(&h.ctx).await.expect("the owed bisection");
+    let repaired = branch_status(h).await;
+    assert_eq!(repaired.health, IntegrationHealth::Red, "{repaired:?}");
+    assert_eq!(fix_items(h).await.len(), 1, "one fix item for the red head");
+    assert_eq!(full_runs(), 1, "GitHub's verdict needs no full check");
+}
+
+async fn set_full_check(h: &Harness, command: &str) {
+    let patch = RepoPatch {
+        tiers: TiersPatch {
+            full_check: Clearable::Set(command.into()),
+            ..TiersPatch::default()
+        },
+        ..RepoPatch::default()
+    };
+    let request = Request::RepoUpdate {
+        repo: RepoRef(REPO_NAME.into()),
+        patch,
+    };
+    h.cli(request).await.expect("full check set");
 }

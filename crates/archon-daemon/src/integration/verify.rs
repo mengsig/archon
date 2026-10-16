@@ -193,6 +193,13 @@ impl<'a> Session<'a> {
             }
             Outcome::Red { via, excerpt } => {
                 state.verdict = Some(verdict(false, via, excerpt));
+                if state.last_green.as_ref() == Some(&commit) {
+                    // A rerun failed the green baseline: the next look bisects from an older one.
+                    state.last_green = None;
+                    state.culprit = None;
+                    state.bisecting = Some(commit);
+                    return Ok(());
+                }
                 if culprit_stands {
                     return Ok(());
                 }

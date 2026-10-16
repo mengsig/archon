@@ -93,6 +93,30 @@ async fn fix_items(h: &Harness) -> Vec<QueueItem> {
     items
 }
 
+/// Merge a branch adding `file` into `origin`'s `next`, as a pull request
+/// lands, and return the merge commit.
+fn land(h: &Harness, file: &str) -> String {
+    let clone = h.dir.path().join(format!("upstream-{file}"));
+    let origin = origin_of(h);
+    let (from, to) = (origin.to_str().unwrap(), clone.to_str().unwrap());
+    git(
+        h.dir.path(),
+        &["clone", "--quiet", "--branch", "next", from, to],
+    );
+    git(&clone, &["checkout", "--quiet", "-b", file]);
+    std::fs::write(clone.join(file), "landed\n").unwrap();
+    git(&clone, &["add", file]);
+    git(&clone, &["commit", "--quiet", "-m", &format!("Add {file}")]);
+    git(&clone, &["checkout", "--quiet", "next"]);
+    let message = format!("Merge pull request: add {file}");
+    git(
+        &clone,
+        &["merge", "--quiet", "--no-ff", "-m", &message, file],
+    );
+    git(&clone, &["push", "--quiet", from, "next"]);
+    git(&clone, &["rev-parse", "HEAD"])
+}
+
 async fn look(
     h: &Harness,
     checks: &Path,
@@ -105,7 +129,8 @@ async fn look(
 }
 
 /// GitHub's checks decide, show as verifying while they run, and are read
-/// again on a head they judged: a rerun turns it green, a later one red.
+/// again on a head they judged: a rerun turns it green, a later one red,
+/// which revokes it as the baseline a later merge is blamed against.
 #[test]
 fn github_checks_are_followed_through_reruns_on_the_same_head() {
     let tools = tempfile::tempdir().expect("tools dir");
@@ -149,6 +174,21 @@ async fn github_checks_under_the_operator_s_git_config() {
 
     let red_again = look(&h, &checks, "completed", Some("failure")).await;
     assert_eq!(red_again.health, IntegrationHealth::Red, "{red_again:?}");
+    assert_eq!(red_again.last_green, None, "the green baseline is revoked");
     let fixes = fix_items(&h).await;
     assert_eq!(fixes.len(), 1, "none while the fix is open: {fixes:?}");
+
+    integration::pass(&h.ctx).await.expect("the owed bisection");
+    let harmless = land(&h, "harmless");
+    integration::pass(&h.ctx)
+        .await
+        .expect("a red merge on a red base");
+    let after = branch_status(&h).await;
+    assert_eq!(after.head.as_deref(), Some(harmless.as_str()));
+    assert_eq!(after.health, IntegrationHealth::Red, "{after:?}");
+    assert_eq!(
+        after.culprit, None,
+        "the merge is not blamed for its red base"
+    );
+    assert_eq!(fix_items(&h).await.len(), 1);
 }

@@ -456,6 +456,7 @@ CREATE TABLE run_pull_requests (
     number     INTEGER NOT NULL CHECK (number > 0),
     node_id    TEXT CHECK (node_id <> '')
 );
+CREATE INDEX run_pull_requests_by_pr ON run_pull_requests (host, repository, number);
 
 WITH reported AS (
     SELECT run, json_extract(data, '$.structured.pr_url') AS url,

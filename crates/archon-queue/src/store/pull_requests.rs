@@ -19,8 +19,7 @@ pub struct RunPullRequest {
 
 impl Store {
     /// Record that `run` delivered to `pr`, replacing the one it delivered to
-    /// before. A node id already known for the same pull request is kept, and
-    /// a new one is given to every run delivered to it.
+    /// before. A pull request's node id, once known, is every such run's.
     pub fn record_run_pull_request(
         &mut self,
         run: &PipelineRunId,
@@ -56,15 +55,16 @@ impl Store {
             )
             .ctx("record a run's pull request")?;
         assert_eq!(changed, 1, "one run, one row");
-        if node_id.is_some() {
-            // The node id is the pull request's, so every run delivered to it learns it.
-            tx.execute(
-                "UPDATE run_pull_requests SET node_id = ?4
-                 WHERE host = ?1 AND repository = ?2 AND number = ?3 AND node_id IS NULL",
-                params![pr.host, pr.repository, number, node_id],
-            )
-            .ctx("share a pull request's node id")?;
-        }
+        // The node id is the pull request's, so every run delivered to it learns it.
+        tx.execute(
+            "UPDATE run_pull_requests SET node_id = (
+                 SELECT node_id FROM run_pull_requests
+                 WHERE host = ?1 AND repository = ?2 AND number = ?3 AND node_id IS NOT NULL
+                 LIMIT 1)
+             WHERE host = ?1 AND repository = ?2 AND number = ?3 AND node_id IS NULL",
+            params![pr.host, pr.repository, number],
+        )
+        .ctx("share a pull request's node id")?;
         tx.commit().ctx("commit a run's pull request")
     }
 

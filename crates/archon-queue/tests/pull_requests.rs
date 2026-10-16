@@ -37,6 +37,15 @@ fn runs_record_the_pull_request_they_delivered_to_and_may_share_one() {
         "a known node id is kept"
     );
 
+    let third = store.insert_item(&item(None, "third"), None).unwrap();
+    let c = start(&mut store, &third.id);
+    store.record_run_pull_request(&c.id, &pr(7), None).unwrap();
+    assert_eq!(
+        store.run_pull_request(&c.id).unwrap(),
+        Some(known(Some("PR_kw7"))),
+        "a run delivered later learns the known node id"
+    );
+
     store.record_run_pull_request(&b.id, &pr(8), None).unwrap();
     let moved = store.run_pull_request(&b.id).unwrap().unwrap();
     assert_eq!(

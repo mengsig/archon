@@ -13,7 +13,7 @@ use std::sync::{Arc, PoisonError};
 
 use archon_core::error::ArchonError;
 use archon_core::pull_request::{OntoPullRequest, PullRequestRef};
-use archon_core::repo::Repo;
+use archon_core::repo::{Repo, github_slug};
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use super::super::gh;
@@ -112,6 +112,9 @@ fn fast_forward_now(
         Ok(url) => url,
         Err(refusal) => return Ok(Err(refusal)),
     };
+    if let Some(refusal) = elsewhere(&url, onto) {
+        return Ok(Err(refusal));
+    }
     // Read through `origin` as configured; only the push goes as `token`'s login.
     let push_to = match token {
         Some(token) => match gh_account::push_url(repo, token.user())? {
@@ -235,6 +238,23 @@ async fn confirm(
     }
 }
 
+/// Why `onto`'s pull request is not updated: `origin` names another github.com
+/// repository than the one holding its head. Other hosts are not GitHub's to name.
+fn elsewhere(url: &str, onto: &OntoPullRequest) -> Option<String> {
+    assert!(!onto.head_repository.is_empty(), "frozen at enqueue");
+    let slug = github_slug(url)?;
+    if slug.eq_ignore_ascii_case(&onto.head_repository) {
+        return None;
+    }
+    Some(format!(
+        "BLOCKED: `origin` is `{slug}` now, but the head of {} lives in `{}`; nothing was \
+         pushed. Point `origin` back at `{}`, or queue the work again without `onto`",
+        onto.pr.url(),
+        onto.head_repository,
+        onto.head_repository
+    ))
+}
+
 /// Why `onto`'s pull request is not updated: its head branch is gone.
 fn gone(onto: &OntoPullRequest) -> String {
     format!(
@@ -292,9 +312,8 @@ mod tests {
         assert_eq!(kept, 1, "only a held lock is kept");
     }
 
-    #[test]
-    fn a_moved_head_names_both_commits_and_never_forces() {
-        let onto = OntoPullRequest {
+    fn frozen() -> OntoPullRequest {
+        OntoPullRequest {
             target: archon_core::pull_request::OntoTarget::Pr(100),
             pr: pr(100),
             node_id: None,
@@ -302,7 +321,34 @@ mod tests {
             head_ref: "feature".into(),
             base_ref: "main".into(),
             head_sha: "a".repeat(40),
-        };
+        }
+    }
+
+    #[test]
+    fn a_push_goes_only_to_the_repository_holding_the_frozen_head() {
+        let onto = frozen();
+        for same in [
+            "https://github.com/o/r.git",
+            "git@github.com:O/R",
+            "/srv/origin.git",
+        ] {
+            assert_eq!(elsewhere(same, &onto), None, "{same}");
+        }
+        for fork in [
+            "https://github.com/fork/r.git",
+            "git@github.com:o/mirror.git",
+        ] {
+            let said = elsewhere(fork, &onto).expect(fork);
+            assert!(
+                said.starts_with("BLOCKED:") && said.contains("`o/r`"),
+                "{said}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_moved_head_names_both_commits_and_never_forces() {
+        let onto = frozen();
         let said = moved(&onto, &"b".repeat(40));
         assert!(
             said.contains(&"a".repeat(40)) && said.contains(&"b".repeat(40)),

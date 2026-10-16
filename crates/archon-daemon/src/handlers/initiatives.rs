@@ -86,8 +86,14 @@ async fn prepare_member(
         .unwrap_or_else(|| member_title(&member.brief));
     check_enqueue(&title, &member.brief, &[], None)?;
     assert!(member.after.iter().all(|&i| i < earlier.len()));
-    let onto =
-        items::freeze_onto(ctx, &env, member.onto.as_ref(), !member.after.is_empty()).await?;
+    let onto = items::freeze_onto(
+        ctx,
+        &env,
+        &resolved.spec,
+        member.onto.as_ref(),
+        !member.after.is_empty(),
+    )
+    .await?;
     let dependencies = member
         .after
         .iter()

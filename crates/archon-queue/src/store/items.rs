@@ -168,6 +168,15 @@ fn find_by_key(conn: &Connection, key: &str) -> Result<Option<(QueueItemId, Stri
     .transpose()
 }
 
+pub(super) fn by_key(conn: &Connection, key: &str) -> Result<Option<QueueItem>, ArchonError> {
+    let Some((id, _)) = find_by_key(conn, key)? else {
+        return Ok(None);
+    };
+    let item = load(conn, &id)?;
+    assert_eq!(item.id, id, "load reads the item asked for");
+    Ok(Some(item))
+}
+
 fn validate_new(item: &QueueItem, key: Option<&str>) -> Result<(), ArchonError> {
     if item.state != QueueState::Queued {
         return Err(ArchonError::Invalid(format!(

@@ -224,6 +224,47 @@ async fn a_closed_merged_or_fork_target_is_refused_at_enqueue_with_the_reason() 
 }
 
 #[tokio::test]
+async fn a_replay_returns_the_frozen_item_after_its_pull_request_merged() {
+    let (h, gh, head) = setup().await;
+    gh.show(100, &head, json!({}));
+    let mut keyed = request("onto 100", Some(OntoTarget::Pr(100)), &[]);
+    keyed.idempotency_key = Some("onto-key".into());
+    let Reply::Item(first) = h.cli(Request::Enqueue(keyed.clone())).await.unwrap() else {
+        panic!("enqueue replied no item");
+    };
+    gh.show(100, "f".repeat(40).as_str(), json!({"state": "MERGED"}));
+
+    let Reply::Item(replayed) = h.cli(Request::Enqueue(keyed.clone())).await.unwrap() else {
+        panic!("replay replied no item");
+    };
+    assert_eq!(replayed.id, first.id, "the same item");
+    assert_eq!(replayed.onto, Some(frozen(OntoTarget::Pr(100), 100, &head)));
+    keyed.onto = Some(OntoTarget::Pr(101));
+    let other = h.cli(Request::Enqueue(keyed)).await;
+    assert!(other.is_err(), "another target is no replay");
+    assert_eq!(item_count(&h).await, 1);
+}
+
+#[tokio::test]
+async fn onto_is_refused_for_a_pipeline_without_a_worktree() {
+    let (h, gh, head) = setup().await;
+    gh.show(100, &head, json!({}));
+    let mut ask = request("ask onto 100", Some(OntoTarget::Pr(100)), &[]);
+    ask.pipeline = Some("ask".into());
+    let mut stages = std::collections::BTreeMap::new();
+    let answer = common::choice(common::MODEL, archon_core::model::Effort::Medium);
+    stages.insert("answer".to_owned(), vec![answer]);
+    ask.model_plan = archon_core::model::ModelPlan(stages).into();
+
+    let error = h.cli(Request::Enqueue(ask)).await.expect_err("refused");
+    assert!(
+        error.to_string().contains("does not work in a worktree"),
+        "{error}"
+    );
+    assert_eq!(item_count(&h).await, 0, "nothing was queued");
+}
+
+#[tokio::test]
 async fn onto_with_dependencies_is_refused_before_github_is_asked() {
     let (h, gh, head) = setup().await;
     gh.show(100, &head, json!({}));

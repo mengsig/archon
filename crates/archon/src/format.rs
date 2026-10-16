@@ -150,6 +150,9 @@ fn link_lines(out: &mut String, status: &DaemonStatus) {
     for provider in status.quota.iter().flat_map(|q| &q.providers) {
         let _ = writeln!(out, "quota {}", sanitize_line(&provider.describe()));
     }
+    for branch in &status.integration {
+        let _ = writeln!(out, "integration {}", sanitize_line(&branch.describe()));
+    }
     if let Some(disk) = &status.disk {
         let _ = writeln!(out, "disk: {}", disk_line(disk));
         for usage in &disk.storage {
@@ -817,7 +820,37 @@ pub(crate) mod tests {
             health: None,
             quota: None,
             recovery: None,
+            integration: Vec::new(),
         }
+    }
+
+    #[test]
+    fn status_shows_each_integration_branch_s_last_green_commit() {
+        use archon_core::integration::{IntegrationHealth, IntegrationStatus};
+        let mut up = status_with(AetherLinkStatus::Disconnected {
+            error: "x".into(),
+            retry_at: None,
+        });
+        assert!(!status(&up, &RepoNames::new()).contains("integration"));
+        up.integration = vec![IntegrationStatus {
+            repo: "archon".into(),
+            branch: "next".into(),
+            health: IntegrationHealth::Pending,
+            head: Some("1a2b3c4d5e".into()),
+            last_green: Some("9f8e7d6c5b".into()),
+            merges_since_green: 2,
+            culprit: None,
+            fix_item: None,
+            problem: None,
+            verified_at: None,
+        }];
+        let text = status(&up, &RepoNames::new());
+        assert!(
+            text.contains(
+                "\nintegration archon/next: pending at 1a2b3c4d; last green 9f8e7d6c, 2 merge(s) since\n"
+            ),
+            "{text}"
+        );
     }
 
     #[test]

@@ -2771,6 +2771,19 @@ fast = "cargo test -p mycrate" # every stage agent's contract says: run before y
 full = "make ci"               # the contract forbids it: it runs off the item's path
 ```
 
+`archond` verifies the integration branch off the items' path
+(`archon_daemon::integration`): one worker reads each branch's head every
+`[integration] poll_every` (fetched from `origin` in `pr` mode) and, after
+`batch_merges` merges or `idle_after` without one, verifies it by the
+commit's GitHub check runs when CI covers it, else by `checks.full` in a
+daemon-owned checkout sealed as the mirrors are (§13.3). Full runs take the
+host's build slot, an in-process mutex plus an exclusive `flock` on
+`[integration] slot_lock`, so they never overlap across daemons. A red head
+is bisected over the first-parent commits since the last green one; the
+culprit, the failing excerpt and the fix item (one per red head, none while
+one is open, idempotency key `integration-fix-<repo>-<head>`) are kept in
+the store's `integration_<repo>` key, and `status` reports each branch.
+
 Precedence for repository settings: registry flags from `archon repo add` or
 `archon repo set`, then `.archon/config.toml`, then global defaults.
 **Only the operator can raise an autonomy ceiling**, through the global

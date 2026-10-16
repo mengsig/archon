@@ -29,8 +29,8 @@ const PUSH_GUARD: &str = "#!/bin/sh\n\
     exit 1\n";
 
 /// The commit a mirror is checked out at, and where a fetch finds it.
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct Base {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Base {
     pub commit: String,
     /// The ref of the repository that names it, fetched besides the
     /// branches; `None` for a bare commit id.
@@ -41,7 +41,7 @@ pub(super) struct Base {
 
 impl Base {
     /// What `base`, or `HEAD` without one, names in the repository now.
-    pub(super) fn resolve(repo: &Path, base: Option<&str>) -> Result<Self, ArchonError> {
+    pub(crate) fn resolve(repo: &Path, base: Option<&str>) -> Result<Self, ArchonError> {
         assert!(repo.is_absolute(), "registered paths are canonical");
         let name = base.unwrap_or("HEAD");
         // Git would read a base like `--all` as an option.
@@ -77,12 +77,24 @@ impl Base {
             format,
         })
     }
+
+    /// The same source at `commit`, which must be one of its ancestors to be fetched.
+    pub(crate) fn at(&self, commit: &str) -> Self {
+        assert!(
+            crate::worktree::stack::is_commit_id(commit),
+            "a full commit id"
+        );
+        Self {
+            commit: commit.to_owned(),
+            ..self.clone()
+        }
+    }
 }
 
 /// One repository's mirror: the work tree helpers read and the git
 /// directory only the daemon writes.
 #[derive(Debug, Clone)]
-pub(super) struct Mirror {
+pub(crate) struct Mirror {
     pub work: PathBuf,
     pub git_dir: PathBuf,
     /// The push guard's directory, named by the mirror's config.
@@ -92,7 +104,7 @@ pub(super) struct Mirror {
 impl Mirror {
     /// Make the git directory if it is missing and the work tree a real
     /// directory whose `.git` names it, whatever was there before.
-    pub(super) fn prepare(&self, base: &Base) -> Result<(), ArchonError> {
+    pub(crate) fn prepare(&self, base: &Base) -> Result<(), ArchonError> {
         make(&self.git_dir, &base.format)?;
         if !is_real_dir(&self.work)? {
             remove_entry(&self.work)?;
@@ -114,7 +126,7 @@ impl Mirror {
 
     /// Fetch the repository's branches, and its base when that is no branch,
     /// from its path. Incremental: only objects the mirror lacks are copied.
-    pub(super) fn fetch(&self, source: &Path, base: &Base) -> Result<(), ArchonError> {
+    pub(crate) fn fetch(&self, source: &Path, base: &Base) -> Result<(), ArchonError> {
         let source = source
             .to_str()
             .ok_or_else(|| ArchonError::Invalid(format!("{} is not UTF-8", source.display())))?;
@@ -143,7 +155,7 @@ impl Mirror {
 
     /// Check the mirror out detached at `commit`. Tracked files are reset to
     /// it; untracked ones (a helper's notes, build output) are left.
-    pub(super) fn checkout(&self, base: &Base) -> Result<(), ArchonError> {
+    pub(crate) fn checkout(&self, base: &Base) -> Result<(), ArchonError> {
         assert!(!base.commit.starts_with('-'), "a commit id is no option");
         let args = ["checkout", "--quiet", "--force", "--detach", &base.commit];
         self.git(&base.format)?
@@ -154,7 +166,7 @@ impl Mirror {
     }
 
     /// The commit the mirror has checked out; `None` before its first checkout.
-    pub(super) fn head(&self, base: &Base) -> Result<Option<String>, ArchonError> {
+    pub(crate) fn head(&self, base: &Base) -> Result<Option<String>, ArchonError> {
         let args = ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"];
         let ran = self.git(&base.format)?.args(args).output()?;
         // `rev-parse --verify --quiet` exits 1 exactly when the name is unborn.
@@ -163,6 +175,16 @@ impl Mirror {
             Some(1) => Ok(None),
             _ => Err(ran.failure()),
         }
+    }
+
+    /// Remove untracked files git does not ignore, keeping ignored build output.
+    pub(crate) fn clean(&self, base: &Base) -> Result<(), ArchonError> {
+        let args = ["clean", "--quiet", "--force", "-d"];
+        self.git(&base.format)?
+            .args(args)
+            .limit(CHECKOUT_TIMEOUT)
+            .text()
+            .map(drop)
     }
 
     /// Git on exactly this git directory and work tree, sealed first.
@@ -195,7 +217,7 @@ pub(super) fn remove_all_but(root: &Path, keep: &BTreeSet<String>) -> Result<(),
 
 /// The `pre-push` hook every mirror runs: a push from a mirror, or from a
 /// worktree of one, is refused wherever it is aimed.
-pub(super) fn write_push_guard(hooks: &Path) -> Result<(), ArchonError> {
+pub(crate) fn write_push_guard(hooks: &Path) -> Result<(), ArchonError> {
     let hook = hooks.join("pre-push");
     let written = std::fs::read_to_string(&hook).is_ok_and(|text| text == PUSH_GUARD);
     if !written {

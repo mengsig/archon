@@ -311,6 +311,37 @@ including later provider settlement. Missing outcomes are reconciled in recurrin
 bounded scans; malformed history gets a diagnostic skip marker instead of blocking
 later runs.
 
+## Integration branch verification
+
+A repository with an integration branch (`integration_branch` in its
+`.archon/repo.toml`, or `archon repo set --integration-branch`) has that
+branch verified by `archond`, off every item's path. It reads the branch's
+head every `poll_every` and verifies it once `batch_merges` merges have
+landed since the last verified head, or once the head has stood still for
+`idle_after`. When the repository ships pull requests and GitHub runs check
+runs on the commit, those decide. Otherwise `archond` runs `[checks] full`
+in its own checkout of the branch (`<data>/integration/<repo>`, its output
+in `<repo>.log` beside it), under `nice`, one run at a time per host.
+
+```toml
+[integration]
+enabled = true                 # the default; false never verifies an integration branch
+poll_every = "60s"             # how often the branch heads are read
+batch_merges = 3               # verify after this many merges since the last verdict
+idle_after = "10m"             # or once the head has not moved for this long
+full_timeout = "2h"            # a full check running longer is ended and counts as red
+# slot_lock = "/tmp/archon-full-check-<uid>.lock"   # the default; one full run per host
+```
+
+A red head is bisected over the merges since the last green commit (with
+none recorded, since the branch left the release branch), each probe one
+more full run, to the first merge that fails. Archon then queues one fix
+item onto the integration branch at high priority, tagged `integration-fix`,
+naming that merge and carrying the end of the failing output, and tells you.
+No second fix item is queued while that one is open. `archon status` and
+`queue_status` show each integration branch: green, red, verifying or
+pending, its last green commit and the merges since.
+
 ## Disk use
 
 Every item that works on a repository runs in its own git worktree, by

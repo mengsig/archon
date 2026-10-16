@@ -680,6 +680,29 @@ fn the_status_text_shows_each_provider_s_headroom_reserve_and_next_reset() {
 }
 
 #[test]
+fn the_status_text_shows_each_integration_branch_s_state() {
+    use archon_core::integration::{IntegrationHealth, IntegrationStatus};
+    assert_eq!(render::integration_text(&[]), "");
+    let red = IntegrationStatus {
+        repo: "archon".into(),
+        branch: "next".into(),
+        health: IntegrationHealth::Red,
+        head: Some("1a2b3c4d5e".into()),
+        last_green: Some("9f8e7d6c5b".into()),
+        merges_since_green: 5,
+        culprit: Some("5d6e7f80 Merge pull request #12".into()),
+        fix_item: None,
+        problem: None,
+        verified_at: None,
+    };
+    assert_eq!(
+        render::integration_text(&[red]),
+        "\nIntegration branch archon/next: red at 1a2b3c4d; last green 9f8e7d6c, 5 merge(s) \
+         since; broken by 5d6e7f80 Merge pull request #12."
+    );
+}
+
+#[test]
 fn rendered_catalog_shows_what_a_model_plan_needs() {
     let stage = |id: &str, kind, fan_out, gate| StageSummary {
         effort: archon_core::model::Effort::Medium,

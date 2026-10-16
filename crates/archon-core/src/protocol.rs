@@ -999,6 +999,10 @@ pub struct DaemonStatus {
     /// older archond.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery: Option<RecoveryProgress>,
+    /// Each watched integration branch: green, red, verifying or pending,
+    /// its last green commit and the merges since.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub integration: Vec<crate::integration::IntegrationStatus>,
 }
 
 /// `DaemonStatus::recovery`: how far archond is in recovering its runs.

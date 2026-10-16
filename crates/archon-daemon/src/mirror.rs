@@ -7,7 +7,7 @@
 //! mirrors current; a refresh that fails is posted to the feed and told to
 //! the orchestrator, and blocks neither.
 
-mod git;
+pub(crate) mod git;
 mod reach;
 
 use std::collections::BTreeSet;
@@ -85,6 +85,11 @@ impl MirrorQueue {
 /// Where the mirrors of an orchestrator workspace live.
 pub fn mirrors_root(workspace: &Path) -> PathBuf {
     workspace.join(MIRRORS_DIR)
+}
+
+/// The push guard's directory, which every daemon-owned checkout's config names.
+pub(crate) fn hooks_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join(HOOKS_DIR)
 }
 
 /// Where the mirrors' git directories live, one per repository name.
@@ -182,7 +187,7 @@ impl Layout {
         Self {
             root: mirrors_root(&workspace),
             git_dirs: git_dirs_root(&ctx.paths.data_dir),
-            hooks: ctx.paths.data_dir.join(HOOKS_DIR),
+            hooks: hooks_dir(&ctx.paths.data_dir),
             workspace,
         }
     }

@@ -276,6 +276,7 @@ mod tests {
             default_pipeline: None,
             autonomy_max: Default::default(),
             grant_merge: false,
+            attribution: Default::default(),
             added_at: archon_core::now(),
         }
     }

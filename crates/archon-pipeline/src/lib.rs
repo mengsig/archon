@@ -22,6 +22,6 @@ pub mod template;
 
 pub use catalog::{Catalog, CatalogSources};
 pub use engine::{EngineAction, OperatorWait, RunDriver, SpawnPlan};
-pub use ship::{ShipOutcome, ShipPlan, ShipRecord};
+pub use ship::{ShipOutcome, ShipPlan, ShipRecord, attribution_lines};
 pub use spec::PipelineSpec;
 pub use template::RunVars;

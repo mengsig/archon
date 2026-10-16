@@ -60,4 +60,5 @@ is the verifier's input.
 
 Include the ship record your contract requires in `structured`. Its `pr.body`
 is the pull request description a maintainer reads: what changed and why,
-how it was verified, and what is left open.
+how it was verified, and what is left open. It names no model or tool: no
+`Co-Authored-By` or "Generated with" line.

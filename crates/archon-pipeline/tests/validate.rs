@@ -489,6 +489,43 @@ fn every_builtin_validates_and_keeps_its_promises() {
 
 /// archond ships what one agent recorded, so `[pipeline.ship]` names a
 /// single-agent stage of a worktree pipeline after which nothing commits.
+/// What every shipping prompt says of the pull request body it writes.
+const PR_BODY_RULE: &str =
+    "names no model or tool: no `Co-Authored-By` or \"Generated with\" line.";
+
+#[test]
+fn every_pipeline_that_ships_forbids_attribution_in_the_pr_body() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../pipelines");
+    let catalog = Catalog::builtin();
+    let mut shipping = Vec::new();
+    for entry in std::fs::read_dir(&root).expect("the pipelines directory") {
+        let dir = entry.expect("a directory entry").path();
+        if !dir.join("pipeline.toml").is_file() {
+            continue;
+        }
+        let name = dir.file_name().unwrap().to_str().unwrap().to_owned();
+        let spec = catalog
+            .get(&name)
+            .expect("every pipeline directory is a built-in");
+        let writers = spec.file.stages.iter().filter(|stage| {
+            stage.kind == StageKind::Ship
+                || spec.ship_record_stage().is_some_and(|r| r.id == stage.id)
+        });
+        for stage in writers {
+            let prompt = std::fs::read_to_string(dir.join(&stage.prompt)).expect("its prompt");
+            let prompt = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+            assert!(
+                prompt.contains(PR_BODY_RULE),
+                "{name}/{}: the PR-body rule is missing",
+                stage.prompt
+            );
+            shipping.push(name.clone());
+        }
+    }
+    shipping.sort();
+    assert_eq!(shipping, ["adaptive", "direct", "performance", "refactor"]);
+}
+
 #[test]
 fn a_daemon_ship_names_the_last_stage_that_can_commit() {
     let direct = include_str!("../../../pipelines/direct/pipeline.toml");

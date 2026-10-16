@@ -34,7 +34,8 @@ async fn command(ctx: &DaemonContext, text: &str) -> Result<Request, ArchonError
             },
         }),
         ("set", ["--repo", name, settings @ ..]) if !settings.is_empty() => {
-            if settings.iter().any(|s| s.starts_with("grant_merge=") || s.starts_with("ship=") || s.starts_with("base_branch=")) {
+            let registry = ["grant_merge=", "ship=", "base_branch=", "attribution="];
+            if settings.iter().any(|s| registry.iter().any(|key| s.starts_with(key))) {
                 repo_settings(ctx, name, settings).await
             } else { overlay_settings(ctx, Some(name), settings).await }
         }
@@ -62,12 +63,14 @@ async fn repo_settings(
                 })?)
             }
             "ship" => patch.ship = Some(value.parse()?),
+            "attribution" => patch.attribution = Some(value.parse()?),
             "base_branch" => {
                 patch.base_branch = archon_core::protocol::Clearable::Set(value.into())
             }
             _ => {
                 return Err(ArchonError::Invalid(
-                    "set grant_merge, ship and base_branch separately from saved overlay settings"
+                    "set grant_merge, ship, base_branch and attribution separately from saved \
+                     overlay settings"
                         .into(),
                 ));
             }

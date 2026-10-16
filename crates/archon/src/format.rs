@@ -17,7 +17,7 @@ use archon_core::protocol::{
     PauseTarget, ReportPublished, ReportState, ReportSummary, gib,
 };
 use archon_core::queue::{Caps, PauseState};
-use archon_core::repo::{Repo, ShipMode};
+use archon_core::repo::{Attribution, Repo, ShipMode};
 
 use crate::wrap::{sanitize, sanitize_line};
 
@@ -342,6 +342,9 @@ pub fn repo_line(repo: &Repo) -> String {
     }
     if repo.grant_merge {
         line.push_str(", grant_merge on");
+    }
+    if repo.attribution != Attribution::default() {
+        let _ = write!(line, ", attribution {}", repo.attribution.name());
     }
     line
 }

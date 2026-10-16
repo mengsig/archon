@@ -11,6 +11,7 @@ use archon_core::catalog::{StageKind, WorkspaceMode};
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
 use archon_core::model::{ModelChoice, ModelPlan};
+use archon_core::repo::Attribution;
 use archon_core::run::{
     GateDecision, GateSubject, PipelineRun, RunState, StageOutcome, StageRun, StageState,
 };
@@ -126,6 +127,8 @@ pub struct RunDriver {
     /// The item's directory for reviewers' experiment copies, which the
     /// contract names; `None` leaves them to `mktemp -d`.
     experiments: Option<PathBuf>,
+    /// The repository's attribution policy, which decides the body's last line.
+    attribution: Attribution,
 }
 
 /// A live role of a team group another role already failed, and why it is
@@ -234,6 +237,7 @@ impl RunDriver {
             cancelling: BTreeSet::new(),
             aborts: BTreeMap::new(),
             experiments: None,
+            attribution: Attribution::default(),
         };
         driver.check_prompts_render()?;
         Ok(driver)
@@ -271,6 +275,18 @@ impl RunDriver {
         );
         assert!(dir.is_absolute(), "the experiments directory is absolute");
         self.experiments = Some(dir);
+        self
+    }
+
+    /// The repository's attribution policy for the pull request this run
+    /// may open; the default keeps the `Archon item:` line.
+    pub fn with_attribution(mut self, attribution: Attribution) -> Self {
+        assert!(
+            self.emitted.is_empty() && !self.finished && !self.shipping,
+            "the policy is set before the driver acts"
+        );
+        assert!(self.shipped.is_none(), "set before a delivery is replayed");
+        self.attribution = attribution;
         self
     }
 
@@ -1047,12 +1063,13 @@ impl RunDriver {
             later: &later,
             report: report_stage.and_then(passed),
         };
-        let body = ship::pr_body(&record, added, &self.base_vars["item.id"]);
+        let body = ship::pr_body(&record, added, &self.base_vars["item.id"], self.attribution);
         ShipPlan {
             record_stage: record_stage.id.clone(),
             record,
             body,
             summary,
+            attribution: self.attribution,
         }
     }
 

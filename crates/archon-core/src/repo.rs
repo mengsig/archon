@@ -49,6 +49,54 @@ impl<'de> Deserialize<'de> for ShipMode {
     }
 }
 
+/// What a delivered pull request says of Archon and of the tools that made
+/// it; only the operator sets it, in the registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum Attribution {
+    /// No `Archon item:` line, and delivery refuses a pull request body or
+    /// commit message carrying a `Co-Authored-By:` or `Generated with` line.
+    None,
+    /// The body ends with the `Archon item:` line. The default.
+    #[default]
+    ItemId,
+}
+
+impl Attribution {
+    /// The policy `name` spells, or why it is none.
+    fn named(name: &str) -> Result<Self, String> {
+        match name {
+            "none" => Ok(Self::None),
+            "item-id" => Ok(Self::ItemId),
+            other => Err(format!("attribution {other:?} is not one of none, item-id")),
+        }
+    }
+
+    /// The name the CLI, chat commands and the store use.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::ItemId => "item-id",
+        }
+    }
+}
+
+impl std::str::FromStr for Attribution {
+    type Err = crate::ArchonError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::named(s).map_err(crate::ArchonError::Invalid)
+    }
+}
+
+/// Not derived: an unknown name is refused with the policies that exist.
+impl<'de> Deserialize<'de> for Attribution {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        Self::named(&name).map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Repo {
     pub id: RepoId,
@@ -70,6 +118,9 @@ pub struct Repo {
     /// `merge` knob and its ceiling are separate (ARCHITECTURE §18.6).
     #[serde(default)]
     pub grant_merge: bool,
+    /// What its pull requests say of Archon and the tools; operator only.
+    #[serde(default)]
+    pub attribution: Attribution,
     pub added_at: Timestamp,
 }
 
@@ -115,6 +166,43 @@ mod tests {
             );
         }
         assert!(serde_json::from_str::<ShipMode>("1").is_err());
+    }
+
+    #[test]
+    fn attribution_names_round_trip_and_an_unknown_one_lists_the_policies() {
+        for policy in [Attribution::None, Attribution::ItemId] {
+            let wire = serde_json::to_string(&policy).unwrap();
+            assert_eq!(wire, format!("\"{}\"", policy.name()));
+            assert_eq!(serde_json::from_str::<Attribution>(&wire).unwrap(), policy);
+            assert_eq!(policy.name().parse::<Attribution>().unwrap(), policy);
+        }
+        assert_eq!(Attribution::default(), Attribution::ItemId);
+        let refused = "full".parse::<Attribution>().unwrap_err().to_string();
+        assert!(
+            refused.ends_with("is not one of none, item-id"),
+            "{refused}"
+        );
+        let repo = Repo {
+            id: RepoId::new(),
+            name: "a".into(),
+            path: "/a".into(),
+            ship: ShipMode::Pr,
+            base_branch: None,
+            default_pipeline: None,
+            autonomy_max: AutonomyPatch::default(),
+            grant_merge: false,
+            attribution: Attribution::None,
+            added_at: crate::now(),
+        };
+        let mut stored = serde_json::to_value(&repo).unwrap();
+        assert_eq!(stored["attribution"], "none");
+        stored.as_object_mut().unwrap().remove("attribution");
+        let old: Repo = serde_json::from_value(stored).unwrap();
+        assert_eq!(
+            old.attribution,
+            Attribution::ItemId,
+            "stored before it existed"
+        );
     }
 
     #[test]

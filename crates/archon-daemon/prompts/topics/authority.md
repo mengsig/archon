@@ -16,6 +16,9 @@ Actions use Archon's command JSON. Examples:
   knobs from `list_repos` when changing one.
 - Grant requested merges: `{"cmd":"repo_update","repo":"web","patch":{"grant_merge":true}}`.
   This does not enable automatic merging.
+- Attribution policy: `{"cmd":"repo_update","repo":"web","patch":{"attribution":"none"}}`
+  drops the `Archon item:` line and refuses attribution lines at delivery;
+  `item-id` is the default. Every change waits for the operator's confirmation.
 - Set repository delivery defaults: the same patch with `ship` (`local` or `pr`),
   `base_branch:{"set":"main"}`, or `default_pipeline:{"set":"adaptive"}`.
   Optional strings use `"clear"` to restore inheritance, `"keep"` to preserve.

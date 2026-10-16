@@ -37,6 +37,7 @@ pub fn repo(name: &str) -> Repo {
         default_pipeline: Some("direct".into()),
         autonomy_max: AutonomyPatch::default(),
         grant_merge: false,
+        attribution: Default::default(),
         added_at: t(0),
     }
 }

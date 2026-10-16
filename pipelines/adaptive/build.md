@@ -99,6 +99,8 @@ ship record and, where reviewers were asked for, the review record naming the
 agent id of each reviewer the pass rests on. The `pr.body` is what a
 maintainer reads: what changed and why, how it was verified, the review's
 scope (the commits each reviewer read), advisory findings left open,
-assumptions and limits. Keep the summary to what the orchestrator acts on, in a few lines:
-what changed, the paths, the verification commands with their results, what
-workers did, and anything left open.
+assumptions and limits. The `pr.body` names no model or tool: no
+`Co-Authored-By` or "Generated with" line. Keep the summary to what the
+orchestrator acts on, in a few lines: what changed, the paths, the
+verification commands with their results, what workers did, and anything
+left open.

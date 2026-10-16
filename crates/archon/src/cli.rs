@@ -316,6 +316,10 @@ pub enum RepoCommand {
         /// confirmation question; independent of the ceiling.
         #[arg(long)]
         grant_merge: Option<bool>,
+        /// What its pull requests attribute: `item-id` ends the body with the
+        /// `Archon item:` line; `none` omits it and refuses attribution lines.
+        #[arg(long)]
+        attribution: Option<archon_core::repo::Attribution>,
     },
 }
 
@@ -1205,6 +1209,14 @@ mod tests {
             panic!("a merge grant is independent of the ceiling")
         };
         assert_eq!(grant_merge, Some(true));
+        let Command::Repo(RepoCommand::Set { attribution, .. }) =
+            parse(&["repo", "set", "api", "--attribution", "none"])
+        else {
+            panic!("an attribution policy is a repository setting")
+        };
+        assert_eq!(attribution, Some(archon_core::repo::Attribution::None));
+        let full = ["archon", "repo", "set", "api", "--attribution", "full"];
+        assert!(Cli::try_parse_from(full).is_err());
     }
 
     #[test]

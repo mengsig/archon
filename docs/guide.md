@@ -391,6 +391,13 @@ open: `archond` does not wait for your CI and does not repair a failing
 check. Ask for a fix, or run `archon queue retry <id> --append "…"`, which
 delivers into the same PR. See [Shipping](PIPELINES.md#shipping).
 
+The PR body ends with an `Archon item: <id>` line. `archon repo set <repo>
+--attribution none` omits it (the run-to-PR link stays in Archon's store),
+and from then on a delivery whose PR body or commit messages carry a
+`Co-Authored-By:` or `Generated with` line is refused, quoting each line;
+`--attribution item-id` is the default. Only you change it: a change the
+orchestrator relays waits for your confirmation.
+
 ## Aether setup
 
 `archon setup` creates Archon's own Aether instance in

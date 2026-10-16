@@ -71,6 +71,7 @@ pub(super) async fn record(
                     default_pipeline: optional(old.default_pipeline),
                     autonomy_max: Some(old.autonomy_max),
                     grant_merge: Some(old.grant_merge),
+                    attribution: Some(old.attribution),
                 },
             })
         }

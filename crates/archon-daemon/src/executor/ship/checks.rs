@@ -1,14 +1,16 @@
 //! What archond proves about a run worktree before it delivers anything
 //! (ARCHITECTURE §8.7): it is the run's own worktree, on the run branch,
 //! with no uncommitted change, holding the tree the pipeline verified, ahead
-//! of its base, and every commit it adds carries the repository's identity.
+//! of its base, and every commit it adds carries the repository's identity
+//! and, under the attribution policy `none`, no attribution line.
 //! Blocking git, none of it running a program the worktree's config names:
 //! callers run it off the async runtime.
 
 use std::path::{Path, PathBuf};
 
 use archon_core::error::ArchonError;
-use archon_pipeline::ShipRecord;
+use archon_core::repo::Attribution;
+use archon_pipeline::{ShipRecord, attribution_lines};
 
 use crate::worktree::daemon_git::{Config, DaemonGit};
 use crate::worktree::head;
@@ -30,6 +32,8 @@ pub(super) struct Target {
     pub base: String,
     /// The addresses a commit the run adds may carry, recorded at registration.
     pub allowed: Vec<String>,
+    /// The policy the pull request body was written under.
+    pub attribution: Attribution,
 }
 
 /// A worktree that may be delivered.
@@ -87,7 +91,15 @@ pub(super) fn check(
             target.branch, target.base
         )));
     }
-    Ok(foreign_commits(tree, &base, &target.allowed)?.map(|()| Checked { commit }))
+    if let Err(refusal) = foreign_commits(tree, &base, &target.allowed)? {
+        return Ok(Err(refusal));
+    }
+    if target.attribution == Attribution::None
+        && let Err(refusal) = unattributed(tree, &base, record)?
+    {
+        return Ok(Err(refusal));
+    }
+    Ok(Ok(Checked { commit }))
 }
 
 /// Git in the run worktree under the repository's config, running none of
@@ -209,6 +221,56 @@ fn foreign_commits(
         foreign.len(),
         allowed[0],
         listed(foreign.iter().map(String::as_str))
+    )))
+}
+
+/// Refuse a record whose `pr.body`, or a commit the run adds, carries a line
+/// attributing the change to a model or a tool, quoting each such line.
+fn unattributed(
+    tree: &Path,
+    base: &str,
+    record: &ShipRecord,
+) -> Result<Result<(), String>, ArchonError> {
+    assert!(base.starts_with("refs/"), "a full ref name");
+    assert!(!record.body.trim().is_empty(), "a read record has a body");
+    let mut found: Vec<String> = attribution_lines(&record.body)
+        .into_iter()
+        .map(|line| format!("`pr.body` has {line:?}"))
+        .collect();
+    let log = git(
+        tree,
+        &[
+            "log",
+            "-z",
+            "--format=%H%n%B",
+            "HEAD",
+            "--not",
+            base,
+            "--remotes",
+        ],
+    )?;
+    for entry in log.split('\0').filter(|entry| !entry.trim().is_empty()) {
+        let entry = entry.trim_start();
+        let (commit, message) = entry.split_once('\n').unwrap_or((entry, ""));
+        if !crate::worktree::stack::is_commit_id(commit) {
+            return Err(ArchonError::Protocol(format!(
+                "git log printed {entry:?}, not a commit and its message"
+            )));
+        }
+        let short = &commit[..12];
+        let lines = attribution_lines(message).into_iter();
+        found.extend(lines.map(|line| format!("commit {short} has {line:?}")));
+    }
+    if found.is_empty() {
+        return Ok(Ok(()));
+    }
+    Ok(Err(format!(
+        "this repository's attribution policy is `none`, so nothing that ships may credit a \
+         model or a tool, and {} line(s) do: {}. Retry the item so its stage writes `pr.body` \
+         without them and rewords those commits (no `Co-Authored-By:` trailer, no \
+         `Generated with` line), then records the new `commit` and `tree`",
+        found.len(),
+        listed(found.iter().map(String::as_str))
     )))
 }
 

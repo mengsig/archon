@@ -67,6 +67,7 @@ async fn add_with_watch(
         default_pipeline: add.default_pipeline.or(config.repo.default_pipeline),
         autonomy_max: registry_ceiling(add.auto_merge),
         grant_merge: false,
+        attribution: Default::default(),
         added_at: archon_core::now(),
     };
     check_repo(&repo).await?;
@@ -191,6 +192,9 @@ pub(super) async fn update(
     }
     if let Some(grant) = patch.grant_merge {
         repo.grant_merge = grant;
+    }
+    if let Some(attribution) = patch.attribution {
+        repo.attribution = attribution;
     }
     check_repo(&repo).await?;
     assert_eq!(repo.id, before.id, "a patch never changes identity");

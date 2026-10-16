@@ -19,13 +19,15 @@ Attempt {{attempt}}: build on what the branch already holds.
 3. Run the checks the change affects: the build, the linter or formatter and
    the tests of what you touched. Fix what you broke; report what was broken
    before you.
-4. Commit on `{{branch}}` under the repository's commit rules, with its
-   configured git identity and no attribution trailer. Do not push.
+4. Commit on `{{branch}}` under the repository's commit rules and its
+   configured git identity; do not push. A commit message, like the
+   `pr.body`, names no model or tool: no `Co-Authored-By` or "Generated
+   with" line.
 5. When review is required, delegate with `wait: false` on committed changes:
    the base (`git merge-base {{base_branch}} HEAD`) and head commits,
    changed paths, the checks you ran and the verdict your contract shows.
    Apply your contract's command bounds, early fixes and delta re-review.
 
 Finish with `complete_task`: the `structured` data your contract requires
-and a summary of a few lines saying what changed, the checks and their
-results, and anything left open.
+and a summary of a few lines: what changed, the checks and their results,
+and anything left open.

@@ -225,6 +225,7 @@ async fn carry_out(ctx: &DaemonContext, claimed: &Claimed) -> Result<ShipOutcome
         branch: run.branch.clone(),
         base: base.clone(),
         allowed: repo_identity::RepoIdentity::allowed(identity.as_ref()),
+        attribution: plan.attribution,
     };
     let own = repo_identity::DAEMON_EMAIL;
     assert!(
@@ -612,6 +613,7 @@ mod tests {
             },
             body: "b".into(),
             summary: "s".into(),
+            attribution: Default::default(),
         };
         let mut table = RunTable::default();
         for run in [&waiting, &ready, &running] {

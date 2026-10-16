@@ -147,7 +147,8 @@ fn direct_is_the_cheapest_shipping_pipeline() {
     let costs = costs();
     let direct = cost_of(&costs, "direct", "implement");
     assert_eq!(direct.delegation, 0, "no reviewer at its own review level");
-    assert!(direct.prompt <= 1_600, "prompt is {} B", direct.prompt);
+    // 1,600 B before the prompt carried the PR-body attribution rule.
+    assert!(direct.prompt <= 1_700, "prompt is {} B", direct.prompt);
     let fixed = |pipeline: &str| -> usize {
         let stages = costs.iter().filter(|c| c.pipeline == pipeline);
         stages.map(|c| c.contract + c.delegation + c.prompt).sum()

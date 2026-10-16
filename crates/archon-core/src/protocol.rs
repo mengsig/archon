@@ -28,7 +28,7 @@ use crate::notify::{FeedItem, NotificationKind, Question};
 use crate::ops::{UpgradeRequest, Versions};
 use crate::policy::ModelPolicy;
 use crate::queue::{Caps, PauseState, Priority, QueueItem};
-use crate::repo::{Repo, ShipMode};
+use crate::repo::{Attribution, Repo, ShipMode};
 use crate::run::{OperatorGate, PipelineRun, StageRun, StageState, Verdict};
 use crate::steer::Steer;
 
@@ -50,7 +50,8 @@ use crate::steer::Steer;
 /// 12: merging on the operator's request (`merge_item`, `request_merge`) and
 /// a repository's `grant_merge`, which an older archond would drop.
 /// 13: daemon-verified operator authority requests and settings.
-pub const PROTOCOL_VERSION: u32 = 13;
+/// 14: a repository's `attribution`, which an older archond would drop.
+pub const PROTOCOL_VERSION: u32 = 14;
 
 /// Said beside an item whose `budget_usd` was set while budgets are off.
 pub const BUDGETS_OFF_NOTE: &str = "Dollar budgets are globally off ([limits] budgets_enabled = \
@@ -551,6 +552,9 @@ pub struct RepoPatch {
     /// Sets or clears the repository's `grant_merge` (ARCHITECTURE §18.6).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant_merge: Option<bool>,
+    /// Sets the repository's attribution policy; operator only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attribution: Option<Attribution>,
 }
 
 /// A patch to an optional setting. Explicit on the wire (`"keep"`,

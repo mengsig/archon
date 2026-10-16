@@ -6,6 +6,7 @@ use archon_core::aether_ids::AetherAgentId;
 use archon_core::config::{AetherMode, Config};
 use archon_core::notify::Question;
 use archon_core::protocol::{ClientKind, Reply, RepoPatch, RepoRef, Request};
+use archon_core::repo::Attribution;
 use archon_daemon::{handlers, pump};
 use archon_queue::store::keys;
 use common::{Harness, ORCHESTRATOR, REPO_NAME};
@@ -259,6 +260,54 @@ async fn explicit_chat_commands_apply_without_model_confirmation() {
     )
     .await;
     assert!(!granted(&h).await);
+}
+
+async fn attribution(h: &Harness) -> Attribution {
+    let store = h.ctx.store.lock().await;
+    store.repo(&RepoRef(REPO_NAME.into())).unwrap().attribution
+}
+
+fn attribute(policy: Attribution) -> Request {
+    Request::RepoUpdate {
+        repo: RepoRef(REPO_NAME.into()),
+        patch: RepoPatch {
+            attribution: Some(policy),
+            ..Default::default()
+        },
+    }
+}
+
+/// The agent cannot set the policy itself, and a change it relays waits for
+/// the operator's own reply either way; the operator's command applies.
+#[tokio::test]
+async fn only_the_operator_changes_a_repositorys_attribution() {
+    let h = harness(AetherMode::Dedicated).await;
+    assert_eq!(attribution(&h).await, Attribution::ItemId);
+    let alone = h.orchestrator(attribute(Attribution::None)).await;
+    assert!(alone.is_err(), "{alone:?}");
+    deliver(&h, 1, user("drop the item line")).await;
+    let asked = h
+        .orchestrator(cited(attribute(Attribution::None), 1, "drop the item line"))
+        .await
+        .unwrap();
+    assert!(matches!(asked, Reply::Question(_)), "{asked:?}");
+    assert_eq!(attribution(&h).await, Attribution::ItemId);
+    deliver(&h, 2, user("yes")).await;
+    assert_eq!(attribution(&h).await, Attribution::None);
+    deliver(&h, 3, user("put the item line back")).await;
+    let back = h
+        .orchestrator(cited(
+            attribute(Attribution::ItemId),
+            3,
+            "put the item line back",
+        ))
+        .await
+        .unwrap();
+    assert!(matches!(back, Reply::Question(_)), "{back:?}");
+    assert_eq!(attribution(&h).await, Attribution::None);
+    let command = format!("/archon set --repo {REPO_NAME} attribution=item-id");
+    deliver(&h, 4, user(&command)).await;
+    assert_eq!(attribution(&h).await, Attribution::ItemId);
 }
 
 fn github(text: &str, number: u64) -> Value {

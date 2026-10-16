@@ -64,6 +64,7 @@ reached today.
 | Merge an item (`merge_item`) | `archon merge` | `/merge ITEM [--ignore-checks]` | same | no (the orchestrator has `request_merge`, a question you answer) | — |
 | Repository ceiling `autonomy_max` | `archon repo set --autonomy-max` | `/archon set --repo R max.K=V` | same | `repo_update` or `set_settings` | when it raises any knob |
 | `grant_merge` | `archon repo set --grant-merge` | `/archon set --repo R grant_merge=true` | same | `repo_update` | when set to true |
+| `attribution` | `archon repo set --attribution` | `/archon set --repo R attribution=none` | same | `repo_update` | any change |
 | `ship`, `base_branch`, `default_pipeline` | `archon repo set` | `/archon set --repo R ship=pr …` | same | `repo_update` | `ship` local→pr, and any `base_branch` or `default_pipeline` change |
 | Saved defaults, ceiling, budgets and pipeline | `archon settings [--repo R] --set JSON` / `--reset` | `/archon set [--repo R] key=value` / `reset` | same | `set_settings`, `reset_settings` | when effective or stored permission rises, a budget loosens, or the default pipeline changes |
 | Item autonomy after enqueue / delivery | socket `update_item` | `/archon item qi_… merge=auto` | same | autonomy-only `update_item` | when a changed knob exceeds its ceiling |
@@ -114,7 +115,7 @@ Details:
   `default.<knob>` and `max.<knob>` change defaults and ceilings. Other keys
   match `OperatorSettings`, including `budgets_enabled`, `budget_usd_per_item`
   and `default_pipeline`. Omitted fields are preserved.
-- Registry settings `grant_merge`, `ship` and `base_branch` use a separate
+- Registry settings `grant_merge`, `ship`, `base_branch` and `attribution` use a separate
   `/archon set --repo` message; mixing them with overlay fields is refused.
 - `/archon reset [--repo NAME]` clears the scope's overlay. Registry settings
   are separate and remain until explicitly changed.
@@ -194,7 +195,7 @@ before and after, and the outcome. The outcomes you will see are
 
 An overlay, repository setting, item-autonomy or caps change that was applied ends with
 `undo with /archon undo N`. Undo restores the previous repository settings
-(ceiling, `grant_merge`, `ship`, base branch, default pipeline) or the previous saved overlay. Item autonomy restores the previous knobs
+(ceiling, `grant_merge`, `attribution`, `ship`, base branch, default pipeline) or the previous saved overlay. Item autonomy restores the previous knobs
 subject to current item-state rules. It
 is refused if those settings have changed since: it never overwrites a newer
 change. A cited undo asks when it restores a looser value; an explicit

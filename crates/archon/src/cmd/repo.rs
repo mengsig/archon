@@ -63,10 +63,12 @@ pub async fn run(command: RepoCommand, json: bool) -> anyhow::Result<ExitCode> {
             autonomy_max,
             auto_merge,
             grant_merge,
+            attribution,
         } => {
             let ceiling = ceiling(&repo, autonomy_max, auto_merge).await?;
             let patch = RepoPatch {
                 grant_merge,
+                attribution,
                 ..repo_patch(ship, base, pipeline, ceiling)
             };
             set(repo, patch, json).await?;
@@ -156,6 +158,7 @@ fn repo_patch(
         default_pipeline: clearable(pipeline),
         autonomy_max,
         grant_merge: None,
+        attribution: None,
     }
 }
 

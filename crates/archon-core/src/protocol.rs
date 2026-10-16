@@ -54,7 +54,9 @@ use crate::steer::Steer;
 /// 13: daemon-verified operator authority requests and settings.
 /// 14: a repository's `attribution`, which an older archond would drop.
 /// 15: a repository's `gh_user`, which an older archond would drop.
-pub const PROTOCOL_VERSION: u32 = 15;
+/// 16: `promote`, a repository's `release_hook` and its confirmed full and
+/// release checks; an older archond knows no such request and would drop them.
+pub const PROTOCOL_VERSION: u32 = 16;
 
 /// Said beside an item whose `budget_usd` was set while budgets are off.
 pub const BUDGETS_OFF_NOTE: &str = "Dollar budgets are globally off ([limits] budgets_enabled = \
@@ -441,6 +443,11 @@ pub enum Request {
         reason: String,
         caller: Option<AetherAgentId>,
     },
+    /// Promote the repository's integration branch into its release branch
+    /// once its head is green; an agent's call merges only under `grant_merge`.
+    Promote {
+        repo: RepoRef,
+    },
     /// Request a merge; archond confirms unless `grant_merge` permits it.
     RequestMerge {
         item: QueueItemId,
@@ -575,10 +582,13 @@ pub struct TiersPatch {
     pub release_branch: Clearable<String>,
     pub fast_check: Clearable<String>,
     pub full_check: Clearable<String>,
+    pub release_hook: Clearable<String>,
     /// The committed file's fast check the operator confirms, word for word.
     pub confirmed_fast_check: Clearable<String>,
     /// The committed file's full check the operator confirms, word for word.
     pub confirmed_full_check: Clearable<String>,
+    /// The committed file's release hook the operator confirms, word for word.
+    pub confirmed_release_check: Clearable<String>,
 }
 
 impl TiersPatch {
@@ -595,6 +605,7 @@ impl TiersPatch {
             checks: Checks {
                 fast: self.fast_check.apply(current.checks.fast),
                 full: self.full_check.apply(current.checks.full),
+                release: self.release_hook.apply(current.checks.release),
             },
         }
     }
@@ -778,6 +789,7 @@ pub enum Reply {
     Feedback(Box<FeedbackReceipt>),
     LearningWhy(Box<LearningWhy>),
     Merge(Box<MergeRequest>),
+    Promotion(Box<crate::integration::Promotion>),
     Settings(Box<crate::settings::SettingsView>),
 }
 

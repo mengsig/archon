@@ -20,7 +20,7 @@ use crate::worktree::stack;
 
 /// The pull request a run branch is delivered as.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct Request<'a> {
+pub(crate) struct Request<'a> {
     pub branch: &'a str,
     pub base: &'a str,
     pub title: &'a str,
@@ -154,7 +154,7 @@ pub(in crate::executor) async fn open_pr(
 
 /// The open pull request of `request.branch`, reused (moved onto
 /// `request.base`) when GitHub lists one, else opened: never a second.
-pub(super) async fn pull_request(
+pub(crate) async fn pull_request(
     binary: &Path,
     repo: &Repo,
     request: Request<'_>,

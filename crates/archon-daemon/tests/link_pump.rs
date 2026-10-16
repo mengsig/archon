@@ -1716,6 +1716,7 @@ async fn two_mirrored_repos(harness: &Harness) -> (tempfile::TempDir, PathBuf) {
         tiers: Default::default(),
         confirmed_fast_check: None,
         confirmed_full_check: None,
+        confirmed_release_check: None,
         added_at: archon_core::now(),
     };
     harness.ctx.store.lock().await.insert_repo(&second).unwrap();

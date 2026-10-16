@@ -869,6 +869,7 @@ echo "GH_TOKEN=${GH_TOKEN-unset} GH_HOST=${GH_HOST-unset} GITHUB_TOKEN=${GITHUB_
                 tiers: Default::default(),
                 confirmed_fast_check: None,
                 confirmed_full_check: None,
+                confirmed_release_check: None,
                 added_at: archon_core::now(),
             };
             Self {

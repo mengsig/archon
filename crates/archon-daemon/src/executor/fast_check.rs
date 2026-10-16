@@ -30,24 +30,36 @@ const DRAIN_LIMIT: Duration = Duration::from_secs(5);
 /// word. Never one read from an item's worktree.
 pub(crate) fn trusted(repo: &Repo) -> Result<Option<String>, ArchonError> {
     let registry = repo.tiers.checks.fast.as_ref();
-    trusted_check(repo, registry, repo.confirmed_fast_check.as_ref(), |c| {
-        c.fast
-    })
+    let confirmed = repo.confirmed_fast_check.as_ref();
+    trusted_check(repo, "HEAD", registry, confirmed, |c| c.fast)
 }
 
 /// The full check archond may run itself in `repo`, trusted as [`trusted`]
 /// trusts the fast one: an untracked or edited file names no command.
 pub(crate) fn trusted_full(repo: &Repo) -> Result<Option<String>, ArchonError> {
     let registry = repo.tiers.checks.full.as_ref();
-    trusted_check(repo, registry, repo.confirmed_full_check.as_ref(), |c| {
-        c.full
-    })
+    let confirmed = repo.confirmed_full_check.as_ref();
+    trusted_check(repo, "HEAD", registry, confirmed, |c| c.full)
 }
 
-/// `registry`, else the check `pick` takes from the committed file while it
-/// equals `confirmed`.
+/// The release hook archond may run itself in `repo` at the promotion's
+/// merge commit `merge`: the registry's, else the file committed in `merge`
+/// (not `HEAD`) while the operator's confirmation names it word for word.
+pub(crate) fn trusted_release(repo: &Repo, merge: &str) -> Result<Option<String>, ArchonError> {
+    assert!(
+        crate::worktree::stack::is_commit_id(merge),
+        "a pinned merge commit"
+    );
+    let registry = repo.tiers.checks.release.as_ref();
+    let confirmed = repo.confirmed_release_check.as_ref();
+    trusted_check(repo, merge, registry, confirmed, |c| c.release)
+}
+
+/// `registry`, else the check `pick` takes from the file committed in `rev`
+/// while it equals `confirmed`.
 fn trusted_check(
     repo: &Repo,
+    rev: &str,
     registry: Option<&String>,
     confirmed: Option<&String>,
     pick: fn(Checks) -> Option<String>,
@@ -63,10 +75,11 @@ fn trusted_check(
     let Some(confirmed) = confirmed else {
         return Ok(None);
     };
-    let committed = committed_checks(&repo.path)?.and_then(pick);
+    let committed = committed_checks(&repo.path, rev)?.and_then(pick);
     if committed.as_ref() != Some(confirmed) {
         tracing::warn!(
             repo = %repo.name,
+            rev,
             ?committed,
             ?confirmed,
             "the committed check differs from the confirmed one; archond does not run it"
@@ -77,16 +90,20 @@ fn trusted_check(
 }
 
 /// The checks `.archon/repo.toml` names in the registered repository's
-/// `HEAD` commit; an untracked or edited copy of the file counts for nothing.
-fn committed_checks(root: &Path) -> Result<Option<Checks>, ArchonError> {
+/// commit `rev`; an untracked or edited copy of the file counts for nothing.
+fn committed_checks(root: &Path, rev: &str) -> Result<Option<Checks>, ArchonError> {
     assert!(root.is_absolute(), "registered paths are absolute");
+    assert!(
+        rev == "HEAD" || crate::worktree::stack::is_commit_id(rev),
+        "HEAD or a full commit id, never an option"
+    );
     let file = format!(".archon/{REPO_FILE_NAME}");
     // An empty listing proves the file absent; a failed read is an error.
-    let listed = DaemonGit::sealed_in(root).args(["ls-tree", "HEAD", "--", &file]);
+    let listed = DaemonGit::sealed_in(root).args(["ls-tree", rev, "--", &file]);
     if listed.text()?.is_empty() {
         return Ok(None);
     }
-    let spec = format!("HEAD:{file}");
+    let spec = format!("{rev}:{file}");
     let text = DaemonGit::sealed_in(root).args(["cat-file", "blob", &spec]);
     let tiers = RepoTiers::parse(&text.text()?, &format!("{} {spec}", root.display()))?;
     Ok(Some(tiers.checks))

@@ -33,7 +33,8 @@ pub struct RepoTiers {
 /// The check tiers: `fast` runs in every item before it commits, for the
 /// units the change affects where it names `{packages}` or
 /// `{packages:<flag>}` ([`super::affected`]); `full` is the whole suite,
-/// which items never run.
+/// which items never run; `release` runs once a promotion merged the
+/// integration branch into the release branch.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Checks {
@@ -41,11 +42,13 @@ pub struct Checks {
     pub fast: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub full: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release: Option<String>,
 }
 
 impl Checks {
     pub fn is_empty(&self) -> bool {
-        self.fast.is_none() && self.full.is_none()
+        self.fast.is_none() && self.full.is_none() && self.release.is_none()
     }
 }
 
@@ -62,6 +65,7 @@ impl RepoTiers {
             checks: Checks {
                 fast: self.checks.fast.or(below.checks.fast),
                 full: self.checks.full.or(below.checks.full),
+                release: self.checks.release.or(below.checks.release),
             },
         }
     }
@@ -101,6 +105,7 @@ impl RepoTiers {
         let commands = [
             ("checks.fast", &self.checks.fast),
             ("checks.full", &self.checks.full),
+            ("checks.release", &self.checks.release),
         ];
         for (key, command) in commands {
             if let Some(text) = command.as_deref() {
@@ -171,6 +176,7 @@ mod tests {
             checks: Checks {
                 fast: fast.map(str::to_owned),
                 full: None,
+                release: None,
             },
         }
     }
@@ -182,6 +188,7 @@ mod tests {
             checks: Checks {
                 fast: Some("make quick".into()),
                 full: Some("make ci".into()),
+                release: Some("make tag".into()),
             },
             ..tiers(Some("next"), None)
         };
@@ -190,6 +197,7 @@ mod tests {
         assert_eq!(merged.release_branch(), "trunk");
         assert_eq!(merged.checks.fast.as_deref(), Some("make quick"));
         assert_eq!(merged.checks.full.as_deref(), Some("make ci"));
+        assert_eq!(merged.checks.release.as_deref(), Some("make tag"));
         assert_eq!(RepoTiers::default().release_branch(), "main");
         assert!(RepoTiers::default().over(RepoTiers::default()).is_empty());
     }
@@ -234,6 +242,7 @@ mod tests {
             "integration = \"next\"\n",
             "integration_branch = \"--force\"\n",
             "[checks]\nfast = \"  \"\n",
+            "[checks]\nrelease = \"tag\\nmore\"\n",
         ] {
             std::fs::write(&file, text).unwrap();
             let refused = RepoTiers::load(dir.path()).unwrap_err().to_string();

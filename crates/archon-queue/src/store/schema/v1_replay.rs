@@ -36,6 +36,7 @@ fn repo(name: &str) -> Repo {
         tiers: Default::default(),
         confirmed_fast_check: None,
         confirmed_full_check: None,
+        confirmed_release_check: None,
         added_at: v1_time(),
     }
 }

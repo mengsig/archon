@@ -111,6 +111,9 @@ pub(super) fn to_request(tool: &str, arguments: Value) -> Result<Request, ToolEr
             reason: args.required_text("reason")?,
             caller: None,
         },
+        "promote" => Request::Promote {
+            repo: RepoRef(args.required_text("repo")?),
+        },
         "request_merge" => Request::RequestMerge {
             item: args.required("item")?,
             reason: args.optional_text("reason")?,

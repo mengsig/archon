@@ -81,6 +81,13 @@ pub enum Command {
         #[arg(long)]
         ignore_checks: bool,
     },
+    /// Promote a repository's integration branch into its release branch:
+    /// refused unless the full check is green on its exact head; merges the
+    /// pull request between them, then fast-forwards the integration branch.
+    Promote {
+        /// The repository's name or repo_… id.
+        repo: String,
+    },
     /// Daemon, orchestrator, caps, spend and Aether link status. Never
     /// starts Archon or Aether.
     Status {
@@ -345,7 +352,7 @@ pub enum RepoCommand {
         gh_user: Option<String>,
         /// Verification tiers over the repository's `.archon/repo.toml`.
         #[command(flatten)]
-        tiers: TierArgs,
+        tiers: Box<TierArgs>,
     },
 }
 
@@ -365,6 +372,10 @@ pub struct TierArgs {
     /// The whole suite, which items never run (e.g. `make ci`).
     #[arg(long)]
     pub full_check: Option<String>,
+    /// Command run once `archon promote` merged into the release branch
+    /// (e.g. a tag command), in a checkout at the merged commit.
+    #[arg(long)]
+    pub release_hook: Option<String>,
     /// Confirm the committed `.archon/repo.toml` fast check, word for word,
     /// so the ship gate runs it; it stops running once the file differs.
     #[arg(long)]
@@ -373,6 +384,10 @@ pub struct TierArgs {
     /// so the integration branch is verified by it while the file reads so.
     #[arg(long)]
     pub confirm_full_check: Option<String>,
+    /// Confirm the committed `.archon/repo.toml` release hook, word for word,
+    /// so a promotion runs it; it stops running once the file differs.
+    #[arg(long)]
+    pub confirm_release_check: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -1302,6 +1317,15 @@ mod tests {
         for bad in [&["merge"][..], &["merge", "qi_01", "--admin"]] {
             assert!(Cli::try_parse_from([&["archon"], bad].concat()).is_err());
         }
+    }
+
+    #[test]
+    fn promote_names_one_repository() {
+        let Command::Promote { repo } = parse(&["promote", "archon"]) else {
+            panic!()
+        };
+        assert_eq!(repo, "archon");
+        assert!(Cli::try_parse_from(["archon", "promote"]).is_err());
     }
 
     #[test]

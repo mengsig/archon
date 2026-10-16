@@ -375,6 +375,30 @@ No second fix item is queued while that one is open. `archon status` and
 `queue_status` show each integration branch: green, red, verifying or
 pending, its last green commit and the merges since.
 
+`archon promote <repo>` (or the orchestrator's `promote` tool) moves the
+integration branch into the release branch. It is refused, with the reason,
+unless the full check is green on the branch's exact head as `origin` has it
+now. It opens or reuses the pull request from the integration branch to the
+release branch, merges it with a merge commit (only at that head, and only
+while none of the pull request's own checks fails or runs), then
+fast-forwards the integration branch to the release branch, never forced.
+When the merge commit's tree is the verified one it keeps the green verdict
+and is not verified again; a release-side change that alters it is verified
+anew. An
+orchestrator's call merges only under the repository's `grant_merge`;
+otherwise it stops at the open pull request and asks you to run
+`archon promote`. The release hook, for example a tag command, then runs once
+in `archond`'s checkout at the merged commit, in the host's build slot; how it
+ended is part of the result, and a failing hook undoes nothing. It is trusted
+as the full check is, but decided just before it runs: the registry's
+(`archon repo set --release-hook`), or `[checks] release` in the
+`.archon/repo.toml` the merge commit itself holds once the operator confirmed
+its exact text with `archon repo set --confirm-release-check '<command>'`.
+The registered checkout's `HEAD` never speaks for the merge, and an untracked
+or uncommitted copy runs nothing.
+When a merge queue or branch rule holds the merge, promote again once it
+landed: that call finishes the promotion, realigning and running the hook.
+
 ## Push notifications
 
 ```toml

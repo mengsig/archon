@@ -53,6 +53,7 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         list_artifacts(),
         read_artifact(),
         request_merge(),
+        promote(),
         request_authority(),
         guide(),
         settings(),
@@ -74,6 +75,21 @@ fn request_merge() -> ToolDefinition {
                 "reason": {"type": "string", "maxLength": 500, "description": "The operator's words."},
             }),
             &["item"],
+        ),
+        true,
+    )
+}
+
+fn promote() -> ToolDefinition {
+    define(
+        "promote",
+        "Promote",
+        "Merge a repository's green integration branch into its release branch, only because \
+         the operator asked you to; refused, with why, while it is not green. Without \
+         grant_merge it only opens the pull request and the operator is asked.",
+        object(
+            json!({"repo": {"type": "string", "minLength": 1}}),
+            &["repo"],
         ),
         true,
     )

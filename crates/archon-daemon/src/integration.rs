@@ -12,6 +12,7 @@ mod branch;
 mod fix;
 mod full;
 mod github;
+mod promote;
 mod state;
 mod verify;
 
@@ -27,6 +28,7 @@ use archon_core::repo::{Repo, ShipMode};
 use self::branch::{Head, Source};
 pub use self::fix::FIX_TAG;
 use self::github::GithubRepo;
+pub use self::promote::{Promoter, promote};
 use self::state::{BranchState, Verdict};
 use crate::context::DaemonContext;
 use crate::feed;
@@ -164,7 +166,8 @@ pub async fn pass(ctx: &DaemonContext) -> Result<(), ArchonError> {
             state::forget(&mut store, &id)?;
         }
     }
-    Ok(())
+    let kept: Vec<RepoId> = repos.iter().map(|repo| repo.id.clone()).collect();
+    promote::forget_unregistered(&mut store, &kept)
 }
 
 /// The integration branches, as `status` shows them.

@@ -429,6 +429,7 @@ fn how_to_check(request: &Request) -> String {
         Request::PublishArtifact { .. } => "the files may already be stored; list_artifacts for your item shows them, and publishing a name again replaces it".into(),
         Request::GithubReply { thread, .. } => thread.check_before_retry(),
         Request::RecordChatAnswer { .. } => "the answer may already be recorded; a repeat is then refused as already answered, which is the confirmation".into(),
+        Request::Promote { repo } => format!("the promotion may have merged; queue_status shows `{}`'s integration branch, and promote again is safe: it merges nothing twice", repo.0),
         Request::RequestMerge { item, .. } => format!("the request may already be recorded or the pull request merged; check get_item {item} (its merge line) before repeating it, which is refused while one is open"),
         _ => "the change may already have been applied, so check with list_queue or get_item \
               before repeating it (an enqueue repeated with the same idempotency_key is always \

@@ -72,7 +72,7 @@ pub async fn run(command: RepoCommand, json: bool) -> anyhow::Result<ExitCode> {
                 grant_merge,
                 attribution,
                 gh_user: gh_user_patch(gh_user)?,
-                tiers: tiers_patch(tiers),
+                tiers: tiers_patch(*tiers),
                 ..repo_patch(ship, base, pipeline, ceiling)
             };
             set(repo, patch, json).await?;
@@ -169,8 +169,10 @@ fn tiers_patch(args: TierArgs) -> TiersPatch {
         release_branch: clearable(args.release_branch),
         fast_check: clearable(args.fast_check),
         full_check: clearable(args.full_check),
+        release_hook: clearable(args.release_hook),
         confirmed_fast_check: clearable(args.confirm_fast_check),
         confirmed_full_check: clearable(args.confirm_full_check),
+        confirmed_release_check: clearable(args.confirm_release_check),
     }
 }
 

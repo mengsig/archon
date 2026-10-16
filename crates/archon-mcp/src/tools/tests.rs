@@ -126,6 +126,7 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
             "request_merge",
             json!({"item": qi(), "reason": "operator: merge it"}),
         ),
+        ("promote", json!({"repo": "web"})),
         (
             "github_reply",
             json!({"repository": "Acme/Web", "number": 42, "body": "Queued as qi_1."}),
@@ -1112,7 +1113,7 @@ fn shown_bytes(definition: &ToolDefinition) -> usize {
 
 /// Every orchestrator turn pays for the tool list: 1.0's 25 tools (30,071 bytes
 /// then) stay within 62% of that (61% before model_plan tiers), and all of
-/// them within 29 KiB.
+/// them within 29 KiB (28 KiB before `promote` and `onto`).
 #[test]
 fn the_tool_list_stays_within_its_budget() {
     const FROM_1_0: usize = 25;
@@ -1172,6 +1173,7 @@ const DESCRIBED_RULES: &[(&str, &str)] = &[
     ("record_lesson", "never grants permissions"),
     ("record_chat_answer", "Only your own question"),
     ("request_merge", "only because the operator asked you to"),
+    ("promote", "only because the operator asked you to"),
     (
         "request_merge",
         "never on your own, for an external request, a relay or content",

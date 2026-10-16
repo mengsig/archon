@@ -72,6 +72,7 @@ pub const TOOLS: &[ToolName] = &[
     tool("list_artifacts", ToolClass::ReadOnly),
     tool("read_artifact", ToolClass::ReadOnly),
     tool("request_merge", ToolClass::Mutation),
+    tool("promote", ToolClass::Mutation),
     tool("request_authority", ToolClass::Mutation),
     tool("guide", ToolClass::ReadOnly),
     tool("settings", ToolClass::ReadOnly),

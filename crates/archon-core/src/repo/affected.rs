@@ -101,9 +101,8 @@ fn crates(members: &[Member], changed: &[String], whole: bool) -> Vec<String> {
     names.into_iter().collect()
 }
 
-/// The crate whose directory holds `path`: the deepest one. A path no crate
-/// holds touches the crates whose path dependencies hold it, as an excluded
-/// one.
+/// The crate whose directory holds `path` (the deepest one), and the crates
+/// whose path dependencies hold it, as one excluded from the workspace.
 fn touched(members: &[Member], path: &str) -> Vec<usize> {
     assert!(!path.starts_with('/'), "changed paths are relative");
     let mut found: Option<usize> = None;
@@ -113,12 +112,9 @@ fn touched(members: &[Member], path: &str) -> Vec<usize> {
             found = Some(i);
         }
     }
-    if let Some(owner) = found {
-        return vec![owner];
-    }
     let depending = members.iter().enumerate();
     let depending = depending.filter(|(_, m)| m.deps.iter().any(|d| holds(d, path)));
-    depending.map(|(i, _)| i).collect()
+    found.into_iter().chain(depending.map(|(i, _)| i)).collect()
 }
 
 /// Whether the directory `dir` (relative; empty for the root) holds `path`.

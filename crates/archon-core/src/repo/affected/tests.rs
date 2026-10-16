@@ -216,6 +216,14 @@ fn path_dependencies_under_the_root_are_members_as_cargo_makes_them() {
     );
     let excluded = units(root, &["libs/base/src/lib.rs"]);
     assert_eq!(excluded.units, ["app", "helper"], "what depends on it");
+    let top = "[dependencies]\n\n[workspace]\nmembers = [\"app\"]\nexclude = [\"helper\"]\n";
+    write(root, "Cargo.toml", &package("rootpkg", top));
+    let owned = units(root, &["helper/src/lib.rs"]);
+    assert_eq!(
+        owned.units,
+        ["app", "rootpkg"],
+        "the root owning it hides none"
+    );
 }
 
 #[test]

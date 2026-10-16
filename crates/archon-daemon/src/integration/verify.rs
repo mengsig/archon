@@ -18,8 +18,8 @@ use crate::context::DaemonContext;
 
 pub(super) const VIA_FULL: &str = "checks.full";
 pub(super) const VIA_GITHUB: &str = "GitHub checks";
-const NOTHING_VERIFIES: &str =
-    "nothing verifies it: set `[checks] full` or run GitHub CI on the branch";
+const NOTHING_VERIFIES: &str = "nothing verifies it: set `archon repo set --full-check`, confirm the committed \
+     `[checks] full` with `--confirm-full-check`, or run GitHub CI on the branch";
 
 /// How one commit fared.
 #[derive(Debug)]

@@ -2062,6 +2062,23 @@ prompt = "implement.md"
 allow_delegation = true
 "#;
 
+async fn seed_review_catalog(h: &Harness) {
+    use archon_core::model_tier::{CatalogModel, ModelCatalog, Tier};
+    let models = [MODEL, REVIEW_MODEL]
+        .into_iter()
+        .map(|model| CatalogModel {
+            model: model.parse().unwrap(),
+            tier: Some(Tier::Balanced),
+            is_default: false,
+        })
+        .collect();
+    h.ctx
+        .store
+        .lock()
+        .await
+        .set_model_catalog(ModelCatalog::new(models));
+}
+
 /// The repository narrows its policy mid-run: the later lead is advised the
 /// reviewer models allowed when it spawns, not those allowed at the start.
 #[tokio::test]
@@ -2069,6 +2086,7 @@ async fn a_policy_narrowed_mid_run_bounds_the_next_lead_s_reviewers() {
     let mut config = Config::default();
     config.models.allow = vec![MODEL.parse().unwrap(), REVIEW_MODEL.parse().unwrap()];
     let h = Harness::with_config(config).await;
+    seed_review_catalog(&h).await;
     h.add_pipeline("drafted", DRAFTED_THEN_LED);
     planned_item(&h, "drafted", &["draft", "build"]).await;
     let draft = h.backend.requests()[0].clone();
@@ -2080,7 +2098,7 @@ async fn a_policy_narrowed_mid_run_bounds_the_next_lead_s_reviewers() {
     h.dispatch().await;
     let build = h.backend.requests().last().unwrap().clone();
     assert_eq!(build.labels["archon.stage"], "build");
-    let own = format!("on your own model {MODEL}: this item allows no other");
+    let own = format!("on {MODEL} at tier balanced and effort low");
     assert!(build.instructions.contains(&own), "{}", build.instructions);
     let named = build.instructions.matches(REVIEW_MODEL).count();
     assert_eq!(named, 0, "{}", build.instructions);
@@ -2147,6 +2165,7 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     config.models.allow = vec![MODEL.parse().unwrap(), REVIEW_MODEL.parse().unwrap()];
     config.models.max_effort = Some(Effort::High);
     let h = Harness::with_config(config).await;
+    seed_review_catalog(&h).await;
     let gh = FakeGh::install(&h);
     // Aether may list the review model as ready; this repository denies it.
     h.repo_config(&format!("[models]\ndeny = [\"{REVIEW_MODEL}\"]\n"));
@@ -2163,8 +2182,7 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     assert!(build.instructions.contains("\n## Review on record\n"));
     assert!(build.instructions.contains("\n## Ship record\n"));
     // The repository leaves the lead's model alone: its reviewers run on it.
-    let own =
-        format!("on your own model {MODEL}, at effort at most high: this item allows no other");
+    let own = format!("on {MODEL} at tier balanced and effort low");
     assert!(build.instructions.contains(&own), "{}", build.instructions);
 
     let (built, reviewer) = reviewed_by_one(&h, "Verified; one reviewer passed it").await;

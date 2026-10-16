@@ -79,6 +79,7 @@ pub(super) async fn record(
                         full_check: optional(old.tiers.checks.full),
                         release_hook: optional(old.tiers.checks.release),
                         confirmed_fast_check: optional(old.confirmed_fast_check),
+                        confirmed_full_check: optional(old.confirmed_full_check),
                     },
                 },
             })

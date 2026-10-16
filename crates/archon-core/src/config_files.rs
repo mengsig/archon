@@ -33,6 +33,12 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 # reserve_percent = { orchestrator = 15, interactive = 10 }   # quota stages never spend
 # interactive_providers = ["claude-code"]   # providers also used by hand
 
+# Reviewers without an explicit <stage>.review model plan.
+# [review]
+# default_tier = "balanced"
+# default_effort = "low"
+# prefer_other_provider = true
+
 # [limits]
 # max_parallel_agents = 8   # the hard cap on running stage agents
 # budgets_enabled = true    # false: no dollar budget is enforced (spend still recorded)

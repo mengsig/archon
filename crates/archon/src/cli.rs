@@ -208,6 +208,9 @@ pub enum Command {
     },
     /// Check Aether, the MCP registration, lavish, git and the config.
     Doctor,
+    /// Audit release assets, Latest, and whether CI started.
+    #[command(subcommand)]
+    Release(ReleaseCommand),
     /// Open the terminal UI: Aether's TUI on Archon's main orchestrator
     /// (what a bare `archon` opens).
     Tui(TuiArgs),
@@ -248,6 +251,22 @@ pub enum Command {
     /// updated; 10 with --check: a newer release exists; 1: error.
     #[command(after_help = "Example: archon update --check || archon update")]
     Update(UpdateArgs),
+}
+
+#[derive(Debug, clap::Subcommand)]
+pub enum ReleaseCommand {
+    /// Check published history; optionally validate an upcoming release's assets.
+    Check {
+        /// GitHub repository in owner/name form.
+        #[arg(default_value = "mengsig/archon")]
+        repo: String,
+        /// Pending tag, checked against local assets instead of a published release.
+        #[arg(long, requires = "assets")]
+        pending_tag: Option<String>,
+        /// Directory containing the pending release archives and checksum files.
+        #[arg(long, requires = "pending_tag")]
+        assets: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(Debug, Default, Args)]
@@ -357,6 +376,10 @@ pub struct TierArgs {
     /// so the ship gate runs it; it stops running once the file differs.
     #[arg(long)]
     pub confirm_fast_check: Option<String>,
+    /// Confirm the committed `.archon/repo.toml` full check, word for word,
+    /// so the integration branch is verified by it while the file reads so.
+    #[arg(long)]
+    pub confirm_full_check: Option<String>,
 }
 
 #[derive(Debug, Args)]

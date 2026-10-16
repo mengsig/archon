@@ -26,9 +26,21 @@ fn full_check(runs: &Path) -> String {
     )
 }
 
-/// A harness whose `next` integrates into `main` and is verified at once;
-/// the build slot's lock lives under the returned directory.
+/// A harness whose `next` integrates into `main` and is verified at once by
+/// the registry's full check; the build slot's lock lives under the
+/// returned directory.
 async fn verifying() -> (Harness, tempfile::TempDir) {
+    let (h, slot) = integrating().await;
+    let tiers = TiersPatch {
+        full_check: Clearable::Set(full_check(&runs_file(&h))),
+        ..TiersPatch::default()
+    };
+    set_tiers(&h, tiers).await;
+    (h, slot)
+}
+
+/// A harness whose `next` integrates into `main`, with no full check set.
+async fn integrating() -> (Harness, tempfile::TempDir) {
     let slot = tempfile::tempdir().expect("slot dir");
     let mut config = Config::default();
     config.integration.idle_after = Age::from_secs(0);
@@ -39,9 +51,13 @@ async fn verifying() -> (Harness, tempfile::TempDir) {
     git(&h.repo, &["push", "--quiet", "origin", "next"]);
     let tiers = TiersPatch {
         integration_branch: Clearable::Set("next".into()),
-        full_check: Clearable::Set(full_check(&runs_file(&h))),
         ..TiersPatch::default()
     };
+    set_tiers(&h, tiers).await;
+    (h, slot)
+}
+
+async fn set_tiers(h: &Harness, tiers: TiersPatch) {
     let patch = RepoPatch {
         tiers,
         ..RepoPatch::default()
@@ -51,7 +67,6 @@ async fn verifying() -> (Harness, tempfile::TempDir) {
         patch,
     };
     h.cli(request).await.expect("repo update");
-    (h, slot)
 }
 
 fn runs_file(h: &Harness) -> PathBuf {
@@ -341,4 +356,56 @@ async fn a_branch_whose_first_read_fails_is_shown_with_its_problem() {
         _ => false,
     });
     assert!(told, "the operator is told: {feed:?}");
+}
+
+/// A full check in the registered checkout's `.archon/repo.toml` never runs
+/// as the daemon until the operator confirms its committed text, and stops
+/// again once an uncommitted edit or a new commit changes it.
+#[tokio::test]
+async fn only_a_confirmed_committed_full_check_runs() {
+    let (h, _slot) = integrating().await;
+    let command = full_check(&runs_file(&h));
+    let file = format!("[checks]\nfull = {}\n", toml_string(&command));
+    std::fs::create_dir_all(h.repo.join(".archon")).unwrap();
+    std::fs::write(h.repo.join(".archon/repo.toml"), &file).unwrap();
+    integration::pass(&h.ctx).await.expect("untracked pass");
+    let untracked = branch_status(&h).await;
+    assert_eq!(
+        untracked.health,
+        IntegrationHealth::Unknown,
+        "{untracked:?}"
+    );
+    assert_eq!(full_runs(&h), 0, "an untracked check never runs");
+
+    git(&h.repo, &["add", ".archon/repo.toml"]);
+    git(&h.repo, &["commit", "--quiet", "-m", "Name the full check"]);
+    integration::pass(&h.ctx).await.expect("unconfirmed pass");
+    assert_eq!(full_runs(&h), 0, "an unconfirmed check never runs");
+
+    let confirm = TiersPatch {
+        confirmed_full_check: Clearable::Set(command.clone()),
+        ..TiersPatch::default()
+    };
+    set_tiers(&h, confirm).await;
+    integration::pass(&h.ctx).await.expect("confirmed pass");
+    let green = branch_status(&h).await;
+    assert_eq!(green.health, IntegrationHealth::Green, "{green:?}");
+    assert_eq!(full_runs(&h), 1, "the confirmed check ran once");
+
+    let edited = "[checks]\nfull = \"echo edited >> edited.log\"\n";
+    std::fs::write(h.repo.join(".archon/repo.toml"), edited).unwrap();
+    git(
+        &h.repo,
+        &["commit", "--quiet", "-am", "Change the full check"],
+    );
+    land(&h, &["later"]);
+    integration::pass(&h.ctx).await.expect("changed pass");
+    let changed = branch_status(&h).await;
+    assert_eq!(changed.health, IntegrationHealth::Unknown, "{changed:?}");
+    assert_eq!(full_runs(&h), 1, "a changed check runs no more");
+}
+
+/// `text` as a TOML basic string.
+fn toml_string(text: &str) -> String {
+    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
 }

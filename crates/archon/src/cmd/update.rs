@@ -6,7 +6,7 @@ mod interrupt;
 mod location;
 mod release;
 mod tools;
-mod version;
+pub(super) mod version;
 
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};

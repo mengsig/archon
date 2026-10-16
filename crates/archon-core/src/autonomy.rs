@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Timestamp;
+use crate::config::StructuralLimit;
 use crate::error::ArchonError;
 use crate::id::DirectiveId;
 
@@ -512,6 +513,10 @@ pub struct AutonomyView {
     /// every one for the global view (ARCHITECTURE §18.6).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub merge_granted: Vec<String>,
+    /// Every structural limit in force; empty from an archond that
+    /// predates them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub limits: Vec<StructuralLimit>,
 }
 
 #[cfg(test)]

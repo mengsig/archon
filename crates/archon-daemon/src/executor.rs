@@ -11,7 +11,7 @@ pub mod coordination;
 mod dependencies;
 mod descendants;
 mod discard;
-mod fast_check;
+pub(crate) mod fast_check;
 mod finish;
 pub(crate) mod frozen;
 mod gate_news;

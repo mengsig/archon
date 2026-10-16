@@ -70,6 +70,7 @@ async fn add_with_watch(
         attribution: Default::default(),
         tiers: Default::default(),
         confirmed_fast_check: None,
+        confirmed_full_check: None,
         added_at: archon_core::now(),
     };
     check_repo(&repo).await?;
@@ -200,6 +201,8 @@ pub(super) async fn update(
     }
     let confirmed = patch.tiers.confirmed_fast_check.clone();
     repo.confirmed_fast_check = confirmed.apply(repo.confirmed_fast_check);
+    let confirmed = patch.tiers.confirmed_full_check.clone();
+    repo.confirmed_full_check = confirmed.apply(repo.confirmed_full_check);
     repo.tiers = patch.tiers.apply(repo.tiers);
     check_repo(&repo).await?;
     assert_eq!(repo.id, before.id, "a patch never changes identity");
@@ -261,6 +264,9 @@ async fn check_repo(repo: &Repo) -> Result<(), ArchonError> {
     repo.tiers.validate_fields()?;
     if let Some(confirmed) = &repo.confirmed_fast_check {
         archon_core::repo::check_command("confirmed fast check", confirmed)?;
+    }
+    if let Some(confirmed) = &repo.confirmed_full_check {
+        archon_core::repo::check_command("confirmed full check", confirmed)?;
     }
     RepoEnv::new(Some(repo.clone()))?.tiers()?;
     if let Some(base) = repo.base_branch.clone() {

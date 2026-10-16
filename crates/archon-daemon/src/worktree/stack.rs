@@ -4,6 +4,8 @@
 //! branch is pushed from the shadow. Nothing an agent configured runs.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use archon_core::error::ArchonError;
 
@@ -274,25 +276,47 @@ pub(crate) fn push(
     push_with(shadow, url, (branch, commit), (None, false), token)
 }
 
-/// The remote [`push_from`] pushes through: `url` as its push URL too, so
-/// git applies no `pushInsteadOf`, only the `insteadOf` [`pinned_url`] reports.
-const PINNED: &str = "archon-pinned";
+/// A remote [`push_from`] pushes through: `url` as its only URL and push URL,
+/// so git applies no `pushInsteadOf`, only the `insteadOf` [`pinned_url`] reports.
+struct Pinned {
+    /// New for each command, so no config file can set anything for it.
+    name: String,
+    /// `-c` arguments defining it; an empty value clears what came before.
+    args: Vec<String>,
+}
 
-/// `-c` arguments defining [`PINNED`] as `url`.
-fn pinned(url: &str) -> [String; 4] {
-    assert!(!url.contains('\n'), "a checked URL");
-    let url_setting = format!("remote.{PINNED}.url={url}");
-    let push_setting = format!("remote.{PINNED}.pushurl={url}");
-    ["-c".into(), url_setting, "-c".into(), push_setting]
+impl Pinned {
+    fn new(url: &str) -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        assert!(!url.is_empty() && !url.contains('\n'), "a checked URL");
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |since| since.as_nanos());
+        let name = format!("archon-pinned-{}-{n}-{nanos}", std::process::id());
+        let mut args = Vec::new();
+        for key in ["url", "pushurl"] {
+            for value in ["", url] {
+                args.extend(["-c".to_owned(), format!("remote.{name}.{key}={value}")]);
+            }
+        }
+        Self { name, args }
+    }
+
+    /// Its `-c` arguments, then `command`.
+    fn before<'a>(&'a self, command: &[&'a str]) -> Vec<&'a str> {
+        let mut args: Vec<&str> = self.args.iter().map(String::as_str).collect();
+        args.extend(command);
+        args
+    }
 }
 
 /// Where [`push_from`] to `url` without a token goes, as git resolves it with
 /// the operator's config in the same shadow: `url` after their `insteadOf`.
 pub(crate) fn pinned_url(shadow: &Shadow, url: &str) -> Result<String, ArchonError> {
     let url = check_url(url)?;
-    let defined = pinned(&url);
-    let mut args: Vec<&str> = defined.iter().map(String::as_str).collect();
-    args.extend(["ls-remote", "--get-url", PINNED]);
+    let pinned = Pinned::new(&url);
+    let args = pinned.before(&["ls-remote", "--get-url", &pinned.name]);
     let resolved = shadow.git(None, Config::Operator)?.args(args).text()?;
     assert!(!resolved.is_empty() && !resolved.contains('\n'), "one URL");
     Ok(resolved)
@@ -316,7 +340,7 @@ pub(crate) fn push_from(
 }
 
 /// [`push`], with `lease` the extra `--force-with-lease` argument, if any,
-/// through the [`PINNED`] remote when `pin`.
+/// through a [`Pinned`] remote when `pin`.
 fn push_with(
     shadow: &Shadow,
     url: &str,
@@ -341,14 +365,14 @@ fn push_with(
     );
     let refspec = format!("{commit}:refs/heads/{branch}");
     let receive_pack = format!("--receive-pack={receive_pack}");
-    let defined = pinned(&url);
-    let mut args: Vec<&str> = match pin {
-        true => defined.iter().map(String::as_str).collect(),
-        false => Vec::new(),
+    let pinned = Pinned::new(&url);
+    let mut command = vec!["push", "--porcelain", "--no-verify", &receive_pack];
+    command.extend(lease);
+    command.extend([if pin { &pinned.name } else { url.as_str() }, &refspec]);
+    let args = match pin {
+        true => pinned.before(&command),
+        false => command,
     };
-    args.extend(["push", "--porcelain", "--no-verify", &receive_pack]);
-    args.extend(lease);
-    args.extend([if pin { PINNED } else { url.as_str() }, &refspec]);
     let Some(token) = token else {
         let git = shadow.git(None, Config::Operator)?.network();
         return git.args(args).output();

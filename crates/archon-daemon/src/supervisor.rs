@@ -206,7 +206,10 @@ pub fn github_policy() -> &'static str {
 /// enabling the watcher needs one, so this precedes the check for it.
 pub async fn want_github_policy(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let mut store = ctx.store.lock().await;
-    if store.kv_get(GITHUB_WANTED_KEY)?.is_none() {
+    if store
+        .kv_get(GITHUB_WANTED_KEY)?
+        .is_none_or(|v| v.is_empty())
+    {
         store.kv_set(GITHUB_WANTED_KEY, "1")?;
         tracing::info!("orchestrators from the next generation on get the GitHub policy");
     }
@@ -651,20 +654,30 @@ async fn info_for(
 }
 
 /// How generation `generation` compares with one this archond would start
-/// now; `None` when an Archon that recorded no origin created it.
+/// now; `None` when an Archon that recorded no origin created it. Until the
+/// GitHub choice is recorded (an upgrade), either choice counts as current.
 pub async fn freshness(
     ctx: &DaemonContext,
     generation: u64,
 ) -> Result<Option<OrchestratorFreshness>, ArchonError> {
-    let github = github_recorded(ctx).await?.unwrap_or(false);
+    let choices = match github_recorded(ctx).await? {
+        Some(github) => vec![github],
+        None => vec![false, true],
+    };
     let workspace = &ctx.paths.orchestrator_workspace;
-    let instructions = orchestrator_instructions(&ctx.config, workspace, github)
-        .inspect_err(|error| {
-            tracing::warn!(%error, "today's orchestrator instructions cannot be built");
-        })
-        .ok();
+    let mut candidates = Vec::with_capacity(choices.len());
+    for github in choices {
+        match orchestrator_instructions(&ctx.config, workspace, github) {
+            Ok(text) => candidates.push(text),
+            Err(error) => {
+                tracing::warn!(%error, "today's orchestrator instructions cannot be built");
+                candidates.clear();
+                break;
+            }
+        }
+    }
     let store = ctx.store.lock().await;
-    origin::freshness(&store, generation, instructions.as_deref())
+    origin::freshness(&store, generation, &candidates)
 }
 
 /// Deliver an operator chat line (`Say`), keyed by its feed item id. The

@@ -1909,14 +1909,15 @@ the tier asked for and any fallback are stored on the plan and on every attempt
 for five minutes; with none read yet, a stored resolution stands.
 
 **Provider weights.** With `[models] provider_weights` set (a repository's
-table replaces the global one), each item is routed to one provider
+entries and default override the global ones), each item is routed to one provider
 (`provider_route`): eligible are providers with a positive weight, a table
 entry or `default_provider_weight`, whose best allowed model is at or above the
 floor, the tier asked for or the stage's lower `min_tier`. The pick is a
 weighted draw from a hash of the item id, so it is deterministic; it is stored
 on the item (`QueueItem.routed_provider`) at enqueue, retry and dispatch, and a
 held provider is kept while it stays eligible. With no eligible provider the
-orchestrator's provider serves the stage as before. Exact pins and named
+choice is refused rather than sent below the floor or to a provider weighted 0;
+a stage default then falls back as it does for any unresolved tier. Exact pins and named
 providers are never rerouted. Weights are plain multipliers, so live quota
 headroom can scale them later without a format change.
 

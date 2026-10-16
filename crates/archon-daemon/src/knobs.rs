@@ -260,7 +260,7 @@ impl<'a> TierScope<'a> {
     }
 
     /// `tier` on `provider` when given; else on the routed provider that
-    /// meets `floor`, or the orchestrator's when weights route nothing.
+    /// meets `floor`, or the orchestrator's provider when weights are off.
     pub fn resolve(
         &self,
         (tier, floor): (Tier, Tier),
@@ -268,9 +268,7 @@ impl<'a> TierScope<'a> {
     ) -> Result<(ModelRef, TierChoice), ArchonError> {
         assert!(floor <= tier, "a floor never exceeds the tier asked for");
         let routed = match (provider, self.route) {
-            (None, Some(route)) => self
-                .catalog
-                .routed_provider((tier, floor), route, self.policy),
+            (None, Some(route)) => Some(self.weighted_provider(tier, floor, route)?),
             _ => None,
         };
         let resolved = self.catalog.resolve(
@@ -284,6 +282,40 @@ impl<'a> TierScope<'a> {
             "a routed choice stays on its provider, at or above the floor"
         );
         Ok(resolved)
+    }
+
+    /// The weighted provider whose best allowed model reaches `floor`;
+    /// refused when none does, so a weight of 0 or the floor is never bypassed.
+    fn weighted_provider(
+        &self,
+        tier: Tier,
+        floor: Tier,
+        route: ProviderRoute<'a>,
+    ) -> Result<&'a str, ArchonError> {
+        if let Some(provider) = self
+            .catalog
+            .routed_provider((tier, floor), route, self.policy)
+        {
+            return Ok(provider);
+        }
+        let best = self.catalog.best_tiers(tier, self.policy);
+        let offered: Vec<String> = best
+            .iter()
+            .map(|(p, t)| format!("{p}: {t} (weight {})", route.weights.weight(p)))
+            .collect();
+        debug_assert!(
+            best.iter()
+                .all(|(p, t)| *t < floor || route.weights.weight(p) == 0)
+        );
+        Err(ArchonError::Invalid(format!(
+            "no provider with a positive weight in [models] provider_weights has an allowed \
+             model at or above tier {floor} (asked for {tier}); best allowed per provider: {}",
+            if offered.is_empty() {
+                "none".into()
+            } else {
+                offered.join("; ")
+            }
+        )))
     }
 }
 

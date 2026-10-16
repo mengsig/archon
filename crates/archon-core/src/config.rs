@@ -227,7 +227,7 @@ pub struct ModelsConfig {
     /// when unset); a plan may name any. A repository may only lower it.
     pub max_default_tier: Option<Tier>,
     /// Each provider's share of tier-only items; empty keeps them on the
-    /// orchestrator's provider. A repository's entries replace the global ones.
+    /// orchestrator's provider. A repository's entries override the global ones.
     pub provider_weights: BTreeMap<String, u32>,
     /// The weight of a provider `provider_weights` leaves out
     /// ([`DEFAULT_PROVIDER_WEIGHT`] when unset).

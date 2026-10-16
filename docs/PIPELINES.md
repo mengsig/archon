@@ -966,7 +966,8 @@ unless the choice names one, and falls back to a lower tier where the
 provider has none. `get_item` shows the tier and the model it resolved to.
 With `[models] provider_weights` set, the item's routed provider takes the
 orchestrator's place, as long as its best model reaches the stage's floor:
-the tier asked for, or the stage's `min_tier` when that is lower.
+the tier asked for, or the stage's `min_tier` when that is lower. A choice no
+weighted provider can serve at that floor is refused.
 
 A choice that leaves out `effort` gets the stage's default `effort` (`medium`
 unless the stage sets one). An effort above it needs a `model_reasons` entry

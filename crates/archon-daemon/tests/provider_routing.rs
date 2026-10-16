@@ -83,8 +83,8 @@ fn tier_plan() -> ModelPlanDraft {
     .unwrap()
 }
 
-async fn enqueue(h: &Harness, pipeline: &str, title: &str, plan: ModelPlanDraft) -> QueueItem {
-    let request = EnqueueRequest {
+fn enqueue_request(pipeline: &str, title: &str) -> EnqueueRequest {
+    EnqueueRequest {
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(pipeline.into()),
@@ -93,12 +93,19 @@ async fn enqueue(h: &Harness, pipeline: &str, title: &str, plan: ModelPlanDraft)
         priority: Default::default(),
         depends_on: Vec::new(),
         tags: Vec::new(),
-        model_plan: plan,
+        model_plan: ModelPlanDraft::default(),
         model_reasons: None,
         budget_usd: None,
         idempotency_key: None,
         autonomy: Default::default(),
         origin: None,
+    }
+}
+
+async fn enqueue(h: &Harness, pipeline: &str, title: &str, plan: ModelPlanDraft) -> QueueItem {
+    let request = EnqueueRequest {
+        model_plan: plan,
+        ..enqueue_request(pipeline, title)
     };
     match h.cli(Request::Enqueue(request)).await.expect("enqueue") {
         Reply::Item(item) => item,
@@ -178,7 +185,10 @@ async fn every_stage_dispatch_and_retry_of_an_item_keeps_its_weighted_provider()
     assert_eq!(detail.item.routed_provider.as_deref(), Some(held.as_str()));
 
     let mut seen = std::collections::BTreeSet::new();
-    for n in 0..8 {
+    for n in 0..40 {
+        if seen.len() == 2 && n >= 4 {
+            break;
+        }
         let item = enqueue(&h, PIPELINE, &format!("item {n}"), tier_plan()).await;
         let held = item
             .routed_provider
@@ -199,7 +209,7 @@ async fn every_stage_dispatch_and_retry_of_an_item_keeps_its_weighted_provider()
             "a strong floor keeps the frontier reviewer on {held}"
         );
     }
-    assert_eq!(seen.len(), 2, "an even split routes to both: {seen:?}");
+    assert_eq!(seen.len(), 2, "an even split reaches both: {seen:?}");
 }
 
 #[tokio::test]
@@ -220,12 +230,9 @@ async fn without_weights_tier_only_choices_stay_on_the_orchestrator_s_provider()
 async fn a_repository_s_weights_route_its_items_and_a_pin_still_binds() {
     let h = harness(Config::default()).await;
     h.repo_config("[models]\nprovider_weights = { codex = 1 }\ndefault_provider_weight = 0\n");
-    let item = enqueue(&h, PIPELINE, "repo weighted", tier_plan()).await;
+    let item = enqueue(&h, ROUTED, "repo weighted", tier_plan()).await;
     assert_eq!(item.routed_provider.as_deref(), Some("codex"));
-    assert_eq!(
-        providers(&item.model_plan),
-        expected("codex", "claude-code")
-    );
+    assert_eq!(providers(&item.model_plan), expected("codex", "codex"));
     let pinned: ModelPlanDraft = serde_json::from_value(serde_json::json!({
         "implement": [{"model": "claude-code/sonnet"}],
         "review": [{"tier": "strong", "provider": "claude-code"}, {"tier": "fast"}],
@@ -233,17 +240,31 @@ async fn a_repository_s_weights_route_its_items_and_a_pin_still_binds() {
     }))
     .unwrap();
     let item = enqueue(&h, PIPELINE, "pinned", pinned).await;
+    let mut want = expected("codex", "claude-code");
+    want[0].1 = vec!["claude-code".into()];
     assert_eq!(
         providers(&item.model_plan),
-        expected("codex", "claude-code")
-            .into_iter()
-            .map(|(key, mut on)| {
-                if key == "implement" {
-                    on = vec!["claude-code".into()];
-                }
-                (key, on)
-            })
-            .collect::<Vec<_>>(),
+        want,
         "an exact model and an explicit provider win over the weights"
     );
+}
+
+#[tokio::test]
+async fn a_floor_no_weighted_provider_reaches_is_refused_not_lowered() {
+    let h = harness(weighted(&[("codex", 1)])).await;
+    h.repo_config("[models]\ndefault_provider_weight = 0\n");
+    let request = EnqueueRequest {
+        model_plan: tier_plan(),
+        ..enqueue_request(PIPELINE, "frontier")
+    };
+    let refused = h.cli(Request::Enqueue(request)).await.unwrap_err();
+    let refused = refused.to_string();
+    assert!(refused.contains("at or above tier frontier"), "{refused}");
+    assert!(refused.contains("codex: strong (weight 1)"), "{refused}");
+    assert!(
+        refused.contains("claude-code: frontier (weight 0)"),
+        "{refused}"
+    );
+    let lowered = enqueue(&h, ROUTED, "lowered", tier_plan()).await;
+    assert_eq!(providers(&lowered.model_plan), expected("codex", "codex"));
 }

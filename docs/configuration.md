@@ -24,9 +24,10 @@ A tier without a provider runs on the orchestrator's provider, unless
 weight from a hash of its id, and all of its tier-only choices run there,
 through every stage and retry; `get_item` names it. A provider whose best
 allowed model is below a stage's floor (the tier asked for, or the stage's
-`min_tier`) is skipped for that stage, and with none left the orchestrator's
-provider serves it as before. A provider Aether lists but the table leaves out
-gets `default_provider_weight`. A repository's table replaces the global one.
+`min_tier`) is skipped for that stage; with none left, or only ones weighted
+0, the choice is refused, naming each provider's best tier. A provider Aether
+lists but the table leaves out gets `default_provider_weight`. A repository's
+entries and default override the global ones; the rest of the table stays.
 An exact `model` or a named `provider` always wins. `archon cost --by provider`
 and `model_evidence` show the share each provider got.
 

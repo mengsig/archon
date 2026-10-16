@@ -132,6 +132,7 @@ fn request(repo: &Repo, state: &BranchState, red: &Red) -> EnqueueRequest {
         brief: brief(repo, state, red),
         priority: Priority::High,
         depends_on: Vec::new(),
+        onto: None,
         tags: vec![FIX_TAG.to_owned()],
         model_plan: ModelPlan::default().into(),
         model_reasons: None,

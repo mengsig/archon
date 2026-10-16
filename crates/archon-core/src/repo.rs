@@ -102,6 +102,91 @@ impl<'de> Deserialize<'de> for Attribution {
     }
 }
 
+/// The GitHub host a [`GhUser`] logs in to.
+pub const GH_HOST: &str = "github.com";
+
+/// A github.com login whose `gh` token every `gh` call and push for a
+/// repository carries; only the operator sets it, in the registry.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+pub struct GhUser(String);
+
+impl GhUser {
+    /// Longest login GitHub gives out.
+    const MAX_LEN: usize = 39;
+
+    /// The login `name` spells, or why it is none. It becomes an argument
+    /// of `gh`, so it never starts with `-`.
+    fn named(name: &str) -> Result<Self, String> {
+        let shaped = !name.is_empty()
+            && name.len() <= Self::MAX_LEN
+            && !name.starts_with('-')
+            && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+        if !shaped {
+            return Err(format!(
+                "{name:?} is no GitHub login: 1 to {} letters, digits or hyphens, not starting \
+                 with a hyphen",
+                Self::MAX_LEN
+            ));
+        }
+        Ok(Self(name.to_owned()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// `gh` arguments that print this login's token on [`GH_HOST`].
+    pub fn token_args(&self) -> [&str; 6] {
+        let args = ["auth", "token", "--hostname", GH_HOST, "--user", &self.0];
+        assert!(!self.0.starts_with('-'), "checked when named");
+        args
+    }
+}
+
+/// `owner/name` of the github.com repository `url` names over https or ssh,
+/// with no credentials, port or further path; `None` for any other URL.
+pub fn github_slug(url: &str) -> Option<String> {
+    let path = url
+        .strip_prefix("https://github.com/")
+        .or_else(|| url.strip_prefix("ssh://git@github.com/"))
+        .or_else(|| url.strip_prefix("git@github.com:"))?;
+    let path = path.strip_suffix('/').unwrap_or(path);
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let (owner, name) = path.split_once('/')?;
+    let plain = |part: &str| {
+        !part.is_empty()
+            && !part.starts_with('.')
+            && part
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+    };
+    let slug = (plain(owner) && plain(name)).then(|| format!("{owner}/{name}"))?;
+    assert_eq!(slug.matches('/').count(), 1, "owner and name");
+    Some(slug)
+}
+
+impl std::fmt::Display for GhUser {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::str::FromStr for GhUser {
+    type Err = crate::ArchonError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::named(s).map_err(crate::ArchonError::Invalid)
+    }
+}
+
+/// Not derived: a stored or sent login is checked as a typed one is.
+impl<'de> Deserialize<'de> for GhUser {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        Self::named(&name).map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Repo {
     pub id: RepoId,
@@ -126,6 +211,10 @@ pub struct Repo {
     /// What its pull requests say of Archon and the tools; operator only.
     #[serde(default)]
     pub attribution: Attribution,
+    /// The GitHub login its `gh` calls and pushes run as; `None` uses the
+    /// daemon's own login. Operator only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gh_user: Option<GhUser>,
     /// The operator's verification tiers, over the committed `.archon/repo.toml`.
     #[serde(default, skip_serializing_if = "RepoTiers::is_empty")]
     pub tiers: RepoTiers,
@@ -208,6 +297,7 @@ mod tests {
             autonomy_max: AutonomyPatch::default(),
             grant_merge: false,
             attribution: Attribution::None,
+            gh_user: None,
             tiers: RepoTiers::default(),
             confirmed_fast_check: None,
             confirmed_full_check: None,
@@ -222,6 +312,75 @@ mod tests {
             Attribution::ItemId,
             "stored before it existed"
         );
+    }
+
+    #[test]
+    fn a_gh_user_is_a_plain_login_and_is_checked_when_read() {
+        for login in ["devGunnin", "a", "a-b-1", &"x".repeat(39)] {
+            let user: GhUser = login.parse().unwrap();
+            assert_eq!(user.as_str(), login);
+            let wire = serde_json::to_string(&user).unwrap();
+            assert_eq!(serde_json::from_str::<GhUser>(&wire).unwrap(), user);
+        }
+        for bad in ["", "-u", "--user=other", "a b", "a/b", "ü", &"x".repeat(40)] {
+            assert!(bad.parse::<GhUser>().is_err(), "{bad:?}");
+            let decoded = serde_json::from_value::<GhUser>(bad.into());
+            assert!(decoded.is_err(), "a stored {bad:?} is refused too");
+        }
+        let user: GhUser = "devGunnin".parse().unwrap();
+        let args = [
+            "auth",
+            "token",
+            "--hostname",
+            "github.com",
+            "--user",
+            "devGunnin",
+        ];
+        assert_eq!(user.token_args(), args);
+    }
+
+    #[test]
+    fn only_a_github_com_repository_over_https_or_ssh_has_a_slug() {
+        for url in [
+            "https://github.com/o/r",
+            "https://github.com/o/r.git",
+            "https://github.com/o/r/",
+            "git@github.com:o/r.git",
+            "ssh://git@github.com/o/r.git",
+        ] {
+            assert_eq!(github_slug(url).as_deref(), Some("o/r"), "{url}");
+        }
+        for url in [
+            "http://github.com/o/r.git",
+            "https://user:pw@github.com/o/r.git",
+            "https://github.com:8443/o/r.git",
+            "https://github.com.evil.example/o/r.git",
+            "https://ghe.example.com/o/r.git",
+            "git@ghe.example.com:o/r.git",
+            "git@github.com-work:o/r.git",
+            "https://github.com/o/r/extra",
+            "https://github.com/../r.git",
+            "https://github.com/o/r?x=1",
+            "/srv/git/r.git",
+            "file:///srv/git/r.git",
+        ] {
+            assert_eq!(github_slug(url), None, "{url}");
+        }
+    }
+
+    #[test]
+    fn a_repo_stored_before_gh_user_existed_has_none() {
+        let repo = serde_json::json!({
+            "id": RepoId::new(), "name": "a", "path": "/a", "ship": "pr",
+            "base_branch": null, "default_pipeline": null, "added_at": crate::now(),
+        });
+        let old: Repo = serde_json::from_value(repo).unwrap();
+        assert_eq!(old.gh_user, None);
+        let mut with = old.clone();
+        with.gh_user = Some("devGunnin".parse().unwrap());
+        let stored = serde_json::to_value(&with).unwrap();
+        assert_eq!(stored["gh_user"], "devGunnin");
+        assert!(serde_json::to_value(&old).unwrap().get("gh_user").is_none());
     }
 
     #[test]

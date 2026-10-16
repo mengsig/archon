@@ -65,6 +65,7 @@ pub struct Config {
     pub autonomy: AutonomyConfig,
     pub learning: LearningConfig,
     pub integration: IntegrationConfig,
+    pub notify: crate::push::NotifyConfig,
 }
 
 /// How archond verifies each repository's integration branch off the items'
@@ -1037,6 +1038,7 @@ impl Config {
         self.artifacts.validate()?;
         self.storage.validate()?;
         self.integration.validate()?;
+        self.notify.validate()?;
         self.models.check_weights()?;
         let orchestrator = crate::model::ModelChoice {
             model: self.orchestrator.model.clone(),

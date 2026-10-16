@@ -29,7 +29,7 @@ use crate::notify::{FeedItem, NotificationKind, Question};
 use crate::ops::{UpgradeRequest, Versions};
 use crate::policy::ModelPolicy;
 use crate::queue::{Caps, PauseState, Priority, QueueItem};
-use crate::repo::{Attribution, Checks, Repo, RepoTiers, ShipMode};
+use crate::repo::{Attribution, Checks, GhUser, Repo, RepoTiers, ShipMode};
 use crate::run::{OperatorGate, PipelineRun, StageRun, StageState, Verdict};
 use crate::steer::Steer;
 
@@ -52,7 +52,8 @@ use crate::steer::Steer;
 /// a repository's `grant_merge`, which an older archond would drop.
 /// 13: daemon-verified operator authority requests and settings.
 /// 14: a repository's `attribution`, which an older archond would drop.
-pub const PROTOCOL_VERSION: u32 = 14;
+/// 15: a repository's `gh_user`, which an older archond would drop.
+pub const PROTOCOL_VERSION: u32 = 15;
 
 /// Said beside an item whose `budget_usd` was set while budgets are off.
 pub const BUDGETS_OFF_NOTE: &str = "Dollar budgets are globally off ([limits] budgets_enabled = \
@@ -556,6 +557,10 @@ pub struct RepoPatch {
     /// Sets the repository's attribution policy; operator only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attribution: Option<Attribution>,
+    /// Sets or clears the GitHub login its `gh` calls and pushes run as;
+    /// operator only.
+    #[serde(default, skip_serializing_if = "Clearable::is_keep")]
+    pub gh_user: Clearable<GhUser>,
     /// Changes the registry's verification tiers; operator only.
     #[serde(default, skip_serializing_if = "TiersPatch::is_keep")]
     pub tiers: TiersPatch,
@@ -606,6 +611,11 @@ pub enum Clearable<T> {
 }
 
 impl<T> Clearable<T> {
+    /// Whether it leaves the setting as it is.
+    pub fn is_keep(&self) -> bool {
+        matches!(self, Self::Keep)
+    }
+
     /// `current` after the patch.
     pub fn apply(self, current: Option<T>) -> Option<T> {
         match self {

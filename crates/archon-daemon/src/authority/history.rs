@@ -72,6 +72,7 @@ pub(super) async fn record(
                     autonomy_max: Some(old.autonomy_max),
                     grant_merge: Some(old.grant_merge),
                     attribution: Some(old.attribution),
+                    gh_user: optional(old.gh_user),
                     tiers: TiersPatch {
                         integration_branch: optional(old.tiers.integration_branch),
                         release_branch: optional(old.tiers.release_branch),
@@ -118,7 +119,7 @@ pub(super) async fn record(
     Ok(())
 }
 
-fn optional(value: Option<String>) -> Clearable<String> {
+fn optional<T>(value: Option<T>) -> Clearable<T> {
     match value {
         Some(value) => Clearable::Set(value),
         None => Clearable::Clear,

@@ -125,7 +125,7 @@ pub(super) async fn announce(ctx: &DaemonContext, key: &GateKey) -> Result<Follo
         answer: None,
         answered_at: None,
     };
-    let feed_item = {
+    let (feed_item, number) = {
         let mut store = ctx.store.lock().await;
         let mut current = load(&store, key)?;
         if !needs_asking(&store, &current)? {
@@ -141,11 +141,12 @@ pub(super) async fn announce(ctx: &DaemonContext, key: &GateKey) -> Result<Follo
         store.update_gate(&current)?;
         let news = gate_news::opened(ctx.config.aether.mode, &current, &item, &question);
         crate::triggers::hold(&mut store, news)?;
-        feed_item
+        (feed_item, question.number)
     };
     crate::triggers::wake(ctx);
     // No receivers is normal (nobody has chat open); not an error.
     let _ = ctx.feed.send(feed_item);
+    crate::push::gate(ctx, &item, gate.subject, number);
     Ok(FollowUp::default())
 }
 

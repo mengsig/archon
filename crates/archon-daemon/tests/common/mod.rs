@@ -483,6 +483,7 @@ pub fn context(
         storage: Default::default(),
         status_probes: Default::default(),
         quota: Default::default(),
+        push: Default::default(),
         config,
         paths,
         store: Mutex::new(store),

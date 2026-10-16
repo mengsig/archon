@@ -130,6 +130,7 @@ fn repo(path: &Path, fast: Option<&str>, confirmed: Option<&str>) -> Repo {
         autonomy_max: Default::default(),
         grant_merge: false,
         attribution: Attribution::None,
+        gh_user: None,
         tiers: RepoTiers {
             checks: Checks {
                 fast: fast.map(str::to_owned),

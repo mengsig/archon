@@ -117,7 +117,7 @@ async fn look_once(
         Err(error) => return Err(error),
     };
     let binary = &ctx.config.github.binary;
-    let read = checks::of_pull_request(binary, &repo.path, &watch.url, waited(QUEUED_LIMIT)).await;
+    let read = checks::of_pull_request(binary, &repo, &watch.url, waited(QUEUED_LIMIT)).await;
     let checks = match read {
         Ok(checks) => checks,
         Err(error) if error.is_store() => return Err(error),
@@ -208,6 +208,9 @@ async fn report(
     };
     tracing::info!(%run, url = %watch.url, state, "pull request checks reported");
     finish::notify(ctx, kind, &text, item, item.and(Some(run))).await?;
+    if let Some(item) = item {
+        crate::push::pr_checks(ctx, item, &watch.url, state).await;
+    }
     let event = TriggerEvent::PrChecks {
         item: watch.item.clone(),
         url: watch.url.clone(),

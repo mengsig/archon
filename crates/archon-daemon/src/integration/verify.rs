@@ -170,7 +170,7 @@ impl<'a> Session<'a> {
         github: &GithubRepo,
         commit: &str,
     ) -> Result<Option<Outcome>, ArchonError> {
-        let (binary, repo) = (&self.ctx.config.github.binary, &self.watch.repo.path);
+        let (binary, repo) = (&self.ctx.config.github.binary, &self.watch.repo);
         match github::commit_checks(binary, repo, github, commit).await {
             Ok(CommitChecks::Passed) => Ok(Some(Outcome::Green(VIA_GITHUB))),
             Ok(CommitChecks::Failed(failed)) => Ok(Some(Outcome::Red {

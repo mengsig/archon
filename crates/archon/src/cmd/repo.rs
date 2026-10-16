@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use anyhow::Context as _;
 use archon_core::autonomy::{AutonomyPatch, MergeMode};
 use archon_core::protocol::{Clearable, Reply, RepoAdd, RepoPatch, RepoRef, Request, TiersPatch};
-use archon_core::repo::ShipMode;
+use archon_core::repo::{GhUser, ShipMode};
 
 use super::{emit, to_json};
 use crate::cli::{RepoCommand, Ship, TierArgs};
@@ -64,12 +64,14 @@ pub async fn run(command: RepoCommand, json: bool) -> anyhow::Result<ExitCode> {
             auto_merge,
             grant_merge,
             attribution,
+            gh_user,
             tiers,
         } => {
             let ceiling = ceiling(&repo, autonomy_max, auto_merge).await?;
             let patch = RepoPatch {
                 grant_merge,
                 attribution,
+                gh_user: gh_user_patch(gh_user)?,
                 tiers: tiers_patch(tiers),
                 ..repo_patch(ship, base, pipeline, ceiling)
             };
@@ -156,6 +158,7 @@ fn repo_patch(
         autonomy_max,
         grant_merge: None,
         attribution: None,
+        gh_user: Clearable::Keep,
         tiers: TiersPatch::default(),
     }
 }
@@ -177,6 +180,15 @@ fn clearable(value: Option<String>) -> Clearable<String> {
         Some("") => Clearable::Clear,
         Some(v) => Clearable::Set(v.to_owned()),
     }
+}
+
+/// `--gh-user`: a login sets it, an empty value clears it.
+fn gh_user_patch(value: Option<String>) -> anyhow::Result<Clearable<GhUser>> {
+    Ok(match value.as_deref().map(str::trim) {
+        None => Clearable::Keep,
+        Some("") => Clearable::Clear,
+        Some(login) => Clearable::Set(login.parse()?),
+    })
 }
 
 fn ship_mode(ship: Ship) -> ShipMode {
@@ -204,6 +216,16 @@ mod tests {
         assert_eq!(cleared.autonomy_max, Some(AutonomyPatch::default()));
         let patch = repo_patch(Some(Ship::Local), None, None, None);
         assert_eq!(patch.ship, Some(ShipMode::Local));
+    }
+
+    #[test]
+    fn a_gh_user_is_set_by_a_login_and_cleared_by_an_empty_value() {
+        assert_eq!(gh_user_patch(None).unwrap(), Clearable::Keep);
+        assert_eq!(gh_user_patch(Some(" ".into())).unwrap(), Clearable::Clear);
+        let set = gh_user_patch(Some("devGunnin".into())).unwrap();
+        assert_eq!(set, Clearable::Set("devGunnin".parse().unwrap()));
+        let refused = gh_user_patch(Some("--user=x".into())).unwrap_err();
+        assert!(refused.to_string().contains("no GitHub login"), "{refused}");
     }
 
     #[test]

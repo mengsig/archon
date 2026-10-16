@@ -124,6 +124,10 @@ fn fast_forward_now(
         None => url.clone(),
     };
     let shadow = Shadow::of(data_dir, repo)?;
+    let rewritten = stack::rewritten(&shadow, &url)?;
+    if let Some(refusal) = rewritten.iter().find_map(|url| elsewhere(url, onto)) {
+        return Ok(Err(refusal));
+    }
     let branch = onto.head_ref.as_str();
     match stack::remote_head(&shadow, &url, branch)? {
         // An earlier try pushed it and failed after.

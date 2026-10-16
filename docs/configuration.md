@@ -342,9 +342,11 @@ branch verified by `archond`, off every item's path. It reads the branch's
 head every `poll_every` and verifies it once `batch_merges` merges have
 landed since the last verified head, or once the head has stood still for
 `idle_after`. When the repository ships pull requests and GitHub runs check
-runs on the commit, those decide. Otherwise `archond` runs `[checks] full`
-in its own checkout of the branch (`<data>/integration/<repo>`, its output
-in `<repo>.log` beside it), under `nice`, one run at a time per host. It
+runs on the commit, those decide; they are read again on every look while
+the head stands, so a rerun that turns them is followed. Otherwise
+`archond` runs `[checks] full` in its own checkout of the branch
+(`<data>/integration/<repo>`, its output in `<repo>.log` beside it), under
+`nice`, one run at a time per host. It
 runs the registry's full check (`archon repo set --full-check`), or the one
 in the registered repository's committed `.archon/repo.toml` once the
 operator confirmed its exact text with `archon repo set --confirm-full-check
@@ -395,6 +397,35 @@ as the full check is: the registry's (`archon repo set --release-hook`), or
 an untracked or uncommitted copy runs nothing.
 When a merge queue or branch rule holds the merge, promote again once it
 landed: that call finishes the promotion, realigning and running the hook.
+
+## Push notifications
+
+```toml
+[notify]
+on = ["gate", "question", "failure", "blocked", "pr_checks", "budget"]
+command = ["ntfy", "publish", "--title", "archon", "mytopic"]
+# or: webhook = "https://ntfy.sh/mytopic"
+min_gap_secs = 60
+```
+
+Nothing is sent until `command` or `webhook` is set; set one, not both. `on`
+lists the kinds sent and defaults to all six: an operator gate opening, a
+question waiting, an item failing, an item blocked or ending in need of you,
+a delivered pull request's checks failing or never starting, and a budget
+holding new work.
+
+Each event is one JSON object: `{"kind", "id", "title", "line", "at"}`. `id`
+is the item (a question about no item gives its `q_…` id, a budget hold
+`budget`), `title` the item's title and `line` a sentence Archon writes. It
+never carries a brief, a stage summary, a question's text or a secret.
+`command` runs without a shell with the event on stdin; `webhook` POSTs it as
+`application/json` through `curl`, which must be on `PATH`, with the URL
+passed on curl's stdin, taken literally (no `[]` globbing), so no process
+listing shows it; curl's own error output is not logged, since it may quote
+the URL. At most one event of a
+kind goes out per `min_gap_secs` (0 to 86400); later ones are skipped and
+logged. A notifier that fails or runs over 30 seconds is logged as a warning
+in `archond`'s log and changes nothing else.
 
 ## Disk use
 

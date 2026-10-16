@@ -29,7 +29,8 @@ pub(crate) struct BranchState {
     /// The latest head verified, and how it fared.
     #[serde(default)]
     pub verdict: Option<Verdict>,
-    /// The commit a full check runs on now.
+    /// The head being verified now: a full check runs on it, or GitHub's
+    /// checks on it still run.
     #[serde(default)]
     pub verifying: Option<String>,
     #[serde(default)]

@@ -483,13 +483,20 @@ async fn remote_fork(
     let (data_dir, path) = (ctx.paths.data_dir.clone(), repo.path.clone());
     let (base_name, branch) = (base.to_owned(), branch.to_owned());
     let from = release.map(str::to_owned);
+    // Only an integration branch made on `origin` is pushed, as the repository's login.
+    let token = match from {
+        Some(_) => super::gh::token(&ctx.config.github.binary, repo).await,
+        None => Ok(None),
+    };
     let fetched = tokio::task::spawn_blocking(move || -> Result<_, ArchonError> {
         if crate::worktree::branch_exists(&path, &branch)? {
             return Ok(Ok((false, None)));
         }
         let shadow = Shadow::of(&data_dir, &path)?;
         let created = match &from {
-            Some(from) => stack::ensure_remote_branch(&shadow, &path, &base_name, from),
+            Some(from) => token.and_then(|token| {
+                stack::ensure_remote_branch(&shadow, &path, (&base_name, from), token.as_ref())
+            }),
             None => Ok(false),
         };
         Ok(created.and_then(|created| {

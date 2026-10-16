@@ -27,6 +27,7 @@ use crate::context::DaemonContext;
 use crate::executor::gh;
 use crate::executor::ship::remote;
 use crate::feed;
+use crate::gh_account;
 use crate::worktree::shadow::Shadow;
 use crate::worktree::stack;
 
@@ -85,7 +86,7 @@ pub async fn promote(
     }
     let mut promotion = promotion_of(&watch, &head, None);
     if contains(&watch, &heads.release.commit, &head).await? {
-        let realign_problem = realign(&watch, &heads.release.commit).await?;
+        let realign_problem = realign(ctx, &watch, &heads.release.commit).await?;
         promotion.outcome = PromotionOutcome::UpToDate { realign_problem };
         return Ok(promotion);
     }
@@ -245,7 +246,7 @@ async fn open_pull_request(
         draft: false,
     };
     let binary = &ctx.config.github.binary;
-    match remote::pull_request(binary, &watch.repo.path, request).await? {
+    match remote::pull_request(binary, &watch.repo, request).await? {
         Ok(url) => Ok(url),
         Err(refusal) => Err(ArchonError::Unavailable(refusal)),
     }
@@ -286,7 +287,7 @@ async fn merge_pull_request(
     head: &str,
 ) -> Result<(), ArchonError> {
     assert!(stack::is_commit_id(head), "a verified commit");
-    let (binary, repo) = (&ctx.config.github.binary, &watch.repo.path);
+    let (binary, repo) = (&ctx.config.github.binary, &watch.repo);
     let facts = mergeable_facts(binary, repo, url).await?;
     if let Err(why) = may_merge(&facts, head, &watch.release) {
         return Err(ArchonError::InvalidTransition(format!(
@@ -314,7 +315,7 @@ async fn merge_pull_request(
 /// whether it merges cleanly, as it does just after it was opened.
 async fn mergeable_facts(
     binary: &std::path::Path,
-    repo: &std::path::Path,
+    repo: &Repo,
     url: &str,
 ) -> Result<PullRequestFacts, ArchonError> {
     let mut facts = gh::merge_facts(binary, repo, url).await?;
@@ -373,7 +374,7 @@ async fn after_merge(
             short(head)
         )));
     }
-    let realign_problem = realign(watch, &release.commit).await?;
+    let realign_problem = realign(ctx, watch, &release.commit).await?;
     if realign_problem.is_none() {
         carry_green(ctx, watch, head, &release.commit).await?;
     }
@@ -389,23 +390,36 @@ async fn after_merge(
 }
 
 /// Fast-forward the integration branch on `origin` to `release`, never
-/// forced; `Some` says why it was not, as when it moved on meanwhile.
-async fn realign(watch: &Watch, release: &str) -> Result<Option<String>, ArchonError> {
+/// forced, as the repository's GitHub login when it names one; `Some` says
+/// why it was not, as when it moved on meanwhile.
+async fn realign(
+    ctx: &DaemonContext,
+    watch: &Watch,
+    release: &str,
+) -> Result<Option<String>, ArchonError> {
     assert!(stack::is_commit_id(release), "a release commit");
+    let token = gh::token(&ctx.config.github.binary, &watch.repo).await?;
     let (source, branch, release) = (
         watch.source.clone(),
         watch.branch.clone(),
         release.to_owned(),
     );
     blocking(move || {
-        let url = stack::origin_url(&source.repo)?.expect("checked: promotion has an origin");
+        let url = match &token {
+            Some(token) => gh_account::push_url(&source.repo, token.user())?
+                .map_err(|why| ArchonError::Invalid(format!("BLOCKED: {why}")))?,
+            None => stack::origin_url(&source.repo)?.expect("checked: promotion has an origin"),
+        };
         let shadow = Shadow::of(&source.data_dir, &source.repo)?;
-        let pushed = stack::push(&shadow, &url, &branch, &release)?;
+        let pushed = stack::push(&shadow, &url, &branch, &release, token.as_ref())?;
         if !pushed.status.success() {
+            let said = match &token {
+                Some(token) => token.redact(&pushed.stderr_text()),
+                None => pushed.stderr_text(),
+            };
             return Ok(Some(format!(
-                "`origin` refused the fast-forward to {}: {}",
-                short(&release),
-                pushed.stderr_text()
+                "`origin` refused the fast-forward to {}: {said}",
+                short(&release)
             )));
         }
         let Some(now) = source.head(&branch)?.map(|head| head.commit) else {

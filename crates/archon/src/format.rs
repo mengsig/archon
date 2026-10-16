@@ -382,6 +382,9 @@ pub fn repo_line(repo: &Repo) -> String {
     if repo.attribution != Attribution::default() {
         let _ = write!(line, ", attribution {}", repo.attribution.name());
     }
+    if let Some(user) = &repo.gh_user {
+        let _ = write!(line, ", gh_user {user}");
+    }
     line
 }
 

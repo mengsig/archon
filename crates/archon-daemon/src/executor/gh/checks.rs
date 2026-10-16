@@ -6,6 +6,7 @@
 use std::path::Path;
 
 use archon_core::error::ArchonError;
+use archon_core::repo::{GH_HOST, Repo};
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
@@ -60,7 +61,7 @@ pub(crate) enum Checks {
 /// queued counts as never started.
 pub(crate) async fn of_pull_request(
     binary: &Path,
-    repo: &Path,
+    repo: &Repo,
     url: &str,
     waited_long: bool,
 ) -> Result<Checks, ArchonError> {
@@ -168,12 +169,16 @@ pub(crate) fn classify(
 /// annotated so; any other check ran.
 async fn never_started(
     binary: &Path,
-    repo: &Path,
+    repo: &Repo,
     check: &Check,
 ) -> Result<Option<String>, ArchonError> {
     let Some((host, slug, job)) = actions_job(&check.link) else {
         return Ok(None);
     };
+    // A repository's own login is for github.com: no other host is asked as it.
+    if repo.gh_user.is_some() && host != GH_HOST {
+        return Ok(None);
+    }
     let path = format!("repos/{slug}/check-runs/{job}/annotations");
     let args = ["api", "--hostname", host, &path];
     let doing = format!("reading why check `{}` failed", check.name);

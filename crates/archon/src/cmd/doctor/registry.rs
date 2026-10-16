@@ -25,6 +25,11 @@ pub(super) struct Registry {
 }
 
 impl Registry {
+    /// The registered repositories, or why they are unknown.
+    pub(super) fn repos(&self) -> Result<&[Repo], &str> {
+        self.repos.as_deref().map_err(String::as_str)
+    }
+
     pub(super) async fn read(
         archond: &anyhow::Result<Option<ArchonClient>>,
         mode: AetherMode,
@@ -179,6 +184,17 @@ pub(in crate::cmd) async fn run_bounded(
     dir: Option<&Path>,
     timeout: Duration,
 ) -> Result<Output, String> {
+    run_bounded_with(program, args, dir, timeout, |_| {}).await
+}
+
+/// [`run_bounded`], with the command's environment changed by `env` first.
+pub(super) async fn run_bounded_with(
+    program: &Path,
+    args: &[&str],
+    dir: Option<&Path>,
+    timeout: Duration,
+    env: impl FnOnce(&mut tokio::process::Command),
+) -> Result<Output, String> {
     assert!(
         !timeout.is_zero(),
         "a zero timeout never lets a command run"
@@ -195,6 +211,7 @@ pub(in crate::cmd) async fn run_bounded(
         assert!(dir.is_absolute(), "{} is not absolute", dir.display());
         command.current_dir(dir);
     }
+    env(&mut command);
     match tokio::time::timeout(timeout, command.output()).await {
         Ok(Ok(output)) => Ok(output),
         Ok(Err(e)) => Err(format!("{shown} could not run: {e}")),
@@ -203,7 +220,7 @@ pub(in crate::cmd) async fn run_bounded(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use std::path::PathBuf;
 
     use archon_core::id::RepoId;
@@ -211,7 +228,7 @@ mod tests {
 
     use super::*;
 
-    fn repo(name: &str, path: &Path, ship: ShipMode) -> Repo {
+    pub(in crate::cmd::doctor) fn repo(name: &str, path: &Path, ship: ShipMode) -> Repo {
         Repo {
             id: RepoId::new(),
             name: name.to_owned(),
@@ -222,6 +239,7 @@ mod tests {
             autonomy_max: Default::default(),
             grant_merge: false,
             attribution: Default::default(),
+            gh_user: None,
             tiers: Default::default(),
             confirmed_fast_check: None,
             confirmed_full_check: None,
@@ -230,7 +248,7 @@ mod tests {
         }
     }
 
-    fn registry(repos: Vec<Repo>, watcher_on: bool) -> Registry {
+    pub(in crate::cmd::doctor) fn registry(repos: Vec<Repo>, watcher_on: bool) -> Registry {
         Registry {
             repos: Ok(repos),
             watcher_on: Ok(watcher_on),

@@ -1712,6 +1712,7 @@ async fn two_mirrored_repos(harness: &Harness) -> (tempfile::TempDir, PathBuf) {
         autonomy_max: Default::default(),
         grant_merge: false,
         attribution: Default::default(),
+        gh_user: None,
         tiers: Default::default(),
         confirmed_fast_check: None,
         confirmed_full_check: None,

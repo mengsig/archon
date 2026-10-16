@@ -197,6 +197,8 @@ async fn examine(ctx: &DaemonContext, repo: &Repo) -> Result<(), ArchonError> {
             fresh
         }
     };
+    // Running GitHub checks are read again on this look.
+    state.verifying = None;
     let told = state.problem.clone();
     let reading = {
         let (watch, state) = (watch.clone(), state.clone());
@@ -212,14 +214,24 @@ async fn examine(ctx: &DaemonContext, repo: &Repo) -> Result<(), ArchonError> {
     // A force-push may have left the recorded green commit off the branch.
     state.last_green = reading.green.clone();
     let red_on_head = |state: &BranchState| state.verdict_on_head().is_some_and(|v| !v.green);
+    let by_github = |state: &BranchState| {
+        state
+            .verdict_on_head()
+            .is_some_and(|v| v.via == verify::VIA_GITHUB)
+    };
     if state.verdict_on_head().is_none() && due(&ctx.config.integration, &state, &reading, now) {
         let verified = verify::head(ctx, &watch, &mut state, &reading).await;
         kept(repo, &mut state, verified)?;
+    } else if by_github(&state) {
+        // A rerun may have turned the head since, so it is read before an owed bisection.
+        let rechecked = verify::recheck(ctx, &watch, &mut state, &reading).await;
+        kept(repo, &mut state, rechecked)?;
     } else if state.bisecting.is_some() && red_on_head(&state) {
         let resumed = verify::resume(ctx, &watch, &mut state, &reading).await;
         kept(repo, &mut state, resumed)?;
     }
-    if red_on_head(&state) && state.bisecting.is_none() {
+    // A head whose checks run again is repaired once they judge it.
+    if red_on_head(&state) && state.bisecting.is_none() && state.verifying.is_none() {
         ensure_fix(ctx, &watch, &mut state, &reading).await?;
     }
     save(ctx, repo, &told, &state).await

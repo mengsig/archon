@@ -15,7 +15,7 @@ use archon_core::protocol::{
 };
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::ShipMode;
-use common::delivery::{FakeGh, add_origin, origin_of, pass_by, pushed, shipped_by};
+use common::delivery::{FAKE_LOGIN, FakeGh, add_origin, origin_of, pass_by, pushed, shipped_by};
 use common::{Harness, REPO_NAME, REVIEW_MODEL, git};
 use serde_json::json;
 
@@ -190,6 +190,28 @@ async fn a_missing_integration_branch_is_created_on_origin_from_the_release_bran
     let said = h.notices(NotificationKind::Decision).await;
     let created = |n: &&String| n.contains("Created the integration branch `origin/next`");
     assert_eq!(said.iter().filter(created).count(), 1, "{said:?}");
+}
+
+/// A repository that runs as a GitHub login makes its missing integration
+/// branch only as that login: an `origin` off github.com gets none, with no
+/// fallback to the daemon's account, and the operator hears why.
+#[tokio::test]
+async fn a_missing_integration_branch_is_never_made_as_the_daemon_for_a_login() {
+    let (h, gh) = delivering().await;
+    integrate_into(&h, "next").await;
+    let login = RepoPatch {
+        gh_user: Clearable::Set(FAKE_LOGIN.parse().unwrap()),
+        ..RepoPatch::default()
+    };
+    update(&h, login).await;
+
+    enqueue(&h, "first onto next as a login").await;
+    h.dispatch().await;
+    assert_eq!(pushed(&origin_of(&h), "next"), None);
+    let said = h.notices(NotificationKind::Decision).await;
+    let blocked = |n: &&String| n.contains("BLOCKED: `origin` is") && n.contains(FAKE_LOGIN);
+    assert_eq!(said.iter().filter(blocked).count(), 1, "{said:?}");
+    assert!(gh.calls().is_empty(), "{:?}", gh.calls());
 }
 
 /// In `local` mode the integration branch is a local one, made from the

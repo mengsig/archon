@@ -11,7 +11,10 @@ use std::path::Path;
 use archon_core::error::ArchonError;
 use serde::Deserialize;
 
+use archon_core::repo::Repo;
+
 use super::super::gh::{self, needs_operator};
+use crate::gh_account::{self, Token};
 use crate::worktree::shadow::Shadow;
 use crate::worktree::stack;
 
@@ -27,18 +30,25 @@ pub(crate) struct Request<'a> {
 }
 
 /// Push `commit`, the one the checks proved, to `branch` on `repo`'s `origin`, never
-/// forced; what `origin` already has is a success, so a repeated delivery pushes once.
+/// forced, as the repository's GitHub login when it has one; what `origin` already
+/// has is a success, so a repeated delivery pushes once.
 pub(super) async fn push(
+    binary: &Path,
     data_dir: &Path,
-    repo: &Path,
+    repo: &Repo,
     branch: &str,
     commit: &str,
 ) -> Result<Result<(), String>, ArchonError> {
     assert!(!branch.is_empty(), "a run has a branch");
     assert!(stack::is_commit_id(commit), "the checked commit is pushed");
-    let (data_dir, repo) = (data_dir.to_owned(), repo.to_owned());
+    let token = match gh::token(binary, repo).await {
+        Ok(token) => token,
+        Err(ArchonError::Invalid(blocked)) => return Ok(Err(blocked)),
+        Err(error) => return Err(error),
+    };
+    let (data_dir, path) = (data_dir.to_owned(), repo.path.clone());
     let (branch, commit) = (branch.to_owned(), commit.to_owned());
-    tokio::task::spawn_blocking(move || push_now(&data_dir, &repo, &branch, &commit))
+    tokio::task::spawn_blocking(move || push_now(&data_dir, &path, &branch, &commit, token))
         .await
         .map_err(|e| ArchonError::io("the push task", std::io::Error::other(e)))?
 }
@@ -48,32 +58,49 @@ fn push_now(
     repo: &Path,
     branch: &str,
     commit: &str,
+    token: Option<Token>,
 ) -> Result<Result<(), String>, ArchonError> {
-    let url = match stack::origin_url(repo) {
-        Ok(Some(url)) => url,
-        Ok(None) => {
-            return Ok(Err(
-                "BLOCKED: the repository has no `origin` remote to push to; add one, or set the \
-                 repository's ship mode to `local`"
-                    .into(),
-            ));
-        }
-        Err(ArchonError::Invalid(why)) => return Ok(Err(format!("BLOCKED: {why}"))),
-        Err(error) => return Err(error),
+    let url = match &token {
+        Some(token) => match gh_account::push_url(repo, token.user())? {
+            Ok(url) => url,
+            Err(why) => return Ok(Err(format!("BLOCKED: {why}"))),
+        },
+        None => match origin(repo)? {
+            Ok(url) => url,
+            Err(refusal) => return Ok(Err(refusal)),
+        },
     };
     let shadow = Shadow::of(data_dir, repo)?;
-    let pushed = stack::push(&shadow, &url, branch, commit)?;
+    let pushed = stack::push(&shadow, &url, branch, commit, token.as_ref())?;
     if pushed.status.success() {
         return Ok(Ok(()));
     }
+    let shown = |text: String| match &token {
+        Some(token) => token.redact(&text),
+        None => text,
+    };
     let doing = format!("pushing `{branch}` to `origin`");
-    let said = pushed.stderr_text();
-    let stdout = String::from_utf8_lossy(&pushed.stdout);
+    let said = shown(pushed.stderr_text());
+    let stdout = shown(String::from_utf8_lossy(&pushed.stdout).into_owned());
     match push_refusal(branch, &stdout).or_else(|| needs_operator(&doing, &said)) {
         Some(refusal) => Ok(Err(refusal)),
         None => Err(ArchonError::Unavailable(format!(
             "git push of `{branch}` failed: {said}"
         ))),
+    }
+}
+
+/// Where `repo`'s `origin` takes a push with the operator's credentials.
+fn origin(repo: &Path) -> Result<Result<String, String>, ArchonError> {
+    match stack::origin_url(repo) {
+        Ok(Some(url)) => Ok(Ok(url)),
+        Ok(None) => Ok(Err(
+            "BLOCKED: the repository has no `origin` remote to push to; add one, or set the \
+             repository's ship mode to `local`"
+                .into(),
+        )),
+        Err(ArchonError::Invalid(why)) => Ok(Err(format!("BLOCKED: {why}"))),
+        Err(error) => Err(error),
     }
 }
 
@@ -96,7 +123,7 @@ fn push_refusal(branch: &str, stdout: &str) -> Option<String> {
 /// The open pull requests whose head is `branch`, or a refusal for want of access.
 async fn open_prs(
     binary: &Path,
-    repo: &Path,
+    repo: &Repo,
     branch: &str,
 ) -> Result<Result<Vec<gh::PullRequest>, String>, ArchonError> {
     match gh::of_branch(binary, repo, branch, true).await {
@@ -110,7 +137,7 @@ async fn open_prs(
 /// none or several. What a pipeline's own ship agent claims is checked here.
 pub(in crate::executor) async fn open_pr(
     binary: &Path,
-    repo: &Path,
+    repo: &Repo,
     branch: &str,
 ) -> Result<String, ArchonError> {
     let prs = open_prs(binary, repo, branch)
@@ -129,7 +156,7 @@ pub(in crate::executor) async fn open_pr(
 /// `request.base`) when GitHub lists one, else opened: never a second.
 pub(crate) async fn pull_request(
     binary: &Path,
-    repo: &Path,
+    repo: &Repo,
     request: Request<'_>,
 ) -> Result<Result<String, String>, ArchonError> {
     assert!(!request.title.is_empty() && !request.body.is_empty());
@@ -161,7 +188,7 @@ pub(crate) async fn pull_request(
 /// creation is no failure when the pull request is there all the same.
 async fn create(
     binary: &Path,
-    repo: &Path,
+    repo: &Repo,
     request: Request<'_>,
 ) -> Result<Result<String, String>, ArchonError> {
     assert!(!request.branch.is_empty() && !request.base.is_empty());
@@ -208,7 +235,7 @@ async fn create(
 }
 
 /// Point the pull request at `url` to `base`, the branch its change is for.
-async fn retarget(binary: &Path, repo: &Path, url: &str, base: &str) -> Result<(), ArchonError> {
+async fn retarget(binary: &Path, repo: &Repo, url: &str, base: &str) -> Result<(), ArchonError> {
     assert!(url.starts_with("https://") && !base.is_empty());
     gh::text(binary, repo, &["pr", "edit", url, "--base", base])
         .await
@@ -241,7 +268,7 @@ pub(in crate::executor) enum MergeRefusal {
 /// that commit: GitHub refuses when the branch moved on.
 pub(in crate::executor) async fn auto_merge(
     binary: &Path,
-    repo: &Path,
+    repo: &Repo,
     url: &str,
     head: Option<&str>,
 ) -> Result<(), MergeRefusal> {
@@ -262,7 +289,7 @@ pub(in crate::executor) async fn auto_merge(
 /// squash, then a merge commit, then rebase.
 pub(in crate::executor) async fn merge_method(
     binary: &Path,
-    repo: &Path,
+    repo: &Repo,
 ) -> Result<&'static str, MergeRefusal> {
     let fields = "squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed";
     let viewed = gh::text(binary, repo, &["repo", "view", "--json", fields])

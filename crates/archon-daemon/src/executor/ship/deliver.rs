@@ -397,12 +397,11 @@ async fn deliver_pr(
         Err(ArchonError::Invalid(why)) => return Ok(Err(why)),
         Err(error) => return Err(error),
     }
-    let data_dir = &ctx.paths.data_dir;
-    if let Err(refusal) = remote::push(data_dir, &repo.path, &run.branch, commit).await? {
+    let (gh, data_dir) = (&ctx.config.github.binary, &ctx.paths.data_dir);
+    if let Err(refusal) = remote::push(gh, data_dir, repo, &run.branch, commit).await? {
         return Ok(Err(refusal));
     }
-    let gh = &ctx.config.github.binary;
-    let url = match remote::pull_request(gh, &repo.path, request).await? {
+    let url = match remote::pull_request(gh, repo, request).await? {
         Ok(url) => url,
         Err(refusal) => return Ok(Err(refusal)),
     };

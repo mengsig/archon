@@ -4,6 +4,7 @@
 use std::path::Path;
 
 use archon_core::error::ArchonError;
+use archon_core::repo::Repo;
 use serde::Deserialize;
 
 use super::full::excerpt_of;
@@ -117,10 +118,10 @@ struct CheckOutput {
 }
 
 /// The check runs GitHub holds for `commit` of `github`, every page of
-/// them, asked with `gh` in the registered repository at `repo`.
+/// them, asked with `gh` in the registered `repo`, as its GitHub login.
 pub(crate) async fn commit_checks(
     binary: &Path,
-    repo: &Path,
+    repo: &Repo,
     github: &GithubRepo,
     commit: &str,
 ) -> Result<CommitChecks, ArchonError> {
@@ -155,7 +156,7 @@ pub(crate) async fn commit_checks(
 /// `gh api <path>` on `github`'s host.
 async fn api(
     binary: &Path,
-    repo: &Path,
+    repo: &Repo,
     github: &GithubRepo,
     path: &str,
 ) -> Result<String, ArchonError> {
@@ -219,7 +220,7 @@ fn failed_check(run: &CheckRun) -> FailedCheck {
 /// end of the first failing GitHub Actions job's log, or why it is missing.
 pub(crate) async fn failure_excerpt(
     binary: &Path,
-    repo: &Path,
+    repo: &Repo,
     github: &GithubRepo,
     failed: &[FailedCheck],
 ) -> String {
@@ -338,6 +339,27 @@ mod tests {
         assert_eq!(names(classify(&failed)), ["test"]);
     }
 
+    /// A repository at `dir` with no GitHub login of its own.
+    fn repo_at(dir: &Path) -> Repo {
+        Repo {
+            id: archon_core::id::RepoId::new(),
+            name: "r".into(),
+            path: dir.to_owned(),
+            ship: archon_core::repo::ShipMode::Pr,
+            base_branch: None,
+            default_pipeline: None,
+            autonomy_max: Default::default(),
+            grant_merge: false,
+            attribution: Default::default(),
+            gh_user: None,
+            tiers: Default::default(),
+            confirmed_fast_check: None,
+            confirmed_full_check: None,
+            confirmed_release_check: None,
+            added_at: archon_core::now(),
+        }
+    }
+
     /// A fake `gh` serving `dir`'s files: two pages of check runs, the
     /// second holding the failure, and the failing job's log.
     fn fake_gh(dir: &Path) -> std::path::PathBuf {
@@ -377,12 +399,13 @@ mod tests {
         let dir = dir.path().canonicalize().unwrap();
         let gh = fake_gh(&dir);
         let github = github_repo("https://github.com/o/r").unwrap();
-        let checks = commit_checks(&gh, &dir, &github, COMMIT).await.unwrap();
+        let repo = repo_at(&dir);
+        let checks = commit_checks(&gh, &repo, &github, COMMIT).await.unwrap();
         let CommitChecks::Failed(failed) = checks else {
             panic!("the second page's failure is missed: {checks:?}");
         };
         assert_eq!(failed.len(), 1);
-        let excerpt = failure_excerpt(&gh, &dir, &github, &failed).await;
+        let excerpt = failure_excerpt(&gh, &repo, &github, &failed).await;
         assert!(
             excerpt.starts_with("failing GitHub checks: test\ntest: Tests failed: 1 failing"),
             "{excerpt}"
@@ -397,7 +420,7 @@ mod tests {
         );
 
         std::fs::remove_file(dir.join("log")).unwrap();
-        let excerpt = failure_excerpt(&gh, &dir, &github, &failed).await;
+        let excerpt = failure_excerpt(&gh, &repo, &github, &failed).await;
         assert!(
             excerpt.contains("[the log of `test` could not be read"),
             "{excerpt}"

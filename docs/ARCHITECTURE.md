@@ -2492,6 +2492,35 @@ table and delivers it off every lock:
    itself. Success is an outcome saying auto-merge is on and the pull
    request is not merged yet: delivered is never reported as merged.
 
+**A repository's GitHub login.** `archon repo set NAME --gh-user LOGIN`
+(operator only; `--gh-user ""` clears it) makes every `gh` call and push for
+the repository run as that login rather than the daemon's own
+(`gh_account`). For each call archond reads the token with `gh auth token
+--hostname github.com --user LOGIN` and hands it only to that call's own
+process:
+
+- `gh` gets `GH_TOKEN` and `GH_HOST=github.com`, with every other token and
+  host variable removed, so it cannot fall back to another account or send
+  the token to another host.
+- A push goes to `https://github.com/<owner>/<name>.git`, whatever form
+  `origin` gives that repository in, with the sealed config of §13.4 (no
+  operator credential helper, `insteadOf` or proxy). The token rides in an
+  `Authorization` header scoped to `https://github.com/`, set through
+  git's environment rather than its arguments, with redirects not followed.
+- An `origin` that is not a github.com repository, or a login `gh` holds
+  no token for, is `BLOCKED:` naming the login; nothing runs as the daemon
+  instead.
+
+The token is never logged, stored, put in a worktree or in archond's own
+environment, nor shown in an error: what `gh` or git printed has it
+replaced by `[token]`, and `Debug` of the token and of a daemon git command
+hides it. Stage agents never see it, since they get no environment from
+archond. The commit identity is still the recorded one of step 2. Fetches
+and the GitHub watcher's replies keep the daemon's own login, and only
+github.com is supported. `archon doctor` checks, for each repository with a
+login, that `gh` holds its token, `origin` is on github.com and GitHub lets
+the login push there.
+
 A refusal is exact and final: the orchestrator reads what to change in the
 item's failure and retries. A failure another try may pass (the network,
 GitHub, a timeout: 180 s for the push, 60 s per `gh` call) leaves the plan
@@ -2940,7 +2969,8 @@ defined in `archon_core::protocol` and served by `archon-daemon`.
 - Protocol 12 added `MergeItem`, `RequestMerge`, `Reply::Merge` and
   `grant_merge`; an older archond is refused at hello. Protocol 14 added
   `RepoPatch.attribution` (`"none"` or `"item-id"`), a plain option like
-  `grant_merge`.
+  `grant_merge`. Protocol 15 added `RepoPatch.gh_user`, a `Clearable`
+  GitHub login.
 
 The command set is `archon_core::protocol::Request`, and every variant is
 documented there. Reply kinds are `archon_core::protocol::Reply`. Error codes
@@ -3178,7 +3208,8 @@ object per line under `--json`).
   repository's tiers, else `repo.base_branch`, or the repo's current `HEAD`
   commit. A missing integration branch is first created from the release
   branch: pushed to `origin` in `pr` mode (a `decision` in the item's feed),
-  else made locally. In `pr` mode a new
+  as the repository's GitHub login when it has one, else made locally. In
+  `pr` mode a new
   branch forks from `origin`'s head of the base, fetched through the shadow
   just before (`ls-remote`, then the objects), with
   `refs/remotes/origin/<base>` moved to it; the operator's local base branch

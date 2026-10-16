@@ -9,6 +9,7 @@ use super::dependencies::is_plain_branch;
 use super::gh::{self, Pass, PullRequest};
 use super::repo_identity::{self, RepoIdentity};
 use crate::context::DaemonContext;
+use crate::gh_account::{self, Token};
 use crate::worktree::shadow::Shadow;
 use crate::worktree::stack::{self, Identity, Merge};
 use archon_core::error::ArchonError;
@@ -155,11 +156,11 @@ async fn pull_request(
         });
     }
     let binary = &ctx.config.github.binary;
-    let mut pr = pass.pull_request(binary, &repo.path, branch).await?;
+    let mut pr = pass.pull_request(binary, repo, branch).await?;
     assert_eq!(pr.head_ref_name, branch, "checked by the gh module");
     if let Some(own) = own.filter(|own| *own != pr.identity()) {
         // The branch carries a newer pull request, so the run's own ended.
-        pr = pass.by_number(binary, &repo.path, &own).await?;
+        pr = pass.by_number(binary, repo, &own).await?;
         if pr.is_open() {
             return Err(ArchonError::Protocol(format!(
                 "{own} is open, but GitHub lists {} for `{branch}`",
@@ -441,12 +442,16 @@ async fn merge_into_branch(
     let (data_dir, worktrees) = (ctx.paths.data_dir.clone(), ctx.paths.worktrees.clone());
     let (path, branch, sha) = (repo.path.clone(), run.branch.clone(), sha.to_owned());
     let push = repo.ship == ShipMode::Pr;
+    let token = match push {
+        true => gh::token(&ctx.config.github.binary, repo).await?,
+        false => None,
+    };
     tokio::task::spawn_blocking(move || {
         let _mark = mark;
         let shadow = Shadow::of(&data_dir, &path)?;
         let conflict = merge_branch(&shadow, &path, &worktrees, &branch, &sha, &identity)?;
         if conflict.is_none() && push {
-            push_branch(&shadow, &path, &branch)?;
+            push_branch(&shadow, &path, &branch, token.as_ref())?;
         }
         Ok(conflict)
     })
@@ -454,17 +459,33 @@ async fn merge_into_branch(
     .map_err(|e| ArchonError::io("restack merge task", std::io::Error::other(e)))?
 }
 
-/// Push `branch` of `repo` to `origin` as it stands, never forced.
-fn push_branch(shadow: &Shadow, repo: &Path, branch: &str) -> Result<(), ArchonError> {
-    let Some(url) = stack::origin_url(repo)? else {
-        return Err(ArchonError::Invalid(
-            "the repository has no `origin` to push the restacked branch to".into(),
-        ));
+/// Push `branch` of `repo` to `origin` as it stands, never forced, as
+/// `token`'s login when given.
+fn push_branch(
+    shadow: &Shadow,
+    repo: &Path,
+    branch: &str,
+    token: Option<&Token>,
+) -> Result<(), ArchonError> {
+    let url = match token {
+        Some(token) => gh_account::push_url(repo, token.user())?
+            .map_err(|why| ArchonError::Invalid(format!("BLOCKED: {why}")))?,
+        None => stack::origin_url(repo)?.ok_or_else(|| {
+            ArchonError::Invalid(
+                "the repository has no `origin` to push the restacked branch to".into(),
+            )
+        })?,
     };
     let commit = stack::sha(repo, branch)?;
-    let pushed = stack::push(shadow, &url, branch, &commit)?;
-    if !pushed.status.success() {
-        return Err(pushed.failure());
+    let pushed = stack::push(shadow, &url, branch, &commit, token)?;
+    match (pushed.status.success(), token) {
+        (true, _) => {}
+        (false, None) => return Err(pushed.failure()),
+        (false, Some(token)) => {
+            let said = token.redact(&pushed.stderr_text());
+            let what = format!("git push of the restacked `{branch}` as {}", token.user());
+            return Err(ArchonError::io(what, std::io::Error::other(said)));
+        }
     }
     assert!(stack::is_commit_id(&commit), "the pushed commit");
     Ok(())
@@ -509,7 +530,7 @@ async fn retarget(
     assert_eq!(pr.head_ref_name, run.branch);
     if pr.is_open() && pr.base_ref_name != base {
         let args = ["pr", "edit", &pr.url, "--base", &base];
-        gh::text(&ctx.config.github.binary, &repo.path, &args).await?;
+        gh::text(&ctx.config.github.binary, repo, &args).await?;
     }
     Ok(())
 }

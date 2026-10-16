@@ -73,36 +73,31 @@ pub(super) async fn parents(
     let mut pass = Pass::default();
     let mut parents = Vec::new();
     for id in &item.dependencies {
-        let (parent, run) = {
+        let run = {
             let store = ctx.store.lock().await;
-            let parent = store.item(id)?;
-            if parent.repo != item.repo {
+            if store.item(id)?.repo != item.repo {
                 continue;
             }
-            let run = store.runs_for_item(id)?.last().cloned();
-            (parent, run)
+            store.runs_for_item(id)?.last().cloned()
         };
-        let Some(run) = run.filter(|r| r.shipped) else {
+        let Some(run) = run.filter(|r| r.shipped && is_plain_branch(&r.branch)) else {
             continue;
         };
-        let branch = delivered_branch(&parent, &run, repo.ship).to_owned();
-        if !is_plain_branch(&branch) {
-            continue;
-        }
         let head = match repo.ship {
             ShipMode::Local => None,
-            ShipMode::Pr => match pull_request(ctx, &mut pass, repo, &branch, Some(&run.id)).await?
-            {
-                Pr::Settled { merged: true } => continue,
-                Pr::Settled { merged: false } => None,
-                Pr::Open(pr) => pr.head_ref_oid,
-            },
+            ShipMode::Pr => {
+                match pull_request(ctx, &mut pass, repo, &run.branch, Some(&run.id)).await? {
+                    Pr::Settled { merged: true } => continue,
+                    Pr::Settled { merged: false } => None,
+                    Pr::Open(pr) => pr.head_ref_oid,
+                }
+            }
         };
-        let sha = parent_sha(ctx, repo, &branch, head).await?;
+        let sha = parent_sha(ctx, repo, &run.branch, head).await?;
         parents.push(StackParent {
             item: item.id.clone(),
             parent_item: id.clone(),
-            parent_branch: branch,
+            parent_branch: run.branch,
             parent_sha: sha,
             position: parents.len(),
             repository_base: None,
@@ -119,16 +114,6 @@ pub(super) async fn parents(
     Ok(parents)
 }
 
-/// The branch `run` of `item` delivered to: in `pr` mode an `onto` item's
-/// goes into its pull request's head branch, never its own run branch.
-fn delivered_branch<'a>(item: &'a QueueItem, run: &'a PipelineRun, ship: ShipMode) -> &'a str {
-    assert_eq!(run.item, item.id, "the item's own run");
-    match (&item.onto, ship) {
-        (Some(onto), ShipMode::Pr) => &onto.head_ref,
-        _ => &run.branch,
-    }
-}
-
 /// The pull request of `parent`'s branch, by the one its newest run on that
 /// branch delivered to.
 async fn parent_pr(
@@ -137,15 +122,8 @@ async fn parent_pr(
     repo: &Repo,
     parent: &StackParent,
 ) -> Result<Pr, ArchonError> {
-    let (item, runs) = {
-        let store = ctx.store.lock().await;
-        let runs = store.runs_for_item(&parent.parent_item)?;
-        (store.item(&parent.parent_item)?, runs)
-    };
-    let delivered = runs
-        .iter()
-        .rev()
-        .find(|r| r.shipped && delivered_branch(&item, r, repo.ship) == parent.parent_branch);
+    let runs = ctx.store.lock().await.runs_for_item(&parent.parent_item)?;
+    let delivered = runs.iter().rev().find(|r| r.branch == parent.parent_branch);
     let branch = &parent.parent_branch;
     pull_request(ctx, pass, repo, branch, delivered.map(|r| &r.id)).await
 }

@@ -38,7 +38,7 @@ case "$1 $2" in
     ;;
 "pr list")
     if [ "$3 $4 $5 $6 $7" = "--state open --limit 1000 --json" ]; then printf '[]'; exit 0; fi
-    [ "$3 $5 $7 $8 $9" = "--head --state --limit 20 --json" ] || exit 2
+    [ "$3 $5 $6 $7 $8 $9" = "--head --state open --limit 20 --json" ] || exit 2
     listed="$state/branch-$(printf '%s' "$4" | tr '/' '_').json"
     if [ -f "$listed" ]; then cat "$listed"; else printf '[]'; fi
     ;;
@@ -505,39 +505,4 @@ async fn a_head_that_moved_since_enqueue_fails_delivery_without_a_force_push() {
     assert_eq!(pushed(&origin_of(&h), "feature"), Some(moved), "kept");
     assert_ne!(commit, head, "the item had a change of its own");
     assert!(!gh.calls().contains("pr edit"));
-}
-
-/// A child of a delivered onto item stacks on the pull request's head branch
-/// it went into, not on the onto item's own unpublished run branch.
-#[tokio::test]
-async fn a_child_of_an_onto_item_stacks_on_the_pull_request_s_head_branch() {
-    let (h, gh, head) = setup().await;
-    let shown = gh.show(100, &head, json!({}));
-    gh.follow_origin(&origin_of(&h));
-    let (parent, commit) = delivered_onto(&h, || {}).await;
-    assert!(matches!(
-        h.state(&parent.id).await,
-        QueueState::Succeeded { .. }
-    ));
-    let mut listed = shown;
-    listed["headRefOid"] = json!(commit);
-    gh.list("feature", &[listed]);
-
-    let asked = request("child", None, &[&parent]);
-    let Reply::Item(child) = h.cli(Request::Enqueue(asked)).await.unwrap() else {
-        panic!("enqueue replied no item");
-    };
-    h.dispatch().await;
-
-    let stacked = h.ctx.store.lock().await.stack_parents(&child.id).unwrap();
-    assert_eq!(stacked.len(), 1, "{stacked:?}");
-    assert_eq!(stacked[0].parent_branch, "feature");
-    assert_eq!(stacked[0].parent_sha, commit);
-    let run = h.run(&child.id).await;
-    assert_eq!(
-        head_of(&run.workspace),
-        commit,
-        "forked from the delivered head"
-    );
-    assert_ne!(run.branch, h.run(&parent.id).await.branch);
 }

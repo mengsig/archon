@@ -71,13 +71,13 @@ pub(super) fn record_created(
     store.kv_set(ORIGIN_KEY, &serde_json::to_string(&origin)?)
 }
 
-/// How generation `generation` compares with one started now with
-/// `instructions` (`None` when they cannot be built); `None` when its
+/// How generation `generation` compares with one started now with any of
+/// `instructions` (empty when they cannot be built); `None` when its
 /// creation was not recorded.
 pub(super) fn freshness(
     store: &Store,
     generation: u64,
-    instructions: Option<&str>,
+    instructions: &[String],
 ) -> Result<Option<OrchestratorFreshness>, ArchonError> {
     let Some(origin) = read(store)?.filter(|origin| origin.generation == generation) else {
         return Ok(None);
@@ -93,7 +93,11 @@ pub(super) fn freshness(
     assert!(new_lessons <= archon_core::lesson::ORCHESTRATOR_LESSONS);
     Ok(Some(OrchestratorFreshness {
         created_by: origin.archon_version,
-        prompt_outdated: instructions.map(|text| fingerprint(text) != origin.prompt),
+        prompt_outdated: (!instructions.is_empty()).then(|| {
+            instructions
+                .iter()
+                .all(|text| fingerprint(text) != origin.prompt)
+        }),
         tools_outdated: tools_fingerprint() != origin.tools,
         new_lessons: u32::try_from(new_lessons).expect("at most ORCHESTRATOR_LESSONS"),
     }))

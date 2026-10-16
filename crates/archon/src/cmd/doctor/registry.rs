@@ -173,7 +173,7 @@ async fn work_tree_problem(path: &Path) -> Option<String> {
 }
 
 /// Runs `program args` in `dir`, killed once `timeout` passes.
-pub(super) async fn run_bounded(
+pub(in crate::cmd) async fn run_bounded(
     program: &Path,
     args: &[&str],
     dir: Option<&Path>,

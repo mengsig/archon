@@ -715,6 +715,70 @@ async fn a_new_orchestrator_gets_every_tool_and_the_lessons_of_its_generation() 
     assert!(second.contains("Run the new repo check"), "{second}");
 }
 
+/// `kv`: set once the GitHub watcher is wanted.
+const GITHUB_WANTED_KEY: &str = "orchestrator_github";
+
+fn serve_watcher(harness: &Harness, repositories: Value) {
+    let config = json!({
+        "enabled": true,
+        "mention_regex": "(?i)(?:^|[^a-z0-9_@])@aether(?:$|[^a-z0-9_-])",
+        "label_regex": "(?i)aether",
+        "poll_interval_secs": 120,
+        "repositories": repositories,
+    });
+    let status = json!({"revision": 1, "config": config, "repositories": []});
+    harness.fake.set_responder(
+        "get_github_watcher",
+        Arc::new(move |_| Scripted::reply("github_watcher", status.clone())),
+    );
+}
+
+/// Each create attempt is refused, so every attempt shows its own text.
+async fn refused_create(harness: &Harness) -> String {
+    let refused = Scripted::refuse("internal", "store busy");
+    harness.fake.script("create_agent", refused);
+    let failed = supervisor::ensure_orchestrator(&harness.ctx).await;
+    failed.expect_err("the create is refused");
+    created_instructions(harness)
+}
+
+/// No GitHub request reaches an orchestrator while nothing is watched, so
+/// none pays for the policy until the watcher is wanted.
+#[tokio::test]
+async fn an_orchestrator_gets_the_github_policy_only_once_the_watcher_is_wanted() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    serve_watcher(&harness, json!([]));
+    let unwatched = refused_create(&harness).await;
+    assert!(!unwatched.contains("## GitHub requests"), "{unwatched}");
+    assert_eq!(harness.kv(GITHUB_WANTED_KEY).await, None);
+
+    supervisor::want_github_policy(&harness.ctx).await.unwrap();
+    let wanted = refused_create(&harness).await;
+    assert!(wanted.contains(supervisor::github_policy()), "{wanted}");
+    assert!(wanted.len() >= unwatched.len() + 3 * 1024);
+}
+
+/// An installation that watched before this was recorded keeps the policy,
+/// as does one whose watcher cannot be read; both are then recorded.
+#[tokio::test]
+async fn a_watcher_with_repositories_or_unread_keeps_the_github_policy() {
+    let watching = Harness::new().await;
+    watching.connect().await;
+    let repository = json!({"repository": "o/r", "enabled": false, "agent": ORCH,
+                            "dispatch": {"mode": "fixed"}});
+    serve_watcher(&watching, json!([repository]));
+    let text = refused_create(&watching).await;
+    assert!(text.contains(supervisor::github_policy()), "{text}");
+    assert_eq!(watching.kv(GITHUB_WANTED_KEY).await.as_deref(), Some("1"));
+
+    let unread = Harness::new().await;
+    unread.connect().await;
+    let text = refused_create(&unread).await;
+    assert!(text.contains(supervisor::github_policy()), "{text}");
+    assert_eq!(unread.kv(GITHUB_WANTED_KEY).await.as_deref(), Some("1"));
+}
+
 /// An orchestrator stuck `failed` by a transient engine error.
 fn failing_orchestrator(harness: &Harness) -> Arc<Mutex<HashMap<String, String>>> {
     let states = agent_table(harness, &[]);

@@ -268,6 +268,25 @@ mod tests {
         assert!(super::guide("../../config.toml").is_err());
     }
 
+    /// The orchestrator's prompt carries only GitHub's standing rules and
+    /// points here for the workflow of each request.
+    #[test]
+    fn the_github_topic_holds_the_per_request_workflow() {
+        let archon_core::protocol::Reply::Guide { text } = super::guide("github").unwrap() else {
+            panic!("guide reply")
+        };
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        for said in [
+            "reply on its originating thread with `github_reply`",
+            "Match the `list_repos` path by its `git remote get-url origin`.",
+            "pass the thread as `origin`, reply with the item id",
+            "`item_finished` carries the same origin: post its outcome to that thread.",
+        ] {
+            assert!(text.contains(said), "{said:?}");
+        }
+        assert!(!crate::supervisor::github_policy().contains("git remote get-url origin"));
+    }
+
     #[test]
     fn the_models_topic_trades_tiers_against_effort_without_naming_models() {
         let archon_core::protocol::Reply::Guide { text } = super::guide("models").unwrap() else {

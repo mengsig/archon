@@ -50,7 +50,19 @@ stays on its provider. `status` and `queue_status`
 show each provider's headroom, reserve and next reset. Reserves and interactive
 providers are global settings only.
 
+Unnamed reviewers use the global `[review]` profile. Archon prefers a different
+provider from the lead when an allowed model meets the configured tier; otherwise
+it uses an eligible provider from the catalog. The model policy's effort cap still
+applies. An explicit `<stage>.review` plan is unchanged. If the catalog has no model
+at the tier, the contract asks the lead to refresh it and report a blocker if none
+is available, rather than silently choosing a weaker model.
+
 ```toml
+[review]                       # reviewers with no explicit <stage>.review plan
+default_tier = "balanced"
+default_effort = "low"
+prefer_other_provider = true
+
 [models]                       # optional: leave it out to allow every ready model
 allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-sol"]
 max_effort = "high"
@@ -261,7 +273,18 @@ initiative_contract_bytes = 2048 # 1..=16384
   size. The contract is in every member's stage contract, and is sent
   whole to running members whenever it changes.
 
-Others stay fixed. The pipeline format's own bounds (32 stages, `fan_out`
+Others stay fixed. `MAX_DIRECTIVES` caps the operator directives in force
+at once at 20, each at most 500 characters (`MAX_DIRECTIVE_CHARS`); expired
+ones do not count. A directive past the cap is refused with the ids of the
+oldest ones and of those that lapse soonest, so you can clear one with
+`archon autonomy clear <id>`. `archon status` shows the count as
+`directives: 17/20 in force`.
+
+`archon autonomy` (and the orchestrator's `autonomy_policy` tool) lists
+every structural limit with its value, default, ceiling and source:
+`default`, `set in config.toml [limits]`, or `fixed`.
+
+The pipeline format's own bounds (32 stages, `fan_out`
 16, `max_loops` 10) are the same everywhere, so a pipeline that loads on
 one installation loads on all ([pipelines](PIPELINES.md)). The git-identity
 rules, workspace placement, model policy, budgets, review evidence and

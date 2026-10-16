@@ -104,7 +104,8 @@ draft makes it the release the installer and `archon update` download.
 `archon release check [owner/repo]` audits release health (default:
 `mengsig/archon`). It checks all version tags, the four platform archives and
 their `.sha256` files, `SHA256SUMS`, `VERSION`, the highest stable SemVer as
-Latest, and whether the latest `ci.yml` run assigned a job to a runner.
+Latest, and whether the latest completed `ci.yml` run assigned a job to a runner.
+Queued or waiting runs are not treated as failures to start.
 Pre-releases are checked for assets but do not compete for Latest. This uses
 the configured `github.binary` and its GitHub authentication; `--json` emits
 `repo`, `ok` and `problems`. An unhealthy release or an API failure exits 1.

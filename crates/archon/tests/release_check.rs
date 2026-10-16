@@ -51,7 +51,7 @@ case "$2" in
   */tags\?*) file=tags ;;
   */releases\?*) file=releases ;;
   */releases/latest) file=latest ;;
-  */actions/workflows/ci.yml/runs\?*) file=runs ;;
+  */actions/workflows/ci.yml/runs\?status=completed\&per_page=1) file=runs ;;
   */actions/runs/42/jobs\?*) file=jobs ;;
   *) echo "unexpected endpoint $2" >&2; exit 11 ;;
 esac
@@ -291,4 +291,41 @@ fn workflow_shell_stops_before_publication_on_failed_check() {
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     assert!(String::from_utf8_lossy(&output.stdout).contains("missing or empty asset"));
     assert!(!env.path("published").exists());
+}
+
+#[test]
+fn a_non_version_latest_is_a_health_failure() {
+    let env = fixture("archon");
+    std::fs::write(env.path("latest"), r#"{"tag_name":"nightly"}"#).unwrap();
+    let (output, value) = check(&env, &[]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        value["problems"],
+        json!(["Latest is nightly, highest stable semver is v1.10.0"])
+    );
+}
+
+#[test]
+fn queued_runs_do_not_hide_the_latest_completed_runs_health() {
+    let env = fixture("archon");
+    let script = std::fs::read_to_string(env.path("gh")).unwrap();
+    let script = script.replace(
+        "case \"$2\" in",
+        r#"case "$2" in
+  */actions/workflows/ci.yml/runs\?per_page=1)
+    echo '{"workflow_runs":[{"id":43,"status":"queued"}]}'
+    exit 0 ;;"#,
+    );
+    write_script(&env.path("gh"), &script);
+    let (output, value) = check(&env, &[]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(value["problems"], json!([]));
+    std::fs::write(env.path("jobs"), r#"[{"jobs":[]}]"#).unwrap();
+    let (output, value) = check(&env, &[]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        value["problems"]
+            .to_string()
+            .contains("CI run 42 never started")
+    );
 }

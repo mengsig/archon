@@ -48,6 +48,7 @@ pub async fn run(command: ReleaseCommand, json: bool) -> anyhow::Result<ExitCode
     config.validate()?;
     let pending = pending_tag.as_deref().zip(assets.as_deref());
     let problems = inspect(&config.github.binary, &repo, pending).await?;
+    assert!(problems.iter().all(|problem| !problem.is_empty()));
     let ok = problems.is_empty();
     if json {
         crate::connect::print_json(&serde_json::json!({
@@ -177,6 +178,11 @@ fn check_local(
     directory: &Path,
     problems: &mut Vec<String>,
 ) -> anyhow::Result<()> {
+    assert!(
+        version(tag).is_ok(),
+        "pending tags are validated by inspect"
+    );
+    assert!(!product.is_empty() && !product.contains('/'));
     let mut assets = Vec::new();
     for entry in std::fs::read_dir(directory).context("reading pending release assets")? {
         let entry = entry?;
@@ -205,6 +211,8 @@ fn check_history(
     pending: Option<&str>,
     problems: &mut Vec<String>,
 ) {
+    assert!(tags.iter().all(|tag| !tag.name.is_empty()));
+    assert!(pending.is_none_or(|tag| version(tag).is_ok()));
     for tag in tags.iter().filter(|tag| version(&tag.name).is_ok()) {
         if Some(tag.name.as_str()) != pending
             && !releases
@@ -244,12 +252,17 @@ async fn check_latest(
         }
         return Ok(());
     };
+    assert!(!highest.draft && !highest.prerelease);
+    assert_eq!(
+        version(&highest.tag_name).ok(),
+        Some(highest_version.clone())
+    );
     #[derive(Deserialize)]
     struct Latest {
         tag_name: String,
     }
     let latest: Latest = api(binary, &["api", &format!("repos/{repo}/releases/latest")]).await?;
-    if version(&latest.tag_name)? != highest_version {
+    if version(&latest.tag_name).ok() != Some(highest_version) {
         problems.push(format!(
             "Latest is {}, highest stable semver is {}",
             latest.tag_name, highest.tag_name
@@ -280,7 +293,7 @@ async fn check_ci(binary: &Path, repo: &str, problems: &mut Vec<String>) -> anyh
         binary,
         &[
             "api",
-            &format!("repos/{repo}/actions/workflows/ci.yml/runs?per_page=1"),
+            &format!("repos/{repo}/actions/workflows/ci.yml/runs?status=completed&per_page=1"),
         ],
     )
     .await?;
@@ -289,7 +302,7 @@ async fn check_ci(binary: &Path, repo: &str, problems: &mut Vec<String>) -> anyh
         "CI returned more than the requested latest run"
     );
     let Some(run) = runs.workflow_runs.first() else {
-        problems.push("CI has no runs".into());
+        problems.push("CI has no completed runs".into());
         return Ok(());
     };
     anyhow::ensure!(run.id > 0, "CI returned an invalid run id");

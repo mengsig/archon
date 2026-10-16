@@ -243,6 +243,7 @@ async fn a_replayed_creation_with_older_instructions_is_outdated() {
     let built = supervisor::orchestrator_instructions(
         &harness.ctx.config,
         &harness.ctx.paths.orchestrator_workspace,
+        true,
     )
     .unwrap();
     std::fs::write(&file, "Prefer small changes.").unwrap();

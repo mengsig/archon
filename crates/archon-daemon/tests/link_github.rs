@@ -456,6 +456,11 @@ async fn an_orchestrator_started_before_github_gets_no_requests_until_restarted(
         repository: repository("o/r"),
     };
     assert_restart_advised(configure(&harness, ClientKind::ArchonCli, add("o/new")).await);
+    assert_eq!(
+        harness.kv("orchestrator_github").await.as_deref(),
+        Some("1"),
+        "the restart advised brings the policy"
+    );
     assert_restart_advised(configure(&harness, ClientKind::ArchonCli, enable_repo).await);
     watcher.lock().unwrap().1["repositories"][0]["enabled"] = json!(true);
     watcher.lock().unwrap().1["enabled"] = json!(false);

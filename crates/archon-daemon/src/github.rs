@@ -395,6 +395,7 @@ pub(crate) fn enables(change: &WatcherChange) -> bool {
 /// authority settings mutex; neither may be held while ensuring a root.
 pub(crate) async fn prepare_enable(ctx: &DaemonContext) -> Result<(), ArchonError> {
     require_dedicated(ctx)?;
+    supervisor::want_github_policy(ctx).await?;
     supervisor::ensure_orchestrator(ctx).await.map(drop)
 }
 
@@ -410,6 +411,10 @@ pub(crate) async fn configure_existing(
         WatcherChange::Add { .. } | WatcherChange::Enable { .. }
     );
     let setting_operators = sets_operators(&change);
+    if enabling {
+        // Before any refusal, so the restart it asks for brings the policy.
+        supervisor::want_github_policy(ctx).await?;
+    }
     let orchestrator = supervisor::current_orchestrator(ctx).await?;
     if enabling && orchestrator.is_none() {
         return Err(ArchonError::Unavailable(

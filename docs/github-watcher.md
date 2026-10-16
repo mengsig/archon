@@ -84,6 +84,11 @@ policy in its instructions, and the new tools (`github_reply`, `enqueue`'s
   targets where they were. For the same reason `operators <LOGIN>...` is
   refused while a repository hands requests to such an orchestrator;
   `operators --clear` always applies.
+- **The first watched repository.** To save every turn its cost, an
+  orchestrator gets the GitHub section only once the watcher is wanted:
+  when Aether's watcher holds a repository as it is created, or after an
+  `add` or `enable` was asked for. So the first `add` on an installation
+  that never watched may also say to restart; after the restart it applies.
 - **Tools.** An agent keeps the tool list it started with, and Archon's
   aetherd keeps running the old `archon mcp` server. Once, after upgrading,
   run:

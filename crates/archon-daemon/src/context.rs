@@ -132,6 +132,8 @@ pub struct DaemonContext {
     /// Set once archond's store hit a full disk: its work has stopped and it
     /// serves only reads until it restarts (see `standby`).
     pub standby: OnceLock<String>,
+    /// Start-up recovery under way: reads are served, changes refused.
+    pub recovery: crate::recovery::Recovery,
     /// Held through each worktree gc pass, so passes never overlap; when
     /// the last one ended.
     pub gc: Mutex<Option<std::time::Instant>>,

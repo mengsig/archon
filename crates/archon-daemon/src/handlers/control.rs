@@ -71,6 +71,7 @@ pub(super) async fn status(ctx: &DaemonContext, query: StatusQuery) -> Result<Re
         merge_granted: counts.merges.granted,
         health: Some(aether.health),
         quota: crate::quota::status(ctx),
+        recovery: ctx.recovery.progress(),
     };
     assert!(
         status.spend_today_usd <= status.spend_total_usd + 1e-9,

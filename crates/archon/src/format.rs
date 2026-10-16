@@ -70,6 +70,13 @@ pub fn status(status: &DaemonStatus, names: &RepoNames) -> String {
         status.pid,
         duration(uptime.num_seconds())
     );
+    if let Some(recovery) = &status.recovery {
+        let _ = writeln!(
+            out,
+            "recovery: {}; changes are refused and dispatch held until it is done",
+            recovery.describe()
+        );
+    }
     if let Some(upgrade) = &status.upgrade {
         let _ = writeln!(out, "upgrade: {upgrade}");
     }
@@ -809,7 +816,28 @@ pub(crate) mod tests {
             waiting_next_offset: None,
             health: None,
             quota: None,
+            recovery: None,
         }
+    }
+
+    #[test]
+    fn status_shows_recovery_progress_until_it_is_done() {
+        let mut up = status_with(AetherLinkStatus::Disconnected {
+            error: "x".into(),
+            retry_at: None,
+        });
+        let done = status(&up, &RepoNames::new());
+        assert!(!done.contains("recovery:"), "{done}");
+
+        up.recovery = Some(archon_core::protocol::RecoveryProgress {
+            runs_done: 40,
+            runs_total: Some(120),
+        });
+        let text = status(&up, &RepoNames::new());
+        assert!(
+            text.contains("\nrecovery: recovering 40/120 runs; changes are refused"),
+            "{text}"
+        );
     }
 
     #[test]

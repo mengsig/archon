@@ -711,10 +711,16 @@ fn stale_text(health: Option<&StatusHealth>) -> String {
     }
 }
 
-/// An upgrade under way, and versions that differ: running against
-/// installed, or against the latest release once the operator checked.
+/// Start-up recovery or an upgrade under way, and versions that differ:
+/// running against installed, or against the latest release once checked.
 fn upkeep_text(status: &DaemonStatus) -> String {
     let mut text = String::new();
+    if let Some(recovery) = &status.recovery {
+        text.push_str(&format!(
+            "\nRecovery under way (changes refused, dispatch held until it is done): {}.",
+            recovery.describe()
+        ));
+    }
     if let Some(upgrade) = &status.upgrade {
         text.push_str(&format!(
             "\nUpgrade under way (dispatch held while it drains): {upgrade}."

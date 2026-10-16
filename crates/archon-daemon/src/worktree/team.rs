@@ -183,6 +183,7 @@ fn prefixed(error: ArchonError, prefix: &str) -> ArchonError {
         ArchonError::Policy(why) => ArchonError::Policy(with(why)),
         ArchonError::Unavailable(why) => ArchonError::Unavailable(with(why)),
         ArchonError::Forbidden(why) => ArchonError::Forbidden(with(why)),
+        ArchonError::Recovering(why) => ArchonError::Recovering(with(why)),
         ArchonError::Protocol(why) => ArchonError::Protocol(with(why)),
     }
 }

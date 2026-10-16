@@ -33,7 +33,7 @@ use archon_core::protocol::{ClientKind, ItemPatch, Reply, RepoRef, Request};
 
 use crate::context::DaemonContext;
 use crate::executor::operator_merge;
-use crate::{github, ops, reports, standby, supervisor};
+use crate::{github, ops, recovery, reports, standby, supervisor};
 
 /// `update_item` with only `autonomy`, above the item's ceiling. Only the
 /// operator's confirmed request calls this; no request field reaches it.
@@ -52,8 +52,8 @@ pub async fn update_item_autonomy_above_ceiling(
 /// Validate and execute one request. Operator-only requests are refused
 /// with `ErrorCode::Forbidden` over MCP and for any agent, whatever the
 /// client; a request that changes Archon for an agent is made only for the
-/// orchestrator archond has now (ARCHITECTURE §11). In standby only reads
-/// are served.
+/// orchestrator archond has now (ARCHITECTURE §11). In standby and while
+/// start-up recovery runs only reads are served.
 pub async fn handle(
     ctx: &DaemonContext,
     client: ClientKind,
@@ -73,6 +73,11 @@ pub async fn handle(
             "{} is reserved for the operator's archon CLI",
             command_name(&request)
         )));
+    }
+    // Recovery first: a change it held is then checked against the standby
+    // a failed recovery may have entered meanwhile.
+    if let Some(refusal) = recovery::refusal(ctx, &request).await {
+        return Err(refusal);
     }
     if let Some(refusal) = standby::refusal(ctx, &request) {
         return Err(refusal);

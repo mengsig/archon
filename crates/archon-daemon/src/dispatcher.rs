@@ -1,8 +1,9 @@
 //! The dispatch loop (ARCHITECTURE §7.3). Wakes on
 //! `ctx.dispatch` or every `dispatcher.tick_secs`, builds a snapshot, calls
 //! `archon_queue::plan_dispatch`, and executes the plan. No dispatch while
-//! Aether is disconnected. Each pass first checks free disk space, and
-//! while that holds dispatch, collects what finished runs left first.
+//! Aether is disconnected or start-up recovery runs. Each pass first checks
+//! free disk space, and while that holds dispatch, collects what finished
+//! runs left first.
 
 mod disk_hold;
 mod snapshot;
@@ -31,6 +32,16 @@ pub(crate) async fn read_snapshot(
 ) -> Result<archon_queue::DispatchSnapshot, ArchonError> {
     let caps = resolve::caps(ctx).await;
     let envs = snapshot::Envs::prefetch(ctx).await?;
+    // Recovery holds the run table while it rebuilds the drivers; no spawn is
+    // pending before they are, so an empty table reads the same without waiting.
+    if !ctx.recovery.is_recovered() {
+        let rebuilding = executor::RunTable::default();
+        assert!(
+            rebuilding.pending.is_empty(),
+            "an empty table owes no spawn"
+        );
+        return snapshot::build(ctx, &rebuilding, caps, envs).await;
+    }
     let table = ctx.runs.lock().await;
     snapshot::build(ctx, &table, caps, envs).await
 }
@@ -66,8 +77,14 @@ pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
 /// One planning pass; returns the plan it executed (for tests and Status).
 /// A failing stage or item never holds back the rest of the pass: items
 /// admitted as `dispatching` are always started. Its first error is
-/// returned at the end; a store error ends the pass at once.
+/// returned at the end; a store error ends the pass at once. Nothing is
+/// planned until start-up recovery is done.
 pub async fn dispatch_once(ctx: &DaemonContext) -> Result<DispatchPlan, ArchonError> {
+    if !ctx.recovery.is_recovered() {
+        let phase = ctx.recovery.phase();
+        tracing::debug!(?phase, "dispatch held until recovery is done");
+        return Ok(DispatchPlan::default());
+    }
     let mut first_error = None;
     disk_hold::check(ctx).await?;
     if crate::gc::before_dispatch(ctx).await? {

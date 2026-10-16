@@ -246,6 +246,7 @@ pub fn refusal_error(refusal: ErrorReply) -> ArchonError {
             ArchonError::InvalidTransition(bare("state transition refused: "))
         }
         ErrorCode::Unavailable => ArchonError::Unavailable(bare("unavailable: ")),
+        ErrorCode::Recovering => ArchonError::Recovering(bare("recovering: ")),
         ErrorCode::Incompatible | ErrorCode::Internal => {
             ArchonError::Protocol(format!("archond failed: {message}"))
         }

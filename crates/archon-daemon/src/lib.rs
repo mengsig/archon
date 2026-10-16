@@ -22,6 +22,7 @@ pub mod ops;
 pub mod prune;
 pub mod pump;
 pub mod quota;
+pub mod recovery;
 pub mod reports;
 pub mod server;
 mod standby;
@@ -72,8 +73,9 @@ pub struct DaemonOptions {
     pub archon_bin: PathBuf,
 }
 
-/// Run until `Shutdown` or SIGTERM/SIGINT: recover, bind the socket and run
-/// the server and every worker; it serves while Aether is down and in standby.
+/// Run until `Shutdown` or SIGTERM/SIGINT: bind the socket, serve it, recover,
+/// then run every worker; it serves while Aether is down, while it recovers
+/// (reads only) and in standby.
 pub async fn run(options: DaemonOptions) -> Result<(), ArchonError> {
     let endpoint = Endpoint::from_config(&options.config.aether)?;
     // Holds the data directory's lock from before the store opens until the
@@ -84,14 +86,25 @@ pub async fn run(options: DaemonOptions) -> Result<(), ArchonError> {
     // touches live runs. The lock is released only once the socket is gone.
     let (listener, lock) = server::bind(&ctx)?;
     let mut signals = Signals::install()?;
+    // Begun before the server starts, so no change slips in ahead of recovery.
+    ctx.recovery.begin();
+    let server: standby::Server = tokio::spawn(server::serve(ctx.clone(), listener));
     let result = match recover(&ctx).await {
-        Ok(()) => supervise(ctx.clone(), listener, endpoint, &mut signals).await,
+        Ok(()) => {
+            ctx.recovery.finish();
+            supervise(ctx.clone(), server, endpoint, &mut signals).await
+        }
         Err(error @ ArchonError::DiskFull(_)) => {
+            // Standby first: the changes waiting on recovery meet its refusal.
             standby::enter(&ctx, &error);
-            let server = tokio::spawn(server::serve(ctx.clone(), listener));
+            ctx.recovery.fail();
             standby::serve(&ctx, server, signals.stop()).await
         }
-        Err(error) => Err(error),
+        Err(error) => {
+            ctx.recovery.fail();
+            server.abort();
+            Err(error)
+        }
     };
     remove_socket(&ctx.paths.socket);
     drop(lock);
@@ -218,11 +231,11 @@ impl Workers {
 /// upgrade's handed-off restart also stops it cleanly.
 async fn supervise(
     ctx: Arc<DaemonContext>,
-    listener: tokio::net::UnixListener,
+    mut server: standby::Server,
     endpoint: Endpoint,
     signals: &mut Signals,
 ) -> Result<(), ArchonError> {
-    let mut server: standby::Server = tokio::spawn(server::serve(ctx.clone(), listener));
+    assert!(ctx.recovery.is_recovered(), "workers start once recovered");
     let mut workers = Workers::default();
     workers.spawn("event pump", pump::run(ctx.clone(), endpoint));
     workers.spawn("dispatcher", dispatcher::run(ctx.clone()));
@@ -346,6 +359,7 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
         started_at: archon_core::now(),
         disk: disk::DiskWatch::system(),
         standby: std::sync::OnceLock::new(),
+        recovery: Default::default(),
         gc: Mutex::new(None),
         collecting: gc::Collecting::new(dispatch),
         ops: ops::OpsState::new(ops_port, ops::DRAIN_POLL),

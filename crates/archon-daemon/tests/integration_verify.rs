@@ -285,3 +285,60 @@ async fn status_shows_the_last_green_commit_and_the_merges_since() {
     );
     assert!(shown.contains(&expected), "{shown}");
 }
+
+/// A restart between queueing the fix and saving the branch's state loses
+/// its reference: a later red head still finds the open fix and adds none.
+#[tokio::test]
+async fn an_open_fix_whose_reference_was_lost_still_holds_back_another() {
+    let (h, _slot) = verifying().await;
+    integration::pass(&h.ctx).await.expect("green pass");
+    land(&h, &["broken"]);
+    integration::pass(&h.ctx).await.expect("red pass");
+    assert_eq!(fix_items(&h).await.len(), 1);
+    let key = {
+        let store = h.ctx.store.lock().await;
+        format!("integration_{}", store.repos().unwrap()[0].id)
+    };
+    {
+        let mut store = h.ctx.store.lock().await;
+        let mut state: serde_json::Value =
+            serde_json::from_str(&store.kv_get(&key).unwrap().expect("a state")).unwrap();
+        state["fix"] = serde_json::Value::Null;
+        store.kv_set(&key, &state.to_string()).unwrap();
+    }
+
+    let later = land(&h, &["later"]);
+    integration::pass(&h.ctx).await.expect("a later red head");
+    let red = branch_status(&h).await;
+    assert_eq!(red.health, IntegrationHealth::Red, "{red:?}");
+    assert_eq!(red.head.as_deref(), Some(later[0].as_str()));
+    let fixes = fix_items(&h).await;
+    assert_eq!(
+        fixes.len(),
+        1,
+        "the open fix is found in the store: {fixes:?}"
+    );
+}
+
+/// A branch whose first read fails, its `origin` gone, is still shown,
+/// with the failure, and the operator is told of it.
+#[tokio::test]
+async fn a_branch_whose_first_read_fails_is_shown_with_its_problem() {
+    let (h, _slot) = verifying().await;
+    let origin = origin_of(&h);
+    std::fs::rename(&origin, origin.with_extension("gone")).expect("hide origin");
+
+    integration::pass(&h.ctx)
+        .await
+        .expect("a failed read is no pass error");
+    let branch = branch_status(&h).await;
+    assert_eq!(branch.branch, "next");
+    assert_eq!(branch.health, IntegrationHealth::Unknown, "{branch:?}");
+    assert!(branch.problem.is_some(), "the failure is shown: {branch:?}");
+    let feed = h.ctx.store.lock().await.feed_after(0, 10_000).unwrap();
+    let told = feed.iter().any(|entry| match &entry.entry {
+        FeedEntry::System { text } => text.contains("could not verify the integration branch"),
+        _ => false,
+    });
+    assert!(told, "the operator is told: {feed:?}");
+}

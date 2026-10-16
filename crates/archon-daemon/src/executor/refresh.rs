@@ -35,7 +35,7 @@ pub(crate) async fn refresh_item(
     let catalog = crate::learned::catalog(ctx).await?;
     let prepared = refresh_owner(ctx, &owner, &env, &catalog)?;
     if repo.ship == ShipMode::Pr && run.shipped {
-        check_pr_open(ctx, &repo, &run.branch).await?;
+        check_pr_open(ctx, &repo, &run).await?;
     }
     let sha = base_head(ctx, &repo, &base, &run.branch).await?;
     let refresh = Refresh { base, sha };
@@ -209,16 +209,28 @@ async fn base_of(
 
 /// Refuse a refresh of a delivered branch whose pull request merged or closed:
 /// it would only open a new one.
-async fn check_pr_open(ctx: &DaemonContext, repo: &Repo, branch: &str) -> Result<(), ArchonError> {
-    let settled = gh::settled(&*ctx.store.lock().await, &repo.id, branch)?;
-    let open = match settled {
+async fn check_pr_open(
+    ctx: &DaemonContext,
+    repo: &Repo,
+    run: &PipelineRun,
+) -> Result<(), ArchonError> {
+    let branch = &run.branch;
+    let (own, settled) = {
+        let store = ctx.store.lock().await;
+        let own = store.run_pull_request(&run.id)?.map(|recorded| recorded.pr);
+        let settled = own.as_ref().map(|pr| gh::settled(&store, pr)).transpose()?;
+        (own, settled.flatten())
+    };
+    let mut open = match settled {
         Some(_) => Vec::new(),
         None => gh::of_branch(&ctx.config.github.binary, &repo.path, branch, true).await?,
     };
+    // A newer pull request of the branch is not the one the run delivered to.
+    open.retain(|pr| own.as_ref().is_none_or(|own| pr.identity() == *own));
     if open.is_empty() {
         return Err(ArchonError::Invalid(format!(
-            "`{branch}` has no open pull request: it merged or closed, so there is nothing to \
-             refresh; enqueue new work instead"
+            "the pull request `{branch}` was delivered to is not open: it merged or closed, so \
+             there is nothing to refresh; enqueue new work instead"
         )));
     }
     Ok(())

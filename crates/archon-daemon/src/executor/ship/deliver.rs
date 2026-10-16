@@ -340,7 +340,7 @@ fn base_of(
 }
 
 /// Persist `outcome` for a rebuilt driver to replay. A pull request's URL
-/// goes on the stage run that named the change, where a run's is read from.
+/// goes on the stage run that named the change, its identity on the run.
 fn persist(
     store: &mut Store,
     run: &PipelineRun,
@@ -370,6 +370,7 @@ fn persist(
         data.insert("pr_url".into(), url.clone().into());
         stage.structured = Some(data.into());
         store.upsert_stage_run(&stage)?;
+        super::super::pull_requests::record_delivery(store, &run.id, url)?;
     }
     store.kv_set(&ship_key(&run.id), &serde_json::to_string(outcome)?)
 }

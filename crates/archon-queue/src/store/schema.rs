@@ -445,8 +445,62 @@ CREATE UNIQUE INDEX merge_requests_open_per_item ON merge_requests (item)
 CREATE INDEX merge_requests_by_item ON merge_requests (item, requested_at);
 "#;
 
-pub(super) const MIGRATIONS: &[&str] =
-    &[V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14];
+/// Version 15: the pull request each run delivered to, by host, repository and
+/// number, from the newest `pr_url` its completed stages hold: GitHub listed each.
+/// A settled branch's key moves to its one recorded pull request, or GitHub is asked again.
+const V15: &str = r#"
+CREATE TABLE run_pull_requests (
+    run        TEXT PRIMARY KEY REFERENCES runs (id),
+    host       TEXT NOT NULL CHECK (host <> '' AND host = lower(host)),
+    repository TEXT NOT NULL CHECK (repository GLOB '?*/?*' AND repository = lower(repository)),
+    number     INTEGER NOT NULL CHECK (number > 0),
+    node_id    TEXT CHECK (node_id <> '')
+);
+CREATE INDEX run_pull_requests_by_pr ON run_pull_requests (host, repository, number);
+
+WITH reported AS (
+    SELECT run, json_extract(data, '$.structured.pr_url') AS url,
+           ROW_NUMBER() OVER (PARTITION BY run
+               ORDER BY started_at DESC, attempt DESC, fan_index DESC, id DESC) AS age
+    FROM stage_runs
+    WHERE state = 'completed' AND json_type(data, '$.structured.pr_url') = 'text'
+), hosted AS (
+    SELECT run, substr(url, 9) AS rest FROM reported WHERE age = 1 AND url GLOB 'https://*'
+), owned AS (
+    SELECT run, substr(rest, 1, instr(rest, '/') - 1) AS host,
+           substr(rest, instr(rest, '/') + 1) AS path
+    FROM hosted WHERE instr(rest, '/') > 1
+), named AS (
+    SELECT run, host, substr(path, 1, instr(path, '/') - 1) AS owner,
+           substr(path, instr(path, '/') + 1) AS tail
+    FROM owned WHERE instr(path, '/') > 1
+), numbered AS (
+    SELECT run, host, owner, substr(tail, 1, instr(tail, '/pull/') - 1) AS name,
+           substr(tail, instr(tail, '/pull/') + 6) AS number
+    FROM named WHERE instr(tail, '/pull/') > 1
+)
+INSERT INTO run_pull_requests (run, host, repository, number)
+SELECT run, lower(host), lower(owner || '/' || name), CAST(number AS INTEGER) FROM numbered
+WHERE host NOT GLOB '*[^A-Za-z0-9.:-]*'
+  AND owner NOT GLOB '*[^A-Za-z0-9._-]*' AND owner NOT IN ('.', '..') AND length(owner) <= 100
+  AND name NOT GLOB '*[^A-Za-z0-9._-]*' AND name NOT IN ('.', '..') AND length(name) <= 100
+  AND number GLOB '[1-9]*' AND number NOT GLOB '*[^0-9]*' AND length(number) <= 18;
+
+INSERT OR IGNORE INTO kv (key, value)
+SELECT 'pr_settled:' || p.host || '/' || p.repository || '#' || p.number, k.value
+FROM run_pull_requests p
+JOIN runs r ON r.id = p.run
+JOIN items i ON i.id = r.item
+JOIN kv k ON k.key = 'pr_settled:' || i.repo || ':' || json_extract(r.data, '$.branch')
+WHERE k.value IN ('MERGED', 'CLOSED')
+GROUP BY k.key
+HAVING COUNT(DISTINCT p.host || '/' || p.repository || '#' || p.number) = 1;
+DELETE FROM kv WHERE key GLOB 'pr_settled:*' AND key NOT GLOB 'pr_settled:*/*#*';
+"#;
+
+pub(super) const MIGRATIONS: &[&str] = &[
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15,
+];
 
 /// Pragmas every connection needs. `on_disk` connections must end up in
 /// WAL mode; in-memory databases report `memory` and stay that way.
@@ -588,6 +642,8 @@ pub(super) fn migrate(conn: &mut Connection) -> Result<usize, ArchonError> {
 
 #[cfg(test)]
 mod merge_upgrade;
+#[cfg(test)]
+mod pr_identity;
 #[cfg(test)]
 mod v1_replay;
 
@@ -1028,7 +1084,8 @@ mod tests {
         .unwrap();
         insert_feedback(&conn, "fb_old", V11_ROW).unwrap();
         conn.execute_batch(
-            "DROP TABLE merge_requests; DELETE FROM schema_migrations WHERE version >= 12",
+            "DROP TABLE run_pull_requests; DROP TABLE merge_requests;
+             DELETE FROM schema_migrations WHERE version >= 12",
         )
         .unwrap();
         assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());

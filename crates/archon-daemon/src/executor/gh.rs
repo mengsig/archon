@@ -2,7 +2,7 @@
 //! repository, never an agent's worktree, with no prompt and a time limit
 //! that ends it and everything it started. The git `gh` runs itself is told
 //! to run no hook or fsmonitor. Pull requests are read through one type,
-//! checked against the branch they were asked about.
+//! checked against the branch or the number they were asked about.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use archon_core::error::ArchonError;
 use archon_core::merge::{Check, CheckOutcome, PullRequestFacts};
+use archon_core::pull_request::PullRequestRef;
 use serde::Deserialize;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -31,7 +32,7 @@ const MAX_OPEN: &str = "1000";
 const MAX_OF_BRANCH: &str = "20";
 /// Everything archond reads of a pull request.
 const FIELDS: &str =
-    "number,url,state,headRefName,headRefOid,baseRefName,body,isDraft,reviewDecision";
+    "id,number,url,state,headRefName,headRefOid,baseRefName,body,isDraft,reviewDecision";
 
 /// Everything a merge decision reads of a pull request (§18.6).
 const MERGE_FIELDS: &str =
@@ -59,6 +60,9 @@ const NEEDS_OPERATOR: [&str; 14] = [
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PullRequest {
+    /// GitHub's node id, which older `gh` may not give.
+    #[serde(default)]
+    pub id: Option<String>,
     pub number: u64,
     pub url: String,
     /// `OPEN`, `CLOSED` or `MERGED`.
@@ -81,12 +85,29 @@ impl PullRequest {
         self.state == "OPEN"
     }
 
+    /// Which pull request this is, by host, repository and number.
+    pub(crate) fn identity(&self) -> PullRequestRef {
+        let pr = PullRequestRef::from_url(&self.url).expect("checked when read");
+        assert_eq!(pr.number, self.number, "checked when read");
+        pr
+    }
+
+    /// GitHub's node id, when it gave a usable one.
+    pub(crate) fn node_id(&self) -> Option<&str> {
+        let id = self.id.as_deref().filter(|id| !id.trim().is_empty());
+        id.filter(|id| {
+            id.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"_-=".contains(&b))
+        })
+    }
+
     /// Refuse what GitHub could not have meant: a pull request of another
     /// branch, an unknown state or a URL that is not its own.
     fn check(&self, branch: Option<&str>) -> Result<(), ArchonError> {
+        let named = PullRequestRef::from_url(&self.url);
         let shaped = self.number != 0
             && is_plain_url(&self.url)
-            && self.url.ends_with(&format!("/pull/{}", self.number))
+            && named.is_some_and(|pr| pr.number == self.number)
             && is_plain_branch(&self.head_ref_name)
             && is_plain_branch(&self.base_ref_name)
             && matches!(self.state.as_str(), "OPEN" | "CLOSED" | "MERGED")
@@ -390,6 +411,28 @@ pub(crate) async fn view(
     Ok(pr.clone())
 }
 
+/// The pull request `pr` names, of any state, asked for by its number.
+pub(crate) async fn view_number(
+    binary: &Path,
+    repo: &Path,
+    pr: &PullRequestRef,
+) -> Result<PullRequest, ArchonError> {
+    let url = pr.url();
+    assert!(is_plain_url(&url), "a pull request URL is plain");
+    let args = ["pr", "view", &url, "--json", FIELDS];
+    let raw = text(binary, repo, &args).await?;
+    let viewed: PullRequest = serde_json::from_str(&raw)
+        .map_err(|e| ArchonError::Protocol(format!("invalid `gh pr view` response: {e}")))?;
+    viewed.check(None)?;
+    if viewed.identity() != *pr {
+        return Err(ArchonError::Protocol(format!(
+            "GitHub showed {} when asked for {pr}",
+            viewed.url
+        )));
+    }
+    Ok(viewed)
+}
+
 /// One pass's reading of GitHub: one listing of each repository's open pull
 /// requests, then one lookup for each pull request asked about that it lacks.
 #[derive(Debug, Default)]
@@ -407,6 +450,29 @@ impl Pass {
         repo: &Path,
         branch: &str,
     ) -> Result<PullRequest, ArchonError> {
+        let listed = self.open_in(binary, repo).await?;
+        if let Some(pr) = listed.iter().find(|pr| pr.head_ref_name == branch) {
+            return Ok(pr.clone());
+        }
+        view(binary, repo, branch).await
+    }
+
+    /// The pull request `pr` names, whatever branch now carries it.
+    pub(crate) async fn by_number(
+        &mut self,
+        binary: &Path,
+        repo: &Path,
+        pr: &PullRequestRef,
+    ) -> Result<PullRequest, ArchonError> {
+        let listed = self.open_in(binary, repo).await?;
+        if let Some(open) = listed.iter().find(|open| open.identity() == *pr) {
+            return Ok(open.clone());
+        }
+        view_number(binary, repo, pr).await
+    }
+
+    /// The open pull requests of `repo`, listed once a pass.
+    async fn open_in(&mut self, binary: &Path, repo: &Path) -> Result<&[PullRequest], ArchonError> {
         if !self.open.contains_key(repo) {
             let filter = ["--state", "open", "--limit", MAX_OPEN];
             let doing = "listing the open pull requests";
@@ -423,13 +489,7 @@ impl Pass {
         }
         let listed = self.open.get(repo).expect("listed above");
         assert!(listed.iter().all(PullRequest::is_open), "an open listing");
-        if let Some(pr) = listed
-            .iter()
-            .find(|pr| pr.head_ref_name == branch && pr.is_open())
-        {
-            return Ok(pr.clone());
-        }
-        view(binary, repo, branch).await
+        Ok(listed)
     }
 
     /// Why the listing of `repo` failed this pass, if it did.
@@ -443,43 +503,40 @@ impl Pass {
     }
 }
 
-/// `kv`: `pr_settled:<repository>:<branch>` → the `MERGED` or `CLOSED`
-/// GitHub said the branch's pull request ended as; it is not asked again.
+/// `kv`: `pr_settled:<host>/<owner>/<name>#<number>` → the `MERGED` or
+/// `CLOSED` GitHub said that pull request ended as; it is not asked again.
 const SETTLED_PREFIX: &str = "pr_settled:";
 
-fn settled_key(repo: &archon_core::id::RepoId, branch: &str) -> String {
-    format!("{SETTLED_PREFIX}{repo}:{branch}")
+fn settled_key(pr: &PullRequestRef) -> String {
+    format!("{SETTLED_PREFIX}{pr}")
 }
 
-/// How the pull request of `branch` ended, if it did.
+/// How the pull request `pr` ended, if it did.
 pub(crate) fn settled(
     store: &archon_queue::Store,
-    repo: &archon_core::id::RepoId,
-    branch: &str,
+    pr: &PullRequestRef,
 ) -> Result<Option<String>, ArchonError> {
-    let state = store.kv_get(&settled_key(repo, branch))?;
-    assert!(
-        state
-            .as_deref()
-            .is_none_or(|s| matches!(s, "MERGED" | "CLOSED"))
-    );
+    let key = settled_key(pr);
+    let state = store.kv_get(&key)?;
+    if state
+        .as_deref()
+        .is_some_and(|s| !matches!(s, "MERGED" | "CLOSED"))
+    {
+        return Err(ArchonError::Store(format!("kv {key}: {state:?}")));
+    }
     Ok(state)
 }
 
 /// Remember `pr` when it ended, so no later pass asks about it.
-pub(crate) fn settle(
-    store: &mut archon_queue::Store,
-    repo: &archon_core::id::RepoId,
-    pr: &PullRequest,
-) -> Result<(), ArchonError> {
+pub(crate) fn settle(store: &mut archon_queue::Store, pr: &PullRequest) -> Result<(), ArchonError> {
     if pr.is_open() {
         return Ok(());
     }
     assert!(
         matches!(pr.state.as_str(), "MERGED" | "CLOSED"),
-        "checked by list"
+        "checked when read"
     );
-    store.kv_set(&settled_key(repo, &pr.head_ref_name), &pr.state)
+    store.kv_set(&settled_key(&pr.identity()), &pr.state)
 }
 
 #[cfg(test)]
@@ -488,6 +545,7 @@ mod tests {
 
     fn pr(state: &str, head: &str) -> PullRequest {
         PullRequest {
+            id: None,
             number: 7,
             url: "https://github.com/o/r/pull/7".into(),
             state: state.into(),

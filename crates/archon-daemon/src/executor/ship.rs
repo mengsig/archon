@@ -57,6 +57,8 @@ pub(super) async fn verify(
             let pushed = format!("refs/heads/{}", run.branch);
             super::initiative_ship::verify_stack(ctx, run, &pushed).await?;
             super::initiative_ship::record(ctx, run, &url).await?;
+            let store = &mut *ctx.store.lock().await;
+            super::pull_requests::record_delivery(store, &run.id, &url)?;
             let mut data = structured
                 .and_then(|s| s.as_object().cloned())
                 .unwrap_or_default();

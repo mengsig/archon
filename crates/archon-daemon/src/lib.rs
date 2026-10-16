@@ -89,15 +89,19 @@ pub async fn run(options: DaemonOptions) -> Result<(), ArchonError> {
     // Begun before the server starts, so no change slips in ahead of recovery.
     ctx.recovery.begin();
     let server: standby::Server = tokio::spawn(server::serve(ctx.clone(), listener));
-    let recovered = recover(&ctx).await;
-    ctx.recovery.finish();
-    let result = match recovered {
-        Ok(()) => supervise(ctx.clone(), server, endpoint, &mut signals).await,
+    let result = match recover(&ctx).await {
+        Ok(()) => {
+            ctx.recovery.finish();
+            supervise(ctx.clone(), server, endpoint, &mut signals).await
+        }
         Err(error @ ArchonError::DiskFull(_)) => {
+            // Standby first: the changes waiting on recovery meet its refusal.
             standby::enter(&ctx, &error);
+            ctx.recovery.fail();
             standby::serve(&ctx, server, signals.stop()).await
         }
         Err(error) => {
+            ctx.recovery.fail();
             server.abort();
             Err(error)
         }
@@ -231,10 +235,7 @@ async fn supervise(
     endpoint: Endpoint,
     signals: &mut Signals,
 ) -> Result<(), ArchonError> {
-    assert!(
-        ctx.recovery.progress().is_none(),
-        "workers start once recovered"
-    );
+    assert!(ctx.recovery.is_recovered(), "workers start once recovered");
     let mut workers = Workers::default();
     workers.spawn("event pump", pump::run(ctx.clone(), endpoint));
     workers.spawn("dispatcher", dispatcher::run(ctx.clone()));

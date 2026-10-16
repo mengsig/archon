@@ -15,94 +15,135 @@ use crate::context::DaemonContext;
 /// client that has just started archond is not refused for a short one.
 pub const RECOVERY_GRACE: Duration = Duration::from_secs(2);
 
-/// How far start-up recovery is; nothing once it is done, or in a context
-/// that never recovers.
+/// Where start-up recovery is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    /// Done, or never run in this context: changes are served.
+    Recovered,
+    Running(RecoveryProgress),
+    /// It failed: archond stops, or serves in standby, but never recovered.
+    Failed,
+}
+
+/// Start-up recovery, which every change and dispatch pass waits on.
 #[derive(Debug)]
 pub struct Recovery {
-    progress: watch::Sender<Option<RecoveryProgress>>,
+    phase: watch::Sender<Phase>,
 }
 
 impl Default for Recovery {
     fn default() -> Self {
         Self {
-            progress: watch::Sender::new(None),
+            phase: watch::Sender::new(Phase::Recovered),
         }
     }
 }
+
+const STARTED: RecoveryProgress = RecoveryProgress {
+    runs_done: 0,
+    runs_total: None,
+};
 
 impl Recovery {
     /// Recovery starts: changes are refused and dispatch held until
     /// [`Recovery::finish`].
     pub fn begin(&self) {
-        let started = RecoveryProgress {
-            runs_done: 0,
-            runs_total: None,
-        };
-        let earlier = self.progress.send_replace(Some(started));
-        assert!(earlier.is_none(), "recovery begins once");
+        let earlier = self.phase.send_replace(Phase::Running(STARTED));
+        assert_eq!(earlier, Phase::Recovered, "recovery begins once");
     }
 
     /// `total` live runs are to be recovered; begins recovery if nobody has.
     pub fn count(&self, total: usize) {
         let total = u32::try_from(total).expect("live runs fit in a u32");
-        self.progress.send_modify(|progress| {
-            let counted = progress.get_or_insert(RecoveryProgress {
-                runs_done: 0,
-                runs_total: None,
-            });
+        self.phase.send_modify(|phase| {
+            let mut counted = match *phase {
+                Phase::Recovered => STARTED,
+                Phase::Running(progress) => progress,
+                Phase::Failed => panic!("a failed recovery counts no runs"),
+            };
             assert_eq!(counted.runs_total, None, "runs are counted once");
             assert_eq!(counted.runs_done, 0, "no run is done before the count");
             counted.runs_total = Some(total);
+            *phase = Phase::Running(counted);
         });
     }
 
     /// One more counted run is recovered.
     pub fn advance(&self) {
-        self.progress.send_modify(|progress| {
-            let counted = progress.as_mut().expect("runs recover while recovery runs");
+        self.phase.send_modify(|phase| {
+            let Phase::Running(counted) = phase else {
+                panic!("runs recover while recovery runs, not {phase:?}");
+            };
             let total = counted.runs_total.expect("runs are counted first");
             assert!(counted.runs_done < total, "no run is recovered twice");
             counted.runs_done += 1;
         });
     }
 
-    /// Recovery is done, or failed into standby or an exit.
+    /// Recovery is done: changes and dispatch go ahead.
     pub fn finish(&self) {
-        self.progress.send_replace(None);
+        let earlier = self.phase.send_replace(Phase::Recovered);
+        assert_ne!(earlier, Phase::Failed, "a failed recovery stays failed");
     }
 
-    /// Recovery under way, `None` once done.
+    /// Recovery failed. On a full disk, enter standby first: the changes
+    /// that waited for recovery are released into standby's refusal.
+    pub fn fail(&self) {
+        let earlier = self.phase.send_replace(Phase::Failed);
+        assert_ne!(earlier, Phase::Recovered, "only a recovery under way fails");
+    }
+
+    pub fn phase(&self) -> Phase {
+        *self.phase.borrow()
+    }
+
+    pub fn is_recovered(&self) -> bool {
+        self.phase() == Phase::Recovered
+    }
+
+    /// Recovery under way, `None` once it ended.
     pub fn progress(&self) -> Option<RecoveryProgress> {
-        *self.progress.borrow()
+        match self.phase() {
+            Phase::Running(progress) => Some(progress),
+            Phase::Recovered | Phase::Failed => None,
+        }
     }
 
-    /// Recovery under way after waiting up to `limit` for it to end.
-    async fn progress_after(&self, limit: Duration) -> Option<RecoveryProgress> {
-        let mut changes = self.progress.subscribe();
-        let ended = tokio::time::timeout(limit, changes.wait_for(Option::is_none)).await;
-        match ended {
-            Ok(Ok(_)) => None,
+    /// The phase after waiting up to `limit` for recovery to end.
+    async fn phase_after(&self, limit: Duration) -> Phase {
+        let mut changes = self.phase.subscribe();
+        let ended = changes.wait_for(|phase| !matches!(phase, Phase::Running(_)));
+        match tokio::time::timeout(limit, ended).await {
+            Ok(Ok(phase)) => *phase,
             // The sender lives in the context this borrows, so it cannot close.
             Ok(Err(_)) => unreachable!("the recovery sender outlives its readers"),
-            Err(_) => self.progress(),
+            Err(_) => self.phase(),
         }
     }
 }
 
-/// The refusal of `request` while recovery runs, which serves reads only. A
-/// change waits up to [`RECOVERY_GRACE`] for recovery to end first.
+/// The refusal of `request` until recovery is done, which serves reads only.
+/// A change waits up to [`RECOVERY_GRACE`] for recovery to end first; check
+/// standby after this, as a failed recovery may have entered it meanwhile.
 pub(crate) async fn refusal(ctx: &DaemonContext, request: &Request) -> Option<ArchonError> {
-    if request.is_read_only() {
+    if request.is_read_only() || ctx.recovery.is_recovered() {
         return None;
     }
-    ctx.recovery.progress()?;
-    let progress = ctx.recovery.progress_after(RECOVERY_GRACE).await?;
     let command = crate::handlers::command_name(request);
-    Some(ArchonError::Recovering(format!(
-        "archond is {} and refuses {command} until it is done; retry in a few seconds \
-         (`archon status` shows the progress)",
-        progress.describe()
-    )))
+    match ctx.recovery.phase_after(RECOVERY_GRACE).await {
+        Phase::Recovered => None,
+        Phase::Running(progress) => Some(ArchonError::Recovering(format!(
+            "archond is {} and refuses {command} until it is done; retry in a few seconds \
+             (`archon status` shows the progress)",
+            progress.describe()
+        ))),
+        // A full disk's standby refuses it next, with its own reason.
+        Phase::Failed if ctx.standby.get().is_some() => None,
+        Phase::Failed => Some(ArchonError::Unavailable(format!(
+            "archond failed to recover its runs and refuses {command}; it is stopping, \
+             and the next command restarts it"
+        ))),
+    }
 }
 
 #[cfg(test)]
@@ -140,18 +181,20 @@ mod tests {
         let recovery = std::sync::Arc::new(Recovery::default());
         recovery.begin();
         let short = Duration::from_millis(20);
-        assert!(
-            recovery.progress_after(short).await.is_some(),
-            "still running"
-        );
+        let still = recovery.phase_after(short).await;
+        assert_eq!(still, Phase::Running(STARTED), "still running");
 
-        let finishing = recovery.clone();
-        let finisher = tokio::spawn(async move {
+        let failing = recovery.clone();
+        let failer = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(20)).await;
-            finishing.finish();
+            failing.fail();
         });
-        let left = recovery.progress_after(Duration::from_secs(5)).await;
-        assert_eq!(left, None, "the wait ends when recovery does");
-        finisher.await.expect("finisher");
+        let ended = recovery.phase_after(Duration::from_secs(5)).await;
+        assert_eq!(ended, Phase::Failed, "a failure ends the wait as one");
+        failer.await.expect("failer");
+        assert!(
+            !recovery.is_recovered(),
+            "a failed recovery never recovered"
+        );
     }
 }

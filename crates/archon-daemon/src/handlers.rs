@@ -74,10 +74,12 @@ pub async fn handle(
             command_name(&request)
         )));
     }
-    if let Some(refusal) = standby::refusal(ctx, &request) {
+    // Recovery first: a change it held is then checked against the standby
+    // a failed recovery may have entered meanwhile.
+    if let Some(refusal) = recovery::refusal(ctx, &request).await {
         return Err(refusal);
     }
-    if let Some(refusal) = recovery::refusal(ctx, &request).await {
+    if let Some(refusal) = standby::refusal(ctx, &request) {
         return Err(refusal);
     }
     check_named_caller(caller.as_ref(), &request)?;

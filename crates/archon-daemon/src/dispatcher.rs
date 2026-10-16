@@ -34,7 +34,7 @@ pub(crate) async fn read_snapshot(
     let envs = snapshot::Envs::prefetch(ctx).await?;
     // Recovery holds the run table while it rebuilds the drivers; no spawn is
     // pending before they are, so an empty table reads the same without waiting.
-    if ctx.recovery.progress().is_some() {
+    if !ctx.recovery.is_recovered() {
         let rebuilding = executor::RunTable::default();
         assert!(
             rebuilding.pending.is_empty(),
@@ -80,8 +80,9 @@ pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
 /// returned at the end; a store error ends the pass at once. Nothing is
 /// planned until start-up recovery is done.
 pub async fn dispatch_once(ctx: &DaemonContext) -> Result<DispatchPlan, ArchonError> {
-    if let Some(progress) = ctx.recovery.progress() {
-        tracing::debug!(progress = %progress.describe(), "dispatch held until recovery is done");
+    if !ctx.recovery.is_recovered() {
+        let phase = ctx.recovery.phase();
+        tracing::debug!(?phase, "dispatch held until recovery is done");
         return Ok(DispatchPlan::default());
     }
     let mut first_error = None;

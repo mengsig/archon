@@ -189,3 +189,57 @@ async fn a_change_waits_out_a_short_recovery_instead_of_failing() {
     finishing.await.expect("finisher");
     assert_eq!(h.ctx.recovery.progress(), None);
 }
+
+/// Pause globally while recovery runs; the request waits out the grace.
+fn pause_during_recovery(h: &Harness) -> tokio::task::JoinHandle<Result<Reply, ArchonError>> {
+    let ctx = h.ctx.clone();
+    tokio::spawn(async move {
+        let pause = Request::Pause(PauseTarget::Global { hard: false });
+        archon_daemon::handlers::handle(&ctx, ClientKind::ArchonCli, pause).await
+    })
+}
+
+#[tokio::test]
+async fn a_change_held_by_a_recovery_that_fails_into_standby_is_refused_by_it() {
+    let h = Harness::new().await;
+    h.ctx.recovery.begin();
+    let pausing = pause_during_recovery(&h);
+    // Let it reach the wait; one that arrives later meets the same refusal.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    h.ctx
+        .standby
+        .set("store: disk full: test".into())
+        .expect("standby entered once");
+    h.ctx.recovery.fail();
+
+    let answer = pausing.await.expect("pause task");
+    let refused = answer.expect_err("standby refuses the change");
+    assert!(matches!(refused, ArchonError::DiskFull(_)), "{refused:?}");
+    let read = h.cli(Request::Status(Default::default())).await;
+    assert!(read.is_ok(), "reads are still served: {read:?}");
+}
+
+#[tokio::test]
+async fn a_change_held_by_a_recovery_that_fails_is_never_admitted() {
+    let h = Harness::new().await;
+    h.ctx.recovery.begin();
+    let pausing = pause_during_recovery(&h);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    h.ctx.recovery.fail();
+
+    let refused = pausing.await.expect("pause task").expect_err("refused");
+    assert!(
+        matches!(refused, ArchonError::Unavailable(_)),
+        "{refused:?}"
+    );
+    assert!(
+        refused.to_string().contains("failed to recover"),
+        "{refused}"
+    );
+    let held = h
+        .cli(Request::Pause(PauseTarget::Global { hard: false }))
+        .await;
+    assert!(held.is_err(), "a later change is refused too: {held:?}");
+}

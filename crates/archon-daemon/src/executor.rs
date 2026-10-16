@@ -439,14 +439,13 @@ pub async fn decide_gate(
 
 /// On daemon start: rebuild drivers for active runs with `RunDriver::resume`
 /// and requeue `dispatching` items that never got a run. `ctx.recovery`
-/// counts the runs as they recover, and ends with it, failed or not.
+/// counts the runs as they recover and is finished once all did; a failure
+/// is left to the caller, which decides between standby and an exit.
 pub async fn recover(ctx: &DaemonContext) -> Result<(), ArchonError> {
-    let recovered = match recover::recover(ctx).await {
-        Ok(follow) => run_follow_up(ctx, follow).await,
-        Err(error) => Err(error),
-    };
+    let follow = recover::recover(ctx).await?;
+    run_follow_up(ctx, follow).await?;
     ctx.recovery.finish();
-    recovered
+    Ok(())
 }
 
 /// Run follow-ups until none are left. Every step is attempted even when

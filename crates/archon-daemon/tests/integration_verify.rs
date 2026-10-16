@@ -214,6 +214,51 @@ async fn exactly_one_fix_item_is_queued_and_none_while_one_is_open() {
     );
 }
 
+/// A daemon stopped mid-bisection left a red verdict and the bisection it
+/// owes: the next look resumes it, and only then queues the fix item.
+#[tokio::test]
+async fn an_interrupted_bisection_is_resumed_before_the_fix_is_queued() {
+    let (h, _slot) = verifying().await;
+    integration::pass(&h.ctx).await.expect("green pass");
+    let merges = land(&h, &["one", "broken", "three"]);
+    let head = merges[2].clone();
+    let key = {
+        let store = h.ctx.store.lock().await;
+        format!("integration_{}", store.repos().unwrap()[0].id)
+    };
+    let mut state: serde_json::Value = {
+        let store = h.ctx.store.lock().await;
+        serde_json::from_str(&store.kv_get(&key).unwrap().expect("a state")).unwrap()
+    };
+    let at = state["verdict"]["at"].clone();
+    state["head"] = head.clone().into();
+    state["verdict"] = serde_json::json!({
+        "commit": head, "green": false, "at": at, "via": "checks.full",
+        "excerpt": "error: the broken file is here",
+    });
+    state["bisecting"] = head.clone().into();
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&key, &state.to_string())
+        .unwrap();
+    let runs = full_runs(&h);
+
+    integration::pass(&h.ctx).await.expect("resumed pass");
+    let red = branch_status(&h).await;
+    let culprit = red.culprit.clone().expect("the resumed bisection names it");
+    assert!(culprit.contains(&merges[1][..8]), "{culprit}");
+    assert_eq!(
+        full_runs(&h),
+        runs + 2,
+        "two probes; the head is not verified again"
+    );
+    let fixes = fix_items(&h).await;
+    assert_eq!(fixes.len(), 1, "{fixes:?}");
+    assert!(fixes[0].brief.contains(&merges[1]), "{}", fixes[0].brief);
+}
+
 /// `status` shows the integration branch's last green commit and the
 /// merges landed since.
 #[tokio::test]

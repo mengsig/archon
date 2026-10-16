@@ -10,6 +10,8 @@ use std::time::Duration;
 
 use archon_core::config::IntegrationConfig;
 use archon_core::error::ArchonError;
+use rustix::io::Errno;
+use rustix::process::{Pid, Signal, kill_process_group};
 use tokio::sync::{Mutex, MutexGuard};
 
 /// Taken before the host's lock, so one daemon's runs queue without a
@@ -74,9 +76,10 @@ pub(crate) struct FullRun {
 }
 
 /// Run `command` with `sh -c` in `work`, its output in `log`, ended with
-/// everything it started after `limit`. The caller holds the [`Slot`].
+/// everything it started after `limit`. `slot` is held until the run's
+/// process group is killed, even when the daemon drops the run mid-way.
 pub(crate) async fn run(
-    _slot: &Slot,
+    _slot: Slot,
     command: &str,
     work: &Path,
     log: &Path,
@@ -100,22 +103,32 @@ pub(crate) async fn run(
         .stderr(Stdio::from(errors))
         .spawn()
         .map_err(|e| ArchonError::io(format!("running the full check `{command}`"), e))?;
-    let group = child
-        .id()
-        .and_then(|pid| rustix::process::Pid::from_raw(pid as i32));
-    let waited = tokio::time::timeout(limit, child.wait()).await;
-    let ended = match waited {
+    // Declared after `_slot`, so dropped (the group killed) before it.
+    let group = Group(child.id().and_then(|pid| Pid::from_raw(pid as i32)));
+    assert!(group.0.is_some(), "a spawned child has a pid");
+    let ended = match tokio::time::timeout(limit, child.wait()).await {
         Ok(status) => Ended::Exited(status.map_err(|e| ArchonError::io("the full check", e))?),
-        Err(_) => {
-            if let Some(group) = group {
-                // Gone already is fine: kill_on_drop reaps what is left.
-                let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
-            }
-            Ended::TimedOut(limit)
-        }
+        Err(_) => Ended::TimedOut(limit),
     };
+    drop(group);
     let tail = blocking_tail(log).await?;
     Ok(ended.into_run(tail))
+}
+
+/// A full run's process group, killed when dropped: when the run ends, times
+/// out or is cancelled, so nothing it started outlives its slot.
+struct Group(Option<Pid>);
+
+impl Drop for Group {
+    fn drop(&mut self) {
+        let Some(group) = self.0 else {
+            return;
+        };
+        match kill_process_group(group, Signal::KILL) {
+            Ok(()) | Err(Errno::SRCH) => {}
+            Err(error) => tracing::warn!(%error, "the full check's processes could not be killed"),
+        }
+    }
 }
 
 enum Ended {
@@ -179,7 +192,12 @@ fn tail(log: &Path) -> Result<String, ArchonError> {
         .map_err(reading)?;
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).map_err(reading)?;
-    let text = String::from_utf8_lossy(&bytes);
+    Ok(excerpt_of(&String::from_utf8_lossy(&bytes)))
+}
+
+/// The last [`EXCERPT_LINES`] lines of `text`, at most [`EXCERPT_CHARS`]:
+/// what a fix item carries of a failing output.
+pub(crate) fn excerpt_of(text: &str) -> String {
     let lines: Vec<&str> = text.lines().collect();
     let kept = lines[lines.len().saturating_sub(EXCERPT_LINES)..].join("\n");
     let skip = kept.chars().count().saturating_sub(EXCERPT_CHARS);
@@ -188,7 +206,11 @@ fn tail(log: &Path) -> Result<String, ArchonError> {
         excerpt.chars().count() <= EXCERPT_CHARS,
         "the excerpt is bounded"
     );
-    Ok(excerpt)
+    assert!(
+        excerpt.lines().count() <= EXCERPT_LINES,
+        "the excerpt is the last lines"
+    );
+    excerpt
 }
 
 #[cfg(test)]
@@ -199,7 +221,7 @@ mod tests {
 
     async fn full(command: &str, dir: &Path, name: &str) -> FullRun {
         let slot = Slot::acquire(&dir.join("slot.lock")).await.unwrap();
-        run(&slot, command, dir, &dir.join(name), LIMIT)
+        run(slot, command, dir, &dir.join(name), LIMIT)
             .await
             .unwrap()
     }
@@ -246,7 +268,7 @@ mod tests {
         let log = dir.join("slow.log");
         let started = std::time::Instant::now();
         let ran = run(
-            &slot,
+            slot,
             "echo started; sleep 30",
             &dir,
             &log,
@@ -313,5 +335,53 @@ mod tests {
         for pair in lines.chunks(2) {
             assert_eq!(pair, ["start", "end"], "overlapping runs: {trace}");
         }
+    }
+
+    /// Whether `pid` runs: not gone and not a zombie.
+    fn alive(pid: &str) -> bool {
+        std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(
+            |stat| !matches!(stat.rsplit(") ").next(), Some(s) if s.starts_with(['Z', 'X'])),
+        )
+    }
+
+    /// The daemon dropping a run mid-way (shutdown, abort) kills what the
+    /// check started, and only then frees the slot.
+    #[tokio::test]
+    async fn a_cancelled_run_ends_everything_it_started_before_freeing_the_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir = dir.path().canonicalize().unwrap();
+        let started = dir.join("started");
+        let command = format!("sleep 30 & echo $! > {}; wait", started.display());
+        let lock = dir.join("slot.lock");
+        let slot = Slot::acquire(&lock).await.unwrap();
+        let running = {
+            let (dir, command) = (dir.clone(), command.clone());
+            tokio::spawn(
+                async move { run(slot, &command, &dir, &dir.join("run.log"), LIMIT).await },
+            )
+        };
+        let pid = tokio::time::timeout(LIMIT, async {
+            loop {
+                match std::fs::read_to_string(&started) {
+                    Ok(pid) if pid.ends_with('\n') => return pid.trim().to_owned(),
+                    _ => tokio::time::sleep(Duration::from_millis(10)).await,
+                }
+            }
+        })
+        .await
+        .expect("the check started");
+        assert!(alive(&pid), "the build's process runs");
+        running.abort();
+        assert!(running.await.unwrap_err().is_cancelled());
+        let freed = Slot::acquire(&lock).await.unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while alive(&pid) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{pid} outlived its run"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        drop(freed);
     }
 }

@@ -1,5 +1,7 @@
 //! Verifying the integration branch's head, and bisecting a red head over
-//! the merges since the last green commit to the first red one.
+//! the merges since the last green commit to the first red one. A bisection
+//! left unfinished (CI still running, a failed probe, a restart) is kept in
+//! the branch's state and resumed on a later look.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -32,6 +34,16 @@ enum Outcome {
     Unverifiable(String),
 }
 
+/// Where a bisection got to.
+#[derive(Debug)]
+enum Search {
+    Found(Culprit),
+    /// No merge can be blamed: the baseline is red, or a merge cannot be verified.
+    Blameless,
+    /// A probe waits for GitHub's checks.
+    Waiting,
+}
+
 /// Verify the head `reading` names, and bisect it when it is red.
 pub(super) async fn head(
     ctx: &DaemonContext,
@@ -41,13 +53,14 @@ pub(super) async fn head(
 ) -> Result<(), ArchonError> {
     let commit = reading.head.commit.clone();
     assert_eq!(state.head.as_ref(), Some(&commit), "the head was observed");
-    let earlier_red = state.verdict.clone().filter(|v| !v.green);
-    let mut session = Session {
-        ctx,
-        watch,
-        head: &reading.head,
-        checkout: None,
-    };
+    let known_red = known_red(state, reading);
+    let culprit_stands = state.bisecting.is_none()
+        && known_red.is_some()
+        && state
+            .culprit
+            .as_ref()
+            .is_some_and(|c| reading.since_green.contains(&c.commit));
+    let mut session = Session::new(ctx, watch, &reading.head);
     let verdict = |green, via: &str, excerpt| Verdict {
         commit: commit.clone(),
         green,
@@ -66,9 +79,52 @@ pub(super) async fn head(
         }
         Outcome::Red { via, excerpt } => {
             state.verdict = Some(verdict(false, via, excerpt));
-            state.culprit = session.culprit(state, reading, earlier_red).await?;
-            Ok(())
+            if culprit_stands {
+                return Ok(());
+            }
+            state.culprit = None;
+            state.bisecting = Some(known_red.unwrap_or(commit));
+            session.bisect(state, reading).await
         }
+    }
+}
+
+/// Go on with the bisection the red head still owes.
+pub(super) async fn resume(
+    ctx: &DaemonContext,
+    watch: &Watch,
+    state: &mut BranchState,
+    reading: &Reading,
+) -> Result<(), ArchonError> {
+    assert!(state.bisecting.is_some(), "a bisection is owed");
+    assert!(
+        state.verdict_on_head().is_some_and(|v| !v.green),
+        "only a red head is bisected"
+    );
+    Session::new(ctx, watch, &reading.head)
+        .bisect(state, reading)
+        .await
+}
+
+/// The earliest commit known red among the merges since green: where an
+/// unfinished bisection stood, else the head an earlier look found red.
+fn known_red(state: &BranchState, reading: &Reading) -> Option<String> {
+    let earlier_red = state.verdict.as_ref().filter(|v| !v.green);
+    let earliest = state
+        .bisecting
+        .clone()
+        .or_else(|| earlier_red.map(|v| v.commit.clone()));
+    earliest.filter(|commit| reading.since_green.contains(commit))
+}
+
+/// What a commit's outcome tells a bisection: whether it is red, or why
+/// the search stops.
+fn told(outcome: Outcome) -> Result<bool, Search> {
+    match outcome {
+        Outcome::Green(_) => Ok(false),
+        Outcome::Red { .. } => Ok(true),
+        Outcome::Pending => Err(Search::Waiting),
+        Outcome::Unverifiable(_) => Err(Search::Blameless),
     }
 }
 
@@ -80,7 +136,16 @@ struct Session<'a> {
     checkout: Option<Arc<Checkout>>,
 }
 
-impl Session<'_> {
+impl<'a> Session<'a> {
+    fn new(ctx: &'a DaemonContext, watch: &'a Watch, head: &'a Head) -> Self {
+        Self {
+            ctx,
+            watch,
+            head,
+            checkout: None,
+        }
+    }
+
     /// GitHub's checks on `commit` when they cover it, else the full check.
     async fn verify(
         &mut self,
@@ -105,13 +170,12 @@ impl Session<'_> {
         github: &GithubRepo,
         commit: &str,
     ) -> Result<Option<Outcome>, ArchonError> {
-        let binary = &self.ctx.config.github.binary;
-        let read = github::commit_checks(binary, &self.watch.repo.path, github, commit).await;
-        match read {
+        let (binary, repo) = (&self.ctx.config.github.binary, &self.watch.repo.path);
+        match github::commit_checks(binary, repo, github, commit).await {
             Ok(CommitChecks::Passed) => Ok(Some(Outcome::Green(VIA_GITHUB))),
-            Ok(CommitChecks::Failed(names)) => Ok(Some(Outcome::Red {
+            Ok(CommitChecks::Failed(failed)) => Ok(Some(Outcome::Red {
                 via: VIA_GITHUB,
-                excerpt: format!("failing GitHub checks: {}", names.join(", ")),
+                excerpt: github::failure_excerpt(binary, repo, github, &failed).await,
             })),
             Ok(CommitChecks::Pending) => Ok(Some(Outcome::Pending)),
             Ok(CommitChecks::None) => Ok(None),
@@ -138,7 +202,7 @@ impl Session<'_> {
         let repo = &self.watch.repo.id;
         state.verifying = Some(commit.to_owned());
         state::save(&mut *self.ctx.store.lock().await, repo, state)?;
-        let ran = self.run_at(&slot, commit, command).await;
+        let ran = self.run_at(slot, commit, command).await;
         state.verifying = None;
         state::save(&mut *self.ctx.store.lock().await, repo, state)?;
         let ran = ran?;
@@ -154,7 +218,7 @@ impl Session<'_> {
 
     async fn run_at(
         &mut self,
-        slot: &Slot,
+        slot: Slot,
         commit: &str,
         command: &str,
     ) -> Result<FullRun, ArchonError> {
@@ -180,64 +244,83 @@ impl Session<'_> {
         Ok(made)
     }
 
-    /// Whether `commit` is red; `None` when it could not be told.
-    async fn probe(
-        &mut self,
-        state: &mut BranchState,
-        commit: &str,
-    ) -> Result<Option<bool>, ArchonError> {
-        Ok(match self.verify(state, commit).await? {
-            Outcome::Green(_) => Some(false),
-            Outcome::Red { .. } => Some(true),
-            Outcome::Pending | Outcome::Unverifiable(_) => None,
-        })
-    }
-
-    /// The first red merge since the last green commit; `None` when it
-    /// cannot be told. A culprit found for an earlier red head stands.
-    async fn culprit(
+    /// Search from `state.bisecting` for the first red merge. A search
+    /// waiting on GitHub stays owed until the red verdict is `full_timeout` old.
+    async fn bisect(
         &mut self,
         state: &mut BranchState,
         reading: &Reading,
-        earlier_red: Option<Verdict>,
-    ) -> Result<Option<Culprit>, ArchonError> {
+    ) -> Result<(), ArchonError> {
+        let bound = state.bisecting.clone().expect("a bisection is owed");
+        match self.search(state, reading, &bound).await? {
+            Search::Found(culprit) => state.culprit = Some(culprit),
+            Search::Blameless => {}
+            Search::Waiting if !self.waited_out(state) => return Ok(()),
+            Search::Waiting => {
+                tracing::warn!(repo = %self.watch.repo.name, "GitHub's checks never finished; the fix names no merge");
+            }
+        }
+        state.bisecting = None;
+        Ok(())
+    }
+
+    fn waited_out(&self, state: &BranchState) -> bool {
+        let red_at = state.verdict_on_head().expect("a red head").at;
+        let limit = self.ctx.config.integration.full_timeout.duration();
+        let limit = chrono::Duration::from_std(limit).unwrap_or(chrono::Duration::MAX);
+        archon_core::now() - red_at >= limit
+    }
+
+    /// The first red merge since the last green commit, `known_red` the
+    /// earliest merge already known red.
+    async fn search(
+        &mut self,
+        state: &mut BranchState,
+        reading: &Reading,
+        known_red: &str,
+    ) -> Result<Search, ArchonError> {
         let merges = &reading.since_green;
-        let known = state.culprit.clone().filter(|c| merges.contains(&c.commit));
-        if let (Some(known), Some(_)) = (known, &earlier_red) {
-            return Ok(Some(known));
+        if merges.is_empty() {
+            return Ok(Search::Blameless);
         }
-        if merges.is_empty() || !self.baseline_green(state, reading).await? {
-            return Ok(None);
+        if let Some(stop) = self.baseline_not_green(state, reading).await? {
+            return Ok(stop);
         }
-        let known_bad = earlier_red.and_then(|v| merges.iter().position(|m| *m == v.commit));
+        let known_bad = merges.iter().position(|m| m == known_red);
         let mut search = Bisect::new(merges.len(), known_bad);
         while let Some(index) = search.next() {
-            let Some(red) = self.probe(state, &merges[index]).await? else {
-                return Ok(None);
-            };
-            search.record(index, red);
+            match told(self.verify(state, &merges[index]).await?) {
+                Ok(red) => search.record(index, red),
+                Err(stop) => return Ok(stop),
+            }
         }
         let commit = merges[search.first_bad().expect("the search ended")].clone();
+        assert!(merges.contains(&commit), "the culprit is one of the merges");
         let subject = {
             let (source, commit) = (self.watch.source.clone(), commit.clone());
             blocking(move || source.subject(&commit)).await?
         };
-        Ok(Some(Culprit { commit, subject }))
+        Ok(Search::Found(Culprit { commit, subject }))
     }
 
-    /// A recorded green baseline is green; the release branch's fork point
-    /// is verified first, as a red one leaves no merge to blame.
-    async fn baseline_green(
+    /// `None` when the baseline is green: a recorded green commit is, and
+    /// the release branch's fork point is verified first, as a red one
+    /// leaves no merge to blame.
+    async fn baseline_not_green(
         &mut self,
         state: &mut BranchState,
         reading: &Reading,
-    ) -> Result<bool, ArchonError> {
+    ) -> Result<Option<Search>, ArchonError> {
         if reading.green.is_some() {
-            return Ok(true);
+            return Ok(None);
         }
         let Some(base) = &reading.baseline else {
-            return Ok(false);
+            return Ok(Some(Search::Blameless));
         };
-        Ok(self.probe(state, base).await? == Some(false))
+        Ok(match told(self.verify(state, base).await?) {
+            Ok(false) => None,
+            Ok(true) => Some(Search::Blameless),
+            Err(stop) => Some(stop),
+        })
     }
 }

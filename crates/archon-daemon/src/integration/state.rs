@@ -34,6 +34,10 @@ pub(crate) struct BranchState {
     pub verifying: Option<String>,
     #[serde(default)]
     pub culprit: Option<Culprit>,
+    /// The bisection the red head still owes: the earliest merge known red.
+    /// No fix item is queued until it is done.
+    #[serde(default)]
+    pub bisecting: Option<String>,
     /// The latest fix item queued, and the red head it was queued for.
     #[serde(default)]
     pub fix: Option<Fix>,

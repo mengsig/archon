@@ -335,9 +335,12 @@ full_timeout = "2h"            # a full check running longer is ended and counts
 
 A red head is bisected over the merges since the last green commit (with
 none recorded, since the branch left the release branch), each probe one
-more full run, to the first merge that fails. Archon then queues one fix
-item onto the integration branch at high priority, tagged `integration-fix`,
-naming that merge and carrying the end of the failing output, and tells you.
+more full run, to the first merge that fails. A bisection cut short (a
+restart, a failed probe, GitHub checks still running on an older merge) is
+resumed on the next look. Archon then queues one fix item onto the
+integration branch at high priority, tagged `integration-fix`, naming that
+merge and carrying the end of the failing output (for GitHub checks, the
+failing job's log), and tells you.
 No second fix item is queued while that one is open. `archon status` and
 `queue_status` show each integration branch: green, red, verifying or
 pending, its last green commit and the merges since.

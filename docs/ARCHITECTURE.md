@@ -2778,8 +2778,11 @@ full = "make ci"               # the contract forbids it: it runs off the item's
 commit's GitHub check runs when CI covers it, else by `checks.full` in a
 daemon-owned checkout sealed as the mirrors are (§13.3). Full runs take the
 host's build slot, an in-process mutex plus an exclusive `flock` on
-`[integration] slot_lock`, so they never overlap across daemons. A red head
-is bisected over the first-parent commits since the last green one; the
+`[integration] slot_lock`, so they never overlap across daemons; the run's
+process group is killed before the slot is released, even when the daemon
+drops the run. A red head is bisected over the first-parent commits since
+the last green one, the unfinished bound kept in `bisecting` so a restart or
+a waiting probe resumes it, and no fix is queued before it ends; the
 culprit, the failing excerpt and the fix item (one per red head, none while
 one is open, idempotency key `integration-fix-<repo>-<head>`) are kept in
 the store's `integration_<repo>` key, and `status` reports each branch.

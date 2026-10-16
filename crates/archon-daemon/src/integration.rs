@@ -200,13 +200,36 @@ async fn examine(ctx: &DaemonContext, repo: &Repo) -> Result<(), ArchonError> {
     state.merges_since_green = u32::try_from(reading.since_green.len()).unwrap_or(u32::MAX);
     // A force-push may have left the recorded green commit off the branch.
     state.last_green = reading.green.clone();
+    let red_on_head = |state: &BranchState| state.verdict_on_head().is_some_and(|v| !v.green);
     if state.verdict_on_head().is_none() && due(&ctx.config.integration, &state, &reading, now) {
-        verify::head(ctx, &watch, &mut state, &reading).await?;
+        let verified = verify::head(ctx, &watch, &mut state, &reading).await;
+        kept(repo, &mut state, verified)?;
+    } else if state.bisecting.is_some() && red_on_head(&state) {
+        let resumed = verify::resume(ctx, &watch, &mut state, &reading).await;
+        kept(repo, &mut state, resumed)?;
     }
-    if state.verdict_on_head().is_some_and(|v| !v.green) {
+    if red_on_head(&state) && state.bisecting.is_none() {
         ensure_fix(ctx, &watch, &mut state, &reading).await?;
     }
     save(ctx, repo, &told, &state).await
+}
+
+/// A verification that failed is the branch's problem, and what it found
+/// so far is kept: a red verdict and the bisection it owes go on next look.
+fn kept(
+    repo: &Repo,
+    state: &mut BranchState,
+    result: Result<(), ArchonError>,
+) -> Result<(), ArchonError> {
+    let error = match result {
+        Err(error) if !error.is_store() => error,
+        other => return other,
+    };
+    tracing::warn!(repo = %repo.name, %error, "integration branch verification failed");
+    state.verifying = None;
+    state.set_problem(&error.to_string());
+    assert!(state.problem.is_some(), "the failure is shown");
+    Ok(())
 }
 
 /// A head is verified once enough merges landed since the last verdict, or
@@ -280,6 +303,7 @@ async fn turned_green(
     state.last_green = Some(verdict.commit.clone());
     state.merges_since_green = 0;
     state.culprit = None;
+    state.bisecting = None;
     let text = format!(
         "The integration branch `{}` of `{}` is green again at {} ({}).",
         watch.branch,

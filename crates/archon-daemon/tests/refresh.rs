@@ -329,6 +329,22 @@ async fn a_refresh_is_refused_for_work_that_is_not_finished_or_is_a_refresh() {
     assert!(nested.contains("refresh that item instead"), "{nested}");
 }
 
+/// The pull request a run delivered to ended and its branch carries a newer
+/// one: that one is not the run's, so nothing is refreshed.
+#[tokio::test]
+async fn a_refresh_is_refused_once_the_run_s_own_pull_request_ended() {
+    let (h, gh) = delivering().await;
+    let (owner, run) = shipped(&h, "the change").await;
+    advance_origin(&h, "upstream.txt", "elsewhere\n");
+    gh.open(&run.branch, "main");
+    let refused = refresh(&h, &owner).await.unwrap_err().to_string();
+    assert!(
+        refused.contains("was delivered to is not open"),
+        "{refused}"
+    );
+    assert_eq!(gh.count("pr create"), 1, "{:?}", gh.calls());
+}
+
 /// Move the watch of `run`'s checks to `minutes` after its delivery, due now.
 async fn age_watch(h: &Harness, run: &PipelineRun, minutes: i64) {
     let key = format!("ship_checks:{}", run.id);

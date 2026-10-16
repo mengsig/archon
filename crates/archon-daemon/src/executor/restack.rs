@@ -127,8 +127,8 @@ async fn parent_pr(
     pull_request(ctx, pass, repo, branch, delivered.map(|r| &r.id)).await
 }
 
-/// The pull request of `branch` in `repo`: settled when the one `run`
-/// delivered to is, else as the pass lists it, recorded once it merged or closed.
+/// The pull request of `branch` in `repo`, the one `run` delivered to when it
+/// recorded one: settled when known to be, else as GitHub shows it now.
 async fn pull_request(
     ctx: &DaemonContext,
     pass: &mut Pass,
@@ -142,23 +142,31 @@ async fn pull_request(
         "only a pr repository has pull requests"
     );
     assert!(!branch.is_empty(), "a delivered branch");
-    let settled = {
+    let (own, settled) = {
         let store = ctx.store.lock().await;
         let recorded = run.map(|run| store.run_pull_request(run)).transpose()?;
-        match recorded.flatten() {
-            Some(recorded) => gh::settled(&store, &recorded.pr)?,
-            None => None,
-        }
+        let own = recorded.flatten().map(|recorded| recorded.pr);
+        let settled = own.as_ref().map(|pr| gh::settled(&store, pr)).transpose()?;
+        (own, settled.flatten())
     };
     if let Some(state) = settled {
         return Ok(Pr::Settled {
             merged: state == "MERGED",
         });
     }
-    let pr = pass
-        .pull_request(&ctx.config.github.binary, &repo.path, branch)
-        .await?;
+    let binary = &ctx.config.github.binary;
+    let mut pr = pass.pull_request(binary, &repo.path, branch).await?;
     assert_eq!(pr.head_ref_name, branch, "checked by the gh module");
+    if let Some(own) = own.filter(|own| *own != pr.identity()) {
+        // The branch carries a newer pull request, so the run's own ended.
+        pr = pass.by_number(binary, &repo.path, &own).await?;
+        if pr.is_open() {
+            return Err(ArchonError::Protocol(format!(
+                "{own} is open, but GitHub lists {} for `{branch}`",
+                pr.url
+            )));
+        }
+    }
     if pr.is_open() {
         return Ok(Pr::Open(Box::new(pr)));
     }

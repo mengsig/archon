@@ -26,7 +26,11 @@ fn runs_record_the_pull_request_they_delivered_to_and_may_share_one() {
         pr: pr(7),
         node_id: node.map(str::to_owned),
     };
-    assert_eq!(store.run_pull_request(&a.id).unwrap(), Some(known(None)));
+    assert_eq!(
+        store.run_pull_request(&a.id).unwrap(),
+        Some(known(Some("PR_kw7"))),
+        "every run delivered to the pull request learns its node id"
+    );
     assert_eq!(
         store.run_pull_request(&b.id).unwrap(),
         Some(known(Some("PR_kw7"))),

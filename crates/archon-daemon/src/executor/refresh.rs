@@ -214,21 +214,22 @@ async fn check_pr_open(
     run: &PipelineRun,
 ) -> Result<(), ArchonError> {
     let branch = &run.branch;
-    let settled = {
+    let (own, settled) = {
         let store = ctx.store.lock().await;
-        match store.run_pull_request(&run.id)? {
-            Some(recorded) => gh::settled(&store, &recorded.pr)?,
-            None => None,
-        }
+        let own = store.run_pull_request(&run.id)?.map(|recorded| recorded.pr);
+        let settled = own.as_ref().map(|pr| gh::settled(&store, pr)).transpose()?;
+        (own, settled.flatten())
     };
-    let open = match settled {
+    let mut open = match settled {
         Some(_) => Vec::new(),
         None => gh::of_branch(&ctx.config.github.binary, &repo.path, branch, true).await?,
     };
+    // A newer pull request of the branch is not the one the run delivered to.
+    open.retain(|pr| own.as_ref().is_none_or(|own| pr.identity() == *own));
     if open.is_empty() {
         return Err(ArchonError::Invalid(format!(
-            "`{branch}` has no open pull request: it merged or closed, so there is nothing to \
-             refresh; enqueue new work instead"
+            "the pull request `{branch}` was delivered to is not open: it merged or closed, so \
+             there is nothing to refresh; enqueue new work instead"
         )));
     }
     Ok(())

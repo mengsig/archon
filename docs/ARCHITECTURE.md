@@ -2529,8 +2529,10 @@ A pass asks GitHub once per repository, `gh pr list --state open --limit
 1000`, and looks up with `gh pr list --head <branch> --state all` only a
 branch the listing lacks. A pull request found merged or closed is kept in
 `kv` `pr_settled:<host>/<owner>/<name>#<number>` and never asked about
-again; a branch counts as settled once the pull request its run recorded
-is, so a pass over settled stacks makes no GitHub call. The pull requests
+again, so a pass over settled stacks makes no GitHub call. A run's branch
+stands for the pull request the run recorded: when the branch now carries
+another, the run's is shown by its number, and a refresh of it is refused
+as it is no longer open. The pull requests
 of finished runs, which learning watches, are read from the same listing
 every 10 minutes, but by number: one it lacks is shown with `gh pr view
 <url>`, so a newer pull request of the same branch never stands in for a

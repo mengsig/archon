@@ -129,6 +129,34 @@ async fn a_stacked_item_ships_onto_its_parent_and_moves_to_the_base_once_it_merg
     assert_eq!(prs(&h).as_object().unwrap().len(), 2, "never a second one");
 }
 
+/// A parent's pull request merged and its branch now carries a newer, open
+/// one: the child still moves to the base, before anything settled the parent's.
+#[tokio::test]
+async fn a_stacked_item_moves_to_the_base_when_its_parent_s_branch_carries_a_newer_pr() {
+    let h = delivering().await;
+    let parent = enqueue(&h, "the parent change", &[]).await;
+    let child = enqueue(&h, "the child change", &[&parent]).await;
+    let parent_run = ship(&h, &parent.id).await;
+    let child_run = ship(&h, &child.id).await;
+    assert_eq!(prs(&h)[&child_run.branch]["baseRefName"], parent_run.branch);
+
+    let mut state = prs(&h);
+    let mut merged = state[&parent_run.branch].take();
+    merged["state"] = json!("MERGED");
+    let mut newer = merged.clone();
+    newer["url"] = json!("https://github.com/o/r/pull/3");
+    newer["number"] = json!(3);
+    newer["state"] = json!("OPEN");
+    state[&parent_run.branch] = newer;
+    state["merged-before"] = merged;
+    std::fs::write(h.dir.path().join("prs.json"), state.to_string()).unwrap();
+
+    h.dispatch().await;
+    assert_eq!(prs(&h)[&child_run.branch]["baseRefName"], "main");
+    let stacked = h.ctx.store.lock().await.stack_base(&child.id).unwrap();
+    assert_eq!(stacked, None, "the parent's own pull request merged");
+}
+
 /// A second repository with an `origin`, whose ceiling allows auto-merge.
 async fn add_client(h: &Harness) {
     let path = common::init_repo(&h.dir.path().join("client"));
@@ -348,12 +376,15 @@ async fn two_runs_delivered_to_one_pull_request_both_see_its_outcome() {
     let recorded = (h.ctx.store.lock().await).record_run_pull_request(&second.id, &shared, None);
     recorded.unwrap();
     set_pr(&h, &first.branch, "state", json!("MERGED"));
+    set_pr(&h, &first.branch, "id", json!("PR_shared"));
 
     let before = gh_calls(&h).len();
     let seen = pull_requests::observe(&h.ctx).await.unwrap();
     assert_eq!((seen.merged, seen.unanswered), (2, 0), "{seen:?}");
     for run in [&first, &second] {
         assert_eq!(outcome(&h, run).await.merged, Some(true), "{}", run.id);
+        let known = delivered_to(&h, run).await;
+        assert_eq!(known.node_id.as_deref(), Some("PR_shared"), "{}", run.id);
     }
     assert_eq!(views_since(&h, before).len(), 1, "settled once, then known");
 }

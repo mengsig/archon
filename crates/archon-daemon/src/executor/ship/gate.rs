@@ -148,22 +148,27 @@ async fn gated(
         .acquire_owned()
         .await
         .map_err(|_| ArchonError::Unavailable("the fast check slot closed".into()))?;
-    let affected = match affected::selects(&check.template) {
-        true => {
-            let (workspace, base) = (check.workspace.clone(), check.base.clone());
-            let read = move || fast_check::affected_by(&workspace, &base);
-            tokio::task::spawn_blocking(read).await.map_err(|e| {
-                ArchonError::io("fast check selection task", std::io::Error::other(e))
-            })??
+    let affected = selected(&check).await?;
+    let command = match affected::expand(&check.template, &affected.units) {
+        Ok(Some(command)) => command,
+        Ok(None) => {
+            tracing::info!(%run, "the change affects no unit; the fast check has nothing to run");
+            return Ok(Verdict {
+                tree: check.tree,
+                refusal: None,
+            });
         }
-        false => Affected::default(),
-    };
-    let Some(command) = fast_check::command_for(&check.template, &affected)? else {
-        tracing::info!(%run, "the change affects no unit; the fast check has nothing to run");
-        return Ok(Verdict {
-            tree: check.tree,
-            refusal: None,
-        });
+        Err(why) => {
+            let refusal = format!(
+                "the fast check `{}` cannot run for the committed change: {why}; rename it, \
+                 commit, and retry the item.",
+                check.template
+            );
+            return Ok(Verdict {
+                tree: check.tree,
+                refusal: Some(refusal),
+            });
+        }
     };
     let envs: Vec<(&str, &std::path::Path)> = check
         .target_dir
@@ -186,6 +191,18 @@ async fn gated(
         tree: check.tree,
         refusal,
     })
+}
+
+/// What the committed change affects, read only when the check selects.
+async fn selected(check: &Check) -> Result<Affected, ArchonError> {
+    if !affected::selects(&check.template) {
+        return Ok(Affected::default());
+    }
+    let (workspace, base) = (check.workspace.clone(), check.base.clone());
+    let read = move || fast_check::affected_by(&workspace, &base);
+    tokio::task::spawn_blocking(read)
+        .await
+        .map_err(|e| ArchonError::io("fast check selection task", std::io::Error::other(e)))?
 }
 
 #[cfg(test)]

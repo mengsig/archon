@@ -92,7 +92,7 @@ fn lockfile_toolchain_and_ci_changes_yield_the_whole_workspace() {
 }
 
 #[test]
-fn files_outside_every_crate_and_excluded_crates_affect_none() {
+fn files_outside_every_crate_and_excluded_crates_none_uses_affect_none() {
     let dir = fixture();
     let found = units(
         dir.path(),
@@ -147,14 +147,14 @@ fn a_broken_member_manifest_is_an_error_naming_it() {
 }
 
 #[test]
-fn placeholders_expand_to_quoted_units() {
-    let units = vec!["archon-core".to_owned(), "it's".to_owned()];
+fn placeholders_expand_to_the_units() {
+    let units = vec!["archon-core".to_owned(), "web_2.0+x".to_owned()];
     let command = "cargo clippy {packages:-p} && cargo test {packages:-p} && ls {packages}";
     let expanded = expand(command, &units).unwrap().unwrap();
     assert_eq!(
         expanded,
-        "cargo clippy -p archon-core -p 'it'\\''s' && cargo test -p archon-core -p 'it'\\''s' \
-         && ls archon-core 'it'\\''s'"
+        "cargo clippy -p archon-core -p web_2.0+x && cargo test -p archon-core -p web_2.0+x \
+         && ls archon-core web_2.0+x"
     );
     assert!(selects(command));
     assert_eq!(expand(command, &[]).unwrap(), None, "nothing to run");
@@ -163,6 +163,59 @@ fn placeholders_expand_to_quoted_units() {
         Some("make quick")
     );
     assert!(!selects("make quick"));
+}
+
+#[test]
+fn a_unit_that_is_no_plain_name_refuses_in_every_shell_context() {
+    for command in [
+        "ls {packages}",
+        "printf '%s\\n' \"{packages}\"",
+        "eval echo {packages}",
+    ] {
+        for unit in [
+            "$(touch x)",
+            "`id`",
+            "it's",
+            "a b",
+            "--config=x",
+            ".hidden",
+            "",
+        ] {
+            let error = expand(command, &[unit.to_owned()]).unwrap_err();
+            assert!(
+                error.contains("no plain name"),
+                "{command} {unit:?}: {error}"
+            );
+        }
+        let fine = expand(command, &["a".to_owned(), "b".to_owned()]).unwrap();
+        assert!(fine.is_some_and(|c| c.contains("a b")), "{command}");
+    }
+}
+
+#[test]
+fn path_dependencies_under_the_root_are_members_as_cargo_makes_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(root, "Cargo.toml", "[workspace]\nmembers = [\"app\"]\n");
+    let app = "[dependencies]\nhelper = { path = \"../helper\" }\n";
+    write(root, "app/Cargo.toml", &package("app", app));
+    let helper = "[dependencies]\nbase = { path = \"../libs/base\" }\n";
+    write(root, "helper/Cargo.toml", &package("helper", helper));
+    write(root, "libs/base/Cargo.toml", &package("base", ""));
+    assert_eq!(units(root, &["helper/src/lib.rs"]).units, ["app", "helper"]);
+    let base = units(root, &["libs/base/src/lib.rs"]);
+    assert_eq!(base.units, ["app", "base", "helper"], "transitively");
+    assert_eq!(
+        units(root, &["Cargo.lock"]).units,
+        ["app", "base", "helper"]
+    );
+    write(
+        root,
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"app\"]\nexclude = [\"libs\"]\n",
+    );
+    let excluded = units(root, &["libs/base/src/lib.rs"]);
+    assert_eq!(excluded.units, ["app", "helper"], "what depends on it");
 }
 
 #[test]

@@ -92,16 +92,6 @@ fn base_ref(tree: &Path, base: &str) -> Result<Option<String>, ArchonError> {
     Ok(None)
 }
 
-/// `template` for what `affected` holds; `None` when it selects units and
-/// none is affected, so there is nothing to run.
-pub(crate) fn command_for(
-    template: &str,
-    affected: &Affected,
-) -> Result<Option<String>, ArchonError> {
-    affected::expand(template, &affected.units)
-        .map_err(|why| ArchonError::Invalid(format!("fast check {template:?}: {why}")))
-}
-
 /// How a check run ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Ended {

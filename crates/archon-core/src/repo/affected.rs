@@ -78,7 +78,7 @@ fn crates(members: &[Member], changed: &[String], whole: bool) -> Vec<String> {
     assert!(!members.is_empty(), "a workspace has a crate");
     let mut hit: BTreeSet<usize> = match whole {
         true => (0..members.len()).collect(),
-        false => changed.iter().filter_map(|p| owner(members, p)).collect(),
+        false => changed.iter().flat_map(|p| touched(members, p)).collect(),
     };
     let at: BTreeMap<&str, usize> = members
         .iter()
@@ -101,22 +101,32 @@ fn crates(members: &[Member], changed: &[String], whole: bool) -> Vec<String> {
     names.into_iter().collect()
 }
 
-/// The crate whose directory holds `path`: the deepest one.
-fn owner(members: &[Member], path: &str) -> Option<usize> {
-    let holds = |dir: &str| {
-        dir.is_empty()
-            || path
-                .strip_prefix(dir)
-                .is_some_and(|rest| rest.starts_with('/'))
-    };
+/// The crate whose directory holds `path`: the deepest one. A path no crate
+/// holds touches the crates whose path dependencies hold it, as an excluded
+/// one.
+fn touched(members: &[Member], path: &str) -> Vec<usize> {
+    assert!(!path.starts_with('/'), "changed paths are relative");
     let mut found: Option<usize> = None;
     for (i, member) in members.iter().enumerate() {
         let deeper = found.is_none_or(|f| member.dir.len() > members[f].dir.len());
-        if holds(&member.dir) && deeper {
+        if holds(&member.dir, path) && deeper {
             found = Some(i);
         }
     }
-    found
+    if let Some(owner) = found {
+        return vec![owner];
+    }
+    let depending = members.iter().enumerate();
+    let depending = depending.filter(|(_, m)| m.deps.iter().any(|d| holds(d, path)));
+    depending.map(|(i, _)| i).collect()
+}
+
+/// Whether the directory `dir` (relative; empty for the root) holds `path`.
+fn holds(dir: &str, path: &str) -> bool {
+    dir.is_empty()
+        || path
+            .strip_prefix(dir)
+            .is_some_and(|rest| rest.starts_with('/'))
 }
 
 /// The top-level directories `changed` touches that still exist; all of
@@ -151,41 +161,73 @@ fn workspace(root: &Path) -> Result<Option<Vec<Member>>, ArchonError> {
         return Ok(None);
     };
     let section = top.get("workspace").and_then(toml::Value::as_table);
-    let shared = section.map(shared_paths).unwrap_or_default();
-    let mut members = Vec::new();
-    if let Some(member) = member(&top, "", &shared) {
-        members.push(member);
-    }
-    let globs = |key: &str| -> Vec<String> {
-        let list = section
-            .and_then(|ws| ws.get(key))
-            .and_then(toml::Value::as_array);
-        let names = list.into_iter().flatten().filter_map(toml::Value::as_str);
-        names
-            .map(|name| name.trim_end_matches('/').to_owned())
-            .collect()
+    let mut found = Discovery {
+        root,
+        shared: section.map(shared_paths).unwrap_or_default(),
+        excluded: listed(section, "exclude"),
+        seen: BTreeSet::from([String::new()]),
+        members: Vec::new(),
     };
-    let excluded = globs("exclude");
-    let mut seen = BTreeSet::new();
-    for pattern in globs("members") {
+    found.members.extend(member(&top, "", &found.shared));
+    for pattern in listed(section, "members") {
         for dir in expand_glob(root, &pattern)? {
-            let out = excluded
-                .iter()
-                .any(|ex| dir == *ex || dir.starts_with(&format!("{ex}/")));
-            if out || !seen.insert(dir.clone()) {
-                continue;
-            }
-            let Some(found) = manifest(root, &dir)? else {
-                continue;
-            };
-            members.extend(member(&found, &dir, &shared));
+            found.admit(dir)?;
         }
     }
+    // Cargo makes every path dependency under the root a member too.
+    let mut next = 0;
+    while next < found.members.len() {
+        for dir in found.members[next].deps.clone() {
+            found.admit(dir)?;
+        }
+        next += 1;
+    }
+    let members = found.members;
     assert!(
         members.iter().all(|m| !m.name.is_empty()),
         "a package has a name"
     );
     Ok((!members.is_empty()).then_some(members))
+}
+
+/// The members found so far, and what admits another.
+struct Discovery<'a> {
+    root: &'a Path,
+    shared: BTreeMap<String, String>,
+    excluded: Vec<String>,
+    /// Every directory considered, members or not.
+    seen: BTreeSet<String>,
+    members: Vec<Member>,
+}
+
+impl Discovery<'_> {
+    /// Admit the package in `dir` unless it was considered or is excluded.
+    fn admit(&mut self, dir: String) -> Result<(), ArchonError> {
+        assert!(!dir.starts_with('/'), "member directories are relative");
+        let out = self
+            .excluded
+            .iter()
+            .any(|ex| dir == *ex || dir.starts_with(&format!("{ex}/")));
+        if out || !self.seen.insert(dir.clone()) {
+            return Ok(());
+        }
+        if let Some(found) = manifest(self.root, &dir)? {
+            self.members.extend(member(&found, &dir, &self.shared));
+        }
+        debug_assert!(self.seen.contains(&dir));
+        Ok(())
+    }
+}
+
+/// The `[workspace]` list under `key`, without trailing slashes.
+fn listed(section: Option<&toml::Table>, key: &str) -> Vec<String> {
+    let list = section
+        .and_then(|ws| ws.get(key))
+        .and_then(toml::Value::as_array);
+    let names = list.into_iter().flatten().filter_map(toml::Value::as_str);
+    names
+        .map(|name| name.trim_end_matches('/').to_owned())
+        .collect()
 }
 
 /// `<root>/<dir>/Cargo.toml`, parsed; `None` when missing.
@@ -380,8 +422,8 @@ pub fn selects(command: &str) -> bool {
 }
 
 /// `command` for `units`: `{packages}` becomes the units and
-/// `{packages:-p}` becomes `-p <unit>` for each, every unit shell-quoted.
-/// `None` when it selects and no unit is affected: nothing to run.
+/// `{packages:-p}` becomes `-p <unit>` for each. `None` when it selects and
+/// no unit is affected: nothing to run. A unit that is no plain name refuses.
 pub fn expand(command: &str, units: &[String]) -> Result<Option<String>, String> {
     let found = placeholders(command)?;
     if found.is_empty() {
@@ -389,6 +431,12 @@ pub fn expand(command: &str, units: &[String]) -> Result<Option<String>, String>
     }
     if units.is_empty() {
         return Ok(None);
+    }
+    if let Some(unsafe_unit) = units.iter().find(|unit| !plain(unit)) {
+        return Err(format!(
+            "the unit {unsafe_unit:?} is no plain name (letters, digits, `_`, `-`, `.`, `+`, \
+             not leading `-` or `.`), so no command may take it"
+        ));
     }
     let mut text = String::with_capacity(command.len() + units.len() * 16);
     let mut copied = 0;
@@ -398,8 +446,8 @@ pub fn expand(command: &str, units: &[String]) -> Result<Option<String>, String>
         let words: Vec<String> = units
             .iter()
             .map(|unit| match &placeholder.flag {
-                Some(flag) => format!("{flag} {}", quoted(unit)),
-                None => quoted(unit),
+                Some(flag) => format!("{flag} {unit}"),
+                None => unit.clone(),
             })
             .collect();
         text.push_str(&words.join(" "));
@@ -409,13 +457,12 @@ pub fn expand(command: &str, units: &[String]) -> Result<Option<String>, String>
     Ok(Some(text))
 }
 
-/// `unit` as one shell word.
-fn quoted(unit: &str) -> String {
-    let plain = |c: char| c.is_ascii_alphanumeric() || "-_./+:@=,".contains(c);
-    if !unit.is_empty() && unit.chars().all(plain) {
-        return unit.to_owned();
-    }
-    format!("'{}'", unit.replace('\'', r"'\''"))
+/// Whether `unit` reads as the same one word in any shell context, quoted,
+/// unquoted or `eval`ed, and as no option: units come from the item's tree.
+fn plain(unit: &str) -> bool {
+    let inner = |c: char| c.is_ascii_alphanumeric() || "_-.+".contains(c);
+    let first = unit.chars().next();
+    first.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') && unit.chars().all(inner)
 }
 
 #[cfg(test)]

@@ -211,7 +211,7 @@ fn a_change_is_what_its_commits_add_to_their_base() {
     let affected = affected_by(&tree, "main").unwrap();
     assert_eq!(affected.units, ["a", "b"], "committed changes only");
     assert_eq!(affected.whole, None);
-    let command = command_for("cargo test {packages:-p}", &affected).unwrap();
+    let command = affected::expand("cargo test {packages:-p}", &affected.units).unwrap();
     assert_eq!(command.as_deref(), Some("cargo test -p a -p b"));
     let missing = affected_by(&tree, "nowhere").unwrap_err().to_string();
     assert!(missing.contains("nowhere"), "{missing}");

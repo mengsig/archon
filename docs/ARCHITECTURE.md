@@ -2789,12 +2789,15 @@ fast = "cargo clippy {packages:-p} && cargo test {packages:-p}" # run before eve
 full = "make ci"               # the contract forbids it: it runs off the item's path
 ```
 
-`{packages}` in the fast check becomes the units the change affects, each
-shell-quoted, and `{packages:-p}` becomes `-p <unit>` for each
-(`repo::affected`). In a Cargo workspace a unit is a crate: those whose
-files the change touches and every workspace crate depending on them
-through a path or `workspace = true` dependency. Elsewhere it is a changed
-top-level directory. A change to a root manifest or lockfile
+`{packages}` in the fast check becomes the units the change affects, and
+`{packages:-p}` becomes `-p <unit>` for each (`repo::affected`). In a Cargo
+workspace a unit is a crate: those whose files the change touches and every
+workspace crate depending on them through a path or `workspace = true`
+dependency; path dependencies under the root are members, as Cargo makes
+them. Elsewhere it is a changed top-level directory. A unit is substituted
+only when it is a plain name (letters, digits, `_`, `-`, `.`, `+`, not
+leading `-` or `.`), which no shell context can read as code or an option;
+any other unit refuses the check. A change to a root manifest or lockfile
 (`Cargo.toml`, `Cargo.lock`, `package.json`, …), a toolchain pin, the
 `Makefile`, or a file under `.github/`, `.cargo/` or `.archon/` affects every
 unit. Each stage agent's contract names the command for the change as

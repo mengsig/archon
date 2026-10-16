@@ -79,7 +79,7 @@ fn current(template: &str, affected: Option<&Affected>) -> String {
     match affected::expand(template, &affected.units) {
         Ok(Some(command)) => format!(" For the change as committed now{whole}: `{command}`."),
         Ok(None) => " The change as committed now affects none.".to_owned(),
-        Err(why) => unreachable!("validated placeholders: {why}"),
+        Err(why) => format!(" It cannot run for the change as committed now: {why}."),
     }
 }
 
@@ -164,5 +164,13 @@ mod tests {
         };
         let text = check_rules(&checks(Some(template), None), fast);
         assert!(text.contains("as committed now affects none"), "{text}");
+        let hostile = units(&["$(touch x)"], None);
+        let fast = FastCheck {
+            affected: Some(&hostile),
+            gated: false,
+        };
+        let text = check_rules(&checks(Some(template), None), fast);
+        assert!(text.contains("It cannot run for the change"), "{text}");
+        assert!(!text.contains("cargo test $("), "{text}");
     }
 }

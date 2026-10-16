@@ -160,6 +160,21 @@ async fn ship_refuses_an_item_whose_fast_check_fails_with_its_output() {
 }
 
 #[tokio::test]
+async fn a_unit_that_is_no_plain_name_refuses_without_running_anything() {
+    let (h, gh) = delivering().await;
+    fast_check(&h, "printf '%s\\n' \"{packages}\"").await;
+    let (item, run) = started(&h, "direct").await;
+    let structured = commit_in(&run.workspace, "$(touch injected)/x.txt");
+    let state = settled(&h, &item.id, structured).await;
+
+    let error = failure(state);
+    assert!(error.contains("no plain name"), "{error}");
+    assert!(!run.workspace.join("injected").exists(), "nothing ran");
+    assert_eq!(pushed(&origin_of(&h), &run.branch), None);
+    assert_eq!(gh.count("pr create"), 0);
+}
+
+#[tokio::test]
 async fn a_passing_fast_check_runs_once_for_the_affected_units_and_ships() {
     let (h, gh) = delivering().await;
     let marker = h.dir.path().join("checked");

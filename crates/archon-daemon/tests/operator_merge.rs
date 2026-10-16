@@ -45,6 +45,7 @@ async fn delivering(config: Config) -> (Harness, FakeGh) {
 
 async fn enqueue(h: &Harness, pipeline: &str, review: ReviewLevel) -> QueueItem {
     let request = EnqueueRequest {
+        onto: None,
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(pipeline.into()),
         title: format!("a change through {pipeline}"),

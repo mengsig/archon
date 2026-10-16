@@ -12,6 +12,7 @@ use archon_core::id::{DirectiveId, InitiativeId, PipelineRunId, QuestionId, Queu
 use archon_core::mcp_tools::TOOLS;
 use archon_core::model::Effort;
 use archon_core::protocol::{PauseTarget, Request};
+use archon_core::pull_request::OntoTarget;
 use archon_core::queue::{Priority, QueueItem, QueueState};
 use serde_json::json;
 
@@ -74,7 +75,7 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
                 "brief": "Users land on /404 after login.", "priority": "high", "depends_on": [qi()],
                 "tags": ["auth"], "model_plan": plan(), "model_reasons": {"implement": "Apply supplied fix"}, "budget_usd": 5.0, "stage_timeouts": {"implement": 90}, "idempotency_key": "fix-login-1",
                 "autonomy": {"review": "standard", "proposal": "lavish", "report": "with-pr", "merge": "manual", "tools": "guarded"},
-                "origin": {"repository": "acme/web", "number": 42}
+                "origin": {"repository": "acme/web", "number": 42}, "onto": {"pr": 100}
             }),
         ),
         (
@@ -336,6 +337,9 @@ fn enqueue_maps_its_fields_and_both_model_spellings() {
     assert_eq!(request.idempotency_key.as_deref(), Some("fix-login-1"));
     let origin = request.origin.expect("the GitHub thread is kept");
     assert_eq!(origin.to_string(), "acme/web#42");
+    assert_eq!(request.onto, Some(OntoTarget::Pr(100)));
+    let two = json!({"title": "t", "brief": "b", "onto": {"pr": 1, "branch": "b"}});
+    assert!(to_request("enqueue", two).is_err(), "one way of naming it");
 }
 
 /// A plan is the stages whose model the caller chooses: without one the
@@ -557,6 +561,7 @@ fn retries_default_to_the_old_worktree_and_amendments_alone_are_a_change() {
 
 pub(super) fn item(state: QueueState) -> QueueItem {
     QueueItem {
+        onto: None,
         id: QueueItemId::new(),
         repo: None,
         pipeline: "ask".into(),

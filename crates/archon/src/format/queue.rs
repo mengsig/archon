@@ -136,6 +136,10 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
         let deps: Vec<String> = item.dependencies.iter().map(ToString::to_string).collect();
         let _ = writeln!(out, "depends on: {}", deps.join(", "));
     }
+    if let Some(onto) = &item.onto {
+        let line = format!("onto: {onto}, frozen at enqueue from {}", onto.target);
+        let _ = writeln!(out, "{}", sanitize_line(&line));
+    }
     if !item.tags.is_empty() {
         let _ = writeln!(out, "tags: {}", sanitize_line(&item.tags.join(", ")));
     }
@@ -390,6 +394,7 @@ mod tests {
 
     fn queue_item(repo: Option<&RepoId>, title: &str, pipeline: &str) -> QueueItem {
         QueueItem {
+            onto: None,
             id: QueueItemId::new(),
             repo: repo.cloned(),
             pipeline: pipeline.into(),

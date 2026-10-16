@@ -381,8 +381,9 @@ fn reserve_each(
     Ok(ids)
 }
 
-/// What the store adds to the contract of every agent of `run`: where the
-/// item's dependencies left their work, its initiative, and the run's lessons,
+/// What the store adds to the contract of every agent of `run`: the pull
+/// request it delivers into, where the item's dependencies left their work,
+/// its initiative, and the run's lessons,
 /// then the repository's checks, the build cache and the artifact store.
 fn run_sections(
     ctx: &DaemonContext,
@@ -394,6 +395,10 @@ fn run_sections(
 ) -> Result<String, ArchonError> {
     assert_eq!(run.item, item.id, "the run is the item's");
     let artifacts = ctx.paths.artifacts();
+    let onto = match mode {
+        WorkspaceMode::Worktree => super::onto::section(item.onto.as_deref()),
+        _ => String::new(),
+    };
     let dependencies = dependencies::section(store, run, item, mode, &artifacts)?;
     let initiative = dependencies::initiative_brief(store, item)?;
     let lessons = learned::lessons_for_run(store, run, item)?;
@@ -413,7 +418,16 @@ fn run_sections(
     let checks = contract::check_rules(&tiers.checks, fast);
     let cache = build_cache_section(ctx, &env, &item.id);
     let storage = contract::artifact_rules(&ctx.config.artifacts);
-    Ok([dependencies, initiative, lessons, checks, cache, storage].concat())
+    Ok([
+        onto,
+        dependencies,
+        initiative,
+        lessons,
+        checks,
+        cache,
+        storage,
+    ]
+    .concat())
 }
 
 /// What the run's change as committed affects, where its fast check selects

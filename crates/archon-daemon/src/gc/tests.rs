@@ -494,6 +494,7 @@ fn what_cannot_be_read_is_noted_and_the_rest_still_collected() {
 fn item_in(state: QueueState, updated_secs_ago: i64) -> QueueItem {
     let at = ago(updated_secs_ago);
     QueueItem {
+        onto: None,
         id: QueueItemId::new(),
         repo: None,
         pipeline: "direct".into(),

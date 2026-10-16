@@ -433,6 +433,77 @@ pub(crate) async fn view_number(
     Ok(viewed)
 }
 
+/// What `gh pr view` shows of a pull request to deliver into: [`FIELDS`]
+/// and where its head branch lives.
+const HEADED_FIELDS: &str = "id,number,url,state,headRefName,headRefOid,baseRefName,body,isDraft,\
+     reviewDecision,isCrossRepository,headRepository,headRepositoryOwner";
+
+/// A pull request with the repository its head branch is in.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Headed {
+    #[serde(flatten)]
+    pub pr: PullRequest,
+    /// Whether the head is in another repository than the base, a fork.
+    pub is_cross_repository: bool,
+    head_repository: Option<HeadRepository>,
+    head_repository_owner: Option<HeadOwner>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct HeadRepository {
+    name: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct HeadOwner {
+    login: String,
+}
+
+impl Headed {
+    /// `owner/name` of the head's repository, lowercase; `None` once it is gone.
+    pub(crate) fn head_repository(&self) -> Option<String> {
+        let name = &self.head_repository.as_ref()?.name;
+        let owner = &self.head_repository_owner.as_ref()?.login;
+        let plain = |s: &str| {
+            !s.is_empty()
+                && s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+        };
+        (plain(owner) && plain(name)).then(|| format!("{owner}/{name}").to_ascii_lowercase())
+    }
+}
+
+/// The pull request `selector`, its number or URL, names in `repo`, with
+/// where its head lives.
+pub(crate) async fn view_headed(
+    binary: &Path,
+    repo: &Path,
+    selector: &str,
+) -> Result<Headed, ArchonError> {
+    let number = !selector.is_empty() && selector.bytes().all(|b| b.is_ascii_digit());
+    assert!(
+        number || PullRequestRef::from_url(selector).is_some(),
+        "a pull request number or URL"
+    );
+    let args = ["pr", "view", selector, "--json", HEADED_FIELDS];
+    let raw = text(binary, repo, &args).await?;
+    let viewed: Headed = serde_json::from_str(&raw)
+        .map_err(|e| ArchonError::Protocol(format!("invalid `gh pr view` response: {e}")))?;
+    viewed.pr.check(None)?;
+    let asked = match number {
+        true => viewed.pr.number.to_string() == selector,
+        false => PullRequestRef::from_url(selector) == Some(viewed.pr.identity()),
+    };
+    if !asked {
+        return Err(ArchonError::Protocol(format!(
+            "GitHub showed {} when asked for {selector}",
+            viewed.pr.url
+        )));
+    }
+    Ok(viewed)
+}
+
 /// One pass's reading of GitHub: one listing of each repository's open pull
 /// requests, then one lookup for each pull request asked about that it lacks.
 #[derive(Debug, Default)]

@@ -9,11 +9,13 @@ use archon_core::catalog::{StageKind, WorkspaceMode, is_snapshot_of};
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId};
 use archon_core::notify::NotificationKind;
+use archon_core::pull_request::OntoPullRequest;
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::{Repo, ShipMode};
 use archon_core::run::{PipelineRun, RunState};
 use archon_pipeline::autonomy::OperatorGates;
 use archon_pipeline::{PipelineSpec, RunDriver, RunVars};
+use archon_queue::store::stacks::{StackFix, StackParent};
 
 use super::{Cleanup, FollowUp, RunTable, finish, frozen, recover, settle};
 use crate::context::DaemonContext;
@@ -304,7 +306,9 @@ async fn workspace(
         "validated: team pipelines use worktrees"
     );
     let tiers = env.tiers()?;
-    let base = env.fork_base(&tiers);
+    // An `onto` item's change is for its pull request's base.
+    let onto_base = item.onto.as_ref().map(|onto| onto.base_ref.clone());
+    let base = onto_base.or_else(|| env.fork_base(&tiers));
     // Only an integration branch is created when it is missing.
     let release = tiers
         .integration_branch
@@ -342,7 +346,9 @@ async fn workspace(
 /// The item's worktree, added now or reused from an earlier run; a team
 /// run's is `main` under the item's directory. Each fresh retry of the
 /// item gives it a new branch. With a `release` branch, `base` is the
-/// integration branch, created from it when missing.
+/// integration branch, created from it when missing. An `onto` item's
+/// branch starts from its pull request's frozen head, for that pull
+/// request's base.
 async fn add_worktree(
     ctx: &DaemonContext,
     repo: &Repo,
@@ -355,17 +361,15 @@ async fn add_worktree(
         ctx.config.worktrees.branch_prefix.clone(),
     );
     let target = ctx.store.lock().await.stack_fix(&item.id)?;
-    let parents = match &target {
-        Some(target) => ctx.store.lock().await.stack_parents(&target.owner)?,
-        None => super::restack::parents(ctx, item, repo, base.as_deref()).await?,
-    };
+    let parents = parents(ctx, repo, item, target.as_ref(), base.as_deref()).await?;
     let stacked_on = parents.iter().find(|p| !p.merged);
     let branch = target
         .as_ref()
         .map(|t| t.branch.clone())
         .unwrap_or_else(|| manager.branch_name(&item.id, &item.title, item.fresh_retries));
-    let fork = match (&target, stacked_on, base.as_deref()) {
-        (None, None, Some(base)) => {
+    let fork = match (&target, &item.onto, stacked_on, base.as_deref()) {
+        (None, Some(onto), ..) => onto_fork(ctx, repo, onto, &branch).await?,
+        (None, None, None, Some(base)) => {
             fork_point(ctx, repo, item, (base, release.as_deref()), &branch).await?
         }
         _ => None,
@@ -402,6 +406,49 @@ async fn add_worktree(
         merge_stack(ctx, &source_repo, &workspace, &parents).await?;
     }
     Ok(workspace)
+}
+
+/// The parents `item`'s branch stacks on: the stack owner's for a stack fix
+/// `target`, none for an `onto` item, else its unmerged dependencies'.
+async fn parents(
+    ctx: &DaemonContext,
+    repo: &Repo,
+    item: &QueueItem,
+    target: Option<&StackFix>,
+    base: Option<&str>,
+) -> Result<Vec<StackParent>, ArchonError> {
+    assert!(
+        item.onto.is_none() || item.dependencies.is_empty(),
+        "refused at enqueue: an `onto` item has no dependency"
+    );
+    match (target, &item.onto) {
+        (Some(target), _) => ctx.store.lock().await.stack_parents(&target.owner),
+        (None, Some(_)) => Ok(Vec::new()),
+        (None, None) => super::restack::parents(ctx, item, repo, base).await,
+    }
+}
+
+/// The frozen head of `onto`, fetched when missing, where a new branch of an
+/// `onto` item starts; `None` when `branch` exists already.
+async fn onto_fork(
+    ctx: &DaemonContext,
+    repo: &Repo,
+    onto: &OntoPullRequest,
+    branch: &str,
+) -> Result<Option<String>, ArchonError> {
+    assert!(!branch.is_empty(), "a worktree run has a branch");
+    let (data_dir, path) = (ctx.paths.data_dir.clone(), repo.path.clone());
+    let (onto, branch) = (onto.clone(), branch.to_owned());
+    let head = tokio::task::spawn_blocking(move || -> Result<_, ArchonError> {
+        if crate::worktree::branch_exists(&path, &branch)? {
+            return Ok(None);
+        }
+        super::onto::fetch_head(&data_dir, &path, &onto).map(Some)
+    })
+    .await
+    .map_err(|e| ArchonError::io("onto head fetch task", std::io::Error::other(e)))??;
+    assert!(head.as_deref().is_none_or(stack::is_commit_id));
+    Ok(head)
 }
 
 /// Where a new, unstacked branch of `item` starts: `origin`'s head of `base` in
@@ -538,7 +585,7 @@ async fn merge_stack(
     ctx: &DaemonContext,
     repo: &Repo,
     workspace: &Workspace,
-    parents: &[archon_queue::store::stacks::StackParent],
+    parents: &[StackParent],
 ) -> Result<(), ArchonError> {
     assert!(workspace.path.starts_with(&ctx.paths.worktrees));
     assert!(!workspace.branch.is_empty());

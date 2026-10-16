@@ -50,7 +50,8 @@ to use a model outside that policy.
 `--repo` takes a registered name or id. `--pipeline` can be omitted when
 using a repository, letting archond apply its repository/autonomy defaults.
 Other inputs are `--priority low|normal|high|critical` (default `normal`),
-repeatable `--depends-on <id-or-prefix>`, repeatable `--tag`,
+repeatable `--depends-on <id-or-prefix>`, `--onto <item|number|branch>` (an
+existing pull request to deliver into, frozen at enqueue), repeatable `--tag`,
 `--idempotency-key`, and `--budget-usd`. A repeated enqueue with the same
 idempotency key and arguments returns the original item; conflicting
 arguments are refused.

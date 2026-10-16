@@ -24,6 +24,7 @@ fn request() -> EnqueueInitiative {
 
 fn member(repo: &str) -> InitiativeMember {
     InitiativeMember {
+        onto: None,
         repo: RepoRef(repo.into()),
         brief: format!("Change {repo} to account_id"),
         title: None,

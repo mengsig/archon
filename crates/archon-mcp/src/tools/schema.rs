@@ -307,6 +307,14 @@ pub(super) fn autonomy_change() -> Value {
     })
 }
 
+/// An existing pull request to deliver into, named one way.
+fn onto() -> Value {
+    json!({
+        "type": "object",
+        "description": "PR to deliver into: {item}|{pr}|{branch}",
+    })
+}
+
 fn string_list(description: &str) -> Value {
     json!({
         "type": "array",
@@ -505,6 +513,7 @@ fn enqueue() -> ToolDefinition {
                 "brief": {"type": "string", "description": "All the stage agents get besides the repository: the request's own words, then goal, context, constraints, acceptance criteria."},
                 "priority": priority(),
                 "depends_on": string_list("Items (`qi_…`) that must succeed first, else this one is blocked. Its agents are told their branches and pull requests."),
+                "onto": onto(),
                 "tags": string_list(&format!("Labels for list_queue. `{NOTIFY_TAG}` wakes you when the item succeeds too.")),
                 "model_reasons": model_reasons(),
                 "model_plan": model_plan("Model and effort for the stages you have a reason to choose; Archon fills the rest."),

@@ -375,6 +375,7 @@ async fn a_known_diff_size_never_pools_evidence_from_another_size() {
     partial.0.remove("implement");
     let request = |size: &str| {
         Request::Enqueue(archon_core::protocol::EnqueueRequest {
+            onto: None,
             stage_timeouts: Default::default(),
             repo: Some(archon_core::protocol::RepoRef(common::REPO_NAME.into())),
             pipeline: Some(PIPELINE.into()),

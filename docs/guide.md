@@ -914,6 +914,21 @@ pull request against that branch. Other parents are merged
 in. A parent's merge retargets the child PR; later parent commits are merged
 forward. Conflicts create a fix item on the child branch, visible in the queue.
 
+### Work onto an existing pull request
+
+`onto` names an open pull request an item's change is for, instead of a new
+one: `{item: "qi_…"}` (the pull request that item delivered to), `{pr: 100}`
+or `{branch: "feat/x"}` (the one open pull request of that head branch); the
+CLI takes `queue add --onto <item|number|branch>`, and initiative members
+take it too. `archond` resolves it at enqueue and freezes the pull request's
+identity, head repository, head and base branches and head commit, which
+`get_item`, `queue show` and the orchestrator's briefing show. A closed or
+merged pull request, or one whose head is in a fork, is refused then with the
+reason, as is `onto` together with `depends_on`. The item's branch starts
+from the frozen head commit, and its agents are told to review against it.
+Delivery into the pull request is not there yet: such an item still ships
+through its own branch as any other.
+
 ### Coordinated changes across repositories
 
 Ask for one initiative when a request spans repositories. Its shared contract

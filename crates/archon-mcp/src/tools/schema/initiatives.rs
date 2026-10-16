@@ -3,7 +3,7 @@
 use archon_core::initiative::InitiativeLimits;
 use serde_json::json;
 
-use super::{ToolDefinition, define, object, repo_ref};
+use super::{ToolDefinition, define, object, onto, repo_ref};
 
 pub(super) fn enqueue_initiative() -> ToolDefinition {
     let limits = InitiativeLimits::DEFAULT;
@@ -16,6 +16,7 @@ pub(super) fn enqueue_initiative() -> ToolDefinition {
             "model_plan": {"type": "object", "description": "As in enqueue."},
             "autonomy": {"type": "object", "description": "As in enqueue; an atomic initiative's members merge by hand."},
             "after": {"type": "array", "items": {"type": "integer", "minimum": 0}, "description": "Positions (from 0) of earlier members this one waits for. Members build against the contract at once: wait only for one whose code this one cannot build or test without."},
+            "onto": onto(),
         }),
         &["repo", "brief"],
     );

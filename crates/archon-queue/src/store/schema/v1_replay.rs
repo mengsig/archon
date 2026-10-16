@@ -40,6 +40,7 @@ fn repo(name: &str) -> Repo {
 
 fn item(repo: &Repo, pipeline: &str) -> QueueItem {
     QueueItem {
+        onto: None,
         id: QueueItemId::new(),
         repo: Some(repo.id.clone()),
         pipeline: pipeline.into(),

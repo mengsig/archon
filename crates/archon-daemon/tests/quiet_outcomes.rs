@@ -26,6 +26,7 @@ fn passing(stage: &StageRun) -> StageOutcome {
 
 fn request(title: &str) -> EnqueueRequest {
     EnqueueRequest {
+        onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(PIPELINE.into()),

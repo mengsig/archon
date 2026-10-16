@@ -167,6 +167,7 @@ async fn set_orchestrator(h: &Harness, agent: &str) {
 
 async fn enqueue(h: &Harness, title: &str, autonomy: AutonomyPatch) -> QueueItem {
     let request = EnqueueRequest {
+        onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(PIPELINE.into()),

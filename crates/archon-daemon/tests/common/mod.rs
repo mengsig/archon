@@ -278,6 +278,7 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         model_plan: ModelPlan,
     ) -> Result<QueueItem, ArchonError> {
         let request = EnqueueRequest {
+            onto: None,
             stage_timeouts: Default::default(),
             repo: Some(RepoRef(REPO_NAME.into())),
             pipeline: Some(pipeline.into()),

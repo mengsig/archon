@@ -42,6 +42,10 @@ fn request_value(item: &QueueItem) -> serde_json::Value {
     if let Some(reasons) = &item.model_reasons {
         value["model_reasons"] = serde_json::json!(reasons);
     }
+    // The target as asked: what it resolved to may move between retries.
+    if let Some(onto) = &item.onto {
+        value["onto"] = serde_json::json!(onto.target);
+    }
     value
 }
 

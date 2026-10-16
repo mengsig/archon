@@ -241,6 +241,7 @@ fn archon_daemon_gets_a_private_config_and_data_dir() {
 fn item(state: QueueState, repo: Option<RepoId>, minute: i64) -> QueueItem {
     let at = archon_core::now() + chrono::Duration::minutes(minute);
     QueueItem {
+        onto: None,
         stage_timeouts: Default::default(),
         id: QueueItemId::new(),
         repo,

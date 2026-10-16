@@ -299,6 +299,7 @@ mod tests {
             connected: true,
         };
         let item = QueueItem {
+            onto: None,
             id: QueueItemId::new(),
             repo: None,
             pipeline: "ask".into(),

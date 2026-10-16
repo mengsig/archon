@@ -12,6 +12,7 @@ fn reasons(stage: &str, reason: &str) -> Option<ModelReasons> {
 
 fn enqueue(model_reasons: Option<ModelReasons>) -> Request {
     Request::Enqueue(EnqueueRequest {
+        onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(PIPELINE.into()),

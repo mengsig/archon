@@ -386,6 +386,7 @@ fn queue_item(repo: &Repo) -> QueueItem {
     let mut plan = ModelPlan::default();
     plan.0.insert("implement".into(), vec![choice()]);
     QueueItem {
+        onto: None,
         id: QueueItemId::new(),
         repo: Some(repo.id.clone()),
         pipeline: "direct".into(),

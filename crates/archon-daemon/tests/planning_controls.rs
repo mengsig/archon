@@ -23,6 +23,7 @@ fn reason(stage: &str) -> Option<archon_core::model::ModelReasons> {
 
 fn enqueue(plan: ModelPlanDraft, reasons: Option<archon_core::model::ModelReasons>) -> Request {
     Request::Enqueue(EnqueueRequest {
+        onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(PIPELINE.into()),

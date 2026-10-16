@@ -14,24 +14,31 @@ fn dir() -> (tempfile::TempDir, PathBuf) {
 
 const LIMIT: Duration = Duration::from_secs(20);
 
-/// Whether `pid` still runs: neither gone nor a zombie awaiting its reaper.
+/// Whether `pid` still runs: neither gone, a zombie awaiting its reaper, nor
+/// dead (`X`) while that reaper releases it.
 pub(crate) fn alive(pid: i32) -> bool {
     match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
         Ok(stat) => stat
             .rsplit_once(')')
-            .is_some_and(|(_, rest)| !rest.trim_start().starts_with('Z')),
+            .is_some_and(|(_, rest)| !rest.trim_start().starts_with(['Z', 'X'])),
         Err(_) => rustix::process::Pid::from_raw(pid)
             .is_some_and(|pid| rustix::process::test_kill_process(pid).is_ok()),
     }
 }
 
-/// Wait up to five seconds for `pid` to stop running.
+/// Wait up to five seconds for `pid` to stop running. Once seen ended it
+/// stays so: a later look may catch the reaper mid-release.
 pub(crate) async fn ended(pid: i32) -> bool {
     let deadline = Instant::now() + Duration::from_secs(5);
-    while alive(pid) && Instant::now() < deadline {
+    loop {
+        if !alive(pid) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    !alive(pid)
 }
 
 #[tokio::test]

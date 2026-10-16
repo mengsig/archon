@@ -147,7 +147,8 @@ each run's verified pull request URL into a number-based identity; legacy
 branch-keyed settled entries are rekeyed when the branch maps to exactly one
 pull request, and the rest are asked again. The migration is one-way: a 1.2.5
 `archond` refuses the migrated store. Back up `archon.db` first, and stop the
-1.2.5 `archond` before updating, since the daemon protocol is now 16; see
+1.2.5 `archond` before updating the binary with `archon update`, since the
+daemon protocol is now 16; see
 "Back up before a release that migrates the store" in
 [docs/install.md](docs/install.md).
 

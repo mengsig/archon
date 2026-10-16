@@ -557,6 +557,10 @@ pub struct ProviderInfo {
     pub protocol: String,
     #[serde(default)]
     pub engine: Option<bool>,
+    /// Quota left per usage window; `None` from an aetherd that predates it,
+    /// which leaves routing to the weights alone.
+    #[serde(default)]
+    pub headroom: Option<archon_core::quota::ProviderHeadroom>,
 }
 
 /// The payload of a `subscribed` reply.
@@ -615,6 +619,22 @@ mod tests {
         assert_eq!(agent.scope.unwrap().labels["archon.run"], "prun_1");
         value["scope"]["labels"] = serde_json::json!(["bad"]);
         assert!(serde_json::from_value::<Agent>(value).is_err());
+    }
+
+    #[test]
+    fn provider_headroom_is_optional_and_read_as_aetherd_sends_it() {
+        let old = serde_json::json!({"provider": "codex", "protocol": "codex", "engine": true});
+        let old: ProviderInfo = serde_json::from_value(old).unwrap();
+        assert_eq!(old.headroom, None, "an older aetherd reports no usage");
+        let new = serde_json::json!({"provider": "codex", "protocol": "codex", "headroom": {
+            "windows": [{"name":"primary", "window_minutes":300, "remaining_percent":62,
+                "resets_at":"2030-01-02T15:30:00Z", "resets_in_seconds":900}],
+            "observed_at":"2030-01-02T15:14:30Z", "age_seconds":30, "stale":false}});
+        let new: ProviderInfo = serde_json::from_value(new).unwrap();
+        let headroom = new.headroom.unwrap();
+        assert!(!headroom.stale);
+        assert_eq!(headroom.windows[0].window_minutes, Some(300));
+        assert_eq!(headroom.windows[0].resets_in_seconds, Some(900));
     }
 
     #[test]

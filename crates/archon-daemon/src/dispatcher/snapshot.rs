@@ -41,6 +41,7 @@ pub(super) async fn build(
     for candidate in &mut snapshot.queued {
         envs.read_late(ctx, candidate.repo.as_ref(), true).await?;
         (candidate.first_stage_agents, candidate.gang) = envs.first_stage(candidate);
+        candidate.quota_hold = ctx.quota.hold(&candidate.item);
     }
     for spawn in &snapshot.pending_spawns {
         envs.read_late(ctx, spawn.repo.as_ref(), false).await?;
@@ -300,6 +301,7 @@ mod tests {
             deps: DependencyState::AllSucceeded,
             first_stage_agents: 0,
             gang: false,
+            quota_hold: None,
         }
     }
 

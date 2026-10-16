@@ -109,6 +109,7 @@ async fn prepare_member(
         stage_timeouts: Default::default(),
         fresh_retries: 0,
         routed_provider,
+        provider_switch: None,
         initiative: Some(initiative.id.clone()),
         state: QueueState::Queued,
         created_at: initiative.created_at,

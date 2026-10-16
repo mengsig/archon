@@ -510,6 +510,7 @@ fn item_in(state: QueueState, updated_secs_ago: i64) -> QueueItem {
         stage_timeouts: Default::default(),
         fresh_retries: 0,
         routed_provider: None,
+        provider_switch: None,
         initiative: None,
         state,
         created_at: at,

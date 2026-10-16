@@ -70,6 +70,7 @@ pub(super) async fn enqueue(
         origin: req.origin.clone(),
         fresh_retries: 0,
         routed_provider,
+        provider_switch: None,
         initiative: None,
         state: QueueState::Queued,
         created_at: now,
@@ -680,9 +681,10 @@ pub(crate) async fn routed_provider(
         return Ok(item.held.map(str::to_owned));
     };
     let catalog = learned::catalog(ctx).await?;
+    let quota = crate::quota::current(ctx, Some(&weights)).await;
     let policy = env.policy(&ctx.config);
     Ok(knobs::item_provider(
-        Some(&weights),
+        (Some(&weights), quota.as_ref()),
         &catalog,
         &policy,
         item,
@@ -701,8 +703,9 @@ pub(super) async fn resolve_draft(
     let catalog = learned::catalog(ctx).await?;
     let policy = env.policy(&ctx.config);
     let weights = env.provider_weights(&ctx.config);
-    let tiers =
-        knobs::TierScope::new(&ctx.config, &policy, &catalog).routed(item.by(weights.as_ref()));
+    let quota = crate::quota::current(ctx, weights.as_ref()).await;
+    let route = item.by(weights.as_ref(), quota.as_ref());
+    let tiers = knobs::TierScope::new(&ctx.config, &policy, &catalog).routed(route);
     knobs::resolve_plan(spec, draft, reasons, tiers)
 }
 
@@ -720,8 +723,9 @@ pub(super) async fn filled_plan(
     let policy = env.policy(&ctx.config);
     let catalog = learned::catalog(ctx).await?;
     let weights = env.provider_weights(&ctx.config);
-    let tiers =
-        knobs::TierScope::new(&ctx.config, &policy, &catalog).routed(item.by(weights.as_ref()));
+    let quota = crate::quota::current(ctx, weights.as_ref()).await;
+    let route = item.by(weights.as_ref(), quota.as_ref());
+    let tiers = knobs::TierScope::new(&ctx.config, &policy, &catalog).routed(route);
     let max_tier = env.max_default_tier(&ctx.config);
     let fallback = knobs::default_choice(&ctx.config, tiers, max_tier, spec);
     let store = ctx.store.lock().await;

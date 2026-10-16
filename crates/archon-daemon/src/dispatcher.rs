@@ -74,6 +74,12 @@ pub async fn dispatch_once(ctx: &DaemonContext) -> Result<DispatchPlan, ArchonEr
         disk_hold::check(ctx).await?;
     }
     keep_error(&mut first_error, executor::sweep_live_stages(ctx).await)?;
+    if crate::quota::wanted(ctx)
+        && let Err(error) = crate::quota::refresh(ctx).await
+    {
+        tracing::warn!(%error, "provider quota refresh failed; using the last reading");
+    }
+    crate::quota::refresh_holds(ctx).await?;
     let mut merged = DispatchPlan::default();
     let mut last = None;
     for _ in 0..MAX_PASSES {

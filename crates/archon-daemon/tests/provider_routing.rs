@@ -1,16 +1,24 @@
 //! Provider weights: an item holds one provider for its tier-only choices,
 //! picked by weight, through dispatch and retries; a stage's capability floor
 //! moves it off that provider; with no weights the orchestrator's provider
-//! wins as before.
+//! wins as before. Quota headroom scales the weights: an item waits while
+//! every provider is out and a running one moves off a provider that ran out.
 
 mod common;
 
+use archon_core::Timestamp;
 use archon_core::config::Config;
 use archon_core::model::{ModelPlan, ModelPlanDraft};
 use archon_core::model_tier::{CatalogModel, ModelCatalog, Tier};
-use archon_core::protocol::{EnqueueRequest, Reply, RepoRef, Request};
+use archon_core::protocol::{
+    DaemonStatus, EnqueueRequest, Reply, RepoRef, Request, WaitingReason, WaitingReasonCode,
+};
+use archon_core::provider_route::ProviderRoute;
 use archon_core::queue::{QueueItem, QueueState};
-use common::{Harness, PIPELINE, REPO_NAME};
+use archon_core::quota::{ProviderHeadroom, QuotaWindow};
+use archon_daemon::quota::Reading;
+use chrono::TimeDelta;
+use common::{Harness, PIPELINE, REPO_NAME, completed};
 
 const ROUTED: &str = "routed";
 const ROUTED_TOML: &str = r#"[pipeline]
@@ -267,4 +275,200 @@ async fn a_floor_no_weighted_provider_reaches_is_refused_not_lowered() {
     );
     let lowered = enqueue(&h, ROUTED, "lowered", tier_plan()).await;
     assert_eq!(providers(&lowered.model_plan), expected("codex", "codex"));
+}
+
+/// A fresh five-hour window with `remaining` percent left, resetting `in_`
+/// from now.
+fn window(remaining: u64, in_: TimeDelta) -> ProviderHeadroom {
+    ProviderHeadroom {
+        windows: vec![QuotaWindow {
+            name: "5h".into(),
+            window_minutes: Some(300),
+            remaining_percent: remaining,
+            resets_at: Some(archon_core::now() + in_),
+            resets_in_seconds: None,
+        }],
+        observed_at: Some(archon_core::now()),
+        age_seconds: Some(0),
+        stale: false,
+    }
+}
+
+/// Aetherd's answer, read `ago`.
+fn read(h: &Harness, ago: TimeDelta, providers: Vec<(&str, ProviderHeadroom)>) {
+    let providers = providers
+        .into_iter()
+        .map(|(p, r)| (p.to_owned(), r))
+        .collect();
+    h.ctx.quota.set_reading(Reading {
+        read_at: archon_core::now() - ago,
+        providers,
+    });
+}
+
+async fn status(h: &Harness) -> DaemonStatus {
+    match h.cli(Request::Status(Default::default())).await {
+        Ok(Reply::Status(status)) => *status,
+        other => panic!("status replied {other:?}"),
+    }
+}
+
+fn waiting_reason(status: &DaemonStatus, item: &QueueItem) -> WaitingReason {
+    let row = status
+        .waiting_items
+        .iter()
+        .find(|row| row.item.id == item.id);
+    let reason = row.and_then(|row| row.waiting_reason.clone());
+    reason.unwrap_or_else(|| panic!("{} waits: {status:?}", item.id))
+}
+
+fn minute(at: Timestamp) -> String {
+    at.format("%Y-%m-%d %H:%M UTC").to_string()
+}
+
+#[tokio::test]
+async fn with_every_provider_out_an_item_waits_for_the_earliest_reset_then_starts() {
+    let h = harness(weighted(&[("claude-code", 7), ("codex", 3)])).await;
+    let codex_reset = archon_core::now() + TimeDelta::minutes(40);
+    // Claude keeps 10%, under the orchestrator's 15% reserve; Codex is spent.
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(10, TimeDelta::hours(2))),
+            ("codex", window(0, TimeDelta::minutes(40))),
+        ],
+    );
+    let item = enqueue(&h, ROUTED, "held", tier_plan()).await;
+    h.dispatch().await;
+    assert_eq!(h.state(&item.id).await, QueueState::Queued);
+    assert!(h.stages(&item.id).await.is_empty(), "nothing spawned");
+    let now = status(&h).await;
+    let reason = waiting_reason(&now, &item);
+    assert_eq!(reason.code, WaitingReasonCode::ProviderQuota);
+    assert!(reason.message.contains(&minute(codex_reset)), "{reason:?}");
+    let quota = now.quota.expect("status shows the reading");
+    let claude = quota
+        .providers
+        .iter()
+        .find(|p| p.provider == "claude-code")
+        .unwrap();
+    assert_eq!((claude.headroom, claude.reserve_percent), (Some(0.0), 15));
+    assert!(claude.next_reset.is_some());
+
+    let other = enqueue(&h, PIPELINE, "explicit", common::plan().into()).await;
+    h.dispatch().await;
+    assert_eq!(h.stages(&other.id).await.len(), 1, "named models start");
+
+    // The same reading once Codex's window has reset.
+    read(
+        &h,
+        TimeDelta::minutes(1),
+        vec![
+            ("claude-code", window(10, TimeDelta::hours(2))),
+            ("codex", window(0, TimeDelta::seconds(-10))),
+        ],
+    );
+    h.dispatch().await;
+    let stages = h.stages(&item.id).await;
+    assert_eq!(stages.len(), 1, "the implementer starts on reset");
+    assert_eq!(stages[0].choice.model.provider, "codex");
+    assert_eq!(
+        h.item(&item.id).await.routed_provider.as_deref(),
+        Some("codex")
+    );
+}
+
+#[tokio::test]
+async fn a_running_item_s_next_stages_move_off_a_spent_provider_and_get_item_says_why() {
+    let h = harness(weighted(&[("claude-code", 1), ("codex", 1)])).await;
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(80, TimeDelta::hours(4))),
+            ("codex", window(0, TimeDelta::hours(1))),
+        ],
+    );
+    let item = enqueue(&h, ROUTED, "moves", tier_plan()).await;
+    assert_eq!(item.routed_provider.as_deref(), Some("claude-code"));
+    h.dispatch().await;
+    let implement = h.stages(&item.id).await;
+    assert_eq!(implement[0].choice.model.provider, "claude-code");
+
+    read(
+        &h,
+        TimeDelta::zero(),
+        vec![
+            ("claude-code", window(10, TimeDelta::hours(3))),
+            ("codex", window(90, TimeDelta::hours(4))),
+        ],
+    );
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let reviews: Vec<_> = (h.stages(&item.id).await.into_iter())
+        .filter(|s| s.stage_id == "review")
+        .collect();
+    assert_eq!(reviews.len(), 2, "both reviewers start");
+    assert!(
+        reviews.iter().all(|s| s.choice.model.provider == "codex"),
+        "{reviews:?}"
+    );
+    let detail = match h
+        .cli(Request::GetItem {
+            item: item.id.clone(),
+        })
+        .await
+    {
+        Ok(Reply::ItemDetail(detail)) => detail,
+        other => panic!("get_item replied {other:?}"),
+    };
+    assert_eq!(detail.item.routed_provider.as_deref(), Some("codex"));
+    let switch = detail.item.provider_switch.expect("the switch is recorded");
+    assert!(
+        switch.contains("stage review moved from claude-code to codex"),
+        "{switch}"
+    );
+    assert!(switch.contains("15% reserve"), "{switch}");
+    let review = detail.item.model_plan.choices_for("review").unwrap();
+    assert!(
+        review.iter().all(|c| c.model.provider == "codex"),
+        "{review:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_aetherd_without_headroom_or_with_a_stale_one_routes_by_weight_alone() {
+    let config = weighted(&[("claude-code", 7), ("codex", 3)]);
+    let weights = config.models.provider_weights(&Default::default()).unwrap();
+    let h = harness(config).await;
+    let (catalog, policy) = (catalog(), Default::default());
+    let mut stale = window(0, TimeDelta::hours(1));
+    stale.stale = true;
+    for reading in [vec![], vec![("codex", stale)]] {
+        read(&h, TimeDelta::zero(), reading);
+        for n in 0..12 {
+            let item = enqueue(&h, ROUTED, &format!("unknown {n}"), tier_plan()).await;
+            let route = ProviderRoute {
+                weights: &weights,
+                key: item.id.as_str(),
+                held: None,
+                quota: None,
+            };
+            let by_weight = catalog.item_provider(route, &policy);
+            assert_eq!(
+                item.routed_provider.as_deref(),
+                by_weight,
+                "as without quota"
+            );
+        }
+        let now = status(&h).await;
+        assert!(
+            now.waiting_items.iter().all(|row| row
+                .waiting_reason
+                .as_ref()
+                .is_none_or(|r| r.code != WaitingReasonCode::ProviderQuota)),
+            "nothing waits for quota"
+        );
+    }
 }

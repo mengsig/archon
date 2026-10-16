@@ -60,6 +60,7 @@ impl Fx {
             deps: DependencyState::AllSucceeded,
             first_stage_agents: 1,
             gang: false,
+            quota_hold: None,
         }
     }
 
@@ -863,6 +864,44 @@ fn waiting_reason_precedence_matches_admission_holds() {
     assert_eq!(reason(&s), Code::RepoPause);
     s.pause.repos.clear();
     assert_eq!(reason(&s), Code::PipelinePause);
+}
+
+#[test]
+fn a_quota_held_item_waits_while_others_start_and_says_why() {
+    use archon_core::protocol::WaitingReasonCode as Code;
+    use archon_core::quota::QuotaHold;
+    let fx = Fx::new();
+    let mut s = fx.base();
+    s.queued = vec![
+        fx.item(0, 0, Priority::High, 0),
+        fx.item(1, 1, Priority::Normal, 1),
+    ];
+    s.queued[0].quota_hold = Some(QuotaHold {
+        stage: "implement".into(),
+        until: Some("2026-10-16T15:00:00Z".parse().unwrap()),
+    });
+    let plan = plan_dispatch(&s);
+    assert_eq!(
+        plan.start,
+        vec![fx.items[1].clone()],
+        "the held item is skipped"
+    );
+    assert_eq!(plan.held_by, Some(Hold::ProviderQuota));
+    let reasons = archon_queue::dispatch::waiting_reasons(&s);
+    assert_eq!(reasons[&fx.items[0]], Code::ProviderQuota);
+    assert_eq!(reasons[&fx.items[1]], Code::NextInLine);
+    s.pause.global = true;
+    let reasons = archon_queue::dispatch::waiting_reasons(&s);
+    assert_eq!(
+        reasons[&fx.items[0]],
+        Code::GlobalPause,
+        "a global hold names itself first"
+    );
+    s.pause.global = false;
+    s.queued[0].quota_hold = None;
+    let plan = plan_dispatch(&s);
+    assert_eq!(plan.start.len(), 2, "it starts once a provider has quota");
+    assert_eq!(plan.held_by, None);
 }
 
 #[test]

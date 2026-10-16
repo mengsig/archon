@@ -17,6 +17,7 @@ use crate::model_tier::Tier;
 use crate::policy::ModelPolicy;
 use crate::provider_route::{DEFAULT_PROVIDER_WEIGHT, ProviderWeights};
 use crate::queue::Caps;
+use crate::quota::Reserves;
 use crate::repo::ShipMode;
 
 pub const CONFIG_FILE_NAME: &str = "config.toml";
@@ -232,6 +233,30 @@ pub struct ModelsConfig {
     /// The weight of a provider `provider_weights` leaves out
     /// ([`DEFAULT_PROVIDER_WEIGHT`] when unset).
     pub default_provider_weight: Option<u32>,
+    /// Quota stage routing leaves to the orchestrator; global only.
+    pub reserve_percent: Option<ReservePercent>,
+    /// Providers the operator also uses by hand, which keep the
+    /// `interactive` reserve; global only.
+    pub interactive_providers: Vec<String>,
+}
+
+/// Percent of each quota window held back from tier-only stage routing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ReservePercent {
+    /// On the orchestrator's provider.
+    pub orchestrator: u8,
+    /// On each of `interactive_providers`.
+    pub interactive: u8,
+}
+
+impl Default for ReservePercent {
+    fn default() -> Self {
+        Self {
+            orchestrator: 15,
+            interactive: 10,
+        }
+    }
 }
 
 /// Defaults stop below the frontier tier unless the operator raises them.
@@ -258,19 +283,53 @@ impl ModelsConfig {
         Some(ProviderWeights::new(table, default))
     }
 
-    /// `provider_weights` names providers, not models.
+    /// `provider_weights` and `interactive_providers` name providers, not
+    /// models, and reserves are percentages.
     pub fn check_weights(&self) -> Result<(), ArchonError> {
-        let bad = self
-            .provider_weights
-            .keys()
-            .find(|p| p.trim().is_empty() || p.contains('/'));
-        match bad {
-            Some(bad) => Err(ArchonError::Config(format!(
-                "models.provider_weights key {bad:?} must name a provider, such as \"codex\", \
-                 not a model"
-            ))),
-            None => Ok(()),
+        let named = [
+            (
+                "provider_weights key",
+                self.provider_weights.keys().collect::<Vec<_>>(),
+            ),
+            (
+                "interactive_providers entry",
+                self.interactive_providers.iter().collect(),
+            ),
+        ];
+        for (what, providers) in named {
+            if let Some(bad) = providers
+                .iter()
+                .find(|p| p.trim().is_empty() || p.contains('/'))
+            {
+                return Err(ArchonError::Config(format!(
+                    "models.{what} {bad:?} must name a provider, such as \"codex\", not a model"
+                )));
+            }
         }
+        let reserve = self.reserve_percent.unwrap_or_default();
+        if reserve.orchestrator > 100 || reserve.interactive > 100 {
+            return Err(ArchonError::Config(
+                "models.reserve_percent values are percentages, 0 to 100".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// The quota held back from stage routing, as the global file sets it.
+    pub fn reserves(&self, orchestrator_provider: &str) -> Reserves {
+        assert!(
+            !orchestrator_provider.is_empty(),
+            "the orchestrator has a provider"
+        );
+        let percent = self.reserve_percent.unwrap_or_default();
+        let reserves = Reserves {
+            orchestrator_provider: orchestrator_provider.to_owned(),
+            orchestrator: percent.orchestrator,
+            interactive_providers: self.interactive_providers.iter().cloned().collect(),
+            interactive: percent.interactive,
+        };
+        debug_assert!(reserves.orchestrator <= 100 && reserves.interactive <= 100);
+        reserves
     }
 
     /// The global cap on a default's tier, lowered by `repo`'s.
@@ -829,6 +888,15 @@ impl RepoConfig {
         let path = crate::paths::repo_archon_dir(repo_root).join(CONFIG_FILE_NAME);
         let config: Self = read_toml(&path)?.unwrap_or_default();
         config.models.check_weights()?;
+        if config.models.reserve_percent.is_some()
+            || !config.models.interactive_providers.is_empty()
+        {
+            return Err(ArchonError::Config(format!(
+                "{}: models.reserve_percent and models.interactive_providers are set in \
+                 Archon's global config only",
+                path.display()
+            )));
+        }
         Ok(config)
     }
 
@@ -964,6 +1032,32 @@ mod tests {
             toml::from_str("[models]\nprovider_weights = { \"codex/sol\" = 1 }").unwrap();
         let refused = model.validate().unwrap_err().to_string();
         assert!(refused.contains("must name a provider"), "{refused}");
+    }
+
+    #[test]
+    fn quota_reserves_default_to_fifteen_and_ten_and_stay_global() {
+        let defaults = ModelsConfig::default().reserves("claude-code");
+        assert_eq!((defaults.orchestrator, defaults.interactive), (15, 10));
+        assert_eq!(defaults.percent("codex"), 0);
+        let set: Config = toml::from_str(
+            "[models]\nreserve_percent = { orchestrator = 20 }\ninteractive_providers = [\"codex\"]",
+        )
+        .unwrap();
+        set.validate().unwrap();
+        let reserves = set.models.reserves("claude-code");
+        assert_eq!(
+            (reserves.percent("claude-code"), reserves.percent("codex")),
+            (20, 10)
+        );
+        let over: Config =
+            toml::from_str("[models]\nreserve_percent = { interactive = 101 }").unwrap();
+        assert!(over.validate().is_err(), "a reserve is a percentage");
+        let dir = tempfile::tempdir().unwrap();
+        let file = crate::paths::repo_archon_dir(dir.path()).join(CONFIG_FILE_NAME);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "[models]\nreserve_percent = { orchestrator = 0 }\n").unwrap();
+        let refused = RepoConfig::load(dir.path()).unwrap_err().to_string();
+        assert!(refused.contains("global config only"), "{refused}");
     }
 
     #[test]

@@ -140,6 +140,9 @@ fn link_lines(out: &mut String, status: &DaemonStatus) {
     if let Some(github) = &status.github {
         let _ = writeln!(out, "github: {}", github_line(github));
     }
+    for provider in status.quota.iter().flat_map(|q| &q.providers) {
+        let _ = writeln!(out, "quota {}", sanitize_line(&provider.describe()));
+    }
     if let Some(disk) = &status.disk {
         let _ = writeln!(out, "disk: {}", disk_line(disk));
         for usage in &disk.storage {
@@ -802,6 +805,7 @@ pub(crate) mod tests {
             waiting_total: 0,
             waiting_next_offset: None,
             health: None,
+            quota: None,
         }
     }
 
@@ -866,6 +870,33 @@ pub(crate) mod tests {
             "{text}"
         );
         assert!(text.contains("25 more waiting item(s) not shown"), "{text}");
+    }
+
+    #[test]
+    fn status_shows_each_provider_s_quota_headroom() {
+        let mut up = status_with(AetherLinkStatus::Disconnected {
+            error: "x".into(),
+            retry_at: None,
+        });
+        assert!(!status(&up, &RepoNames::new()).contains("quota"));
+        let reset = "2026-10-16T18:30:00Z".parse().unwrap();
+        up.quota = Some(archon_core::protocol::QuotaStatus {
+            as_of: archon_core::now(),
+            providers: vec![archon_core::protocol::ProviderQuotaStatus {
+                provider: "codex".into(),
+                headroom: Some(1.25),
+                reserve_percent: 0,
+                next_reset: Some(reset),
+                windows: vec![],
+            }],
+        });
+        let text = status(&up, &RepoNames::new());
+        assert!(
+            text.contains(
+                "\nquota codex: headroom 1.25, reserve 0%, next reset 2026-10-16 18:30 UTC\n"
+            ),
+            "{text}"
+        );
     }
 
     #[test]

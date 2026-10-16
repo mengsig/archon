@@ -4,6 +4,7 @@
 //! "result":{"Ok":{"reply":"...","data":...}}}` or `{"frame":"feed",...}`.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
 
@@ -959,6 +960,65 @@ pub struct DaemonStatus {
     /// archond that asked Aether while answering.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health: Option<StatusHealth>,
+    /// Each provider's quota headroom for stage routing, as archond last
+    /// read it from Aether. `None` before a reading or from an older archond.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota: Option<QuotaStatus>,
+}
+
+/// `DaemonStatus::quota`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QuotaStatus {
+    /// When archond read it from Aether.
+    pub as_of: Timestamp,
+    pub providers: Vec<ProviderQuotaStatus>,
+}
+
+/// One provider's quota as tier-only stage routing scores it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProviderQuotaStatus {
+    pub provider: String,
+    /// What its weight is multiplied by, 0 to 2; `None` while its usage is
+    /// unknown or stale, which routes by weight alone.
+    pub headroom: Option<f64>,
+    /// Percent of each window held back for the orchestrator.
+    pub reserve_percent: u8,
+    /// The earliest reset among its windows still ahead.
+    pub next_reset: Option<Timestamp>,
+    pub windows: Vec<crate::quota::QuotaWindow>,
+}
+
+impl ProviderQuotaStatus {
+    /// `claude: headroom 0.40, reserve 15%, next reset …; 5h 32% left`, as
+    /// `status` and `queue_status` show it.
+    pub fn describe(&self) -> String {
+        assert!(self.reserve_percent <= 100, "a reserve is a percentage");
+        let headroom = self
+            .headroom
+            .map_or("unknown (routes by weight)".to_owned(), |h| {
+                assert!(
+                    (0.0..=crate::quota::MAX_HEADROOM).contains(&h),
+                    "headroom is clamped"
+                );
+                format!("{h:.2}")
+            });
+        let reset = self.next_reset.map_or("none reported".to_owned(), |at| {
+            at.format("%Y-%m-%d %H:%M UTC").to_string()
+        });
+        let mut line = format!(
+            "{}: headroom {headroom}, reserve {}%, next reset {reset}",
+            self.provider, self.reserve_percent
+        );
+        for (n, window) in self.windows.iter().enumerate() {
+            let lead = if n == 0 { "; " } else { ", " };
+            let _ = write!(
+                line,
+                "{lead}{} {}% left",
+                window.name, window.remaining_percent
+            );
+        }
+        line
+    }
 }
 
 /// `DaemonStatus::health`. archond asks Aether off the request path and
@@ -1164,6 +1224,8 @@ pub enum WaitingReasonCode {
     NextInLine,
     /// Dependencies recovered, but the item is still explicitly blocked.
     Blocked,
+    /// Every provider that meets one of its stages' floors is out of quota.
+    ProviderQuota,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1644,6 +1706,7 @@ mod tests {
             origin: None,
             fresh_retries: 0,
             routed_provider: None,
+            provider_switch: None,
             initiative: None,
             state: crate::queue::QueueState::Queued,
             created_at: crate::now(),

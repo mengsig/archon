@@ -477,6 +477,7 @@ pub fn context(
     DaemonContext {
         storage: Default::default(),
         status_probes: Default::default(),
+        quota: Default::default(),
         config,
         paths,
         store: Mutex::new(store),

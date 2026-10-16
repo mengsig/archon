@@ -21,6 +21,7 @@ mod operator_commands;
 pub mod ops;
 pub mod prune;
 pub mod pump;
+pub mod quota;
 pub mod reports;
 pub mod server;
 mod standby;
@@ -318,6 +319,7 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
     let ctx = DaemonContext {
         storage: Default::default(),
         status_probes: Default::default(),
+        quota: Default::default(),
         config,
         paths,
         store: Mutex::new(store),

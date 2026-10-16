@@ -31,6 +31,23 @@ entries and default override the global ones; the rest of the table stays.
 An exact `model` or a named `provider` always wins. `archon cost --by provider`
 and `model_evidence` show the share each provider got.
 
+With weights set, Archon also reads each provider's usage from Aether (at most
+every 30 seconds) and routes by weight × headroom. A window's headroom is what
+is left above the reserve per second until it resets, over the even rate
+`100 / window length`, clamped to 0..2; a provider's is its tightest window's.
+So 30% left resetting in 10 minutes outscores 30% left for five days, and a
+nearly spent provider gets almost nothing whatever its weight. `reserve_percent`
+holds back part of every window for the orchestrator (on its own provider) and
+for the providers named in `interactive_providers`; stages never spend it. A
+provider with no report, a stale one, or a reset already passed keeps its plain
+weight. An item keeps its provider until that one has no headroom left; its
+stages not yet started then move to the best provider that meets their floor,
+and `get_item` records the switch. While every provider a stage may use is out,
+the item waits (`provider_quota`, naming the earliest reset) and starts once
+one resets; a stage is never sent below its floor. `status` and `queue_status`
+show each provider's headroom, reserve and next reset. Reserves and interactive
+providers are global settings only.
+
 ```toml
 [models]                       # optional: leave it out to allow every ready model
 allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-sol"]
@@ -38,6 +55,8 @@ max_effort = "high"
 # max_default_tier = "strong"  # the highest tier a default picks (the default)
 # provider_weights = { "claude-code" = 7, codex = 3 }   # route tier-only choices by share
 # default_provider_weight = 1  # a provider the table leaves out (the default; 0 = never)
+# reserve_percent = { orchestrator = 15, interactive = 10 }   # quota stages leave (the defaults)
+# interactive_providers = ["claude-code"]   # providers someone uses by hand; global only
 
 [limits]
 max_parallel_agents = 8        # the hard cap on running stage agents (the default)

@@ -19,9 +19,9 @@ use archon_core::ports::{SpawnRequest, SpawnedAgent};
 use archon_core::queue::QueueItem;
 use archon_core::repo::Repo;
 use archon_core::run::{PipelineRun, StageOutcome, StageRun, StageState};
-use archon_pipeline::SpawnPlan;
 use archon_pipeline::contract;
 use archon_pipeline::spec::MAX_TIMEOUT_MINUTES;
+use archon_pipeline::{PipelineSpec, SpawnPlan};
 use archon_queue::Store;
 use serde::{Deserialize, Serialize};
 
@@ -274,9 +274,10 @@ pub(super) async fn reserve(
     if queue.is_empty() {
         table.pending.remove(run);
     }
+    let spec = table.drivers.get(run).map(|driver| driver.spec().clone());
     let reserved = {
         let mut store = ctx.store.lock().await;
-        reserve_plans(ctx, &mut store, run, plans)?
+        reserve_plans(ctx, &mut store, (run, spec.as_deref()), plans)?
     };
     match reserved {
         Ok(ids) => Ok(FollowUp {
@@ -290,22 +291,27 @@ pub(super) async fn reserve(
     }
 }
 
+/// `spec` is the run's pipeline, `None` once its driver is gone; with it,
+/// stages bound for a provider out of quota move first.
 fn reserve_plans(
     ctx: &DaemonContext,
     store: &mut Store,
-    run_id: &PipelineRunId,
-    plans: Vec<SpawnPlan>,
+    (run_id, spec): (&PipelineRunId, Option<&PipelineSpec>),
+    mut plans: Vec<SpawnPlan>,
 ) -> Result<Result<Vec<StageRunId>, Exhausted>, ArchonError> {
     let run = store.run(run_id)?;
     if run.state.is_terminal() || plans.is_empty() {
         return Ok(Ok(Vec::new()));
     }
-    let item = store.item(&run.item)?;
+    let mut item = store.item(&run.item)?;
     let repo = item
         .repo
         .as_ref()
         .map(|id| store.repo(&resolve::repo_ref(id)))
         .transpose()?;
+    if let Some(spec) = spec {
+        crate::quota::reroute_spawns(ctx, store, (&mut item, spec), &mut plans, repo.as_ref())?;
+    }
     let estimates = ctx.config.limits.count_estimated_cost;
     let budget = budget_left(ctx, store, &item, estimates)?;
     if let Some(left) = budget.filter(|left| *left <= 0.0) {

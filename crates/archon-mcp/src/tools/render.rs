@@ -20,8 +20,8 @@ use archon_core::model::{Effort, ModelPlan, ModelReasons};
 use archon_core::notify::Question;
 use archon_core::policy::ModelPolicy;
 use archon_core::protocol::{
-    AetherLinkStatus, DaemonStatus, DiskStatus, ItemDetail, Reply, ReportPublished, StatusHealth,
-    gib,
+    AetherLinkStatus, DaemonStatus, DiskStatus, ItemDetail, QuotaStatus, Reply, ReportPublished,
+    StatusHealth, gib,
 };
 use archon_core::queue::{Caps, QueueItem, QueueState};
 use archon_core::repo::Repo;
@@ -271,6 +271,9 @@ fn item_detail(detail: &ItemDetail) -> String {
             text,
             "\nRouted provider: {provider} (tier-only choices, by provider weights)"
         );
+    }
+    if let Some(switch) = &item.provider_switch {
+        let _ = write!(text, "\nProvider switch: {switch}");
     }
     if !item.stage_timeouts.is_empty() {
         let timeouts: Vec<String> = (item.stage_timeouts.iter())
@@ -678,7 +681,22 @@ fn daemon_status(status: &DaemonStatus) -> String {
         status.github.as_ref().map_or(String::new(), github_text),
         status.disk.as_ref().map_or(String::new(), disk_text),
         upkeep_text(status)
-    ) + &stale_text(status.health.as_ref())
+    ) + &quota_text(status.quota.as_ref())
+        + &stale_text(status.health.as_ref())
+}
+
+/// Each provider's quota headroom, reserve and next reset, as Aether last
+/// reported them.
+pub(super) fn quota_text(quota: Option<&QuotaStatus>) -> String {
+    let Some(quota) = quota.filter(|q| !q.providers.is_empty()) else {
+        return String::new();
+    };
+    let providers: Vec<String> = quota.providers.iter().map(|p| p.describe()).collect();
+    format!(
+        "\nProvider quota as of {}: {}.",
+        quota.as_of.to_rfc3339(),
+        providers.join(" | ")
+    )
 }
 
 /// The sections that show Aether's last answer rather than its latest.

@@ -139,6 +139,8 @@ pub struct DaemonContext {
     pub collecting: crate::gc::Collecting,
     /// The operator's upgrade or restart, and the versions `status` shows.
     pub ops: crate::ops::OpsState,
+    /// Aether's last provider quota reading and the holds drawn from it.
+    pub quota: crate::quota::QuotaCache,
 }
 
 impl DaemonContext {

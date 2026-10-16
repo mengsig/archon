@@ -258,6 +258,7 @@ fn item(state: QueueState, repo: Option<RepoId>, minute: i64) -> QueueItem {
         origin: None,
         fresh_retries: 0,
         routed_provider: None,
+        provider_switch: None,
         initiative: None,
         created_at: at,
         updated_at: at,

@@ -126,6 +126,7 @@ impl WaitingView {
                 "archon gc".into(),
             ),
             Code::Capacity => self.capacity(store, item)?,
+            Code::ProviderQuota => self.provider_quota(item),
             Code::AetherDisconnected => (
                 "Dispatch held: Aether disconnected".into(),
                 "archon doctor".into(),
@@ -143,6 +144,35 @@ impl WaitingView {
                 unreachable!("operator waits are handled before dispatch reasons")
             }
         })
+    }
+
+    /// The stage no provider has quota for, and the earliest reset.
+    fn provider_quota(&self, item: &QueueItem) -> (String, String) {
+        let (_, index) = self.reasons[&item.id];
+        let candidate = &self.snapshot.queued[index];
+        assert_eq!(
+            candidate.item, item.id,
+            "the reason indexes the item's candidate"
+        );
+        let hold = candidate
+            .quota_hold
+            .as_ref()
+            .expect("a provider quota reason names its hold");
+        let reset = hold
+            .until
+            .map_or("no provider reported a reset".into(), |at| {
+                format!("the earliest reset is {}", at.format("%Y-%m-%d %H:%M UTC"))
+            });
+        (
+            format!(
+                "Waiting for provider quota: every provider stage {} may use is out ({reset})",
+                hold.stage
+            ),
+            format!(
+                "It starts once a provider has quota again; or name a provider or model for {} with update_item",
+                item.id
+            ),
+        )
     }
 
     fn capacity(&self, store: &Store, item: &QueueItem) -> Result<(String, String), ArchonError> {
@@ -285,6 +315,7 @@ mod tests {
             stage_timeouts: Default::default(),
             fresh_retries: 0,
             routed_provider: None,
+            provider_switch: None,
             initiative: None,
             state: QueueState::Queued,
             created_at: now,

@@ -274,6 +274,11 @@ impl RunDriver {
         self
     }
 
+    /// The pipeline the run follows, with its stages' tier floors.
+    pub fn spec(&self) -> &Arc<PipelineSpec> {
+        &self.spec
+    }
+
     /// The stages that wait for the operator once they pass.
     pub fn gates(&self) -> &OperatorGates {
         &self.gates

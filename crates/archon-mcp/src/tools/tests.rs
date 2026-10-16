@@ -573,6 +573,7 @@ pub(super) fn item(state: QueueState) -> QueueItem {
         stage_timeouts: Default::default(),
         fresh_retries: 0,
         routed_provider: None,
+        provider_switch: None,
         initiative: None,
         state,
         created_at: archon_core::now(),
@@ -633,6 +634,49 @@ fn the_status_text_says_when_budgets_are_off() {
         "{off}"
     );
     assert!(!off.contains("daily budget"), "{off}");
+}
+
+fn provider_quota(
+    provider: &str,
+    headroom: Option<f64>,
+) -> archon_core::protocol::ProviderQuotaStatus {
+    let reset = "2026-10-16T18:30:00Z".parse().unwrap();
+    archon_core::protocol::ProviderQuotaStatus {
+        provider: provider.into(),
+        headroom,
+        reserve_percent: 15,
+        next_reset: headroom.map(|_| reset),
+        windows: vec![archon_core::quota::QuotaWindow {
+            name: "5h".into(),
+            window_minutes: Some(300),
+            remaining_percent: 12,
+            resets_at: Some(reset),
+            resets_in_seconds: None,
+        }],
+    }
+}
+
+#[test]
+fn the_status_text_shows_each_provider_s_headroom_reserve_and_next_reset() {
+    assert_eq!(render::quota_text(None), "");
+    let quota = archon_core::protocol::QuotaStatus {
+        as_of: archon_core::now(),
+        providers: vec![
+            provider_quota("claude-code", Some(0.0)),
+            provider_quota("gemini", None),
+        ],
+    };
+    let text = render::quota_text(Some(&quota));
+    assert!(
+        text.contains(
+            "claude-code: headroom 0.00, reserve 15%, next reset 2026-10-16 18:30 UTC; 5h 12% left"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("gemini: headroom unknown (routes by weight)"),
+        "{text}"
+    );
 }
 
 #[test]

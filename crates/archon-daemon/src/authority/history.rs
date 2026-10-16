@@ -77,6 +77,7 @@ pub(super) async fn record(
                         release_branch: optional(old.tiers.release_branch),
                         fast_check: optional(old.tiers.checks.fast),
                         full_check: optional(old.tiers.checks.full),
+                        release_hook: optional(old.tiers.checks.release),
                     },
                 },
             })

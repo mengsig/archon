@@ -33,7 +33,7 @@ use archon_core::protocol::{ClientKind, ItemPatch, Reply, RepoRef, Request};
 
 use crate::context::DaemonContext;
 use crate::executor::operator_merge;
-use crate::{github, ops, recovery, reports, standby, supervisor};
+use crate::{github, integration, ops, recovery, reports, standby, supervisor};
 
 /// `update_item` with only `autonomy`, above the item's ceiling. Only the
 /// operator's confirmed request calls this; no request field reaches it.
@@ -146,7 +146,23 @@ pub async fn handle(
     {
         return crate::authority::socket_settings(ctx, request).await;
     }
+    if let Request::Promote { repo } = &request {
+        let by = match for_an_agent(client, caller.as_ref()) {
+            true => integration::Promoter::Agent,
+            false => integration::Promoter::Operator,
+        };
+        return promote(ctx, repo, by).await;
+    }
     route(ctx, client, request).await
+}
+
+async fn promote(
+    ctx: &DaemonContext,
+    repo: &RepoRef,
+    by: integration::Promoter,
+) -> Result<Reply, ArchonError> {
+    let promotion = integration::promote(ctx, repo, by).await?;
+    Ok(Reply::Promotion(Box::new(promotion)))
 }
 
 /// Whether only the orchestrator may make this call: any change to Archon for
@@ -264,6 +280,8 @@ pub(crate) async fn route(
             crate::authority::request(ctx, caller.as_ref(), utterance, &quote, &reason, *action)
                 .await
         }
+        // `handle` names the operator; any other way in is an agent's.
+        Request::Promote { repo } => promote(ctx, &repo, integration::Promoter::Agent).await,
         Request::RequestMerge { item, reason } => {
             let merge = operator_merge::request(ctx, &item, reason.as_deref()).await?;
             Ok(Reply::Merge(Box::new(merge)))

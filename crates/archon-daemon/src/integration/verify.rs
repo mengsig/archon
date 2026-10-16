@@ -228,7 +228,7 @@ impl<'a> Session<'a> {
             blocking(move || checkout.at(&commit).map(PathBuf::from)).await?
         };
         let limit = self.ctx.config.integration.full_timeout.duration();
-        full::run(slot, command, &work, &checkout.log, limit).await
+        full::run(slot, "the full check", command, &work, &checkout.log, limit).await
     }
 
     /// The checkout, made and fetched on first use.

@@ -41,6 +41,7 @@ mod tests {
         Checks {
             fast: fast.map(str::to_owned),
             full: full.map(str::to_owned),
+            release: None,
         }
     }
 

@@ -75,11 +75,13 @@ pub(crate) struct FullRun {
     pub excerpt: String,
 }
 
-/// Run `command` with `sh -c` in `work`, its output in `log`, ended with
-/// everything it started after `limit`. `slot` is held until the run's
-/// process group is killed, even when the daemon drops the run mid-way.
+/// Run `command`, which is `what` (e.g. `the full check`), with `sh -c` in
+/// `work`, its output in `log`, ended with everything it started after
+/// `limit`. `slot` is held until the run's process group is killed, even
+/// when the daemon drops the run mid-way.
 pub(crate) async fn run(
     _slot: Slot,
+    what: &str,
     command: &str,
     work: &Path,
     log: &Path,
@@ -102,17 +104,17 @@ pub(crate) async fn run(
         .stdout(Stdio::from(output))
         .stderr(Stdio::from(errors))
         .spawn()
-        .map_err(|e| ArchonError::io(format!("running the full check `{command}`"), e))?;
+        .map_err(|e| ArchonError::io(format!("running {what} `{command}`"), e))?;
     // Declared after `_slot`, so dropped (the group killed) before it.
     let group = Group(child.id().and_then(|pid| Pid::from_raw(pid as i32)));
     assert!(group.0.is_some(), "a spawned child has a pid");
     let ended = match tokio::time::timeout(limit, child.wait()).await {
-        Ok(status) => Ended::Exited(status.map_err(|e| ArchonError::io("the full check", e))?),
+        Ok(status) => Ended::Exited(status.map_err(|e| ArchonError::io(what.to_owned(), e))?),
         Err(_) => Ended::TimedOut(limit),
     };
     drop(group);
     let tail = blocking_tail(log).await?;
-    Ok(ended.into_run(tail))
+    Ok(ended.into_run(what, tail))
 }
 
 /// A full run's process group, killed when dropped: when the run ends, times
@@ -137,7 +139,7 @@ enum Ended {
 }
 
 impl Ended {
-    fn into_run(self, tail: String) -> FullRun {
+    fn into_run(self, what: &str, tail: String) -> FullRun {
         match self {
             Self::Exited(status) if status.success() => FullRun {
                 passed: true,
@@ -145,14 +147,11 @@ impl Ended {
             },
             Self::Exited(status) => FullRun {
                 passed: false,
-                excerpt: format!("{tail}\n[the full check failed: {status}]"),
+                excerpt: format!("{tail}\n[{what} failed: {status}]"),
             },
             Self::TimedOut(limit) => FullRun {
                 passed: false,
-                excerpt: format!(
-                    "{tail}\n[the full check was ended after {}s]",
-                    limit.as_secs()
-                ),
+                excerpt: format!("{tail}\n[{what} was ended after {}s]", limit.as_secs()),
             },
         }
     }
@@ -221,7 +220,7 @@ mod tests {
 
     async fn full(command: &str, dir: &Path, name: &str) -> FullRun {
         let slot = Slot::acquire(&dir.join("slot.lock")).await.unwrap();
-        run(slot, command, dir, &dir.join(name), LIMIT)
+        run(slot, "the full check", command, dir, &dir.join(name), LIMIT)
             .await
             .unwrap()
     }
@@ -269,6 +268,7 @@ mod tests {
         let started = std::time::Instant::now();
         let ran = run(
             slot,
+            "the full check",
             "echo started; sleep 30",
             &dir,
             &log,
@@ -356,9 +356,17 @@ mod tests {
         let slot = Slot::acquire(&lock).await.unwrap();
         let running = {
             let (dir, command) = (dir.clone(), command.clone());
-            tokio::spawn(
-                async move { run(slot, &command, &dir, &dir.join("run.log"), LIMIT).await },
-            )
+            tokio::spawn(async move {
+                run(
+                    slot,
+                    "the full check",
+                    &command,
+                    &dir,
+                    &dir.join("run.log"),
+                    LIMIT,
+                )
+                .await
+            })
         };
         let pid = tokio::time::timeout(LIMIT, async {
             loop {

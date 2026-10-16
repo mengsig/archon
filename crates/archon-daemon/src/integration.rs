@@ -12,6 +12,7 @@ mod branch;
 mod fix;
 mod full;
 mod github;
+mod promote;
 mod state;
 mod verify;
 
@@ -27,6 +28,7 @@ use archon_core::repo::{Repo, ShipMode};
 use self::branch::{Head, Source};
 pub use self::fix::FIX_TAG;
 use self::github::GithubRepo;
+pub use self::promote::{Promoter, promote};
 use self::state::{BranchState, Verdict};
 use crate::context::DaemonContext;
 use crate::feed;
@@ -39,6 +41,7 @@ struct Watch {
     branch: String,
     release: String,
     full: Option<String>,
+    release_hook: Option<String>,
     github: Option<GithubRepo>,
     source: Source,
 }
@@ -67,6 +70,7 @@ impl Watch {
             repo: repo.clone(),
             release: tiers.release_branch().to_owned(),
             full: tiers.checks.full.clone(),
+            release_hook: tiers.checks.release.clone(),
             branch,
             github,
             source,

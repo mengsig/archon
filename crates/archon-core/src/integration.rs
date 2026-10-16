@@ -92,6 +92,106 @@ impl IntegrationStatus {
     }
 }
 
+/// How one promotion of an integration branch into its release branch ended.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Promotion {
+    pub repo: String,
+    pub branch: String,
+    pub release: String,
+    /// The integration head promoted, green on the full check.
+    pub head: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pull_request: Option<String>,
+    #[serde(flatten)]
+    pub outcome: PromotionOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum PromotionOutcome {
+    /// The pull request is open at the green head; merging waits for the
+    /// operator, as the caller has no merge permission.
+    AwaitingOperator,
+    /// The release branch held the head already: nothing was merged.
+    UpToDate {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        realign_problem: Option<String>,
+    },
+    Merged {
+        /// The release branch's head after the merge.
+        release_head: String,
+        /// Why the integration branch was not fast-forwarded to it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        realign_problem: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hook: Option<ReleaseHook>,
+    },
+}
+
+/// How the release hook ran after the merge.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReleaseHook {
+    pub command: String,
+    pub passed: bool,
+    /// The end of its output, or why it could not run.
+    pub excerpt: String,
+}
+
+impl Promotion {
+    /// What happened, in a few lines, as `archon promote` prints it.
+    pub fn describe(&self) -> String {
+        assert!(!self.branch.is_empty() && !self.release.is_empty());
+        let pr = self.pull_request.as_deref().unwrap_or("no pull request");
+        let what = format!("{}/{} at {}", self.repo, self.branch, short(&self.head));
+        let (mut text, realign, hook) = match &self.outcome {
+            PromotionOutcome::AwaitingOperator => {
+                let text = format!(
+                    "{what} is green and {pr} is open into `{}`; merging it waits for the \
+                     operator: run `archon promote {}`",
+                    self.release, self.repo
+                );
+                return text;
+            }
+            PromotionOutcome::UpToDate { realign_problem } => (
+                format!("`{}` holds {what} already; nothing to merge", self.release),
+                realign_problem,
+                None,
+            ),
+            PromotionOutcome::Merged {
+                release_head,
+                realign_problem,
+                hook,
+            } => (
+                format!(
+                    "promoted {what} into `{}` ({pr}); `{}` is now at {}",
+                    self.release,
+                    self.release,
+                    short(release_head)
+                ),
+                realign_problem,
+                hook.as_ref(),
+            ),
+        };
+        match realign {
+            Some(problem) => {
+                text.push_str(&format!("\n`{}` was not realigned: {problem}", self.branch))
+            }
+            None => text.push_str(&format!(
+                "\n`{}` is realigned with `{}`",
+                self.branch, self.release
+            )),
+        }
+        if let Some(hook) = hook {
+            let verdict = if hook.passed { "passed" } else { "FAILED" };
+            text.push_str(&format!("\nrelease hook `{}` {verdict}", hook.command));
+            if !hook.passed {
+                text.push_str(&format!(":\n{}", hook.excerpt));
+            }
+        }
+        text
+    }
+}
+
 /// The first eight characters of a commit id.
 pub fn short(commit: &str) -> &str {
     let end = commit
@@ -138,5 +238,43 @@ mod tests {
             "archon/next: unknown at no head yet; never green, 0 merge(s) since; no checks.full"
         );
         assert_eq!(short("abc"), "abc");
+    }
+
+    #[test]
+    fn a_promotion_says_what_merged_and_what_is_left() {
+        let mut promotion = Promotion {
+            repo: "archon".into(),
+            branch: "next".into(),
+            release: "main".into(),
+            head: "1a2b3c4d5e6f".into(),
+            pull_request: Some("https://github.com/o/r/pull/9".into()),
+            outcome: PromotionOutcome::AwaitingOperator,
+        };
+        let waiting = promotion.describe();
+        assert!(
+            waiting.contains("waits for the operator: run `archon promote archon`"),
+            "{waiting}"
+        );
+        promotion.outcome = PromotionOutcome::Merged {
+            release_head: "9f8e7d6c5b4a".into(),
+            realign_problem: Some("`origin` refused the fast-forward".into()),
+            hook: Some(ReleaseHook {
+                command: "make tag".into(),
+                passed: false,
+                excerpt: "no tag".into(),
+            }),
+        };
+        assert_eq!(
+            promotion.describe(),
+            "promoted archon/next at 1a2b3c4d into `main` (https://github.com/o/r/pull/9); \
+             `main` is now at 9f8e7d6c\n`next` was not realigned: `origin` refused the \
+             fast-forward\nrelease hook `make tag` FAILED:\nno tag"
+        );
+        let json = serde_json::to_value(&promotion).unwrap();
+        assert_eq!(json["outcome"], "merged");
+        assert_eq!(
+            serde_json::from_value::<Promotion>(json).unwrap(),
+            promotion
+        );
     }
 }

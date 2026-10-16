@@ -2759,7 +2759,7 @@ tools = "guarded"
 
 Per-repository verification tiers, committed in `<repo>/.archon/repo.toml` so
 every machine reads the same values. `archon repo set --integration-branch`,
-`--release-branch`, `--fast-check` and `--full-check` set them in the registry,
+`--release-branch`, `--fast-check`, `--full-check` and `--release-hook` set them in the registry,
 whose values win field by field (an empty value clears one):
 
 ```toml
@@ -2769,6 +2769,7 @@ release_branch = "main"        # the default; next is created from it when missi
 [checks]
 fast = "cargo test -p mycrate" # every stage agent's contract says: run before you commit
 full = "make ci"               # the contract forbids it: it runs off the item's path
+release = "make tag"           # runs once `archon promote` merged into the release branch
 ```
 
 `archond` verifies the integration branch off the items' path
@@ -2786,6 +2787,18 @@ a waiting probe resumes it, and no fix is queued before it ends; the
 culprit, the failing excerpt and the fix item (one per red head, none while
 one is open, idempotency key `integration-fix-<repo>-<head>`) are kept in
 the store's `integration_<repo>` key, and `status` reports each branch.
+
+`promote` (`archon promote`, the `promote` tool; one at a time per daemon)
+reads both branches' heads from `origin` afresh and refuses unless the saved
+state holds a green verdict on that exact integration head. It opens or
+reuses the integration branch's pull request onto the release branch and
+merges it with `gh pr merge --match-head-commit <head> --merge`, a merge
+commit so the integration branch can fast-forward: it is pushed to the
+release branch's new head, never forced, and the verdict is carried to the
+merge commit when its tree is the verified one. The operator's socket call
+merges; an agent's merges only under `grant_merge`, else it stops at the
+pull request with a blocker notification. `checks.release` then runs in the
+integration checkout at the merged commit, under the build slot.
 
 Precedence for repository settings: registry flags from `archon repo add` or
 `archon repo set`, then `.archon/config.toml`, then global defaults.

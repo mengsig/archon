@@ -32,7 +32,7 @@ mod revive;
 mod roster;
 mod run_node;
 mod settle;
-mod ship;
+pub(crate) mod ship;
 mod siblings;
 mod spawn;
 mod start;

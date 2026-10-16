@@ -7,7 +7,7 @@ mod auto_merge;
 mod checks;
 mod deliver;
 mod pr_checks;
-mod remote;
+pub(crate) mod remote;
 
 use archon_core::catalog::StageKind;
 use archon_core::error::ArchonError;

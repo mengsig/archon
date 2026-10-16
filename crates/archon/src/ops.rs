@@ -4,9 +4,10 @@
 
 use archon_client::ArchonClient;
 use archon_core::id::QueueItemId;
+use archon_core::integration::Promotion;
 use archon_core::merge::MergeRequest;
 use archon_core::notify::Question;
-use archon_core::protocol::{PauseTarget, Reply, Request};
+use archon_core::protocol::{PauseTarget, Reply, RepoRef, Request};
 
 use crate::connect::unexpected;
 
@@ -60,6 +61,13 @@ pub async fn pause(client: &ArchonClient, target: PauseTarget, pause: bool) -> a
 
 /// Have archond merge `item`'s pull request now; `chat` records that the
 /// chat's `/merge` asked. The request comes back however it ended.
+pub async fn promote(client: &ArchonClient, repo: RepoRef) -> anyhow::Result<Promotion> {
+    match client.request(Request::Promote { repo }).await? {
+        Reply::Promotion(promotion) => Ok(*promotion),
+        other => Err(unexpected(&other, "promote")),
+    }
+}
+
 pub async fn merge(
     client: &ArchonClient,
     item: QueueItemId,

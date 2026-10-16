@@ -345,6 +345,21 @@ No second fix item is queued while that one is open. `archon status` and
 `queue_status` show each integration branch: green, red, verifying or
 pending, its last green commit and the merges since.
 
+`archon promote <repo>` (or the orchestrator's `promote` tool) moves the
+integration branch into the release branch. It is refused, with the reason,
+unless the full check is green on the branch's exact head as `origin` has it
+now. It opens or reuses the pull request from the integration branch to the
+release branch, merges it with a merge commit (only at that head, and only
+while none of the pull request's own checks fails or runs), then
+fast-forwards the integration branch to the release branch, never forced.
+The merge commit has the verified tree, so it is not verified again. An
+orchestrator's call merges only under the repository's `grant_merge`;
+otherwise it stops at the open pull request and asks you to run
+`archon promote`. `[checks] release` in `.archon/repo.toml` (or
+`archon repo set --release-hook`), for example a tag command, then runs once
+in `archond`'s checkout at the merged commit, in the host's build slot; how it
+ended is part of the result, and a failing hook undoes nothing.
+
 ## Disk use
 
 Every item that works on a repository runs in its own git worktree, by

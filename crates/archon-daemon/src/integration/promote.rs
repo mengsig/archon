@@ -30,6 +30,11 @@ use crate::feed;
 use crate::worktree::shadow::Shadow;
 use crate::worktree::stack;
 
+mod pending;
+
+use self::pending::Pending;
+pub(crate) use self::pending::forget_unregistered;
+
 /// One promotion at a time in this daemon.
 static PROMOTING: Mutex<()> = Mutex::const_new(());
 /// Reads of a pull request whose mergeability GitHub is still working out.
@@ -68,6 +73,9 @@ pub async fn promote(
         let watch = watch.clone();
         blocking(move || read_heads(&watch)).await?
     };
+    if let Some(promotion) = resume(ctx, &watch, &heads).await? {
+        return Ok(promotion);
+    }
     let head = heads.branch.commit.clone();
     let saved = state::load(&*ctx.store.lock().await, &repo.id)?;
     if let Some(why) = not_green(&repo.name, saved.as_ref(), &watch.branch, &head) {
@@ -75,14 +83,7 @@ pub async fn promote(
             "promotion refused: {why}"
         )));
     }
-    let mut promotion = Promotion {
-        repo: repo.name.clone(),
-        branch: watch.branch.clone(),
-        release: watch.release.clone(),
-        head: head.clone(),
-        pull_request: None,
-        outcome: PromotionOutcome::AwaitingOperator,
-    };
+    let mut promotion = promotion_of(&watch, &head, None);
     if contains(&watch, &heads.release.commit, &head).await? {
         let realign_problem = realign(&watch, &heads.release.commit).await?;
         promotion.outcome = PromotionOutcome::UpToDate { realign_problem };
@@ -95,8 +96,53 @@ pub async fn promote(
         feed::notify(ctx, NotificationKind::Blocker, text, None, None).await?;
         return Ok(promotion);
     }
+    let sent = Pending {
+        head: head.clone(),
+        pull_request: url.clone(),
+    };
+    pending::save(&mut *ctx.store.lock().await, &repo.id, &sent)?;
     merge_pull_request(ctx, &watch, &url, &head).await?;
-    promotion.outcome = after_merge(ctx, &watch, &head).await?;
+    finish(ctx, &watch, promotion).await
+}
+
+fn promotion_of(watch: &Watch, head: &str, pull_request: Option<String>) -> Promotion {
+    Promotion {
+        repo: watch.repo.name.clone(),
+        branch: watch.branch.clone(),
+        release: watch.release.clone(),
+        head: head.to_owned(),
+        pull_request,
+        outcome: PromotionOutcome::AwaitingOperator,
+    }
+}
+
+/// Finish a promotion whose merge was sent earlier and has since landed, as
+/// through a merge queue; `None` when none waits or it has not landed yet.
+async fn resume(
+    ctx: &DaemonContext,
+    watch: &Watch,
+    heads: &Heads,
+) -> Result<Option<Promotion>, ArchonError> {
+    let Some(sent) = pending::load(&*ctx.store.lock().await, &watch.repo.id)? else {
+        return Ok(None);
+    };
+    if !contains(watch, &heads.release.commit, &sent.head).await? {
+        return Ok(None);
+    }
+    let promotion = promotion_of(watch, &sent.head, Some(sent.pull_request));
+    finish(ctx, watch, promotion).await.map(Some)
+}
+
+/// The post-merge work, then the pending promotion forgotten: a failure
+/// before the release hook ended leaves it for the next `promote`.
+async fn finish(
+    ctx: &DaemonContext,
+    watch: &Watch,
+    mut promotion: Promotion,
+) -> Result<Promotion, ArchonError> {
+    assert!(promotion.pull_request.is_some(), "a merged pull request");
+    promotion.outcome = after_merge(ctx, watch, &promotion.head).await?;
+    pending::clear(&mut *ctx.store.lock().await, &watch.repo.id)?;
     let text = promotion.describe();
     feed::notify(ctx, NotificationKind::Outcome, text, None, None).await?;
     Ok(promotion)
@@ -356,9 +402,17 @@ async fn realign(watch: &Watch, release: &str) -> Result<Option<String>, ArchonE
                 pushed.stderr_text()
             )));
         }
-        let now = source.head(&branch)?.map(|head| head.commit);
-        assert_eq!(now.as_deref(), Some(release.as_str()), "the push moved it");
-        Ok(None)
+        let Some(now) = source.head(&branch)?.map(|head| head.commit) else {
+            return Ok(Some(format!("`{branch}` is gone from `origin`")));
+        };
+        if now == release || source.contains(&now, &release)? {
+            return Ok(None);
+        }
+        Ok(Some(format!(
+            "`{branch}` is at {} on `origin`, which does not hold {}",
+            short(&now),
+            short(&release)
+        )))
     })
     .await
 }

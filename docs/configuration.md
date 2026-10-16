@@ -359,6 +359,8 @@ otherwise it stops at the open pull request and asks you to run
 `archon repo set --release-hook`), for example a tag command, then runs once
 in `archond`'s checkout at the merged commit, in the host's build slot; how it
 ended is part of the result, and a failing hook undoes nothing.
+When a merge queue or branch rule holds the merge, promote again once it
+landed: that call finishes the promotion, realigning and running the hook.
 
 ## Disk use
 

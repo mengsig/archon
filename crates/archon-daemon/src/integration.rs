@@ -168,7 +168,8 @@ pub async fn pass(ctx: &DaemonContext) -> Result<(), ArchonError> {
             state::forget(&mut store, &id)?;
         }
     }
-    Ok(())
+    let kept: Vec<RepoId> = repos.iter().map(|repo| repo.id.clone()).collect();
+    promote::forget_unregistered(&mut store, &kept)
 }
 
 /// The integration branches, as `status` shows them.

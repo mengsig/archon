@@ -21,12 +21,22 @@ use common::{Harness, REPO_NAME, git};
 
 /// A `gh` keeping the one pull request in `gh-state/pr` (`<base> <head>`):
 /// `pr view` shows `origin`'s head of it, and `pr merge` merges it there
-/// with a merge commit, as GitHub does, only at the commit it names.
+/// with a merge commit, as GitHub does, only at the commit it names. With
+/// `gh-state/queue` it only queues the merge, which `queue land` lands.
 const MERGING_GH: &str = r#"#!/bin/sh
 state="$(dirname "$0")/gh-state"
 origin="$(cat "$state/origin")"
 printf '%s\n' "$*" >> "$state/calls"
 url=https://github.com/o/r/pull/9
+land() {
+    work="$state/merge-work"
+    rm -rf "$work"
+    git clone --quiet "$origin" "$work" && cd "$work" || exit 1
+    git checkout --quiet "$base" &&
+    git -c user.name=GitHub -c user.email=gh@github.invalid merge --quiet --no-ff -m "Merge pull request #9 from $head" "origin/$head" &&
+    git push --quiet origin "$base" || exit 1
+    touch "$state/merged"
+}
 case "$1 $2" in
 "pr list")
     [ -f "$state/pr" ] && [ ! -f "$state/merged" ] || { printf '[]'; exit 0; }
@@ -51,13 +61,12 @@ case "$1 $2" in
     [ "$# $4 $6" = "6 --match-head-commit --merge" ] || exit 2
     read -r base head < "$state/pr"
     [ "$5" = "$(git --git-dir="$origin" rev-parse "$head")" ] || { echo "Head branch was modified" >&2; exit 1; }
-    work="$state/merge-work"
-    rm -rf "$work"
-    git clone --quiet "$origin" "$work" && cd "$work" || exit 1
-    git checkout --quiet "$base" &&
-    git -c user.name=GitHub -c user.email=gh@github.invalid merge --quiet --no-ff -m "Merge pull request #9 from $head" "origin/$head" &&
-    git push --quiet origin "$base" || exit 1
-    touch "$state/merged"
+    [ -f "$state/queue" ] && { touch "$state/queued"; exit 0; }
+    land
+    ;;
+"queue land")
+    read -r base head < "$state/pr"
+    land
     ;;
 *)
     exit 2
@@ -83,6 +92,20 @@ impl Gh {
     fn calls(&self) -> Vec<String> {
         let calls = std::fs::read_to_string(self.state.join("calls")).unwrap_or_default();
         calls.lines().map(str::to_owned).collect()
+    }
+
+    fn queue_merges(&self) {
+        std::fs::write(self.state.join("queue"), "").expect("queue on");
+    }
+
+    /// The merge queue lets the queued pull request in.
+    fn land_queued(&self, binary: &std::path::Path) {
+        assert!(self.state.join("queued").exists(), "a merge was queued");
+        let landed = std::process::Command::new(binary)
+            .args(["queue", "land"])
+            .output()
+            .expect("run gh");
+        assert!(landed.status.success(), "{landed:?}");
     }
 
     fn merged(&self) -> bool {
@@ -358,4 +381,47 @@ async fn without_merge_permission_promotion_stops_at_the_pull_request() {
     );
     assert!(gh.merged());
     assert_eq!(creates(&gh), 1, "the open pull request is reused");
+}
+
+/// A merge queue holds the merge: the promotion says to promote again, and
+/// the next `promote` after it landed finishes it, the hook included, once.
+#[tokio::test]
+async fn a_queued_merge_is_finished_by_the_next_promotion() {
+    let (h, gh, _slot) = promoting().await;
+    land(&h, "one");
+    integration::pass(&h.ctx).await.expect("green pass");
+    gh.queue_merges();
+
+    let held = h.cli(promote()).await;
+    assert!(
+        matches!(&held, Err(ArchonError::Unavailable(why)) if why.contains("merge queue")),
+        "{held:?}"
+    );
+    assert!(!gh.merged());
+    assert!(!file(&h, "released").exists(), "no hook before the merge");
+    gh.land_queued(&h.ctx.config.github.binary);
+
+    let done = promotion(h.cli(promote()).await);
+    let PromotionOutcome::Merged {
+        release_head, hook, ..
+    } = &done.outcome
+    else {
+        panic!("not finished: {done:?}");
+    };
+    let origin = origin_of(&h);
+    assert_eq!(
+        pushed(&origin, "next").as_deref(),
+        Some(release_head.as_str())
+    );
+    assert!(hook.as_ref().is_some_and(|hook| hook.passed), "{hook:?}");
+    let released = std::fs::read_to_string(file(&h, "released")).expect("hook output");
+    assert_eq!(released.trim(), release_head, "the hook ran at the merge");
+
+    std::fs::remove_file(file(&h, "released")).unwrap();
+    let again = promotion(h.cli(promote()).await);
+    assert!(
+        matches!(again.outcome, PromotionOutcome::UpToDate { .. }),
+        "{again:?}"
+    );
+    assert!(!file(&h, "released").exists(), "the hook ran once");
 }

@@ -975,8 +975,9 @@ What works from the app, because it is all text in the orchestrator's chat:
 
 What does not: the Lavish page of a gate is a link to `127.0.0.1` on
 Archon's machine and does not open on a phone; the `archon` CLI, its line
-chat and `archon questions` are not in the app; there are no Archon views
-and no push notifications for gates. Chat answers need the default
+chat and `archon questions` are not in the app; there are no Archon views.
+For a push to the phone when a gate opens, set `[notify]`
+([push notifications](configuration.md#push-notifications)). Chat answers need the default
 dedicated mode (see
 [Answering in the orchestrator's chat](#answering-in-the-orchestrators-chat)).
 A device paired as an observer cannot answer: Aether does not treat it as

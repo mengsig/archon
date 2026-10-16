@@ -139,6 +139,18 @@ async fn a_repository_overlay_beats_the_global_one_and_its_file_only_lowers() {
         panic!("autonomy");
     };
     assert_eq!(autonomy.policy, policy, "the autonomy view agrees");
+    let limits = &autonomy.limits;
+    assert!(
+        limits
+            .iter()
+            .any(|l| l.key == "max_directives" && l.value == 20),
+        "the view lists the structural limits: {limits:?}"
+    );
+    assert!(
+        limits
+            .iter()
+            .any(|l| l.key == "initiative_contract_bytes" && l.ceiling == 16_384)
+    );
 }
 
 #[tokio::test]

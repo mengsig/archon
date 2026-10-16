@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use archon_core::Timestamp;
-use archon_core::autonomy::{AutonomyView, Directive, DirectiveSource};
+use archon_core::autonomy::{AutonomyView, Directive, DirectiveSource, MAX_DIRECTIVES};
 use archon_core::catalog::{CatalogListing, Gate, PipelineSource, PipelineSummary};
 use archon_core::github::{GithubWatch, GithubWatcherView, WatchTarget, WatchedRepo};
 use archon_core::id::RepoId;
@@ -106,6 +106,11 @@ pub fn status(status: &DaemonStatus, names: &RepoNames) -> String {
         out,
         "autonomy ceiling: {}",
         status.autonomy.ceiling.describe_allowed()
+    );
+    let _ = writeln!(
+        out,
+        "directives: {} in force",
+        directive_count(status.directives.len())
     );
     for directive in &status.directives {
         let _ = writeln!(out, "directive: {}", directive_line(directive));
@@ -394,7 +399,13 @@ pub fn directive_line(directive: &Directive) -> String {
     )
 }
 
-/// `archon autonomy`: the defaults and ceiling in force, then directives.
+/// `17/20`: directives in force against the most allowed at once.
+fn directive_count(in_force: usize) -> String {
+    format!("{in_force}/{MAX_DIRECTIVES}")
+}
+
+/// `archon autonomy`: the defaults and ceiling in force, the structural
+/// limits, then directives.
 pub fn autonomy(view: &AutonomyView) -> String {
     let scope = view
         .repo
@@ -406,11 +417,18 @@ pub fn autonomy(view: &AutonomyView) -> String {
         view.policy.ceiling.describe_allowed()
     );
     merge_lines(&mut out, &view.merge_granted, &[]);
+    if !view.limits.is_empty() {
+        out.push_str("limits:\n");
+    }
+    for limit in &view.limits {
+        let _ = writeln!(out, "  {}", limit.describe());
+    }
+    let count = directive_count(view.directives.len());
     if view.directives.is_empty() {
-        out.push_str("directives: none");
+        let _ = write!(out, "directives {count}: none");
         return out;
     }
-    out.push_str("directives:");
+    let _ = write!(out, "directives {count}:");
     for directive in &view.directives {
         let _ = write!(out, "\n  {}", directive_line(directive));
     }
@@ -782,6 +800,7 @@ pub fn problems(listing: &CatalogListing) -> Vec<String> {
 #[cfg(test)]
 pub(crate) mod tests {
     use archon_core::autonomy::{AutonomyConfig, AutonomyPolicy};
+    use archon_core::config::LimitsConfig;
     use archon_core::ops::{ProgramVersions, Versions};
     use archon_core::protocol::GcStatus;
 
@@ -1282,6 +1301,7 @@ pub(crate) mod tests {
         assert!(text.contains("caps: 8 agents, unlimited per repo"));
         assert!(text.contains("pause: nothing paused"));
         assert!(text.contains("\nautonomy default: review=standard, proposal=off,"));
+        assert!(text.contains("\ndirectives: 0/20 in force\n"), "{text}");
         assert!(text.contains("questions: 1 open, 2 gates waiting for approval"));
         let up = status_with(AetherLinkStatus::Connected {
             daemon_version: "0.9.0".into(),
@@ -1406,6 +1426,7 @@ pub(crate) mod tests {
             policy,
             directives: vec![],
             merge_granted: Vec::new(),
+            limits: LimitsConfig::default().structural(),
         };
         let text = autonomy(&view);
         assert!(text.starts_with("autonomy (repo api)\ndefault: review=standard"));
@@ -1413,12 +1434,26 @@ pub(crate) mod tests {
             text.contains("\nceiling: review=strict|standard|none, proposal=lavish|off,"),
             "the ceiling lists what it allows: {text}"
         );
-        assert!(text.ends_with("directives: none"), "{text}");
+        assert!(
+            text.contains(
+                "\nlimits:\n  max_delegation_depth = 2 (default 2, ceiling 4; default)\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "\n  initiative_contract_bytes = 2048 (default 2048, ceiling 16384; default)\n"
+            ),
+            "{text}"
+        );
+        assert!(text.contains("\n  max_directives = 20 (fixed)\n"), "{text}");
+        assert!(text.ends_with("directives 0/20: none"), "{text}");
         let now = archon_core::now();
         let directive =
             Directive::new("auto-merge today", DirectiveSource::Operator, Some(8), now).unwrap();
         view.directives.push(directive.clone());
         let text = autonomy(&view);
+        assert!(text.contains("\ndirectives 1/20:\n"), "{text}");
         let line = text.lines().last().unwrap();
         assert!(line.contains(&directive.id.to_string()) && line.contains("(operator, until "));
     }

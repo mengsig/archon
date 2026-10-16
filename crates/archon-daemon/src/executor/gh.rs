@@ -560,7 +560,7 @@ impl Headed {
 /// where its head lives.
 pub(crate) async fn view_headed(
     binary: &Path,
-    repo: &Path,
+    repo: &Repo,
     selector: &str,
 ) -> Result<Headed, ArchonError> {
     let number = !selector.is_empty() && selector.bytes().all(|b| b.is_ascii_digit());
@@ -586,11 +586,11 @@ pub(crate) async fn view_headed(
     Ok(viewed)
 }
 
-/// Whether the operator's `gh` may push to `full_name`, an `owner/name`:
+/// Whether `repo`'s `gh` user may push to `full_name`, an `owner/name`:
 /// GitHub grants it from the write role up.
 pub(crate) async fn can_push(
     binary: &Path,
-    repo: &Path,
+    repo: &Repo,
     full_name: &str,
 ) -> Result<bool, ArchonError> {
     assert!(

@@ -355,7 +355,9 @@ fn push_with(
     );
     assert!(is_commit_id(commit), "the checked commit is pushed");
     let url = check_url(url)?;
-    let receive_pack = match is_local(&url) {
+    // The operator's `insteadOf` may send a pinned remote URL to this machine.
+    let rewritten_local = pin && token.is_none() && is_local(&pinned_url(shadow, &url)?);
+    let receive_pack = match is_local(&url) || rewritten_local {
         true => format!("git {} receive-pack", no_programs().join(" ")),
         false => "git-receive-pack".to_owned(),
     };
@@ -684,5 +686,72 @@ mod tests {
             remote_head(&shadow, url, "feature").unwrap().as_ref(),
             Some(ours)
         );
+    }
+
+    const HOOKED_ENV: &str = "ARCHON_TEST_HOOKED_ORIGIN";
+
+    /// An operator `insteadOf` sending the GitHub URL to a repository on this
+    /// machine still runs none of its hooks; run under that global config.
+    #[test]
+    fn a_push_rewritten_to_a_local_repository_runs_none_of_its_hooks() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        let inner = module_path!().split_once("::").unwrap().1;
+        let inner = format!("{inner}::a_rewritten_push_under_the_operator_s_config");
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([inner.as_str(), "--exact", "--ignored", "--quiet"])
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", &home)
+            .env(HOOKED_ENV, &home)
+            .status()
+            .expect("the inner test runs");
+        assert!(status.success(), "the inner test failed");
+    }
+
+    #[test]
+    #[ignore = "run by a_push_rewritten_to_a_local_repository_runs_none_of_its_hooks"]
+    fn a_rewritten_push_under_the_operator_s_config() {
+        let home = PathBuf::from(std::env::var_os(HOOKED_ENV).expect("run by the outer test"));
+        let (repo, origin) = (home.join("repo"), home.join("origin.git"));
+        run_git(&home, &["init", "--quiet", "--bare", "origin.git"]);
+        let marker = home.join("hook-ran");
+        let hook = origin.join("hooks/pre-receive");
+        let script = format!("#!/bin/sh\ntouch '{}'\n", marker.display());
+        archon_core::testing::write_script(&hook, &script);
+        let github = "https://github.com/o/r.git";
+        let rewrite = format!("[url \"{}\"]\n\tinsteadOf = {github}\n", origin.display());
+        std::fs::create_dir_all(home.join("git")).unwrap();
+        std::fs::write(home.join("git/config"), rewrite).unwrap();
+        run_git(&home, &["init", "--quiet", "-b", "main", "repo"]);
+        let mut commits = Vec::new();
+        for message in ["frozen", "ours"] {
+            run_git(
+                &repo,
+                &["commit", "--quiet", "--allow-empty", "-m", message],
+            );
+            commits.push(run_git(&repo, &["rev-parse", "HEAD"]));
+        }
+        let [frozen, ours] = commits.as_slice() else {
+            unreachable!("two commits")
+        };
+        let to_origin = format!("{frozen}:refs/heads/feature");
+        run_git(
+            &repo,
+            &["push", "--quiet", origin.to_str().unwrap(), &to_origin],
+        );
+        std::fs::remove_file(&marker).ok();
+        let shadow = Shadow::of(&home.join("data"), &repo).unwrap();
+
+        assert_eq!(
+            pinned_url(&shadow, github).unwrap(),
+            origin.to_str().unwrap()
+        );
+        let pushed = push_from(&shadow, github, ("feature", ours), frozen, None).unwrap();
+        assert!(pushed.status.success(), "{pushed:?}");
+        assert_eq!(
+            remote_head(&shadow, github, "feature").unwrap().as_ref(),
+            Some(ours)
+        );
+        assert!(!marker.exists(), "the receiver ran its pre-receive hook");
     }
 }

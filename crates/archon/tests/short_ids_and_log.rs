@@ -39,6 +39,7 @@ struct Fake {
 fn item(id: &str, title: &str) -> QueueItem {
     let now = archon_core::now();
     QueueItem {
+        onto: None,
         id: QueueItemId::parse(id).unwrap(),
         repo: None,
         pipeline: "ask".into(),

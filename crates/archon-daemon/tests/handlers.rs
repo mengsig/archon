@@ -606,6 +606,7 @@ async fn an_item_asked_for_on_github_reports_back_to_its_thread() {
         serde_json::from_value(serde_json::json!({"repository": "Owner/Repo", "number": 12}))
             .unwrap();
     let request = EnqueueRequest {
+        onto: None,
         stage_timeouts: Default::default(),
         repo: Some(repo_ref()),
         pipeline: None,
@@ -767,6 +768,7 @@ async fn only_open_blocking_questions_for_live_stage_agents_derive_a_wait() {
 async fn mcp_enqueue_and_updates_refuse_invalid_queue_inputs() {
     let h = Harness::new().await;
     let base = EnqueueRequest {
+        onto: None,
         stage_timeouts: Default::default(),
         repo: Some(repo_ref()),
         pipeline: Some(common::PIPELINE.into()),

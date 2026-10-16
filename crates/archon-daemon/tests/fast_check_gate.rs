@@ -78,6 +78,7 @@ async fn fast_check(h: &Harness, command: &str) {
 
 async fn started(h: &Harness, pipeline: &str) -> (QueueItem, PipelineRun) {
     let request = EnqueueRequest {
+        onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(pipeline.into()),

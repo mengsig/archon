@@ -37,6 +37,7 @@ fn enqueue_initiative() -> Request {
         contract: "The field is `account_id`.".into(),
         atomic: false,
         members: vec![InitiativeMember {
+            onto: None,
             repo: RepoRef(REPO_NAME.into()),
             brief: "Rename it.".into(),
             title: None,

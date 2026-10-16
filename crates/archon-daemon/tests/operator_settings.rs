@@ -31,6 +31,7 @@ async fn set(
 
 fn enqueue(pipeline: Option<&str>, budget_usd: Option<f64>) -> Request {
     Request::Enqueue(EnqueueRequest {
+        onto: None,
         repo: repo(),
         pipeline: pipeline.map(str::to_owned),
         title: "t".into(),

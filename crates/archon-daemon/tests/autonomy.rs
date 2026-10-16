@@ -45,6 +45,7 @@ async fn enqueue_into(
     autonomy: AutonomyPatch,
 ) -> Result<QueueItem, ArchonError> {
     let request = EnqueueRequest {
+        onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(pipeline.into()),
@@ -1153,6 +1154,7 @@ async fn enqueue_reviewing(
 ) -> Result<QueueItem, ArchonError> {
     let stages = [(stage.to_owned(), plan().0["implement"].clone())];
     let request = EnqueueRequest {
+        onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(pipeline.into()),
@@ -1221,6 +1223,7 @@ async fn a_pipeline_with_review_stages_refuses_another_level() {
     let stages =
         ["implement", "review", "ship"].map(|s| (s.to_owned(), plan().0["implement"].clone()));
     let request = |review| EnqueueRequest {
+        onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(common::PIPELINE.into()),

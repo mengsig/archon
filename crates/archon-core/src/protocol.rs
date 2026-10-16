@@ -28,6 +28,7 @@ use crate::model_evidence::{ModelEvidenceQuery, ModelEvidenceReport};
 use crate::notify::{FeedItem, NotificationKind, Question};
 use crate::ops::{UpgradeRequest, Versions};
 use crate::policy::ModelPolicy;
+use crate::pull_request::OntoTarget;
 use crate::queue::{Caps, PauseState, Priority, QueueItem};
 use crate::repo::{Attribution, Checks, GhUser, Repo, RepoTiers, ShipMode};
 use crate::run::{OperatorGate, PipelineRun, StageRun, StageState, Verdict};
@@ -649,6 +650,10 @@ pub struct EnqueueRequest {
     pub priority: Priority,
     #[serde(default)]
     pub depends_on: Vec<QueueItemId>,
+    /// An existing pull request to deliver into instead of opening one;
+    /// resolved and frozen at enqueue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub onto: Option<OntoTarget>,
     #[serde(default)]
     pub tags: Vec<String>,
     /// Choices per stage, within the model policy. Optional: a stage left
@@ -1848,6 +1853,7 @@ mod tests {
     #[test]
     fn item_summaries_carry_the_items_own_fields_at_the_top() {
         let item = QueueItem {
+            onto: None,
             id: QueueItemId::new(),
             repo: None,
             pipeline: "ask".into(),

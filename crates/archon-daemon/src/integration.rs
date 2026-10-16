@@ -214,15 +214,17 @@ async fn examine(ctx: &DaemonContext, repo: &Repo) -> Result<(), ArchonError> {
     // A force-push may have left the recorded green commit off the branch.
     state.last_green = reading.green.clone();
     let red_on_head = |state: &BranchState| state.verdict_on_head().is_some_and(|v| !v.green);
-    let by_github = |state: &BranchState| {
-        state
-            .verdict_on_head()
-            .is_some_and(|v| v.via == verify::VIA_GITHUB)
+    // A green full check stood in for GitHub, whose checks may judge the head later.
+    let read_again = |state: &BranchState| {
+        state.verdict_on_head().is_some_and(|v| {
+            v.via == verify::VIA_GITHUB
+                || (v.green && v.via == verify::VIA_FULL && watch.github.is_some())
+        })
     };
     if state.verdict_on_head().is_none() && due(&ctx.config.integration, &state, &reading, now) {
         let verified = verify::head(ctx, &watch, &mut state, &reading).await;
         kept(repo, &mut state, verified)?;
-    } else if by_github(&state) {
+    } else if read_again(&state) {
         // A rerun may have turned the head since, so it is read before an owed bisection.
         let rechecked = verify::recheck(ctx, &watch, &mut state, &reading).await;
         kept(repo, &mut state, rechecked)?;

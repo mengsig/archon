@@ -18,6 +18,7 @@ async fn text_errand(with_repo: bool) {
     let before_status = git(&h.repo, &["status", "--porcelain"]);
     let before_worktrees = git(&h.repo, &["worktree", "list", "--porcelain"]);
     let request = EnqueueRequest {
+        onto: None,
         stage_timeouts: Default::default(),
         repo: with_repo.then(|| RepoRef(REPO_NAME.into())),
         pipeline: Some("errand".into()),

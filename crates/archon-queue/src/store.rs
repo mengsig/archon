@@ -258,6 +258,10 @@ impl Store {
     pub fn item(&self, id: &QueueItemId) -> Result<QueueItem, ArchonError> {
         items::load(&self.conn, id)
     }
+    /// The item an enqueue with idempotency `key` stored, if any.
+    pub fn item_by_key(&self, key: &str) -> Result<Option<QueueItem>, ArchonError> {
+        items::by_key(&self.conn, key)
+    }
     /// Newest first, at most `limit` (default 50) items.
     pub fn items(&self, query: &ItemQuery) -> Result<Vec<QueueItem>, ArchonError> {
         items::list(&self.conn, query)

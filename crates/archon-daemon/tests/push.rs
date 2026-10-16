@@ -85,6 +85,7 @@ async fn open_gate(h: &Harness, title: &str) -> QueueItem {
             ..AutonomyPatch::default()
         },
         origin: None,
+        onto: None,
     };
     let Ok(Reply::Item(item)) = h.cli(Request::Enqueue(request)).await else {
         panic!("enqueue failed")

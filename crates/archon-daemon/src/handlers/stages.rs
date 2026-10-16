@@ -234,6 +234,7 @@ mod tests {
         let mut store = Store::open_in_memory().unwrap();
         let now = archon_core::now();
         let item = QueueItem {
+            onto: None,
             id: QueueItemId::new(),
             repo: None,
             pipeline: "ask".into(),

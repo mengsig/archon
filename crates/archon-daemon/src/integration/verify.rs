@@ -60,7 +60,8 @@ pub(super) async fn head(
 
 /// Read GitHub's checks again on a head they judged, as a rerun may turn
 /// them: a turned verdict is judged afresh, a running rerun shown, and an
-/// owed bisection goes on only while the red verdict stands.
+/// owed bisection goes on only while the red verdict stands. A green full
+/// check standing in for GitHub is turned only by GitHub's failure.
 pub(super) async fn recheck(
     ctx: &DaemonContext,
     watch: &Watch,
@@ -71,9 +72,10 @@ pub(super) async fn recheck(
         .verdict_on_head()
         .cloned()
         .expect("a verdict on the head");
-    assert_eq!(
-        held.via, VIA_GITHUB,
-        "only GitHub's verdicts are read again"
+    let by_github = held.via == VIA_GITHUB;
+    assert!(
+        by_github || (held.green && held.via == VIA_FULL),
+        "only GitHub's verdicts and a green full check are read again"
     );
     assert!(
         !held.green || state.bisecting.is_none(),
@@ -84,15 +86,26 @@ pub(super) async fn recheck(
         return session.go_on(state, reading).await;
     };
     let (binary, repo) = (&ctx.config.github.binary, &watch.repo);
-    let outcome = match github::commit_checks(binary, repo, github, &held.commit).await? {
+    let checks = match github::commit_checks(binary, repo, github, &held.commit).await {
+        Ok(checks) => checks,
+        Err(error) if by_github || error.is_store() => return Err(error),
+        Err(error) => {
+            tracing::warn!(repo = %repo.name, %error, "GitHub checks unread; the full check's green verdict stands");
+            return Ok(());
+        }
+    };
+    let outcome = match checks {
         CommitChecks::Passed if !held.green => Outcome::Green(VIA_GITHUB),
         // Only a turned verdict reads the failing job's log.
         CommitChecks::Failed(failed) if held.green => Outcome::Red {
             via: VIA_GITHUB,
             excerpt: github::failure_excerpt(binary, repo, github, &failed).await,
         },
-        CommitChecks::Pending => Outcome::Pending,
-        CommitChecks::Passed | CommitChecks::Failed(_) | CommitChecks::None => {
+        CommitChecks::Pending if by_github => Outcome::Pending,
+        CommitChecks::Passed
+        | CommitChecks::Failed(_)
+        | CommitChecks::Pending
+        | CommitChecks::None => {
             return session.go_on(state, reading).await;
         }
     };

@@ -93,6 +93,7 @@ fn tier_plan() -> ModelPlanDraft {
 
 fn enqueue_request(pipeline: &str, title: &str) -> EnqueueRequest {
     EnqueueRequest {
+        onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(pipeline.into()),

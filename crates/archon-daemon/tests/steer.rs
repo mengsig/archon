@@ -969,6 +969,7 @@ async fn a_failed_item_is_revived_on_its_branch_by_a_shape_steer() {
 /// it: the run then waits for the operator.
 async fn at_proposal_gate(h: &Harness, title: &str) -> QueueItem {
     let request = EnqueueRequest {
+        onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some(PIPELINE.into()),
@@ -1097,6 +1098,7 @@ async fn inserting_a_stage_preserves_the_delegated_reviewer_plan() {
     );
     let Reply::Item(queued) = h
         .cli(Request::Enqueue(EnqueueRequest {
+            onto: None,
             repo: Some(RepoRef(REPO_NAME.into())),
             pipeline: Some("direct".into()),
             title: "Keep reviewer".into(),

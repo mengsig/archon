@@ -9,6 +9,7 @@ use crate::error::ArchonError;
 use crate::id::{InitiativeId, QueueItemId};
 use crate::model::ModelPlan;
 use crate::protocol::RepoRef;
+use crate::pull_request::OntoTarget;
 use crate::queue::QueueItem;
 
 const MAX_TITLE_CHARS: usize = 200;
@@ -182,6 +183,9 @@ pub struct InitiativeMember {
     /// earlier than its own, so the members cannot form a cycle.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub after: Vec<usize>,
+    /// An existing pull request to deliver into, as in an enqueue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub onto: Option<OntoTarget>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -256,6 +260,7 @@ mod tests {
 
     fn member(after: &[usize]) -> InitiativeMember {
         InitiativeMember {
+            onto: None,
             repo: RepoRef("api".into()),
             brief: "Add the endpoint.".into(),
             title: None,

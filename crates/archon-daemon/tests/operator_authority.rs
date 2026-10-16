@@ -678,6 +678,7 @@ async fn item_override_needs_verified_consent_and_preserves_the_repository_ceili
     let mut h = harness(AetherMode::Dedicated).await;
     let item = match h
         .cli(Request::Enqueue(EnqueueRequest {
+            onto: None,
             repo: Some(RepoRef(REPO_NAME.into())),
             pipeline: Some("direct".into()),
             title: "change".into(),

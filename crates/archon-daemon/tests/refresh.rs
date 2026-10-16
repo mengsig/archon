@@ -33,6 +33,7 @@ async fn delivering() -> (Harness, FakeGh) {
 /// Enqueue a `direct` change whose review owes one reviewer.
 async fn enqueue(h: &Harness, title: &str) -> QueueItem {
     let request = EnqueueRequest {
+        onto: None,
         stage_timeouts: Default::default(),
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some("direct".into()),

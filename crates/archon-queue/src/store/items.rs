@@ -42,6 +42,10 @@ fn request_value(item: &QueueItem) -> serde_json::Value {
     if let Some(reasons) = &item.model_reasons {
         value["model_reasons"] = serde_json::json!(reasons);
     }
+    // The target as asked: what it resolved to may move between retries.
+    if let Some(onto) = &item.onto {
+        value["onto"] = serde_json::json!(onto.target);
+    }
     value
 }
 
@@ -162,6 +166,15 @@ fn find_by_key(conn: &Connection, key: &str) -> Result<Option<(QueueItemId, Stri
     .ctx("look up idempotency key")?
     .map(|(id, request)| Ok((QueueItemId::parse(&id)?, request)))
     .transpose()
+}
+
+pub(super) fn by_key(conn: &Connection, key: &str) -> Result<Option<QueueItem>, ArchonError> {
+    let Some((id, _)) = find_by_key(conn, key)? else {
+        return Ok(None);
+    };
+    let item = load(conn, &id)?;
+    assert_eq!(item.id, id, "load reads the item asked for");
+    Ok(Some(item))
 }
 
 fn validate_new(item: &QueueItem, key: Option<&str>) -> Result<(), ArchonError> {

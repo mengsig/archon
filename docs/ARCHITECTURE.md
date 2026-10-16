@@ -3071,7 +3071,7 @@ can reach the socket (§5.5).
 | `list_repos` | `{}` | `RepoList` |
 | `model_policy` | `{repo?}` | `ModelPolicy` |
 | `register_repo` | `{path, name?, ship?, base_branch?, default_pipeline?}` | `RepoAdd` (never raises a ceiling) |
-| `enqueue` | `{repo?, pipeline?, title, brief, priority?, depends_on?, tags?, model_plan?, model_reasons?, budget_usd?, stage_timeouts?, idempotency_key?, autonomy?, origin?}` | `Enqueue` |
+| `enqueue` | `{repo?, pipeline?, title, brief, priority?, depends_on?, onto?, tags?, model_plan?, model_reasons?, budget_usd?, stage_timeouts?, idempotency_key?, autonomy?, origin?}` | `Enqueue` |
 | `list_queue` | `{states?, repo?, pipeline?, tag?, limit?}` | `ListItems` |
 | `get_item` | `{item}` | `GetItem` (stage summaries and errors clipped at 1500 characters, naming `get_stage`, and the run unless it is the latest) |
 | `get_stage` | `{item, run?, stage?, attempt?, slot?, offset?, limit?}` | `GetStage` |

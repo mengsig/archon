@@ -59,7 +59,8 @@ pub(super) async fn head(
 }
 
 /// Read GitHub's checks again on a head they judged, as a rerun may turn
-/// them: a turned verdict is judged afresh, a running rerun shown.
+/// them: a turned verdict is judged afresh, a running rerun shown, and an
+/// owed bisection goes on only while the red verdict stands.
 pub(super) async fn recheck(
     ctx: &DaemonContext,
     watch: &Watch,
@@ -75,11 +76,12 @@ pub(super) async fn recheck(
         "only GitHub's verdicts are read again"
     );
     assert!(
-        state.bisecting.is_none(),
-        "an owed bisection is resumed instead"
+        !held.green || state.bisecting.is_none(),
+        "a green head owes no bisection"
     );
+    let mut session = Session::new(ctx, watch, &reading.head);
     let Some(github) = &watch.github else {
-        return Ok(());
+        return session.go_on(state, reading).await;
     };
     let (binary, repo) = (&ctx.config.github.binary, &watch.repo);
     let outcome = match github::commit_checks(binary, repo, github, &held.commit).await? {
@@ -90,11 +92,11 @@ pub(super) async fn recheck(
             excerpt: github::failure_excerpt(binary, repo, github, &failed).await,
         },
         CommitChecks::Pending => Outcome::Pending,
-        CommitChecks::Passed | CommitChecks::Failed(_) | CommitChecks::None => return Ok(()),
+        CommitChecks::Passed | CommitChecks::Failed(_) | CommitChecks::None => {
+            return session.go_on(state, reading).await;
+        }
     };
-    Session::new(ctx, watch, &reading.head)
-        .judge(state, reading, outcome)
-        .await
+    session.judge(state, reading, outcome).await
 }
 
 /// Go on with the bisection the red head still owes.
@@ -110,7 +112,7 @@ pub(super) async fn resume(
         "only a red head is bisected"
     );
     Session::new(ctx, watch, &reading.head)
-        .bisect(state, reading)
+        .go_on(state, reading)
         .await
 }
 
@@ -306,6 +308,22 @@ impl<'a> Session<'a> {
         let made = Arc::new(made);
         self.checkout = Some(made.clone());
         Ok(made)
+    }
+
+    /// Go on with the bisection a standing red head owes, if any.
+    async fn go_on(
+        &mut self,
+        state: &mut BranchState,
+        reading: &Reading,
+    ) -> Result<(), ArchonError> {
+        if state.bisecting.is_none() {
+            return Ok(());
+        }
+        assert!(
+            state.verdict_on_head().is_some_and(|v| !v.green),
+            "only a red head is bisected"
+        );
+        self.bisect(state, reading).await
     }
 
     /// Search from `state.bisecting` for the first red merge. A search

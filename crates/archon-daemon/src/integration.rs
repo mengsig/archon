@@ -217,14 +217,16 @@ async fn examine(ctx: &DaemonContext, repo: &Repo) -> Result<(), ArchonError> {
     if state.verdict_on_head().is_none() && due(&ctx.config.integration, &state, &reading, now) {
         let verified = verify::head(ctx, &watch, &mut state, &reading).await;
         kept(repo, &mut state, verified)?;
+    } else if by_github(&state) {
+        // A rerun may have turned the head since, so it is read before an owed bisection.
+        let rechecked = verify::recheck(ctx, &watch, &mut state, &reading).await;
+        kept(repo, &mut state, rechecked)?;
     } else if state.bisecting.is_some() && red_on_head(&state) {
         let resumed = verify::resume(ctx, &watch, &mut state, &reading).await;
         kept(repo, &mut state, resumed)?;
-    } else if state.bisecting.is_none() && by_github(&state) {
-        let rechecked = verify::recheck(ctx, &watch, &mut state, &reading).await;
-        kept(repo, &mut state, rechecked)?;
     }
-    if red_on_head(&state) && state.bisecting.is_none() {
+    // A head whose checks run again is repaired once they judge it.
+    if red_on_head(&state) && state.bisecting.is_none() && state.verifying.is_none() {
         ensure_fix(ctx, &watch, &mut state, &reading).await?;
     }
     save(ctx, repo, &told, &state).await

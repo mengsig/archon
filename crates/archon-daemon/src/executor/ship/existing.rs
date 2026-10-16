@@ -18,6 +18,7 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use super::super::gh;
 use crate::context::DaemonContext;
+use crate::gh_account::{self, Token};
 use crate::worktree::daemon_git::{DaemonGit, Ran};
 use crate::worktree::shadow::Shadow;
 use crate::worktree::stack;
@@ -44,8 +45,8 @@ impl Locks {
 }
 
 /// Push `commit` onto the head branch of `onto`'s pull request, which must
-/// still be at its frozen head, and return that pull request's URL once
-/// GitHub shows `commit` as its head.
+/// still be at its frozen head, as the repository's GitHub login when it has
+/// one, and return that pull request's URL once GitHub shows `commit` as its head.
 pub(super) async fn deliver(
     ctx: &DaemonContext,
     repo: &Repo,
@@ -58,25 +59,34 @@ pub(super) async fn deliver(
         commit, onto.head_sha,
         "the checks proved commits of its own"
     );
+    let binary = &ctx.config.github.binary;
+    let token = match gh::token(binary, repo).await {
+        Ok(token) => token,
+        Err(ArchonError::Invalid(blocked)) => return Ok(Err(blocked)),
+        Err(error) => return Err(error),
+    };
     let _held = ctx.coordination.onto.hold(&onto.pr).await;
     let data_dir = &ctx.paths.data_dir;
-    if let Err(refusal) = fast_forward(data_dir, &repo.path, onto, commit).await? {
+    if let Err(refusal) = fast_forward(data_dir, &repo.path, onto, commit, token).await? {
         return Ok(Err(refusal));
     }
-    confirm(&ctx.config.github.binary, &repo.path, onto, commit).await
+    confirm(binary, repo, onto, commit).await
 }
 
-/// Push `commit` to `onto.head_ref` unless `origin` holds it there already;
-/// refused when that branch moved off the frozen head. Never forced.
+/// Push `commit` to `onto.head_ref` unless `origin` holds it there already,
+/// as `token`'s login when given; refused when that branch moved off the
+/// frozen head. Never forced.
 async fn fast_forward(
     data_dir: &Path,
     repo: &Path,
     onto: &OntoPullRequest,
     commit: &str,
+    token: Option<Token>,
 ) -> Result<Result<(), String>, ArchonError> {
     let (data_dir, repo) = (data_dir.to_owned(), repo.to_owned());
     let (onto, commit) = (onto.clone(), commit.to_owned());
-    tokio::task::spawn_blocking(move || fast_forward_now(&data_dir, &repo, &onto, &commit))
+    let push = move || fast_forward_now(&data_dir, &repo, &onto, &commit, token.as_ref());
+    tokio::task::spawn_blocking(push)
         .await
         .map_err(|e| ArchonError::io("the push task", std::io::Error::other(e)))?
 }
@@ -88,6 +98,7 @@ fn fast_forward_now(
     repo: &Path,
     onto: &OntoPullRequest,
     commit: &str,
+    token: Option<&Token>,
 ) -> Result<Result<(), String>, ArchonError> {
     let frozen = &onto.head_sha;
     if !descends(repo, frozen, commit)? {
@@ -101,6 +112,14 @@ fn fast_forward_now(
         Ok(url) => url,
         Err(refusal) => return Ok(Err(refusal)),
     };
+    // Read through `origin` as configured; only the push goes as `token`'s login.
+    let push_to = match token {
+        Some(token) => match gh_account::push_url(repo, token.user())? {
+            Ok(push_to) => push_to,
+            Err(why) => return Ok(Err(format!("BLOCKED: {why}"))),
+        },
+        None => url.clone(),
+    };
     let shadow = Shadow::of(data_dir, repo)?;
     let branch = onto.head_ref.as_str();
     match stack::remote_head(&shadow, &url, branch)? {
@@ -110,7 +129,7 @@ fn fast_forward_now(
         Some(head) => return Ok(Err(moved(onto, &head))),
         None => return Ok(Err(gone(onto))),
     }
-    let pushed = stack::push_from(&shadow, &url, (branch, commit), frozen)?;
+    let pushed = stack::push_from(&shadow, &push_to, (branch, commit), frozen, token)?;
     if pushed.status.success() {
         return Ok(Ok(()));
     }
@@ -118,16 +137,21 @@ fn fast_forward_now(
         Some(head) if head == commit => Ok(Ok(())),
         Some(head) if head != *frozen => Ok(Err(moved(onto, &head))),
         None => Ok(Err(gone(onto))),
-        Some(_) => Ok(Err(push_refused(branch, &pushed)?)),
+        Some(_) => Ok(Err(push_refused(branch, &pushed, token)?)),
     }
 }
 
 /// Why `origin`, still at the frozen head, refused the push: a rule or access
-/// only the operator can change, else a failure worth trying again.
-fn push_refused(branch: &str, pushed: &Ran) -> Result<String, ArchonError> {
+/// only the operator can change, else a failure worth trying again. What git
+/// printed is shown without `token`.
+fn push_refused(branch: &str, pushed: &Ran, token: Option<&Token>) -> Result<String, ArchonError> {
     assert!(!pushed.status.success(), "only a refused push");
-    let said = pushed.stderr_text();
-    let stdout = String::from_utf8_lossy(&pushed.stdout);
+    let shown = |text: String| match token {
+        Some(token) => token.redact(&text),
+        None => text,
+    };
+    let said = shown(pushed.stderr_text());
+    let stdout = shown(String::from_utf8_lossy(&pushed.stdout).into_owned());
     let doing = format!("pushing `{branch}` to `origin`");
     if let Some(line) = stdout
         .lines()
@@ -178,7 +202,7 @@ fn origin(repo: &Path) -> Result<Result<String, String>, ArchonError> {
 /// request; a pull request still showing the frozen head is retried.
 async fn confirm(
     binary: &Path,
-    repo: &Path,
+    repo: &Repo,
     onto: &OntoPullRequest,
     commit: &str,
 ) -> Result<Result<String, String>, ArchonError> {

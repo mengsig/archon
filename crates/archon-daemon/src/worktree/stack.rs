@@ -282,11 +282,12 @@ pub(crate) fn push_from(
     url: &str,
     (branch, commit): (&str, &str),
     expected: &str,
+    token: Option<&Token>,
 ) -> Result<Ran, ArchonError> {
     assert!(is_commit_id(expected), "a lease names a commit");
     assert_ne!(expected, commit, "an update moves the branch");
     let lease = format!("--force-with-lease=refs/heads/{branch}:{expected}");
-    push_with(shadow, url, (branch, commit), Some(&lease))
+    push_with(shadow, url, (branch, commit), Some(&lease), token)
 }
 
 /// [`push`], with `lease` the extra `--force-with-lease` argument, if any.
@@ -604,14 +605,14 @@ mod tests {
         run_git(&repo, &["push", "--quiet", url, &tip(between)]);
         let shadow = Shadow::of(&dir.path().join("data"), &repo).unwrap();
 
-        let moved = push_from(&shadow, url, ("feature", ours), frozen).unwrap();
+        let moved = push_from(&shadow, url, ("feature", ours), frozen, None).unwrap();
         assert!(!moved.status.success(), "the lease refuses it");
         assert_eq!(
             remote_head(&shadow, url, "feature").unwrap().as_ref(),
             Some(between)
         );
         run_git(&repo, &["push", "--quiet", "--force", url, &tip(frozen)]);
-        let pushed = push_from(&shadow, url, ("feature", ours), frozen).unwrap();
+        let pushed = push_from(&shadow, url, ("feature", ours), frozen, None).unwrap();
         assert!(pushed.status.success(), "{pushed:?}");
         assert_eq!(
             remote_head(&shadow, url, "feature").unwrap().as_ref(),

@@ -15,7 +15,9 @@ This is attempt {{attempt}} of at most 3.
 
 The plan is `.archon/swarm-plan.json` on `{{branch}}`: each task's
 objective, owned paths, interfaces, acceptance commands and the plan's
-checks. The planner summarised it:
+checks. An earlier attempt may have removed it; read it from history then:
+`git show "$(git log -1 --format=%H --diff-filter=A -- .archon/swarm-plan.json)":.archon/swarm-plan.json`.
+The planner summarised it:
 
 {{previous.plan.summary}}
 

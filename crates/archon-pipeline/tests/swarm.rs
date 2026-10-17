@@ -301,3 +301,13 @@ fn only_a_team_waiting_for_a_plan_takes_assigned_roles() {
     let error = reshape::apply(&spec, &plan.assignment("ghost")).expect_err("no such stage");
     assert!(error.to_string().contains("\"ghost\""), "{error}");
 }
+
+#[test]
+fn the_integrator_can_read_the_plan_after_an_earlier_attempt_removed_it() {
+    let prompt = include_str!("../../../pipelines/swarm/integrate.md");
+    assert!(prompt.contains("git rm .archon/swarm-plan.json"));
+    assert!(
+        prompt.contains("--diff-filter=A -- .archon/swarm-plan.json"),
+        "a retry must be told how to recover the removed plan from history"
+    );
+}

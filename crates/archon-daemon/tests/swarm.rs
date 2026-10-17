@@ -69,6 +69,7 @@ fn worker_tree(run: &PipelineRun, task: &str) -> PathBuf {
 }
 
 /// Enqueue a swarm item and let its planner commit `plan`, if any, then pass.
+/// A JSON string is committed as the file's raw text.
 async fn planned(h: &Harness, title: &str, plan: Option<&Value>) -> (QueueItem, PipelineRun) {
     let item = h
         .enqueue_in("swarm", title, swarm_model_plan())
@@ -80,7 +81,10 @@ async fn planned(h: &Harness, title: &str, plan: Option<&Value>) -> (QueueItem, 
     assert_eq!(running.len(), 1, "{running:?}");
     assert_eq!(running[0].stage_id, "plan");
     if let Some(plan) = plan {
-        let text = serde_json::to_string_pretty(plan).expect("json");
+        let text = match plan {
+            Value::String(raw) => raw.clone(),
+            plan => serde_json::to_string_pretty(plan).expect("json"),
+        };
         commit_file(&run.workspace, ".archon/swarm-plan.json", &text);
     }
     h.settle_running(|_| completed("split into tasks")).await;
@@ -297,6 +301,8 @@ async fn an_invalid_or_missing_plan_fails_the_plan_stage_with_every_problem() {
     plan_refusal(&h, Some(&solo), "a plan has 2 to 8 tasks, found 1").await;
     let missing = "it committed no `.archon/swarm-plan.json` on the run branch";
     plan_refusal(&h, None, missing).await;
+    let blank = Value::String(" \n".into());
+    plan_refusal(&h, Some(&blank), "its `.archon/swarm-plan.json` is blank").await;
 }
 
 /// A team is admitted whole: more tasks than may run at once would wait forever.

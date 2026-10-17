@@ -1996,7 +1996,8 @@ fn a_swarm_plan_that_assigns_no_roles_fails_the_run_at_the_team() {
 fn a_swarm_spawns_one_worker_per_planned_task_with_its_task_only() {
     let mut sim = swarm_sim();
     assign_tasks(&mut sim, &["api", "cli", "docs"]);
-    let build = sim.settle("plan", 0, Agent::Done("api, cli, docs"));
+    let split = "api: PRIVATE_API in api/. cli: PRIVATE_CLI in cli/.";
+    let build = sim.settle("plan", 0, Agent::Done(split));
     assert_eq!(
         spawned(&build),
         slots(&[("build", 1, 0), ("build", 1, 1), ("build", 1, 2)])
@@ -2009,6 +2010,7 @@ fn a_swarm_spawns_one_worker_per_planned_task_with_its_task_only() {
         assert!(plan.prompt.contains(&format!("You build task `{task}`.")));
         assert!(plan.prompt.contains("Build task `"), "{}", plan.prompt);
         assert!(!plan.prompt.contains("{{"), "{}", plan.prompt);
+        assert!(!plan.prompt.contains("PRIVATE_"), "{}", plan.prompt);
         let others = ["api", "cli", "docs"].into_iter().filter(|t| *t != task);
         for other in others {
             let theirs = format!("You build task `{other}`.");
@@ -2049,6 +2051,12 @@ fn a_swarm_re_dispatches_failed_tasks_at_most_twice() {
         );
         assert!(
             rebuilt[1].prompt.contains("REDISPATCH: cli"),
+            "{}",
+            rebuilt[1].prompt
+        );
+        let peers_report = "api built";
+        assert!(
+            !rebuilt[1].prompt.contains(peers_report),
             "{}",
             rebuilt[1].prompt
         );

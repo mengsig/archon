@@ -101,8 +101,13 @@ pub(crate) fn context(
 
 /// The stages whose summary `stage` gets no other way: not the proposal
 /// (it has its own section), nor one its template or the change report shows.
+/// A planned team's workers get none: the plan's and their peers' reports
+/// name other tasks, and a worker sees its own task only.
 fn handed_off<'a>(spec: &'a PipelineSpec, stage: &StageSpec) -> Vec<&'a StageSpec> {
     let index = spec.stage_index(&stage.id).expect("stage of this pipeline");
+    if stage.roles_from.is_some() {
+        return Vec::new();
+    }
     let template = &spec.prompts[&stage.prompt];
     let shown = template::placeholders(template).expect("validated prompts parse");
     let lists_all = stage.prompt == autonomy::REPORT_PROMPT;

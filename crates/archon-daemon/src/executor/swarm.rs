@@ -104,9 +104,7 @@ async fn assignment(
 /// The plan as committed on the run branch, never the working tree.
 async fn read_plan(workspace: PathBuf) -> Result<String, String> {
     let read = tokio::task::spawn_blocking(move || committed_plan(&workspace)).await;
-    let text = read.map_err(|e| format!("reading its plan stopped: {e}"))??;
-    assert!(!text.is_empty(), "a committed plan has content");
-    Ok(text)
+    read.map_err(|e| format!("reading its plan stopped: {e}"))?
 }
 
 fn committed_plan(workspace: &Path) -> Result<String, String> {
@@ -122,7 +120,13 @@ fn committed_plan(workspace: &Path) -> Result<String, String> {
             swarm::MAX_PLAN_BYTES
         ));
     }
-    worktree::git(workspace, &["show", &object]).map_err(|e| format!("its plan is unread: {e}"))
+    let text = worktree::git(workspace, &["show", &object])
+        .map_err(|e| format!("its plan is unread: {e}"))?;
+    // git's output comes back trimmed, so a blank file reads as nothing.
+    if text.is_empty() {
+        return Err(format!("its `{PLAN_FILE}` is blank"));
+    }
+    Ok(text)
 }
 
 /// A team is admitted whole, so a plan with more tasks than the caps allow

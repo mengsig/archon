@@ -37,7 +37,8 @@ The workers report (claims to verify, not evidence):
    or incomplete goes back to its worker, while attempts remain (attempts
    1 and 2): call `fail_task` with an error that starts with
    `REDISPATCH: <task ids>` and then, per task, what failed (command and
-   output) and what to change. Only those tasks change; the others finish
+   output) and what to change. Every worker reads that error, so restate
+   no task's objective in it. Only those tasks change; the others finish
    at once. Archon then builds again on top of this branch and calls a new
    integrator.
 3. **Fix the glue yourself.** Wiring between tasks, a mismatch that no

@@ -602,7 +602,8 @@ roles' branches onto the run branch. The run still ships one pull request.
   progress.
 - **Roles from a plan.** A team stage with `roles_from` has no roles in
   the file: the swarm plan its planner stage commits gives them, one per
-  task, each with its task as its role prompt (see "Swarm plans").
+  task, each with its task as its role prompt (see "Swarm plans"), and
+  no hand-off from earlier stages.
   At enqueue it counts as two roles against the caps; the plan is held to
   them when it is checked.
 - **Admission.** A team stage's roles start together or not at all: the
@@ -767,6 +768,8 @@ earlier stage reported and, on a later attempt, what this stage's own last
 attempt reported. It is a digest of at most 1,200 characters per stage and
 4,000 in all, nearest stages first when that runs out. A stage your prompt
 already shows through `{{previous.<id>.summary}}` is not repeated there.
+A team stage with `roles_from` gets none: its workers see their own task
+only, so the plan's and their peers' reports stay out.
 So a prompt needs `{{previous.*}}` only where the full summary matters;
 the next stage is not left to rediscover what changed, where, how it was
 verified and what is still open. That is what a stage summary should say.

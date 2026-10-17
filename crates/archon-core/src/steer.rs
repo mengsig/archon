@@ -173,6 +173,13 @@ pub enum RunEdit {
         #[serde(flatten)]
         then: Then,
     },
+    /// The daemon, not a steer: a planner's validated swarm plan gives team
+    /// stage `stage` its `roles`, one per task, each with its task prompt.
+    AssignRoles {
+        stage: String,
+        roles: Vec<String>,
+        role_prompts: std::collections::BTreeMap<String, String>,
+    },
 }
 
 impl RunEdit {
@@ -181,6 +188,7 @@ impl RunEdit {
             Self::InsertStage { .. } => "insert_stage",
             Self::SwitchPipeline { .. } => "switch_pipeline",
             Self::AbortStage { .. } => "abort_stage",
+            Self::AssignRoles { .. } => "assign_roles",
         }
     }
 }

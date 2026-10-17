@@ -1,0 +1,46 @@
+[pipeline]
+name = "swarm"
+description = "A strong planner splits the change into 2 to 8 tasks, cheap workers build them in parallel, one lead integrates, has it reviewed and Archon ships it"
+version = 1
+workspace = "worktree"
+requires_repo = true
+
+# The integrator holds the review: an item's review level says how many reviewers.
+[pipeline.review]
+level = "standard"
+stage = "integrate"
+
+# Archon ships the commits this stage records; no agent does.
+[pipeline.ship]
+stage = "integrate"
+
+[nudges]
+tier = "balanced"
+independent_reviewers = true
+notes = "For a change that splits into 3 or more independent parts with disjoint files and interfaces a planner can state exactly: a strong planner writes the plan, one cheap worker per task builds it in parallel, and a strong lead integrates, re-dispatches failed tasks at most twice and owes the item's review. A change one author can make, or parts too coupled to split, belongs in direct or adaptive."
+
+[[stage]]
+id = "plan"
+kind = "work"
+prompt = "plan.md"
+tier = "strong"
+timeout_minutes = 60
+nudge = "The strong tier at medium effort (the default): it researches the change and writes the plan the workers build from, no product code."
+
+[[stage]]
+id = "build"
+kind = "team"
+prompt = "build.md"
+roles_from = "plan"
+tier = "fast"
+timeout_minutes = 90
+nudge = "The fast tier at medium effort (the default): one worker per task of the plan, each in its own worktree and branch. List up to 8 choices to vary engines; tasks take them in turn."
+
+[[stage]]
+id = "integrate"
+kind = "work"
+prompt = "integrate.md"
+tier = "strong"
+timeout_minutes = 150
+on_fail = { goto = "build", max_loops = 2 }
+nudge = "The strong tier at medium effort (the default): it checks the merged tasks, sends failed ones back to the workers at most twice, fixes the glue no task owns and owes the item's review."

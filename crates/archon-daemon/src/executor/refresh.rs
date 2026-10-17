@@ -135,7 +135,11 @@ fn refresh_owner(
             &stage.id
         };
         for (target, source, limit) in [
-            (stage.id.clone(), source.to_owned(), stage.fan_out as usize),
+            (
+                stage.id.clone(),
+                source.to_owned(),
+                stage.choice_limit() as usize,
+            ),
             (
                 reviewers_key(&stage.id),
                 reviewers_key(source),
@@ -162,6 +166,7 @@ fn refresh_owner(
             }
         }
     }
+    let plan = knobs::fill_stage_tiers(tiers, max_tier, &spec, plan);
     item.model_plan = knobs::fill_static_stages(&base, &spec, plan, fallback.as_ref())?;
     item.model_reasons = Some(reasons);
     item.stage_timeouts

@@ -253,7 +253,7 @@ fn projected_plan(
         .retain(|id, _| new.stage(id).is_some() || Some(id) == reviewers.as_ref());
     for (id, choices) in &mut kept.0 {
         if let Some(stage) = new.stage(id) {
-            choices.truncate(stage.fan_out as usize);
+            choices.truncate(stage.choice_limit() as usize);
         }
     }
     let Learning {

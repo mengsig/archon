@@ -23,6 +23,8 @@ const REVIEW_BUDGET: usize = 3_250;
 const RECORD_BUDGET: usize = 1_300;
 /// What holding a review adds: the record and the verdict each reviewer returns.
 const REVIEW_HOLDER_BUDGET: usize = 1_100;
+/// What a work stage of a team pipeline adds: committing where the roles fork.
+const RUN_TREE_BUDGET: usize = 550;
 const TOTAL_BUDGET: usize = 120_000;
 
 /// One built-in stage's fixed input, in bytes.
@@ -127,6 +129,10 @@ fn built_in_contracts_stay_within_their_byte_budgets() {
         if holds_review {
             budget += REVIEW_HOLDER_BUDGET;
         }
+        let team = spec.file.stages.iter().any(|s| s.kind == StageKind::Team);
+        if team && cost.kind == StageKind::Work {
+            budget += RUN_TREE_BUDGET;
+        }
         if cost.contract > budget {
             over.push(format!(
                 "{}/{}: {} B",
@@ -153,7 +159,7 @@ fn direct_is_the_cheapest_shipping_pipeline() {
         let stages = costs.iter().filter(|c| c.pipeline == pipeline);
         stages.map(|c| c.contract + c.delegation + c.prompt).sum()
     };
-    let shipping = ["adaptive", "refactor", "performance"];
+    let shipping = ["adaptive", "refactor", "performance", "swarm"];
     for other in shipping {
         assert!(
             fixed("direct") < fixed(other),
@@ -190,5 +196,5 @@ fn no_built_in_declares_a_ship_stage() {
             record.id
         );
     }
-    assert_eq!(shipping, 4, "every repository-changing built-in ships");
+    assert_eq!(shipping, 5, "every repository-changing built-in ships");
 }

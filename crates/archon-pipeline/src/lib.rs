@@ -1,6 +1,7 @@
 //! Pipelines: discovery and validation (`catalog`, `spec`, `builtin`),
 //! prompt templating (`template`), the autonomy knobs' stages and gates
-//! (`autonomy`), team stage names and merges (`team`), what archond ships
+//! (`autonomy`), team stage names and merges (`team`), swarm plans that
+//! assign a team its roles (`swarm`), what archond ships
 //! (`ship`), the run state machine (`engine`), and edits to the unstarted
 //! stages of a run (`reshape`).
 //! No process spawning and no store access: the daemon drives this crate.
@@ -17,6 +18,7 @@ pub mod review;
 mod sections;
 pub mod ship;
 pub mod spec;
+pub mod swarm;
 pub mod team;
 pub mod template;
 

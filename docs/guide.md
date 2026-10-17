@@ -73,7 +73,8 @@ gates, your ship mode, caps and autonomy ceiling apply. The orchestrator
 picks the cheapest pipeline that fits: `direct` for any change one author
 can make and check, whatever its size, where one agent does all of it,
 `adaptive` where one lead that keeps its context through fixes or
-integrates independent parts saves restarts, and a heavier one only when
+integrates independent parts saves restarts, `swarm` for a change that
+splits into three or more independent parts, and a heavier one only when
 the work clearly calls for it. How much review an item gets is a choice of
 its own, set by risk rather than size: see
 [Autonomy levels](#autonomy-levels). The orchestrator adds no review on top
@@ -358,6 +359,7 @@ per stage. Add your own under `~/.config/archon/pipelines/` or
 | --- | --- | --- |
 | `direct` | implement | balanced models; the default, and the cheapest path for a change one author can make and check, whatever its size: a fix, a feature, tests, docs or a dependency upgrade. One agent implements it, runs the affected checks and commits, and Archon ships. No review unless the item's `review` knob asks for one; the agent hands back work that turns out risky. See [`docs/PIPELINES.md`](PIPELINES.md#direct) |
 | `adaptive` | build (delegation enabled, holds the review) | balanced models; the orchestrator's choice where one lead that keeps its context through fixes, or integrates independent parts, saves restarts. One lead builds it, delegates the parts worth splitting and has the integrated diff reviewed by as many independent reviewers as the item's `review` knob asks for (one by default); Archon ships only a build with those reviewers verified. Chosen by name or as a repository's `default_pipeline`; see [`docs/PIPELINES.md`](PIPELINES.md#adaptive) |
+| `swarm` | plan → build (team, one worker per planned task) → integrate (holds the review, back to build ×2) | a strong planner and lead, fast workers; for a change that splits into three or more parts with disjoint files. The planner commits a plan Archon checks; each worker gets only its task and the shared interfaces, and may message its peers; the lead integrates, sends failed tasks back at most twice, and has the change reviewed at the item's `review` level (one reviewer by default). See [`docs/PIPELINES.md`](PIPELINES.md#swarm) |
 | `refactor` | baseline/characterize → refactor → verify (gate, back to refactor ×3) → review (gate, back to refactor ×2) | balanced tier, independent reviewer; structure-only changes, use `direct` for behaviour changes |
 | `performance` | measure → optimize → verify (gate, back to optimize ×3) → review (gate, back to optimize ×2) | strong tier, independent reviewer. For a specific slow path with a measurable goal; use `direct` for ordinary changes. |
 | `agent-testing` | plan → exercise (fan-out) → report | agents using the product as a user would |
@@ -1028,7 +1030,7 @@ risk and from what you told it, within a ceiling that only you can raise.
 
 | Knob | Values (default first) | What it changes |
 | --- | --- | --- |
-| `review` | `standard`, `strict`, `none` | how much independent checking the change gets. With no pipeline named the item runs `direct`; in `adaptive` or `direct` the stage agent delegates one, three or no reviewers and Archon verifies them. Any other pipeline has the level its gated stages give it, whatever its reviewer count: a gated review or test stage makes it `standard` and both make it `strict`, so `refactor` is `strict` with one reviewer |
+| `review` | `standard`, `strict`, `none` | how much independent checking the change gets. With no pipeline named the item runs `direct`; in `adaptive`, `direct` or `swarm` the stage agent delegates one, three or no reviewers and Archon verifies them. Any other pipeline has the level its gated stages give it, whatever its reviewer count: a gated review or test stage makes it `standard` and both make it `strict`, so `refactor` is `strict` with one reviewer |
 | `proposal` | `off`, `lavish` | `lavish`: a proposal page first, and nothing is built until you approve it |
 | `report` | `off`, `with-pr`, `before-pr` | a change report in the PR; `before-pr` waits for your approval before the PR |
 | `merge` | `manual`, `auto` | `auto`: Archon asks GitHub to merge the PR once its checks allow |

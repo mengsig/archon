@@ -81,8 +81,8 @@ Commands start `archond` and Archon's own Aether instance when needed.
   A **gate** holds the run on stage verdicts or your approval, and can send
   it back to fix.
 - **Review level:** `none`, `standard` or `strict`. With no pipeline named
-  an item runs `direct`. `direct` and `adaptive` delegate no, one or three
-  reviewers as the item's level asks. Any other pipeline's level follows its
+  an item runs `direct`. `direct`, `adaptive` and `swarm` delegate no, one
+  or three reviewers as the item's level asks. Any other pipeline's level follows its
   gated stages, not a reviewer count: a gated review or test stage makes it
   `standard`, both make it `strict`, so `refactor` is `strict` with one
   reviewer.
@@ -106,6 +106,7 @@ Commands start `archond` and Archon's own Aether instance when needed.
 | --- | --- | --- |
 | `direct` | one agent implements, checks and commits: a fix, a feature, tests, docs or an upgrade | as the item's level asks; none by default |
 | `adaptive` | one lead builds, delegates and integrates | as the item's level asks; one reviewer by default |
+| `swarm` | a strong planner splits the change into tasks, cheap workers build them in parallel, a strong lead integrates | as the item's level asks; one reviewer by default |
 | `refactor`, `performance` | baseline or measure → change → verify → review | a test gate and one reviewer |
 
 `agent-testing`, `e2e-testing`, `code-audit`, `design-doc`, `ask` and

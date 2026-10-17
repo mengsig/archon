@@ -1538,6 +1538,8 @@ mod tests {
             "`adaptive`: one lead that keeps its context through real fixes, or integrates parts \
              that split.",
             "Never bundle unrelated changes into it.",
+            "`swarm`: 3 or more independent parts in disjoint files, built at once by cheap \
+             workers.",
             "only where they clearly fit",
         ];
         let at: Vec<usize> = choice.iter().map(|s| prompt.find(s).unwrap()).collect();
@@ -1583,7 +1585,7 @@ mod tests {
     fn builtin_prompt_steers_stacks_and_groups_work_instead_of_restarting_it() {
         let prompt = unwrapped(&prompt());
         for said in [
-            "0, 1 or 3 reviewers in `adaptive` and `direct` (other pipelines fix theirs)",
+            "0, 1 or 3 reviewers in the three above (others fix theirs)",
             "`steer_item` blames no model; once a run delivers, only its `note` reaches it.",
             "One failed with `ESCALATE:` does not fit its pipeline: do not retry it; \
              `switch_pipeline` or `insert_stage` revives it on its branch.",
@@ -1741,7 +1743,7 @@ mod tests {
     }
 
     /// The prompt is paid for on every turn; the tools describe themselves.
-    const BUDGET_BYTES: usize = 12 * 1024;
+    const BUDGET_BYTES: usize = 12 * 1024 + 256;
 
     #[test]
     fn builtin_prompt_stays_within_its_budget() {

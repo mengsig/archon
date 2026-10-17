@@ -108,6 +108,7 @@ gate = "all_pass"            # default none; none | all_pass | majority | any
 timeout_minutes = 60         # default 120, 1..=43200 (30 days); Archon cancels the agent after this
 effort = "medium"            # default medium; what a model_plan gets without an effort, above it needs a model_reasons entry
 min_tier = "strong"          # default: the tier asked for; the lowest tier a weighted provider may offer here
+tier = "strong"              # default: the pipeline's default choice; this stage's tier when the plan names no model
 allow_delegation = false     # true lets the stage agent delegate, whatever the item's tools
 nudge = "Advice for this stage's model choice."
 on_fail = { goto = "fix", max_loops = 2 }   # optional fix loop
@@ -118,6 +119,12 @@ kind = "team"
 prompt = "build.md"
 roles = ["api", "ui"]        # required on team stages; 2 to 8, [a-z0-9-]
 role_prompts = { ui = "Own the CSS; never touch src/api/." }   # optional, per role
+
+[[stage]]                    # a team whose roles a plan gives it (see "Swarm plans")
+id = "workers"
+kind = "team"
+prompt = "workers.md"
+roles_from = "plan"          # an earlier one-agent work stage that commits a swarm plan
 ```
 
 Unknown keys are errors, so a misspelt field cannot be silently ignored.
@@ -148,6 +155,11 @@ the field:
   `role_prompts` may only name listed roles. A team stage has no `gate`,
   and it needs `workspace = "worktree"`. `roles` and `role_prompts` are
   refused on other kinds.
+- A team stage with `roles_from` lists no `roles`, `role_prompts` or
+  `fan_out`: the swarm plan of the stage it names gives them at run time.
+  That stage is an earlier `work` stage with one agent, and no other team
+  stage takes its roles from it. `roles_from` is refused on other kinds.
+- A stage's `tier` is no lower than its `min_tier`.
 - A `gate` other than `none` is only allowed on `review`, `test` and `report`
   stages. `review` and `test` stages must have one (`all_pass`, `majority`
   or `any`): their agents return a verdict, and `gate = "none"` would ignore
@@ -588,6 +600,11 @@ roles' branches onto the run branch. The run still ships one pull request.
   in it) is moved to `<repo>/.git/archon-set-aside/<name>-<n>` rather than
   deleted, a detached `HEAD` kept as above, and posted to the run's
   progress.
+- **Roles from a plan.** A team stage with `roles_from` has no roles in
+  the file: the swarm plan its planner stage commits gives them, one per
+  task, each with its task as its role prompt (see "Swarm plans").
+  At enqueue it counts as two roles against the caps; the plan is held to
+  them when it is checked.
 - **Admission.** A team stage's roles start together or not at all: the
   dispatcher admits every role's agent at once, or waits. While it waits,
   other work under the caps it waits on (the global cap, its repository's
@@ -1009,6 +1026,7 @@ back to the built-in.
 | --- | --- | --- |
 | `direct` | implement | balanced tier; review level `none` unless the item asks. The pipeline an item runs when it names none. One agent implements, runs the affected tests, commits and returns the ship record. The cheapest path for a change one author can make and check, whatever its size; the agent escalates risky work. |
 | `adaptive` | build (work, delegation enabled, holds the review) | balanced tier; review level `standard` unless the item asks. One lead chooses workers at runtime and has the integrated change reviewed by as many independent reviewers as the item's review level asks for. |
+| `swarm` | plan (strong) → build (team, one fast worker per planned task) → integrate (strong, holds the review, back to build ×2) | review level `standard` unless the item asks. For a change that splits into 3 or more independent parts with disjoint files. |
 | `refactor` | baseline/characterize → refactor → verify (`all_pass`, back to refactor ×3) → review (1, `all_pass`, back to refactor ×2) | balanced tier, independent reviewer. Structure-only changes; use `direct` for behaviour changes. |
 | `performance` | measure → optimize → verify (`all_pass`, back to optimize ×3) → review (1, `all_pass`, back to optimize ×2) | strong tier, independent reviewer. For a specific slow path with a measurable goal, not speculative micro-optimization; use `direct` for ordinary changes. |
 | `agent-testing` | plan → exercise (2 exploratory testers) → report (HTML) | balanced tier, independent testers |
@@ -1018,7 +1036,7 @@ back to the built-in.
 | `errand` | errand (report) | balanced tier. A small job answered in text or as a Lavish page, with no repository changes or outward side effects. Scratch workspace, repository optional. Use `ask` for repository questions in text, and a shipping pipeline for changes. |
 | `design-doc` | research → critique (`all_pass`, back to research ×2) → report (HTML design/RFC) | strong tier, independent critic. Before a large or ambiguous change; no product-code changes or shipping. Use `proposal: lavish` for design and implementation in one item. |
 
-The first four change a repository, and archond ships each of them once
+The first five change a repository, and archond ships each of them once
 its last stage has passed (see "Shipping"); none has a ship agent. Their
 prompts, in [`pipelines/`](../pipelines/), are a good starting point for
 your own. Each pipeline directory stays self-contained.
@@ -1101,6 +1119,90 @@ report knobs work normally: `proposal = lavish` inserts `propose` before
 `build`, `report = with-pr` inserts `report` after it, and `report =
 before-pr` also requires operator approval before archond ships. A
 requested report revision returns to `build`.
+
+### `swarm`
+
+Use `swarm` for a change that splits into three or more parts that can be
+built at the same time, each in files no other part touches. A strong
+planner settles the design and writes precise tasks; cheap workers build
+them in parallel; a strong lead integrates, has the change reviewed and
+hands it in for shipping. For a change one author can make, or whose parts
+are coupled, `direct` or `adaptive` costs less.
+
+1. `plan` (work, tier `strong`) researches the change and commits a plan
+   at `.archon/swarm-plan.json` on the run branch (see "Swarm plans").
+   When it passes, archond reads the committed file, checks it and gives
+   `build` one role per task. A plan it refuses fails the stage with
+   every problem listed. A change that does not split is escalated
+   instead, recommending `adaptive` or `direct`.
+2. `build` (team, `roles_from = "plan"`, tier `fast`) runs one worker per
+   task, each in its own worktree and branch forked from the plan's
+   commit. A worker's prompt holds its own task, the paths it owns, the
+   interfaces it provides and consumes, every interface of the plan and
+   its acceptance commands, never the brief or another task's objective.
+   Archon sends each worker the team roster so that peers can settle an
+   interface question with Aether's `send_message`; an Aether without
+   messaging leaves workers to work alone from the plan. Archon merges
+   the workers' branches in plan order.
+3. `integrate` (work, tier `strong`) runs every task's acceptance
+   commands, the plan's checks and the repository's fast checks on the
+   merged change. A task whose own part is wrong goes back to its worker:
+   the integrator fails with `REDISPATCH: <task ids>` and what to fix,
+   `on_fail` returns to `build`, and the workers not named finish at
+   once. That happens at most twice; on the third attempt the integrator
+   fixes what remains itself or fails. It removes the plan file in its
+   last commit, delegates the reviewers the item's review level asks for
+   (`[pipeline.review] level = "standard"` on `integrate`), and returns
+   the ship record; archond ships it.
+
+The `model_plan` stage ids are `plan`, `build` and `integrate`. A stage
+the plan leaves out gets its `tier`, falling back to the best model the
+policy permits below it; `build` may list up to 8 choices, one per worker
+in task order. Owned paths are kept by instruction and checked by the
+integrator: an Aether workspace does not narrow what a worker may write.
+
+#### Swarm plans
+
+The plan is JSON, at most 64 KiB:
+
+```json
+{
+  "version": 1,
+  "summary": "What the change does and how the tasks fit together.",
+  "checks": ["cargo check --workspace"],
+  "tasks": [
+    {
+      "id": "parser",
+      "objective": "What to build, precisely: behaviour, edge cases, tests.",
+      "paths": ["crates/parser/src/plan.rs", "crates/parser/tests/plan.rs"],
+      "provides": [{"name": "parse_plan", "signature": "pub fn parse_plan(text: &str) -> Result<Plan, PlanError>"}],
+      "consumes": [],
+      "acceptance": ["cargo test -p parser plan"],
+      "depends_on": []
+    }
+  ]
+}
+```
+
+Archon refuses it unless:
+
+- `version` is 1, `summary` is not empty, and no other field is present;
+- it has 2 to 8 tasks, and no more than the item's agent caps run at once,
+  since a team is admitted whole;
+- each task `id` is a role name (1 to 32 of `[a-z0-9-]`, starting and
+  ending with a letter or digit, no `--`) and unique;
+- each task has an `objective`, 1 to 64 `paths` and 1 to 16 `acceptance`
+  commands, and the plan 1 to 16 `checks`; a command is one line;
+- each path is relative and normalised, has no glob or backslash, and is
+  not inside `.git` or `.archon`; no path of one task equals, contains or
+  lies inside a path of another;
+- interface names are unique, each with a signature, and every name a
+  task `consumes` is provided by another task;
+- `depends_on` names only earlier tasks, so plan order is merge order.
+
+The roles a plan gives are recorded with the run, like a steer's edit, so
+a restart rebuilds the run without reading the file again. Once `build`
+has run, a later plan must keep its task ids; it may reword their tasks.
 
 ### `errand`
 

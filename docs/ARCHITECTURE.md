@@ -1538,9 +1538,14 @@ replays the same after a restart.
 
 **Run edits.** A change to a run's stages is a `RunEdit` appended to the
 `run_edits` table (`Store::append_run_edit`), numbered per run:
-`InsertStage`, `SwitchPipeline` and `AbortStage {stage, attempt, then}`.
-An insert or a switch carries the stages and the prompt texts it adds, so
-replay never reads the catalog. `frozen::thaw` applies the run's edits in
+`InsertStage`, `SwitchPipeline` and `AbortStage {stage, attempt, then}`
+from steers, and `AssignRoles {stage, roles, role_prompts}` from archond
+itself: when a planner stage passes, `executor::swarm` reads its committed
+swarm plan, checks it (`swarm::parse`, the agent caps) and records the
+roles it gives the team stage with `roles_from`, then has `decide` rebuild
+the driver from the store. An insert, a switch or an assignment carries
+the stages and the prompt texts it adds, so replay never reads the catalog
+or the plan. `frozen::thaw` applies the run's edits in
 order to its frozen pipeline (`reshape::apply_all`) before
 `RunDriver::resume`, and `record_abort` gives the driver each abort. An
 inserted stage whose id is taken gets a numbered one (`test-2`), and a

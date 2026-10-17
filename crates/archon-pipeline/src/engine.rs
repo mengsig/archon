@@ -436,7 +436,7 @@ impl RunDriver {
         if stage.kind != StageKind::Team {
             return None;
         }
-        debug_assert_eq!(stage.roles.len(), stage.fan_out as usize);
+        debug_assert!(stage.awaits_roles() || stage.roles.len() == stage.fan_out as usize);
         Some(&stage.roles)
     }
 
@@ -827,6 +827,9 @@ impl RunDriver {
             }
             if let Some(stop) = blocked_stop(stage, &group) {
                 return stop;
+            }
+            if stage.awaits_roles() {
+                return unassigned_stop(stage);
             }
             let missing: Vec<u32> = (0..stage.fan_out)
                 .filter(|f| group[*f as usize].is_none())
@@ -1244,15 +1247,21 @@ impl RunDriver {
             .roles
             .get(fan as usize)
             .expect("validated: one role per slot");
+        Some(self.role_slot(stage, role, attempt))
+    }
+
+    /// `role`'s slot of team stage `stage` for `attempt`.
+    fn role_slot(&self, stage: &StageSpec, role: &str, attempt: u32) -> TeamSlot {
+        assert_eq!(stage.kind, StageKind::Team, "only team stages have roles");
         let root = team::team_root(Path::new(&self.base_vars["workspace"]))
             .expect("RunDriver::new checked the team layout");
         let slot = TeamSlot {
-            role: role.clone(),
+            role: role.to_owned(),
             branch: team::worker_branch(&self.base_vars["branch"], &self.run_id(), role, attempt),
             workspace: root.join(team::worker_dir(&stage.id, role)),
         };
         debug_assert_ne!(PathBuf::from(&self.base_vars["workspace"]), slot.workspace);
-        Some(slot)
+        slot
     }
 
     /// How a spawn relates to the pipeline's team stage, for its contract.
@@ -1317,7 +1326,11 @@ impl RunDriver {
                     stage.id, stage.prompt
                 ))
             })?;
-            let team = self.team_slot(stage, 1, 0);
+            // A team waiting for a plan's roles renders as its first task would.
+            let team = match stage.awaits_roles() {
+                true => Some(self.role_slot(stage, "task", 1)),
+                false => self.team_slot(stage, 1, 0),
+            };
             template::render(template, &self.spawn_vars(stage, &at, 0, team.as_ref()))
                 .map_err(|e| ArchonError::Pipeline(format!("stage {:?}: {e}", stage.id)))?;
             at.previous
@@ -1337,12 +1350,12 @@ fn check_plan(spec: &PipelineSpec, plan: &ModelPlan) -> Result<(), ArchonError> 
                 spec.name()
             )));
         }
-        if choices.len() > stage.fan_out as usize {
+        if choices.len() > stage.choice_limit() as usize {
             return Err(ArchonError::Invalid(format!(
                 "model_plan lists {} choices for stage {:?}, which runs {} agent(s)",
                 choices.len(),
                 stage.id,
-                stage.fan_out
+                stage.choice_limit()
             )));
         }
     }
@@ -1470,6 +1483,25 @@ fn blocked_stop(stage: &StageSpec, group: &[Option<&StageRun>]) -> Option<Replay
             error: gate::clip(&error, MAX_ERROR_CHARS),
         },
     })
+}
+
+/// The run reached a team stage whose planner assigned it no roles: archond
+/// assigns them as the planner passes, so this is never a silent pass.
+fn unassigned_stop(stage: &StageSpec) -> Replay {
+    let planner = stage.roles_from.as_deref();
+    let planner = planner.expect("only a team stage with roles_from awaits roles");
+    let error = format!(
+        "team stage `{}` has no roles: stage `{planner}` passed without the swarm plan \
+         assigning them",
+        stage.id
+    );
+    Replay::Stop {
+        cancel: Vec::new(),
+        state: RunState::Failed {
+            stage_id: stage.id.clone(),
+            error,
+        },
+    }
 }
 
 /// Why a live team role is cancelled: the roles that already failed.

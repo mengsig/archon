@@ -67,6 +67,17 @@ impl RepoEnv {
         Self::new(repo)
     }
 
+    /// The most agents an item of `pipeline` here may run at once; 0 when
+    /// no cap applies.
+    pub fn agent_cap(&self, ctx: &DaemonContext, pipeline: &str) -> u32 {
+        let caps = item_caps(ctx, self.repo.as_ref().map(|r| &r.id));
+        let repo_cap = self
+            .repo
+            .as_ref()
+            .map(|_| self.config.limits.max_per_repo.unwrap_or(0));
+        archon_queue::dispatch::effective_agent_cap(&caps, repo_cap, pipeline)
+    }
+
     /// The global policy narrowed by the repository's `[models]`.
     pub fn policy(&self, config: &Config) -> ModelPolicy {
         config

@@ -12,7 +12,7 @@ use archon_core::pull_request::{OntoPullRequest, OntoTarget};
 use archon_core::queue::{QueueItem, QueueState, check_enqueue, check_item_budget, check_tags};
 use archon_core::repo::Repo;
 use archon_pipeline::PipelineSpec;
-use archon_queue::dispatch::effective_agent_cap;
+use archon_pipeline::spec::MIN_ROLES;
 
 use super::revise::{self, Ceiling};
 use crate::context::DaemonContext;
@@ -815,16 +815,17 @@ pub(super) async fn filled_plan(
     store.configure_learning(&ctx.config.learning)?;
     let repo = env.repo.as_ref().map(|repo| &repo.id);
     // What an enqueue naming no model runs with nothing learned: savings are measured against it.
-    let unnamed = ModelPlan::default();
+    let unnamed = knobs::fill_stage_tiers(tiers, max_tier, spec, ModelPlan::default());
     let baseline = knobs::fill_static_stages(base, spec, unnamed, fallback.as_ref())?;
     store.record_static_plan(repo, spec.name(), &baseline)?;
     let learned = learned::plan_for_item(&store, id, repo, spec, (&policy, max_tier), &plan)?;
     let mut plan = plan;
     plan.0.extend(learned.0);
+    let plan = knobs::fill_stage_tiers(tiers, max_tier, spec, plan);
     knobs::fill_static_stages(base, spec, plan, fallback.as_ref())
 }
 
-/// Every stage has 1 to `fan_out` choices, no unknown stage is named, and
+/// Every stage has 1 to `choice_limit` choices, no unknown stage is named, and
 /// every choice passes the effective model policy.
 pub(super) fn check_plan(
     ctx: &DaemonContext,
@@ -834,12 +835,12 @@ pub(super) fn check_plan(
 ) -> Result<(), ArchonError> {
     for stage in &spec.file.stages {
         let choices = plan.choices_for(&stage.id).unwrap_or_default();
-        if choices.is_empty() || choices.len() > stage.fan_out as usize {
+        if choices.is_empty() || choices.len() > stage.choice_limit() as usize {
             return Err(ArchonError::Invalid(format!(
                 "model_plan must give stage {:?} of {:?} 1 to {} model choice(s), not {}",
                 stage.id,
                 spec.name(),
-                stage.fan_out,
+                stage.choice_limit(),
                 choices.len()
             )));
         }
@@ -912,20 +913,20 @@ pub(super) async fn check_runs_here(
             spec.name()
         )));
     }
-    let caps = resolve::item_caps(ctx, env.repo.as_ref().map(|r| &r.id));
-    let repo_cap = env
-        .repo
-        .as_ref()
-        .map(|_| env.config.limits.max_per_repo.unwrap_or(0));
-    let cap = effective_agent_cap(&caps, repo_cap, spec.name());
+    let cap = env.agent_cap(ctx, spec.name());
     let teams = spec
         .file
         .stages
         .iter()
         .filter(|s| s.kind == StageKind::Team);
     for stage in teams {
-        assert!(!stage.roles.is_empty(), "a validated team stage has roles");
-        let roles = u32::try_from(stage.roles.len()).expect("a team has few roles");
+        // A plan gives a waiting team its roles at run time: at least two.
+        let roles = match stage.awaits_roles() {
+            true => MIN_ROLES,
+            false => stage.roles.len(),
+        };
+        assert!(roles >= MIN_ROLES, "a validated team stage has roles");
+        let roles = u32::try_from(roles).expect("a team has few roles");
         if cap != 0 && roles > cap {
             return Err(ArchonError::Invalid(format!(
                 "team stage {:?} of {:?} runs its {roles} roles at once, but the agent caps \

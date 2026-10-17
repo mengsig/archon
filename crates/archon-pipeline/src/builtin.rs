@@ -32,6 +32,7 @@ macro_rules! builtin {
 
 pub const BUILTINS: &[BuiltinPipeline] = &[
     builtin!("adaptive", ["build.md"]),
+    builtin!("swarm", ["plan.md", "build.md", "integrate.md"]),
     builtin!("direct", ["implement.md"]),
     builtin!(
         "refactor",

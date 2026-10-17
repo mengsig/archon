@@ -1952,3 +1952,135 @@ fn adaptive_never_ships_a_failed_or_blocked_build() {
         ));
     }
 }
+
+/// The `swarm` built-in, started: its plan stage is live.
+fn swarm_sim() -> Sim {
+    let mut sim = sim("swarm");
+    assert_eq!(spawned(&sim.start()), slots(&[("plan", 1, 0)]));
+    sim
+}
+
+/// The roles a plan of `tasks` gives `build`, recorded as archond does
+/// before the plan stage's settle reaches the rebuilt driver.
+fn assign_tasks(sim: &mut Sim, tasks: &[&str]) {
+    let edit = archon_core::steer::RunEdit::AssignRoles {
+        stage: "build".into(),
+        roles: tasks.iter().map(|t| (*t).to_owned()).collect(),
+        role_prompts: tasks
+            .iter()
+            .map(|t| ((*t).to_owned(), format!("You build task `{t}`.")))
+            .collect(),
+    };
+    let spec = archon_pipeline::reshape::apply(&sim.spec, &edit).expect("assignable");
+    let plan = sim.plan.clone();
+    assert!(
+        sim.reshape(spec, plan).is_empty(),
+        "the planner is still live"
+    );
+}
+
+#[test]
+fn a_swarm_plan_that_assigns_no_roles_fails_the_run_at_the_team() {
+    let mut sim = swarm_sim();
+    let done = sim.settle("plan", 0, Agent::Done("planned"));
+    assert!(spawned(&done).is_empty(), "no worker without a task");
+    let (stage, error) = failed(&done);
+    assert_eq!(stage, "build");
+    assert!(
+        error.contains("stage `plan` passed without the swarm plan"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_swarm_spawns_one_worker_per_planned_task_with_its_task_only() {
+    let mut sim = swarm_sim();
+    assign_tasks(&mut sim, &["api", "cli", "docs"]);
+    let build = sim.settle("plan", 0, Agent::Done("api, cli, docs"));
+    assert_eq!(
+        spawned(&build),
+        slots(&[("build", 1, 0), ("build", 1, 1), ("build", 1, 2)])
+    );
+    for (plan, task) in spawn_plans(&build).iter().zip(["api", "cli", "docs"]) {
+        let slot = plan.team.as_ref().expect("a worker is a team slot");
+        assert_eq!(slot.role, task);
+        assert!(slot.workspace.ends_with(format!("build-{task}")));
+        assert_eq!(plan.fan_count, 3, "one worker per task");
+        assert!(plan.prompt.contains(&format!("You build task `{task}`.")));
+        assert!(plan.prompt.contains("Build task `"), "{}", plan.prompt);
+        assert!(!plan.prompt.contains("{{"), "{}", plan.prompt);
+        let others = ["api", "cli", "docs"].into_iter().filter(|t| *t != task);
+        for other in others {
+            let theirs = format!("You build task `{other}`.");
+            assert!(!plan.prompt.contains(&theirs), "{}", plan.prompt);
+        }
+    }
+}
+
+/// The integrator sends tasks back twice at most: a third failure ends the run.
+#[test]
+fn a_swarm_re_dispatches_failed_tasks_at_most_twice() {
+    let mut sim = swarm_sim();
+    assign_tasks(&mut sim, &["api", "cli"]);
+    sim.settle("plan", 0, Agent::Done("api, cli"));
+    for attempt in 1..=3 {
+        sim.settle("build", 0, Agent::Done("api built"));
+        let merge = sim.settle("build", 1, Agent::Done("cli built"));
+        assert_eq!(sim::merge_plans(&merge)[0].attempt, attempt);
+        let integrate = sim.merge(MergeOutcome::Merged);
+        assert_eq!(spawned(&integrate), slots(&[("integrate", attempt, 0)]));
+        let prompt = &spawn_plans(&integrate)[0].prompt;
+        assert!(prompt.contains(&format!("This is attempt {attempt} of at most 3.")));
+        let back = sim.settle(
+            "integrate",
+            0,
+            Agent::Error("REDISPATCH: cli\ncli: test fails"),
+        );
+        if attempt == 3 {
+            let (stage, error) = failed(&back);
+            assert_eq!(stage, "integrate");
+            assert!(error.contains("after 2 of 2 fix loop(s)"), "{error}");
+            return;
+        }
+        let rebuilt = spawn_plans(&back);
+        assert_eq!(
+            spawned(&back),
+            slots(&[("build", attempt + 1, 0), ("build", attempt + 1, 1)])
+        );
+        assert!(
+            rebuilt[1].prompt.contains("REDISPATCH: cli"),
+            "{}",
+            rebuilt[1].prompt
+        );
+    }
+    unreachable!("the third failure ends the run");
+}
+
+#[test]
+fn a_swarm_integrator_ships_its_reviewed_change() {
+    let mut sim = swarm_sim();
+    assign_tasks(&mut sim, &["api", "cli"]);
+    sim.settle("plan", 0, Agent::Done("api, cli"));
+    sim.settle("build", 0, Agent::Done("api built"));
+    sim.settle("build", 1, Agent::Done("cli built"));
+    let integrate = sim.merge(MergeOutcome::Merged);
+    let lead = spawn_plans(&integrate)[0];
+    assert!(
+        lead.allow_delegation,
+        "the integrator delegates its reviewers"
+    );
+    assert!(lead.instructions.contains("## Review on record"));
+    assert!(
+        lead.prompt.contains("[role cli] cli built"),
+        "{}",
+        lead.prompt
+    );
+    let ship = sim.settle(
+        "integrate",
+        0,
+        Agent::DoneStructured("Integrated; checks pass.", reviewed_by("codex/astra")),
+    );
+    assert_eq!(shipping(&ship).record_stage, "integrate");
+    let done = sim.ship_pr(PR);
+    assert!(succeeded(&done).contains(&format!("SHIPPED: {PR}")));
+}

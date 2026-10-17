@@ -3,13 +3,15 @@
 //! run's frozen pipeline. An edit holds the stages and prompt texts it adds,
 //! so replay after a restart never reads the catalog.
 
+use std::collections::BTreeMap;
+
 use archon_core::autonomy::ReviewLevel;
 use archon_core::catalog::StageKind;
 use archon_core::error::ArchonError;
 use archon_core::steer::RunEdit;
 use serde::{Deserialize, Serialize};
 
-use crate::spec::{DaemonShip, InStageReview, PipelineSpec, StageSpec};
+use crate::spec::{DaemonShip, InStageReview, MAX_ROLES, PipelineSpec, StageSpec};
 
 /// A stage with what a run needs to hold it: its prompt text, the review its
 /// pipeline declared it holds, and whether archond shipped what it recorded.
@@ -241,6 +243,13 @@ pub fn apply(spec: &PipelineSpec, edit: &RunEdit) -> Result<PipelineSpec, Archon
         RunEdit::SwitchPipeline { stages, .. } => {
             out.file.stages = switched(&mut out, stages, &mut recorder)?;
         }
+        RunEdit::AssignRoles {
+            stage,
+            roles,
+            role_prompts,
+        } => {
+            assign_roles(&mut out, stage, roles, role_prompts)?;
+        }
     }
     let review = out.file.pipeline.review.take();
     out.file.pipeline.review = review.filter(|r| out.stage(&r.stage).is_some());
@@ -248,6 +257,34 @@ pub fn apply(spec: &PipelineSpec, edit: &RunEdit) -> Result<PipelineSpec, Archon
     out.validate(spec.name())?;
     assert_eq!(out.name(), spec.name(), "a run keeps its snapshot's name");
     Ok(out)
+}
+
+/// Give `stage`, a team stage with `roles_from`, its roles. Replacing roles
+/// after the stage ran is the daemon's to refuse: only it sees the attempts.
+fn assign_roles(
+    spec: &mut PipelineSpec,
+    stage: &str,
+    roles: &[String],
+    role_prompts: &BTreeMap<String, String>,
+) -> Result<(), ArchonError> {
+    let index = spec.stage_index(stage).ok_or_else(|| missing(stage))?;
+    let team = &mut spec.file.stages[index];
+    if team.kind != StageKind::Team || team.roles_from.is_none() {
+        return Err(refused(format!(
+            "stage {stage:?} is no team stage that takes its roles from a plan"
+        )));
+    }
+    if roles.is_empty() || roles.len() > MAX_ROLES {
+        return Err(refused(format!(
+            "a plan assigns {} roles to team stage {stage:?}",
+            roles.len()
+        )));
+    }
+    team.roles = roles.to_vec();
+    team.role_prompts = role_prompts.clone();
+    team.fan_out = roles.len() as u32;
+    assert_eq!(team.roles.len(), team.fan_out as usize, "one slot per role");
+    Ok(())
 }
 
 fn missing(stage: &str) -> ArchonError {

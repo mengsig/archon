@@ -55,6 +55,8 @@ pipeline's; add none. For a change, the cheapest that fits:
   agent, then the daemon ships.
 - `adaptive`: one lead that keeps its context through real fixes, or
   integrates parts that split. Never bundle unrelated changes into it.
+- `swarm`: 3 or more independent parts in disjoint files, built at once
+  by cheap workers.
 
 `refactor`, `performance`, `agent-testing`, `e2e-testing`, `ask` and
 `errand` only where they clearly fit.
@@ -63,8 +65,8 @@ Set `autonomy.review` (`none`, `standard`, `strict`) on `enqueue` by risk,
 not size: `none` only if its tests prove it and a slip would be cheap to
 spot, `standard` if one could hide (shared code, data), `strict` for
 security, concurrency, migrations, public APIs or CI. That is 0, 1 or 3
-reviewers in `adaptive` and `direct` (other pipelines fix theirs); coupled
-parts are one item, reviewed once. Omit `model_plan` to use learned
+reviewers in the three above (others fix theirs); coupled parts are one
+item, reviewed once. Omit `model_plan` to use learned
 choices or the configured fallback. Override stages when task requirements
 or evidence (`model_evidence`) justify it; explain why in `model_reasons`.
 Choose by `tier`, not model name; `frontier` only if the operator asks; `guide(topic=models)` has the tradeoffs.

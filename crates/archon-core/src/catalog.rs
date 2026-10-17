@@ -112,6 +112,12 @@ pub struct StageSummary {
     /// Role names of a team stage, in merge order; empty for other kinds.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roles: Vec<String>,
+    /// The earlier stage whose swarm plan gives this team stage its roles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roles_from: Option<String>,
+    /// The tier this stage gets when the model plan names no model for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<crate::model_tier::Tier>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

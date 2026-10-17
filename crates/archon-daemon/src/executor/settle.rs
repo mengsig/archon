@@ -8,11 +8,12 @@ use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
 use archon_core::notify::{FeedEntry, Notification, NotificationKind};
 use archon_core::run::{PipelineRun, RunState, StageOutcome, StageRun, StageState, Verdict};
+use archon_core::steer::RunEdit;
 use archon_pipeline::{EngineAction, SpawnPlan};
 
 use super::{
     FollowUp, RunTable, descendants, finish, gates, pages, recover, resume, ship, siblings, spawn,
-    team,
+    swarm, team,
 };
 use crate::context::DaemonContext;
 use crate::disk::{self, FullDisk};
@@ -26,7 +27,7 @@ pub(super) async fn settle(
         let mut table = ctx.runs.lock().await;
         return settle_locked(ctx, &mut table, id, outcome).await;
     }
-    let (stage, run, review, daemon_ships) = {
+    let (stage, run, review, daemon_ships, planner) = {
         let table = ctx.runs.lock().await;
         let store = ctx.store.lock().await;
         let stage = store.stage_run(id)?;
@@ -40,12 +41,14 @@ pub(super) async fn settle(
             records_ship: driver.is_some_and(|d| d.records_ship(&stage.stage_id)),
         };
         let daemon_ships = driver.is_some_and(|d| d.ships_by_daemon());
-        (stage, run, review, daemon_ships)
+        let planner = driver.and_then(|d| swarm::Planner::of(d.spec(), &stage.stage_id));
+        (stage, run, review, daemon_ships, planner)
     };
     // Leave the stage live until verification is persisted. If interrupted,
     // reconnect reconciliation reads the task outcome and verifies it again.
     let outcome = ship::verify(ctx, &run, &stage, daemon_ships, outcome).await?;
     let outcome = super::review::verify(ctx, &run, &stage, review, outcome).await?;
+    let (outcome, assigned) = swarm::verify(ctx, &run, &stage, planner, outcome).await?;
     let mut table = ctx.runs.lock().await;
     let (stage, run, all) = {
         let store = ctx.store.lock().await;
@@ -67,9 +70,36 @@ pub(super) async fn settle(
         );
         (current_stage, current_run, all)
     };
+    if let Some(edit) = assigned {
+        assign_roles(ctx, &mut table, &run, edit).await?;
+    }
     // Verification failures are final stage outcomes, not infrastructure
     // failures from Aether: they must not enter the stage's retry path.
     persist(ctx, &mut table, stage, run, &all, outcome).await
+}
+
+/// Record the roles a swarm plan gives a team stage and drop the run's
+/// driver, which `decide` then rebuilds from the store with them.
+async fn assign_roles(
+    ctx: &DaemonContext,
+    table: &mut RunTable,
+    run: &PipelineRun,
+    edit: RunEdit,
+) -> Result<(), ArchonError> {
+    let RunEdit::AssignRoles { stage, roles, .. } = &edit else {
+        unreachable!("a plan assigns roles, not {edit:?}");
+    };
+    assert!(!roles.is_empty(), "a plan assigns at least one role");
+    let text = format!(
+        "The swarm plan assigned tasks {} to team stage `{stage}`.",
+        roles.join(", ")
+    );
+    ctx.store
+        .lock()
+        .await
+        .append_run_edit(&run.id, &edit, archon_core::now())?;
+    table.drivers.remove(&run.id);
+    progress(ctx, run, text).await
 }
 
 /// Settle one stage run while the caller holds the run table. A stage run
@@ -151,8 +181,8 @@ async fn decide(
             pages::lists_pages(settled) && driver.gates().subject(&settled.stage_id).is_none(),
         ),
         None => {
-            // A driver is missing only if an earlier rebuild failed; retry it
-            // from the store, which already holds this settle.
+            // A driver is missing if a swarm plan just reshaped the run or an
+            // earlier rebuild failed: rebuild it from the store, with this settle.
             let stages = ctx.store.lock().await.stage_runs(&run.id)?;
             return recover::resume_run(ctx, table, run, &stages).await;
         }

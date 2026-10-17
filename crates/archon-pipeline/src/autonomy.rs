@@ -138,11 +138,13 @@ fn inserted(id: &str, kind: StageKind, prompt: &str) -> StageSpec {
         timeout_minutes: INSERTED_TIMEOUT_MINUTES,
         effort: Effort::Medium,
         min_tier: None,
+        tier: None,
         allow_delegation: false,
         nudge: None,
         on_fail: None,
         roles: Vec::new(),
         role_prompts: Default::default(),
+        roles_from: None,
     }
 }
 

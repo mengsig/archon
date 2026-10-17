@@ -1,0 +1,309 @@
+//! The built-in `swarm` pipeline against the scripted backend: a planner
+//! commits `.archon/swarm-plan.json`, archond checks it and gives `build`
+//! one worker per task, and the integrator sends tasks back at most twice.
+
+mod common;
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use archon_core::model::{Effort, ModelPlan};
+use archon_core::queue::{QueueItem, QueueState};
+use archon_core::run::{PipelineRun, StageOutcome, StageRun};
+use archon_core::steer::RunEdit;
+use archon_daemon::executor;
+use archon_pipeline::team::worker_branch;
+use common::{Harness, MODEL, choice, completed, git};
+use serde_json::{Value, json};
+
+const TASKS: [&str; 3] = ["api", "cli", "docs"];
+
+fn swarm_model_plan() -> ModelPlan {
+    let stages = ["plan", "build", "integrate"]
+        .into_iter()
+        .map(|stage| (stage.to_owned(), vec![choice(MODEL, Effort::Medium)]));
+    ModelPlan(stages.collect::<BTreeMap<_, _>>())
+}
+
+/// A plan of `tasks`; of two or more, the first provides `parse` to the second.
+fn swarm_plan(tasks: &[&str]) -> Value {
+    let tasks: Vec<Value> = tasks
+        .iter()
+        .map(|id| {
+            json!({
+                "id": id,
+                "objective": format!("Build the {id} part."),
+                "paths": [format!("{id}/")],
+                "acceptance": [format!("test -f {id}/done.txt")],
+            })
+        })
+        .collect();
+    let mut plan = json!({
+        "version": 1,
+        "summary": "Three parts.",
+        "checks": ["true"],
+        "tasks": tasks,
+    });
+    if plan["tasks"]
+        .as_array()
+        .is_some_and(|tasks| tasks.len() > 1)
+    {
+        plan["tasks"][0]["provides"] = json!([{"name": "parse", "signature": "fn parse() -> u8"}]);
+        plan["tasks"][1]["consumes"] = json!(["parse"]);
+    }
+    plan
+}
+
+fn commit_file(tree: &Path, file: &str, text: &str) {
+    if let Some(dir) = Path::new(file).parent() {
+        std::fs::create_dir_all(tree.join(dir)).expect("mkdir");
+    }
+    std::fs::write(tree.join(file), text).expect("write");
+    git(tree, &["add", "-f", file]);
+    git(tree, &["commit", "--quiet", "-m", &format!("write {file}")]);
+}
+
+fn worker_tree(run: &PipelineRun, task: &str) -> PathBuf {
+    let root = run.team_root.as_ref().expect("a team run");
+    root.join(format!("build-{task}"))
+}
+
+/// Enqueue a swarm item and let its planner commit `plan`, if any, then pass.
+async fn planned(h: &Harness, title: &str, plan: Option<&Value>) -> (QueueItem, PipelineRun) {
+    let item = h
+        .enqueue_in("swarm", title, swarm_model_plan())
+        .await
+        .expect("the swarm built-in enqueues");
+    h.dispatch().await;
+    let run = h.run(&item.id).await;
+    let running = h.running().await;
+    assert_eq!(running.len(), 1, "{running:?}");
+    assert_eq!(running[0].stage_id, "plan");
+    if let Some(plan) = plan {
+        let text = serde_json::to_string_pretty(plan).expect("json");
+        commit_file(&run.workspace, ".archon/swarm-plan.json", &text);
+    }
+    h.settle_running(|_| completed("split into tasks")).await;
+    h.dispatch().await;
+    (item, run)
+}
+
+/// The running workers, in task order, all at `attempt`.
+async fn running_workers(h: &Harness, attempt: u32) -> Vec<StageRun> {
+    let mut running = h.running().await;
+    running.sort_by_key(|s| s.fan_index);
+    let shape: Vec<(&str, u32)> = running
+        .iter()
+        .map(|s| (s.stage_id.as_str(), s.attempt))
+        .collect();
+    assert_eq!(shape, vec![("build", attempt); TASKS.len()], "{running:?}");
+    running
+}
+
+/// Each worker commits in its own paths on its own branch and completes.
+async fn build_round(h: &Harness, run: &PipelineRun, attempt: u32) {
+    running_workers(h, attempt).await;
+    for task in TASKS {
+        let tree = worker_tree(run, task);
+        let branch = worker_branch(&run.branch, &run.id, task, attempt);
+        assert_eq!(git(&tree, &["rev-parse", "--abbrev-ref", "HEAD"]), branch);
+        assert!(
+            tree.join(".archon/swarm-plan.json").exists(),
+            "{task} forks from the plan"
+        );
+        commit_file(&tree, &format!("{task}/v{attempt}.txt"), "work\n");
+    }
+    let settled =
+        h.settle_running(|s| completed(&format!("{} built", TASKS[s.fan_index as usize])));
+    assert_eq!(settled.await.len(), TASKS.len());
+    h.dispatch().await;
+}
+
+/// The only running stage, which must be `integrate` at `attempt`.
+async fn running_integrator(h: &Harness, attempt: u32) {
+    let running = h.running().await;
+    assert_eq!(running.len(), 1, "{running:?}");
+    let now = (running[0].stage_id.as_str(), running[0].attempt);
+    assert_eq!(now, ("integrate", attempt));
+}
+
+fn redispatch(task: &str) -> StageOutcome {
+    StageOutcome::Failed {
+        error: format!("REDISPATCH: {task}\n{task}: its acceptance command failed"),
+        infra: false,
+    }
+}
+
+/// Each worker runs in its own tree with its task and the shared interfaces,
+/// never another task's objective.
+fn assert_worker_prompts(h: &Harness, run: &PipelineRun) {
+    let requests = h.backend.requests();
+    assert!(requests.len() > TASKS.len(), "a planner and the workers");
+    for task in TASKS {
+        let request = requests
+            .iter()
+            .find(|r| r.objective.contains(&format!("You build task `{task}`")))
+            .unwrap_or_else(|| panic!("no worker for {task}"));
+        assert!(
+            request
+                .objective
+                .contains(&format!("Build the {task} part."))
+        );
+        assert!(
+            request
+                .objective
+                .contains("Tasks merge in plan order: `api`, `cli`, `docs`.")
+        );
+        assert_eq!(request.workspace, worker_tree(run, task));
+        for other in TASKS.iter().filter(|t| **t != task) {
+            let theirs = format!("Build the {other} part.");
+            assert!(
+                !request.objective.contains(&theirs),
+                "{}",
+                request.objective
+            );
+        }
+    }
+    let cli = requests
+        .iter()
+        .find(|r| r.objective.contains("You build task `cli`"));
+    let cli = &cli.expect("cli's worker").objective;
+    assert!(
+        cli.contains("- `parse` from task `api`, built in parallel"),
+        "{cli}"
+    );
+    assert!(cli.contains("fn parse() -> u8"), "{cli}");
+}
+
+#[tokio::test]
+async fn a_committed_plan_gives_each_task_a_worker_with_its_task_and_peers() {
+    let h = Harness::new().await;
+    let (_, run) = planned(&h, "split three ways", Some(&swarm_plan(&TASKS))).await;
+    let workers = running_workers(&h, 1).await;
+    assert_worker_prompts(&h, &run);
+    let edits = h.ctx.store.lock().await.run_edits(&run.id).expect("edits");
+    assert_eq!(edits.len(), 1, "one assignment: {edits:?}");
+    let RunEdit::AssignRoles { stage, roles, .. } = &edits[0].edit else {
+        panic!("the plan assigns roles: {edits:?}");
+    };
+    assert_eq!(
+        (stage.as_str(), roles.as_slice()),
+        ("build", &TASKS.map(String::from)[..])
+    );
+    let roster = h.backend.messages();
+    assert_eq!(
+        roster.len(),
+        TASKS.len(),
+        "each worker gets its peers: {roster:?}"
+    );
+    for worker in &workers {
+        let agent = worker.aether_agent.as_ref().expect("an agent");
+        let (_, text) = roster.iter().find(|(to, _)| to == agent).expect("sent");
+        assert!(text.starts_with("Archon team roster v1 for team stage `build` attempt 1"));
+    }
+    let notes = h
+        .notices(archon_core::notify::NotificationKind::Progress)
+        .await;
+    let assigned = "The swarm plan assigned tasks api, cli, docs to team stage `build`.";
+    assert!(notes.iter().any(|n| n == assigned), "{notes:?}");
+}
+
+/// A restart rebuilds the run from the recorded assignment, never the file.
+#[tokio::test]
+async fn a_restart_keeps_the_assigned_workers() {
+    let mut h = Harness::new().await;
+    let (_, run) = planned(&h, "restart mid-swarm", Some(&swarm_plan(&TASKS))).await;
+    running_workers(&h, 1).await;
+    let created = h.backend.created();
+    git(
+        &run.workspace,
+        &["rm", "--quiet", ".archon/swarm-plan.json"],
+    );
+    git(
+        &run.workspace,
+        &["commit", "--quiet", "-m", "drop the plan"],
+    );
+    h.restart();
+    executor::recover(&h.ctx).await.expect("recover");
+    h.dispatch().await;
+    running_workers(&h, 1).await;
+    assert_eq!(h.backend.created(), created, "no worker is spawned twice");
+}
+
+#[tokio::test]
+async fn the_integrator_sends_tasks_back_at_most_twice() {
+    let h = Harness::new().await;
+    let (item, run) = planned(&h, "loop the swarm", Some(&swarm_plan(&TASKS))).await;
+    for attempt in 1..=3 {
+        build_round(&h, &run, attempt).await;
+        running_integrator(&h, attempt).await;
+        let integrator = h.backend.requests().pop().expect("an integrator");
+        assert!(
+            integrator.objective.contains("[role cli] cli built"),
+            "{}",
+            integrator.objective
+        );
+        let merged = format!("cli/v{attempt}.txt");
+        assert!(run.workspace.join(&merged).exists(), "{merged} is merged");
+        h.settle_running(|_| redispatch("cli")).await;
+        h.dispatch().await;
+        if attempt < 3 {
+            let rebuild = h.backend.requests().pop().expect("a worker again");
+            assert!(
+                rebuild.objective.contains("REDISPATCH: cli"),
+                "{}",
+                rebuild.objective
+            );
+        }
+    }
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!(
+            "a third failure ends the run: {:?}",
+            h.state(&item.id).await
+        );
+    };
+    assert!(error.contains("after 2 of 2 fix loop(s)"), "{error}");
+    let builds = h.stages(&item.id).await;
+    let workers = builds.iter().filter(|s| s.stage_id == "build").count();
+    assert_eq!(workers, 3 * TASKS.len(), "three rounds of three workers");
+}
+
+/// The plan stage fails with the reason, and no worker starts.
+async fn plan_refusal(h: &Harness, plan: Option<&Value>, needle: &str) -> String {
+    let (item, _) = planned(h, needle, plan).await;
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!("{needle}: {:?}", h.state(&item.id).await);
+    };
+    assert!(error.contains("stage `plan` passed, but"), "{error}");
+    assert!(error.contains(needle), "{error}");
+    let stages = h.stages(&item.id).await;
+    assert!(stages.iter().all(|s| s.stage_id == "plan"), "{stages:?}");
+    error
+}
+
+#[tokio::test]
+async fn an_invalid_or_missing_plan_fails_the_plan_stage_with_every_problem() {
+    let h = Harness::new().await;
+    let mut overlapping = swarm_plan(&TASKS);
+    overlapping["tasks"][2]["paths"] = json!(["api/docs.md"]);
+    overlapping["checks"] = json!([]);
+    let needle = "tasks \"api\" and \"docs\" both own";
+    let error = plan_refusal(&h, Some(&overlapping), needle).await;
+    assert!(
+        error.contains("checks lists 1 to 16 commands, found 0"),
+        "{error}"
+    );
+    let solo = swarm_plan(&["solo"]);
+    plan_refusal(&h, Some(&solo), "a plan has 2 to 8 tasks, found 1").await;
+    let missing = "it committed no `.archon/swarm-plan.json` on the run branch";
+    plan_refusal(&h, None, missing).await;
+}
+
+/// A team is admitted whole: more tasks than may run at once would wait forever.
+#[tokio::test]
+async fn a_plan_beyond_the_agent_caps_is_refused() {
+    let h = Harness::new().await;
+    h.repo_config("[limits]\nmax_per_repo = 2\n");
+    let error = plan_refusal(&h, Some(&swarm_plan(&TASKS)), "its plan has 3 tasks").await;
+    assert!(error.contains("run at most 2 at once here"), "{error}");
+}

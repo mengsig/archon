@@ -233,7 +233,7 @@ pub(super) async fn blueprint(
             } => aborts.push((stage, attempt, then)),
             // The stages a removal was about went with the pipeline switched away.
             RunEdit::SwitchPipeline { .. } => aborts.retain(|(_, attempt, _)| *attempt != 0),
-            RunEdit::InsertStage { .. } => {}
+            RunEdit::InsertStage { .. } | RunEdit::AssignRoles { .. } => {}
         }
     }
     aborts.retain(|(stage, _, _)| spec.stage(stage).is_some());

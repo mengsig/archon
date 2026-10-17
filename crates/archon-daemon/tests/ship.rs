@@ -1162,7 +1162,7 @@ async fn every_builtin_runs_without_a_model_plan_or_a_ship_agent() {
         shipping += usize::from(by_daemon);
     }
     assert_eq!(
-        shipping, 4,
-        "adaptive, direct, refactor and performance ship"
+        shipping, 5,
+        "adaptive, direct, swarm, refactor and performance ship"
     );
 }

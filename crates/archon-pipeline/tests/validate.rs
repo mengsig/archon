@@ -362,6 +362,90 @@ fn roles_belong_to_team_stages_only() {
 }
 
 #[test]
+fn a_team_stage_may_take_its_roles_from_an_earlier_planner() {
+    let planner = stage("plan", "work", "");
+    let team = stage("build", "team", "roles_from = \"plan\"");
+    let stages = [planner.clone(), team.clone()].concat();
+    validate(&stages, &[]).expect("a team waiting for a plan validates");
+    let spec = support::spec_from(&format!("{HEADER}{stages}"), &[]);
+    let build = spec.stage("build").expect("declared");
+    assert!(build.awaits_roles(), "no roles until the plan assigns them");
+    assert_eq!(build.fan_out, 8, "room for the largest plan");
+    assert_eq!(build.choice_limit(), 8);
+    assert_eq!(
+        spec.assigned_by("plan").map(|s| s.id.as_str()),
+        Some("build")
+    );
+    assert_eq!(spec.summary().stages[1].roles_from.as_deref(), Some("plan"));
+    let back = spec.manifest().expect("serializes");
+    assert!(back.contains("roles_from = \"plan\""), "{back}");
+    let frozen = support::spec_from(&back, &[]);
+    assert_eq!(frozen.file, spec.file, "a frozen copy loads as it was");
+    frozen.validate("demo").expect("and validates again");
+}
+
+#[test]
+fn roles_from_names_one_earlier_planner_and_leaves_the_roles_to_it() {
+    let planner = stage("plan", "work", "");
+    let team = stage("build", "team", "roles_from = \"plan\"");
+    let later = [team.clone(), planner.clone()].concat();
+    assert_refused(
+        &later,
+        &[],
+        "roles_from = \"plan\" must name an earlier stage",
+    );
+    let reviewer = stage("plan", "review", "gate = \"all_pass\"");
+    assert_refused(
+        &[reviewer, team.clone()].concat(),
+        &[],
+        "must name a work stage with one agent",
+    );
+    let twice =
+        [planner.clone(), team.clone()].concat() + &stage("again", "team", "roles_from = \"plan\"");
+    assert_refused(
+        &twice,
+        &[],
+        "another team stage already takes its roles from \"plan\"",
+    );
+    let prompts = stage(
+        "build",
+        "team",
+        "roles_from = \"plan\"\nrole_prompts = { a = \"x\" }",
+    );
+    assert_refused(
+        &[planner.clone(), prompts].concat(),
+        &[],
+        "with roles_from the plan writes them",
+    );
+    let sized = stage("build", "team", "roles_from = \"plan\"\nfan_out = 3");
+    assert_refused(
+        &[planner.clone(), sized].concat(),
+        &[],
+        "fan_out = 3 is set by the plan",
+    );
+    assert_refused(
+        &stage("plan", "work", "roles_from = \"x\""),
+        &[],
+        "only allowed on team stages",
+    );
+}
+
+#[test]
+fn a_stage_tier_is_at_least_its_min_tier() {
+    validate(&stage("a", "work", "tier = \"fast\""), &[]).expect("a tier alone");
+    validate(
+        &stage("a", "work", "tier = \"strong\"\nmin_tier = \"balanced\""),
+        &[],
+    )
+    .expect("a tier above the floor");
+    assert_refused(
+        &stage("a", "work", "tier = \"fast\"\nmin_tier = \"balanced\""),
+        &[],
+        "tier fast is below min_tier balanced",
+    );
+}
+
+#[test]
 fn a_team_stage_has_no_gate_and_needs_a_worktree() {
     let roles = "roles = [\"api\", \"ui\"]";
     assert_refused(
@@ -410,8 +494,10 @@ fn every_builtin_validates_and_keeps_its_promises() {
         for stage in stages {
             let text = &spec.prompts[&stage.prompt];
             let names = template::placeholders(text).expect("parses");
-            assert!(
+            // A swarm worker gets its task and the shared interfaces only.
+            assert_eq!(
                 names.iter().any(|n| n == "task.brief"),
+                stage.roles_from.is_none(),
                 "{}/{}: brief",
                 builtin.name,
                 stage.id
@@ -523,7 +609,10 @@ fn every_pipeline_that_ships_forbids_attribution_in_the_pr_body() {
         }
     }
     shipping.sort();
-    assert_eq!(shipping, ["adaptive", "direct", "performance", "refactor"]);
+    assert_eq!(
+        shipping,
+        ["adaptive", "direct", "performance", "refactor", "swarm"]
+    );
 }
 
 #[test]
@@ -606,7 +695,7 @@ fn adaptive_declares_the_review_its_lead_holds_and_round_trips() {
         .collect();
     assert_eq!(
         holders,
-        ["adaptive", "direct"],
+        ["adaptive", "direct", "swarm"],
         "the rest gate their review"
     );
 }

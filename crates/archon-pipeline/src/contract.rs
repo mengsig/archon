@@ -685,11 +685,13 @@ mod tests {
             timeout_minutes: 10,
             effort: archon_core::model::Effort::Medium,
             min_tier: None,
+            tier: None,
             allow_delegation: false,
             nudge: None,
             on_fail: None,
             roles: Vec::new(),
             role_prompts: Default::default(),
+            roles_from: None,
         }
     }
 

@@ -29,6 +29,9 @@ fn goes_on(edit: &RunEdit) -> Result<String, ArchonError> {
              switch_pipeline"
                 .into(),
         )),
+        RunEdit::AssignRoles { .. } => Err(ArchonError::Invalid(
+            "a swarm plan's roles are assigned by the daemon, not by a steer".into(),
+        )),
     }
 }
 

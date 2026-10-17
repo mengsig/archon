@@ -612,6 +612,8 @@ fn stage_summary(stage: &StageSummary) -> String {
     let mut text = format!("{} ({}", stage.id, snake(&stage.kind));
     if !stage.roles.is_empty() {
         let _ = write!(text, ", roles {}", stage.roles.join(", "));
+    } else if let Some(planner) = &stage.roles_from {
+        let _ = write!(text, ", one role per task of the plan of {planner}");
     } else if stage.fan_out > 1 {
         let _ = write!(text, ", fan_out {}", stage.fan_out);
     }
@@ -624,6 +626,9 @@ fn stage_summary(stage: &StageSummary) -> String {
             ", on fail back to {target} at most {}x",
             stage.max_loops
         );
+    }
+    if let Some(tier) = stage.tier {
+        let _ = write!(text, ", default tier {tier}");
     }
     let _ = write!(
         text,

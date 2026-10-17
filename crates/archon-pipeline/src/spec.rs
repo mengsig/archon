@@ -130,6 +130,10 @@ pub struct StageSpec {
     /// unset, the tier the choice asks for is the floor.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_tier: Option<Tier>,
+    /// The tier a stage the model plan leaves out is given, within policy;
+    /// unset, it gets the pipeline's default choice.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tier: Option<Tier>,
     /// Allows child delegation even with guarded tools; Archon tool exposure
     /// still follows the item’s tools mode.
     pub allow_delegation: bool,
@@ -143,6 +147,10 @@ pub struct StageSpec {
     /// Extra prompt text for a team role, appended verbatim to its prompt.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub role_prompts: BTreeMap<String, String>,
+    /// The earlier work stage whose swarm plan gives this team stage its
+    /// roles at run time; until then it has none and [`MAX_ROLES`] slots.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roles_from: Option<String>,
 }
 
 /// A `[[stage]]` table as written: an omitted `fan_out` is one agent, or
@@ -164,6 +172,8 @@ struct StageToml {
     #[serde(default)]
     min_tier: Option<Tier>,
     #[serde(default)]
+    tier: Option<Tier>,
+    #[serde(default)]
     allow_delegation: bool,
     #[serde(default)]
     nudge: Option<String>,
@@ -173,11 +183,14 @@ struct StageToml {
     roles: Vec<String>,
     #[serde(default)]
     role_prompts: BTreeMap<String, String>,
+    #[serde(default)]
+    roles_from: Option<String>,
 }
 
 impl From<StageToml> for StageSpec {
     fn from(raw: StageToml) -> Self {
         let implied = match raw.kind {
+            StageKind::Team if raw.roles.is_empty() && raw.roles_from.is_some() => MAX_ROLES as u32,
             StageKind::Team => u32::try_from(raw.roles.len()).unwrap_or(u32::MAX),
             _ => 1,
         };
@@ -190,11 +203,29 @@ impl From<StageToml> for StageSpec {
             timeout_minutes: raw.timeout_minutes,
             effort: raw.effort,
             min_tier: raw.min_tier,
+            tier: raw.tier,
             allow_delegation: raw.allow_delegation,
             nudge: raw.nudge,
             on_fail: raw.on_fail,
             roles: raw.roles,
             role_prompts: raw.role_prompts,
+            roles_from: raw.roles_from,
+        }
+    }
+}
+
+impl StageSpec {
+    /// A team stage whose roles a planner has not assigned yet.
+    pub fn awaits_roles(&self) -> bool {
+        self.kind == StageKind::Team && self.roles_from.is_some() && self.roles.is_empty()
+    }
+
+    /// How many model choices a plan may list for this stage: one per agent,
+    /// or up to [`MAX_ROLES`] for a team whose roles a plan assigns.
+    pub fn choice_limit(&self) -> u32 {
+        match self.roles_from {
+            Some(_) => MAX_ROLES as u32,
+            None => self.fan_out,
         }
     }
 }
@@ -488,6 +519,12 @@ impl PipelineSpec {
             return Err("id is used by more than one stage".into());
         }
         validate_roles(stage)?;
+        self.validate_roles_from(index, stage)?;
+        if let (Some(tier), Some(min)) = (stage.tier, stage.min_tier)
+            && tier < min
+        {
+            return Err(format!("tier {tier} is below min_tier {min}"));
+        }
         if !(1..=MAX_FAN_OUT).contains(&stage.fan_out) {
             return Err(format!("fan_out must be between 1 and {MAX_FAN_OUT}"));
         }
@@ -502,6 +539,40 @@ impl PipelineSpec {
             self.validate_on_fail(index, on_fail)?;
         }
         self.validate_prompt(index, stage)
+    }
+
+    /// `roles_from` names an earlier single-agent `work` stage, the planner,
+    /// and no other team stage takes its roles from the same one.
+    fn validate_roles_from(&self, index: usize, stage: &StageSpec) -> Result<(), String> {
+        let Some(planner) = &stage.roles_from else {
+            return Ok(());
+        };
+        let Some(at) = self.stage_index(planner).filter(|at| *at < index) else {
+            return Err(format!(
+                "roles_from = {planner:?} must name an earlier stage"
+            ));
+        };
+        let planner_stage = &self.file.stages[at];
+        if planner_stage.kind != StageKind::Work || planner_stage.fan_out != 1 {
+            return Err(format!(
+                "roles_from = {planner:?} must name a work stage with one agent"
+            ));
+        }
+        let shared = self.file.stages[..index]
+            .iter()
+            .any(|s| s.roles_from.as_ref() == Some(planner));
+        if shared {
+            return Err(format!(
+                "another team stage already takes its roles from {planner:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// The team stage whose roles stage `planner_id` assigns with its plan.
+    pub fn assigned_by(&self, planner_id: &str) -> Option<&StageSpec> {
+        let mut teams = self.file.stages.iter();
+        teams.find(|s| s.kind == StageKind::Team && s.roles_from.as_deref() == Some(planner_id))
     }
 
     /// What the stage's kind allows: fan-out, a gate, and the workspace.
@@ -623,6 +694,8 @@ impl PipelineSpec {
                     loops_to: s.on_fail.as_ref().map(|f| f.goto.clone()),
                     max_loops: s.on_fail.as_ref().map_or(0, |f| f.max_loops),
                     roles: s.roles.clone(),
+                    roles_from: s.roles_from.clone(),
+                    tier: s.tier,
                 })
                 .collect(),
         }
@@ -673,10 +746,15 @@ pub fn valid_role(role: &str) -> bool {
 /// has [`MIN_ROLES`] to [`MAX_ROLES`] unique roles and one agent per role.
 fn validate_roles(stage: &StageSpec) -> Result<(), String> {
     if stage.kind != StageKind::Team {
-        if !stage.roles.is_empty() || !stage.role_prompts.is_empty() {
-            return Err("roles and role_prompts are only allowed on team stages".into());
+        if !stage.roles.is_empty() || !stage.role_prompts.is_empty() || stage.roles_from.is_some() {
+            return Err(
+                "roles, role_prompts and roles_from are only allowed on team stages".into(),
+            );
         }
         return Ok(());
+    }
+    if stage.awaits_roles() {
+        return validate_unassigned(stage);
     }
     if !(MIN_ROLES..=MAX_ROLES).contains(&stage.roles.len()) {
         return Err(format!(
@@ -707,6 +785,22 @@ fn validate_roles(stage: &StageSpec) -> Result<(), String> {
         )),
         None => Ok(()),
     }
+}
+
+/// A team stage waiting for a plan's roles: none listed, no prompts for
+/// them, and the implied [`MAX_ROLES`] slots.
+fn validate_unassigned(stage: &StageSpec) -> Result<(), String> {
+    assert!(stage.awaits_roles(), "only an unassigned team stage");
+    if !stage.role_prompts.is_empty() {
+        return Err("role_prompts need roles; with roles_from the plan writes them".into());
+    }
+    if usize::try_from(stage.fan_out).ok() != Some(MAX_ROLES) {
+        return Err(format!(
+            "fan_out = {} is set by the plan roles_from names; omit it",
+            stage.fan_out
+        ));
+    }
+    Ok(())
 }
 
 /// Worker branches omit the stage and worker directories join stage and

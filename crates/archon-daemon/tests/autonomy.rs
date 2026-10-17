@@ -1248,7 +1248,10 @@ async fn a_pipeline_with_review_stages_refuses_another_level() {
         refused.contains("runs review=standard in its own stages"),
         "{refused}"
     );
-    assert!(refused.contains("(`adaptive`, `direct`)"), "{refused}");
+    assert!(
+        refused.contains("(`adaptive`, `direct`, `swarm`)"),
+        "{refused}"
+    );
     h.cli(Request::Enqueue(request(ReviewLevel::Standard)))
         .await
         .expect("the level its stages run may be named");

@@ -39,6 +39,7 @@ mod siblings;
 mod spawn;
 mod start;
 pub(crate) mod steer;
+mod swarm;
 mod sweep;
 mod team;
 

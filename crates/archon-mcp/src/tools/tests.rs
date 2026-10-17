@@ -737,6 +737,8 @@ fn rendered_catalog_shows_what_a_model_plan_needs() {
         loops_to: None,
         max_loops: 0,
         roles: Vec::new(),
+        roles_from: None,
+        tier: None,
     };
     let catalog = CatalogListing {
         pipelines: vec![PipelineSummary {
@@ -757,6 +759,11 @@ fn rendered_catalog_shows_what_a_model_plan_needs() {
                     effort: archon_core::model::Effort::Medium,
                     roles: vec!["api".into(), "ui".into()],
                     ..stage("build", StageKind::Team, 2, Gate::None)
+                },
+                StageSummary {
+                    roles_from: Some("plan".into()),
+                    tier: Some(archon_core::model_tier::Tier::Fast),
+                    ..stage("workers", StageKind::Team, 8, Gate::None)
                 },
             ],
         }],
@@ -780,6 +787,13 @@ fn rendered_catalog_shows_what_a_model_plan_needs() {
         text.contains("stage build (team, roles api, ui, timeout 60m, effort medium)"),
         "{text}"
     );
+    assert!(
+        text.contains(
+            "stage workers (team, one role per task of the plan of plan, default tier fast, \
+             timeout 60m"
+        ),
+        "{text}"
+    );
     assert!(text.contains("independent reviewers"), "{text}");
     assert!(
         text.contains("Unusable pipeline broken (user): stage ids must be unique"),
@@ -801,6 +815,8 @@ fn a_rendered_catalog_lists_pipelines_in_a_line_each() {
         loops_to: None,
         max_loops: 0,
         roles: Vec::new(),
+        roles_from: None,
+        tier: None,
     };
     let pipeline = |name: &str, stages: Vec<StageSummary>| PipelineSummary {
         name: name.into(),

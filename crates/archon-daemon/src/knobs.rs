@@ -100,7 +100,8 @@ fn review_of(
     if let Some(asked) = patch.review.filter(|asked| *asked != review) {
         return Err(ArchonError::Invalid(format!(
             "pipeline {:?} runs review={review} in its own stages, not review={asked}; name \
-             one that takes a review level (`adaptive`, `direct`) instead, or leave review out",
+             one that takes a review level (`adaptive`, `direct`, `swarm`) instead, or leave \
+             review out",
             base.name(),
         )));
     }
@@ -459,6 +460,46 @@ pub(crate) fn default_choice(
     Some(choice)
 }
 
+/// `plan` with each stage it leaves out that names a `tier` given the best
+/// permitted model up to that tier (and `max_tier`), at the stage's effort
+/// within the policy's cap. A stage whose tier resolves to nothing is left out.
+pub(crate) fn fill_stage_tiers(
+    scope: TierScope<'_>,
+    max_tier: Tier,
+    spec: &PipelineSpec,
+    mut plan: ModelPlan,
+) -> ModelPlan {
+    let cap = scope.policy.max_effort;
+    for stage in &spec.file.stages {
+        let Some(tier) = stage.tier.map(|tier| tier.min(max_tier)) else {
+            continue;
+        };
+        if plan.choices_for(&stage.id).is_some() {
+            continue;
+        }
+        let floor = spec.tier_floor(&stage.id, tier);
+        let Ok((model, tier)) = scope.resolve((tier, floor), None) else {
+            continue;
+        };
+        assert!(
+            tier.resolved <= max_tier,
+            "a stage default is within the ceiling"
+        );
+        let effort = cap.map_or(stage.effort, |cap| stage.effort.min(cap));
+        let choice = ModelChoice {
+            model,
+            effort,
+            tier: Some(tier),
+        };
+        debug_assert!(
+            scope.policy.check(&choice).is_ok(),
+            "a default is within the policy"
+        );
+        plan.0.insert(stage.id.clone(), vec![choice]);
+    }
+    plan
+}
+
 /// `plan` with the stages it leaves out: first what was learned for `repo`
 /// within `policy`, then the static choices of [`fill_static_stages`].
 pub(crate) fn fill_plan(
@@ -585,7 +626,7 @@ mod tests {
         let err = knobs(&strict, &conflict, &policy())
             .unwrap_err()
             .to_string();
-        assert!(err.contains("(`adaptive`, `direct`)"), "{err}");
+        assert!(err.contains("(`adaptive`, `direct`, `swarm`)"), "{err}");
     }
 
     #[test]
@@ -756,6 +797,44 @@ mod tests {
         assert_eq!(
             (own.model, own.tier),
             (config.orchestrator.model.clone(), None)
+        );
+    }
+
+    /// A swarm's planner and integrator default strong and its workers fast,
+    /// each falling back to the best permitted model below its tier.
+    #[test]
+    fn a_stage_tier_picks_that_stage_s_default_within_policy() {
+        let mut config = Config::default();
+        config.orchestrator.model = "claude-code/own".parse().unwrap();
+        let catalog = tiered_catalog();
+        let open = ModelPolicy::default();
+        let spec = builtin("swarm");
+        let tiers = TierScope::new(&config, &open, &catalog);
+        let pinned = ModelChoice::pinned("codex/two-strong".parse().unwrap(), Effort::High);
+        let mut plan = ModelPlan::default();
+        plan.0.insert("integrate".into(), vec![pinned.clone()]);
+        let filled = fill_stage_tiers(tiers, Tier::Strong, &spec, plan);
+        let model = |stage: &str| filled.choices_for(stage).unwrap()[0].model.to_string();
+        assert_eq!(model("plan"), "claude-code/one-strong");
+        assert_eq!(model("build"), "claude-code/one-fast");
+        assert_eq!(filled.choices_for("integrate"), Some(&[pinned][..]), "kept");
+        let worker = &filled.choices_for("build").unwrap()[0];
+        assert_eq!(worker.effort, spec.stage("build").unwrap().effort);
+
+        let no_fast =
+            ModelPolicy::from_lists(&[], &["claude-code/one-fast".parse().unwrap()], None);
+        let tiers = TierScope::new(&config, &no_fast, &catalog);
+        let filled = fill_stage_tiers(tiers, Tier::Balanced, &spec, ModelPlan::default());
+        let model = |stage: &str| filled.choices_for(stage).map(|c| c[0].model.to_string());
+        assert_eq!(
+            model("plan").as_deref(),
+            Some("claude-code/one-balanced"),
+            "the ceiling"
+        );
+        assert_eq!(
+            model("build"),
+            None,
+            "no fast model: the pipeline default fills it"
         );
     }
 

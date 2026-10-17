@@ -300,7 +300,7 @@ fn autonomy() -> Value {
         "description": "A knob left out takes autonomy_policy's default. `propose` and `report` stages \
             take the first stage's model unless model_plan names them.",
         "properties": {
-            "review": {"type": "string", "enum": ["strict", "standard", "none"], "description": "Without `pipeline`, `direct` runs. `adaptive` and `direct` delegate 3, 1 or 0 reviewers; another pipeline's gates fix it."},
+            "review": {"type": "string", "enum": ["strict", "standard", "none"], "description": "Without `pipeline`, `direct` runs. `adaptive`, `direct` and `swarm` delegate 3, 1 or 0 reviewers; another pipeline's gates fix it."},
             "proposal": {"type": "string", "enum": ["off", "lavish"], "description": "lavish: a proposal page first, and the run waits for the operator's verdict on it. For an ambiguous direction or a requested plan."},
             "report": {"type": "string", "enum": ["off", "with-pr", "before-pr"], "description": "with-pr: a change report linked from the PR. before-pr: the operator approves it before the PR opens. For a diff that is hard to review alone."},
             "merge": {"type": "string", "enum": ["manual", "auto"], "description": "auto: GitHub merges the PR once its checks allow."},

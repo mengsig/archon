@@ -254,7 +254,10 @@ fn grant_note(repo: &Repo) -> String {
 fn checked_bases(bases: Vec<String>) -> Result<Vec<String>, ArchonError> {
     let mut kept: Vec<String> = Vec::new();
     for base in bases {
-        if base.is_empty() || base.starts_with('-') || base.chars().any(char::is_whitespace) {
+        if base.is_empty()
+            || base.starts_with('-')
+            || base.chars().any(|c| c.is_whitespace() || c.is_control())
+        {
             return Err(ArchonError::Invalid(format!(
                 "{base:?} is not a branch name for merge_waive_checks"
             )));

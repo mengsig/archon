@@ -34,10 +34,10 @@ const MAX_REASON_CHARS: usize = 500;
 /// A merge archond is still working on is never this old; one older was
 /// interrupted, or its confirmation was lost.
 const STALE_AFTER: chrono::TimeDelta = chrono::TimeDelta::minutes(10);
-/// A granted request waits this long for pending checks before the operator
-/// is asked.
 /// Starts the reason of a request whose pull request could not be read.
 const GITHUB_UNREADABLE: &str = "GitHub could not be read";
+/// A granted request waits this long for pending checks before the operator
+/// is asked.
 const WAIT_FOR_CHECKS: chrono::TimeDelta = chrono::TimeDelta::minutes(60);
 
 /// What `grant_merge` does with a reviewed request, from its checks.
@@ -739,10 +739,11 @@ async fn resume_waiting(ctx: &DaemonContext, mut merge: MergeRequest) -> Result<
         ignore_checks: true,
         ..merge.clone()
     };
+    let timed_out = archon_core::now() - merge.requested_at >= WAIT_FOR_CHECKS;
     let seen = match ready(ctx, &probe).await? {
         Ok(ready) => ready.seen,
-        // A read that failed is retried on the next pass.
-        Err(why) if why.starts_with(GITHUB_UNREADABLE) => return Ok(false),
+        // A read that failed is retried on the next pass, until the wait ends.
+        Err(why) if why.starts_with(GITHUB_UNREADABLE) && !timed_out => return Ok(false),
         Err(why) => {
             merge.state = MergeState::Refused { reason: why };
             finish_merge(ctx, merge).await?;
@@ -751,7 +752,6 @@ async fn resume_waiting(ctx: &DaemonContext, mut merge: MergeRequest) -> Result<
     };
     let shipped = shipped(&*ctx.store.lock().await, &merge.item)?;
     let granted = shipped.repo.grant_merge && shipped.item.autonomy.review != ReviewLevel::None;
-    let timed_out = archon_core::now() - merge.requested_at >= WAIT_FOR_CHECKS;
     let still_pending = seen.failed.is_empty() && !seen.pending.is_empty();
     if granted && seen.all_green() {
         merge.state = MergeState::Merging;

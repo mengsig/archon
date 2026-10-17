@@ -1167,6 +1167,30 @@ policy permits below it; `build` may list up to 8 choices, one per worker
 in task order. Owned paths are kept by instruction and checked by the
 integrator: an Aether workspace does not narrow what a worker may write.
 
+#### Try it
+
+From the command line, name the pipeline and, to vary engines, give a
+model plan (a `build` list of up to 8 choices is taken one per worker in
+task order, so a `codex` worker can sit beside Aether ones):
+
+```sh
+archon queue add --title 'Add the export command' --pipeline swarm \
+  --brief-file brief.md --model-plan-file plan.json
+```
+
+```json
+{"plan": [{"tier": "strong"}],
+ "build": [{"tier": "fast"}, {"tier": "fast", "provider": "codex"}],
+ "integrate": [{"tier": "strong"}]}
+```
+
+In chat, say it in words: "Queue this as a swarm: split it into
+independent parts, have cheap workers build them in parallel, and
+integrate and review it." The orchestrator picks `swarm` when a change
+splits into three or more independent parts in disjoint files, and
+`direct` or `adaptive` otherwise. Watch the run with `archon queue show <id>`:
+`plan` first, then one `build` worker per task, then `integrate`.
+
 #### Swarm plans
 
 The plan is JSON, at most 64 KiB:

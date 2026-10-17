@@ -1220,7 +1220,7 @@ impl RunDriver {
             ("attempt", at.attempt.to_string()),
             ("fan.index", (fan + 1).to_string()),
             ("fan.count", stage.fan_out.to_string()),
-            ("feedback", at.feedback.clone()),
+            ("feedback", sections::stage_feedback(stage, &at.feedback)),
         ];
         vars.extend(per_spawn.into_iter().map(|(k, v)| (k.to_owned(), v)));
         if let Some(slot) = team {

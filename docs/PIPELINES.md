@@ -769,7 +769,10 @@ attempt reported. It is a digest of at most 1,200 characters per stage and
 4,000 in all, nearest stages first when that runs out. A stage your prompt
 already shows through `{{previous.<id>.summary}}` is not repeated there.
 A team stage with `roles_from` gets none: its workers see their own task
-only, so the plan's and their peers' reports stay out.
+only, so the plan's and their peers' reports stay out, and so does a
+proposal's direction, which the planner carries into the tasks. Of the
+feedback that sends them back, they see the integrator's error from its
+`REDISPATCH:` line on; without one, they are told to change nothing.
 So a prompt needs `{{previous.*}}` only where the full summary matters;
 the next stage is not left to rediscover what changed, where, how it was
 verified and what is still open. That is what a stage summary should say.

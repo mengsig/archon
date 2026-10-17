@@ -2064,6 +2064,29 @@ fn a_swarm_re_dispatches_failed_tasks_at_most_twice() {
     unreachable!("the third failure ends the run");
 }
 
+/// An integrator that fails without naming tasks sends its workers no
+/// report of other tasks: they change nothing and complete.
+#[test]
+fn a_swarm_integrator_failing_without_redispatch_tells_workers_nothing_else() {
+    let mut sim = swarm_sim();
+    assign_tasks(&mut sim, &["api", "cli"]);
+    sim.settle("plan", 0, Agent::Done("api, cli"));
+    sim.settle("build", 0, Agent::Done("api built"));
+    sim.settle("build", 1, Agent::Done("cli built"));
+    sim.merge(MergeOutcome::Merged);
+    let unrecorded = "api: PRIVATE_API done; cli: PRIVATE_CLI done.";
+    let back = sim.settle("integrate", 0, Agent::Done(unrecorded));
+    assert_eq!(spawned(&back), slots(&[("build", 2, 0), ("build", 2, 1)]));
+    for worker in spawn_plans(&back) {
+        assert!(!worker.prompt.contains("PRIVATE_"), "{}", worker.prompt);
+        assert!(
+            worker.prompt.contains("no task is yours to redo"),
+            "{}",
+            worker.prompt
+        );
+    }
+}
+
 #[test]
 fn a_swarm_integrator_ships_its_reviewed_change() {
     let mut sim = swarm_sim();

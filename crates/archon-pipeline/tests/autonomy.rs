@@ -100,6 +100,39 @@ fn an_approved_proposal_reaches_the_implementer_with_the_note() {
     assert_eq!(ship_plans(&ship)[0].record_stage, "implement");
 }
 
+/// The planner follows an approved proposal; its workers see their own task
+/// only, never the proposal that names every part.
+#[test]
+fn a_swarm_proposal_reaches_the_planner_but_no_worker() {
+    let mut sim = gated_sim("swarm", ProposalMode::Lavish, ReportMode::Off);
+    assert_eq!(spawned(&sim.start()), slots(&[("propose", 1, 0)]));
+    propose(&mut sim, 1);
+    let planner = sim.decide(approve(None));
+    assert_eq!(spawned(&planner), slots(&[("plan", 1, 0)]));
+    let prompt = &spawn_plans(&planner)[0].prompt;
+    assert!(prompt.contains("touch src/parse.rs"), "{prompt}");
+    let edit = archon_core::steer::RunEdit::AssignRoles {
+        stage: "build".into(),
+        roles: vec!["api".into(), "cli".into()],
+        role_prompts: [("api", "Build api."), ("cli", "Build cli.")]
+            .map(|(role, task)| (role.to_owned(), task.to_owned()))
+            .into(),
+    };
+    let spec = archon_pipeline::reshape::apply(&sim.spec, &edit).expect("assignable");
+    let plan = sim.plan.clone();
+    assert!(sim.reshape(spec, plan).is_empty(), "the planner is live");
+    let build = sim.settle("plan", 0, Agent::Done("api, cli"));
+    assert_eq!(spawned(&build), slots(&[("build", 1, 0), ("build", 1, 1)]));
+    for worker in spawn_plans(&build) {
+        assert!(!worker.prompt.contains("src/parse.rs"), "{}", worker.prompt);
+        assert!(
+            !worker.prompt.contains("## Direction from"),
+            "{}",
+            worker.prompt
+        );
+    }
+}
+
 #[test]
 fn a_revised_proposal_is_rewritten_with_the_feedback() {
     let mut sim = direct_sim(ProposalMode::Lavish, ReportMode::Off);

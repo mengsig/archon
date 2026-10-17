@@ -67,6 +67,7 @@ async fn add_with_watch(
         default_pipeline: add.default_pipeline.or(config.repo.default_pipeline),
         autonomy_max: registry_ceiling(add.auto_merge),
         grant_merge: false,
+        merge_waive_checks: Vec::new(),
         attribution: Default::default(),
         gh_user: None,
         tiers: Default::default(),
@@ -198,6 +199,9 @@ pub(super) async fn update(
     if let Some(grant) = patch.grant_merge {
         repo.grant_merge = grant;
     }
+    if let Some(bases) = patch.merge_waive_checks {
+        repo.merge_waive_checks = bases;
+    }
     if let Some(attribution) = patch.attribution {
         repo.attribution = attribution;
     }
@@ -215,6 +219,9 @@ pub(super) async fn update(
     ctx.store.lock().await.update_repo(&repo)?;
     if repo.grant_merge != before.grant_merge {
         crate::feed::system(ctx, grant_note(&repo)).await?;
+    }
+    if repo.merge_waive_checks != before.merge_waive_checks {
+        crate::feed::system(ctx, waive_note(&repo)).await?;
     }
     if repo.gh_user != before.gh_user {
         crate::feed::system(ctx, gh_user_note(&repo)).await?;
@@ -241,6 +248,22 @@ fn grant_note(repo: &Repo) -> String {
             repo.name
         ),
     }
+}
+
+/// The feed's record of the operator changing `merge_waive_checks` (§18.6).
+fn waive_note(repo: &Repo) -> String {
+    if repo.merge_waive_checks.is_empty() {
+        return format!(
+            "merge_waive_checks is empty for {}: a granted merge waits for green checks",
+            repo.name
+        );
+    }
+    format!(
+        "merge_waive_checks for {} is {}: under grant_merge, archond merges a reviewed pull \
+         request into those branches without waiting for its checks",
+        repo.name,
+        repo.merge_waive_checks.join(", ")
+    )
 }
 
 /// The feed's record of the operator changing `gh_user`.

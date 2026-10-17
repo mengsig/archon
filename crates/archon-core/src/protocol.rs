@@ -56,7 +56,8 @@ use crate::steer::Steer;
 /// 15: a repository's `gh_user`, which an older archond would drop.
 /// 16: `promote`, a repository's `release_hook` and its confirmed full and
 /// release checks; an older archond knows no such request and would drop them.
-pub const PROTOCOL_VERSION: u32 = 16;
+/// 17: a repository's `merge_waive_checks`, which an older archond would drop.
+pub const PROTOCOL_VERSION: u32 = 17;
 
 /// Said beside an item whose `budget_usd` was set while budgets are off.
 pub const BUDGETS_OFF_NOTE: &str = "Dollar budgets are globally off ([limits] budgets_enabled = \
@@ -562,6 +563,10 @@ pub struct RepoPatch {
     /// Sets or clears the repository's `grant_merge` (ARCHITECTURE §18.6).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant_merge: Option<bool>,
+    /// Replaces the base branches whose checks `grant_merge` does not wait
+    /// for (ARCHITECTURE §18.6); operator only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_waive_checks: Option<Vec<String>>,
     /// Sets the repository's attribution policy; operator only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attribution: Option<Attribution>,

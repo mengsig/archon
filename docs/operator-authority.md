@@ -64,6 +64,7 @@ reached today.
 | Merge an item (`merge_item`) | `archon merge` | `/merge ITEM [--ignore-checks]` | same | no (the orchestrator has `request_merge`, a question you answer) | — |
 | Repository ceiling `autonomy_max` | `archon repo set --autonomy-max` | `/archon set --repo R max.K=V` | same | `repo_update` or `set_settings` | when it raises any knob |
 | `grant_merge` | `archon repo set --grant-merge` | `/archon set --repo R grant_merge=true` | same | `repo_update` | when set to true |
+| `merge_waive_checks` | — | `/archon set --repo R merge_waive_checks=next` (empty clears) | same | `repo_update` | when it adds a branch |
 | `attribution` | `archon repo set --attribution` | `/archon set --repo R attribution=none` | same | `repo_update` | any change |
 | `gh_user` | `archon repo set --gh-user` | `/archon set --repo R gh_user=LOGIN` (empty clears) | same | `repo_update` | any change |
 | `ship`, `base_branch`, `default_pipeline` | `archon repo set` | `/archon set --repo R ship=pr …` | same | `repo_update` | `ship` local→pr, and any `base_branch` or `default_pipeline` change |
@@ -117,7 +118,7 @@ Details:
   `default.<knob>` and `max.<knob>` change defaults and ceilings. Other keys
   match `OperatorSettings`, including `budgets_enabled`, `budget_usd_per_item`
   and `default_pipeline`. Omitted fields are preserved.
-- Registry settings `grant_merge`, `ship`, `base_branch`, `attribution` and `gh_user` use a separate
+- Registry settings `grant_merge`, `merge_waive_checks`, `ship`, `base_branch`, `attribution` and `gh_user` use a separate
   `/archon set --repo` message; mixing them with overlay fields is refused.
 - `/archon reset [--repo NAME]` clears the scope's overlay. Registry settings
   are separate and remain until explicitly changed.

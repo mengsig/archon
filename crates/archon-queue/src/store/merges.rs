@@ -69,7 +69,7 @@ fn insert_in(tx: &Connection, merge: &MergeRequest) -> Result<(), ArchonError> {
                 merge.item.as_str(),
                 merge.run.as_str(),
                 question_of(merge).map(QuestionId::as_str),
-                merge.state.kind(),
+                merge.state.column(),
                 ts(&merge.requested_at),
                 ts(&merge.updated_at),
                 to_json(merge, "merge request")?,
@@ -148,7 +148,7 @@ fn update_in(tx: &Connection, merge: &MergeRequest) -> Result<(), ArchonError> {
             "UPDATE merge_requests SET state = ?2, updated_at = ?3, data = ?4 WHERE id = ?1",
             params![
                 merge.id.as_str(),
-                merge.state.kind(),
+                merge.state.column(),
                 ts(&merge.updated_at),
                 to_json(merge, "merge request")?,
             ],

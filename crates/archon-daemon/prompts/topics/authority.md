@@ -15,7 +15,12 @@ Actions use Archon's command JSON. Examples:
   `autonomy_max` replaces that repository's entire ceiling override; preserve other
   knobs from `list_repos` when changing one.
 - Grant requested merges: `{"cmd":"repo_update","repo":"web","patch":{"grant_merge":true}}`.
-  This does not enable automatic merging.
+  This does not enable automatic merging. Under it, a reviewed request whose
+  checks are pending waits (up to 60 minutes) and merges once they are green.
+- Waive checks per base branch: `{"cmd":"repo_update","repo":"web","patch":{"merge_waive_checks":["next"]}}`
+  (or `/archon set --repo web merge_waive_checks=next`). Under `grant_merge`, a
+  reviewed pull request into a listed branch merges without waiting for checks.
+  Adding a branch waits for the operator's confirmation; `[]` clears the list.
 - Attribution policy: `{"cmd":"repo_update","repo":"web","patch":{"attribution":"none"}}`
   drops the `Archon item:` line and refuses attribution lines at delivery;
   `item-id` is the default. Every change waits for the operator's confirmation.

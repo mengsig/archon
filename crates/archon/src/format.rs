@@ -379,6 +379,13 @@ pub fn repo_line(repo: &Repo) -> String {
     if repo.grant_merge {
         line.push_str(", grant_merge on");
     }
+    if !repo.merge_waive_checks.is_empty() {
+        let _ = write!(
+            line,
+            ", merge_waive_checks {}",
+            repo.merge_waive_checks.join(",")
+        );
+    }
     if repo.attribution != Attribution::default() {
         let _ = write!(line, ", attribution {}", repo.attribution.name());
     }

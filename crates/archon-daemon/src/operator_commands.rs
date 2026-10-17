@@ -23,6 +23,9 @@ pub(crate) async fn handle(
     };
     let github = channel.is_github();
     if !github && ctx.config.aether.mode != AetherMode::Dedicated {
+        if retired_alias(&message.text) {
+            return retired_alias_hint(ctx).await;
+        }
         if matches!(
             message.text.split_whitespace().next(),
             Some("/archon" | "/approve" | "/reject")
@@ -121,7 +124,7 @@ async fn execute(
         .await;
     }
     if retired_alias(text) {
-        return feed::system(ctx, RETIRED_ALIAS_HINT).await.map(drop);
+        return retired_alias_hint(ctx).await;
     }
     // Existing upgrade/watch commands remain restricted to authenticated TUI users.
     if !github {
@@ -191,6 +194,18 @@ fn retired_alias(text: &str) -> bool {
     text.split_whitespace()
         .next()
         .is_some_and(|name| name.eq_ignore_ascii_case("/a"))
+}
+
+/// Note the hint in Archon's feed and tell the orchestrator, which restates
+/// it in the chat the alias was typed in.
+async fn retired_alias_hint(ctx: &DaemonContext) -> Result<(), ArchonError> {
+    feed::system(ctx, RETIRED_ALIAS_HINT).await?;
+    let news = crate::triggers::TriggerEvent::ChatAnswer {
+        number: None,
+        applied: false,
+        text: RETIRED_ALIAS_HINT.into(),
+    };
+    crate::triggers::push(ctx, news).await
 }
 
 async fn gate_alias(ctx: &DaemonContext, text: &str) -> Result<Option<String>, ArchonError> {

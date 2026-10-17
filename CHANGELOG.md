@@ -1,20 +1,5 @@
 # Changelog
 
-## Unreleased
-
-- `archon tui` puts Archon's operator commands (`/answer`, `/approve`,
-  `/reject`, `/merge`, `/archon`, `/status` and the rest) in the Aether TUI's
-  `/` menu, through `aether tui --host-commands`, in dedicated mode
-  (`/pause` and `/resume` stay Aether's own there). An Aether
-  without that option prints a warning and starts without them.
-- `/a` is gone: answer with `/answer N …`. archon chat and archond reply to
-  `/a` with "use /answer", and every hint that offered `/a` names `/answer`.
-
-- Default reviewers: `[review] default_tier` is a preference. Under a model policy
-  that permits nothing at the tier, the reviewer rule names the best permitted
-  model (or the lead's own) instead of sending the agent to `list_models`, which
-  ended in cancelled delegations.
-
 ## 1.3.0
 
 Released 2026-10-17.
@@ -130,6 +115,17 @@ binaries refuse the migrated store. Daemon protocol 16.
   ones to clear (#94).
 - `operator_answer` triggers carry the question they answer, labelled with its
   number, so a delayed answer stays understandable (#79).
+- `archon tui` puts Archon's operator commands (`/answer`, `/approve`,
+  `/reject`, `/merge`, `/archon`, `/status` and the rest) in the Aether TUI's
+  `/` menu, through `aether tui --host-commands`, in dedicated mode
+  (`/pause` and `/resume` stay Aether's own there). An Aether
+  without that option prints a warning and starts without them (#102).
+- Under `grant_merge`, a reviewed request with pending checks waits for them
+  and then merges without asking; a failed check or a 60-minute wait asks the
+  operator. A new operator-only repository setting `merge_waive_checks` (for
+  example `["next"]`) lets reviewed pull requests into those base branches
+  merge under `grant_merge` without waiting for checks (#103). See
+  `docs/configuration.md` and `docs/operator-authority.md`.
 
 ### Changed
 
@@ -145,6 +141,9 @@ binaries refuse the migrated store. Daemon protocol 16.
 - CI runs on pushes to `main` and `next`; pull requests into `next` run only
   lint, those into `main` the full suite; runners are pinned to
   `ubuntu-24.04` (#64, #86).
+- `/a` is gone: answer with `/answer N …`. archon chat and archond reply to
+  `/a` with "use /answer", and every hint that offered `/a` names `/answer`
+  (#102).
 
 ### Fixes
 
@@ -154,6 +153,10 @@ binaries refuse the migrated store. Daemon protocol 16.
   list is paged (50 by default, 500 at most) (#77).
 - A repository whose open pull requests cannot be listed is asked once per
   observation pass, with one coalesced warning (#74).
+- Default reviewers: `[review] default_tier` is a preference. Under a model policy
+  that permits nothing at the tier, the reviewer rule names the best permitted
+  model (or the lead's own) instead of sending the agent to `list_models`, which
+  ended in cancelled delegations (#101).
 
 ### Upgrading
 

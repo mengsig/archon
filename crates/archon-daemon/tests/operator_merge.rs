@@ -918,3 +918,37 @@ async fn a_waiver_needs_the_reviewed_head_a_grant_and_a_review() {
     assert_eq!(unreviewed.state, MergeState::AwaitingOperator);
     assert!(merge_calls(&gh).is_empty() && !gh.merged());
 }
+
+/// Turning the grant off while a request waits makes the pass ask, not merge.
+#[tokio::test]
+async fn a_waiting_grant_asks_once_the_grant_is_off() {
+    let (h, gh) = delivering(Config::default()).await;
+    grant_merge(&h).await;
+    let (item, head) = reviewed(&h).await;
+    gh.show(&head, "MERGEABLE", pending());
+    merge_of(h.orchestrator(request_merge(&item)).await);
+    set_grant(&h, false).await;
+    gh.show(&head, "MERGEABLE", green());
+    coordination::reconcile(&h.ctx).await.unwrap();
+    let states: Vec<_> = merges(&h, &item)
+        .await
+        .iter()
+        .map(|m| m.state.kind())
+        .collect();
+    assert_eq!(states, ["refused", "awaiting_operator"]);
+    assert!(merge_calls(&gh).is_empty() && !gh.merged());
+}
+
+/// The operator's own merge takes over a request still waiting for checks.
+#[tokio::test]
+async fn the_operators_merge_replaces_a_waiting_grant() {
+    let (h, gh) = delivering(Config::default()).await;
+    grant_merge(&h).await;
+    let (item, head) = reviewed(&h).await;
+    gh.show(&head, "MERGEABLE", pending());
+    merge_of(h.orchestrator(request_merge(&item)).await);
+    let reply = h.cli(merge_item(&item, true)).await;
+    let merge = merge_of(reply);
+    assert_eq!(merge.state.kind(), "merged", "{merge:?}");
+    assert!(gh.merged());
+}

@@ -200,7 +200,7 @@ pub(super) async fn update(
         repo.grant_merge = grant;
     }
     if let Some(bases) = patch.merge_waive_checks {
-        repo.merge_waive_checks = bases;
+        repo.merge_waive_checks = checked_bases(bases)?;
     }
     if let Some(attribution) = patch.attribution {
         repo.attribution = attribution;
@@ -248,6 +248,22 @@ fn grant_note(repo: &Repo) -> String {
             repo.name
         ),
     }
+}
+
+/// Branch names without blanks, whitespace or repeats.
+fn checked_bases(bases: Vec<String>) -> Result<Vec<String>, ArchonError> {
+    let mut kept: Vec<String> = Vec::new();
+    for base in bases {
+        if base.is_empty() || base.starts_with('-') || base.chars().any(char::is_whitespace) {
+            return Err(ArchonError::Invalid(format!(
+                "{base:?} is not a branch name for merge_waive_checks"
+            )));
+        }
+        if !kept.contains(&base) {
+            kept.push(base);
+        }
+    }
+    Ok(kept)
 }
 
 /// The feed's record of the operator changing `merge_waive_checks` (§18.6).

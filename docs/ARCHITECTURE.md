@@ -4685,13 +4685,15 @@ operator). The types are in
   question is asked. The coordination pass reads the checks again and merges
   once all are green; a failed check or 60 minutes without a result asks the
   operator instead, and a moved head or closed pull request refuses it. The
-  `merge_finished` news says it waited. Red checks, no checks or `review =
+  `merge_finished` news says it waited. The operator's own `merge` replaces a
+  waiting request, a read of GitHub that fails is retried on the next pass, and
+  turning the grant off makes the pass ask instead of merge. Red checks, no checks or `review =
   none` are still asked at once. A change to the grant posts a `System` note.
 - `merge_waive_checks = ["next"]` on a repository (operator only, set by
   `/archon set --repo R merge_waive_checks=next` or a `repo_update` patch;
   empty by default, so older stores load unchanged) lists base branches whose
   reviewed pull requests merge under `grant_merge` without waiting for their
-  checks. The merge's result says the checks were waived by that setting.
+  checks, failed ones included. The merge's result says the checks were waived by that setting.
   It never applies to a pull request whose head moved after the review, as
   that is refused before. Adding a branch needs the operator's confirmation.
 

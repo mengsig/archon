@@ -250,12 +250,13 @@ loosen them is refused instead of asked. Chat is unaffected. See
 A repository's `grant_merge` lets the orchestrator's `request_merge` merge a
 reviewed pull request with no question. Pending checks (none failed) make
 archond wait, up to 60 minutes, and merge once they are green; a failed
-check or the timeout asks you instead.
+check or the timeout asks you instead. If you turn `grant_merge` off
+meanwhile, archond asks you instead of merging.
 
 `merge_waive_checks` is a list of base branch names, empty by default, for
 which that wait is skipped: a reviewed pull request into a listed branch
 merges at once under `grant_merge`, and the result says the checks were
-waived. It is operator only and never covers a pull request whose head
+waived, even when a check failed. It is operator only and never covers a pull request whose head
 changed after review. Set it with
 `/archon set --repo NAME merge_waive_checks=next`; adding a branch asks you
 to confirm, and an empty value clears it.

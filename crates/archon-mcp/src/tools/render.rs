@@ -463,8 +463,8 @@ fn merge_text(request: &MergeRequest) -> String {
         let _ = write!(
             text,
             "\nTell the operator: Q{number} asks them to confirm; they answer `archon answer \
-             {number} yes` (or `yes ignore-checks`, or `no`), `/a {number} yes` in archon chat, \
-             or `/answer {number} yes` in this chat when it is dedicated. You cannot answer it. \
+             {number} yes` (or `yes ignore-checks`, or `no`), `/answer {number} yes` in archon chat, \
+             or in this chat when it is dedicated. You cannot answer it. \
              Its outcome comes as merge_finished."
         );
     }

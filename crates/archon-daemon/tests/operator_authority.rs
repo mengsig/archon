@@ -993,3 +993,46 @@ async fn resetting_a_masked_lowering_still_requires_confirmation() {
         .unwrap();
     assert!(matches!(result, Reply::Question(_)));
 }
+
+async fn waived(h: &Harness) -> Vec<String> {
+    let store = h.ctx.store.lock().await;
+    store
+        .repo(&RepoRef(REPO_NAME.into()))
+        .unwrap()
+        .merge_waive_checks
+}
+
+fn waive(bases: &[&str]) -> Request {
+    Request::RepoUpdate {
+        repo: RepoRef(REPO_NAME.into()),
+        patch: RepoPatch {
+            merge_waive_checks: Some(bases.iter().map(|b| (*b).to_owned()).collect()),
+            ..Default::default()
+        },
+    }
+}
+
+/// The agent cannot widen the waiver itself, and a change it relays waits for
+/// the operator's reply; the operator's own command applies at once.
+#[tokio::test]
+async fn only_the_operator_waives_checks_for_a_base_branch() {
+    let h = harness(AetherMode::Dedicated).await;
+    assert!(waived(&h).await.is_empty());
+    let alone = h.orchestrator(waive(&["next"])).await;
+    assert!(alone.is_err(), "{alone:?}");
+    deliver(&h, 1, user("skip ci for next")).await;
+    let asked = h
+        .orchestrator(cited(waive(&["next"]), 1, "skip ci for next"))
+        .await
+        .unwrap();
+    assert!(matches!(asked, Reply::Question(_)), "{asked:?}");
+    assert!(waived(&h).await.is_empty());
+    deliver(&h, 2, user("yes")).await;
+    assert_eq!(waived(&h).await, ["next"]);
+    let command = format!("/archon set --repo {REPO_NAME} merge_waive_checks=");
+    deliver(&h, 3, user(&command)).await;
+    assert!(waived(&h).await.is_empty());
+    let command = format!("/archon set --repo {REPO_NAME} merge_waive_checks=next,release");
+    deliver(&h, 4, user(&command)).await;
+    assert_eq!(waived(&h).await, ["next", "release"]);
+}

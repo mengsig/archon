@@ -864,6 +864,7 @@ echo "GH_TOKEN=${GH_TOKEN-unset} GH_HOST=${GH_HOST-unset} GITHUB_TOKEN=${GITHUB_
                 default_pipeline: None,
                 autonomy_max: Default::default(),
                 grant_merge: false,
+                merge_waive_checks: Vec::new(),
                 attribution: Default::default(),
                 gh_user: gh_user.map(|user| user.parse().unwrap()),
                 tiers: Default::default(),

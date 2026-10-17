@@ -71,6 +71,9 @@ impl MergeAuthority {
 pub enum MergeState {
     /// The operator has not answered the confirmation question yet.
     AwaitingOperator,
+    /// A `grant_merge` request whose checks are still pending: archond reads
+    /// them again and merges once all are green, or asks the operator.
+    AwaitingChecks,
     /// archond is checking and merging; the GitHub write may have happened.
     Merging,
     /// GitHub accepted the request but has not merged it yet.
@@ -100,6 +103,7 @@ impl MergeState {
     pub fn kind(&self) -> &'static str {
         match self {
             Self::AwaitingOperator => "awaiting_operator",
+            Self::AwaitingChecks => "awaiting_checks",
             Self::Merging => "merging",
             Self::Queued => "queued",
             Self::Merged { .. } => "merged",
@@ -108,9 +112,22 @@ impl MergeState {
         }
     }
 
+    /// The name the store's `state` column holds. A request awaiting checks
+    /// is kept as `queued` there, so the column's constraint and the open-
+    /// request index are unchanged; the request's data holds the real state.
+    pub fn column(&self) -> &'static str {
+        match self {
+            Self::AwaitingChecks => "queued",
+            other => other.kind(),
+        }
+    }
+
     /// Whether the request is still in flight: at most one per item is.
     pub fn is_open(&self) -> bool {
-        matches!(self, Self::AwaitingOperator | Self::Merging | Self::Queued)
+        matches!(
+            self,
+            Self::AwaitingOperator | Self::AwaitingChecks | Self::Merging | Self::Queued
+        )
     }
 }
 
@@ -133,6 +150,13 @@ pub struct MergeRequest {
     /// Why the orchestrator asked, for `request_merge`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// The base branch whose `merge_waive_checks` entry let this merge go
+    /// ahead without waiting for its checks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waived_by: Option<String>,
+    /// The orchestrator's grant request waited for pending checks first.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub waited: bool,
     /// The checks as last read, in words.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checks: Option<String>,
@@ -162,6 +186,9 @@ impl MergeRequest {
                 self.pr_url,
                 self.waiting_on().unwrap_or_default()
             ),
+            MergeState::AwaitingChecks => {
+                format!("{} at {head} waits for its checks to finish", self.pr_url)
+            }
             MergeState::Merging => format!("{} at {head} is being merged", self.pr_url),
             MergeState::Queued => format!("{} at {head} is queued at GitHub", self.pr_url),
             MergeState::Merged {
@@ -528,6 +555,8 @@ mod tests {
             },
             ignore_checks: false,
             reason: Some("the operator said merge it".into()),
+            waived_by: None,
+            waited: false,
             checks: None,
             state: MergeState::AwaitingOperator,
             requested_at: now,

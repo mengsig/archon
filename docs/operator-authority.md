@@ -60,10 +60,11 @@ reached today.
 
 | Control | CLI | Chat / TUI | GitHub | `request_authority` | Confirmation |
 | --- | --- | --- | --- | --- | --- |
-| Answer a question or gate (`answer`) | `archon answer` | `/answer`, `/a`, `/approve`, `/reject` | same | proposal/report gates only | none for gates; authority and merge confirmations are answered only by your own reply |
+| Answer a question or gate (`answer`) | `archon answer` | `/answer`, `/approve`, `/reject` | same | proposal/report gates only | none for gates; authority and merge confirmations are answered only by your own reply |
 | Merge an item (`merge_item`) | `archon merge` | `/merge ITEM [--ignore-checks]` | same | no (the orchestrator has `request_merge`, a question you answer) | — |
 | Repository ceiling `autonomy_max` | `archon repo set --autonomy-max` | `/archon set --repo R max.K=V` | same | `repo_update` or `set_settings` | when it raises any knob |
 | `grant_merge` | `archon repo set --grant-merge` | `/archon set --repo R grant_merge=true` | same | `repo_update` | when set to true |
+| `merge_waive_checks` | — | `/archon set --repo R merge_waive_checks=next` (empty clears) | same | `repo_update` | when it adds a branch |
 | `attribution` | `archon repo set --attribution` | `/archon set --repo R attribution=none` | same | `repo_update` | any change |
 | `gh_user` | `archon repo set --gh-user` | `/archon set --repo R gh_user=LOGIN` (empty clears) | same | `repo_update` | any change |
 | `ship`, `base_branch`, `default_pipeline` | `archon repo set` | `/archon set --repo R ship=pr …` | same | `repo_update` | `ship` local→pr, and any `base_branch` or `default_pipeline` change |
@@ -96,7 +97,7 @@ A message that is exactly one of these is applied by archond. On GitHub put
 `@archon` first. Anything else in the message makes it ordinary text.
 
 ```text
-/answer N <answer>            /a N <answer>
+/answer N <answer>
 /approve [N]                  /reject [N] [reason]
 /merge ITEM [--ignore-checks]
 /archon set --repo NAME default.merge=auto max.merge=auto default_pipeline=adaptive
@@ -117,7 +118,7 @@ Details:
   `default.<knob>` and `max.<knob>` change defaults and ceilings. Other keys
   match `OperatorSettings`, including `budgets_enabled`, `budget_usd_per_item`
   and `default_pipeline`. Omitted fields are preserved.
-- Registry settings `grant_merge`, `ship`, `base_branch`, `attribution` and `gh_user` use a separate
+- Registry settings `grant_merge`, `merge_waive_checks`, `ship`, `base_branch`, `attribution` and `gh_user` use a separate
   `/archon set --repo` message; mixing them with overlay fields is refused.
 - `/archon reset [--repo NAME]` clears the scope's overlay. Registry settings
   are separate and remain until explicitly changed.
@@ -172,7 +173,7 @@ holds the action formats and is loaded on demand.
 A loosening request becomes a numbered question with the exact action and
 the state it was asked against. You answer it yourself:
 
-- `/answer N yes` or `/a N no` in the same channel, or `archon answer`.
+- `/answer N yes` or `/answer N no` in the same channel, or `archon answer`.
 - A bare `yes`/`no` works only when exactly one confirmation is
   waiting (an open merge confirmation also makes a bare reply ambiguous), it is the **first** operator message you send in that channel after
   the question, and on GitHub it is in the same thread and from the same

@@ -208,6 +208,10 @@ pub struct Repo {
     /// `merge` knob and its ceiling are separate (ARCHITECTURE §18.6).
     #[serde(default)]
     pub grant_merge: bool,
+    /// Base branches whose reviewed pull requests merge under `grant_merge`
+    /// without waiting for their checks; operator only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub merge_waive_checks: Vec<String>,
     /// What its pull requests say of Archon and the tools; operator only.
     #[serde(default)]
     pub attribution: Attribution,
@@ -300,6 +304,7 @@ mod tests {
             default_pipeline: None,
             autonomy_max: AutonomyPatch::default(),
             grant_merge: false,
+            merge_waive_checks: Vec::new(),
             attribution: Attribution::None,
             gh_user: None,
             tiers: RepoTiers::default(),
@@ -315,6 +320,17 @@ mod tests {
         assert_eq!(
             old.attribution,
             Attribution::ItemId,
+            "stored before it existed"
+        );
+        let mut stored = serde_json::to_value(&repo).unwrap();
+        assert!(
+            stored.get("merge_waive_checks").is_none(),
+            "empty is not stored"
+        );
+        stored.as_object_mut().unwrap().remove("merge_waive_checks");
+        let old: Repo = serde_json::from_value(stored).unwrap();
+        assert!(
+            old.merge_waive_checks.is_empty(),
             "stored before it existed"
         );
     }

@@ -23,9 +23,12 @@ pub(crate) async fn handle(
     };
     let github = channel.is_github();
     if !github && ctx.config.aether.mode != AetherMode::Dedicated {
+        if retired_alias(&message.text) {
+            return retired_alias_hint(ctx).await;
+        }
         if matches!(
             message.text.split_whitespace().next(),
-            Some("/archon" | "/approve" | "/reject" | "/a")
+            Some("/archon" | "/approve" | "/reject")
         ) {
             feed::system(ctx, "Operator commands are disabled in shared-mode Aether chat; use Archon's dedicated Aether or the operator socket.").await?;
         }
@@ -120,6 +123,9 @@ async fn execute(
         )
         .await;
     }
+    if retired_alias(text) {
+        return retired_alias_hint(ctx).await;
+    }
     // Existing upgrade/watch commands remain restricted to authenticated TUI users.
     if !github {
         crate::chat_ops::handle(ctx, text).await?;
@@ -181,11 +187,29 @@ pub(crate) fn command_text(text: &str, github: bool) -> &str {
     text
 }
 
+const RETIRED_ALIAS_HINT: &str = "/a is no longer a command: use /answer N <answer>.";
+
+/// `/a` was once `/answer`'s alias; whoever still types it gets a pointer.
+fn retired_alias(text: &str) -> bool {
+    text.split_whitespace()
+        .next()
+        .is_some_and(|name| name.eq_ignore_ascii_case("/a"))
+}
+
+/// Note the hint in Archon's feed and tell the orchestrator, which restates
+/// it in the chat the alias was typed in.
+async fn retired_alias_hint(ctx: &DaemonContext) -> Result<(), ArchonError> {
+    feed::system(ctx, RETIRED_ALIAS_HINT).await?;
+    let news = crate::triggers::TriggerEvent::ChatAnswer {
+        number: None,
+        applied: false,
+        text: RETIRED_ALIAS_HINT.into(),
+    };
+    crate::triggers::push(ctx, news).await
+}
+
 async fn gate_alias(ctx: &DaemonContext, text: &str) -> Result<Option<String>, ArchonError> {
     let (name, rest) = text.split_once(char::is_whitespace).unwrap_or((text, ""));
-    if name.eq_ignore_ascii_case("/a") {
-        return Ok(Some(format!("/answer {}", rest.trim())));
-    }
     let decision = match name.to_ascii_lowercase().as_str() {
         "/approve" => "approve",
         "/reject" => "reject",
@@ -233,4 +257,19 @@ async fn gate_alias(ctx: &DaemonContext, text: &str) -> Result<Option<String>, A
         "/answer {} {decision}{note}",
         question.number
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_message_led_by_a_bare_slash_a_is_the_retired_alias() {
+        for text in ["/a", "/a 3 yes", "/A yes", "  /a\t2"] {
+            assert!(retired_alias(text), "{text:?}");
+        }
+        for text in ["/answer 3 yes", "/approve", "/a/b", "say /a 3 yes", ""] {
+            assert!(!retired_alias(text), "{text:?}");
+        }
+    }
 }

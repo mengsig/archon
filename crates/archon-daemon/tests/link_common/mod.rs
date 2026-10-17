@@ -326,6 +326,7 @@ fn repo_at(path: &Path) -> Repo {
         default_pipeline: Some("direct".into()),
         autonomy_max: Default::default(),
         grant_merge: false,
+        merge_waive_checks: Vec::new(),
         attribution: Default::default(),
         gh_user: None,
         tiers: Default::default(),

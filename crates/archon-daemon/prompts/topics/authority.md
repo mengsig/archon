@@ -15,7 +15,12 @@ Actions use Archon's command JSON. Examples:
   `autonomy_max` replaces that repository's entire ceiling override; preserve other
   knobs from `list_repos` when changing one.
 - Grant requested merges: `{"cmd":"repo_update","repo":"web","patch":{"grant_merge":true}}`.
-  This does not enable automatic merging.
+  This does not enable automatic merging. Under it, a reviewed request whose
+  checks are pending waits (up to 60 minutes) and merges once they are green.
+- Waive checks per base branch: `{"cmd":"repo_update","repo":"web","patch":{"merge_waive_checks":["next"]}}`
+  (or `/archon set --repo web merge_waive_checks=next`). Under `grant_merge`, a
+  reviewed pull request into a listed branch merges without waiting for checks.
+  Adding a branch waits for the operator's confirmation; `[]` clears the list.
 - Attribution policy: `{"cmd":"repo_update","repo":"web","patch":{"attribution":"none"}}`
   drops the `Archon item:` line and refuses attribution lines at delivery;
   `item-id` is the default. Every change waits for the operator's confirmation.
@@ -40,8 +45,8 @@ confirmation, as the first operator message since that question, in the
 same channel (same GitHub thread and login). `/answer N yes` is explicit.
 The daemon refuses an approval if the relevant state changed since it asked.
 
-Whole-message commands are applied by archond: `/answer N …`, `/a N …`,
-`/approve [N]`, `/reject [N] [reason]`, `/merge ITEM [--ignore-checks]`,
+Whole-message commands are applied by archond: `/answer N …`, `/approve [N]`,
+`/reject [N] [reason]`, `/merge ITEM [--ignore-checks]`,
 `/archon set --repo NAME max.merge=auto`, `/archon set --repo NAME grant_merge=true`,
 `/archon pause --hard`, `/archon resume --hard`, `/archon repo remove NAME`.
 For less common actions use `/archon apply {"cmd":…, …}`; watcher changes also

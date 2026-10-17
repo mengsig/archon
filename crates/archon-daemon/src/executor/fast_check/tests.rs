@@ -136,6 +136,7 @@ fn repo(path: &Path, fast: Option<&str>, confirmed: Option<&str>) -> Repo {
         default_pipeline: None,
         autonomy_max: Default::default(),
         grant_merge: false,
+        merge_waive_checks: Vec::new(),
         attribution: Attribution::None,
         gh_user: None,
         tiers: RepoTiers {

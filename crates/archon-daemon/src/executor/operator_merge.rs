@@ -34,6 +34,36 @@ const MAX_REASON_CHARS: usize = 500;
 /// A merge archond is still working on is never this old; one older was
 /// interrupted, or its confirmation was lost.
 const STALE_AFTER: chrono::TimeDelta = chrono::TimeDelta::minutes(10);
+/// Starts the reason of a request whose pull request could not be read.
+const GITHUB_UNREADABLE: &str = "GitHub could not be read";
+/// A granted request waits this long for pending checks before the operator
+/// is asked.
+const WAIT_FOR_CHECKS: chrono::TimeDelta = chrono::TimeDelta::minutes(60);
+
+/// What `grant_merge` does with a reviewed request, from its checks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum GrantRoute {
+    /// Merge now; the base branch's waiver covers the checks.
+    Waived,
+    /// Merge now: every check passed.
+    Green,
+    /// Some checks are pending and none failed: wait for them.
+    Wait,
+    /// Failed or missing checks: the operator decides.
+    Ask,
+}
+
+fn grant_route(waived_bases: &[String], base: &str, seen: &ChecksSeen) -> GrantRoute {
+    if waived_bases.iter().any(|b| b == base) {
+        GrantRoute::Waived
+    } else if seen.all_green() {
+        GrantRoute::Green
+    } else if seen.failed.is_empty() && !seen.pending.is_empty() {
+        GrantRoute::Wait
+    } else {
+        GrantRoute::Ask
+    }
+}
 
 /// A succeeded item's delivered pull request, as archond recorded it.
 struct Shipped {
@@ -139,6 +169,8 @@ fn fresh(
         authority,
         ignore_checks,
         reason,
+        waived_by: None,
+        waited: false,
         checks: None,
         state,
         requested_at: now,
@@ -166,6 +198,7 @@ pub(crate) async fn merge_now(
     let request = {
         let mut store = ctx.store.lock().await;
         let shipped = shipped(&store, item)?;
+        end_waiting_for_checks(&mut store, item)?;
         let request = fresh(
             &shipped,
             authority,
@@ -179,9 +212,26 @@ pub(crate) async fn merge_now(
     execute(ctx, request).await
 }
 
+/// The operator's own merge takes over a granted request still waiting for
+/// its checks.
+fn end_waiting_for_checks(store: &mut Store, item: &QueueItemId) -> Result<(), ArchonError> {
+    for mut waiting in store.merges_for_item(item)? {
+        if waiting.state != MergeState::AwaitingChecks {
+            continue;
+        }
+        waiting.state = MergeState::Refused {
+            reason: "the operator merged it themselves".into(),
+        };
+        waiting.updated_at = archon_core::now();
+        store.update_merge(&waiting)?;
+    }
+    Ok(())
+}
+
 /// The orchestrator's `request_merge`: refused at once when the pull
-/// request cannot merge; merged under `grant_merge` when it is reviewed and
-/// green; otherwise the operator is asked to confirm.
+/// request cannot merge; under `grant_merge` merged when it is reviewed and
+/// green (or its base waives checks), waiting while checks are pending;
+/// otherwise the operator is asked to confirm.
 pub(crate) async fn request(
     ctx: &DaemonContext,
     item: &QueueItemId,
@@ -207,18 +257,50 @@ pub(crate) async fn request(
     };
     let seen = merge::evaluate(&facts.await?, expected).map_err(|w| refused_early(&shipped, &w))?;
     let reviewed = shipped.item.autonomy.review != ReviewLevel::None;
-    if shipped.repo.grant_merge && reviewed && seen.all_green() {
-        let request = fresh(
-            &shipped,
-            MergeAuthority::Grant,
-            false,
-            reason,
-            MergeState::Merging,
-        );
-        ctx.store.lock().await.insert_merge(&request)?;
-        return execute(ctx, request).await;
+    if !(shipped.repo.grant_merge && reviewed) {
+        return ask(ctx, &shipped, reason, &seen).await;
     }
-    ask(ctx, &shipped, reason, &seen).await
+    match grant_route(&shipped.repo.merge_waive_checks, &base, &seen) {
+        GrantRoute::Ask => ask(ctx, &shipped, reason, &seen).await,
+        GrantRoute::Wait => wait_for_checks(ctx, &shipped, reason, &seen).await,
+        route => {
+            let waived = route == GrantRoute::Waived;
+            let mut request = fresh(
+                &shipped,
+                MergeAuthority::Grant,
+                waived,
+                reason,
+                MergeState::Merging,
+            );
+            request.waived_by = waived.then_some(base);
+            ctx.store.lock().await.insert_merge(&request)?;
+            execute(ctx, request).await
+        }
+    }
+}
+
+/// Record a granted request waiting for its pending checks.
+async fn wait_for_checks(
+    ctx: &DaemonContext,
+    shipped: &Shipped,
+    reason: Option<String>,
+    seen: &ChecksSeen,
+) -> Result<MergeRequest, ArchonError> {
+    assert!(
+        !seen.pending.is_empty() && seen.failed.is_empty(),
+        "only pending checks wait"
+    );
+    let mut waiting = fresh(
+        shipped,
+        MergeAuthority::Grant,
+        false,
+        reason,
+        MergeState::AwaitingChecks,
+    );
+    waiting.waited = true;
+    waiting.checks = Some(seen.describe());
+    ctx.store.lock().await.insert_merge(&waiting)?;
+    Ok(waiting)
 }
 
 /// Turn on GitHub's auto-merge of a succeeded item's pull request, pinned to
@@ -449,7 +531,7 @@ async fn ready(
     let binary = &ctx.config.github.binary;
     let facts = match gh::merge_facts(binary, &shipped.repo, &merge.pr_url).await {
         Ok(facts) => facts,
-        Err(error) => return Ok(Err(format!("GitHub could not be read: {error}"))),
+        Err(error) => return Ok(Err(format!("{GITHUB_UNREADABLE}: {error}"))),
     };
     let expected = Expected {
         head: &merge.head,
@@ -525,7 +607,10 @@ async fn finish_merge(
     mut merge: MergeRequest,
 ) -> Result<MergeRequest, ArchonError> {
     assert!(
-        merge.state != MergeState::AwaitingOperator && merge.state != MergeState::Merging,
+        !matches!(
+            merge.state,
+            MergeState::AwaitingOperator | MergeState::AwaitingChecks | MergeState::Merging
+        ),
         "only a known outcome is reported"
     );
     merge.updated_at = archon_core::now();
@@ -544,8 +629,16 @@ async fn report(ctx: &DaemonContext, merge: &MergeRequest) -> Result<(), ArchonE
             observed,
         } => {
             let checks = match (merge.ignore_checks, &merge.checks) {
+                _ if merge.waived_by.is_some() => format!(
+                    "; checks waived by the repository's merge_waive_checks for `{}` ({})",
+                    merge.waived_by.as_deref().unwrap_or_default(),
+                    merge.checks.as_deref().unwrap_or("not read")
+                ),
                 (true, Some(checks)) => {
                     format!("; the operator acknowledged the checks ({checks})")
+                }
+                (_, Some(checks)) if merge.waited => {
+                    format!("; waited for its checks to finish: {checks}")
                 }
                 (_, Some(checks)) => format!("; checks: {checks}"),
                 (_, None) => String::new(),
@@ -580,7 +673,9 @@ async fn report(ctx: &DaemonContext, merge: &MergeRequest) -> Result<(), ArchonE
             );
             (NotificationKind::Blocker, text)
         }
-        MergeState::AwaitingOperator | MergeState::Merging => unreachable!("an open request"),
+        MergeState::AwaitingOperator | MergeState::AwaitingChecks | MergeState::Merging => {
+            unreachable!("an open request")
+        }
     };
     finish::notify(ctx, kind, &text, Some(&merge.item), Some(&merge.run)).await?;
     if merge.state == MergeState::Queued {
@@ -607,6 +702,16 @@ pub(crate) async fn settle_stale(ctx: &DaemonContext) -> Result<usize, ArchonErr
     let mut ended = 0;
     for merge in open {
         let stale = merge.updated_at < ctx.started_at || merge.updated_at < cutoff;
+        if merge.state == MergeState::AwaitingChecks {
+            let (subject, item) = (format!("merge:{}", merge.id), merge.item.clone());
+            let result = resume_waiting(ctx, merge).await;
+            if let Ok(settled) = &result {
+                ended += usize::from(*settled);
+            }
+            let what = format!("Waiting for the checks of the merge of {item}");
+            coordination::isolate(ctx, &subject, Some(&item), &what, result.map(drop)).await?;
+            continue;
+        }
         if merge.state != MergeState::Queued && (merge.state != MergeState::Merging || !stale) {
             continue;
         }
@@ -619,6 +724,58 @@ pub(crate) async fn settle_stale(ctx: &DaemonContext) -> Result<usize, ArchonErr
         coordination::isolate(ctx, &subject, Some(&item), &what, result.map(drop)).await?;
     }
     Ok(ended)
+}
+
+/// Read a waiting request's checks again: merge when all are green, ask the
+/// operator when one failed or the wait ran out, refuse when the pull request
+/// can no longer merge. `true` when the request left the waiting state.
+async fn resume_waiting(ctx: &DaemonContext, mut merge: MergeRequest) -> Result<bool, ArchonError> {
+    assert_eq!(
+        merge.state,
+        MergeState::AwaitingChecks,
+        "only a waiting request resumes"
+    );
+    let probe = MergeRequest {
+        ignore_checks: true,
+        ..merge.clone()
+    };
+    let timed_out = archon_core::now() - merge.requested_at >= WAIT_FOR_CHECKS;
+    let seen = match ready(ctx, &probe).await? {
+        Ok(ready) => ready.seen,
+        // A read that failed is retried on the next pass, until the wait ends.
+        Err(why) if why.starts_with(GITHUB_UNREADABLE) && !timed_out => return Ok(false),
+        Err(why) => {
+            merge.state = MergeState::Refused { reason: why };
+            finish_merge(ctx, merge).await?;
+            return Ok(true);
+        }
+    };
+    let shipped = shipped(&*ctx.store.lock().await, &merge.item)?;
+    let granted = shipped.repo.grant_merge && shipped.item.autonomy.review != ReviewLevel::None;
+    let still_pending = seen.failed.is_empty() && !seen.pending.is_empty();
+    if granted && seen.all_green() {
+        merge.state = MergeState::Merging;
+        merge.updated_at = archon_core::now();
+        ctx.store.lock().await.update_merge(&merge)?;
+        return execute(ctx, merge)
+            .await
+            .map(|m| m.state != MergeState::Merging);
+    }
+    if granted && still_pending && !timed_out {
+        return Ok(false);
+    }
+    let why = match (granted, timed_out && still_pending) {
+        (false, _) => "the repository no longer grants the merge",
+        (true, true) => "its checks were still pending after the wait",
+        (true, false) => "its checks did not all pass",
+    };
+    merge.state = MergeState::Refused {
+        reason: format!("{why}; the operator was asked instead"),
+    };
+    merge.updated_at = archon_core::now();
+    ctx.store.lock().await.update_merge(&merge)?;
+    ask(ctx, &shipped, merge.reason.clone(), &seen).await?;
+    Ok(true)
 }
 
 async fn settle_one(ctx: &DaemonContext, mut merge: MergeRequest) -> Result<bool, ArchonError> {
@@ -673,6 +830,8 @@ mod tests {
             authority: MergeAuthority::Cli,
             ignore_checks: false,
             reason: None,
+            waived_by: None,
+            waited: false,
             checks: None,
             state: MergeState::Merging,
             requested_at: now,
@@ -720,5 +879,40 @@ mod tests {
             panic!("a refused merge is refused");
         };
         assert!(reason.contains("Head branch was modified"), "{reason}");
+    }
+
+    #[test]
+    fn a_grant_waits_only_while_checks_are_pending_and_none_failed() {
+        let seen = |green, pending: &[&str], failed: &[&str]| ChecksSeen {
+            green,
+            pending: pending.iter().map(|n| (*n).to_owned()).collect(),
+            failed: failed.iter().map(|n| (*n).to_owned()).collect(),
+        };
+        let none: &[String] = &[];
+        let next = ["next".to_owned()];
+        assert_eq!(
+            grant_route(none, "main", &seen(2, &[], &[])),
+            GrantRoute::Green
+        );
+        assert_eq!(
+            grant_route(none, "main", &seen(1, &["lint"], &[])),
+            GrantRoute::Wait
+        );
+        assert_eq!(
+            grant_route(none, "main", &seen(0, &["lint"], &["ci"])),
+            GrantRoute::Ask
+        );
+        assert_eq!(
+            grant_route(none, "main", &seen(0, &[], &[])),
+            GrantRoute::Ask
+        );
+        assert_eq!(
+            grant_route(&next, "next", &seen(0, &["lint"], &["ci"])),
+            GrantRoute::Waived
+        );
+        assert_eq!(
+            grant_route(&next, "main", &seen(1, &["lint"], &[])),
+            GrantRoute::Wait
+        );
     }
 }

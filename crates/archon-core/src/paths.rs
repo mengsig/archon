@@ -35,6 +35,11 @@ pub fn store_path() -> PathBuf {
     data_dir().join(STORE_FILE_NAME)
 }
 
+/// The operator commands `archon tui` hands `aether tui --host-commands`.
+pub fn tui_host_commands_path() -> PathBuf {
+    data_dir().join("tui-host-commands.json")
+}
+
 /// The lock archond holds in its data directory for as long as it runs, so
 /// a second daemon never opens the same store (see `archon_queue::DataLock`).
 pub const DATA_LOCK_FILE_NAME: &str = "data.lock";

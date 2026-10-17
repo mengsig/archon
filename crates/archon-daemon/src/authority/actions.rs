@@ -118,7 +118,12 @@ pub(super) async fn needs_confirmation(
             let repo: Repo = serde_json::from_value(before.clone())?;
             // The operator alone decides what a repository's pull requests attribute,
             // and which GitHub login publishes them.
+            let waived_more = patch
+                .merge_waive_checks
+                .as_ref()
+                .is_some_and(|bases| bases.iter().any(|b| !repo.merge_waive_checks.contains(b)));
             if patch.grant_merge == Some(true) && !repo.grant_merge
+                || waived_more
                 || patch.attribution.is_some_and(|a| a != repo.attribution)
                 || patch.gh_user.clone().apply(repo.gh_user.clone()) != repo.gh_user
                 || patch.ship == Some(ShipMode::Pr) && repo.ship == ShipMode::Local

@@ -363,6 +363,7 @@ mod tests {
             default_pipeline: None,
             autonomy_max: Default::default(),
             grant_merge: false,
+            merge_waive_checks: Vec::new(),
             attribution: Default::default(),
             gh_user: None,
             tiers: Default::default(),

@@ -31,6 +31,7 @@ fn repo(name: &str) -> Repo {
         default_pipeline: None,
         autonomy_max: AutonomyPatch::default(),
         grant_merge: false,
+        merge_waive_checks: Vec::new(),
         attribution: Default::default(),
         gh_user: None,
         tiers: Default::default(),

@@ -19,7 +19,7 @@ const LABEL_WIDTH: usize = 8;
 const MIN_TEXT_WIDTH: usize = 24;
 
 /// The numbers (`Q1`, `Q2`) of the questions the chat knows to be open, so
-/// the operator can type `/a 2 yes`; archond assigns them.
+/// the operator can type `/answer 2 yes`; archond assigns them.
 #[derive(Debug, Default, Clone)]
 pub struct QuestionLabels(HashMap<QuestionId, u64>);
 
@@ -246,9 +246,9 @@ fn describe_question(question: &Question, number: Option<u64>) -> Parts {
             let pick = if question.options.is_empty() {
                 String::new()
             } else {
-                format!(" or /a {n} <option number>")
+                format!(" or /answer {n} <option number>")
             };
-            notes.push(format!("answer: /a {n} <text>{pick}"));
+            notes.push(format!("answer: /answer {n} <text>{pick}"));
             format!("Q{n}  {}", question.text)
         }
         None => question.text.clone(),
@@ -379,10 +379,10 @@ mod tests {
         assert_eq!(head(&rendered), "question  Q2  Ship it?");
         assert_eq!(lines[1].trim(), "1) yes");
         assert_eq!(lines[2].trim(), "2) no");
-        assert!(lines[3].contains("answer: /a 2 <text> or /a 2 <option number>"));
+        assert!(lines[3].contains("answer: /answer 2 <text> or /answer 2 <option number>"));
         let unnumbered = render_feed_item(&item(FeedEntry::Question(q.clone())), false).unwrap();
         assert!(unnumbered.contains(&format!("[{}]", q.id)));
-        assert!(!unnumbered.contains("/a "));
+        assert!(!unnumbered.contains("/answer "));
     }
 
     #[test]

@@ -34,7 +34,7 @@ async fn command(ctx: &DaemonContext, text: &str) -> Result<Request, ArchonError
             },
         }),
         ("set", ["--repo", name, settings @ ..]) if !settings.is_empty() => {
-            let registry = ["grant_merge=", "ship=", "base_branch=", "attribution=", "gh_user="];
+            let registry = ["grant_merge=", "merge_waive_checks=", "ship=", "base_branch=", "attribution=", "gh_user="];
             if settings.iter().any(|s| registry.iter().any(|key| s.starts_with(key))) {
                 repo_settings(ctx, name, settings).await
             } else { overlay_settings(ctx, Some(name), settings).await }
@@ -62,6 +62,7 @@ async fn repo_settings(
                     ArchonError::Invalid("grant_merge must be true or false".into())
                 })?)
             }
+            "merge_waive_checks" => patch.merge_waive_checks = Some(waived_bases(value)?),
             "ship" => patch.ship = Some(value.parse()?),
             "attribution" => patch.attribution = Some(value.parse()?),
             "gh_user" if value.is_empty() => patch.gh_user = Clearable::Clear,
@@ -69,7 +70,8 @@ async fn repo_settings(
             "base_branch" => patch.base_branch = Clearable::Set(value.into()),
             _ => {
                 return Err(ArchonError::Invalid(
-                    "set grant_merge, ship, base_branch, attribution and gh_user separately from \
+                    "set grant_merge, merge_waive_checks, ship, base_branch, attribution and gh_user \
+                     separately from \
                      saved overlay settings"
                         .into(),
                 ));
@@ -80,6 +82,22 @@ async fn repo_settings(
         repo: reference,
         patch,
     })
+}
+
+/// Base branch names from a comma-separated value; empty clears the list.
+fn waived_bases(value: &str) -> Result<Vec<String>, ArchonError> {
+    let mut bases = Vec::new();
+    for name in value.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+        if name.starts_with('-') || name.chars().any(|c| c.is_whitespace() || c.is_control()) {
+            return Err(ArchonError::Invalid(format!(
+                "{name:?} is not a branch name for merge_waive_checks"
+            )));
+        }
+        if !bases.iter().any(|b| b == name) {
+            bases.push(name.to_owned());
+        }
+    }
+    Ok(bases)
 }
 
 async fn overlay_settings(

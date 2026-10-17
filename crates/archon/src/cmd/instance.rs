@@ -13,6 +13,7 @@ use archon_core::config::{AetherMode, Config};
 use archon_core::config_files;
 use archon_core::error::ArchonError;
 use archon_core::protocol::{Reply, Request};
+use archon_core::{operator_commands, paths};
 
 use super::doctor;
 use crate::cli::TuiArgs;
@@ -24,6 +25,7 @@ use crate::instance::{AETHER_PROGRAM, Instance, effective_aether, operator_confi
 use crate::setup;
 
 const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+const HOST_COMMANDS: &str = "--host-commands";
 const TOO_OLD: &str =
     "the installed Aether is too old for Archon's terminal UI; update it with `aether update`";
 
@@ -304,19 +306,18 @@ fn heal_voice(config: &Config) -> anyhow::Result<()> {
 
 /// `aether tui` on Archon's own Aether, started first if needed.
 pub async fn tui(args: TuiArgs) -> anyhow::Result<ExitCode> {
-    exec_aether(tui_command(args).await?)
+    exec_aether(tui_command(args, false).await?)
 }
 
 /// As [`tui`], but an `aether` that does not take the options is an error
 /// here: once it has replaced this process, Archon can add nothing to its own.
 pub async fn tui_checked(args: TuiArgs) -> anyhow::Result<ExitCode> {
-    let command = tui_command(args).await?;
-    ensure_tui_options(&command).await?;
-    exec_aether(command)
+    exec_aether(tui_command(args, true).await?)
 }
 
-/// The `aether tui` to run, with the orchestrator attached and the instance ready.
-async fn tui_command(mut args: TuiArgs) -> anyhow::Result<Command> {
+/// The `aether tui` to run, with the orchestrator attached and the instance
+/// ready; `checked` refuses an `aether` that lacks an option it passes.
+async fn tui_command(mut args: TuiArgs, checked: bool) -> anyhow::Result<Command> {
     let config = Config::load_default()?;
     anyhow::ensure!(
         config.aether.address.is_none(),
@@ -348,14 +349,56 @@ async fn tui_command(mut args: TuiArgs) -> anyhow::Result<Command> {
     if let Some(socket) = &config.aether.socket {
         command.env("AETHER_SOCKET", socket);
     }
+    let dedicated = config.aether.mode == AetherMode::Dedicated;
+    if !checked && !dedicated {
+        return Ok(command);
+    }
+    let help = match tui_help(&command).await {
+        Ok(help) => help,
+        Err(error) if !checked => {
+            eprintln!("Warning: Archon's commands are not in the terminal UI's / menu: {error:#}");
+            return Ok(command);
+        }
+        Err(error) => return Err(error),
+    };
+    if checked {
+        ensure_tui_options(&command, &help)?;
+    }
+    if dedicated {
+        offer_host_commands(&mut command, &help, &paths::tui_host_commands_path());
+    }
     Ok(command)
 }
 
-/// Ask the `aether` of `command` for its `tui` options, and refuse one that
-/// lacks an option `command` passes.
-async fn ensure_tui_options(command: &Command) -> anyhow::Result<()> {
-    let mut args = command.get_args();
-    assert_eq!(args.next(), Some(OsStr::new("tui")), "an `aether tui`");
+/// Write Archon's operator commands to `path` and pass it as
+/// `--host-commands`, so `/answer` and the rest join the TUI's / menu. An
+/// `aether` that predates the option, or a failed write, costs only the menu.
+fn offer_host_commands(command: &mut Command, help: &str, path: &Path) {
+    if !missing_options(help, [OsStr::new(HOST_COMMANDS)].into_iter()).is_empty() {
+        eprintln!(
+            "Warning: this Aether's terminal UI takes no {HOST_COMMANDS}, so /answer and \
+             Archon's other commands are not in its / menu; update it with `aether update`."
+        );
+        return;
+    }
+    if let Err(error) = write_host_commands(path) {
+        eprintln!("Warning: Archon's commands are not in the terminal UI's / menu: {error:#}");
+        return;
+    }
+    command.arg(HOST_COMMANDS).arg(path);
+}
+
+fn write_host_commands(path: &Path) -> anyhow::Result<()> {
+    let dir = path
+        .parent()
+        .context("the host commands path has no directory")?;
+    std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    let text = serde_json::to_string_pretty(&operator_commands::host_commands_json())?;
+    seed::write_atomically(path, &text)
+}
+
+/// The `aether tui --help` of the `aether` that `command` runs.
+async fn tui_help(command: &Command) -> anyhow::Result<String> {
     let mut probe = Command::new(command.get_program());
     probe.args(["tui", "--help"]).stdin(Stdio::null());
     for (name, value) in command.get_envs() {
@@ -376,10 +419,17 @@ async fn ensure_tui_options(command: &Command) -> anyhow::Result<()> {
         let said = said.unwrap_or("it said nothing");
         anyhow::bail!("{asked} failed ({}): {said}; {TOO_OLD}", output.status);
     }
-    let missing = missing_options(&String::from_utf8_lossy(&output.stdout), args);
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Refuse an `aether` whose `tui --help` lacks an option `command` passes.
+fn ensure_tui_options(command: &Command, help: &str) -> anyhow::Result<()> {
+    let mut args = command.get_args();
+    assert_eq!(args.next(), Some(OsStr::new("tui")), "an `aether tui`");
+    let missing = missing_options(help, args);
     anyhow::ensure!(
         missing.is_empty(),
-        "{asked} lists no {}; {TOO_OLD}",
+        "`{AETHER_PROGRAM} tui --help` lists no {}; {TOO_OLD}",
         missing.join(" or ")
     );
     Ok(())
@@ -550,5 +600,50 @@ mod tests {
     #[test]
     fn an_option_named_only_in_another_description_is_not_listed() {
         assert_eq!(missing(HELP, &["tui", "--plain", "--ascii"]), ["--ascii"]);
+    }
+
+    fn tui() -> Command {
+        let mut command = Command::new(AETHER_PROGRAM);
+        command.args(["tui", "--agent", "agt_1"]);
+        command
+    }
+
+    #[test]
+    fn the_tui_gets_the_operator_commands_when_its_aether_takes_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data/tui-host-commands.json");
+        let help = format!("{HELP}      --host-commands <PATH>  A host's slash commands\n");
+        let mut command = tui();
+        offer_host_commands(&mut command, &help, &path);
+        let args: Vec<&OsStr> = command.get_args().collect();
+        assert_eq!(&args[3..], [OsStr::new(HOST_COMMANDS), path.as_os_str()]);
+        assert!(ensure_tui_options(&command, &help).is_ok());
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(written, operator_commands::host_commands_json());
+        let names: Vec<&str> = written["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["name"].as_str().unwrap())
+            .collect();
+        let listed: Vec<&str> = operator_commands::OPERATOR_COMMANDS
+            .iter()
+            .filter(|c| c.in_tui)
+            .map(|c| c.name)
+            .collect();
+        assert_eq!(names, listed);
+        assert!(names.contains(&"answer") && !names.contains(&"pause"));
+    }
+
+    #[test]
+    fn an_older_aether_gets_no_operator_commands_and_still_starts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tui-host-commands.json");
+        let mut command = tui();
+        offer_host_commands(&mut command, HELP, &path);
+        assert_eq!(command.get_args().count(), 3, "no --host-commands");
+        assert!(!path.exists());
+        assert!(ensure_tui_options(&command, HELP).is_ok());
     }
 }

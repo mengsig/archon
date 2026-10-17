@@ -31,6 +31,7 @@ pub mod model;
 pub mod model_evidence;
 pub mod model_tier;
 pub mod notify;
+pub mod operator_commands;
 pub mod ops;
 pub mod outcome;
 pub mod paths;

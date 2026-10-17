@@ -1,28 +1,29 @@
 //! Parsing chat input lines: plain text goes to the orchestrator, `/…`
 //! lines are slash commands (ARCHITECTURE §12). Pure.
 
+use std::fmt::Write as _;
+
+use archon_core::operator_commands::OPERATOR_COMMANDS;
 use archon_core::protocol::{PauseTarget, RepoRef};
 
 use crate::questions::QuestionRef;
 
-pub const HELP: &str = "\
-Type a message and press Enter to talk to the orchestrator.
-  /a [n] <text>           answer question n, or the newest open question
-  /answer <n|id> <text>   answer question n (a number picks one of its options)
-  /questions              list open questions
-  /status                 daemon, Aether, queue and spend
-  /queue [state ...]      the queue, e.g. /queue running failed
-  /item <id>              one queue item (its id or the id's start)
-  /merge <id> [--ignore-checks]  merge the item's pull request now
-  /approve [n] [note]      approve a proposal or report gate
-  /reject [n] [reason]     reject a proposal or report gate
-  /archon <command>       change operator settings (see guide authority)
-  /pause [hard | repo <name> | pipeline <name>]
-  /resume [hard | repo <name> | pipeline <name>]
+/// The chat's own commands, after the operator commands every surface takes.
+const CHAT_HELP: &str = "\
   /progress               show or hide progress notes (also /verbose)
   /help                   this list
   /quit                   leave (also Ctrl-D, or Ctrl-C twice)
 Start a line with // to send literal slash text; the escape stays in the message.";
+
+pub fn help() -> String {
+    let mut text = String::from("Type a message and press Enter to talk to the orchestrator.\n");
+    for command in OPERATOR_COMMANDS {
+        let usage = format!("/{} {}", command.name, command.args);
+        let _ = writeln!(text, "  {:<23} {}", usage.trim_end(), command.about);
+    }
+    text.push_str(CHAT_HELP);
+    text
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChatInput {
@@ -40,7 +41,6 @@ pub enum SlashCommand {
     Quit,
     ToggleProgress,
     Answer { question: QuestionRef, text: String },
-    AnswerNewest { text: String },
     Questions,
     Status,
     Queue { states: Vec<String> },
@@ -90,29 +90,11 @@ fn parse_command(name: &str, rest: &str) -> Result<SlashCommand, String> {
         },
         "archon" | "approve" | "reject" => Ok(SlashCommand::Authority(format!("/{name} {rest}"))),
         "merge" => parse_merge(rest),
-        "a" => parse_short_answer(rest),
+        "a" => Err("use /answer <n> <text>".to_owned()),
         "answer" => parse_answer(rest),
         "pause" => parse_pause_target(rest, "pause").map(SlashCommand::Pause),
         "resume" => parse_pause_target(rest, "resume").map(SlashCommand::Resume),
         other => Err(format!("unknown command /{other}; /help lists them")),
-    }
-}
-
-/// `/a 3 yes` answers Q3; `/a yes` (or a lone `/a 2`, option 2) answers the
-/// newest open question.
-fn parse_short_answer(rest: &str) -> Result<SlashCommand, String> {
-    if rest.is_empty() {
-        return Err("usage: /a [n] <text>".to_owned());
-    }
-    let (first, text) = split_word(rest);
-    match QuestionRef::parse(first) {
-        Ok(question) if !text.is_empty() => Ok(SlashCommand::Answer {
-            question,
-            text: text.to_owned(),
-        }),
-        _ => Ok(SlashCommand::AnswerNewest {
-            text: rest.to_owned(),
-        }),
     }
 }
 
@@ -213,29 +195,33 @@ mod tests {
                 text: "yes".into()
             })
         );
-        assert_eq!(
-            parse_line("/a 1"),
-            ChatInput::Command(SlashCommand::AnswerNewest { text: "1".into() })
-        );
-        assert_eq!(
-            parse_line("/a 3 no, keep the old API"),
-            ChatInput::Command(SlashCommand::Answer {
-                question: QuestionRef::Number(3),
-                text: "no, keep the old API".into()
-            })
-        );
-        assert_eq!(
-            parse_line("/a sounds good"),
-            ChatInput::Command(SlashCommand::AnswerNewest {
-                text: "sounds good".into()
-            })
-        );
         assert!(matches!(parse_line("/answer 2"), ChatInput::Invalid(_)));
         assert!(matches!(
             parse_line("/answer zero yes"),
             ChatInput::Invalid(_)
         ));
-        assert!(matches!(parse_line("/a"), ChatInput::Invalid(_)));
+        for retired in ["/a", "/a 3 yes", "/A sounds good"] {
+            assert_eq!(
+                parse_line(retired),
+                ChatInput::Invalid("use /answer <n> <text>".into())
+            );
+        }
+    }
+
+    #[test]
+    fn every_operator_command_is_known_and_in_the_help() {
+        let help = help();
+        for command in OPERATOR_COMMANDS {
+            let line = format!("/{}", command.name);
+            if let ChatInput::Invalid(message) = parse_line(&line) {
+                assert!(!message.starts_with("unknown command"), "{line}: {message}");
+            }
+            assert!(
+                help.contains(&format!("  {line} ")),
+                "{line} is in the help"
+            );
+        }
+        assert!(!help.contains("/a "), "{help}");
     }
 
     #[test]

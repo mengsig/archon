@@ -157,6 +157,7 @@ fn repo_patch(
         default_pipeline: clearable(pipeline),
         autonomy_max,
         grant_merge: None,
+        merge_waive_checks: None,
         attribution: None,
         gh_user: Clearable::Keep,
         tiers: TiersPatch::default(),

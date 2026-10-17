@@ -443,7 +443,10 @@ orchestrator to attach to) is an error, not a fallback; it names
 `archon tui` starts
 Archon if needed, asks its supervisor for the live orchestrator, then replaces
 itself with `aether tui --agent <id> --view-mode calm` in dedicated mode. A healthy orchestrator is reused;
-restarts made in Aether are followed. Attachment sends no user message and
+restarts made in Aether are followed. In dedicated mode Archon's commands
+(`/answer`, `/approve`, `/reject`, `/merge`, `/archon`, `/status` and the
+rest) appear in the TUI's `/` menu beside Aether's own, marked as Archon's;
+an Aether too old for that prints a warning and starts without them. Attachment sends no user message and
 respects revival backoff. An unavailable attachment stops with a visible error;
 it never deliberately opens a generic root. If the agent disappears after
 launch, Aether may select another root: exit and run `archon tui` again.
@@ -682,7 +685,6 @@ archon repo add ~/code/web --pipeline adaptive
 ```
 
 In `archon chat`, just talk. Slash commands cover the rest: `/questions`,
-`/a [n] <answer>` (the newest open question without `n`),
 `/answer <n> <answer>`, `/status`, `/queue [state …]` (the queue, e.g.
 `/queue running failed`), `/item <id>` (one item), `/merge <id>
 [--ignore-checks]` (merge its pull request; see
@@ -1036,8 +1038,8 @@ risk and from what you told it, within a ceiling that only you can raise.
 | `merge` | `manual`, `auto` | `auto`: Archon asks GitHub to merge the PR once its checks allow |
 | `tools` | `guarded`, `yolo` | `guarded`: a stage agent delegates only when its stage sets `allow_delegation`. `yolo`: every stage agent may delegate, and nothing waits for approval |
 
-Answer a waiting proposal or report in chat with `/a <n> yes`,
-`/a <n> <feedback>` or `/a <n> reject`, with `archon answer <n> …`, on
+Answer a waiting proposal or report in chat with `/answer <n> yes`,
+`/answer <n> <feedback>` or `/answer <n> reject`, with `archon answer <n> …`, on
 its Lavish page, or with `/answer <n> …` in the terminal UI (see
 [Answering in the orchestrator's chat](#answering-in-the-orchestrators-chat)).
 A question keeps its number for good: if it was answered
@@ -1073,7 +1075,7 @@ and merges nothing. `archon queue show <item>` prints a `merge:` line.
 You can also just tell the orchestrator "merge it", in chat or in a GitHub
 request with operator standing. It cannot merge by itself: it calls
 `request_merge`, and Archon asks you `Merge …?` as a numbered question.
-Answer `/a <n> yes`, `/a <n> yes ignore-checks` or `/a <n> no`. The
+Answer `/answer <n> yes`, `/answer <n> yes ignore-checks` or `/answer <n> no`. The
 orchestrator cannot answer it for you. A whole-message `/merge <item>` in
 the orchestrator's Aether chat merges at once, in dedicated mode only.
 

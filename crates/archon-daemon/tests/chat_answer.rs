@@ -915,6 +915,23 @@ async fn the_orchestrator_cannot_answer_a_reopen_or_an_aether_question() {
 }
 
 #[tokio::test]
+async fn the_retired_a_alias_answers_nothing_and_points_to_answer() {
+    for mode in [AetherMode::Dedicated, AetherMode::Shared] {
+        let (h, item, asked) = at_proposal_gate(mode).await;
+        deliver(&h, 1, operator(&format!("/a {} yes", asked.number))).await;
+        assert!(question(&h, &asked.id).await.is_open(), "{mode:?}");
+        assert_eq!(decision(&h, &item.id, "propose").await, None);
+        let notes = system_notes(&h).await;
+        assert!(notes.iter().any(|n| n.contains("use /answer")), "{notes:?}");
+        let news = chat_news(&h).await;
+        assert_eq!(news.len(), 1, "{mode:?}: {news:?}");
+        let (number, applied, hint) = &news[0];
+        assert_eq!((*number, *applied), (None, false));
+        assert!(hint.contains("use /answer"), "{hint}");
+    }
+}
+
+#[tokio::test]
 async fn approve_alias_passes_the_only_open_gate() {
     let (h, item, asked) = at_proposal_gate(AetherMode::Dedicated).await;
     deliver(&h, 1, operator("/approve")).await;

@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.3.1
+
+Released 2026-10-18.
+
+Archon ships a builtin `swarm` pipeline for changes that split into
+independent parts. A plan stage divides the change into tasks, each with its
+own disjoint owned paths. Build workers then run in parallel, one per task,
+and can mix engines: the model plan's `build` list is taken one entry per
+worker in task order, so a `codex` worker can sit beside Aether ones. An
+integrate stage merges the workers' results, runs the checks and reviews the
+whole change. Peers message each other through Aether 1.1.1 when it is
+available.
+
+Try it:
+
+```sh
+archon queue add --title 'Add the export command' --pipeline swarm \
+  --brief-file brief.md --model-plan-file plan.json
+```
+
+```json
+{"plan": [{"tier": "strong"}],
+ "build": [{"tier": "fast"}, {"tier": "fast", "provider": "codex"}],
+ "integrate": [{"tier": "strong"}]}
+```
+
+See `docs/PIPELINES.md` for the plan format. Watch a run with `archon queue
+show <id>`.
+
 ## 1.3.0
 
 Released 2026-10-17.

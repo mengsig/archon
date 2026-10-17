@@ -162,5 +162,5 @@ verifies itself ([operator authority](docs/operator-authority.md)). Read
 [GitHub watcher](docs/github-watcher.md) ·
 [Operator authority](docs/operator-authority.md) · [Architecture](docs/ARCHITECTURE.md)
 
-Project version: **1.3.0**. Licensed under [MIT](LICENSE). For development,
+Project version: **1.3.1**. Licensed under [MIT](LICENSE). For development,
 see [CONTRIBUTING.md](CONTRIBUTING.md).

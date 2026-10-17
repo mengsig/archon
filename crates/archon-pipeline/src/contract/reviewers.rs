@@ -2,7 +2,7 @@
 
 use archon_core::config::ReviewConfig;
 use archon_core::model::{ModelChoice, ModelRef};
-use archon_core::model_tier::ModelCatalog;
+use archon_core::model_tier::{ModelCatalog, Tier};
 use archon_core::policy::ModelPolicy;
 
 /// Explicit plans keep their contract; unnamed reviewers use the configured profile.
@@ -20,63 +20,80 @@ pub fn reviewer_profile_rules(
     let effort = policy.max_effort.map_or(profile.default_effort, |cap| {
         cap.min(profile.default_effort)
     });
-    let providers = catalog.best_tiers(tier, policy);
-    let provider = providers
-        .iter()
-        .filter(|(_, best)| **best == tier)
-        .map(|(provider, _)| *provider)
-        .min_by_key(|provider| {
-            let is_own = *provider == own.provider;
-            (is_own == profile.prefer_other_provider, *provider)
-        });
-    if let Some(provider) = provider {
-        let (model, resolved) = catalog
-            .resolve(tier, Some(provider), None, policy)
-            .expect("an eligible provider has an allowed model at the requested tier");
-        assert_eq!(
-            resolved.resolved, tier,
-            "review defaults never fall below their tier"
-        );
+    if let Some((model, resolved)) = resolve_default(tier, own, policy, profile, catalog) {
         assert!(
             policy.permits_model(&model),
             "review defaults respect the model policy"
         );
+        assert!(resolved <= tier, "review defaults never exceed their tier");
+        if resolved == tier {
+            return format!(
+                "- Delegate every reviewer with role `reviewer`, on {model} at tier {tier} \
+                 and effort {effort}.\n"
+            );
+        }
         return format!(
-            "- Delegate every reviewer with role `reviewer`, on {model} at tier {tier} \
-             and effort {effort}.\n"
+            "- Delegate every reviewer with role `reviewer`, on {model} at effort {effort}: \
+             {tier} unavailable under policy ({}); using {model}.\n",
+            policy.describe()
         );
     }
-    unresolved_rules(own, policy, profile, effort)
+    unplaced_rules(own, policy, effort)
 }
 
-fn unresolved_rules(
+/// The permitted model nearest the tier from below: the strongest tier first,
+/// then another provider than `own` when the profile prefers one, then name.
+fn resolve_default(
+    tier: Tier,
     own: &ModelRef,
     policy: &ModelPolicy,
     profile: &ReviewConfig,
+    catalog: &ModelCatalog,
+) -> Option<(ModelRef, Tier)> {
+    let providers = catalog.best_tiers(tier, policy);
+    let provider = providers
+        .iter()
+        .max_by_key(|(provider, best)| {
+            let other = profile.prefer_other_provider && **provider != own.provider;
+            (**best, other, std::cmp::Reverse(**provider))
+        })
+        .map(|(provider, _)| *provider)?;
+    let (model, choice) = catalog
+        .resolve(tier, Some(provider), None, policy)
+        .expect("an eligible provider has an allowed model at or below the tier");
+    Some((model, choice.resolved))
+}
+
+/// Neither the catalog nor the policy places a model: name one the policy
+/// permits, never one it would refuse, and never send the agent to look.
+fn unplaced_rules(
+    own: &ModelRef,
+    policy: &ModelPolicy,
     effort: archon_core::model::Effort,
 ) -> String {
-    assert!(
-        effort <= profile.default_effort,
-        "policy may only lower default effort"
-    );
     assert!(
         policy.max_effort.is_none_or(|cap| effort <= cap),
         "effort respects policy"
     );
-    let tier = profile.default_tier;
-    let preference = if profile.prefer_other_provider {
-        format!(
-            " Prefer a provider other than {} when one meets that tier.",
-            own.provider
-        )
-    } else {
-        String::new()
+    let listed = policy
+        .allow
+        .iter()
+        .flatten()
+        .find(|model| policy.permits_model(model));
+    let model = match (policy.permits_model(own), listed) {
+        (true, _) => own,
+        (false, Some(model)) => model,
+        (false, None) => {
+            return format!(
+                "- Delegate no reviewer: the model policy ({}) allows no model.\n",
+                policy.describe()
+            );
+        }
     };
     format!(
-        "- Delegate every reviewer with role `reviewer`, at tier {tier} and effort {effort}, \
-         within the model policy: {}.{preference} No allowed model at that tier is in \
-         Archon's cached catalog; use Aether's list_models to resolve it, and report a \
-         blocker if none meets it.\n",
+        "- Delegate every reviewer with role `reviewer`, on {model} at effort {effort}: \
+         Archon's cached catalog places no allowed model by tier, and the model policy \
+         ({}) permits it.\n",
         policy.describe()
     )
 }
@@ -85,7 +102,7 @@ fn unresolved_rules(
 mod tests {
     use super::*;
     use archon_core::model::Effort;
-    use archon_core::model_tier::{CatalogModel, Tier};
+    use archon_core::model_tier::CatalogModel;
 
     fn catalog() -> ModelCatalog {
         ModelCatalog::new(
@@ -167,19 +184,134 @@ mod tests {
         assert!(rules.contains("claude-code/sonnet at effort high"));
     }
 
+    fn assert_no_lookup_instruction(rules: &str) {
+        assert!(!rules.contains("list_models"), "{rules}");
+        assert!(!rules.contains("Prefer a provider other than"), "{rules}");
+    }
+
+    fn policy_allowing(models: &[&str]) -> ModelPolicy {
+        let allow: Vec<ModelRef> = models.iter().map(|m| m.parse().unwrap()).collect();
+        ModelPolicy::from_lists(&allow, &[], None)
+    }
+
+    fn single_fast_catalog() -> ModelCatalog {
+        ModelCatalog::new(
+            [
+                ("codex/luna", Tier::Fast),
+                ("claude-code/sonnet", Tier::Balanced),
+                ("codex/sol", Tier::Balanced),
+            ]
+            .into_iter()
+            .map(|(name, tier)| CatalogModel {
+                model: name.parse().unwrap(),
+                tier: Some(tier),
+                is_default: false,
+            })
+            .collect(),
+        )
+    }
+
     #[test]
-    fn missing_catalog_or_tier_names_the_profile_and_blocker() {
+    fn single_fast_model_policy_resolves_to_that_model_without_lookup() {
+        let own: ModelRef = "codex/luna".parse().unwrap();
+        let policy = policy_allowing(&["codex/luna"]);
+        let rules = reviewer_profile_rules(
+            None,
+            &own,
+            &policy,
+            &ReviewConfig::default(),
+            &single_fast_catalog(),
+        );
+        assert!(rules.contains("on codex/luna at effort low"), "{rules}");
+        assert!(rules.contains("balanced unavailable under policy"));
+        assert_no_lookup_instruction(&rules);
+        assert!(!rules.contains("sonnet") && !rules.contains("sol"));
+    }
+
+    #[test]
+    fn unplaced_models_fall_back_to_a_permitted_one_never_a_lookup() {
+        let own: ModelRef = "codex/luna".parse().unwrap();
+        let config = ReviewConfig::default();
+        for catalog in [ModelCatalog::default(), catalog()] {
+            let rules = reviewer_profile_rules(
+                None,
+                &own,
+                &policy_allowing(&["codex/luna"]),
+                &config,
+                &catalog,
+            );
+            assert!(rules.contains("on codex/luna at effort low"), "{rules}");
+            assert_no_lookup_instruction(&rules);
+        }
+        let rules = reviewer_profile_rules(
+            None,
+            &own,
+            &policy_allowing(&["third/other"]),
+            &config,
+            &ModelCatalog::default(),
+        );
+        assert!(rules.contains("on third/other at effort low"), "{rules}");
+        let rules = reviewer_profile_rules(
+            None,
+            &own,
+            &policy_allowing(&[]).narrowed_by(&policy_allowing(&["third/other"])),
+            &config,
+            &ModelCatalog::default(),
+        );
+        assert!(rules.contains("on third/other"), "{rules}");
+        let none = ModelPolicy {
+            allow: Some(Default::default()),
+            ..ModelPolicy::default()
+        };
+        let rules = reviewer_profile_rules(None, &own, &none, &config, &catalog());
+        assert!(rules.contains("Delegate no reviewer"), "{rules}");
+    }
+
+    #[test]
+    fn balanced_models_of_both_providers_still_prefer_the_other_provider() {
+        let own: ModelRef = "claude-code/sonnet".parse().unwrap();
+        let policy = policy_allowing(&["claude-code/sonnet", "codex/sol", "codex/luna"]);
+        let rules = reviewer_profile_rules(
+            None,
+            &own,
+            &policy,
+            &ReviewConfig::default(),
+            &single_fast_catalog(),
+        );
+        assert!(
+            rules.contains("codex/sol at tier balanced and effort low"),
+            "{rules}"
+        );
+    }
+
+    #[test]
+    fn repository_policy_narrows_the_global_one() {
+        let own: ModelRef = "codex/luna".parse().unwrap();
+        let global = policy_allowing(&["codex/luna", "codex/sol", "claude-code/sonnet"]);
+        let config = ReviewConfig::default();
+        let wide = reviewer_profile_rules(None, &own, &global, &config, &single_fast_catalog());
+        assert!(
+            wide.contains("claude-code/sonnet at tier balanced"),
+            "{wide}"
+        );
+        let narrowed = global.narrowed_by(&policy_allowing(&["codex/luna"]));
+        let rules = reviewer_profile_rules(None, &own, &narrowed, &config, &single_fast_catalog());
+        assert!(rules.contains("on codex/luna at effort low"), "{rules}");
+        assert_no_lookup_instruction(&rules);
+        assert!(!rules.contains("sonnet") && !rules.contains("sol"));
+    }
+
+    #[test]
+    fn a_tier_above_the_catalog_falls_back_to_the_best_permitted_tier() {
         let own: ModelRef = "claude-code/sonnet".parse().unwrap();
         let config = ReviewConfig {
             default_tier: Tier::Frontier,
             ..ReviewConfig::default()
         };
-        for catalog in [ModelCatalog::default(), catalog()] {
-            let rules =
-                reviewer_profile_rules(None, &own, &ModelPolicy::default(), &config, &catalog);
-            assert!(rules.contains("tier frontier and effort low"));
-            assert!(rules.contains("report a blocker"));
-            assert!(rules.contains("Prefer a provider other than claude-code"));
-        }
+        let rules =
+            reviewer_profile_rules(None, &own, &ModelPolicy::default(), &config, &catalog());
+        assert!(rules.contains("on codex/strong at effort low"), "{rules}");
+        assert!(rules.contains("frontier unavailable under policy"));
+        assert_no_lookup_instruction(&rules);
     }
 }

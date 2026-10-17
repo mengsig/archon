@@ -117,7 +117,9 @@ impl IntegrationConfig {
     }
 }
 
-/// Defaults for reviewers an item's model plan leaves unnamed.
+/// Defaults for reviewers an item's model plan leaves unnamed. The tier is a
+/// preference: when the model policy permits none at it, the best permitted
+/// model is used.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ReviewConfig {

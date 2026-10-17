@@ -33,7 +33,8 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 # reserve_percent = { orchestrator = 15, interactive = 10 }   # quota stages never spend
 # interactive_providers = ["claude-code"]   # providers also used by hand
 
-# Reviewers without an explicit <stage>.review model plan.
+# Reviewers without an explicit <stage>.review model plan. The tier is a
+# preference: with no permitted model at it, the best permitted one is used.
 # [review]
 # default_tier = "balanced"
 # default_effort = "low"

@@ -50,12 +50,14 @@ stays on its provider. `status` and `queue_status`
 show each provider's headroom, reserve and next reset. Reserves and interactive
 providers are global settings only.
 
-Unnamed reviewers use the global `[review]` profile. Archon prefers a different
-provider from the lead when an allowed model meets the configured tier; otherwise
-it uses an eligible provider from the catalog. The model policy's effort cap still
-applies. An explicit `<stage>.review` plan is unchanged. If the catalog has no model
-at the tier, the contract asks the lead to refresh it and report a blocker if none
-is available, rather than silently choosing a weaker model.
+Unnamed reviewers use the global `[review]` profile. `default_tier` is a
+preference, not a floor: Archon picks the best model the effective model policy
+(global and repository) permits at or below it, preferring a different provider
+from the lead when `prefer_other_provider` is set and a permitted model of
+another provider exists. If no permitted model reaches the tier, the contract
+names the best permitted one, or the lead's own model, and says so; the agent is
+never sent to look for a model the policy would refuse. The model policy's effort
+cap still applies. An explicit `<stage>.review` plan is unchanged.
 
 ```toml
 [review]                       # reviewers with no explicit <stage>.review plan

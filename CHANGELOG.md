@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Default reviewers: `[review] default_tier` is a preference. Under a model policy
+  that permits nothing at the tier, the reviewer rule names the best permitted
+  model (or the lead's own) instead of sending the agent to `list_models`, which
+  ended in cancelled delegations.
+
 ## 1.3.0
 
 Released 2026-10-17.

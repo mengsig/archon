@@ -64,12 +64,6 @@ impl QuestionBook {
         }
     }
 
-    /// The most recently asked question still open, for `/a`.
-    pub fn newest_open(&self) -> Option<&Question> {
-        self.open()
-            .max_by(|a, b| a.asked_at.cmp(&b.asked_at).then(a.number.cmp(&b.number)))
-    }
-
     pub fn find(&self, reference: &QuestionRef) -> Option<&Question> {
         self.entries
             .iter()
@@ -167,13 +161,13 @@ mod tests {
         book.sync_open(vec![new.clone(), old.clone()]);
         assert_eq!(book.find(&QuestionRef::Number(4)).unwrap().text, "old");
         assert!(book.find(&QuestionRef::Number(1)).is_none());
-        assert_eq!(book.newest_open().unwrap().text, "new");
+        assert_eq!(book.open().count(), 2);
         book.observe(&FeedEntry::Answer {
             question: new.id.clone(),
             text: "ok".into(),
             via: AnswerVia::Archon,
         });
-        assert_eq!(book.newest_open().unwrap().number, 4);
+        assert_eq!(book.open().map(|q| q.number).collect::<Vec<_>>(), [4]);
         let later = question(10, "later", 0, &[]);
         book.observe(&FeedEntry::Question(later.clone()));
         assert_eq!(book.labels().get(&later.id), Some(10));

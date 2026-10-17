@@ -4,7 +4,7 @@
 use archon_client::ArchonClient;
 use archon_core::protocol::{ItemQuery, PauseTarget, Request};
 
-use super::commands::{ChatInput, HELP, SlashCommand, parse_line};
+use super::commands::{ChatInput, SlashCommand, help, parse_line};
 use super::{Chat, Flow};
 use crate::format;
 use crate::ops;
@@ -36,7 +36,7 @@ pub(super) async fn handle_line(
     };
     match command {
         SlashCommand::Quit => return Ok(Flow::Quit),
-        SlashCommand::Help => chat.note(HELP)?,
+        SlashCommand::Help => chat.note(&help())?,
         SlashCommand::ToggleProgress => {
             chat.verbose = !chat.verbose;
             let state = if chat.verbose { "shown" } else { "hidden" };
@@ -81,13 +81,6 @@ async fn run_remote(
         SlashCommand::Authority(text) => {
             client.request(Request::OperatorCommand { text }).await?;
             Ok(())
-        }
-        SlashCommand::AnswerNewest { text } => {
-            let Some(newest) = chat.book.newest_open() else {
-                return chat.note("there is no open question to answer");
-            };
-            let reference = QuestionRef::Id(newest.id.clone());
-            answer(chat, client, reference, &text).await
         }
         SlashCommand::Answer { question, text } => answer(chat, client, question, &text).await,
         SlashCommand::Questions => {

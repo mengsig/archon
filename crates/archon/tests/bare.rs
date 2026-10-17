@@ -140,11 +140,14 @@ impl Drop for Session {
     }
 }
 
+const RECORD_THE_TERMINAL: &str = "on=pipe\n[ -t 0 ] && [ -t 1 ] && on=terminal";
+
 /// An `aether` on `PATH` that lists the `tui` options Archon passes, and
 /// records its arguments and whether it was given the terminal in `launched`.
 fn with_recording_aether(config: &str) -> Env {
-    let help = "printf '      %s\\n' '--agent <AGENT>' '--view-mode <VIEW_MODE>'\nexit 0";
-    with_aether(config, help, "on=pipe\n[ -t 0 ] && [ -t 1 ] && on=terminal")
+    let help = "printf '      %s\\n' '--agent <AGENT>' '--view-mode <VIEW_MODE>' \
+                '--host-commands <PATH>'\nexit 0";
+    with_aether(config, help, RECORD_THE_TERMINAL)
 }
 
 /// An `aether` on `PATH` that runs `help` for `tui --help`; for anything else
@@ -199,11 +202,44 @@ fn a_bare_archon_on_a_terminal_opens_the_terminal_ui_as_archon_tui_does() {
         let out = terminal.run(env.command(args).env("PATH", env.path("bin")));
         assert!(out.status.success(), "archon {args:?}: {out:?}");
         assert_eq!(text(&out.stderr), "", "archon {args:?} says nothing itself");
+        let commands = env.path("data/tui-host-commands.json");
+        assert_eq!(
+            std::fs::read_to_string(env.path("launched")).unwrap(),
+            format!(
+                "tui\n--agent\nagt_selected\n--view-mode\ncalm\n--host-commands\n{}\nterminal\n",
+                commands.display()
+            ),
+            "archon {args:?}"
+        );
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&commands).unwrap()).unwrap();
+        assert_eq!(
+            written,
+            archon_core::operator_commands::host_commands_json()
+        );
+        assert_eq!(server.join().unwrap().len(), 2);
+    }
+}
+
+#[test]
+fn an_aether_without_host_commands_opens_the_terminal_ui_without_them_and_says_so() {
+    let help = "printf '      %s\\n' '--agent <AGENT>' '--view-mode <VIEW_MODE>'\nexit 0";
+    for args in [&[][..], &["tui"]] {
+        let env = with_aether("", help, RECORD_THE_TERMINAL);
+        let _aetherd = dedicated(&env);
+        let server = fake::serve(&env.path("archond.sock"), 1, vec![Ok(fake::orchestrator())]);
+        let terminal = Terminal::open();
+        let out = terminal.run(env.command(args).env("PATH", env.path("bin")));
+        assert!(out.status.success(), "archon {args:?}: {out:?}");
+        let stderr = text(&out.stderr);
+        assert_eq!(stderr.lines().count(), 1, "{stderr}");
+        assert!(stderr.contains("takes no --host-commands"), "{stderr}");
         assert_eq!(
             std::fs::read_to_string(env.path("launched")).unwrap(),
             "tui\n--agent\nagt_selected\n--view-mode\ncalm\nterminal\n",
             "archon {args:?}"
         );
+        assert!(!env.path("data/tui-host-commands.json").exists());
         assert_eq!(server.join().unwrap().len(), 2);
     }
 }
@@ -250,12 +286,16 @@ fn an_aether_that_rejects_the_terminal_ui_options_is_an_error_before_the_handoff
         assert!(!env.path("launched").exists(), "Aether must not launch");
         assert_eq!(server.join().unwrap().len(), 2, "no chat request was made");
 
-        // `archon tui` is as before: it hands over, and Aether's refusal is all there is.
+        // `archon tui` hands over: it warns of the missing / menu, then Aether refuses.
         std::fs::remove_file(env.path("archond.sock")).unwrap();
         let server = fake::serve(&env.path("archond.sock"), 1, vec![Ok(fake::orchestrator())]);
         let out = terminal.run(env.command(&["tui"]).env("PATH", env.path("bin")));
         assert_eq!(out.status.code(), Some(2), "{out:?}");
-        assert_eq!(text(&out.stderr), format!("{refusal}\n"));
+        let stderr = text(&out.stderr);
+        let (warning, refused) = stderr.split_once('\n').unwrap();
+        assert!(warning.starts_with("Warning: "), "{stderr}");
+        assert!(warning.contains("/ menu"), "{stderr}");
+        assert_eq!(refused, format!("{refusal}\n"));
         assert!(
             env.path("launched").exists(),
             "`archon tui` launches Aether"

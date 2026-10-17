@@ -33,8 +33,10 @@ impl Env {
         std::fs::write(operator.join("providers.toml"), "").unwrap();
         let bin = home.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
+        // `tui --help` lists `--host-commands`, as an Aether that takes it does.
         let script = format!(
-            "#!/bin/sh\nprintf '%s|%s|%s|%s|%s|%s|%s\\n' \"$*\" \"$AETHER_CONFIG_DIR\" \
+            "#!/bin/sh\n[ \"$*\" = 'tui --help' ] && echo '      --host-commands <PATH>' && exit 0\n\
+             printf '%s|%s|%s|%s|%s|%s|%s\\n' \"$*\" \"$AETHER_CONFIG_DIR\" \
              \"$AETHER_DATA_DIR\" \"$AETHER_SOCKET\" \"$ARCHON_CONFIG_DIR\" \"$ARCHON_DATA_DIR\" \
              \"$ARCHON_SOCKET\" >> '{}'\n",
             home.join("aether-calls.log").display()
@@ -308,14 +310,11 @@ fn tui_start_gives_the_instance_its_own_voice_toml() {
     assert_eq!(std::fs::read_to_string(&own).unwrap(), voice);
 
     let verbs: Vec<_> = env.calls().into_iter().map(|c| c[0].clone()).collect();
-    assert_eq!(
-        verbs,
-        [
-            "tui --agent agt_selected --view-mode calm",
-            "tui --agent agt_selected --view-mode calm"
-        ],
-        "the TUI started both times"
+    let tui = format!(
+        "tui --agent agt_selected --view-mode calm --host-commands {}",
+        env.path("data/tui-host-commands.json").display()
     );
+    assert_eq!(verbs, [tui.clone(), tui], "the TUI started both times");
     assert_eq!(server.join().unwrap().len(), 4);
     assert_eq!(contents(&env.path("operator-aether")), operator_before);
 }

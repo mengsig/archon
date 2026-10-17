@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `archon tui` puts Archon's operator commands (`/answer`, `/approve`,
+  `/reject`, `/merge`, `/archon`, `/status` and the rest) in the Aether TUI's
+  `/` menu, through `aether tui --host-commands`, in dedicated mode
+  (`/pause` and `/resume` stay Aether's own there). An Aether
+  without that option prints a warning and starts without them.
+- `/a` is gone: answer with `/answer N …`. archon chat and archond reply to
+  `/a` with "use /answer", and every hint that offered `/a` names `/answer`.
+
 - Default reviewers: `[review] default_tier` is a preference. Under a model policy
   that permits nothing at the tier, the reviewer rule names the best permitted
   model (or the lead's own) instead of sending the agent to `list_models`, which

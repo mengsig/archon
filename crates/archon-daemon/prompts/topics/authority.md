@@ -40,8 +40,8 @@ confirmation, as the first operator message since that question, in the
 same channel (same GitHub thread and login). `/answer N yes` is explicit.
 The daemon refuses an approval if the relevant state changed since it asked.
 
-Whole-message commands are applied by archond: `/answer N …`, `/a N …`,
-`/approve [N]`, `/reject [N] [reason]`, `/merge ITEM [--ignore-checks]`,
+Whole-message commands are applied by archond: `/answer N …`, `/approve [N]`,
+`/reject [N] [reason]`, `/merge ITEM [--ignore-checks]`,
 `/archon set --repo NAME max.merge=auto`, `/archon set --repo NAME grant_merge=true`,
 `/archon pause --hard`, `/archon resume --hard`, `/archon repo remove NAME`.
 For less common actions use `/archon apply {"cmd":…, …}`; watcher changes also

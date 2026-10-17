@@ -300,11 +300,12 @@ fn read_optional(path: &Path) -> anyhow::Result<String> {
     }
 }
 
-/// Replace `path` by rename, so a reader never sees half a config.
-fn write_atomically(path: &Path, text: &str) -> anyhow::Result<()> {
-    let dir = path.parent().context("the config path has no directory")?;
-    assert!(dir.is_dir(), "the instance directory is created first");
-    let temp = dir.join(format!(".config.toml.{}.tmp", std::process::id()));
+/// Replace `path` by rename, so a reader never sees half a file.
+pub(crate) fn write_atomically(path: &Path, text: &str) -> anyhow::Result<()> {
+    let dir = path.parent().context("the path has no directory")?;
+    let name = path.file_name().context("the path has no file name")?;
+    assert!(dir.is_dir(), "the directory is created first");
+    let temp = dir.join(format!(".{}.{}.tmp", name.display(), std::process::id()));
     std::fs::write(&temp, text).with_context(|| format!("writing {}", temp.display()))?;
     if let Err(error) = std::fs::rename(&temp, path) {
         let left = match std::fs::remove_file(&temp) {

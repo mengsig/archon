@@ -636,7 +636,14 @@ validation refuses `[aether] socket` or `address`.
   The CLI retries transient unavailability within a five-second startup
   window, drops its client, and execs `aether tui --agent <resolved-id>`.
   Native `--theme`, `--ascii`, `--reduced-motion` and `--plain` options are
-  forwarded unchanged. There is no additional renderer or refresh loop.
+  forwarded unchanged. In dedicated mode it also writes the operator
+  commands (`archon_core::operator_commands`: `/answer`, `/approve`, …) to
+  `tui-host-commands.json` in the data directory and passes
+  `--host-commands <file>` (`"host": "archon"`), so they join the TUI's
+  slash menu and are sent as ordinary messages for archond to apply.
+  `/pause` and `/resume` are Aether built-ins and stay `archon chat` commands. An Aether whose
+  `tui --help` lists no `--host-commands` gets a warning and no host
+  commands. There is no additional renderer or refresh loop.
   Aether can fall back if the selected agent disappears after exec; exit and
   rerun to reattach.
 - A bare `archon` does what `archon tui` does with default options. Where the
@@ -646,8 +653,8 @@ validation refuses `[aether] socket` or `address`.
   other failure to open the TUI is an error that names `archon chat` and
   `archon doctor`, never a fallback. Nothing can be added to Aether's own
   words after the exec, so a bare `archon` first asks `aether tui --help` and
-  refuses an Aether that lacks an option it passes; `archon tui` hands over
-  unasked. `--json` is refused before either opens.
+  refuses an Aether that lacks an option it passes; `archon tui` asks only
+  to offer `--host-commands`, and hands over whatever the answer. `--json` is refused before either opens.
 - `archon aether <args…>` runs any `aether` command against the instance,
   for example `archon aether agents`. It refuses to run before
   `archon setup`, because Aether would otherwise write default templates
@@ -791,7 +798,7 @@ orchestrator sees all of Archon's tools. Guarded stages now expose only
 - The store gives every `Question` a permanent `number` as it records it
   (store migration 4 numbered the existing ones in asking order). Numbers are
   never reused, so `Q7` names the same question in `archon questions`,
-  `archon answer 7` and the chat's `/a 7`, and a number whose question has
+  `archon answer 7` and the chat's `/answer 7`, and a number whose question has
   closed is refused instead of resolving to another one.
 - Aether `ask_user` blocks. `archond` sees `question.asked` for the
   orchestrator or a stage agent and records a `Question` with
@@ -3160,11 +3167,13 @@ appears there only as far as the orchestrator restates it; see
 - On open, it prints the last `chat.history` **visible** feed items, then
   subscribes with `SubscribeFeed{after, verbose}`.
 - Input lines are sent with `Say`. Slash commands: `/progress` (toggle
-  verbose), `/a <n> <text>` or `/answer <n> <text>` (a bare `/a <text>`
-  answers the newest open question), `/status`, `/queue [state …]`,
+  verbose), `/answer <n> <text>`, `/questions`, `/status`, `/queue [state …]`,
   `/item <id>`, `/merge <id> [--ignore-checks]` (§18.6), `/pause`,
   `/resume`, `/help`, `/quit`. An operator gate's
-  question (§18.3) reads `/a 3 yes`, `/a 3 <feedback>` or `/a 3 reject`.
+  question (§18.3) reads `/answer 3 yes`, `/answer 3 <feedback>` or
+  `/answer 3 reject`. `/a` is no longer a command: archon chat and archond
+  answer it with "use /answer". The commands besides `/progress`, `/help`
+  and `/quit` come from one list, `archon_core::operator_commands`.
   Question numbers are archond's permanent ones (§5.2).
 - Text that agents or repositories wrote (feed entries, questions and their
   options, item titles and briefs, errors, gate notes) is printed without
@@ -4517,7 +4526,7 @@ the passed change-report stage of an item with `report = before-pr`.
    ```
 
    The options are `yes` and `reject`. In chat the operator types
-   `/a 3 yes`, `/a 3 <feedback>` or `/a 3 reject`; `archon answer 3 …`
+   `/answer 3 yes`, `/answer 3 <feedback>` or `/answer 3 reject`; `archon answer 3 …`
    works the same, because `3` is the question's permanent number (§5.2).
    If the gate was decided elsewhere in the meantime (step 4), `archon
    answer 3` is refused and never decides a different gate. It prints the
@@ -4672,8 +4681,8 @@ operator). The types are in
 - The orchestrator's `request_merge {item, reason}`, for an operator's plain
   request in chat or in a GitHub request with operator standing. archond
   asks its own question, "Merge … ?" with the options `yes`,
-  `yes ignore-checks` and `no`. Only the operator answers it: `/a`,
-  `archon answer` or Aether's `/answer`. `record_chat_answer` is refused for
+  `yes ignore-checks` and `no`. Only the operator answers it: `/answer`
+  in archon chat or Aether's chat, or `archon answer`. `record_chat_answer` is refused for
   it, and an answer that is not an option leaves it open.
 - `grant_merge = true` on a repository (`archon repo set R --grant-merge
   true`) stands in for that question. It has no expiry and is independent of

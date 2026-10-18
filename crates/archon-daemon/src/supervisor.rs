@@ -1004,7 +1004,7 @@ async fn create_generation(
         let mut store = ctx.store.lock().await;
         let generation = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?.max(1);
         store.kv_set(keys::ORCHESTRATOR_GENERATION, &generation.to_string())?;
-        origin::record_lessons(&mut store, generation, &configured_settings(config))?;
+        origin::record_lessons(&mut store, generation)?;
         // Chosen once per generation, so a retried create sends the same text.
         instructions.push_str(&crate::learned::lessons_for_orchestrator(&store)?);
         generation
@@ -1024,7 +1024,8 @@ async fn create_generation(
     let agent = create_orchestrator(ctx, client, request).await?;
     let created = agent.config.instructions.as_deref();
     let mut store = ctx.store.lock().await;
-    origin::record_created(&mut store, generation, &prompt, &sent, created)?;
+    let settings = configured_settings(config);
+    origin::record_created(&mut store, generation, &prompt, &sent, created, &settings)?;
     drop(store);
     tracing::info!(agent = %agent.id, generation, delegation, github, "orchestrator created");
     brief_created_orchestrator(ctx, client, &agent.id, generation).await?;

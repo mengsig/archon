@@ -30,13 +30,8 @@ struct Origin {
 
 /// Record the lessons generation `generation` is chosen, unless already
 /// recorded: a retried creation sends the lessons its first attempt chose.
-pub(super) fn record_lessons(
-    store: &mut Store,
-    generation: u64,
-    settings: &str,
-) -> Result<(), ArchonError> {
+pub(super) fn record_lessons(store: &mut Store, generation: u64) -> Result<(), ArchonError> {
     assert!(generation > 0, "generations start at 1");
-    assert!(!settings.is_empty(), "the orchestrator has a model");
     if read(store)?.is_some_and(|origin| origin.generation == generation) {
         return Ok(());
     }
@@ -45,14 +40,15 @@ pub(super) fn record_lessons(
         archon_version: env!("CARGO_PKG_VERSION").to_owned(),
         prompt: String::new(),
         tools: tools_fingerprint(),
-        settings: settings.to_owned(),
+        settings: String::new(),
         lessons: chosen_lessons(store)?,
     };
     assert!(origin.lessons.len() <= archon_core::lesson::ORCHESTRATOR_LESSONS);
     store.kv_set(ORIGIN_KEY, &serde_json::to_string(&origin)?)
 }
 
-/// Record what Aether created generation `generation` with: `prompt`, the
+/// Record what Aether created generation `generation` with: `settings`, the
+/// model and effort of the successful request, and `prompt`, the
 /// part of `sent` before the lessons, unless `created` (the agent's
 /// instructions, when Aether returns them) differs from `sent`, as when it
 /// replays an earlier attempt's creation; then that text is recorded.
@@ -62,7 +58,9 @@ pub(super) fn record_created(
     prompt: &str,
     sent: &str,
     created: Option<&str>,
+    settings: &str,
 ) -> Result<(), ArchonError> {
+    assert!(!settings.is_empty(), "the orchestrator has a model");
     assert!(
         !prompt.trim().is_empty(),
         "the orchestrator has instructions"
@@ -78,6 +76,7 @@ pub(super) fn record_created(
     origin.archon_version = env!("CARGO_PKG_VERSION").to_owned();
     origin.prompt = fingerprint(received);
     origin.tools = tools_fingerprint();
+    origin.settings = settings.to_owned();
     store.kv_set(ORIGIN_KEY, &serde_json::to_string(&origin)?)
 }
 

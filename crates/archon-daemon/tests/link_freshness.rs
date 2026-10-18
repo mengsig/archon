@@ -134,6 +134,35 @@ async fn after_an_upgrade_that_changes_the_prompt_status_says_so_until_a_restart
     assert_eq!(line, current.replace("generation 1", "generation 2"));
 }
 
+/// A refused first attempt under one model must not pin the settings a
+/// retry under another one then runs.
+#[tokio::test]
+async fn a_retry_under_another_model_records_the_model_it_ran() {
+    let mut config = Config::default();
+    config.orchestrator.model = "claude-code/first".parse().unwrap();
+    let harness = Harness::with(config, None).await;
+    harness.connect().await;
+    let states = agent_table(&harness);
+    let refused = Scripted::refuse("internal", "store busy");
+    harness.fake.script("create_agent", refused);
+    supervisor::ensure_orchestrator(&harness.ctx)
+        .await
+        .expect_err("the first create is refused");
+    let raw = harness.kv(ORIGIN_KEY).await.expect("lessons were recorded");
+    let mut origin: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(origin["settings"], json!(""));
+    origin["settings"] = json!("claude-code/first high");
+    harness.set_kv(ORIGIN_KEY, &origin.to_string()).await;
+
+    create(&harness, &states, ORCH).await;
+    let recorded: Value = serde_json::from_str(&harness.kv(ORIGIN_KEY).await.unwrap()).unwrap();
+    let expected = format!(
+        "{} {}",
+        harness.ctx.config.orchestrator.model, harness.ctx.config.orchestrator.effort
+    );
+    assert_eq!(recorded["settings"], json!(expected));
+}
+
 /// The daemon restarted on a config naming another model: the running
 /// orchestrator keeps the one it was created with.
 #[tokio::test]

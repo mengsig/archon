@@ -22,7 +22,15 @@ async fn harness(mode: AetherMode) -> Harness {
         .await
         .kv_set(keys::ORCHESTRATOR_AGENT, ORCHESTRATOR)
         .unwrap();
+    set_origin(&h);
     h
+}
+
+fn set_origin(h: &Harness) {
+    common::git(
+        &h.repo,
+        &["remote", "add", "origin", "https://github.com/o/r.git"],
+    );
 }
 
 fn user(text: &str) -> Value {
@@ -385,6 +393,18 @@ async fn a_relayed_tiers_change_waits_for_the_operator() {
     assert_eq!(integration(&h).await.as_deref(), Some("next"));
 }
 
+/// Aether watches `o/r`, delivering only `allowed` logins when given.
+fn watch_o_r(fake: &archon_aether::fake::FakeAether, allowed: Option<Value>) {
+    let status = json!({"revision": 1, "repositories": [], "config": {
+        "enabled": true, "mention_regex": "m", "label_regex": "l", "poll_interval_secs": 120,
+        "repositories": [{"repository": "o/r", "enabled": true, "agent": ORCHESTRATOR,
+            "dispatch": {"mode": "fixed"}, "allowed_users": allowed}]}});
+    fake.set_default(
+        "get_github_watcher",
+        archon_aether::fake::Scripted::reply("github_watcher", status),
+    );
+}
+
 fn github(text: &str, number: u64) -> Value {
     json!({"kind":"external_trigger", "source":"github", "operator":true,
         "payload":{"repository":"o/r", "number":number,"requester":"octocat","operator":true,"text":text}})
@@ -398,6 +418,7 @@ async fn github_confirmations_bind_the_thread_and_never_change_the_watcher() {
     let fake = FakeAether::start(&dir.path().join("authority.sock"))
         .await
         .unwrap();
+    watch_o_r(&fake, None);
     let client = AetherClient::connect(&fake.endpoint()).await.unwrap();
     h.ctx
         .aether
@@ -449,6 +470,7 @@ async fn github_first_reply_in_the_same_thread_confirms() {
     let fake = FakeAether::start(&dir.path().join("authority.sock"))
         .await
         .unwrap();
+    watch_o_r(&fake, None);
     h.ctx
         .aether
         .replace(Some(std::sync::Arc::new(
@@ -485,6 +507,7 @@ async fn github_loosening_switch_blocks_explicit_and_cited_changes() {
     config.aether.mode = AetherMode::Dedicated;
     config.authority.github_may_loosen = false;
     let h = Harness::with_config(config).await;
+    set_origin(&h);
     h.ctx
         .store
         .lock()
@@ -495,6 +518,7 @@ async fn github_loosening_switch_blocks_explicit_and_cited_changes() {
     let fake = FakeAether::start(&dir.path().join("authority.sock"))
         .await
         .unwrap();
+    watch_o_r(&fake, None);
     h.ctx
         .aether
         .replace(Some(std::sync::Arc::new(
@@ -877,6 +901,7 @@ async fn github_operator_can_confirm_a_repository_budget_override() {
     let fake = FakeAether::start(&dir.path().join("settings.sock"))
         .await
         .unwrap();
+    watch_o_r(&fake, None);
     h.ctx
         .aether
         .replace(Some(std::sync::Arc::new(
@@ -915,6 +940,7 @@ async fn github_numbered_answers_cannot_cross_channels_or_threads() {
         let mut config = Config::default();
         config.authority.github_may_loosen = may_loosen;
         let h = Harness::with_config(config).await;
+        set_origin(&h);
         h.ctx
             .store
             .lock()
@@ -925,6 +951,7 @@ async fn github_numbered_answers_cannot_cross_channels_or_threads() {
         let fake = FakeAether::start(&dir.path().join("authority.sock"))
             .await
             .unwrap();
+        watch_o_r(&fake, None);
         h.ctx
             .aether
             .replace(Some(std::sync::Arc::new(
@@ -1035,4 +1062,93 @@ async fn only_the_operator_waives_checks_for_a_base_branch() {
     let command = format!("/archon set --repo {REPO_NAME} merge_waive_checks=next,release");
     deliver(&h, 4, user(&command)).await;
     assert_eq!(waived(&h).await, ["next", "release"]);
+}
+
+fn github_from(repository: &str, login: &str, text: &str) -> Value {
+    json!({"kind":"external_trigger", "source":"github", "operator":true,
+        "payload":{"repository":repository, "number":1,"requester":login,"operator":true,"text":text}})
+}
+
+async fn watched(h: &Harness, allowed: Option<Value>) -> archon_aether::fake::FakeAether {
+    use archon_aether::{AetherClient, fake::FakeAether};
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeAether::start(&dir.path().join("scope.sock"))
+        .await
+        .unwrap();
+    watch_o_r(&fake, allowed);
+    h.ctx
+        .aether
+        .replace(Some(std::sync::Arc::new(
+            AetherClient::connect(&fake.endpoint()).await.unwrap(),
+        )))
+        .unwrap();
+    std::mem::forget(dir);
+    fake
+}
+
+async fn repo_exists(h: &Harness) -> bool {
+    h.ctx
+        .store
+        .lock()
+        .await
+        .repo(&RepoRef(REPO_NAME.into()))
+        .is_ok()
+}
+
+#[tokio::test]
+async fn a_github_thread_of_another_repository_changes_nothing() {
+    let h = harness(AetherMode::Shared).await;
+    let _fake = watched(&h, None).await;
+    let before = setting(&h, None).await;
+    let commands = [
+        format!("@archon /archon set --repo {REPO_NAME} grant_merge=true"),
+        "@archon /archon set max.merge=auto max.tools=yolo".to_owned(),
+        "@archon /archon set budgets_enabled=false".to_owned(),
+        format!("@archon /archon repo remove {REPO_NAME}"),
+        "@archon /archon pause --hard".to_owned(),
+    ];
+    for (seq, text) in (1..).zip(commands) {
+        deliver(
+            &h,
+            seq,
+            github_from("other-org/unrelated", "octocat", &text),
+        )
+        .await;
+    }
+    assert!(!granted(&h).await);
+    assert!(repo_exists(&h).await);
+    assert_eq!(setting(&h, None).await.effective, before.effective);
+    assert!(h.ctx.store.lock().await.questions(true).unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_github_thread_cannot_change_global_settings_but_loosens_its_own_repository_by_asking() {
+    let h = harness(AetherMode::Shared).await;
+    let _fake = watched(&h, None).await;
+    let before = setting(&h, None).await;
+    deliver(&h, 1, github("@archon /archon set max.merge=auto", 1)).await;
+    deliver(&h, 2, github("@archon /archon pause --hard", 1)).await;
+    assert_eq!(setting(&h, None).await.effective, before.effective);
+    assert!(h.ctx.store.lock().await.questions(true).unwrap().is_empty());
+    let own = format!("@archon /archon set --repo {REPO_NAME} grant_merge=true");
+    deliver(&h, 3, github(&own, 1)).await;
+    assert!(!granted(&h).await, "loosening asks before it applies");
+    let q = h.ctx.store.lock().await.questions(true).unwrap().remove(0);
+    deliver(
+        &h,
+        4,
+        github(&format!("@archon /answer {} yes", q.number), 1),
+    )
+    .await;
+    assert!(granted(&h).await);
+}
+
+#[tokio::test]
+async fn a_login_outside_the_repository_allowlist_is_refused_for_it() {
+    let h = harness(AetherMode::Shared).await;
+    let _fake = watched(&h, Some(json!(["someone-else"]))).await;
+    let own = format!("@archon /archon set --repo {REPO_NAME} grant_merge=true");
+    deliver(&h, 1, github(&own, 1)).await;
+    assert!(!granted(&h).await);
+    assert!(h.ctx.store.lock().await.questions(true).unwrap().is_empty());
 }

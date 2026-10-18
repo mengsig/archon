@@ -56,30 +56,34 @@ count.
 
 "Operator-only" means `archon mcp` and agents are refused the request on
 archond's socket (`Request::is_operator_only`). The columns say how each is
-reached today.
+reached today. A GitHub operator is scoped to the repository of the thread the
+command is posted in (the registered repository whose `origin` it is, and only
+while that repository's allowlist includes the login): it has full operator
+rights there, and none over any other repository or any global setting. Every
+loosening from GitHub, explicit or not, asks for confirmation first.
 
 | Control | CLI | Chat / TUI | GitHub | `request_authority` | Confirmation |
 | --- | --- | --- | --- | --- | --- |
-| Answer a question or gate (`answer`) | `archon answer` | `/answer`, `/approve`, `/reject` | same | proposal/report gates only | none for gates; authority and merge confirmations are answered only by your own reply |
-| Merge an item (`merge_item`) | `archon merge` | `/merge ITEM [--ignore-checks]` | same | no (the orchestrator has `request_merge`, a question you answer) | — |
-| Repository ceiling `autonomy_max` | `archon repo set --autonomy-max` | `/archon set --repo R max.K=V` | same | `repo_update` or `set_settings` | when it raises any knob |
-| `grant_merge` | `archon repo set --grant-merge` | `/archon set --repo R grant_merge=true` | same | `repo_update` | when set to true |
-| `merge_waive_checks` | — | `/archon set --repo R merge_waive_checks=next` (empty clears) | same | `repo_update` | when it adds a branch |
-| `attribution` | `archon repo set --attribution` | `/archon set --repo R attribution=none` | same | `repo_update` | any change |
-| `gh_user` | `archon repo set --gh-user` | `/archon set --repo R gh_user=LOGIN` (empty clears) | same | `repo_update` | any change |
-| `ship`, `base_branch`, `default_pipeline` | `archon repo set` | `/archon set --repo R ship=pr …` | same | `repo_update` | `ship` local→pr, and any `base_branch` or `default_pipeline` change |
+| Answer a question or gate (`answer`) | `archon answer` | `/answer`, `/approve`, `/reject` | items of this thread's repository only | proposal/report gates only | none for gates; authority and merge confirmations are answered only by your own reply |
+| Merge an item (`merge_item`) | `archon merge` | `/merge ITEM [--ignore-checks]` | items of this thread's repository only | no (the orchestrator has `request_merge`, a question you answer) | — |
+| Repository ceiling `autonomy_max` | `archon repo set --autonomy-max` | `/archon set --repo R max.K=V` | this thread's repository only | `repo_update` or `set_settings` | when it raises any knob |
+| `grant_merge` | `archon repo set --grant-merge` | `/archon set --repo R grant_merge=true` | this thread's repository only | `repo_update` | when set to true |
+| `merge_waive_checks` | — | `/archon set --repo R merge_waive_checks=next` (empty clears) | this thread's repository only | `repo_update` | when it adds a branch |
+| `attribution` | `archon repo set --attribution` | `/archon set --repo R attribution=none` | this thread's repository only | `repo_update` | any change |
+| `gh_user` | `archon repo set --gh-user` | `/archon set --repo R gh_user=LOGIN` (empty clears) | this thread's repository only | `repo_update` | any change |
+| `ship`, `base_branch`, `default_pipeline` | `archon repo set` | `/archon set --repo R ship=pr …` | this thread's repository only | `repo_update` | `ship` local→pr, and any `base_branch` or `default_pipeline` change |
 | Verification tiers (`integration_branch`, `release_branch`, fast and full checks, the confirmed committed fast check) | `archon repo set --integration-branch …` | — | — | `repo_update` | any change |
-| Saved defaults, ceiling, budgets and pipeline | `archon settings [--repo R] --set JSON` / `--reset` | `/archon set [--repo R] key=value` / `reset` | same | `set_settings`, `reset_settings` | when effective or stored permission rises, a budget loosens, or the default pipeline changes |
-| Item autonomy after enqueue / delivery | socket `update_item` | `/archon item qi_… merge=auto` | same | autonomy-only `update_item` | when a changed knob exceeds its ceiling |
-| Caps and budgets (`set_caps`) | `archon queue caps` | `/archon apply {…}` | same | `set_caps` | when any limit rises, is cleared (zero) or budgets are turned off |
-| Hard pause | `archon pause --hard` | `/archon pause --hard` | same | `pause` | no |
-| Hard resume | `archon resume --hard` | `/archon resume --hard` | same | `resume` | always |
-| Register a repository with `auto_merge` (`repo_add`) | `archon repo add` | `/archon apply` | same | `repo_add` | always |
-| Remove a repository | `archon repo remove` | `/archon repo remove R` | same | `repo_remove` | always |
-| Directives (`set_directive`, `clear_directive`) | `archon autonomy direct` / `clear` | `/archon apply` | same | yes | `clear_directive` only |
-| Lessons and learning corrections | `archon learning …` | `/archon apply` | same | `update_lesson`, `learning_*` | always |
+| Saved defaults, ceiling, budgets and pipeline | `archon settings [--repo R] --set JSON` / `--reset` | `/archon set [--repo R] key=value` / `reset` | this thread's repository only (`--repo R`); global **refused** | `set_settings`, `reset_settings` | when effective or stored permission rises, a budget loosens, or the default pipeline changes |
+| Item autonomy after enqueue / delivery | socket `update_item` | `/archon item qi_… merge=auto` | items of this thread's repository only | autonomy-only `update_item` | when a changed knob exceeds its ceiling |
+| Caps and budgets (`set_caps`) | `archon queue caps` | `/archon apply {…}` | **refused** (global) | `set_caps` | when any limit rises, is cleared (zero) or budgets are turned off |
+| Hard pause | `archon pause --hard` | `/archon pause --hard` | **refused** (global) | `pause` | no |
+| Hard resume | `archon resume --hard` | `/archon resume --hard` | **refused** (global) | `resume` | always |
+| Register a repository with `auto_merge` (`repo_add`) | `archon repo add` | `/archon apply` | **refused** (global) | `repo_add` | always |
+| Remove a repository | `archon repo remove` | `/archon repo remove R` | this thread's repository only | `repo_remove` | always |
+| Directives (`set_directive`, `clear_directive`) | `archon autonomy direct` / `clear` | `/archon apply` | **refused** (global) | yes | `clear_directive` only |
+| Lessons and learning corrections | `archon learning …` | `/archon apply` | **refused** (global) | `update_lesson`, `learning_*` | always |
 | GitHub watcher configuration | `archon github-watcher` | `/archon watcher JSON` | **refused** | `configure_github_watcher`, operator chat only | always |
-| Undo an authority change | — | `/archon undo N` | same | `undo_authority` | same rules as the inverse change; guarded by unchanged state |
+| Undo an authority change | — | `/archon undo N` | same; the undone change must be in scope | `undo_authority` | same rules as the inverse change; guarded by unchanged state |
 | Say something as the operator (`say`) | `archon say` | — | — | no | — |
 | Restart / attach the orchestrator | `archon orchestrator restart`, `attach` | not implemented | not implemented | no | — |
 | Drained daemon upgrade / restart | `archon daemon upgrade` | `/upgrade` (existing dedicated-TUI command) | no | no | explicit command only |
@@ -130,8 +134,10 @@ Details:
 - A command is limited to 4000 characters.
 - Settings and `archon queue caps` changes now survive daemon restarts. Reset
   the global settings overlay to return caps to the configuration file.
-- Explicit commands apply directly, including loosening. The GitHub
-  `github_may_loosen` switch and watcher exclusion still apply.
+- Explicit commands from your own channels apply directly, including
+  loosening. From GitHub a command is scoped to its thread's repository, and
+  a loosening one asks for confirmation (or is refused with
+  `github_may_loosen = false`).
 - `archon chat` preserves a leading `//` escape when forwarding literal text
   to Aether, so the delivered message cannot become a command.
 
@@ -155,7 +161,8 @@ archond refuses unless every check passes, in this order:
 3. In shared mode, chat citations are refused.
 4. The message is at most 60 minutes old by its original time.
 5. The quote occurs verbatim in it.
-6. The action is on the allowlist, and for GitHub is not a watcher change.
+6. The action is on the allowlist, and for GitHub is not a watcher change and
+   stays within the repository of the cited thread.
 7. For `answer`, the message arrived after the gate opened, and the question
    is a proposal or report gate. Authority and merge confirmations are not
    answerable this way.

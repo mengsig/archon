@@ -334,8 +334,12 @@ from anything written in the request, or from an earlier request.
 
 From such a request archond also applies whole-message commands
 (`@archon /approve 1`, `@archon /merge ITEM`, `@archon /archon set --repo …`)
-and lets the orchestrator cite it with `request_authority`. Changes that
-loosen a limit still ask you first, and the watcher itself (repositories,
+and lets the orchestrator cite it with `request_authority`. They are scoped to
+the repository of the thread: the registered repository whose `origin` is the
+thread's, and only while its allowlist includes the login. Settings, merges,
+approvals and item changes of any other repository are refused, as are global
+settings, caps, pause and resume. Changes that loosen a limit, even in the
+thread's own repository, ask you first, and the watcher itself (repositories,
 allowlists, operator logins) can never be changed from GitHub. Set
 `[authority] github_may_loosen = false` to let GitHub only tighten. See
 [Operator authority](operator-authority.md).

@@ -6,6 +6,7 @@ mod confirmations;
 pub(crate) mod evidence;
 mod history;
 pub(crate) mod item_grants;
+mod scope;
 mod settings;
 
 use archon_core::aether_ids::AetherAgentId;
@@ -86,24 +87,16 @@ async fn perform(
     explicit: bool,
 ) -> Result<Reply, ArchonError> {
     let action = history::resolve(ctx, action).await?;
-    actions::check_channel(ctx, message, &action)?;
+    actions::check_channel(ctx, message, &action).await?;
     let before = actions::snapshot(ctx, &action).await?;
-    if !explicit && actions::needs_confirmation(ctx, &action, &before).await? {
-        if message.channel.is_github() && !ctx.config.authority.github_may_loosen {
+    let github = message.channel.is_github();
+    if (!explicit || github) && actions::needs_confirmation(ctx, &action, &before).await? {
+        if github && !ctx.config.authority.github_may_loosen {
             return Err(ArchonError::Forbidden(
                 "GitHub loosening is disabled by authority.github_may_loosen".into(),
             ));
         }
         return confirmations::ask(ctx, message, action, before).await;
-    }
-    if explicit
-        && message.channel.is_github()
-        && !ctx.config.authority.github_may_loosen
-        && actions::needs_confirmation(ctx, &action, &before).await?
-    {
-        return Err(ArchonError::Forbidden(
-            "GitHub loosening is disabled by authority.github_may_loosen".into(),
-        ));
     }
     apply_audited(ctx, message, action, before).await
 }
@@ -121,6 +114,7 @@ async fn answer_gate(
         }
         store.question(id)?
     };
+    scope::check_question(ctx, message, &question).await?;
     if message.at < question.asked_at {
         return Err(ArchonError::Forbidden(
             "the operator message predates this gate; ask again".into(),
@@ -223,6 +217,8 @@ pub(crate) async fn decide(
 ) -> Result<bool, ArchonError> {
     confirmations::decide(ctx, question, text).await
 }
+
+pub(crate) use scope::{check_item, check_question};
 
 pub(crate) async fn check_answer(
     ctx: &DaemonContext,

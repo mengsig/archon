@@ -124,6 +124,14 @@ async fn apply(
         return Ok(Outcome::refused(number, why));
     }
     if let Some(evidence) = evidence
+        && let Err(error) = crate::authority::check_question(ctx, evidence, &question).await
+    {
+        if error.is_store() {
+            return Err(error);
+        }
+        return Ok(Outcome::refused(number, error.to_string()));
+    }
+    if let Some(evidence) = evidence
         && let Err(error) = crate::authority::check_answer(
             ctx,
             &question.id,

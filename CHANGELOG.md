@@ -6,6 +6,11 @@
 now work as `/answer`, `/approve`, `/reject` and `/merge`, with the same sender
 checks and results. The `/archon` usage error lists them.
 
+A GitHub operator's commands are now scoped to the repository of their thread:
+settings, merges, approvals and item changes of other repositories, and global
+settings, caps, pause and resume, are refused. A loosening change in the
+thread's own repository asks for confirmation instead of applying directly.
+
 ## 1.3.1
 
 Released 2026-10-18.

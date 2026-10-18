@@ -997,6 +997,18 @@ async fn github_operator_can_answer_in_shared_mode_but_payload_markers_cannot() 
     let fake = FakeAether::start(&dir.path().join("authority.sock"))
         .await
         .unwrap();
+    let status = json!({"revision": 1, "repositories": [], "config": {
+        "enabled": true, "mention_regex": "m", "label_regex": "l", "poll_interval_secs": 120,
+        "repositories": [{"repository": "o/r", "enabled": true, "agent": ORCH,
+            "dispatch": {"mode": "fixed"}, "allowed_users": null}]}});
+    fake.set_default(
+        "get_github_watcher",
+        archon_aether::fake::Scripted::reply("github_watcher", status),
+    );
+    common::git(
+        &h.repo,
+        &["remote", "add", "origin", "https://github.com/o/r.git"],
+    );
     let client = AetherClient::connect(&fake.endpoint()).await.unwrap();
     h.ctx.aether.replace(Some(Arc::new(client))).unwrap();
     let command = format!("@archon /approve {}", asked.number);

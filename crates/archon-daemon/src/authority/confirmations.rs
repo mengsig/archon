@@ -114,7 +114,7 @@ pub(super) async fn check_answer(
     let Some(pending) = load(ctx, id).await? else {
         return Ok(());
     };
-    actions::check_channel(ctx, evidence, &pending.action)?;
+    actions::check_channel(ctx, evidence, &pending.action).await?;
     use archon_core::authority::OperatorChannel;
     if !matches!(
         evidence.channel,
@@ -178,7 +178,7 @@ pub(super) async fn decide(
         .await?;
         return Ok(true);
     }
-    actions::check_channel(ctx, &pending.evidence, &pending.action)?;
+    actions::check_channel(ctx, &pending.evidence, &pending.action).await?;
     if pending.evidence.channel.is_github() && !ctx.config.authority.github_may_loosen {
         return Err(ArchonError::Forbidden(
             "GitHub loosening is disabled by authority.github_may_loosen".into(),

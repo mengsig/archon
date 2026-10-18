@@ -106,6 +106,17 @@ async fn apply(
         Err(error) if error.is_store() => return Err(error),
         Err(error) => return Ok(Some(error.to_string())),
     };
+    if let MergeAuthority::Github {
+        repository, login, ..
+    } = &authority
+    {
+        let thread = archon_core::github::GithubRepo::parse(repository)?;
+        match crate::authority::check_item(ctx, &thread, login, &item).await {
+            Err(error) if error.is_store() => return Err(error),
+            Err(error) => return Ok(Some(error.to_string())),
+            Ok(()) => {}
+        }
+    }
     match operator_merge::merge_now(ctx, &item, authority, command.ignore_checks).await {
         Ok(merge) => {
             assert_eq!(merge.item, item, "the item named was merged");

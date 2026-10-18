@@ -502,6 +502,20 @@ async fn verified_github_merge_refuses_unsent_items_and_merges_the_pinned_head()
     let fake = FakeAether::start(&h.dir.path().join("merge-authority.sock"))
         .await
         .unwrap();
+    let status = json!({"revision": 1, "repositories": [], "config": {
+        "enabled": true, "mention_regex": "m", "label_regex": "l", "poll_interval_secs": 120,
+        "repositories": [{"repository": "o/r", "enabled": true, "agent": ORCHESTRATOR,
+            "dispatch": {"mode": "fixed"}, "allowed_users": null}]}});
+    fake.set_default(
+        "get_github_watcher",
+        archon_aether::fake::Scripted::reply("github_watcher", status),
+    );
+    // The ship stage pushes to the real origin, so the thread's repository
+    // is only claimed while GitHub commands run.
+    let real_origin = git(&h.repo, &["remote", "get-url", "origin"]);
+    let real_origin = real_origin.trim().to_owned();
+    let claim = |url: &str| git(&h.repo, &["remote", "set-url", "origin", url]);
+    claim("https://github.com/o/r.git");
     h.ctx
         .aether
         .replace(Some(std::sync::Arc::new(
@@ -536,12 +550,14 @@ async fn verified_github_merge_refuses_unsent_items_and_merges_the_pinned_head()
             .iter()
             .any(|e| matches!(e, TriggerEvent::ChatMergeRefused { .. }))
     );
+    claim(&real_origin);
     h.dispatch().await;
     let stage = h.running().await.remove(0);
     let outcome = shipped_by(&h, &stage, "Changed it", json!({})).await;
     h.settle_running(|_| outcome.clone()).await;
     h.dispatch().await;
     let (_, head) = delivered(&h, &item).await;
+    claim("https://github.com/o/r.git");
     gh.show(&head, "MERGEABLE", green());
     pump::handle_orchestrator_event(&h.ctx, &event(2, false))
         .await

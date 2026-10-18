@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use crate::{context::DaemonContext, handlers, resolve::RepoEnv};
 
-pub(super) fn check_channel(
+pub(super) async fn check_channel(
     ctx: &DaemonContext,
     message: &OperatorMessage,
     action: &Request,
@@ -32,6 +32,7 @@ pub(super) fn check_channel(
                 .into(),
         ));
     }
+    super::scope::check_action(ctx, message, action).await?;
     match action {
         Request::SetSettings { .. } | Request::ResetSettings { .. } | Request::RepoUpdate { .. } | Request::RepoRemove { .. } | Request::RepoAdd(_)
         | Request::SetCaps { .. } | Request::Pause(_) | Request::Resume(_)

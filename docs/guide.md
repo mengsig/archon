@@ -547,6 +547,12 @@ Archon's feed. They overlap, but they are not the same list.
   outcome with its pull request URL, and each proposal or report gate when
   it opens: what is asked, a short summary, its number and the
   `/answer <n> …` line that answers it. Ctrl+T shows the calls and payloads.
+- **Shown at once as a note row:** the result of a command archond applies
+  itself (`/answer`, `/approve`, `/reject`, `/merge` refusals, `/upgrade`,
+  `/watch`, `/archon …`), as `Applied: …` or `Refused: …` (coloured when
+  aetherd speaks protocol 24 or newer), with no orchestrator turn. This needs
+  aetherd protocol 23 (the `notes` feature); with an older one the result
+  reaches the TUI only when the orchestrator restates it.
 - **Not shown:** the rest of what archond posts to the feed itself. That is
   "reopen the review window?" questions, reports published by stages,
   progress notices, system notices, and the chat's "open questions" header.

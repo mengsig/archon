@@ -55,6 +55,7 @@ fn variant_name(command: &Command) -> &'static str {
         Command::SendMessage { .. } => "send_message",
         Command::ReplyToQuestion { .. } => "reply_to_question",
         Command::Trigger { .. } => "trigger",
+        Command::AppendNote { .. } => "append_note",
         Command::Cancel { .. } => "cancel",
         Command::Interrupt { .. } => "interrupt",
         Command::Wake { .. } => "wake",

@@ -22,8 +22,8 @@ use crate::github::{WatcherConfig, WatcherStatus};
 use crate::wire::{
     ALLOWLIST_PROTOCOL_VERSION, Agent, AgentPatch, AgentQuery, CLIENT_NAME, Command, CreateAgent,
     DaemonDefaults, ErrorReply, EventQuery, Hello, MIN_PROTOCOL_VERSION, ModelInfo,
-    OPERATOR_LOGINS_PROTOCOL_VERSION, PROTOCOL_VERSION, ProviderInfo, RawReply, Subscribed, Task,
-    Welcome,
+    NOTE_LEVEL_PROTOCOL_VERSION, NOTES_FEATURE, NoteLevel, OPERATOR_LOGINS_PROTOCOL_VERSION,
+    PROTOCOL_VERSION, ProviderInfo, RawReply, Subscribed, Task, Welcome,
 };
 
 /// Default per-request timeout; nothing waits forever on a silent daemon.
@@ -196,7 +196,7 @@ enum Handshake {
 }
 
 impl AetherClient {
-    /// Handshake at protocol 18, falling back to the newest served version down to 14.
+    /// Handshake at protocol 23, falling back to the newest served version down to 14.
     /// Incompatible refusals report both protocol windows.
     pub async fn connect(endpoint: &Endpoint) -> Result<Self, ArchonError> {
         Self::connect_with(endpoint, ClientOptions::default()).await
@@ -421,6 +421,31 @@ impl AetherClient {
         let agent: Agent = self.typed(command, "agent").await?;
         ensure_same(id.as_str(), agent.id.as_str(), "update_agent")?;
         Ok(agent)
+    }
+
+    /// Add a display-only note to `agent`'s transcript; it starts no turn. A
+    /// `level` is sent only to an aetherd that speaks protocol 24.
+    pub async fn append_note(
+        &self,
+        agent: &AetherAgentId,
+        text: &str,
+        level: Option<NoteLevel>,
+    ) -> Result<(), ArchonError> {
+        assert!(!text.trim().is_empty(), "a note says something");
+        let welcome = self.welcome();
+        if !welcome.features.iter().any(|f| f == NOTES_FEATURE) {
+            return Err(ArchonError::Unavailable(format!(
+                "aetherd {} does not serve append_note (protocol {})",
+                welcome.daemon_version, welcome.protocol_version
+            )));
+        }
+        let level = level.filter(|_| welcome.protocol_version >= NOTE_LEVEL_PROTOCOL_VERSION);
+        let command = Command::AppendNote {
+            agent: agent.clone(),
+            text: text.to_owned(),
+            level,
+        };
+        self.request(command, "note_appended").await.map(drop)
     }
 
     pub async fn send_message(
@@ -900,13 +925,13 @@ mod tests {
 
     #[test]
     fn incompatible_refusals_are_restated_as_the_served_window() {
-        let text = "client protocol 17 is not served: this daemon speaks 18 to 19";
+        let text = "client protocol 17 is not served: this daemon speaks 24 to 25";
         assert_eq!(
             incompatible_message(text),
-            "Archon speaks Aether protocol 14..18; the daemon serves 18..19"
+            "Archon speaks Aether protocol 14..23; the daemon serves 24..25"
         );
         let odd = incompatible_message("go away");
-        assert!(odd.starts_with("Archon speaks Aether protocol 14..18"));
+        assert!(odd.starts_with("Archon speaks Aether protocol 14..23"));
         assert!(odd.ends_with("go away"));
     }
 
@@ -926,7 +951,7 @@ mod tests {
         assert_eq!(serving(13, 14), Some(14));
         assert_eq!(serving(14, 14), Some(14));
         assert_eq!(serving(12, 13), None, "older than Archon speaks");
-        assert_eq!(serving(19, 20), None, "newer: retrying older cannot help");
+        assert_eq!(serving(24, 25), None, "newer: retrying older cannot help");
         assert_eq!(
             serving(16, 17),
             Some(17),

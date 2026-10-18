@@ -1,4 +1,4 @@
-//! Aether protocol v18 wire subset, checked against its published schema.
+//! Aether protocol v23 wire subset, checked against its published schema.
 //! Replies decode in two steps so unexpected reply kinds remain named errors.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -18,16 +18,29 @@ use crate::memory::MemoryQuery;
 
 /// Archon asks for this first, and falls back to the newest protocol an
 /// older aetherd serves, down to [`MIN_PROTOCOL_VERSION`].
-pub const PROTOCOL_VERSION: u32 = 18;
+pub const PROTOCOL_VERSION: u32 = 23;
 pub const MIN_PROTOCOL_VERSION: u32 = 14;
 /// The first protocol whose GitHub watcher stores `allowed_users`.
 pub const ALLOWLIST_PROTOCOL_VERSION: u32 = 15;
 /// The first protocol whose GitHub watcher stores `operator_users`.
 pub const OPERATOR_LOGINS_PROTOCOL_VERSION: u32 = 17;
+/// The first protocol that serves `append_note`.
+pub const NOTES_PROTOCOL_VERSION: u32 = 23;
+/// The first protocol whose notes carry a `level`.
+pub const NOTE_LEVEL_PROTOCOL_VERSION: u32 = 24;
 pub const MAX_FRAME_BYTES: usize = 64 * 1024 * 1024;
 pub const CLIENT_NAME: &str = "archon";
 pub const HOST_CONTEXT_FEATURE: &str = "host_context";
 pub const REPOSITORY_ROOT_FEATURE: &str = "repository_root";
+pub const NOTES_FEATURE: &str = "notes";
+
+/// How a note row is coloured in the TUI (protocol 24).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NoteLevel {
+    Applied,
+    Refused,
+}
 
 /// One client frame: `{"req": id, "cmd": ..., ...fields}`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -76,6 +89,13 @@ pub enum Command {
         payload: serde_json::Value,
         #[serde(skip_serializing_if = "Option::is_none")]
         idempotency_key: Option<String>,
+    },
+    /// A display-only transcript row that wakes no turn (protocol 23).
+    AppendNote {
+        agent: AetherAgentId,
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        level: Option<NoteLevel>,
     },
     Cancel {
         agent: AetherAgentId,

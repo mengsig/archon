@@ -133,6 +133,7 @@ async fn refused(ctx: &DaemonContext, why: &str) -> Result<(), ArchonError> {
     assert!(!why.trim().is_empty(), "a refusal gives its reason");
     let note = format!("A `/merge` sent in the orchestrator's Aether chat was not applied: {why}");
     feed::system(ctx, clip(&note, 2 * MAX_NEWS_CHARS)).await?;
+    crate::command_notice::show(ctx, "/merge", false, why).await;
     let news = TriggerEvent::ChatMergeRefused {
         text: clip(why, MAX_NEWS_CHARS),
     };

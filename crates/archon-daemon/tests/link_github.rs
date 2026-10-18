@@ -245,7 +245,7 @@ const NO_OPERATORS: WatcherChange = WatcherChange::Operators {
 async fn operators_replaces_or_clears_the_list_and_nothing_else() {
     let harness = Harness::new().await;
     let client = harness.connect().await;
-    assert_eq!(client.welcome().protocol_version, 18);
+    assert_eq!(client.welcome().protocol_version, 23);
     let mut narrowed = fixed("o/narrow", ORCH);
     narrowed["allowed_users"] = json!(["monalisa"]);
     let watcher = serve_watcher(&harness, json!([narrowed, fixed("o/open", ORCH)]));

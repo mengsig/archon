@@ -26,7 +26,7 @@ async fn only_advertised_lean_context_is_sent_on_every_create() {
             Scripted::reply("agent", fake::agent(AGENT, Some(TASK))),
         );
         let client = connect(&fake).await;
-        assert_eq!(client.welcome().protocol_version, 18);
+        assert_eq!(client.welcome().protocol_version, 23);
         assert_eq!(
             client.welcome().effective_host_context(HostContext::Lean) == HostContext::Lean,
             advertised

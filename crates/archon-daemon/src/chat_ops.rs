@@ -138,6 +138,7 @@ async fn report(
         let note = format!("A `{name}` sent in the orchestrator's Aether chat was refused: {text}");
         feed::system(ctx, clip(&note, 2 * MAX_NEWS_CHARS)).await?;
     }
+    crate::command_notice::show(ctx, name, applied, &text).await;
     let news = TriggerEvent::ChatCommand {
         command: name.to_owned(),
         applied,

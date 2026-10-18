@@ -227,6 +227,11 @@ async fn report(ctx: &DaemonContext, outcome: Outcome) -> Result<(), ArchonError
         );
         feed::system(ctx, clip(&note, 2 * MAX_NEWS_CHARS)).await?;
     }
+    let label = match outcome.number {
+        Some(n) => format!("/answer Q{n}"),
+        None => "/answer".to_owned(),
+    };
+    crate::command_notice::show(ctx, &label, outcome.applied, &outcome.text).await;
     let news = TriggerEvent::ChatAnswer {
         number: outcome.number,
         applied: outcome.applied,

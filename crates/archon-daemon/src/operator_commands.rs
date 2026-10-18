@@ -115,12 +115,14 @@ async fn execute(
             .map(drop);
     }
     if let Some(result) = crate::authority::command(ctx, &evidence, text).await {
+        let label = command_label(text);
         let (applied, text) = match result {
             Ok(reply) => (true, serde_json::to_string(&reply)?),
             Err(error) if error.is_store() => return Err(error),
             Err(error) => (false, error.to_string()),
         };
         feed::system(ctx, format!("Operator command: {text}")).await?;
+        crate::command_notice::show(ctx, &label, applied, &text).await;
         return crate::triggers::push(
             ctx,
             crate::triggers::TriggerEvent::ChatAnswer {
@@ -177,6 +179,16 @@ async fn execute(
         },
     };
     chat_merge::handle(ctx, &command, authority).await
+}
+
+/// The command word, plus its subcommand for `/archon`, for a result note.
+fn command_label(text: &str) -> String {
+    let mut words = text.split_whitespace();
+    let first = words.next().unwrap_or("/archon");
+    match (first, words.next()) {
+        ("/archon", Some(sub)) => format!("{first} {sub}"),
+        _ => first.to_owned(),
+    }
 }
 
 /// GitHub's mention is accepted only at the start, never inside quoted text.

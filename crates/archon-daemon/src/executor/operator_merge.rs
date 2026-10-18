@@ -259,6 +259,7 @@ pub(crate) async fn request(
         ignore_checks: true,
     };
     let seen = merge::evaluate(&facts.await?, expected).map_err(|w| refused_early(&shipped, &w))?;
+    supersede_stale_requests(&mut *ctx.store.lock().await, &shipped)?;
     let reviewed = shipped.item.autonomy.review != ReviewLevel::None;
     if !(shipped.repo.grant_merge && reviewed) {
         return ask(ctx, &shipped, reason, &seen).await;
@@ -280,6 +281,30 @@ pub(crate) async fn request(
             execute(ctx, request).await
         }
     }
+}
+
+/// Close an open request that waits on a commit other than the one the pull
+/// request now shows, so a fresh request is not blocked by the stale one.
+fn supersede_stale_requests(store: &mut Store, shipped: &Shipped) -> Result<(), ArchonError> {
+    for mut stale in store.merges_for_item(&shipped.item.id)? {
+        let waiting = matches!(
+            stale.state,
+            MergeState::AwaitingOperator | MergeState::AwaitingChecks
+        );
+        if !waiting || stale.head == shipped.head {
+            continue;
+        }
+        stale.state = MergeState::Refused {
+            reason: format!(
+                "superseded: the pull request head moved from {} to {}",
+                merge::short(&stale.head),
+                merge::short(&shipped.head)
+            ),
+        };
+        stale.updated_at = archon_core::now();
+        store.update_merge(&stale)?;
+    }
+    Ok(())
 }
 
 /// Record a granted request waiting for its pending checks.

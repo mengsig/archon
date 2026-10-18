@@ -785,6 +785,42 @@ async fn a_head_moved_after_the_question_is_refused_on_yes() {
     assert!(matches!(news.as_slice(), [(false, _)]), "{news:?}");
 }
 
+/// A confirmation asked at an older head is closed as superseded when a
+/// fresh request finds the pull request green at the delivered head.
+#[tokio::test]
+async fn a_request_at_a_new_head_supersedes_the_stale_confirmation() {
+    let (h, gh) = delivering(Config::default()).await;
+    let (item, head) = shipped(&h).await;
+    gh.show(&head, "MERGEABLE", green());
+    let asked = merge_of(h.orchestrator(request_merge(&item)).await);
+    let MergeAuthority::Confirmed { question, .. } = asked.authority.clone() else {
+        panic!("asked: {asked:?}")
+    };
+    let mut stale = asked;
+    stale.head = "a".repeat(40);
+    h.ctx.store.lock().await.update_merge(&stale).unwrap();
+
+    let fresh = merge_of(h.orchestrator(request_merge(&item)).await);
+    assert_eq!(fresh.state, MergeState::AwaitingOperator);
+    assert_eq!(fresh.head, head);
+    let all = merges(&h, &item).await;
+    assert_eq!(all.len(), 2, "{all:?}");
+    let old = all
+        .iter()
+        .find(|m| m.id == stale.id)
+        .expect("the stale one");
+    let MergeState::Refused { reason } = &old.state else {
+        panic!("closed: {old:?}")
+    };
+    assert!(
+        reason.contains("superseded") && reason.contains("aaaaaaa"),
+        "{reason}"
+    );
+    let closed = h.ctx.store.lock().await.question(&question).unwrap();
+    assert!(!closed.is_open());
+    assert!(!gh.merged());
+}
+
 /// A stage agent and the agents it delegated to cannot request a merge,
 /// even of an item that could merge.
 #[tokio::test]

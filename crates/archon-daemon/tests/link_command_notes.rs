@@ -74,12 +74,18 @@ async fn an_applied_and_a_refused_answer_each_add_a_note_at_once() {
     say(&harness, 1, &format!("/answer {} yes", asked.number)).await;
     let applied = note_texts(&harness);
     assert_eq!(applied.len(), 1, "one note for the applied answer");
-    assert!(applied[0].starts_with("Applied: /answer"), "{applied:?}");
+    assert!(applied[0].starts_with("/answer"), "{applied:?}");
+    let levels = |h: &Harness| -> Vec<Value> {
+        let notes = h.fake.received_named("append_note");
+        notes.iter().map(|n| n["level"].clone()).collect()
+    };
+    assert_eq!(levels(&harness), [json!("applied")]);
 
     say(&harness, 2, "/answer 99 hi").await;
     let all = note_texts(&harness);
     assert_eq!(all.len(), 2, "one more note for the refusal: {all:?}");
-    assert!(all[1].starts_with("Refused: /answer"), "{all:?}");
+    assert!(all[1].starts_with("/answer:"), "{all:?}");
+    assert_eq!(levels(&harness), [json!("applied"), json!("refused")]);
     let sent: Vec<Value> = harness.fake.received_named("send_message");
     assert!(sent.is_empty(), "no message woke the orchestrator");
     assert_eq!(harness.fake.received_named("append_note")[0]["agent"], ORCH);
@@ -95,4 +101,55 @@ async fn an_aetherd_without_notes_gets_none_and_the_command_still_applies() {
     );
     let held = archon_daemon::triggers::held(&harness.ctx).await.unwrap();
     assert_eq!(held.len(), 1, "the refusal still reaches the orchestrator");
+}
+
+#[tokio::test]
+async fn a_paused_queue_still_shows_the_note_at_once() {
+    let harness = harness(&["notes"]).await;
+    let pause = Request::Pause(archon_core::protocol::PauseTarget::Global { hard: false });
+    archon_daemon::handlers::handle(&harness.ctx, ClientKind::ArchonCli, pause)
+        .await
+        .expect("the queue pauses");
+
+    say(&harness, 1, "/answer 99 hi").await;
+    let notes = note_texts(&harness);
+    assert_eq!(
+        notes.len(),
+        1,
+        "the refusal is shown while paused: {notes:?}"
+    );
+    assert!(notes[0].starts_with("/answer:"), "{notes:?}");
+}
+
+#[tokio::test]
+async fn a_second_command_mid_turn_is_shown_without_waiting_for_the_turn() {
+    let harness = harness(&["notes"]).await;
+    say(&harness, 1, "/answer 98 hi").await;
+    say(&harness, 2, "/answer 99 hi").await;
+    let notes = note_texts(&harness);
+    assert_eq!(notes.len(), 2, "each command shows its own note: {notes:?}");
+    assert!(harness.fake.received_named("send_message").is_empty());
+}
+
+#[tokio::test]
+async fn a_protocol_24_aetherd_gets_the_level_and_no_word_prefix() {
+    let harness = harness(&["notes"]).await;
+    assert_eq!(
+        harness
+            .ctx
+            .aether
+            .client()
+            .unwrap()
+            .welcome()
+            .protocol_version,
+        24
+    );
+
+    say(&harness, 1, "/answer 99 hi").await;
+    let sent = &harness.fake.received_named("append_note")[0];
+    assert_eq!(sent["level"], "refused", "{sent}");
+    assert!(
+        !sent["text"].as_str().unwrap().starts_with("Refused:"),
+        "{sent}"
+    );
 }

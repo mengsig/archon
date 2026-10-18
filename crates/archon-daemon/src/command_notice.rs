@@ -1,7 +1,7 @@
 //! Shows the result of a host command as a note row in the orchestrator's
 //! transcript, at once and without a model turn.
 
-use archon_aether::wire::{NOTE_LEVEL_PROTOCOL_VERSION, NOTES_FEATURE, NoteLevel};
+use archon_aether::wire::{NOTE_LEVEL_PROTOCOL_VERSION, NOTES_FEATURE, NoteLevel, Welcome};
 
 use crate::context::DaemonContext;
 use crate::executor::clip;
@@ -21,6 +21,18 @@ pub(crate) fn note_line(label: &str, applied: bool, text: &str, has_level: bool)
         (false, false) => format!("Refused: {label}: {text}"),
     };
     clip(&line, MAX_NOTE_CHARS)
+}
+
+/// One start-up line when aetherd cannot show command results, so their
+/// absence from the TUI is explained.
+pub(crate) fn warn_if_unsupported(welcome: &Welcome) {
+    if welcome.features.iter().any(|f| f == NOTES_FEATURE) {
+        return;
+    }
+    tracing::warn!(
+        protocol = welcome.protocol_version,
+        "Aether lacks notes; the TUI will not show host command results (they stay in Archon's feed)"
+    );
 }
 
 /// Best effort: the outcome is already in Archon's feed, so a note that cannot
@@ -56,6 +68,54 @@ pub(crate) async fn show(ctx: &DaemonContext, label: &str, applied: bool, text: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone)]
+    struct Sink(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Sink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn welcome(features: &[&str]) -> Welcome {
+        serde_json::from_value(serde_json::json!({
+            "protocol_version": 23, "daemon_version": "1.0.0", "instance_id": "i",
+            "schema_version": 1, "pid": 1, "features": features,
+        }))
+        .expect("a valid welcome")
+    }
+
+    fn logged_by(welcome: &Welcome) -> String {
+        let bytes = Arc::new(Mutex::new(Vec::new()));
+        let sink = Sink(bytes.clone());
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(move || sink.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || warn_if_unsupported(welcome));
+        let written = bytes.lock().unwrap().clone();
+        String::from_utf8(written).unwrap()
+    }
+
+    #[test]
+    fn an_aetherd_without_notes_logs_one_start_up_line() {
+        let text = logged_by(&welcome(&[]));
+        assert_eq!(text.lines().count(), 1, "{text}");
+        assert!(text.contains("Aether lacks notes"), "{text}");
+    }
+
+    #[test]
+    fn an_aetherd_with_notes_logs_nothing() {
+        let text = logged_by(&welcome(&["notes"]));
+        assert!(text.is_empty(), "{text}");
+    }
 
     #[test]
     fn a_plain_note_leads_with_the_word_a_level_would_colour() {

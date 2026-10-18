@@ -196,7 +196,7 @@ enum Handshake {
 }
 
 impl AetherClient {
-    /// Handshake at protocol 23, falling back to the newest served version down to 14.
+    /// Handshake at protocol 24, falling back to the newest served version down to 14.
     /// Incompatible refusals report both protocol windows.
     pub async fn connect(endpoint: &Endpoint) -> Result<Self, ArchonError> {
         Self::connect_with(endpoint, ClientOptions::default()).await
@@ -925,13 +925,13 @@ mod tests {
 
     #[test]
     fn incompatible_refusals_are_restated_as_the_served_window() {
-        let text = "client protocol 17 is not served: this daemon speaks 24 to 25";
+        let text = "client protocol 17 is not served: this daemon speaks 25 to 26";
         assert_eq!(
             incompatible_message(text),
-            "Archon speaks Aether protocol 14..23; the daemon serves 24..25"
+            "Archon speaks Aether protocol 14..24; the daemon serves 25..26"
         );
         let odd = incompatible_message("go away");
-        assert!(odd.starts_with("Archon speaks Aether protocol 14..23"));
+        assert!(odd.starts_with("Archon speaks Aether protocol 14..24"));
         assert!(odd.ends_with("go away"));
     }
 

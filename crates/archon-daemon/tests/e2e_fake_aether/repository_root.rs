@@ -26,7 +26,7 @@ async fn reconnect(h: &Harness, aether: &FakeAether) {
     )
     .await
     .unwrap();
-    assert_eq!(client.welcome().protocol_version, 23);
+    assert_eq!(client.welcome().protocol_version, 24);
     assert!(!client.welcome().instance_id.is_empty());
     h.ctx.aether.replace(Some(Arc::new(client))).unwrap();
 }

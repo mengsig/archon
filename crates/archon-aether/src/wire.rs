@@ -18,7 +18,7 @@ use crate::memory::MemoryQuery;
 
 /// Archon asks for this first, and falls back to the newest protocol an
 /// older aetherd serves, down to [`MIN_PROTOCOL_VERSION`].
-pub const PROTOCOL_VERSION: u32 = 23;
+pub const PROTOCOL_VERSION: u32 = 24;
 pub const MIN_PROTOCOL_VERSION: u32 = 14;
 /// The first protocol whose GitHub watcher stores `allowed_users`.
 pub const ALLOWLIST_PROTOCOL_VERSION: u32 = 15;

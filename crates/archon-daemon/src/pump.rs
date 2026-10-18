@@ -125,6 +125,7 @@ async fn link_loop(ctx: Arc<DaemonContext>, endpoint: Endpoint) -> Result<(), Ar
     let mut backoff = BACKOFF_MIN;
     let mut outage = Outage::started();
     let mut host_context_warned = false;
+    let mut notes_warned = false;
     loop {
         match AetherClient::connect(&endpoint).await {
             Ok(client) => {
@@ -140,6 +141,10 @@ async fn link_loop(ctx: Arc<DaemonContext>, endpoint: Endpoint) -> Result<(), Ar
                         "Aether lacks host_context; new and pending lean creations fall back to full; existing agents keep their context"
                     );
                     host_context_warned = true;
+                }
+                if !notes_warned {
+                    crate::command_notice::warn_if_unsupported(client.welcome());
+                    notes_warned = true;
                 }
                 announce_connected(&ctx, &client, &outage).await?;
                 backoff = BACKOFF_MIN;

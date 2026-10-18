@@ -218,7 +218,7 @@ pub(crate) fn publish(
     name: Option<&str>,
     limits: &ArtifactsConfig,
 ) -> Result<ArtifactListing, ArchonError> {
-    let source = inside_workspace(workspace, path)?;
+    let (workspace_root, source) = inside_workspace(workspace, path)?;
     let default_name = source.file_name().map(|n| n.to_string_lossy().into_owned());
     let name = name
         .map(str::to_owned)
@@ -249,7 +249,7 @@ pub(crate) fn publish(
         .map_err(|e| ArchonError::io(format!("creating {}", dir.display()), e))?;
     let incoming = Incoming(dir.join(incoming_name()));
     let staged = incoming.0.join("payload");
-    let copied = copy_payload(&source, &staged, &payload)?;
+    let copied = copy_payload(&workspace_root, &source, &staged, &payload)?;
     // A file grown since it was measured is caught here, before anything is replaced.
     let copied_payload = Payload {
         bytes: copied,
@@ -266,7 +266,7 @@ pub(crate) fn publish(
 
 /// `path` resolved inside `workspace`, as a real path: not the workspace
 /// itself, and reached through no symlink that leads out of it.
-fn inside_workspace(workspace: &Path, path: &str) -> Result<PathBuf, ArchonError> {
+fn inside_workspace(workspace: &Path, path: &str) -> Result<(PathBuf, PathBuf), ArchonError> {
     let root = workspace
         .canonicalize()
         .map_err(|e| ArchonError::io(format!("resolving {}", workspace.display()), e))?;
@@ -283,7 +283,7 @@ fn inside_workspace(workspace: &Path, path: &str) -> Result<PathBuf, ArchonError
             root.display()
         )));
     }
-    Ok(real)
+    Ok((root, real))
 }
 
 fn check_room(
@@ -310,7 +310,12 @@ fn check_room(
 }
 
 /// Copy the payload to `staged`; the bytes copied.
-fn copy_payload(source: &Path, staged: &Path, payload: &Payload) -> Result<u64, ArchonError> {
+fn copy_payload(
+    root: &Path,
+    source: &Path,
+    staged: &Path,
+    payload: &Payload,
+) -> Result<u64, ArchonError> {
     let single = source.is_file();
     let mut copied = 0u64;
     for (relative, _) in &payload.files {
@@ -322,7 +327,7 @@ fn copy_payload(source: &Path, staged: &Path, payload: &Payload) -> Result<u64, 
         let parent = to.parent().expect("a staged file has a directory");
         std::fs::create_dir_all(parent)
             .map_err(|e| ArchonError::io(format!("creating {}", parent.display()), e))?;
-        copied += copy_regular_file(source, relative, &to)?;
+        copied += copy_regular_file(root, source, relative, &to)?;
     }
     if payload.files.is_empty() {
         std::fs::create_dir_all(staged)
@@ -331,30 +336,29 @@ fn copy_payload(source: &Path, staged: &Path, payload: &Payload) -> Result<u64, 
     Ok(copied)
 }
 
-/// Open `source/relative` without following a symlink at any component,
-/// so a file or directory swapped for a link after the gather is refused.
-fn open_no_follow(source: &Path, relative: &Path) -> Result<std::fs::File, ArchonError> {
+/// Open `root/below` without following a symlink at any component, so a
+/// file, directory or ancestor swapped for a link after the gather is refused.
+fn open_no_follow(root: &Path, below: &Path) -> Result<std::fs::File, ArchonError> {
     use rustix::fs::{CWD, Mode, OFlags, openat};
     let dir_flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
     let file_flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
-    let components: Vec<_> = relative.components().collect();
-    let last_is_file = components.is_empty();
-    let flags = if last_is_file { file_flags } else { dir_flags };
+    let components: Vec<_> = below.components().collect();
+    assert!(!components.is_empty(), "a file lies below the workspace");
     let refused = |e: rustix::io::Errno| {
         ArchonError::io(
             format!(
                 "opening {} (artifacts are regular files; was it replaced by a symlink?)",
-                source.join(relative).display()
+                root.join(below).display()
             ),
             e.into(),
         )
     };
-    let mut fd = openat(CWD, source, flags, Mode::empty()).map_err(refused)?;
+    let mut fd = openat(CWD, root, dir_flags, Mode::empty()).map_err(refused)?;
     for (index, component) in components.iter().enumerate() {
         let Component::Normal(name) = component else {
             return Err(ArchonError::Invalid(format!(
                 "{} is not a plain relative path",
-                relative.display()
+                below.display()
             )));
         };
         let flags = if index + 1 == components.len() {
@@ -368,10 +372,19 @@ fn open_no_follow(source: &Path, relative: &Path) -> Result<std::fs::File, Archo
 }
 
 /// Copy `source/relative` to `to` through one handle opened by
-/// [`open_no_follow`].
-fn copy_regular_file(source: &Path, relative: &Path, to: &Path) -> Result<u64, ArchonError> {
-    let from = source.join(relative);
-    let mut input = open_no_follow(source, relative)?;
+/// [`open_no_follow`] from the resolved workspace `root`.
+fn copy_regular_file(
+    root: &Path,
+    source: &Path,
+    relative: &Path,
+    to: &Path,
+) -> Result<u64, ArchonError> {
+    let full = source.join(relative);
+    let below = full.strip_prefix(root).map_err(|_| {
+        ArchonError::Invalid(format!("{} is outside {}", full.display(), root.display()))
+    })?;
+    let from = full.as_path();
+    let mut input = open_no_follow(root, below)?;
     let meta = input
         .metadata()
         .map_err(|e| ArchonError::io(format!("inspecting {}", from.display()), e))?;
@@ -616,7 +629,7 @@ mod tests {
         std::fs::remove_file(&source).unwrap();
         std::os::unix::fs::symlink(&secret, &source).unwrap();
         let staged = fx.workspace.join("staged.txt");
-        let err = copy_payload(&source, &staged, &payload).unwrap_err();
+        let err = copy_payload(&fx.workspace, &source, &staged, &payload).unwrap_err();
         assert!(err.to_string().contains("symlink"), "{err}");
         assert!(!staged.exists() || std::fs::read(&staged).unwrap().is_empty());
     }
@@ -633,9 +646,30 @@ mod tests {
         std::fs::remove_dir_all(&source).unwrap();
         std::os::unix::fs::symlink(&outside, &source).unwrap();
         let staged = fx.workspace.join("staged");
-        let err = copy_payload(&source, &staged, &payload).unwrap_err();
+        let err = copy_payload(&fx.workspace, &source, &staged, &payload).unwrap_err();
         assert!(err.to_string().contains("symlink"), "{err}");
         assert!(!staged.join("token").exists());
+    }
+
+    #[test]
+    fn an_ancestor_swapped_for_a_symlink_after_the_gather_is_refused() {
+        let fx = fixture();
+        fx.write("parent/report.txt", b"mine");
+        fx.write("parent/out/token", b"mine");
+        let outside = fx.workspace.join("outside");
+        std::fs::create_dir_all(outside.join("out")).unwrap();
+        std::fs::write(outside.join("report.txt"), b"credentials").unwrap();
+        std::fs::write(outside.join("out/token"), b"credentials").unwrap();
+        let parent = fx.workspace.join("parent");
+        let file = gather(&parent.join("report.txt"), &limits(1, 1)).unwrap();
+        let dir = gather(&parent.join("out"), &limits(1, 1)).unwrap();
+        std::fs::remove_dir_all(&parent).unwrap();
+        std::os::unix::fs::symlink(&outside, &parent).unwrap();
+        for (source, payload) in [(parent.join("report.txt"), file), (parent.join("out"), dir)] {
+            let staged = fx.workspace.join("staged");
+            let err = copy_payload(&fx.workspace, &source, &staged, &payload).unwrap_err();
+            assert!(err.to_string().contains("symlink"), "{err}");
+        }
     }
 
     fn limits(max_file_mb: u64, max_item_mb: u64) -> ArtifactsConfig {

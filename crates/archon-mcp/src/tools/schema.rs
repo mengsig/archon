@@ -621,7 +621,8 @@ fn refresh_item() -> ToolDefinition {
         "refresh_item",
         "Refresh item onto its base",
         "Merge fresh base into a stale or conflicting item's branch and same pull request. \
-         Review reads from the new merge base, conflict fixes included.",
+         Review reads from the new merge base, conflict fixes included. \
+         An `onto` item merges its pull request's current head instead.",
         object(json!({"item": item_id("")}), &["item"]),
         false,
     )

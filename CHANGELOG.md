@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+
+- `refresh_item` on an item queued `onto` a pull request merges that pull
+  request's current head, not the repository base. When another delivery moved
+  the head, so the item failed at ship, a refresh now keeps its run, review and
+  history, and it delivers as a fast-forward of the pull request. The ship
+  failure tells you to refresh the item instead of queueing new work.
+
 ## 1.3.1
 
 Released 2026-10-18.

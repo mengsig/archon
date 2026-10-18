@@ -208,21 +208,27 @@ impl ReplyTracker {
 
     /// `inbox.consumed`: the running turn read the inbox up to `up_to`, at
     /// its start or mid-turn. Text written before it read a first operator
-    /// message cannot answer it; an answer already begun stays until replaced.
-    pub fn consumed(&mut self, up_to: u64) {
+    /// message cannot answer it. When a further operator message is read
+    /// while an answer is begun, that answer is returned to be shown now
+    /// and the new message starts a fresh one.
+    pub fn consumed(&mut self, up_to: u64) -> Option<String> {
         let before = self.pending.len();
         self.pending.retain(|seq| *seq > up_to);
         if self.pending.len() == before {
-            return;
-        }
-        if !self.answering {
-            self.answering = true;
-            self.text = None;
+            return None;
         }
         assert!(
             self.pending.iter().all(|seq| *seq > up_to),
             "consumed messages are no longer pending"
         );
+        let finished = if self.answering {
+            self.text.take()
+        } else {
+            None
+        };
+        self.answering = true;
+        self.text = None;
+        finished
     }
 
     /// `agent.message {role: assistant}`. Whitespace-only text (a message
@@ -474,18 +480,55 @@ mod tests {
     }
 
     #[test]
-    fn a_message_steered_in_after_the_answer_began_does_not_erase_it() {
+    fn a_message_steered_in_after_the_answer_began_keeps_both_replies() {
         let mut tracker = ReplyTracker::default();
         tracker.delivered(1, OPERATOR);
-        tracker.consumed(1);
-        tracker.assistant_text("Answer to the first.");
         tracker.delivered(2, OPERATOR);
-        tracker.consumed(2);
+        assert_eq!(tracker.consumed(1), None);
+        tracker.assistant_text("A");
+        assert_eq!(tracker.consumed(2).as_deref(), Some("A"));
+        tracker.assistant_text("B");
+        assert_eq!(tracker.turn_completed(Some("ready")).as_deref(), Some("B"));
+        assert!(!tracker.awaiting_reply());
+    }
+
+    #[test]
+    fn a_message_steered_in_before_any_text_does_not_show_an_empty_reply() {
+        let mut tracker = ReplyTracker::default();
+        tracker.delivered(1, OPERATOR);
+        assert_eq!(tracker.consumed(1), None);
+        tracker.delivered(2, OPERATOR);
+        assert_eq!(tracker.consumed(2), None);
+        tracker.assistant_text("Both done.");
         assert_eq!(
             tracker.turn_completed(Some("ready")).as_deref(),
-            Some("Answer to the first.")
+            Some("Both done.")
         );
-        assert!(!tracker.awaiting_reply());
+    }
+
+    #[test]
+    fn messages_consumed_together_give_one_reply() {
+        let mut tracker = ReplyTracker::default();
+        tracker.delivered(1, OPERATOR);
+        tracker.delivered(2, OPERATOR);
+        assert_eq!(tracker.consumed(2), None);
+        tracker.assistant_text("A");
+        tracker.assistant_text("B");
+        assert_eq!(tracker.turn_completed(Some("ready")).as_deref(), Some("B"));
+    }
+
+    #[test]
+    fn a_tracker_restored_between_two_replies_yields_the_same_ones() {
+        let mut tracker = ReplyTracker::default();
+        tracker.delivered(1, OPERATOR);
+        tracker.delivered(2, OPERATOR);
+        tracker.consumed(1);
+        tracker.assistant_text("A");
+        let raw = serde_json::to_string(&tracker).unwrap();
+        let mut restored = restore_replies(Some(&raw)).unwrap();
+        assert_eq!(restored.consumed(2).as_deref(), Some("A"));
+        restored.assistant_text("B");
+        assert_eq!(restored.turn_completed(None).as_deref(), Some("B"));
     }
 
     #[test]

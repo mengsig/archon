@@ -31,9 +31,7 @@ pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(
             message,
         } => delivered(ctx, event, *seq, *from_operator, message.as_ref()).await,
         EventKind::InboxConsumed { up_to } => {
-            track_once(ctx, event, |replies| replies.consumed(*up_to))
-                .await
-                .map(drop)
+            post_replies(ctx, event.seq, |replies| replies.consumed(*up_to)).await
         }
         EventKind::AgentMessage {
             assistant: true,
@@ -47,7 +45,10 @@ pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(
                 .map(drop)
         }
         EventKind::AgentTurnCompleted { next, .. } => {
-            turn_completed(ctx, event.seq, next.as_deref()).await?;
+            post_replies(ctx, event.seq, |replies| {
+                replies.turn_completed(next.as_deref())
+            })
+            .await?;
             supervisor::turn_ended(ctx, next.as_deref()).await
         }
         EventKind::QuestionAsked { question } => {
@@ -115,17 +116,17 @@ async fn track_once(
     .await
 }
 
-/// Post the turn's reply when it answers the operator. The reply and the
-/// tracker that no longer awaits it are written under one store lock.
-async fn turn_completed(
+/// Post the reply a tracker change finishes, unless the event is a replay.
+/// The reply and the tracker are written under one store lock.
+async fn post_replies(
     ctx: &DaemonContext,
     seq: u64,
-    next: Option<&str>,
+    change: impl FnOnce(&mut ReplyTracker) -> Option<String>,
 ) -> Result<(), ArchonError> {
     let mut replies = ctx.replies.lock().await;
     let before = replies.clone();
     let reply = if replies.first_sight(seq) {
-        replies.turn_completed(next)
+        change(&mut replies)
     } else {
         None
     };

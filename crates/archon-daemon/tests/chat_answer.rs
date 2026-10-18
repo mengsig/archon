@@ -1062,3 +1062,24 @@ async fn a_cited_plain_language_gate_answer_must_postdate_the_gate() {
         Some(GateDecision::Approve { .. })
     ));
 }
+
+#[tokio::test]
+async fn github_cannot_answer_an_itemless_question_from_another_thread() {
+    use archon_aether::{AetherClient, fake::FakeAether};
+    let h = harness(AetherMode::Dedicated).await;
+    let asked = ask(&h, "Which branch?", &[]).await;
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeAether::start(&dir.path().join("authority.sock"))
+        .await
+        .unwrap();
+    let client = AetherClient::connect(&fake.endpoint()).await.unwrap();
+    h.ctx
+        .aether
+        .replace(Some(std::sync::Arc::new(client)))
+        .unwrap();
+    let command = format!("@archon /answer {} main", asked.number);
+    let trigger = json!({"kind":"external_trigger", "source":"github", "operator":true,
+        "payload":{"repository":"other-org/unrelated", "number":3,"requester":"octocat","operator":true,"text":command}});
+    deliver(&h, 1, trigger).await;
+    assert!(question(&h, &asked.id).await.is_open());
+}

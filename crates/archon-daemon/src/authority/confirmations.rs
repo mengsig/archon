@@ -45,6 +45,13 @@ async fn load(ctx: &DaemonContext, id: &QuestionId) -> Result<Option<Confirmatio
         .transpose()
 }
 
+pub(super) async fn is_confirmation(
+    ctx: &DaemonContext,
+    id: &QuestionId,
+) -> Result<bool, ArchonError> {
+    Ok(load(ctx, id).await?.is_some())
+}
+
 async fn save(
     ctx: &DaemonContext,
     id: &QuestionId,

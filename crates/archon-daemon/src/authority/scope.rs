@@ -62,7 +62,8 @@ pub(crate) async fn check_item(
     item_in(ctx, &own, item).await
 }
 
-/// Refuse a GitHub operator answering a question about another repository's item.
+/// Refuse a GitHub operator answering a question about another repository's item,
+/// or an item-less question that is not an authority confirmation.
 pub(crate) async fn check_question(
     ctx: &DaemonContext,
     message: &OperatorMessage,
@@ -76,7 +77,8 @@ pub(crate) async fn check_question(
     };
     match &question.item {
         Some(item) => check_item(ctx, repository, login, item).await,
-        None => Ok(()),
+        None if super::confirmations::is_confirmation(ctx, &question.id).await? => Ok(()),
+        None => Err(refused("that question is not about this repository")),
     }
 }
 

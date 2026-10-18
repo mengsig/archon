@@ -131,21 +131,18 @@ async fn apply(
         }
         return Ok(Outcome::refused(number, error.to_string()));
     }
+    let text = match question.expand_option(&command.text) {
+        Ok(text) => text,
+        Err(error) => return Ok(Outcome::refused(number, error.to_string())),
+    };
     if let Some(evidence) = evidence
-        && let Err(error) = crate::authority::check_answer(
-            ctx,
-            &question.id,
-            evidence,
-            &question.expand_option(&command.text),
-        )
-        .await
+        && let Err(error) = crate::authority::check_answer(ctx, &question.id, evidence, &text).await
     {
         if error.is_store() {
             return Err(error);
         }
         return Ok(Outcome::refused(number, error.to_string()));
     }
-    let text = question.expand_option(&command.text);
     let via = AnswerVia::ChatCommand;
     match handlers::answer_question(ctx, &question.id, &text, via).await {
         Ok(answered) => {

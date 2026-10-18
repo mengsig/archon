@@ -21,7 +21,7 @@ pub async fn say(client: &ArchonClient, text: String) -> anyhow::Result<()> {
     }
 }
 
-/// Answer `question`; a bare option number picks that option. Returns the
+/// Answer `question`; a bare option number picks that option; a number outside the options is refused. Returns the
 /// answer as sent.
 pub async fn answer(
     client: &ArchonClient,
@@ -29,7 +29,7 @@ pub async fn answer(
     text: &str,
 ) -> anyhow::Result<String> {
     assert!(!text.trim().is_empty(), "callers refuse empty answers");
-    let text = question.expand_option(text);
+    let text = question.expand_option(text)?;
     // Options come from the asker, so an empty one is refused, not sent.
     if text.is_empty() {
         return Err(archon_core::ArchonError::Invalid(

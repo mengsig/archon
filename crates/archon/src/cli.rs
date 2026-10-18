@@ -66,7 +66,7 @@ pub enum Command {
         /// (2 or Q2), or its q_… id. Numbers are permanent and never reused,
         /// so a question answered elsewhere since is refused, not replaced.
         question: String,
-        /// The answer; a bare option number picks that option.
+        /// The answer; a bare option number picks that option; a number outside the options is refused.
         text: Vec<String>,
     },
     /// List open questions.

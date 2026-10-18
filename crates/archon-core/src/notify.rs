@@ -97,15 +97,22 @@ impl Question {
     }
 
     /// The answer text to record: a bare number picks that option when the
-    /// question offered options; anything else is taken as typed.
-    pub fn expand_option(&self, text: &str) -> String {
+    /// question offered options, and one outside `1..=N` is refused; anything
+    /// else is taken as typed.
+    pub fn expand_option(&self, text: &str) -> Result<String, crate::ArchonError> {
         let text = text.trim();
+        let bare_number = !text.is_empty() && text.chars().all(|c| c.is_ascii_digit());
+        if self.options.is_empty() || !bare_number {
+            return Ok(text.to_owned());
+        }
         let picked = text
             .parse::<usize>()
             .ok()
             .and_then(|n| n.checked_sub(1))
             .and_then(|i| self.options.get(i));
-        picked.cloned().unwrap_or_else(|| text.to_owned())
+        picked.cloned().ok_or_else(|| {
+            crate::ArchonError::Invalid(format!("options are 1..{}", self.options.len()))
+        })
     }
 }
 
@@ -264,12 +271,19 @@ mod tests {
     #[test]
     fn a_bare_number_picks_an_option() {
         let q = question(&["rebase", "merge"]);
-        assert_eq!(q.expand_option("2"), "merge");
-        assert_eq!(q.expand_option(" 1 "), "rebase");
-        assert_eq!(q.expand_option("3"), "3");
-        assert_eq!(q.expand_option("0"), "0");
-        assert_eq!(q.expand_option("merge please"), "merge please");
-        assert_eq!(question(&[]).expand_option("2"), "2");
+        assert_eq!(q.expand_option("2").unwrap(), "merge");
+        assert_eq!(q.expand_option(" 1 ").unwrap(), "rebase");
+        assert_eq!(q.expand_option("merge please").unwrap(), "merge please");
+        assert_eq!(question(&[]).expand_option("2").unwrap(), "2");
+    }
+
+    #[test]
+    fn a_number_outside_the_options_is_refused() {
+        let q = question(&["a", "b", "c"]);
+        for text in ["7", "0", " 4 ", "99999999999999999999999"] {
+            let error = q.expand_option(text).unwrap_err().to_string();
+            assert!(error.contains("options are 1..3"), "{text:?}: {error}");
+        }
     }
 
     /// An answer through archond's own socket keeps its old wire form, so an

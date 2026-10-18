@@ -234,6 +234,28 @@ async fn retired_alias_hint(ctx: &DaemonContext) -> Result<(), ArchonError> {
     crate::triggers::push(ctx, news).await
 }
 
+/// A first word that is shaped like a question reference (`3`, `Q3`, `q_…`),
+/// even a bad one such as `0`, so it is refused rather than taken as a note.
+fn names_a_question(word: &str) -> bool {
+    let digits = word.strip_prefix(['Q', 'q']).unwrap_or(word);
+    let numeric = !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit());
+    numeric || QuestionRef::parse(word).is_ok()
+}
+
+fn not_one_gate(gates: &[archon_core::notify::Question]) -> String {
+    if gates.is_empty() {
+        return "there is no open proposal/report gate to act on".into();
+    }
+    let listed: Vec<String> = gates
+        .iter()
+        .map(|q| format!("Q{}: {}", q.number, q.text))
+        .collect();
+    format!(
+        "name a question: /approve N [note] or /reject N [note]; open gates: {}",
+        listed.join("; ")
+    )
+}
+
 async fn gate_alias(ctx: &DaemonContext, text: &str) -> Result<Option<String>, ArchonError> {
     let (name, rest) = text.split_once(char::is_whitespace).unwrap_or((text, ""));
     let decision = match name.to_ascii_lowercase().as_str() {
@@ -241,10 +263,13 @@ async fn gate_alias(ctx: &DaemonContext, text: &str) -> Result<Option<String>, A
         "/reject" => "reject",
         _ => return Ok(None),
     };
-    let (reference, note) = rest
-        .trim()
-        .split_once(char::is_whitespace)
-        .unwrap_or((rest.trim(), ""));
+    let rest = rest.trim();
+    let (first, after) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+    let (reference, note) = if names_a_question(first) {
+        (first, after)
+    } else {
+        ("", rest)
+    };
     let store = ctx.store.lock().await;
     let mut gates = Vec::new();
     for question in store.questions(true)? {
@@ -254,10 +279,7 @@ async fn gate_alias(ctx: &DaemonContext, text: &str) -> Result<Option<String>, A
     }
     let question = if reference.is_empty() {
         if gates.len() != 1 {
-            return Err(ArchonError::Invalid(
-                "name a question: /approve N or /reject N; there is not exactly one open gate"
-                    .into(),
-            ));
+            return Err(ArchonError::Invalid(not_one_gate(&gates)));
         }
         gates.remove(0)
     } else {
@@ -311,6 +333,21 @@ mod tests {
         ] {
             assert_eq!(unalias(text), text);
         }
+    }
+
+    #[test]
+    fn only_a_question_shaped_word_is_a_reference() {
+        for word in ["3", "Q3", "q12", "0", "99"] {
+            assert!(names_a_question(word), "{word:?}");
+        }
+        for word in ["looks", "not", "q", "3rd", "approved,"] {
+            assert!(!names_a_question(word), "{word:?}");
+        }
+    }
+
+    #[test]
+    fn several_gates_are_listed_by_number_and_title() {
+        assert!(not_one_gate(&[]).contains("no open"));
     }
 
     #[test]

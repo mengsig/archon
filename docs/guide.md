@@ -599,7 +599,7 @@ anything else in the message makes it ordinary text. For a proposal or
 report gate the answer is `approve` (a note may follow; `yes`, `ok` and
 `lgtm` approve too), `reject` to cancel the item, or any other text, which is
 feedback that sends the work back. For a question with options, a bare option
-number picks that option.
+number picks that option, and a number outside `1..N` is refused with "options are 1..N" (a question with no options takes numbers as text).
 
 - The orchestrator still receives the message. It acknowledges in one line
   and then restates what archond did. A malformed command, an unknown or

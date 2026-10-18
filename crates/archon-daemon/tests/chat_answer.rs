@@ -415,6 +415,57 @@ async fn archon_approve_and_reject_decide_gates_like_the_bare_commands() {
 }
 
 #[tokio::test]
+async fn approve_and_reject_with_only_a_note_act_on_the_single_open_gate() {
+    let (h, item, _) = at_proposal_gate(AetherMode::Dedicated).await;
+    deliver(&h, 1, operator("/approve looks good")).await;
+    assert!(matches!(
+        decision(&h, &item.id, "propose").await,
+        Some(GateDecision::Approve { .. })
+    ));
+    let (h, item, _) = at_proposal_gate(AetherMode::Dedicated).await;
+    deliver(&h, 1, operator("/reject not wanted")).await;
+    assert!(matches!(
+        decision(&h, &item.id, "propose").await,
+        Some(GateDecision::Reject { .. })
+    ));
+}
+
+#[tokio::test]
+async fn approve_with_an_out_of_range_number_is_not_taken_as_a_note() {
+    let (h, item, asked) = at_proposal_gate(AetherMode::Dedicated).await;
+    deliver(&h, 1, operator("/approve 99 fine")).await;
+    assert_eq!(decision(&h, &item.id, "propose").await, None);
+    assert!(question(&h, &asked.id).await.is_open());
+}
+
+#[tokio::test]
+async fn an_out_of_range_option_number_is_refused_and_the_question_stays_open() {
+    let h = harness(AetherMode::Dedicated).await;
+    let asked = ask(&h, "Ship?", &["a", "b", "c"]).await;
+    for (seq, text) in [(1, "7"), (2, "0")] {
+        let command = format!("/answer {} {text}", asked.number);
+        deliver(&h, seq, operator(&command)).await;
+        assert!(question(&h, &asked.id).await.is_open(), "{text}");
+        assert!(answers(&h, &asked.id).await.is_empty(), "{text}");
+    }
+    let news = chat_news(&h).await;
+    assert_eq!(news.len(), 2);
+    assert!(
+        news.iter()
+            .all(|(_, applied, why)| !applied && why.contains("options are 1..3"))
+    );
+}
+
+#[tokio::test]
+async fn a_gate_refuses_an_out_of_range_option_number_without_a_revision() {
+    let (h, item, asked) = at_proposal_gate(AetherMode::Dedicated).await;
+    let command = format!("/answer {} 7", asked.number);
+    deliver(&h, 1, operator(&command)).await;
+    assert_eq!(decision(&h, &item.id, "propose").await, None);
+    assert!(question(&h, &asked.id).await.is_open());
+}
+
+#[tokio::test]
 async fn archon_answer_from_anyone_but_the_operator_passes_no_gate() {
     let (h, item, asked) = at_proposal_gate(AetherMode::Dedicated).await;
     let text = format!("/archon answer {} approve", asked.number);

@@ -15,7 +15,7 @@ use archon_pipeline::review::{self, MAX_NAMED_REVIEWERS, Reviewer, Verdict};
 
 use super::recover;
 use crate::context::DaemonContext;
-use coverage::{Held, History};
+use coverage::{Base, Held, History};
 
 /// Agents named in a refusal: enough to see what the lead delegated to.
 const MAX_LISTED: usize = 6;
@@ -385,12 +385,16 @@ async fn holding(
     shipped: Option<String>,
 ) -> Result<Checked, ArchonError> {
     assert!(!verdicts.is_empty(), "a named reviewer was read");
-    let base_branch = base_branch(ctx, run).await?;
+    let (base_branch, onto_head) = base_of(ctx, run).await?;
     let workspace = run.workspace.clone();
     let checked = tokio::task::spawn_blocking(move || {
         let mut history = History::new(&workspace);
         let read = earlier.as_deref().unwrap_or_default();
-        let placed = coverage::place(&mut history, &base_branch, &verdicts, read)?;
+        let base = Base {
+            branch: &base_branch,
+            onto_head: onto_head.as_deref(),
+        };
+        let placed = coverage::place(&mut history, base, &verdicts, read)?;
         let (head, placed) = match placed {
             Ok(placed) => placed,
             Err(why) => return Ok(Checked::Refused(why)),
@@ -417,13 +421,21 @@ async fn holding(
         .map_err(|e| ArchonError::io("reviewed commits task", std::io::Error::other(e)))?
 }
 
-/// The branch `run` forked from, or empty when its variables name none.
-async fn base_branch(ctx: &DaemonContext, run: &PipelineRun) -> Result<String, ArchonError> {
+/// The branch `run` forked from, empty when its variables name none, and the
+/// frozen head of the pull request its item is queued `onto`.
+async fn base_of(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+) -> Result<(String, Option<String>), ArchonError> {
     let store = ctx.store.lock().await;
+    let onto_head = store.item(&run.item)?.onto.map(|onto| onto.head_sha);
     match recover::load_run_vars(&store, &run.id) {
-        Ok(vars) => Ok(vars.get("base_branch").cloned().unwrap_or_default()),
+        Ok(vars) => Ok((
+            vars.get("base_branch").cloned().unwrap_or_default(),
+            onto_head,
+        )),
         // Without a base only reviews stating no base read the whole change.
-        Err(ArchonError::NotFound(_)) => Ok(String::new()),
+        Err(ArchonError::NotFound(_)) => Ok((String::new(), onto_head)),
         Err(error) => Err(error),
     }
 }

@@ -60,11 +60,21 @@ impl<'a> History<'a> {
     }
 }
 
+/// Where the change under review starts.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Base<'a> {
+    /// The branch the run forked from; empty when its variables name none.
+    pub branch: &'a str,
+    /// The frozen pull request head an `onto` item's branch was forked at: the
+    /// change is what the item added on top of it, not the pull request.
+    pub onto_head: Option<&'a str>,
+}
+
 /// The branch head and each verdict on its commits, `named` first, or why a named one is
-/// not on the branch (an `earlier` one is left out). `base_branch` gives the fork point.
+/// not on the branch (an `earlier` one is left out). `base` gives the fork point.
 pub(super) fn place(
     history: &mut History,
-    base_branch: &str,
+    base: Base,
     named: &[(String, Verdict)],
     earlier: &[(String, Verdict)],
 ) -> Result<Result<(String, Vec<Placed>), String>, ArchonError> {
@@ -72,17 +82,17 @@ pub(super) fn place(
     let Some(head) = worktree::commit_id(dir, "HEAD")? else {
         return Ok(Err("the run's workspace has no commit to review".into()));
     };
-    let fork = fork_point(dir, base_branch, &head)?;
+    let forks = fork_points(dir, base, &head)?;
     let mut placed = Vec::with_capacity(named.len() + earlier.len());
     for (agent, verdict) in named {
-        match place_one(history, &head, fork.as_deref(), agent, verdict)? {
+        match place_one(history, &head, &forks, agent, verdict)? {
             Ok(read) => placed.push(read),
             Err(why) => return Ok(Err(format!("reviewer {agent} {why}"))),
         }
     }
     assert_eq!(placed.len(), named.len(), "every named verdict is placed");
     for (agent, verdict) in earlier {
-        match place_one(history, &head, fork.as_deref(), agent, verdict)? {
+        match place_one(history, &head, &forks, agent, verdict)? {
             Ok(read) => placed.push(Placed {
                 named: false,
                 ..read
@@ -126,10 +136,35 @@ pub(super) fn holds_tree(
     )))
 }
 
-/// Where the run's branch last took in `base_branch`, local or as fetched from
-/// `origin`: after a refresh merged the remote base, the newer of the two. `None`
+/// Where the run's branch last took in `base.branch`, local or as fetched from
+/// `origin`: after a refresh merged the remote base, the newer of the two. Empty
 /// when neither is there, so only a review stating no base reads the whole change.
-fn fork_point(dir: &Path, base_branch: &str, head: &str) -> Result<Option<String>, ArchonError> {
+/// An `onto` item's change starts at its frozen head, which the branch holds; a
+/// newer base a refresh merged is a start too, as both hold the item's change.
+fn fork_points(dir: &Path, base: Base, head: &str) -> Result<Vec<String>, ArchonError> {
+    let forks: Vec<String> = branch_fork(dir, base.branch, head)?.into_iter().collect();
+    let Some(onto) = base.onto_head else {
+        return Ok(forks);
+    };
+    let Some(onto) = worktree::commit_id(dir, onto)? else {
+        return Ok(forks);
+    };
+    if !worktree::is_ancestor(dir, &onto, head)? {
+        return Ok(forks);
+    }
+    // The pull request's fork from its base is behind the frozen head: not a start.
+    let mut starts = Vec::with_capacity(forks.len() + 1);
+    for fork in forks {
+        if !worktree::is_ancestor(dir, &fork, &onto)? {
+            starts.push(fork);
+        }
+    }
+    starts.push(onto);
+    Ok(starts)
+}
+
+/// The newest commit of `base_branch` (local or `origin`'s) that `head` holds.
+fn branch_fork(dir: &Path, base_branch: &str, head: &str) -> Result<Option<String>, ArchonError> {
     if base_branch.is_empty() {
         return Ok(None);
     }
@@ -151,7 +186,7 @@ fn fork_point(dir: &Path, base_branch: &str, head: &str) -> Result<Option<String
 fn place_one(
     history: &mut History,
     head: &str,
-    fork: Option<&str>,
+    forks: &[String],
     agent: &str,
     verdict: &Verdict,
 ) -> Result<Result<Placed, String>, ArchonError> {
@@ -176,7 +211,7 @@ fn place_one(
     if !history.holds(&read, head)? {
         return Ok(Ok(placed(read, None, true)));
     }
-    if fork == Some(read.as_str()) {
+    if forks.contains(&read) {
         return Ok(Err("read the base branch, not the change".into()));
     }
     let Some(base) = &verdict.base else {
@@ -193,10 +228,10 @@ fn place_one(
             short(&base)
         )));
     }
-    let whole = match fork {
-        Some(fork) => history.holds(&base, fork)?,
-        None => false,
-    };
+    let mut whole = false;
+    for fork in forks {
+        whole |= history.holds(&base, fork)?;
+    }
     Ok(Ok(placed(read, (!whole).then_some(base), false)))
 }
 
@@ -851,7 +886,17 @@ mod tests {
         let named = [("agt_r".to_owned(), verdict)];
 
         let mut history = History::new(&repo);
-        let (at, placed) = place(&mut history, "main", &named, &[]).unwrap().unwrap();
+        let (at, placed) = place(
+            &mut history,
+            Base {
+                branch: "main",
+                onto_head: None,
+            },
+            &named,
+            &[],
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(at, head);
         assert_eq!(
             placed[0].base, None,
@@ -859,11 +904,96 @@ mod tests {
         );
 
         git(&repo, &["update-ref", "-d", "refs/remotes/origin/main"]);
-        let (_, placed) = place(&mut history, "main", &named, &[]).unwrap().unwrap();
+        let (_, placed) = place(
+            &mut history,
+            Base {
+                branch: "main",
+                onto_head: None,
+            },
+            &named,
+            &[],
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(
             placed[0].base.as_deref(),
             Some(upstream.as_str()),
             "without the fetched base the same read is only a delta"
         );
+    }
+
+    /// A pull request of two commits on `main`, and a run branch of two commits
+    /// forked at its head: (pull request's first commit, its head, run's first, run's head).
+    fn onto_run(repo: &Path) -> (String, String, String, String) {
+        git(repo, &["init", "-q", "--initial-branch=main"]);
+        commit(repo, "base.txt");
+        git(repo, &["checkout", "-q", "-b", "pr"]);
+        let first = commit(repo, "pr1.txt");
+        let onto = commit(repo, "pr2.txt");
+        git(repo, &["checkout", "-q", "-b", "run"]);
+        let change = commit(repo, "change1.txt");
+        let head = commit(repo, "change2.txt");
+        (first, onto, change, head)
+    }
+
+    /// The base the placed read of `head` from `from` keeps, for a run on `main`.
+    fn kept_base(repo: &Path, onto: Option<&str>, head: &str, from: &str) -> Option<String> {
+        let verdict = Verdict {
+            pass: true,
+            head: head.to_owned(),
+            base: Some(from.to_owned()),
+        };
+        let named = [("agt_r".to_owned(), verdict)];
+        let base = Base {
+            branch: "main",
+            onto_head: onto,
+        };
+        let mut history = History::new(repo);
+        let (_, placed) = place(&mut history, base, &named, &[]).unwrap().unwrap();
+        placed[0].base.clone()
+    }
+
+    #[test]
+    fn an_onto_items_change_starts_at_the_frozen_head_not_the_pull_requests_fork() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().canonicalize().unwrap();
+        let (first, onto, change, head) = onto_run(&repo);
+        let at = Some(onto.as_str());
+
+        assert_eq!(kept_base(&repo, at, &head, &onto), None);
+        assert_eq!(kept_base(&repo, at, &head, &first), None);
+        assert_eq!(
+            kept_base(&repo, at, &head, &change).as_deref(),
+            Some(change.as_str()),
+            "a read from after the frozen head is a delta needing an anchor"
+        );
+    }
+
+    #[test]
+    fn without_onto_a_read_from_the_pull_requests_head_is_only_a_delta() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().canonicalize().unwrap();
+        let (_, onto, _, head) = onto_run(&repo);
+        assert_eq!(
+            kept_base(&repo, None, &head, &onto).as_deref(),
+            Some(onto.as_str())
+        );
+    }
+
+    #[test]
+    fn an_onto_item_that_took_a_newer_base_reads_whole_from_either_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().canonicalize().unwrap();
+        let (_, onto, _, _) = onto_run(&repo);
+        git(&repo, &["checkout", "-q", "main"]);
+        let newer = commit(&repo, "newer.txt");
+        git(&repo, &["checkout", "-q", "run"]);
+        git(&repo, &["merge", "-q", "--no-edit", "main"]);
+        let head = git(&repo, &["rev-parse", "HEAD"]);
+        git(&repo, &["checkout", "-q", "main"]);
+        let at = Some(onto.as_str());
+
+        assert_eq!(kept_base(&repo, at, &head, &onto), None);
+        assert_eq!(kept_base(&repo, at, &head, &newer), None);
     }
 }

@@ -81,7 +81,10 @@ fn is_word_char(c: char) -> bool {
 
 /// True when `needle` occurs in `haystack` starting and ending on word boundaries.
 fn contains_on_word_boundaries(haystack: &str, needle: &str) -> bool {
-    haystack.match_indices(needle).any(|(start, _)| {
+    haystack.char_indices().any(|(start, _)| {
+        if !haystack[start..].starts_with(needle) {
+            return false;
+        }
         let before = haystack[..start].chars().next_back();
         let after = haystack[start + needle.len()..].chars().next();
         let starts_ok = needle.chars().next().is_some_and(|c| !is_word_char(c))
@@ -140,6 +143,7 @@ mod tests {
         assert!(check_quote(message, "status of the").is_ok());
         assert!(check_quote("yes", "yes").is_ok());
         assert!(check_quote(message, "the queue").is_err());
+        assert!(check_quote("cargo go go go", "go go go").is_ok());
     }
 
     #[test]

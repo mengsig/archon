@@ -18,6 +18,7 @@ use super::{emit, instance};
 use crate::cli::{DaemonCommand, DrainArgs};
 use crate::connect::{archon_bin, connect_existing, connect_or_start, connect_running, unexpected};
 use crate::instance::{Instance, create_private_dir, effective_aether};
+use crate::views::fetch_status;
 
 const STOP_WAIT: Duration = Duration::from_secs(10);
 const STOP_POLL: Duration = Duration::from_millis(100);
@@ -41,7 +42,8 @@ pub async fn run(command: DaemonCommand, json: bool) -> anyhow::Result<ExitCode>
         DaemonCommand::Stop {
             aether,
             keep_aether,
-        } => stop(json, aether, keep_aether).await,
+            force,
+        } => stop(json, aether, keep_aether, force).await,
         DaemonCommand::Status => status(json).await,
         DaemonCommand::Restart { drain, keep_aether } => {
             upgrade(upgrade_request(None, None, drain, keep_aether)?, json).await
@@ -232,7 +234,12 @@ fn read_startup_error(stderr: Option<&mut ChildStderr>, bytes: &mut Vec<u8>) -> 
 
 /// Stop archond, then in dedicated mode Archon's own aetherd unless `keep_aether`.
 /// Shared mode owns no aetherd, so `--aether` is refused there before anything stops.
-async fn stop(json: bool, aether: bool, keep_aether: bool) -> anyhow::Result<ExitCode> {
+async fn stop(
+    json: bool,
+    aether: bool,
+    keep_aether: bool,
+    force: bool,
+) -> anyhow::Result<ExitCode> {
     assert!(!(aether && keep_aether), "clap refuses both");
     if aether && Config::load_default()?.aether.mode != AetherMode::Dedicated {
         return Err(archon_core::ArchonError::Invalid(
@@ -242,7 +249,7 @@ async fn stop(json: bool, aether: bool, keep_aether: bool) -> anyhow::Result<Exi
         )
         .into());
     }
-    let (mut value, mut text) = stop_archond().await?;
+    let (mut value, mut text) = stop_archond(force).await?;
     if !keep_aether && owns_aetherd()? {
         let (aether_value, aether_text) = instance::stop_aether().await?;
         value["aether"] = aether_value;
@@ -260,12 +267,14 @@ fn owns_aetherd() -> anyhow::Result<bool> {
     Ok(config.aether.mode == AetherMode::Dedicated)
 }
 
-async fn stop_archond() -> anyhow::Result<(serde_json::Value, String)> {
+async fn stop_archond(force: bool) -> anyhow::Result<(serde_json::Value, String)> {
     let Some(client) = connect_existing().await? else {
         let text = "archond is not running.".to_owned();
         return Ok((serde_json::json!({"stopped": false}), text));
     };
     let pid = client.welcome().pid;
+    let active = fetch_status(&client).await?.active_runs;
+    refuse_stop_with_runs(active, force)?;
     match client.call(Request::Shutdown).await {
         Ok(Ok(_)) => {}
         Ok(Err(refusal)) => return Err(archon_client::refusal_error(refusal).into()),
@@ -277,6 +286,18 @@ async fn stop_archond() -> anyhow::Result<(serde_json::Value, String)> {
     wait_until_gone().await?;
     let value = serde_json::json!({"stopped": true, "pid": pid});
     Ok((value, format!("Stopped archond (pid {pid}).")))
+}
+
+/// Stopping kills the agents of active runs and fails their items, so it needs `--force`.
+fn refuse_stop_with_runs(active_runs: u32, force: bool) -> anyhow::Result<()> {
+    if active_runs == 0 || force {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "{active_runs} run(s) are active, and stopping archond would kill their agents and \
+         fail their items. `archon daemon restart` waits for them to finish; \
+         `archon daemon stop --force` stops anyway."
+    )
 }
 
 async fn wait_until_gone() -> anyhow::Result<()> {
@@ -335,6 +356,8 @@ fn upgrade_request(
 /// Hand `request` to the running archond, which drains and restarts itself
 /// through a detached helper, so this command returns at once.
 async fn upgrade(request: UpgradeRequest, json: bool) -> anyhow::Result<ExitCode> {
+    // archond leaves for good when the new one cannot load the config.
+    Config::load_default().context("not restarting archond: the config does not load")?;
     let client = connect_running().await?;
     let text = match client.call(Request::Upgrade(request)).await? {
         Ok(Reply::UpgradeStarted { text }) => text,
@@ -390,6 +413,14 @@ pub async fn mcp() -> anyhow::Result<ExitCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stop_with_active_runs_needs_force() {
+        let refused = refuse_stop_with_runs(2, false).unwrap_err().to_string();
+        assert!(refused.contains("2 run(s)") && refused.contains("daemon restart"));
+        refuse_stop_with_runs(2, true).unwrap();
+        refuse_stop_with_runs(0, false).unwrap();
+    }
 
     #[tokio::test]
     async fn startup_diagnostics_are_returned_after_child_exit() {

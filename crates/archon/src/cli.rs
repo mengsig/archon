@@ -850,6 +850,10 @@ pub enum DaemonCommand {
         /// Leave Archon's own aetherd running; only archond stops.
         #[arg(long)]
         keep_aether: bool,
+        /// Stop even while runs are active: their agents are killed and the
+        /// items fail. `daemon restart` drains them instead.
+        #[arg(long)]
+        force: bool,
     },
     /// Whether archond is running (exit code 3 when not).
     Status,
@@ -1569,7 +1573,8 @@ mod tests {
                 parse(&["daemon", "stop", flag]),
                 Command::Daemon(DaemonCommand::Stop {
                     aether: true,
-                    keep_aether: false
+                    keep_aether: false,
+                    force: false
                 })
             ));
         }
@@ -1577,15 +1582,21 @@ mod tests {
             parse(&["daemon", "stop"]),
             Command::Daemon(DaemonCommand::Stop {
                 aether: false,
-                keep_aether: false
+                keep_aether: false,
+                force: false
             })
         ));
         assert!(matches!(
             parse(&["daemon", "stop", "--keep-aether"]),
             Command::Daemon(DaemonCommand::Stop {
                 aether: false,
-                keep_aether: true
+                keep_aether: true,
+                force: false
             })
+        ));
+        assert!(matches!(
+            parse(&["daemon", "stop", "--force"]),
+            Command::Daemon(DaemonCommand::Stop { force: true, .. })
         ));
         let both = ["archon", "daemon", "stop", "--aether", "--keep-aether"];
         assert!(Cli::try_parse_from(both).is_err());

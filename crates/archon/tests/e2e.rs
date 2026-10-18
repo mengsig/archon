@@ -43,6 +43,31 @@ fn daemon_serves_the_cli_while_aether_is_down() {
     stop_daemon(&env, daemon);
 }
 
+#[test]
+fn restart_with_an_invalid_config_is_refused_and_archond_keeps_running() {
+    let env = Env::new();
+    let daemon = start_daemon(&env);
+    let config = env.path("config").join("config.toml");
+    let valid = std::fs::read_to_string(&config).unwrap();
+    std::fs::write(&config, format!("{valid}bogus_key = 1\n")).unwrap();
+
+    let restart = env.command(&["daemon", "restart"]).output().unwrap();
+    let stderr = String::from_utf8_lossy(&restart.stderr);
+    assert!(!restart.status.success(), "{restart:?}");
+    assert!(stderr.contains("bogus_key"), "{stderr}");
+    assert!(
+        env.command(&["daemon", "status"])
+            .output()
+            .unwrap()
+            .status
+            .success(),
+        "archond stopped after a refused restart"
+    );
+
+    std::fs::write(&config, valid).unwrap();
+    stop_daemon(&env, daemon);
+}
+
 /// A running `archon chat` with piped stdin, its stdout collected.
 struct Chat {
     child: Child,

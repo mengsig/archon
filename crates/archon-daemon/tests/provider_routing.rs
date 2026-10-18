@@ -330,14 +330,17 @@ fn minute(at: Timestamp) -> String {
 #[tokio::test]
 async fn with_every_provider_out_an_item_waits_for_the_earliest_reset_then_starts() {
     let h = harness(weighted(&[("claude-code", 7), ("codex", 3)])).await;
-    let codex_reset = archon_core::now() + TimeDelta::minutes(40);
+    let codex = window(0, TimeDelta::minutes(40));
+    let codex_reset = codex.windows[0]
+        .resets_at
+        .expect("the fixture names its reset");
     // Claude keeps 10%, under the orchestrator's 15% reserve; Codex is spent.
     read(
         &h,
         TimeDelta::zero(),
         vec![
             ("claude-code", window(10, TimeDelta::hours(2))),
-            ("codex", window(0, TimeDelta::minutes(40))),
+            ("codex", codex),
         ],
     );
     let item = enqueue(&h, ROUTED, "held", tier_plan()).await;
@@ -488,13 +491,16 @@ async fn a_running_item_s_next_stages_wait_while_every_provider_is_out_then_star
     let item = enqueue(&h, ROUTED, "waits", tier_plan()).await;
     h.dispatch().await;
     assert_eq!(h.stages(&item.id).await.len(), 1, "the implementer runs");
-    let codex_reset = archon_core::now() + TimeDelta::hours(1);
+    let codex = window(0, TimeDelta::hours(1));
+    let codex_reset = codex.windows[0]
+        .resets_at
+        .expect("the fixture names its reset");
     read(
         &h,
         TimeDelta::zero(),
         vec![
             ("claude-code", window(10, TimeDelta::hours(3))),
-            ("codex", window(0, TimeDelta::hours(1))),
+            ("codex", codex),
         ],
     );
     h.settle_running(|_| completed("implemented")).await;

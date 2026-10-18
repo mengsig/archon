@@ -48,10 +48,13 @@ const HOOK_EVENTS: [&str; 19] = [
     "push-to-checkout",
 ];
 /// Settings naming a program, forced off for every git the daemon runs.
-const NO_PROGRAM: [&str; 3] = [
+const NO_PROGRAM: [&str; 6] = [
     "core.hooksPath=/dev/null",
     "core.fsmonitor=false",
     "log.showSignature=false",
+    "commit.gpgSign=false",
+    "tag.gpgSign=false",
+    "gpg.program=/bin/false",
 ];
 /// Forced over every config file a [`DaemonGit`] reads, besides [`no_programs`].
 const FORCED: [&str; 21] = [

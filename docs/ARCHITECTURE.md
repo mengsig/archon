@@ -3456,8 +3456,9 @@ a tag or another ref counts as a branch not the role's. Roles fork from
 `refs/heads/<run branch>`, never from a tag of that name.
 
 Every git the daemon runs has
-`core.fsmonitor=false`, `core.hooksPath=/dev/null` and every
-`hook.<event>.enabled=false` (§13.4): `worktree add`, `switch`,
+`core.fsmonitor=false`, `core.hooksPath=/dev/null`, no signing
+(`commit.gpgSign=false`, `tag.gpgSign=false`, `gpg.program=/bin/false`) and
+every `hook.<event>.enabled=false` (§13.4): `worktree add`, `switch`,
 `update-ref`, the `--quit`s and the daemon's commits and merges run no
 repository hook, which a role could have committed where `core.hooksPath`
 looks. A team's merges and status still read the repository's config, so
@@ -3785,7 +3786,8 @@ often its local `origin`; git runs programs those name. Every git command
 - `-c` settings outrank every config file: `core.hooksPath=/dev/null`,
   `hook.<event>.enabled=false` for every event (recent git also runs hooks
   named in config), `core.fsmonitor=false`, `core.attributesFile=/dev/null`,
-  no signing or signature check, no auto gc, no submodule recursion, and
+  no signing or signature check (`gpg.program=/bin/false`, so no program a
+  repository configured signs for the daemon), no auto gc, no submodule recursion, and
   every transport but `file` refused.
 - A command is killed with all it started after 120 s, a fetch or push
   after 180 s, and fails as unavailable.

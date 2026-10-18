@@ -840,6 +840,37 @@ fn no_repository_hook_runs_in_the_daemon_s_git() {
     assert_eq!(ran, None, "hooks ran as the daemon");
 }
 
+/// A repository that signs commits with a `gpg.program` of its own does
+/// not make the daemon's team merge or leftover commit fail or run it.
+#[test]
+fn a_repository_s_signing_configuration_is_not_used_by_the_daemon_s_git() {
+    let f = fixture();
+    let (run, _) = team_run(&f);
+    let (api, api_branch) = worker(&f, &run, "api", 1);
+    commit_file(&api, "api.txt", "api\n");
+    std::fs::write(api.join("pre.txt"), "pre\n").expect("write");
+    let marker = f._dir.path().join("gpg.ran");
+    let program = f._dir.path().join("fake-gpg");
+    let script = format!("#!/bin/sh\necho ran >> '{}'\nexit 1\n", marker.display());
+    archon_core::testing::write_script(&program, &script);
+    git(&f.repo, &["config", "commit.gpgSign", "true"]);
+    git(
+        &f.repo,
+        &["config", "gpg.program", program.to_str().expect("UTF-8")],
+    );
+
+    let one = plan(&run, &[("api", &api_branch)]);
+    let merged_from = head(&run.path);
+    assert_eq!(merge(&f, &run, &one).expect("merge"), MergeOutcome::Merged);
+    assert_ne!(head(&run.path), merged_from, "the merge commit was made");
+    assert!(run.path.join("pre.txt").exists(), "the leftover was merged");
+    std::fs::write(api.join("more.txt"), "more\n").expect("write");
+    let next = worker_branch(&run.branch, &run_id(), "api", 2);
+    let saved = ensure_worker(&f.repo, &run.path, &api, &next, &run.branch).expect("moves on");
+    assert_eq!(committed(saved).files, ["more.txt"]);
+    assert!(!marker.exists(), "the repository's gpg.program ran");
+}
+
 /// A worker directory that is not a worktree, inside some other work
 /// tree: nothing is committed in the enclosing one.
 #[test]

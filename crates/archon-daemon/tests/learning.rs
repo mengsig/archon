@@ -713,3 +713,22 @@ async fn ordinary_operator_chat_is_not_a_correction_but_structured_feedback_is()
     assert_eq!(events[0].item, item.id);
     assert_eq!(events[0].stage, stage.stage_id);
 }
+
+#[tokio::test]
+async fn stats_survive_the_removal_of_a_repository_with_runs() {
+    let h = Harness::new().await;
+    samples(&h, "codex/cheap", 0.2, 2).await;
+    {
+        let mut store = h.ctx.store.lock().await;
+        let repo = store.repos().unwrap().remove(0);
+        store.remove_repo(&repo.id).unwrap();
+    }
+    let Reply::LessonStats(stats) = h.cli(Request::LessonStats { repo: None }).await.unwrap()
+    else {
+        panic!("stats");
+    };
+    assert_eq!(stats.outcomes, 2);
+    assert_eq!(stats.pipelines.len(), 1);
+    assert!(stats.repo_names.is_empty(), "the repository is gone");
+    assert_eq!(stats.pipelines[0].estimated_saving_usd, None);
+}

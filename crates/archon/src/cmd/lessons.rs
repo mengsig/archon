@@ -237,13 +237,17 @@ fn lesson_lines(lessons: &[archon_core::lesson::Lesson]) -> String {
     lessons.iter().map(line).collect::<Vec<_>>().join("\n")
 }
 
-fn repo_name<'a>(
-    stats: &'a archon_core::lesson::LessonStats,
-    repo: Option<&'a archon_core::id::RepoId>,
-) -> &'a str {
-    repo.map_or("global", |id| {
-        stats.repo_names.get(id).map_or(id.as_str(), String::as_str)
-    })
+fn repo_name(
+    stats: &archon_core::lesson::LessonStats,
+    repo: Option<&archon_core::id::RepoId>,
+) -> String {
+    let Some(id) = repo else {
+        return "global".to_owned();
+    };
+    match stats.repo_names.get(id) {
+        Some(name) => name.clone(),
+        None => format!("{id} (removed repository)"),
+    }
 }
 
 async fn send(request: Request) -> anyhow::Result<Reply> {

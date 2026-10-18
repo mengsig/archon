@@ -106,11 +106,12 @@ pub(super) async fn stats(
     let store = ctx.store.lock().await;
     let repo = repo.map(|r| store.repo(r)).transpose()?;
     let mut stats = store.learning_stats(repo.as_ref().map(|r| &r.id))?;
-    for pipeline in stats
-        .pipelines
-        .iter_mut()
-        .filter(|_| ctx.config.learning.enabled)
-    {
+    let live_repos = stats.repo_names.clone();
+    // Runs of a removed repository stay in the counts but get no routing advice.
+    let advisable = |p: &archon_core::lesson::PipelineEvidence| {
+        ctx.config.learning.enabled && p.repo.as_ref().is_none_or(|id| live_repos.contains_key(id))
+    };
+    for pipeline in stats.pipelines.iter_mut().filter(|p| advisable(p)) {
         let repo = pipeline
             .repo
             .as_ref()

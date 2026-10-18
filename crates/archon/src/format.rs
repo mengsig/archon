@@ -40,7 +40,10 @@ pub fn repo_names(repos: &[Repo]) -> RepoNames {
 fn repo_label(names: &RepoNames, id: Option<&RepoId>) -> String {
     match id {
         None => "-".to_owned(),
-        Some(id) => names.get(id).cloned().unwrap_or_else(|| id.to_string()),
+        Some(id) => names
+            .get(id)
+            .cloned()
+            .unwrap_or_else(|| format!("{id} (removed repository)")),
     }
 }
 
@@ -818,6 +821,14 @@ pub(crate) mod tests {
     use archon_core::protocol::GcStatus;
 
     use super::*;
+
+    #[test]
+    fn a_removed_repository_is_labelled_not_left_as_a_bare_id() {
+        let id = RepoId::new();
+        let label = repo_label(&RepoNames::new(), Some(&id));
+        assert_eq!(label, format!("{id} (removed repository)"));
+        assert_eq!(repo_label(&RepoNames::new(), None), "-");
+    }
 
     pub(crate) fn status_with(aether: AetherLinkStatus) -> DaemonStatus {
         DaemonStatus {

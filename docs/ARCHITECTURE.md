@@ -1699,8 +1699,8 @@ The orchestrator is not counted, and neither are the agents it delegates to
 | `budget_usd_total` | Lifetime spend recorded in this store. | unlimited |
 | `budgets_enabled` | Master switch for every dollar budget (default `true`). | n/a |
 
-**Turning budgets off.** `[limits] budgets_enabled = false` (or at runtime
-`archon queue caps --budgets off`, until archond restarts) stops enforcing
+**Turning budgets off.** `[limits] budgets_enabled = false` (or
+`archon queue caps --budgets off`, saved across daemon restarts) stops enforcing
 every dollar budget at once; the default is unchanged. Off means: an item's own
 or default `budget_usd` is never checked, so neither "budget used up" nor
 "cannot enforce the item's dollar budget" (usage without a dollar cost) fails a
@@ -1713,7 +1713,12 @@ an Aether `cost_budget` keep it until they end, and `steer_item` can still
 move it. `enqueue`, `update_item` and
 `steer_item` still accept `budget_usd`; the reply is `ItemBudgetsOff` (protocol
 9) and says the budget is stored but not enforced. `archon status` and
-`queue_status` show `budgets: off`.
+`queue_status` show `budgets: off`. The CLI also warns that this persists and
+names `archon queue caps --budgets on` to re-enable enforcement.
+
+`archon queue caps` saves its changes in the global settings overlay (§18.2).
+They survive daemon restarts and override `[limits]` until changed again or
+`archon settings --reset` clears all global overrides.
 
 ### 7.3 Dispatch (`archon_queue::plan_dispatch`)
 

@@ -41,7 +41,7 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 # prefer_other_provider = true
 
 # [limits]
-# max_parallel_agents = 8   # the hard cap on running stage agents
+# max_parallel_agents = 8   # running stage agents; 0 = unlimited
 # budgets_enabled = true    # false: no dollar budget is enforced (spend still recorded)
 # budget_usd_daily = 50.0   # 0 = no daily budget
 # min_free_gb = 10          # nothing new starts below this much free disk

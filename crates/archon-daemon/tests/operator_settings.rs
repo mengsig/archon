@@ -60,6 +60,7 @@ async fn settings_and_set_caps_survive_a_restart_until_reset() {
     set(&h, None, global.clone()).await.unwrap();
     let caps = Caps {
         max_parallel_agents: 3,
+        budgets_enabled: false,
         ..Caps::default()
     };
     h.cli(Request::SetCaps { caps }).await.unwrap();
@@ -84,6 +85,8 @@ async fn settings_and_set_caps_survive_a_restart_until_reset() {
         panic!("status");
     };
     assert_eq!(status.caps.max_parallel_agents, 3);
+    assert!(!status.caps.budgets_enabled);
+    assert_eq!(after.scoped.budgets_enabled, Some(false));
     assert_eq!(status.autonomy.ceiling.merge, MergeMode::Auto);
 
     h.cli(Request::ResetSettings { repo: None }).await.unwrap();

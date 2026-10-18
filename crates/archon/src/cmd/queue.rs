@@ -170,7 +170,7 @@ async fn caps(
     let text = format!(
         "{}caps: {}\nbudgets: {}",
         if changed {
-            "Until archond restarts:\n"
+            "Saved across daemon restarts (archon settings --reset clears all global overrides):\n"
         } else {
             ""
         },
@@ -188,12 +188,6 @@ fn apply_caps(
     total: Option<f64>,
     budgets: Option<Budgets>,
 ) -> anyhow::Result<()> {
-    if agents == Some(0) {
-        return Err(archon_core::ArchonError::Invalid(
-            "--max-parallel-agents must be at least 1".into(),
-        )
-        .into());
-    }
     for (flag, amount) in [("--budget-daily", daily), ("--budget-total", total)] {
         if let Some(amount) = amount
             && !(amount.is_finite() && amount >= 0.0)
@@ -233,14 +227,15 @@ mod tests {
         apply_caps(&mut caps, Some(5), None, Some(12.5), None, None).unwrap();
         assert_eq!((caps.max_parallel_agents, caps.max_per_repo), (5, 0));
         assert_eq!((caps.budget_usd_daily, caps.budget_usd_total), (12.5, 50.0));
-        assert!(apply_caps(&mut caps, Some(0), None, None, None, None).is_err());
+        apply_caps(&mut caps, Some(0), None, None, None, None).unwrap();
+        assert_eq!(caps.max_parallel_agents, 0, "0 is unlimited");
         assert!(apply_caps(&mut caps, None, None, Some(f64::NAN), None, None).is_err());
         assert!(apply_caps(&mut caps, None, None, Some(-1.0), None, None).is_err());
         assert!(apply_caps(&mut caps, None, None, None, Some(f64::INFINITY), None).is_err());
         apply_caps(&mut caps, None, None, None, Some(75.0), None).unwrap();
         assert_eq!(caps.budget_usd_total, 75.0);
         assert_eq!(
-            caps.max_parallel_agents, 5,
+            caps.max_parallel_agents, 0,
             "a refused change changes nothing"
         );
     }

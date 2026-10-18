@@ -811,8 +811,8 @@ Aether disconnection, which stops dispatch.
 
 `archon queue caps --budget-daily <usd>` and `--budget-total <usd>` raise
 saved budgets until the global settings overlay is reset (0 removes the limit);
-`--budgets off` stops enforcing every dollar budget until then (set
-`budgets_enabled = false` under `[limits]` to make it permanent), and
+`--budgets off` stops enforcing every dollar budget until changed or reset,
+including across daemon restarts, and
 `--budgets on` enforces them again. Spend is recorded either way. Daily budgets
 reset at local midnight. Capacity suggestions inspect running work, or raise
 a limiting cap when a team can never fit. Disk reasons use the dispatcher's

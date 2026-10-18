@@ -152,7 +152,7 @@ pub enum Command {
     /// Register and configure repositories.
     #[command(subcommand)]
     Repo(RepoCommand),
-    /// Inspect and change queue items and runtime caps.
+    /// Inspect and change queue items and saved caps.
     #[command(subcommand)]
     Queue(QueueCommand),
     /// Coordinated requests across repositories.
@@ -641,10 +641,10 @@ pub enum QueueCommand {
         after_help = "Examples:\n  archon queue steer qi_… --note 'Use the v2 client'\n  archon queue steer qi_… --stage implement --model claude-code/claude-opus-5-5 --effort high\n  archon queue steer qi_… --abort --goto implement\n  archon queue steer qi_… --insert verify --from refactor --after implement"
     )]
     Steer(Box<QueueSteerArgs>),
-    /// Show the runtime caps, or change them until archond restarts (the
-    /// config's `[limits]` apply again then).
+    /// Show or change saved global caps. Changes survive daemon restarts;
+    /// `archon settings --reset` clears the global overlay (all overrides).
     Caps {
-        /// Stage agents running at once across all repositories; at least 1.
+        /// Stage agents running at once across all repositories; 0 means no limit.
         #[arg(long)]
         max_parallel_agents: Option<u32>,
         /// Stage agents running at once per repository; 0 means no limit.

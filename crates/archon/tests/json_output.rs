@@ -391,10 +391,6 @@ fn caller_errors_have_typed_json_categories() {
     let daemon = start_daemon(&env);
     let cases: &[(&[&str], &str)] = &[
         (
-            &["queue", "caps", "--max-parallel-agents", "0"],
-            "invalid_argument",
-        ),
-        (
             &["queue", "caps", "--budget-daily", "NaN"],
             "invalid_argument",
         ),

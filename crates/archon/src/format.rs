@@ -313,7 +313,7 @@ pub fn caps_line(caps: &Caps) -> String {
 
 pub fn budgets_line(caps: &Caps) -> String {
     if !caps.budgets_enabled {
-        return "off (no dollar budget is enforced; spend is still recorded)".to_owned();
+        return "off (no dollar budget is enforced; spend is still recorded); saved across restarts, use archon queue caps --budgets on to re-enable".to_owned();
     }
     format!(
         "{} per item, {} daily, {} total",
@@ -1032,6 +1032,8 @@ pub(crate) mod tests {
         up.caps.budgets_enabled = false;
         let text = status(&up, &RepoNames::new());
         assert!(text.contains("\nbudgets: off (no dollar budget"), "{text}");
+        assert!(text.contains("saved across restarts"), "{text}");
+        assert!(text.contains("archon queue caps --budgets on"), "{text}");
     }
 
     #[test]

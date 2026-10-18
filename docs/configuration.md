@@ -75,7 +75,7 @@ max_effort = "high"
 # interactive_providers = ["claude-code"]   # providers someone uses by hand; global only
 
 [limits]
-max_parallel_agents = 8        # the hard cap on running stage agents (the default)
+max_parallel_agents = 8        # running stage agents (default 8); 0 = unlimited
 max_per_repo = 2
 budget_usd_daily = 50.0
 # budgets_enabled = false      # no dollar budget is enforced at all; spend is still recorded
@@ -514,8 +514,8 @@ keep from a directory that was set aside. The rules in full are in
 If the disk still fills:
 
 - Run fewer agents at once: lower `[limits] max_parallel_agents` (8 by
-  default) or `max_per_repo`, or until the next restart
-  `archon queue caps --max-parallel-agents 2`.
+  default) or `max_per_repo`, or save an override with
+  `archon queue caps --max-parallel-agents 2` (survives daemon restarts).
 - Shorten `cache_after`, for example to `"15m"`, so finished items give
   their build directories back sooner.
 - Make each build directory smaller. In a Rust project, start with the
@@ -547,7 +547,7 @@ Replace `codex/your-available-model` in both examples with an entry from
 Account access and the installed engine determine model availability.
 Config is loaded when archond starts; restart it after edits when it is safe
 to interrupt your work. `archon queue caps` changes saved operator caps without a
-restart; these overrides last only until the daemon restarts.
+restart; these overrides survive daemon restarts until changed or reset.
 
 
 ## Saved operator settings

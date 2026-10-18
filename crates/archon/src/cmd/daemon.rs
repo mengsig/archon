@@ -289,6 +289,7 @@ async fn stop_archond(force: bool) -> anyhow::Result<(serde_json::Value, String)
 }
 
 /// Stopping kills the agents of active runs and fails their items, so it needs `--force`.
+/// A guard on one status snapshot: a run dispatched after it is not covered.
 fn refuse_stop_with_runs(active_runs: u32, force: bool) -> anyhow::Result<()> {
     if active_runs == 0 || force {
         return Ok(());

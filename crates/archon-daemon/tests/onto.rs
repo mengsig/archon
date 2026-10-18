@@ -9,11 +9,12 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use archon_core::error::ArchonError;
+use archon_core::model::{Effort, ModelPlan};
 use archon_core::protocol::{EnqueueRequest, ItemPatch, Reply, RepoRef, Request};
 use archon_core::pull_request::{OntoPullRequest, OntoTarget, PullRequestRef};
 use archon_core::queue::{QueueItem, QueueState};
-use common::delivery::{add_origin, origin_of, pushed, shipped_by};
-use common::{Harness, PIPELINE, REPO_NAME, git, plan};
+use common::delivery::{add_origin, origin_of, pass_by, pushed, shipped_by, verdict_on};
+use common::{Harness, MODEL, PIPELINE, REPO_NAME, REVIEW_MODEL, choice, git, plan};
 use serde_json::{Value, json};
 
 /// `pr view <number|url>` shows `pr-<number>.json`, its head the commit
@@ -486,6 +487,79 @@ async fn an_onto_item_fast_forwards_the_pull_request_and_leaves_its_text_alone()
     }
     let stages = h.stages(&item.id).await;
     assert_eq!(archon_core::run::pr_url(stages.iter()), Some(url));
+}
+
+/// An `adaptive` item onto #100 whose lead is running, and the frozen head.
+async fn adaptive_onto(h: &Harness, head: &str) -> (QueueItem, archon_core::run::StageRun) {
+    let mut asked = request("reviewed onto 100", Some(OntoTarget::Pr(100)), &[]);
+    asked.pipeline = Some("adaptive".into());
+    let build = vec![choice(MODEL, Effort::Medium)];
+    asked.model_plan = ModelPlan([("build".to_owned(), build)].into()).into();
+    let Reply::Item(item) = h.cli(Request::Enqueue(asked)).await.unwrap() else {
+        panic!("enqueue replied no item");
+    };
+    h.dispatch().await;
+    let lead = h.running().await.remove(0);
+    let workspace = h.run(&item.id).await.workspace;
+    assert_eq!(
+        head_of(&workspace),
+        head,
+        "the branch starts at the frozen head"
+    );
+    (item, lead)
+}
+
+/// The review gate reads an onto item's change from the frozen head: a
+/// reviewer whose diff starts there read all of it, not part of the pull request's.
+#[tokio::test]
+async fn a_reviewer_reading_from_the_frozen_head_read_the_whole_onto_change() {
+    let (h, gh, head) = setup().await;
+    gh.show(100, &head, json!({}));
+    gh.follow_origin(&origin_of(&h));
+    let (item, lead) = adaptive_onto(&h, &head).await;
+    let reviewer = h
+        .backend
+        .delegate(lead.aether_agent.as_ref().unwrap(), REVIEW_MODEL);
+    let built = shipped_by(&h, &lead, "Built", pass_by(std::slice::from_ref(&reviewer))).await;
+    let mut verdict = verdict_on(&built, "pass");
+    verdict["base"] = head.clone().into();
+    h.backend.complete_delegated(&reviewer, verdict);
+    h.settle_running(|_| built.clone()).await;
+    h.dispatch().await;
+
+    let state = h.state(&item.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+}
+
+/// A reviewer who read only from a commit after the frozen head still needs an anchor.
+#[tokio::test]
+async fn a_reviewer_reading_from_after_the_frozen_head_still_needs_an_anchor() {
+    let (h, gh, head) = setup().await;
+    gh.show(100, &head, json!({}));
+    gh.follow_origin(&origin_of(&h));
+    let (item, lead) = adaptive_onto(&h, &head).await;
+    let reviewer = h
+        .backend
+        .delegate(lead.aether_agent.as_ref().unwrap(), REVIEW_MODEL);
+    let first = shipped_by(&h, &lead, "Built", json!({})).await;
+    let first_head = verdict_on(&first, "pass")["head"].clone();
+    let built = shipped_by(
+        &h,
+        &lead,
+        "Built, then fixed",
+        pass_by(std::slice::from_ref(&reviewer)),
+    )
+    .await;
+    let mut verdict = verdict_on(&built, "pass");
+    verdict["base"] = first_head;
+    h.backend.complete_delegated(&reviewer, verdict);
+    h.settle_running(|_| built.clone()).await;
+    h.dispatch().await;
+
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!("the review is refused: {:?}", h.state(&item.id).await);
+    };
+    assert!(error.contains("read only from"), "{error}");
 }
 
 #[tokio::test]

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+An item queued `onto` a pull request now counts a review that read from the
+pull request's frozen head as a review of the whole change. The review gate
+used to start the change at the pull request's fork from its base, so such a
+review failed as "read only from" an unanchored commit.
+
 ## 1.3.1
 
 Released 2026-10-18.

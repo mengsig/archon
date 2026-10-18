@@ -373,7 +373,7 @@ fn strict_pipeline_counts_loops_per_gate_and_cycles_reviewer_choices() {
     assert!(
         spawn_plans(&back)[0]
             .prompt
-            .contains("timed out after 90 minutes")
+            .contains("timed out after 0 minutes")
     );
     sim.settle("implement", 0, Agent::Done("v3"));
     let reviews = sim.settle("test", 0, Agent::Pass);

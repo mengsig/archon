@@ -789,6 +789,47 @@ async fn a_week_long_timeout_gives_the_agent_a_week_long_deadline() {
     assert_eq!(requests[0].deadline, Some(stage.started_at + week));
 }
 
+/// An item's `stage_timeouts` set after a first run reach the agent's
+/// deadline when `retry_item` starts the next one.
+#[tokio::test]
+async fn an_item_timeout_set_before_a_retry_is_the_retried_agents_deadline() {
+    use archon_core::protocol::ItemPatch;
+
+    let h = Harness::new().await;
+    let item = h.enqueue("slow change").await;
+    h.dispatch().await;
+    h.cli(Request::CancelItem {
+        item: item.id.clone(),
+        reason: None,
+    })
+    .await
+    .expect("cancel");
+    h.cli(Request::UpdateItem {
+        item: item.id.clone(),
+        patch: ItemPatch {
+            stage_timeouts: [("implement".to_owned(), 150)].into(),
+            ..Default::default()
+        },
+    })
+    .await
+    .expect("update");
+    h.cli(Request::RetryItem {
+        item: item.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        fresh: false,
+        brief_append: None,
+    })
+    .await
+    .expect("retry");
+    h.dispatch().await;
+
+    let stage = h.running().await.remove(0);
+    let retried = h.backend.requests().pop().expect("the retried spawn");
+    let wanted = stage.started_at + chrono::Duration::minutes(150);
+    assert_eq!(retried.deadline, Some(wanted));
+}
+
 /// Aether's `agent.failed` for `stage`'s agent, stamped `at`.
 fn agent_failed(stage: &StageRun, at: Timestamp, error: &str) -> AetherEvent {
     AetherEvent {

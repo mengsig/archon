@@ -206,10 +206,7 @@ fn member_report(stage: &StageSpec, member: &StageRun) -> String {
             format!("{label}: verdict {verdict}**\n\n{summary}\n{findings}")
         }
         StageState::Failed { error } => format!("{label}: failed**\n\n{}\n", error.trim()),
-        StageState::TimedOut => format!(
-            "{label}: timed out after {} minutes**\n",
-            stage.timeout_minutes
-        ),
+        StageState::TimedOut => format!("{label}: timed out after {}**\n", ran_for(member)),
         StageState::Cancelled if summary.is_empty() => {
             format!("{label}: cancelled before it finished**\n")
         }
@@ -217,6 +214,15 @@ fn member_report(stage: &StageSpec, member: &StageRun) -> String {
         StageState::Spawning | StageState::Running => {
             unreachable!("evaluate() asserts every member is terminal")
         }
+    }
+}
+
+/// How long the member ran, from its own record: the deadline it had may be
+/// an item's override, not the pipeline's `timeout_minutes`.
+fn ran_for(member: &StageRun) -> String {
+    match member.finished_at {
+        Some(end) => format!("{} minutes", (end - member.started_at).num_minutes()),
+        None => "its deadline".to_owned(),
     }
 }
 
@@ -290,5 +296,20 @@ mod tests {
         assert!(text.contains("  loop\n  ends early"), "{text}");
         assert!(text.contains("- [-] nit"), "{text}");
         assert_eq!(findings_text(None), "");
+    }
+
+    #[test]
+    fn timed_out_report_names_the_time_the_stage_ran_not_the_pipeline_default() {
+        let member: StageRun = serde_json::from_value(serde_json::json!({
+            "id": "stg_01M58B56K8HTQT169S0FYFQWDP",
+            "run": "prun_01M58B56J7J5HAT01706PQRAVW",
+            "stage_id": "implement", "kind": "work", "attempt": 1, "fan_index": 0,
+            "choice": {"model": {"provider": "claude-code", "model": "claude-sonnet-5-5"}, "effort": "medium"},
+            "infrastructure_failure": false, "host_context": "full",
+            "state": {"state": "timed_out"}, "cost_usd": 0.0,
+            "started_at": "2026-10-18T20:27:24Z", "finished_at": "2026-10-18T22:57:24Z"
+        }))
+        .unwrap();
+        assert_eq!(ran_for(&member), "150 minutes");
     }
 }

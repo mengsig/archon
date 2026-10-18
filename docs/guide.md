@@ -946,7 +946,9 @@ At ship, `archond` pushes the reviewed commit onto the pull request's head
 branch by fast-forward only, one item per pull request at a time, and the
 item succeeds once GitHub shows that commit as the head: its summary ends
 `SHIPPED: updated #100 to <sha> (<url>)`. The pull request's title, body and
-base stay as its owner left them, and nothing is merged. When the head moved
+base stay as its owner left them, and nothing is merged: `archon merge`, `/merge`,
+`request_merge` and `merge=auto` all refuse such an item and name the pull request to
+merge by hand. When the head moved
 since enqueue (someone else pushed), delivery fails naming both commits
 instead of force-pushing; queue the work again `onto` it to start from the
 new head. The push goes only to the repository holding that head: an

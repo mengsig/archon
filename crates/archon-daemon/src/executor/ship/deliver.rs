@@ -225,7 +225,9 @@ async fn fresh(
     let owes_merge = claimed.vars.get("ship.auto_merge").map(String::as_str) == Some("true")
         && claimed.onto.is_none();
     if let ShipOutcome::Shipped {
-        pr_url: Some(url), ..
+        pr_url: Some(url),
+        commit,
+        ..
     } = &outcome
     {
         let repo = claimed
@@ -234,7 +236,7 @@ async fn fresh(
             .expect("a pull request is of a registered repository");
         pr_checks::owe(&mut store, &run.id, &run.item, &repo.id, url)?;
         if owes_merge {
-            auto_merge::owe(&mut store, &run.id, &run.item, &repo.id, url)?;
+            auto_merge::owe(&mut store, &run.id, &run.item, &repo.id, url, commit)?;
             ctx.coordination.changed.notify_one();
         }
     }

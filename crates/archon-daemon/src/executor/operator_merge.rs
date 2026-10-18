@@ -89,6 +89,13 @@ fn shipped(store: &Store, id: &QueueItemId) -> Result<Shipped, ArchonError> {
         return Err(ArchonError::Invalid(format!("{id} has no repository")));
     };
     let repo = store.repo(&crate::resolve::repo_ref(repo))?;
+    if let Some(onto) = &item.onto {
+        return Err(ArchonError::Invalid(format!(
+            "{id} was delivered onto {}, which belongs to its owner and holds commits Archon \
+             never reviewed: Archon delivers into it but never merges it; merge it by hand",
+            onto.pr.url()
+        )));
+    }
     let Some((pr_url, head)) = delivered(&store.stage_runs(&run)?) else {
         return Err(ArchonError::Invalid(format!(
             "run {run} of {id} delivered no pull request: its repository ships `local`, or \

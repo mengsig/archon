@@ -31,6 +31,9 @@ pub(super) struct Owed {
     pub item: QueueItemId,
     pub repo: RepoId,
     pub url: String,
+    /// The delivered commit the auto-merge is pinned to; absent in older records.
+    #[serde(default)]
+    pub commit: Option<String>,
     /// Failed tries so far.
     pub tries: u32,
     /// The next try waits for this.
@@ -48,12 +51,15 @@ pub(super) fn owe(
     item: &QueueItemId,
     repo: &RepoId,
     url: &str,
+    commit: &str,
 ) -> Result<(), ArchonError> {
     assert!(url.starts_with("https://"), "a pull request GitHub listed");
+    assert!(!commit.is_empty(), "the delivered commit pins the merge");
     let owed = Owed {
         item: item.clone(),
         repo: repo.clone(),
         url: url.to_owned(),
+        commit: Some(commit.to_owned()),
         tries: 0,
         next_at: archon_core::now(),
     };
@@ -110,7 +116,15 @@ async fn pay_one(
         Err(error) => return Err(error),
     };
     let tried = match &repo {
-        Some(repo) => remote::auto_merge(&ctx.config.github.binary, repo, &owed.url, None).await,
+        Some(repo) => {
+            remote::auto_merge(
+                &ctx.config.github.binary,
+                repo,
+                &owed.url,
+                owed.commit.as_deref(),
+            )
+            .await
+        }
         None => Err(MergeRefusal::Never(
             "its repository is no longer registered".into(),
         )),

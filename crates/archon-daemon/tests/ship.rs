@@ -989,7 +989,8 @@ async fn auto_merge_is_owed_until_github_takes_it_and_its_refusal_fails_nothing(
     let owed_key = format!("ship_automerge:{}", run.id);
     assert!(h.kv(&owed_key).await.is_some(), "delivered is not merged");
     executor::coordination::reconcile(&h.ctx).await.unwrap();
-    let merge = format!("pr merge {PR_ONE} --auto --squash");
+    let head = git(&h.repo, &["rev-parse", &run.branch]);
+    let merge = format!("pr merge {PR_ONE} --auto --squash --match-head-commit {head}");
     let tries = |gh: &FakeGh| gh.calls().iter().filter(|c| **c == merge).count();
     assert_eq!(tries(&gh), 1, "{:?}", gh.calls());
     let owed: Value = serde_json::from_str(&h.kv(&owed_key).await.unwrap()).unwrap();

@@ -538,3 +538,60 @@ async fn a_delivered_onto_item_is_neither_stacked_on_nor_refreshed() {
     assert!(error.contains(&advice), "{error}");
     assert!(error.contains("https://github.com/o/r/pull/100"), "{error}");
 }
+
+/// A pull request an `onto` item delivered into belongs to its owner and
+/// holds commits Archon never reviewed: no route merges it or turns on its
+/// auto-merge, and the refusal names it.
+#[tokio::test]
+async fn a_delivered_onto_pull_request_is_never_merged_or_auto_merged() {
+    let (h, gh, head) = setup().await;
+    gh.show(100, &head, json!({}));
+    gh.follow_origin(&origin_of(&h));
+    let (item, _) = delivered_onto(&h, || {}).await;
+    let pr = "https://github.com/o/r/pull/100";
+    let before = gh.calls();
+    let raise = Request::RepoUpdate {
+        repo: RepoRef(REPO_NAME.into()),
+        patch: archon_core::protocol::RepoPatch {
+            autonomy_max: Some(
+                archon_core::autonomy::AutonomyPatch::parse_list("merge=auto").unwrap(),
+            ),
+            ..Default::default()
+        },
+    };
+    h.cli(raise).await.expect("repo update");
+
+    let auto = Request::UpdateItem {
+        item: item.id.clone(),
+        patch: ItemPatch {
+            autonomy: Some(archon_core::autonomy::AutonomyPatch::parse_list("merge=auto").unwrap()),
+            ..ItemPatch::default()
+        },
+    };
+    let requests = [
+        Request::RequestMerge {
+            item: item.id.clone(),
+            reason: None,
+        },
+        auto,
+    ];
+    for request in requests {
+        let refused = h.orchestrator(request).await.unwrap_err().to_string();
+        assert!(
+            refused.contains(pr) && refused.contains("by hand"),
+            "{refused}"
+        );
+    }
+    let merge = Request::MergeItem {
+        item: item.id.clone(),
+        ignore_checks: true,
+        chat: false,
+    };
+    let refused = h.cli(merge).await.unwrap_err().to_string();
+    assert!(
+        refused.contains(pr) && refused.contains("by hand"),
+        "{refused}"
+    );
+    assert_eq!(gh.calls(), before, "GitHub was not asked to merge");
+    assert!(!gh.calls().contains("pr merge"));
+}

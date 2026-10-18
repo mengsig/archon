@@ -4,7 +4,7 @@
 use archon_core::error::ArchonError;
 use archon_core::id::LessonId;
 use archon_core::mcp_tools::TOOLS;
-use archon_core::protocol::OrchestratorFreshness;
+use archon_core::protocol::{OrchestratorFreshness, SettingsDrift};
 use archon_queue::Store;
 use serde::{Deserialize, Serialize};
 
@@ -20,14 +20,23 @@ struct Origin {
     /// [`fingerprint`] of its instructions before the lessons were added.
     prompt: String,
     tools: String,
+    /// `provider/model effort` it was created with; empty when an older
+    /// archond recorded the origin.
+    #[serde(default)]
+    settings: String,
     /// The lessons it was chosen, in selection order.
     lessons: Vec<LessonId>,
 }
 
 /// Record the lessons generation `generation` is chosen, unless already
 /// recorded: a retried creation sends the lessons its first attempt chose.
-pub(super) fn record_lessons(store: &mut Store, generation: u64) -> Result<(), ArchonError> {
+pub(super) fn record_lessons(
+    store: &mut Store,
+    generation: u64,
+    settings: &str,
+) -> Result<(), ArchonError> {
     assert!(generation > 0, "generations start at 1");
+    assert!(!settings.is_empty(), "the orchestrator has a model");
     if read(store)?.is_some_and(|origin| origin.generation == generation) {
         return Ok(());
     }
@@ -36,6 +45,7 @@ pub(super) fn record_lessons(store: &mut Store, generation: u64) -> Result<(), A
         archon_version: env!("CARGO_PKG_VERSION").to_owned(),
         prompt: String::new(),
         tools: tools_fingerprint(),
+        settings: settings.to_owned(),
         lessons: chosen_lessons(store)?,
     };
     assert!(origin.lessons.len() <= archon_core::lesson::ORCHESTRATOR_LESSONS);
@@ -72,12 +82,13 @@ pub(super) fn record_created(
 }
 
 /// How generation `generation` compares with one started now with any of
-/// `instructions` (empty when they cannot be built); `None` when its
-/// creation was not recorded.
+/// `instructions` (empty when they cannot be built) and `settings`; `None`
+/// when its creation was not recorded.
 pub(super) fn freshness(
     store: &Store,
     generation: u64,
     instructions: &[String],
+    settings: &str,
 ) -> Result<Option<OrchestratorFreshness>, ArchonError> {
     let Some(origin) = read(store)?.filter(|origin| origin.generation == generation) else {
         return Ok(None);
@@ -91,6 +102,12 @@ pub(super) fn freshness(
         .filter(|id| !origin.lessons.contains(id))
         .count();
     assert!(new_lessons <= archon_core::lesson::ORCHESTRATOR_LESSONS);
+    assert!(!settings.is_empty(), "the orchestrator has a model");
+    let settings_drift =
+        (!origin.settings.is_empty() && origin.settings != settings).then(|| SettingsDrift {
+            configured: settings.to_owned(),
+            running: origin.settings.clone(),
+        });
     Ok(Some(OrchestratorFreshness {
         created_by: origin.archon_version,
         prompt_outdated: (!instructions.is_empty()).then(|| {
@@ -100,6 +117,7 @@ pub(super) fn freshness(
         }),
         tools_outdated: tools_fingerprint() != origin.tools,
         new_lessons: u32::try_from(new_lessons).expect("at most ORCHESTRATOR_LESSONS"),
+        settings_drift,
     }))
 }
 

@@ -134,6 +134,42 @@ async fn after_an_upgrade_that_changes_the_prompt_status_says_so_until_a_restart
     assert_eq!(line, current.replace("generation 1", "generation 2"));
 }
 
+/// The daemon restarted on a config naming another model: the running
+/// orchestrator keeps the one it was created with.
+#[tokio::test]
+async fn a_changed_orchestrator_model_is_stale_until_a_restart() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    let states = agent_table(&harness);
+    create(&harness, &states, ORCH).await;
+    let configured = format!(
+        "{} {}",
+        harness.ctx.config.orchestrator.model, harness.ctx.config.orchestrator.effort
+    );
+    let raw = harness
+        .kv(ORIGIN_KEY)
+        .await
+        .expect("the creation was recorded");
+    let mut origin: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(origin["settings"], json!(configured));
+
+    origin["settings"] = json!("claude-code/older low");
+    harness.set_kv(ORIGIN_KEY, &origin.to_string()).await;
+    for info in [
+        orchestrator_status(&harness).await,
+        daemon_status(&harness).await,
+    ] {
+        let drift = info.freshness.as_ref().unwrap().settings_drift.as_ref();
+        assert_eq!(drift.unwrap().running, "claude-code/older low");
+        let expected = format!("; configured {configured}, running claude-code/older low");
+        assert!(info.describe_freshness().ends_with(&expected));
+    }
+
+    restart(&harness, &states).await;
+    let line = daemon_status(&harness).await.describe_freshness();
+    assert!(line.ends_with("; up to date"), "{line}");
+}
+
 #[tokio::test]
 async fn lessons_recorded_since_creation_are_counted_until_a_restart() {
     let harness = Harness::new().await;

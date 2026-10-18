@@ -1311,6 +1311,13 @@ impl OrchestratorInfo {
         if fresh.tools_outdated {
             line.push_str("; tools outdated");
         }
+        if let Some(drift) = &fresh.settings_drift {
+            let _ = write!(
+                line,
+                "; configured {}, running {}",
+                drift.configured, drift.running
+            );
+        }
         match fresh.new_lessons {
             0 => {}
             1 => line.push_str("; 1 new lesson"),
@@ -1338,12 +1345,26 @@ pub struct OrchestratorFreshness {
     pub tools_outdated: bool,
     /// Lessons a new generation would be given that it was not.
     pub new_lessons: u32,
+    /// The configured `[orchestrator]` model and effort differ from the
+    /// ones it was created with; `None` when they match or were not recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings_drift: Option<SettingsDrift>,
+}
+
+/// Model and effort as `provider/model effort`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SettingsDrift {
+    pub configured: String,
+    pub running: String,
 }
 
 impl OrchestratorFreshness {
     /// Whether a restart is owed, or may be when the prompt is unknown.
     pub fn is_stale(&self) -> bool {
-        self.prompt_outdated != Some(false) || self.tools_outdated || self.new_lessons > 0
+        self.prompt_outdated != Some(false)
+            || self.tools_outdated
+            || self.new_lessons > 0
+            || self.settings_drift.is_some()
     }
 }
 

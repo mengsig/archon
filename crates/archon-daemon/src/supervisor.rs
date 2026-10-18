@@ -677,7 +677,12 @@ pub async fn freshness(
         }
     }
     let store = ctx.store.lock().await;
-    origin::freshness(&store, generation, &candidates)
+    origin::freshness(
+        &store,
+        generation,
+        &candidates,
+        &configured_settings(&ctx.config),
+    )
 }
 
 /// Deliver an operator chat line (`Say`), keyed by its feed item id. The
@@ -960,6 +965,14 @@ async fn advance_generation(ctx: &DaemonContext) -> Result<(), ArchonError> {
     store.kv_delete(HOST_CONTEXT_KEY)
 }
 
+/// The configured orchestrator model and effort, as `provider/model effort`.
+fn configured_settings(config: &Config) -> String {
+    format!(
+        "{} {}",
+        config.orchestrator.model, config.orchestrator.effort
+    )
+}
+
 /// `create_agent` under the stored generation's idempotency key, after the
 /// model policy check (ARCHITECTURE §7.4, point 3). The new agent never saw
 /// its predecessor's news, so the news held for it is compacted (§5.4).
@@ -991,7 +1004,7 @@ async fn create_generation(
         let mut store = ctx.store.lock().await;
         let generation = parse_generation(store.kv_get(keys::ORCHESTRATOR_GENERATION)?)?.max(1);
         store.kv_set(keys::ORCHESTRATOR_GENERATION, &generation.to_string())?;
-        origin::record_lessons(&mut store, generation)?;
+        origin::record_lessons(&mut store, generation, &configured_settings(config))?;
         // Chosen once per generation, so a retried create sends the same text.
         instructions.push_str(&crate::learned::lessons_for_orchestrator(&store)?);
         generation

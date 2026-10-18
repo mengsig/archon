@@ -81,6 +81,7 @@ mod tests {
             prompt_outdated,
             tools_outdated: false,
             new_lessons,
+            settings_drift: None,
         }
     }
 

@@ -8,8 +8,9 @@ use archon_aether::AetherEvent;
 use archon_aether::events::parse_event;
 use archon_core::config::{AetherMode, Config};
 use archon_core::notify::FeedEntry;
+use archon_core::protocol::{ClientKind, Request};
 use archon_daemon::triggers::{self, TriggerEvent};
-use archon_daemon::{ops, pump};
+use archon_daemon::{handlers, ops, pump};
 use archon_queue::store::keys;
 use common::{Harness, REPO_NAME};
 use serde_json::{Value, json};
@@ -185,4 +186,40 @@ async fn a_malformed_or_failing_command_is_refused_with_its_reason() {
     );
     assert!(refusals[1].contains("nowhere"), "{}", refusals[1]);
     assert!(refusals[2].contains("no origin remote"), "{}", refusals[2]);
+}
+
+/// Send `text` as `archon chat` does: over the operator socket.
+async fn from_socket(h: &Harness, text: &str) {
+    let request = Request::OperatorCommand { text: text.into() };
+    handlers::handle(&h.ctx, ClientKind::ArchonCli, request)
+        .await
+        .expect("the operator socket accepts the command");
+}
+
+#[tokio::test]
+async fn the_line_chat_socket_answers_a_refused_upgrade_and_a_watch() {
+    let h = harness(AetherMode::Dedicated).await;
+    from_socket(&h, "/upgrade archon").await;
+    from_socket(&h, &format!("/watch {REPO_NAME}")).await;
+
+    let news = news(&h).await;
+    assert_eq!(news.len(), 2, "{news:?}");
+    assert_eq!(news[0].0, "/upgrade");
+    assert_eq!(news[1].0, "/watch");
+    assert!(news.iter().all(|(_, applied, _)| !applied), "{news:?}");
+    assert!(news[0].2.starts_with("nothing to upgrade"), "{}", news[0].2);
+    assert!(news[1].2.contains("no origin remote"), "{}", news[1].2);
+    assert!(!upgrade_under_way(&h).await);
+}
+
+#[tokio::test]
+async fn the_line_chat_socket_gets_the_shared_mode_refusal() {
+    let h = harness(AetherMode::Shared).await;
+    from_socket(&h, "/watch scratch").await;
+
+    let news = news(&h).await;
+    assert_eq!(news.len(), 1, "{news:?}");
+    let (command, applied, why) = &news[0];
+    assert_eq!((command.as_str(), *applied), ("/watch", false));
+    assert!(why.contains("mode = \"shared\""), "{why}");
 }

@@ -54,6 +54,16 @@ pub const OPERATOR_COMMANDS: &[OperatorCommand] = &[
         "pause new work, or one repository or pipeline",
     ),
     chat_only("resume", PAUSE_ARGS, "resume what /pause stopped"),
+    chat_only(
+        "upgrade",
+        "archon|aether|both <version|latest|main> [requeue] | restart [requeue] [keep-aether]",
+        "upgrade or restart archond (refused in shared mode)",
+    ),
+    chat_only(
+        "watch",
+        "<repository>",
+        "watch a registered repository's GitHub issues (refused in shared mode)",
+    ),
 ];
 
 const fn command(name: &'static str, args: &'static str, about: &'static str) -> OperatorCommand {

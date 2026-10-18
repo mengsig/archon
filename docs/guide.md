@@ -650,6 +650,9 @@ Known limitations:
 Two more whole-message commands are applied by archond as `/answer` is, with
 the same rules: only your own message (the `user` actor), only alone in the
 message, and off in shared mode.
+`archon chat` takes both as slash commands (and lists them in `/help`); in
+the terminal UI, which does not list them, they reach archond as a message
+to the orchestrator.
 
 ```text
 /upgrade archon|aether|both <version|latest|main> [requeue]

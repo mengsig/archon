@@ -90,7 +90,9 @@ fn parse_command(name: &str, rest: &str) -> Result<SlashCommand, String> {
             _ => Err("usage: /item <id>".to_owned()),
         },
         "archon" => parse_archon(rest),
-        "approve" | "reject" => Ok(SlashCommand::Authority(format!("/{name} {rest}"))),
+        "approve" | "reject" | "upgrade" | "watch" => {
+            Ok(SlashCommand::Authority(format!("/{name} {rest}")))
+        }
         "merge" => parse_merge(rest),
         "a" => Err("use /answer <n> <text>".to_owned()),
         "answer" => parse_answer(rest),
@@ -260,6 +262,21 @@ mod tests {
             );
         }
         assert!(!help.contains("/a "), "{help}");
+    }
+
+    #[test]
+    fn upgrade_and_watch_go_to_the_daemon_unchanged() {
+        assert_eq!(
+            parse_line("/upgrade restart"),
+            ChatInput::Command(SlashCommand::Authority("/upgrade restart".into()))
+        );
+        assert_eq!(
+            parse_line("/watch scratch"),
+            ChatInput::Command(SlashCommand::Authority("/watch scratch".into()))
+        );
+        let help = help();
+        assert!(help.contains("  /upgrade "), "{help}");
+        assert!(help.contains("  /watch <repository>"), "{help}");
     }
 
     #[test]

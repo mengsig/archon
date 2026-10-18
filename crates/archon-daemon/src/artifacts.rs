@@ -314,11 +314,6 @@ fn copy_payload(source: &Path, staged: &Path, payload: &Payload) -> Result<u64, 
     let single = source.is_file();
     let mut copied = 0u64;
     for (relative, _) in &payload.files {
-        let from = if single {
-            source.to_path_buf()
-        } else {
-            source.join(relative)
-        };
         let to = if single {
             staged.to_path_buf()
         } else {
@@ -327,7 +322,7 @@ fn copy_payload(source: &Path, staged: &Path, payload: &Payload) -> Result<u64, 
         let parent = to.parent().expect("a staged file has a directory");
         std::fs::create_dir_all(parent)
             .map_err(|e| ArchonError::io(format!("creating {}", parent.display()), e))?;
-        copied += copy_regular_file(&from, &to)?;
+        copied += copy_regular_file(source, relative, &to)?;
     }
     if payload.files.is_empty() {
         std::fs::create_dir_all(staged)
@@ -336,23 +331,47 @@ fn copy_payload(source: &Path, staged: &Path, payload: &Payload) -> Result<u64, 
     Ok(copied)
 }
 
-/// Copy `from` to `to` through one handle opened without following a
-/// symlink, so a file swapped for a link after the gather is refused.
-fn copy_regular_file(from: &Path, to: &Path) -> Result<u64, ArchonError> {
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut input = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-        .open(from)
-        .map_err(|e| {
-            ArchonError::io(
-                format!(
-                    "opening {} (artifacts are regular files; was it replaced by a symlink?)",
-                    from.display()
-                ),
-                e,
-            )
-        })?;
+/// Open `source/relative` without following a symlink at any component,
+/// so a file or directory swapped for a link after the gather is refused.
+fn open_no_follow(source: &Path, relative: &Path) -> Result<std::fs::File, ArchonError> {
+    use rustix::fs::{CWD, Mode, OFlags, openat};
+    let dir_flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+    let file_flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
+    let components: Vec<_> = relative.components().collect();
+    let last_is_file = components.is_empty();
+    let flags = if last_is_file { file_flags } else { dir_flags };
+    let refused = |e: rustix::io::Errno| {
+        ArchonError::io(
+            format!(
+                "opening {} (artifacts are regular files; was it replaced by a symlink?)",
+                source.join(relative).display()
+            ),
+            e.into(),
+        )
+    };
+    let mut fd = openat(CWD, source, flags, Mode::empty()).map_err(refused)?;
+    for (index, component) in components.iter().enumerate() {
+        let Component::Normal(name) = component else {
+            return Err(ArchonError::Invalid(format!(
+                "{} is not a plain relative path",
+                relative.display()
+            )));
+        };
+        let flags = if index + 1 == components.len() {
+            file_flags
+        } else {
+            dir_flags
+        };
+        fd = openat(&fd, *name, flags, Mode::empty()).map_err(refused)?;
+    }
+    Ok(std::fs::File::from(fd))
+}
+
+/// Copy `source/relative` to `to` through one handle opened by
+/// [`open_no_follow`].
+fn copy_regular_file(source: &Path, relative: &Path, to: &Path) -> Result<u64, ArchonError> {
+    let from = source.join(relative);
+    let mut input = open_no_follow(source, relative)?;
     let meta = input
         .metadata()
         .map_err(|e| ArchonError::io(format!("inspecting {}", from.display()), e))?;
@@ -600,6 +619,23 @@ mod tests {
         let err = copy_payload(&source, &staged, &payload).unwrap_err();
         assert!(err.to_string().contains("symlink"), "{err}");
         assert!(!staged.exists() || std::fs::read(&staged).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_directory_swapped_for_a_symlink_after_the_gather_is_refused() {
+        let fx = fixture();
+        fx.write("out/token", b"mine");
+        let outside = fx.workspace.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("token"), b"credentials").unwrap();
+        let source = fx.workspace.join("out");
+        let payload = gather(&source, &limits(1, 1)).unwrap();
+        std::fs::remove_dir_all(&source).unwrap();
+        std::os::unix::fs::symlink(&outside, &source).unwrap();
+        let staged = fx.workspace.join("staged");
+        let err = copy_payload(&source, &staged, &payload).unwrap_err();
+        assert!(err.to_string().contains("symlink"), "{err}");
+        assert!(!staged.join("token").exists());
     }
 
     fn limits(max_file_mb: u64, max_item_mb: u64) -> ArtifactsConfig {

@@ -124,7 +124,7 @@ fn shutdown_does_not_wait_for_a_git_still_running() {
 
     git.hold();
     let adding = env
-        .command(&["repo", "add", repo.to_str().unwrap()])
+        .command(&["repo", "add", repo.to_str().unwrap(), "--ship", "local"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()

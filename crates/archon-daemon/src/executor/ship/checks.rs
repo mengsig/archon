@@ -168,16 +168,31 @@ fn own_worktree(target: &Target) -> Result<Result<(), String>, ArchonError> {
     }
 }
 
+/// Why the base branch cannot be found, naming a missing `origin` remote
+/// rather than blaming the base for it.
+fn missing_base(target: &Target) -> String {
+    let no_origin = matches!(
+        crate::worktree::stack::origin_url(&target.repo_path),
+        Ok(None)
+    );
+    match no_origin {
+        true => format!(
+            "the base branch `{}` is not in the repository and it has no `origin` remote",
+            target.base
+        ),
+        false => format!(
+            "the base branch `{}` exists neither in the repository nor on `origin`",
+            target.base
+        ),
+    }
+}
+
 /// Where the run's own commits start: `target.since` when it is an ancestor
 /// of the run's head, else the ref of `target.base`.
 fn floor(tree: &Path, target: &Target) -> Result<Result<String, String>, ArchonError> {
     let Some(since) = &target.since else {
-        return Ok(base_ref(tree, &target.base)?.ok_or_else(|| {
-            format!(
-                "the base branch `{}` exists neither in the repository nor on `origin`",
-                target.base
-            )
-        }));
+        let found = base_ref(tree, &target.base)?;
+        return Ok(found.ok_or_else(|| missing_base(target)));
     };
     assert!(
         crate::worktree::stack::is_commit_id(since),

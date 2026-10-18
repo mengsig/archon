@@ -15,6 +15,7 @@ use archon_core::protocol::{
     RepoAdd, RepoPatch, RepoRef, Request,
 };
 use archon_core::queue::{Caps, QueueState};
+use archon_core::repo::ShipMode;
 use archon_daemon::handlers;
 use archon_daemon::triggers::{self, TriggerEvent};
 use archon_queue::store::SpendRow;
@@ -350,6 +351,94 @@ async fn a_retry_takes_a_new_plan_and_keeps_the_worktree() {
         h.backend.cancelled(),
         vec![first_agent, first_node],
         "the first implementer and its run node were stopped"
+    );
+}
+
+fn init_repo(h: &Harness, name: &str, commit: bool) -> std::path::PathBuf {
+    let path = h.dir.path().canonicalize().expect("dir").join(name);
+    std::fs::create_dir_all(&path).expect("repo dir");
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&path)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .output()
+            .expect("git");
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+    };
+    git(&["init", "-q", "-b", "trunk"]);
+    if commit {
+        git(&["commit", "-q", "--allow-empty", "-m", "first"]);
+    }
+    path
+}
+
+fn add_without_base(path: std::path::PathBuf, name: &str, ship: Option<ShipMode>) -> Request {
+    Request::RepoAdd(RepoAdd {
+        path,
+        name: Some(name.into()),
+        ship,
+        base_branch: None,
+        default_pipeline: None,
+        auto_merge: false,
+        github_watch: false,
+    })
+}
+
+#[tokio::test]
+async fn a_repository_added_without_a_base_records_its_current_branch() {
+    let h = Harness::new().await;
+    let path = init_repo(&h, "fresh", true);
+    let added = h
+        .cli(add_without_base(path, "fresh", Some(ShipMode::Local)))
+        .await;
+    let Ok(Reply::Repo(repo)) = added else {
+        panic!("add: {added:?}");
+    };
+    assert_eq!(repo.base_branch.as_deref(), Some("trunk"));
+}
+
+#[tokio::test]
+async fn a_repository_without_commits_or_on_a_detached_head_is_refused() {
+    let h = Harness::new().await;
+    let empty = init_repo(&h, "empty", false);
+    let refused = h
+        .cli(add_without_base(empty, "empty", Some(ShipMode::Local)))
+        .await
+        .expect_err("no commits");
+    assert!(refused.to_string().contains("no commits"), "{refused}");
+
+    let detached = init_repo(&h, "detached", true);
+    let status = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&detached)
+        .args(["checkout", "-q", "--detach"])
+        .status()
+        .expect("git");
+    assert!(status.success());
+    let refused = h
+        .cli(add_without_base(
+            detached,
+            "detached",
+            Some(ShipMode::Local),
+        ))
+        .await
+        .expect_err("detached");
+    assert!(refused.to_string().contains("detached HEAD"), "{refused}");
+}
+
+#[tokio::test]
+async fn a_pr_repository_without_an_origin_is_refused() {
+    let h = Harness::new().await;
+    let path = init_repo(&h, "noorigin", true);
+    let refused = h
+        .cli(add_without_base(path, "noorigin", None))
+        .await
+        .expect_err("no origin");
+    assert!(
+        refused.to_string().contains("no origin remote"),
+        "{refused}"
     );
 }
 

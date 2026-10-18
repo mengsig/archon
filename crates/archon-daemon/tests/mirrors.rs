@@ -232,7 +232,7 @@ async fn a_refresh_resets_tracked_files_and_keeps_untracked_ones() {
 
 /// Register a second repository, `name`, and return its id.
 async fn register(h: &Harness, name: &str) -> RepoId {
-    let path = common::init_repo(&h.dir.path().join(name));
+    let path = common::init_repo_with_origin(&h.dir.path().join(name));
     let reply = h
         .cli(Request::RepoAdd(RepoAdd {
             path,

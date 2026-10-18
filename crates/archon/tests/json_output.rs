@@ -121,7 +121,10 @@ fn repo_queue_pipeline_and_autonomy_commands_print_json() {
     let repo = env.path("demo");
     git_repo(&repo);
     let repo = repo.to_str().unwrap();
-    assert_eq!(json(&env, &["repo", "add", repo])["name"], "demo");
+    assert_eq!(
+        json(&env, &["repo", "add", repo, "--ship", "local"])["name"],
+        "demo"
+    );
     assert_eq!(
         json(&env, &["repo", "list"]).as_array().map(Vec::len),
         Some(1)

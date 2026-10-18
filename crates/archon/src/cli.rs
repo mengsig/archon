@@ -295,7 +295,8 @@ pub enum RepoCommand {
         /// How finished work ships; defaults to .archon/config.toml, else pr.
         #[arg(long, value_enum)]
         ship: Option<Ship>,
-        /// Branch worktrees start from; defaults to the current HEAD.
+        /// Branch worktrees start from; defaults to .archon/config.toml, else the
+        /// branch checked out now.
         #[arg(long)]
         base: Option<String>,
         /// Pipeline used when a request names none.

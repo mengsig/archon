@@ -40,7 +40,7 @@ async fn setup() -> Harness {
     let h = Harness::new().await;
     install_gh(&h);
     for name in ["client", "docs"] {
-        let path = common::init_repo(&h.dir.path().join(name));
+        let path = common::init_repo_with_origin(&h.dir.path().join(name));
         h.cli(Request::RepoAdd(RepoAdd {
             path,
             name: Some(name.into()),
@@ -214,7 +214,7 @@ async fn a_contract_is_revised_within_the_configured_limits() {
     config.limits.initiative_contract_bytes = 4096;
     let h = Harness::with_config(config).await;
     install_gh(&h);
-    let path = common::init_repo(&h.dir.path().join("client"));
+    let path = common::init_repo_with_origin(&h.dir.path().join("client"));
     h.cli(Request::RepoAdd(RepoAdd {
         path,
         name: Some("client".into()),

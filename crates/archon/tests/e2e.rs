@@ -22,8 +22,11 @@ fn daemon_serves_the_cli_while_aether_is_down() {
 
     let repo = env.path("demo");
     git_repo(&repo);
-    let added =
-        String::from_utf8(env.run(&["repo", "add", repo.to_str().unwrap()]).stdout).unwrap();
+    let added = String::from_utf8(
+        env.run(&["repo", "add", repo.to_str().unwrap(), "--ship", "local"])
+            .stdout,
+    )
+    .unwrap();
     assert!(added.contains("demo"), "{added}");
     let repos = String::from_utf8(env.run(&["repo", "list"]).stdout).unwrap();
     assert!(repos.contains("demo"), "{repos}");

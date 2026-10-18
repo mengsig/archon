@@ -222,16 +222,24 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         let add = RepoAdd {
             path: self.repo.clone(),
             name: Some(REPO_NAME.into()),
-            ship: Some(ShipMode::Pr),
+            ship: Some(ShipMode::Local),
             base_branch: Some("main".into()),
             default_pipeline: Some(PIPELINE.into()),
             auto_merge: false,
             github_watch: false,
         };
-        match self.cli(Request::RepoAdd(add)).await {
-            Ok(Reply::Repo(repo)) => repo,
-            other => panic!("repo add: {other:?}"),
-        }
+        let Ok(Reply::Repo(mut repo)) = self.cli(Request::RepoAdd(add)).await else {
+            panic!("repo add failed");
+        };
+        // Registration refuses a pr repository without an origin, which most tests lack.
+        repo.ship = ShipMode::Pr;
+        self.ctx
+            .store
+            .lock()
+            .await
+            .update_repo(&repo)
+            .expect("ship = pr");
+        repo
     }
 
     pub async fn cli(&self, request: Request) -> Result<Reply, ArchonError> {
@@ -567,6 +575,21 @@ fn write_pipeline(repo: &Path, name: &str, toml: &str) {
 }
 
 /// `git` with a throwaway identity, isolated from the user's config.
+/// A repository that can be registered as `ship = pr`, which needs an origin.
+pub fn init_repo_with_origin(path: &Path) -> PathBuf {
+    let repo = init_repo(path);
+    git(
+        &repo,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://example.invalid/demo.git",
+        ],
+    );
+    repo
+}
+
 pub fn git(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .arg("-C")

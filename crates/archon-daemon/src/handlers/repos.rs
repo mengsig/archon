@@ -8,7 +8,7 @@ use archon_core::error::ArchonError;
 use archon_core::github::{GithubRepo, WatcherChange};
 use archon_core::id::RepoId;
 use archon_core::protocol::{Reply, RepoAdd, RepoPatch, RepoRef};
-use archon_core::repo::Repo;
+use archon_core::repo::{Repo, ShipMode};
 
 use crate::context::DaemonContext;
 use crate::executor::repo_identity;
@@ -58,12 +58,19 @@ async fn add_with_watch(
             "repository name {name:?} must be 1-64 letters, digits, '-', '_' or '.', not starting with '.'"
         )));
     }
+    let base_branch = match add.base_branch.or(config.repo.base_branch) {
+        Some(base) => base,
+        None => {
+            let root = root.clone();
+            blocking(move || current_branch(&root)).await?
+        }
+    };
     let repo = Repo {
         id: RepoId::new(),
         name,
         path: root,
         ship: add.ship.or(config.repo.ship).unwrap_or_default(),
-        base_branch: add.base_branch.or(config.repo.base_branch),
+        base_branch: Some(base_branch),
         default_pipeline: add.default_pipeline.or(config.repo.default_pipeline),
         autonomy_max: registry_ceiling(add.auto_merge),
         grant_merge: false,
@@ -77,6 +84,7 @@ async fn add_with_watch(
         added_at: archon_core::now(),
     };
     check_repo(&repo).await?;
+    require_origin_for_pr(&repo).await?;
     ctx.store.lock().await.insert_repo(&repo)?;
     repo_identity::record(ctx, &repo).await?;
     // The orchestrator reads it in a mirror, made in the background.
@@ -214,6 +222,9 @@ pub(super) async fn update(
     repo.confirmed_release_check = confirmed.apply(repo.confirmed_release_check);
     repo.tiers = patch.tiers.apply(repo.tiers);
     check_repo(&repo).await?;
+    if repo.ship == ShipMode::Pr && before.ship != ShipMode::Pr {
+        require_origin_for_pr(&repo).await?;
+    }
     assert_eq!(repo.id, before.id, "a patch never changes identity");
     assert_eq!(repo.path, before.path, "a patch never moves a repository");
     ctx.store.lock().await.update_repo(&repo)?;
@@ -353,6 +364,44 @@ async fn check_repo(repo: &Repo) -> Result<(), ArchonError> {
     if let Some(pipeline) = &repo.default_pipeline {
         let env = RepoEnv::new(Some(repo.clone()))?;
         env.catalog()?.get(pipeline)?;
+    }
+    Ok(())
+}
+
+/// The branch checked out at `root`: the base a repository registered
+/// without one delivers to. A repository with no commits or a detached
+/// HEAD has none, and says so.
+fn current_branch(root: &Path) -> Result<String, ArchonError> {
+    if worktree::commit_id(root, "HEAD")?.is_none() {
+        return Err(ArchonError::Invalid(format!(
+            "repository has no commits: {} needs a first commit before it can be registered",
+            root.display()
+        )));
+    }
+    let branch = worktree::git(root, &["branch", "--show-current"])?;
+    if branch.is_empty() {
+        return Err(ArchonError::Invalid(format!(
+            "{} has a detached HEAD; check out a branch or pass --base",
+            root.display()
+        )));
+    }
+    assert!(!branch.contains('\n'), "one current branch");
+    Ok(branch)
+}
+
+/// A `ship = pr` repository pushes to `origin`, so it must have one.
+async fn require_origin_for_pr(repo: &Repo) -> Result<(), ArchonError> {
+    assert!(repo.path.is_absolute(), "registered paths are canonical");
+    if repo.ship != ShipMode::Pr {
+        return Ok(());
+    }
+    let root = repo.path.clone();
+    let origin = blocking(move || worktree::stack::origin_url(&root)).await?;
+    if origin.is_none() {
+        return Err(ArchonError::Invalid(format!(
+            "{} has no origin remote, which ship = pr needs; add one or use ship = local",
+            repo.path.display()
+        )));
     }
     Ok(())
 }

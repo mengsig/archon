@@ -1915,6 +1915,10 @@ async fn local_shipping_does_not_query_github() {
     let item = h.enqueue("unchanged shipping mode").await;
     drive_to_ship(&h).await;
     // The run keeps the mode it started with.
+    common::git(
+        &h.repo,
+        &["remote", "add", "origin", "https://example.invalid/r.git"],
+    );
     h.cli(set_ship(ShipMode::Pr)).await.unwrap();
     h.settle_running(|_| completed("committed locally")).await;
     assert!(matches!(

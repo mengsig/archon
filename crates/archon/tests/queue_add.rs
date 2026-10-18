@@ -184,7 +184,15 @@ fn stdin_brief_toml_plan_repo_defaults_and_text_id() {
     env.run(&["pause"]);
     let repo = env.path("demo");
     git_repo(&repo);
-    env.run(&["repo", "add", repo.to_str().unwrap(), "--pipeline", "ask"]);
+    env.run(&[
+        "repo",
+        "add",
+        repo.to_str().unwrap(),
+        "--pipeline",
+        "ask",
+        "--ship",
+        "local",
+    ]);
     let plan = env.path("plan.toml");
     std::fs::write(
         &plan,

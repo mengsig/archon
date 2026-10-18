@@ -810,7 +810,7 @@ fn request_authority() -> ToolDefinition {
             json!({
                 "action": {"type":"object", "description":"Archon command object with cmd and its arguments; see the authority guide."},
                 "utterance": {"type":"integer", "minimum":1, "description":"Operator inbox sequence, not event sequence."},
-                "quote": {"type":"string", "minLength":1, "maxLength":4000},
+                "quote": {"type":"string", "minLength":1, "maxLength":4000, "description":"Verbatim from the message: at least 3 words or 12 characters (or the whole message); for an answer, it must contain the answer word."},
                 "reason": {"type":"string", "minLength":1, "maxLength":500}
             }),
             &["action", "utterance", "quote", "reason"],

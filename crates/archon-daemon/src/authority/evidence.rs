@@ -68,10 +68,84 @@ pub(crate) async fn cite(
             "the operator citation is outside its 60-minute window; ask again".into(),
         ));
     }
-    if quote.trim().is_empty() || !message.text.contains(quote) {
+    check_quote(&message.text, quote)?;
+    Ok(message)
+}
+
+const MIN_QUOTE_WORDS: usize = 3;
+const MIN_QUOTE_CHARS: usize = 12;
+
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// True when `needle` occurs in `haystack` starting and ending on word boundaries.
+fn contains_on_word_boundaries(haystack: &str, needle: &str) -> bool {
+    haystack.match_indices(needle).any(|(start, _)| {
+        let before = haystack[..start].chars().next_back();
+        let after = haystack[start + needle.len()..].chars().next();
+        let starts_ok = needle.chars().next().is_some_and(|c| !is_word_char(c))
+            || !before.is_some_and(is_word_char);
+        let ends_ok = needle.chars().next_back().is_some_and(|c| !is_word_char(c))
+            || !after.is_some_and(is_word_char);
+        starts_ok && ends_ok
+    })
+}
+
+/// The quote must be verbatim, on word boundaries, and substantial (or the
+/// whole message): a fragment such as `t` proves nothing about intent.
+fn check_quote(message: &str, quote: &str) -> Result<(), ArchonError> {
+    let trimmed = quote.trim();
+    if trimmed.is_empty() || !contains_on_word_boundaries(message, trimmed) {
         return Err(ArchonError::Forbidden(
-            "quote must occur verbatim in the verified operator message".into(),
+            "quote must occur verbatim, on word boundaries, in the verified operator message"
+                .into(),
         ));
     }
-    Ok(message)
+    let words = trimmed.split_whitespace().count();
+    let chars = trimmed.chars().filter(|c| !c.is_whitespace()).count();
+    let whole_message = trimmed == message.trim();
+    if !whole_message && words < MIN_QUOTE_WORDS && chars < MIN_QUOTE_CHARS {
+        return Err(ArchonError::Forbidden(format!(
+            "quote must be at least {MIN_QUOTE_WORDS} words or {MIN_QUOTE_CHARS} characters, or the whole message"
+        )));
+    }
+    Ok(())
+}
+
+/// A gate answer must be backed by its answer word appearing in the quote.
+pub(crate) fn check_answer_quote(quote: &str, answer: &str) -> Result<(), ArchonError> {
+    let verb = answer
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| ArchonError::Invalid("a gate answer must not be empty".into()))?;
+    if !contains_on_word_boundaries(&quote.to_lowercase(), &verb.to_lowercase()) {
+        return Err(ArchonError::Forbidden(format!(
+            "the quote must contain the answer word `{verb}`"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_fragments_and_mid_word_quotes_are_refused() {
+        let message = "what is the status of the queue?";
+        assert!(check_quote(message, "t").is_err());
+        assert!(check_quote(message, "s ").is_err());
+        assert!(check_quote(message, "stat").is_err());
+        assert!(check_quote(message, "status of the").is_ok());
+        assert!(check_quote("yes", "yes").is_ok());
+        assert!(check_quote(message, "the queue").is_err());
+    }
+
+    #[test]
+    fn answer_word_must_appear_in_the_quote() {
+        assert!(check_answer_quote("please approve this proposal", "approve").is_ok());
+        assert!(check_answer_quote("what is the status", "approve").is_err());
+        assert!(check_answer_quote("anything", " ").is_err());
+    }
 }

@@ -147,7 +147,9 @@ When you say it in prose ("let `web` merge on its own"), the orchestrator
 calls `request_authority` with:
 
 - `utterance`: the inbox sequence of your message;
-- `quote`: text that occurs verbatim in that message;
+- `quote`: text that occurs verbatim in that message, on word boundaries, of
+  at least 3 words or 12 non-space characters unless it is the whole message;
+  for an `answer` it must also contain the answer's first word;
 - `reason`: one line, 1–500 characters;
 - `action`: one command JSON from the allowlist above, or an `answer` for a
   proposal or report gate.
@@ -160,7 +162,7 @@ archond refuses unless every check passes, in this order:
    messages and relays have no record.
 3. In shared mode, chat citations are refused.
 4. The message is at most 60 minutes old by its original time.
-5. The quote occurs verbatim in it.
+5. The quote occurs verbatim in it and is meaningful (see above).
 6. The action is on the allowlist, and for GitHub is not a watcher change and
    stays within the repository of the cited thread.
 7. For `answer`, the message arrived after the gate opened, and the question

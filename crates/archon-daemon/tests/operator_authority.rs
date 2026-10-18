@@ -114,7 +114,7 @@ async fn loosening_needs_the_operators_reply_and_tightening_applies_directly() {
     assert!(!h.ctx.store.lock().await.question(&q.id).unwrap().is_open());
     deliver(&h, 4, user("turn the grant off")).await;
     assert!(matches!(
-        h.orchestrator(cited(grant(false), 4, "grant off"))
+        h.orchestrator(cited(grant(false), 4, "turn the grant off"))
             .await
             .unwrap(),
         Reply::Repo(_)
@@ -158,6 +158,13 @@ async fn only_fresh_verbatim_operator_citations_are_accepted() {
             .is_err()
     );
     assert!(!granted(&h).await);
+    deliver(&h, 12, user("what is the status of the queue?")).await;
+    for quote in ["t", "s ", "status"] {
+        assert!(
+            h.orchestrator(cited(grant(true), 12, quote)).await.is_err(),
+            "quote {quote:?} must be refused"
+        );
+    }
     let shared = harness(AetherMode::Shared).await;
     deliver(&shared, 1, user("grant requested merges")).await;
     assert!(

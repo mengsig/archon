@@ -1026,6 +1026,34 @@ async fn github_operator_can_answer_in_shared_mode_but_payload_markers_cannot() 
 }
 
 #[tokio::test]
+async fn a_cited_gate_answer_needs_its_answer_word_in_the_quote() {
+    let (h, _item, asked) = at_proposal_gate(AetherMode::Dedicated).await;
+    let mut event = delivered(1, operator("what is the status of the queue?"));
+    event.at = archon_core::now();
+    pump::handle_orchestrator_event(&h.ctx, &event)
+        .await
+        .unwrap();
+    let request = Request::RequestAuthority {
+        action: Box::new(Request::Answer {
+            question: asked.id.clone(),
+            text: "approve".into(),
+        }),
+        utterance: 1,
+        quote: "status of the queue".into(),
+        reason: "operator approved this gate".into(),
+        caller: Some(AetherAgentId::parse(ORCH).unwrap()),
+    };
+    assert!(
+        h.orchestrator(request)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("answer word")
+    );
+    assert!(question(&h, &asked.id).await.is_open());
+}
+
+#[tokio::test]
 async fn a_cited_plain_language_gate_answer_must_postdate_the_gate() {
     let (h, item, asked) = at_proposal_gate(AetherMode::Dedicated).await;
     let request = |seq| Request::RequestAuthority {

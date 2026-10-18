@@ -287,7 +287,10 @@ impl PipelineSpec {
     /// directory name it was found under. Errors name the stage and field.
     pub fn validate(&self, dir_name: &str) -> Result<(), ArchonError> {
         let stages = &self.file.stages;
-        match (self.validate_header(dir_name), check_stage_count(stages.len())) {
+        match (
+            self.validate_header(dir_name),
+            check_stage_count(stages.len()),
+        ) {
             (Err(header), Err(count)) => return Err(invalid(format!("{header}; {count}"))),
             (Err(header), Ok(())) => return Err(header),
             (Ok(()), Err(count)) => return Err(count),

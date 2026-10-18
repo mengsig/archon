@@ -13,6 +13,14 @@ use crate::id::{InitiativeId, PipelineRunId, QueueItemId, RepoId};
 use crate::model::{ModelPlan, ModelReasons};
 use crate::pull_request::OntoPullRequest;
 
+/// The longest brief an enqueue accepts, well under the protocol frame cap.
+pub const MAX_BRIEF_BYTES: usize = 1024 * 1024;
+
+/// Characters that reorder how the rest of a line displays (Trojan Source).
+fn is_bidi_control(c: char) -> bool {
+    matches!(c, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
+}
+
 /// Input checks shared by the CLI and daemon enqueue boundaries.
 pub fn check_enqueue(
     title: &str,
@@ -23,15 +31,29 @@ pub fn check_enqueue(
     if title.trim().is_empty() {
         return Err(ArchonError::Invalid("an item needs a title".into()));
     }
-    if title.contains(['\n', '\r', '\u{2028}', '\u{2029}']) || title.trim().chars().count() > 200 {
+    if title.contains(['\u{2028}', '\u{2029}']) || title.trim().chars().count() > 200 {
         return Err(ArchonError::Invalid(
             "titles must be one line of at most 200 characters".into(),
+        ));
+    }
+    if title.chars().any(|c| c.is_control() || is_bidi_control(c)) {
+        return Err(ArchonError::Invalid(
+            "titles must not contain control or bidirectional-override characters".into(),
         ));
     }
     if brief.trim().is_empty() {
         return Err(ArchonError::Invalid(
             "an item needs a nonempty brief".into(),
         ));
+    }
+    if brief.len() > MAX_BRIEF_BYTES {
+        return Err(ArchonError::Invalid(format!(
+            "the brief is {} bytes; a brief may be at most {MAX_BRIEF_BYTES} bytes",
+            brief.len()
+        )));
+    }
+    if brief.contains('\0') {
+        return Err(ArchonError::Invalid("a brief must not contain NUL".into()));
     }
     check_tags(tags)?;
     check_item_budget(budget)
@@ -308,6 +330,37 @@ pub struct PauseState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn refused(title: &str, brief: &str) -> String {
+        check_enqueue(title, brief, &[], None)
+            .expect_err("refused")
+            .to_string()
+    }
+
+    #[test]
+    fn titles_with_control_or_bidi_characters_are_refused() {
+        for title in [
+            "\u{1b}[31mred",
+            "a\0b",
+            "a\u{202e}b",
+            "a\u{85}b",
+            "a\tb",
+            "a\nb",
+        ] {
+            assert!(refused(title, "b").contains("title"), "{title:?}");
+        }
+        for title in ["café", "日本語", "ship it 🚀"] {
+            check_enqueue(title, "b", &[], None).expect(title);
+        }
+    }
+
+    #[test]
+    fn briefs_with_nul_or_over_the_cap_are_refused_naming_the_cap() {
+        assert!(refused("t", "a\0b").contains("NUL"));
+        let big = "x".repeat(MAX_BRIEF_BYTES + 1);
+        assert!(refused("t", &big).contains(&MAX_BRIEF_BYTES.to_string()));
+        check_enqueue("t", &big[..MAX_BRIEF_BYTES], &[], None).expect("at the cap");
+    }
 
     fn item() -> QueueItem {
         QueueItem {

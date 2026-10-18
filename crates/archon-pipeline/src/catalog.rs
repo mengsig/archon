@@ -226,8 +226,18 @@ pub fn load_dir(dir: &Path, source: PipelineSource) -> Result<PipelineSpec, Arch
         &read_small(&root, &manifest)?,
         &manifest.display().to_string(),
     )?;
-    // Checked before reading prompts, so a huge stage list reads nothing.
-    spec::check_stage_count(file.stages.len())?;
+    // Checked before reading prompts, so a huge stage list reads nothing;
+    // validating the promptless spec reports the name rule first.
+    if let Err(count) = spec::check_stage_count(file.stages.len()) {
+        let bare = PipelineSpec {
+            file,
+            source,
+            dir: Some(dir.to_path_buf()),
+            prompts: BTreeMap::new(),
+        };
+        bare.validate(dir_name)?;
+        return Err(count);
+    }
     let mut prompts = BTreeMap::new();
     for stage in &file.stages {
         // Validation reports unsafe or missing names with the stage id.

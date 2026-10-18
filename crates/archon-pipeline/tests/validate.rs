@@ -95,6 +95,24 @@ fn prompt_files_must_exist_and_stay_in_the_directory() {
 }
 
 #[test]
+fn an_empty_or_blank_prompt_is_refused_with_stage_and_file() {
+    for blank in ["", " \n\t "] {
+        let error = validate(&stage("a", "work", ""), &[("a.md", blank)]).expect_err("blank");
+        assert!(error.contains("stage \"a\""), "{error}");
+        assert!(error.contains("\"a.md\" is empty"), "{error}");
+    }
+}
+
+#[test]
+fn a_bad_name_is_reported_together_with_missing_stages() {
+    let upper = HEADER.replace("name = \"demo\"", "name = \"Upper-Case\"");
+    let spec = support::spec_from(&upper, &[]);
+    let error = spec.validate("Upper-Case").expect_err("bad").to_string();
+    assert!(error.contains("[a-z0-9-]+"), "{error}");
+    assert!(error.contains("at least one [[stage]]"), "{error}");
+}
+
+#[test]
 fn goto_must_name_an_earlier_stage_within_the_loop_bound() {
     let gated = |goto: &str, loops: u32| {
         format!("gate = \"all_pass\"\non_fail = {{ goto = \"{goto}\", max_loops = {loops} }}")

@@ -3,8 +3,9 @@
 A **pipeline** is a directory: one `pipeline.toml` plus one Markdown prompt
 per stage. To add a pipeline, you drop a directory in place. You do not
 change any code, rebuild anything, or restart the daemon. Archon reads the
-catalog again at every enqueue, so a new or edited pipeline is live for the
-next item.
+catalog again at every enqueue and again when an item dispatches, so a new or
+edited pipeline is live for the next item. Editing or deleting a pipeline while
+an item waiting on it is queued fails that item with "pipeline not found".
 
 This guide covers where pipelines live, the file format, how a run moves
 through stages, the template variables, and a complete worked example. The

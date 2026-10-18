@@ -286,9 +286,13 @@ impl PipelineSpec {
     /// Enforce every load-time rule of ARCHITECTURE §8.2, given the
     /// directory name it was found under. Errors name the stage and field.
     pub fn validate(&self, dir_name: &str) -> Result<(), ArchonError> {
-        self.validate_header(dir_name)?;
         let stages = &self.file.stages;
-        check_stage_count(stages.len())?;
+        match (self.validate_header(dir_name), check_stage_count(stages.len())) {
+            (Err(header), Err(count)) => return Err(invalid(format!("{header}; {count}"))),
+            (Err(header), Ok(())) => return Err(header),
+            (Ok(()), Err(count)) => return Err(count),
+            (Ok(()), Ok(())) => {}
+        }
         for (index, stage) in stages.iter().enumerate() {
             self.validate_stage(index, stage)
                 .map_err(|e| invalid(format!("stage {:?}: {e}", stage.id)))?;
@@ -637,6 +641,9 @@ impl PipelineSpec {
         let Some(text) = self.prompts.get(&stage.prompt) else {
             return Err(format!("prompt file {:?} does not exist", stage.prompt));
         };
+        if text.trim().is_empty() {
+            return Err(format!("prompt file {:?} is empty", stage.prompt));
+        }
         let names =
             template::placeholders(text).map_err(|e| format!("prompt {:?}: {e}", stage.prompt))?;
         for name in names {

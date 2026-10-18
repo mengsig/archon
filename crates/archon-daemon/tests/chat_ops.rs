@@ -223,3 +223,49 @@ async fn the_line_chat_socket_gets_the_shared_mode_refusal() {
     assert_eq!((command.as_str(), *applied), ("/watch", false));
     assert!(why.contains("mode = \"shared\""), "{why}");
 }
+
+/// Every chat command result held, as `(applied, text)`.
+async fn refusals_held(h: &Harness) -> Vec<(bool, String)> {
+    let held = triggers::held(&h.ctx).await.expect("held news");
+    let news = held.into_iter().filter_map(|event| match event {
+        TriggerEvent::ChatAnswer { applied, text, .. }
+        | TriggerEvent::ChatCommand { applied, text, .. } => Some((applied, text)),
+        TriggerEvent::ChatMergeRefused { text } => Some((false, text)),
+        _ => None,
+    });
+    news.collect()
+}
+
+#[tokio::test]
+async fn a_shared_instance_refuses_every_host_command_in_the_feed_and_the_news() {
+    let h = harness(AetherMode::Shared).await;
+    let commands = [
+        "/answer 3 yes",
+        "/approve 3",
+        "/reject 3 no",
+        "/merge qi_01",
+        "/archon set a=b",
+        "/upgrade restart",
+        "/watch somewhere",
+    ];
+    for (seq, text) in (1..).zip(commands) {
+        deliver(&h, seq, operator(text)).await;
+    }
+
+    let held = refusals_held(&h).await;
+    assert_eq!(held.len(), commands.len(), "{held:?}");
+    assert!(held.iter().all(|(applied, _)| !applied), "{held:?}");
+    let notes = system_notes(&h).await;
+    assert!(notes.len() >= commands.len(), "{notes:?}");
+    assert!(!upgrade_under_way(&h).await);
+}
+
+#[tokio::test]
+async fn a_shared_instance_leaves_ordinary_text_and_quoted_commands_alone() {
+    let h = harness(AetherMode::Shared).await;
+    deliver(&h, 1, operator("hello there")).await;
+    deliver(&h, 2, operator("please run /answer 3 yes")).await;
+
+    assert_eq!(refusals_held(&h).await, []);
+    assert_eq!(system_notes(&h).await, Vec::<String>::new());
+}

@@ -18,31 +18,13 @@ pub(crate) async fn handle(
     seq: u64,
     message: &InboxMessage,
 ) -> Result<(), ArchonError> {
+    let github = message.channel.as_ref().is_some_and(|c| c.is_github());
+    if !github && ctx.config.aether.mode != AetherMode::Dedicated {
+        return refuse_in_shared(ctx, message).await;
+    }
     let Some(channel) = &message.channel else {
         return Ok(());
     };
-    let github = channel.is_github();
-    if !github && ctx.config.aether.mode != AetherMode::Dedicated {
-        let text = unalias(message.text.trim());
-        let message = InboxMessage {
-            text: text.into_owned(),
-            ..message.clone()
-        };
-        let message = &message;
-        if retired_alias(&message.text) {
-            return retired_alias_hint(ctx).await;
-        }
-        if matches!(
-            message.text.split_whitespace().next(),
-            Some("/archon" | "/approve" | "/reject")
-        ) {
-            feed::system(ctx, "Operator commands are disabled in shared-mode Aether chat; use Archon's dedicated Aether or the operator socket.").await?;
-        }
-        // Preserve the existing refusal messages for shared-mode chat.
-        chat_answer::handle(ctx, &message.text, None).await?;
-        crate::chat_ops::handle(ctx, &message.text).await?;
-        return chat_merge::handle(ctx, &message.text, MergeAuthority::AetherChat).await;
-    }
     if github && ctx.aether.client()?.welcome().protocol_version < 17 {
         return feed::system(
             ctx,
@@ -179,6 +161,56 @@ async fn execute(
         },
     };
     chat_merge::handle(ctx, &command, authority).await
+}
+
+/// Host commands an Aether chat message may carry; shared mode refuses them
+/// all, because its `user` actor includes `[listen]` token clients.
+const SHARED_CHAT_COMMANDS: &[&str] = &[
+    "/answer", "/approve", "/reject", "/merge", "/archon", "/upgrade", "/watch", "/a",
+];
+
+const SHARED_REFUSAL: &str = "Operator commands are disabled in shared-mode Aether chat; use Archon's dedicated Aether or the operator socket.";
+
+/// Whether the whole message is led by one of the host command words.
+fn names_host_command(text: &str) -> bool {
+    let first = text.split_whitespace().next().unwrap_or("");
+    SHARED_CHAT_COMMANDS
+        .iter()
+        .any(|name| first.eq_ignore_ascii_case(name))
+}
+
+/// A shared-mode Aether chat message never runs a command: say so in the
+/// feed, in the TUI and to the orchestrator. Other text is left alone.
+async fn refuse_in_shared(ctx: &DaemonContext, message: &InboxMessage) -> Result<(), ArchonError> {
+    assert!(
+        ctx.config.aether.mode != AetherMode::Dedicated,
+        "only a shared instance refuses chat commands"
+    );
+    let text = unalias(message.text.trim());
+    if !names_host_command(&text) {
+        return Ok(());
+    }
+    if retired_alias(&text) {
+        return retired_alias_hint(ctx).await;
+    }
+    let first = text.split_whitespace().next().unwrap_or("");
+    // The specific handlers word the refusal for the commands they parse.
+    if !["/approve", "/reject", "/archon"]
+        .iter()
+        .any(|name| first.eq_ignore_ascii_case(name))
+    {
+        chat_answer::handle(ctx, &text, None).await?;
+        crate::chat_ops::handle(ctx, &text).await?;
+        return chat_merge::handle(ctx, &text, MergeAuthority::AetherChat).await;
+    }
+    feed::system(ctx, SHARED_REFUSAL).await?;
+    crate::command_notice::show(ctx, &command_label(&text), false, SHARED_REFUSAL).await;
+    let news = crate::triggers::TriggerEvent::ChatAnswer {
+        number: None,
+        applied: false,
+        text: SHARED_REFUSAL.into(),
+    };
+    crate::triggers::push(ctx, news).await
 }
 
 /// The command word, plus its subcommand for `/archon`, for a result note.
@@ -369,6 +401,32 @@ mod tests {
         }
         for text in ["/answer 3 yes", "/approve", "/a/b", "say /a 3 yes", ""] {
             assert!(!retired_alias(text), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_message_led_by_a_host_command_is_refused_in_shared_chat() {
+        for text in [
+            "/answer 3 yes",
+            "/APPROVE",
+            "/archon set a=b",
+            "/watch repo",
+            "/a 1",
+        ] {
+            assert!(names_host_command(text), "{text:?}");
+        }
+        for text in ["say /answer 3 yes", "hello", "/status", "/answered", ""] {
+            assert!(!names_host_command(text), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn the_shared_list_names_only_real_operator_commands() {
+        for name in SHARED_CHAT_COMMANDS.iter().filter(|n| **n != "/a") {
+            let known = archon_core::operator_commands::OPERATOR_COMMANDS
+                .iter()
+                .any(|c| format!("/{}", c.name) == *name);
+            assert!(known, "{name}");
         }
     }
 }

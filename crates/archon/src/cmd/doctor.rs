@@ -895,9 +895,13 @@ mod tests {
     #[test]
     fn a_dedicated_aetherd_on_protocol_14_warns_that_allowlists_need_15() {
         let dedicated = AetherMode::Dedicated;
-        let current = aether_ok(&welcome(18), dedicated);
+        let current = aether_ok(&welcome(PROTOCOL_VERSION), dedicated);
         assert_eq!(current.level, Level::Ok);
-        assert!(current.detail.ends_with("(protocol 18, instance i-1)"));
+        assert!(
+            current
+                .detail
+                .ends_with(&format!("(protocol {PROTOCOL_VERSION}, instance i-1)"))
+        );
         let older = aether_ok(&welcome(14), dedicated);
         assert_eq!(older.level, Level::Warn);
         assert!(
@@ -908,7 +912,8 @@ mod tests {
             older.detail
         );
         assert_eq!(aether_ok(&welcome(13), dedicated).level, Level::Fail);
-        assert_eq!(aether_ok(&welcome(19), dedicated).level, Level::Fail);
+        let newer = aether_ok(&welcome(PROTOCOL_VERSION + 1), dedicated);
+        assert_eq!(newer.level, Level::Fail);
     }
 
     #[test]

@@ -261,9 +261,44 @@ pub(super) async fn publish_report(
     if let Some(id) = item {
         ctx.store.lock().await.item(id)?;
     }
+    check_report_scope(ctx, path).await?;
     Ok(Reply::Report(
         reports::publish(ctx, &title, path, item).await?,
     ))
+}
+
+/// The report's directory is snapshotted, so it must lie in a registered
+/// repository or under the item workspaces. A missing file is left to
+/// `reports::publish` to report as not found.
+async fn check_report_scope(ctx: &DaemonContext, path: &Path) -> Result<(), ArchonError> {
+    assert!(
+        path.is_absolute(),
+        "report paths are checked absolute first"
+    );
+    let Ok(resolved) = path.canonicalize() else {
+        return Ok(());
+    };
+    let mut roots = vec![ctx.paths.worktrees.clone()];
+    roots.extend(
+        ctx.store
+            .lock()
+            .await
+            .repos()?
+            .into_iter()
+            .map(|repo| repo.path),
+    );
+    let inside = roots
+        .iter()
+        .filter_map(|root| root.canonicalize().ok())
+        .any(|root| resolved.starts_with(root));
+    if inside {
+        return Ok(());
+    }
+    Err(ArchonError::Invalid(format!(
+        "report {} is outside every registered repository and item workspace; \
+         write the page in the item's workspace or the repository",
+        path.display()
+    )))
 }
 
 /// Trimmed, non-empty and bounded.

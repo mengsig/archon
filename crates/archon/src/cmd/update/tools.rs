@@ -1,7 +1,7 @@
 //! Downloading, hashing and unpacking with the installer's own programs: the
 //! workspace has no HTTP, TLS or SHA-256 crate, and they honour system proxies.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
@@ -49,6 +49,32 @@ fn require(names: &[&str], purpose: &str) -> anyhow::Result<PathBuf> {
         })
 }
 
+/// The arguments that make curl or wget fetch `url` into `dest`; an
+/// `https://` address is never downgraded or redirected to plain http.
+fn download_args(is_curl: bool, url: &str, dest: &Path, limit: Duration) -> Vec<OsString> {
+    assert!(!limit.is_zero(), "a download has a time limit");
+    let seconds = limit.as_secs().max(1).to_string();
+    let connect = CONNECT_TIMEOUT_SECS.to_string();
+    let https = url.starts_with("https://");
+    let mut args: Vec<&OsStr> = Vec::new();
+    if is_curl {
+        args.extend(["-fsSL", "--retry", "2", "--connect-timeout", &connect].map(OsStr::new));
+        args.extend(["--max-time", &seconds].map(OsStr::new));
+        if https {
+            args.extend(["--proto", "=https", "--tlsv1.2"].map(OsStr::new));
+        }
+        args.push(OsStr::new("-o"));
+    } else {
+        args.extend(["-q", "-T", &connect].map(OsStr::new));
+        if https {
+            args.push(OsStr::new("--https-only"));
+        }
+        args.push(OsStr::new("-O"));
+    }
+    args.extend([dest.as_os_str(), OsStr::new(url)]);
+    args.into_iter().map(OsString::from).collect()
+}
+
 /// Download `url` to `dest` within `limit`. A failure leaves no partial
 /// file behind that could be taken for the download.
 pub async fn download(url: &str, dest: &Path, limit: Duration) -> anyhow::Result<()> {
@@ -57,21 +83,10 @@ pub async fn download(url: &str, dest: &Path, limit: Duration) -> anyhow::Result
         "release addresses are validated when read: {url}"
     );
     let program = require(&["curl", "wget"], "to download releases")?;
-    let seconds = limit.as_secs().max(1).to_string();
-    let connect = CONNECT_TIMEOUT_SECS.to_string();
-    let mut args: Vec<&OsStr> = Vec::new();
-    if program.file_name() == Some(OsStr::new("curl")) {
-        args.extend(["-fsSL", "--retry", "2", "--connect-timeout", &connect].map(OsStr::new));
-        args.extend(["--max-time", &seconds].map(OsStr::new));
-        if url.starts_with("https://") {
-            args.extend(["--proto", "=https", "--tlsv1.2"].map(OsStr::new));
-        }
-        args.push(OsStr::new("-o"));
-    } else {
-        args.extend(["-q", "-T", &connect, "-O"].map(OsStr::new));
-    }
-    args.extend([dest.as_os_str(), OsStr::new(url)]);
-    let result = run(&program, &args, limit + KILL_MARGIN).await;
+    let is_curl = program.file_name() == Some(OsStr::new("curl"));
+    let args = download_args(is_curl, url, dest, limit);
+    let arg_refs: Vec<&OsStr> = args.iter().map(OsString::as_os_str).collect();
+    let result = run(&program, &arg_refs, limit + KILL_MARGIN).await;
     if result.is_err() && dest.exists() {
         std::fs::remove_file(dest).with_context(|| format!("removing {}", dest.display()))?;
     }
@@ -155,6 +170,18 @@ mod tests {
             let error = parse_checksum(text).unwrap_err().to_string();
             assert!(error.contains("is not a SHA-256 digest"), "{text}: {error}");
         }
+    }
+
+    #[test]
+    fn wget_refuses_non_https_for_https_addresses() {
+        let limit = Duration::from_secs(30);
+        let dest = Path::new("/tmp/out");
+        let wget = download_args(false, "https://example.com/a.tar.gz", dest, limit);
+        assert!(wget.iter().any(|a| a == "--https-only"), "{wget:?}");
+        let local = download_args(false, "http://127.0.0.1:1/a", dest, limit);
+        assert!(!local.iter().any(|a| a == "--https-only"), "{local:?}");
+        let curl = download_args(true, "https://example.com/a.tar.gz", dest, limit);
+        assert!(curl.iter().any(|a| a == "=https"), "{curl:?}");
     }
 
     #[tokio::test]

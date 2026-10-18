@@ -126,6 +126,20 @@ fn text_of(item: &FeedItem) -> &str {
 }
 
 #[tokio::test]
+async fn bind_tightens_a_loose_socket_directory_and_keeps_the_socket_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let h = Harness::new().await;
+    let socket = h.ctx.paths.socket.clone();
+    let parent = socket.parent().unwrap();
+    std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let (_listener, _lock) = server::bind(&h.ctx).expect("bind");
+    let mode =
+        |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(parent), 0o700);
+    assert_eq!(mode(&socket), 0o600);
+}
+
+#[tokio::test]
 async fn hello_requests_feed_and_shutdown_over_a_socket() {
     let h = Harness::new().await;
     let socket = h.ctx.paths.socket.clone();

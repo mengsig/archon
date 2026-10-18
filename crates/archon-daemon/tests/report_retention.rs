@@ -919,3 +919,29 @@ async fn expiry_keeps_a_settled_items_report_referenced_by_a_live_gate() {
     assert!(pass.reports.is_empty(), "{pass:?}");
     assert!(stored.exists());
 }
+
+#[tokio::test]
+async fn publish_report_refuses_a_page_outside_every_repository_and_workspace() {
+    let h = Harness::new().await;
+    let outside = page(&h.dir.path().join("elsewhere"));
+    let request = |path: &Path| Request::PublishReport {
+        title: "Page".into(),
+        path: path.to_path_buf(),
+        item: None,
+    };
+    let refused = h.cli(request(&outside)).await.unwrap_err();
+    assert!(
+        refused
+            .to_string()
+            .contains("outside every registered repository"),
+        "{refused}"
+    );
+    let in_worktrees = page(&h.ctx.paths.worktrees.join("item"));
+    h.cli(request(&in_worktrees))
+        .await
+        .expect("a workspace page is published");
+    let in_repo = page(&h.repo.join("docs"));
+    h.cli(request(&in_repo))
+        .await
+        .expect("a repository page is published");
+}

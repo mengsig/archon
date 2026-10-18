@@ -49,15 +49,10 @@ pub fn bind(ctx: &DaemonContext) -> Result<(UnixListener, DaemonLock), ArchonErr
     let parent = socket.parent().ok_or_else(|| {
         ArchonError::Invalid(format!("socket {} has no directory", socket.display()))
     })?;
-    if !parent.exists() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| ArchonError::io(format!("creating {}", parent.display()), e))?;
-        set_mode(parent, 0o700)?;
-    }
+    secure_parent(parent)?;
     let lock = lock_daemon(socket)?;
     clear_stale_socket(socket)?;
-    let listener = UnixListener::bind(socket)
-        .map_err(|e| ArchonError::io(format!("binding {}", socket.display()), e))?;
+    let listener = bind_private(socket)?;
     set_mode(socket, 0o600)?;
     let pid_path = archon_core::paths::pid_path_for(socket);
     std::fs::write(&pid_path, format!("{}\n", std::process::id()))
@@ -91,6 +86,58 @@ pub fn lock_daemon(socket: &Path) -> Result<DaemonLock, ArchonError> {
             Err(ArchonError::io(format!("locking {}", path.display()), e))
         }
     }
+}
+
+/// Create the socket's directory with mode 0700. An existing one of ours is
+/// tightened to 0700; another user's is refused when others can write in it
+/// without the sticky bit (as in `/tmp`).
+fn secure_parent(parent: &Path) -> Result<(), ArchonError> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = match std::fs::metadata(parent) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| ArchonError::io(format!("creating {}", parent.display()), e))?;
+            return set_mode(parent, 0o700);
+        }
+        Err(e) => {
+            return Err(ArchonError::io(
+                format!("inspecting {}", parent.display()),
+                e,
+            ));
+        }
+    };
+    if !meta.is_dir() {
+        return Err(ArchonError::Invalid(format!(
+            "{} is not a directory; the socket needs one",
+            parent.display()
+        )));
+    }
+    let mode = meta.mode() & 0o7777;
+    if meta.uid() == rustix::process::getuid().as_raw() {
+        return if mode == 0o700 {
+            Ok(())
+        } else {
+            tracing::warn!(dir = %parent.display(), mode = format!("{mode:o}"), "tightening the socket directory to 0700");
+            set_mode(parent, 0o700)
+        };
+    }
+    if mode & 0o022 != 0 && mode & 0o1000 == 0 {
+        return Err(ArchonError::Invalid(format!(
+            "{} is owned by another user and writable by others (mode {mode:o}); \
+             put the socket in a directory only you can write",
+            parent.display()
+        )));
+    }
+    Ok(())
+}
+
+/// Bind under umask 0077, so the socket is never visible with wider access.
+fn bind_private(socket: &Path) -> Result<UnixListener, ArchonError> {
+    let previous = rustix::process::umask(rustix::fs::Mode::from_raw_mode(0o077));
+    let bound = UnixListener::bind(socket);
+    rustix::process::umask(previous);
+    bound.map_err(|e| ArchonError::io(format!("binding {}", socket.display()), e))
 }
 
 fn set_mode(path: &Path, mode: u32) -> Result<(), ArchonError> {

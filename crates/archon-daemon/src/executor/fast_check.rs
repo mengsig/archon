@@ -201,6 +201,20 @@ impl Drop for Group {
     }
 }
 
+/// Drop the daemon's own `GIT_*` variables from what `process` inherits, so
+/// a check cannot be steered at another repository.
+pub(crate) fn strip_git_env(process: &mut Command) {
+    strip_git_keys(process, std::env::vars_os().map(|(key, _)| key));
+}
+
+fn strip_git_keys(process: &mut Command, keys: impl Iterator<Item = std::ffi::OsString>) {
+    for key in keys {
+        if key.to_string_lossy().starts_with("GIT_") {
+            process.env_remove(key);
+        }
+    }
+}
+
 /// Run `command` with `sh -c` in `tree` with `envs` added, in its own process
 /// group, for at most `limit`, keeping the end of its output.
 pub(crate) async fn run(
@@ -211,7 +225,9 @@ pub(crate) async fn run(
 ) -> Result<Ran, ArchonError> {
     assert!(tree.is_absolute(), "checks run in absolute work trees");
     assert!(!limit.is_zero(), "a time limit is positive");
-    let mut child = Command::new("sh")
+    let mut process = Command::new("sh");
+    strip_git_env(&mut process);
+    let mut child = process
         .args(["-c", command])
         .current_dir(tree)
         .envs(envs.iter().map(|(key, value)| (*key, *value)))

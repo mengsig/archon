@@ -161,11 +161,7 @@ impl Ended {
 /// daemon's `GIT_*` environment.
 fn command_in(work: &Path, command: &str) -> tokio::process::Command {
     let mut process = tokio::process::Command::new("nice");
-    for (key, _) in std::env::vars_os() {
-        if key.to_string_lossy().starts_with("GIT_") {
-            process.env_remove(key);
-        }
-    }
+    crate::executor::fast_check::strip_git_env(&mut process);
     process
         .args(["-n", "19", "sh", "-c", command])
         .current_dir(work)

@@ -42,6 +42,19 @@ pub(crate) async fn ended(pid: i32) -> bool {
 }
 
 #[tokio::test]
+async fn git_variables_are_not_inherited_by_a_check() {
+    let (_guard, tree) = dir();
+    let mut process = Command::new("sh");
+    process
+        .env("GIT_DIR", "/elsewhere")
+        .env("KEEP_ME", "kept")
+        .args(["-c", "echo ${GIT_DIR-unset} $KEEP_ME"]);
+    strip_git_keys(&mut process, ["GIT_DIR".into()].into_iter());
+    let out = process.current_dir(&tree).output().await.unwrap();
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "unset kept");
+}
+
+#[tokio::test]
 async fn a_run_reports_how_it_ended_with_its_output_and_environment() {
     let (_keep, tree) = dir();
     let ran = run("echo out; echo err >&2", &tree, &[], LIMIT)

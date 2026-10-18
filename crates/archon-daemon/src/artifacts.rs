@@ -327,13 +327,45 @@ fn copy_payload(source: &Path, staged: &Path, payload: &Payload) -> Result<u64, 
         let parent = to.parent().expect("a staged file has a directory");
         std::fs::create_dir_all(parent)
             .map_err(|e| ArchonError::io(format!("creating {}", parent.display()), e))?;
-        copied += std::fs::copy(&from, &to)
-            .map_err(|e| ArchonError::io(format!("copying {}", from.display()), e))?;
+        copied += copy_regular_file(&from, &to)?;
     }
     if payload.files.is_empty() {
         std::fs::create_dir_all(staged)
             .map_err(|e| ArchonError::io(format!("creating {}", staged.display()), e))?;
     }
+    Ok(copied)
+}
+
+/// Copy `from` to `to` through one handle opened without following a
+/// symlink, so a file swapped for a link after the gather is refused.
+fn copy_regular_file(from: &Path, to: &Path) -> Result<u64, ArchonError> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut input = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+        .open(from)
+        .map_err(|e| {
+            ArchonError::io(
+                format!(
+                    "opening {} (artifacts are regular files; was it replaced by a symlink?)",
+                    from.display()
+                ),
+                e,
+            )
+        })?;
+    let meta = input
+        .metadata()
+        .map_err(|e| ArchonError::io(format!("inspecting {}", from.display()), e))?;
+    if !meta.is_file() {
+        return Err(ArchonError::Invalid(format!(
+            "{} changed into a special file while it was being copied",
+            from.display()
+        )));
+    }
+    let mut output = std::fs::File::create(to)
+        .map_err(|e| ArchonError::io(format!("creating {}", to.display()), e))?;
+    let copied = std::io::copy(&mut input, &mut output)
+        .map_err(|e| ArchonError::io(format!("copying {}", from.display()), e))?;
     Ok(copied)
 }
 
@@ -552,6 +584,22 @@ mod tests {
         ) -> Result<ArtifactListing, ArchonError> {
             publish(&self.root, &self.item, &self.workspace, path, name, limits)
         }
+    }
+
+    #[test]
+    fn a_file_swapped_for_a_symlink_after_the_gather_is_refused() {
+        let fx = fixture();
+        fx.write("report.txt", b"fine");
+        let secret = fx.workspace.join("secret.txt");
+        std::fs::write(&secret, b"credentials").unwrap();
+        let source = fx.workspace.join("report.txt");
+        let payload = gather(&source, &limits(1, 1)).unwrap();
+        std::fs::remove_file(&source).unwrap();
+        std::os::unix::fs::symlink(&secret, &source).unwrap();
+        let staged = fx.workspace.join("staged.txt");
+        let err = copy_payload(&source, &staged, &payload).unwrap_err();
+        assert!(err.to_string().contains("symlink"), "{err}");
+        assert!(!staged.exists() || std::fs::read(&staged).unwrap().is_empty());
     }
 
     fn limits(max_file_mb: u64, max_item_mb: u64) -> ArtifactsConfig {

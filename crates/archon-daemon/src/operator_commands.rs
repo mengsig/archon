@@ -235,11 +235,11 @@ async fn retired_alias_hint(ctx: &DaemonContext) -> Result<(), ArchonError> {
 }
 
 /// A first word that is shaped like a question reference (`3`, `Q3`, `q_…`),
-/// even a bad one such as `0`, so it is refused rather than taken as a note.
+/// even a bad one such as `0` or a truncated `q_…`, so it is refused rather than taken as a note.
 fn names_a_question(word: &str) -> bool {
     let digits = word.strip_prefix(['Q', 'q']).unwrap_or(word);
     let numeric = !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit());
-    numeric || QuestionRef::parse(word).is_ok()
+    numeric || word.starts_with("q_")
 }
 
 fn not_one_gate(gates: &[archon_core::notify::Question]) -> String {
@@ -337,7 +337,7 @@ mod tests {
 
     #[test]
     fn only_a_question_shaped_word_is_a_reference() {
-        for word in ["3", "Q3", "q12", "0", "99"] {
+        for word in ["3", "Q3", "q12", "0", "99", "q_01M57Z"] {
             assert!(names_a_question(word), "{word:?}");
         }
         for word in ["looks", "not", "q", "3rd", "approved,"] {

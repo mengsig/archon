@@ -434,6 +434,7 @@ async fn approve_and_reject_with_only_a_note_act_on_the_single_open_gate() {
 async fn approve_with_an_out_of_range_number_is_not_taken_as_a_note() {
     let (h, item, asked) = at_proposal_gate(AetherMode::Dedicated).await;
     deliver(&h, 1, operator("/approve 99 fine")).await;
+    deliver(&h, 2, operator("/reject q_01M57Z fine")).await;
     assert_eq!(decision(&h, &item.id, "propose").await, None);
     assert!(question(&h, &asked.id).await.is_open());
 }

@@ -605,6 +605,33 @@ async fn the_aether_chat_merge_command_merges_only_in_dedicated_mode() {
     );
 }
 
+#[tokio::test]
+async fn archon_merge_is_the_merge_command_for_the_operator_only() {
+    let (h, gh) = delivering(Config::default()).await;
+    let (item, head) = shipped(&h).await;
+    gh.show(&head, "MERGEABLE", green());
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(keys::ORCHESTRATOR_AGENT, ORCHESTRATOR)
+        .unwrap();
+    let event = message_from(
+        1,
+        &format!("/archon merge {}", item.id),
+        json!({"actor":"agent", "id":"agt_other"}),
+    );
+    pump::handle_orchestrator_event(&h.ctx, &event)
+        .await
+        .unwrap();
+    assert!(merges(&h, &item).await.is_empty() && !gh.merged());
+
+    chat(&h, 2, &format!("/archon merge {}", item.id)).await;
+    let [merge] = merges(&h, &item).await.try_into().expect("one request");
+    assert_eq!(merge.authority, MergeAuthority::AetherChat);
+    assert!(gh.merged() && matches!(merge.state, MergeState::Merged { .. }));
+}
+
 /// A merge sent while GitHub could not be read back stays `merging`; after
 /// a restart the coordination pass settles it from what GitHub shows.
 #[tokio::test]

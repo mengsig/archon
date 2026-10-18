@@ -23,6 +23,12 @@ pub(crate) async fn handle(
     };
     let github = channel.is_github();
     if !github && ctx.config.aether.mode != AetherMode::Dedicated {
+        let text = unalias(message.text.trim());
+        let message = InboxMessage {
+            text: text.into_owned(),
+            ..message.clone()
+        };
+        let message = &message;
         if retired_alias(&message.text) {
             return retired_alias_hint(ctx).await;
         }
@@ -101,6 +107,8 @@ async fn execute(
         return Ok(());
     }
     let text = command_text(text, github);
+    let text = unalias(text);
+    let text = text.as_ref();
     if text.starts_with('/') && text.chars().count() > evidence::MAX_MESSAGE_CHARS {
         return feed::system(ctx, "Operator command exceeds the 4000-character limit.")
             .await
@@ -187,6 +195,24 @@ pub(crate) fn command_text(text: &str, github: bool) -> &str {
     text
 }
 
+/// `/archon answer|approve|reject|merge …` runs the same handler as the bare
+/// command, so the sender checks and results cannot differ.
+pub(crate) fn unalias(text: &str) -> std::borrow::Cow<'_, str> {
+    let (name, rest) = text.split_once(char::is_whitespace).unwrap_or((text, ""));
+    if !name.eq_ignore_ascii_case("/archon") {
+        return text.into();
+    }
+    let rest = rest.trim_start();
+    let (verb, args) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+    let verb = verb.to_ascii_lowercase();
+    match verb.as_str() {
+        "answer" | "approve" | "reject" | "merge" => {
+            format!("/{verb} {args}").trim_end().to_owned().into()
+        }
+        _ => text.into(),
+    }
+}
+
 const RETIRED_ALIAS_HINT: &str = "/a is no longer a command: use /answer N <answer>.";
 
 /// `/a` was once `/answer`'s alias; whoever still types it gets a pointer.
@@ -262,6 +288,30 @@ async fn gate_alias(ctx: &DaemonContext, text: &str) -> Result<Option<String>, A
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn archon_verbs_become_the_bare_commands() {
+        for (text, bare) in [
+            ("/archon answer 73 yes", "/answer 73 yes"),
+            ("/ARCHON  Approve", "/approve"),
+            ("/archon reject 4 no\nwhy", "/reject 4 no\nwhy"),
+            (
+                "/archon merge qi_01 --ignore-checks",
+                "/merge qi_01 --ignore-checks",
+            ),
+        ] {
+            assert_eq!(unalias(text), bare);
+        }
+        for text in [
+            "/archon set a=b",
+            "/archon",
+            "/answer 3 yes",
+            "say /archon answer 3 x",
+            "/archonanswer 3",
+        ] {
+            assert_eq!(unalias(text), text);
+        }
+    }
 
     #[test]
     fn only_a_message_led_by_a_bare_slash_a_is_the_retired_alias() {

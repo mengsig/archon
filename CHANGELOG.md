@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+`/archon answer N …`, `/archon approve`, `/archon reject` and `/archon merge ITEM`
+now work as `/answer`, `/approve`, `/reject` and `/merge`, with the same sender
+checks and results. The `/archon` usage error lists them.
+
 ## 1.3.1
 
 Released 2026-10-18.

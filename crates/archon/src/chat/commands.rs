@@ -10,6 +10,7 @@ use crate::questions::QuestionRef;
 
 /// The chat's own commands, after the operator commands every surface takes.
 const CHAT_HELP: &str = "\
+  /archon answer|approve|reject|merge   the same as /answer, /approve, /reject, /merge
   /progress               show or hide progress notes (also /verbose)
   /help                   this list
   /quit                   leave (also Ctrl-D, or Ctrl-C twice)
@@ -88,13 +89,24 @@ fn parse_command(name: &str, rest: &str) -> Result<SlashCommand, String> {
             (id, "") if !id.is_empty() => Ok(SlashCommand::Item(id.to_owned())),
             _ => Err("usage: /item <id>".to_owned()),
         },
-        "archon" | "approve" | "reject" => Ok(SlashCommand::Authority(format!("/{name} {rest}"))),
+        "archon" => parse_archon(rest),
+        "approve" | "reject" => Ok(SlashCommand::Authority(format!("/{name} {rest}"))),
         "merge" => parse_merge(rest),
         "a" => Err("use /answer <n> <text>".to_owned()),
         "answer" => parse_answer(rest),
         "pause" => parse_pause_target(rest, "pause").map(SlashCommand::Pause),
         "resume" => parse_pause_target(rest, "resume").map(SlashCommand::Resume),
         other => Err(format!("unknown command /{other}; /help lists them")),
+    }
+}
+
+/// `/archon answer|approve|reject|merge …` is the same command as `/answer …`.
+fn parse_archon(rest: &str) -> Result<SlashCommand, String> {
+    let (verb, args) = split_word(rest);
+    let verb = verb.to_ascii_lowercase();
+    match verb.as_str() {
+        "answer" | "approve" | "reject" | "merge" => parse_command(&verb, args),
+        _ => Ok(SlashCommand::Authority(format!("/archon {rest}"))),
     }
 }
 
@@ -206,6 +218,32 @@ mod tests {
                 ChatInput::Invalid("use /answer <n> <text>".into())
             );
         }
+    }
+
+    #[test]
+    fn archon_verbs_are_the_whole_message_commands() {
+        assert_eq!(
+            parse_line("/archon answer 73 yes"),
+            parse_line("/answer 73 yes")
+        );
+        assert_eq!(
+            parse_line("/Archon merge qi_01 --ignore-checks"),
+            parse_line("/merge qi_01 --ignore-checks")
+        );
+        for verb in ["approve", "reject"] {
+            assert_eq!(
+                parse_line(&format!("/archon {verb} 4 ok")),
+                parse_line(&format!("/{verb} 4 ok"))
+            );
+        }
+        assert!(matches!(
+            parse_line("/archon answer 73"),
+            ChatInput::Invalid(_)
+        ));
+        assert_eq!(
+            parse_line("/archon pause --hard"),
+            ChatInput::Command(SlashCommand::Authority("/archon pause --hard".into()))
+        );
     }
 
     #[test]

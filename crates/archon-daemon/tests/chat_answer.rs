@@ -379,6 +379,52 @@ async fn operator_commands_revise_then_reject_a_report_gate() {
     assert_eq!(applied, [true, true]);
 }
 
+#[tokio::test]
+async fn archon_answer_applies_like_answer_for_the_operator() {
+    let h = harness(AetherMode::Dedicated).await;
+    let asked = ask(&h, "Ship to prod?", &["yes", "wait a day"]).await;
+    let command = format!("/archon answer {} 2", asked.number);
+    deliver(&h, 1, operator(&command)).await;
+    assert_eq!(
+        question(&h, &asked.id).await.answer.as_deref(),
+        Some("wait a day")
+    );
+    let applied = vec![(Some(asked.number), true, "wait a day".to_owned())];
+    assert_eq!(chat_news(&h).await, applied);
+}
+
+#[tokio::test]
+async fn archon_approve_and_reject_decide_gates_like_the_bare_commands() {
+    let (h, item, _) = at_proposal_gate(AetherMode::Dedicated).await;
+    deliver(&h, 1, operator("/archon approve")).await;
+    assert!(matches!(
+        decision(&h, &item.id, "propose").await,
+        Some(GateDecision::Approve { .. })
+    ));
+    let (h, item, asked) = at_proposal_gate(AetherMode::Dedicated).await;
+    deliver(
+        &h,
+        1,
+        operator(&format!("/ARCHON reject {} too big", asked.number)),
+    )
+    .await;
+    assert!(matches!(
+        decision(&h, &item.id, "propose").await,
+        Some(GateDecision::Reject { .. })
+    ));
+}
+
+#[tokio::test]
+async fn archon_answer_from_anyone_but_the_operator_passes_no_gate() {
+    let (h, item, asked) = at_proposal_gate(AetherMode::Dedicated).await;
+    let text = format!("/archon answer {} approve", asked.number);
+    let sender = json!({"actor": "agent", "id": "agt_stage"});
+    deliver(&h, 1, message(sender, &text)).await;
+    h.dispatch().await;
+    assert_untouched(&h, &asked, "an agent's /archon answer").await;
+    assert_eq!(decision(&h, &item.id, "propose").await, None);
+}
+
 /// Inbox items that are not the operator's own chat message, each carrying
 /// a well-formed command for gate `number`.
 fn unauthenticated(number: u64) -> Vec<(&'static str, Value)> {

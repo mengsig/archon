@@ -100,6 +100,7 @@ A message that is exactly one of these is applied by archond. On GitHub put
 /answer N <answer>
 /approve [N]                  /reject [N] [reason]
 /merge ITEM [--ignore-checks]
+/archon answer|approve|reject|merge …   (the same as the four lines above)
 /archon set --repo NAME default.merge=auto max.merge=auto default_pipeline=adaptive
 /archon set --repo NAME grant_merge=true ship=pr base_branch=main
 /archon set budgets_enabled=false

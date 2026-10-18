@@ -40,7 +40,7 @@ async fn command(ctx: &DaemonContext, text: &str) -> Result<Request, ArchonError
             } else { overlay_settings(ctx, Some(name), settings).await }
         }
         ("set", settings) if !settings.is_empty() => overlay_settings(ctx, None, settings).await,
-        _ => Err(ArchonError::Invalid("usage: /archon set --repo NAME key=value … | pause --hard | resume --hard | repo remove NAME | watcher JSON | apply JSON".into())),
+        _ => Err(ArchonError::Invalid("usage: /archon answer N TEXT | approve [N] | reject [N] | merge ITEM [--ignore-checks] | set --repo NAME key=value … | pause --hard | resume --hard | repo remove NAME | watcher JSON | apply JSON".into())),
     }
 }
 

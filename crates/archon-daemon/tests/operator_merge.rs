@@ -238,6 +238,39 @@ async fn the_operators_merge_merges_the_delivered_head_once() {
     );
 }
 
+/// After the prune deletes a finished run's variables, the retained fork base
+/// still decides the merge, whatever the repository's base became since.
+#[tokio::test]
+async fn a_pruned_run_merges_by_its_retained_fork_base() {
+    let (h, gh) = delivering(Config::default()).await;
+    let (item, head) = shipped(&h).await;
+    gh.show(&head, "MERGEABLE", green());
+    git(&h.repo, &["branch", "develop"]);
+    let patch = RepoPatch {
+        base_branch: archon_core::protocol::Clearable::Set("develop".into()),
+        ..RepoPatch::default()
+    };
+    let request = Request::RepoUpdate {
+        repo: RepoRef(REPO_NAME.into()),
+        patch,
+    };
+    h.cli(request).await.expect("repo update");
+    let run = h.run(&item.id).await.id;
+    let pruned = archon_daemon::prune::prune_once(&h.ctx, archon_core::now())
+        .await
+        .unwrap();
+    assert!(pruned.run_vars >= 1, "the run's variables were pruned");
+    assert_eq!(
+        h.kv(&format!("run_base:{run}")).await.as_deref(),
+        Some("main")
+    );
+
+    let merge = merge_of(h.cli(merge_item(&item, false)).await);
+    assert_eq!(merge.state.kind(), "merged", "{merge:?}");
+    let pinned = format!("pr merge {PR_ONE} --match-head-commit {head} --squash");
+    assert_eq!(merge_calls(&gh), [pinned]);
+}
+
 /// An item that has not succeeded is refused before anything is recorded
 /// or GitHub is asked, from the operator and the orchestrator alike.
 #[tokio::test]

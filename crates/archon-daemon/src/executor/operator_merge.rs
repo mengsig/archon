@@ -138,11 +138,7 @@ fn expected_base(store: &Store, shipped: &Shipped) -> Result<Result<String, Stri
     if let Some(base) = super::restack::target_base(store, &shipped.item.id)? {
         return Ok(Ok(base));
     }
-    let forked = match recover::load_run_vars(store, &shipped.run) {
-        Ok(vars) => vars.get("base_branch").cloned(),
-        Err(ArchonError::NotFound(_)) => None,
-        Err(error) => return Err(error),
-    };
+    let forked = recover::forked_base(store, &shipped.run)?;
     let named = |base: &String| !base.trim().is_empty() && !is_commit_id(base);
     let configured = match shipped.repo.base_branch.clone() {
         Some(base) => Some(base),

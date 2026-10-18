@@ -63,6 +63,22 @@ pub(super) fn load_run_vars(
     Ok(vars)
 }
 
+/// The branch the run forked from: the retained `run_base:` key, which outlives
+/// the pruned variables, then the variables' `base_branch`. `None` when neither remains.
+pub(super) fn forked_base(
+    store: &Store,
+    run: &PipelineRunId,
+) -> Result<Option<String>, ArchonError> {
+    if let Some(base) = store.kv_get(&format!("run_base:{run}"))? {
+        return Ok(Some(base));
+    }
+    match load_run_vars(store, run) {
+        Ok(vars) => Ok(vars.get("base_branch").cloned()),
+        Err(ArchonError::NotFound(_)) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
 /// Delete the variables of finished runs, which only rebuild a live run's
 /// driver, and of runs never inserted. Returns how many went.
 pub(crate) fn prune_finished_run_vars(store: &mut Store) -> Result<usize, ArchonError> {

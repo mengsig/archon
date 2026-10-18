@@ -196,18 +196,14 @@ async fn base_of(
     env: &RepoEnv,
 ) -> Result<String, ArchonError> {
     let store = ctx.store.lock().await;
-    let base = match store.kv_get(&format!("run_base:{}", run.id))? {
+    let base = match recover::forked_base(&store, &run.id)? {
         Some(base) => base,
-        None => match recover::load_run_vars(&store, &run.id) {
-            Ok(vars) => vars.get("base_branch").cloned().unwrap_or_default(),
-            Err(ArchonError::NotFound(_)) => env
-                .repo
-                .as_ref()
-                .and_then(|repo| repo.base_branch.clone())
-                .or_else(|| env.config.repo.base_branch.clone())
-                .unwrap_or_default(),
-            Err(error) => return Err(error),
-        },
+        None => env
+            .repo
+            .as_ref()
+            .and_then(|repo| repo.base_branch.clone())
+            .or_else(|| env.config.repo.base_branch.clone())
+            .unwrap_or_default(),
     };
     let base = base.trim();
     if stack::is_commit_id(base) || !is_plain_branch(base) {

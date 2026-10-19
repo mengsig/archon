@@ -1,6 +1,176 @@
 # Release 1.4.0 smoke gate
 
-**Verdict: REGRESSION (Luna).** In the re-gate at `74a33e3a`, on
+**Verdict: PASS.** At `52021145`, which makes the orchestrator's repository
+mirrors read-only, `codex/gpt-6-luna` passes **11/12** Archon trials over
+three runs. Per task: `fix-off-by-one` 3/3, `quality-ledger-transfer` 3/3,
+`quality-retry-budget` 2/3 and `review-seeded-bug` 3/3, so no task is below
+2/3. The median Archon cost is **$0.0564**, +3% over v1.3.1's re-gate median
+of $0.0546, inside the $0.06825 bound (+25%). `claude-code/claude-haiku-5-5`
+passes 4/4 against its baseline's 4/4. `CARGO_BUILD_JOBS=6 make ci` is green.
+The one failed trial is an implementation that misses two edge cases of the
+spec. Its item was queued and shipped normally, not made in a mirror. No
+orchestrator in any run tried to write into a mirror. The four runs and
+`make ci` ran **concurrently**, so wall times are reported but do not gate.
+Nothing was tuned to pass.
+
+The two earlier gates' numbers and findings are kept below as history.
+
+## Read-only mirrors and second re-gate (2026-10-19, at `52021145`)
+
+### What enforces the lock
+
+The re-gate's Luna failure was an orchestrator that edited and committed in
+its own mirror, `<workspace>/repos/<name>`, and queued no item. Neither Aether
+nor the engines can make that path read-only while keeping the workspace
+writable:
+
+- Aether has no read-only scope paths.
+- Codex runs with full access under bypass and network.
+- Claude Code sandboxes offline turns only.
+
+The filesystem works for both engines, so `52021145` enforces the lock there
+(`crates/archon-daemon/src/mirror/lock.rs`):
+
+- **Lock.** Every file and directory of a mirror's work tree has no write
+  bit. Any write by the orchestrator, whether a native edit, an
+  `apply_patch` or a shell redirect, fails with a permission error.
+- **Daemon checkout.** archond opens the tree only for its own checkout and
+  closes it again straight after, even when the checkout fails. It also
+  opens a mirror before removing it.
+- **Git directory.** The git directory (`<data>/mirror-git/<name>`) stays
+  writable, because Aether snapshots a mirror there.
+- **Backstop.** Every refresh, and a pass after every orchestrator turn,
+  compares the mirror with the commit archond checked out. A moved HEAD or a
+  changed tracked file is undone, and the undo posts a visible feed note and
+  wakes the orchestrator with a `mirror` event (`reverted`) telling it to
+  queue the change.
+- **Prompt.** The orchestrator's prompt says mirrors are read-only, but the
+  lock does not depend on it.
+
+Tests in `crates/archon-daemon/tests/it/mirrors.rs`, `link_pump.rs` and
+`mirror/lock.rs` cover four cases:
+
+- refused writes: edit, create, rename, remove, mkdir, `.git` and a shell
+  redirect;
+- reads and `git status`;
+- refresh to a new base;
+- the undo-and-report path for a commit and for an uncommitted edit.
+
+### Method
+
+`CARGO_BUILD_JOBS=6 make ci` at `52021145` passed: fmt-check, clippy
+`-D warnings`, doc and 2927 tests with 0 failed (9 ignored).
+
+The preset, method and $7 cap per run match the earlier gates: four tasks,
+arms `archon` and `aether`, one trial per cell, serial within a run, medium
+effort.
+
+At the operator's request the four runs (Luna ×3, Haiku ×1) and `make ci`
+ran **at the same time**:
+
+- Each run had its own new private sandbox under `archon-bench/`
+  (`rg4l1`, `rg4l2`, `rg4l3`, `rg4h`), with distinct sockets, configuration
+  and data directories.
+- Each sandbox ran its own aetherd, all from one binary.
+- Each sandbox was set up as in the earlier gates: `env -i` with only HOME,
+  USER, LANG, PATH, TMPDIR and the private ARCHON_/AETHER_ variables.
+- No operator daemon was used.
+
+Overlapping runs compete for the host and the provider, so trial wall times
+are not comparable with the serial re-gate and do not gate. No run had a
+timeout or an infrastructure failure, so none was rerun.
+
+Before the runs, I checked the hashes of each sandbox's running processes
+against the builds:
+
+- the `archon mcp` process's executable matched the `archon` build;
+- the aetherd process's executable matched the `aether` build.
+
+`archon-bench verify` passed all 11 graders with the host PATH. Inside the
+sandboxes' `env -i` PATH, which has no `cargo`, two graders outside the smoke
+preset fail. All four aetherds were stopped after the runs, and no sandbox
+process remained.
+
+| | |
+|---|---|
+| measured | archon 1.4.0, commit `52021145` (tree `cadf8a63`) |
+| baseline for cost | v1.3.1's three runs in the re-gate below (12/12, median $0.0546, 325 s) |
+| harness | `archon-bench` from `52021145` |
+| aetherd | mengsig/aether origin/next `78faf9c1` (release 1.2.0), built with its own target directory. The earlier gates used `90aff1fa`; between them only the version, changelog, docs and client libraries changed, not the daemon's code |
+| engines | Claude Code 2.1.299, codex-cli 0.163.0 |
+| binaries (sha256) | archon `27ec5f2a…`, archon-bench `19032dd2…`, aether `486684fb…` |
+
+The run results, logs and the `make ci` log are kept as this item's
+artifacts (`release-1.4.0-regate2-evidence.tar.gz`, `make-ci-52021145.log`).
+
+### Per run (Luna, concurrent)
+
+Each cell: pass · trial wall s · cost $. A `*` cost has `cost_gap = mixed`:
+incomplete costs plus estimates, not a bound.
+
+| Run | fix-off-by-one | quality-ledger-transfer | quality-retry-budget | review-seeded-bug | Archon | Archon cost | Archon wall | End to end |
+|---|---|---|---|---|---|---|---|---|
+| `20261019T141758Z` (`rg4l1`) | pass · 65 · 0.0084 | pass · 145 · *0.0223 | pass · 123 · *0.0190 | pass · 30 · 0.0067 | 4/4 | $0.0564 | 364 s | 682 s |
+| `20261019T141800Z` (`rg4l2`) | pass · 118 · *0.0145 | pass · 135 · *0.0197 | pass · 79 · *0.0166 | pass · 20 · 0.0017 | 4/4 | $0.0526 | 352 s | 695 s |
+| `20261019T141803Z` (`rg4l3`) | pass · 164 · *0.0257 | pass · 160 · *0.0277 | **fail** · 110 · 0.0149 | pass · 35 · 0.0043 | **3/4** | $0.0726 | 469 s | 772 s |
+
+Aether arm: 4/4 in all three runs, $0.0134, $0.0162 and $0.0152.
+
+### Luna totals
+
+| | `52021145` (concurrent) | v1.3.1 re-gate (serial) | vs v1.3.1 |
+|---|---|---|---|
+| Archon passes | **11/12** | 12/12 | −1 |
+| fix-off-by-one | 3/3 | 3/3 | |
+| quality-ledger-transfer | 3/3 | 3/3 | |
+| quality-retry-budget | 2/3 | 3/3 | |
+| review-seeded-bug | 3/3 | 3/3 | |
+| median Archon cost | **$0.0564** | $0.0546 | +3% (bound +25%) |
+| median Archon trial wall | 364 s | 325 s | +12%, not gating |
+| median end to end | 695 s | 628 s | +11%, not gating |
+
+### Haiku 5.5 against its baseline (concurrent)
+
+| Run | fix-off-by-one | quality-ledger-transfer | quality-retry-budget | review-seeded-bug | Archon | Aether | Archon cost | Archon wall | End to end |
+|---|---|---|---|---|---|---|---|---|---|
+| `20261019T141805Z` (`rg4h`) | pass · 81 · 0.0295 | pass · 297 · 0.0546 | pass · 92 · 0.0276 | pass · 40 · 0.0109 | 4/4 | 4/4 | $0.1227 | 510 s | 833 s |
+| baseline `20261015T071250Z` | pass · 65 · ≥ 0.0230 | pass · 155 · ≥ 0.0756 | pass · 115 · ≥ 0.0356 | pass · 35 · 0.0096 | 4/4 | 4/4 | ≥ $0.1438 | 370 s | 11.5 min |
+
+`archon-bench smoke` reported PASS for this run (Archon 4/4, baseline 4/4).
+It also reported PASS for Luna runs 1 and 2, and a pass-rate drop below the
+stored Luna baseline for run 3.
+
+### Second re-gate findings
+
+These findings come from the item captures and each run's archond store,
+plus each sandbox's Aether store and the Codex session records of the
+orchestrators, all read-only.
+
+- **No orchestrator tried to write a mirror.** Every orchestrator tool call
+  across all four runs was recorded in the sandbox Aether stores. Besides
+  Archon tools, they were 28 shell commands and one Read, all reads: `ls`,
+  `rg`, `cat`, `sed -n`, `git status`/`rev-parse`, and `node` run from
+  `/tmp` loading the mirror's module. The 12 Codex orchestrator sessions
+  contain no patch and no permission error. No archond feed has a
+  "read-only mirror" note, and every mirror's recorded state has no problem.
+  So the lock was not exercised live here; its refusals rest on the tests
+  above. Every code task queued at least one item in every run, and
+  `review-seeded-bug` was answered from the mirror without an item, as
+  intended.
+- **Run 3's `quality-retry-budget` failure is quality, not the lock.** The
+  orchestrator queued one item with review level `none`. Its implement stage
+  shipped a `retry_delay` that returns 0 instead of the Retry-After delay
+  when the base or cap is 0, and fails a brute-force check of the formula
+  over a small domain: 3 of 14 hidden tests failed. In the other two runs
+  the same task ran with `standard` review and passed.
+- **One unreadable reviewer verdict.** In run 3 the first ledger item failed
+  because its reviewer's result was not a JSON verdict, as in the earlier
+  re-gate. The orchestrator queued a new item, which passed. Haiku's ledger
+  item was retried once and passed.
+
+## Re-gate (2026-10-19, at `74a33e3a`)
+
+Verdict then: **REGRESSION (Luna).** In the re-gate at `74a33e3a`, on
 `codex/gpt-6-luna`, next passes **9/12** Archon trials over three runs against
 **12/12** for v1.3.1. Next's third run scored 1/4: `fix-off-by-one` and
 `quality-retry-budget` failed because the orchestrator made the change in its
@@ -13,10 +183,6 @@ v1.3.1, both within the 25% bound. On `claude-code/claude-haiku-5-5` next
 passes: Archon 4/4 against the baseline's 4/4, $0.1364 (−5%) and 416 s
 (+12%). The rule fails only on total passes (9 < 12). Nothing was tuned
 to pass.
-
-The first gate's numbers and findings are kept below as history.
-
-## Re-gate (2026-10-19, at `74a33e3a`)
 
 `CARGO_BUILD_JOBS=6 make ci` at `74a33e3a` passed: fmt-check, clippy
 `-D warnings`, doc and 2922 tests with 0 failed (9 ignored).

@@ -77,9 +77,9 @@ impl Verdict {
         let Some(data) = structured.and_then(Value::as_object) else {
             return Err("its result carries no structured verdict".into());
         };
-        let pass = match data.get("verdict").and_then(Value::as_str).map(str::trim) {
-            Some("pass") => true,
-            Some("fail") => false,
+        let pass = match data.get("verdict").and_then(Value::as_str) {
+            Some(word) if word.trim().eq_ignore_ascii_case("pass") => true,
+            Some(word) if word.trim().eq_ignore_ascii_case("fail") => false,
             Some(other) => {
                 return Err(format!(
                     "its `verdict` is {:?}, not \"pass\" or \"fail\"",
@@ -158,7 +158,7 @@ impl Evidence {
             return Err("the result carries no `review` object".into());
         };
         let field = |key: &str| one_line(review.get(key).and_then(Value::as_str).unwrap_or(""));
-        match field("verdict").as_str() {
+        match field("verdict").to_ascii_lowercase().as_str() {
             "pass" => passed(review, field(UNVERIFIED)),
             "skipped" => match field("reason") {
                 reason if reason.is_empty() => {
@@ -168,8 +168,9 @@ impl Evidence {
             },
             "fail" => Err("the reviewer's verdict is `fail`".into()),
             "" => Err("`review.verdict` is missing".into()),
-            other => Err(format!(
-                "`review.verdict` is {other:?}, not \"pass\" or \"skipped\""
+            _ => Err(format!(
+                "`review.verdict` is {:?}, not \"pass\" or \"skipped\"",
+                field("verdict")
             )),
         }
     }
@@ -236,7 +237,7 @@ pub fn on_record(structured: Option<&Value>) -> Option<String> {
 pub fn claimed_reviewers(structured: &Value) -> Option<Vec<String>> {
     let review = structured.get("review")?;
     let verdict = review.get("verdict").and_then(Value::as_str).unwrap_or("");
-    if one_line(verdict) != "pass" {
+    if !one_line(verdict).eq_ignore_ascii_case("pass") {
         return None;
     }
     let named = review.get("reviewers").and_then(Value::as_array);
@@ -316,6 +317,35 @@ mod tests {
         Evidence::read(Some(&structured), ONE_OR_SKIP)
     }
 
+    #[test]
+    fn a_verdict_is_read_in_any_letter_case() {
+        for (word, expected) in [
+            ("PASS", true),
+            ("Pass", true),
+            (" fail ", false),
+            ("FAIL", false),
+        ] {
+            let verdict = json!({"verdict": word, "head": "abcdef1"});
+            let read = Verdict::read(Some(&verdict)).unwrap();
+            assert_eq!(read.pass, expected, "{word:?}");
+        }
+        let refused = Verdict::read(Some(&json!({"verdict": "Passed", "head": "abcdef1"})));
+        assert!(refused.unwrap_err().contains("not \"pass\" or \"fail\""));
+    }
+
+    #[test]
+    fn a_review_record_verdict_is_read_in_any_letter_case() {
+        let upper = read(pass(json!({"verdict": "PASS",
+            "reviewer_models": ["a/1"], "reviewer_agents": ["agt_r"]})));
+        assert!(upper.is_ok(), "{upper:?}");
+        let skipped = read(json!({"review": {"verdict": "Skipped", "reason": "a typo"}}));
+        assert!(skipped.is_ok(), "{skipped:?}");
+        let claimed = json!({"review": {"verdict": "Pass", "reviewers": ["agt_r"]}});
+        assert_eq!(claimed_reviewers(&claimed), Some(vec!["agt_r".to_string()]));
+        let other = read(json!({"review": {"verdict": "Passed"}})).unwrap_err();
+        assert!(other.contains("\"Passed\""), "{other}");
+    }
+
     fn pass(extra: Value) -> Value {
         let mut review = json!({"verdict": "pass", "reviewers": ["agt_r"]});
         review
@@ -355,7 +385,7 @@ mod tests {
                 json!({"review": {"verdict": "fail", "reviewers": ["agt_r"]}}),
                 "verdict is `fail`",
             ),
-            (json!({"review": {"verdict": "PASS"}}), "\"PASS\""),
+            (json!({"review": {"verdict": "Passed"}}), "\"Passed\""),
             (json!({"review": "pass"}), "`review.verdict` is missing"),
         ] {
             let refused = read(structured.clone()).unwrap_err();
@@ -599,7 +629,7 @@ mod tests {
             "null".to_owned(),
             format!("[{pass}]"),
             "{}".to_owned(),
-            json!({"verdict": "PASS", "head": "abcdef1"}).to_string(),
+            json!({"verdict": "Passed", "head": "abcdef1"}).to_string(),
             json!({"verdict": "pass"}).to_string(),
             json!({"verdict": "pass", "head": "HEAD"}).to_string(),
             json!({"verdict": "pass", "head": "abcdef1", "base": "main"}).to_string(),

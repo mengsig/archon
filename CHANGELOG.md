@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+A reviewer's verdict is accepted in any letter case: `PASS`, `Pass` and
+` fail ` count as `pass` and `fail`, as do the same words in `review.verdict`.
+Any other word is still refused.
+
 Against an aetherd with a notification center (feature `notifications`),
 archond posts every open operator question there, gates included, with its
 suggested answers as actions, and posts blockers and outcomes without. An

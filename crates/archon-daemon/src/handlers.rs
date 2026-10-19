@@ -30,6 +30,7 @@ use archon_core::id::{QuestionId, QueueItemId};
 use archon_core::merge::MergeAuthority;
 use archon_core::notify::{AnswerVia, Question};
 use archon_core::protocol::{ClientKind, ItemPatch, Reply, RepoRef, Request};
+use tokio::sync::RwLockReadGuard;
 
 use crate::context::DaemonContext;
 use crate::executor::operator_merge;
@@ -53,12 +54,31 @@ pub async fn update_item_autonomy_above_ceiling(
 /// with `ErrorCode::Forbidden` over MCP and for any agent, whatever the
 /// client; a request that changes Archon for an agent is made only for the
 /// orchestrator archond has now (ARCHITECTURE §11). In standby and while
-/// start-up recovery runs only reads are served.
+/// start-up recovery runs only reads are served. The steps run in this order.
 pub async fn handle(
     ctx: &DaemonContext,
     client: ClientKind,
     request: Request,
 ) -> Result<Reply, ArchonError> {
+    let (caller, request) = unwrap_for_agent(request)?;
+    refuse_early(ctx, client, caller.as_ref(), &request).await?;
+    if let Some(reply) = prepare_watcher(ctx, &request).await? {
+        return Ok(reply);
+    }
+    // Held to the end of the call: the orchestrator is not replaced under it.
+    let _authority = take_authority(ctx, client, caller.as_ref(), &request).await?;
+    // Serialize the state whose before/after authority confirmations observe.
+    // Lifecycle and chat delivery can replace the orchestrator, so they must
+    // never hold this mutex while waiting for its authority write lock.
+    let _changes = match request.changes_authority_state() {
+        true => Some(ctx.authority_changes.lock().await),
+        false => None,
+    };
+    special_routes(ctx, client, caller.as_ref(), request).await
+}
+
+/// The agent a request is forwarded for, and the request it carries.
+fn unwrap_for_agent(request: Request) -> Result<(Option<AetherAgentId>, Request), ArchonError> {
     let (caller, request) = match request {
         Request::ForAgent { caller, request } => (Some(caller), *request),
         request => (None, request),
@@ -68,52 +88,79 @@ pub async fn handle(
             "for_agent carries one request, not another for_agent".into(),
         ));
     }
-    if for_an_agent(client, caller.as_ref()) && request.is_operator_only() {
+    Ok((caller, request))
+}
+
+/// The refusals that precede any lock: operator-only for an agent, then
+/// recovery, standby and a mismatched caller.
+async fn refuse_early(
+    ctx: &DaemonContext,
+    client: ClientKind,
+    caller: Option<&AetherAgentId>,
+    request: &Request,
+) -> Result<(), ArchonError> {
+    if for_an_agent(client, caller) && request.is_operator_only() {
         return Err(ArchonError::Forbidden(format!(
             "{} is reserved for the operator's archon CLI",
-            command_name(&request)
+            command_name(request)
         )));
     }
     // Recovery first: a change it held is then checked against the standby
     // a failed recovery may have entered meanwhile.
-    if let Some(refusal) = recovery::refusal(ctx, &request).await {
+    if let Some(refusal) = recovery::refusal(ctx, request).await {
         return Err(refusal);
     }
-    if let Some(refusal) = standby::refusal(ctx, &request) {
+    if let Some(refusal) = standby::refusal(ctx, request) {
         return Err(refusal);
     }
-    check_named_caller(caller.as_ref(), &request)?;
-    // Registration validates and stores the repo before enabling its watcher.
-    // Its optional lifecycle work must precede authority lock acquisition.
-    if let Request::RepoAdd(add) = &request
+    check_named_caller(caller, request)
+}
+
+/// Watcher lifecycle work, which must precede authority lock acquisition.
+/// A watched `RepoAdd` is answered here: registration validates and stores
+/// the repo before enabling its watcher.
+async fn prepare_watcher(
+    ctx: &DaemonContext,
+    request: &Request,
+) -> Result<Option<Reply>, ArchonError> {
+    if let Request::RepoAdd(add) = request
         && add.github_watch
     {
-        return repos::add_from_operator(ctx, add.clone()).await;
+        return repos::add_from_operator(ctx, add.clone()).await.map(Some);
     }
-
-    if let Request::ConfigureGithubWatcher { change } = &request {
+    if let Request::ConfigureGithubWatcher { change } = request {
         github::require_dedicated(ctx)?;
         github::check_storable(ctx, change)?;
         if github::enables(change) {
             github::prepare_enable(ctx).await?;
         }
     }
+    Ok(None)
+}
 
-    // Held to the end of the call: the orchestrator is not replaced under it.
-    let _authority = if orchestrators_alone(client, caller.as_ref(), &request) {
-        Some(supervisor::authorize(ctx, caller.as_ref()).await?)
-    } else {
-        supervisor::saw_call(ctx, caller.as_ref()).await?;
-        None
-    };
-    // Serialize the state whose before/after authority confirmations observe.
-    // Lifecycle and chat delivery can replace the orchestrator, so they must
-    // never hold this mutex while waiting for its authority write lock.
-    let _changes = if request.changes_authority_state() {
-        Some(ctx.authority_changes.lock().await)
-    } else {
-        None
-    };
+/// The orchestrator's authority for a call only it may make; any other call
+/// is only seen.
+async fn take_authority<'a>(
+    ctx: &'a DaemonContext,
+    client: ClientKind,
+    caller: Option<&AetherAgentId>,
+    request: &Request,
+) -> Result<Option<RwLockReadGuard<'a, ()>>, ArchonError> {
+    if orchestrators_alone(client, caller, request) {
+        return supervisor::authorize(ctx, caller).await.map(Some);
+    }
+    supervisor::saw_call(ctx, caller).await?;
+    Ok(None)
+}
+
+/// The operator's own settings changes and `Promote` go their own way;
+/// every other request goes to [`route`].
+async fn special_routes(
+    ctx: &DaemonContext,
+    client: ClientKind,
+    caller: Option<&AetherAgentId>,
+    request: Request,
+) -> Result<Reply, ArchonError> {
     if client == ClientKind::ArchonCli
         && caller.is_none()
         && matches!(
@@ -127,7 +174,7 @@ pub async fn handle(
         return crate::authority::socket_settings(ctx, request).await;
     }
     if let Request::Promote { repo } = &request {
-        let by = match for_an_agent(client, caller.as_ref()) {
+        let by = match for_an_agent(client, caller) {
             true => integration::Promoter::Agent,
             false => integration::Promoter::Operator,
         };

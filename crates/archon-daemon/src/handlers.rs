@@ -109,27 +109,7 @@ pub async fn handle(
     // Serialize the state whose before/after authority confirmations observe.
     // Lifecycle and chat delivery can replace the orchestrator, so they must
     // never hold this mutex while waiting for its authority write lock.
-    let _changes = if matches!(
-        request,
-        Request::SetSettings { .. }
-            | Request::ResetSettings { .. }
-            | Request::UpdateItem { .. }
-            | Request::SteerItem { .. }
-            | Request::RepoUpdate { .. }
-            | Request::RepoRemove { .. }
-            | Request::RepoAdd(_)
-            | Request::SetCaps { .. }
-            | Request::Pause(_)
-            | Request::Resume(_)
-            | Request::ConfigureGithubWatcher { .. }
-            | Request::SetDirective { .. }
-            | Request::ClearDirective { .. }
-            | Request::UpdateLesson { .. }
-            | Request::LearningCorrect(_)
-            | Request::LearningUndo { .. }
-            | Request::LearningRestoreMemory { .. }
-            | Request::LearningRetryMemory { .. }
-    ) {
+    let _changes = if request.changes_authority_state() {
         Some(ctx.authority_changes.lock().await)
     } else {
         None

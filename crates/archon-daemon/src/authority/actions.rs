@@ -2,7 +2,7 @@
 
 use archon_core::authority::OperatorMessage;
 use archon_core::error::ArchonError;
-use archon_core::protocol::{ClientKind, PauseTarget, Reply, Request};
+use archon_core::protocol::{ClientKind, PauseTarget, Reply, RepoPatch, Request};
 use archon_core::queue::Caps;
 use archon_core::repo::{Repo, ShipMode};
 use serde_json::{Value, json};
@@ -33,20 +33,19 @@ pub(super) async fn check_channel(
         ));
     }
     super::scope::check_action(ctx, message, action).await?;
-    match action {
-        Request::SetSettings { .. } | Request::ResetSettings { .. } | Request::RepoUpdate { .. } | Request::RepoRemove { .. } | Request::RepoAdd(_)
-        | Request::SetCaps { .. } | Request::Pause(_) | Request::Resume(_)
-        | Request::ConfigureGithubWatcher { .. }
-        | Request::SetDirective { .. } | Request::ClearDirective { .. }
-        | Request::UpdateLesson { .. } | Request::LearningCorrect(_)
-        | Request::LearningUndo { .. } | Request::LearningRestoreMemory { .. }
-        | Request::LearningRetryMemory { .. } => Ok(()),
-        Request::UpdateItem { patch, .. } if patch.autonomy.is_some() && {
-            let mut only = patch.clone(); only.autonomy = None;
-            only == Default::default()
-        } => Ok(()),
-        _ => Err(ArchonError::Forbidden("this action is not available through operator authority; host lifecycle, destructive GC and nested requests stay excluded".into())),
+    let allowed = match action {
+        // Only an item's autonomy, which `apply` raises above its ceiling.
+        Request::UpdateItem { patch, .. } => {
+            let mut rest = patch.clone();
+            rest.autonomy.take().is_some() && rest == Default::default()
+        }
+        Request::SteerItem { .. } => false,
+        action => action.changes_authority_state(),
+    };
+    if !allowed {
+        return Err(ArchonError::Forbidden("this action is not available through operator authority; host lifecycle, destructive GC and nested requests stay excluded".into()));
     }
+    Ok(())
 }
 
 pub(super) async fn snapshot(ctx: &DaemonContext, action: &Request) -> Result<Value, ArchonError> {
@@ -117,24 +116,35 @@ pub(super) async fn needs_confirmation(
         }
         Request::RepoUpdate { patch, .. } => {
             let repo: Repo = serde_json::from_value(before.clone())?;
+            // Destructured so that a new field cannot skip this decision.
+            let RepoPatch {
+                ship,
+                base_branch,
+                default_pipeline,
+                autonomy_max,
+                grant_merge,
+                merge_waive_checks,
+                attribution,
+                gh_user,
+                tiers,
+            } = patch;
             // The operator alone decides what a repository's pull requests attribute,
             // and which GitHub login publishes them.
-            let waived_more = patch
-                .merge_waive_checks
+            let waived_more = merge_waive_checks
                 .as_ref()
                 .is_some_and(|bases| bases.iter().any(|b| !repo.merge_waive_checks.contains(b)));
-            if patch.grant_merge == Some(true) && !repo.grant_merge
+            if *grant_merge == Some(true) && !repo.grant_merge
                 || waived_more
-                || patch.attribution.is_some_and(|a| a != repo.attribution)
-                || patch.gh_user.clone().apply(repo.gh_user.clone()) != repo.gh_user
-                || patch.ship == Some(ShipMode::Pr) && repo.ship == ShipMode::Local
-                || patch.base_branch != Default::default()
-                || patch.default_pipeline != Default::default()
-                || !patch.tiers.is_keep()
+                || attribution.is_some_and(|a| a != repo.attribution)
+                || gh_user.clone().apply(repo.gh_user.clone()) != repo.gh_user
+                || *ship == Some(ShipMode::Pr) && repo.ship == ShipMode::Local
+                || *base_branch != Default::default()
+                || *default_pipeline != Default::default()
+                || !tiers.is_keep()
             {
                 return Ok(true);
             }
-            if let Some(max) = &patch.autonomy_max {
+            if let Some(max) = autonomy_max {
                 let old = RepoEnv::new(Some(repo.clone()))?.autonomy(ctx);
                 let global = crate::settings::mirror(ctx).global.autonomy_max.over(
                     ctx.config

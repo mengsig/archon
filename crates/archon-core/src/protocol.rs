@@ -458,46 +458,26 @@ pub enum Request {
     },
 }
 
-impl Request {
-    /// Operator-only actions: archond refuses them over MCP and for any
-    /// agent, whichever client forwards them.
-    pub fn is_operator_only(&self) -> bool {
-        match self {
-            Self::OperatorCommand { .. }
-            | Self::UndoAuthority { .. }
-            | Self::Shutdown
-            | Self::RepoRemove { .. }
-            | Self::RepoUpdate { .. }
-            | Self::SetCaps { .. }
-            | Self::SetSettings { .. }
-            | Self::ResetSettings { .. }
-            | Self::Say { .. }
-            | Self::OrchestratorRestart
-            | Self::OrchestratorAttach
-            | Self::Upgrade(_)
-            | Self::CheckUpdates
-            | Self::Gc { .. }
-            | Self::ConfigureGithubWatcher { .. }
-            | Self::UpdateLesson { .. }
-            | Self::LearningCorrect(_)
-            | Self::LearningUndo { .. }
-            | Self::LearningRestoreMemory { .. }
-            | Self::LearningRetryMemory { .. }
-            | Self::MergeItem { .. }
-            | Self::Answer { .. } => true,
-            Self::RepoAdd(add) => add.auto_merge || add.github_watch,
-            Self::Pause(target) | Self::Resume(target) => {
-                matches!(target, PauseTarget::Global { hard: true })
-            }
-            Self::ForAgent { request, .. } => request.is_operator_only(),
-            _ => false,
-        }
-    }
+/// Who may make a request and whether it changes Archon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestClass {
+    /// Reads Archon; any client may make it.
+    Read,
+    /// Reads Archon, for the operator only.
+    OperatorRead,
+    /// Changes Archon; an agent may ask, under the orchestrator's authority.
+    Change,
+    /// Changes Archon, for the operator only.
+    OperatorChange,
+}
 
-    /// Whether the request only reads Archon. Anything not listed here
-    /// counts as a change, so a new request is guarded until it is listed.
-    pub fn is_read_only(&self) -> bool {
+impl Request {
+    /// The request's class. No arm is a wildcard, so a new request kind
+    /// does not compile until it is classified here.
+    pub fn class(&self) -> RequestClass {
+        use RequestClass::{Change, OperatorChange, OperatorRead, Read};
         match self {
+            Self::ForAgent { request, .. } => request.class(),
             Self::Hello { .. }
             | Self::Status(_)
             | Self::Guide { .. }
@@ -526,11 +506,103 @@ impl Request {
             | Self::LessonStats { .. }
             | Self::LearningWhy { .. }
             | Self::ListArtifacts { .. }
-            | Self::ReadArtifact { .. }
-            | Self::CheckUpdates => true,
-            Self::ForAgent { request, .. } => request.is_read_only(),
-            _ => false,
+            | Self::ReadArtifact { .. } => Read,
+            Self::CheckUpdates => OperatorRead,
+            Self::OperatorCommand { .. }
+            | Self::UndoAuthority { .. }
+            | Self::Shutdown
+            | Self::RepoRemove { .. }
+            | Self::RepoUpdate { .. }
+            | Self::SetCaps { .. }
+            | Self::SetSettings { .. }
+            | Self::ResetSettings { .. }
+            | Self::Say { .. }
+            | Self::OrchestratorRestart
+            | Self::OrchestratorAttach
+            | Self::Upgrade(_)
+            | Self::Gc { .. }
+            | Self::ConfigureGithubWatcher { .. }
+            | Self::UpdateLesson { .. }
+            | Self::LearningCorrect(_)
+            | Self::LearningUndo { .. }
+            | Self::LearningRestoreMemory { .. }
+            | Self::LearningRetryMemory { .. }
+            | Self::MergeItem { .. }
+            | Self::Answer { .. } => OperatorChange,
+            Self::RepoAdd(add) if add.auto_merge || add.github_watch => OperatorChange,
+            Self::Pause(PauseTarget::Global { hard: true })
+            | Self::Resume(PauseTarget::Global { hard: true }) => OperatorChange,
+            Self::RepoAdd(_)
+            | Self::Pause(_)
+            | Self::Resume(_)
+            | Self::MessageOrchestrator { .. }
+            | Self::PublishArtifact { .. }
+            | Self::Enqueue(_)
+            | Self::UpdateItem { .. }
+            | Self::CancelItem { .. }
+            | Self::RetryItem { .. }
+            | Self::RefreshItem { .. }
+            | Self::Notify { .. }
+            | Self::AskOperator { .. }
+            | Self::RecordChatAnswer { .. }
+            | Self::PublishReport { .. }
+            | Self::ReopenReport { .. }
+            | Self::SetDirective { .. }
+            | Self::ClearDirective { .. }
+            | Self::GithubReply { .. }
+            | Self::EnqueueInitiative(_)
+            | Self::CancelInitiative { .. }
+            | Self::RetryInitiative { .. }
+            | Self::UpdateInitiative { .. }
+            | Self::SteerItem { .. }
+            | Self::RecordLesson(_)
+            | Self::RequestAuthority { .. }
+            | Self::Promote { .. }
+            | Self::RequestMerge { .. } => Change,
         }
+    }
+
+    /// Operator-only actions: archond refuses them over MCP and for any
+    /// agent, whichever client forwards them.
+    pub fn is_operator_only(&self) -> bool {
+        matches!(
+            self.class(),
+            RequestClass::OperatorRead | RequestClass::OperatorChange
+        )
+    }
+
+    /// Whether the request only reads Archon.
+    pub fn is_read_only(&self) -> bool {
+        matches!(
+            self.class(),
+            RequestClass::Read | RequestClass::OperatorRead
+        )
+    }
+
+    /// Whether the request changes state that operator-authority
+    /// confirmations compare before and after; such requests are serialized.
+    pub fn changes_authority_state(&self) -> bool {
+        matches!(
+            self,
+            Self::SetSettings { .. }
+                | Self::ResetSettings { .. }
+                | Self::UpdateItem { .. }
+                | Self::SteerItem { .. }
+                | Self::RepoUpdate { .. }
+                | Self::RepoRemove { .. }
+                | Self::RepoAdd(_)
+                | Self::SetCaps { .. }
+                | Self::Pause(_)
+                | Self::Resume(_)
+                | Self::ConfigureGithubWatcher { .. }
+                | Self::SetDirective { .. }
+                | Self::ClearDirective { .. }
+                | Self::UpdateLesson { .. }
+                | Self::LearningCorrect(_)
+                | Self::LearningUndo { .. }
+                | Self::LearningRestoreMemory { .. }
+                | Self::LearningRetryMemory { .. }
+        )
     }
 }
 

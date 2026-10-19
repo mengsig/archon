@@ -119,3 +119,91 @@ No run had a timeout or an infrastructure failure, so none was rerun.
 - `quality-retry-budget` (v1.3.1, for comparison): the orchestrator
   implemented the change in its own mirror without queueing an item, so the
   graded repository was untouched.
+
+## Findings
+
+Read from the code (`v1.3.1..50076851`) and from the gate's sandbox store
+(`archon-bench/r140-062029/data/aether/aether.db`, read-only); no benchmark
+was rerun. Everything a stage or orchestrator agent sees is unchanged since
+v1.3.1: the orchestrator and topic prompts, the pipelines, the stage contract
+(`archon-pipeline/src/contract*`), `stage_create_agent`, the hidden tools,
+and every item's model plan (`codex/gpt-6-luna`, medium, balanced resolved
+to fast, `host_context` full in all three Luna runs). The one wording change
+is the `request_authority` `quote` description, a tool none of these runs
+called.
+
+Ruled out:
+
+- **Protocol 18 → 24.** On aether `90aff1fa` the negotiated version only
+  changes frame encoding: image refs before 19, accounting deltas from 20
+  (Archon subscribes with `deltas: false`), `not_started` replay frames from
+  23, and the `NoModel` error code from 21. No agent setting depends on it.
+- **#160.** It records and compares `provider/model effort`; it reports
+  drift and selects nothing.
+- **#144.** The reply tracker changes only when a second operator message
+  arrives mid-turn; the bench sends one.
+- **Aether #206, #216, #195.** #206 refuses side-effect calls batched after a
+  park, with a `TURN_IS_OVER` tool error; the failed stage agent has no
+  failed tool call. #216 changes description wording only. #195 is a store
+  query change. In any case the same aetherd served the v1.3.1 runs.
+
+### `review-seeded-bug`: lexical miss, no Archon cause
+
+All three Luna answers find the same bug with the empty-signature input
+(`body.`). v1.3.1's says "authentication bypass"; next's say "accepts any
+prefix … including an empty signature" and "passes the signature check". The
+first next answer's only "bypass" describes another finding, 416 characters
+from the nearest prefix anchor, just outside the rubric's 400-character
+window. This is wording variance at one trial per cell. The same miss was
+recorded with an older Archon in `luna-no-baseline-20261015`.
+
+### `quality-ledger-transfer` (gate run): the agent never tried the tools
+
+Stage agent `agt_01M59E1ABCGFM4WFXW0N3QTX7K` called only `bash`,
+`apply_patch` and `mcp__aether__mcp__archon__message_orchestrator`. It never
+attempted a harness tool, then said they were absent. In the same next runs,
+seven other Luna implement agents created with the same request called
+`mcp__aether__complete_task` through the same bridge. Six of them also called
+`delegate` and `wait_for`; the seventh ran an item with review `none`. Aether's list for an engine agent (`engine_access.rs`
+`engine_tool_specs`) depends only on its exposure, scope and position, so
+nothing in Archon or in the agent's state would withhold them.
+
+**Aether finding** (aether `90aff1fa`): the record cannot show what Codex
+offered that turn.
+
+- `crates/aether-engine/src/codex_app/driver.rs:73-98` (`mcp_inventory`)
+  starts the turn once the `aether` server lists any tools at all; it does
+  not check that `complete_task` is among them.
+- The inventory ("Aether MCP tools ready: …") is logged only at debug, in
+  `crates/aether-runtime/src/turn_engine/events.rs:679-681`.
+- `engine.session` records `"tools": []` for every Codex session
+  (`codex_app/driver.rs:417-421`).
+
+If Aether recorded the inventory as an event, and refused to start a
+task-holding agent's turn without `complete_task`, the next occurrence would
+either be proven or prevented.
+
+### Cost and wall time: unreadable reviewer verdicts, now fixed
+
+Next ×2 cost $0.0229 more than v1.3.1. Of that:
+
+- $0.0145 is `quality-retry-budget`: v1.3.1's orchestrator did the work in
+  its own mirror without queueing and failed in 40 s for $0.0048, while next
+  queued, implemented and passed.
+- $0.0092 is `quality-ledger-transfer`, where the implement stage ran twice.
+
+In the gate run, `fix-off-by-one` needed a second item, and the orchestrator
+chose `strict` review (three reviewers) for the ledger, where v1.3.1's chose
+`standard`.
+
+Both extra implement runs have one cause. Reviewers `agt_01M59DTPQ…` and
+`agt_01M59FK4J…` passed the change, but wrote their `complete_task`
+arguments, `{"summary": …, "structured": {"verdict": "pass", …}}`, as their
+final text. Aether auto-completed them with that text as the summary, and
+`Verdict::read_result` accepted only a bare verdict there, so archond failed
+the stage with "its result carries no `verdict`". The reader is unchanged
+since v1.3.1, whose Luna reviewers happened to call `complete_task`.
+`read_result` now also reads the verdict inside a whole written-out
+`complete_task` call. Explicit `structured` still wins, and prose is still
+no verdict. The two captured summaries are a test fixture
+(`crates/archon-pipeline/tests/fixtures/luna-wrapped-review-results.json`).

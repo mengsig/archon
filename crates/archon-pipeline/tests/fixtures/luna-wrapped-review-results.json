@@ -1,0 +1,24 @@
+{
+  "source_runs": [
+    "20261019T063205Z fix-off-by-one",
+    "20261019T065946Z quality-ledger-transfer"
+  ],
+  "model": "codex/gpt-6-luna",
+  "effort": "medium",
+  "reviewers": [
+    {
+      "agent": "agt_01M59DTPQAHX9A1GBWNA4EHA1N",
+      "result": {
+        "summary": "{\"summary\":\"Reviewed the committed change in window.py across valid sequence and size boundaries. The inclusive range endpoint now returns every full contiguous window, including the last one; empty, shorter-than-window, exact-size, string, and tuple inputs behave consistently with the existing slicing approach. No correctness findings.\",\"structured\":{\"verdict\":\"pass\",\"head\":\"10e188774f9836d94a4b35ad74d92ef80de10be2\",\"base\":\"dab55ed\",\"findings\":[]}}",
+        "artifacts": []
+      }
+    },
+    {
+      "agent": "agt_01M59FK4JYW66NWQEHEE5KMN71",
+      "result": {
+        "summary": "{\"summary\":\"Review passed. The ledger implementation matches SPEC.md: inputs are validated, constructor and snapshots avoid aliasing, failed transfers leave balances unchanged, and a single lock makes transfers and snapshots linearizable without opposite-transfer deadlock. The unittest suite passed (9 tests); git diff --check was clean.\",\"structured\":{\"verdict\":\"pass\",\"head\":\"aadf31b3d55eb9071ab6572970b9fcc11754378d\",\"base\":\"ccc386248bc5a22d3d2b025ebb6f67a4ce57ac13\",\"findings\":[]}}",
+        "artifacts": []
+      }
+    }
+  ]
+}

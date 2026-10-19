@@ -50,7 +50,8 @@ pub struct Verdict {
 
 impl Verdict {
     /// Prefer the task's `structured` field. Aether can auto-complete a Codex
-    /// review with its final JSON text in `summary` and no structured field.
+    /// review with its final JSON text in `summary` and no structured field:
+    /// the verdict itself, or the `complete_task` arguments `{summary, structured}`.
     /// Accept only a whole JSON value there, never a verdict inferred from prose.
     pub fn read_result(summary: &str, structured: Option<&Value>) -> Result<Self, String> {
         if structured.is_some() {
@@ -61,7 +62,13 @@ impl Verdict {
                 "its result carries no structured verdict and its summary is not a JSON verdict: {error}"
             )
         })?;
-        Self::read(Some(&data))
+        let wrapped = data.get("verdict").is_none()
+            && data.get("summary").is_some_and(Value::is_string)
+            && data.get("structured").is_some_and(Value::is_object);
+        match wrapped {
+            true => Self::read(data.get("structured")),
+            false => Self::read(Some(&data)),
+        }
     }
 
     /// Read a reviewer's `{"verdict", "head", "base"}`; `Err` says, in words
@@ -517,6 +524,48 @@ mod tests {
             assert_eq!(verdict.head, data["head"]);
             assert_eq!(verdict.base.as_deref(), data["base"].as_str());
         }
+    }
+
+    #[test]
+    fn luna_reviews_that_write_out_their_complete_task_call_are_read() {
+        let capture: Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/luna-wrapped-review-results.json"
+        ))
+        .unwrap();
+        let reviews = capture["reviewers"].as_array().unwrap();
+        assert_eq!(reviews.len(), 2);
+        for review in reviews {
+            let summary = review["result"]["summary"].as_str().unwrap();
+            let data: Value = serde_json::from_str(summary).unwrap();
+            assert!(data.get("verdict").is_none(), "{}", review["agent"]);
+            let verdict = Verdict::read_result(summary, None).unwrap();
+            assert!(verdict.pass, "{}", review["agent"]);
+            assert_eq!(verdict.head, data["structured"]["head"]);
+            assert_eq!(verdict.base.as_deref(), data["structured"]["base"].as_str());
+        }
+    }
+
+    #[test]
+    fn only_a_whole_complete_task_call_is_unwrapped() {
+        let pass = json!({"verdict": "pass", "head": "abcdef1"});
+        let fail = json!({"verdict": "fail", "head": "1234567"});
+        let own = json!({"verdict": "fail", "head": "1234567", "summary": "s", "structured": pass});
+        let verdict = Verdict::read_result(&own.to_string(), None).unwrap();
+        assert!(!verdict.pass, "a top-level verdict is the reviewer's own");
+        for refused in [
+            json!({"summary": "s", "structured": "pass"}),
+            json!({"summary": "s", "structured": {"verdict": "pass"}}),
+            json!({"structured": pass}),
+            json!({"summary": 1, "structured": pass}),
+            json!({"summary": "s", "structured": {"summary": "s", "structured": fail}}),
+        ] {
+            assert!(
+                Verdict::read_result(&refused.to_string(), None).is_err(),
+                "{refused}"
+            );
+        }
+        let wrapped = json!({"summary": "s", "structured": fail}).to_string();
+        assert!(!Verdict::read_result(&wrapped, None).unwrap().pass);
     }
 
     #[test]

@@ -325,9 +325,11 @@ re-review of a fix):
 ```
 
 For providers that auto-complete a task from final text, Archon also accepts
-this object as the entire `summary` when `structured` is absent. An explicit
-`structured` value takes precedence, even if invalid. Prose, fenced blocks,
-and a `VERDICT:` line alone do not count as a delegated review.
+this object as the entire `summary` when `structured` is absent, or the
+`complete_task` arguments `{"summary": "...", "structured": {...}}` written
+out as that summary. An explicit `structured` value takes precedence, even if
+invalid. Prose, fenced blocks, and a `VERDICT:` line alone do not count as a
+delegated review.
 
 The stage agent's `complete_task` names the agent id `delegate`
 returned for each reviewer the pass rests on, including a failed one whose

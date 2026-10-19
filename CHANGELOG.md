@@ -91,6 +91,9 @@ start-up warning and the results stay in Archon's feed only.
 
 ### Fixes
 
+- A Codex reviewer that writes its `complete_task` call out as its final
+  text (`{"summary": …, "structured": {verdict…}}`) has that verdict read,
+  instead of failing the stage and costing a retry.
 - Every orchestrator reply is kept when a second operator message arrives
   mid-turn (#144, #152).
 - Saved caps survive restarts and their lifetime is documented; zero means

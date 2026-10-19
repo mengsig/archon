@@ -2191,9 +2191,10 @@ its verdict on the commits it read:
 ```
 
 Where Aether auto-completes a Codex reviewer from its final text, the verdict
-object arrives as the whole `summary` with no `structured`; Archon reads it
-only then, and an explicit `structured` always wins. Prose or a fenced block
-is no verdict.
+object arrives as the whole `summary` with no `structured`, alone or as the
+`structured` of a written-out `complete_task` call (`{summary, structured}`);
+Archon reads it only then, and an explicit `structured` always wins. Prose or
+a fenced block is no verdict.
 
 A completion without the record, with any other verdict, or with a pass
 that names fewer reviewers than the level asks for fails the run at that

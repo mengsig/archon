@@ -3,6 +3,7 @@
 //! (re)connect, runs the `orchestrator` and `fleet` subscriptions, and
 //! persists each cursor after its event is handled (at-least-once).
 
+mod aetherd;
 mod fleet;
 mod orchestrator;
 mod stream;
@@ -25,6 +26,8 @@ use crate::context::DaemonContext;
 use crate::feed::{self, REPLY_STATE_KEY};
 use crate::{executor, github, reports, supervisor};
 
+pub use aetherd::AetherStarter;
+use aetherd::OwnAetherd;
 pub(crate) use watchdog::{prune_children, prune_stage_agents};
 
 pub const BACKOFF_MIN: std::time::Duration = std::time::Duration::from_secs(1);
@@ -102,14 +105,19 @@ const QUIET_OUTAGE: Duration = Duration::from_secs(30);
 
 /// Runs until shutdown; never returns `Ok` early. Connection failures are
 /// retried with `BACKOFF_MIN..BACKOFF_MAX`; only a store failure is fatal.
+/// With a `starter` (dedicated mode) an aetherd that is gone is started again.
 /// Also supervises the Lavish report polls, the orchestrator's deferred
 /// revivals and owed sweeps, the `archon` MCP server's health and the
 /// GitHub watcher's target, which need an `Arc` context.
-pub async fn run(ctx: Arc<DaemonContext>, endpoint: Endpoint) -> Result<(), ArchonError> {
+pub async fn run(
+    ctx: Arc<DaemonContext>,
+    endpoint: Endpoint,
+    starter: Option<Arc<dyn AetherStarter>>,
+) -> Result<(), ArchonError> {
     let saved = ctx.store.lock().await.kv_get(REPLY_STATE_KEY)?;
     *ctx.replies.lock().await = feed::restore_replies(saved.as_deref())?;
     tokio::try_join!(
-        link_loop(ctx.clone(), endpoint),
+        link_loop(ctx.clone(), endpoint, OwnAetherd::new(starter)),
         reports::supervise(ctx.clone()),
         supervisor::revive_when_due(ctx.clone()),
         supervisor::sweep_when_owed(ctx.clone()),
@@ -121,32 +129,21 @@ pub async fn run(ctx: Arc<DaemonContext>, endpoint: Endpoint) -> Result<(), Arch
 }
 
 /// Connect, serve one session until the connection drops, and repeat.
-async fn link_loop(ctx: Arc<DaemonContext>, endpoint: Endpoint) -> Result<(), ArchonError> {
+async fn link_loop(
+    ctx: Arc<DaemonContext>,
+    endpoint: Endpoint,
+    mut own: OwnAetherd,
+) -> Result<(), ArchonError> {
     let mut backoff = BACKOFF_MIN;
     let mut outage = Outage::started();
-    let mut host_context_warned = false;
-    let mut notes_warned = false;
+    let mut warned = Warned::default();
     loop {
         match AetherClient::connect(&endpoint).await {
             Ok(client) => {
                 let client = Arc::new(client);
-                if ctx.config.aether.host_context == archon_core::config::HostContext::Lean
-                    && client
-                        .welcome()
-                        .effective_host_context(ctx.config.aether.host_context)
-                        .is_full()
-                    && !host_context_warned
-                {
-                    tracing::warn!(
-                        "Aether lacks host_context; new and pending lean creations fall back to full; existing agents keep their context"
-                    );
-                    host_context_warned = true;
-                }
-                if !notes_warned {
-                    crate::command_notice::warn_if_unsupported(client.welcome());
-                    notes_warned = true;
-                }
+                warned.warn_once(&ctx, &client);
                 announce_connected(&ctx, &client, &outage).await?;
+                own.answered();
                 backoff = BACKOFF_MIN;
                 ctx.aether.replace(Some(client.clone()))?;
                 ctx.memory_feedback_ready.notify_one();
@@ -167,14 +164,43 @@ async fn link_loop(ctx: Arc<DaemonContext>, endpoint: Endpoint) -> Result<(), Ar
                 // No daemon is burdened by being asked again soon, and one
                 // that starts is found within a second.
                 if absent {
+                    own.absent(&ctx).await?;
                     backoff = BACKOFF_MIN;
                     tokio::time::sleep(backoff).await;
                     continue;
                 }
+                own.listening();
             }
         }
         tokio::time::sleep(backoff).await;
         backoff = (backoff * 2).min(BACKOFF_MAX);
+    }
+}
+
+/// What the link loop warned about once already, whatever the reconnects.
+#[derive(Debug, Default)]
+struct Warned {
+    host_context: bool,
+    notes: bool,
+}
+
+impl Warned {
+    fn warn_once(&mut self, ctx: &DaemonContext, client: &AetherClient) {
+        let welcome = client.welcome();
+        let host_context = ctx.config.aether.host_context;
+        if host_context == archon_core::config::HostContext::Lean
+            && welcome.effective_host_context(host_context).is_full()
+            && !self.host_context
+        {
+            tracing::warn!(
+                "Aether lacks host_context; new and pending lean creations fall back to full; existing agents keep their context"
+            );
+            self.host_context = true;
+        }
+        if !self.notes {
+            crate::command_notice::warn_if_unsupported(welcome);
+            self.notes = true;
+        }
     }
 }
 

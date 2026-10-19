@@ -75,6 +75,8 @@ pub struct DaemonOptions {
     pub config: Config,
     /// This executable (for MCP registration hints and autostart).
     pub archon_bin: PathBuf,
+    /// Starts Archon's own aetherd when it is gone; `None` in shared mode.
+    pub aether_starter: Option<Arc<dyn pump::AetherStarter>>,
 }
 
 /// Run until `Shutdown` or SIGTERM/SIGINT: bind the socket, serve it, recover,
@@ -82,6 +84,7 @@ pub struct DaemonOptions {
 /// (reads only) and in standby.
 pub async fn run(options: DaemonOptions) -> Result<(), ArchonError> {
     let endpoint = Endpoint::from_config(&options.config.aether)?;
+    let starter = options.aether_starter.clone();
     // Holds the data directory's lock from before the store opens until the
     // store is dropped with the context, after the socket is gone.
     let ctx = build_context(options)?;
@@ -96,7 +99,7 @@ pub async fn run(options: DaemonOptions) -> Result<(), ArchonError> {
     let result = match recover(&ctx).await {
         Ok(()) => {
             ctx.recovery.finish();
-            supervise(ctx.clone(), server, endpoint, &mut signals).await
+            supervise(ctx.clone(), server, endpoint, starter, &mut signals).await
         }
         Err(error @ ArchonError::DiskFull(_)) => {
             // Standby first: the changes waiting on recovery meet its refusal.
@@ -237,11 +240,12 @@ async fn supervise(
     ctx: Arc<DaemonContext>,
     mut server: standby::Server,
     endpoint: Endpoint,
+    starter: Option<Arc<dyn pump::AetherStarter>>,
     signals: &mut Signals,
 ) -> Result<(), ArchonError> {
     assert!(ctx.recovery.is_recovered(), "workers start once recovered");
     let mut workers = Workers::default();
-    workers.spawn("event pump", pump::run(ctx.clone(), endpoint));
+    workers.spawn("event pump", pump::run(ctx.clone(), endpoint, starter));
     workers.spawn("dispatcher", dispatcher::run(ctx.clone()));
     workers.spawn("coordination", executor::coordination::run(ctx.clone()));
     workers.spawn("trigger delivery", triggers::deliver_loop(ctx.clone()));
@@ -312,7 +316,9 @@ fn task_ended(done: Result<TaskResult, tokio::task::JoinError>) -> Result<(), Ar
 /// Resolve absolute paths, create the directories, open the store, and
 /// build the shared context.
 fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
-    let DaemonOptions { config, archon_bin } = options;
+    let DaemonOptions {
+        config, archon_bin, ..
+    } = options;
     let paths = absolute_paths(DaemonPaths::resolve(&config, archon_bin))?;
     let ops_port = Arc::new(ops::system::SystemOps {
         archon_bin: paths.archon_bin.clone(),

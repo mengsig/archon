@@ -4,11 +4,12 @@
 
 use std::fs::{File, OpenOptions};
 use std::os::unix::net::UnixStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
+use archon_core::error::ArchonError;
 
 use super::{Instance, create_private_dir, seed};
 
@@ -86,6 +87,23 @@ pub fn ensure_running(instance: &Instance, aether: &Path) -> anyhow::Result<Star
         true => Start::Restarted,
         false => Start::Started,
     })
+}
+
+/// How archond starts the instance's aetherd again when it is gone: as any
+/// archon command does, under the same start lock.
+#[derive(Debug, Clone)]
+pub struct Starter {
+    pub instance: Instance,
+    pub aether: PathBuf,
+}
+
+impl archon_daemon::pump::AetherStarter for Starter {
+    fn ensure_running(&self) -> Result<(), ArchonError> {
+        let start = ensure_running(&self.instance, &self.aether)
+            .map_err(|error| ArchonError::Unavailable(format!("{error:#}")))?;
+        tracing::info!(?start, "Archon's own aetherd answers");
+        Ok(())
+    }
 }
 
 /// Whether [`ensure_running`] is about to restart an aetherd that answers.

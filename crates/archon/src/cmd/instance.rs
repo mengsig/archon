@@ -113,7 +113,7 @@ async fn setup_dedicated(config: &Config, resync: bool, json: bool) -> anyhow::R
     } else if running && changed {
         println!(
             "Archon's aetherd is running with the old config: `archon daemon stop --aether`, \
-             then any archon command starts it again."
+             then `archon daemon start` starts it again."
         );
     } else if !running {
         println!(

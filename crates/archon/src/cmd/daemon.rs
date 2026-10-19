@@ -4,6 +4,7 @@ use std::io::Read as _;
 use std::os::unix::process::CommandExt as _;
 use std::path::Path;
 use std::process::{Child, ChildStderr, Command, ExitCode, Stdio};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
@@ -17,7 +18,7 @@ use archon_daemon::DaemonOptions;
 use super::{emit, instance};
 use crate::cli::{DaemonCommand, DrainArgs};
 use crate::connect::{archon_bin, connect_existing, connect_or_start, connect_running, unexpected};
-use crate::instance::{Instance, create_private_dir, effective_aether};
+use crate::instance::{AETHER_PROGRAM, Instance, create_private_dir, effective_aether, lifecycle};
 use crate::views::fetch_status;
 
 const STOP_WAIT: Duration = Duration::from_secs(10);
@@ -86,11 +87,20 @@ async fn status(json: bool) -> anyhow::Result<ExitCode> {
 async fn foreground() -> anyhow::Result<ExitCode> {
     warn_if_mixed();
     let mut config = Config::load_default()?;
-    // Dedicated mode: archond talks only to Archon's own aetherd.
-    config.aether = effective_aether(&config.aether, &Instance::resolve()?);
+    let instance = Instance::resolve()?;
+    // Dedicated mode: archond talks only to Archon's own aetherd, and starts it when it is gone.
+    config.aether = effective_aether(&config.aether, &instance);
+    let aether_starter = (config.aether.mode == AetherMode::Dedicated).then(|| {
+        let starter = lifecycle::Starter {
+            instance,
+            aether: AETHER_PROGRAM.into(),
+        };
+        Arc::new(starter) as Arc<dyn archon_daemon::pump::AetherStarter>
+    });
     let options = DaemonOptions {
         config,
         archon_bin: archon_bin()?,
+        aether_starter,
     };
     archon_daemon::run(options).await?;
     Ok(ExitCode::SUCCESS)

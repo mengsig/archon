@@ -473,7 +473,7 @@ fn watcher_gap(protocol: u32) -> Option<String> {
     };
     Some(format!(
         "{lacking}; to set them, install a newer `aether`, then `archon daemon stop --aether` \
-         (the next archon command starts it)"
+         and `archon daemon start`"
     ))
 }
 
@@ -520,7 +520,7 @@ fn registration_problem(
     }
     let fix = match mode {
         AetherMode::Dedicated => {
-            "the next archon command that starts Archon (`archon status`) repairs it and \
+            "`archon daemon start` repairs it and \
              restarts Archon's aetherd"
         }
         AetherMode::Shared => {

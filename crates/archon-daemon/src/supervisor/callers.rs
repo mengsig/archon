@@ -103,7 +103,7 @@ pub(super) fn fix(mode: AetherMode) -> &'static str {
     match mode {
         AetherMode::Dedicated => {
             "Restart Archon's own aetherd, which reads its MCP settings only as it starts: \
-             `archon daemon stop --aether`, then any archon command starts it again and \
+             `archon daemon stop --aether`, then `archon daemon start` starts it again and \
              brings the registration up to date first."
         }
         AetherMode::Shared => {

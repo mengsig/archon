@@ -692,7 +692,7 @@ impl AetherClient {
             "aetherd {} speaks Aether protocol {speaking}, which cannot store GitHub \
              operator logins (they need {OPERATOR_LOGINS_PROTOCOL_VERSION}); upgrade \
              Archon's aetherd (install the newer `aether`, then `archon daemon stop \
-             --aether`; the next archon command starts it), then set the operator logins \
+             --aether`, then `archon daemon start`), then set the operator logins \
              again. Nothing was changed",
             self.welcome.daemon_version
         )))

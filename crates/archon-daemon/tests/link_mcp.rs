@@ -651,7 +651,11 @@ async fn the_pump_checks_the_server_as_soon_as_it_connects() {
     let harness = Harness::new().await;
     running_orchestrator(&harness).await;
     install_server(&harness, failed("Broken pipe"), ready());
-    let pump = tokio::spawn(pump::run(harness.ctx.clone(), harness.fake.endpoint()));
+    let pump = tokio::spawn(pump::run(
+        harness.ctx.clone(),
+        harness.fake.endpoint(),
+        None,
+    ));
     harness
         .eventually("the orchestrator was restarted", || async {
             harness.kv(keys::ORCHESTRATOR_AGENT).await.as_deref() == Some(ORCH_2)

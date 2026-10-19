@@ -28,11 +28,6 @@ impl ModelRef {
         debug_assert!(!this.provider.is_empty() && !this.model.is_empty());
         this
     }
-
-    /// Native harness providers whose agents run on the official CLIs.
-    pub fn is_native_harness(&self) -> bool {
-        matches!(self.provider.as_str(), "claude-code" | "codex")
-    }
 }
 
 impl fmt::Display for ModelRef {
@@ -381,7 +376,6 @@ mod tests {
         let m: ModelRef = "claude-code/opus".parse().unwrap();
         assert_eq!(m.provider, "claude-code");
         assert_eq!(m.to_string(), "claude-code/opus");
-        assert!(m.is_native_harness());
         assert!("opus".parse::<ModelRef>().is_err());
         assert!("/opus".parse::<ModelRef>().is_err());
     }

@@ -12,7 +12,7 @@ use archon_core::Timestamp;
 use archon_core::config::LearningConfig;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, RepoId};
-use archon_core::model_tier::{CatalogModel, ModelCatalog};
+use archon_core::model_tier::ModelCatalog;
 use archon_core::outcome::{Correction, Outcome};
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -412,12 +412,15 @@ impl Store {
     }
 
     /// Connected models Aether places in no tier.
+    #[cfg(feature = "testing")]
     pub fn set_learning_models(&self, models: Vec<archon_core::model::ModelRef>) {
-        let untiered = models.into_iter().map(|model| CatalogModel {
-            model,
-            tier: None,
-            is_default: false,
-        });
+        let untiered = models
+            .into_iter()
+            .map(|model| archon_core::model_tier::CatalogModel {
+                model,
+                tier: None,
+                is_default: false,
+            });
         self.set_model_catalog(ModelCatalog::new(untiered.collect()));
     }
 

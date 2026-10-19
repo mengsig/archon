@@ -22,16 +22,6 @@ pub struct CatalogSources {
     pub disabled: Vec<String>,
 }
 
-impl CatalogSources {
-    pub fn user_only() -> Self {
-        Self {
-            user_dir: Some(archon_core::paths::config_dir().join("pipelines")),
-            repo_root: None,
-            disabled: Vec::new(),
-        }
-    }
-}
-
 /// `pipeline.toml` and prompts are small; anything bigger is a mistake.
 pub const MAX_FILE_BYTES: u64 = 256 * 1024;
 

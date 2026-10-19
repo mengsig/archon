@@ -25,6 +25,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+archon-queue = { workspace = true, features = ["testing"] }
 archon-aether = { workspace = true, features = ["fake"] }
 archon-core = { workspace = true, features = ["testing"] }
 tempfile = { workspace = true }

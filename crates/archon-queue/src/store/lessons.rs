@@ -195,35 +195,6 @@ fn write(conn: &Connection, l: &Lesson) -> Result<(), ArchonError> {
     Ok(())
 }
 
-impl Store {
-    pub fn record_distilled_lesson(
-        &self,
-        lesson: Lesson,
-        replaces: Option<&LessonId>,
-    ) -> Result<Lesson, ArchonError> {
-        assert_eq!(lesson.source, LessonSource::Distilled);
-        assert_eq!(lesson.state, LessonState::Proposed);
-        if let Some(id) = replaces {
-            let prior = self.lesson(id)?;
-            if prior.scope.repo != lesson.scope.repo {
-                return Err(ArchonError::Invalid(
-                    "a rewrite keeps its repository scope".into(),
-                ));
-            }
-            if prior.source == LessonSource::Operator || prior.pinned {
-                return Ok(prior);
-            }
-        }
-        let recorded = self.record_lesson(lesson)?;
-        if let Some(id) = replaces
-            && *id != recorded.id
-        {
-            self.save_learning_value(&format!("learning/rewrite/{}", recorded.id), id.as_str())?;
-        }
-        Ok(recorded)
-    }
-}
-
 fn accept_rewrite(conn: &Connection, lesson: &Lesson) -> Result<(), ArchonError> {
     if lesson.state != LessonState::Active {
         return Ok(());

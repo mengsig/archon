@@ -25,6 +25,7 @@ pub struct StackParent {
 
 impl Store {
     /// The first unmerged parent's branch and last incorporated SHA.
+    #[cfg(feature = "testing")]
     pub fn stack_base(&self, item: &QueueItemId) -> Result<Option<(String, String)>, ArchonError> {
         Ok(self
             .stack_parents(item)?

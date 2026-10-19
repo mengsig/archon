@@ -25,6 +25,7 @@ use archon_core::notify::{AnswerVia, FeedEntry, NotificationKind};
 use archon_core::protocol::{ReportPublished, ReportState, ReportSummary};
 use archon_core::run::GateDecision;
 use archon_lavish::{Lavish, LavishFeedback};
+use tokio::sync::OwnedMutexGuard;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::task::{AbortHandle, JoinError, JoinSet};
 
@@ -87,14 +88,71 @@ pub(crate) async fn publish_page(
         Some((id, record)) => (id, record.source.unwrap_or_else(|| original.clone())),
         None => (ReportId::new(), original.clone()),
     };
+    let (copied, _files) =
+        copy_snapshot(ctx, report.clone(), input, first_publication, files_guard).await;
+    let (mut snapshot, warning) = warn_if_not_copied(ctx, title, &original, copied).await?;
+    let source = if snapshot.is_some() {
+        source
+    } else {
+        original.clone()
+    };
+    let html = snapshot.as_ref().map_or(original, |copy| copy.html.clone());
+    let result = record_publication(
+        ctx,
+        report,
+        PublishedPage {
+            title,
+            item,
+            run,
+            source,
+            html,
+        },
+        snapshot.as_mut(),
+    )
+    .await;
+    if result.is_err()
+        && let Some(copy) = snapshot.as_mut()
+        && let Err(error) = copy.abort()
+    {
+        feed::system(ctx, format!("Report snapshot cleanup failed: {error}")).await?;
+    }
+    result.map(|published| (published, warning))
+}
+
+/// A failed copy leaves the page where it is and tells the operator it is not durable.
+async fn warn_if_not_copied(
+    ctx: &DaemonContext,
+    title: &str,
+    original: &Path,
+    copied: Result<files::Snapshot, ArchonError>,
+) -> Result<(Option<files::Snapshot>, Option<String>), ArchonError> {
+    let error = match copied {
+        Ok(snapshot) => return Ok((Some(snapshot), None)),
+        Err(error) => error,
+    };
+    let warning = format!(
+        "Report \"{title}\" at {} could not be copied ({error}). The page is not durable: \
+         it disappears when its workspace is collected.",
+        original.display()
+    );
+    feed::system(ctx, warning.clone()).await?;
+    Ok((None, Some(warning)))
+}
+
+/// The worker owns the lock so cancellation cannot overlap its copy with
+/// a later publish or prune. The returned snapshot drops before the lock.
+async fn copy_snapshot(
+    ctx: &DaemonContext,
+    report: ReportId,
+    input: &Path,
+    first_publication: bool,
+    files_guard: OwnedMutexGuard<()>,
+) -> (Result<files::Snapshot, ArchonError>, OwnedMutexGuard<()>) {
     let root = ctx.paths.reports.clone();
     let input = input.to_owned();
-    let id = report.clone();
-    // The worker owns the lock so cancellation cannot overlap its copy with
-    // a later publish or prune. The returned snapshot drops before the lock.
-    let (copied, _files) = match tokio::task::spawn_blocking(move || {
+    match tokio::task::spawn_blocking(move || {
         (
-            files::snapshot(&root, &id, &input, first_publication),
+            files::snapshot(&root, &report, &input, first_publication),
             files_guard,
         )
     })
@@ -107,69 +165,64 @@ pub(crate) async fn publish_page(
             ))),
             ctx.report_files.clone().lock_owned().await,
         ),
-    };
-    let (mut snapshot, warning) = match copied {
-        Ok(snapshot) => (Some(snapshot), None),
-        Err(error) => {
-            let warning = format!(
-                "Report \"{title}\" at {} could not be copied ({error}). The page is not durable: \
-                 it disappears when its workspace is collected.",
-                original.display()
-            );
-            feed::system(ctx, warning.clone()).await?;
-            (None, Some(warning))
-        }
-    };
-    let source = if snapshot.is_some() {
-        source
-    } else {
-        original.clone()
-    };
-    let html = snapshot.as_ref().map_or(original, |copy| copy.html.clone());
-    let result = async {
-        let (location, published) = open_in_lavish(ctx, &html).await?;
-        let record = ReportRecord {
-            source: Some(source),
-            html,
-            title: title.to_owned(),
-            item: item.cloned(),
-            run: run.clone(),
-            state: if published {
-                ReportState::Open
-            } else {
-                ReportState::Unpublished
-            },
-            reopen_question: None,
-            location: Some(location.clone()),
-            updated_at: archon_core::now(),
-        };
-        upsert_report(ctx, report.clone(), record).await?;
-        // No await between writing the record and committing its snapshot:
-        // cancellation must never roll back a directory already referenced.
-        let cleanup = snapshot.as_mut().and_then(|copy| copy.commit().err());
-        if let Some(error) = cleanup {
-            feed::system(
-                ctx,
-                format!("Report {report} was published, but snapshot cleanup failed: {error}"),
-            )
-            .await?;
-        }
-        announce_location(ctx, &report, title, item, &location).await?;
-        Ok(ReportPublished {
-            report,
-            published,
-            location,
-            run,
-        })
     }
-    .await;
-    if result.is_err()
-        && let Some(copy) = snapshot.as_mut()
-        && let Err(error) = copy.abort()
-    {
-        feed::system(ctx, format!("Report snapshot cleanup failed: {error}")).await?;
+}
+
+struct PublishedPage<'a> {
+    title: &'a str,
+    item: Option<&'a QueueItemId>,
+    run: Option<PipelineRunId>,
+    source: PathBuf,
+    html: PathBuf,
+}
+
+async fn record_publication(
+    ctx: &DaemonContext,
+    report: ReportId,
+    page: PublishedPage<'_>,
+    snapshot: Option<&mut files::Snapshot>,
+) -> Result<ReportPublished, ArchonError> {
+    let PublishedPage {
+        title,
+        item,
+        run,
+        source,
+        html,
+    } = page;
+    let (location, published) = open_in_lavish(ctx, &html).await?;
+    let record = ReportRecord {
+        source: Some(source),
+        html,
+        title: title.to_owned(),
+        item: item.cloned(),
+        run: run.clone(),
+        state: if published {
+            ReportState::Open
+        } else {
+            ReportState::Unpublished
+        },
+        reopen_question: None,
+        location: Some(location.clone()),
+        updated_at: archon_core::now(),
+    };
+    upsert_report(ctx, report.clone(), record).await?;
+    // No await between writing the record and committing its snapshot:
+    // cancellation must never roll back a directory already referenced.
+    let cleanup = snapshot.and_then(|copy| copy.commit().err());
+    if let Some(error) = cleanup {
+        feed::system(
+            ctx,
+            format!("Report {report} was published, but snapshot cleanup failed: {error}"),
+        )
+        .await?;
     }
-    result.map(|published| (published, warning))
+    announce_location(ctx, &report, title, item, &location).await?;
+    Ok(ReportPublished {
+        report,
+        published,
+        location,
+        run,
+    })
 }
 
 /// Keep one poll task per open report until its item finishes or shutdown.

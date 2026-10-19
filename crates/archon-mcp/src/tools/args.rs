@@ -31,8 +31,18 @@ pub(super) fn to_request(tool: &str, arguments: Value) -> Result<Request, ToolEr
         return Err(ToolError(format!("unknown tool `{tool}`")));
     };
     let mut args = Args::new(definition, arguments)?;
+    let request = match query_request(tool, &mut args)? {
+        Some(request) => request,
+        None => action_request(tool, &mut args)?,
+    };
+    args.finish()?;
+    Ok(request)
+}
+
+/// The tools that only read state.
+fn query_request(tool: &str, args: &mut Args) -> Result<Option<Request>, ToolError> {
     let request = match tool {
-        "message_orchestrator" => message_orchestrator(&mut args)?,
+        "message_orchestrator" => message_orchestrator(args)?,
         "publish_artifact" => Request::PublishArtifact {
             path: args.required_text("path")?,
             name: args.optional_text("name")?,
@@ -55,49 +65,57 @@ pub(super) fn to_request(tool: &str, arguments: Value) -> Result<Request, ToolEr
         "model_policy" => Request::ModelPolicy {
             repo: args.optional("repo")?,
         },
-        "list_queue" => list_queue(&mut args)?,
+        "list_queue" => list_queue(args)?,
         "get_item" => Request::GetItem {
             item: args.required("item")?,
         },
-        "get_stage" => get_stage(&mut args)?,
+        "get_stage" => get_stage(args)?,
         "queue_status" => Request::Status(Default::default()),
-        "cost_report" => cost_report(&mut args)?,
-        "model_evidence" => model_evidence(&mut args)?,
-        "register_repo" => register_repo(&mut args)?,
-        "enqueue" => Request::Enqueue(enqueue(&mut args)?),
-        "update_item" => update_item(&mut args)?,
+        "cost_report" => cost_report(args)?,
+        "model_evidence" => model_evidence(args)?,
+        _ => return Ok(None),
+    };
+    Ok(Some(request))
+}
+
+/// The tools that change state or talk to the operator.
+fn action_request(tool: &str, args: &mut Args) -> Result<Request, ToolError> {
+    let request = match tool {
+        "register_repo" => register_repo(args)?,
+        "enqueue" => Request::Enqueue(enqueue(args)?),
+        "update_item" => update_item(args)?,
         "cancel_item" => Request::CancelItem {
             item: args.required("item")?,
             reason: args.optional_text("reason")?,
         },
-        "retry_item" => retry_item(&mut args)?,
+        "retry_item" => retry_item(args)?,
         "refresh_item" => Request::RefreshItem {
             item: args.required("item")?,
         },
-        "pause" => Request::Pause(pause_target(&mut args)?),
-        "resume" => Request::Resume(pause_target(&mut args)?),
+        "pause" => Request::Pause(pause_target(args)?),
+        "resume" => Request::Resume(pause_target(args)?),
         "notify" => Request::Notify {
             kind: args.required("kind")?,
             text: args.required_text("text")?,
             item: args.optional("item")?,
         },
-        "ask_operator" => ask_operator(&mut args)?,
+        "ask_operator" => ask_operator(args)?,
         "record_chat_answer" => Request::RecordChatAnswer {
             question: args.required("question")?,
             answer: args.required_text("answer")?,
             caller: None,
         },
-        "publish_report" => publish_report(&mut args)?,
+        "publish_report" => publish_report(args)?,
         "autonomy_policy" => Request::Autonomy {
             repo: args.optional("repo")?,
         },
-        "set_directive" => set_directive(&mut args)?,
-        "clear_directive" => clear_directive(&mut args)?,
-        "github_reply" => github_reply(&mut args)?,
-        "enqueue_initiative" => initiatives::enqueue_initiative(&mut args)?,
-        "update_initiative" => initiatives::update_initiative(&mut args)?,
-        "steer_item" => steer::steer_item(&mut args)?,
-        "record_lesson" => lessons::record_lesson(&mut args)?,
+        "set_directive" => set_directive(args)?,
+        "clear_directive" => clear_directive(args)?,
+        "github_reply" => github_reply(args)?,
+        "enqueue_initiative" => initiatives::enqueue_initiative(args)?,
+        "update_initiative" => initiatives::update_initiative(args)?,
+        "steer_item" => steer::steer_item(args)?,
+        "record_lesson" => lessons::record_lesson(args)?,
         "settings" => Request::Settings {
             repo: args.optional("repo")?,
         },
@@ -120,7 +138,6 @@ pub(super) fn to_request(tool: &str, arguments: Value) -> Result<Request, ToolEr
         },
         other => unreachable!("`{other}` has a definition but no mapping"),
     };
-    args.finish()?;
     Ok(request)
 }
 

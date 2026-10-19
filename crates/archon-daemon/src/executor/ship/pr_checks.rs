@@ -145,45 +145,62 @@ async fn look_once(
             ctx.store.lock().await.kv_set(&key(run), &raw)?;
             Ok(false)
         }
-        Checks::Failed { names } => {
-            let detail = format!("failed: {}", names.join(", "));
-            let text = format!(
-                "The checks of {} failed after delivery ({}): they ran on the change. Retry the \
-                 item with an amendment, or enqueue a follow-up",
-                watch.url,
-                names.join(", ")
-            );
-            report(
-                ctx,
-                run,
-                &watch,
-                "failed",
-                detail,
-                NotificationKind::Outcome,
-                text,
-            )
-            .await
-        }
+        Checks::Failed { names } => report_failed(ctx, run, &watch, &names).await,
         Checks::NotStarted { names, reason } => {
-            let detail = format!("{}: {reason}", names.join(", "));
-            let text = format!(
-                "The checks of {} never started ({}): {reason}. This is not a failure of the \
-                 change; fix the GitHub Actions account or runners, then re-run them on GitHub",
-                watch.url,
-                names.join(", ")
-            );
-            report(
-                ctx,
-                run,
-                &watch,
-                "not_started",
-                detail,
-                NotificationKind::Blocker,
-                text,
-            )
-            .await
+            report_not_started(ctx, run, &watch, &names, &reason).await
         }
     }
+}
+
+async fn report_failed(
+    ctx: &DaemonContext,
+    run: &PipelineRunId,
+    watch: &Watch,
+    names: &[String],
+) -> Result<bool, ArchonError> {
+    let detail = format!("failed: {}", names.join(", "));
+    let text = format!(
+        "The checks of {} failed after delivery ({}): they ran on the change. Retry the \
+         item with an amendment, or enqueue a follow-up",
+        watch.url,
+        names.join(", ")
+    );
+    report(
+        ctx,
+        run,
+        watch,
+        "failed",
+        detail,
+        NotificationKind::Outcome,
+        text,
+    )
+    .await
+}
+
+async fn report_not_started(
+    ctx: &DaemonContext,
+    run: &PipelineRunId,
+    watch: &Watch,
+    names: &[String],
+    reason: &str,
+) -> Result<bool, ArchonError> {
+    let detail = format!("{}: {reason}", names.join(", "));
+    let text = format!(
+        "The checks of {} never started ({}): {reason}. This is not a failure of the \
+         change; fix the GitHub Actions account or runners, then re-run them on GitHub",
+        watch.url,
+        names.join(", ")
+    );
+    report(
+        ctx,
+        run,
+        watch,
+        "not_started",
+        detail,
+        NotificationKind::Blocker,
+        text,
+    )
+    .await
 }
 
 /// Tell the orchestrator and the operator how the checks ended, once.

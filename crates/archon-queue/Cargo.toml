@@ -16,6 +16,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 
+[features]
+# Store helpers used only by tests of this crate's consumers.
+testing = []
+
 [dev-dependencies]
 tempfile = { workspace = true }
 

@@ -40,7 +40,7 @@ pub(crate) async fn request(
         ));
     }
     let message = evidence::cite(ctx, caller, seq, quote).await?;
-    if let Request::Answer { question, text } = &action {
+    if let Request::Answer { question, text, .. } = &action {
         evidence::check_answer_quote(quote, text)?;
         return answer_gate(ctx, &message, question, text).await;
     }
@@ -69,7 +69,13 @@ pub(crate) async fn socket_settings(
     action: Request,
 ) -> Result<Reply, ArchonError> {
     let text = serde_json::to_string(&action)?;
-    let entry = feed::append(ctx, FeedEntry::Operator { text: text.clone() }).await?;
+    let entry = feed::append(
+        ctx,
+        FeedEntry::Operator {
+            text: crate::operator_sentence::request_sentence(&action),
+        },
+    )
+    .await?;
     let evidence = OperatorMessage {
         agent: None,
         seq: entry.seq,

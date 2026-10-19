@@ -212,6 +212,7 @@ async fn waiting_gate_question(
 
 async fn answer(h: &Harness, question: &Question, text: &str) {
     let request = Request::Answer {
+        chat: false,
         question: question.id.clone(),
         text: text.into(),
     };
@@ -272,6 +273,7 @@ async fn an_approved_proposal_is_passed_to_implement() {
     );
 
     let repeat = Request::Answer {
+        chat: false,
         question: question.id.clone(),
         text: "reject".into(),
     };
@@ -369,6 +371,7 @@ async fn cancelling_withdraws_the_gate_and_closes_its_question() {
         "chat stops offering it"
     );
     let late = Request::Answer {
+        chat: false,
         question: question.id.clone(),
         text: "yes".into(),
     };

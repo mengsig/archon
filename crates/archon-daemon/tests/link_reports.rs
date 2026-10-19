@@ -152,6 +152,7 @@ async fn cli(harness: &Harness, request: Request) -> Reply {
 
 async fn answer(harness: &Harness, question: &Question, text: &str) {
     let request = Request::Answer {
+        chat: false,
         question: question.id.clone(),
         text: text.into(),
     };
@@ -519,6 +520,7 @@ async fn decide(harness: &Harness, gate: &mut OperatorGate) {
 
 fn answer_request(question: &Question, text: &str) -> Request {
     Request::Answer {
+        chat: false,
         question: question.id.clone(),
         text: text.into(),
     }

@@ -240,6 +240,7 @@ async fn a_confirmation_does_not_apply_to_changed_state() {
     .unwrap();
     let result = h
         .cli(Request::Answer {
+            chat: false,
             question: q.id.clone(),
             text: "yes".into(),
         })

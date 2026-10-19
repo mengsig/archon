@@ -21,6 +21,7 @@ pub mod handlers;
 pub mod integration;
 pub mod mirror;
 mod operator_commands;
+mod operator_sentence;
 pub mod ops;
 pub mod prune;
 pub mod pump;

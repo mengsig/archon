@@ -1026,6 +1026,7 @@ async fn a_steer_at_an_operator_gate_keeps_the_gate_and_asks_once() {
     assert!(h.backend.messages().is_empty(), "nobody runs to be told");
 
     let answer = Request::Answer {
+        chat: false,
         question: asked[0].id.clone(),
         text: "yes".into(),
     };

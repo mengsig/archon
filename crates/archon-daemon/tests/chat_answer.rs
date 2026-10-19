@@ -589,6 +589,7 @@ async fn a_shared_instance_refuses_the_command_and_says_why() {
     );
 
     let cli = Request::Answer {
+        chat: false,
         question: asked.id.clone(),
         text: "approve".into(),
     };
@@ -885,6 +886,7 @@ async fn assert_only_the_operator_answers(h: &Harness, asked: &Question, asker: 
     );
     assert!(answers(h, &asked.id).await.is_empty(), "{asker}: no answer");
     let operator_only = Request::Answer {
+        chat: false,
         question: asked.id.clone(),
         text: "approve".into(),
     };
@@ -1087,6 +1089,7 @@ async fn a_cited_gate_answer_needs_its_answer_word_in_the_quote() {
         .unwrap();
     let request = Request::RequestAuthority {
         action: Box::new(Request::Answer {
+            chat: false,
             question: asked.id.clone(),
             text: "approve".into(),
         }),
@@ -1110,6 +1113,7 @@ async fn a_cited_plain_language_gate_answer_must_postdate_the_gate() {
     let (h, item, asked) = at_proposal_gate(AetherMode::Dedicated).await;
     let request = |seq| Request::RequestAuthority {
         action: Box::new(Request::Answer {
+            chat: false,
             question: asked.id.clone(),
             text: "approve".into(),
         }),
@@ -1162,4 +1166,17 @@ async fn github_cannot_answer_an_itemless_question_from_another_thread() {
         "payload":{"repository":"other-org/unrelated", "number":3,"requester":"octocat","operator":true,"text":command}});
     deliver(&h, 1, trigger).await;
     assert!(question(&h, &asked.id).await.is_open());
+}
+
+#[tokio::test]
+async fn an_answer_typed_in_archons_chat_is_marked_as_chat_given() {
+    let (h, _item, asked) = at_proposal_gate(AetherMode::Dedicated).await;
+    let cli = Request::Answer {
+        chat: true,
+        question: asked.id.clone(),
+        text: "approve".into(),
+    };
+    h.cli(cli).await.expect("the chat's answer is applied");
+    let recorded = vec![("approve".to_owned(), AnswerVia::ChatCommand)];
+    assert_eq!(answers(&h, &asked.id).await, recorded);
 }

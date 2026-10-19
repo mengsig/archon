@@ -1203,6 +1203,7 @@ async fn answer(
     text: &str,
 ) -> Result<Reply, ArchonError> {
     let request = Request::Answer {
+        chat: false,
         question: question.clone(),
         text: text.into(),
     };

@@ -266,6 +266,9 @@ pub enum Request {
     Answer {
         question: QuestionId,
         text: String,
+        /// Sent from Archon's chat, so the feed marks it as chat-given.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        chat: bool,
     },
     /// The orchestrator records that the operator answered, in chat, a
     /// question it asked with `ask_operator`. Never a gate's question.
@@ -2248,6 +2251,7 @@ mod tests {
     #[test]
     fn answers_and_hard_pauses_are_operator_only() {
         let answer = Request::Answer {
+            chat: false,
             question: QuestionId::new(),
             text: "yes".into(),
         };

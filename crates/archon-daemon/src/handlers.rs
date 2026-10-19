@@ -431,8 +431,17 @@ async fn handle_operator(ctx: &DaemonContext, request: Request) -> Result<Reply,
             options,
             caller,
         } => operator::ask(ctx, &text, item, options, caller).await,
-        Request::Answer { question, text } => {
-            answer_question(ctx, &question, &text, AnswerVia::Archon)
+        Request::Answer {
+            question,
+            text,
+            chat,
+        } => {
+            let via = if chat {
+                AnswerVia::ChatCommand
+            } else {
+                AnswerVia::Archon
+            };
+            answer_question(ctx, &question, &text, via)
                 .await
                 .map(Reply::Question)
         }

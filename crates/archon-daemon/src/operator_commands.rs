@@ -99,7 +99,7 @@ async fn execute(
     if let Some(result) = crate::authority::command(ctx, &evidence, text).await {
         let label = command_label(text);
         let (applied, text) = match result {
-            Ok(reply) => (true, serde_json::to_string(&reply)?),
+            Ok(_) => (true, crate::operator_sentence::command_sentence(text)),
             Err(error) if error.is_store() => return Err(error),
             Err(error) => (false, error.to_string()),
         };

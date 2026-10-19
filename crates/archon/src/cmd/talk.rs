@@ -51,7 +51,7 @@ pub async fn answer(question: &str, words: &[String], json: bool) -> anyhow::Res
         ))
         .into());
     };
-    let text = ops::answer(&client, found, &text).await?;
+    let text = ops::answer(&client, found, &text, false).await?;
     let done = format::answered(found, &text);
     emit(
         json,

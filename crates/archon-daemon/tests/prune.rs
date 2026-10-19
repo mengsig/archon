@@ -537,6 +537,7 @@ async fn a_report_awaiting_its_reopen_answer_is_kept_until_answered() {
     );
 
     let answer = Request::Answer {
+        chat: false,
         question: question.id.clone(),
         text: "leave it closed".into(),
     };

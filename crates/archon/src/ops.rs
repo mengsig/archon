@@ -21,12 +21,13 @@ pub async fn say(client: &ArchonClient, text: String) -> anyhow::Result<()> {
     }
 }
 
-/// Answer `question`; a bare option number picks that option; a number outside the options is refused. Returns the
+/// Answer `question` (`chat` when typed in the chat); a bare option number picks that option; a number outside the options is refused. Returns the
 /// answer as sent.
 pub async fn answer(
     client: &ArchonClient,
     question: &Question,
     text: &str,
+    chat: bool,
 ) -> anyhow::Result<String> {
     assert!(!text.trim().is_empty(), "callers refuse empty answers");
     let text = question.expand_option(text)?;
@@ -38,6 +39,7 @@ pub async fn answer(
         .into());
     }
     let request = Request::Answer {
+        chat,
         question: question.id.clone(),
         text: text.clone(),
     };

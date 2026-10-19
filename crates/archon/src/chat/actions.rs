@@ -140,7 +140,7 @@ async fn answer(
     };
     let number = found.number;
     assert!(number > 0, "the chat only tracks numbered questions");
-    ops::answer(client, found, text).await?;
+    ops::answer(client, found, text, true).await?;
     chat.note(&format!("answered Q{number}"))
 }
 

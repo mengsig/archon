@@ -363,6 +363,7 @@ async fn only_the_operator_confirms(h: &Harness, gh: &FakeGh, question: &Questio
     );
     let unclear = h
         .cli(Request::Answer {
+            chat: false,
             question: question.clone(),
             text: "maybe later".into(),
         })
@@ -395,6 +396,7 @@ async fn a_request_waits_for_the_operator_and_merges_on_yes() {
     only_the_operator_confirms(&h, &gh, &question).await;
 
     let yes = Request::Answer {
+        chat: false,
         question: question.clone(),
         text: "yes".into(),
     };
@@ -456,6 +458,7 @@ async fn a_declined_request_merges_nothing() {
         panic!("asked")
     };
     let no = Request::Answer {
+        chat: false,
         question,
         text: "no".into(),
     };
@@ -694,6 +697,7 @@ async fn an_interrupted_merge_is_settled_from_github() {
     };
     gh.lose_next_merge_reply();
     h.cli(Request::Answer {
+        chat: false,
         question: question.clone(),
         text: "yes".into(),
     })
@@ -771,6 +775,7 @@ async fn a_head_moved_after_the_question_is_refused_on_yes() {
     };
     gh.show(&"0".repeat(40), "MERGEABLE", green());
     let yes = Request::Answer {
+        chat: false,
         question,
         text: "yes".into(),
     };

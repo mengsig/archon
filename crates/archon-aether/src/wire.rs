@@ -33,6 +33,8 @@ pub const CLIENT_NAME: &str = "archon";
 pub const HOST_CONTEXT_FEATURE: &str = "host_context";
 pub const REPOSITORY_ROOT_FEATURE: &str = "repository_root";
 pub const NOTES_FEATURE: &str = "notes";
+/// The daemon serves the notification center (`post_notification` and kin).
+pub const NOTIFICATIONS_FEATURE: &str = "notifications";
 
 /// How a note row is coloured in the TUI (protocol 24).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -96,6 +98,24 @@ pub enum Command {
         text: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         level: Option<NoteLevel>,
+    },
+    /// Post, or update the one `key` names; the `notifications` feature.
+    PostNotification {
+        source: String,
+        notification: crate::notifications::NotificationPost,
+    },
+    ListNotifications {
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        states: Vec<crate::notifications::NotificationState>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        limit: Option<usize>,
+    },
+    /// By the `source` and `key` it was posted under.
+    ResolveNotification {
+        source: String,
+        key: String,
     },
     Cancel {
         agent: AetherAgentId,

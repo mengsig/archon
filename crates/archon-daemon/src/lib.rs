@@ -20,6 +20,7 @@ pub mod github;
 pub mod handlers;
 pub mod integration;
 pub mod mirror;
+pub mod notification_center;
 mod operator_commands;
 mod operator_sentence;
 pub mod ops;

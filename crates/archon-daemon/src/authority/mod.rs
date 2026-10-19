@@ -227,6 +227,14 @@ pub(crate) async fn decide(
 
 pub(crate) use scope::{check_item, check_question};
 
+/// Whether question `id` asks the operator to confirm an authority change.
+pub(crate) async fn is_confirmation(
+    ctx: &DaemonContext,
+    id: &archon_core::id::QuestionId,
+) -> Result<bool, ArchonError> {
+    confirmations::is_confirmation(ctx, id).await
+}
+
 pub(crate) async fn check_answer(
     ctx: &DaemonContext,
     id: &archon_core::id::QuestionId,

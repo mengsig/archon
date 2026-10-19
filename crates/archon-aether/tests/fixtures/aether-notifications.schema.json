@@ -1,0 +1,64 @@
+{
+  "$defs": {
+    "ClientFrame": {
+      "oneOf": [
+        {
+          "properties": {
+            "cmd": { "const": "post_notification", "type": "string" },
+            "source": { "type": "string" },
+            "notification": { "$ref": "#/$defs/NotificationPost" }
+          },
+          "required": ["cmd", "source", "notification"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": { "const": "list_notifications", "type": "string" },
+            "states": { "items": { "$ref": "#/$defs/NotificationState" }, "type": "array" },
+            "source": { "type": ["string", "null"] },
+            "limit": { "minimum": 0, "type": ["integer", "null"] }
+          },
+          "required": ["cmd"],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cmd": { "const": "resolve_notification", "type": "string" },
+            "id": { "type": ["string", "null"] },
+            "source": { "type": ["string", "null"] },
+            "key": { "type": ["string", "null"] }
+          },
+          "required": ["cmd"],
+          "type": "object"
+        }
+      ]
+    },
+    "NotificationAction": {
+      "properties": { "id": { "type": "string" }, "label": { "type": "string" } },
+      "required": ["id", "label"],
+      "type": "object"
+    },
+    "NotificationKind": {
+      "enum": ["question", "blocker", "decision", "outcome", "info"],
+      "type": "string"
+    },
+    "NotificationPost": {
+      "properties": {
+        "kind": { "$ref": "#/$defs/NotificationKind" },
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "key": { "type": ["string", "null"] },
+        "link": { "type": ["string", "null"] },
+        "actions": { "items": { "$ref": "#/$defs/NotificationAction" }, "type": "array" },
+        "free_text": { "type": "boolean" }
+      },
+      "required": ["kind", "title"],
+      "type": "object"
+    },
+    "NotificationState": {
+      "enum": ["unread", "read", "resolved"],
+      "type": "string"
+    }
+  },
+  "protocol_version": 24
+}

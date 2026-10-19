@@ -131,6 +131,9 @@ pub enum AnswerVia {
     /// The operator's chat reply to an `ask_operator` question, recorded by
     /// the orchestrator that asked it.
     ChatReply,
+    /// An answer chosen in Aether's notification center, applied by the
+    /// daemon as an `/answer` command is.
+    NotificationCenter,
 }
 
 impl AnswerVia {
@@ -144,6 +147,7 @@ impl AnswerVia {
             Self::Archon => None,
             Self::ChatCommand => Some("answered from operator chat"),
             Self::ChatReply => Some("answered in chat, recorded by the orchestrator"),
+            Self::NotificationCenter => Some("answered in the notification center"),
         }
     }
 }

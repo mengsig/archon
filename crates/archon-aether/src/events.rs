@@ -91,6 +91,11 @@ pub enum EventKind {
     InboxConsumed {
         up_to: u64,
     },
+    /// A `custom` event, such as Aether's `notification.answered`.
+    Custom {
+        name: String,
+        payload: Value,
+    },
     Other {
         type_name: String,
     },
@@ -216,6 +221,10 @@ fn parse_kind(kind: Value) -> Result<EventKind, serde_json::Error> {
         "inbox.delivered" => inbox_delivered(field("item"))?,
         "inbox.consumed" => EventKind::InboxConsumed {
             up_to: serde_json::from_value(field("up_to"))?,
+        },
+        "custom" => EventKind::Custom {
+            name: serde_json::from_value(field("name"))?,
+            payload: field("payload"),
         },
         _ => EventKind::Other { type_name },
     };

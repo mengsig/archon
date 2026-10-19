@@ -1,5 +1,6 @@
 //! Shared commands match Aether v17/v15 schemas; optional memory and recovery
-//! commands match their published schema subsets, including nested fields.
+//! commands match their published schema subsets, including nested fields;
+//! the notification commands match a subset transcribed from Aether.
 
 use std::collections::BTreeSet;
 
@@ -78,6 +79,9 @@ fn variant_name(command: &Command) -> &'static str {
         Command::RecordMemoryFeedback(_) => "record_memory_feedback",
         Command::RetractMemoryFeedback { .. } => "retract_memory_feedback",
         Command::ResolveSubmission { .. } => "resolve_submission",
+        Command::PostNotification { .. } => "post_notification",
+        Command::ListNotifications { .. } => "list_notifications",
+        Command::ResolveNotification { .. } => "resolve_notification",
     }
 }
 
@@ -680,4 +684,56 @@ fn submission_resolution_matches_aethers_published_wire_shape() {
         let data = serde_json::to_value(&command).unwrap();
         assert_eq!(data["command"]["idempotency_key"], request.idempotency_key);
     }
+}
+
+/// Transcribed from Aether's `aether-protocol` command definitions, as the
+/// branch adding the center has not regenerated its published schema yet.
+#[test]
+fn notification_commands_match_aethers_feature_schema() {
+    use archon_aether::notifications::{
+        NotificationAction, NotificationKind, NotificationPost, NotificationState,
+    };
+    let schema: Value =
+        serde_json::from_str(include_str!("fixtures/aether-notifications.schema.json")).unwrap();
+    let mut post = NotificationPost::new(NotificationKind::Question, "q_1", "Q1: ship?", "body");
+    post.link = Some(agent().to_string());
+    post.actions = vec![NotificationAction::option(1, "yes")];
+    post.free_text = true;
+    let minimal = NotificationPost::new(NotificationKind::Outcome, "ntf_1", "done", "");
+    let commands = [post, minimal]
+        .into_iter()
+        .map(|notification| Command::PostNotification {
+            source: "archon".into(),
+            notification,
+        });
+    let list = |states: Vec<NotificationState>, limit| Command::ListNotifications {
+        states,
+        source: Some("archon".into()),
+        limit,
+    };
+    let commands = commands.chain([
+        list(Vec::new(), Some(1000)),
+        list(
+            vec![NotificationState::Unread, NotificationState::Resolved],
+            None,
+        ),
+        Command::ResolveNotification {
+            source: "archon".into(),
+            key: "q_1".into(),
+        },
+    ]);
+    for command in commands {
+        let problems = violations(&schema, &command);
+        assert!(problems.is_empty(), "{problems:?}");
+    }
+    let defs = &schema["$defs"];
+    for (kind, name) in [
+        (NotificationKind::Blocker, "blocker"),
+        (NotificationKind::Info, "info"),
+    ] {
+        assert_eq!(serde_json::to_value(kind).unwrap(), name);
+        assert!(allowed_strings(&defs["NotificationKind"]).contains(&json!(name)));
+    }
+    let action = serde_json::to_value(NotificationAction::option(2, "reject")).unwrap();
+    assert_eq!(action, json!({"id": "2", "label": "reject"}));
 }

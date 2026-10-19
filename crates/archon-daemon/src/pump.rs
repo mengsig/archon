@@ -182,6 +182,7 @@ async fn link_loop(
 struct Warned {
     host_context: bool,
     notes: bool,
+    notifications: bool,
 }
 
 impl Warned {
@@ -200,6 +201,10 @@ impl Warned {
         if !self.notes {
             crate::command_notice::warn_if_unsupported(welcome);
             self.notes = true;
+        }
+        if !self.notifications {
+            crate::notification_center::warn_if_unsupported(client);
+            self.notifications = true;
         }
     }
 }
@@ -285,8 +290,8 @@ async fn announce_connected(
     Ok(())
 }
 
-/// One connection's worth of work: reconcile, then follow both streams
-/// until the connection is lost. `Err` only for a fatal (store) failure.
+/// One connection's worth of work: reconcile, then follow both streams and
+/// the notification center until the connection is lost. `Err` only for a fatal (store) failure.
 async fn session(ctx: &DaemonContext, client: &AetherClient) -> Result<(), ArchonError> {
     match reconcile(ctx).await {
         Ok(()) => {}
@@ -301,7 +306,8 @@ async fn session(ctx: &DaemonContext, client: &AetherClient) -> Result<(), Archo
     ctx.dispatch.notify_one();
     tokio::try_join!(
         stream::follow_fleet(ctx, client),
-        stream::follow_orchestrator(ctx, client)
+        stream::follow_orchestrator(ctx, client),
+        crate::notification_center::follow(ctx, client)
     )?;
     Ok(())
 }

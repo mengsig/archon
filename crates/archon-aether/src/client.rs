@@ -301,7 +301,7 @@ impl AetherClient {
         Ok(raw.data)
     }
 
-    async fn typed<T: DeserializeOwned>(
+    pub(crate) async fn typed<T: DeserializeOwned>(
         &self,
         command: Command,
         expected: &str,

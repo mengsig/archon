@@ -50,6 +50,7 @@ mod link_triggers;
 mod mirrors;
 mod model_evidence;
 mod model_reasons;
+mod notification_center;
 mod onto;
 mod operator_authority;
 mod operator_merge;

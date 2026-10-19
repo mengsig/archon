@@ -648,6 +648,56 @@ Known limitations:
   orchestrator created since starts an empty transcript. `archon questions`
   always lists every open question.
 
+### Aether's notification center
+
+With an aetherd that serves a notification center (feature
+`notifications`), archond posts there under the source `archon`, so what
+needs you shows next to the rest of your Aether inbox:
+
+- **Every open question**: each `ask_operator` question and each proposal or
+  report gate, keyed by its `q_…` id. The title is `Q<n>: <question>`; the
+  body names the item, says in one line why it is asked (a gate, the agent
+  that asked, or an authority change), and repeats the question. Its
+  suggested answers are its actions, numbered as `/answer` numbers them; a
+  question with more than eight keeps the rest answerable as text. A
+  question an Aether agent asked with `ask_user` is not posted: Aether shows
+  it itself.
+- **Blockers and outcomes**, keyed by their feed notification, with no
+  actions. They are not resolved by Archon; mark them read or resolved in
+  Aether.
+
+Answering a question there is the same as sending
+`/answer <n> <choice>` in the orchestrator's chat
+([Answering in the orchestrator's chat](#answering-in-the-orchestrators-chat)):
+the chosen action is the option number, words you add follow it (`reject
+too risky`), and words alone are the answer. The same rules apply: only an
+answer Aether records from you (the `user` actor) counts, only in the
+default dedicated mode, and an authority confirmation is answered only in
+the channel it was asked in. Its feed record says
+`answered in the notification center`. An answer that is refused, or no
+longer valid, comes back as a system notice with the reason, and the
+question stays in `archon questions`.
+
+A question closed anywhere else (chat, GitHub, `archon answer`, an
+orchestrator recording a chat answer, or a cancelled or finished item)
+resolves its notification. In shared mode questions are posted without
+actions, with a hint to answer them with `archon answer`.
+
+archond follows the feed with a stored cursor. When Aether was away, it
+posts what it missed once Aether is back, and on every connect it applies
+answers given meanwhile, resolves questions that closed, and posts open
+ones Aether does not hold. A blocker or outcome older than a day is not
+posted late. Against an aetherd without the notification center archond
+logs one line at start-up and behaves as before; it starts posting once a
+newer aetherd serves the feature, from then on.
+
+Known limitations:
+
+- The reconcile on connect reads Archon's newest 1000 notifications; an
+  answer older than those is not applied.
+- An answer that is refused leaves its notification resolved in Aether;
+  answer the question again with `/answer` or `archon answer`.
+
 ### Upgrading and watching from the orchestrator's chat
 
 Two more whole-message commands are applied by archond as `/answer` is, with
@@ -1033,7 +1083,9 @@ What does not: the Lavish page of a gate is a link to `127.0.0.1` on
 Archon's machine and does not open on a phone; the `archon` CLI, its line
 chat and `archon questions` are not in the app; there are no Archon views.
 For a push to the phone when a gate opens, set `[notify]`
-([push notifications](configuration.md#push-notifications)). Chat answers need the default
+([push notifications](configuration.md#push-notifications)). An aetherd with a
+notification center also lists open questions and outcomes there
+([Aether's notification center](#aethers-notification-center)). Chat answers need the default
 dedicated mode (see
 [Answering in the orchestrator's chat](#answering-in-the-orchestrators-chat)).
 A device paired as an observer cannot answer: Aether does not treat it as

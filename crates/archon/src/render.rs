@@ -419,6 +419,10 @@ mod tests {
                 AnswerVia::ChatReply,
                 "answered in chat, recorded by the orchestrator",
             ),
+            (
+                AnswerVia::NotificationCenter,
+                "answered in the notification center",
+            ),
         ] {
             let answer = item(FeedEntry::Answer {
                 question: q.id.clone(),

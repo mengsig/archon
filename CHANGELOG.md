@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+Against an aetherd with a notification center (feature `notifications`),
+archond posts every open operator question there, gates included, with its
+suggested answers as actions, and posts blockers and outcomes without. An
+answer given there is applied as `/answer N <choice>` is, under the same
+rules, and a question closed anywhere else resolves its notification. An
+older aetherd is left alone: one log line, no change.
+
 ## 1.4.0
 
 Released 2026-10-19.

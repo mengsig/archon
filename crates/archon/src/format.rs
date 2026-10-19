@@ -226,7 +226,7 @@ pub fn aether_link(link: &AetherLinkStatus) -> String {
                 .map(|at| {
                     format!(
                         "; retrying at {}",
-                        at.with_timezone(&chrono::Local).format("%H:%M:%S")
+                        at.with_timezone(&chrono::Local).format("%H:%M:%S %z")
                     )
                 })
                 .unwrap_or_default();

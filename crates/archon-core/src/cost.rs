@@ -362,7 +362,7 @@ mod tests {
         assert!(matches!(backwards, ArchonError::Invalid(_)), "{backwards}");
         assert!(range(Some("7d"), Some("7d")).is_err());
         assert!(range(Some("0d"), None).is_err());
-        assert!(range(Some("4000000000d"), None).is_err());
+        assert!(DayBound::parse("4000000000d").is_err());
     }
 
     #[test]

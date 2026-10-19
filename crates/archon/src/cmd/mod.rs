@@ -26,7 +26,7 @@ mod update;
 use std::process::ExitCode;
 
 use crate::chat;
-use crate::cli::{Cli, Command, DaemonCommand};
+use crate::cli::{Cli, Command, DaemonCommand, OrchestratorCommand};
 
 pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
     let json = cli.json;
@@ -73,7 +73,9 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::GithubWatcher { command } => github_watcher::run(command, json).await,
         Command::Pause(args) => control::pause(args, true, json).await,
         Command::Resume(args) => control::pause(args, false, json).await,
-        Command::Orchestrator(command) => control::orchestrator(command, json).await,
+        Command::Orchestrator { command } => {
+            control::orchestrator(command.unwrap_or(OrchestratorCommand::Status), json).await
+        }
         Command::Repo(command) => repo::run(command, json).await,
         Command::Initiatives { command } => initiatives::run(command, json).await,
         Command::Queue(command) => queue::run(command, json).await,
@@ -150,7 +152,7 @@ fn json_refusal(command: Option<&Command>) -> Option<&'static str> {
         | Command::Doctor
         | Command::Release(_)
         | Command::Gc { .. }
-        | Command::Orchestrator(_)
+        | Command::Orchestrator { .. }
         | Command::Update(_) => None,
     }
 }

@@ -240,9 +240,11 @@ pub enum Command {
     Daemon(DaemonCommand),
     /// Serve MCP on stdio (spawned by Aether; not for interactive use).
     Mcp,
-    /// The orchestrator agent's status, or restart it.
-    #[command(subcommand)]
-    Orchestrator(OrchestratorCommand),
+    /// The orchestrator agent's status (the default), or restart it.
+    Orchestrator {
+        #[command(subcommand)]
+        command: Option<OrchestratorCommand>,
+    },
     /// Install the latest released archon over this one.
     ///
     /// Downloads the release for this machine, verifies its SHA-256 and
@@ -1384,6 +1386,20 @@ mod tests {
                 "{bad:?}"
             );
         }
+    }
+
+    #[test]
+    fn orchestrator_without_a_subcommand_shows_its_status() {
+        assert!(matches!(
+            parse(&["orchestrator"]),
+            Command::Orchestrator { command: None }
+        ));
+        assert!(matches!(
+            parse(&["orchestrator", "restart"]),
+            Command::Orchestrator {
+                command: Some(OrchestratorCommand::Restart)
+            }
+        ));
     }
 
     #[test]

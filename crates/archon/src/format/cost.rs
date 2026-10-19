@@ -1,7 +1,7 @@
 //! `archon cost`: a header naming the range and what counts, then one row
 //! per group and the total, amounts counted as the budgets count them.
 
-use archon_core::cost::{CostAmounts, CostReport};
+use archon_core::cost::{CostAmounts, CostReport, format_usd};
 
 use super::table;
 use crate::wrap::sanitize_line;
@@ -44,7 +44,10 @@ pub fn cost(report: &CostReport) -> String {
     debug_assert_eq!(text.lines().count(), report.rows.len() + 3);
     // Uncounted estimates, such as Codex usage, must not read as free.
     if let Some(total) = report.total.uncounted_api_equivalent_usd() {
-        text = format!("{text}\n≈ ${total:.2} API-equivalent with the estimates.");
+        text = format!(
+            "{text}\n≈ {} API-equivalent with the estimates.",
+            format_usd(total)
+        );
     }
     text
 }
@@ -52,10 +55,10 @@ pub fn cost(report: &CostReport) -> String {
 fn row_cells(key: String, amounts: &CostAmounts) -> [String; 5] {
     [
         key,
-        format!("${:.2}", amounts.counted_usd),
-        format!("${:.2}", amounts.cost_usd),
-        format!("${:.2}", amounts.estimated_cost_usd),
-        format!("${:.2}", amounts.unclassified_cost_usd),
+        format_usd(amounts.counted_usd),
+        format_usd(amounts.cost_usd),
+        format_usd(amounts.estimated_cost_usd),
+        format_usd(amounts.unclassified_cost_usd),
     ]
 }
 
@@ -134,6 +137,25 @@ mod tests {
                 "≈ $3.00 API-equivalent with the estimates.",
             ]
         );
+    }
+
+    #[test]
+    fn sub_cent_rows_are_marked_not_rounded_to_zero() {
+        let row = |key: &str| CostRow {
+            key: Some(key.into()),
+            amounts: amounts(0.004, 0.0),
+        };
+        let text = cost(&report(
+            vec![row("a"), row("b"), row("c")],
+            amounts(0.012, 0.0),
+        ));
+        let lines: Vec<&str> = text.lines().collect();
+        for line in &lines[2..5] {
+            let cells: Vec<&str> = line.split_whitespace().collect();
+            assert_eq!(cells[1..3], ["<$0.01", "<$0.01"], "{line}");
+        }
+        assert!(lines[5].starts_with("total  "), "{text}");
+        assert!(lines[5].contains("$0.01"), "{text}");
     }
 
     #[test]

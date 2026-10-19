@@ -157,9 +157,9 @@ impl Renderer {
     fn time(&self, at: Timestamp) -> String {
         let local = at.with_timezone(&Local);
         if local.date_naive() == self.today {
-            local.format("%H:%M").to_string()
+            local.format("%H:%M %z").to_string()
         } else {
-            local.format("%b %d %H:%M").to_string()
+            local.format("%b %d %H:%M %z").to_string()
         }
     }
 }
@@ -308,9 +308,14 @@ mod tests {
         }
     }
 
+    /// `HH:MM +0400`, the width of the time column on the current day.
+    const HH_MM_ZONE: usize = 11;
+
     /// The label and first line of text, without the time column.
     fn head(rendered: &str) -> String {
-        rendered.lines().next().unwrap()[5..].trim().to_owned()
+        rendered.lines().next().unwrap()[HH_MM_ZONE..]
+            .trim()
+            .to_owned()
     }
 
     #[test]

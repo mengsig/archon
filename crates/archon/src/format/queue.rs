@@ -215,12 +215,15 @@ fn run_lines(out: &mut String, detail: &ItemDetail, run: &PipelineRun, full: boo
         run.item, detail.item.id,
         "the run belongs to the item shown"
     );
+    let on_branch = match run.branch.is_empty() {
+        true => String::new(),
+        false => format!(" on {}", run.branch),
+    };
     let _ = writeln!(
         out,
-        "run {}: {} on {} in {}",
+        "run {}: {}{on_branch} in {}",
         run.id,
         run_state(&run.state),
-        run.branch,
         run.workspace.display()
     );
     let stages: Vec<&StageRun> = detail.stages.iter().filter(|s| s.run == run.id).collect();
@@ -596,6 +599,22 @@ mod tests {
             switched_to: None,
             merges: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_run_without_a_branch_names_no_branch() {
+        let mut detail = detail_with_stages();
+        detail.runs[0].branch.clear();
+        let text = item_detail(&detail, &RepoNames::new(), false);
+        let run = &detail.runs[0].id;
+        assert!(
+            text.contains(&format!("run {run}: succeeded in /w\n")),
+            "{text}"
+        );
+        assert!(
+            !text.contains("  in /w") && !text.contains(" on  "),
+            "{text}"
+        );
     }
 
     #[test]

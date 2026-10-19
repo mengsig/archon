@@ -356,8 +356,8 @@ fn json_errors_keep_codes_messages_and_exit_status() {
 fn a_command_line_that_does_not_parse_is_an_envelope_under_json() {
     let env = Env::new();
     let cases: [&[&str]; 4] = [
-        &["--json", "queue", "steer", "qi_x", "--budget-usd", "-1"],
-        &["queue", "steer", "qi_x", "--budget-usd", "-1", "--json"],
+        &["--json", "queue", "steer", "qi_x", "--extend", "0"],
+        &["queue", "steer", "qi_x", "--extend", "0", "--json"],
         &["--json", "no-such-command"],
         &["--json", "initiatives", "update", "ini_x"],
     ];
@@ -374,7 +374,7 @@ fn a_command_line_that_does_not_parse_is_an_envelope_under_json() {
         assert!(out.stderr.is_empty(), "{args:?}: {out:?}");
     }
     let plain = env
-        .command(&["queue", "steer", "qi_x", "--budget-usd", "-1"])
+        .command(&["queue", "steer", "qi_x", "--extend", "0"])
         .output()
         .unwrap();
     assert_eq!(plain.status.code(), Some(2));

@@ -348,6 +348,12 @@ fn reserve_plans(
         let stage = plans[0].stage_id.clone();
         return Ok(Reserved::Blocked(Exhausted { stage, error }));
     }
+    if let Some(spec) = spec {
+        let cap = RepoEnv::new(repo.clone())?.agent_cap(ctx, &run.pipeline);
+        for plan in &mut plans {
+            super::swarm::brief(plan, spec, cap, None);
+        }
+    }
     let ids = reserve_each(ctx, store, (&run, &item, repo.as_ref()), plans, budget)?;
     Ok(Reserved::Spawned(ids))
 }

@@ -9,7 +9,8 @@ Operator commands are easier to use and safer to grant: `/archon answer`,
 command's applied or refused result shows in the TUI without an orchestrator
 turn, and a GitHub operator's commands reach only the repository of their
 thread. archond now supervises its own aetherd and restarts one that was
-killed. No store migration; daemon protocol 17 as before.
+killed. 1.4.0 holds every 1.3.2 fix, so it upgrades 1.3.1 and 1.3.2 alike:
+no store migration, daemon protocol 17 as before.
 
 Archon asks Aether for protocol 24 and needs **Aether 1.2.0** for the whole
 TUI experience. With an older aetherd it falls back to the newest protocol
@@ -83,8 +84,6 @@ start-up warning and the results stay in Archon's feed only.
 
 ### Merge paths
 
-- An item queued `onto` a pull request counts a review that read from the
-  pull request's frozen head as a review of the whole change (#110).
 - Items delivered onto another pull request are refused by `request_merge`,
   `merge=auto` and `MergeItem`, naming the pull request to merge by hand; the
   owed auto-merge is pinned to the delivered commit (#137).
@@ -123,6 +122,29 @@ start-up warning and the results stay in Archon's feed only.
 
 - The reference docs match the code, with consistency tests that hold them
   to it, and cover the autonomy keys and chat history (#132, #166).
+
+## 1.3.2
+
+Released 2026-10-19.
+
+### Fixes
+
+- `refresh_item` on an item queued `onto` a pull request merges that pull
+  request's current head, not the repository base. When another delivery moved
+  the head, so the item failed at ship, a refresh now keeps its run, review and
+  history, and it delivers as a fast-forward of the pull request. The ship
+  failure tells you to refresh the item instead of queueing new work (#111).
+- An item queued `onto` a pull request now counts a review that read from the
+  pull request's frozen head as a review of the whole change. The review gate
+  used to start the change at the pull request's fork from its base, so such a
+  review failed as "read only from" an unanchored commit (#110).
+- A timed-out stage's gate message now reports how long the stage actually ran,
+  rather than the pipeline's default timeout (#165).
+- A swarm plan that Archon refuses (an objective over 8000 bytes, more tasks
+  than the agent caps run at once, an interface written as a string) goes back
+  to the planner in the same stage with every problem listed, at most twice,
+  before the stage fails. The planner's brief now states the run's task limit,
+  the byte limits and the exact plan shape up front (#167).
 
 ## 1.3.1
 

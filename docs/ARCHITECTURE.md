@@ -3329,6 +3329,12 @@ object per line under `--json`).
   restack fix or refresh pending, whose branch already holds the base head,
   or (delivered in `pr` mode) whose pull request merged or closed. Asking
   again for the same base commit returns the refresh already queued.
+  An `onto` item that is not delivered yet (typically failed because another
+  delivery moved its pull request's head) is refreshed from that head, not the
+  repository base: archond fetches `origin`'s head branch of the pull request,
+  the refresh merges it, and the refresh's frozen head is the merged commit, so
+  delivery fast-forwards the pull request from it and review coverage starts
+  there. A delivered `onto` item is still refused.
 - A brief amendment (`brief_append` on `retry_item` or `update_item`, a
   `note` on `steer_item`, `archon queue retry --append`) is appended to the
   brief under a dated `## Amendment (<UTC time>)` heading, so every later

@@ -184,7 +184,8 @@ impl Store {
     /// Queue a refresh of `owner`, whose last run is `run`: an item on its branch
     /// that merges `refresh.sha` and ships into the same pull request. The one
     /// still to finish for that commit is returned again; another unfinished
-    /// restack fix or refresh of `owner` refuses it.
+    /// restack fix or refresh of `owner` refuses it. The refresh of an `onto`
+    /// owner merges its pull request's head: that becomes the refresh's frozen head.
     pub fn enqueue_refresh(
         &mut self,
         owner: &archon_core::queue::QueueItem,
@@ -212,6 +213,13 @@ impl Store {
         fix.id = QueueItemId::new();
         fix.title = format!("Refresh {} onto {}", owner.id, refresh.base);
         fix.brief = refresh_brief(owner, &run.branch, refresh);
+        if let Some(onto) = fix.onto.as_mut() {
+            assert_eq!(
+                onto.head_ref, refresh.base,
+                "an onto refresh merges its head"
+            );
+            onto.head_sha.clone_from(&refresh.sha);
+        }
         fix.dependencies.clear();
         fix.initiative = None;
         fix.origin = None;

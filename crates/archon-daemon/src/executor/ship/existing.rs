@@ -307,8 +307,8 @@ fn moved(onto: &OntoPullRequest, head: &str) -> String {
     assert_ne!(head, onto.head_sha, "only a head that moved");
     format!(
         "the head of {} moved from {} (frozen when the item was queued) to {head}, so the change \
-         is no fast-forward of it; Archon never force-pushes. Refresh: queue the work again \
-         `onto` that pull request so it starts from {head}",
+         is no fast-forward of it; Archon never force-pushes. Refresh: run `refresh_item` on \
+         the item so its branch merges {head} and the change is delivered as a fast-forward",
         onto.pr.url(),
         onto.head_sha
     )

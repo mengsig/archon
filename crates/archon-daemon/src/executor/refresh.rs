@@ -2,7 +2,8 @@
 //! (ARCHITECTURE §13). The base is fetched from `origin`, and an item on the
 //! same branch merges it in, never rebasing: its agent resolves conflicts and
 //! runs the checks, its review reads the change from the new merge base, and it
-//! ships into the pull request the branch already has.
+//! ships into the pull request the branch already has. The base of an `onto`
+//! item is the head of its pull request, which other deliveries move.
 
 use std::path::Path;
 
@@ -23,15 +24,19 @@ use crate::resolve::RepoEnv;
 use crate::worktree::shadow::Shadow;
 use crate::worktree::stack;
 
-/// Queue a refresh of the finished item `id` onto its base branch, or return the
-/// one still to finish for the same base commit.
+/// Queue a refresh of the finished item `id` onto its base branch (an `onto`
+/// item: its pull request's head branch), or return the one still to finish
+/// for the same base commit.
 pub(crate) async fn refresh_item(
     ctx: &DaemonContext,
     id: &QueueItemId,
 ) -> Result<QueueItem, ArchonError> {
     let (owner, run, repo) = target(ctx, id).await?;
     let env = RepoEnv::new(Some(repo.clone()))?;
-    let base = base_of(ctx, &run, &env).await?;
+    let base = match &owner.onto {
+        Some(onto) => onto.head_ref.clone(),
+        None => base_of(ctx, &run, &env).await?,
+    };
     let catalog = crate::learned::catalog(ctx).await?;
     let prepared = refresh_owner(ctx, &owner, &env, &catalog)?;
     if repo.ship == ShipMode::Pr && run.shipped {

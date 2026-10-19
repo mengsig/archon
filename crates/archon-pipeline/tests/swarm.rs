@@ -311,3 +311,16 @@ fn the_integrator_can_read_the_plan_after_an_earlier_attempt_removed_it() {
         "a retry must be told how to recover the removed plan from history"
     );
 }
+
+#[test]
+fn the_planner_is_told_the_task_limit_and_a_shape_that_deserialises() {
+    assert_eq!(swarm::task_limit(0), swarm::MAX_TASKS);
+    assert_eq!(swarm::task_limit(5), 5);
+    assert_eq!(swarm::task_limit(100), swarm::MAX_TASKS);
+    let told = swarm::planner_limits(5);
+    assert!(told.contains("2 to 5 tasks (the agent caps"), "{told}");
+    let fence = told.split("```json\n").nth(1).expect("a shape");
+    let shape = fence.split("\n```").next().expect("a closed fence");
+    let plan: SwarmPlan = serde_json::from_str(shape).expect("the shape is a plan");
+    assert_eq!(plan.tasks[0].provides[0].name, "parse_plan");
+}

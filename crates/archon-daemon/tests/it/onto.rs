@@ -13,7 +13,9 @@ use archon_core::model::{Effort, ModelPlan};
 use archon_core::protocol::{EnqueueRequest, ItemPatch, Reply, RepoRef, Request};
 use archon_core::pull_request::{OntoPullRequest, OntoTarget, PullRequestRef};
 use archon_core::queue::{QueueItem, QueueState};
-use common::delivery::{add_origin, origin_of, pass_by, pushed, shipped_by, verdict_on};
+use common::delivery::{
+    add_origin, change, origin_of, pass_by, pushed, record, shipped_by, verdict_on,
+};
 use common::{Harness, MODEL, PIPELINE, REPO_NAME, REVIEW_MODEL, choice, git, plan};
 use serde_json::{Value, json};
 
@@ -668,4 +670,224 @@ async fn a_delivered_onto_pull_request_is_never_merged_or_auto_merged() {
     );
     assert_eq!(gh.calls(), before, "GitHub was not asked to merge");
     assert!(!gh.calls().contains("pr merge"));
+}
+
+/// A `direct` item onto #100, enqueued.
+async fn enqueue_direct_onto(h: &Harness, title: &str) -> QueueItem {
+    let mut asked = request(title, Some(OntoTarget::Pr(100)), &[]);
+    asked.pipeline = Some("direct".into());
+    asked.model_plan = archon_core::model::ModelPlan::default().into();
+    let Reply::Item(item) = h.cli(Request::Enqueue(asked)).await.unwrap() else {
+        panic!("enqueue replied no item");
+    };
+    item
+}
+
+/// The running stage of `item`'s last run completes with the record of
+/// `ship` run in its worktree; the dispatcher then delivers it.
+async fn settle_item(h: &Harness, item: &QueueItem, ship: impl FnOnce(&Path) -> Value) {
+    let mut runs = h.ctx.store.lock().await.runs_for_item(&item.id).unwrap();
+    let run = runs.pop().expect("a run");
+    let stage = h
+        .running()
+        .await
+        .into_iter()
+        .find(|stage| stage.run == run.id)
+        .expect("the item's stage runs");
+    let outcome = archon_core::run::StageOutcome::Completed {
+        summary: "Changed it; cargo test passes".into(),
+        structured: Some(ship(&run.workspace)),
+    };
+    let agent = stage.aether_agent.clone().expect("an agent");
+    archon_daemon::executor::stage_settled(&h.ctx, &agent, outcome)
+        .await
+        .expect("stage settles");
+    h.dispatch().await;
+}
+
+/// What a refresh agent does with `sha`: merge it, and where `resolve` names
+/// a file and its content, resolve the conflict there.
+fn merge_head(tree: &Path, sha: &str, resolve: Option<(&str, &str)>) {
+    let merging = std::process::Command::new("git")
+        .arg("-C")
+        .arg(tree)
+        .args([
+            "-c",
+            "user.name=Archon Test",
+            "-c",
+            "user.email=test@archon.invalid",
+        ])
+        .args(["merge", "--quiet", "--no-edit", sha])
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .expect("git runs");
+    let Some((file, content)) = resolve else {
+        assert!(merging.status.success(), "a clean merge");
+        return;
+    };
+    assert!(!merging.status.success(), "the pull request head conflicts");
+    std::fs::write(tree.join(file), content).unwrap();
+    git(tree, &["add", file]);
+    git(tree, &["commit", "--quiet", "--no-edit"]);
+}
+
+/// Two items onto #100 start from one head; the first ships, so the second
+/// fails at delivery. Returns the second, with the head the first pushed.
+async fn second_onto_item_failed(
+    h: &Harness,
+    gh: &Gh,
+    head: &str,
+    second_ships: impl FnOnce(&Path) -> Value,
+) -> (QueueItem, String) {
+    gh.show(100, head, json!({}));
+    gh.follow_origin(&origin_of(h));
+    let first = enqueue_direct_onto(h, "first").await;
+    let second = enqueue_direct_onto(h, "second").await;
+    h.dispatch().await;
+    settle_item(h, &first, change).await;
+    let first_head = pushed(&origin_of(h), "feature").expect("the first shipped");
+    assert_ne!(first_head, head, "the pull request head moved");
+    settle_item(h, &second, second_ships).await;
+    let QueueState::Failed { error, .. } = h.state(&second.id).await else {
+        panic!("the second fails: {:?}", h.state(&second.id).await);
+    };
+    assert!(error.contains("`refresh_item`"), "{error}");
+    (second, first_head)
+}
+
+/// The first item's file with other content: its change conflicts.
+fn change_the_same_file(workspace: &Path) -> Value {
+    std::fs::write(workspace.join("change.txt"), "a different change\n").unwrap();
+    git(workspace, &["add", "change.txt"]);
+    git(
+        workspace,
+        &["commit", "--quiet", "-m", "Change the thing too"],
+    );
+    record(workspace)
+}
+
+/// Another file than the first item's: its change merges cleanly.
+fn change_elsewhere(workspace: &Path) -> Value {
+    std::fs::write(workspace.join("other.txt"), "other\n").unwrap();
+    git(workspace, &["add", "other.txt"]);
+    git(
+        workspace,
+        &["commit", "--quiet", "-m", "Change another thing"],
+    );
+    record(workspace)
+}
+
+async fn refresh(h: &Harness, item: &QueueItem) -> Result<QueueItem, ArchonError> {
+    let request = Request::RefreshItem {
+        item: item.id.clone(),
+    };
+    match h.orchestrator(request).await? {
+        Reply::Item(item) => Ok(item),
+        other => panic!("refresh replied {other:?}"),
+    }
+}
+
+/// The second of two items onto one pull request failed because the first
+/// moved its head: a refresh merges that head, and the second then
+/// fast-forwards the pull request from it.
+#[tokio::test]
+async fn a_refresh_merges_the_moved_pull_request_head_and_ships_as_a_fast_forward() {
+    let (h, gh, head) = setup().await;
+    let (second, first_head) = second_onto_item_failed(&h, &gh, &head, change_elsewhere).await;
+    let run = h.run(&second.id).await;
+
+    let fix = refresh(&h, &second).await.expect("queued");
+    assert_eq!(fix.title, format!("Refresh {} onto feature", second.id));
+    assert!(
+        fix.brief.contains(&format!("git merge {first_head}")),
+        "{}",
+        fix.brief
+    );
+    let onto = fix.onto.as_ref().expect("still onto the pull request");
+    assert_eq!(onto.head_sha, first_head, "frozen at the merged head");
+    assert_eq!(
+        refresh(&h, &second).await.unwrap().id,
+        fix.id,
+        "queued once"
+    );
+
+    h.dispatch().await;
+    let fixing = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .runs_for_item(&fix.id)
+        .unwrap()
+        .remove(0);
+    assert_eq!(fixing.branch, run.branch, "the item's own branch");
+    merge_head(&fixing.workspace, &first_head, None);
+    let merged = git(&fixing.workspace, &["rev-parse", "HEAD"]);
+    settle_item(&h, &fix, record).await;
+
+    let state = h.state(&fix.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+    assert_eq!(pushed(&origin_of(&h), "feature"), Some(merged.clone()));
+    git(
+        &origin_of(&h),
+        &["merge-base", "--is-ancestor", &first_head, &merged],
+    );
+    let calls = gh.calls();
+    for untouched in ["pr create", "pr edit"] {
+        assert!(!calls.contains(untouched), "{untouched}: {calls}");
+    }
+    let again = refresh(&h, &second).await.unwrap_err().to_string();
+    assert!(again.contains("nothing to refresh"), "{again}");
+}
+
+/// A change that conflicts with the moved head is resolved by the refresh's agent.
+#[tokio::test]
+async fn a_refresh_of_an_onto_item_resolves_a_conflict_with_the_moved_head() {
+    let (h, gh, head) = setup().await;
+    let (second, first_head) = second_onto_item_failed(&h, &gh, &head, change_the_same_file).await;
+
+    let fix = refresh(&h, &second).await.expect("queued");
+    h.dispatch().await;
+    let fixing = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .runs_for_item(&fix.id)
+        .unwrap()
+        .remove(0);
+    merge_head(
+        &fixing.workspace,
+        &first_head,
+        Some(("change.txt", "both changes\n")),
+    );
+    let merged = git(&fixing.workspace, &["rev-parse", "HEAD"]);
+    settle_item(&h, &fix, record).await;
+
+    let state = h.state(&fix.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+    assert_eq!(pushed(&origin_of(&h), "feature"), Some(merged));
+}
+
+/// A refresh that did not merge the moved head delivers nothing.
+#[tokio::test]
+async fn an_onto_refresh_that_did_not_merge_the_moved_head_pushes_nothing() {
+    let (h, gh, head) = setup().await;
+    let (second, first_head) = second_onto_item_failed(&h, &gh, &head, change_elsewhere).await;
+
+    let fix = refresh(&h, &second).await.expect("queued");
+    h.dispatch().await;
+    let fixing = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .runs_for_item(&fix.id)
+        .unwrap()
+        .remove(0);
+    settle_item(&h, &fix, |_| record(&fixing.workspace)).await;
+
+    assert!(matches!(h.state(&fix.id).await, QueueState::Failed { .. }));
+    assert_eq!(pushed(&origin_of(&h), "feature"), Some(first_head));
 }

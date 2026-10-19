@@ -12,6 +12,7 @@ use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::{PipelineRun, StageOutcome, StageRun};
 use archon_core::steer::RunEdit;
 use archon_daemon::executor;
+use archon_pipeline::swarm::MAX_CORRECTIONS;
 use archon_pipeline::team::worker_branch;
 use common::{Harness, MODEL, choice, completed, git};
 use serde_json::{Value, json};
@@ -272,9 +273,30 @@ async fn the_integrator_sends_tasks_back_at_most_twice() {
     assert_eq!(workers, 3 * TASKS.len(), "three rounds of three workers");
 }
 
-/// The plan stage fails with the reason, and no worker starts.
+/// The planner finishes again with `plan` committed, if any.
+async fn replan(h: &Harness, run: &PipelineRun, plan: Option<&Value>) {
+    let running = h.running().await;
+    assert_eq!(running.len(), 1, "{running:?}");
+    assert_eq!(running[0].stage_id, "plan");
+    if let Some(plan) = plan {
+        let text = serde_json::to_string_pretty(plan).expect("json");
+        commit_file(&run.workspace, ".archon/swarm-plan.json", &text);
+    }
+    h.settle_running(|_| completed("fixed the plan")).await;
+    h.dispatch().await;
+}
+
+/// The plan stage fails with the reason once its corrections are used up, and no worker starts.
 async fn plan_refusal(h: &Harness, plan: Option<&Value>, needle: &str) -> String {
-    let (item, _) = planned(h, needle, plan).await;
+    let (item, run) = planned(h, needle, plan).await;
+    for _ in 0..MAX_CORRECTIONS {
+        let state = h.state(&item.id).await;
+        assert!(
+            matches!(state, QueueState::Running { .. }),
+            "sent back: {state:?}"
+        );
+        replan(h, &run, None).await;
+    }
     let QueueState::Failed { error, .. } = h.state(&item.id).await else {
         panic!("{needle}: {:?}", h.state(&item.id).await);
     };
@@ -282,7 +304,92 @@ async fn plan_refusal(h: &Harness, plan: Option<&Value>, needle: &str) -> String
     assert!(error.contains(needle), "{error}");
     let stages = h.stages(&item.id).await;
     assert!(stages.iter().all(|s| s.stage_id == "plan"), "{stages:?}");
+    assert_eq!(stages.len(), 1 + MAX_CORRECTIONS, "{stages:?}");
     error
+}
+
+/// The refused plan goes back to the planner in the same stage with the
+/// problem and the limits; its fixed file then gives `build` its workers.
+async fn corrected(h: &Harness, refused: &Value, problem: &str) {
+    let (item, run) = planned(h, problem, Some(refused)).await;
+    let sent = h.backend.requests().pop().expect("the planner again");
+    for needle in [problem, "Your plan was refused (correction 1 of 2)"] {
+        assert!(
+            sent.objective.contains(needle),
+            "{needle}: {}",
+            sent.objective
+        );
+    }
+    for limit in [
+        "## Limits on the plan file",
+        "at most 8000 bytes",
+        "`name` and a `signature`",
+    ] {
+        assert!(
+            sent.objective.contains(limit),
+            "{limit}: {}",
+            sent.objective
+        );
+    }
+    replan(h, &run, Some(&swarm_plan(&TASKS))).await;
+    running_workers(h, 1).await;
+    let stages = h.stages(&item.id).await;
+    let plans = stages.iter().filter(|s| s.stage_id == "plan").count();
+    assert_eq!(plans, 2, "one refusal, one correction: {stages:?}");
+}
+
+#[tokio::test]
+async fn a_task_objective_over_the_limit_is_corrected_in_the_plan_stage() {
+    let h = Harness::new().await;
+    let mut plan = swarm_plan(&TASKS);
+    plan["tasks"][1]["objective"] = json!("x".repeat(8001));
+    corrected(&h, &plan, "has more than 8000 bytes").await;
+}
+
+#[tokio::test]
+async fn more_tasks_than_the_agent_caps_allow_are_corrected_in_the_plan_stage() {
+    let h = Harness::new().await;
+    h.repo_config("[limits]\nmax_per_repo = 3\n");
+    let plan = swarm_plan(&["a", "b", "c", "d"]);
+    corrected(&h, &plan, "its plan has 4 tasks").await;
+    let sent = h.backend.requests();
+    let planner = sent
+        .iter()
+        .find(|r| r.objective.contains("## Limits on the plan file"));
+    let text = &planner.expect("the planner was told its limits").objective;
+    assert!(
+        text.contains("2 to 3 tasks (the agent caps allow that many at once here)"),
+        "{text}"
+    );
+}
+
+#[tokio::test]
+async fn an_interface_written_as_a_string_is_corrected_in_the_plan_stage() {
+    let h = Harness::new().await;
+    let mut plan = swarm_plan(&TASKS);
+    plan["tasks"][0]["provides"] = json!(["parse"]);
+    corrected(&h, &plan, "it is not a plan").await;
+}
+
+/// Only Archon's own refusal is sent back: an agent's failure that happens to
+/// say "passed, but" ends the stage.
+#[tokio::test]
+async fn a_planner_s_own_failure_is_never_sent_back() {
+    let h = Harness::new().await;
+    let item = h
+        .enqueue_in("swarm", "planner gives up", swarm_model_plan())
+        .await
+        .expect("the swarm built-in enqueues");
+    h.dispatch().await;
+    let failure = StageOutcome::Failed {
+        error: "FAILED: tests passed, but packaging failed".into(),
+        infra: false,
+    };
+    h.settle_running(|_| failure.clone()).await;
+    h.dispatch().await;
+    let state = h.state(&item.id).await;
+    assert!(matches!(state, QueueState::Failed { .. }), "{state:?}");
+    assert_eq!(h.stages(&item.id).await.len(), 1);
 }
 
 #[tokio::test]

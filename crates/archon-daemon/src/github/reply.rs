@@ -24,7 +24,7 @@ const MAX_ERROR_CHARS: usize = 2_000;
 /// `body` ready to post: non-empty, bounded, ending in exactly one marker
 /// so Aether's watcher never takes the comment as a new request.
 pub fn reply_body(body: &str) -> Result<String, ArchonError> {
-    let text = body.replace(REPLY_MARKER, "");
+    let text = strip_markers(body);
     let text = text.trim();
     if text.is_empty() {
         return Err(ArchonError::Invalid("a GitHub reply needs a body".into()));
@@ -43,6 +43,17 @@ pub fn reply_body(body: &str) -> Result<String, ArchonError> {
     );
     assert_eq!(posted.matches(REPLY_MARKER).count(), 1, "one marker");
     Ok(posted)
+}
+
+/// `body` without the marker, also where removing one marker joins the
+/// halves of another; each pass shortens the text, so it ends.
+fn strip_markers(body: &str) -> String {
+    let mut text = body.to_owned();
+    while text.contains(REPLY_MARKER) {
+        text = text.replace(REPLY_MARKER, "");
+    }
+    assert!(!text.contains(REPLY_MARKER), "no marker survives stripping");
+    text
 }
 
 /// Post `body` on `thread`, only in a repository Archon's watcher sends to
@@ -181,6 +192,15 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    #[test]
+    fn a_split_marker_is_stripped_to_one_closing_marker() {
+        let (head, tail) = REPLY_MARKER.split_at(10);
+        let split = format!("hi {head}{REPLY_MARKER}{tail} there");
+        let posted = reply_body(&split).unwrap();
+        assert_eq!(posted, format!("hi  there\n\n{REPLY_MARKER}"));
+        assert_eq!(posted.matches(REPLY_MARKER).count(), 1);
+    }
 
     fn thread() -> GithubThread {
         serde_json::from_value(serde_json::json!({"repository": "o/r", "number": 5})).unwrap()

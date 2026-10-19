@@ -188,7 +188,8 @@ pub enum TriggerEvent {
         more: u32,
     },
     /// A mirror changed state: `stale` (a refresh failed), `withheld` (its
-    /// model policy refuses the orchestrator) or `current` again.
+    /// model policy refuses the orchestrator) or `current` again; or a write
+    /// into it was found and undone (`reverted`), which wakes the orchestrator.
     Mirror {
         repo: String,
         state: String,

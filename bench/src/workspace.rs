@@ -261,9 +261,52 @@ pub fn copy_tree(src: &Path, dst: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Delete the trial workspace `dir`. Archon leaves its orchestrator's
+/// mirrors read-only, so each directory is opened to its owner first.
+pub fn remove_workspace(dir: &Path) -> anyhow::Result<()> {
+    ensure!(dir.is_absolute(), "{} is not absolute", dir.display());
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(next) = pending.pop() {
+        let meta = std::fs::symlink_metadata(&next)
+            .with_context(|| format!("inspecting {}", next.display()))?;
+        if !meta.file_type().is_dir() {
+            continue;
+        }
+        let mode = meta.permissions().mode();
+        if mode & 0o700 != 0o700 {
+            std::fs::set_permissions(&next, std::fs::Permissions::from_mode(mode | 0o700))
+                .with_context(|| format!("opening {}", next.display()))?;
+        }
+        for entry in
+            std::fs::read_dir(&next).with_context(|| format!("reading {}", next.display()))?
+        {
+            pending.push(entry?.path());
+        }
+    }
+    std::fs::remove_dir_all(dir).with_context(|| format!("removing {}", dir.display()))
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn a_workspace_with_read_only_mirrors_is_removed() {
+        let tmp = scratch();
+        let dir = tmp.path().join("trial");
+        let mirror = dir.join(".archon/data/orchestrator/repos/demo/src");
+        std::fs::create_dir_all(&mirror).unwrap();
+        std::fs::write(mirror.join("lib.py"), "").unwrap();
+        for locked in [&mirror, mirror.parent().unwrap()] {
+            std::fs::set_permissions(locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+        }
+        assert!(
+            std::fs::remove_dir_all(&dir).is_err(),
+            "plain removal fails"
+        );
+        remove_workspace(&dir).unwrap();
+        assert!(!dir.exists());
+    }
 
     pub(crate) fn scratch() -> tempfile::TempDir {
         let base = Path::new(env!("CARGO_MANIFEST_DIR")).join(".work");

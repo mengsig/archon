@@ -197,9 +197,9 @@ async fn run_trial(shared: &Shared, spec: TrialSpec) -> TrialResult {
     }
     if !shared.options.keep_workspaces
         && let Some(layout) = &layout
-        && let Err(e) = std::fs::remove_dir_all(&layout.workspace)
+        && let Err(e) = workspace::remove_workspace(&layout.workspace)
     {
-        let problem = format!("removing {}: {e}", layout.workspace.display());
+        let problem = format!("{e:#}");
         result.note = Some(join_notes(result.note.take(), problem));
     }
     result.started_at = Some(started_at);

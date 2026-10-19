@@ -177,6 +177,73 @@ impl Mirror {
         }
     }
 
+    /// What was changed in the mirror since the daemon checked out `commit`:
+    /// commits made on top of it and tracked files changed, staged or not;
+    /// `None` when nothing was. Untracked files are not counted.
+    pub(crate) fn changes_since(
+        &self,
+        base: &Base,
+        commit: &str,
+    ) -> Result<Option<String>, ArchonError> {
+        assert!(
+            crate::worktree::stack::is_commit_id(commit),
+            "a full commit id"
+        );
+        let mut found = Vec::new();
+        match self.head(base)? {
+            Some(head) if head == commit => {}
+            Some(head) => found.push(self.commits_between(base, commit, &head)?),
+            None => found.push("HEAD unset".to_owned()),
+        }
+        let args = [
+            "status",
+            "--porcelain",
+            "-z",
+            "--untracked-files=no",
+            "--no-renames",
+            "--ignore-submodules",
+        ];
+        let ran = self.git(&base.format)?.args(args).output()?;
+        if !ran.status.success() {
+            return Err(ran.failure());
+        }
+        // Each record is `XY path`, the status taking three bytes.
+        let changed: Vec<String> = ran
+            .stdout
+            .split(|byte| *byte == 0)
+            .filter(|record| record.len() > 3)
+            .map(|record| String::from_utf8_lossy(&record[3..]).into_owned())
+            .collect();
+        if !changed.is_empty() {
+            found.push(format!("changed {}", listed(&changed)));
+        }
+        Ok((!found.is_empty()).then(|| found.join("; ")))
+    }
+
+    /// The commits `head` has that `commit` lacks, newest first, as
+    /// `HEAD moved to …`; just the move when git cannot list them.
+    fn commits_between(
+        &self,
+        base: &Base,
+        commit: &str,
+        head: &str,
+    ) -> Result<String, ArchonError> {
+        assert_ne!(commit, head, "HEAD moved");
+        let range = format!("{commit}..{head}");
+        let args = ["log", "--format=%h %s", "--max-count=4", &range];
+        let ran = self.git(&base.format)?.args(args).output()?;
+        let short = &head[..head.len().min(12)];
+        let made = ran.stdout_text().unwrap_or_default();
+        if !ran.status.success() || made.is_empty() {
+            return Ok(format!("HEAD moved to {short}"));
+        }
+        let made: Vec<String> = made.lines().map(|line| format!("`{line}`")).collect();
+        Ok(format!(
+            "HEAD moved to {short}, committing {}",
+            listed(&made)
+        ))
+    }
+
     /// Remove untracked files git does not ignore, keeping ignored build output.
     pub(crate) fn clean(&self, base: &Base) -> Result<(), ArchonError> {
         let args = ["clean", "--quiet", "--force", "-d"];
@@ -198,7 +265,19 @@ impl Mirror {
     }
 }
 
-/// Remove every entry of the directory `root` not named in `keep`.
+/// The first few of `names`, and how many more there are.
+fn listed(names: &[String]) -> String {
+    const SHOWN: usize = 3;
+    assert!(!names.is_empty(), "a list of something");
+    let shown = names[..names.len().min(SHOWN)].join(", ");
+    match names.len().checked_sub(SHOWN) {
+        Some(more) if more > 0 => format!("{shown} and {more} more"),
+        _ => shown,
+    }
+}
+
+/// Remove every entry of the directory `root` not named in `keep`, opening
+/// a read-only mirror first.
 pub(super) fn remove_all_but(root: &Path, keep: &BTreeSet<String>) -> Result<(), ArchonError> {
     assert!(is_real_dir(root)?, "the directory was prepared");
     let entries = std::fs::read_dir(root)
@@ -210,6 +289,7 @@ pub(super) fn remove_all_but(root: &Path, keep: &BTreeSet<String>) -> Result<(),
             continue;
         }
         tracing::info!(entry = %entry.path().display(), "removing what is no registered repository's mirror");
+        super::lock::open(&entry.path())?;
         remove_entry(&entry.path())?;
     }
     Ok(())

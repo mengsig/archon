@@ -60,8 +60,11 @@ draft or a second look at a result it delegates to a helper agent (Aether's
 
 It reads code in a mirror: for every registered repository `archond` keeps
 a clone at `~/.local/share/archon/orchestrator/repos/<name>`, checked out
-at the base branch. A mirror holds committed work only and has no remote,
-so nothing done in it reaches your checkout, your branches or GitHub.
+at the base branch. A mirror holds committed work only, has no remote and
+is read-only, so nothing done in it reaches your checkout, your branches or
+GitHub, and a change goes through an item. If an agent writes into one
+anyway, `archond` puts it back and says so in the feed. To delete a mirror
+by hand, run `chmod -R u+w` on it first.
 `archond` refreshes it when an item finishes and when you write to the
 orchestrator, and says so in the feed if a refresh fails; the orchestrator
 is told as well, so it knows when what it reads may be behind. The `ask`

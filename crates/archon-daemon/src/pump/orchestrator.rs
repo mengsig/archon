@@ -49,6 +49,8 @@ pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(
                 replies.turn_completed(next.as_deref())
             })
             .await?;
+            // Undoes, and reports, a write into a mirror made in that turn.
+            ctx.mirrors.request();
             supervisor::turn_ended(ctx, next.as_deref()).await
         }
         EventKind::QuestionAsked { question } => {

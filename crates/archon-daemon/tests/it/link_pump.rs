@@ -2075,3 +2075,36 @@ async fn a_reviewer_on_the_only_allowed_model_is_kept() {
     assert!(cancels[0].1.contains("is not allowed"), "{}", cancels[0].1);
     assert_eq!(harness.kv(&format!("link_unchecked_{CHILD}")).await, None);
 }
+
+/// The end of an orchestrator turn has the mirrors checked: a write made in
+/// that turn is undone at once, not at the next item or operator message.
+#[tokio::test]
+async fn an_orchestrator_turn_end_undoes_a_write_into_a_mirror() {
+    let harness = Harness::new().await;
+    let (_agents, pump) = running_pump(&harness).await;
+    let repo = harness.dir.path().canonicalize().unwrap().join("alpha");
+    std::fs::create_dir_all(&repo).unwrap();
+    crate::common::init_repo(&repo);
+    link_common::cancelled_item(&harness.ctx, &repo).await;
+    mirror::sync_all(&harness.ctx).await.unwrap();
+    let readme =
+        mirror::mirrors_root(&harness.ctx.paths.orchestrator_workspace).join("alpha/README.md");
+    crate::common::writable_again(readme.parent().unwrap());
+    std::fs::write(&readme, "the orchestrator's edit\n").unwrap();
+    mirror::refresh_requested(&harness.ctx).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&readme).unwrap(),
+        "the orchestrator's edit\n",
+        "nothing asked for a pass yet"
+    );
+
+    orch(&harness, completed()).await;
+    mirror::refresh_requested(&harness.ctx).await.unwrap();
+    pump.abort();
+    assert_eq!(std::fs::read_to_string(&readme).unwrap(), "demo\n");
+    let notes = harness.system_notes().await;
+    assert!(
+        notes.iter().any(|note| note.contains("changed README.md")),
+        "{notes:?}"
+    );
+}

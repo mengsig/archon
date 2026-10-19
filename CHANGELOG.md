@@ -50,6 +50,14 @@ start-up warning and the results stay in Archon's feed only.
 
 ### Security and authority
 
+- The orchestrator's repository mirrors are read-only on disk: archond
+  clears every write bit of a mirror's work tree after each refresh, so the
+  orchestrator's own edit, patch or shell write into `repos/<name>` fails
+  on Codex and Claude Code alike, where the prompt alone did not hold. A
+  change made anyway (after a `chmod`, or a commit through git) is undone
+  at the end of the orchestrator's turn, posted to the feed and sent to
+  the orchestrator as a waking `mirror` event (`reverted`). Remove a mirror
+  by hand with `chmod -R u+w` first.
 - A GitHub operator's commands are scoped to the repository of their thread:
   settings, merges, approvals and item changes of other repositories, and
   global settings, caps, pause and resume, are refused. A loosening change in

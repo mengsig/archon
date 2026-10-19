@@ -204,29 +204,141 @@ async fn the_mirror_follows_the_base_branch_when_an_item_finishes() {
     worker.abort();
 }
 
+/// What an agent's native write into `path` gets: `None` when it went through.
+fn refused(written: std::io::Result<()>) -> Option<std::io::ErrorKind> {
+    written.err().map(|error| error.kind())
+}
+
+/// The commit an agent makes in `dir` of everything staged there.
+fn agent_commit(dir: &Path, message: &str) -> Output {
+    let identity = [
+        "-c",
+        "user.name=agent",
+        "-c",
+        "user.email=agent@example.invalid",
+    ];
+    let args: Vec<&str> = identity
+        .iter()
+        .copied()
+        .chain(["commit", "--quiet", "-m", message])
+        .collect();
+    agent_git(dir, &args)
+}
+
 #[tokio::test]
-async fn a_refresh_resets_tracked_files_and_keeps_untracked_ones() {
+async fn a_mirror_can_be_read_but_not_written() {
     let h = synced().await;
     let mirror = mirror_of(&h);
-    std::fs::write(mirror.join("README.md"), "a helper's experiment\n").unwrap();
-    std::fs::write(mirror.join("notes.txt"), "a helper's notes\n").unwrap();
+    let denied = Some(std::io::ErrorKind::PermissionDenied);
+    let readme = mirror.join("README.md");
+    assert_eq!(std::fs::read_to_string(&readme).unwrap(), "demo\n");
+    assert_eq!(refused(std::fs::write(&readme, "an edit\n")), denied);
+    assert_eq!(refused(std::fs::write(mirror.join("new.txt"), "")), denied);
+    assert_eq!(
+        refused(std::fs::rename(&readme, mirror.join("moved"))),
+        denied
+    );
+    assert_eq!(refused(std::fs::remove_file(&readme)), denied);
+    assert_eq!(refused(std::fs::create_dir(mirror.join("sub"))), denied);
+    assert_eq!(
+        refused(std::fs::write(mirror.join(".git"), "gitdir: /x\n")),
+        denied
+    );
+    let shell = Command::new("sh")
+        .arg("-c")
+        .arg("echo shell > README.md")
+        .current_dir(&mirror)
+        .output()
+        .unwrap();
+    assert!(!shell.status.success(), "a shell write went through");
+    assert_eq!(std::fs::read_to_string(&readme).unwrap(), "demo\n");
+
+    // Git still reads it, and an isolated helper still gets a writable copy.
+    let status = agent_git(&mirror, &["status", "--porcelain"]);
+    assert!(status.status.success(), "{status:?}");
+    assert_eq!(stdout(&status), "");
+    let child = h.dir.path().join("isolated-child");
+    let worktree = [
+        "worktree",
+        "add",
+        "--quiet",
+        "--detach",
+        child.to_str().unwrap(),
+    ];
+    let added = agent_git(&mirror, &worktree);
+    assert!(added.status.success(), "{added:?}");
+    std::fs::write(child.join("README.md"), "a helper's build\n").unwrap();
+
+    let moved = commit(&h.repo, "README.md", "demo, second edition\n");
     mirror::sync_all(&h.ctx).await.unwrap();
+    assert_eq!(head(&mirror), moved, "a refresh still works");
+    assert_eq!(
+        std::fs::read_to_string(&readme).unwrap(),
+        "demo, second edition\n"
+    );
+    assert_eq!(
+        refused(std::fs::write(&readme, "an edit\n")),
+        denied,
+        "closed again"
+    );
+    assert!(system_notes(&h).await.is_empty(), "nothing was undone");
+}
+
+/// The Luna orchestrator's way past the prompt: edit a file of its mirror
+/// and commit it there, here after opening the mirror as an agent could.
+#[tokio::test]
+async fn a_write_made_anyway_is_undone_and_reported() {
+    let h = synced().await;
+    let mirror = mirror_of(&h);
+    let base = head(&mirror);
+    common::writable_again(&mirror);
+    std::fs::write(mirror.join("README.md"), "the orchestrator's fix\n").unwrap();
+    std::fs::write(mirror.join("notes.txt"), "a helper's notes\n").unwrap();
+    assert!(agent_git(&mirror, &["add", "README.md"]).status.success());
+    let committed = agent_commit(&mirror, "Fix the README");
+    assert!(committed.status.success(), "{committed:?}");
+    assert_ne!(head(&mirror), base);
+
+    mirror::sync_all(&h.ctx).await.unwrap();
+    assert_eq!(head(&mirror), base, "back at the base");
     assert_eq!(
         std::fs::read_to_string(mirror.join("README.md")).unwrap(),
         "demo\n"
     );
+    assert!(
+        mirror.join("notes.txt").exists(),
+        "untracked files are left"
+    );
+    let denied = refused(std::fs::write(mirror.join("README.md"), "again\n"));
+    assert_eq!(denied, Some(std::io::ErrorKind::PermissionDenied));
+    let notes = system_notes(&h).await;
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].contains("read-only mirror of `demo`"),
+        "{}",
+        notes[0]
+    );
+    assert!(
+        notes[0].contains("Fix the README`"),
+        "names the commit: {}",
+        notes[0]
+    );
+    let news = mirror_news(&h).await;
+    assert_eq!(news.len(), 1, "{news:?}");
+    assert_eq!(news[0].0, "reverted");
+    assert!(news[0].1.contains("Queue the change"), "{}", news[0].1);
 
-    let moved = commit(&h.repo, "README.md", "demo, second edition\n");
-    std::fs::write(mirror.join("README.md"), "another experiment\n").unwrap();
+    // An uncommitted edit is named by its file; a clean pass says nothing.
+    common::writable_again(&mirror);
+    std::fs::write(mirror.join("README.md"), "an uncommitted edit\n").unwrap();
     mirror::sync_all(&h.ctx).await.unwrap();
-    assert_eq!(head(&mirror), moved);
+    mirror::sync_all(&h.ctx).await.unwrap();
+    let notes = system_notes(&h).await;
+    assert_eq!(notes.len(), 2, "{notes:?}");
+    assert!(notes[1].contains("changed README.md"), "{}", notes[1]);
     assert_eq!(
         std::fs::read_to_string(mirror.join("README.md")).unwrap(),
-        "demo, second edition\n"
-    );
-    assert_eq!(
-        std::fs::read_to_string(mirror.join("notes.txt")).unwrap(),
-        "a helper's notes\n"
+        "demo\n"
     );
 }
 
@@ -260,6 +372,7 @@ async fn a_pass_refreshes_only_the_mirrors_asked_for() {
     let readme = |at: usize| std::fs::read_to_string(mirrors[at].join("README.md")).unwrap();
     assert_eq!(readme(1), "demo\n", "a new repository's mirror is made");
     for mirror in &mirrors {
+        common::writable_again(mirror);
         std::fs::write(mirror.join("README.md"), "a helper's experiment\n").unwrap();
     }
 
@@ -438,9 +551,11 @@ async fn a_link_where_a_mirror_belongs_is_replaced_and_never_followed() {
     // is replaced by one naming the mirror's own.
     let own = format!("gitdir: {}\n", git_dir_of(&h).display());
     let real = format!("gitdir: {}\n", h.repo.join(".git").display());
+    common::writable_again(&mirror);
     std::fs::write(mirror.join(".git"), real).unwrap();
     mirror::sync_all(&h.ctx).await.unwrap();
     assert_eq!(std::fs::read_to_string(mirror.join(".git")).unwrap(), own);
+    common::writable_again(&mirror);
     std::fs::remove_file(mirror.join(".git")).unwrap();
     git(&mirror, &["init", "--quiet"]);
     mirror::sync_all(&h.ctx).await.unwrap();

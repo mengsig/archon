@@ -62,6 +62,27 @@ impl Env {
     }
 }
 
+impl Drop for Env {
+    /// archond leaves the orchestrator's mirrors read-only, and the temporary
+    /// directory's removal cannot enter them: open them first.
+    fn drop(&mut self) {
+        let mirrors = self.path("data/orchestrator/repos");
+        if !mirrors.exists() || std::thread::panicking() {
+            return;
+        }
+        let opened = Command::new("chmod")
+            .arg("-R")
+            .arg("u+w")
+            .arg(&mirrors)
+            .status();
+        assert!(
+            opened.is_ok_and(|status| status.success()),
+            "chmod -R u+w {}",
+            mirrors.display()
+        );
+    }
+}
+
 /// Kills the daemon if the test fails before stopping it.
 pub struct Daemon(pub Child);
 

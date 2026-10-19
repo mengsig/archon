@@ -3,11 +3,13 @@
 //! checked out detached at the base branch, whose git directory is under the
 //! data directory. The orchestrator and its helpers read code there, so a
 //! code question needs no queue item, and nothing done in a mirror reaches
-//! the operator's checkout, its objects or its remotes. One worker keeps the
-//! mirrors current; a refresh that fails is posted to the feed and told to
-//! the orchestrator, and blocks neither.
+//! the operator's checkout, its objects or its remotes. A mirror's work tree
+//! is read-only on disk (`lock`), and a change found anyway is undone and
+//! reported. One worker keeps the mirrors current; a refresh that fails is
+//! posted to the feed and told to the orchestrator, and blocks neither.
 
 pub(crate) mod git;
+mod lock;
 mod reach;
 
 use std::collections::BTreeSet;
@@ -140,11 +142,15 @@ async fn sync(ctx: &DaemonContext, asked: &Asked) -> Result<(), ArchonError> {
         return Ok(());
     }
     for repo in selected(ctx, &repos, asked).await? {
+        let recorded = stored_state(&*ctx.store.lock().await, &repo.id)?.commit;
         let plan = Plan::new(ctx, &layout, repo);
-        let outcome = blocking(move || Ok(plan.refresh()))
+        let (outcome, undone) = blocking(move || Ok(plan.refresh(recorded.as_deref())))
             .await
-            .unwrap_or_else(|error| Outcome::Stale(error.to_string()));
+            .unwrap_or_else(|error| (Outcome::Stale(error.to_string()), None));
         record(ctx, repo, outcome).await?;
+        if let Some(undone) = undone {
+            report_undone(ctx, repo, &undone).await?;
+        }
     }
     forget_unregistered(ctx, &layout, &repos).await
 }
@@ -252,47 +258,85 @@ impl Plan {
         }
     }
 
-    fn refresh(&self) -> Outcome {
+    /// Refresh the mirror last checked out at `recorded`. Besides the outcome,
+    /// what was changed in it since, when a good refresh undid that.
+    fn refresh(&self, recorded: Option<&str>) -> (Outcome, Option<String>) {
         let config = match RepoConfig::load(&self.repo.path) {
             Ok(config) => config,
-            Err(error) => return Outcome::Stale(error.to_string()),
+            Err(error) => return (Outcome::Stale(error.to_string()), None),
         };
         let policy = self.global.narrowed_by(&config.models.policy());
         if let Err(refusal) = policy.check(&self.orchestrator) {
-            let removed = git::remove_entry(&self.mirror.work)
+            let removed = lock::open(&self.mirror.work)
+                .and_then(|()| git::remove_entry(&self.mirror.work))
                 .and_then(|()| git::remove_entry(&self.mirror.git_dir));
-            return match removed {
+            let outcome = match removed {
                 Ok(()) => Outcome::Withheld(refusal.to_string()),
                 Err(error) => Outcome::Stale(error.to_string()),
             };
+            return (outcome, None);
         }
         let base = self.repo.base_branch.clone().or(config.repo.base_branch);
-        match self.bring_to(base.as_deref()) {
-            Ok(commit) => Outcome::Current(commit),
-            Err(error) => Outcome::Stale(error.to_string()),
+        match self.bring_to(base.as_deref(), recorded) {
+            Ok((commit, undone)) => (Outcome::Current(commit), undone),
+            Err(error) => (Outcome::Stale(error.to_string()), None),
         }
     }
 
     /// Make the mirror if it is missing, then check it out at the commit
-    /// `base` (or the repository's `HEAD`) names now. Returns that commit.
-    fn bring_to(&self, base: Option<&str>) -> Result<String, ArchonError> {
+    /// `base` (or the repository's `HEAD`) names now, its work tree opened
+    /// only meanwhile. Returns that commit, and what was changed in the
+    /// mirror since the daemon checked out `recorded`.
+    fn bring_to(
+        &self,
+        base: Option<&str>,
+        recorded: Option<&str>,
+    ) -> Result<(String, Option<String>), ArchonError> {
         let base = git::Base::resolve(&self.repo.path, base)?;
-        self.mirror.prepare(&base)?;
+        let undone = self.changes_since(&base, recorded)?;
+        lock::open(&self.mirror.work)?;
+        let checked_out = self.check_out(&base);
+        let closed = lock::close(&self.mirror.work);
+        let commit = checked_out?;
+        closed?;
+        Ok((commit, undone))
+    }
+
+    /// What was changed in an existing mirror since `recorded`; `None` for
+    /// a mirror not made yet or never checked out.
+    fn changes_since(
+        &self,
+        base: &git::Base,
+        recorded: Option<&str>,
+    ) -> Result<Option<String>, ArchonError> {
+        let Some(recorded) = recorded else {
+            return Ok(None);
+        };
+        let made = git::is_real_dir(&self.mirror.git_dir)? && git::is_real_dir(&self.mirror.work)?;
+        if !made {
+            return Ok(None);
+        }
+        self.mirror.changes_since(base, recorded)
+    }
+
+    /// Make the mirror if it is missing and check it out at `base`.
+    fn check_out(&self, base: &git::Base) -> Result<String, ArchonError> {
+        self.mirror.prepare(base)?;
         assert!(
             git::is_real_dir(&self.mirror.git_dir)?,
             "a mirror was just made"
         );
-        if self.mirror.head(&base)?.as_deref() != Some(base.commit.as_str()) {
-            self.mirror.fetch(&self.repo.path, &base)?;
+        if self.mirror.head(base)?.as_deref() != Some(base.commit.as_str()) {
+            self.mirror.fetch(&self.repo.path, base)?;
         }
-        // Also when the base stood still: a tracked file a helper changed is reset.
-        self.mirror.checkout(&base)?;
+        // Also when the base stood still: a tracked file changed anyway is reset.
+        self.mirror.checkout(base)?;
         assert_eq!(
-            self.mirror.head(&base)?.as_deref(),
+            self.mirror.head(base)?.as_deref(),
             Some(base.commit.as_str()),
             "the mirror is at the base commit"
         );
-        Ok(base.commit)
+        Ok(base.commit.clone())
     }
 }
 
@@ -405,6 +449,29 @@ fn announcement(repo: &str, problem: Option<&Problem>) -> (&'static str, String,
             ("stale", detail, note)
         }
     }
+}
+
+/// Tell the operator's feed and the orchestrator that the mirror of `repo`
+/// had been changed (`undone` says how) and was put back at its base.
+async fn report_undone(ctx: &DaemonContext, repo: &Repo, undone: &str) -> Result<(), ArchonError> {
+    assert!(!undone.is_empty(), "a change was found");
+    let undone: String = undone.chars().take(MAX_DETAIL_CHARS).collect();
+    tracing::warn!(repo = %repo.name, %undone, "a write into a read-only mirror was undone");
+    let note = format!(
+        "Something in the orchestrator's workspace wrote into its read-only mirror of `{}` \
+         ({undone}). Archon put the mirror back at its base commit: a change to a repository \
+         ships only as a queued item.",
+        repo.name
+    );
+    feed::system(ctx, note).await?;
+    let event = TriggerEvent::Mirror {
+        repo: repo.name.clone(),
+        state: "reverted".to_owned(),
+        detail: format!(
+            "mirrors are read-only; this write was undone: {undone}. Queue the change."
+        ),
+    };
+    triggers::push(ctx, event).await
 }
 
 /// Remove everything in the mirrors directory but the mirrors of `repos`, and

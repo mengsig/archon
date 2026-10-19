@@ -43,6 +43,12 @@ pub struct Harness {
     drained: usize,
 }
 
+impl Drop for Harness {
+    fn drop(&mut self) {
+        crate::common::open_mirrors_for_removal(&self.ctx);
+    }
+}
+
 impl Harness {
     pub async fn new() -> Self {
         Self::with(Config::default(), None).await

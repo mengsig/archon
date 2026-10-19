@@ -226,8 +226,8 @@ or schedules, and never touches the GitHub watcher of an Aether it shares.
   while Aether does not name the agents that call Archon's tools (§11).
 - Its workspace holds `repos/<name>`, a mirror of each registered repository
   (§13.3), and `scratch/` for work in no repository. It reads code in the
-  mirrors. Its native tools are not confined to the workspace (an Aether
-  limitation, §17).
+  mirrors, which are read-only on disk. Its native tools are not confined
+  to the workspace (an Aether limitation, §17).
 - `archon-daemon/prompts/orchestrator.md` is the built-in prompt, held to
   12 KiB by a test. It gives the order in which to decide how a request is
   done (answer, read the mirror, delegate, enqueue the cheapest pipeline that
@@ -269,6 +269,11 @@ budgets apply. The prompt says so, and the daemon stands behind it:
 - *No integration.* `integrate_workspace`, which copies an isolated child's
   worktree back, stays hidden: the orchestrator ships nothing, and what a
   helper commits in a mirror stays in the mirror.
+- *No edit in a mirror.* A mirror's work tree has no write bit (§13.3), so
+  the orchestrator's own edit, patch or shell write into it fails with a
+  permission error, on every engine. A change made anyway, after a
+  `chmod`, or a commit made through git, is undone at the end of its turn
+  and reported in the feed and to the orchestrator.
 - *No delegation for an external request.* The prompt forbids `delegate` for
   a GitHub request without operator standing; such a request is answered
   directly, from that repository's mirror when it takes code. Only the
@@ -1056,7 +1061,7 @@ and cost as `results`.
 Every other event wakes: `agent_message`, `item_blocked`, `gate_opened`,
 `operator_answer`, `chat_answer`, `chat_merge_refused`, `lavish_feedback`, `budget`,
 `policy_violation`, `directives_restated`, `initiative_finished`, `pr_checks` (§8.7). A mirror's change of state
-(§13.3) is quiet. `merge_finished` (§18.6) wakes when the orchestrator asked
+(§13.3) is quiet; a write into a mirror that was undone (`reverted`) wakes. `merge_finished` (§18.6) wakes when the orchestrator asked
 for the merge or it came from the orchestrator's chat, and is quiet after
 `archon merge` or `archon chat`'s `/merge`. Quiet news is saved in the outbox like any other and makes
 no trigger by itself. It leaves with the next trigger there is, and an
@@ -3749,6 +3754,34 @@ The mirror's objects are its own, fetched from the repository, so a mirror
 costs about one more copy of the repository; nothing git does in a mirror
 writes to the repository.
 
+**Read-only.** The orchestrator was told never to change a repository
+itself, and a Luna orchestrator still fixed a bug in its mirror with
+Codex's `apply_patch` and committed it there, queueing nothing (release
+1.4.0 re-gate). No Aether setting stops that: a scope names writable paths
+and no read-only one, and an attended orchestrator with network runs Codex
+with `danger-full-access` and Claude Code unsandboxed. So the filesystem
+holds the line (`mirror::lock`): after each refresh every file and
+directory of a mirror's work tree, the `.git` file included, has no write
+bit, so a native edit, a patch, a shell redirect, a new file or a rename
+there fails with `EACCES` on either engine. The daemon gives its owner
+write access back only for its own checkout and removes it again, also
+when the checkout fails. The mirrors directory itself and the git
+directory stay writable: Aether's isolated workspace of a mirror writes
+its snapshot commit and worktree into the git directory, and that copy is
+where a helper builds.
+
+Agents run as the operator's user, so one could `chmod` a mirror back
+open, and a commit through git needs no write to the work tree. Each
+refresh therefore first compares the mirror with the commit it last
+checked out: a moved `HEAD` (with up to four of the commits made) or a
+changed tracked file, staged or not, is undone by the checkout and
+reported. One `System` feed entry names the repository and the change, and
+a `mirror` event with `state: "reverted"` wakes the orchestrator to queue
+the change instead. Untracked files are left, as before. The orchestrator's
+every turn end asks for a pass, so a write is undone within the turn that
+made it. A tree removed by hand needs `chmod -R u+w` first, as Go's module
+cache does.
+
 **Refresh.** One worker (`mirror::run`) brings every mirror up to date at
 start and when the operator sends a message. It refreshes one repository's
 mirror when that repository is registered or changed and when one of its
@@ -3757,8 +3790,9 @@ retries a mirror that has a problem or was never made. Requests made
 during a pass share the next one, and a request never waits for the
 refresh. A pass resolves the base in the repository, skips
 the fetch when the mirror is already there, fetches only what it lacks
-otherwise, and checks out with `--force --detach`: tracked files a helper
-changed are reset, untracked ones are left. A git directory is made beside
+otherwise, and checks out with `--force --detach`: tracked files changed
+anyway are reset, untracked ones are left. A pass also follows each end of
+an orchestrator turn. A git directory is made beside
 its place and renamed, so a crash leaves no half-made one, and the pass
 removes whatever else lies in the mirrors directory and under
 `<data>/mirror-git`, an unregistered repository's mirror included.
@@ -4354,6 +4388,9 @@ delivered is never pruned, nor is a report whose reopen question waits.
    check reads the scope Aether holds for the agent; it cannot see a path a
    native tool opens outside that scope, so a helper stays out of
    repositories by its placement and its instructions, not by a sandbox.
+   The orchestrator's mirrors are the exception Archon can hold: their
+   work trees are read-only on disk, and a write made anyway is undone
+   and reported (§13.3).
    The same holds for a stage agent's delegated children: an editing child
    gets an isolated worktree of its own, a reading child shares the lead's
    worktree and is read-only by instruction only. For a pipeline's declared

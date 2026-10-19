@@ -1454,7 +1454,8 @@ mod tests {
             "A mirror holds the registered repository's local base commit (HEAD when no base \
              is configured), without uncommitted work.",
             "Refresh is asynchronous: check its HEAD for freshness-sensitive answers.",
-            "A `mirror` event reports stale or withheld access.",
+            "Mirrors are read-only.",
+            "A `mirror` event reports stale or withheld access, or a write undone.",
         ] {
             assert!(prompt.contains(said), "missing {said:?}");
         }

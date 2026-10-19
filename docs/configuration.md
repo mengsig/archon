@@ -255,8 +255,8 @@ full reference is in [`docs/ARCHITECTURE.md` §9](ARCHITECTURE.md#9-configuratio
 
 The orchestrator reads your code in mirrors: for every registered
 repository, `archond` keeps a clone at `<data>/orchestrator/repos/<name>`,
-checked out at the base branch, with no remote, and refreshes it when an
-item finishes and when you write. A mirror shares the repository's objects
+checked out at the base branch, read-only and with no remote, and refreshes
+it when an item finishes and when you write. A mirror shares the repository's objects
 through hard links when both are on one filesystem, so it costs about one
 more checkout; on another filesystem it is a full copy. A repository whose
 own `[models]` refuses the orchestrator's model gets no mirror.

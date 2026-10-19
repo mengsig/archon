@@ -137,6 +137,33 @@ pub struct Harness {
     pub ops: Arc<fake_ops::FakeOps>,
 }
 
+/// Give the owner write access under `path` again, as `chmod -R u+w` does:
+/// what an agent set on writing into a read-only mirror could do.
+pub fn writable_again(path: &Path) {
+    let opened = Command::new("chmod")
+        .arg("-R")
+        .arg("u+w")
+        .arg(path)
+        .status()
+        .expect("chmod runs");
+    assert!(opened.success(), "chmod -R u+w {}", path.display());
+}
+
+/// archond leaves the orchestrator's mirrors read-only, and a temporary
+/// directory's removal cannot enter them: open them before it runs.
+pub fn open_mirrors_for_removal(ctx: &DaemonContext) {
+    let mirrors = archon_daemon::mirror::mirrors_root(&ctx.paths.orchestrator_workspace);
+    if mirrors.exists() && !std::thread::panicking() {
+        writable_again(&mirrors);
+    }
+}
+
+impl Drop for Harness {
+    fn drop(&mut self) {
+        open_mirrors_for_removal(&self.ctx);
+    }
+}
+
 impl Harness {
     /// Default config with the scripted backend.
     pub async fn new() -> Self {

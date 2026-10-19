@@ -2,6 +2,7 @@
 //! posted to a fake aetherd that keeps notifications, answers given there
 //! take the `/answer` path, and an aetherd without the center is left alone.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use archon_aether::AetherClient;
@@ -27,24 +28,40 @@ impl Center {
     /// Serve `post`, `list` and `resolve` from these records, as Aether does.
     fn install(&self, h: &Harness) {
         h.fake.set_features(vec!["notifications".into()]);
-        let center = self.clone();
-        h.fake.set_responder(
+        for cmd in [
             "post_notification",
-            Arc::new(move |cmd| center.post(&cmd["source"], &cmd["notification"])),
-        );
-        let center = self.clone();
-        h.fake.set_responder(
             "list_notifications",
-            Arc::new(move |_| {
-                let newest_first: Vec<Value> = center.all().into_iter().rev().collect();
-                Scripted::reply("notifications", Value::Array(newest_first))
+            "resolve_notification",
+        ] {
+            let center = self.clone();
+            h.fake
+                .set_responder(cmd, Arc::new(move |frame| center.respond(cmd, frame)));
+        }
+    }
+
+    /// Fail the next `cmd` inside Aether, then serve it again.
+    fn fail_next(&self, h: &Harness, cmd: &'static str) {
+        let center = self.clone();
+        let failed = Arc::new(AtomicBool::new(false));
+        h.fake.set_responder(
+            cmd,
+            Arc::new(move |frame| match failed.swap(true, Ordering::SeqCst) {
+                false => Scripted::refuse("internal", "the store is busy"),
+                true => center.respond(cmd, frame),
             }),
         );
-        let center = self.clone();
-        h.fake.set_responder(
-            "resolve_notification",
-            Arc::new(move |cmd| center.resolve(cmd["key"].as_str().unwrap())),
-        );
+    }
+
+    fn respond(&self, cmd: &str, frame: &Value) -> Scripted {
+        match cmd {
+            "post_notification" => self.post(&frame["source"], &frame["notification"]),
+            "list_notifications" => {
+                let newest_first: Vec<Value> = self.all().into_iter().rev().collect();
+                Scripted::reply("notifications", Value::Array(newest_first))
+            }
+            "resolve_notification" => self.resolve(frame["key"].as_str().unwrap()),
+            other => panic!("the center serves no {other}"),
+        }
     }
 
     fn all(&self) -> Vec<Value> {
@@ -258,6 +275,70 @@ async fn on_connect_answers_given_meanwhile_apply_and_closed_questions_resolve()
     .await;
     let record = posted(&h, &center, never_posted.id.as_str()).await;
     assert_eq!(record["state"], "unread");
+}
+
+#[tokio::test]
+async fn a_reconcile_that_failed_inside_aether_is_retried() {
+    let h = Harness::new().await;
+    let center = Center::default();
+    center.install(&h);
+    let asked = ask(&h, "Merge #12?", &["yes", "no"]).await;
+    center.post(
+        &json!("archon"),
+        &json!({"kind": "question", "title": "Q1", "key": asked.id}),
+    );
+    center.answer(asked.id.as_str(), Some("1"), None, operator());
+    center.fail_next(&h, "list_notifications");
+
+    let _bridge = bridge(&h, h.connect().await).await;
+    h.eventually("the failed list is sent", || async {
+        h.fake
+            .received()
+            .iter()
+            .any(|c| c["cmd"] == "list_notifications")
+    })
+    .await;
+    assert!(
+        question(&h, &asked.id).await.is_open(),
+        "nothing applied yet"
+    );
+    feed::notify(&h.ctx, NotificationKind::Progress, "stage 2", None, None)
+        .await
+        .unwrap();
+    h.eventually("the answer given meanwhile is applied", || async {
+        !question(&h, &asked.id).await.is_open()
+    })
+    .await;
+    assert_eq!(question(&h, &asked.id).await.answer.as_deref(), Some("yes"));
+}
+
+#[tokio::test]
+async fn a_notice_aether_failed_to_take_is_posted_on_the_next_pass() {
+    let h = Harness::new().await;
+    let center = Center::default();
+    center.install(&h);
+    let _bridge = bridge(&h, h.connect().await).await;
+    center.fail_next(&h, "post_notification");
+    feed::notify(&h.ctx, NotificationKind::Blocker, "stuck", None, None)
+        .await
+        .unwrap();
+    h.eventually("the failed post is sent", || async {
+        h.fake
+            .received()
+            .iter()
+            .any(|c| c["cmd"] == "post_notification")
+    })
+    .await;
+    assert!(center.all().is_empty(), "the first post failed");
+    feed::notify(&h.ctx, NotificationKind::Outcome, "merged", None, None)
+        .await
+        .unwrap();
+    h.eventually("both notices are posted", || async {
+        center.all().len() == 2
+    })
+    .await;
+    let titles: Vec<Value> = center.all().iter().map(|n| n["title"].clone()).collect();
+    assert_eq!(titles, [json!("stuck"), json!("merged")], "in feed order");
 }
 
 #[tokio::test]

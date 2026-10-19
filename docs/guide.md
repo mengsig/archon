@@ -686,8 +686,9 @@ actions, with a hint to answer them with `archon answer`.
 archond follows the feed with a stored cursor. When Aether was away, it
 posts what it missed once Aether is back, and on every connect it applies
 answers given meanwhile, resolves questions that closed, and posts open
-ones Aether does not hold. A blocker or outcome older than a day is not
-posted late. Against an aetherd without the notification center archond
+ones Aether does not hold. A post or reconcile that fails inside Aether is
+retried every 30 seconds, and later news waits behind it in feed order. A
+blocker or outcome older than a day is not posted late. Against an aetherd without the notification center archond
 logs one line at start-up and behaves as before; it starts posting once a
 newer aetherd serves the feature, from then on.
 

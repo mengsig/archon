@@ -84,7 +84,7 @@ async fn permitted(
 }
 
 /// The answer text `/answer` would record: the chosen option, the operator's
-/// own words, or the option followed by them ("reject too risky").
+/// own words (a bare number picks an option), or the option followed by them.
 fn answer_text(question: &Question, answer: &NotificationAnswer) -> Result<String, ArchonError> {
     let chosen = answer
         .action
@@ -99,7 +99,7 @@ fn answer_text(question: &Question, answer: &NotificationAnswer) -> Result<Strin
     let text = match (chosen, typed) {
         (Some(choice), Some(text)) => format!("{choice} {text}"),
         (Some(choice), None) => choice,
-        (None, Some(text)) => text.to_owned(),
+        (None, Some(text)) => question.expand_option(text)?,
         (None, None) => {
             return Err(ArchonError::Invalid(
                 "the answer chose no option and said nothing".into(),
@@ -165,6 +165,10 @@ mod tests {
         assert_eq!(answer_text(&q, &both).unwrap(), "reject too risky");
         let typed = answer(None, Some("ship after the release"));
         assert_eq!(answer_text(&q, &typed).unwrap(), "ship after the release");
+        assert_eq!(
+            answer_text(&q, &answer(None, Some(" 2 "))).unwrap(),
+            "reject"
+        );
         assert!(answer_text(&q, &answer(Some("3"), None)).is_err());
         assert!(answer_text(&q, &answer(None, Some("  "))).is_err());
     }

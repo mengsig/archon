@@ -55,6 +55,8 @@ pub async fn follow(ctx: &DaemonContext, client: &AetherClient) -> Result<(), Ar
             .kv_delete(keys::CURSOR_NOTIFICATION_CENTER);
     }
     let mut feed = ctx.feed.subscribe();
+    // Before the first reconcile: what is asked after its snapshot is fed.
+    cursor(&mut *ctx.store.lock().await)?;
     while client.is_connected() {
         let mut answers = match client.subscribe(None, answer_query()).await {
             Ok(subscription) => subscription,
@@ -64,11 +66,24 @@ pub async fn follow(ctx: &DaemonContext, client: &AetherClient) -> Result<(), Ar
                 continue;
             }
         };
-        logged(reconcile(ctx, client).await, "reconcile")?;
-        logged(mirror_feed(ctx, client).await, "mirror the feed")?;
-        follow_pass(ctx, client, &mut feed, &mut answers).await?;
+        let mut reconciled = false;
+        catch_up(ctx, client, &mut reconciled).await?;
+        follow_pass(ctx, client, &mut feed, &mut answers, &mut reconciled).await?;
     }
     Ok(())
+}
+
+/// Reconcile, until that succeeds once on this connection, then mirror the
+/// feed; a failure of either is logged and left to the next retry.
+async fn catch_up(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    reconciled: &mut bool,
+) -> Result<(), ArchonError> {
+    if !*reconciled {
+        *reconciled = logged(reconcile(ctx, client).await, "reconcile")?.is_some();
+    }
+    logged(mirror_feed(ctx, client).await, "mirror the feed").map(drop)
 }
 
 /// Every `custom` event, of which `notification.answered` is Archon's.
@@ -86,8 +101,9 @@ async fn follow_pass(
     client: &AetherClient,
     feed: &mut broadcast::Receiver<FeedItem>,
     answers: &mut Subscription,
+    reconciled: &mut bool,
 ) -> Result<(), ArchonError> {
-    let mut retry = tokio::time::interval(RETRY);
+    let mut retry = tokio::time::interval_at(tokio::time::Instant::now() + RETRY, RETRY);
     retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
@@ -106,12 +122,8 @@ async fn follow_pass(
                 }
             }
             // A lagged receiver only means the store holds more to read.
-            _ = feed.recv() => {
-                logged(mirror_feed(ctx, client).await, "mirror the feed")?;
-            }
-            _ = retry.tick() => {
-                logged(mirror_feed(ctx, client).await, "mirror the feed")?;
-            }
+            _ = feed.recv() => catch_up(ctx, client, reconciled).await?,
+            _ = retry.tick() => catch_up(ctx, client, reconciled).await?,
         }
     }
 }
@@ -174,8 +186,8 @@ async fn post_question(
 }
 
 /// Mirror every feed item after the cursor, a page at a time. The cursor
-/// stops before an item Aether could not take, so it is retried; an item
-/// Aether refused is logged and passed.
+/// stops before an item Aether could not take (no reply, or a failure inside
+/// Aether), so it is retried; an item Aether refused is logged and passed.
 async fn mirror_feed(ctx: &DaemonContext, client: &AetherClient) -> Result<(), ArchonError> {
     loop {
         let (cursor, items) = {
@@ -196,7 +208,7 @@ async fn mirror_feed(ctx: &DaemonContext, client: &AetherClient) -> Result<(), A
             match mirror_item(ctx, client, item).await {
                 Ok(()) => {}
                 Err(error) if error.is_store() => return Err(error),
-                Err(error @ ArchonError::Unavailable(_)) => {
+                Err(error) if is_transient(&error) => {
                     stopped = Some(error);
                     break;
                 }
@@ -219,6 +231,10 @@ async fn mirror_feed(ctx: &DaemonContext, client: &AetherClient) -> Result<(), A
             "a page mirrored whole moves the cursor to its end"
         );
     }
+}
+
+fn is_transient(error: &ArchonError) -> bool {
+    matches!(error, ArchonError::Unavailable(_)) || archon_aether::wire::is_internal(error)
 }
 
 /// The stored cursor, or the feed's head the first time: the questions

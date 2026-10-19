@@ -1,20 +1,117 @@
 # Changelog
 
-## Unreleased
+## 1.4.0
 
-`/archon answer N …`, `/archon approve`, `/archon reject` and `/archon merge ITEM`
-now work as `/answer`, `/approve`, `/reject` and `/merge`, with the same sender
-checks and results. The `/archon` usage error lists them.
+Released 2026-10-19.
 
-A GitHub operator's commands are now scoped to the repository of their thread:
-settings, merges, approvals and item changes of other repositories, and global
-settings, caps, pause and resume, are refused. A loosening change in the
-thread's own repository asks for confirmation instead of applying directly.
+Operator commands are easier to use and safer to grant: `/archon answer`,
+`approve`, `reject` and `merge` work as whole-message commands, a host
+command's applied or refused result shows in the TUI without an orchestrator
+turn, and a GitHub operator's commands reach only the repository of their
+thread. archond now supervises its own aetherd and restarts one that was
+killed. No store migration; daemon protocol 17 as before.
 
-An item queued `onto` a pull request now counts a review that read from the
-pull request's frozen head as a review of the whole change. The review gate
-used to start the change at the pull request's fork from its base, so such a
-review failed as "read only from" an unanchored commit.
+Archon asks Aether for protocol 24 and needs **Aether 1.2.0** for the whole
+TUI experience. With an older aetherd it falls back to the newest protocol
+that aetherd serves, down to 14: Aether 1.1.x (protocol 23) shows host
+command results as notes led by `Applied:` or `Refused:` instead of coloured
+by level, and an Aether before 1.1.0 has no notes, so archond logs one
+start-up warning and the results stay in Archon's feed only.
+
+### Added
+
+- `/archon answer N …`, `/archon approve`, `/archon reject` and `/archon merge
+  ITEM` work as `/answer`, `/approve`, `/reject` and `/merge`, with the same
+  sender checks and results; the `/archon` usage error lists them (#109).
+- archond adds a display-only note to the orchestrator's transcript when it
+  applies or refuses `/answer`, `/approve`, `/reject`, `/merge`, `/upgrade`,
+  `/watch` or `/archon`, so the TUI shows the result at once; protocol 24
+  notes carry an applied or refused level (#141, #153, #155).
+- `/approve` and `/reject` take a note; out-of-range option numbers and a
+  malformed `q_` reference are refused (#142, #143, #150).
+- The line chat handles `/upgrade` and `/watch` and lists them in `/help`
+  (#146, #154).
+
+### Daemon
+
+- archond supervises its own aetherd in dedicated mode: when nothing listens
+  on its socket for two seconds it starts aetherd through the CLI's lifecycle
+  and start lock and says so in the feed. A failed start backs off from 10 s
+  to 5 min, is posted as a blocker once per outage, and `archon status` names
+  the failure and `archon daemon start`, which retries at once. An aetherd
+  that listens but refuses the handshake is reported as refused. Shared mode
+  is unchanged (#119, #171).
+- `archon daemon restart` and `upgrade` load `config.toml` first and refuse
+  with the parse error while archond keeps running; `daemon stop` refuses
+  while runs are active, naming how many, unless given `--force` (#118, #159).
+- Status and doctor compare the configured orchestrator model and effort with
+  the running generation and report `configured X, running Y` as stale (#121,
+  #160).
+
+### Security and authority
+
+- A GitHub operator's commands are scoped to the repository of their thread:
+  settings, merges, approvals and item changes of other repositories, and
+  global settings, caps, pause and resume, are refused. A loosening change in
+  the thread's own repository asks for confirmation (#135).
+- `request_authority` needs a meaningful quote on word boundaries (3 words or
+  12 non-space characters unless it is the whole message), and a gate
+  answer's quote must contain the answer word (#140).
+- In shared mode every operator chat command is refused visibly, in the feed,
+  as a TUI note and as an unapplied trigger (#145, #156).
+- Hardening: artifacts are copied through `O_NOFOLLOW` handles and symlinked
+  files or directories are refused; an existing socket directory is
+  tightened to 0700 (another user's writable one is refused) and sockets bind
+  under umask 0077; fast checks drop `GIT_*` like full checks; `publish_report`
+  refuses paths outside a registered repository or item workspace; `wget`
+  runs with `--https-only` (#124, #157).
+- The daemon's git disables `commit.gpgSign`, `tag.gpgSign` and
+  `gpg.program`, so team merges neither need a signing key nor run a
+  repository's `gpg.program` (#116, #139).
+- Request authority is classified exhaustively, so a new request kind does
+  not compile until it is classified; the authorization steps of the request
+  handler are named and their order is tested. No request gains or loses
+  authority (#130, #134, #169).
+
+### Merge paths
+
+- An item queued `onto` a pull request counts a review that read from the
+  pull request's frozen head as a review of the whole change (#110).
+- Items delivered onto another pull request are refused by `request_merge`,
+  `merge=auto` and `MergeItem`, naming the pull request to merge by hand; the
+  owed auto-merge is pinned to the delivered commit (#137).
+- A pending merge confirmation closes when the pull request's head moves
+  (#138, #161).
+- Merges and refreshes read a run's retained base through one helper, so
+  items forked from a non-configured base still merge after a prune (#117,
+  #149).
+- `repo add` records the checked-out branch when no base is given and
+  refuses an empty repository, a detached HEAD, and a `ship = pr` repository
+  without an `origin` remote (#136).
+
+### Fixes
+
+- Every orchestrator reply is kept when a second operator message arrives
+  mid-turn (#144, #152).
+- Saved caps survive restarts and their lifetime is documented; zero means
+  unlimited everywhere, and disabled budgets are warned about (#151).
+- `pipelines check` rejects empty prompts, `lessons stats` works after a
+  repository with runs is removed, and titles refuse control and bidi
+  characters (#122, #123, #125, #162).
+- The CLI exits quietly on a closed pipe, validates pause, resume and id
+  arguments, rounds costs consistently and labels time zones (#126, #128,
+  #129, #168).
+- GitHub reply marker stripping is idempotent, feed settings lines are
+  sentences, and operator usage and confirmation wording is fixed (#127,
+  #147, #148, #170).
+- Dead code is removed, the longest non-authority functions are split, and
+  archon-daemon's integration tests build as one binary (#131, #133, #172,
+  #173).
+
+### Docs
+
+- The reference docs match the code, with consistency tests that hold them
+  to it, and cover the autonomy keys and chat history (#132, #166).
 
 ## 1.3.1
 

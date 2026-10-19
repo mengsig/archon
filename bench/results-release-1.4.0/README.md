@@ -1,6 +1,134 @@
 # Release 1.4.0 smoke gate
 
-**Verdict: REGRESSION (Luna).** On `codex/gpt-6-luna`, next loses
+**Verdict: REGRESSION (Luna).** In the re-gate at `74a33e3a`, on
+`codex/gpt-6-luna`, next passes **9/12** Archon trials over three runs against
+**12/12** for v1.3.1. Next's third run scored 1/4: `fix-off-by-one` and
+`quality-retry-budget` failed because the orchestrator made the change in its
+own mirror and queued no item, and `review-seeded-bug` scored 0.5 on the
+rubric (the Aether arm missed it in that run too). Per task, next has
+`fix-off-by-one` 2/3, `quality-ledger-transfer` 3/3, `quality-retry-budget`
+2/3 and `review-seeded-bug` 2/3, against 3/3 each for v1.3.1. No task is at
+0/3. Next's median Archon cost is +15% and its median trial wall time +8% over
+v1.3.1, both within the 25% bound. On `claude-code/claude-haiku-5-5` next
+passes: Archon 4/4 against the baseline's 4/4, $0.1364 (−5%) and 416 s
+(+12%). The rule fails only on total passes (9 < 12). Nothing was tuned
+to pass.
+
+The first gate's numbers and findings are kept below as history.
+
+## Re-gate (2026-10-19, at `74a33e3a`)
+
+`CARGO_BUILD_JOBS=6 make ci` at `74a33e3a` passed: fmt-check, clippy
+`-D warnings`, doc and 2922 tests with 0 failed (9 ignored).
+
+Same preset, method and $7 cap per run as the first gate: four tasks, arms
+`archon` and `aether`, one trial per cell, serial, medium effort. Seven runs,
+one at a time: Luna next, v1.3.1, next, v1.3.1, next, v1.3.1, then Haiku next.
+No run had a timeout or an infrastructure failure, so none was rerun.
+
+### Versions
+
+| | |
+|---|---|
+| next (measured) | archon 1.4.0, commit `74a33e3a` |
+| last release | archon 1.3.1, tag `v1.3.1` = `a3501e5d`, built from a clean export of the tag with its own target directory; its binary hash equals the first gate's v1.3.1 build |
+| harness | `archon-bench` from `74a33e3a` for all runs; `run.json`'s `archon_commit` names this harness checkout, not the measured binary |
+| aetherd | mengsig/aether origin/next, still `90aff1fa`: the first gate's binary (hash checked), reports 1.1.1 and serves protocol 24; one aetherd served all seven runs |
+| engines | Claude Code 2.1.299, codex-cli 0.163.0 |
+| binaries (sha256) | archon 1.4.0 `3b6ff2a1…`, archon 1.3.1 `ca4d1089…`, archon-bench `01cd9e65…`, aether `73d4f023…` |
+
+Sandbox: a new private `archon-bench/` sandbox, set up as in the first gate
+(`env -i` with only HOME, USER, LANG, PATH, TMPDIR and the private ARCHON_/
+AETHER_ CONFIG, DATA and SOCKET variables, four distinct directories). No
+operator daemon was used. Before each run the sandbox's `archon` was replaced
+by rename with the build under test and `aether mcp refresh archon` restarted
+the `archon mcp` server. The hash of the running MCP process's executable was
+then checked against that build, and it matched before all seven runs. The
+sandbox aetherd was stopped after the last run and no sandbox process
+remained.
+
+### Per run
+
+Each cell: pass · trial wall s · cost $. Archon costs of the three code tasks
+have `cost_gap = mixed` (`*` in the bench's report): incomplete costs plus
+estimates, not a bound.
+
+| Run | Build | fix-off-by-one | quality-ledger-transfer | quality-retry-budget | review-seeded-bug | Archon | Archon cost | Archon wall | End to end |
+|---|---|---|---|---|---|---|---|---|---|
+| `20261019T110722Z` | next | pass · 140 · 0.0246 | pass · 100 · 0.0178 | pass · 110 · 0.0222 | pass · 25 · 0.0042 | 4/4 | $0.0688 | 376 s | 643 s |
+| `20261019T111810Z` | v1.3.1 | pass · 80 · 0.0164 | pass · 85 · 0.0174 | pass · 100 · 0.0167 | pass · 20 · 0.0035 | 4/4 | $0.0540 | 285 s | 578 s |
+| `20261019T112759Z` | next | pass · 80 · 0.0134 | pass · 145 · 0.0265 | pass · 101 · 0.0182 | pass · 25 · 0.0047 | 4/4 | $0.0628 | 351 s | 654 s |
+| `20261019T113857Z` | v1.3.1 | pass · 145 · 0.0259 | pass · 95 · 0.0141 | pass · 100 · 0.0164 | pass · 30 · 0.0042 | 4/4 | $0.0605 | 371 s | 668 s |
+| `20261019T115010Z` | next | **fail** · 30 · 0.0033 | pass · 210 · 0.0385 | **fail** · 45 · 0.0078 | **fail** · 25 · 0.0041 | **1/4** | $0.0537 | 311 s | 604 s |
+| `20261019T120017Z` | v1.3.1 | pass · 100 · 0.0160 | pass · 100 · 0.0152 | pass · 105 · 0.0198 | pass · 20 · 0.0036 | 4/4 | $0.0546 | 325 s | 628 s |
+
+Aether arm: next 4/4, 4/4 and 3/4 (`review-seeded-bug` failed in the third
+run); v1.3.1 4/4 in all three runs. Its cost was $0.0127–$0.0153 a run.
+
+### Per build (Luna)
+
+| | next | v1.3.1 | next vs v1.3.1 |
+|---|---|---|---|
+| Archon passes | **9/12** | 12/12 | −3 |
+| fix-off-by-one | 2/3 | 3/3 | |
+| quality-ledger-transfer | 3/3 | 3/3 | |
+| quality-retry-budget | 2/3 | 3/3 | |
+| review-seeded-bug | 2/3 | 3/3 | |
+| median Archon cost | $0.0628 | $0.0546 | +15% |
+| median Archon trial wall | 351 s | 325 s | +8% |
+| median end to end | 643 s | 628 s | +2% |
+
+### Haiku 5.5 against its baseline
+
+| Run | fix-off-by-one | quality-ledger-transfer | quality-retry-budget | review-seeded-bug | Archon | Aether | Archon cost | Archon wall | End to end |
+|---|---|---|---|---|---|---|---|---|---|
+| next `20261019T121050Z` | pass · 40 · 0.0209 | pass · 230 · 0.0739 | pass · 100 · 0.0309 | pass · 45 · 0.0107 | 4/4 | 4/4 | $0.1364 | 416 s | 739 s |
+| baseline `20261015T071250Z` | pass · 65 · ≥ 0.0230 | pass · 155 · ≥ 0.0756 | pass · 115 · ≥ 0.0356 | pass · 35 · 0.0096 | 4/4 | 4/4 | ≥ $0.1438 | 370 s | 11.5 min |
+
+`archon-bench smoke` reported PASS (Archon 4/4, baseline 4/4). The ledger trial
+ran its implement stage three times, because the stage agent twice wrote its
+commit hash with a typo (a space inside it, then a missing digit) and the
+ship record refused it. The third run passed.
+
+### Re-gate findings
+
+Read from the runs' item captures, the sandbox Aether store (read-only) and
+the Codex session records of the stage agents named below.
+
+- **Next's third run** is the whole gap. In `fix-off-by-one` and
+  `quality-retry-budget` the orchestrator committed the fix in its own
+  repository mirror and queued nothing (zero items), so the graded checkout is
+  untouched. v1.3.1's orchestrator did the same on `quality-retry-budget` in
+  the first gate. The orchestrator's prompt is unchanged since v1.3.1; the
+  one change to `pump/orchestrator.rs` is the #144 reply tracker. Both arms'
+  `review-seeded-bug` answers name the empty-signature `startsWith` bug
+  without the rubric's forgery/bypass words: the lexical miss of the first
+  gate.
+- **"Completion tools not offered" is a search miss by the agent.** Both
+  next-run-1 implement agents that reported missing tools
+  (`agt_01M59XH9RYJGKHN32N4KRTR94P`, `agt_01M59XWEW16ACFVC54JDPE6X25`) used
+  Codex's code-mode `exec` to search `ALL_TOOLS` with a filter that cannot
+  match Aether's own tools: `/archon.*(complete_task|delegate|wait_for|fail_task)/`
+  over name and description, then `/mcp__aether__mcp__archon__/` over names.
+  The first gate's ledger agent `agt_01M59E1ABCGFM4WFXW0N3QTX7K` searched
+  `/archon/` over names. `mcp__aether__complete_task` and its description
+  contain no "archon". The Codex record does not list the offered tools, so
+  their presence is not proven, but the agents' conclusion rests on a search
+  that would have missed them. This replaces the first gate's suspected
+  Aether-side event (aether #221). Both items passed on their second run.
+- **Unreadable reviewer verdicts remain, on both builds.** Three implement
+  runs failed because a reviewer ended without calling `complete_task`. Next
+  run 2 (ledger) and v1.3.1 run 2 (`fix-off-by-one`) had a prose
+  "**Verdict: pass.**" summary. Next run 3 (ledger) had a JSON verdict
+  followed by prose. `74a33e3a` reads a whole written-out `complete_task`
+  call; it still treats prose, and JSON followed by prose, as no verdict.
+  Each item passed on its second run.
+- Extra implement runs: next 4 over three runs, v1.3.1 1. Next's +15%
+  median cost includes them.
+
+## First gate (2026-10-19, at `600ddae3`)
+
+Verdict then: **REGRESSION (Luna).** On `codex/gpt-6-luna`, next loses
 `review-seeded-bug`, which v1.3.1 and the Luna baseline both pass: Archon 0/1
 in both next runs (rubric score 0.5) against 1/1 for v1.3.1 and 1/1 for the
 baseline. The gate run also lost `quality-ledger-transfer` (0/1, passed in the
@@ -17,7 +145,7 @@ Quality smoke preset (`archon-bench smoke`): `fix-off-by-one`,
 effort, $7 admission limit per run. One trial per cell is a regression
 signal, not a reliability estimate.
 
-## Versions
+### Versions
 
 | | |
 |---|---|
@@ -41,12 +169,12 @@ next runs (`next ×2`). The v1.3.1 runs were then redone after replacing the
 binary by rename and `aether mcp refresh archon`, with the running MCP
 process's executable hash checked against the v1.3.1 build.
 
-## Runs
+### Runs
 
 Each cell: pass · trial wall s · cost $ (billed plus Aether's estimate; `≥`
 marks an Archon trial whose cost Aether reported as incomplete).
 
-### Haiku 5.5
+#### Haiku 5.5
 
 | Run | Archon | Aether | Archon cost | Archon wall | End to end |
 |---|---|---|---|---|---|
@@ -65,7 +193,7 @@ marks an Archon trial whose cost Aether reported as incomplete).
 Aether arm: 4/4 in every run, $0.0396, $0.0349 and $0.0354, 155 s, 144 s and
 151 s.
 
-### Luna (`codex/gpt-6-luna`)
+#### Luna (`codex/gpt-6-luna`)
 
 | Run | Archon | Aether | Archon cost | Archon wall | End to end |
 |---|---|---|---|---|---|
@@ -86,7 +214,7 @@ Aether arm: 4/4 in every run, $0.0132, $0.0128 and $0.0123, 145 s, 145 s and
 
 No run had a timeout or an infrastructure failure, so none was rerun.
 
-## Next against v1.3.1 and the baselines
+### Next against v1.3.1 and the baselines
 
 | Model | Check | next | v1.3.1 | baseline | Result |
 |---|---|---|---|---|---|
@@ -97,7 +225,7 @@ No run had a timeout or an infrastructure failure, so none was rerun.
 | Luna | Archon cost | $0.0755, $0.0667 | $0.0438 | $0.0760 | +72% / +52% vs v1.3.1; −1% / −12% vs baseline |
 | Luna | Archon trial wall | 681 s, 496 s | 316 s | 737 s | +115% / +57% vs v1.3.1; −8% / −33% vs baseline |
 
-## The Luna failures
+### The Luna failures
 
 - `review-seeded-bug` (both next runs): the orchestrator answered itself with
   an empty queue and named the bug correctly (`expected.startsWith(signature)`
@@ -120,7 +248,7 @@ No run had a timeout or an infrastructure failure, so none was rerun.
   implemented the change in its own mirror without queueing an item, so the
   graded repository was untouched.
 
-## Findings
+### Findings
 
 Read from the code (`v1.3.1..50076851`) and from the gate's sandbox store
 (`archon-bench/r140-062029/data/aether/aether.db`, read-only); no benchmark
@@ -147,7 +275,7 @@ Ruled out:
   failed tool call. #216 changes description wording only. #195 is a store
   query change. In any case the same aetherd served the v1.3.1 runs.
 
-### `review-seeded-bug`: lexical miss, no Archon cause
+#### `review-seeded-bug`: lexical miss, no Archon cause
 
 All three Luna answers find the same bug with the empty-signature input
 (`body.`). v1.3.1's says "authentication bypass"; next's say "accepts any
@@ -157,7 +285,7 @@ from the nearest prefix anchor, just outside the rubric's 400-character
 window. This is wording variance at one trial per cell. The same miss was
 recorded with an older Archon in `luna-no-baseline-20261015`.
 
-### `quality-ledger-transfer` (gate run): the agent never tried the tools
+#### `quality-ledger-transfer` (gate run): the agent never tried the tools
 
 Stage agent `agt_01M59E1ABCGFM4WFXW0N3QTX7K` called only `bash`,
 `apply_patch` and `mcp__aether__mcp__archon__message_orchestrator`. It never
@@ -183,7 +311,7 @@ If Aether recorded the inventory as an event, and refused to start a
 task-holding agent's turn without `complete_task`, the next occurrence would
 either be proven or prevented.
 
-### Cost and wall time: unreadable reviewer verdicts, now fixed
+#### Cost and wall time: unreadable reviewer verdicts, now fixed
 
 Next ×2 cost $0.0229 more than v1.3.1. Of that:
 

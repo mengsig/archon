@@ -8,12 +8,20 @@ use std::sync::Arc;
 use archon_core::error::ArchonError;
 use archon_core::run::{PipelineRun, StageOutcome, StageRun};
 use archon_core::steer::RunEdit;
-use archon_pipeline::PipelineSpec;
 use archon_pipeline::swarm::{self, PLAN_FILE, SwarmPlan};
+use archon_pipeline::{PipelineSpec, SpawnPlan};
 
 use crate::context::DaemonContext;
 use crate::resolve::RepoEnv;
 use crate::worktree;
+
+/// Between a refused planner's stage id and the problems, in its failure.
+const PASSED_BUT: &str = " passed, but ";
+
+/// Whether `error` is the failure of a planner whose plan Archon refused.
+pub(super) fn is_refusal(error: &str) -> bool {
+    error.contains(PASSED_BUT)
+}
 
 /// A settling planner stage: the team stage its plan assigns, in the run's
 /// pipeline as the driver holds it.
@@ -34,8 +42,26 @@ impl Planner {
     }
 }
 
+/// Tell the planner of `plan` its limits under the agent `cap` (0: none), and
+/// the refusal Archon sent it back with, if any. Other stages are left alone.
+pub(super) fn brief(
+    plan: &mut SpawnPlan,
+    spec: &PipelineSpec,
+    cap: u32,
+    refusal: Option<(&str, usize)>,
+) {
+    if spec.assigned_by(&plan.stage_id).is_none() {
+        return;
+    }
+    plan.prompt.push_str(&swarm::planner_limits(cap));
+    if let Some((refusal, corrections)) = refusal {
+        plan.prompt
+            .push_str(&swarm::correction(refusal, corrections));
+    }
+}
+
 /// `outcome` once the plan a completed planner committed is checked, with
-/// the edit giving the team its roles. A refused plan fails the stage.
+/// the edit giving the team its roles. A refused plan fails the stage, which settle may send back.
 pub(super) async fn verify(
     ctx: &DaemonContext,
     run: &PipelineRun,
@@ -59,7 +85,7 @@ pub(super) async fn verify(
     match assignment(ctx, run, &planner).await? {
         Ok(edit) => Ok((outcome, edit)),
         Err(error) => {
-            let error = format!("stage `{}` passed, but {error}", stage.stage_id);
+            let error = format!("stage `{}`{PASSED_BUT}{error}", stage.stage_id);
             let failed = StageOutcome::Failed {
                 error,
                 infra: false,

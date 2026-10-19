@@ -17,6 +17,7 @@ use super::{
 };
 use crate::context::DaemonContext;
 use crate::disk::{self, FullDisk};
+use crate::resolve::RepoEnv;
 
 pub(super) async fn settle(
     ctx: &DaemonContext,
@@ -70,10 +71,16 @@ pub(super) async fn settle(
         );
         (current_stage, current_run, all)
     };
+    if let StageOutcome::Failed { error, .. } = &outcome
+        && swarm::is_refusal(error)
+        && let Some(follow) = infra_retry(ctx, &table, &stage, &run, &all, &outcome).await?
+    {
+        return Ok(follow);
+    }
     if let Some(edit) = assigned {
         assign_roles(ctx, &mut table, &run, edit).await?;
     }
-    // Verification failures are final stage outcomes, not infrastructure
+    // Other verification failures are final stage outcomes, not infrastructure
     // failures from Aether: they must not enter the stage's retry path.
     persist(ctx, &mut table, stage, run, &all, outcome).await
 }
@@ -239,6 +246,8 @@ const MAX_DISK_FULL_RETRIES: usize = 5;
 enum RetryKind {
     Infra,
     DiskFull,
+    /// A planner whose plan Archon refused, sent back with the problems.
+    Refused,
 }
 
 impl RetryKind {
@@ -246,6 +255,9 @@ impl RetryKind {
     /// trusted to report a full disk: a failure the agent wrote is one only
     /// when the free space confirms it, else it is the agent's own.
     async fn of_failure(ctx: &DaemonContext, error: &str, infra: bool) -> Option<Self> {
+        if !infra && swarm::is_refusal(error) {
+            return Some(Self::Refused);
+        }
         if !disk::is_disk_full(error) {
             return infra.then_some(Self::Infra);
         }
@@ -260,6 +272,7 @@ impl RetryKind {
     /// failure that says the disk is full was retried as one.
     fn of_replaced(stage: &StageRun) -> Self {
         match &stage.state {
+            StageState::Failed { error } if swarm::is_refusal(error) => Self::Refused,
             StageState::Failed { error } if disk::is_disk_full(error) => Self::DiskFull,
             _ => Self::Infra,
         }
@@ -269,6 +282,7 @@ impl RetryKind {
         match self {
             Self::Infra => ctx.config.limits.infra_retries as usize,
             Self::DiskFull => MAX_DISK_FULL_RETRIES,
+            Self::Refused => archon_pipeline::swarm::MAX_CORRECTIONS,
         }
     }
 }
@@ -316,12 +330,15 @@ async fn infra_retry(
         return Ok(None);
     }
     let failed = settled_stage(stage.clone(), outcome.clone(), archon_core::now());
-    let Some(replacement) = replace(ctx, table, run, all, &failed, slot.len()).await? else {
+    let refusal = (kind == RetryKind::Refused).then_some((error.as_str(), retry));
+    let Some(replacement) = replace(ctx, table, run, all, &failed, slot.len(), refusal).await?
+    else {
         return Ok(None);
     };
     let (what, when) = match kind {
         RetryKind::Infra => ("an infrastructure failure", ""),
         RetryKind::DiskFull => ("a full disk", " once disk space is free"),
+        RetryKind::Refused => ("a refused swarm plan", ""),
     };
     let text = format!(
         "Stage `{}` of run {} hit {what} ({error}); retrying{when} ({retry} of {limit}).",
@@ -360,6 +377,7 @@ async fn replace(
     all: &[StageRun],
     failed: &StageRun,
     nth: usize,
+    refusal: Option<(&str, usize)>,
 ) -> Result<Option<StageRunId>, ArchonError> {
     assert!(
         failed.state.is_terminal(),
@@ -367,13 +385,15 @@ async fn replace(
     );
     assert!(nth >= 1, "the slot holds the failed stage run");
     let now_all = replaced(all, failed);
-    let plan = table
-        .drivers
-        .get(&run.id)
-        .and_then(|driver| driver.respawn(failed, &now_all));
-    let Some(plan) = plan else {
+    let driver = table.drivers.get(&run.id);
+    let plan = driver.and_then(|driver| driver.respawn(failed, &now_all).zip(Some(driver)));
+    let Some((mut plan, driver)) = plan else {
         return Ok(None);
     };
+    if driver.spec().assigned_by(&plan.stage_id).is_some() {
+        let cap = planner_cap(ctx, run).await?;
+        swarm::brief(&mut plan, driver.spec(), cap, refusal);
+    }
     let mut store = ctx.store.lock().await;
     // Owed before the replacement exists, so it never starts beside them.
     descendants::owe(&mut store, failed)?;
@@ -384,6 +404,13 @@ async fn replace(
     // stage run, never a failure that looks final on resume.
     store.upsert_stage_run(failed)?;
     Ok(Some(id))
+}
+
+/// The agent cap a replaced planner is told, from the repository as it is now.
+async fn planner_cap(ctx: &DaemonContext, run: &PipelineRun) -> Result<u32, ArchonError> {
+    let repo = ctx.store.lock().await.item(&run.item)?.repo;
+    let env = RepoEnv::load(ctx, repo.as_ref()).await?;
+    Ok(env.agent_cap(ctx, &run.pipeline))
 }
 
 /// `all` with `settled` in place of its earlier self.

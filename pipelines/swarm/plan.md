@@ -70,8 +70,10 @@ Finish with a clean `git status`.
 }
 ```
 
-Archon refuses the plan, and fails this stage with every problem listed,
-unless:
+Archon refuses the plan unless the rules below hold. It sends a refused
+plan back to you with every problem listed, at most twice, and fails this
+stage after that. The limits that depend on this run (the most tasks, the
+byte sizes) follow this brief.
 
 - `version` is 1 and `summary` is not empty;
 - there are 2 to 8 tasks, and no more than the item's agent caps run at
@@ -83,8 +85,11 @@ unless:
 - paths are relative and normalised, with no glob, and none is inside
   `.git` or `.archon`; no path of one task equals, contains or lies inside
   a path of another;
-- interface names are unique, each with a signature, and every name in
-  `consumes` is provided by another task;
+- interface names are unique, each an object with a `name` and a
+  `signature` (never a bare string), and every name in `consumes` is
+  provided by another task;
+- each `objective` and each `signature` has at most 8000 bytes, and the
+  file at most 65536 bytes;
 - `depends_on` names only earlier tasks: list tasks so that each depends
   only on those before it. Tasks merge in this order.
 

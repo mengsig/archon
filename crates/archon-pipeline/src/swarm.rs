@@ -24,6 +24,25 @@ const MAX_COMMANDS: usize = 16;
 const MAX_COMMAND_LEN: usize = 500;
 const MAX_INTERFACES: usize = 32;
 const MAX_TEXT: usize = 8000;
+/// Times a refused plan goes back to its planner before its stage fails.
+pub const MAX_CORRECTIONS: usize = 2;
+
+const PLAN_SHAPE: &str = r#"{
+  "version": 1,
+  "summary": "What the change does.",
+  "checks": ["cargo check --workspace"],
+  "tasks": [
+    {
+      "id": "parser",
+      "objective": "What to build, precisely.",
+      "paths": ["crates/parser/src/plan.rs"],
+      "provides": [{"name": "parse_plan", "signature": "pub fn parse_plan(text: &str) -> Plan"}],
+      "consumes": [],
+      "acceptance": ["cargo test -p parser"],
+      "depends_on": []
+    }
+  ]
+}"#;
 
 /// A planner's split of one change into tasks that workers build at once.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,6 +82,47 @@ pub struct Interface {
     pub name: String,
     /// The exact signature, as the providing task writes it.
     pub signature: String,
+}
+
+/// Most tasks a plan may have when the agent caps run `cap` agents at once
+/// (0: no cap).
+pub fn task_limit(cap: u32) -> usize {
+    match cap {
+        0 => MAX_TASKS,
+        cap => MAX_TASKS.min(cap as usize),
+    }
+}
+
+/// What the planner is told up front: the limits `parse` and the agent caps
+/// enforce, and the exact shape of the file.
+pub fn planner_limits(cap: u32) -> String {
+    let tasks = task_limit(cap);
+    format!(
+        "\n\n## Limits on the plan file\n\n\
+         Archon refuses a plan that breaks one of these:\n\n\
+         - {MIN_TASKS} to {tasks} tasks{why}.\n\
+         - Every `objective` has at most {MAX_TEXT} bytes; split a larger task instead.\n\
+         - Every interface `signature` has at most {MAX_TEXT} bytes.\n\
+         - The file has at most {MAX_PLAN_BYTES} bytes.\n\
+         - `provides` holds objects with a `name` and a `signature`, never bare strings; \
+         `consumes` holds the interface names as strings.\n\n\
+         The exact shape, with an interface:\n\n\
+         ```json\n{PLAN_SHAPE}\n```\n",
+        why = match tasks < MAX_TASKS {
+            true => " (the agent caps allow that many at once here)",
+            false => "",
+        },
+    )
+}
+
+/// What a planner is told when Archon refused the plan it committed.
+pub fn correction(refusal: &str, attempt: usize) -> String {
+    format!(
+        "\n\n## Your plan was refused (correction {attempt} of {MAX_CORRECTIONS})\n\n\
+         You committed `{PLAN_FILE}`, and Archon refused it. Fix the file in this \
+         workspace, check it, commit it on the same branch and finish. Change nothing else.\n\n\
+         {refusal}\n"
+    )
 }
 
 /// Parse and validate a plan file's text; the error lists every problem.

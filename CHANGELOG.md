@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+A swarm plan that Archon refuses (an objective over 8000 bytes, more tasks than
+the agent caps run at once, an interface written as a string) goes back to the
+planner in the same stage with every problem listed, at most twice, before
+the stage fails. The planner's brief now states the run's task limit, the
+byte limits and the exact plan shape up front.
+
 An item queued `onto` a pull request now counts a review that read from the
 pull request's frozen head as a review of the whole change. The review gate
 used to start the change at the pull request's fork from its base, so such a

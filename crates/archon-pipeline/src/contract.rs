@@ -70,8 +70,16 @@ pub fn instructions(
     }
     if owed.ship_record {
         out.push_str(&ship_record_rules(stage.kind));
+        out.push_str(&risk_rules(relays_reviewer(owed)));
+    } else if stage.kind == StageKind::Review {
+        out.push_str(&review_risk_rules());
     }
     out
+}
+
+/// Whether the record stage holds a review whose reviewers judge the risk.
+fn relays_reviewer(owed: Owed) -> bool {
+    owed.review.is_some_and(|duty| duty.reviewers > 0)
 }
 
 /// The section for an agent that can delegate: `models` is its children's policy in words,
@@ -543,8 +551,59 @@ pub const SHIP_RECORD_JSON: &str = "\
 {\"commit\": \"<git rev-parse HEAD>\", \"tree\": \"<git rev-parse HEAD^{tree}>\",\n \
 \"checks\": [\"<each verification command that ran>\"],\n \
 \"pr\": {\"title\": \"<one line, in the repository's convention>\", \
-\"body\": \"<what changed and why, how it was verified, assumptions>\"}}\n\
+\"body\": \"<what changed and why, how it was verified, assumptions>\"},\n \
+\"risk\": {\"level\": \"<low, medium or high>\", \"why\": \"<the evidence for it>\", \
+\"captures\": [\"<https:// link to a screenshot or capture, if any>\"]}}\n\
 ```\n";
+
+/// How the record stage labels its change's risk (ARCHITECTURE §8.7), with
+/// how it relays its reviewer's call when it `relays` one.
+fn risk_rules(relays: bool) -> String {
+    let reviewer = match relays {
+        true => {
+            "- Give each reviewer the rubric and your level; it returns `\"risk\": \
+             {\"level\": …, \"why\": …}` in `structured`, confirming it or changing it with \
+             a reason. Relay the call your pass rests on as `risk.reviewer`; it stands.\n"
+        }
+        false => "",
+    };
+    let rules = format!(
+        "\n## Risk level\n\n\
+         - `risk` sets the pull request's advisory `risk:` label and the \"Risk\" section \
+         atop its body; nothing merges or gates by it, and you never merge. Low may merge \
+         with no human review, medium needs one human reviewer, high two who read the code.\n\
+         - Rubric:\n{rubric}\
+         - `why`: areas and files touched, whether behaviour changes or only tests, docs or \
+         comments, tests run with results, review findings, what pushes the level up.\n\
+         - `captures`: `https://` links to screenshots or captures of a visible change; \
+         never a local path.\n\
+         {reviewer}\
+         - Without a valid `risk` key Archon labels it `high`.\n",
+        rubric = indented(archon_core::risk::RUBRIC),
+    );
+    debug_assert!(rules.ends_with('\n'), "sections end with a newline");
+    rules
+}
+
+/// What a review stage after the record stage says of the change's risk.
+fn review_risk_rules() -> String {
+    let rules = format!(
+        "\n## Risk level\n\n\
+         - Judge the implementer's proposed advisory risk level by this rubric in \
+         `\"risk\": {{\"level\": \"<low, medium or high>\", \"why\": \"…\"}}` of your \
+         `structured` data: confirm it, or change it with a reason.\n\
+         {rubric}",
+        rubric = indented(archon_core::risk::RUBRIC),
+    );
+    debug_assert!(rules.ends_with('\n'), "sections end with a newline");
+    rules
+}
+
+/// `list`, a Markdown list, nested one level.
+fn indented(list: &str) -> String {
+    assert!(list.ends_with('\n'), "a list of whole lines");
+    list.lines().map(|line| format!("  {line}\n")).collect()
+}
 
 const SHIP_RECORD_SHAPE: &str = "\
 - Read both hashes after the last commit, made under the repository's own git \
@@ -1404,6 +1463,40 @@ mod tests {
         );
         assert!(judged.contains("You commit nothing: the record names the commit you judged"));
         assert_eq!(judged.matches("untracked").count(), 0, "{judged}");
+    }
+
+    #[test]
+    fn the_record_stage_proposes_a_risk_level_and_a_later_review_judges_it() {
+        let plain = work_contract(Owed::default());
+        assert_eq!(plain.matches("## Risk level").count(), 0, "{plain}");
+        let alone = work_contract(Owed {
+            review: None,
+            ship_record: true,
+        });
+        for said in [
+            "## Risk level",
+            "\"risk\": {\"level\": \"<low, medium or high>\"",
+            "nothing merges or gates by it, and you never merge",
+            "high two who read the code",
+            "  - `high`: security, auth, permissions",
+            "  - When in doubt, pick the higher level.",
+            "never a local path",
+            "Without a valid `risk` key Archon labels it `high`.",
+        ] {
+            assert!(alone.contains(said), "missing {said:?} in {alone}");
+        }
+        assert!(!alone.contains("risk.reviewer"), "no reviewer to relay");
+        let held = work_contract(Owed {
+            ship_record: true,
+            ..owing(1, false)
+        });
+        assert!(held.contains("Relay the call your pass rests on as `risk.reviewer`"));
+        let review = stage(StageKind::Review, Gate::AllPass, 1);
+        let mode = WorkspaceMode::Worktree;
+        let later = instructions(&review, mode, "/w", TeamPart::Solo, Owed::default(), None);
+        assert_eq!(later.matches("## Risk level").count(), 1, "{later}");
+        assert!(later.contains("confirm it, or change it with a reason"));
+        assert!(later.contains("\"risk\": {\"level\": \"<low, medium or high>\", \"why\": \"…\"}"));
     }
 
     /// A task that does not fit its pipeline goes back to the orchestrator

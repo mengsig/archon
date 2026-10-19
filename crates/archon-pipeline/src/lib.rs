@@ -15,6 +15,7 @@ mod gate;
 pub mod proposals;
 pub mod reshape;
 pub mod review;
+pub mod risk;
 mod sections;
 pub mod ship;
 pub mod spec;

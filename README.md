@@ -98,6 +98,13 @@ archond](docs/guide.md#which-commands-start-archond)).
   `archon merge <item>`, or asking the orchestrator and confirming, merges
   it at the reviewed commit; a repository's `grant_merge` skips the
   confirmation. `local` mode keeps the commits on the run branch.
+- **Risk label:** every pull request Archon opens or updates carries one
+  label, `risk: low`, `risk: medium` or `risk: high`, and a "Risk" section
+  at the top of its body that says why, with the evidence. Low may be
+  merged with no human review; medium needs one human reviewer and no
+  agent merges it; high needs two who read the functional code. The label
+  is advisory: Archon merges, gates and reviews nothing by it. See
+  [risk labels](docs/guide.md#risk-labels).
 - **Initiative:** a member item per repository, one shared contract, and
   pull requests linked to each other. An atomic initiative keeps them
   drafts until every member passes, then marks them ready together. That

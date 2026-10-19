@@ -1899,6 +1899,7 @@ fn a_delivery_is_recorded_once_and_replays_after_a_restart() {
         commit: sim::COMMIT.into(),
         pr_url: Some(PR.into()),
         updated: false,
+        risk: None,
     };
     let mut driver = sim.resumed_driver();
     driver.record_ship(shipped.clone()).expect("recorded once");

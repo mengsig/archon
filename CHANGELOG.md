@@ -9,6 +9,18 @@ answer given there is applied as `/answer N <choice>` is, under the same
 rules, and a question closed anywhere else resolves its notification. An
 older aetherd is left alone: one log line, no change.
 
+Every pull request Archon opens or updates now carries one risk label,
+`risk: low`, `risk: medium` or `risk: high`, and a "Risk" section at the
+top of its body saying what the level means for merging, why it was chosen
+and the evidence: the files and areas touched, the diff's size, the checks
+run, the review and any screenshots. The implementing agent proposes the
+level by a written rubric, a reviewer confirms or changes it, and archond
+applies it at every delivery, creating the three labels where the
+repository lacks them. `get_item`, `list_queue`, `queue list` and
+`queue show` show the level. The label is advisory only: no merge, gate or
+review rule follows from it, and a label GitHub refuses never fails a
+delivery.
+
 ## 1.4.0
 
 Released 2026-10-19.

@@ -90,6 +90,10 @@ pub struct ShipPlan {
     pub body: String,
     /// The run's summary once it shipped, before the line saying where to.
     pub summary: String,
+    /// The risk level the pull request is labelled with, and why.
+    pub risk: crate::risk::Assessment,
+    /// The line Archon wrote for the review the record stage holds.
+    pub review: Option<String>,
 }
 
 /// How a delivery ended; persisted by the daemon and fed back through
@@ -105,19 +109,39 @@ pub enum ShipOutcome {
         pr_url: Option<String>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         updated: bool,
+        /// How labelling the pull request with its risk level went, in one
+        /// line for the run's summary; never a reason the delivery failed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        risk: Option<String>,
     },
     /// Nothing more is delivered; `error` says exactly why.
     Failed { error: String },
 }
 
 impl ShipOutcome {
-    /// The line that ends a shipped run's summary.
+    /// The lines that end a shipped run's summary: how its risk label went,
+    /// then where it shipped.
+    pub fn lines(&self) -> Option<String> {
+        let line = self.line()?;
+        match self {
+            Self::Shipped {
+                risk: Some(risk), ..
+            } => {
+                assert!(!risk.contains('\n'), "one line");
+                Some(format!("{risk}\n{line}"))
+            }
+            _ => Some(line),
+        }
+    }
+
+    /// The line saying where a shipped run went.
     pub fn line(&self) -> Option<String> {
         match self {
             Self::Shipped {
                 commit,
                 pr_url: Some(url),
                 updated: true,
+                ..
             } => {
                 let pr = archon_core::pull_request::PullRequestRef::from_url(url);
                 let number = pr.map_or_else(|| url.clone(), |pr| pr.number.to_string());
@@ -127,6 +151,7 @@ impl ShipOutcome {
                 commit,
                 pr_url: Some(url),
                 updated: false,
+                ..
             } => Some(format!("SHIPPED: {url} (commit {commit})")),
             Self::Shipped {
                 commit,
@@ -374,6 +399,7 @@ mod tests {
             commit: COMMIT.into(),
             pr_url: Some("https://github.com/o/r/pull/7".into()),
             updated: false,
+            risk: None,
         };
         let text = serde_json::to_string(&pr).unwrap();
         assert!(!text.contains("updated"), "{text}");
@@ -387,6 +413,7 @@ mod tests {
             commit: COMMIT.into(),
             pr_url: Some("https://github.com/o/r/pull/7".into()),
             updated: true,
+            risk: None,
         };
         let text = serde_json::to_string(&updated).unwrap();
         assert_eq!(serde_json::from_str::<ShipOutcome>(&text).unwrap(), updated);
@@ -399,6 +426,7 @@ mod tests {
             commit: COMMIT.into(),
             pr_url: None,
             updated: false,
+            risk: None,
         };
         assert!(local.line().unwrap().contains("on the run branch"));
         let failed = ShipOutcome::Failed { error: "e".into() };

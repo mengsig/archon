@@ -228,6 +228,9 @@ pub struct QueueItem {
     /// The existing pull request it delivers into, frozen at enqueue.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub onto: Option<Box<OntoPullRequest>>,
+    /// The risk level its last delivery labelled its pull request with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk: Option<crate::risk::RiskLevel>,
     pub state: QueueState,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
@@ -383,6 +386,7 @@ mod tests {
             routed_provider: None,
             provider_switch: None,
             initiative: None,
+            risk: None,
             state: QueueState::Queued,
             created_at: crate::now(),
             updated_at: crate::now(),

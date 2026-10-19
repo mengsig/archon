@@ -120,6 +120,7 @@ async fn prepare_member(
         routed_provider,
         provider_switch: None,
         initiative: Some(initiative.id.clone()),
+        risk: None,
         state: QueueState::Queued,
         created_at: initiative.created_at,
         updated_at: initiative.created_at,

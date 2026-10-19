@@ -20,6 +20,8 @@ pub const FAKE_LOGIN: &str = "devfake";
 /// `fail-<command>` fails it once, `lose-create-reply` loses a create's reply,
 /// `checks` and `annotations` are what `pr checks` and the annotations API say.
 /// `pr view` shows the `view-*` files; a merge at that head marks it merged.
+/// Labels: `labels` lists the repository's, `labels-<n>` and `body-<n>` hold
+/// pull request n's, and `refuse-labels` makes every `label create` fail.
 const STATEFUL_GH: &str = r#"#!/bin/sh
 state="$(dirname "$0")/gh-state"
 printf '%s\n' "$*" >> "$state/calls"
@@ -31,7 +33,44 @@ if [ -f "$failing" ]; then
     exit 1
 fi
 slot() { printf '%s/pr-%s' "$state" "$(printf '%s' "$1" | tr '/' '_')"; }
+names() { python3 -c 'import json,sys; print(json.dumps([{"name": n} for n in open(sys.argv[1]).read().splitlines()]))' "$1"; }
+if [ "$1 $2" = "pr edit" ] && [ "$4" != "--base" ]; then
+    n="${3##*/}"
+    shift 3
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        --body-file) cat > "$state/body-$n" ;;
+        --add-label)
+            grep -qxF "$2" "$state/labels" 2>/dev/null || { echo "'$2' not found" >&2; exit 1; }
+            printf '%s\n' "$2" >> "$state/labels-$n" ;;
+        --remove-label)
+            grep -vxF "$2" "$state/labels-$n" > "$state/labels-$n.new"
+            mv "$state/labels-$n.new" "$state/labels-$n" ;;
+        *) exit 2 ;;
+        esac
+        shift 2
+    done
+    exit 0
+fi
+if [ "$1 $2 $4 $5" = "pr view --json labels,body" ]; then
+    n="${3##*/}"
+    touch "$state/labels-$n" "$state/body-$n"
+    python3 -c 'import json,sys; print(json.dumps({"labels": [{"name": l} for l in open(sys.argv[1]).read().splitlines()], "body": open(sys.argv[2]).read()}))' "$state/labels-$n" "$state/body-$n"
+    exit 0
+fi
 case "$1 $2" in
+"label list")
+    [ "$3 $4 $5 $6" = "--json name --limit 1000" ] || exit 2
+    touch "$state/labels"
+    names "$state/labels"
+    ;;
+"label create")
+    [ "$4 $6 $#" = "--color --description 7" ] || exit 2
+    [ -f "$state/refuse-labels" ] && { cat "$state/refuse-labels" >&2; exit 1; }
+    grep -qxF "$3" "$state/labels" 2>/dev/null && { echo "label with name \"$3\" already exists" >&2; exit 1; }
+    printf '%s\n' "$3" >> "$state/labels"
+    printf '%s|%s|%s\n' "$3" "$5" "$7" >> "$state/label-specs"
+    ;;
 "auth token")
     [ "$3 $4 $5 $6" = "--hostname github.com --user @LOGIN@" ] || {
         echo "no oauth token found for github.com account $6" >&2
@@ -68,6 +107,7 @@ case "$1 $2" in
     printf '%s %s %s\n' "$number" "$4" "$6" > "$pr"
     printf '%s' "$8" > "$state/title"
     cat > "$state/body"
+    cp "$state/body" "$state/body-$number"
     if [ -f "$state/lose-create-reply" ]; then
         rm "$state/lose-create-reply"
         echo "HTTP 502: Bad Gateway" | tee "$state/fail-pr-list" >&2
@@ -233,6 +273,41 @@ impl FakeGh {
     pub fn set_annotations(&self, annotations: &Value) {
         let raw = annotations.to_string();
         std::fs::write(self.state.join("annotations"), raw).expect("annotations");
+    }
+
+    /// Every `label create` fails from now on, saying `stderr`.
+    pub fn refuse_labels(&self, stderr: &str) {
+        std::fs::write(self.state.join("refuse-labels"), stderr).expect("refusal");
+    }
+
+    /// The repository has `labels` already.
+    pub fn add_labels(&self, labels: &[&str]) {
+        let text: String = labels.iter().map(|l| format!("{l}\n")).collect();
+        std::fs::write(self.state.join("labels"), text).expect("labels");
+    }
+
+    /// Pull request `number` carries `labels` and `body` already.
+    pub fn label_pr(&self, number: u64, labels: &[&str], body: &str) {
+        let text: String = labels.iter().map(|l| format!("{l}\n")).collect();
+        std::fs::write(self.state.join(format!("labels-{number}")), text).expect("labels");
+        std::fs::write(self.state.join(format!("body-{number}")), body).expect("body");
+    }
+
+    /// The labels and the current body of pull request `number`.
+    pub fn pr_labels(&self, number: u64) -> (Vec<String>, String) {
+        let read =
+            |name: String| std::fs::read_to_string(self.state.join(name)).unwrap_or_default();
+        let labels = read(format!("labels-{number}"));
+        (
+            labels.lines().map(str::to_owned).collect(),
+            read(format!("body-{number}")),
+        )
+    }
+
+    /// Each label the repository created: its name, colour and description.
+    pub fn created_labels(&self) -> Vec<String> {
+        let specs = std::fs::read_to_string(self.state.join("label-specs")).unwrap_or_default();
+        specs.lines().map(str::to_owned).collect()
     }
 
     /// The title and body of the pull request last created.

@@ -597,6 +597,7 @@ pub(super) fn item(state: QueueState) -> QueueItem {
         routed_provider: None,
         provider_switch: None,
         initiative: None,
+        risk: None,
         state,
         created_at: archon_core::now(),
         updated_at: archon_core::now(),
@@ -949,6 +950,29 @@ fn get_item_shows_recorded_reasons_next_to_choices_and_omits_missing_reasons() {
     detail.item.model_reasons = None;
     let text = render("get_item", &Reply::ItemDetail(Box::new(detail)));
     assert!(!text.contains("Apply supplied fix"));
+}
+
+#[test]
+fn list_queue_shows_the_risk_level_an_item_s_delivery_labelled() {
+    use archon_core::protocol::{ItemSummary, Reply};
+    let mut labelled = item(QueueState::Queued);
+    labelled.risk = Some(archon_core::risk::RiskLevel::Medium);
+    let row = |item| ItemSummary {
+        item,
+        stage: None,
+        spent_usd: 0.0,
+        pr_url: None,
+        waiting_on: None,
+        waiting_reason: None,
+        switched_to: None,
+    };
+    let listed = render("list_queue", &Reply::ItemSummaries(vec![row(labelled)]));
+    assert!(listed.contains(", risk medium"), "{listed}");
+    let plain = render(
+        "list_queue",
+        &Reply::ItemSummaries(vec![row(item(QueueState::Queued))]),
+    );
+    assert!(!plain.contains("risk"), "{plain}");
 }
 
 #[test]

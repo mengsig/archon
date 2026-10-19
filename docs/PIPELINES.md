@@ -393,18 +393,24 @@ stage whose result says what to ship, and archond delivers it:
 stage = "fix"
 ```
 
-That stage's contract gains a `## Ship record` section, and its
-`complete_task` carries the record beside anything else it returns:
+That stage's contract gains a `## Ship record` section and a `## Risk
+level` section with the risk rubric, and its `complete_task` carries the
+record beside anything else it returns:
 
 ```json
 {"commit": "<git rev-parse HEAD>",
  "tree": "<git rev-parse HEAD^{tree}>",
  "checks": ["cargo test", "cargo clippy"],
- "pr": {"title": "<one line>", "body": "<what changed, why, how it was verified>"}}
+ "pr": {"title": "<one line>", "body": "<what changed, why, how it was verified>"},
+ "risk": {"level": "medium", "why": "<the evidence>", "captures": ["https://…"]}}
 ```
 
 A pass without a readable record fails the run at that stage. Stages after
-it (reviews, tests) verify that tree and commit nothing more.
+it (reviews, tests) verify that tree and commit nothing more. The `risk` key
+is the level archond labels the pull request with (see
+[risk labels](guide.md#risk-labels)); a missing or invalid one never fails
+the stage, and the label is then `high`. A review stage after the record
+stage is asked for a `risk` call of its own, which stands when it passes.
 
 Once every stage has passed, archond checks the run worktree and refuses
 the delivery when any of this does not hold:

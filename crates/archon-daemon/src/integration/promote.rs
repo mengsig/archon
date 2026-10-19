@@ -17,6 +17,8 @@ use archon_core::merge::{self, ChecksSeen, Expected, PullRequestFacts};
 use archon_core::notify::NotificationKind;
 use archon_core::protocol::RepoRef;
 use archon_core::repo::Repo;
+use archon_core::risk::RiskLevel;
+use archon_pipeline::risk::{Assessment, DiffStat};
 use tokio::sync::Mutex;
 
 use super::branch::{Checkout, Head};
@@ -25,7 +27,7 @@ use super::state::{self, BranchState, Verdict};
 use super::{Watch, blocking};
 use crate::context::DaemonContext;
 use crate::executor::gh;
-use crate::executor::ship::remote;
+use crate::executor::ship::{remote, risk};
 use crate::feed;
 use crate::gh_account;
 use crate::worktree::shadow::Shadow;
@@ -233,7 +235,7 @@ async fn open_pull_request(
     watch: &Watch,
     heads: &Heads,
 ) -> Result<String, ArchonError> {
-    let body = {
+    let promoted = {
         let (watch, heads) = (watch.clone(), heads.clone());
         blocking(move || body(&watch, &heads)).await?
     };
@@ -242,18 +244,57 @@ async fn open_pull_request(
         branch: &watch.branch,
         base: &watch.release,
         title: &title,
-        body: &body,
+        body: &promoted.body,
         draft: false,
     };
     let binary = &ctx.config.github.binary;
-    match remote::pull_request(binary, &watch.repo, request).await? {
-        Ok(url) => Ok(url),
-        Err(refusal) => Err(ArchonError::Unavailable(refusal)),
-    }
+    let url = match remote::pull_request(binary, &watch.repo, request).await? {
+        Ok(url) => url,
+        Err(refusal) => return Err(ArchonError::Unavailable(refusal)),
+    };
+    let checks: Vec<String> = watch.full.iter().cloned().collect();
+    let labelling = risk::Labelling {
+        assessment: promotion_risk(watch, promoted.merges),
+        onto: false,
+        diff: promoted.diff.as_ref(),
+        against: format!("`{}`", watch.release),
+        checks: &checks,
+        review: None,
+    };
+    risk::label(ctx, &watch.repo, None, &url, labelling).await?;
+    Ok(url)
+}
+
+/// Every promotion is labelled high: it brings many changes into the
+/// release branch at once, each reviewed only in its own pull request.
+fn promotion_risk(watch: &Watch, merges: usize) -> Assessment {
+    assert!(!watch.branch.is_empty() && !watch.release.is_empty());
+    let assessment = Assessment {
+        level: RiskLevel::High,
+        decided: "Archon labels every promotion `high`.".into(),
+        why: format!(
+            "It merges {merges} merge(s) from `{}` into the release branch `{}` at once. Each \
+             was reviewed in its own pull request, and the full check passed on this exact \
+             head, but together they change what is released.",
+            watch.branch, watch.release
+        ),
+        captures: Vec::new(),
+    };
+    debug_assert!(assessment.why.contains(&watch.release));
+    assessment
+}
+
+/// What a promotion's pull request is opened with.
+struct Promoted {
+    body: String,
+    /// How many merges it brings.
+    merges: usize,
+    /// What it changes on the release branch; `None` when git could not say.
+    diff: Option<DiffStat>,
 }
 
 /// The pull request's body: what it promotes, and the merges it brings.
-fn body(watch: &Watch, heads: &Heads) -> Result<String, ArchonError> {
+fn body(watch: &Watch, heads: &Heads) -> Result<Promoted, ArchonError> {
     let (head, release) = (&heads.branch.commit, &heads.release.commit);
     let args = ["merge-base", release.as_str(), head.as_str()];
     let base = crate::worktree::git(&watch.source.repo, &args)?;
@@ -274,7 +315,23 @@ fn body(watch: &Watch, heads: &Heads) -> Result<String, ArchonError> {
         text.push_str(&format!("- … and {} older\n", merges.len() - MAX_LISTED));
     }
     assert!(!text.trim().is_empty(), "a pull request says something");
-    Ok(text)
+    let numstat = crate::worktree::git(
+        &watch.source.repo,
+        &["diff", "--numstat", "-z", &base, head],
+    );
+    let diff =
+        match numstat.and_then(|raw| DiffStat::from_numstat(&raw).map_err(ArchonError::Protocol)) {
+            Ok(diff) => Some(diff),
+            Err(error) => {
+                tracing::warn!(%error, "the promotion's diff could not be read");
+                None
+            }
+        };
+    Ok(Promoted {
+        body: text,
+        merges: merges.len(),
+        diff,
+    })
 }
 
 /// Merge the pull request at `url` with a merge commit, only while it shows

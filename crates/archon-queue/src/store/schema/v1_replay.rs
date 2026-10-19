@@ -63,6 +63,7 @@ fn item(repo: &Repo, pipeline: &str) -> QueueItem {
         routed_provider: None,
         provider_switch: None,
         initiative: None,
+        risk: None,
         state: QueueState::Queued,
         created_at: v1_time(),
         updated_at: v1_time(),

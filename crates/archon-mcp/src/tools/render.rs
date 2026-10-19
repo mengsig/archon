@@ -205,6 +205,9 @@ fn item_line(item: &QueueItem, reason_chars: usize) -> String {
     if !item.tags.is_empty() {
         let _ = write!(line, ", tags {}", item.tags.join(", "));
     }
+    if let Some(risk) = item.risk {
+        let _ = write!(line, ", risk {risk}");
+    }
     if let Some(detail) = state_detail(&item.state) {
         let _ = write!(line, "; {}", clip(&detail, reason_chars));
     }

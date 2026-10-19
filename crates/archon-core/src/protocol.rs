@@ -1973,6 +1973,7 @@ mod tests {
             routed_provider: None,
             provider_switch: None,
             initiative: None,
+            risk: None,
             state: crate::queue::QueueState::Queued,
             created_at: crate::now(),
             updated_at: crate::now(),

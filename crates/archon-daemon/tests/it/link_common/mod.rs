@@ -414,6 +414,7 @@ fn queue_item(repo: &Repo) -> QueueItem {
         routed_provider: None,
         provider_switch: None,
         initiative: None,
+        risk: None,
         state: QueueState::Queued,
         created_at: archon_core::now(),
         updated_at: archon_core::now(),

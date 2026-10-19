@@ -44,6 +44,7 @@ pub mod push;
 pub mod queue;
 pub mod quota;
 pub mod repo;
+pub mod risk;
 pub mod run;
 pub mod settings;
 pub mod steer;

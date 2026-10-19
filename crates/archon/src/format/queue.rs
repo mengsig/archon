@@ -37,6 +37,9 @@ fn item_row(row: &ItemSummary, names: &RepoNames, now: Timestamp) -> [String; 8]
     if let Some(url) = &row.pr_url {
         let _ = write!(last, "  {}", sanitize_line(url));
     }
+    if let Some(risk) = item.risk {
+        let _ = write!(last, "  {}", risk.label());
+    }
     if let Some(wait) = &row.waiting_on {
         let _ = write!(
             last,
@@ -142,6 +145,9 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
     }
     if !item.tags.is_empty() {
         let _ = writeln!(out, "tags: {}", sanitize_line(&item.tags.join(", ")));
+    }
+    if let Some(risk) = item.risk {
+        let _ = writeln!(out, "risk: {risk} ({})", risk.meaning());
     }
     let budget = item
         .budget_usd
@@ -409,6 +415,7 @@ mod tests {
             model_plan: ModelPlan::default(),
             model_reasons: None,
             budget_usd: None,
+            risk: None,
             state: QueueState::Queued,
             autonomy: Autonomy::default(),
             origin: None,
@@ -645,6 +652,18 @@ mod tests {
             "{full}"
         );
         assert!(!full.contains("--full"), "{full}");
+    }
+
+    #[test]
+    fn the_risk_level_shows_in_the_list_and_the_detail() {
+        let mut detail = detail_with_stages();
+        detail.item.risk = Some(archon_core::risk::RiskLevel::High);
+        let text = item_detail(&detail, &RepoNames::new(), false);
+        let said = "\nrisk: high (Needs at least two human reviewers who read the functional code changes.)\n";
+        assert!(text.contains(said), "{text}");
+        let row = summary(detail.item.clone());
+        let listed = items(&[row], &RepoNames::new(), at(10, 0));
+        assert!(listed.ends_with("  risk: high"), "{listed}");
     }
 
     #[test]

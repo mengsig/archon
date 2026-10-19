@@ -266,6 +266,7 @@ impl Sim {
             commit: plan.record.commit.clone(),
             pr_url: Some(url.to_owned()),
             updated: false,
+            risk: None,
         };
         self.ship(outcome)
     }

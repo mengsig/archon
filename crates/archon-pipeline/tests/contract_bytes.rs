@@ -21,10 +21,14 @@ const POLICY: &str = "any model the policy allows";
 const PLAIN_BUDGET: usize = 2_650;
 const REVIEW_BUDGET: usize = 3_250;
 const RECORD_BUDGET: usize = 1_300;
-/// What holding a review adds: the record and the verdict each reviewer returns.
-const REVIEW_HOLDER_BUDGET: usize = 1_100;
+/// What holding a review adds: the record, and the verdict and risk call
+/// each reviewer returns.
+const REVIEW_HOLDER_BUDGET: usize = 1_350;
 /// What a work stage of a team pipeline adds: committing where the roles fork.
 const RUN_TREE_BUDGET: usize = 550;
+/// What judging the change's risk adds: the rubric, to the record stage and
+/// to a review stage after it.
+const RISK_BUDGET: usize = 1_350;
 const TOTAL_BUDGET: usize = 120_000;
 
 /// One built-in stage's fixed input, in bytes.
@@ -132,6 +136,9 @@ fn built_in_contracts_stay_within_their_byte_budgets() {
         let team = spec.file.stages.iter().any(|s| s.kind == StageKind::Team);
         if team && cost.kind == StageKind::Work {
             budget += RUN_TREE_BUDGET;
+        }
+        if owed.ship_record || cost.kind == StageKind::Review {
+            budget += RISK_BUDGET;
         }
         if cost.contract > budget {
             over.push(format!(

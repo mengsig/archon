@@ -1013,8 +1013,9 @@ idempotency key returns the item as first frozen, without asking GitHub again.
 At ship, `archond` pushes the reviewed commit onto the pull request's head
 branch by fast-forward only, one item per pull request at a time, and the
 item succeeds once GitHub shows that commit as the head: its summary ends
-`SHIPPED: updated #100 to <sha> (<url>)`. The pull request's title, body and
-base stay as its owner left them, and nothing is merged: `archon merge`, `/merge`,
+`SHIPPED: updated #100 to <sha> (<url>)`. The pull request's title, base and
+the owner's text in its body stay as its owner left them, apart from its
+[risk label](#risk-labels) and the Risk section at the top, and nothing is merged: `archon merge`, `/merge`,
 `request_merge` and `merge=auto` all refuse such an item and name the pull request to
 merge by hand. When the head moved
 since enqueue (someone else pushed), delivery fails naming both commits
@@ -1025,6 +1026,56 @@ and `pushInsteadOf` does not apply to it. A delivered `onto` item has no
 branch of its own on `origin`, so it is not refreshed and an item depending
 on it in the same repository does not start: queue that work `onto` the
 item instead.
+
+### Risk labels
+
+Every pull request Archon opens or updates carries exactly one label,
+`risk: low`, `risk: medium` or `risk: high`, and a section at the top of
+its body headed `Risk: <level>`. That covers new pull requests, deliveries
+`onto` an existing one, a run's last fix after a fix loop, refreshes,
+team pipelines and integration-branch promotions. `archond` creates the
+three labels in the repository when it lacks them: green, yellow and red,
+each with a one-line description of what it means for merging.
+
+| Level | What it means |
+| --- | --- |
+| `low` | May be merged automatically, with no human review. |
+| `medium` | Needs at least one human reviewer; agents must not merge it. |
+| `high` | Needs at least two human reviewers who read the functional code changes. |
+
+Agents pick the level by one rubric, and pick the higher level when in doubt:
+
+- `low`: docs, comments, tests only, typo or formatting, and small isolated
+  changes with no behaviour change, or a trivial one fully covered by tests.
+- `medium`: contained behaviour changes and new features behind existing
+  interfaces, plus minor dependency bumps.
+- `high`: security, auth, permissions, or anything touching secrets;
+  persistence formats and migrations, data deletion, concurrency or locking;
+  protocol, API or CLI changes that break callers; merge, push, ship,
+  release or deploy machinery; and large cross-cutting refactors.
+
+The stage that writes the ship record proposes the level with its evidence
+in a `risk` key of its result; a reviewer it delegated, or a later review
+stage that passes, confirms it or changes it with a reason, and the
+reviewer's call stands. With no valid proposal the level is `high`. Archon
+applies the result at delivery and judges it again whenever new commits
+land: a refresh or a fix replaces the label, while commits delivered `onto`
+someone else's pull request never lower the label it already has. An
+integration-branch promotion is always `high`.
+
+The section states what the level means, who chose it and why, then the
+evidence: the diff's size against its base, the areas and files it touches
+and whether they are only tests and docs, the checks the agent ran, the
+review on record, and screenshots or terminal captures the stage already
+published as `https://` links (never local paths). The level is kept on
+the item: `get_item`, `list_queue`, `queue list` and `queue show` show it,
+and the run's summary has a `RISK:` line before `SHIPPED:`.
+
+The label is strictly advisory. Archon changes no merge, auto-merge, gate,
+review count or approval by it, and no agent merges a pull request because
+of it. When GitHub refuses a step (no permission to create labels, say),
+the delivery still succeeds, and the summary and the section say what to
+set by hand.
 
 ### Coordinated changes across repositories
 

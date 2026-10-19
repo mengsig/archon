@@ -25,7 +25,7 @@ use super::super::{
     FollowUp, RunTable, ShipRetry, descendants, fast_check, initiative_ship, recover,
     repo_identity, restack, settle,
 };
-use super::{auto_merge, checks, existing, gate, pr_checks, remote};
+use super::{auto_merge, checks, existing, gate, pr_checks, remote, risk};
 use crate::context::DaemonContext;
 use crate::resolve;
 
@@ -265,10 +265,11 @@ async fn carry_out(
         (base, initiative_ship::opens_as_draft(&store, &run.item)?)
     };
     // Proved again after a fast check ran: it may have changed the worktree.
-    let commit = match prove(ctx, claimed, &repo, &base).await? {
-        Ok(commit) => commit,
+    let checked = match prove(ctx, claimed, &repo, &base).await? {
+        Ok(checked) => checked,
         Err(refusal) => return refused(refusal),
     };
+    let commit = checked.commit.clone();
     match gate_step(ctx, claimed, &repo, &base, gate)? {
         GateStep::Pass => {}
         GateStep::Refuse(refusal) => return refused(refusal),
@@ -285,11 +286,12 @@ async fn carry_out(
             commit,
             pr_url: None,
             updated: false,
+            risk: None,
         };
         return Ok(Carried::Done(shipped));
     }
     if let Some(onto) = &claimed.onto {
-        return into_existing(ctx, &repo, onto, commit).await;
+        return into_existing(ctx, claimed, &repo, onto, checked).await;
     }
     // The operator's policy as it stands at delivery, as the checks applied it.
     let body = archon_pipeline::pr_body(&plan.body, run.item.as_str(), repo.attribution);
@@ -300,34 +302,50 @@ async fn carry_out(
         body: &body,
         draft,
     };
-    match deliver_pr(ctx, run, &repo, &commit, request).await? {
-        Ok(url) => Ok(Carried::Done(ShipOutcome::Shipped {
-            commit,
-            pr_url: Some(url),
-            updated: false,
-        })),
-        Err(refusal) => refused(refusal),
-    }
+    let url = match deliver_pr(ctx, run, &repo, &commit, request).await? {
+        Ok(url) => url,
+        Err(refusal) => return refused(refusal),
+    };
+    let against = format!("`{base}`");
+    let risk = label(ctx, claimed, &repo, &url, &checked, against, false).await?;
+    Ok(Carried::Done(ShipOutcome::Shipped {
+        commit,
+        pr_url: Some(url),
+        updated: false,
+        risk: Some(risk),
+    }))
 }
 
-/// Push `commit` into the existing pull request `onto` names, by fast-forward,
-/// leaving its title, body and base as they are.
+/// Push the checked commit into the existing pull request `onto` names, by
+/// fast-forward, leaving its title and base as they are; only its risk
+/// label and section change.
 async fn into_existing(
     ctx: &DaemonContext,
+    claimed: &Claimed,
     repo: &Repo,
     onto: &OntoPullRequest,
-    commit: String,
+    checked: checks::Checked,
 ) -> Result<Carried, ArchonError> {
+    let commit = checked.commit.clone();
     assert!(
         crate::worktree::stack::is_commit_id(&commit),
         "the checked commit"
     );
     let outcome = match existing::deliver(ctx, repo, onto, &commit).await? {
-        Ok(url) => ShipOutcome::Shipped {
-            commit,
-            pr_url: Some(url),
-            updated: true,
-        },
+        Ok(url) => {
+            let head = onto.head_sha.get(..12).unwrap_or(&onto.head_sha);
+            let against = format!(
+                "`{head}`, the head of {} when this change was queued",
+                onto.pr.url()
+            );
+            let risk = label(ctx, claimed, repo, &url, &checked, against, true).await?;
+            ShipOutcome::Shipped {
+                commit,
+                pr_url: Some(url),
+                updated: true,
+                risk: Some(risk),
+            }
+        }
         Err(error) => ShipOutcome::Failed { error },
     };
     assert!(
@@ -337,6 +355,34 @@ async fn into_existing(
     Ok(Carried::Done(outcome))
 }
 
+/// Label the pull request at `url` with the risk level `claimed`'s plan
+/// settled on, the `checked` diff against `against` as its evidence.
+async fn label(
+    ctx: &DaemonContext,
+    claimed: &Claimed,
+    repo: &Repo,
+    url: &str,
+    checked: &checks::Checked,
+    against: String,
+    onto: bool,
+) -> Result<String, ArchonError> {
+    let plan = &claimed.plan;
+    assert_eq!(
+        onto,
+        claimed.onto.is_some(),
+        "only an onto item adds to another's pull request"
+    );
+    let labelling = risk::Labelling {
+        assessment: plan.risk.clone(),
+        onto,
+        diff: checked.diff.as_ref(),
+        against,
+        checks: &plan.record.checks,
+        review: plan.review.as_deref(),
+    };
+    risk::label(ctx, repo, Some(&claimed.run.item), url, labelling).await
+}
+
 /// The run branch's head once the worktree holds what the record names
 /// ([`checks::check`]), or why it does not.
 async fn prove(
@@ -344,7 +390,7 @@ async fn prove(
     claimed: &Claimed,
     repo: &Repo,
     base: &str,
-) -> Result<Result<String, String>, ArchonError> {
+) -> Result<Result<checks::Checked, String>, ArchonError> {
     let identity = repo_identity::of(ctx, repo).await?;
     let run = &claimed.run;
     let target = checks::Target {
@@ -366,13 +412,17 @@ async fn prove(
     let checked = tokio::task::spawn_blocking(move || checks::check(&target, &record))
         .await
         .map_err(|e| ArchonError::io("delivery check task", std::io::Error::other(e)))??;
-    let commit = match checked {
-        Ok(checked) => checked.commit,
+    let checked = match checked {
+        Ok(checked) => checked,
         Err(refusal) => return Ok(Err(refusal)),
     };
-    let full = crate::worktree::stack::is_commit_id(&commit);
-    assert!(full, "the checks prove a full commit id: {commit:?}");
-    Ok(Ok(commit))
+    let full = crate::worktree::stack::is_commit_id(&checked.commit);
+    assert!(
+        full,
+        "the checks prove a full commit id: {:?}",
+        checked.commit
+    );
+    Ok(Ok(checked))
 }
 
 /// What the ship gate says of the proved tree.
@@ -762,6 +812,12 @@ mod tests {
             },
             body: "b".into(),
             summary: "s".into(),
+            risk: archon_pipeline::risk::Assessment::settle(
+                "implement",
+                &archon_pipeline::risk::Proposal::read(None),
+                None,
+            ),
+            review: None,
         };
         let mut table = RunTable::default();
         for run in [&waiting, &ready, &running] {

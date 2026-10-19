@@ -35,6 +35,7 @@ fn item(state: QueueState) -> QueueItem {
         routed_provider: None,
         provider_switch: None,
         initiative: None,
+        risk: None,
         state,
         created_at: archon_core::now(),
         updated_at: archon_core::now(),

@@ -21,7 +21,7 @@ use crate::gate::{self, GroupResult};
 use crate::ship::{self, BodyAdditions, SHIP_STEP, ShipOutcome, ShipPlan, ShipRecord};
 use crate::spec::{PipelineSpec, ReviewDuty, StageSpec};
 use crate::team::{self, MergeOutcome, MergePlan, RoleBranch, TeamSlot};
-use crate::{contract, review, sections, template};
+use crate::{contract, review, risk, sections, template};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EngineAction {
@@ -173,9 +173,20 @@ struct Position {
     entered: BTreeSet<(usize, u32)>,
     /// Gate stages the operator approved, with the operator's note.
     approved: BTreeMap<String, Option<String>>,
-    /// The ship record of the record stage's latest pass, and the review
-    /// line Archon wrote for it.
-    record: Option<(ShipRecord, Option<String>)>,
+    /// What the record stage's latest pass left for the delivery.
+    record: Option<Recorded>,
+}
+
+/// The record stage's latest pass, as the delivery uses it.
+#[derive(Debug, Clone)]
+struct Recorded {
+    record: ShipRecord,
+    /// The line Archon wrote for the review the record stage holds.
+    review: Option<String>,
+    risk: risk::Proposal,
+    /// The highest risk call of the latest review stage that passed after
+    /// it, with that stage's id.
+    reviewed: Option<(String, risk::RiskCall)>,
 }
 
 impl Position {
@@ -860,6 +871,12 @@ impl RunDriver {
             GroupResult::Pass { summary } if stage.kind != StageKind::Team => {
                 if owed.ship_record {
                     at.record = Some(passed_record(members, owed.review));
+                } else if stage.kind == StageKind::Review
+                    && let Some(recorded) = at.record.as_mut()
+                    && let Some(call) =
+                        risk::highest_call(members.iter().map(|m| m.structured.as_ref()))
+                {
+                    recorded.reviewed = Some((stage.id.clone(), call));
                 }
                 return self.after_pass(at, counts, summary);
             }
@@ -1019,7 +1036,7 @@ impl RunDriver {
                 error: gate::clip(error, MAX_ERROR_CHARS),
             }),
             Some(shipped) => {
-                let line = shipped.line().expect("a delivery that shipped says where");
+                let line = shipped.lines().expect("a delivery that shipped says where");
                 stop(RunState::Succeeded {
                     summary: format!("{summary}\n\n{line}"),
                 })
@@ -1030,7 +1047,12 @@ impl RunDriver {
     /// The delivery of the run at `at`, its last stage, which just passed
     /// with `summary`.
     fn ship_plan(&self, at: &Position, record_stage: &StageSpec, summary: String) -> ShipPlan {
-        let (record, review) = at
+        let Recorded {
+            record,
+            review,
+            risk,
+            reviewed,
+        } = at
             .record
             .clone()
             .expect("the caller checked that the record stage passed");
@@ -1056,11 +1078,18 @@ impl RunDriver {
             report: report_stage.and_then(passed),
         };
         let body = ship::pr_text(&record, added);
+        let reviewer = reviewed
+            .as_ref()
+            .map(|(id, call)| (format!("stage `{id}`"), call));
+        let reviewer = reviewer.as_ref().map(|(by, call)| (by.as_str(), *call));
+        let risk = risk::Assessment::settle(&record_stage.id, &risk, reviewer);
         ShipPlan {
             record_stage: record_stage.id.clone(),
             record,
             body,
             summary,
+            risk,
+            review,
         }
     }
 
@@ -1446,9 +1475,9 @@ fn group_at<'a>(
         .collect()
 }
 
-/// The record stage's passed member's ship record, with the line Archon
-/// wrote for the review it holds as `duty`.
-fn passed_record(members: &[&StageRun], duty: Option<ReviewDuty>) -> (ShipRecord, Option<String>) {
+/// The record stage's passed member's ship record and risk proposal, with
+/// the line Archon wrote for the review it holds as `duty`.
+fn passed_record(members: &[&StageRun], duty: Option<ReviewDuty>) -> Recorded {
     let [member] = members else {
         panic!("validated: one agent writes the ship record")
     };
@@ -1458,7 +1487,12 @@ fn passed_record(members: &[&StageRun], duty: Option<ReviewDuty>) -> (ShipRecord
         let held = review::Evidence::read(structured, duty);
         held.expect("the gate passed only with the review").line()
     });
-    (record, review)
+    Recorded {
+        record,
+        review,
+        risk: risk::Proposal::read(structured),
+        reviewed: None,
+    }
 }
 
 /// A `BLOCKED:` or `ESCALATE:` failure anywhere in the group ends the run at

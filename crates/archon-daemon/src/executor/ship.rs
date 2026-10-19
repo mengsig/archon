@@ -10,6 +10,7 @@ mod existing;
 mod gate;
 mod pr_checks;
 pub(crate) mod remote;
+pub(crate) mod risk;
 
 use archon_core::catalog::StageKind;
 use archon_core::error::ArchonError;

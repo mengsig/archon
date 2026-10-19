@@ -67,6 +67,7 @@ mod refresh;
 mod report_retention;
 mod restack;
 mod retry;
+mod risk_label;
 mod server;
 mod ship;
 mod ship_coordination;

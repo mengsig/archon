@@ -2420,7 +2420,8 @@ returns:
 
 ```json
 {"commit": "<git rev-parse HEAD>", "tree": "<git rev-parse HEAD^{tree}>",
- "checks": ["…"], "pr": {"title": "…", "body": "…"}}
+ "checks": ["…"], "pr": {"title": "…", "body": "…"},
+ "risk": {"level": "low|medium|high", "why": "…", "captures": ["https://…"]}}
 ```
 
 `ShipRecord::read` requires full object ids, a one-line title of at most
@@ -2608,6 +2609,36 @@ checks that never started are a blocker and a `pr_checks` event (`state:
 Either is told once and ends the watch. Passing checks, no checks 30 minutes
 after delivery, or a day without an answer end it quietly; a `gh` failure is
 logged and the next look tries again.
+
+**Risk labels.** Every pull request archond opens or updates carries one
+label, `risk: low`, `risk: medium` or `risk: high` (`archon_core::risk`),
+and a section at the top of its body between `<!-- archon-risk -->` and
+`<!-- /archon-risk -->` (`archon_pipeline::risk::section`): what the level
+means, who settled it and why, and the evidence. The contract (§8.6) gives
+the record stage the rubric and asks for the `risk` key above; a record
+stage holding a review relays its reviewer's call as `risk.reviewer`, and a
+review stage after it may return its own `risk` call. `risk::Proposal`
+reads the record stage's result and `risk::Assessment::settle` decides:
+the call of the latest review stage that passed after the record stage,
+else the relayed one, stands over the proposal; with no valid call at all
+the level is `high`. Captures are kept only as `https://` links. The plan
+carries the assessment, so a fix loop's new record replaces it.
+
+At delivery, `executor::ship::risk::label` reads the pull request's labels
+and body (`gh pr view --json labels,body`), creates whichever of the three
+labels the repository lacks (`gh label create` with a colour and the
+level's meaning), sets the one label and removes other `risk:` labels, and
+rewrites only its own section of the body. The diff evidence is
+`git diff --numstat` of the run's commits against the base it shipped to.
+An `onto` delivery judged only the commits it added, so the label it applies
+is never lower than the one the pull request had (`Assessment::onto`);
+every other delivery, refreshes included, replaces it. A promotion of the
+integration branch is labelled `high`. The level is stored on the item
+(`QueueItem::risk`), and the run's summary gets a `RISK:` line before
+`SHIPPED:`. Nothing reads the label back: merge, auto-merge, gates and
+review counts are as without it. A pull request that cannot be read is not
+labelled, and a refused step is told in the summary and the section; only
+a failing store fails the delivery.
 
 **A ship stage.** A pipeline may instead end in one `kind = "ship"` stage,
 as every built-in did before archond shipped. Its agent delivers with git

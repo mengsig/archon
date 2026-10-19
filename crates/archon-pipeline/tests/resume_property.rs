@@ -152,11 +152,13 @@ fn random_delivery(rng: &mut Lcg) -> ShipOutcome {
             commit,
             pr_url: None,
             updated: false,
+            risk: None,
         },
         _ => ShipOutcome::Shipped {
             commit,
             pr_url: Some("https://github.com/o/r/pull/7".into()),
             updated: false,
+            risk: None,
         },
     }
 }

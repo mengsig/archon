@@ -79,6 +79,7 @@ pub fn item(repo: Option<&Repo>, title: &str) -> QueueItem {
         routed_provider: None,
         provider_switch: None,
         initiative: None,
+        risk: None,
         state: QueueState::Queued,
         created_at: t(1),
         updated_at: t(1),

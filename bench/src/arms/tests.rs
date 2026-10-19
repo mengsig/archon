@@ -254,6 +254,7 @@ fn item(state: QueueState, repo: Option<RepoId>, minute: i64) -> QueueItem {
         model_plan: ModelPlan::default(),
         model_reasons: None,
         budget_usd: None,
+        risk: None,
         state,
         autonomy: Default::default(),
         origin: None,

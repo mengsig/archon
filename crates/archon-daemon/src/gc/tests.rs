@@ -513,6 +513,7 @@ fn item_in(state: QueueState, updated_secs_ago: i64) -> QueueItem {
         routed_provider: None,
         provider_switch: None,
         initiative: None,
+        risk: None,
         state,
         created_at: at,
         updated_at: at,

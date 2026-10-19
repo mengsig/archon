@@ -82,16 +82,19 @@ fn advance_origin(h: &Harness, file: &str, content: &str) -> String {
 /// The running lead commits a change and passes it with one reviewer that
 /// read it from `base` (or the whole change); the dispatcher then runs.
 async fn settle_reviewed(h: &Harness, base: Option<&str>) {
+    settle_judged(h, base, Value::Null).await;
+}
+
+/// [`settle_reviewed`], the lead proposing the `risk` level it names.
+async fn settle_judged(h: &Harness, base: Option<&str>, risk: Value) {
     let lead = h.running().await.remove(0);
     let agent = lead.aether_agent.clone().unwrap();
     let reviewer = h.backend.delegate(&agent, REVIEW_MODEL);
-    let built = shipped_by(
-        h,
-        &lead,
-        "Built; reviewed",
-        pass_by(std::slice::from_ref(&reviewer)),
-    )
-    .await;
+    let mut extra = pass_by(std::slice::from_ref(&reviewer));
+    if !risk.is_null() {
+        extra["risk"] = risk;
+    }
+    let built = shipped_by(h, &lead, "Built; reviewed", extra).await;
     let head = match &built {
         archon_core::run::StageOutcome::Completed {
             structured: Some(record),
@@ -253,6 +256,51 @@ async fn a_refresh_merges_the_new_base_into_the_same_branch_and_pull_request() {
     );
     let again = refresh(&h, &owner).await.unwrap_err().to_string();
     assert!(again.contains("nothing to refresh"), "{again}");
+}
+
+/// A refresh judges the whole change again: its level replaces the label
+/// the pull request had, lower or higher.
+#[tokio::test]
+async fn a_refresh_relabels_the_pull_request_by_its_own_call() {
+    let (h, gh) = delivering().await;
+    let owner = enqueue(&h, "the change").await;
+    h.dispatch().await;
+    settle_judged(&h, None, json!({"level": "low", "why": "A wording fix."})).await;
+    assert_eq!(gh.pr_labels(1).0, ["risk: low"]);
+    let upstream = advance_origin(&h, "change.txt", "upstream wording\n");
+
+    let fix = refresh(&h, &owner).await.expect("queued");
+    h.dispatch().await;
+    let fixing = h.run(&fix.id).await;
+    merge_by_hand(
+        &fixing.workspace,
+        &upstream,
+        "change.txt",
+        "both wordings\n",
+    );
+    let medium = json!({"level": "medium", "why": "The merge changes what it prints."});
+    settle_judged(&h, Some(&upstream), medium).await;
+
+    let state = h.state(&fix.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+    let (labels, body) = gh.pr_labels(1);
+    assert_eq!(labels, ["risk: medium"], "{:?}", gh.calls());
+    assert!(
+        gh.calls()
+            .iter()
+            .any(|c| c.ends_with("--add-label risk: medium --remove-label risk: low"))
+    );
+    assert!(
+        body.starts_with("<!-- archon-risk -->\n## Risk: medium\n"),
+        "{body}"
+    );
+    assert_eq!(
+        body.matches("<!-- archon-risk -->").count(),
+        1,
+        "replaced: {body}"
+    );
+    let stored = h.ctx.store.lock().await.item(&fix.id).unwrap().risk;
+    assert_eq!(stored, Some(archon_core::risk::RiskLevel::Medium));
 }
 
 /// A refresh whose agent did not merge the base delivers nothing.

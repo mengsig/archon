@@ -23,7 +23,8 @@ use serde_json::{Value, json};
 /// `origin` holds for `feature` once `origin` names that repository;
 /// `pr list --head <branch>` lists `branch-<branch>.json`, else none;
 /// `repo view <owner/name>` grants the permission in
-/// `permission-<owner>_<name>`, else WRITE.
+/// `permission-<owner>_<name>`, else WRITE; the three risk labels exist, and
+/// `pr edit --body-file` keeps the body as `body-<number>`.
 const GH: &str = r#"#!/bin/sh
 state="$(dirname "$0")/gh-onto"
 printf '%s\n' "$*" >> "$state/calls"
@@ -51,7 +52,10 @@ case "$1 $2" in
     if [ -f "$granted" ]; then permission="$(cat "$granted")"; else permission=WRITE; fi
     printf '{"viewerPermission":"%s"}' "$permission"
     ;;
-"pr edit") ;;
+"label list") printf '[{"name":"risk: low"},{"name":"risk: medium"},{"name":"risk: high"}]' ;;
+"pr edit")
+    if [ "$4" = "--body-file" ]; then cat > "$state/body-${3##*/}"; fi
+    ;;
 *) exit 2 ;;
 esac
 "#;
@@ -95,6 +99,11 @@ impl Gh {
     /// GitHub shows the head `origin` holds for `feature` from now on.
     fn follow_origin(&self, origin: &Path) {
         std::fs::write(self.state.join("origin"), origin.to_str().unwrap()).expect("origin");
+    }
+
+    /// The body `pr edit` last gave pull request `number`.
+    fn edited_body(&self, number: u64) -> String {
+        std::fs::read_to_string(self.state.join(format!("body-{number}"))).expect("an edited body")
     }
 
     fn calls(&self) -> String {
@@ -459,7 +468,7 @@ async fn delivered_onto(h: &Harness, before_settle: impl FnOnce()) -> (QueueItem
 }
 
 #[tokio::test]
-async fn an_onto_item_fast_forwards_the_pull_request_and_leaves_its_text_alone() {
+async fn an_onto_item_fast_forwards_the_pull_request_and_only_adds_its_risk_section() {
     let (h, gh, head) = setup().await;
     gh.show(100, &head, json!({}));
     let origin = origin_of(&h);
@@ -484,11 +493,66 @@ async fn an_onto_item_fast_forwards_the_pull_request_and_leaves_its_text_alone()
     let run = h.run(&item.id).await;
     assert_eq!(pushed(&origin, &run.branch), None, "no branch of its own");
     let calls = gh.calls();
-    for untouched in ["pr create", "pr edit", "pr merge", "pr ready"] {
+    for untouched in ["pr create", "pr merge", "pr ready", "--title", "--base"] {
         assert!(!calls.contains(untouched), "{untouched}: {calls}");
     }
+    let body = gh.edited_body(100);
+    assert!(
+        body.starts_with("<!-- archon-risk -->\n## Risk: high"),
+        "{body}"
+    );
     let stages = h.stages(&item.id).await;
     assert_eq!(archon_core::run::pr_url(stages.iter()), Some(url));
+}
+
+/// Commits added to a pull request judged only themselves: a label the pull
+/// request had stays when theirs is lower, and its owner's text stays below.
+#[tokio::test]
+async fn an_onto_delivery_never_lowers_the_pull_request_s_risk_label() {
+    let (h, gh, head) = setup().await;
+    let before =
+        "<!-- archon-risk -->\n## Risk: high\nold\n<!-- /archon-risk -->\n\nThe owner's text.";
+    let shown = json!({"labels": [{"name": "bug"}, {"name": "risk: high"}], "body": before});
+    gh.show(100, &head, shown);
+    gh.follow_origin(&origin_of(&h));
+    let item = enqueue_direct_onto(&h, "a small fix onto 100").await;
+    h.dispatch().await;
+    let low = json!({"level": "low", "why": "One line in a test."});
+    settle_item(&h, &item, |workspace| {
+        let mut record = change_elsewhere(workspace);
+        record["risk"] = low;
+        record
+    })
+    .await;
+
+    let QueueState::Succeeded { summary, .. } = h.state(&item.id).await else {
+        panic!("the item ships: {:?}", h.state(&item.id).await);
+    };
+    assert!(
+        summary.contains("RISK: high, labelled `risk: high`"),
+        "{summary}"
+    );
+    let calls = gh.calls();
+    assert!(
+        !calls.contains("--add-label") && !calls.contains("--remove-label"),
+        "{calls}"
+    );
+    let body = gh.edited_body(100);
+    assert!(
+        body.starts_with("<!-- archon-risk -->\n## Risk: high\n"),
+        "{body}"
+    );
+    assert!(
+        body.contains("already labelled `high`, and these commits add to it"),
+        "{body}"
+    );
+    assert!(body.contains("One line in a test."), "{body}");
+    assert!(
+        body.ends_with("\n\nThe owner's text.\n") && !body.contains("\nold\n"),
+        "{body}"
+    );
+    let stored = h.ctx.store.lock().await.item(&item.id).unwrap().risk;
+    assert_eq!(stored, Some(archon_core::risk::RiskLevel::High));
 }
 
 /// An `adaptive` item onto #100 whose lead is running, and the frozen head.
@@ -834,7 +898,7 @@ async fn a_refresh_merges_the_moved_pull_request_head_and_ships_as_a_fast_forwar
         &["merge-base", "--is-ancestor", &first_head, &merged],
     );
     let calls = gh.calls();
-    for untouched in ["pr create", "pr edit"] {
+    for untouched in ["pr create", "--title", "--base"] {
         assert!(!calls.contains(untouched), "{untouched}: {calls}");
     }
     let again = refresh(&h, &second).await.unwrap_err().to_string();

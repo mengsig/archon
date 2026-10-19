@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use archon_core::error::ArchonError;
 use archon_core::repo::Attribution;
+use archon_pipeline::risk::DiffStat;
 use archon_pipeline::{ShipRecord, attribution_lines};
 
 use crate::worktree::daemon_git::{Config, DaemonGit};
@@ -44,6 +45,8 @@ pub(super) struct Target {
 pub(super) struct Checked {
     /// The run branch's head, which is what ships.
     pub commit: String,
+    /// What the run's own commits change; `None` when git could not say.
+    pub diff: Option<DiffStat>,
 }
 
 /// Prove `target` holds what `record` names. The inner `Err` is a refusal no
@@ -101,7 +104,29 @@ pub(super) fn check(
     {
         return Ok(Err(refusal));
     }
-    Ok(Ok(Checked { commit }))
+    let diff = match diff_stat(tree, &base) {
+        Ok(diff) => Some(diff),
+        Err(error) => {
+            tracing::warn!(%error, "the delivered change's diff could not be read");
+            None
+        }
+    };
+    Ok(Ok(Checked { commit, diff }))
+}
+
+/// What the commits after `base`, a [`floor`], change up to `HEAD`.
+fn diff_stat(tree: &Path, base: &str) -> Result<DiffStat, ArchonError> {
+    assert!(is_floor(base), "a full ref name or a commit id");
+    let range = format!("{base}...HEAD");
+    let raw = DaemonGit::sealed_in(tree)
+        .args(["diff", "--numstat", "-z", "--no-color", range.as_str()])
+        .text()?;
+    let diff = DiffStat::from_numstat(&raw).map_err(ArchonError::Protocol)?;
+    assert!(
+        diff.files.iter().all(|f| !f.path.is_empty()),
+        "every file is named"
+    );
+    Ok(diff)
 }
 
 /// Git in the run worktree under the repository's config, running none of

@@ -139,6 +139,7 @@ fn reviewed(run: &PipelineRun) -> StageOutcome {
     let mut structured = record(&run.workspace);
     structured["verdict"] = "pass".into();
     structured["findings"] = serde_json::json!([]);
+    structured["risk"] = serde_json::json!({"level": "medium", "why": "A new sign-in form."});
     StageOutcome::Completed {
         summary: "reviewed\nVERDICT: pass".into(),
         structured: Some(structured),
@@ -213,6 +214,13 @@ async fn a_failed_end_to_end_test_loops_the_team_back_then_ships() {
         "the merged branch"
     );
     assert_eq!(gh.count("pr create"), 1);
+    let (labels, body) = gh.pr_labels(1);
+    assert_eq!(
+        labels,
+        ["risk: medium"],
+        "the team's pull request is labelled"
+    );
+    assert!(body.contains("`review` proposed `medium`"), "{body}");
     assert_eq!(
         h.stages(&item.id).await.len(),
         8,

@@ -58,6 +58,7 @@ fn item(id: &str, title: &str) -> QueueItem {
         routed_provider: None,
         provider_switch: None,
         initiative: None,
+        risk: None,
         state: QueueState::Queued,
         created_at: now,
         updated_at: now,

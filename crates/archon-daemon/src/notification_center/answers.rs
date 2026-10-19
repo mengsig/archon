@@ -6,13 +6,15 @@ use archon_core::config::AetherMode;
 use archon_core::error::ArchonError;
 use archon_core::id::QuestionId;
 use archon_core::notify::{AnswerVia, Question};
+use archon_queue::store::keys;
 
 use crate::context::DaemonContext;
 use crate::{feed, handlers};
 
 /// Apply the answer `notification` carries to the open question its key
-/// names. A question closed already, or a key that names none, is left be.
-/// Only a store failure is returned; a refusal is told in the chat.
+/// names. A question closed already, a key that names none, or an answer
+/// refused before is left be. Only a store failure is returned; a refusal
+/// is told in the chat, once.
 pub(super) async fn apply(
     ctx: &DaemonContext,
     notification: &Notification,
@@ -34,14 +36,47 @@ pub(super) async fn apply(
         Err(error) => return Err(error),
     };
     assert_eq!(question.id, id, "the store returns the question asked for");
-    if !question.is_open() {
+    if !question.is_open() || refused_before(ctx, &id, notification).await? {
         return Ok(());
     }
     match answer_with(ctx, &question, answer).await {
         Ok(()) => Ok(()),
         Err(error) if error.is_store() => Err(error),
-        Err(error) => not_applied(ctx, &question, &error).await,
+        Err(error) => not_applied(ctx, &question, notification, &error).await,
     }
+}
+
+fn refused_key(question: &QuestionId) -> String {
+    format!("{}{question}", keys::NOTIFICATION_CENTER_REFUSED)
+}
+
+/// Whether this very answer was refused already: Aether keeps it on the
+/// notification, so every reconcile reads it again.
+async fn refused_before(
+    ctx: &DaemonContext,
+    question: &QuestionId,
+    notification: &Notification,
+) -> Result<bool, ArchonError> {
+    assert!(!notification.id.is_empty(), "Aether ids its notifications");
+    let refused = ctx.store.lock().await.kv_get(&refused_key(question))?;
+    Ok(refused.as_deref() == Some(notification.id.as_str()))
+}
+
+/// Drop the refusals of questions no longer open, so they do not pile up.
+pub(super) async fn forget_refusals(
+    ctx: &DaemonContext,
+    open: &[Question],
+) -> Result<(), ArchonError> {
+    let mut store = ctx.store.lock().await;
+    let refusals = store.kv_prefix(keys::NOTIFICATION_CENTER_REFUSED)?;
+    for (key, _) in refusals {
+        let id = key.strip_prefix(keys::NOTIFICATION_CENTER_REFUSED);
+        assert!(id.is_some(), "kv_prefix returns keys under its prefix");
+        if !open.iter().any(|q| Some(q.id.as_str()) == id) {
+            store.kv_delete(&key)?;
+        }
+    }
+    Ok(())
 }
 
 async fn answer_with(
@@ -110,20 +145,23 @@ fn answer_text(question: &Question, answer: &NotificationAnswer) -> Result<Strin
     Ok(text)
 }
 
-/// Tell the operator the answer did not take, and how to give it again; a
-/// lost connection is only logged, as the next connect retries it.
+/// Tell the operator once that the answer did not take, and how to give it
+/// again; a transient failure is only logged, as the next connect retries it.
 async fn not_applied(
     ctx: &DaemonContext,
     question: &Question,
+    notification: &Notification,
     error: &ArchonError,
 ) -> Result<(), ArchonError> {
     let number = question.number;
     assert!(number > 0, "a stored question is numbered");
-    if matches!(error, ArchonError::Unavailable(_)) {
+    if super::is_transient(error) {
         tracing::warn!(question = %question.id, %error, "notification center answer deferred");
         return Ok(());
     }
     tracing::warn!(question = %question.id, %error, "notification center answer refused");
+    let key = refused_key(&question.id);
+    ctx.store.lock().await.kv_set(&key, &notification.id)?;
     let text = format!(
         "Q{number} was answered in the notification center, but the answer was not applied: {error}. Answer it with `archon answer {number} <answer>`."
     );

@@ -69,6 +69,8 @@ pub mod keys {
     pub const AETHER_INSTANCE: &str = "aether_instance_id";
     /// The last feed seq mirrored to Aether's notification center.
     pub const CURSOR_NOTIFICATION_CENTER: &str = "notification_center_feed_cursor";
+    /// Prefix: + question id → the notification whose answer was refused.
+    pub const NOTIFICATION_CENTER_REFUSED: &str = "notification_center_refused:";
 }
 
 /// Latest absolute usage for one Aether agent (`agent.usage_updated`).

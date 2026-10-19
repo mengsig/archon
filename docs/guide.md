@@ -684,20 +684,25 @@ resolves its notification. In shared mode questions are posted without
 actions, with a hint to answer them with `archon answer`.
 
 archond follows the feed with a stored cursor. When Aether was away, it
-posts what it missed once Aether is back, and on every connect it applies
-answers given meanwhile, resolves questions that closed, and posts open
-ones Aether does not hold. A post or reconcile that fails inside Aether is
-retried every 30 seconds, and later news waits behind it in feed order. A
-blocker or outcome older than a day is not posted late. Against an aetherd without the notification center archond
-logs one line at start-up and behaves as before; it starts posting once a
-newer aetherd serves the feature, from then on.
+posts what it missed once Aether is back. On every connect it posts each
+open question again (a no-op when Aether holds it unchanged), applies any
+answer Aether holds for one, and resolves the questions that closed
+meanwhile. A post or reconcile that fails inside Aether is retried every 30
+seconds, and later news waits behind it in feed order. A blocker or outcome
+older than a day is not posted late. Against an aetherd without the
+notification center archond logs one line at start-up and behaves as
+before; it starts posting once a newer aetherd serves the feature, from then
+on.
 
 Known limitations:
 
-- The reconcile on connect reads Archon's newest 1000 notifications; an
-  answer older than those is not applied.
-- An answer that is refused leaves its notification resolved in Aether;
-  answer the question again with `/answer` or `archon answer`.
+- An answer that is refused leaves its notification resolved in Aether, and
+  is told once; answer the question again with `/answer` or `archon answer`.
+- Aether keeps only its newest 500 resolved notifications. An answer given
+  while Archon was away and pruned before it reconnects is lost; the question
+  is then posted afresh.
+- Closing questions the live feed missed reads Archon's newest 1000
+  notifications; an older one stays open in Aether until you resolve it.
 
 ### Upgrading and watching from the orchestrator's chat
 

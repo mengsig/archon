@@ -4,6 +4,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use archon_aether::AetherClient;
 use archon_aether::fake::Scripted;
@@ -84,8 +85,12 @@ impl Center {
             records.push(record.clone());
             return Scripted::reply("notification", record);
         };
-        record["id"] = existing["id"].clone();
-        record["state"] = existing["state"].clone();
+        // A repost keeps the record's state and answer.
+        for kept in ["id", "state", "answer"] {
+            if let Some(value) = existing.get(kept) {
+                record[kept] = value.clone();
+            }
+        }
         *existing = record.clone();
         Scripted::reply("notification", record)
     }
@@ -134,9 +139,13 @@ impl Drop for Bridge {
 
 /// Started once its feed cursor is set: news before that is not posted.
 async fn bridge(h: &Harness, client: Arc<AetherClient>) -> Bridge {
+    bridge_retrying(h, client, Duration::from_secs(30)).await
+}
+
+async fn bridge_retrying(h: &Harness, client: Arc<AetherClient>, retry: Duration) -> Bridge {
     let ctx = h.ctx.clone();
     let bridge = Bridge(tokio::spawn(async move {
-        notification_center::follow(&ctx, &client)
+        notification_center::follow_retrying(&ctx, &client, retry)
             .await
             .expect("the bridge never fails the session");
     }));
@@ -277,34 +286,56 @@ async fn on_connect_answers_given_meanwhile_apply_and_closed_questions_resolve()
     assert_eq!(record["state"], "unread");
 }
 
-#[tokio::test]
-async fn a_reconcile_that_failed_inside_aether_is_retried() {
-    let h = Harness::new().await;
-    let center = Center::default();
-    center.install(&h);
-    let asked = ask(&h, "Merge #12?", &["yes", "no"]).await;
+/// A question Aether holds answered, as the operator left it while Archon
+/// was away.
+async fn answered_while_away(h: &Harness, center: &Center) -> Question {
+    let asked = ask(h, "Merge #12?", &["yes", "no"]).await;
     center.post(
         &json!("archon"),
         &json!({"kind": "question", "title": "Q1", "key": asked.id}),
     );
     center.answer(asked.id.as_str(), Some("1"), None, operator());
-    center.fail_next(&h, "list_notifications");
+    asked
+}
 
-    let _bridge = bridge(&h, h.connect().await).await;
-    h.eventually("the failed list is sent", || async {
-        h.fake
-            .received()
-            .iter()
-            .any(|c| c["cmd"] == "list_notifications")
+fn sent(h: &Harness, cmd: &str) -> usize {
+    h.fake.received().iter().filter(|c| c["cmd"] == cmd).count()
+}
+
+#[tokio::test]
+async fn a_reconcile_that_failed_inside_aether_is_retried() {
+    let h = Harness::new().await;
+    let center = Center::default();
+    center.install(&h);
+    let asked = answered_while_away(&h, &center).await;
+    center.fail_next(&h, "post_notification");
+
+    let client = h.connect().await;
+    let _bridge = bridge_retrying(&h, client, Duration::from_millis(100)).await;
+    h.eventually("the answer given meanwhile is applied", || async {
+        !question(&h, &asked.id).await.is_open()
     })
     .await;
+    assert_eq!(question(&h, &asked.id).await.answer.as_deref(), Some("yes"));
     assert!(
-        question(&h, &asked.id).await.is_open(),
-        "nothing applied yet"
+        sent(&h, "post_notification") >= 2,
+        "the failed post was retried"
     );
-    feed::notify(&h.ctx, NotificationKind::Progress, "stage 2", None, None)
-        .await
-        .unwrap();
+}
+
+#[tokio::test]
+async fn an_answer_past_the_listed_notifications_is_still_applied() {
+    let h = Harness::new().await;
+    let center = Center::default();
+    center.install(&h);
+    let asked = answered_while_away(&h, &center).await;
+    // As when a thousand newer notifications push it out of the list.
+    h.fake.set_responder(
+        "list_notifications",
+        Arc::new(|_| Scripted::reply("notifications", json!([]))),
+    );
+
+    let _bridge = bridge(&h, h.connect().await).await;
     h.eventually("the answer given meanwhile is applied", || async {
         !question(&h, &asked.id).await.is_open()
     })
@@ -396,7 +427,7 @@ async fn in_shared_mode_questions_are_shown_but_not_answered_there() {
     let h = Harness::with(config, None).await;
     let center = Center::default();
     center.install(&h);
-    let _bridge = bridge(&h, h.connect().await).await;
+    let bridge = self::bridge(&h, h.connect().await).await;
     let asked = ask(&h, "Ship it?", &["yes", "no"]).await;
 
     let record = posted(&h, &center, asked.id.as_str()).await;
@@ -411,6 +442,17 @@ async fn in_shared_mode_questions_are_shown_but_not_answered_there() {
             .any(|n| n.contains("was not applied"))
     })
     .await;
+    assert!(question(&h, &asked.id).await.is_open());
+
+    drop(bridge);
+    let _again = self::bridge(&h, h.connect().await).await;
+    h.eventually("the reconnect reconciles", || async {
+        sent(&h, "list_notifications") >= 2
+    })
+    .await;
+    let refusals = h.system_notes().await;
+    let told = refusals.iter().filter(|n| n.contains("was not applied"));
+    assert_eq!(told.count(), 1, "a refusal is told once: {refusals:?}");
     assert!(question(&h, &asked.id).await.is_open());
 }
 

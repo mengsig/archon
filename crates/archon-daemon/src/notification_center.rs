@@ -46,6 +46,16 @@ pub(crate) fn warn_if_unsupported(client: &AetherClient) {
 /// Mirror the feed into the notification center and apply answers given
 /// there, until the connection drops. Only a store failure is an `Err`.
 pub async fn follow(ctx: &DaemonContext, client: &AetherClient) -> Result<(), ArchonError> {
+    follow_retrying(ctx, client, RETRY).await
+}
+
+/// [`follow`], retrying a failed pass every `retry` instead of every 30s.
+pub async fn follow_retrying(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    retry: Duration,
+) -> Result<(), ArchonError> {
+    assert!(!retry.is_zero(), "a retry period paces the retries");
     if !client.serves_notifications() {
         // Support may come with a later aetherd; it then starts from that day.
         return ctx
@@ -62,13 +72,13 @@ pub async fn follow(ctx: &DaemonContext, client: &AetherClient) -> Result<(), Ar
             Ok(subscription) => subscription,
             Err(error) => {
                 tracing::warn!(%error, "notification center: cannot follow answers");
-                tokio::time::sleep(RETRY).await;
+                tokio::time::sleep(retry).await;
                 continue;
             }
         };
         let mut reconciled = false;
         catch_up(ctx, client, &mut reconciled).await?;
-        follow_pass(ctx, client, &mut feed, &mut answers, &mut reconciled).await?;
+        follow_pass(ctx, client, &mut feed, &mut answers, &mut reconciled, retry).await?;
     }
     Ok(())
 }
@@ -95,15 +105,17 @@ fn answer_query() -> EventQuery {
 }
 
 /// Answers as Aether records them and new feed items as the store does,
-/// until the answer stream ends (a dropped connection or an overflow).
+/// until the answer stream ends (a dropped connection or an overflow). A
+/// failed reconcile waits for the retry tick, so its own notices cannot spin it.
 async fn follow_pass(
     ctx: &DaemonContext,
     client: &AetherClient,
     feed: &mut broadcast::Receiver<FeedItem>,
     answers: &mut Subscription,
     reconciled: &mut bool,
+    period: Duration,
 ) -> Result<(), ArchonError> {
-    let mut retry = tokio::time::interval_at(tokio::time::Instant::now() + RETRY, RETRY);
+    let mut retry = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
     retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
@@ -122,7 +134,9 @@ async fn follow_pass(
                 }
             }
             // A lagged receiver only means the store holds more to read.
-            _ = feed.recv() => catch_up(ctx, client, reconciled).await?,
+            _ = feed.recv() => {
+                logged(mirror_feed(ctx, client).await, "mirror the feed")?;
+            }
             _ = retry.tick() => catch_up(ctx, client, reconciled).await?,
         }
     }
@@ -141,19 +155,23 @@ fn logged<T>(result: Result<T, ArchonError>, what: &str) -> Result<Option<T>, Ar
     }
 }
 
-/// Make Aether's questions match the store's: apply answers given while
-/// Archon was not listening, resolve what closed meanwhile, and post the
-/// open questions Aether lacks.
+/// Make Aether's questions match the store's. Every open question is posted
+/// again, a no-op for one Aether holds unchanged, whose record carries any
+/// answer given while Archon was not listening; then what closed is resolved.
 async fn reconcile(ctx: &DaemonContext, client: &AetherClient) -> Result<(), ArchonError> {
-    let held = client.archon_notifications(notifications::MAX_LIST).await?;
-    for answered in held.iter().filter(|n| n.answer.is_some()) {
-        answers::apply(ctx, answered).await?;
-    }
     let open = ctx.store.lock().await.questions(true)?;
     assert!(
         open.iter().all(Question::is_open),
         "the store lists open questions"
     );
+    for question in &open {
+        let posted = post_question(ctx, client, question).await?;
+        if let Some(answered) = posted.filter(|n| n.answer.is_some()) {
+            answers::apply(ctx, &answered).await?;
+        }
+    }
+    answers::forget_refusals(ctx, &open).await?;
+    let held = client.archon_notifications(notifications::MAX_LIST).await?;
     let is_open = |key: &str| open.iter().any(|q| q.id.as_str() == key);
     let closed = held
         .iter()
@@ -163,26 +181,26 @@ async fn reconcile(ctx: &DaemonContext, client: &AetherClient) -> Result<(), Arc
     for key in closed {
         client.resolve_notification(key).await?;
     }
-    for question in open.iter().filter(|q| !holds(&held, q)) {
-        post_question(ctx, client, question).await?;
-    }
     Ok(())
 }
 
-fn holds(held: &[Notification], question: &Question) -> bool {
-    held.iter()
-        .any(|n| n.key.as_deref() == Some(question.id.as_str()))
-}
-
+/// The notification as Aether now holds it; `None` for a question Archon
+/// does not post.
 async fn post_question(
     ctx: &DaemonContext,
     client: &AetherClient,
     question: &Question,
-) -> Result<(), ArchonError> {
+) -> Result<Option<Notification>, ArchonError> {
     let Some(post) = posts::question(ctx, question).await? else {
-        return Ok(());
+        return Ok(None);
     };
-    client.post_notification(post).await.map(drop)
+    let posted = client.post_notification(post).await?;
+    assert_eq!(
+        posted.key.as_deref(),
+        Some(question.id.as_str()),
+        "posted under its id"
+    );
+    Ok(Some(posted))
 }
 
 /// Mirror every feed item after the cursor, a page at a time. The cursor
@@ -233,7 +251,8 @@ async fn mirror_feed(ctx: &DaemonContext, client: &AetherClient) -> Result<(), A
     }
 }
 
-fn is_transient(error: &ArchonError) -> bool {
+/// No reply, or a failure inside Aether: worth the same request again.
+pub(super) fn is_transient(error: &ArchonError) -> bool {
     matches!(error, ArchonError::Unavailable(_)) || archon_aether::wire::is_internal(error)
 }
 
@@ -266,7 +285,7 @@ async fn mirror_item(
             if !question.is_open() {
                 return Ok(());
             }
-            post_question(ctx, client, &question).await
+            post_question(ctx, client, &question).await.map(drop)
         }
         FeedEntry::Answer { question, .. } => client
             .resolve_notification(question.as_str())

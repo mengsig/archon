@@ -28,16 +28,14 @@ macro_rules! prefixed_id {
             /// Accepts only `<prefix>_<ULID>`; anything else is a caller bug or
             /// corrupted storage, never silently accepted.
             pub fn parse(raw: &str) -> Result<Self, ArchonError> {
-                let Some(rest) = raw.strip_prefix(concat!($prefix, "_")) else {
-                    return Err(ArchonError::Invalid(format!(
-                        "{raw:?} is not a {} id (expected prefix {})",
-                        stringify!($name),
+                let invalid = || {
+                    ArchonError::Invalid(format!(
+                        "{raw:?} is not a valid id here (expected `{}_` plus {ULID_LEN} characters)",
                         $prefix
-                    )));
+                    ))
                 };
-                ulid::Ulid::from_string(rest).map_err(|e| {
-                    ArchonError::Invalid(format!("{raw:?} has a malformed ULID: {e}"))
-                })?;
+                let rest = raw.strip_prefix(concat!($prefix, "_")).ok_or_else(invalid)?;
+                ulid::Ulid::from_string(rest).map_err(|_| invalid())?;
                 Ok(Self(raw.to_owned()))
             }
         }
@@ -122,13 +120,14 @@ pub fn id_prefix(text: &str, kind: &str, what: &str) -> Result<String, ArchonErr
     let ulid = bare.to_ascii_uppercase();
     if ulid.is_empty() || ulid.len() > ULID_LEN {
         return Err(ArchonError::Invalid(format!(
-            "{text:?} is not a {what} id or its start: give 1 to {ULID_LEN} characters \
-             after {kind}_"
+            "{text:?} is not a {what} id or its start: expected `{kind}_` plus 1 to \
+             {ULID_LEN} characters"
         )));
     }
     if let Some(bad) = ulid.chars().find(|c| !ULID_ALPHABET.contains(*c)) {
         return Err(ArchonError::Invalid(format!(
-            "{text:?} is not a {what} id or its start: {bad:?} is not a ULID character"
+            "{text:?} is not a {what} id or its start: expected `{kind}_` plus characters \
+             from 0-9 and A-Z without I, L, O or U, but found {bad:?}"
         )));
     }
     let prefix = format!("{kind}_{ulid}");
@@ -167,7 +166,9 @@ mod tests {
         assert_eq!(id_prefix("01k2", "ini", "initiative").unwrap(), "ini_01K2");
         let wrong = id_prefix("qi_01K2", "ini", "initiative").unwrap_err();
         assert!(
-            wrong.to_string().contains("not a ULID character"),
+            wrong
+                .to_string()
+                .contains("is not a initiative id or its start"),
             "{wrong}"
         );
     }

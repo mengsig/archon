@@ -117,7 +117,7 @@ impl Steer {
             .is_some_and(|m| m == 0 || m > MAX_EXTEND_MINUTES)
         {
             return Err(ArchonError::Invalid(format!(
-                "extend_minutes is 1 to {MAX_EXTEND_MINUTES}"
+                "an extension is 1 to {MAX_EXTEND_MINUTES} minutes"
             )));
         }
         if self.insert_stage.is_some() && self.switch_pipeline.is_some() {

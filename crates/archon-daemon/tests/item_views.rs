@@ -160,7 +160,9 @@ async fn an_unknown_or_malformed_prefix_is_refused_clearly() {
     let error = resolve(&h, "qi_01*").await.expect_err("malformed");
     assert!(matches!(error, ArchonError::Invalid(_)), "{error:?}");
     assert!(
-        error.to_string().contains("not a ULID character"),
+        error
+            .to_string()
+            .contains("is not a queue item id or its start"),
         "{error}"
     );
 }

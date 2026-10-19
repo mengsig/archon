@@ -219,7 +219,9 @@ fn check_steerable(item: &QueueItem, steer: &Steer) -> Result<(), ArchonError> {
         _ => {}
     }
     if steer.abort.is_some() {
-        return refuse("has no running stage to abort");
+        return refuse(
+            "has no running stage to abort or remove yet; stages can be steered once it runs",
+        );
     }
     if steer.extend_minutes.is_some() {
         return refuse("has no running stage to give more time");

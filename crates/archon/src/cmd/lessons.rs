@@ -1,7 +1,7 @@
 //! Inspect and edit durable learned advice.
 use super::{emit, to_json};
 use archon_core::id::{LessonId, QueueItemId};
-use archon_core::lesson::{LessonDraft, LessonKind, LessonPatch, LessonQuery, LessonState};
+use archon_core::lesson::{Lesson, LessonDraft, LessonKind, LessonPatch, LessonQuery, LessonState};
 use archon_core::protocol::{Reply, RepoRef, Request};
 use clap::{Args, Subcommand};
 use std::process::ExitCode;
@@ -65,7 +65,32 @@ pub enum LessonCommand {
     Stats,
 }
 
+/// The lesson `retract` names, when it is retracted already.
+async fn already_retracted(args: &LessonsArgs) -> anyhow::Result<Option<Lesson>> {
+    let Some(LessonCommand::Retract { lesson }) = &args.command else {
+        return Ok(None);
+    };
+    let id = LessonId::parse(lesson.trim())?;
+    let query = LessonQuery {
+        repo: args.repo.clone().map(RepoRef),
+        state: Some(LessonState::Retracted),
+        kind: None,
+    };
+    let Reply::Lessons(retracted) = send(Request::Lessons(query)).await? else {
+        anyhow::bail!("archond answered the lesson list with something else");
+    };
+    Ok(retracted.into_iter().find(|l| l.id == id))
+}
+
 pub async fn run(args: LessonsArgs, json: bool) -> anyhow::Result<ExitCode> {
+    if let Some(lesson) = already_retracted(&args).await? {
+        let text = format!(
+            "Lesson {} is already retracted; nothing changed.",
+            lesson.id
+        );
+        emit(json, || to_json(&lesson), &text)?;
+        return Ok(ExitCode::SUCCESS);
+    }
     let request = request(args)?;
     let reply = send(request).await?;
     let (value, text) = match reply {

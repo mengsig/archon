@@ -399,7 +399,7 @@ pub(crate) async fn check_item_budget(
                 .to_owned()
         } else if left <= 0.0 {
             format!(
-                "BLOCKED: the item's budget is used up ({} over); raise it with update_item or retry",
+                "BLOCKED: the item's budget is used up ({} over); raise it with `archon queue steer <item> --budget-usd <USD>` or retry",
                 archon_core::cost::format_usd(-left)
             )
         } else {

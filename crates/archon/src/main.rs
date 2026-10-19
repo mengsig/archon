@@ -133,8 +133,7 @@ fn exit_quietly_on_closed_stdout() {
 }
 
 fn is_closed_stdout(panic_message: &str) -> bool {
-    panic_message.starts_with("failed printing to stdout:")
-        && panic_message.contains("Broken pipe")
+    panic_message.starts_with("failed printing to stdout:") && panic_message.contains("Broken pipe")
 }
 
 fn detached_logger(cli: &Cli) -> anyhow::Result<Option<daemon_log::Logger>> {

@@ -75,7 +75,7 @@ pub fn check_tags(tags: &[String]) -> Result<(), ArchonError> {
 pub fn check_item_budget(budget: Option<f64>) -> Result<(), ArchonError> {
     if budget.is_some_and(|usd| !usd.is_finite() || usd <= 0.0) {
         return Err(ArchonError::Invalid(
-            "budget_usd must be a finite amount greater than zero".into(),
+            "a budget must be a finite amount of USD greater than zero".into(),
         ));
     }
     Ok(())

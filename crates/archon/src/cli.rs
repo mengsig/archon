@@ -691,10 +691,10 @@ pub struct QueueSteerArgs {
     #[arg(long)]
     pub effort: Option<archon_core::model::Effort>,
     /// The item's new budget in USD.
-    #[arg(long, value_name = "USD")]
+    #[arg(long, value_name = "USD", allow_negative_numbers = true)]
     pub budget_usd: Option<f64>,
     /// Minutes added to the deadline of the stage running now.
-    #[arg(long, value_name = "MINUTES")]
+    #[arg(long, value_name = "MINUTES", value_parser = parse_extend_minutes)]
     pub extend: Option<u32>,
     /// Stop the stage's agents now, then retry it (or --then, --goto).
     #[arg(long)]
@@ -720,6 +720,17 @@ pub struct QueueSteerArgs {
     /// Replace the stages not started with those this pipeline runs next.
     #[arg(long, value_name = "PIPELINE")]
     pub switch: Option<String>,
+}
+
+/// `--extend` as whole minutes, with one message for every bad value.
+fn parse_extend_minutes(text: &str) -> Result<u32, String> {
+    let max = archon_core::steer::MAX_EXTEND_MINUTES;
+    match text.trim().parse::<u32>() {
+        Ok(minutes) if (1..=max).contains(&minutes) => Ok(minutes),
+        _ => Err(format!(
+            "{text:?} is not an extension of 1 to {max} minutes"
+        )),
+    }
 }
 
 /// File inputs are decoded here; policy and pipeline validation belong to archond.
@@ -761,7 +772,7 @@ pub struct QueueAddArgs {
     #[arg(long)]
     pub idempotency_key: Option<String>,
     /// Item budget in USD.
-    #[arg(long)]
+    #[arg(long, allow_negative_numbers = true)]
     pub budget_usd: Option<f64>,
     /// Review family: strict, standard or none; omitted uses daemon defaults.
     #[arg(long)]

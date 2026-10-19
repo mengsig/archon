@@ -75,8 +75,10 @@ async fn clear(directive: Option<DirectiveId>, json: bool) -> anyhow::Result<()>
 }
 
 fn parse_directive_id(text: &str) -> anyhow::Result<DirectiveId> {
-    Ok(DirectiveId::parse(text.trim()).map_err(|e| {
-        archon_core::ArchonError::Invalid(format!("{text:?} is not a directive id (dir_…): {e}"))
+    Ok(DirectiveId::parse(text.trim()).map_err(|_| {
+        archon_core::ArchonError::Invalid(format!(
+            "{text:?} is not a directive id (expected `dir_` plus 26 characters)"
+        ))
     })?)
 }
 
@@ -88,6 +90,11 @@ mod tests {
     fn directive_ids_must_be_directive_ids() {
         let id = DirectiveId::new();
         assert_eq!(parse_directive_id(&format!(" {id}")).unwrap(), id);
-        assert!(parse_directive_id("qi_nope").is_err());
+        let error = parse_directive_id("nope").unwrap_err().to_string();
+        assert!(error.contains("\"nope\" is not a directive id"), "{error}");
+        assert!(
+            !error.contains("DirectiveId") && !error.contains("ULID"),
+            "{error}"
+        );
     }
 }

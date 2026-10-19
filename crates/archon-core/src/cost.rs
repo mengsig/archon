@@ -90,6 +90,9 @@ impl CostGroup {
     }
 }
 
+/// The furthest back an age may reach: ten years, far beyond any ledger.
+pub const MAX_DAYS_BACK: u32 = 3650;
+
 /// One end of a report's range: a local calendar date, or a number of
 /// whole days back from today.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,7 +123,13 @@ impl DayBound {
             )));
         }
         let days = u32::try_from(age.secs() / SECS_PER_DAY)
-            .map_err(|_| ArchonError::Invalid(format!("{text:?} is too long")))?;
+            .ok()
+            .filter(|days| *days <= MAX_DAYS_BACK)
+            .ok_or_else(|| {
+                ArchonError::Invalid(format!(
+                    "{text:?} reaches back too far: at most {MAX_DAYS_BACK} days"
+                ))
+            })?;
         Ok(Self::Days(days))
     }
 
@@ -263,6 +272,18 @@ mod tests {
             by: CostGroup::Day,
         };
         query.range(date("2026-09-29"))
+    }
+
+    #[test]
+    fn ages_reaching_back_too_far_are_refused() {
+        assert_eq!(
+            DayBound::parse("3650d").unwrap(),
+            DayBound::Days(MAX_DAYS_BACK)
+        );
+        for text in ["3651d", "99999d", "9999999999d"] {
+            let error = DayBound::parse(text).unwrap_err().to_string();
+            assert!(error.contains("reaches back too far"), "{error}");
+        }
     }
 
     #[test]

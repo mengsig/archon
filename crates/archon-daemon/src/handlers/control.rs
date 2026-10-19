@@ -462,10 +462,18 @@ pub(super) async fn pause(
     paused: bool,
 ) -> Result<Reply, ArchonError> {
     let hard_pause = matches!(target, PauseTarget::Global { hard: true }) && paused;
-    // Resuming skips the check: a pipeline removed since it was paused
-    // must still be resumable.
-    if let (PauseTarget::Pipeline { name }, true) = (&target, paused) {
-        check_pipeline_known(ctx, name).await?;
+    if let PauseTarget::Pipeline { name } = &target {
+        // A pipeline removed since it was paused must still be resumable.
+        let paused_now = ctx
+            .store
+            .lock()
+            .await
+            .pause_state()?
+            .pipelines
+            .contains(name);
+        if paused || !paused_now {
+            check_pipeline_known(ctx, name).await?;
+        }
     }
     let release = {
         let mut store = ctx.store.lock().await;

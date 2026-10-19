@@ -342,7 +342,7 @@ fn reserve_plans(
     let budget = budget_left(ctx, store, &item, estimates)?;
     if let Some(left) = budget.filter(|left| *left <= 0.0) {
         let error = format!(
-            "BLOCKED: the item's budget is used up ({} over); raise it with update_item or retry",
+            "BLOCKED: the item's budget is used up ({} over); raise it with `archon queue steer <item> --budget-usd <USD>` or retry",
             archon_core::cost::format_usd(-left)
         );
         let stage = plans[0].stage_id.clone();

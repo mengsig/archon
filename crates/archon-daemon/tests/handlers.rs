@@ -550,9 +550,17 @@ async fn pausing_an_unknown_pipeline_is_refused_with_the_known_ones() {
             && text.contains(common::PIPELINE),
         "{text}"
     );
+    let error = h
+        .cli(Request::Resume(unknown.clone()))
+        .await
+        .expect_err("resuming a pipeline that is not paused and not known");
+    assert!(error.to_string().contains("known pipelines"), "{error}");
+    let mut state = h.ctx.store.lock().await.pause_state().unwrap();
+    state.pipelines.push("no-such-pipeline".into());
+    h.ctx.store.lock().await.set_pause_state(&state).unwrap();
     h.cli(Request::Resume(unknown))
         .await
-        .expect("resuming a stale name stays possible");
+        .expect("resuming a stale name that is paused stays possible");
     let known = PauseTarget::Pipeline {
         name: common::PIPELINE.into(),
     };

@@ -839,7 +839,7 @@ async fn a_waiting_item_takes_what_it_runs_next_and_nothing_that_needs_a_run() {
     assert!(which.contains("name the stage"), "{which}");
     let nothing_runs = refused(&h, &item.id, abort(Some("review"), Then::Skip)).await;
     assert!(
-        nothing_runs.contains("has no running stage to abort"),
+        nothing_runs.contains("has no running stage to abort or remove yet"),
         "{nothing_runs}"
     );
     let no_deadline = Steer {

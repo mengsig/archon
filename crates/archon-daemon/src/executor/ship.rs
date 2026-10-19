@@ -14,6 +14,7 @@ pub(crate) mod risk;
 
 use archon_core::catalog::StageKind;
 use archon_core::error::ArchonError;
+use archon_core::repo::Repo;
 use archon_core::run::{PipelineRun, StageOutcome, StageRun};
 use serde_json::Value;
 
@@ -58,18 +59,21 @@ pub(super) async fn verify(
             structured,
         }),
         Err(error) if error.is_store() => Err(error),
-        Ok(Some(url)) => {
+        Ok(Some((repo, url))) => {
             let pushed = format!("refs/heads/{}", run.branch);
             super::initiative_ship::verify_stack(ctx, run, &pushed).await?;
             super::initiative_ship::record(ctx, run, &url).await?;
-            let store = &mut *ctx.store.lock().await;
-            super::pull_requests::record_delivery(store, &run.id, &url)?;
+            {
+                let store = &mut *ctx.store.lock().await;
+                super::pull_requests::record_delivery(store, &run.id, &url)?;
+            }
+            let risk = label_agent_pr(ctx, run, stage, &repo, &url, structured.as_ref()).await?;
             let mut data = structured
                 .and_then(|s| s.as_object().cloned())
                 .unwrap_or_default();
             data.insert("pr_url".into(), url.into());
             Ok(StageOutcome::Completed {
-                summary,
+                summary: format!("{}\n\n{risk}", summary.trim_end()),
                 structured: Some(data.into()),
             })
         }
@@ -92,13 +96,42 @@ fn without_pr_url(mut structured: Option<Value>) -> Option<Value> {
     structured
 }
 
-/// The open pull request a ship agent's `stage` must have left in `pr`
-/// mode; `None` for any other stage and in `local` mode.
+/// Label the pull request a ship agent delivered by the `risk` call in its
+/// own `structured` result: no reviewer judged it, and without one it is high.
+/// Into another item's pull request, its label never goes lower.
+async fn label_agent_pr(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+    stage: &StageRun,
+    repo: &Repo,
+    url: &str,
+    structured: Option<&Value>,
+) -> Result<String, ArchonError> {
+    assert_eq!(stage.run, run.id, "the run's own ship stage");
+    let onto = ctx.store.lock().await.item(&run.item)?.onto.is_some();
+    let proposal = archon_pipeline::risk::Proposal::read(structured);
+    let labelling = risk::Labelling {
+        assessment: archon_pipeline::risk::Assessment::settle(
+            stage.stage_id.as_str(),
+            &proposal,
+            None,
+        ),
+        onto,
+        diff: None,
+        against: "the base the ship agent chose; see the pull request's files".into(),
+        checks: &[],
+        review: None,
+    };
+    risk::label(ctx, repo, Some(&run.item), url, labelling).await
+}
+
+/// The repository and open pull request a ship agent's `stage` must have
+/// left in `pr` mode; `None` for any other stage and in `local` mode.
 async fn agent_pr(
     ctx: &DaemonContext,
     run: &PipelineRun,
     stage: &StageRun,
-) -> Result<Option<String>, ArchonError> {
+) -> Result<Option<(Repo, String)>, ArchonError> {
     let vars = recover::load_run_vars(&*ctx.store.lock().await, &run.id)?;
     match vars.get("ship.mode").map(String::as_str) {
         Some("pr") => {}
@@ -123,5 +156,6 @@ async fn agent_pr(
         store.repo(&crate::resolve::repo_ref(&repo))?
     };
     let gh = &ctx.config.github.binary;
-    remote::open_pr(gh, &repo, &run.branch).await.map(Some)
+    let url = remote::open_pr(gh, &repo, &run.branch).await?;
+    Ok(Some((repo, url)))
 }

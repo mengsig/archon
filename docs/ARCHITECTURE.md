@@ -2620,8 +2620,8 @@ stage holding a review relays its reviewer's call as `risk.reviewer`, and a
 review stage after it may return its own `risk` call. `risk::Proposal`
 reads the record stage's result and `risk::Assessment::settle` decides:
 the call of the latest review stage that passed after the record stage,
-else the relayed one, stands over the proposal; with no valid call at all
-the level is `high`. Captures are kept only as `https://` links. The plan
+else the relayed one, stands over the proposal; without a valid proposal
+the level is `high`, and a reviewer's call is kept only as evidence. Captures are kept only as `https://` links. The plan
 carries the assessment, so a fix loop's new record replaces it.
 
 At delivery, `executor::ship::risk::label` reads the pull request's labels
@@ -2633,7 +2633,10 @@ rewrites only its own section of the body. The diff evidence is
 An `onto` delivery judged only the commits it added, so the label it applies
 is never lower than the one the pull request had (`Assessment::onto`);
 every other delivery, refreshes included, replaces it. A promotion of the
-integration branch is labelled `high`. The level is stored on the item
+integration branch is labelled `high`, and `Promotion::risk` carries how
+that went. A pull request a `kind = "ship"` agent opened is labelled once
+`ship::verify` finds it, by the `risk` call in that agent's own result,
+which its contract asks for; no diff is read for it. The level is stored on the item
 (`QueueItem::risk`), and the run's summary gets a `RISK:` line before
 `SHIPPED:`. Nothing reads the label back: merge, auto-merge, gates and
 review counts are as without it. A pull request that cannot be read is not

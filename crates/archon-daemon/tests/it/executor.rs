@@ -1593,7 +1593,8 @@ async fn pr_shipping_records_githubs_url_even_when_the_agent_guesses_another() {
     }
 }
 
-/// A lookup held until the test releases it, with a bound if the test fails.
+/// A lookup held until the test releases it, with a bound if the test fails;
+/// other calls, such as the risk label's, pass straight through.
 struct SlowGh {
     binary: std::path::PathBuf,
 }
@@ -1603,16 +1604,18 @@ impl SlowGh {
         let binary = h.ctx.config.github.binary.clone();
         let response = std::fs::read_to_string(&binary).unwrap();
         let barrier = r#"#!/bin/sh
-printf 'lookup\n' >> "$0.started"
-attempt=0
-while [ ! -e "$0.release" ]; do
-    attempt=$((attempt + 1))
-    [ "$attempt" -lt 1000 ] || exit 4
-    sleep 0.01
-done
-if [ -e "$0.missing" ]; then
-    printf '[]'
-    exit 0
+if [ "$1 $2" = "pr list" ]; then
+    printf 'lookup\n' >> "$0.started"
+    attempt=0
+    while [ ! -e "$0.release" ]; do
+        attempt=$((attempt + 1))
+        [ "$attempt" -lt 1000 ] || exit 4
+        sleep 0.01
+    done
+    if [ -e "$0.missing" ]; then
+        printf '[]'
+        exit 0
+    fi
 fi
 "#;
         std::fs::write(&binary, format!("{barrier}{response}")).unwrap();

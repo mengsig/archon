@@ -116,7 +116,8 @@ pub struct Assessment {
 impl Assessment {
     /// Settle `proposal`, made by `stage`, with the latest reviewer's call:
     /// `reviewed` from a later review stage, else the one the proposal relays.
-    /// A reviewer's call stands; with no call at all, the level is high.
+    /// A reviewer's call on a proposal stands; without a valid proposal, the
+    /// level is high.
     pub fn settle(stage: &str, proposal: &Proposal, reviewed: Option<(&str, &RiskCall)>) -> Self {
         assert!(!stage.is_empty(), "a stage proposed it");
         let relayed = proposal
@@ -146,13 +147,15 @@ impl Assessment {
                 ),
                 format!("{}\n\n{by}, changing it: {}", own.why, call.why),
             ),
+            // A reviewer only judges a proposal; without one the level stays high.
             (Err(missing), Some((by, call))) => (
-                call.level,
+                RiskLevel::High,
                 format!(
-                    "`{stage}` proposed no valid level ({missing}); {by} set `{}`.",
+                    "`{stage}` proposed no valid level ({missing}), so Archon applies `high`; \
+                     {by} called it `{}`.",
                     call.level
                 ),
-                call.why.clone(),
+                format!("{by}: {}", call.why),
             ),
             (Err(missing), None) => (
                 RiskLevel::High,

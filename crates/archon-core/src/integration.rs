@@ -102,6 +102,9 @@ pub struct Promotion {
     pub head: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pull_request: Option<String>,
+    /// How labelling the pull request's advisory risk went, in one line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub risk: Option<String>,
     #[serde(flatten)]
     pub outcome: PromotionOutcome,
 }
@@ -140,6 +143,14 @@ pub struct ReleaseHook {
 impl Promotion {
     /// What happened, in a few lines, as `archon promote` prints it.
     pub fn describe(&self) -> String {
+        let text = self.outcome_text();
+        match &self.risk {
+            Some(risk) => format!("{text}\n{risk}"),
+            None => text,
+        }
+    }
+
+    fn outcome_text(&self) -> String {
         assert!(!self.branch.is_empty() && !self.release.is_empty());
         let pr = self.pull_request.as_deref().unwrap_or("no pull request");
         let what = format!("{}/{} at {}", self.repo, self.branch, short(&self.head));
@@ -248,6 +259,7 @@ mod tests {
             release: "main".into(),
             head: "1a2b3c4d5e6f".into(),
             pull_request: Some("https://github.com/o/r/pull/9".into()),
+            risk: Some("RISK: high; the label could not be set: HTTP 403".into()),
             outcome: PromotionOutcome::AwaitingOperator,
         };
         let waiting = promotion.describe();
@@ -255,6 +267,8 @@ mod tests {
             waiting.contains("waits for the operator: run `archon promote archon`"),
             "{waiting}"
         );
+        assert!(waiting.ends_with("\nRISK: high; the label could not be set: HTTP 403"));
+        promotion.risk = None;
         promotion.outcome = PromotionOutcome::Merged {
             release_head: "9f8e7d6c5b4a".into(),
             realign_problem: Some("`origin` refused the fast-forward".into()),

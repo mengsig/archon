@@ -37,7 +37,7 @@ fn a_proposal_reads_its_call_the_relayed_review_and_only_web_captures() {
 }
 
 #[test]
-fn a_reviewer_s_call_stands_and_no_call_at_all_is_high() {
+fn a_reviewer_s_call_stands_and_no_proposal_is_high() {
     let mut proposal = Proposal::read(Some(&json!({"risk": {"level": "low", "why": "docs"}})));
     let kept = Assessment::settle("implement", &proposal, None);
     assert_eq!(kept.level, RiskLevel::Low);
@@ -68,8 +68,20 @@ fn a_reviewer_s_call_stands_and_no_call_at_all_is_high() {
     let high = Assessment::settle("implement", &none, None);
     assert_eq!(high.level, RiskLevel::High);
     assert!(high.decided.contains("applies `high`"), "{}", high.decided);
-    let lowered = Assessment::settle("implement", &none, Some(("its reviewer", &review)));
-    assert_eq!(lowered.level, RiskLevel::Medium);
+    let unproposed = Assessment::settle("implement", &none, Some(("its reviewer", &review)));
+    assert_eq!(
+        unproposed.level,
+        RiskLevel::High,
+        "a reviewer never lowers it"
+    );
+    assert!(
+        unproposed
+            .decided
+            .contains("its reviewer called it `medium`"),
+        "{}",
+        unproposed.decided
+    );
+    assert!(unproposed.why.contains("a default"), "{}", unproposed.why);
 }
 
 #[test]

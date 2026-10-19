@@ -301,6 +301,8 @@ async fn a_green_integration_branch_merges_into_the_release_branch_and_is_realig
         body.contains("Archon labels every promotion `high`."),
         "{body}"
     );
+    let risk = done.risk.as_deref().unwrap_or("");
+    assert!(risk.starts_with("RISK: high, labelled"), "{done:?}");
     assert!(told(&h, NotificationKind::Outcome, "promoted demo/next").await);
 
     integration::pass(&h.ctx)

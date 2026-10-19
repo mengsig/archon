@@ -73,6 +73,9 @@ pub fn instructions(
         out.push_str(&risk_rules(relays_reviewer(owed)));
     } else if stage.kind == StageKind::Review {
         out.push_str(&review_risk_rules());
+    } else if stage.kind == StageKind::Ship {
+        out.push_str(&risk_rules(false));
+        out.push_str(SHIP_RISK_SHAPE);
     }
     out
 }
@@ -570,7 +573,7 @@ fn risk_rules(relays: bool) -> String {
     let rules = format!(
         "\n## Risk level\n\n\
          - `risk` sets the pull request's advisory `risk:` label and the \"Risk\" section \
-         atop its body; nothing merges or gates by it, and you never merge. Low may merge \
+         atop its body; nothing merges or gates by it, so never merge on its account. Low may merge \
          with no human review, medium needs one human reviewer, high two who read the code.\n\
          - Rubric:\n{rubric}\
          - `why`: areas and files touched, whether behaviour changes or only tests, docs or \
@@ -604,6 +607,10 @@ fn indented(list: &str) -> String {
     assert!(list.ends_with('\n'), "a list of whole lines");
     list.lines().map(|line| format!("  {line}\n")).collect()
 }
+
+/// Where a ship agent, which has no ship record, puts its `risk` key.
+const SHIP_RISK_SHAPE: &str = "- Add it to your `structured` data as `\"risk\": \
+{\"level\": \"<low, medium or high>\", \"why\": \"…\", \"captures\": [\"https://…\"]}`.\n";
 
 const SHIP_RECORD_SHAPE: &str = "\
 - Read both hashes after the last commit, made under the repository's own git \
@@ -1476,7 +1483,7 @@ mod tests {
         for said in [
             "## Risk level",
             "\"risk\": {\"level\": \"<low, medium or high>\"",
-            "nothing merges or gates by it, and you never merge",
+            "nothing merges or gates by it, so never merge on its account",
             "high two who read the code",
             "  - `high`: security, auth, permissions",
             "  - When in doubt, pick the higher level.",
@@ -1497,6 +1504,10 @@ mod tests {
         assert_eq!(later.matches("## Risk level").count(), 1, "{later}");
         assert!(later.contains("confirm it, or change it with a reason"));
         assert!(later.contains("\"risk\": {\"level\": \"<low, medium or high>\", \"why\": \"…\"}"));
+        let ship = stage(StageKind::Ship, Gate::None, 1);
+        let agent = instructions(&ship, mode, "/w", TeamPart::Solo, Owed::default(), None);
+        assert_eq!(agent.matches("## Risk level").count(), 1, "{agent}");
+        assert!(agent.contains("Add it to your `structured` data as `\"risk\": {"));
     }
 
     /// A task that does not fit its pipeline goes back to the orchestrator

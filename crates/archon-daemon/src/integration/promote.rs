@@ -92,8 +92,9 @@ pub async fn promote(
         promotion.outcome = PromotionOutcome::UpToDate { realign_problem };
         return Ok(promotion);
     }
-    let url = open_pull_request(ctx, &watch, &heads).await?;
+    let (url, risk) = open_pull_request(ctx, &watch, &heads).await?;
     promotion.pull_request = Some(url.clone());
+    promotion.risk = Some(risk);
     if by == Promoter::Agent && !repo.grant_merge {
         let text = promotion.describe();
         feed::notify(ctx, NotificationKind::Blocker, text, None, None).await?;
@@ -117,6 +118,7 @@ fn promotion_of(watch: &Watch, head: &str, pull_request: Option<String>) -> Prom
         release: watch.release.clone(),
         head: head.to_owned(),
         pull_request,
+        risk: None,
         outcome: PromotionOutcome::AwaitingOperator,
     }
 }
@@ -229,12 +231,13 @@ async fn contains(watch: &Watch, head: &str, commit: &str) -> Result<bool, Archo
 }
 
 /// The open pull request from the integration branch, moved onto the
-/// release branch when it targets another, else opened.
+/// release branch when it targets another, else opened; with the line that
+/// says how labelling its risk went.
 async fn open_pull_request(
     ctx: &DaemonContext,
     watch: &Watch,
     heads: &Heads,
-) -> Result<String, ArchonError> {
+) -> Result<(String, String), ArchonError> {
     let promoted = {
         let (watch, heads) = (watch.clone(), heads.clone());
         blocking(move || body(&watch, &heads)).await?
@@ -261,8 +264,8 @@ async fn open_pull_request(
         checks: &checks,
         review: None,
     };
-    risk::label(ctx, &watch.repo, None, &url, labelling).await?;
-    Ok(url)
+    let risk = risk::label(ctx, &watch.repo, None, &url, labelling).await?;
+    Ok((url, risk))
 }
 
 /// Every promotion is labelled high: it brings many changes into the

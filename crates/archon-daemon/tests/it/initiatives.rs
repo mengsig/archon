@@ -153,7 +153,12 @@ async fn an_onto_members_pull_request_keeps_its_body_and_draft_state() {
         assert!(body.contains(url), "{other}: {body}");
     }
     let calls = common::initiative::gh_calls(&h);
-    let touched = |call: &&Vec<String>| call.iter().any(|arg| arg == url) && call[1] != "view";
+    // Only its risk label and section change, never its title, base or draft state.
+    let risk = |call: &Vec<String>| {
+        call[3..] == ["--body-file", "-"] || call.contains(&"--add-label".into())
+    };
+    let touched =
+        |call: &&Vec<String>| call.iter().any(|arg| arg == url) && call[1] != "view" && !risk(call);
     assert!(!calls.iter().any(|c| touched(&c)), "{calls:?}");
 }
 

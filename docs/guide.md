@@ -1057,11 +1057,14 @@ Agents pick the level by one rubric, and pick the higher level when in doubt:
 The stage that writes the ship record proposes the level with its evidence
 in a `risk` key of its result; a reviewer it delegated, or a later review
 stage that passes, confirms it or changes it with a reason, and the
-reviewer's call stands. With no valid proposal the level is `high`. Archon
-applies the result at delivery and judges it again whenever new commits
-land: a refresh or a fix replaces the label, while commits delivered `onto`
-someone else's pull request never lower the label it already has. An
-integration-branch promotion is always `high`.
+reviewer's call stands. With no valid proposal the level is `high`, whatever
+a reviewer calls it. Archon applies the result at delivery and judges it
+again whenever new commits land: a refresh or a fix replaces the label,
+while commits delivered `onto` someone else's pull request never lower the
+label it already has. A pipeline that ends in a ship agent has Archon label
+the pull request that agent opened by the agent's own `risk` call. An
+integration-branch promotion is always `high`, and `archon promote` says
+how labelling it went.
 
 The section states what the level means, who chose it and why, then the
 evidence: the diff's size against its base, the areas and files it touches

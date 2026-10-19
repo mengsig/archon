@@ -13,7 +13,7 @@ use archon_core::risk::RiskLevel;
 use archon_core::run::{StageOutcome, StageRun};
 use archon_daemon::executor;
 use common::delivery::{FakeGh, add_origin, change, shipped_by};
-use common::{Harness, MODEL, REVIEW_MODEL, REVIEWED, REVIEWED_TOML, choice};
+use common::{Harness, MODEL, REVIEW_MODEL, REVIEWED, REVIEWED_TOML, choice, completed, verdict};
 use serde_json::{Value, json};
 
 const PR_ONE: &str = "https://github.com/o/r/pull/1";
@@ -260,4 +260,45 @@ async fn through_a_fix_loop_the_last_proposal_counts_and_the_passing_review_chan
         "the first attempt's call is gone: {body}"
     );
     assert_eq!(recorded(&h, &item).await, Some(RiskLevel::High));
+}
+
+/// A ship agent opens its pull request itself: Archon labels it by the
+/// agent's own call, which no reviewer judged, and tells how in its summary.
+#[tokio::test]
+async fn a_pull_request_a_ship_agent_opened_is_labelled_by_its_own_call() {
+    let h = Harness::new().await;
+    let gh = FakeGh::install(&h);
+    let item = h.enqueue("an agent ships").await;
+    h.dispatch().await;
+    gh.open(&h.run(&item.id).await.branch, "main");
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    h.settle_running(|_| verdict(true)).await;
+    h.dispatch().await;
+    let ship = h.running().await;
+    assert_eq!(ship.len(), 1, "{ship:?}");
+    assert_eq!(ship[0].stage_id, "ship");
+    let outcome = StageOutcome::Completed {
+        summary: "opened a pull request".into(),
+        structured: Some(json!({
+            "pr_url": "https://github.com/o/r/pull/7",
+            "risk": {"level": "medium", "why": "A new flag behind the CLI."},
+        })),
+    };
+    h.settle_running(|_| outcome.clone()).await;
+
+    let summary = summary(&h, &item).await;
+    assert!(
+        summary.contains("RISK: medium, labelled `risk: medium`"),
+        "{summary}"
+    );
+    let (labels, body) = gh.pr_labels(7);
+    assert_eq!(labels, ["risk: medium"]);
+    assert!(
+        body.contains("`ship` proposed `medium`; no reviewer judged the level."),
+        "{body}"
+    );
+    assert!(body.contains("A new flag behind the CLI."), "{body}");
+    assert_eq!(recorded(&h, &item).await, Some(RiskLevel::Medium));
+    assert_eq!(gh.count("pr merge"), 0, "the label merges nothing");
 }

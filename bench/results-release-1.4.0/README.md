@@ -15,6 +15,40 @@ Nothing was tuned to pass.
 
 The two earlier gates' numbers and findings are kept below as history.
 
+## Merge of 1.3.2 (2026-10-19, at `addb7309`)
+
+**Verdict: PASS.** next merged with main (1.3.2: #111, #165, #167) passes the
+quick confirmation: Luna Archon **4/4** (needs at least 3/4) and Haiku
+Archon **4/4** (needs 4/4). `archon-bench smoke` reported PASS for both
+against their stored baselines. `CARGO_BUILD_JOBS=6 make ci` is green:
+fmt-check, clippy `-D warnings`, doc and 2937 tests with 0 failed
+(9 ignored).
+
+The binaries were built from merge commit `137819b2`. `addb7309` only adds
+main's `docs/ARCHITECTURE.md` paragraph on refreshing an `onto` item, so the
+binaries are the same. The method matches the second re-gate below:
+
+- one run per model, each in its own new private sandbox (`mg132l`,
+  `mg132h`), with an `env -i` environment;
+- each sandbox ran its own aetherd, built from mengsig/aether `78faf9c1`
+  (1.2.0, sha256 `486684fb…`);
+- archon was sha256 `2f5eded9…` and archon-bench `fe30cc29…`;
+- before the runs, the running `archon mcp` and aetherd executables of both
+  sandboxes matched these hashes;
+- the two runs and `make ci` ran at the same time, so wall times do not gate;
+- no run had a timeout or an infrastructure failure, no operator daemon was
+  used, and both aetherds were stopped after the runs.
+
+Each cell: pass · trial wall s · cost $. A `*` cost has `cost_gap = mixed`.
+
+| Run | fix-off-by-one | quality-ledger-transfer | quality-retry-budget | review-seeded-bug | Archon | Aether | Archon cost | Archon wall | End to end |
+|---|---|---|---|---|---|---|---|---|---|
+| Luna `20261019T145111Z` | pass · 137 · *0.0156 | pass · 105 · *0.0170 | pass · 128 · *0.0208 | pass · 20 · 0.0036 | 4/4 | 4/4 | $0.0570 | 390 s | 711 s |
+| Haiku `20261019T145113Z` | pass · 101 · 0.0271 | pass · 135 · 0.0339 | pass · 135 · 0.0351 | pass · 40 · 0.0094 | 4/4 | 4/4 | $0.1055 | 412 s | 751 s |
+
+The Aether arm's costs were $0.0143 (Luna) and $0.0362 (Haiku). The run
+results are kept as this item's artifact (`merge-1.3.2-smoke-evidence`).
+
 ## Read-only mirrors and second re-gate (2026-10-19, at `52021145`)
 
 ### What enforces the lock

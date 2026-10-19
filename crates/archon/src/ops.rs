@@ -80,7 +80,9 @@ async fn is_paused(client: &ArchonClient, target: &PauseTarget) -> anyhow::Resul
         PauseTarget::Pipeline { name } => Ok(state.pipelines.contains(name)),
         PauseTarget::Repo { name } => {
             let repos = crate::views::fetch_repos(client).await?;
-            let repo = repos.iter().find(|r| r.name == name.0);
+            let repo = repos
+                .iter()
+                .find(|r| r.name == name.0 || r.id.as_str() == name.0);
             Ok(repo.is_none_or(|r| state.repos.contains(&r.id)))
         }
     }

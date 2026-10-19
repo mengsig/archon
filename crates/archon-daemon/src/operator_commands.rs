@@ -99,6 +99,13 @@ async fn execute(
     if let Some(result) = crate::authority::command(ctx, &evidence, text).await {
         let label = command_label(text);
         let (applied, text) = match result {
+            Ok(archon_core::protocol::Reply::Question(asked)) => (
+                false,
+                format!(
+                    "Awaiting your confirmation as Q{}; nothing changed yet.",
+                    asked.number
+                ),
+            ),
             Ok(_) => (true, crate::operator_sentence::command_sentence(text)),
             Err(error) if error.is_store() => return Err(error),
             Err(error) => (false, error.to_string()),

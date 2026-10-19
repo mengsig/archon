@@ -103,6 +103,14 @@ async fn connected_pump(
     (first, pump)
 }
 
+/// Why the link is down; empty while it is up.
+fn link_error(harness: &Harness) -> String {
+    let link = harness.ctx.aether.client();
+    link.err()
+        .map(|error| error.to_string())
+        .unwrap_or_default()
+}
+
 async fn within<F, Fut>(what: &str, mut check: F)
 where
     F: FnMut() -> Fut,
@@ -171,4 +179,31 @@ async fn an_aetherd_that_cannot_be_started_is_a_blocker_with_a_working_remedy() 
     assert_eq!(starter.calls.load(Ordering::SeqCst), 1, "no start loop");
     let blockers = harness.notifications(NotificationKind::Blocker).await;
     assert_eq!(blockers.len(), 1, "{blockers:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_aetherd_that_answers_but_refuses_replaces_the_absence_in_status() {
+    let harness = Harness::new().await;
+    let socket = harness.dir.path().join("own-aetherd.sock");
+    let (first, pump) = connected_pump(&harness, &socket, starter(&socket, true)).await;
+
+    drop(first);
+    within("the failed start is the link's reason", || async {
+        link_error(&harness).contains("could not start it")
+    })
+    .await;
+    std::fs::remove_file(&socket).unwrap();
+    let refusing = FakeAether::start(&socket).await.unwrap();
+    refusing.set_protocol_window(1000, 1001);
+    within(
+        "status says why the listening aetherd is refused",
+        || async {
+            let error = harness.ctx.aether.client().unwrap_err().to_string();
+            error.contains("answers, but archond cannot connect")
+        },
+    )
+    .await;
+    pump.abort();
+    let error = harness.ctx.aether.client().unwrap_err().to_string();
+    assert!(!error.contains("not running"), "{error}");
 }

@@ -169,7 +169,7 @@ async fn link_loop(
                     tokio::time::sleep(backoff).await;
                     continue;
                 }
-                own.listening();
+                own.listening(&ctx, &error)?;
             }
         }
         tokio::time::sleep(backoff).await;

@@ -52,9 +52,19 @@ impl OwnAetherd {
         *self = Self::new(self.starter.take());
     }
 
-    /// Something listens, though it did not connect: it is not missing.
-    pub(super) fn listening(&mut self) {
+    /// Something listens, though it did not connect: it is not missing, and
+    /// `status` says why archond cannot connect instead of an absence.
+    pub(super) fn listening(
+        &mut self,
+        ctx: &DaemonContext,
+        error: &ArchonError,
+    ) -> Result<(), ArchonError> {
         self.absent_since = None;
+        if self.starter.is_none() {
+            return Ok(());
+        }
+        let why = format!("Archon's own aetherd answers, but archond cannot connect: {error}");
+        ctx.aether.mark_down(why)
     }
 
     /// Nothing listens: once the grace is over, start aetherd, waiting

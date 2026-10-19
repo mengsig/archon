@@ -11,6 +11,8 @@ use crate::questions::QuestionRef;
 /// The chat's own commands, after the operator commands every surface takes.
 const CHAT_HELP: &str = "\
   /archon answer|approve|reject|merge   the same as /answer, /approve, /reject, /merge
+  /archon undo N          undo operator change N from the Authority feed
+  /archon reset [--repo NAME]   forget the saved settings of a scope
   /progress               show or hide progress notes (also /verbose)
   /help                   this list
   /quit                   leave (also Ctrl-D, or Ctrl-C twice)

@@ -151,7 +151,9 @@ async fn pause(
     pause: bool,
 ) -> anyhow::Result<()> {
     let what = format::pause_target(&target);
-    ops::pause(client, target, pause).await?;
+    if !ops::pause(client, target, pause).await? {
+        return chat.note(&format!("nothing was paused: {what} was running"));
+    }
     let verb = if pause { "paused" } else { "resumed" };
     chat.note(&format!("{verb} {what}"))
 }

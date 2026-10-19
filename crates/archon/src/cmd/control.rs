@@ -63,13 +63,13 @@ pub async fn pause(args: PauseArgs, pause: bool, json: bool) -> anyhow::Result<E
     let target = pause_target(args)?;
     let what = format::pause_target(&target);
     let client = connect_or_start().await?;
-    ops::pause(&client, target, pause).await?;
+    let changed = ops::pause(&client, target, pause).await?;
     let verb = if pause { "Paused" } else { "Resumed" };
-    emit(
-        json,
-        || Ok(serde_json::json!({"ok": true})),
-        &format!("{verb} {what}."),
-    )?;
+    let line = match changed {
+        true => format!("{verb} {what}."),
+        false => format!("Nothing was paused: {what} was running."),
+    };
+    emit(json, || Ok(serde_json::json!({"ok": true})), &line)?;
     Ok(ExitCode::SUCCESS)
 }
 

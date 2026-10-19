@@ -631,3 +631,45 @@ prompt = "implement.md"
     assert!(run.shipped);
     assert!(!tree.exists(), "finish removes a shipped worktree");
 }
+
+/// An item that never built frees nothing, so no "Freed 0.0 GiB" notice.
+#[tokio::test]
+async fn releasing_zero_bytes_posts_no_notice_but_real_bytes_do() {
+    let h = harness(Config::default()).await;
+    let item = archon_core::id::QueueItemId::new();
+    let nothing = archon_core::protocol::Reclaimed {
+        path: h.repo.join("target"),
+        bytes: 0,
+    };
+    gc::announce_item_release(&h.ctx, &item, &nothing)
+        .await
+        .expect("zero bytes");
+    let notices = |feed: Vec<archon_core::notify::FeedItem>| {
+        feed.iter()
+            .filter(|f| matches!(&f.entry, FeedEntry::System { text } if text.contains("of build output")))
+            .count()
+    };
+    let feed = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .feed_after(0, 10_000)
+        .expect("feed");
+    assert_eq!(notices(feed), 0);
+    let some = archon_core::protocol::Reclaimed {
+        bytes: 5 << 30,
+        ..nothing
+    };
+    gc::announce_item_release(&h.ctx, &item, &some)
+        .await
+        .expect("real bytes");
+    let feed = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .feed_after(0, 10_000)
+        .expect("feed");
+    assert_eq!(notices(feed), 1);
+}

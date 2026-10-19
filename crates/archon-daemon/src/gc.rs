@@ -386,12 +386,15 @@ async fn announce(ctx: &DaemonContext, report: &GcReport) -> Result<(), ArchonEr
 }
 
 /// Tell the operator an item's build directory went when the item ended.
-pub(crate) async fn announce_item_release(
+pub async fn announce_item_release(
     ctx: &DaemonContext,
     item: &QueueItemId,
     freed: &Reclaimed,
 ) -> Result<(), ArchonError> {
     ctx.storage.forget();
+    if freed.bytes == 0 {
+        return Ok(());
+    }
     let status = GcStatus {
         at: archon_core::now(),
         bytes_freed: freed.bytes,

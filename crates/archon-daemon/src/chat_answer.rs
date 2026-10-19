@@ -303,7 +303,10 @@ mod tests {
         assert!(refusal("/answer 0 yes").contains("not a question number"));
         assert!(refusal("/answer approve 3").contains("neither a question number"));
         assert!(refusal("/answer -3 yes").contains("neither a question number"));
-        assert!(refusal("/answer 99999999999999999999999 yes").contains("not a question number"));
+        assert!(
+            refusal("/answer 99999999999999999999999 yes")
+                .contains("too large to be a question number")
+        );
         for message in ["/answer", "/answer 3", "/answer x y"] {
             assert!(refusal(message).ends_with(USAGE), "{message:?}");
         }

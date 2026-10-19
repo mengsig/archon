@@ -80,9 +80,10 @@ impl QuestionRef {
         if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
             return match digits.parse::<u64>() {
                 Ok(n) if n > 0 => Ok(Self::Number(n)),
-                _ => Err(format!(
+                Ok(_) => Err(format!(
                     "{text:?} is not a question number (they start at 1)"
                 )),
+                Err(_) => Err(format!("{text:?} is too large to be a question number")),
             };
         }
         QuestionId::parse(text)
@@ -219,6 +220,14 @@ mod tests {
         assert_eq!(QuestionRef::parse(id.as_str()), Ok(QuestionRef::Id(id)));
         assert!(QuestionRef::parse("0").is_err());
         assert!(QuestionRef::parse("qi_01").is_err());
+    }
+
+    #[test]
+    fn a_number_too_large_to_parse_says_so() {
+        let too_large = QuestionRef::parse("99999999999999999999").unwrap_err();
+        assert!(too_large.contains("too large"), "{too_large}");
+        let zero = QuestionRef::parse("0").unwrap_err();
+        assert!(zero.contains("start at 1"), "{zero}");
     }
 
     fn progress_item() -> FeedItem {

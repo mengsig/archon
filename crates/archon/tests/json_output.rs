@@ -589,3 +589,15 @@ fn queued_waiting_reason_is_visible_in_queue_and_status_text_and_json() {
     );
     assert_eq!(show["item"]["state"]["state"], "queued");
 }
+
+#[test]
+fn resuming_when_nothing_is_paused_says_so() {
+    let env = Env::new();
+    let daemon = start_daemon(&env);
+    let say = |args: &[&str]| String::from_utf8(env.run(args).stdout).unwrap();
+    assert!(say(&["resume"]).contains("Nothing was paused"));
+    say(&["pause"]);
+    assert!(say(&["resume"]).contains("Resumed dispatch"));
+    assert!(say(&["resume"]).contains("Nothing was paused"));
+    common::stop_daemon(&env, daemon);
+}

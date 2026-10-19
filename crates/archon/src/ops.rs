@@ -49,15 +49,40 @@ pub async fn answer(
     }
 }
 
-/// Pause `target`, or resume it when `pause` is false.
-pub async fn pause(client: &ArchonClient, target: PauseTarget, pause: bool) -> anyhow::Result<()> {
+/// Pause `target`, or resume it when `pause` is false. `false` comes back
+/// when a resume found nothing paused.
+pub async fn pause(
+    client: &ArchonClient,
+    target: PauseTarget,
+    pause: bool,
+) -> anyhow::Result<bool> {
+    let was_paused = match pause {
+        true => true,
+        false => is_paused(client, &target).await?,
+    };
     let request = match pause {
         true => Request::Pause(target),
         false => Request::Resume(target),
     };
     match client.request(request).await? {
-        Reply::Ok => Ok(()),
+        Reply::Ok => Ok(was_paused),
         other => Err(unexpected(&other, "ok")),
+    }
+}
+
+/// Whether `target` is paused now. A hard resume also frees stage agents,
+/// so it always counts as a change; an unknown repository is left for
+/// archond to refuse.
+async fn is_paused(client: &ArchonClient, target: &PauseTarget) -> anyhow::Result<bool> {
+    let state = crate::views::fetch_status(client).await?.pause;
+    match target {
+        PauseTarget::Global { hard } => Ok(*hard || state.global),
+        PauseTarget::Pipeline { name } => Ok(state.pipelines.contains(name)),
+        PauseTarget::Repo { name } => {
+            let repos = crate::views::fetch_repos(client).await?;
+            let repo = repos.iter().find(|r| r.name == name.0);
+            Ok(repo.is_none_or(|r| state.repos.contains(&r.id)))
+        }
     }
 }
 

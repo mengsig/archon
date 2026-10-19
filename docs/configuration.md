@@ -131,14 +131,15 @@ infra_retries = 1              # re-spawns after an infrastructure failure, per 
 # [limits.per_pipeline] sets the most runs of one pipeline at once (see above)
 
 [autonomy]                     # the knobs, their defaults and the ceiling
-# default = { review = "standard", merge = "manual" }   # ARCHITECTURE §18.1 lists them all
+# default = { review = "standard", proposal = "off", report = "off", merge = "manual", tools = "guarded" }
+# max = { merge = "manual", tools = "guarded" }   # the ceiling only the operator raises; values in ARCHITECTURE §18.1
 
 [dispatcher]
 tick_secs = 15                 # how often the queue is scanned
 
 [chat]
 show_progress = false          # print stage progress in `archon chat`
-history = 30                   # lines of chat history kept
+history = 30                   # feed entries replayed when `archon chat` opens
 
 [worktrees]
 # root = "~/archon-worktrees"  # unset: <data>/worktrees

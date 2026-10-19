@@ -9,9 +9,10 @@ use archon_pipeline::builtin::BUILTINS;
 
 const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 /// Sources of the structs `Config` and `RepoConfig` are built from.
-const CONFIG_SOURCES: [&str; 3] = [
+const CONFIG_SOURCES: [&str; 4] = [
     "crates/archon-core/src/config.rs",
     "crates/archon-core/src/authority.rs",
+    "crates/archon-core/src/autonomy.rs",
     "crates/archon-core/src/push.rs",
 ];
 const NUMBER_WORDS: [&str; 20] = [

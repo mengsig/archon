@@ -371,6 +371,27 @@ async fn an_interface_written_as_a_string_is_corrected_in_the_plan_stage() {
     corrected(&h, &plan, "it is not a plan").await;
 }
 
+/// Only Archon's own refusal is sent back: an agent's failure that happens to
+/// say "passed, but" ends the stage.
+#[tokio::test]
+async fn a_planner_s_own_failure_is_never_sent_back() {
+    let h = Harness::new().await;
+    let item = h
+        .enqueue_in("swarm", "planner gives up", swarm_model_plan())
+        .await
+        .expect("the swarm built-in enqueues");
+    h.dispatch().await;
+    let failure = StageOutcome::Failed {
+        error: "FAILED: tests passed, but packaging failed".into(),
+        infra: false,
+    };
+    h.settle_running(|_| failure.clone()).await;
+    h.dispatch().await;
+    let state = h.state(&item.id).await;
+    assert!(matches!(state, QueueState::Failed { .. }), "{state:?}");
+    assert_eq!(h.stages(&item.id).await.len(), 1);
+}
+
 #[tokio::test]
 async fn an_invalid_or_missing_plan_fails_the_plan_stage_with_every_problem() {
     let h = Harness::new().await;

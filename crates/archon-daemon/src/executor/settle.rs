@@ -49,7 +49,11 @@ pub(super) async fn settle(
     // reconnect reconciliation reads the task outcome and verifies it again.
     let outcome = ship::verify(ctx, &run, &stage, daemon_ships, outcome).await?;
     let outcome = super::review::verify(ctx, &run, &stage, review, outcome).await?;
+    let planned = planner.is_some();
+    let was_completed = matches!(outcome, StageOutcome::Completed { .. });
     let (outcome, assigned) = swarm::verify(ctx, &run, &stage, planner, outcome).await?;
+    // Only the swarm check turns a completed planner into a refusal.
+    let refused = planned && was_completed && matches!(outcome, StageOutcome::Failed { .. });
     let mut table = ctx.runs.lock().await;
     let (stage, run, all) = {
         let store = ctx.store.lock().await;
@@ -71,9 +75,8 @@ pub(super) async fn settle(
         );
         (current_stage, current_run, all)
     };
-    if let StageOutcome::Failed { error, .. } = &outcome
-        && swarm::is_refusal(error)
-        && let Some(follow) = infra_retry(ctx, &table, &stage, &run, &all, &outcome).await?
+    if refused
+        && let Some(follow) = infra_retry(ctx, &table, &stage, &run, &all, &outcome, true).await?
     {
         return Ok(follow);
     }
@@ -133,7 +136,7 @@ pub(super) async fn settle_locked(
     if stage.state.is_terminal() {
         return Ok(FollowUp::default());
     }
-    if let Some(follow) = infra_retry(ctx, table, &stage, &run, &all, &outcome).await? {
+    if let Some(follow) = infra_retry(ctx, table, &stage, &run, &all, &outcome, false).await? {
         return Ok(follow);
     }
     persist(ctx, table, stage, run, &all, outcome).await
@@ -255,9 +258,6 @@ impl RetryKind {
     /// trusted to report a full disk: a failure the agent wrote is one only
     /// when the free space confirms it, else it is the agent's own.
     async fn of_failure(ctx: &DaemonContext, error: &str, infra: bool) -> Option<Self> {
-        if !infra && swarm::is_refusal(error) {
-            return Some(Self::Refused);
-        }
         if !disk::is_disk_full(error) {
             return infra.then_some(Self::Infra);
         }
@@ -270,9 +270,13 @@ impl RetryKind {
 
     /// An earlier run of the slot, which a retry replaced. A replaced
     /// failure that says the disk is full was retried as one.
-    fn of_replaced(stage: &StageRun) -> Self {
+    fn of_replaced(stage: &StageRun, planner: bool) -> Self {
         match &stage.state {
-            StageState::Failed { error } if swarm::is_refusal(error) => Self::Refused,
+            StageState::Failed { error }
+                if planner && !stage.infrastructure_failure && swarm::is_refusal(error) =>
+            {
+                Self::Refused
+            }
             StageState::Failed { error } if disk::is_disk_full(error) => Self::DiskFull,
             _ => Self::Infra,
         }
@@ -290,7 +294,8 @@ impl RetryKind {
 /// Re-spawn the slot of a live run with its original plan
 /// (`RunDriver::respawn`): `limits.infra_retries` times for infrastructure
 /// failures, and for a failure on a full disk, which holds dispatch until
-/// space is free. The failure never reaches the driver, so the slot keeps
+/// space is free. A planner whose plan Archon `refused` is sent back the
+/// same way, `MAX_CORRECTIONS` times. The failure never reaches the driver, so the slot keeps
 /// its capacity.
 async fn infra_retry(
     ctx: &DaemonContext,
@@ -299,11 +304,16 @@ async fn infra_retry(
     run: &PipelineRun,
     all: &[StageRun],
     outcome: &StageOutcome,
+    refused: bool,
 ) -> Result<Option<FollowUp>, ArchonError> {
     let StageOutcome::Failed { error, infra } = outcome else {
         return Ok(None);
     };
-    let Some(kind) = RetryKind::of_failure(ctx, error, *infra).await else {
+    let kind = match refused {
+        true => Some(RetryKind::Refused),
+        false => RetryKind::of_failure(ctx, error, *infra).await,
+    };
+    let Some(kind) = kind else {
         return Ok(None);
     };
     if kind == RetryKind::DiskFull {
@@ -321,9 +331,13 @@ async fn infra_retry(
         slot.iter().any(|s| s.id == stage.id),
         "the failed stage run belongs to its run"
     );
+    let planner = table
+        .drivers
+        .get(&run.id)
+        .is_some_and(|d| d.spec().assigned_by(&stage.stage_id).is_some());
     let earlier = slot.iter().filter(|s| s.id != stage.id);
     let retry = 1 + earlier
-        .filter(|s| RetryKind::of_replaced(s) == kind)
+        .filter(|s| RetryKind::of_replaced(s, planner) == kind)
         .count();
     let limit = kind.limit(ctx);
     if retry > limit {

@@ -105,6 +105,56 @@ log_max_mb = 10                # rotate detached daemon logs by size; 0 disables
 log_max_files = 3              # archives in addition to the active log; 0 disables count limit
 ```
 
+Keys the example above leaves out, with their defaults (a `0` cap or budget is
+off):
+
+```toml
+[aether]
+# socket = "/run/user/1000/aether.sock"   # shared mode only: the operator's daemon socket
+# address = "127.0.0.1:7777"   # shared mode only: TCP instead of the Unix socket
+token_env = "AETHER_TOKEN"     # the variable holding the token for `address`
+
+[orchestrator]
+name = "Archon"                # the orchestrator's name in Aether
+# instructions_file = "~/orchestrator.md"   # appended to the built-in prompt
+trigger_coalesce_ms = 2000     # triggers within this window wake it once
+
+[models]
+# deny = ["codex/gpt-6.1-sol"] # never used, whatever `allow` says
+
+[limits]
+max_active_runs = 0            # runs going at once; 0 = unlimited
+budget_usd_per_item = 0.0      # one item may spend this much; 0 = no cap
+budget_usd_total = 0.0         # all spend ever; 0 = no cap
+count_estimated_cost = true    # API-equivalent estimates (such as Codex usage) count toward budgets
+infra_retries = 1              # re-spawns after an infrastructure failure, per stage run
+# [limits.per_pipeline] sets the most runs of one pipeline at once (see above)
+
+[autonomy]                     # the knobs, their defaults and the ceiling
+# default = { review = "standard", merge = "manual" }   # ARCHITECTURE §18.1 lists them all
+
+[dispatcher]
+tick_secs = 15                 # how often the queue is scanned
+
+[chat]
+show_progress = false          # print stage progress in `archon chat`
+history = 30                   # lines of chat history kept
+
+[worktrees]
+# root = "~/archon-worktrees"  # unset: <data>/worktrees
+branch_prefix = "archon/"      # run branches are named <prefix><id>-<slug>
+
+[lavish]
+binary = "lavish-axi"          # the Lavish command
+
+[github]
+binary = "gh"                  # the command `github_reply` posts with
+```
+
+In `<repo>/.archon/config.toml`, `[repo]` takes `ship = "pr"`, `base_branch = "main"` and
+`default_pipeline = "direct"`, and `[pipelines]` takes `disabled = ["adaptive"]`,
+a list of pipelines items in that repository may not name.
+
 Each item's cargo target directory (`<data>/cache/<repo>/items/<item>`) is kept
 across its retries and deleted when the item reaches a final state; `archon
 gc` sweeps ones whose item is final or gone. A repository sets `[cache]

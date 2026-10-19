@@ -114,11 +114,11 @@ archon-core ◀── archon-aether ◀──┐
 ## 4. Aether integration
 
 Everything below was checked against Aether's source (`aether-protocol`,
-`aether-core`, `clients/protocol.schema.json`, protocol version **15**; the
-daemon also serves 14).
+`aether-core`, `clients/protocol.schema.json`, protocol version **24**; the
+daemon also serves 23 down to 14).
 
 The lean creation extension is checked against **v17 + host_context feature**;
-protocol 17 alone does not imply support.
+protocol 17 and later alone do not imply support.
 
 ### 4.1 Transport and framing
 
@@ -144,21 +144,21 @@ protocol 17 alone does not imply support.
 ### 4.2 Handshake
 
 ```json
-{"req":1,"cmd":"hello","protocol_version":18,"client_name":"archon",
+{"req":1,"cmd":"hello","protocol_version":24,"client_name":"archon",
  "client_version":"1.3.1","features":[]}
 ```
 
 The reply is `Welcome {protocol_version, daemon_version, instance_id,
 schema_version, pid, features, daemon_protocol_version?, min_protocol_version?,
 idle_timeout_secs?, submission_horizon?}`. If Aether refuses the handshake with `incompatible`
-and the newest protocol it serves is 17, 16, 15 or 14, Archon reconnects and
+and the newest protocol it serves is 23 down to 14, Archon reconnects and
 says hello at that one: an aetherd not yet upgraded keeps working. What its
 protocol cannot store, Archon refuses to save, before anything is sent:
 GitHub operator logins below 17 (`operator_users`), and a GitHub watcher
 allowlist at 14, which would widen who may dispatch. An aetherd that
 answers a watcher read with `incompatible` because operator logins are set
 is reported as that, never as a reply that failed to decode. Any other
-refusal is reported as "Archon speaks Aether protocol 14..18; the daemon
+refusal is reported as "Archon speaks Aether protocol 14..24; the daemon
 serves {min}..{max}". A change to `instance_id` between connections means
 Aether restarted, which triggers reconciliation (§16).
 
@@ -2283,6 +2283,7 @@ literal `{{`.
 | Name | Stages | Nudges |
 | --- | --- | --- |
 | `direct` | implement (work, holds the review) | tier = balanced. The pipeline an item that names none runs. One agent implements a change one author can make and check, whatever its size, runs the affected checks, commits and returns the ship record; the cheapest path to a shipped change. Review level `none` unless the item asks (§8.2); the agent escalates what turns out risky. |
+| `swarm` | plan (strong) → build (team, one fast worker per planned task) → integrate (work, strong, holds the review, goto build ×2) | tier = balanced, independent_reviewers. For a change that splits into 3 or more independent parts with disjoint files: a planner writes the plan, cheap workers build the tasks in parallel and a strong lead integrates. Review level `standard` unless the item asks (§8.2). |
 | `adaptive` | build (work, `allow_delegation`, holds the review) | tier = balanced, independent_reviewers. For a change where one lead that keeps its context through fixes, or integrates independent parts, saves restarts: it sizes the work, delegates the parts worth splitting, integrates them and has the integrated diff reviewed by as many reviewers as the item's review level asks. Review level `standard` unless the item asks (§8.2). |
 | `refactor` | baseline/characterize → refactor → verify (test, all_pass, goto refactor ×3) → review (1, all_pass, goto refactor ×2) | tier = balanced, independent_reviewers. Structure-only changes; use `direct` for behaviour changes. |
 | `performance` | measure → optimize → verify (test, all_pass, goto optimize ×3) → review (1, all_pass, goto optimize ×2) | tier = strong, independent_reviewers. For a specific slow path with a measurable goal; use `direct` for ordinary changes. |
@@ -2293,7 +2294,7 @@ literal `{{`.
 | `errand` | errand (report) | workspace = scratch, requires_repo = false, tier = balanced. A small job answered in its summary and optionally as one self-contained Lavish page. No repository changes or outward side effects; read an attached checkout only, and run code on a throwaway copy in scratch. Other files are temporary and collected after `worktrees.gc_after` (default 7d; §13.2). |
 | `design-doc` | research → critique (1, all_pass, goto research ×2) → report (HTML design/RFC) | workspace = worktree, requires_repo = true, tier = strong, independent_reviewers. Before a large or ambiguous change; no product-code changes or shipping. Use `proposal: lavish` for design and implementation in one item. |
 
-The first four change a repository. Each declares `[pipeline.ship]`, so
+The first five change a repository. Each declares `[pipeline.ship]`, so
 archond delivers its change once the last stage passed (§8.7) and none has
 a ship agent: each takes the ship record from its last committing stage.
 The `propose` and change-report stages the autonomy knobs insert (§18.1)
@@ -4261,7 +4262,7 @@ time the pump connects and every 60 s:
   ready again, or the orchestrator has the tools again.
 - Each refresh and restart, and its outcome, writes a `System` feed entry
   and a log line, so `archon log` shows them. `archon status` shows `mcp:
-  ok (22 tools)` or `mcp: FAIL <reason>`, the failed refreshes and restarts
+  ok (38 tools)` or `mcp: FAIL <reason>`, the failed refreshes and restarts
   in a row, and the last heal (`mcp` in `--json`, with `failed_refreshes`
   and `failed_relinks`). `archon doctor` keeps its own `mcp health` check.
 

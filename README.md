@@ -13,7 +13,7 @@ ceiling. Agents run on [Aether](https://github.com/mengsig/aether).
   the CLI, or mention `@archon` on a watched GitHub repository. The
   orchestrator answers code questions from its own copy of your
   repositories and queues every change as an item.
-- **Pipelines with real gates.** Ten built-in pipelines, from a single
+- **Pipelines with real gates.** Eleven built-in pipelines, from a single
   agent with no reviewer to a lead with three independent ones, or your own
   in TOML. A failed gate sends the findings back to the implementer, which
   keeps its context through the fix.
@@ -71,7 +71,10 @@ writes and checks the guide, has it reviewed independently, and Archon ships
 it; the orchestrator reports the pull request. Answer its questions in
 place. `/quit` leaves and the work continues. `archon say "…"` sends one
 request and exits, and `archon chat` is a line chat for SSH and scripts.
-Commands start `archond` and Archon's own Aether instance when needed.
+Chat and the commands that change state start `archond` and Archon's own
+Aether instance when needed; read-only ones such as `queue`, `repo`,
+`questions` and `status` do not ([which commands start
+archond](docs/guide.md#which-commands-start-archond)).
 
 ## How it works
 

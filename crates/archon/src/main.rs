@@ -31,7 +31,11 @@ use crate::cli::{Cli, Command, DaemonCommand};
 /// a daemon git that may take minutes; the process exits without it.
 const RUNTIME_STOP: Duration = Duration::from_secs(5);
 
+/// What a shell reports for a process that SIGPIPE ended: 128 plus 13.
+const BROKEN_PIPE_STATUS: i32 = 141;
+
 fn main() -> ExitCode {
+    exit_quietly_on_closed_stdout();
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error) => return usage_error(&error),
@@ -110,6 +114,29 @@ fn main() -> ExitCode {
     }
 }
 
+/// Rust ignores SIGPIPE, so `println!` panics once the reader of stdout is
+/// gone (`archon queue list | head -1`). Exits as a SIGPIPE death would.
+fn exit_quietly_on_closed_stdout() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let payload = info.payload();
+        let message = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or_default();
+        if is_closed_stdout(message) {
+            std::process::exit(BROKEN_PIPE_STATUS);
+        }
+        default_hook(info);
+    }));
+}
+
+fn is_closed_stdout(panic_message: &str) -> bool {
+    panic_message.starts_with("failed printing to stdout:")
+        && panic_message.contains("Broken pipe")
+}
+
 fn detached_logger(cli: &Cli) -> anyhow::Result<Option<daemon_log::Logger>> {
     if !matches!(
         cli.command,
@@ -161,4 +188,22 @@ fn usage_error(error: &clap::Error) -> ExitCode {
     let envelope = serde_json::json!({"error": {"code": code, "message": message}});
     println!("{envelope}");
     ExitCode::from(status)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_broken_stdout_is_quiet() {
+        assert!(is_closed_stdout(
+            "failed printing to stdout: Broken pipe (os error 32)"
+        ));
+        assert!(!is_closed_stdout(
+            "failed printing to stderr: Broken pipe (os error 32)"
+        ));
+        assert!(!is_closed_stdout(
+            "failed printing to stdout: No space left on device (os error 28)"
+        ));
+    }
 }

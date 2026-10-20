@@ -41,7 +41,7 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
     };
     match command {
         Command::Chat { progress } => chat::run(progress).await,
-        Command::Say { text } => talk::say(&text, json).await,
+        Command::Say { text, images } => talk::say(&text, &images, json).await,
         Command::Answer { question, text } => talk::answer(&question, &text, json).await,
         Command::Questions => talk::questions(json).await,
         Command::Merge {

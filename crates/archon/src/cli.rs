@@ -57,8 +57,11 @@ pub enum Command {
     },
     /// Send one message to the orchestrator and exit.
     Say {
-        /// The message; every word is kept.
+        /// The message; every word is kept. It may be empty with `--image`.
         text: Vec<String>,
+        /// Attach an image file (PNG, JPEG, GIF or WebP); repeat for more.
+        #[arg(long = "image", value_name = "PATH")]
+        images: Vec<std::path::PathBuf>,
     },
     /// Answer an open question by its number or id.
     Answer {
@@ -1191,10 +1194,18 @@ mod tests {
             parse(&["chat", "--progress"]),
             Command::Chat { progress: true }
         ));
-        let Command::Say { text } = parse(&["say", "ship", "the", "fix"]) else {
+        let Command::Say { text, images } = parse(&["say", "ship", "the", "fix"]) else {
             panic!()
         };
         assert_eq!(text, ["ship", "the", "fix"]);
+        assert!(images.is_empty());
+        let Command::Say { text, images } = parse(&["say", "--image", "a.png", "look"]) else {
+            panic!()
+        };
+        assert_eq!(
+            (text, images),
+            (vec!["look".to_owned()], vec!["a.png".into()])
+        );
         let Command::Answer { question, text } = parse(&["answer", "2", "yes", "please"]) else {
             panic!()
         };

@@ -85,7 +85,10 @@ fn operator_only_requests() -> Vec<Request> {
         Request::SetCaps {
             caps: Caps::default(),
         },
-        Request::Say { text: "hi".into() },
+        Request::Say {
+            text: "hi".into(),
+            images: Vec::new(),
+        },
         Request::ConfigureGithubWatcher {
             change: WatcherChange::Operators {
                 operator_users: Some(OperatorUsers::parse(&["octocat"]).unwrap()),

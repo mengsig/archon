@@ -480,7 +480,7 @@ impl AgentBackend for AetherBackend {
     ) -> Result<(), ArchonError> {
         self.link
             .client()?
-            .send_message(to, content, idempotency_key)
+            .send_message(to, content, &[], idempotency_key)
             .await
     }
 

@@ -5,17 +5,21 @@
 
 mod actions;
 pub mod commands;
+mod draft;
 mod input;
+mod keys;
 mod link;
 
 use std::collections::VecDeque;
 use std::process::ExitCode;
+use std::sync::{Arc, Mutex};
 
 use archon_client::{ArchonClient, FeedSubscription};
 use archon_core::config::Config;
 use archon_core::notify::{FeedEntry, FeedItem};
 use archon_core::protocol::{AetherLinkStatus, Reply, Request};
 
+use crate::chat::draft::Draft;
 use crate::chat::input::{Ack, Incoming, Input, InputEvent, Output};
 use crate::chat::link::{Link, LinkEvent};
 use crate::connect::unexpected;
@@ -45,6 +49,10 @@ struct Chat {
     pending_echoes: VecDeque<String>,
     /// Consecutive Ctrl-C presses at the prompt.
     interrupts: u32,
+    /// The images attached to the line being typed, shared with the editor's keys.
+    draft: Arc<Mutex<Draft>>,
+    /// What the next line starts with: the chips `/image` attached.
+    prefill: Option<String>,
 }
 
 pub async fn run(progress: bool) -> anyhow::Result<ExitCode> {
@@ -63,9 +71,11 @@ pub async fn run(progress: bool) -> anyhow::Result<ExitCode> {
         book: QuestionBook::default(),
         pending_echoes: VecDeque::new(),
         interrupts: 0,
+        draft: Arc::default(),
+        prefill: None,
     };
     let feed = chat.open(&client, config.chat.history).await?;
-    let (input, output) = Input::start(history)?;
+    let (input, output) = Input::start(history, chat.draft.clone())?;
     chat.output = output;
     let link = Link::up(socket, client, feed);
     chat.run(input, link).await
@@ -118,7 +128,10 @@ impl Chat {
                 incoming = input.next() => match incoming {
                     Incoming::Notice(notice) => self.warn(&notice)?,
                     Incoming::Event(event) => match self.on_input(event, &link).await? {
-                        Flow::Continue => input.ack(Ack::Continue),
+                        Flow::Continue => match self.prefill.take() {
+                            Some(chips) => input.ack(Ack::Draft(chips)),
+                            None => input.ack(Ack::Continue),
+                        },
                         Flow::Quit => {
                             input.stop();
                             return Ok(ExitCode::SUCCESS);
@@ -192,7 +205,7 @@ impl Chat {
         self.last_seq = item.seq;
         if live {
             self.book.observe(&item.entry);
-            if let FeedEntry::Operator { text } = &item.entry
+            if let FeedEntry::Operator { text, .. } = &item.entry
                 && let Some(at) = self.pending_echoes.iter().position(|sent| sent == text)
             {
                 self.pending_echoes.remove(at);
@@ -204,6 +217,11 @@ impl Chat {
             Some(text) => self.print(&text),
             None => Ok(()),
         }
+    }
+
+    /// The draft; a poisoned lock only means a paste panicked mid-way.
+    fn lock_draft(&self) -> std::sync::MutexGuard<'_, Draft> {
+        self.draft.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     fn expect_echo(&mut self, text: &str) {
@@ -312,11 +330,8 @@ mod tests {
         client
     }
 
-    #[tokio::test]
-    async fn a_failed_refresh_after_reconnecting_does_not_end_the_chat() {
-        let dir = tempfile::tempdir().unwrap();
-        let client = client_of_a_vanishing_daemon(&dir.path().join("d.sock")).await;
-        let mut chat = Chat {
+    fn quiet_chat() -> Chat {
+        Chat {
             output: Output::Stdout,
             palette: Palette::new(false),
             verbose: false,
@@ -324,7 +339,46 @@ mod tests {
             book: QuestionBook::default(),
             pending_echoes: VecDeque::new(),
             interrupts: 0,
-        };
+            draft: Arc::default(),
+            prefill: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_line_that_sends_nothing_keeps_the_images_its_chips_hold() {
+        let dir = tempfile::tempdir().unwrap();
+        let shot = dir.path().join("shot.png");
+        std::fs::write(&shot, b"\x89PNG\r\n\x1a\npixels").unwrap();
+        let mut chat = quiet_chat();
+        let attach = format!("/image {}", shot.display());
+        actions::handle_line(&mut chat, &attach, None)
+            .await
+            .unwrap();
+        assert_eq!(chat.prefill.take().as_deref(), Some("[image #1] "));
+        let missing = dir.path().join("missing.png");
+        let failed = format!("[image #1] /image {}", missing.display());
+        actions::handle_line(&mut chat, &failed, None)
+            .await
+            .unwrap();
+        assert_eq!(chat.prefill.take().as_deref(), Some("[image #1] "));
+        // Not connected, so nothing is sent and the image stays attached.
+        let unsent = "[image #1] what is this?";
+        actions::handle_line(&mut chat, unsent, None).await.unwrap();
+        assert_eq!(chat.prefill.take().as_deref(), Some("[image #1] "));
+        actions::handle_line(&mut chat, "/image", None)
+            .await
+            .unwrap();
+        assert_eq!(
+            chat.prefill, None,
+            "a line without the chip drops its image"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_refresh_after_reconnecting_does_not_end_the_chat() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = client_of_a_vanishing_daemon(&dir.path().join("d.sock")).await;
+        let mut chat = quiet_chat();
         assert!(
             chat.sync_questions(&client).await.is_err(),
             "the daemon hung up"

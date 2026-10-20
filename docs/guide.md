@@ -758,14 +758,41 @@ In `archon chat`, just talk. Slash commands cover the rest: `/questions`,
 [--ignore-checks]` (merge its pull request; see
 [Merging on request](#merging-on-request)), `/progress` (show stage
 progress too; also `/verbose`), `/pause` and `/resume` (optionally `hard`,
-`repo <name>` or `pipeline <name>`), `/help` and `/quit`. Start a line with
-`//` to send a message that begins with `/`.
+`repo <name>` or `pipeline <name>`), `/image <path>` (attach an image file),
+`/help` and `/quit`. Start a line with `//` to send a message that begins
+with `/`.
+
+### Images
+
+The orchestrator sees the images you send it when aetherd speaks protocol 19
+or later; an older one refuses a message with images and says so.
+In `archon chat`:
+
+| Key | What it does |
+| --- | --- |
+| Ctrl+V or Alt+V | an image on the clipboard is attached as a chip, `[image #1]`; text on the clipboard is pasted, and a copied path to an image file attaches that file |
+| Ctrl+Shift+V | the terminal's own paste: always text |
+| Backspace right after a chip | removes the chip and its image |
+
+The clipboard is read with `wl-paste` (package wl-clipboard) on Wayland and
+`xclip` on X11. Over SSH, or with neither, copy the file to this machine and
+use `/image <path>`, which attaches it and starts the next line with its
+chip; a line that is only the path of an image file does the same. Enter
+sends the line with the images whose chips are still in it, and a line of
+only chips sends the images alone. Outside the chat, `archon say --image
+shot.png "what is wrong here?"` does the same; repeat `--image` for more.
+
+A message takes at most 10 PNG, JPEG, GIF or WebP images, each up to
+3.8 MB and 10 MB together, checked by their bytes rather than their names.
+archond refuses anything else before recording the line. The feed keeps a
+reference, `[image: shot.png, 14.2 KB]`, not the image. In the terminal UI
+(`archon tui`) pasting is Aether's own.
 
 | Command | What it does |
 | --- | --- |
 | `archon` / `archon tui [options]` | the terminal UI on the orchestrator; a bare `archon` opens the line chat instead off a terminal or with `[aether] address` set |
 | `archon chat [--progress]` | the quiet line chat with the orchestrator |
-| `archon say "…"` | send one message to the orchestrator and exit |
+| `archon say [--image <path>]… "…"` | send one message, with any images, to the orchestrator and exit |
 | `archon questions` / `archon answer <n> "…"` | list or answer open questions; `Q<n>` is permanent and the same in the chat |
 | `archon status` | waiting items and their next action, daemon, orchestrator, `archon` MCP server health, caps, spend and Aether link |
 | `archon cost [--since <date\|7d>] [--until <date\|1d>] [--by day\|repo\|pipeline\|model\|provider\|item\|stage]` | spend as the budgets count it, grouped (by day over the last 7 days by default), with a total; spend with no owner in the grouping, such as the orchestrator's under `--by model`, is the `-` row |

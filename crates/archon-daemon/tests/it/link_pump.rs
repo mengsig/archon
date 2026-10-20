@@ -203,7 +203,7 @@ async fn say(harness: &Harness, seq: u64, text: &str) {
         .fake
         .script("send_message", Scripted::reply("message_sent", json!({})));
     let item = FeedItemId::new();
-    supervisor::deliver_operator_message(&harness.ctx, &item, text)
+    supervisor::deliver_operator_message(&harness.ctx, &item, text, &[])
         .await
         .unwrap();
     let message = json!({"kind": "message", "message_id": format!("msg_{seq}"),

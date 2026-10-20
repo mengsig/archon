@@ -1,12 +1,16 @@
 //! What a typed line does: talk to the orchestrator or run a slash command.
 //! A failed request is reported in the chat and the chat carries on.
 
+use std::path::Path;
+
 use archon_client::ArchonClient;
 use archon_core::protocol::{ItemQuery, PauseTarget, Request};
 
 use super::commands::{ChatInput, SlashCommand, help, parse_line};
+use super::draft::without_chips;
 use super::{Chat, Flow};
 use crate::format;
+use crate::images::{expand_home, pasted_image_path, read_image_file};
 use crate::ops;
 use crate::questions::QuestionRef;
 use crate::views;
@@ -18,22 +22,30 @@ pub(super) async fn handle_line(
     line: &str,
     client: Option<&ArchonClient>,
 ) -> anyhow::Result<Flow> {
-    let command = match parse_line(line) {
-        ChatInput::Empty => return Ok(Flow::Continue),
-        ChatInput::Invalid(message) => {
-            chat.error(&message)?;
+    // The chips are the draft's; what the line asks for is what is left.
+    let bare = without_chips(line);
+    let home = dirs::home_dir();
+    if let Some(path) = pasted_image_path(&bare, home.as_deref()) {
+        attach_file(chat, line, &path)?;
+        return Ok(Flow::Continue);
+    }
+    let command = match parse_line(&bare) {
+        ChatInput::Empty | ChatInput::Say(_) => {
+            say_line(chat, client, line).await?;
             return Ok(Flow::Continue);
         }
-        ChatInput::Say(text) => {
-            let Some(client) = connected(chat, client)? else {
-                return Ok(Flow::Continue);
-            };
-            let result = say(chat, client, text).await;
-            report(chat, result)?;
+        ChatInput::Command(SlashCommand::Image(path)) => {
+            attach_named(chat, line, &path, home.as_deref())?;
+            return Ok(Flow::Continue);
+        }
+        ChatInput::Invalid(message) => {
+            keep_chips(chat, line);
+            chat.error(&message)?;
             return Ok(Flow::Continue);
         }
         ChatInput::Command(command) => command,
     };
+    keep_chips(chat, line);
     match command {
         SlashCommand::Quit => return Ok(Flow::Quit),
         SlashCommand::Help => chat.note(&help())?,
@@ -116,17 +128,87 @@ async fn run_remote(
         }
         SlashCommand::Pause(target) => pause(chat, client, target, true).await,
         SlashCommand::Resume(target) => pause(chat, client, target, false).await,
-        SlashCommand::Help | SlashCommand::Quit | SlashCommand::ToggleProgress => {
+        SlashCommand::Help
+        | SlashCommand::Quit
+        | SlashCommand::ToggleProgress
+        | SlashCommand::Image(_) => {
             unreachable!("local commands are handled before reaching archond")
         }
     }
 }
 
-async fn say(chat: &mut Chat, client: &ArchonClient, text: String) -> anyhow::Result<()> {
+/// Send `line` with the images whose chips it holds; a line of nothing but
+/// stale chips sends nothing.
+async fn say_line(
+    chat: &mut Chat,
+    client: Option<&ArchonClient>,
+    line: &str,
+) -> anyhow::Result<()> {
+    let Some(client) = connected(chat, client)? else {
+        keep_chips(chat, line);
+        return Ok(());
+    };
+    let (text, images) = chat.lock_draft().take(line);
+    if text.is_empty() && images.is_empty() {
+        return Ok(());
+    }
     // archond records the line before delivering it, so the echo comes
     // even when delivery is refused.
     chat.expect_echo(&text);
-    ops::say(client, text).await
+    let result = ops::say(client, text, images).await;
+    report(chat, result)
+}
+
+/// `/image <path>`: the path as typed, or quoted or escaped as a paste has it.
+fn attach_named(
+    chat: &mut Chat,
+    line: &str,
+    path: &str,
+    home: Option<&Path>,
+) -> anyhow::Result<()> {
+    assert!(!path.trim().is_empty(), "/image is parsed with a path");
+    let found = pasted_image_path(path, home).or_else(|| expand_home(path, home));
+    match found {
+        Some(path) => attach_file(chat, line, &path),
+        None => {
+            keep_chips(chat, line);
+            chat.error("no home directory to find ~ in")
+        }
+    }
+}
+
+/// Attach the image at `path` to the draft `line` holds, and start the next
+/// line with the chips still attached.
+fn attach_file(chat: &mut Chat, line: &str, path: &Path) -> anyhow::Result<()> {
+    let image = match read_image_file(path) {
+        Ok(image) => image,
+        Err(refused) => {
+            keep_chips(chat, line);
+            return chat.error(&refused);
+        }
+    };
+    let summary = image.reference().summary();
+    let attached = chat.lock_draft().attach(image, line);
+    prefill_chips(chat);
+    match attached {
+        Ok(chip) => {
+            debug_assert!(chat.prefill.as_ref().is_some_and(|p| p.contains(&chip)));
+            chat.note(&format!("attached {chip}: {summary}"))
+        }
+        Err(refused) => chat.error(&refused),
+    }
+}
+
+/// A line that sends nothing keeps the images whose chips it holds, and the
+/// next line starts with those chips again.
+fn keep_chips(chat: &mut Chat, line: &str) {
+    chat.lock_draft().keep(line);
+    prefill_chips(chat);
+}
+
+fn prefill_chips(chat: &mut Chat) {
+    let chips = chat.lock_draft().chips();
+    chat.prefill = (!chips.is_empty()).then(|| format!("{chips} "));
 }
 
 async fn answer(

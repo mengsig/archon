@@ -496,7 +496,9 @@ async fn a_request_queued_behind_a_stalled_writer_still_times_out() {
     // Far more than a socket buffer holds, so the writer blocks mid-frame.
     calls.spawn(async move {
         let huge = "x".repeat(8 * 1024 * 1024);
-        blocker.send_message(&agent_id(AGENT), &huge, "k").await
+        blocker
+            .send_message(&agent_id(AGENT), &huge, &[], "k")
+            .await
     });
     tokio::time::sleep(Duration::from_millis(50)).await;
     // More pings than the write queue holds, so the last wait to be queued.

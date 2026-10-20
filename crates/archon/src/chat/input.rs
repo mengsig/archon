@@ -8,6 +8,7 @@
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::mpsc as std_mpsc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use anyhow::Context as _;
@@ -15,6 +16,8 @@ use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
 use rustyline::{Config, Editor, ExternalPrinter};
 use tokio::sync::mpsc;
+
+use super::draft::Draft;
 
 const PROMPT: &str = "› ";
 const HISTORY_ENTRIES: usize = 1_000;
@@ -37,9 +40,11 @@ pub enum Incoming {
     Notice(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Ack {
     Continue,
+    /// Read the next line with this already typed (the chips `/image` attached).
+    Draft(String),
     Stop,
 }
 
@@ -87,8 +92,8 @@ pub struct Input {
 
 impl Input {
     /// Start the editor thread; history is loaded from and appended to
-    /// `history` (a missing file is an empty history).
-    pub fn start(history: PathBuf) -> anyhow::Result<(Self, Output)> {
+    /// `history` (a missing file is an empty history). Pasted images go to `draft`.
+    pub fn start(history: PathBuf, draft: Arc<Mutex<Draft>>) -> anyhow::Result<(Self, Output)> {
         assert!(history.is_absolute(), "the history file path is absolute");
         let config = Config::builder()
             .max_history_size(HISTORY_ENTRIES)
@@ -115,6 +120,7 @@ impl Input {
             Err(_) => Output::Stdout,
         };
         let (events_tx, events) = mpsc::channel(4);
+        super::keys::bind(&mut editor, draft, events_tx.clone());
         let (acks, acks_rx) = std_mpsc::channel();
         let thread = std::thread::Builder::new()
             .name("archon-chat-input".into())
@@ -165,10 +171,16 @@ fn run_editor(
         }
     }
     let mut history_warned = false;
+    let mut typed = String::new();
     loop {
-        let event = match editor.readline(PROMPT) {
+        let read = match std::mem::take(&mut typed) {
+            typed if typed.is_empty() => editor.readline(PROMPT),
+            typed => editor.readline_with_initial(PROMPT, (&typed, "")),
+        };
+        let event = match read {
             Ok(line) => {
-                if let Err(e) = remember(&mut editor, &history, &line)
+                let remembered = super::draft::without_chips(&line);
+                if let Err(e) = remember(&mut editor, &history, &remembered)
                     && !history_warned
                 {
                     history_warned = true;
@@ -192,6 +204,7 @@ fn run_editor(
         }
         match acks.recv() {
             Ok(Ack::Continue) => continue,
+            Ok(Ack::Draft(chips)) => typed = chips,
             Ok(Ack::Stop) | Err(_) => return,
         }
     }

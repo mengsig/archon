@@ -97,6 +97,7 @@ async fn failed_briefing_delivery_is_frozen_and_retried_before_adoption() {
         .append_feed(
             FeedEntry::Operator {
                 text: "later".into(),
+                images: Vec::new(),
             },
             archon_core::now(),
         )
@@ -129,6 +130,7 @@ async fn briefing_snapshot_lists_questions_items_initiatives_and_chat() {
         .append_feed(
             FeedEntry::Operator {
                 text: "Please continue".into(),
+                images: Vec::new(),
             },
             archon_core::now(),
         )

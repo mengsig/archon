@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 
 use archon_core::Timestamp;
+use archon_core::attachment::with_image_labels;
 use archon_core::id::QuestionId;
 use archon_core::notify::{FeedEntry, FeedItem, NotificationKind, Question};
 use chrono::{Local, NaiveDate};
@@ -186,7 +187,9 @@ fn describe(entry: &FeedEntry, labels: &QuestionLabels) -> Parts {
                 evidence.channel, evidence.seq
             ),
         ),
-        FeedEntry::Operator { text } => simple("you", Style::Bold, text),
+        FeedEntry::Operator { text, images } => {
+            simple("you", Style::Bold, &with_image_labels(text, images))
+        }
         FeedEntry::Orchestrator { text } => simple("archon", Style::Cyan, text),
         FeedEntry::System { text } => simple("system", Style::Dim, text),
         FeedEntry::Notification(n) => {
@@ -323,6 +326,7 @@ mod tests {
         let you = render_feed_item(
             &item(FeedEntry::Operator {
                 text: "add caching".into(),
+                images: Vec::new(),
             }),
             false,
         );
@@ -334,6 +338,28 @@ mod tests {
             head(&render_feed_item(&reply, false).unwrap()),
             "archon  Queued on api."
         );
+    }
+
+    #[test]
+    fn a_line_sent_with_images_names_each_image() {
+        let shot = archon_core::attachment::ImageRef {
+            media_type: "image/png".into(),
+            size_bytes: 1536,
+            name: Some("shot.png".into()),
+        };
+        let line = item(FeedEntry::Operator {
+            text: "what is this?".into(),
+            images: vec![shot.clone()],
+        });
+        let rendered = render_feed_item(&line, false).unwrap();
+        assert_eq!(head(&rendered), "you  what is this?");
+        assert!(rendered.contains("[image: shot.png, 1.5 KB]"), "{rendered}");
+        let only = item(FeedEntry::Operator {
+            text: String::new(),
+            images: vec![shot],
+        });
+        let rendered = render_feed_item(&only, false).unwrap();
+        assert_eq!(head(&rendered), "you  [image: shot.png, 1.5 KB]");
     }
 
     #[test]

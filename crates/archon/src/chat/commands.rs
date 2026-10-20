@@ -13,10 +13,13 @@ const CHAT_HELP: &str = "\
   /archon answer|approve|reject|merge   the same as /answer, /approve, /reject, /merge
   /archon undo N          undo operator change N from the Authority feed
   /archon reset [--repo NAME]   forget the saved settings of a scope
+  /image <path>           attach an image file to the next message
   /progress               show or hide progress notes (also /verbose)
   /help                   this list
   /quit                   leave (also Ctrl-D, or Ctrl-C twice)
-Start a line with // to send literal slash text; the escape stays in the message.";
+Start a line with // to send literal slash text; the escape stays in the message.
+Ctrl+V (or Alt+V) attaches a copied image as [image #N], else pastes the text;
+Ctrl+Shift+V always pastes text. Backspace after a chip removes its image.";
 
 pub fn help() -> String {
     let mut text = String::from("Type a message and press Enter to talk to the orchestrator.\n");
@@ -43,12 +46,22 @@ pub enum SlashCommand {
     Authority(String),
     Quit,
     ToggleProgress,
-    Answer { question: QuestionRef, text: String },
+    Answer {
+        question: QuestionRef,
+        text: String,
+    },
     Questions,
     Status,
-    Queue { states: Vec<String> },
+    Queue {
+        states: Vec<String>,
+    },
     Item(String),
-    Merge { item: String, ignore_checks: bool },
+    /// Attach the image file at this path to the next message.
+    Image(String),
+    Merge {
+        item: String,
+        ignore_checks: bool,
+    },
     Pause(PauseTarget),
     Resume(PauseTarget),
 }
@@ -90,6 +103,10 @@ fn parse_command(name: &str, rest: &str) -> Result<SlashCommand, String> {
         "item" => match split_word(rest) {
             (id, "") if !id.is_empty() => Ok(SlashCommand::Item(id.to_owned())),
             _ => Err("usage: /item <id>".to_owned()),
+        },
+        "image" | "img" => match rest.is_empty() {
+            true => Err("usage: /image <path>".to_owned()),
+            false => Ok(SlashCommand::Image(rest.to_owned())),
         },
         "archon" => parse_archon(rest),
         "approve" | "reject" | "upgrade" | "watch" => {
@@ -191,6 +208,19 @@ mod tests {
             parse_line("//archon resume --hard"),
             ChatInput::Say("//archon resume --hard".into())
         );
+    }
+
+    #[test]
+    fn image_names_a_path_to_attach() {
+        assert_eq!(
+            parse_line("/image ~/shots/a b.png "),
+            ChatInput::Command(SlashCommand::Image("~/shots/a b.png".into()))
+        );
+        assert_eq!(
+            parse_line("/image"),
+            ChatInput::Invalid("usage: /image <path>".into())
+        );
+        assert!(help().contains("Ctrl+Shift+V always pastes text"));
     }
 
     #[test]

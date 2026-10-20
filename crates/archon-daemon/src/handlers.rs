@@ -450,7 +450,7 @@ async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, Ar
 
 async fn handle_operator(ctx: &DaemonContext, request: Request) -> Result<Reply, ArchonError> {
     match request {
-        Request::Say { text } => operator::say(ctx, &text).await,
+        Request::Say { text, images } => operator::say(ctx, &text, &images).await,
         Request::Notify { kind, text, item } => operator::notify(ctx, kind, &text, item).await,
         Request::AskOperator {
             text,

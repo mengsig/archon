@@ -4,10 +4,12 @@
 
 mod chat;
 mod cli;
+mod clipboard;
 mod cmd;
 mod connect;
 mod daemon_log;
 mod format;
+mod images;
 mod instance;
 mod ops;
 mod questions;

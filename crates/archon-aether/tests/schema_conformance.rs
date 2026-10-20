@@ -212,12 +212,14 @@ fn message_samples() -> Vec<Command> {
             to: agent(),
             content: "hi".into(),
             subtree: false,
+            attachments: Vec::new(),
             idempotency_key: Some("fd_1".into()),
         },
         Command::SendMessage {
             to: agent(),
             content: "hi".into(),
             subtree: false,
+            attachments: Vec::new(),
             idempotency_key: None,
         },
         Command::ReplyToQuestion {
@@ -736,4 +738,44 @@ fn notification_commands_match_aethers_feature_schema() {
     }
     let action = serde_json::to_value(NotificationAction::option(2, "reject")).unwrap();
     assert_eq!(action, json!({"id": "2", "label": "reject"}));
+}
+
+/// Transcribed from Aether's published protocol schema (v24): images ride on
+/// `send_message.attachments`, and a text-only message leaves the key off.
+#[test]
+fn a_message_with_images_matches_aethers_published_schema() {
+    use archon_core::attachment::ImageAttachment;
+    let schema: Value = serde_json::from_str(include_str!(
+        "fixtures/aether-send-message-images.schema.json"
+    ))
+    .unwrap();
+    let image = ImageAttachment::encode(b"\x89PNG\r\n\x1a\npixels", Some("shot.png")).unwrap();
+    let unnamed = ImageAttachment::encode(b"GIF89a-rest", None).unwrap();
+    let command = Command::SendMessage {
+        to: agent(),
+        content: "what is this?".into(),
+        subtree: false,
+        attachments: vec![image, unnamed],
+        idempotency_key: Some("fd_1".into()),
+    };
+    assert_eq!(violations(&schema, &command), Vec::<String>::new());
+    let frame = serde_json::to_value(ClientFrame {
+        req: 1,
+        command: &command,
+    })
+    .unwrap();
+    let images = frame["attachments"].as_array().expect("an array of images");
+    assert_eq!(images.len(), 2);
+    for (at, image) in images.iter().enumerate() {
+        let def = &schema["$defs"]["ImageAttachment"];
+        let problems = check(&schema, def, image, &format!("attachments[{at}]"));
+        assert!(problems.is_empty(), "{problems:?}");
+    }
+    let text_only = &message_samples()[0];
+    let frame = serde_json::to_value(ClientFrame {
+        req: 1,
+        command: text_only,
+    })
+    .unwrap();
+    assert!(frame.get("attachments").is_none(), "{frame}");
 }

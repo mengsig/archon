@@ -1,5 +1,9 @@
 # Release 1.4.1 smoke gate
 
+**Latest: the gate on the final release head shows a Haiku decrease** (Archon
+7/8 against 8/8 on v1.4.0); see
+[the last section](#gate-on-the-final-release-head-a-haiku-decrease).
+
 **Verdict: PASS WITH ONE UNREPRODUCED MISS.** At `70aebe96` (1.4.1) the
 first Haiku run of next passed 3/4 Archon trials against a 4/4 baseline, and
 `archon-bench smoke` reported FAIL. Its repeat passed 4/4. v1.4.0 passed 4/4
@@ -78,3 +82,68 @@ runs. Between v1.4.0 and this branch no file with prompt, orchestrator,
 repository or mirror in its path changed (`git diff --name-only v1.4.0..HEAD`),
 which agrees with the earlier finding that the orchestrator prompts are
 unchanged. The rerun artifacts were not kept; the sandboxes were removed.
+
+## Gate on the final release head: a Haiku decrease
+
+**Verdict: decrease, so the release stops here.** Haiku passed 7/8 Archon
+trials on the release head against 8/8 on v1.4.0, and `archon-bench smoke`
+reported FAIL for one of the head's two runs. Luna passed 4/4 on both. No
+further reruns were made; whether 1.4.1 ships is the operator's call.
+
+The head measured is `0238604b`: 1.4.1 with #182 (image paste, daemon
+protocol 18), `serde_json` 1.0.154, `tokio` 1.53.3 and CI's
+`taiki-e/install-action` 2.87.28. Later commits change only this file.
+`CARGO_BUILD_JOBS=4 make ci` passed on that head (3012 tests passed, 0
+failed, 9 ignored).
+
+Same method as above, with one difference: each build ran under its own
+harness. The head's `archon-bench` speaks daemon protocol 18, and v1.4.0's
+archond speaks 17 and refuses it, so the v1.4.0 arm used `archon-bench`
+built from `v1.4.0` (its tasks and baselines are byte-identical to the
+head's). A first v1.4.0 attempt under the head's harness failed every
+Archon trial on that refusal before any work. It is kept as evidence and
+not counted. Aether was 1.2.1 at `96cfaad0`, the head of mengsig/aether
+#233 when the runs began. The `archon` built from `v1.4.0` is byte-identical
+to the earlier gate's (sha256 `44d29f95`). Runs were interleaved, one at a
+time, each in a new private `env -i` sandbox with its own aetherd, all
+removed afterwards.
+
+| Run | Archon | Archon cost | Archon wall | Aether | Smoke |
+|---|---|---|---|---|---|
+| Haiku head, run 1 | 4/4 | $0.0905 | 302 s | 4/4 | PASS · $0.12 |
+| Haiku v1.4.0, run 1 | 4/4 | $0.0910 | 326 s | 4/4 | PASS · $0.12 |
+| Haiku head, run 2 | 3/4 | $0.0997 | 1427 s | 4/4 | FAIL (timeout) |
+| Haiku v1.4.0, run 2 | 4/4 | $0.0951 | 326 s | 4/4 | PASS · $0.13 |
+| Luna head | 4/4 | $0.0647 | 366 s | 4/4 | PASS · $0.08 |
+| Luna v1.4.0 | 4/4 | $0.0630 | 371 s | 4/4 | PASS · $0.08 |
+
+Archon costs are floors (`cost_gap = interrupted`); Luna's include Aether's
+estimates.
+
+### Findings
+
+- **The miss** is `quality-ledger-transfer` in Haiku run 2 on the head. It
+  hit the 20-minute trial limit at 1202 s. The branch it left passes the
+  hidden grader ("graded on timeout: pass"), but a timeout never counts as a
+  pass. The `direct` implement agent wrote and committed the change in under
+  a minute, delegated its reviewer at 15:46:09, and called `wait_for` with
+  only `message_from` (its parent) and `timeout_seconds: 900`, without the
+  reviewer's task. The reviewer passed in its first turn, but the waiter woke
+  only at 16:01:09, when the 900 s ran out. It then committed a small test
+  fix, delegated a delta reviewer and made the same call again, and the
+  trial ran out. Its turns are in the evidence
+  (`haiku-next-2/replay-stage.txt`).
+- **What changed for that agent.** No `wait_for` guidance changed between
+  v1.4.0 and this head. The record stage's contract
+  (`crates/archon-pipeline/src/contract.rs`) gained #180's "Risk level"
+  section, so its prompt is longer and asks reviewers for a risk call. The
+  earlier sections' "orchestrator prompts are unchanged" holds for the
+  orchestrator only, not for this stage contract. One trial cannot show
+  whether the longer contract made the mistake likelier.
+- **Over both gates**, Haiku on 1.4.1 missed 2 of 28 Archon trials, each a
+  different model mistake (a refusal, then this wait). v1.4.0 missed 0 of 24.
+- **Cost and wall** of the passing runs match v1.4.0 within a few percent on
+  both models.
+
+The results, logs and scripts are kept as this item's artifact
+(`release-1.4.1-gate2-evidence`).

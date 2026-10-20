@@ -31,7 +31,13 @@ async fn a_forwarded_operator_only_request_is_refused_before_recovery() {
     assert!(PROMPT < RECOVERY_GRACE, "the refusal must beat the grace");
     let h = Harness::new().await;
     h.ctx.recovery.begin();
-    let say = for_agent(common::ORCHESTRATOR, Request::Say { text: "hi".into() });
+    let say = for_agent(
+        common::ORCHESTRATOR,
+        Request::Say {
+            text: "hi".into(),
+            images: Vec::new(),
+        },
+    );
     let refused = tokio::time::timeout(PROMPT, h.cli(say))
         .await
         .expect("refused without waiting for recovery")

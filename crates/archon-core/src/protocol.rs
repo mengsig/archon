@@ -57,7 +57,9 @@ use crate::steer::Steer;
 /// 16: `promote`, a repository's `release_hook` and its confirmed full and
 /// release checks; an older archond knows no such request and would drop them.
 /// 17: a repository's `merge_waive_checks`, which an older archond would drop.
-pub const PROTOCOL_VERSION: u32 = 17;
+/// 18: `say` may carry `images`, which an older archond would drop; a
+/// text-only `say` is the frame it always was.
+pub const PROTOCOL_VERSION: u32 = 18;
 
 /// Said beside an item whose `budget_usd` was set while budgets are off.
 pub const BUDGETS_OFF_NOTE: &str = "Dollar budgets are globally off ([limits] budgets_enabled = \
@@ -66,6 +68,9 @@ pub const BUDGETS_OFF_NOTE: &str = "Dollar budgets are globally off ([limits] bu
 
 /// Longest accepted frame in either direction.
 pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
+// A `say` with all the image bytes one message takes, as base64, still fits.
+const _: () =
+    assert!(crate::attachment::MAX_MESSAGE_IMAGE_BYTES / 3 * 4 + (1 << 20) < MAX_FRAME_BYTES);
 
 /// Who is on the other end. Guards against mistakes, not attacks: the
 /// socket's file mode is the security boundary.
@@ -243,9 +248,12 @@ pub enum Request {
         repo: Option<RepoRef>,
     },
 
-    /// Operator chat line to the orchestrator. CLI only.
+    /// Operator chat line to the orchestrator. CLI only. `text` may be
+    /// blank when there is at least one image.
     Say {
         text: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<crate::attachment::ImageAttachment>,
     },
     Notify {
         kind: NotificationKind,
@@ -2020,8 +2028,20 @@ mod tests {
             request: Box::new(request),
         };
         assert!(wrap(Request::Status(StatusQuery::default())).is_read_only());
-        assert!(!wrap(Request::Say { text: "hi".into() }).is_read_only());
-        assert!(wrap(Request::Say { text: "hi".into() }).is_operator_only());
+        assert!(
+            !wrap(Request::Say {
+                text: "hi".into(),
+                images: Vec::new(),
+            })
+            .is_read_only()
+        );
+        assert!(
+            wrap(Request::Say {
+                text: "hi".into(),
+                images: Vec::new(),
+            })
+            .is_operator_only()
+        );
         let pause = wrap(Request::Pause(PauseTarget::Global { hard: false }));
         assert!(!pause.is_read_only() && !pause.is_operator_only());
 
@@ -2060,7 +2080,13 @@ mod tests {
 
     #[test]
     fn operator_only_requests_are_flagged() {
-        assert!(Request::Say { text: "hi".into() }.is_operator_only());
+        assert!(
+            Request::Say {
+                text: "hi".into(),
+                images: Vec::new(),
+            }
+            .is_operator_only()
+        );
         assert!(!Request::Status(StatusQuery::default()).is_operator_only());
         let edit = Request::UpdateLesson {
             lesson: LessonId::new(),

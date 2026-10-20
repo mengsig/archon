@@ -17,7 +17,7 @@ use crate::pull_request::OntoPullRequest;
 pub const MAX_BRIEF_BYTES: usize = 1024 * 1024;
 
 /// Characters that reorder how the rest of a line displays (Trojan Source).
-fn is_bidi_control(c: char) -> bool {
+pub(crate) fn is_bidi_control(c: char) -> bool {
     matches!(c, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
 }
 

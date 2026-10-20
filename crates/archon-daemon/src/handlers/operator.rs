@@ -4,6 +4,7 @@
 use std::path::Path;
 
 use archon_core::aether_ids::AetherAgentId;
+use archon_core::attachment::{ImageAttachment, check_images};
 use archon_core::error::ArchonError;
 use archon_core::id::{NotificationId, QuestionId, QueueItemId};
 use archon_core::notify::{AnswerVia, FeedEntry, Notification, NotificationKind, Question};
@@ -19,14 +20,36 @@ const MAX_TEXT_CHARS: usize = 20_000;
 const MAX_HISTORY: usize = 1_000;
 const MAX_OPTIONS: usize = 10;
 
-/// Echo the line to the feed, then hand it to the orchestrator.
-pub(super) async fn say(ctx: &DaemonContext, text: &str) -> Result<Reply, ArchonError> {
-    let text = checked_text(text, "a chat line")?;
-    let item = feed::append(ctx, FeedEntry::Operator { text: text.clone() }).await?;
+/// Echo the line to the feed, then hand it and its images to the
+/// orchestrator. Images are checked as Aether checks them, before anything
+/// is recorded; the feed keeps only what each image was.
+pub(super) async fn say(
+    ctx: &DaemonContext,
+    text: &str,
+    images: &[ImageAttachment],
+) -> Result<Reply, ArchonError> {
+    let refs = check_images(images).map_err(|e| ArchonError::Invalid(e.to_string()))?;
+    let text = match refs.is_empty() {
+        true => checked_text(text, "a chat line")?,
+        false => checked_caption(text)?,
+    };
+    let entry = FeedEntry::Operator {
+        text: text.clone(),
+        images: refs,
+    };
+    let item = feed::append(ctx, entry).await?;
     assert!(item.seq > 0, "feed sequences start at 1");
     crate::learned::operator_message(ctx, &text).await?;
-    supervisor::deliver_operator_message(ctx, &item.id, &text).await?;
+    supervisor::deliver_operator_message(ctx, &item.id, &text, images).await?;
     Ok(Reply::Ok)
+}
+
+/// The text beside at least one image: trimmed and bounded, and may be blank.
+fn checked_caption(text: &str) -> Result<String, ArchonError> {
+    match text.trim().is_empty() {
+        true => Ok(String::new()),
+        false => checked_text(text, "a chat line"),
+    }
 }
 
 pub(super) async fn notify(

@@ -19,6 +19,7 @@ use archon_aether::wire::{
 };
 use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
+use archon_core::attachment::ImageAttachment;
 use archon_core::autonomy::{AutonomyPolicy, ToolsMode};
 use archon_core::config::{AetherMode, Config, HostContext};
 use archon_core::error::ArchonError;
@@ -692,8 +693,9 @@ pub async fn deliver_operator_message(
     ctx: &DaemonContext,
     feed_item: &FeedItemId,
     text: &str,
+    images: &[ImageAttachment],
 ) -> Result<(), ArchonError> {
-    if text.trim().is_empty() {
+    if text.trim().is_empty() && images.is_empty() {
         return Err(ArchonError::Invalid("an empty message was not sent".into()));
     }
     let orchestrator = ensure_orchestrator(ctx).await?;
@@ -703,7 +705,7 @@ pub async fn deliver_operator_message(
     ctx.mirrors.request();
     let client = ctx.aether.client()?;
     client
-        .send_message(&orchestrator, text, feed_item.as_str())
+        .send_message(&orchestrator, text, images, feed_item.as_str())
         .await
 }
 

@@ -41,6 +41,7 @@ mod link_command_notes;
 mod link_common;
 mod link_freshness;
 mod link_github;
+mod link_images;
 mod link_mcp;
 mod link_pump;
 mod link_reports;

@@ -2,6 +2,7 @@
 
 use archon_aether::AetherClient;
 use archon_core::aether_ids::AetherAgentId;
+use archon_core::attachment::with_image_labels;
 use archon_core::error::ArchonError;
 use archon_core::notify::FeedEntry;
 use archon_core::protocol::ItemQuery;
@@ -237,7 +238,10 @@ fn chat_lines(store: &Store) -> Result<Vec<String>, ArchonError> {
     let mut lines = Vec::new();
     for entry in entries.into_iter().rev() {
         let text = match entry.entry {
-            FeedEntry::Operator { text } => format!("operator: {text}"),
+            FeedEntry::Operator { text, images } => {
+                let said = with_image_labels(&text, &images).replace('\n', " ");
+                format!("operator: {said}")
+            }
             FeedEntry::Orchestrator { text } => format!("orchestrator: {text}"),
             FeedEntry::Notification(n) => format!("{:?}: {}", n.kind, n.text),
             FeedEntry::Question(q) => format!("Q{}: {}", q.number, q.text),

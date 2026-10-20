@@ -58,7 +58,13 @@ fn populate(store: &mut Store) -> (Vec<QueueItem>, archon_core::run::PipelineRun
     let run = start(store, &a.id);
     store.upsert_stage_run(&running_stage(&run, 0, 1)).unwrap();
     store
-        .append_feed(FeedEntry::Operator { text: "go".into() }, t(1))
+        .append_feed(
+            FeedEntry::Operator {
+                text: "go".into(),
+                images: Vec::new(),
+            },
+            t(1),
+        )
         .unwrap();
     store.append_feed(progress("half"), t(2)).unwrap();
     let question = Question {

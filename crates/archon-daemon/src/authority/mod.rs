@@ -73,6 +73,7 @@ pub(crate) async fn socket_settings(
         ctx,
         FeedEntry::Operator {
             text: crate::operator_sentence::request_sentence(&action),
+            images: Vec::new(),
         },
     )
     .await?;

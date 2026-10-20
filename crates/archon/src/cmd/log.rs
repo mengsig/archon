@@ -336,7 +336,13 @@ mod tests {
         let entries = [
             feed(1, notice(NotificationKind::Progress, Some(&mine))),
             feed(2, notice(NotificationKind::Outcome, Some(&other))),
-            feed(3, FeedEntry::Operator { text: "hi".into() }),
+            feed(
+                3,
+                FeedEntry::Operator {
+                    text: "hi".into(),
+                    images: Vec::new(),
+                },
+            ),
             feed(4, answer(&asked_before)),
             feed(5, FeedEntry::Question(asked_now.clone())),
             feed(6, answer(&asked_now)),

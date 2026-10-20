@@ -1128,7 +1128,7 @@ async fn an_operator_message_is_keyed_by_its_feed_item() {
         .fake
         .script("send_message", Scripted::reply("message_sent", json!({})));
     let item = FeedItemId::new();
-    supervisor::deliver_operator_message(&harness.ctx, &item, "status?")
+    supervisor::deliver_operator_message(&harness.ctx, &item, "status?", &[])
         .await
         .unwrap();
     let sent = &harness.fake.received_named("send_message")[0];
@@ -1146,7 +1146,7 @@ async fn a_refused_operator_message_does_not_leave_the_chat_waiting() {
         "send_message",
         Scripted::refuse("invalid_argument", "too long"),
     );
-    let err = supervisor::deliver_operator_message(&harness.ctx, &FeedItemId::new(), "hi")
+    let err = supervisor::deliver_operator_message(&harness.ctx, &FeedItemId::new(), "hi", &[])
         .await
         .unwrap_err();
     assert!(matches!(err, ArchonError::Invalid(_)), "{err}");
@@ -1491,7 +1491,7 @@ async fn an_operator_message_brings_the_quiet_news_and_a_current_mirror() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert!(harness.fake.received_named("trigger").is_empty());
 
-    supervisor::deliver_operator_message(&harness.ctx, &FeedItemId::new(), "what changed?")
+    supervisor::deliver_operator_message(&harness.ctx, &FeedItemId::new(), "what changed?", &[])
         .await
         .unwrap();
     let triggers = harness.fake.wait_for("trigger", 1, WAIT).await;

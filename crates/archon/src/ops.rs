@@ -3,6 +3,7 @@
 //! and the caller says what happened in its own words.
 
 use archon_client::ArchonClient;
+use archon_core::attachment::ImageAttachment;
 use archon_core::id::QueueItemId;
 use archon_core::integration::Promotion;
 use archon_core::merge::MergeRequest;
@@ -12,9 +13,16 @@ use archon_core::protocol::{PauseTarget, Reply, RepoRef, Request};
 use crate::connect::unexpected;
 
 /// Send one line to the orchestrator.
-pub async fn say(client: &ArchonClient, text: String) -> anyhow::Result<()> {
-    assert!(!text.trim().is_empty(), "blank lines are never sent");
-    match client.call(Request::Say { text }).await? {
+pub async fn say(
+    client: &ArchonClient,
+    text: String,
+    images: Vec<ImageAttachment>,
+) -> anyhow::Result<()> {
+    assert!(
+        !text.trim().is_empty() || !images.is_empty(),
+        "a message without images is never blank"
+    );
+    match client.call(Request::Say { text, images }).await? {
         Ok(Reply::Ok) => Ok(()),
         Ok(other) => Err(unexpected(&other, "ok")),
         Err(refusal) => Err(archon_client::refusal_error(refusal).into()),

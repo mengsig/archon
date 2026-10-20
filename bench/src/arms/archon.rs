@@ -282,6 +282,7 @@ async fn session(input: &TrialInput<'_>, client: &ArchonClient) -> anyhow::Resul
     client
         .request(Request::Say {
             text: input.task.file.prompt.clone(),
+            images: Vec::new(),
         })
         .await
         .context("sending the prompt with Say")?;

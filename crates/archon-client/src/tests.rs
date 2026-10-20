@@ -403,6 +403,7 @@ async fn a_daemon_that_stops_reading_times_out_queued_requests() {
     // Far over the socket buffer, so the writer blocks on it...
     let big = Request::Say {
         text: "x".repeat(8 << 20),
+        images: Vec::new(),
     };
     let shared = client.shared.clone();
     stalled.spawn(async move { shared.call(big, None, patient).await });

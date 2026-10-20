@@ -779,6 +779,40 @@ async fn task_outcomes_map_every_settled_state() {
 }
 
 #[tokio::test]
+async fn images_reach_a_protocol_19_aetherd_and_are_refused_below_it() {
+    use archon_core::attachment::ImageAttachment;
+    let image = ImageAttachment::encode(b"\x89PNG\r\n\x1a\npixels", Some("shot.png")).unwrap();
+    let (_dir, fake) = fake_aether().await;
+    fake.set_default("send_message", Scripted::reply("message_sent", json!({})));
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    let client = connect(&fake).await;
+    client
+        .send_message(&agent, "", std::slice::from_ref(&image), "fd_1")
+        .await
+        .unwrap();
+    let sent = fake.received_named("send_message").remove(0);
+    assert_eq!(sent["content"], "");
+    assert_eq!(sent["attachments"], json!([image]));
+
+    let (_old_dir, old) = fake_aether().await;
+    old.set_protocol_window(17, 18);
+    let client = connect(&old).await;
+    assert_eq!(client.welcome().protocol_version, 18);
+    let refused = client
+        .send_message(&agent, "see this", &[image], "fd_2")
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&refused, ArchonError::Unavailable(why) if why.contains("images need 19")),
+        "{refused}"
+    );
+    assert!(
+        old.received_named("send_message").is_empty(),
+        "nothing sent"
+    );
+}
+
+#[tokio::test]
 async fn typed_commands_send_what_architecture_4_3_says() {
     let (_dir, fake) = fake_aether().await;
     let sent = json!({"message": "msg_1"});
@@ -797,7 +831,10 @@ async fn typed_commands_send_what_architecture_4_3_says() {
     fake.set_default("mcp_servers", Scripted::reply("mcp_servers", json!([])));
     let client = connect(&fake).await;
     let agent = AetherAgentId::parse(AGENT).unwrap();
-    client.send_message(&agent, "hello", "fd_1").await.unwrap();
+    client
+        .send_message(&agent, "hello", &[], "fd_1")
+        .await
+        .unwrap();
     client.reply_to_question(&agent, 7, "yes").await.unwrap();
     client
         .trigger(&agent, json!({"kind": "news"}), "tr_1")

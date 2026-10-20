@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+Images reach the orchestrator from `archon chat`. Ctrl+V (or Alt+V) attaches
+a copied image as a chip, `[image #1]`, read through `wl-paste` or `xclip`;
+with only text on the clipboard it pastes the text, and Ctrl+Shift+V stays
+the terminal's plain-text paste. A copied or typed path to an image file,
+`/image <path>` and `archon say --image <path>` attach files, and Backspace
+after a chip removes its image. archond checks each message as Aether does
+(at most 10 PNG, JPEG, GIF or WebP images, 3.8 MB each, 10 MB together),
+delivers the images through Aether's `send_message` attachments (an aetherd
+speaking protocol 19 or later), and keeps only `[image: name, size]` in the
+feed. The daemon protocol is now 18, so `archon` and archond upgrade
+together; a text-only message is the frame it always was.
+
 Steering several running items at once, or one item several times, no longer
 panics archond ("steps are only added while one is made"). A steer's delivery
 to a stage run and the sweep's could both make the same owed steps and then

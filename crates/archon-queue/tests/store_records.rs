@@ -380,7 +380,10 @@ fn feed_entries_round_trip_with_gapless_seq() {
     let mut store = store();
     assert_eq!(store.last_feed_seq().unwrap(), 0);
     let entries = vec![
-        FeedEntry::Operator { text: "hi".into() },
+        FeedEntry::Operator {
+            text: "hi".into(),
+            images: Vec::new(),
+        },
         FeedEntry::Orchestrator {
             text: "hello".into(),
         },

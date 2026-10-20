@@ -10,6 +10,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use archon_core::aether_ids::{AetherAgentId, AetherTaskId};
+use archon_core::attachment::ImageAttachment;
 use archon_core::error::ArchonError;
 use archon_core::protocol::McpHealth;
 use serde::de::DeserializeOwned;
@@ -21,9 +22,10 @@ use crate::events::AetherEvent;
 use crate::github::{WatcherConfig, WatcherStatus};
 use crate::wire::{
     ALLOWLIST_PROTOCOL_VERSION, Agent, AgentPatch, AgentQuery, CLIENT_NAME, Command, CreateAgent,
-    DaemonDefaults, ErrorReply, EventQuery, Hello, MIN_PROTOCOL_VERSION, ModelInfo,
-    NOTE_LEVEL_PROTOCOL_VERSION, NOTES_FEATURE, NoteLevel, OPERATOR_LOGINS_PROTOCOL_VERSION,
-    PROTOCOL_VERSION, ProviderInfo, RawReply, Subscribed, Task, Welcome,
+    DaemonDefaults, ErrorReply, EventQuery, Hello, IMAGES_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION,
+    ModelInfo, NOTE_LEVEL_PROTOCOL_VERSION, NOTES_FEATURE, NoteLevel,
+    OPERATOR_LOGINS_PROTOCOL_VERSION, PROTOCOL_VERSION, ProviderInfo, RawReply, Subscribed, Task,
+    Welcome,
 };
 
 /// Default per-request timeout; nothing waits forever on a silent daemon.
@@ -448,20 +450,37 @@ impl AetherClient {
         self.request(command, "note_appended").await.map(drop)
     }
 
+    /// Deliver a keyed message to `to`'s inbox. Images need an aetherd that
+    /// speaks protocol 19; an older one would deliver the text alone, so a
+    /// message with images is refused here instead.
     pub async fn send_message(
         &self,
         to: &AetherAgentId,
         content: &str,
+        images: &[ImageAttachment],
         idempotency_key: &str,
     ) -> Result<(), ArchonError> {
         assert!(
             !idempotency_key.is_empty(),
             "operator messages are always keyed"
         );
+        assert!(
+            !content.trim().is_empty() || !images.is_empty(),
+            "a message says something or shows something"
+        );
+        let welcome = self.welcome();
+        if !images.is_empty() && welcome.protocol_version < IMAGES_PROTOCOL_VERSION {
+            return Err(ArchonError::Unavailable(format!(
+                "aetherd {} speaks protocol {}, and images need {IMAGES_PROTOCOL_VERSION}; \
+                 upgrade Aether, or send the message without images",
+                welcome.daemon_version, welcome.protocol_version
+            )));
+        }
         let command = Command::SendMessage {
             to: to.clone(),
             content: content.to_owned(),
             subtree: false,
+            attachments: images.to_vec(),
             idempotency_key: Some(idempotency_key.to_owned()),
         };
         self.request(command, "message_sent").await.map(drop)

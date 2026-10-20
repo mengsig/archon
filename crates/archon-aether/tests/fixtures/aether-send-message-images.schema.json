@@ -1,0 +1,70 @@
+{
+  "$defs": {
+    "ClientFrame": {
+      "oneOf": [
+        {
+          "properties": {
+            "attachments": {
+              "items": {
+                "$ref": "#/$defs/ImageAttachment"
+              },
+              "type": "array"
+            },
+            "cmd": {
+              "const": "send_message",
+              "type": "string"
+            },
+            "content": {
+              "type": "string"
+            },
+            "idempotency_key": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "subtree": {
+              "default": false,
+              "type": "boolean"
+            },
+            "to": {
+              "$ref": "#/$defs/AgentId"
+            }
+          },
+          "required": [
+            "cmd",
+            "to",
+            "content"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ImageAttachment": {
+      "properties": {
+        "data": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "media_type",
+        "data"
+      ],
+      "type": "object"
+    },
+    "AgentId": {
+      "pattern": "^agt_[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    }
+  },
+  "protocol_version": 24
+}

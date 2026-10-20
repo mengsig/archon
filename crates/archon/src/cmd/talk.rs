@@ -1,28 +1,37 @@
 //! Talking to the orchestrator outside the chat: `say`, `answer` and
 //! `questions`.
 
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use archon_client::ArchonClient;
+use archon_core::attachment::check_images;
 use archon_core::notify::Question;
 use archon_core::protocol::{Reply, Request};
 
 use super::{emit, to_json};
 use crate::connect::{connect_or_start, connect_running, unexpected};
 use crate::format;
+use crate::images::read_image_file;
 use crate::ops;
 use crate::questions::{QuestionRef, find_open};
 
-pub async fn say(words: &[String], json: bool) -> anyhow::Result<ExitCode> {
+pub async fn say(words: &[String], paths: &[PathBuf], json: bool) -> anyhow::Result<ExitCode> {
     let text = words.join(" ");
-    if text.trim().is_empty() {
+    if text.trim().is_empty() && paths.is_empty() {
         return Err(archon_core::ArchonError::Invalid(
-            "nothing to say; usage: archon say <text>".into(),
+            "nothing to say; usage: archon say [--image <path>]... <text>".into(),
         )
         .into());
     }
+    let images = paths
+        .iter()
+        .map(|path| read_image_file(path).map_err(archon_core::ArchonError::Invalid))
+        .collect::<Result<Vec<_>, _>>()?;
+    check_images(&images).map_err(|e| archon_core::ArchonError::Invalid(e.to_string()))?;
+    assert_eq!(images.len(), paths.len(), "one attachment per --image");
     let client = connect_or_start().await?;
-    ops::say(&client, text).await?;
+    ops::say(&client, text, images).await?;
     emit(
         json,
         || Ok(serde_json::json!({"ok": true})),

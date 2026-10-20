@@ -167,6 +167,9 @@ pub enum FeedEntry {
     },
     Operator {
         text: String,
+        /// What the images sent with the line were; Aether keeps the bytes.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<crate::attachment::ImageRef>,
     },
     /// Final text of an orchestrator turn that answered the operator.
     Orchestrator {

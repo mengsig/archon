@@ -674,6 +674,7 @@ async fn ordinary_operator_chat_is_not_a_correction_but_structured_feedback_is()
     let sent = h
         .cli(Request::Say {
             text: "Actually add another test for the typo".into(),
+            images: Vec::new(),
         })
         .await;
     assert!(matches!(
@@ -693,6 +694,7 @@ async fn ordinary_operator_chat_is_not_a_correction_but_structured_feedback_is()
     let sent = h
         .cli(Request::Say {
             text: format!("correction {event}"),
+            images: Vec::new(),
         })
         .await;
     assert!(matches!(

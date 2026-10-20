@@ -433,6 +433,7 @@ fn operator_messages_count_what_the_quiet_chat_shows() {
             1,
             FeedEntry::Operator {
                 text: "do it".into(),
+                images: Vec::new(),
             },
         ),
         feed(

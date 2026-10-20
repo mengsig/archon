@@ -64,7 +64,10 @@ pub(crate) async fn from_socket(
     }
     let item = feed::append(
         ctx,
-        archon_core::notify::FeedEntry::Operator { text: text.into() },
+        archon_core::notify::FeedEntry::Operator {
+            text: text.into(),
+            images: Vec::new(),
+        },
     )
     .await?;
     let evidence = OperatorMessage {

@@ -8,6 +8,7 @@ use archon_core::Timestamp;
 use archon_core::aether_ids::{
     AetherAgentId, AetherMemoryFeedbackId, AetherMemoryId, AetherRunId, AetherTaskId,
 };
+use archon_core::attachment::ImageAttachment;
 use archon_core::error::ArchonError;
 use archon_core::model::{Effort, ModelRef};
 use archon_core::model_tier::Tier;
@@ -24,6 +25,8 @@ pub const MIN_PROTOCOL_VERSION: u32 = 14;
 pub const ALLOWLIST_PROTOCOL_VERSION: u32 = 15;
 /// The first protocol whose GitHub watcher stores `operator_users`.
 pub const OPERATOR_LOGINS_PROTOCOL_VERSION: u32 = 17;
+/// The first protocol whose `send_message` carries images.
+pub const IMAGES_PROTOCOL_VERSION: u32 = 19;
 /// The first protocol that serves `append_note`.
 pub const NOTES_PROTOCOL_VERSION: u32 = 23;
 /// The first protocol whose notes carry a `level`.
@@ -75,6 +78,9 @@ pub enum Command {
         to: AetherAgentId,
         content: String,
         subtree: bool,
+        /// Images sent with the text (protocol 19); absent when there are none.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<ImageAttachment>,
         #[serde(skip_serializing_if = "Option::is_none")]
         idempotency_key: Option<String>,
     },

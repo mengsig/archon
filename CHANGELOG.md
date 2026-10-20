@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+Steering several running items at once, or one item several times, no longer
+panics archond ("steps are only added while one is made"). A steer's delivery
+to a stage run and the sweep's could both make the same owed steps and then
+both forget them; deliveries to one stage run now take turns, so each steer
+is delivered exactly once.
+
 A reviewer's verdict is accepted in any letter case: `PASS`, `Pass` and
 ` fail ` count as `pass` and `fail`, as do the same words in `review.verdict`.
 Any other word is still refused.

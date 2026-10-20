@@ -368,6 +368,49 @@ async fn every_steer_is_recorded_with_who_made_it() {
 }
 
 #[tokio::test]
+async fn steers_arriving_together_are_each_delivered_once_and_never_panic() {
+    let h = harness().await;
+    let mut working = Vec::new();
+    for title in ["first", "second", "third"] {
+        let item = h.enqueue(title).await;
+        h.dispatch().await;
+        working.push(item);
+    }
+    let stages = running(&h, "implement").await;
+    assert_eq!(stages.len(), 3);
+
+    let notes: Vec<String> = (0..4).map(|n| format!("note {n}")).collect();
+    let mut steers = Vec::new();
+    for item in &working {
+        for text in &notes {
+            steers.push(steer(&h, &item.id, note(text)));
+        }
+    }
+    // The sweep runs beside the steers, as it does in the daemon.
+    let sweeps = (0..6).map(|_| h.dispatch());
+    let (results, _) = tokio::join!(
+        futures_util::future::join_all(steers),
+        futures_util::future::join_all(sweeps)
+    );
+    for result in results {
+        result.expect("steered");
+    }
+    h.dispatch().await;
+
+    let told = h.backend.messages();
+    for stage in &stages {
+        for text in &notes {
+            let count = told
+                .iter()
+                .filter(|(to, said)| *to == agent(stage) && said.contains(text.as_str()))
+                .count();
+            assert_eq!(count, 1, "{text} reached {} once", stage.id);
+        }
+        assert_eq!(h.kv(&format!("steer_owed:{}", stage.id)).await, None);
+    }
+}
+
+#[tokio::test]
 async fn a_steer_aether_did_not_take_is_delivered_by_the_sweep_exactly_once() {
     let h = harness().await;
     let (item, working) = implementing(&h, "aether is away").await;

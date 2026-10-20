@@ -3,6 +3,9 @@
 //! stored with the steer, so a crash or an unreachable Aether only delays
 //! it: the sweep repeats it until Aether answers or the stage run settled.
 
+use std::collections::BTreeMap;
+use std::sync::{Arc, PoisonError};
+
 use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
@@ -13,6 +16,7 @@ use archon_core::ports::{AgentUpdate, DescendantState};
 use archon_core::run::StageRun;
 use archon_queue::Store;
 use serde::{Deserialize, Serialize};
+use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::context::DaemonContext;
 use crate::executor::{FollowUp, notify, resume};
@@ -52,6 +56,26 @@ impl Delivery {
 
     pub(super) fn is_empty(&self) -> bool {
         self.patch().is_empty() && self.lead.is_none() && self.helpers.is_none()
+    }
+}
+
+/// One lock per stage run being delivered to, kept while anyone holds or
+/// awaits it, so a handler's delivery and the sweep's never make one step twice.
+#[derive(Debug, Default)]
+pub(in crate::executor) struct Locks {
+    by_stage: std::sync::Mutex<BTreeMap<StageRunId, Arc<Mutex<()>>>>,
+}
+
+impl Locks {
+    async fn hold(&self, stage: &StageRunId) -> OwnedMutexGuard<()> {
+        let lock = {
+            let mut by_stage = self.by_stage.lock().unwrap_or_else(PoisonError::into_inner);
+            // An entry only this map refers to is neither held nor awaited.
+            by_stage.retain(|_, lock| Arc::strong_count(lock) > 1);
+            Arc::clone(by_stage.entry(stage.clone()).or_default())
+        };
+        assert!(Arc::strong_count(&lock) >= 2, "the map keeps it while held");
+        lock.lock_owned().await
     }
 }
 
@@ -100,6 +124,9 @@ pub(crate) fn owed(store: &Store) -> Result<Vec<StageRunId>, ArchonError> {
 /// Make what `id` is owed, oldest first, and forget each step once made;
 /// an unanswered step waits for the next sweep, a settled run is owed none.
 pub(crate) async fn deliver(ctx: &DaemonContext, id: &StageRunId) -> Result<FollowUp, ArchonError> {
+    // Steps are owed only by appending, so under this lock the oldest `made`
+    // steps loaded below are still the oldest when they are forgotten.
+    let _delivering = ctx.coordination.steering.hold(id).await;
     let (stage, all) = {
         let store = ctx.store.lock().await;
         let stage = match store.stage_run(id) {

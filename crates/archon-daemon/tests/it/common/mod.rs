@@ -1313,6 +1313,8 @@ impl AgentBackend for FakeBackend {
         content: &str,
         idempotency_key: &str,
     ) -> Result<(), ArchonError> {
+        // A real call leaves the task, so deliveries to one stage interleave.
+        tokio::task::yield_now().await;
         let mut state = self.state();
         state.message_calls.push(idempotency_key.to_owned());
         if let Some(error) = state.message_failures.pop_front() {

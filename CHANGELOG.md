@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 1.4.1
+
+Released 2026-10-20.
+
+A small patch release on 1.4.0: no store migration, daemon protocol 17 as
+before.
+
+Archon still asks Aether for protocol 24. The notification center below
+needs **Aether 1.2.1**, which serves the `notifications` feature. Against an
+older aetherd, such as 1.2.0, archond logs one line and behaves as in 1.4.0;
+everything else here works on every aetherd 1.4.0 worked with.
+
 Steering several running items at once, or one item several times, no longer
 panics archond ("steps are only added while one is made"). A steer's delivery
 to a stage run and the sweep's could both make the same owed steps and then

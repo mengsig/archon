@@ -117,8 +117,9 @@ removed afterwards.
 | Luna head | 4/4 | $0.0647 | 366 s | 4/4 | PASS · $0.08 |
 | Luna v1.4.0 | 4/4 | $0.0630 | 371 s | 4/4 | PASS · $0.08 |
 
-Archon costs are floors (`cost_gap = interrupted`); Luna's include Aether's
-estimates.
+Haiku's Archon costs are floors (`cost_gap = interrupted`). Luna's mix
+incomplete reported usage with Aether's estimates (`*` in the smoke output),
+so they are not bounds.
 
 ### Findings
 

@@ -1,8 +1,8 @@
 # Release 1.4.1 smoke gate
 
-**Latest: the gate on the final release head shows a Haiku decrease** (Archon
-7/8 against 8/8 on v1.4.0); see
-[the last section](#gate-on-the-final-release-head-a-haiku-decrease).
+**Latest: no significant decrease** (Haiku, all gates pooled: Archon 40/44 on
+1.4.1 against 40/40 on v1.4.0, Fisher p=0.12); see
+[the last section](#larger-haiku-rerun-on-the-release-head).
 
 **Verdict: PASS WITH ONE UNREPRODUCED MISS.** At `70aebe96` (1.4.1) the
 first Haiku run of next passed 3/4 Archon trials against a 4/4 baseline, and
@@ -148,3 +148,107 @@ so they are not bounds.
 
 The results, logs and scripts are kept as this item's artifact
 (`release-1.4.1-gate2-evidence`).
+
+## Larger Haiku rerun on the release head
+
+**Verdict: no significant decrease: 40/44 vs 40/40, p=0.12** (Fisher's exact
+test, two-sided; one-sided p=0.07). Four more Haiku smoke runs of the head
+passed 14/16 Archon trials, and four more of v1.4.0 passed 16/16. The head's
+misses are still not zero against v1.4.0's zero, and nothing in v1.4.0..HEAD
+explains them, so the data cannot show a decrease but cannot rule out a small
+one either.
+
+The head is `2db9e061` (it differs from `0238604b` only in this README). Same
+method as the last gate: the head ran under its own `archon-bench`, v1.4.0
+under `archon-bench` built from `v1.4.0`, both archons built with
+`CARGO_BUILD_JOBS=4`, Aether 1.2.1 from the v1.2.1 release (sha256 checked
+against its `SHA256SUMS`), one run at a time, alternating builds, each in a new
+private `env -i` sandbox with its own aetherd, removed afterwards.
+
+| Run | Archon | Aether | Smoke total |
+|---|---|---|---|
+| Haiku head, run 1 | 4/4 | 4/4 | PASS · $0.18 |
+| Haiku v1.4.0, run 1 | 4/4 | 4/4 | PASS · $0.20 |
+| Haiku head, run 2 | 3/4 | 4/4 | FAIL · $0.16 |
+| Haiku v1.4.0, run 2 | 4/4 | 4/4 | PASS · $0.17 |
+| Haiku head, run 3 | 3/4 | 4/4 | FAIL · $0.14 |
+| Haiku v1.4.0, run 3 | 4/4 | 4/4 | PASS · $0.22 |
+| Haiku head, run 4 | 4/4 | 4/4 | PASS · $0.14 |
+| Haiku v1.4.0, run 4 | 4/4 | 4/4 | PASS · $0.13 |
+
+### Pooled over every gate
+
+| | 1.4.1 | v1.4.0 | Fisher p |
+|---|---|---|---|
+| All Archon trials | 40/44 (4 missed) | 40/40 | 0.12 |
+| Earlier gates only | 26/28 | 24/24 | 0.49 |
+| This rerun only | 14/16 | 16/16 | 0.48 |
+| `review-seeded-bug` only | 8/11 | 10/10 | 0.21 |
+
+The pool counts the first gate (5 head and 4 v1.4.0 runs), the final-head gate
+(2 and 2) and this rerun (4 and 4), without the uncounted v1.4.0 attempt under
+the wrong harness.
+
+### The misses
+
+Both new misses are `review-seeded-bug`, the task whose Archon arm is
+answered by the orchestrator alone (pipeline `ask`, 20-35 s).
+
+- **Run 3: a refusal, the same as the first gate's miss.** The orchestrator
+  answered that it could not find the `session-lib` repository (`list_repos`
+  showed only `review-seeded-bug`), did not read it, and asked for a path.
+  Score 0.0.
+- **Run 2: a partial review.** The orchestrator read the repository (it noted
+  that `package.json` names it `session-lib`), found the empty-signature and
+  prefix-match bugs in `verify()` with working inputs, and scored 0.5: its
+  answer says "anyone can mint any claims" but never uses a forgery or bypass
+  word the rubric's second group matches. That is a grader-wording miss on a
+  correct finding, not a failure to find the bug.
+- No `quality-ledger-transfer` trial hit the timeout again: its eight head
+  trials took 110-220 s. The `wait_for` mistake of the last gate did not recur.
+
+### Does anything in v1.4.0..HEAD explain them?
+
+No. The diff was read for the text each agent sees, not only for file names.
+
+- **Orchestrator.** `crates/archon-daemon/prompts/` (the orchestrator prompt,
+  its GitHub section and the topics) and `pipelines/` are byte-identical to
+  v1.4.0. The tools the orchestrator calls changed in one place: `list_queue`
+  prints `, risk <level>` for an item that has one, which `review-seeded-bug`
+  never has (it queues nothing). `list_repos` and the repository registration
+  are untouched. #182 adds an `images` field to the operator's message and the
+  feed; with no image it sends the same text as before, so the orchestrator's
+  first message is unchanged. #178 (notification center) only posts to Aether
+  and changes no message to an agent. #181 (steer delivery) concerns stage
+  runs, not the orchestrator.
+- **Stage agents.** The one change to what a stage agent reads is #180's
+  "Risk level" section in the record stage's contract (and a shorter one for
+  a review stage after it), in `crates/archon-pipeline/src/contract.rs`. It
+  adds the risk rubric, `risk` to the ship record and the reviewer's
+  `risk` call. #179 makes the verdict check case-insensitive in code only.
+  The delegation section, where `wait_for` is described ("Delegate with
+  `wait: false`, then use `wait_for` with `any: true`", "Wait for every child
+  (`wait_for`) or cancel it"), has no changed line. So the last gate's
+  `wait_for` call, which passed `message_from` and no task, does not trace
+  to any changed text; the only added text on that stage is the risk section
+  above it.
+- **Models and Aether** are the same on both arms (Haiku, Aether 1.2.1).
+
+The refusal therefore looks like the model's sampling on a task whose prompt
+names `session-lib` while the repository is registered as
+`review-seeded-bug` (the harness's name for the fixture). Across all gates it
+appears on the head in 2 of 11 `review-seeded-bug` trials and on v1.4.0 in 0
+of 10; counting the partial review as well, 3 of 11 against 0 of 10 (p=0.21).
+With so few samples that is within chance, but it is the one place where the
+head is consistently behind.
+
+### Limits
+
+- 4 misses in 44 against none in 40 cannot separate a true rate of a few
+  percent from none, so a small decrease is not ruled out.
+- Costs of the passing runs are within noise of v1.4.0 (smoke totals $0.62
+  for the four head runs, $0.72 for the four v1.4.0 runs). Haiku's costs are
+  floors where Aether reports `cost_gap = interrupted`.
+- Run results, scripts and the binaries' sha256 are kept as this item's
+  artifact (`release-1.4.1-gate3-evidence`). Whether 1.4.1 ships stays the
+  operator's call.

@@ -49,3 +49,32 @@ for the whole run, both arms, were $0.07 for next and $0.08 for v1.4.0.
   the 1.4.0 gate described; it does not gate.
 
 Run results are kept as this item's artifact (`release-1.4.1-gate-evidence`).
+
+## Rerun: is the Haiku miss a flake?
+
+**Verdict: flake.** Three more Haiku smoke runs of this branch passed 4/4
+Archon trials each, as did three more of v1.4.0. Across all runs the miss
+count is 1/20 Archon trials on next (5 runs) against 0/16 on v1.4.0 (4 runs).
+The `review-seeded-bug` failure did not recur in 6 further trials, so there
+is no transcript to read for it; a single refusal in 20 trials does not
+separate 1.4.1 from v1.4.0.
+
+Same method as above: the same Aether 1.2.1 (`96cfaad0`) and the same
+`archon` binaries, a new private `env -i` sandbox and aetherd per run, one run
+at a time, medium effort, the Haiku baseline, no operator daemon. Runs were
+interleaved (next, v1.4.0, next, ...).
+
+| Run | Archon | Aether | Smoke total |
+|---|---|---|---|
+| Haiku next, rerun 1 | 4/4 | 4/4 | PASS · $0.14 |
+| Haiku v1.4.0, rerun 1 | 4/4 | 4/4 | PASS · $0.14 |
+| Haiku next, rerun 2 | 4/4 | 4/4 | PASS · $0.13 |
+| Haiku v1.4.0, rerun 2 | 4/4 | 4/4 | PASS · $0.17 |
+| Haiku next, rerun 3 | 4/4 | 4/4 | PASS · ≥ $0.16 |
+| Haiku v1.4.0, rerun 3 | 4/4 | 4/4 | PASS · $0.13 |
+
+`review-seeded-bug` on Archon took 30-50 s and cost about $0.01 in all six
+runs. Between v1.4.0 and this branch no file with prompt, orchestrator,
+repository or mirror in its path changed (`git diff --name-only v1.4.0..HEAD`),
+which agrees with the earlier finding that the orchestrator prompts are
+unchanged. The rerun artifacts were not kept; the sandboxes were removed.

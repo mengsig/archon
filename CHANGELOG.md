@@ -57,6 +57,9 @@ repository lacks them. `get_item`, `list_queue`, `queue list` and
 review rule follows from it, and a label GitHub refuses never fails a
 delivery.
 
+Dependencies: `serde_json` 1.0.154 and `tokio` 1.53.3, both patch releases,
+and CI's `taiki-e/install-action` 2.87.28.
+
 ## 1.4.0
 
 Released 2026-10-19.

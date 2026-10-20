@@ -9,12 +9,11 @@ Released 2026-10-20.
 A small patch release on 1.4.0, with no store migration. The daemon protocol
 is now 18 (it was 17), so `archon` and archond upgrade together.
 
-Archon still asks Aether for protocol 24. Install **Aether 1.2.1** or newer
-with this release: it serves the `notifications` feature the notification
-center below needs, and image paste was tested with it. Against an older
+Archon still asks Aether for protocol 24. Image paste and the notification
+center need **Aether 1.2.1** or newer: it serves image attachments and the
+`notifications` feature, and both were tested with it. Against an older
 aetherd, such as 1.2.0, archond logs one line and posts no notifications;
-everything else here works on every aetherd 1.4.0 worked with, images on
-those speaking protocol 19 or later.
+everything else here works on every aetherd 1.4.0 worked with.
 
 Images reach the orchestrator from `archon chat`. Ctrl+V (or Alt+V) attaches
 a copied image as a chip, `[image #1]`, read through `wl-paste` or `xclip`;
@@ -25,8 +24,7 @@ after a chip removes its image. archond checks each message as Aether does
 (at most 10 PNG, JPEG, GIF or WebP images, 3.8 MB each, 10 MB together),
 delivers the images through Aether's `send_message` attachments (an aetherd
 speaking protocol 19 or later), and keeps only `[image: name, size]` in the
-feed. The daemon protocol is now 18, so `archon` and archond upgrade
-together; a text-only message is the frame it always was.
+feed. A text-only message is the frame it always was.
 
 Steering several running items at once, or one item several times, no longer
 panics archond ("steps are only added while one is made"). A steer's delivery

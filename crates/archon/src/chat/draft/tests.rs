@@ -78,7 +78,13 @@ fn a_draft_refuses_images_past_the_message_total() {
     let refused = draft.attach(big_png(), &line).unwrap_err();
     assert!(refused.contains("total 10.0 MB"), "{refused}");
     assert_eq!(draft.chips(), "[image #1] [image #2]");
-    draft.clear();
+    draft.keep("[image #2] /status");
+    assert_eq!(
+        draft.chips(),
+        "[image #2]",
+        "a line that sends nothing keeps its chips"
+    );
+    draft.keep("/status");
     assert_eq!(draft.chips(), "");
 }
 

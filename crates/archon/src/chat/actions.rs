@@ -39,13 +39,13 @@ pub(super) async fn handle_line(
             return Ok(Flow::Continue);
         }
         ChatInput::Invalid(message) => {
-            chat.lock_draft().clear();
+            keep_chips(chat, line);
             chat.error(&message)?;
             return Ok(Flow::Continue);
         }
         ChatInput::Command(command) => command,
     };
-    chat.lock_draft().clear();
+    keep_chips(chat, line);
     match command {
         SlashCommand::Quit => return Ok(Flow::Quit),
         SlashCommand::Help => chat.note(&help())?,
@@ -144,13 +144,14 @@ async fn say_line(
     client: Option<&ArchonClient>,
     line: &str,
 ) -> anyhow::Result<()> {
+    let Some(client) = connected(chat, client)? else {
+        keep_chips(chat, line);
+        return Ok(());
+    };
     let (text, images) = chat.lock_draft().take(line);
     if text.is_empty() && images.is_empty() {
         return Ok(());
     }
-    let Some(client) = connected(chat, client)? else {
-        return Ok(());
-    };
     // archond records the line before delivering it, so the echo comes
     // even when delivery is refused.
     chat.expect_echo(&text);
@@ -169,7 +170,10 @@ fn attach_named(
     let found = pasted_image_path(path, home).or_else(|| expand_home(path, home));
     match found {
         Some(path) => attach_file(chat, line, &path),
-        None => chat.error("no home directory to find ~ in"),
+        None => {
+            keep_chips(chat, line);
+            chat.error("no home directory to find ~ in")
+        }
     }
 }
 
@@ -178,19 +182,33 @@ fn attach_named(
 fn attach_file(chat: &mut Chat, line: &str, path: &Path) -> anyhow::Result<()> {
     let image = match read_image_file(path) {
         Ok(image) => image,
-        Err(refused) => return chat.error(&refused),
+        Err(refused) => {
+            keep_chips(chat, line);
+            return chat.error(&refused);
+        }
     };
     let summary = image.reference().summary();
     let attached = chat.lock_draft().attach(image, line);
-    let chips = chat.lock_draft().chips();
-    chat.prefill = (!chips.is_empty()).then(|| format!("{chips} "));
+    prefill_chips(chat);
     match attached {
         Ok(chip) => {
-            debug_assert!(chips.contains(&chip), "a new chip starts the next line");
+            debug_assert!(chat.prefill.as_ref().is_some_and(|p| p.contains(&chip)));
             chat.note(&format!("attached {chip}: {summary}"))
         }
         Err(refused) => chat.error(&refused),
     }
+}
+
+/// A line that sends nothing keeps the images whose chips it holds, and the
+/// next line starts with those chips again.
+fn keep_chips(chat: &mut Chat, line: &str) {
+    chat.lock_draft().keep(line);
+    prefill_chips(chat);
+}
+
+fn prefill_chips(chat: &mut Chat) {
+    let chips = chat.lock_draft().chips();
+    chat.prefill = (!chips.is_empty()).then(|| format!("{chips} "));
 }
 
 async fn answer(

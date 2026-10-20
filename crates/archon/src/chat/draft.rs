@@ -34,8 +34,7 @@ impl Draft {
     /// Attach `image` to a draft that reads `line` now; an image whose chip
     /// was deleted from it no longer counts. Returns the chip to insert.
     pub fn attach(&mut self, image: ImageAttachment, line: &str) -> Result<String, String> {
-        self.attached
-            .retain(|(number, _)| line.contains(&chip(*number)));
+        self.keep(line);
         if self.attached.len() >= MAX_IMAGES_PER_MESSAGE {
             return Err(format!(
                 "not attached: a message takes at most {MAX_IMAGES_PER_MESSAGE} images"
@@ -83,9 +82,12 @@ impl Draft {
         (text.trim().to_owned(), images)
     }
 
-    pub fn clear(&mut self) {
-        self.attached.clear();
-        self.last = 0;
+    /// Drop the images whose chips `line` no longer holds, as when a line
+    /// that sends nothing was entered; the rest stay attached.
+    pub fn keep(&mut self, line: &str) {
+        self.attached
+            .retain(|(number, _)| line.contains(&chip(*number)));
+        debug_assert!(self.attached.iter().all(|(number, _)| *number <= self.last));
     }
 
     fn images(&self) -> impl Iterator<Item = &ImageAttachment> {

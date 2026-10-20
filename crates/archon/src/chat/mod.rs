@@ -330,11 +330,8 @@ mod tests {
         client
     }
 
-    #[tokio::test]
-    async fn a_failed_refresh_after_reconnecting_does_not_end_the_chat() {
-        let dir = tempfile::tempdir().unwrap();
-        let client = client_of_a_vanishing_daemon(&dir.path().join("d.sock")).await;
-        let mut chat = Chat {
+    fn quiet_chat() -> Chat {
+        Chat {
             output: Output::Stdout,
             palette: Palette::new(false),
             verbose: false,
@@ -344,7 +341,44 @@ mod tests {
             interrupts: 0,
             draft: Arc::default(),
             prefill: None,
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn a_line_that_sends_nothing_keeps_the_images_its_chips_hold() {
+        let dir = tempfile::tempdir().unwrap();
+        let shot = dir.path().join("shot.png");
+        std::fs::write(&shot, b"\x89PNG\r\n\x1a\npixels").unwrap();
+        let mut chat = quiet_chat();
+        let attach = format!("/image {}", shot.display());
+        actions::handle_line(&mut chat, &attach, None)
+            .await
+            .unwrap();
+        assert_eq!(chat.prefill.take().as_deref(), Some("[image #1] "));
+        let missing = dir.path().join("missing.png");
+        let failed = format!("[image #1] /image {}", missing.display());
+        actions::handle_line(&mut chat, &failed, None)
+            .await
+            .unwrap();
+        assert_eq!(chat.prefill.take().as_deref(), Some("[image #1] "));
+        // Not connected, so nothing is sent and the image stays attached.
+        let unsent = "[image #1] what is this?";
+        actions::handle_line(&mut chat, unsent, None).await.unwrap();
+        assert_eq!(chat.prefill.take().as_deref(), Some("[image #1] "));
+        actions::handle_line(&mut chat, "/image", None)
+            .await
+            .unwrap();
+        assert_eq!(
+            chat.prefill, None,
+            "a line without the chip drops its image"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_refresh_after_reconnecting_does_not_end_the_chat() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = client_of_a_vanishing_daemon(&dir.path().join("d.sock")).await;
+        let mut chat = quiet_chat();
         assert!(
             chat.sync_questions(&client).await.is_err(),
             "the daemon hung up"

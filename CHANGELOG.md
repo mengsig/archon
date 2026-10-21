@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Notification center: an item's blockers (such as a stage's escalation) are
+  resolved when the item is steered, one of its questions is answered, or it
+  finishes, so "waiting" no longer counts what was acted on. A succeeded item
+  whose summary says `BLOCKED:` is an outcome, not a blocker. New
+  `archon clear-notifications <item>|--all` and the orchestrator's
+  `clear_notifications` tool resolve the rest (#194).
+- Chat paste says why when the clipboard offers an image that could not be
+  read or is of an unsupported type, instead of leaving the line unchanged;
+  ids made in a row now sort in the order made, so same-millisecond feed
+  notes and steer deliveries keep their order (#194).
 - `archon update` is one command: after it installs the release it asks
   (`--yes` answers, `--no-restart` declines), updates Aether, restarts
   archond and Archon's own aetherd through the drained restart, and

@@ -85,7 +85,9 @@ the operator can raise it, so never work around a refusal. `merge: auto` and
 
 Manage items with `update_item`, `cancel_item`, `refresh_item`, `pause` and `resume`;
 `register_repo` only when the operator asks. On a failure read `get_item`,
-then `retry_item`, split the work, or `notify` a `blocker`.
+then `retry_item`, split the work, or `notify` a `blocker`. A stage's escalation you
+acted on is resolved when you steer or finish the item; `clear_notifications` resolves
+what is left.
 
 **Steering.** `steer_item` blames no model; once a run delivers, only its
 `note` reaches it. One failed with `ESCALATE:` does not fit its

@@ -591,3 +591,127 @@ async fn a_gate_is_posted_as_a_question_and_resolved_when_its_run_ends() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn a_blocker_is_resolved_when_its_item_is_steered_or_finishes() {
+    let h = Harness::new().await;
+    let center = Center::default();
+    center.install(&h);
+    let _bridge = bridge(&h, h.connect().await).await;
+    let item = archon_core::id::QueueItemId::new();
+    let key = |item: &archon_core::notify::FeedItem| match &item.entry {
+        FeedEntry::Notification(n) => n.id.to_string(),
+        other => panic!("a notification, not {other:?}"),
+    };
+    let mut keys = Vec::new();
+    for text in ["stage asked for help", "stage asked again"] {
+        let blocker = feed::notify(
+            &h.ctx,
+            NotificationKind::Blocker,
+            text,
+            Some(item.clone()),
+            None,
+        )
+        .await
+        .unwrap();
+        keys.push(key(&blocker));
+        posted(&h, &center, keys.last().unwrap()).await;
+    }
+    let steer = format!("Steered {item} (orchestrator): amended the brief.");
+    feed::notify(
+        &h.ctx,
+        NotificationKind::Progress,
+        &steer,
+        Some(item.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+    for key in &keys {
+        let state = wait_for_state(&center, key, "resolved").await;
+        assert_eq!(state, "resolved", "{key}");
+    }
+
+    let later = feed::notify(
+        &h.ctx,
+        NotificationKind::Blocker,
+        "again",
+        Some(item.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+    let later = key(&later);
+    posted(&h, &center, &later).await;
+    feed::notify(
+        &h.ctx,
+        NotificationKind::Outcome,
+        "done",
+        Some(item.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        wait_for_state(&center, &later, "resolved").await,
+        "resolved"
+    );
+}
+
+async fn wait_for_state(center: &Center, key: &str, want: &str) -> String {
+    let mut state = String::new();
+    for _ in 0..100 {
+        state = center
+            .by_key(key)
+            .map(|n| n["state"].as_str().unwrap_or_default().to_owned())
+            .unwrap_or_default();
+        if state == want {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    state
+}
+
+#[tokio::test]
+async fn clearing_notifications_resolves_an_items_blockers_or_every_open_one() {
+    let h = Harness::new().await;
+    let center = Center::default();
+    center.install(&h);
+    let _bridge = bridge(&h, h.connect().await).await;
+    let key = |item: &archon_core::notify::FeedItem| match &item.entry {
+        FeedEntry::Notification(n) => n.id.to_string(),
+        other => panic!("a notification, not {other:?}"),
+    };
+    let first = crate::link_common::queued_item(&h.ctx, h.dir.path()).await;
+    let second = crate::link_common::queued_item(&h.ctx, h.dir.path()).await;
+    let mut keys = Vec::new();
+    for (kind, item) in [
+        (NotificationKind::Blocker, Some(first.clone())),
+        (NotificationKind::Blocker, Some(second.clone())),
+        (NotificationKind::Outcome, None),
+    ] {
+        let notice = feed::notify(&h.ctx, kind, "needs a look", item, None)
+            .await
+            .unwrap();
+        keys.push(key(&notice));
+        posted(&h, &center, keys.last().unwrap()).await;
+    }
+    clear(&h, Some(first.clone())).await;
+    assert_eq!(
+        wait_for_state(&center, &keys[0], "resolved").await,
+        "resolved"
+    );
+    assert_eq!(center.by_key(&keys[1]).unwrap()["state"], "unread");
+
+    clear(&h, None).await;
+    for key in &keys {
+        assert_eq!(wait_for_state(&center, key, "resolved").await, "resolved");
+    }
+}
+
+async fn clear(h: &Harness, item: Option<archon_core::id::QueueItemId>) {
+    let request = Request::ClearNotifications { item };
+    let reply = handlers::handle(&h.ctx, ClientKind::ArchonCli, request).await;
+    assert!(matches!(reply, Ok(Reply::Ok)), "{reply:?}");
+}

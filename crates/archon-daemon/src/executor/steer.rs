@@ -145,6 +145,13 @@ async fn apply(
     Ok(follow)
 }
 
+/// Whether `text` is a line [`history_line`] wrote.
+pub(crate) fn is_history_line(text: &str) -> bool {
+    text.starts_with(HISTORY_PREFIX)
+}
+
+const HISTORY_PREFIX: &str = "Steered ";
+
 /// The line a steer leaves in the item's feed.
 pub(crate) fn history_line(
     item: &QueueItemId,
@@ -156,9 +163,9 @@ pub(crate) fn history_line(
     match note {
         Some(note) => {
             let preview = super::clip(note.trim(), NOTE_PREVIEW_CHARS);
-            format!("Steered {item} ({by}): {what}. Note: {preview}")
+            format!("{HISTORY_PREFIX}{item} ({by}): {what}. Note: {preview}")
         }
-        None => format!("Steered {item} ({by}): {what}."),
+        None => format!("{HISTORY_PREFIX}{item} ({by}): {what}."),
     }
 }
 

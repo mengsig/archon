@@ -388,3 +388,12 @@ async fn a_waking_success_tells_the_later_settled_cost() {
     .await;
     assert_eq!(told, 4.25);
 }
+
+#[tokio::test]
+async fn a_success_whose_text_says_blocked_is_an_outcome_not_a_blocker() {
+    let h = Harness::with_config(quiet()).await;
+    let item = enqueued(&h, request("handle a BLOCKED: stage")).await;
+    succeed(&h, &item).await;
+    assert_eq!(h.notices(NotificationKind::Outcome).await.len(), 1);
+    assert!(h.notices(NotificationKind::Blocker).await.is_empty());
+}

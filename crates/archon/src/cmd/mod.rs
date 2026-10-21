@@ -47,6 +47,9 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::Say { text, images } => talk::say(&text, &images, json).await,
         Command::Answer { question, text } => talk::answer(&question, &text, json).await,
         Command::Questions => talk::questions(json).await,
+        Command::ClearNotifications { item, all } => {
+            talk::clear_notifications(item.as_deref(), all, json).await
+        }
         Command::Merge {
             item,
             ignore_checks,
@@ -139,6 +142,7 @@ fn json_refusal(command: Option<&Command>) -> Option<&'static str> {
         | Command::Say { .. }
         | Command::Answer { .. }
         | Command::Questions
+        | Command::ClearNotifications { .. }
         | Command::Merge { .. }
         | Command::Promote { .. }
         | Command::Status { .. }

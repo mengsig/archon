@@ -57,6 +57,23 @@ fn an_empty_clipboard_and_a_missing_helper_say_what_to_do() {
 }
 
 #[test]
+fn an_offered_image_that_is_not_read_says_so_instead_of_an_empty_clipboard() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = fake_wl_paste(dir.path(), "image/png\\n", "exit 1");
+    let refused = paste(&script).unwrap_err();
+    assert!(
+        refused.contains("offers image/png but it was not read"),
+        "{refused}"
+    );
+    let bmp = fake_wl_paste(dir.path(), "image/bmp\\n", "exit 1");
+    let refused = paste(&bmp).unwrap_err();
+    assert!(
+        refused.contains("offers image/bmp, which is not attached"),
+        "{refused}"
+    );
+}
+
+#[test]
 fn an_oversized_image_is_refused_without_reading_all_of_it() {
     let dir = tempfile::tempdir().unwrap();
     let body = "printf '\\211PNG\\r\\n\\032\\n'; exec cat /dev/zero";

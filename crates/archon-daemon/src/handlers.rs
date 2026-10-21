@@ -454,6 +454,7 @@ async fn handle_operator(ctx: &DaemonContext, request: Request) -> Result<Reply,
     match request {
         Request::Say { text, images } => operator::say(ctx, &text, &images).await,
         Request::Notify { kind, text, item } => operator::notify(ctx, kind, &text, item).await,
+        Request::ClearNotifications { item } => operator::clear_notifications(ctx, item).await,
         Request::AskOperator {
             text,
             item,

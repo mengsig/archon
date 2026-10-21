@@ -297,7 +297,7 @@ pub(super) async fn announce(
     } else {
         clip(&summary, MAX_NOTICE_CHARS)
     };
-    let needs_operator = blocker || summary.contains(StageOutcome::BLOCKED_PREFIX);
+    let needs_operator = blocker || failed_blocked(item);
     let run = run.map(|r| &r.id);
     let kind = if needs_operator {
         NotificationKind::Blocker
@@ -471,6 +471,12 @@ fn notice_sentence(text: &str) -> String {
         .split_once(". ")
         .map_or(plain.as_str(), |(first, _)| first);
     clip(sentence, 240)
+}
+
+/// Whether the item failed on a stage that only the operator can unblock. A
+/// success never does, whatever words its summary holds.
+fn failed_blocked(item: &QueueItem) -> bool {
+    matches!(&item.state, QueueState::Failed { error, .. } if error.contains(StageOutcome::BLOCKED_PREFIX))
 }
 
 pub(super) fn outcome_text(item: &QueueItem) -> String {

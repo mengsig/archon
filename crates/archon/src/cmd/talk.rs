@@ -84,6 +84,32 @@ pub async fn questions(json: bool) -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+pub async fn clear_notifications(
+    item: Option<&str>,
+    all: bool,
+    json: bool,
+) -> anyhow::Result<ExitCode> {
+    assert!(
+        item.is_some() != all,
+        "clap takes an item or --all, not both"
+    );
+    let client = connect_or_start().await?;
+    let item = match item {
+        Some(item) => Some(crate::views::resolve_item(&client, item).await?),
+        None => None,
+    };
+    let text = match &item {
+        Some(id) => format!("Asked to resolve the open blockers of {id}."),
+        None => "Asked to resolve every open blocker and outcome.".to_owned(),
+    };
+    match client.request(Request::ClearNotifications { item }).await? {
+        Reply::Ok => {}
+        other => return Err(unexpected(&other, "ok")),
+    }
+    emit(json, || Ok(serde_json::json!({"requested": true})), &text)?;
+    Ok(ExitCode::SUCCESS)
+}
+
 /// Open questions by number, as `archon questions` shows them.
 async fn open_questions(client: &ArchonClient) -> anyhow::Result<Vec<Question>> {
     let mut open = match client

@@ -85,7 +85,7 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
         ("cancel_item", json!({"item": qi(), "reason": "superseded"})),
         (
             "retry_item",
-            json!({"item": qi(), "model_plan": plan(), "model_reasons": {"implement": "Retry with more reasoning"}, "fresh": true, "brief_append": "Do Y."}),
+            json!({"item": qi(), "model_plan": plan(), "model_reasons": {"implement": "Retry with more reasoning"}, "fresh": true, "stage_timeouts": {"implement": 90}, "brief_append": "Do Y."}),
         ),
         ("refresh_item", json!({"item": qi()})),
         ("pause", json!({"scope": "repo", "name": "web"})),
@@ -94,6 +94,8 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
             "notify",
             json!({"kind": "decision", "text": "Split the work in two.", "item": qi()}),
         ),
+        ("clear_notifications", json!({"item": qi()})),
+        ("clear_notifications", json!({"all": true})),
         (
             "ask_operator",
             json!({"text": "Ship to prod?", "item": qi(), "options": ["yes", "no"]}),
@@ -427,6 +429,16 @@ fn enqueue_passes_autonomy_through_and_may_omit_the_pipeline() {
         json!({"title": "t", "brief": "b", "model_plan": plan(), "autonomy": {"merge": "always"}}),
     );
     assert!(unknown.contains("`autonomy`"), "{unknown}");
+}
+
+#[test]
+fn clear_notifications_needs_exactly_one_target() {
+    let neither = refusal("clear_notifications", json!({}));
+    assert!(neither.contains("pass `item`"), "{neither}");
+    let both = refusal("clear_notifications", json!({"item": qi(), "all": true}));
+    assert!(both.contains("must be omitted"), "{both}");
+    let every = to_request("clear_notifications", json!({"all": true})).unwrap();
+    assert_eq!(every, Request::ClearNotifications { item: None });
 }
 
 #[test]
@@ -1155,13 +1167,13 @@ fn shown_bytes(definition: &ToolDefinition) -> usize {
 }
 
 /// Every orchestrator turn pays for the tool list: 1.0's 25 tools (30,071 bytes
-/// then) stay within 62% of that (61% before model_plan tiers), and all of
-/// them within 29 KiB (28 KiB before `promote` and `onto`).
+/// then) stay within 62% of that (61% before model_plan tiers, 18,500 bytes before stage_timeouts), and all of
+/// them within 29 KiB (28 KiB before `promote` and `onto`, 29 KiB before `clear_notifications`).
 #[test]
 fn the_tool_list_stays_within_its_budget() {
     const FROM_1_0: usize = 25;
-    const FROM_1_0_BUDGET_BYTES: usize = 18_500;
-    const BUDGET_BYTES: usize = 29 * 1024;
+    const FROM_1_0_BUDGET_BYTES: usize = 18_700;
+    const BUDGET_BYTES: usize = 30 * 1024;
     let definitions = definitions();
     assert_eq!(definitions[FROM_1_0 - 1].name, "message_orchestrator");
     let carried: usize = definitions[..FROM_1_0].iter().map(shown_bytes).sum();

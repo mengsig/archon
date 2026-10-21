@@ -57,6 +57,7 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         request_authority(),
         guide(),
         settings(),
+        clear_notifications(),
     ]
 }
 
@@ -675,6 +676,21 @@ fn notify() -> ToolDefinition {
                 "item": item_id(""),
             }),
             &["kind", "text"],
+        ),
+        false,
+    )
+}
+
+fn clear_notifications() -> ToolDefinition {
+    define(
+        "clear_notifications",
+        "Clear notifications",
+        "Resolve blockers and outcomes archond posted to the operator's notification center: \
+         one item's with `item`, every open one with `all`. Steering or finishing an item \
+         already resolves its blockers.",
+        object(
+            json!({"item": item_id(""), "all": {"type": "boolean"}}),
+            &[],
         ),
         false,
     )

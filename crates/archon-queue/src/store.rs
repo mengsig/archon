@@ -71,6 +71,8 @@ pub mod keys {
     pub const CURSOR_NOTIFICATION_CENTER: &str = "notification_center_feed_cursor";
     /// Prefix: + question id → the notification whose answer was refused.
     pub const NOTIFICATION_CENTER_REFUSED: &str = "notification_center_refused:";
+    /// Prefix: + queue item id → the JSON list of keys of the blockers posted for it.
+    pub const NOTIFICATION_CENTER_BLOCKERS: &str = "notification_center_blockers:";
 }
 
 /// Latest absolute usage for one Aether agent (`agent.usage_updated`).

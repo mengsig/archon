@@ -135,6 +135,7 @@ fn ok(tool: &str) -> &'static str {
         "pause" => "Paused. Nothing new starts in that scope until resume.",
         "resume" => "Resumed.",
         "notify" => "Posted to the operator's chat.",
+        "clear_notifications" => "Cleared.",
         "cancel_item" => "Cancelled.",
         "update_item" => "Updated.",
         "retry_item" => "Re-queued.",

@@ -8,6 +8,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::ArchonError;
 
+/// The next ULID of this process. Ids made in the same millisecond still
+/// sort in the order they were made, so a delivery order is never a coin flip.
+fn next_ulid() -> ulid::Ulid {
+    static GENERATOR: std::sync::Mutex<Option<ulid::Generator>> = std::sync::Mutex::new(None);
+    let mut guard = GENERATOR.lock().unwrap_or_else(|e| e.into_inner());
+    let generator = guard.get_or_insert_with(ulid::Generator::new);
+    match generator.generate() {
+        Ok(ulid) => ulid,
+        // Over 2^80 ids in one millisecond: the random fallback is as good as it gets.
+        Err(overflow) => overflow.commit_overflow_random(),
+    }
+}
+
 macro_rules! prefixed_id {
     ($name:ident, $prefix:literal) => {
         #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -18,7 +31,7 @@ macro_rules! prefixed_id {
             pub const PREFIX: &'static str = $prefix;
 
             pub fn new() -> Self {
-                Self(format!("{}_{}", $prefix, ulid::Ulid::generate()))
+                Self(format!("{}_{}", $prefix, next_ulid()))
             }
 
             pub fn as_str(&self) -> &str {
@@ -138,6 +151,12 @@ pub fn id_prefix(text: &str, kind: &str, what: &str) -> Result<String, ArchonErr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ids_made_in_a_row_sort_in_the_order_they_were_made() {
+        let ids: Vec<NotificationId> = (0..1000).map(|_| NotificationId::new()).collect();
+        assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));
+    }
 
     #[test]
     fn item_prefixes_take_any_case_with_or_without_qi() {

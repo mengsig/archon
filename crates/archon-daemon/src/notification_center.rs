@@ -10,6 +10,7 @@
 //! the questions with what Aether holds and applies answers given meanwhile.
 
 mod answers;
+mod blockers;
 mod posts;
 
 use std::time::Duration;
@@ -18,7 +19,8 @@ use archon_aether::notifications::{self, Notification};
 use archon_aether::wire::EventQuery;
 use archon_aether::{AetherClient, Subscription};
 use archon_core::error::ArchonError;
-use archon_core::notify::{FeedEntry, FeedItem, Question};
+use archon_core::id::QueueItemId;
+use archon_core::notify::{self, FeedEntry, FeedItem, Question};
 use archon_queue::store::keys;
 use tokio::sync::broadcast;
 
@@ -287,16 +289,70 @@ async fn mirror_item(
             }
             post_question(ctx, client, &question).await.map(drop)
         }
-        FeedEntry::Answer { question, .. } => client
-            .resolve_notification(question.as_str())
-            .await
-            .map(drop),
-        FeedEntry::Notification(notice) if archon_core::now() - notice.at < STALE_NOTICE => {
-            match posts::notice(ctx, notice).await? {
-                Some(post) => client.post_notification(post).await.map(drop),
+        FeedEntry::Answer { question, .. } => {
+            client.resolve_notification(question.as_str()).await?;
+            let item = ctx.store.lock().await.question(question)?.item;
+            match item {
+                Some(item) => blockers::resolve(ctx, client, &item).await,
                 None => Ok(()),
             }
         }
+        FeedEntry::Notification(notice) => mirror_notice(ctx, client, notice).await,
         _ => Ok(()),
     }
+}
+
+/// A blocker or outcome is posted; the news that an item moved on (a steer
+/// or its outcome) first resolves the blockers posted for it earlier.
+async fn mirror_notice(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    notice: &notify::Notification,
+) -> Result<(), ArchonError> {
+    if moves_on(notice) {
+        match &notice.item {
+            Some(item) => blockers::resolve(ctx, client, item).await?,
+            None if is_clearing_line(&notice.text) => blockers::resolve_all(ctx, client).await?,
+            None => {}
+        }
+    }
+    if archon_core::now() - notice.at >= STALE_NOTICE {
+        return Ok(());
+    }
+    let Some(post) = posts::notice(ctx, notice).await? else {
+        return Ok(());
+    };
+    client.post_notification(post).await?;
+    if let (Some(item), notify::NotificationKind::Blocker) = (&notice.item, notice.kind) {
+        blockers::remember(ctx, item, &notice.id).await?;
+    }
+    Ok(())
+}
+
+/// Whether `notice` says its item is no longer stuck on what blocked it: it
+/// finished, or a steer (the orchestrator's answer to an escalation) changed it.
+fn moves_on(notice: &notify::Notification) -> bool {
+    match notice.kind {
+        notify::NotificationKind::Outcome => true,
+        notify::NotificationKind::Progress => {
+            crate::executor::steer::is_history_line(&notice.text) || is_clearing_line(&notice.text)
+        }
+        _ => false,
+    }
+}
+
+const CLEARING_PREFIX: &str = "Clearing the notifications of ";
+const CLEARING_ALL: &str = "Clearing every open blocker and outcome in the notification center.";
+
+/// The hidden feed line that asks for notifications to be resolved: those of
+/// `item`, or every open blocker and outcome.
+pub fn clearing_line(item: Option<&QueueItemId>) -> String {
+    match item {
+        Some(item) => format!("{CLEARING_PREFIX}{item}."),
+        None => CLEARING_ALL.to_owned(),
+    }
+}
+
+fn is_clearing_line(text: &str) -> bool {
+    text == CLEARING_ALL || text.starts_with(CLEARING_PREFIX)
 }

@@ -3164,6 +3164,7 @@ can reach the socket (§5.5).
 | `cost_report` | `{since?, until?, by?: day\|repo\|pipeline\|model\|item\|stage}` | `CostReport` (§5.3) |
 | `pause` / `resume` | `{scope: "global"\|"repo"\|"pipeline", name?}` | `Pause` / `Resume` |
 | `notify` | `{kind: question\|decision\|blocker\|outcome\|progress, text, item?}` | `Notify` |
+| `clear_notifications` | `{item?, all?}` | `ClearNotifications` (resolves the blockers archond posted for the item in Aether's notification center, or every open blocker and outcome with `all`; archond also does so itself when the item is steered, answered or finished) |
 | `ask_operator` | `{text, item?, options?}` | `AskOperator` (Aether's caller identity, when sent, is stored as the question's asker; §5.2) |
 | `record_chat_answer` | `{question, answer}` | `RecordChatAnswer` (the orchestrator only, and only `ask_operator` questions it asked itself; §5.2) |
 | `publish_report` | `{title, path (.html or .htm), item?}` | `PublishReport` |

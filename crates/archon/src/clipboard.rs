@@ -113,7 +113,8 @@ pub fn read_with(
     let listing = String::from_utf8_lossy(&listing);
     let offered: Vec<&str> = listing.lines().map(str::trim).collect();
     if let Some(kind) = IMAGE_TYPES.into_iter().find(|kind| offered.contains(kind)) {
-        let bytes = run(&tool.read_args(kind), MAX_IMAGE_BYTES + 1)?;
+        let bytes = run(&tool.read_args(kind), MAX_IMAGE_BYTES + 1)
+            .map_err(|why| format!("the clipboard offers {kind} but it was not read: {why}"))?;
         let image = ImageAttachment::encode(&bytes, None).map_err(|e| e.to_string())?;
         return Ok(Clipboard::Image(image));
     }
@@ -122,7 +123,12 @@ pub fn read_with(
         offered_as.copied()
     });
     let Some(kind) = text_kind else {
-        return Err(NO_CONTENT.into());
+        return Err(match unsupported_image(&offered) {
+            Some(kind) => format!(
+                "the clipboard offers {kind}, which is not attached: use PNG, JPEG, GIF or WebP"
+            ),
+            None => NO_CONTENT.into(),
+        });
     };
     let bytes = run(&tool.read_args(kind), MAX_TEXT_BYTES + 1)?;
     if bytes.len() > MAX_TEXT_BYTES {
@@ -134,6 +140,14 @@ pub fn read_with(
         true => Err(NO_CONTENT.into()),
         false => Ok(Clipboard::Text(text)),
     }
+}
+
+/// An image type the clipboard offers that no attachment can carry.
+fn unsupported_image<'a>(offered: &[&'a str]) -> Option<&'a str> {
+    offered
+        .iter()
+        .copied()
+        .find(|kind| kind.starts_with("image/"))
 }
 
 /// Why a helper gave no bytes.

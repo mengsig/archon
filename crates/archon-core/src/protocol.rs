@@ -263,6 +263,12 @@ pub enum Request {
         text: String,
         item: Option<QueueItemId>,
     },
+    /// Resolve the notifications archond posted to Aether's notification
+    /// center: the open blockers of one item, or every open blocker and
+    /// outcome when `item` is `None`.
+    ClearNotifications {
+        item: Option<QueueItemId>,
+    },
     AskOperator {
         text: String,
         item: Option<QueueItemId>,
@@ -557,6 +563,7 @@ impl Request {
             | Self::RetryItem { .. }
             | Self::RefreshItem { .. }
             | Self::Notify { .. }
+            | Self::ClearNotifications { .. }
             | Self::AskOperator { .. }
             | Self::RecordChatAnswer { .. }
             | Self::PublishReport { .. }

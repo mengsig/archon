@@ -74,6 +74,16 @@ pub enum Command {
     },
     /// List open questions.
     Questions,
+    /// Resolve what archond posted to Aether's notification center: an
+    /// item's open blockers, or every open blocker and outcome with --all.
+    ClearNotifications {
+        /// The item's qi_… id, or enough of its start to name one item.
+        #[arg(required_unless_present = "all", conflicts_with = "all")]
+        item: Option<String>,
+        /// Every open blocker and outcome, not one item's.
+        #[arg(long)]
+        all: bool,
+    },
     /// Merge a succeeded item's pull request now. archond merges only an
     /// open, mergeable pull request at the reviewed commit, on its base,
     /// with green checks; never with --admin or --auto.
@@ -1381,6 +1391,32 @@ mod tests {
             panic!("a GitHub login is a repository setting")
         };
         assert_eq!(gh_user.as_deref(), Some("devGunnin"));
+    }
+
+    #[test]
+    fn clear_notifications_takes_an_item_or_all_and_never_both() {
+        assert!(matches!(
+            parse(&["clear-notifications", "qi_01"]),
+            Command::ClearNotifications {
+                item: Some(_),
+                all: false
+            }
+        ));
+        assert!(matches!(
+            parse(&["clear-notifications", "--all"]),
+            Command::ClearNotifications {
+                item: None,
+                all: true
+            }
+        ));
+        for bad in [
+            &["clear-notifications"][..],
+            &["clear-notifications", "qi_01", "--all"],
+        ] {
+            assert!(
+                Cli::try_parse_from(std::iter::once("archon").chain(bad.iter().copied())).is_err()
+            );
+        }
     }
 
     #[test]

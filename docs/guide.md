@@ -674,8 +674,15 @@ needs you shows next to the rest of your Aether inbox:
   question an Aether agent asked with `ask_user` is not posted: Aether shows
   it itself.
 - **Blockers and outcomes**, keyed by their feed notification, with no
-  actions. They are not resolved by Archon; mark them read or resolved in
-  Aether.
+  actions. A blocker means the operator must act (a stage's escalation, or an
+  item that failed on a `BLOCKED:` stage); an item that succeeded is an
+  outcome whatever its summary says. "Waiting" in Aether is open questions
+  and blockers, so `archon questions` can be empty while a blocker waits.
+  archond resolves an item's blockers when the item is steered, one of its
+  questions is answered, or it finishes. For the rest, `archon
+  clear-notifications <item>` (or `--all`, which also resolves open
+  outcomes) and the orchestrator's `clear_notifications` tool resolve them;
+  you can also mark them read or resolved in Aether.
 
 Answering a question there is the same as sending
 `/answer <n> <choice>` in the orchestrator's chat
@@ -798,6 +805,9 @@ chip; a line that is only the path of an image file does the same. Enter
 sends the line with the images whose chips are still in it, and a line of
 only chips sends the images alone. Outside the chat, `archon say --image
 shot.png "what is wrong here?"` does the same; repeat `--image` for more.
+
+If the clipboard offers an image but it cannot be read (or is a type other than
+PNG, JPEG, GIF or WebP), the chat says so instead of leaving the line unchanged.
 
 A message takes at most 10 PNG, JPEG, GIF or WebP images, each up to
 3.8 MB and 10 MB together, checked by their bytes rather than their names.

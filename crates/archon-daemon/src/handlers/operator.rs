@@ -74,6 +74,28 @@ pub(super) async fn notify(
     Ok(Reply::Ok)
 }
 
+/// Ask the notification center to resolve what archond posted there. The
+/// request travels as a hidden feed line, so it is applied in feed order and
+/// again after a restart or a reconnect.
+pub(super) async fn clear_notifications(
+    ctx: &DaemonContext,
+    item: Option<QueueItemId>,
+) -> Result<Reply, ArchonError> {
+    if let Some(id) = &item {
+        ctx.store.lock().await.item(id)?;
+    }
+    let entry = FeedEntry::Notification(Notification {
+        id: NotificationId::new(),
+        kind: NotificationKind::Progress,
+        text: crate::notification_center::clearing_line(item.as_ref()),
+        item,
+        run: None,
+        at: archon_core::now(),
+    });
+    feed::append(ctx, entry).await?;
+    Ok(Reply::Ok)
+}
+
 /// Record a non-blocking question; the answer comes back as a trigger.
 /// `asked_by` is Aether's word for who called, kept as the question's asker.
 pub(super) async fn ask(

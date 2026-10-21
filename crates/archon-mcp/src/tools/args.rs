@@ -99,6 +99,7 @@ fn action_request(tool: &str, args: &mut Args) -> Result<Request, ToolError> {
             text: args.required_text("text")?,
             item: args.optional("item")?,
         },
+        "clear_notifications" => clear_notifications(args)?,
         "ask_operator" => ask_operator(args)?,
         "record_chat_answer" => Request::RecordChatAnswer {
             question: args.required("question")?,
@@ -408,6 +409,20 @@ fn set_directive(args: &mut Args) -> Result<Request, ToolError> {
         text,
         expires_in_hours,
     })
+}
+
+/// One item's notifications, or every open blocker and outcome with `all`;
+/// never both or neither, so a forgotten id cannot clear them all.
+fn clear_notifications(args: &mut Args) -> Result<Request, ToolError> {
+    let item = args.optional("item")?;
+    let all = args.optional::<bool>("all")?.unwrap_or(false);
+    match (item, all) {
+        (Some(_), true) => Err(args.error("all", "must be omitted when `item` names one")),
+        (None, false) => Err(ToolError(
+            "clear_notifications: pass `item` (a `qi_…` id) or `all: true`".into(),
+        )),
+        (item, _) => Ok(Request::ClearNotifications { item }),
+    }
 }
 
 /// One directive by id, or every one with `all`; never both or neither, so

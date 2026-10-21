@@ -284,7 +284,7 @@ fn head_now(
         false => stack::sha(repo, base)?,
     };
     if stack::contains(repo, &sha, &format!("refs/heads/{branch}"))? {
-        let tip = stack::sha(repo, &format!("refs/heads/{branch}"))?;
+        let tip = stack::sha(repo, branch)?;
         let shipped = !remote && stack::contains(repo, &tip, &format!("refs/heads/{base}"))?;
         let why = match shipped {
             true => {

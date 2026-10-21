@@ -6,6 +6,7 @@ mod control;
 mod cost;
 mod daemon;
 mod doctor;
+mod first_run;
 mod gc;
 mod github_watcher;
 mod initiatives;

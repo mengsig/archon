@@ -6,13 +6,49 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+/// `archon --help`: the commands in three groups instead of one flat list.
+/// A test keeps it in step with the real subcommands.
+const HELP_TEMPLATE: &str = "\
+{about}
+
+{usage-heading} {usage}
+
+Everyday:
+  (none)          Open the terminal UI; the first run offers to set everything up
+  chat, say       Talk to the orchestrator: the line chat, or one message
+  questions       List what the orchestrator is waiting on; `answer` replies
+  queue           Inspect and change queue items
+  status          Daemon, orchestrator, caps, spend and Aether link
+  repo            Register and configure repositories
+  merge           Merge a succeeded item's pull request now
+
+Setup:
+  setup, doctor   Set Archon up, and check that it works
+  update          Update archon and Aether
+  settings, autonomy, pipelines, pause, resume, initiatives, github-watcher
+                  Defaults, limits and what runs
+
+Advanced:
+  log, cost, reports, model-evidence, lessons, learning, clear-notifications,
+  promote, release, orchestrator, daemon, aether, tui, gc, mcp
+                  Inspection, release and internals; see `archon <command> --help`
+
+Options:
+{options}
+{after-help}
+";
+
 #[derive(Debug, Parser)]
 #[command(
     name = "archon",
     version,
     about = "Hierarchical orchestration on top of Aether",
-    after_help = "With no command, `archon` opens the terminal UI (`archon tui`). \
-                  `archon chat` is the line chat."
+    help_template = HELP_TEMPLATE,
+    after_help = "Quick start (after installing and logging in to your engine, e.g. `claude`):\n  \
+                  cd your-repo && archon\n\
+                  The first run offers to set up, register the repository and check the result;\n\
+                  every step asks first. `ARCHON_NO_WIZARD=1` skips the offer.\n\
+                  `archon <command> --help` describes one command."
 )]
 pub struct Cli {
     /// Print machine-readable JSON instead of text. A bare `archon`, chat,
@@ -1036,6 +1072,28 @@ pub enum InitiativeCommand {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn help_groups_name_every_visible_command() {
+        use clap::CommandFactory as _;
+        let help = Cli::command().render_help().to_string();
+        let groups = help.split("Options:").next().unwrap();
+        for sub in Cli::command().get_subcommands() {
+            let name = sub.get_name();
+            if sub.is_hide_set() || name == "help" {
+                continue;
+            }
+            assert!(
+                groups
+                    .split(|c: char| !(c.is_alphanumeric() || c == '-'))
+                    .any(|w| w == name),
+                "`archon --help` groups do not name {name:?}"
+            );
+        }
+        for heading in ["Everyday:", "Setup:", "Advanced:", "Quick start"] {
+            assert!(help.contains(heading), "missing {heading}");
+        }
+    }
+
     use super::*;
     use clap::CommandFactory;
 
@@ -1099,8 +1157,8 @@ mod tests {
         assert!(!cli.json);
         let mut command = Cli::command();
         let help = command.render_help().to_string();
-        let said = "With no command, `archon` opens the terminal UI (`archon tui`). \
-                    `archon chat` is the line chat.";
+        let said =
+            "(none)          Open the terminal UI; the first run offers to set everything up";
         assert!(help.contains(said), "{help}");
         let about = |name: &str| {
             let sub = command.find_subcommand(name).expect(name);

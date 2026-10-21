@@ -49,21 +49,24 @@ can use, and building from source are in
 
 ## Quick start
 
-From the root of a GitHub checkout where you can push a branch and open a
-pull request (with a commit, an `origin` remote and your git name and
-e-mail set), and logged in to your engine (run `claude` once):
+Install Archon, log in to your engine (run `claude` once), then run
+`archon` in a git checkout:
 
 ```sh
-gh auth login
-archon setup
-archon aether models    # the configured orchestrator model must be listed
-archon repo add . --name example --ship pr
-archon doctor
+cd your-repo
 archon
 ```
 
-If the orchestrator's model is missing from the list,
-[choose another](docs/configuration.md#select-an-available-model) first.
+The first run offers, one yes/no question at a time, to set up Archon's own
+Aether, to register the checkout (`--ship pr` when it has an `origin`, else
+`local`) and to run the doctor on the result. Nothing is changed without
+your yes; `ARCHON_NO_WIZARD=1` skips the offer, and without a terminal
+`archon` prints the one command still missing instead of asking. Shipping pull
+requests needs `gh auth login` and a git name and e-mail. The same steps by
+hand: `archon setup`, `archon repo add . --name example --ship pr`,
+`archon doctor`. If the orchestrator's model is missing from `archon aether
+models`, [choose another](docs/configuration.md#select-an-available-model).
+
 `archon` opens the terminal UI on the orchestrator. Ask, for example:
 
 > In repository example, add a short guide to the existing test commands, with one reviewer. Run each command it names and open a pull request. Do not merge.

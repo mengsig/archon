@@ -81,7 +81,7 @@ pub async fn run(command: RepoCommand, json: bool) -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-async fn add_repo(add: RepoAdd, json: bool) -> anyhow::Result<()> {
+pub(super) async fn add_repo(add: RepoAdd, json: bool) -> anyhow::Result<()> {
     let watch = add.github_watch;
     let client = connect_or_start().await?;
     let repo = match client.request(Request::RepoAdd(add)).await? {

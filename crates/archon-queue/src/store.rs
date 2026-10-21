@@ -379,9 +379,10 @@ impl Store {
     ) -> Result<(Vec<PipelineRun>, Vec<UnreadableRun>), ArchonError> {
         runs::active_lenient(&self.conn)
     }
-    /// Mark an undecodable run terminal so its item can be retried.
-    pub fn retire_unreadable_run(&self, run: &str) -> Result<(), ArchonError> {
-        runs::retire_unreadable(&self.conn, run)
+    /// Mark an undecodable run terminal (`retired`) so its item can be
+    /// settled, or active again when that failed.
+    pub fn retire_unreadable_run(&self, run: &str, retired: bool) -> Result<(), ArchonError> {
+        runs::retire_unreadable(&self.conn, run, retired)
     }
     /// Whether the item of run `run` is in the `failed` state.
     pub fn run_item_failed(&self, run: &str) -> Result<bool, ArchonError> {

@@ -199,6 +199,9 @@ pub(super) async fn recover(ctx: &DaemonContext) -> Result<FollowUp, ArchonError
     })
 }
 
+/// Days a removed owed merge or checks watch stays listed; nothing else can rebuild it.
+const RULED_OUT_DAYS: i64 = 30;
+
 /// Forget the quarantine list, which recovery rebuilds from what is still
 /// unusable, except runs that failed and wait for the operator's retry or cancel.
 async fn reset_quarantine(ctx: &DaemonContext) -> Result<(), ArchonError> {
@@ -213,7 +216,9 @@ async fn reset_quarantine(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let store = ctx.store.lock().await;
     let mut waiting = Vec::new();
     for record in listed {
-        if record.kind == "run" && store.run_item_failed(&record.id)? {
+        let recent = archon_core::now() - record.at < chrono::Duration::days(RULED_OUT_DAYS);
+        let ruled_out = matches!(record.kind.as_str(), "owed-merge" | "checks-watch") && recent;
+        if ruled_out || (record.kind == "run" && store.run_item_failed(&record.id)?) {
             waiting.push(record);
         }
     }
@@ -251,16 +256,27 @@ fn set_aside_unreadable_run(
         &format!("archon queue cancel {item}"),
     );
     tracing::error!(run = %bad.run, %item, error = %bad.error, "run record unreadable; its item fails");
-    store.retire_unreadable_run(&bad.run)?;
+    if let Err(write) = archon_core::quarantine::write(&ctx.paths.data_dir, &record) {
+        tracing::error!(%write, "the quarantine record was not written");
+    }
     let failed = QueueState::Failed {
         run: None,
         error: message,
     };
-    store.transition_item(&item, failed, now)?;
-    if let Err(write) = archon_core::quarantine::write(&ctx.paths.data_dir, &record) {
-        tracing::error!(%write, "the quarantine record was not written");
+    // The item can only be settled once its run is terminal; if it cannot
+    // be, the run is active again and found again at the next start.
+    store.retire_unreadable_run(&bad.run, true)?;
+    match store.transition_item(&item, failed, now) {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            store.retire_unreadable_run(&bad.run, false)?;
+            if error.is_store() {
+                return Err(error);
+            }
+            tracing::error!(%item, %error, "the item of an unreadable run could not be failed; cancel it with the command listed");
+            Ok(())
+        }
     }
-    Ok(())
 }
 
 /// A `dispatching` item whose run exists moves on to `running`.

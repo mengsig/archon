@@ -94,7 +94,8 @@ pub(crate) async fn pay(ctx: &DaemonContext) -> Result<usize, ArchonError> {
         if owed.next_at > archon_core::now() {
             continue;
         }
-        match pay_one(ctx, &run, owed).await {
+        let subject = format!("owed auto-merge {run}");
+        match super::super::coordination::guarded(&subject, pay_one(ctx, &run, owed)).await {
             Ok(true) => taken += 1,
             Ok(false) => {}
             Err(error) if error.is_store() => return Err(error),
@@ -116,7 +117,8 @@ fn usable_owed(raw_key: &str, raw: &str) -> Result<(PipelineRunId, Owed), String
     if raw_key != key(&run) {
         return Err("its key is not the run's".into());
     }
-    if owed.tries >= MAX_TRIES || !owed.url.contains("/pull/") {
+    let pending = owed.url.starts_with("https://") && owed.url.contains("/pull/");
+    if owed.tries >= MAX_TRIES || !pending || owed.commit.as_deref() == Some("") {
         return Err(format!(
             "tries {} and url {:?} are not a pending merge",
             owed.tries, owed.url
@@ -133,7 +135,10 @@ async fn reject_owed(
     raw: &str,
     why: &str,
 ) -> Result<(), ArchonError> {
-    let id = raw_key.strip_prefix(OWED_PREFIX).unwrap_or(raw_key);
+    let id = raw_key
+        .strip_prefix(OWED_PREFIX)
+        .filter(|id| !id.is_empty())
+        .unwrap_or(raw_key);
     let record = archon_core::quarantine::Quarantined::new(
         "owed-merge",
         id,
@@ -143,7 +148,8 @@ async fn reject_owed(
     );
     tracing::error!(%raw_key, %why, "an owed auto-merge is unusable and was removed");
     if let Err(error) = archon_core::quarantine::write(&ctx.paths.data_dir, &record) {
-        tracing::error!(%error, "the quarantine record was not written");
+        tracing::error!(%error, "the quarantine record was not written; the record is kept");
+        return Ok(());
     }
     ctx.store.lock().await.kv_delete(raw_key)
 }

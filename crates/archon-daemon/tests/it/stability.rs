@@ -370,6 +370,10 @@ async fn unusable_owed_merge_and_watch_records_are_set_aside_by_a_pass() {
             .unwrap()
             .is_none()
     );
+    drop(store);
+    let mut h = h;
+    h.restart();
+    executor::recover(&h.ctx).await.expect("recovery succeeds");
     let kinds: Vec<_> = archon_core::quarantine::list(&h.ctx.paths.data_dir)
         .unwrap()
         .into_iter()
@@ -377,4 +381,84 @@ async fn unusable_owed_merge_and_watch_records_are_set_aside_by_a_pass() {
         .collect();
     assert!(kinds.contains(&"owed-merge".to_owned()), "{kinds:?}");
     assert!(kinds.contains(&"checks-watch".to_owned()), "{kinds:?}");
+}
+
+/// A run whose record says finished while the index says active, beside a
+/// healthy run, fails its item and does not stop recovery.
+#[tokio::test]
+async fn a_run_record_that_disagrees_with_the_index_is_set_aside() {
+    let mut h = Harness::new().await;
+    let broken = h.enqueue("finished in record").await;
+    let fine = h.enqueue("fine").await;
+    h.dispatch().await;
+    let run = h.run(&broken.id).await;
+    let db = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    db.execute(
+        "UPDATE runs SET data = json_set(data, '$.state', json('{\"state\":\"succeeded\",\"summary\":\"x\"}')) WHERE id = ?1",
+        [run.id.as_str()],
+    )
+    .unwrap();
+    drop(db);
+
+    h.restart();
+    executor::recover(&h.ctx).await.expect("recovery succeeds");
+
+    assert!(matches!(
+        h.state(&broken.id).await,
+        QueueState::Failed { .. }
+    ));
+    assert!(matches!(
+        h.state(&fine.id).await,
+        QueueState::Running { .. }
+    ));
+}
+
+/// A stage row whose id is a path is archived under a safe name, and one
+/// that cannot be archived is kept rather than failing recovery.
+#[tokio::test]
+async fn an_unreadable_stage_row_is_archived_safely_or_kept() {
+    let h = Harness::new().await;
+    let broken = h.enqueue("odd stage id").await;
+    h.dispatch().await;
+    let run = h.run(&broken.id).await;
+    let db = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    db.execute("PRAGMA foreign_keys = OFF", []).unwrap();
+    db.execute(
+        "UPDATE stage_runs SET id = '../escape', data = '{' WHERE run = ?1",
+        [run.id.as_str()],
+    )
+    .unwrap();
+    drop(db);
+    let archive = h.ctx.paths.data_dir.join("quarantine-rows");
+
+    let dropped = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .drop_unreadable_stages(&run.id, &archive)
+        .expect("archived");
+    assert_eq!(dropped.len(), 1);
+    assert!(!h.ctx.paths.data_dir.join("escape.json").exists());
+    assert!(archive.join("___escape.json").exists());
+
+    std::fs::write(h.ctx.paths.data_dir.join("blocked"), "file").unwrap();
+    let stuck = h.enqueue("unarchivable").await;
+    h.dispatch().await;
+    let other = h.run(&stuck.id).await;
+    let db = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    db.execute(
+        "UPDATE stage_runs SET data = '{' WHERE run = ?1",
+        [other.id.as_str()],
+    )
+    .unwrap();
+    drop(db);
+    let dropped = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .drop_unreadable_stages(&other.id, &h.ctx.paths.data_dir.join("blocked"))
+        .expect("an archive failure is not an error");
+    assert!(dropped.is_empty(), "{dropped:?}");
 }

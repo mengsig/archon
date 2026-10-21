@@ -315,6 +315,11 @@ pub(super) fn active_lenient(
     for row in rows {
         let (run, item, data) = row.ctx("read run")?;
         match from_json::<PipelineRun>(&data, "pipeline run") {
+            Ok(decoded) if decoded.state.is_terminal() => bad.push(UnreadableRun {
+                run,
+                item,
+                error: "the run is finished in its record but still active in the index".into(),
+            }),
             Ok(decoded) => good.push(decoded),
             Err(error @ ArchonError::Corrupt(_)) => bad.push(UnreadableRun {
                 run,
@@ -324,14 +329,22 @@ pub(super) fn active_lenient(
             Err(error) => return Err(error),
         }
     }
-    assert!(good.iter().all(|r| !r.state.is_terminal()));
+    debug_assert!(good.iter().all(|r| !r.state.is_terminal()));
     Ok((good, bad))
 }
 
-/// Mark an undecodable run terminal so its item can be retried.
-pub(super) fn retire_unreadable(conn: &Connection, run: &str) -> Result<(), ArchonError> {
+/// Mark an undecodable run terminal (`retired`) so its item can be settled
+/// and retried, or active again when settling the item failed.
+pub(super) fn retire_unreadable(
+    conn: &Connection,
+    run: &str,
+    retired: bool,
+) -> Result<(), ArchonError> {
     let changed = conn
-        .execute("UPDATE runs SET terminal = 1 WHERE id = ?1", [run])
+        .execute(
+            "UPDATE runs SET terminal = ?2 WHERE id = ?1",
+            rusqlite::params![run, retired],
+        )
         .ctx("retire unreadable run")?;
     assert_eq!(changed, 1, "run {run} exists");
     Ok(())
@@ -575,6 +588,31 @@ pub(super) fn live_stages(conn: &Connection) -> Result<Vec<StageRun>, ArchonErro
     Ok(out)
 }
 
+fn archive_row(archive: &std::path::Path, id: &str, data: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let safe: String = id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    assert!(
+        !safe.contains('/') && !safe.contains(".."),
+        "a plain file name"
+    );
+    std::fs::create_dir_all(archive)?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(archive.join(format!("{safe}.json")))?;
+    file.write_all(data.as_bytes())?;
+    file.sync_all()
+}
+
 /// Delete the stage rows of `run` that no longer decode and no operator
 /// feedback cites, returning their ids and raw data. Their agents stay mapped to the run in `agent_runs`.
 pub(super) fn drop_unreadable_stages(
@@ -613,10 +651,11 @@ pub(super) fn drop_unreadable_stages(
             tracing::warn!(stage_run = %id, "an unreadable stage run is kept: operator feedback cites it");
             continue;
         }
-        // Written before the delete, so a failure here keeps the row.
-        std::fs::create_dir_all(archive)
-            .and_then(|()| std::fs::write(archive.join(format!("{id}.json")), &data))
-            .map_err(|e| ArchonError::io("archive an unreadable stage run", e))?;
+        // Saved before the delete; a row that cannot be saved is kept.
+        if let Err(error) = archive_row(archive, &id, &data) {
+            tracing::error!(stage_run = %id, %error, "an unreadable stage run could not be saved and is kept");
+            continue;
+        }
         tx.execute("DELETE FROM stage_runs WHERE id = ?1", [&id])
             .ctx("delete unreadable stage run")?;
         dropped.push((id, data));

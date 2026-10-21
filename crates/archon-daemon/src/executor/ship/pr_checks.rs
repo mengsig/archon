@@ -44,7 +44,9 @@ fn key(run: &PipelineRunId) -> String {
 }
 
 fn after(at: DateTime<Utc>, wait: Duration) -> DateTime<Utc> {
-    at + chrono::Duration::from_std(wait).expect("a day fits")
+    let wait = chrono::Duration::from_std(wait).expect("a day fits");
+    at.checked_add_signed(wait)
+        .unwrap_or(DateTime::<Utc>::MAX_UTC)
 }
 
 /// Watch the checks of `url`, just delivered for `run`; a later delivery
@@ -94,7 +96,8 @@ pub(crate) async fn look(ctx: &DaemonContext) -> Result<usize, ArchonError> {
         if watch.next_at > archon_core::now() {
             continue;
         }
-        match look_once(ctx, &run, watch).await {
+        let subject = format!("checks watch {run}");
+        match super::super::coordination::guarded(&subject, look_once(ctx, &run, watch)).await {
             Ok(true) => ended += 1,
             Ok(false) => {}
             Err(error) if error.is_store() => return Err(error),
@@ -120,7 +123,10 @@ async fn reject(
     raw: &str,
     error: &ArchonError,
 ) -> Result<(), ArchonError> {
-    let id = raw_key.strip_prefix(WATCH_PREFIX).unwrap_or(raw_key);
+    let id = raw_key
+        .strip_prefix(WATCH_PREFIX)
+        .filter(|id| !id.is_empty())
+        .unwrap_or(raw_key);
     let record = archon_core::quarantine::Quarantined::new(
         "checks-watch",
         id,
@@ -130,7 +136,8 @@ async fn reject(
     );
     tracing::error!(%raw_key, %error, "a checks watch is unusable and was removed");
     if let Err(write) = archon_core::quarantine::write(&ctx.paths.data_dir, &record) {
-        tracing::error!(%write, "the quarantine record was not written");
+        tracing::error!(%write, "the quarantine record was not written; the watch is kept");
+        return Ok(());
     }
     ctx.store.lock().await.kv_delete(raw_key)
 }

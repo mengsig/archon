@@ -218,12 +218,25 @@ fn commit_staged(
 
 /// Take caches the role staged itself out of the index; its files stay.
 fn unstage_caches(path: &Path) -> Result<(), ArchonError> {
-    let staged = nul_paths(path, &["diff", "--cached", "--name-only"])?;
-    let caches: Vec<String> = staged
-        .iter()
-        .filter(|name| is_python_cache(name))
-        .map(|name| format!(":(literal){name}"))
-        .collect();
+    let staged = nul_entries(path, &["diff", "--cached", "--name-only"])?;
+    let mut caches = Vec::new();
+    for name in staged {
+        let name = match String::from_utf8(name) {
+            Ok(name) => name,
+            Err(raw) if is_python_cache(&String::from_utf8_lossy(raw.as_bytes())) => {
+                return Err(ArchonError::Invalid(format!(
+                    "a cache staged in {} has a name that is not UTF-8, so it cannot be \
+                     left out of the commit: {}",
+                    path.display(),
+                    String::from_utf8_lossy(raw.as_bytes())
+                )));
+            }
+            Err(_) => continue,
+        };
+        if is_python_cache(&name) {
+            caches.push(format!(":(literal){name}"));
+        }
+    }
     if caches.is_empty() {
         return Ok(());
     }

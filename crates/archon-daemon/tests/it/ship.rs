@@ -866,6 +866,7 @@ async fn a_shipped_item_retried_delivers_into_its_pull_request_again() {
         model_reasons: None,
         fresh: false,
         brief_append: Some("The greeting is still wrong on an empty name.".into()),
+        stage_timeouts: Default::default(),
     };
     h.orchestrator(retry).await.expect("queued again");
     h.dispatch().await;

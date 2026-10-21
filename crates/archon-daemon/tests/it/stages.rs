@@ -220,6 +220,7 @@ async fn a_named_run_is_read_instead_of_the_latest() {
         model_reasons: None,
         fresh: false,
         brief_append: None,
+        stage_timeouts: Default::default(),
     };
     h.cli(retry).await.expect("retry");
     h.dispatch().await;

@@ -814,14 +814,14 @@ reference, `[image: shot.png, 14.2 KB]`, not the image. In the terminal UI
 | `archon status` | waiting items and their next action, daemon, orchestrator, `archon` MCP server health, caps, spend and Aether link |
 | `archon cost [--since <date\|7d>] [--until <date\|1d>] [--by day\|repo\|pipeline\|model\|provider\|item\|stage]` | spend as the budgets count it, grouped (by day over the last 7 days by default), with a total; spend with no owner in the grouping, such as the orchestrator's under `--by model`, is the `-` row |
 | `archon model-evidence [--repo <name\|id>] [--pipeline <name>] [--stage <id>] [--since <date\|30d>]` | recorded stage attempts, completed cost median/p90, median minutes and review/test pass shares; small samples marked, at most 60 groups; evidence only |
-| `archon queue add --title … --brief-file <path\|-> [--model-plan-file <json\|toml>]` | enqueue scripted work through the daemon's MCP-equivalent policy checks; stages the plan leaves out get Archon's default model; prints the id or the item with `--json`; a title is one line without control or bidirectional-override characters, and a brief is at most 1 MiB (1048576 bytes) with no NUL |
+| `archon queue add --title … --brief-file <path\|-> [--model-plan-file <json\|toml>] [--stage-timeout <stage>=<minutes>]…` | enqueue scripted work through the daemon's MCP-equivalent policy checks; stages the plan leaves out get Archon's default model; prints the id or the item with `--json`; a title is one line without control or bidirectional-override characters, and a brief is at most 1 MiB (1048576 bytes) with no NUL |
 | `archon queue wait <id>… [--timeout 30m]` | wait for every item to become terminal, bounded to 30m by default; exit 0 all succeeded, 3 failed/cancelled, 4 timeout, 5 failed/cancelled dependency |
 | `archon queue list` | one line per item: state, current stage, age, cost, title, PR URL and derived waiting reason with one next action |
 | `archon queue show <id> [--full]` | an item's runs and each stage's attempt, slot, state, verdict, model, agent, cost and summary (first lines; `--full` for all), with the PR URL, recorded plan reasons and full waiting explanation when present. A stage that delegated shows how its cost splits (its own agent, then each delegated agent with model, effort and cost), and a stage holding a declared review shows the review on record. Steers made to the item are listed with who made them |
 | `archon queue cancel <id>` / `archon queue caps` | cancel an item, or show and change saved operator caps |
-| `archon queue retry <id> [--fresh] [--append "…"]` | queue a finished item again in its worktree and branch (a succeeded one delivers into its pull request again, and the retry counts against the run that passed); `--fresh` starts over from the base branch on a new branch and sets the old worktree aside, which worktree gc deletes, uncommitted work included, `worktrees.gc_after` (7 days) after the item's last run; `--append` adds guidance to the brief |
+| `archon queue retry <id> [--fresh] [--append "…"] [--stage-timeout <stage>=<minutes>]…` | queue a finished item again in its worktree and branch (a succeeded one delivers into its pull request again, and the retry counts against the run that passed); `--fresh` starts over from the base branch on a new branch and sets the old worktree aside, which worktree gc deletes, uncommitted work included, `worktrees.gc_after` (7 days) after the item's last run; `--append` adds guidance to the brief |
 | `archon queue refresh <id>` | merge a finished item's base branch, fetched from `origin`, into its branch: a new item resolves any conflicts, runs the checks, is reviewed from the new merge base and updates the same pull request (never a rebase or a second pull request); an item queued `onto` a pull request merges that pull request's current head instead |
-| `archon queue steer <id> [--note "…"] [--stage <stage>] [--model <provider/model>] [--effort <effort>] [--budget-usd <usd>] [--extend <minutes>] [--abort [--then retry\|skip] [--goto <stage>]] [--remove <stage>] [--insert <stage> [--from <pipeline>] [--after <stage>]] [--switch <pipeline>]` | change an item without cancelling it; see [steering an item](#steering-an-item) |
+| `archon queue steer <id> [--note "…"] [--stage <stage>] [--model <provider/model>] [--effort <effort>] [--budget-usd <usd>] [--extend <minutes>] [--stage-timeout <stage>=<minutes>]… [--abort [--then retry\|skip] [--goto <stage>]] [--remove <stage>] [--insert <stage> [--from <pipeline>] [--after <stage>]] [--switch <pipeline>]` | change an item without cancelling it; see [steering an item](#steering-an-item) |
 | `archon log` | the complete feed; `--item <id>` keeps one item's entries, `--kind <kind>` (repeatable) some kinds, and `--follow` keeps printing new ones |
 | `archon merge <id> [--ignore-checks]` | merge a succeeded item's pull request at its reviewed commit; see [Merging on request](#merging-on-request) |
 | `archon reports` / `archon reports reopen <rpt_…>` | list published reports with their state and URL, or show a closed one again |
@@ -992,6 +992,7 @@ Give at least one change; several in one command are applied together.
 | `--model <provider/model>`, `--effort <effort>` | Changes the model or effort of `--stage` (the running stage when omitted), within the model policy. A running agent ends its turn and goes on with its work on the new model; later attempts and retries use it too. |
 | `--budget-usd <usd>` | Sets the item's budget. Running agents that carry their own cap get the difference. |
 | `--extend <minutes>` | Gives the stage running now more time, up to 1440 minutes a steer. |
+| `--stage-timeout <stage>=<minutes>` | Sets the timeout of a stage that has not started yet, within `[limits] max_stage_timeout_minutes`; repeat for several. `queue add` and `queue retry` take it too. |
 | `--abort` | Stops the agents of `--stage` now. The stage is then started again with a new agent, or passed over with `--then skip`, or the run continues at another stage with `--goto <stage>`. |
 | `--remove <stage>` | Takes out a stage that has not started, for this run. |
 | `--insert <stage> [--from <pipeline>] [--after <stage>]` | Adds a copy of a stage, from the item's own pipeline or another, among the stages that have not started. |
@@ -1287,7 +1288,8 @@ while the orchestrator that takes GitHub requests runs older instructions,
 which do not know operator standing. See
 [Operator logins](github-watcher.md#operator-logins).
 
-Authority is checked by archond, not by the model. Whole-message commands
+Authority is checked by archond, not by the model. Whole-message commands,
+which you send in chat and not in a shell, so `archon --help` does not list them
 (`/answer`, `/approve`, `/reject`, `/merge`, `/archon set --repo …`,
 `/archon pause --hard`, `/archon repo remove`, `/archon undo N`) work from
 your chat and from a listed GitHub operator. In prose, the orchestrator

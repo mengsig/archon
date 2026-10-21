@@ -819,6 +819,7 @@ async fn an_item_timeout_set_before_a_retry_is_the_retried_agents_deadline() {
         model_reasons: None,
         fresh: false,
         brief_append: None,
+        stage_timeouts: Default::default(),
     })
     .await
     .expect("retry");

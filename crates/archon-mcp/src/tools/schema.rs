@@ -609,6 +609,7 @@ fn retry_item() -> ToolDefinition {
                 "model_plan": new_model_plan("Replaces the plan for the new run."),
                 "fresh": {"type": "boolean", "description": "New branch from the base head, when the earlier work is a dead end or the base moved on. The old branch stays and its worktree, uncommitted work included, is set aside until worktree gc. A new pull request is opened and the old one stays open: close it with a note."},
                 "brief_append": brief_append(),
+                "stage_timeouts": stage_timeouts(),
             }),
             &["item"],
         ),

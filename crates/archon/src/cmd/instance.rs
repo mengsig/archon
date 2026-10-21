@@ -21,7 +21,9 @@ use crate::connect::{archon_bin, print_json};
 use crate::instance::lifecycle::{self, Start, Stop};
 use crate::instance::seed::voice::{self, VoiceFile, VoiceOutcome};
 use crate::instance::seed::{self, ConfigOutcome, LinkState, Seeding, calm};
-use crate::instance::{AETHER_PROGRAM, Instance, effective_aether, operator_config_dir};
+use crate::instance::{
+    AETHER_PROGRAM, Instance, MANAGED_BY, MANAGED_BY_VAR, effective_aether, operator_config_dir,
+};
 use crate::setup;
 
 const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
@@ -502,6 +504,7 @@ fn aether_command(config: &Config, args: &[OsString]) -> anyhow::Result<Command>
         AetherMode::Shared => {
             let mut command = Command::new(aether);
             command.args(args);
+            command.env(MANAGED_BY_VAR, MANAGED_BY);
             command
         }
         AetherMode::Dedicated => {
@@ -574,6 +577,15 @@ pub async fn stop_aether() -> anyhow::Result<(serde_json::Value, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_shared_mode_client_is_told_archon_manages_its_updates() {
+        let mut config = Config::default();
+        config.aether.mode = AetherMode::Shared;
+        let command = aether_command(&config, &[OsString::from("tui")]).unwrap();
+        let managed = command.get_envs().find(|(k, _)| *k == MANAGED_BY_VAR);
+        assert_eq!(managed.unwrap().1, Some(OsStr::new("archon")));
+    }
 
     const HELP: &str = "Attach the terminal UI (starts the daemon if needed)\n\n\
         Usage: aether tui [OPTIONS]\n\nOptions:\n      \

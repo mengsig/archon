@@ -167,6 +167,7 @@ async fn every_stage_dispatch_and_retry_of_an_item_keeps_its_weighted_provider()
         model_reasons: None,
         fresh: false,
         brief_append: None,
+        stage_timeouts: Default::default(),
     };
     h.cli(retry).await.expect("retry");
     let retried = h.item(&item.id).await;

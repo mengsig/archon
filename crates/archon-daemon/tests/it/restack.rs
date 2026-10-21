@@ -458,6 +458,7 @@ async fn a_restack_fix_and_its_item_never_run_at_once() {
             model_reasons: None,
             fresh: false,
             brief_append: None,
+            stage_timeouts: Default::default(),
         })
         .await;
     let Err(ArchonError::InvalidTransition(why)) = retried else {

@@ -101,7 +101,7 @@ fn review_of(
         return Err(ArchonError::Invalid(format!(
             "pipeline {:?} runs review={review} in its own stages, not review={asked}; name \
              one that takes a review level (`adaptive`, `direct`, `swarm`) instead, or leave \
-             review out",
+             `--review` / `review` out: this pipeline's review is fixed and cannot be set per item",
             base.name(),
         )));
     }

@@ -668,6 +668,10 @@ pub enum QueueCommand {
         /// which every stage of the new run reads.
         #[arg(long, value_name = "TEXT")]
         append: Option<String>,
+        /// A stage's timeout in minutes for the new run, as STAGE=MINUTES;
+        /// repeat for several.
+        #[arg(long, value_name = "STAGE=MINUTES", value_parser = parse_stage_timeout)]
+        stage_timeout: Vec<(String, u32)>,
     },
     /// Merge a finished item's base branch, fetched from `origin`, into its
     /// branch: a new item resolves conflicts and updates the same pull request.
@@ -736,6 +740,9 @@ pub struct QueueSteerArgs {
     /// Minutes added to the deadline of the stage running now.
     #[arg(long, value_name = "MINUTES", value_parser = parse_extend_minutes)]
     pub extend: Option<u32>,
+    /// A stage's timeout in minutes, as STAGE=MINUTES; repeat for several.
+    #[arg(long, value_name = "STAGE=MINUTES", value_parser = parse_stage_timeout)]
+    pub stage_timeout: Vec<(String, u32)>,
     /// Stop the stage's agents now, then retry it (or --then, --goto).
     #[arg(long)]
     pub abort: bool,
@@ -770,6 +777,18 @@ fn parse_extend_minutes(text: &str) -> Result<u32, String> {
         _ => Err(format!(
             "{text:?} is not an extension of 1 to {max} minutes"
         )),
+    }
+}
+
+/// `STAGE=MINUTES`; the stage and the limit are checked by archond.
+pub fn parse_stage_timeout(text: &str) -> Result<(String, u32), String> {
+    let bad = || format!("{text:?} is not STAGE=MINUTES, such as implement=90");
+    let (stage, minutes) = text.split_once('=').ok_or_else(bad)?;
+    let minutes = minutes.trim().parse::<u32>().map_err(|_| bad())?;
+    match stage.trim() {
+        "" => Err(bad()),
+        _ if minutes == 0 => Err(format!("{text:?}: a timeout is at least 1 minute")),
+        stage => Ok((stage.to_owned(), minutes)),
     }
 }
 
@@ -814,6 +833,9 @@ pub struct QueueAddArgs {
     /// Item budget in USD.
     #[arg(long, allow_negative_numbers = true)]
     pub budget_usd: Option<f64>,
+    /// A stage's timeout in minutes, as STAGE=MINUTES; repeat for several.
+    #[arg(long, value_name = "STAGE=MINUTES", value_parser = parse_stage_timeout)]
+    pub stage_timeout: Vec<(String, u32)>,
     /// Review family: strict, standard or none; omitted uses daemon defaults.
     #[arg(long)]
     pub review: Option<archon_core::autonomy::ReviewLevel>,
@@ -1604,11 +1626,41 @@ mod tests {
     }
 
     #[test]
+    fn stage_timeouts_are_stage_equals_minutes() {
+        assert_eq!(
+            parse_stage_timeout("implement=90"),
+            Ok(("implement".into(), 90))
+        );
+        for bad in [
+            "implement",
+            "=5",
+            "implement=0",
+            "implement=x",
+            "implement=-1",
+        ] {
+            assert!(parse_stage_timeout(bad).is_err(), "{bad}");
+        }
+        let Command::Queue(QueueCommand::Retry { stage_timeout, .. }) = parse(&[
+            "queue",
+            "retry",
+            "qi_1",
+            "--stage-timeout",
+            "implement=90",
+            "--stage-timeout",
+            "review=30",
+        ]) else {
+            panic!()
+        };
+        assert_eq!(stage_timeout.len(), 2);
+    }
+
+    #[test]
     fn queue_retry_takes_fresh_and_an_amendment() {
         let Command::Queue(QueueCommand::Retry {
             item,
             fresh,
             append,
+            ..
         }) = parse(&["queue", "retry", "qi_1", "--fresh", "--append", "do Y"])
         else {
             panic!()

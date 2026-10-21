@@ -501,6 +501,8 @@ pub(super) struct Retry {
     /// Start from the base branch on a new branch, not in the old worktree.
     pub fresh: bool,
     pub brief_append: Option<String>,
+    /// Merged into the item's own, within the configured maximum.
+    pub stage_timeouts: BTreeMap<String, u32>,
 }
 
 /// `failed | cancelled → queued` (a new run), optionally with a new plan
@@ -533,6 +535,7 @@ pub(super) async fn retry(
     let plan = filled_plan(ctx, route, &env, &base, &spec, plan).await?;
     check_plan(ctx, &env, &spec, &plan)?;
     check_reasons(&spec, retry.model_reasons.as_ref())?;
+    check_stage_timeouts(ctx, &spec, &retry.stage_timeouts)?;
     check_runs_here(ctx, &env, &spec).await?;
     let fresh_in = match retry.fresh {
         true => Some(fresh_repo(&env, &spec)?),
@@ -545,6 +548,7 @@ pub(super) async fn retry(
         let mut item = loaded.clone();
         item.model_plan = plan;
         item.routed_provider = provider;
+        item.stage_timeouts.extend(retry.stage_timeouts);
         if replaces_plan || retry.model_reasons.is_some() {
             item.model_reasons = retry.model_reasons;
         }

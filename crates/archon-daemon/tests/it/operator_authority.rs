@@ -799,6 +799,7 @@ async fn item_override_needs_verified_consent_and_preserves_the_repository_ceili
         model_reasons: None,
         fresh: false,
         brief_append: None,
+        stage_timeouts: Default::default(),
     })
     .await
     .unwrap();

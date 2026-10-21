@@ -404,12 +404,14 @@ async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, Ar
             model_reasons,
             fresh,
             brief_append,
+            stage_timeouts,
         } => {
             let retry = items::Retry {
                 model_plan,
                 model_reasons,
                 fresh,
                 brief_append,
+                stage_timeouts,
             };
             items::retry(ctx, &item, retry).await
         }

@@ -364,6 +364,7 @@ async fn a_retried_item_forks_its_roles_afresh() {
         model_reasons: None,
         fresh: false,
         brief_append: None,
+        stage_timeouts: Default::default(),
     };
     h.cli(retry).await.expect("retry");
     h.dispatch().await;
@@ -410,6 +411,7 @@ async fn a_fresh_retried_team_item_starts_from_the_base_branch() {
         model_reasons: None,
         fresh: true,
         brief_append: None,
+        stage_timeouts: Default::default(),
     };
     h.cli(retry).await.expect("fresh retry");
     let root = first.team_root.clone().expect("a team run");

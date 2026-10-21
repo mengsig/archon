@@ -93,6 +93,7 @@ async fn reasons_persist_get_item_and_clear_only_when_the_plan_is_replaced() {
         model_reasons: None,
         fresh: false,
         brief_append: None,
+        stage_timeouts: Default::default(),
     })
     .await
     .unwrap();
@@ -109,6 +110,7 @@ async fn reasons_persist_get_item_and_clear_only_when_the_plan_is_replaced() {
         model_reasons: replacement.clone(),
         fresh: false,
         brief_append: None,
+        stage_timeouts: Default::default(),
     })
     .await
     .unwrap();
@@ -125,6 +127,7 @@ async fn reasons_persist_get_item_and_clear_only_when_the_plan_is_replaced() {
         model_reasons: None,
         fresh: false,
         brief_append: None,
+        stage_timeouts: Default::default(),
     })
     .await
     .unwrap();
@@ -154,6 +157,7 @@ async fn invalid_reasons_write_nothing_through_all_three_requests() {
                 model_reasons: bad.clone(),
                 fresh: false,
                 brief_append: None,
+                stage_timeouts: Default::default(),
             },
         ];
         for request in requests {

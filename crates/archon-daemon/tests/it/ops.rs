@@ -293,9 +293,10 @@ async fn only_the_operator_upgrades_checks_releases_or_watches_github() {
 #[tokio::test]
 async fn a_watch_that_cannot_be_set_up_registers_nothing() {
     let h = Harness::new().await;
-    // The test repository has no origin remote.
+    // A second repository, with no origin remote.
+    let other = unregistered_repo(&h);
     let add = RepoAdd {
-        path: h.repo.clone(),
+        path: other.clone(),
         name: Some("unwatchable".into()),
         ship: None,
         base_branch: None,
@@ -309,7 +310,7 @@ async fn a_watch_that_cannot_be_set_up_registers_nothing() {
         "{refused:?}"
     );
     common::git(
-        &h.repo,
+        &other,
         &["remote", "add", "origin", "https://gitlab.com/o/r.git"],
     );
     let refused = h.cli(Request::RepoAdd(add.clone())).await;
@@ -322,7 +323,7 @@ async fn a_watch_that_cannot_be_set_up_registers_nothing() {
     config.aether.mode = AetherMode::Shared;
     let shared = Harness::with_config(config).await;
     let add = RepoAdd {
-        path: shared.repo.clone(),
+        path: unregistered_repo(&shared),
         ..add
     };
     let refused = shared.cli(Request::RepoAdd(add)).await;
@@ -335,6 +336,37 @@ async fn a_watch_that_cannot_be_set_up_registers_nothing() {
             panic!("repos")
         };
         assert!(repos.iter().all(|r| r.name != "unwatchable"));
+    }
+}
+
+/// A repository next to the harness's, which the registry has not seen.
+fn unregistered_repo(h: &Harness) -> PathBuf {
+    let path = h.dir.path().join("other");
+    std::fs::create_dir_all(&path).expect("repository directory");
+    common::init_repo(&path)
+}
+
+#[tokio::test]
+async fn adding_a_registered_repository_says_it_is_registered() {
+    let h = Harness::new().await;
+    // Its own config asks for ship = pr and it has no origin: still "registered" first.
+    h.repo_config("[repo]\nship = \"pr\"\n");
+    for ship in [None, Some(archon_core::repo::ShipMode::Pr)] {
+        let add = RepoAdd {
+            path: h.repo.clone(),
+            name: Some("again".into()),
+            ship,
+            base_branch: None,
+            default_pipeline: None,
+            auto_merge: false,
+            github_watch: false,
+        };
+        let refused = h.cli(Request::RepoAdd(add)).await;
+        assert!(
+            matches!(&refused, Err(ArchonError::Invalid(m))
+                if m.contains("already registered as demo") && !m.contains("origin")),
+            "{refused:?}"
+        );
     }
 }
 

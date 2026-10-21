@@ -33,7 +33,8 @@ pub async fn run(command: QueueCommand, json: bool) -> anyhow::Result<ExitCode> 
             item,
             fresh,
             append,
-        } => retry(&item, fresh, append, json).await?,
+            stage_timeout,
+        } => retry(&item, fresh, append, stage_timeout, json).await?,
         QueueCommand::Refresh { item } => refresh(&item, json).await?,
         QueueCommand::Caps {
             max_parallel_agents,
@@ -88,7 +89,13 @@ async fn show(item: &str, full: bool, json: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn retry(item: &str, fresh: bool, append: Option<String>, json: bool) -> anyhow::Result<()> {
+async fn retry(
+    item: &str,
+    fresh: bool,
+    append: Option<String>,
+    stage_timeout: Vec<(String, u32)>,
+    json: bool,
+) -> anyhow::Result<()> {
     let client = connect_or_start().await?;
     let item = views::resolve_item(&client, item).await?;
     let done = match fresh {
@@ -101,6 +108,7 @@ async fn retry(item: &str, fresh: bool, append: Option<String>, json: bool) -> a
         model_reasons: None,
         fresh,
         brief_append: append,
+        stage_timeouts: stage_timeout.into_iter().collect(),
     };
     change(&client, request, &done, json).await
 }

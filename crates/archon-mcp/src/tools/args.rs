@@ -468,6 +468,7 @@ fn retry_item(args: &mut Args) -> Result<Request, ToolError> {
         model_reasons: args.optional_reasons()?,
         fresh: args.optional("fresh")?.unwrap_or(false),
         brief_append: args.optional_text("brief_append")?,
+        stage_timeouts: args.optional("stage_timeouts")?.unwrap_or_default(),
     })
 }
 

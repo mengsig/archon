@@ -35,7 +35,7 @@ pub async fn run(args: QueueAddArgs, json: bool) -> anyhow::Result<()> {
     };
     let request = EnqueueRequest {
         onto,
-        stage_timeouts: Default::default(),
+        stage_timeouts: args.stage_timeout.iter().cloned().collect(),
         title: args.title,
         repo: args.repo.map(RepoRef),
         pipeline: args.pipeline,

@@ -45,6 +45,7 @@ async fn add_with_watch(
     }
     let path = add.path.clone();
     let (root, config) = blocking(move || inspect_repo(&path)).await?;
+    refuse_registered(ctx, &root).await?;
     let name = match &add.name {
         Some(name) => name.clone(),
         None => dir_name(&root)?,
@@ -387,6 +388,22 @@ fn current_branch(root: &Path) -> Result<String, ArchonError> {
     }
     assert!(!branch.contains('\n'), "one current branch");
     Ok(branch)
+}
+
+/// A path that is already registered is said to be, before any rule that
+/// only a new registration must meet.
+async fn refuse_registered(ctx: &DaemonContext, root: &Path) -> Result<(), ArchonError> {
+    assert!(root.is_absolute(), "inspected roots are canonical");
+    let repos = ctx.store.lock().await.repos()?;
+    match repos.iter().find(|repo| repo.path == root) {
+        Some(repo) => Err(ArchonError::Invalid(format!(
+            "{} is already registered as {}; change it with `archon repo set {}`",
+            root.display(),
+            repo.name,
+            repo.name
+        ))),
+        None => Ok(()),
+    }
 }
 
 /// A `ship = pr` repository pushes to `origin`, so it must have one.

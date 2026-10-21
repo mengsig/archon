@@ -233,6 +233,7 @@ async fn retrying_with_above_default_effort_requires_a_reason() {
         model_reasons: reasons,
         fresh: false,
         brief_append: None,
+        stage_timeouts: Default::default(),
     };
     assert!(refusal(&h, retry(None)).await.contains("implement"));
     h.cli(retry(reason("implement")))

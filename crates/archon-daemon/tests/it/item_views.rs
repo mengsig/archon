@@ -594,6 +594,7 @@ async fn retry_run_never_absorbs_an_earlier_runs_late_usage() {
         model_reasons: None,
         fresh: false,
         brief_append: None,
+        stage_timeouts: Default::default(),
     })
     .await
     .unwrap();
@@ -845,6 +846,7 @@ async fn delegated_descendant_cost_stays_with_its_run_after_retry_and_restart() 
         model_reasons: None,
         fresh: false,
         brief_append: None,
+        stage_timeouts: Default::default(),
     })
     .await
     .unwrap();

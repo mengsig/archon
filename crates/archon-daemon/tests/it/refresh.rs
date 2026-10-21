@@ -646,6 +646,7 @@ async fn a_refresh_after_a_retry_survives_template_expiry_and_legacy_missing_met
             model_reasons: None,
             fresh: false,
             brief_append: None,
+            stage_timeouts: Default::default(),
         })
         .await
         .unwrap();

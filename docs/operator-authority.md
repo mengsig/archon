@@ -101,6 +101,11 @@ loosening.
 A message that is exactly one of these is applied by archond. On GitHub put
 `@archon` first. Anything else in the message makes it ordinary text.
 
+These are chat commands: send them as a message in the Archon chat (or on
+GitHub), not in a shell, so `archon --help` does not list them. Their
+terminal counterparts are `archon answer`, `archon merge`, `archon settings`
+and the other subcommands of `archon --help`.
+
 ```text
 /answer N <answer>
 /approve [N]                  /reject [N] [reason]

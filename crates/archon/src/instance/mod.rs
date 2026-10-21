@@ -98,7 +98,7 @@ impl Instance {
         ]
     }
 
-    /// `aether <args>` against this instance.
+    /// `aether <args>` against this instance, told that Archon manages its updates.
     pub fn aether_command<I, S>(&self, aether: &Path, args: I) -> Command
     where
         I: IntoIterator<Item = S>,
@@ -109,9 +109,15 @@ impl Instance {
         for (name, value) in self.env() {
             command.env(name, value);
         }
+        command.env(MANAGED_BY_VAR, MANAGED_BY);
         command
     }
 }
+
+/// Tells an Aether client or daemon that Archon owns its updates, so it skips
+/// its own launch-time update offer.
+pub const MANAGED_BY_VAR: &str = "AETHER_MANAGED_BY";
+pub const MANAGED_BY: &str = "archon";
 
 /// The Aether endpoint archond and `archon doctor` use: the instance's
 /// socket in dedicated mode, the configured one in shared mode.
@@ -213,7 +219,9 @@ mod tests {
         let instance = instance();
         let command = instance.aether_command(Path::new("aether"), ["agents"]);
         let envs: Vec<_> = command.get_envs().collect();
-        assert_eq!(envs.len(), 6);
+        assert_eq!(envs.len(), 7);
+        let managed = envs.iter().find(|(k, _)| *k == MANAGED_BY_VAR).unwrap();
+        assert_eq!(managed.1, Some(OsStr::new("archon")));
         let socket = envs.iter().find(|(k, _)| *k == "AETHER_SOCKET").unwrap();
         assert_eq!(socket.1, Some(instance.socket.as_os_str()));
         assert_eq!(command.get_args().collect::<Vec<_>>(), ["agents"]);

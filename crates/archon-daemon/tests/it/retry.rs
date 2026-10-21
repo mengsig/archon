@@ -22,6 +22,7 @@ fn retry(item: &QueueItem, fresh: bool, brief_append: Option<&str>) -> Request {
         model_reasons: None,
         fresh,
         brief_append: brief_append.map(str::to_owned),
+        stage_timeouts: Default::default(),
     }
 }
 
@@ -322,4 +323,38 @@ async fn update_item_amends_the_brief_of_a_running_item_without_a_cancel() {
     for text in amendments {
         assert!(next.objective.contains(text), "{text}");
     }
+}
+
+#[tokio::test]
+async fn a_retry_sets_stage_timeouts_within_the_limit() {
+    let h = Harness::new().await;
+    let (item, _) = started(&h, "slow stage").await;
+    cancel(&h, &item).await;
+    let with = |stage: &str, minutes: u32| Request::RetryItem {
+        item: item.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        fresh: false,
+        brief_append: None,
+        stage_timeouts: [(stage.to_owned(), minutes)].into(),
+    };
+
+    for (stage, minutes, said) in [
+        ("implement", 100_000, "max_stage_timeout_minutes"),
+        ("no-such-stage", 30, "does not have"),
+    ] {
+        let refused = h.cli(with(stage, minutes)).await;
+        assert!(
+            matches!(&refused, Err(ArchonError::Invalid(m)) if m.contains(said)),
+            "{refused:?}"
+        );
+        assert!(matches!(
+            h.state(&item.id).await,
+            QueueState::Cancelled { .. }
+        ));
+    }
+    h.cli(with("implement", 45)).await.expect("retry");
+    let queued = h.item(&item.id).await;
+    assert_eq!(queued.state, QueueState::Queued);
+    assert_eq!(queued.stage_timeouts["implement"], 45);
 }

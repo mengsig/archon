@@ -3,6 +3,7 @@
 
 use archon_core::error::ArchonError;
 use archon_core::id::queue_item_prefix;
+use archon_core::notify::Question;
 use archon_core::protocol::{ItemQuery, ItemSummary, Reply, WaitingOn};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run;
@@ -129,7 +130,7 @@ pub(super) fn waiting_on(
             ),
             next_action: question.as_ref().map_or_else(
                 || "archon questions".into(),
-                |q| format!("archon answer {} approve", q.id),
+                |q| format!("archon answer {} {}", q.id, approving_word(q)),
             ),
         }));
     }
@@ -152,6 +153,27 @@ pub(super) fn waiting_on(
         }
     }
     Ok(None)
+}
+
+/// The option the question offers for going ahead, else `approve`, which a
+/// gate always reads as approval.
+fn approving_word(question: &Question) -> &str {
+    let offers = |word: &str| {
+        question
+            .options
+            .iter()
+            .any(|o| o.eq_ignore_ascii_case(word))
+    };
+    for word in ["approve", "yes"] {
+        if offers(word) {
+            return question
+                .options
+                .iter()
+                .find(|o| o.eq_ignore_ascii_case(word))
+                .map_or(word, String::as_str);
+        }
+    }
+    question.options.first().map_or("approve", String::as_str)
 }
 
 /// The one item whose id starts with `text`; an unknown prefix is
@@ -194,4 +216,34 @@ fn ambiguous(prefix: &str, matches: &[QueueItem]) -> String {
         "{prefix} is ambiguous; it starts {count} items: {}; give more of the id",
         named.join(", ")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use archon_core::id::QuestionId;
+
+    use super::*;
+
+    fn question(options: &[&str]) -> Question {
+        Question {
+            id: QuestionId::new(),
+            number: 3,
+            text: "Go?".into(),
+            options: options.iter().map(|o| (*o).to_owned()).collect(),
+            item: None,
+            aether: None,
+            asked_by: None,
+            asked_at: archon_core::now(),
+            answer: None,
+            answered_at: None,
+        }
+    }
+
+    #[test]
+    fn the_hint_uses_a_word_the_question_offers() {
+        assert_eq!(approving_word(&question(&["yes", "reject"])), "yes");
+        assert_eq!(approving_word(&question(&["Approve", "reject"])), "Approve");
+        assert_eq!(approving_word(&question(&["go", "stop"])), "go");
+        assert_eq!(approving_word(&question(&[])), "approve");
+    }
 }

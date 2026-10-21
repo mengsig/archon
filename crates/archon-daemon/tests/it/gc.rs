@@ -142,6 +142,7 @@ async fn retry(h: &Harness, item: &QueueItem) {
         model_reasons: None,
         fresh: false,
         brief_append: None,
+        stage_timeouts: Default::default(),
     };
     h.cli(retry).await.expect("retry");
     assert_eq!(h.state(&item.id).await, QueueState::Queued);
@@ -453,6 +454,7 @@ fn fresh_retry(item: &QueueItem) -> Request {
         model_reasons: None,
         fresh: true,
         brief_append: None,
+        stage_timeouts: Default::default(),
     }
 }
 

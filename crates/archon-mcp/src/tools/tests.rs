@@ -553,6 +553,7 @@ fn retries_default_to_the_old_worktree_and_amendments_alone_are_a_change() {
         model_reasons: None,
         fresh: false,
         brief_append: None,
+        stage_timeouts: Default::default(),
     };
     assert_eq!(plain, expected);
     let fresh = to_request(

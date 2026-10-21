@@ -182,7 +182,7 @@ async fn waiting_gate_question(
     assert_eq!(wait.prompt, question.text);
     assert_eq!(
         wait.next_action,
-        format!("archon answer {} approve", question.id)
+        format!("archon answer {} yes", question.id)
     );
     assert_eq!(
         wait.subject,

@@ -208,6 +208,9 @@ pub enum Request {
         /// Appended to the brief under a dated "Amendment" heading.
         #[serde(default)]
         brief_append: Option<String>,
+        /// Stage id to minutes, merged into the item's; within the configured maximum.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        stage_timeouts: BTreeMap<String, u32>,
     },
     /// Merge the finished item's base branch, fetched afresh, into its branch:
     /// a new item on the same branch and pull request (ARCHITECTURE §13).

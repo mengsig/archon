@@ -337,7 +337,7 @@ initiative_contract_bytes = 2048 # 1..=16384
   `max_parallel_agents`. The orchestrator's prompt and each delegating
   stage's contract state the configured depth.
 - `max_stage_timeout_minutes`: the longest per-stage timeout an item may
-  ask for with `stage_timeouts` at `enqueue`, `update_item` or `steer_item`. A pipeline's
+  ask for with `stage_timeouts` at `enqueue`, `update_item`, `steer_item` or `retry_item` (`--stage-timeout` on `archon queue add|steer|retry`). A pipeline's
   own `timeout_minutes` is not capped by it.
 - `max_agent_messages`: the `message_orchestrator` calls one stage agent
   may make in its lifetime, and the messages one run node's inbox may

@@ -284,8 +284,9 @@ fn head_now(
         false => stack::sha(repo, base)?,
     };
     if stack::contains(repo, &sha, &format!("refs/heads/{branch}"))? {
+        let place = if remote { "" } else { " locally" };
         return Err(ArchonError::Invalid(format!(
-            "`{branch}` already holds `{base}` at {}; nothing to refresh",
+            "`{branch}` already holds `{base}`{place} at {}: its work is in `{base}`, so there is nothing to refresh",
             &sha[..12]
         )));
     }

@@ -326,6 +326,7 @@ async fn a_retry_takes_a_new_plan_and_keeps_the_worktree() {
         model_reasons: None,
         fresh: false,
         brief_append: None,
+        stage_timeouts: Default::default(),
     };
     let refused = h.cli(retry(None)).await.expect_err("only a finished item");
     assert!(matches!(refused, ArchonError::InvalidTransition(_)));

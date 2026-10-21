@@ -130,6 +130,7 @@ async fn a_retried_1_0_item_keeps_its_plan_without_the_ship_stage() {
         model_reasons: None,
         fresh: false,
         brief_append: None,
+        stage_timeouts: Default::default(),
     };
     h.cli(retry).await.expect("a 1.0 item is retried");
     let stored = h.item(&item.id).await;

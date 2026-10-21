@@ -88,6 +88,7 @@ impl Installed {
             .env("HOME", self.home.path())
             .env_remove("http_proxy")
             .env_remove("HTTP_PROXY")
+            .env("ARCHON_NO_UPDATE_CHECK", "1")
             .env("NO_COLOR", "1");
         command
     }
@@ -322,6 +323,52 @@ fn a_running_archond_and_an_old_aether_are_named_with_what_to_run() {
              protocol 14 to 17. Run `aether update`."
         ),
         "{stdout}"
+    );
+}
+
+#[test]
+fn yes_updates_aether_and_restarts_nothing_when_archond_is_not_running() {
+    let installed = Installed::new();
+    publish(
+        &installed.releases(),
+        "v9.9.9",
+        &target(),
+        &archon_script("9.9.9"),
+        true,
+    );
+    let updating = aether_script(16, 17).replace("*) exit 64", "update) echo done ;;\n*) exit 64");
+    write_script(&installed.path("tools/aether"), &updating);
+    let out = installed.update(&["--yes"]);
+    let stdout = text(&out.stdout);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(installed.version(), "archon 9.9.9");
+    assert!(
+        stdout.contains("Aether is aether 0.9.0; `aether update` changed nothing."),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("archond is not running; nothing to restart."),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn a_failed_aether_update_is_a_warning_and_a_failing_exit() {
+    let installed = Installed::new();
+    publish(
+        &installed.releases(),
+        "v9.9.9",
+        &target(),
+        &archon_script("9.9.9"),
+        true,
+    );
+    let out = installed.update(&["--yes"]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert_eq!(installed.version(), "archon 9.9.9", "archon stays updated");
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains("warning: aether was not updated"),
+        "{stderr}"
     );
 }
 

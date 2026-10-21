@@ -141,9 +141,26 @@ you run it,
 and sends nothing but the download requests. Like the installer, it runs `curl` or `wget`,
 `sha256sum` or `shasum`, and `tar`.
 
-It restarts nothing. A running `archond` keeps the old version, and the
-update itself interrupts no running item. To move the daemon to the new
-version:
+The install itself interrupts no running item. A running `archond` keeps
+the old version until it restarts. On a terminal `archon update` then says
+what it would restart and asks `[Y/n]`; `--yes` answers for scripts, and
+`--no-restart` installs `archon` alone:
+
+```sh
+archon update --yes                  # install, update Aether, restart everything
+archon update --yes --wait 600 --requeue
+```
+
+An accepted restart does, in order: `aether update`; the drained restart
+of `archond` and, in dedicated mode, Archon's own aetherd (`archon daemon
+restart`, with the same `--wait` and `--requeue`: running items resume as
+after any daemon restart); and `archon orchestrator restart`, which gives
+the orchestrator the new tools. In shared mode your own aetherd is never
+restarted; Archon's tools in it are refreshed with `aether mcp refresh
+archon`. Nothing is restarted when `archond` is not running or already runs
+the installed version, and a failed `aether update` is reported as a
+warning (exit 1) after the restart. Without `--yes`, off a terminal, the
+command prints what to run by hand:
 
 ```sh
 archon daemon stop --keep-aether
@@ -153,6 +170,26 @@ archon orchestrator restart
 
 It also reports whether your Aether serves what the new version needs, and
 prints `aether update` when it does not.
+
+### The check at launch
+
+Each `archon`, `archon tui` and `archon chat` on a terminal looks for a
+newer release of Archon and of Aether before it opens, and offers:
+
+```text
+Archon 1.4.2 is available (this is 1.4.1).
+Update and restart now? [Y/n/s] (s: skip these versions)
+```
+
+`Y` (or Enter) runs `archon update --yes` and then starts the new `archon`;
+`n` goes on and asks again at the next launch; `s` skips these versions
+until a newer one is released. The check waits at most 1.5 seconds for
+GitHub, reuses an answer for `[update] cache_for` (an hour), is silent
+offline and retries ten minutes after a failure, and sends only the
+requests `archon update --check` and `aether update --check` send. The
+answer and the skipped versions are kept in `update-check.json` in the data
+directory. Switch it off with `[update] check_on_launch = false`, or for one
+shell with `ARCHON_NO_UPDATE_CHECK=1`. Nothing is asked off a terminal.
 
 `archon status`, `archon doctor` and the orchestrator's `queue_status` say
 when the running orchestrator is behind: for example `generation 7, created

@@ -41,7 +41,9 @@ engine CLI ([Claude Code](https://code.claude.com/docs/en/quickstart) or
 [Codex](https://github.com/openai/codex)) that you have logged in to, and
 the [GitHub CLI](https://cli.github.com/) for pull requests.
 [Lavish](https://github.com/kunchenguid/lavish-axi) review pages are
-optional. Update with `archon update`. Other methods, every program Archon
+optional. Update with `archon update`, which also updates Aether and
+restarts what runs it once you agree; `archon` offers the same when a newer
+release exists. Other methods, every program Archon
 can use, and building from source are in
 [Installing Archon](docs/install.md).
 

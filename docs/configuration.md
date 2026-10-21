@@ -141,6 +141,10 @@ tick_secs = 15                 # how often the queue is scanned
 show_progress = false          # print stage progress in `archon chat`
 history = 30                   # feed entries replayed when `archon chat` opens
 
+[update]
+check_on_launch = true         # `archon`, `archon tui` and `archon chat` look for a newer Archon or Aether and offer to update
+cache_for = "1h"               # an answer younger than this is reused; a failed check is retried after 10 minutes
+
 [worktrees]
 # root = "~/archon-worktrees"  # unset: <data>/worktrees
 branch_prefix = "archon/"      # run branches are named <prefix><id>-<slug>

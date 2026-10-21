@@ -36,6 +36,9 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
         ))
         .into());
     }
+    if launches_ui(cli.command.as_ref()) {
+        update::before_launch().await?;
+    }
     let Some(command) = cli.command else {
         return bare::run().await;
     };
@@ -97,6 +100,12 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::Mcp => daemon::mcp().await,
         Command::Update(args) => update::run(args, json).await,
     }
+}
+
+/// Whether `command` (`None`: a bare `archon`) opens the TUI or the chat,
+/// where a launch checks for a newer release.
+fn launches_ui(command: Option<&Command>) -> bool {
+    matches!(command, None | Some(Command::Chat { .. } | Command::Tui(_)))
 }
 
 /// Why `command` (`None`: a bare `archon`) cannot print JSON, or `None` when
@@ -218,6 +227,22 @@ mod tests {
     fn refusal(args: &[&str]) -> Option<&'static str> {
         let cli = Cli::try_parse_from([&["archon", "--json"], args].concat()).unwrap();
         json_refusal(cli.command.as_ref())
+    }
+
+    #[test]
+    fn only_the_commands_that_open_the_ui_check_for_a_release() {
+        for (args, opens) in [
+            (&[][..], true),
+            (&["chat"], true),
+            (&["tui"], true),
+            (&["status"], false),
+            (&["update"], false),
+            (&["say", "hi"], false),
+            (&["mcp"], false),
+        ] {
+            let cli = Cli::try_parse_from([&["archon"], args].concat()).unwrap();
+            assert_eq!(launches_ui(cli.command.as_ref()), opens, "{args:?}");
+        }
     }
 
     #[test]

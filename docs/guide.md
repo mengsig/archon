@@ -719,6 +719,11 @@ to the orchestrator.
 /watch <registered repository>
 ```
 
+`/upgrade both latest` is also what to say when the orchestrator tells you a
+newer Archon or Aether exists: only your own message, typed here, starts it,
+never a GitHub request or an agent. (`archon update --yes` from a shell
+does the same, and also restarts the orchestrator.)
+
 `/upgrade` is `archon daemon upgrade` (or `archon daemon restart`): archond
 holds dispatch while running stage agents finish (at most 30 minutes),
 installs what you named while dispatch stays held, then hands the restart to a detached

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- `archon update` is one command: after it installs the release it asks
+  (`--yes` answers, `--no-restart` declines), updates Aether, restarts
+  archond and Archon's own aetherd through the drained restart, and
+  restarts the orchestrator. Your own aetherd is never restarted
+  ([docs/install.md](docs/install.md#updating)).
+- Every `archon`, `archon tui` and `archon chat` on a terminal checks for a
+  newer Archon or Aether and offers the update, with a per-version skip,
+  `[update] check_on_launch = false` and `ARCHON_NO_UPDATE_CHECK=1` to opt
+  out. It never waits more than 1.5 s, stays silent offline and caches its
+  answer for `[update] cache_for`. Reminder idea from #187 by @Markfds01.
+- Archon's own aetherd taking longer than 10 s to answer at startup (its
+  recovery of a big data directory) no longer fails the start with "the
+  daemon did not answer ... it is still running". Archon waits while the
+  aetherd's startup log keeps growing, and gives up only after two quiet
+  minutes or 30 minutes in all.
+
 ## 1.4.1
 
 Released 2026-10-20.

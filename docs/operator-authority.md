@@ -87,6 +87,7 @@ loosening from GitHub, explicit or not, asks for confirmation first.
 | Say something as the operator (`say`) | `archon say` | — | — | no | — |
 | Restart / attach the orchestrator | `archon orchestrator restart`, `attach` | not implemented | not implemented | no | — |
 | Drained daemon upgrade / restart | `archon daemon upgrade` | `/upgrade` (existing dedicated-TUI command) | no | no | explicit command only |
+| One-command update (`archon update --yes`: install, `aether update`, drained restart, orchestrator restart) | `archon update`, or the offer at launch | `/upgrade both latest` restarts without the orchestrator step | no | no | explicit command or answer only |
 | Shutdown, setup, destructive GC | CLI only | no | no | no | — |
 
 The confirmation column applies to plain-language requests relayed through

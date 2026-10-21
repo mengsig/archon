@@ -4,6 +4,7 @@
 
 mod aether;
 mod interrupt;
+mod launch;
 mod location;
 mod release;
 mod restart;
@@ -63,6 +64,25 @@ impl Step {
     }
 }
 
+/// Before `archon`, `archon chat` or `archon tui` opens: check for newer
+/// releases and offer the one-step update. After an accepted update this
+/// process is replaced by the new archon with the same arguments.
+pub async fn before_launch() -> anyhow::Result<()> {
+    use std::os::unix::process::CommandExt as _;
+    // A broken config is reported by the command that follows.
+    let Ok(config) = Config::load_default() else {
+        return Ok(());
+    };
+    if launch::offer(&config.update).await != launch::Launch::Again {
+        return Ok(());
+    }
+    let error = std::process::Command::new(archon_bin()?)
+        .args(std::env::args_os().skip(1))
+        .env(launch::NO_CHECK_ENV, "1")
+        .exec();
+    Err(error).context("starting the updated archon")
+}
+
 pub async fn run(args: UpdateArgs, json: bool) -> anyhow::Result<ExitCode> {
     if args.requirements {
         let own = Requirement::own();
@@ -116,8 +136,11 @@ async fn restart_after(
         drain_secs: args.wait,
         requeue: args.requeue,
     };
+    if !args.yes && !can_ask(json) {
+        return Ok(code);
+    }
     let running = restart::Live.running_archond().await?;
-    if !args.yes && !confirmed(&plan, running.as_ref(), json)? {
+    if !args.yes && !confirmed(&plan, running.as_ref())? {
         return Ok(code);
     }
     let outcome = restart::apply(&restart::Live, &plan).await?;
@@ -134,18 +157,17 @@ async fn restart_after(
     })
 }
 
-/// Say what will restart and ask. `false` where nothing is asked: no
-/// terminal, `--json`, or nothing stale to restart.
-fn confirmed(
-    plan: &restart::Plan,
-    running: Option<&restart::Running>,
-    json: bool,
-) -> anyhow::Result<bool> {
+/// Whether a question can be put: a terminal on both ends, and no `--json`.
+fn can_ask(json: bool) -> bool {
     use std::io::IsTerminal as _;
+    !json && std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+}
+
+/// Say what will restart and ask. `false` where nothing is stale to restart.
+fn confirmed(plan: &restart::Plan, running: Option<&restart::Running>) -> anyhow::Result<bool> {
     let stale = running
         .is_some_and(|archond| archon_core::ops::bare_version(&archond.version) != plan.installed);
-    let asks = !json && std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
-    if !asks || !(plan.archon_changed || stale) {
+    if !(plan.archon_changed || stale) {
         return Ok(false);
     }
     println!("{}", restart::announce(plan, running));

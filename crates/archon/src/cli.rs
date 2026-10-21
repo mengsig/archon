@@ -308,6 +308,21 @@ pub struct UpdateArgs {
     pub requeue: bool,
 }
 
+impl UpdateArgs {
+    /// What accepting the offer at launch runs: update both, restart, no questions.
+    pub fn everything() -> Self {
+        Self {
+            check: false,
+            version: None,
+            requirements: false,
+            yes: true,
+            no_restart: false,
+            wait: archon_core::ops::DEFAULT_DRAIN_SECS,
+            requeue: false,
+        }
+    }
+}
+
 #[derive(Debug, Subcommand)]
 pub enum RepoCommand {
     /// Register a git repository by the path of its top level.

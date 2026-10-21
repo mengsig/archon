@@ -43,7 +43,12 @@ pub(super) async fn settle(
         };
         let daemon_ships = driver.is_some_and(|d| d.ships_by_daemon());
         let planner = driver.and_then(|d| swarm::Planner::of(d.spec(), &stage.stage_id));
-        let record_stage = driver.and_then(|d| d.spec().ship_record_stage().map(|s| s.id.clone()));
+        let record_stage = driver.and_then(|d| {
+            let spec = d.spec();
+            let record = spec.ship_record_stage()?;
+            let after = spec.stage_index(&stage.stage_id)? > spec.stage_index(&record.id)?;
+            after.then(|| record.id.clone())
+        });
         (stage, run, review, daemon_ships, planner, record_stage)
     };
     // Leave the stage live until verification is persisted. If interrupted,

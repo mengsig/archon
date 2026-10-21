@@ -499,9 +499,10 @@ pub(crate) async fn enable_auto_merge(
         ))
     };
     if shipped.local_branch().is_some() {
-        return Err(refused(
-            "a local branch has no pull request; use `archon merge`",
-        ));
+        return Err(ArchonError::Invalid(format!(
+            "{item} was delivered to a local branch, which has no pull request to auto-merge; \
+             land it with `archon merge {item}`"
+        )));
     }
     let base = base.map_err(|why| refused(&why))?;
     let binary = &ctx.config.github.binary;

@@ -210,3 +210,18 @@ async fn an_ignored_local_file_the_branch_would_replace_is_never_overwritten() {
     let kept = std::fs::read_to_string(h.repo.join("change.txt")).unwrap();
     assert_eq!(kept, "USER DATA\n");
 }
+
+#[tokio::test]
+async fn the_users_merge_options_cannot_turn_the_fast_forward_into_a_squash() {
+    let h = Harness::new().await;
+    let (item, _, head) = delivered_locally(&h).await;
+    git(&h.repo, &["config", "branch.main.mergeOptions", "--squash"]);
+
+    let merge = merged(&h, &item).await;
+    assert!(
+        matches!(merge.state, MergeState::Merged { .. }),
+        "{merge:?}"
+    );
+    assert_eq!(git(&h.repo, &["rev-parse", "main"]), head);
+    assert_eq!(git(&h.repo, &["status", "--porcelain"]), "", "index clean");
+}

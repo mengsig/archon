@@ -172,7 +172,19 @@ pub(super) fn land(landing: Landing<'_>, plan: &Plan) -> Result<Result<(), Strin
             ];
             git(repo, &args).map(drop)
         }
-        Some(tree) => git(tree, &["merge", "--ff-only", "--no-overwrite-ignore", head]).map(drop),
+        Some(tree) => {
+            // The user's `branch.<base>.mergeOptions` (e.g. --squash) must not change this.
+            let options = format!("branch.{base}.mergeOptions=");
+            let args = [
+                "-c",
+                &options,
+                "merge",
+                "--ff-only",
+                "--no-overwrite-ignore",
+                head,
+            ];
+            git(tree, &args).map(drop)
+        }
     };
     if let Err(error) = landed {
         return Ok(Err(moved_meanwhile(base, &error)));

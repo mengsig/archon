@@ -175,6 +175,8 @@ struct Position {
     approved: BTreeMap<String, Option<String>>,
     /// What the record stage's latest pass left for the delivery.
     record: Option<Recorded>,
+    /// Why the record stage's latest pass left nothing to deliver.
+    no_change: Option<String>,
 }
 
 /// The record stage's latest pass, as the delivery uses it.
@@ -200,6 +202,7 @@ impl Position {
             entered: BTreeSet::new(),
             approved: BTreeMap::new(),
             record: None,
+            no_change: None,
         };
         at.enter(0, entries, String::new());
         at
@@ -870,7 +873,7 @@ impl RunDriver {
             GroupResult::Fail { headline, report } => (headline, report),
             GroupResult::Pass { summary } if stage.kind != StageKind::Team => {
                 if owed.ship_record {
-                    at.record = Some(passed_record(members, owed.review));
+                    note_record(at, members, owed.review);
                 } else if stage.kind == StageKind::Review
                     && let Some(recorded) = at.record.as_mut()
                     && let Some(call) =
@@ -1016,6 +1019,13 @@ impl RunDriver {
         let Some(record_stage) = self.spec.ship_record_stage() else {
             return stop(RunState::Succeeded { summary });
         };
+        if let Some(reason) = &at.no_change {
+            return stop(RunState::Succeeded {
+                summary: format!(
+                    "{summary}\n\nNo change was needed, so nothing was shipped: {reason}"
+                ),
+            });
+        }
         // A steer's goto can pass the record stage by: then nothing is proved.
         if at.record.is_none() {
             return stop(RunState::Failed {
@@ -1346,6 +1356,7 @@ impl RunDriver {
             entered: BTreeSet::new(),
             approved: BTreeMap::new(),
             record: None,
+            no_change: None,
         };
         for (index, stage) in self.spec.file.stages.iter().enumerate() {
             at.stage = index;
@@ -1473,6 +1484,23 @@ fn group_at<'a>(
     (0..stage.fan_out)
         .map(|fan| slots.get(&(stage.id.as_str(), attempt, fan)).copied())
         .collect()
+}
+
+/// Remember what the record stage's pass left: a ship record, or the reason
+/// for there being nothing to ship.
+fn note_record(at: &mut Position, members: &[&StageRun], duty: Option<ReviewDuty>) {
+    let [member] = members else {
+        panic!("validated: one agent writes the ship record")
+    };
+    at.no_change = ship::no_change_reason(member.structured.as_ref());
+    at.record = match at.no_change {
+        Some(_) => None,
+        None => Some(passed_record(members, duty)),
+    };
+    assert!(
+        at.record.is_some() != at.no_change.is_some(),
+        "a passed record stage leaves a record or a reason for none"
+    );
 }
 
 /// The record stage's passed member's ship record and risk proposal, with

@@ -1,6 +1,7 @@
-//! The blockers posted for an item, kept so they can be resolved when the
-//! item moves on: nothing else closes a blocker archond posted, so one
-//! would count as waiting in Aether's center long after it was acted on.
+//! The blockers and outcomes posted for an item, kept so they can be resolved
+//! when the item moves on or is viewed: nothing else closes one archond
+//! posted, so it would count as waiting or unread in Aether's center long
+//! after it was acted on.
 
 use archon_aether::AetherClient;
 use archon_core::error::ArchonError;
@@ -21,7 +22,15 @@ fn load(store: &archon_queue::Store, item: &QueueItemId) -> Result<Vec<String>, 
         .map_err(|e| ArchonError::Corrupt(format!("blockers posted for item {item}: {e}")))
 }
 
-/// Note that the blocker `posted` is open for `item`.
+/// Whether some notification posted for `item` is still open.
+pub(crate) fn any_open(
+    store: &archon_queue::Store,
+    item: &QueueItemId,
+) -> Result<bool, ArchonError> {
+    Ok(!load(store, item)?.is_empty())
+}
+
+/// Note that the blocker or outcome `posted` is open for `item`.
 pub(super) async fn remember(
     ctx: &DaemonContext,
     item: &QueueItemId,

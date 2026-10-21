@@ -87,6 +87,9 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
         }
     };
     let structured = member.structured.as_ref();
+    if owed.ship_record && crate::ship::no_change_reason(structured).is_some() {
+        return GroupResult::Pass { summary };
+    }
     if owed.ship_record
         && let Err(why) = ShipRecord::read(structured)
     {

@@ -88,6 +88,31 @@ pub(super) async fn verify(
     }
 }
 
+/// `outcome`, failed when the record stage claims "no change needed" but the
+/// run worktree holds one: a claim never bypasses the review of a change.
+pub(super) async fn verify_no_change(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+    outcome: StageOutcome,
+) -> Result<StageOutcome, ArchonError> {
+    let StageOutcome::Completed { structured, .. } = &outcome else {
+        return Ok(outcome);
+    };
+    let Some(reason) = archon_pipeline::ship::no_change_reason(structured.as_ref()) else {
+        return Ok(outcome);
+    };
+    match deliver::prove_unchanged(ctx, run).await? {
+        Ok(()) => Ok(outcome),
+        Err(why) => Ok(StageOutcome::Failed {
+            error: format!(
+                "the stage reported no change needed ({reason}), but that is not so: {why}. \
+                 Either drop the claim and write the ship record with its review, or undo the change."
+            ),
+            infra: false,
+        }),
+    }
+}
+
 /// `structured` without a pull request URL, which only GitHub vouches for.
 fn without_pr_url(mut structured: Option<Value>) -> Option<Value> {
     if let Some(data) = structured.as_mut().and_then(Value::as_object_mut) {

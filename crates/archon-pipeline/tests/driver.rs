@@ -1865,6 +1865,34 @@ fn a_record_stage_without_its_ship_record_fails_the_run() {
     assert!(error.contains("no `structured` object"), "{error}");
 }
 
+/// A task that needs no change succeeds honestly, with no review owed and
+/// nothing shipped; a ship record beside the claim still ships.
+#[test]
+fn a_record_stage_that_reports_no_change_succeeds_without_shipping() {
+    let mut sim = sim_reviewed("direct", ReviewLevel::Standard);
+    sim.writes_record = false;
+    sim.start();
+    let claim = serde_json::json!({"no_change": {"reason": "the typo is already fixed"}});
+    let done = sim.settle("implement", 0, Agent::DoneStructured("Checked.", claim));
+    assert!(ship_plans(&done).is_empty(), "nothing is delivered");
+    let summary = succeeded(&done);
+    assert!(summary.contains("No change was needed, so nothing was shipped"));
+    assert!(summary.contains("the typo is already fixed"), "{summary}");
+
+    let mut sim = sim_reviewed("direct", ReviewLevel::None);
+    sim.writes_record = false;
+    sim.start();
+    let empty = serde_json::json!({"no_change": {"reason": "  "}});
+    let done = sim.settle("implement", 0, Agent::DoneStructured("Checked.", empty));
+    assert!(failed(&done).1.contains("is not on record"));
+
+    let mut sim = sim_reviewed("direct", ReviewLevel::None);
+    sim.start();
+    let both = serde_json::json!({"no_change": {"reason": "nothing to do"}});
+    let done = sim.settle("implement", 0, Agent::DoneStructured("Fixed.", both));
+    assert_eq!(ship_plans(&done).len(), 1, "a record beats the claim");
+}
+
 /// A delivery archond refused ends the run at the ship step, with its
 /// reason as the failure the orchestrator reads.
 #[test]

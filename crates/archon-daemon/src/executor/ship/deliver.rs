@@ -432,6 +432,39 @@ async fn prove(
     Ok(Ok(checked))
 }
 
+/// Whether the run worktree holds no change, as a record stage claims when
+/// it reports "no change needed"; `Err` says why the claim is false.
+pub(in crate::executor) async fn prove_unchanged(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+) -> Result<Result<(), String>, ArchonError> {
+    assert!(run.workspace.is_absolute(), "a run has a worktree");
+    let (repo, onto, base) = {
+        let store = ctx.store.lock().await;
+        let vars = recover::load_run_vars(&store, &run.id)?;
+        let base = base_of(&store, run, &vars)?;
+        (repo_of(&store, run)?, store.item(&run.item)?.onto, base)
+    };
+    let Some(repo) = repo else {
+        return Ok(Err(
+            "the item's repository is no longer registered with Archon".into(),
+        ));
+    };
+    let target = checks::Target {
+        data_dir: ctx.paths.data_dir.clone(),
+        repo_path: repo.path.clone(),
+        workspace: run.workspace.clone(),
+        branch: run.branch.clone(),
+        base,
+        since: onto.map(|onto| onto.head_sha),
+        allowed: Vec::new(),
+        attribution: repo.attribution,
+    };
+    tokio::task::spawn_blocking(move || checks::check_unchanged(&target))
+        .await
+        .map_err(|e| ArchonError::io("no-change check task", std::io::Error::other(e)))?
+}
+
 /// What the ship gate says of the proved tree.
 #[derive(Debug)]
 enum GateStep {

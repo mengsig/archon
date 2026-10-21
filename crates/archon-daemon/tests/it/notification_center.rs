@@ -715,3 +715,32 @@ async fn clear(h: &Harness, item: Option<archon_core::id::QueueItemId>) {
     let reply = handlers::handle(&h.ctx, ClientKind::ArchonCli, request).await;
     assert!(matches!(reply, Ok(Reply::Ok)), "{reply:?}");
 }
+
+#[tokio::test]
+async fn viewing_an_item_resolves_its_outcome_so_it_stops_counting_as_unread() {
+    let h = Harness::new().await;
+    let center = Center::default();
+    center.install(&h);
+    let _bridge = bridge(&h, h.connect().await).await;
+    let item = crate::link_common::queued_item(&h.ctx, h.dir.path()).await;
+    let outcome = feed::notify(
+        &h.ctx,
+        NotificationKind::Outcome,
+        "Item finished",
+        Some(item.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+    let key = match &outcome.entry {
+        FeedEntry::Notification(n) => n.id.to_string(),
+        other => panic!("a notification, not {other:?}"),
+    };
+    posted(&h, &center, &key).await;
+    assert_eq!(center.by_key(&key).unwrap()["state"], "unread");
+
+    let request = Request::GetItem { item };
+    let reply = handlers::handle(&h.ctx, ClientKind::ArchonCli, request).await;
+    assert!(matches!(reply, Ok(Reply::ItemDetail(_))), "{reply:?}");
+    assert_eq!(wait_for_state(&center, &key, "resolved").await, "resolved");
+}

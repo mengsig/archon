@@ -118,6 +118,45 @@ pub(super) fn check(
     Ok(Ok(Checked { commit, diff }))
 }
 
+/// Prove the run worktree holds no change at all: its own worktree, on the
+/// run branch, clean, with no commit beyond its base. The inner `Err` says why
+/// a claim of "no change needed" is false.
+pub(super) fn check_unchanged(target: &Target) -> Result<Result<(), String>, ArchonError> {
+    assert!(target.workspace.is_absolute(), "run worktrees are absolute");
+    assert!(!target.branch.is_empty() && !target.base.is_empty());
+    let tree = &target.workspace;
+    if let Err(refusal) = own_worktree(target)? {
+        return Ok(Err(refusal));
+    }
+    let on = head(tree)?;
+    if !on.is_branch(&target.branch) {
+        return Ok(Err(format!(
+            "the run worktree is on {on}, not on the run branch `{}`",
+            target.branch
+        )));
+    }
+    let commit = git(tree, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    let dirty = changed_files(target, &commit)?;
+    if !dirty.is_empty() {
+        return Ok(Err(format!(
+            "the run worktree has uncommitted changes, so a change exists: {}",
+            listed(dirty.lines())
+        )));
+    }
+    let base = match floor(tree, target)? {
+        Ok(base) => base,
+        Err(refusal) => return Ok(Err(refusal)),
+    };
+    let ahead = git(tree, &["rev-list", "--count", &format!("{base}..HEAD")])?;
+    if ahead != "0" {
+        return Ok(Err(format!(
+            "`{}` holds {ahead} commit(s) beyond `{base}`, so a change exists",
+            target.branch
+        )));
+    }
+    Ok(Ok(()))
+}
+
 /// Whether `path` is output that is never part of a change: a Python
 /// bytecode cache, or the swarm plan the workers built from.
 fn is_unshippable(path: &str) -> bool {

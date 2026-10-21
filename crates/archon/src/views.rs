@@ -3,7 +3,7 @@
 
 use archon_client::ArchonClient;
 use archon_core::id::{QueueItemId, queue_item_prefix};
-use archon_core::lesson::{LessonQuery, LessonState};
+use archon_core::lesson::{Lesson, LessonQuery, LessonState};
 use archon_core::protocol::{DaemonStatus, ItemQuery, ItemSummary, Reply, Request};
 use archon_core::queue::QueueState;
 use archon_core::repo::Repo;
@@ -99,7 +99,13 @@ pub async fn status_text(client: &ArchonClient) -> anyhow::Result<String> {
         .collect();
     }
     let names = format::repo_names(&fetch_repos(client).await?);
-    Ok(format::status(&status, &names))
+    let mut text = format::status(&status, &names);
+    let lessons = proposed_lessons(client).await?;
+    if !lessons.is_empty() {
+        text.push_str("\n\nProposed lessons waiting for you:\n");
+        text.push_str(&crate::cmd::lessons::proposed_text(&lessons));
+    }
+    Ok(text)
 }
 
 pub async fn queue_text(client: &ArchonClient, query: ItemQuery) -> anyhow::Result<String> {
@@ -108,16 +114,22 @@ pub async fn queue_text(client: &ArchonClient, query: ItemQuery) -> anyhow::Resu
     Ok(format::items(&rows, &names, archon_core::now()))
 }
 
-/// The proposed lessons, and how to accept or retract one.
-pub async fn proposed_lessons_text(client: &ArchonClient) -> anyhow::Result<String> {
+async fn proposed_lessons(client: &ArchonClient) -> anyhow::Result<Vec<Lesson>> {
     let query = LessonQuery {
         state: Some(LessonState::Proposed),
         ..LessonQuery::default()
     };
     match client.request(Request::Lessons(query)).await? {
-        Reply::Lessons(lessons) => Ok(crate::cmd::lessons::proposed_text(&lessons)),
+        Reply::Lessons(lessons) => Ok(lessons),
         other => Err(unexpected(&other, "lessons")),
     }
+}
+
+/// The proposed lessons, and how to accept or retract one.
+pub async fn proposed_lessons_text(client: &ArchonClient) -> anyhow::Result<String> {
+    Ok(crate::cmd::lessons::proposed_text(
+        &proposed_lessons(client).await?,
+    ))
 }
 
 /// `full` shows every stage's whole summary instead of its first lines.

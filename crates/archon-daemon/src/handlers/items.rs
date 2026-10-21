@@ -211,7 +211,20 @@ pub(super) async fn list(ctx: &DaemonContext, query: &ItemQuery) -> Result<Reply
 
 /// Run costs include stages and descendants, whose ledger costs remain current even
 /// after they settle. Persisted finish-time snapshots are not authoritative.
+/// Viewing an item reads its outcome: what the notification center still
+/// holds open for it is resolved, so the center counts only what needs action.
+async fn mark_viewed(ctx: &DaemonContext, id: &QueueItemId) -> Result<(), ArchonError> {
+    let open = crate::notification_center::blockers::any_open(&*ctx.store.lock().await, id)?;
+    if !open {
+        return Ok(());
+    }
+    super::operator::clear_notifications(ctx, Some(id.clone()))
+        .await
+        .map(drop)
+}
+
 pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, ArchonError> {
+    mark_viewed(ctx, id).await?;
     let waiting = super::waiting::WaitingView::read(ctx).await?;
     let estimates = ctx.config.limits.count_estimated_cost;
     let default_efforts = default_efforts(ctx, id).await?;

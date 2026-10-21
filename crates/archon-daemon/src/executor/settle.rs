@@ -48,6 +48,10 @@ pub(super) async fn settle(
     // Leave the stage live until verification is persisted. If interrupted,
     // reconnect reconciliation reads the task outcome and verifies it again.
     let outcome = ship::verify(ctx, &run, &stage, daemon_ships, outcome).await?;
+    let outcome = match review.records_ship {
+        true => ship::verify_no_change(ctx, &run, outcome).await?,
+        false => outcome,
+    };
     let outcome = super::review::verify(ctx, &run, &stage, review, outcome).await?;
     let planned = planner.is_some();
     let was_completed = matches!(outcome, StageOutcome::Completed { .. });

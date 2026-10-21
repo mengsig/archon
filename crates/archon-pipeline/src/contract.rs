@@ -538,17 +538,28 @@ fn ship_record_rules(kind: StageKind) -> String {
         }
         other => panic!("validated: a {other:?} stage writes no ship record"),
     };
+    let no_change = match kind {
+        StageKind::Work => NO_CHANGE_RULE,
+        _ => "",
+    };
     let rules = format!(
         "\n## Ship record\n\n\
          - Archon delivers this run's commits itself once every stage passed: do not push \
          and do not open a pull request. {leave}\n\
          - Name what ships in `complete_task`'s `structured` data, beside any other keys:\n\n\
          {SHIP_RECORD_JSON}\n\
-         {SHIP_RECORD_SHAPE}"
+         {SHIP_RECORD_SHAPE}\
+         {no_change}"
     );
     debug_assert!(rules.ends_with('\n'), "sections end with a newline");
     rules
 }
+
+/// What a work stage reports when the task needs no change at all.
+const NO_CHANGE_RULE: &str = "\
+- If the task needs no change, commit nothing and give `\"no_change\": {\"reason\": \"<why>\"}` \
+in `structured` instead of the record. The run then succeeds shipping nothing; Archon \
+refuses it when the branch has a commit beyond its base or the worktree a change.\n";
 
 /// The ship record as an agent writes it, in a fenced block.
 pub const SHIP_RECORD_JSON: &str = "\

@@ -66,6 +66,19 @@ impl ShipRecord {
     }
 }
 
+/// The reason a record stage gives for leaving nothing to ship, from
+/// `structured.no_change.reason`; `None` when it claims no such thing.
+/// A ship record beside it wins: a claim never stands in for a change.
+pub fn no_change_reason(structured: Option<&Value>) -> Option<String> {
+    let data = structured?;
+    if ShipRecord::read(Some(data)).is_ok() {
+        return None;
+    }
+    let reason = data.get("no_change")?.get("reason")?.as_str()?;
+    let reason = reason.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!reason.is_empty()).then_some(reason)
+}
+
 /// `data[key]` as a full git object id: 40 (SHA-1) or 64 (SHA-256) hex digits.
 fn object_id(data: &Value, key: &str) -> Result<String, String> {
     let id = data.get(key).and_then(Value::as_str).unwrap_or("").trim();

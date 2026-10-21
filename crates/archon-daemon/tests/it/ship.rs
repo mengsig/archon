@@ -445,6 +445,42 @@ async fn a_branch_with_no_commit_of_its_own_has_nothing_to_ship() {
     assert!(gh.calls().is_empty());
 }
 
+/// A task that needed no change succeeds with that said, and ships nothing.
+#[tokio::test]
+async fn a_no_change_result_on_a_clean_branch_succeeds_without_shipping() {
+    let (h, gh) = delivering().await;
+    let (item, _run) = started(&h, "direct").await;
+    settle_with(
+        &h,
+        json!({"no_change": {"reason": "the typo is already fixed"}}),
+    )
+    .await;
+    let summary = succeeded(&h, &item).await;
+    assert!(summary.contains("No change was needed"), "{summary}");
+    assert!(summary.contains("the typo is already fixed"), "{summary}");
+    assert!(gh.calls().is_empty(), "{:?}", gh.calls());
+}
+
+/// A claim of no change never bypasses the review of a change that exists.
+#[tokio::test]
+async fn a_no_change_claim_beside_a_commit_or_a_dirty_tree_fails_the_stage() {
+    let (h, gh) = delivering().await;
+    let (item, run) = started(&h, "direct").await;
+    change(&run.workspace);
+    settle_with(&h, json!({"no_change": {"reason": "nothing to do"}})).await;
+    let error = failed(&h, &item).await;
+    assert!(error.contains("reported no change needed"), "{error}");
+    assert!(error.contains("commit(s) beyond"), "{error}");
+
+    let (h, gh2) = delivering().await;
+    let (item, run) = started(&h, "direct").await;
+    std::fs::write(run.workspace.join("README.md"), "edited\n").unwrap();
+    settle_with(&h, json!({"no_change": {"reason": "nothing to do"}})).await;
+    let error = failed(&h, &item).await;
+    assert!(error.contains("uncommitted changes"), "{error}");
+    assert!(gh.calls().is_empty() && gh2.calls().is_empty());
+}
+
 /// A stage that leaves no usable record is told what is missing before
 /// anything is delivered.
 #[tokio::test]

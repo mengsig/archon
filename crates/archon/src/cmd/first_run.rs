@@ -152,7 +152,7 @@ fn is_declined(file: &Path, top: &Path) -> anyhow::Result<bool> {
 }
 
 fn remember_declined(file: &Path, top: &Path) -> anyhow::Result<()> {
-    use std::fmt::Write as _;
+    use std::io::Write as _;
     assert!(top.is_absolute(), "declined checkouts are absolute paths");
     anyhow::ensure!(
         !top.to_string_lossy().contains('\n'),
@@ -163,12 +163,12 @@ fn remember_declined(file: &Path, top: &Path) -> anyhow::Result<()> {
         .parent()
         .context("the declined list has no directory")?;
     crate::instance::create_private_dir(&std::path::absolute(dir)?)?;
-    let mut text = std::fs::read_to_string(file).unwrap_or_default();
-    if !text.is_empty() && !text.ends_with('\n') {
-        text.push('\n');
-    }
-    writeln!(text, "{}", top.display())?;
-    std::fs::write(file, text).with_context(|| format!("writing {}", file.display()))
+    let mut list = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(file)
+        .with_context(|| format!("opening {}", file.display()))?;
+    writeln!(list, "{}", top.display()).with_context(|| format!("writing {}", file.display()))
 }
 
 async fn offer_repo(input: &mut impl BufRead, out: &mut impl Write) -> anyhow::Result<bool> {

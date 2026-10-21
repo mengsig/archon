@@ -300,6 +300,25 @@ mod tests {
     }
 
     #[test]
+    fn the_summary_marks_the_stage_that_delegates_the_reviewers() {
+        let summary = builtin_spec("direct").summary();
+        let marked: Vec<&str> = summary
+            .stages
+            .iter()
+            .filter(|stage| stage.delegates_reviewers)
+            .map(|stage| stage.id.as_str())
+            .collect();
+        assert_eq!(marked, ["implement"]);
+        assert!(
+            !builtin_spec("ask")
+                .summary()
+                .stages
+                .iter()
+                .any(|s| s.delegates_reviewers)
+        );
+    }
+
+    #[test]
     fn declared_stages_are_not_duplicated_and_non_shipping_pipelines_refuse() {
         let spec = builtin_spec("direct");
         let wanted = knobs(ProposalMode::Lavish, ReportMode::WithPr);

@@ -769,6 +769,9 @@ pub fn stage_chain(pipeline: &PipelineSummary) -> String {
             if let Some(target) = &stage.loops_to {
                 notes.push(format!("↺ {target} ≤{}", stage.max_loops));
             }
+            if stage.delegates_reviewers {
+                notes.push("delegates its reviewers".to_owned());
+            }
             if !notes.is_empty() {
                 let _ = write!(text, " ({})", notes.join(", "));
             }
@@ -821,6 +824,40 @@ pub(crate) mod tests {
     use archon_core::protocol::GcStatus;
 
     use super::*;
+
+    #[test]
+    fn the_chain_says_which_stage_delegates_its_reviewers() {
+        let stage = |delegates_reviewers| archon_core::catalog::StageSummary {
+            id: "implement".into(),
+            kind: archon_core::catalog::StageKind::Work,
+            fan_out: 1,
+            gate: Gate::None,
+            timeout_minutes: 60,
+            effort: archon_core::model::Effort::Medium,
+            nudge: None,
+            loops_to: None,
+            max_loops: 0,
+            roles: Vec::new(),
+            roles_from: None,
+            tier: None,
+            delegates_reviewers,
+        };
+        let pipeline = |stage| PipelineSummary {
+            name: "direct".into(),
+            description: String::new(),
+            source: PipelineSource::Builtin,
+            path: None,
+            workspace: Default::default(),
+            requires_repo: true,
+            nudges: Default::default(),
+            stages: vec![stage],
+        };
+        assert_eq!(stage_chain(&pipeline(stage(false))), "implement");
+        assert_eq!(
+            stage_chain(&pipeline(stage(true))),
+            "implement (delegates its reviewers)"
+        );
+    }
 
     #[test]
     fn a_removed_repository_is_labelled_not_left_as_a_bare_id() {

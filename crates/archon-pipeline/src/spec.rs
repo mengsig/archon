@@ -706,6 +706,10 @@ impl PipelineSpec {
                     roles: s.roles.clone(),
                     roles_from: s.roles_from.clone(),
                     tier: s.tier,
+                    delegates_reviewers: header
+                        .review
+                        .as_ref()
+                        .is_some_and(|review| review.stage == s.id),
                 })
                 .collect(),
         }

@@ -22,7 +22,9 @@ mod storage;
 pub use checks::{FastCheck, check_rules};
 pub use initiative::initiative_rules;
 pub use lessons::lesson_rules;
-pub use reviewers::reviewer_profile_rules;
+pub use reviewers::{
+    governed_review_refusal, governed_reviewer_rules, provider_reports_cost, reviewer_profile_rules,
+};
 pub use storage::{artifact_rules, build_cache_rules};
 
 /// Where a stage stands towards its pipeline's team stage.

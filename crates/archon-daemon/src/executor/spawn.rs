@@ -348,6 +348,12 @@ fn reserve_plans(
         let stage = plans[0].stage_id.clone();
         return Ok(Reserved::Blocked(Exhausted { stage, error }));
     }
+    if budget.is_some()
+        && let Some(error) = review_refusal(ctx, store, &item, repo.as_ref(), &plans)
+    {
+        let stage = plans[0].stage_id.clone();
+        return Ok(Reserved::Blocked(Exhausted { stage, error }));
+    }
     if let Some(spec) = spec {
         let cap = RepoEnv::new(repo.clone())?.agent_cap(ctx, &run.pipeline);
         for plan in &mut plans {
@@ -356,6 +362,32 @@ fn reserve_plans(
     }
     let ids = reserve_each(ctx, store, (&run, &item, repo.as_ref()), plans, budget)?;
     Ok(Reserved::Spawned(ids))
+}
+
+/// Why a stage in `plans` owes reviewers that an item budget forbids, found
+/// before any agent starts rather than after the work is committed.
+fn review_refusal(
+    ctx: &DaemonContext,
+    store: &Store,
+    item: &QueueItem,
+    repo: Option<&Repo>,
+    plans: &[SpawnPlan],
+) -> Option<String> {
+    let policy = RepoEnv::new(repo.cloned()).ok()?.policy(&ctx.config);
+    let catalog = store.model_catalog();
+    plans.iter().find_map(|plan| {
+        let named = plan.reviewers.as_deref()?;
+        let why = contract::governed_review_refusal(
+            Some(named),
+            &plan.choice.model,
+            &policy,
+            (&ctx.config.review, &catalog),
+        )?;
+        Some(format!(
+            "BLOCKED: item {} has review {} and a budget: {why}",
+            item.id, item.autonomy.review
+        ))
+    })
 }
 
 /// Reserve each of `plans` of `run` as a `spawning` stage run with its
@@ -386,6 +418,7 @@ fn reserve_each(
             repo,
             config: &ctx.config,
             catalog: &catalog,
+            governed: budget.is_some(),
             sections: &sections,
             experiments: &experiments,
         };
@@ -507,6 +540,8 @@ struct Target<'a> {
     /// The global `[models]` policy, which the repository's narrows.
     config: &'a Config,
     catalog: &'a archon_core::model_tier::ModelCatalog,
+    /// Whether a dollar budget bounds the item, so reviewers must report cost.
+    governed: bool,
     /// The contract's sections on the run itself ([`run_sections`]).
     sections: &'a str,
     /// The item's directory for reviewers' experiment copies.
@@ -532,7 +567,7 @@ impl Target<'_> {
         assert!(!plan.instructions.is_empty(), "every stage has a contract");
         // An unreadable policy refuses this spawn when it is issued (`claim`).
         let policy = RepoEnv::new(self.repo.cloned()).map(|env| env.policy(self.config));
-        let reviewers = reviewer_rules(plan, &policy, &self.config.review, self.catalog);
+        let reviewers = reviewer_rules(plan, &policy, self);
         let contract = format!("{}{reviewers}{}", plan.instructions, self.sections);
         if !self.delegates(plan) {
             return contract;
@@ -553,8 +588,7 @@ impl Target<'_> {
 fn reviewer_rules(
     plan: &SpawnPlan,
     policy: &Result<ModelPolicy, ArchonError>,
-    profile: &archon_core::config::ReviewConfig,
-    catalog: &archon_core::model_tier::ModelCatalog,
+    target: &Target<'_>,
 ) -> String {
     let Some(named) = plan.reviewers.as_deref() else {
         return String::new();
@@ -564,12 +598,12 @@ fn reviewer_rules(
         "an agent owing reviewers delegates them"
     );
     let rules = match policy {
-        Ok(policy) => contract::reviewer_profile_rules(
+        Ok(policy) => contract::governed_reviewer_rules(
             Some(named),
             &plan.choice.model,
             policy,
-            profile,
-            catalog,
+            (&target.config.review, target.catalog),
+            target.governed,
         ),
         Err(error) => format!(
             "- Delegate no reviewer: the repository's model policy cannot be read ({error}).\n"
@@ -778,6 +812,7 @@ pub(super) fn reserve_replacement(
         repo: repo.as_ref(),
         config: &ctx.config,
         catalog: &store.model_catalog(),
+        governed: false,
         sections: &sections,
         experiments: &experiments,
     };
@@ -788,6 +823,10 @@ pub(super) fn reserve_replacement(
     };
     let Some(budget) = budget else {
         return Ok(None);
+    };
+    let target = Target {
+        governed: budget.is_some(),
+        ..target
     };
     let started = archon_core::now().max(failed.started_at + chrono::Duration::microseconds(1));
     let id = reserve_one(store, &target, plan, budget, started, Some(retry))?;

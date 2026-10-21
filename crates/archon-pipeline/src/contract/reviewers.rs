@@ -5,7 +5,7 @@ use archon_core::model::{ModelChoice, ModelRef};
 use archon_core::model_tier::{ModelCatalog, Tier};
 use archon_core::policy::ModelPolicy;
 
-/// Explicit plans keep their contract; unnamed reviewers use the configured profile.
+/// [`governed_reviewer_rules`] with no item budget.
 pub fn reviewer_profile_rules(
     named: Option<&[ModelChoice]>,
     own: &ModelRef,
@@ -13,9 +13,37 @@ pub fn reviewer_profile_rules(
     profile: &ReviewConfig,
     catalog: &ModelCatalog,
 ) -> String {
+    governed_reviewer_rules(named, own, policy, (profile, catalog), false)
+}
+
+/// Whether Aether can enforce a dollar budget on `provider`. Mirrors the
+/// protocol rule of the Aether backend for connections named by their
+/// protocol: only claude-code reports a dollar cost; codex reports tokens.
+pub fn provider_reports_cost(provider: &str) -> bool {
+    provider == "claude-code"
+}
+
+/// The reviewers' models for the stage's `own` model. Under an item budget
+/// (`governed`) only providers that report a dollar cost qualify, since
+/// Aether refuses to delegate to any other. Explicit plans keep their
+/// contract; unnamed reviewers use the configured profile.
+pub fn governed_reviewer_rules(
+    named: Option<&[ModelChoice]>,
+    own: &ModelRef,
+    policy: &ModelPolicy,
+    (profile, catalog): (&ReviewConfig, &ModelCatalog),
+    governed: bool,
+) -> String {
     if let Some(choices) = named.filter(|choices| !choices.is_empty()) {
         return super::named_reviewer_rules(choices);
     }
+    let costed;
+    let catalog = if governed {
+        costed = cost_reporting(catalog);
+        &costed
+    } else {
+        catalog
+    };
     let tier = profile.default_tier;
     let effort = policy.max_effort.map_or(profile.default_effort, |cap| {
         cap.min(profile.default_effort)
@@ -38,7 +66,50 @@ pub fn reviewer_profile_rules(
             policy.describe()
         );
     }
-    unplaced_rules(own, policy, effort)
+    unplaced_rules(own, policy, effort, governed)
+}
+
+/// Why the reviewers owed cannot run under an item budget, `None` when they
+/// can. Checked before any work, so the run does not fail after its commit.
+pub fn governed_review_refusal(
+    named: Option<&[ModelChoice]>,
+    own: &ModelRef,
+    policy: &ModelPolicy,
+    (profile, catalog): (&ReviewConfig, &ModelCatalog),
+) -> Option<String> {
+    let because = "an item budget is a dollar cap, and Aether refuses to delegate to a provider \
+                   that reports no dollar cost";
+    if let Some(choices) = named.filter(|choices| !choices.is_empty()) {
+        let blind = choices
+            .iter()
+            .find(|choice| !provider_reports_cost(&choice.model.provider))?;
+        return Some(format!(
+            "required review cannot run: its reviewer model {} reports no dollar cost; \
+             {because}; name a claude-code reviewer or drop the item budget",
+            blind.model
+        ));
+    }
+    let tier = profile.default_tier;
+    if resolve_default(tier, own, policy, profile, &cost_reporting(catalog)).is_some()
+        || unplaced_model(own, policy, true).is_some()
+    {
+        return None;
+    }
+    Some(format!(
+        "required review cannot run: no allowed model at or below tier {tier} reports a \
+         dollar cost; {because}; allow a claude-code model or drop the item budget"
+    ))
+}
+
+fn cost_reporting(catalog: &ModelCatalog) -> ModelCatalog {
+    ModelCatalog::new(
+        catalog
+            .models()
+            .iter()
+            .filter(|entry| provider_reports_cost(&entry.model.provider))
+            .cloned()
+            .collect(),
+    )
 }
 
 /// The permitted model nearest the tier from below: the strongest tier first,
@@ -64,31 +135,49 @@ fn resolve_default(
     Some((model, choice.resolved))
 }
 
+/// The model to name when neither the catalog nor the policy places one:
+/// the lead's own, else the first the allowlist permits. `governed` also
+/// requires its provider to report a dollar cost.
+fn unplaced_model<'a>(
+    own: &'a ModelRef,
+    policy: &'a ModelPolicy,
+    governed: bool,
+) -> Option<&'a ModelRef> {
+    let listed = policy
+        .allow
+        .iter()
+        .flatten()
+        .find(|model| policy.permits_model(model));
+    let model = if policy.permits_model(own) {
+        own
+    } else {
+        listed?
+    };
+    (!governed || provider_reports_cost(&model.provider)).then_some(model)
+}
+
 /// Neither the catalog nor the policy places a model: name one the policy
 /// permits, never one it would refuse, and never send the agent to look.
 fn unplaced_rules(
     own: &ModelRef,
     policy: &ModelPolicy,
     effort: archon_core::model::Effort,
+    governed: bool,
 ) -> String {
     assert!(
         policy.max_effort.is_none_or(|cap| effort <= cap),
         "effort respects policy"
     );
-    let listed = policy
-        .allow
-        .iter()
-        .flatten()
-        .find(|model| policy.permits_model(model));
-    let model = match (policy.permits_model(own), listed) {
-        (true, _) => own,
-        (false, Some(model)) => model,
-        (false, None) => {
-            return format!(
-                "- Delegate no reviewer: the model policy ({}) allows no model.\n",
-                policy.describe()
-            );
-        }
+    let Some(model) = unplaced_model(own, policy, governed) else {
+        return format!(
+            "- Delegate no reviewer: the model policy ({}) allows no model{}.\n",
+            policy.describe(),
+            if governed {
+                " whose provider reports a dollar cost"
+            } else {
+                ""
+            }
+        );
     };
     format!(
         "- Delegate every reviewer with role `reviewer`, on {model} at effort {effort}: \
@@ -120,6 +209,40 @@ mod tests {
             })
             .collect(),
         )
+    }
+
+    #[test]
+    fn an_item_budget_keeps_reviewers_on_a_provider_that_reports_cost() {
+        let own: ModelRef = "claude-code/sonnet".parse().unwrap();
+        let config = ReviewConfig::default();
+        let args = (&config, &catalog());
+        let free = governed_reviewer_rules(None, &own, &ModelPolicy::default(), args, false);
+        assert!(free.contains("codex/balanced"), "{free}");
+        let governed = governed_reviewer_rules(None, &own, &ModelPolicy::default(), args, true);
+        assert!(governed.contains("claude-code/sonnet"), "{governed}");
+        assert!(!governed.contains("codex"), "{governed}");
+    }
+
+    #[test]
+    fn review_is_refused_up_front_when_no_reviewer_reports_cost() {
+        let own: ModelRef = "codex/balanced".parse().unwrap();
+        let config = ReviewConfig::default();
+        let only_codex = ModelPolicy::from_lists(&[], &["codex/balanced".parse().unwrap()], None);
+        let args = (&config, &catalog());
+        let why = governed_review_refusal(None, &own, &only_codex, args).expect("refused");
+        assert!(why.contains("reports a dollar cost"), "{why}");
+        assert!(governed_review_refusal(None, &own, &ModelPolicy::default(), args).is_none());
+        let named = [ModelChoice {
+            model: own.clone(),
+            effort: Effort::Low,
+            tier: None,
+        }];
+        let why = governed_review_refusal(Some(&named), &own, &ModelPolicy::default(), args)
+            .expect("a named codex reviewer is refused");
+        assert!(
+            why.contains("codex/balanced reports no dollar cost"),
+            "{why}"
+        );
     }
 
     #[test]

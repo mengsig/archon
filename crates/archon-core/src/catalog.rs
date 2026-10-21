@@ -118,6 +118,9 @@ pub struct StageSummary {
     /// The tier this stage gets when the model plan names no model for it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tier: Option<crate::model_tier::Tier>,
+    /// Whether this stage delegates the run's reviewers (the item's review level).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub delegates_reviewers: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

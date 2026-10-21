@@ -740,6 +740,7 @@ fn rendered_catalog_shows_what_a_model_plan_needs() {
         roles: Vec::new(),
         roles_from: None,
         tier: None,
+        delegates_reviewers: false,
     };
     let catalog = CatalogListing {
         pipelines: vec![PipelineSummary {
@@ -818,6 +819,7 @@ fn a_rendered_catalog_lists_pipelines_in_a_line_each() {
         roles: Vec::new(),
         roles_from: None,
         tier: None,
+        delegates_reviewers: false,
     };
     let pipeline = |name: &str, stages: Vec<StageSummary>| PipelineSummary {
         name: name.into(),

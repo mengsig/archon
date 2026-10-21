@@ -53,25 +53,35 @@ pub(super) async fn resolve(
     ctx.store.lock().await.kv_delete(&key(item))
 }
 
-/// Resolve every blocker and outcome Archon holds open in Aether, and
-/// forget the lists of blockers kept per item.
+/// Resolve every tracked blocker, then every other open blocker and outcome
+/// Aether lists. A tracked list is forgotten only once all its keys are
+/// resolved, so a blocker older than Aether's listing window is still closed.
 pub(super) async fn resolve_all(
     ctx: &DaemonContext,
     client: &AetherClient,
 ) -> Result<(), ArchonError> {
+    let tracked = ctx
+        .store
+        .lock()
+        .await
+        .kv_prefix(keys::NOTIFICATION_CENTER_BLOCKERS)?;
+    for (listed, raw) in &tracked {
+        let posted: Vec<String> = serde_json::from_str(raw)
+            .map_err(|e| ArchonError::Store(format!("blockers listed under {listed}: {e}")))?;
+        for key in &posted {
+            client.resolve_notification(key).await?;
+        }
+        ctx.store.lock().await.kv_delete(listed)?;
+    }
     let held = client
         .archon_notifications(archon_aether::notifications::MAX_LIST)
         .await?;
-    let notices = held
+    let open = held
         .iter()
         .filter(|n| n.is_open() && matches!(n.kind.as_str(), "blocker" | "outcome"))
         .filter_map(|n| n.key.as_deref());
-    for posted in notices {
-        client.resolve_notification(posted).await?;
-    }
-    let mut store = ctx.store.lock().await;
-    for (listed, _) in store.kv_prefix(keys::NOTIFICATION_CENTER_BLOCKERS)? {
-        store.kv_delete(&listed)?;
+    for key in open {
+        client.resolve_notification(key).await?;
     }
     Ok(())
 }

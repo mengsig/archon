@@ -735,7 +735,13 @@ to the orchestrator.
 /upgrade archon|aether|both <version|latest|main> [requeue]
 /upgrade restart [requeue] [keep-aether]
 /watch <registered repository>
+/update
 ```
+
+`/update` is `/upgrade both latest` with no options: it waits for running
+agents to finish, then restarts archond and Aether. It is listed in the
+terminal UI's `/` menu. `archon status --check-updates` ends with the same
+advice (`run archon update`) when a newer release exists.
 
 `/upgrade both latest` is also what to say when the orchestrator tells you a
 newer Archon or Aether exists: only your own message, typed here, starts it,

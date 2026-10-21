@@ -118,23 +118,32 @@ pub(super) fn offers(cache: &Cache, archon: &Version, aether: Option<&Version>) 
     .collect()
 }
 
-/// The question that offers `offers`.
-pub(super) fn question(offers: &[Offer]) -> String {
+/// The question that offers `offers`: what is new and where to read about it,
+/// what the update does to running work, and the one-key answers.
+pub(super) fn question(offers: &[Offer], source: &Source) -> String {
     assert!(!offers.is_empty(), "nothing is offered without a release");
-    let named: Vec<String> = offers
-        .iter()
-        .map(|o| {
-            let program = o.program[..1].to_uppercase() + &o.program[1..];
-            format!(
-                "{program} {} is available (this is {})",
-                o.latest, o.current
-            )
-        })
-        .collect();
-    format!(
-        "{}.\nUpdate and restart now? [Y/n/s] (s: skip these versions) ",
-        named.join("; ")
-    )
+    let mut text = String::new();
+    for o in offers {
+        let program = o.program[..1].to_uppercase() + &o.program[1..];
+        text.push_str(&format!(
+            "{program} {} is available (this is {}).\n",
+            o.latest, o.current
+        ));
+        let notes = o
+            .latest
+            .parse::<Version>()
+            .ok()
+            .filter(|_| o.program == "archon");
+        if let Some(version) = notes {
+            text.push_str(&format!("  What's new: {}\n", source.notes_url(&version)));
+        }
+    }
+    text.push_str(
+        "Updating waits for running agents to finish, then restarts archond and Aether \
+         (`archon update` does the same later).\n\
+         Update and restart now? [Y/n/s] (s: skip these versions) ",
+    );
+    text
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -273,11 +282,11 @@ pub async fn offer(config: &archon_core::config::UpdateConfig) -> Launch {
     if found.is_empty() {
         return Launch::Go;
     }
-    ask(&path, cache, &found).await
+    ask(&path, cache, &found, &network.source).await
 }
 
-async fn ask(path: &Path, mut cache: Cache, found: &[Offer]) -> Launch {
-    print!("{}", question(found));
+async fn ask(path: &Path, mut cache: Cache, found: &[Offer], source: &Source) -> Launch {
+    print!("{}", question(found, source));
     let _ = std::io::Write::flush(&mut std::io::stdout());
     let mut answer = String::new();
     if let Err(error) = std::io::stdin().read_line(&mut answer) {
@@ -441,11 +450,17 @@ mod tests {
             current: "1.4.1".into(),
             latest: "1.4.2".into(),
         }];
-        let text = question(&found);
+        let source = Source::new("https://example.test/releases/").unwrap();
+        let text = question(&found, &source);
         assert!(
             text.starts_with("Archon 1.4.2 is available (this is 1.4.1)."),
             "{text}"
         );
+        assert!(
+            text.contains("What's new: https://example.test/releases/tag/v1.4.2"),
+            "{text}"
+        );
+        assert!(text.contains("waits for running agents"), "{text}");
         assert!(text.contains("Update and restart now? [Y/n/s]"), "{text}");
         assert_eq!(choice(""), Choice::Update);
         assert_eq!(choice("Yes\n"), Choice::Update);

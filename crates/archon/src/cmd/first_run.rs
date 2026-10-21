@@ -5,6 +5,7 @@
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
+use anyhow::Context as _;
 use archon_core::config::{AetherMode, Config};
 use archon_core::protocol::RepoAdd;
 use archon_core::repo::ShipMode;
@@ -13,6 +14,8 @@ use super::{doctor, instance, repo};
 use crate::connect::connect_running;
 use crate::instance::Instance;
 use crate::views;
+
+const DECLINED_FILE: &str = "declined-repos";
 
 pub const SKIP_ENV: &str = "ARCHON_NO_WIZARD";
 
@@ -133,11 +136,52 @@ pub async fn offer(config: &Config) -> anyhow::Result<bool> {
     Ok(true)
 }
 
+/// Checkouts whose registration the user declined, one path per line, in
+/// Archon's data directory (never in the repository).
+fn declined_path() -> PathBuf {
+    archon_core::paths::data_dir().join(DECLINED_FILE)
+}
+
+fn is_declined(file: &Path, top: &Path) -> anyhow::Result<bool> {
+    assert!(top.is_absolute(), "declined checkouts are absolute paths");
+    match std::fs::read_to_string(file) {
+        Ok(text) => Ok(text.lines().any(|line| Path::new(line) == top)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).with_context(|| format!("reading {}", file.display())),
+    }
+}
+
+fn remember_declined(file: &Path, top: &Path) -> anyhow::Result<()> {
+    use std::fmt::Write as _;
+    assert!(top.is_absolute(), "declined checkouts are absolute paths");
+    anyhow::ensure!(
+        !top.to_string_lossy().contains('\n'),
+        "{} has a newline in its name",
+        top.display()
+    );
+    let dir = file
+        .parent()
+        .context("the declined list has no directory")?;
+    crate::instance::create_private_dir(&std::path::absolute(dir)?)?;
+    let mut text = std::fs::read_to_string(file).unwrap_or_default();
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    writeln!(text, "{}", top.display())?;
+    std::fs::write(file, text).with_context(|| format!("writing {}", file.display()))
+}
+
 async fn offer_repo(input: &mut impl BufRead, out: &mut impl Write) -> anyhow::Result<bool> {
     let Some((top, has_origin)) = checkout_of(&std::env::current_dir()?) else {
         return Ok(false);
     };
     assert!(top.is_absolute(), "git reports an absolute top level");
+    let declined = declined_path();
+    match is_declined(&declined, &top) {
+        Ok(true) => return Ok(false),
+        Ok(false) => {}
+        Err(error) => eprintln!("archon: the declined-checkouts list is unreadable: {error:#}"),
+    }
     if is_registered(&top).await {
         return Ok(false);
     }
@@ -152,7 +196,14 @@ async fn offer_repo(input: &mut impl BufRead, out: &mut impl Write) -> anyhow::R
         ship_name(ship)
     );
     if !ask(input, out, &question, false)? {
-        println!("Not registered. `archon repo add .` registers it later.");
+        match remember_declined(&declined, &top) {
+            Ok(()) => println!(
+                "Not registered, and not asked again here. `archon repo add .` registers it later."
+            ),
+            Err(error) => println!(
+                "Not registered (could not remember that: {error:#}). `archon repo add .` registers it later."
+            ),
+        }
         return Ok(false);
     }
     let add = RepoAdd {
@@ -209,6 +260,19 @@ mod tests {
     fn ship_mode_follows_the_origin_remote() {
         assert_eq!(ship_for(true), ShipMode::Pr);
         assert_eq!(ship_for(false), ShipMode::Local);
+    }
+
+    #[test]
+    fn a_declined_checkout_is_remembered_by_path_and_others_are_still_offered() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("state").join(DECLINED_FILE);
+        let (one, two) = (Path::new("/work/one"), Path::new("/work/one-more"));
+        assert!(!is_declined(&file, one).unwrap(), "no file yet");
+        remember_declined(&file, one).unwrap();
+        assert!(is_declined(&file, one).unwrap());
+        assert!(!is_declined(&file, two).unwrap(), "a prefix is not a match");
+        remember_declined(&file, two).unwrap();
+        assert!(is_declined(&file, one).unwrap() && is_declined(&file, two).unwrap());
     }
 
     #[test]

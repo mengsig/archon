@@ -54,6 +54,11 @@ pub const OPERATOR_COMMANDS: &[OperatorCommand] = &[
         "pause new work, or one repository or pipeline",
     ),
     chat_only("resume", PAUSE_ARGS, "resume what /pause stopped"),
+    command(
+        "update",
+        "",
+        "update Archon and Aether to the latest release; running agents are waited for",
+    ),
     chat_only(
         "upgrade",
         "archon|aether|both <version|latest|main> [requeue] | restart [requeue] [keep-aether]",
@@ -138,7 +143,8 @@ mod tests {
                 "archon",
                 "status",
                 "queue",
-                "item"
+                "item",
+                "update"
             ],
             "pause and resume are Aether built-ins"
         );

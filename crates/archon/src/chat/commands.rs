@@ -109,7 +109,7 @@ fn parse_command(name: &str, rest: &str) -> Result<SlashCommand, String> {
             false => Ok(SlashCommand::Image(rest.to_owned())),
         },
         "archon" => parse_archon(rest),
-        "approve" | "reject" | "upgrade" | "watch" => {
+        "approve" | "reject" | "upgrade" | "update" | "watch" => {
             Ok(SlashCommand::Authority(format!("/{name} {rest}")))
         }
         "merge" => parse_merge(rest),

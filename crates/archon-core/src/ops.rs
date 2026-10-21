@@ -151,6 +151,27 @@ impl ProgramVersions {
     }
 }
 
+impl ProgramVersions {
+    /// The latest release when it is newer than what runs or is installed.
+    pub fn newer_release(&self) -> Option<&str> {
+        let latest = bare_version(self.latest.as_deref()?);
+        let latest_core = release_core(latest)?;
+        let behind = [&self.running, &self.installed]
+            .into_iter()
+            .flatten()
+            .filter_map(|v| release_core(bare_version(v)))
+            .any(|have| have < latest_core);
+        behind.then_some(latest)
+    }
+}
+
+/// `(1, 2, 3)` from a plain `1.2.3`; `None` for a pre-release or anything else.
+fn release_core(version: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = version.split('.').map(|p| p.parse::<u64>().ok());
+    let core = (parts.next()??, parts.next()??, parts.next()??);
+    parts.next().is_none().then_some(core)
+}
+
 /// Archon's and Aether's versions, for `status` and `queue_status`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Versions {
@@ -170,6 +191,23 @@ impl Versions {
             .filter(|(_, versions)| versions.differ())
             .map(|(program, versions)| format!("{program} {}", versions.describe()))
             .collect()
+    }
+}
+
+impl Versions {
+    /// The one command that brings both programs to the latest release,
+    /// when either is behind it.
+    pub fn update_hint(&self) -> Option<String> {
+        let named: Vec<String> = [("archon", &self.archon), ("aether", &self.aether)]
+            .into_iter()
+            .filter_map(|(program, v)| Some(format!("{program} {}", v.newer_release()?)))
+            .collect();
+        (!named.is_empty()).then(|| {
+            format!(
+                "update available ({}); run `archon update` (waits for running agents)",
+                named.join(", ")
+            )
+        })
     }
 }
 
@@ -236,6 +274,35 @@ mod tests {
         request.archon = None;
         request.aether = None;
         assert_eq!(request.describe(), "a drained restart");
+    }
+
+    #[test]
+    fn a_newer_latest_release_gives_the_update_hint() {
+        let program = |running: &str, latest: Option<&str>| ProgramVersions {
+            running: Some(running.into()),
+            installed: None,
+            latest: latest.map(Into::into),
+        };
+        let versions = Versions {
+            archon: program("1.2.3", Some("v1.2.4")),
+            aether: program("1.0.7", Some("1.0.7")),
+        };
+        let hint = versions.update_hint().unwrap();
+        assert!(
+            hint.contains("archon 1.2.4") && !hint.contains("aether"),
+            "{hint}"
+        );
+        assert!(hint.contains("`archon update`"), "{hint}");
+        let current = Versions {
+            archon: program("1.2.3", Some("1.2.3")),
+            aether: program("1.0.9", Some("1.0.7")),
+        };
+        assert_eq!(current.update_hint(), None, "same or older latest");
+        let unchecked = Versions {
+            archon: program("1.2.3", None),
+            aether: program("1.0.7", Some("1.0.8-rc.1")),
+        };
+        assert_eq!(unchecked.update_hint(), None, "unknown or pre-release");
     }
 
     #[test]

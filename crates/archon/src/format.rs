@@ -86,6 +86,9 @@ pub fn status(status: &DaemonStatus, names: &RepoNames) -> String {
     for line in status.versions.iter().flat_map(|versions| versions.lines()) {
         let _ = writeln!(out, "versions: {line}");
     }
+    if let Some(hint) = status.versions.as_ref().and_then(|v| v.update_hint()) {
+        let _ = writeln!(out, "{hint}");
+    }
     link_lines(&mut out, status);
     let _ = writeln!(
         out,

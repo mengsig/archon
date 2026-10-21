@@ -15,6 +15,7 @@ use crate::triggers::{self, TriggerEvent};
 use crate::{feed, handlers, ops};
 
 const UPGRADE: &str = "/upgrade";
+const UPDATE: &str = "/update";
 const WATCH: &str = "/watch";
 const UPGRADE_USAGE: &str = "usage: `/upgrade archon|aether|both <version|latest|main> [requeue]` \
      or `/upgrade restart [requeue] [keep-aether]`, alone in the message";
@@ -37,6 +38,13 @@ pub(crate) fn parse(message: &str) -> Option<(&'static str, Result<Command, Stri
     let message = message.trim();
     if let Some(args) = after_name(message, UPGRADE) {
         return Some((UPGRADE, parse_upgrade(args).map(Command::Upgrade)));
+    }
+    if let Some(args) = after_name(message, UPDATE) {
+        let update = match args.trim().is_empty() {
+            true => parse_upgrade("both latest").map(Command::Upgrade),
+            false => Err("`/update` takes no arguments; `/upgrade` picks versions".to_owned()),
+        };
+        return Some((UPDATE, update));
     }
     let args = after_name(message, WATCH)?;
     let watch = match args.split_whitespace().collect::<Vec<_>>().as_slice() {
@@ -189,6 +197,20 @@ mod tests {
         assert!(refusal("/upgrade restart now").contains("is not requeue"));
         assert!(refusal("/upgrade aether 1.0.7 keep-aether").contains("drop keep_aether"));
         assert!(refusal("/upgrade archon main later").ends_with(UPGRADE_USAGE));
+    }
+
+    #[test]
+    fn update_is_an_upgrade_of_both_programs_to_the_latest_release() {
+        match parse(" /Update ") {
+            Some((UPDATE, Ok(Command::Upgrade(request)))) => {
+                assert_eq!(request.archon, Some(UpgradeTarget::Latest));
+                assert_eq!(request.aether, Some(UpgradeTarget::Latest));
+                assert!(!request.requeue, "running agents are waited for");
+            }
+            other => panic!("parsed as {other:?}"),
+        }
+        assert!(refusal("/update now").contains("takes no arguments"));
+        assert!(parse("/updates").is_none());
     }
 
     #[test]

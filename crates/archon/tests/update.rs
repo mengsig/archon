@@ -353,6 +353,31 @@ fn yes_updates_aether_and_restarts_nothing_when_archond_is_not_running() {
 }
 
 #[test]
+fn yes_with_json_prints_one_object_holding_the_install_and_the_restart() {
+    let installed = Installed::new();
+    publish(
+        &installed.releases(),
+        "v9.9.9",
+        &target(),
+        &archon_script("9.9.9"),
+        true,
+    );
+    let updating = aether_script(16, 17).replace("*) exit 64", "update) echo done ;;\n*) exit 64");
+    write_script(&installed.path("tools/aether"), &updating);
+    let out = installed.update(&["--yes", "--json"]);
+    assert!(out.status.success(), "{out:?}");
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["status"], "updated");
+    assert_eq!(value["restart"]["restarted"], false);
+    assert!(
+        value["restart"]["steps"]
+            .to_string()
+            .contains("nothing to restart"),
+        "{value}"
+    );
+}
+
+#[test]
 fn a_failed_aether_update_is_a_warning_and_a_failing_exit() {
     let installed = Installed::new();
     publish(

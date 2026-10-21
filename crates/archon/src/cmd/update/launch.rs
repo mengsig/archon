@@ -258,24 +258,18 @@ pub async fn offer(config: &archon_core::config::UpdateConfig) -> Launch {
     let path = cache_path();
     let before = load(&path);
     let ttl = config.cache_for.secs();
-    let cache = refresh(
-        before.clone(),
-        unix_now(),
-        ttl,
-        &Network { source },
-        CHECK_BUDGET,
-    )
-    .await;
+    let network = Network { source };
+    // Concurrent, each bounded by the same budget: a launch waits for it once.
+    let (cache, installed) = tokio::join!(
+        refresh(before.clone(), unix_now(), ttl, &network, CHECK_BUDGET),
+        installed_aether(),
+    );
     if cache != before
         && let Err(error) = store(&path, &cache)
     {
         tracing::warn!(error = %format!("{error:#}"), "update-check cache not saved");
     }
-    let found = offers(
-        &cache,
-        &Version::current(),
-        installed_aether().await.as_ref(),
-    );
+    let found = offers(&cache, &Version::current(), installed.as_ref());
     if found.is_empty() {
         return Launch::Go;
     }

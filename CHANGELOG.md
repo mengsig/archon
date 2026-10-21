@@ -2,30 +2,60 @@
 
 ## Unreleased
 
-- Stability: archond no longer stops on stored or external state. Every
-  background task is supervised and restarted with a growing pause (switched
-  off with a notice after repeated failures); a corrupt run variable, a bad
-  pipeline file, malformed `gh` output or an unknown Aether event fails or
-  skips only the record it belongs to, which `archon doctor` and
-  `archon status` list as quarantined with the exact retry and cancel
-  commands.
+## 1.4.2
 
+Released 2026-10-22.
+
+A patch release on 1.4.1, with no store migration. The daemon protocol stays
+18, but `archon merge` and `archon diff` use requests a 1.4.1 archond does not
+know, so restart archond after upgrading (`archon update` does).
+
+Archon 1.4.2 is released with **Aether 1.2.2**, which the installer and
+`archon update` install. Archon still asks Aether for protocol 24, so an older
+aetherd that serves it runs everything as before; the `archon tui` welcome
+block needs Aether 1.2.2, and image paste and notifications need 1.2.1 or
+newer, as in 1.4.1. Archon starts Aether with `AETHER_MANAGED_BY=archon`, so
+Aether 1.2.2's own update offer at launch stays off there and `archon update`
+updates both.
+
+**After upgrading**, run `archon clear-notifications --all` once. Older
+versions left blocker and outcome notifications open that nothing resolves
+now; new ones resolve themselves.
+
+### Update and first run
+
+- `archon update` is one command: after it installs the release it asks
+  (`--yes` answers, `--no-restart` declines), updates Aether, restarts
+  archond and Archon's own aetherd through the drained restart, and
+  restarts the orchestrator. Your own aetherd is never restarted
+  ([docs/install.md](docs/install.md#updating), #188).
+- Every `archon`, `archon tui` and `archon chat` on a terminal checks for a
+  newer Archon or Aether and offers the update, with a per-version skip,
+  `[update] check_on_launch = false` and `ARCHON_NO_UPDATE_CHECK=1` to opt
+  out. It never waits more than 1.5 s, stays silent offline and caches its
+  answer for `[update] cache_for`. Reminder idea from #187 by @Markfds01.
 - Update suggestions (#208): `archon status` ends with `run archon update`
   when a checked latest release is newer; the launch prompt links the
   release notes and says that running agents are waited for and what
   restarts; `/update` (terminal UI menu, `archon chat`, Aether chat) is
   `/upgrade both latest`; a declined first-run offer to register a checkout
   is remembered per directory and not asked again.
+- A bare `archon` on a new machine offers the first-run setup, `--help`
+  groups its commands, and the README's quick start is one command (#205).
+- `archon tui` shows an Archon welcome block (repositories, queue counts, an
+  example request) with Aether 1.2.2, and gains `/repos` and `/lessons`
+  (#210).
 
-- Follow-ups to #200: an initiative that was done or failed re-opens when
-  one of its members is retried (a cancelled one is retried with
-  `archon initiatives retry`); maintenance of one initiative that hits a bug
-  no longer stops the daemon or the other initiatives; a crash of archond
-  leaves a marker that the next start logs, shows in `archon status` and
-  `archon doctor`, and posts once to the operator chat; an `archon mcp`
-  bridge older than its daemon restarts itself once Archon was upgraded, and
-  `/upgrade` refreshes it; the question of a decided or withdrawn gate is
-  closed with the gate.
+### Local ship
+
+- A ship = local result can be reviewed and landed: `archon diff` and `/diff`
+  show its branch, repository and diffstat, and `archon merge` fast-forwards
+  the base to the reviewed commit through the same confirmation as a pull
+  request. It refuses, changing nothing, when the base moved, the history is
+  unrelated or the checked-out base has local changes, and never forces
+  (#206).
+
+### Notifications and attention
 
 - Notification center: an item's blockers (such as a stage's escalation) are
   resolved when the item is steered, one of its questions is answered, or it
@@ -33,25 +63,65 @@
   whose summary says `BLOCKED:` is an outcome, not a blocker. New
   `archon clear-notifications <item>|--all` and the orchestrator's
   `clear_notifications` tool resolve the rest (#194).
+- Outcome notifications resolve when a settled item is viewed, so finished
+  items no longer stay unread; `archon status` and `/status` list proposed
+  lessons with the commands to accept or retract them. A work stage that
+  needs no change can say why instead of shipping, and the run succeeds only
+  after archond proves the branch has no commit beyond its base and a clean
+  worktree (#207).
 - Chat paste says why when the clipboard offers an image that could not be
   read or is of an unsupported type, instead of leaving the line unchanged;
   ids made in a row now sort in the order made, so same-millisecond feed
   notes and steer deliveries keep their order (#194).
-- `archon update` is one command: after it installs the release it asks
-  (`--yes` answers, `--no-restart` declines), updates Aether, restarts
-  archond and Archon's own aetherd through the drained restart, and
-  restarts the orchestrator. Your own aetherd is never restarted
-  ([docs/install.md](docs/install.md#updating)).
-- Every `archon`, `archon tui` and `archon chat` on a terminal checks for a
-  newer Archon or Aether and offers the update, with a per-version skip,
-  `[update] check_on_launch = false` and `ARCHON_NO_UPDATE_CHECK=1` to opt
-  out. It never waits more than 1.5 s, stays silent offline and caches its
-  answer for `[update] cache_for`. Reminder idea from #187 by @Markfds01.
+
+### Stability
+
+- archond no longer stops on stored or external state. Every
+  background task is supervised and restarted with a growing pause (switched
+  off with a notice after repeated failures); a corrupt run variable, a bad
+  pipeline file, malformed `gh` output or an unknown Aether event fails or
+  skips only the record it belongs to, which `archon doctor` and
+  `archon status` list as quarantined with the exact retry and cancel
+  commands.
+- archond no longer panics on every start for a done initiative whose member
+  was re-run (#200). Follow-ups: an initiative that was done or failed
+  re-opens when one of its members is retried (a cancelled one is retried
+  with `archon initiatives retry`); maintenance of one initiative that hits
+  a bug no longer stops the daemon or the other initiatives; a crash of
+  archond leaves a marker that the next start logs, shows in `archon status`
+  and `archon doctor`, and posts once to the operator chat; an `archon mcp`
+  bridge older than its daemon restarts itself once Archon was upgraded, and
+  `/upgrade` refreshes it; the question of a decided or withdrawn gate is
+  closed with the gate.
 - Archon's own aetherd taking longer than 10 s to answer at startup (its
   recovery of a big data directory) no longer fails the start with "the
   daemon did not answer ... it is still running". Archon waits while the
   aetherd's startup log keeps growing, and gives up only after two quiet
   minutes or 30 minutes in all.
+- The ship stage no longer panics with "one URL" on git older than 2.46
+  (#185, by @Markfds01 in #186).
+
+### Runs, review and pipelines
+
+- A run stops at dispatch when the repository's git identity no longer
+  matches the recorded one, instead of being refused at ship after its work;
+  the refusal on retry says how to fix it (#190).
+- A review that no budgeted reviewer can run is refused before any work, and
+  under a budget Archon picks reviewers that report their cost (#191).
+- The orchestrator reads a repository's state before stating facts about it,
+  and looks again for a mirror still being made (#192).
+- Clearer refusals and hints from `repo add`, `queue refresh` and gates;
+  `--stage-timeout` on `queue add`, `steer` and `retry`, and `stage_timeouts`
+  on the `retry_item` tool (#193).
+- `archon say` waits while aetherd restarts and names the next command;
+  clearer id, unknown-command and `archon doctor` wording (#209).
+- The swarm pipeline keeps worker caches and its plan out of the shipped
+  diff, documents that it needs two agents, and a lesson with a colon is no
+  longer dropped (#195).
+
+### Dependencies
+
+- CI's `taiki-e/install-action` 2.87.29.
 
 ## 1.4.1
 

@@ -144,9 +144,13 @@ pub(super) async fn recover(ctx: &DaemonContext) -> Result<FollowUp, ArchonError
                 "requeued dispatching items without a run"
             );
         }
-        let answers = store.close_withdrawn_questions(now)?;
+        let mut answers = store.close_withdrawn_questions(now)?;
+        answers.extend(store.close_decided_questions(now)?);
         if !answers.is_empty() {
-            tracing::info!(count = answers.len(), "closed questions of withdrawn gates");
+            tracing::info!(
+                count = answers.len(),
+                "closed questions of withdrawn or decided gates"
+            );
         }
         let runs = store.active_runs()?;
         for run in &runs {

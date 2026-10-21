@@ -220,11 +220,19 @@ async fn handshake(shared: &Shared, kind: ClientKind) -> Result<Welcome, ArchonE
     }
 }
 
+/// What every [`incompatible`] error says first.
+const INCOMPATIBLE_MARK: &str = "this archon speaks daemon protocol";
+
 fn incompatible(detail: &str) -> ArchonError {
     ArchonError::Protocol(format!(
-        "this archon speaks daemon protocol {PROTOCOL_VERSION} but archond does not: {detail}. \
+        "{INCOMPATIBLE_MARK} {PROTOCOL_VERSION} but archond does not: {detail}. \
          Restart the daemon from the same build (`archon daemon stop --keep-aether`, then retry)"
     ))
+}
+
+/// Whether `error` is archond refusing this client's protocol version.
+pub fn is_incompatible(error: &ArchonError) -> bool {
+    matches!(error, ArchonError::Protocol(text) if text.starts_with(INCOMPATIBLE_MARK))
 }
 
 /// A daemon refusal as an error. archond sends its own error's text, so the

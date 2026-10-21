@@ -528,6 +528,11 @@ impl Store {
     ) -> Result<Vec<FeedItem>, ArchonError> {
         gates::close_withdrawn_questions(&mut self.conn, at)
     }
+    /// Close the questions still open on decided gates, each with a feed
+    /// answer, which is returned for broadcasting.
+    pub fn close_decided_questions(&mut self, at: Timestamp) -> Result<Vec<FeedItem>, ArchonError> {
+        gates::close_decided_questions(&mut self.conn, at)
+    }
     /// The open gate showing `report`, if any.
     pub fn open_gate_by_report(
         &self,

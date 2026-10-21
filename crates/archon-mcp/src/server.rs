@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use archon_client::ArchonClient;
@@ -14,13 +15,14 @@ use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::protocol::{ClientKind, ErrorReply, Reply, Request};
 use serde_json::{Value, json};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tokio::time::Instant;
 
 use crate::jsonrpc::{
     INVALID_PARAMS, MAX_ID_BYTES, METHOD_NOT_FOUND, Message, Response, encoded_len, negotiate,
     truncate,
 };
+use crate::restart::{self, BinaryStamp};
 use crate::tools::ToolDefinition;
 use crate::{MAX_CONCURRENT_CALLS, MAX_MESSAGE_BYTES, tools};
 
@@ -140,6 +142,11 @@ fn respond(id: Value, result: Result<Value, Failure>) -> Response {
 pub(crate) struct DaemonLink {
     socket: PathBuf,
     archon_bin: PathBuf,
+    /// The binary at `archon_bin` when the bridge started.
+    started_as: Option<BinaryStamp>,
+    /// Archond refused this bridge's protocol and its binary was replaced.
+    restart: Notify,
+    restart_wanted: AtomicBool,
     /// Locked only to (re)connect, never across a request: the client
     /// routes concurrent replies by request id.
     client: Mutex<Option<Arc<ArchonClient>>>,
@@ -150,6 +157,9 @@ impl DaemonLink {
         Self {
             socket: socket.to_owned(),
             archon_bin: archon_bin.to_owned(),
+            started_as: BinaryStamp::of(archon_bin),
+            restart: Notify::new(),
+            restart_wanted: AtomicBool::new(false),
             client: Mutex::new(None),
         }
     }
@@ -158,8 +168,31 @@ impl DaemonLink {
     /// something: a read never starts it, as with the CLI.
     async fn call(&self, request: Request) -> Result<Result<Reply, ErrorReply>, ArchonError> {
         let may_start = !request.is_read_only();
-        let client = self.client(may_start).await?;
+        let client = match self.client(may_start).await {
+            Ok(client) => client,
+            Err(error) => {
+                self.note_refusal(&error);
+                return Err(error);
+            }
+        };
         client.call(request).await
+    }
+
+    /// A protocol refusal from a daemon newer than this bridge, whose binary
+    /// has been replaced since it started, asks for a restart as the new one.
+    fn note_refusal(&self, error: &ArchonError) {
+        if !archon_client::is_incompatible(error)
+            || !restart::replaced(self.started_as, &self.archon_bin)
+        {
+            return;
+        }
+        tracing::warn!(%error, "archon was upgraded under this MCP bridge; restarting it");
+        self.restart_wanted.store(true, Ordering::SeqCst);
+        self.restart.notify_one();
+    }
+
+    pub fn restart_wanted(&self) -> bool {
+        self.restart_wanted.load(Ordering::SeqCst)
     }
 
     /// The live connection, opened now if there is none. Concurrent callers
@@ -209,6 +242,17 @@ impl Server {
         Self { daemon }
     }
 
+    pub fn restart_wanted(&self) -> bool {
+        self.daemon.restart_wanted()
+    }
+
+    /// Returns once the bridge should restart as the upgraded binary.
+    pub async fn restart_requested(&self) {
+        while !self.daemon.restart_wanted() {
+            self.daemon.restart.notified().await;
+        }
+    }
+
     /// The response to one tool call, due by the call's deadline.
     pub async fn call(&self, call: Call) -> Response {
         let result = self.tools_call(&call.params, call.deadline).await;
@@ -253,6 +297,7 @@ impl Server {
                 let structured = serde_json::to_value(&refusal).ok();
                 tool_error(&refusal.message, structured)
             }
+            Ok(Err(_)) if self.daemon.restart_wanted() => tool_error(&upgraded(name), None),
             Ok(Err(error)) => tool_error(&unavailable(name, check.as_deref(), &error), None),
             Err(_elapsed) => tool_error(&timed_out(name, check.as_deref()), None),
         }
@@ -395,6 +440,15 @@ fn content(text: String, structured: Option<Value>, is_error: bool) -> Value {
         result["structuredContent"] = structured;
     }
     result
+}
+
+/// What a call is told when archond is newer than the bridge that carries it.
+fn upgraded(tool: &str) -> String {
+    format!(
+        "Archon was upgraded since this MCP bridge started, so `{tool}` was not sent; nothing \
+         was changed. The bridge restarts itself as the new version now: retry `{tool}` in a few \
+         seconds. If it keeps failing, run `archon aether mcp refresh archon`."
+    )
 }
 
 fn unavailable(tool: &str, check: Option<&str>, error: &ArchonError) -> String {

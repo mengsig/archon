@@ -116,7 +116,7 @@ fn answer_everything(request: &Request) -> Result<Reply, ErrorReply> {
 struct Mcp {
     stdin: DuplexStream,
     stdout: BufReader<ReadHalf<DuplexStream>>,
-    task: JoinHandle<Result<(), ArchonError>>,
+    task: JoinHandle<Result<archon_mcp::Served, ArchonError>>,
 }
 
 impl Mcp {
@@ -198,7 +198,8 @@ impl Mcp {
     async fn close(self) {
         drop(self.stdin);
         let served = self.task.await.expect("serve did not panic");
-        served.expect("serve ends cleanly when stdin closes");
+        let served = served.expect("serve ends cleanly when stdin closes");
+        assert_eq!(served, archon_mcp::Served::InputEnded);
     }
 }
 
@@ -769,4 +770,79 @@ async fn answers_to_near_cap_requests_stay_within_the_cap() {
         (&Value::Null, &json!(-32600))
     );
     mcp.close().await;
+}
+
+/// An archond of another protocol version: it refuses every hello.
+fn refuse_every_hello(socket: &Path) -> JoinHandle<()> {
+    let listener = UnixListener::bind(socket).expect("bind the fake archond");
+    tokio::spawn(async move {
+        let mut connections = JoinSet::new();
+        while let Ok((stream, _)) = listener.accept().await {
+            connections.spawn(async move {
+                let (read, mut write) = stream.into_split();
+                let mut read = BufReader::new(read);
+                while let Ok(Some(frame)) = read_frame::<_, ClientFrame>(&mut read).await {
+                    let refusal = ErrorReply {
+                        code: ErrorCode::Incompatible,
+                        message: format!("archond speaks protocol {}", PROTOCOL_VERSION + 1),
+                    };
+                    let reply = ServerFrame::Reply {
+                        id: frame.id,
+                        result: Err(refusal),
+                    };
+                    if write_frame(&mut write, &reply).await.is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+    })
+}
+
+#[tokio::test]
+async fn a_bridge_whose_binary_was_replaced_asks_to_restart_when_archond_refuses_its_protocol() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("archond.sock");
+    let daemon = refuse_every_hello(&socket);
+    let bin = dir.path().join("archon");
+    std::fs::write(&bin, "the version the bridge started as").unwrap();
+    let mut mcp = Mcp::start(&socket, &bin);
+    // Let the bridge read its binary before the upgrade replaces it.
+    let listed = mcp.request(1, "tools/list", json!({})).await;
+    assert!(listed["result"]["tools"].is_array());
+    let upgraded = dir.path().join("archon.upgraded");
+    std::fs::write(&upgraded, "the upgraded build").unwrap();
+    std::fs::rename(&upgraded, &bin).unwrap();
+
+    let refused = mcp.call(2, "list_repos", json!({})).await;
+    assert_eq!(refused["isError"], true);
+    assert!(text(&refused).contains("restarts itself"), "{refused}");
+    assert!(text(&refused).contains("nothing was changed"), "{refused}");
+
+    let served = tokio::time::timeout(Duration::from_secs(20), mcp.task)
+        .await
+        .expect("the bridge stops to restart")
+        .expect("serve did not panic")
+        .expect("serve ends cleanly");
+    assert_eq!(served, archon_mcp::Served::Restart);
+    daemon.abort();
+}
+
+#[tokio::test]
+async fn a_protocol_refusal_without_an_upgrade_is_reported_and_the_bridge_keeps_serving() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("archond.sock");
+    let daemon = refuse_every_hello(&socket);
+    let bin = dir.path().join("archon");
+    std::fs::write(&bin, "unchanged").unwrap();
+    let mut mcp = Mcp::start(&socket, &bin);
+
+    let refused = mcp.call(1, "list_repos", json!({})).await;
+    assert_eq!(refused["isError"], true);
+    assert!(text(&refused).contains("protocol"), "{refused}");
+    assert!(!text(&refused).contains("restarts itself"), "{refused}");
+    let again = mcp.call(2, "list_repos", json!({})).await;
+    assert_eq!(again["isError"], true, "the bridge still answers");
+    mcp.close().await;
+    daemon.abort();
 }

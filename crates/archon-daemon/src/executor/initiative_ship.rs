@@ -33,6 +33,15 @@ pub(super) async fn record(
     run: &PipelineRun,
     url: &str,
 ) -> Result<(), ArchonError> {
+    let subject = format!("initiative member {}", run.item);
+    super::coordination::guarded(&subject, record_member(ctx, run, url)).await
+}
+
+async fn record_member(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+    url: &str,
+) -> Result<(), ArchonError> {
     let _serial = ctx.coordination.serial.lock().await;
     let item = ctx.store.lock().await.item(&run.item)?;
     check_stack_base(ctx, run).await?;
@@ -171,6 +180,12 @@ pub(crate) async fn deliver_contract(
             detail.initiative.id
         )));
     }
+    let Some(updated_nanos) = detail.initiative.updated_at.timestamp_nanos_opt() else {
+        return Err(ArchonError::Protocol(format!(
+            "initiative {} has an update time outside the supported range",
+            detail.initiative.id
+        )));
+    };
     for item in &detail.members {
         let stages = {
             let store = ctx.store.lock().await;
@@ -189,13 +204,7 @@ pub(crate) async fn deliver_contract(
             };
             let key = format!(
                 "initiative_contract:{}:{}:{}",
-                detail.initiative.id,
-                detail
-                    .initiative
-                    .updated_at
-                    .timestamp_nanos_opt()
-                    .expect("current timestamp"),
-                agent
+                detail.initiative.id, updated_nanos, agent
             );
             if ctx.store.lock().await.kv_get(&key)?.is_some() {
                 continue;
@@ -233,8 +242,9 @@ pub(crate) async fn cancel_members(
 pub(crate) async fn reconcile(ctx: &DaemonContext, pass: &mut Pass) -> Result<(), ArchonError> {
     let initiatives = ctx.store.lock().await.initiatives()?;
     for initiative in initiatives {
-        let result = reconcile_one(ctx, &initiative, pass).await;
         let subject = format!("initiative:{}", initiative.id);
+        let result =
+            super::coordination::guarded(&subject, reconcile_one(ctx, &initiative, pass)).await;
         let what = format!("Initiative `{}`", initiative.title);
         super::coordination::isolate(ctx, &subject, None, &what, result).await?;
     }
@@ -455,6 +465,7 @@ async fn sync_member(
 }
 
 fn linked_body(body: &str, title: &str, id: &InitiativeId, links: &str) -> String {
+    let title = title.replace(['\n', '\r'], " ");
     let start = format!("<!-- archon-initiative:{id} -->");
     let end = "<!-- /archon-initiative -->";
     let section = format!("{start}\nPart of {title}:\n{links}\n{end}");
@@ -463,8 +474,6 @@ fn linked_body(body: &str, title: &str, id: &InitiativeId, links: &str) -> Strin
     {
         return format!("{before}{section}{after}");
     }
-    assert!(!title.contains('\n'));
-    assert!(!links.contains('`'));
     format!("{}\n\n{section}", body.trim_end())
 }
 
@@ -520,7 +529,11 @@ async fn member_results(
     ctx: &DaemonContext,
     members: &[QueueItem],
 ) -> Result<Vec<MemberResult>, ArchonError> {
-    assert!(!members.is_empty(), "an initiative has members");
+    if members.is_empty() {
+        return Err(ArchonError::Protocol(
+            "an initiative with no members cannot be announced".into(),
+        ));
+    }
     let store = ctx.store.lock().await;
     let mut results = Vec::with_capacity(members.len());
     for member in members.iter().filter(|m| m.state.is_terminal()) {

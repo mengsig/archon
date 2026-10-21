@@ -19,8 +19,9 @@ use crate::views;
 pub async fn status(check_updates: bool, json: bool) -> anyhow::Result<ExitCode> {
     let Some(client) = connect_existing().await? else {
         return Err(archon_core::error::ArchonError::Unavailable(format!(
-            "{}; aether: disconnected (cannot observe its link without archond)",
-            not_running_text()
+            "{}; aether: disconnected (cannot observe its link without archond){}",
+            not_running_text(),
+            crash_note()
         ))
         .into());
     };
@@ -36,8 +37,17 @@ pub async fn status(check_updates: bool, json: bool) -> anyhow::Result<ExitCode>
         emit(true, || to_json(&status), "")?;
         return Ok(ExitCode::SUCCESS);
     }
-    println!("{}", views::status_text(&client).await?);
+    println!("{}{}", views::status_text(&client).await?, crash_note());
     Ok(ExitCode::SUCCESS)
+}
+
+/// A line on the last archond crash, empty when none is recorded.
+fn crash_note() -> String {
+    match archon_core::crash::read_latest(&archon_core::paths::data_dir()) {
+        Ok(Some(record)) => format!("\ncrash: {}", record.describe()),
+        Ok(None) => String::new(),
+        Err(error) => format!("\ncrash: {error}"),
+    }
 }
 
 pub fn pause_target(args: PauseArgs) -> anyhow::Result<PauseTarget> {

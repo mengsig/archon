@@ -550,6 +550,11 @@ async fn a_done_initiative_with_a_rerun_member_ships_and_reconciles_without_pani
     })
     .await
     .unwrap();
+    assert_eq!(
+        state().await,
+        InitiativeState::Open,
+        "retrying a member reopens its initiative"
+    );
     h.dispatch().await;
     assert!(!matches!(
         h.state(again).await,
@@ -613,4 +618,125 @@ async fn finish_rerun(h: &Harness, item: &archon_core::id::QueueItemId) {
         }
     }
     panic!("rerun did not succeed: {:?}", h.state(item).await);
+}
+
+async fn retry(h: &Harness, item: &archon_core::id::QueueItemId) {
+    h.cli(Request::RetryItem {
+        item: item.clone(),
+        model_plan: None,
+        model_reasons: None,
+        fresh: false,
+        brief_append: None,
+        stage_timeouts: Default::default(),
+    })
+    .await
+    .unwrap();
+}
+
+async fn initiative_state(h: &Harness, detail: &InitiativeDetail) -> InitiativeState {
+    let store = h.ctx.store.lock().await;
+    store
+        .initiative(&detail.initiative.id)
+        .unwrap()
+        .initiative
+        .state
+}
+
+/// A done initiative whose members run again follows them: it reopens, ends
+/// failed when one fails, and never stops the daemon or unrelated work.
+#[tokio::test]
+async fn a_done_initiative_follows_its_retried_members_and_leaves_other_work_running() {
+    let h = setup().await;
+    let path = common::init_repo_with_origin(&h.dir.path().join("other"));
+    h.cli(Request::RepoAdd(RepoAdd {
+        path,
+        name: Some("other".into()),
+        ship: Some(ShipMode::Pr),
+        base_branch: Some("main".into()),
+        default_pipeline: Some(PIPELINE.into()),
+        auto_merge: false,
+        github_watch: false,
+    }))
+    .await
+    .unwrap();
+    let detail = enqueue(&h, request()).await;
+    h.dispatch().await;
+    for member in &detail.members {
+        finish_item(&h, &member.id).await;
+    }
+    h.dispatch().await;
+    assert_eq!(initiative_state(&h, &detail).await, InitiativeState::Done);
+
+    let unrelated = h
+        .enqueue_in_repo("other", PIPELINE, "Unrelated", plan())
+        .await
+        .unwrap();
+    h.dispatch().await;
+
+    let (ships, fails) = (&detail.members[0].id, &detail.members[1].id);
+    retry(&h, ships).await;
+    retry(&h, fails).await;
+    assert_eq!(initiative_state(&h, &detail).await, InitiativeState::Open);
+    h.dispatch().await;
+    let run = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .runs_for_item(fails)
+        .unwrap()
+        .pop()
+        .unwrap();
+    for stage in h.running().await.iter().filter(|s| s.run == run.id) {
+        let outcome = archon_core::run::StageOutcome::Failed {
+            error: "cannot implement contract".into(),
+            infra: false,
+        };
+        archon_daemon::executor::stage_settled(
+            &h.ctx,
+            stage.aether_agent.as_ref().unwrap(),
+            outcome,
+        )
+        .await
+        .unwrap();
+    }
+    finish_rerun(&h, ships).await;
+    archon_daemon::executor::coordination::reconcile(&h.ctx)
+        .await
+        .unwrap();
+
+    assert!(matches!(h.state(ships).await, QueueState::Succeeded { .. }));
+    assert!(matches!(h.state(fails).await, QueueState::Failed { .. }));
+    assert_eq!(initiative_state(&h, &detail).await, InitiativeState::Failed);
+    assert!(
+        h.state(&unrelated.id).await.is_active(),
+        "unrelated work in another repository keeps running"
+    );
+}
+
+/// A member of a cancelled initiative is not retried alone: maintenance
+/// would cancel it again.
+#[tokio::test]
+async fn a_member_of_a_cancelled_initiative_is_retried_through_the_initiative() {
+    let h = setup().await;
+    let detail = enqueue(&h, request()).await;
+    h.dispatch().await;
+    h.cli(Request::CancelInitiative {
+        initiative: detail.initiative.id.clone(),
+    })
+    .await
+    .unwrap();
+    let refused = h
+        .cli(Request::RetryItem {
+            item: detail.members[0].id.clone(),
+            model_plan: None,
+            model_reasons: None,
+            fresh: false,
+            brief_append: None,
+            stage_timeouts: Default::default(),
+        })
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(refused.contains("archon initiatives retry"), "{refused}");
 }

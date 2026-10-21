@@ -395,6 +395,12 @@ pub(super) fn transition_in(
     {
         super::outcomes::correct(tx, run, archon_core::outcome::Correction::RetryAfterDone)?;
     }
+    if before.is_terminal()
+        && item.state == QueueState::Queued
+        && let Some(initiative) = &item.initiative
+    {
+        super::initiatives::reopen_for_member_in(tx, initiative)?;
+    }
     Ok(item)
 }
 

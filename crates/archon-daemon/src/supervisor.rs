@@ -41,7 +41,7 @@ use retired::{Sweep, cancel_orphans};
 pub(crate) use authority::{authorize, saw_call};
 pub use mcp::{
     HEALS_BEFORE_BLOCKER, MCP_CHECK_INTERVAL, check_mcp, check_mcp_soon, heal_status, mcp_status,
-    watch_mcp,
+    owe_orchestrator_restart, watch_mcp,
 };
 pub(crate) use retired::{
     is_retired as is_retired_orchestrator, prune as prune_retired_orchestrators,

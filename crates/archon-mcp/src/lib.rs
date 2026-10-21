@@ -4,6 +4,7 @@
 //! `ping`, `tools/list` and `tools/call` are implemented.
 
 pub mod jsonrpc;
+mod restart;
 mod server;
 pub mod tools;
 
@@ -20,7 +21,18 @@ use tokio::task::{JoinError, JoinSet};
 use crate::jsonrpc::{PARSE_ERROR, Response};
 use crate::server::{DaemonLink, Dispatch, Server};
 
+pub use crate::restart::exec_current;
 pub use crate::server::CALL_BUDGET;
+
+/// Why [`serve`] returned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Served {
+    /// The input ended.
+    InputEnded,
+    /// Archond is newer than this bridge and its binary was replaced:
+    /// start `archon mcp` again in this process's place.
+    Restart,
+}
 
 /// Longest accepted message, matching Aether's own MCP cap. Responses are
 /// held to it too, newline included.
@@ -31,9 +43,14 @@ pub const MAX_MESSAGE_BYTES: usize = 4 << 20;
 pub const MAX_CONCURRENT_CALLS: usize = 64;
 
 /// Serve stdin/stdout until stdin closes. The daemon connection is opened on first use, starting
-/// archond only for a call that changes something, and re-opened after a drop.
+/// archond only for a call that changes something, and re-opened after a drop. When Archon
+/// was upgraded under it, the bridge starts the new binary in its place and does not return.
 pub async fn serve_stdio(socket: &Path, archon_bin: &Path) -> Result<(), ArchonError> {
-    serve(tokio::io::stdin(), tokio::io::stdout(), socket, archon_bin).await
+    let served = serve(tokio::io::stdin(), tokio::io::stdout(), socket, archon_bin).await?;
+    if served == Served::InputEnded {
+        return Ok(());
+    }
+    Err(exec_current(archon_bin))
 }
 
 /// [`serve_stdio`] over any byte streams: one JSON-RPC message per line in,
@@ -46,7 +63,7 @@ pub async fn serve<R, W>(
     output: W,
     socket: &Path,
     archon_bin: &Path,
-) -> Result<(), ArchonError>
+) -> Result<Served, ArchonError>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin + Send + 'static,
@@ -57,8 +74,16 @@ where
     let output = Arc::new(Mutex::new(output));
     let mut calls = JoinSet::new();
     let mut line = Vec::new();
+    let mut served = Served::InputEnded;
     loop {
-        let dispatch = match read_line(&mut reader, &mut line).await? {
+        let read = tokio::select! {
+            read = read_line(&mut reader, &mut line) => read?,
+            () = server.restart_requested() => {
+                served = Served::Restart;
+                break;
+            }
+        };
+        let dispatch = match read {
             Line::End => break,
             Line::Blank => continue,
             Line::Oversized => Dispatch::Now(Some(Response::error(
@@ -93,7 +118,11 @@ where
     while let Some(finished) = calls.join_next().await {
         call_ended(finished)?;
     }
-    Ok(())
+    assert!(
+        served == Served::InputEnded || server.restart_wanted(),
+        "a restart is served only when one was asked for"
+    );
+    Ok(served)
 }
 
 /// A finished call task: its write error, if any. A panic in a handler is

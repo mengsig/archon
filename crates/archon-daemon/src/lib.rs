@@ -119,9 +119,41 @@ pub async fn run(options: DaemonOptions) -> Result<(), ArchonError> {
     drop(lock);
     match &result {
         Ok(()) => tracing::info!("archond stopped"),
-        Err(error) => tracing::error!(%error, "archond stopped"),
+        Err(error) => {
+            tracing::error!(%error, "archond stopped");
+            record_fatal_stop(&ctx.paths.data_dir, error);
+        }
     }
     result
+}
+
+/// Keep why archond stopped under the data directory, which outlives the
+/// runtime directory's log.
+fn record_fatal_stop(data_dir: &Path, error: &ArchonError) {
+    let record = archon_core::crash::CrashRecord::new("fatal", &error.to_string(), None);
+    if let Err(write_error) = archon_core::crash::write_pending(data_dir, &record) {
+        tracing::error!(%write_error, "the crash marker was not written");
+    }
+}
+
+/// Tell the operator, once, of the crash an earlier run left: in the log and
+/// in the chat. The marker moves on only after the chat has it.
+pub async fn report_crash(ctx: &DaemonContext) -> Result<(), ArchonError> {
+    let data_dir = &ctx.paths.data_dir;
+    let pending = match archon_core::crash::read_pending(data_dir) {
+        Ok(pending) => pending,
+        Err(error) => {
+            tracing::error!(%error, "the crash marker of an earlier run cannot be read");
+            return Ok(());
+        }
+    };
+    let Some(record) = pending else {
+        return Ok(());
+    };
+    let text = record.describe();
+    tracing::error!(kind = %record.kind, at = %record.at, "the previous run left a crash marker: {text}");
+    feed::notify(ctx, NotificationKind::Blocker, text, None, None).await?;
+    archon_core::crash::acknowledge(data_dir)
 }
 
 /// Recover runs, with the disk hold read first so a low disk defers the
@@ -129,6 +161,7 @@ pub async fn run(options: DaemonOptions) -> Result<(), ArchonError> {
 async fn recover(ctx: &DaemonContext) -> Result<(), ArchonError> {
     dispatcher::check_disk(ctx).await?;
     note_legacy_config(ctx, &archon_core::paths::config_dir()).await?;
+    report_crash(ctx).await?;
     executor::recover(ctx).await
 }
 

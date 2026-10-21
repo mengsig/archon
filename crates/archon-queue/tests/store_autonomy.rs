@@ -328,3 +328,27 @@ fn startup_closes_questions_left_open_on_withdrawn_gates() {
     );
     assert_eq!(store.feed_after(0, 10).unwrap(), closed);
 }
+
+#[test]
+fn a_decided_gate_does_not_leave_its_question_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut store, run) = on_disk(&dir);
+    // The decision was persisted, but the step that answers the question never ran.
+    let (mut decided, question) = asked_gate(&mut store, &run, 1);
+    decided.decision = Some(archon_core::run::GateDecision::Approve { note: None });
+    decided.decided_at = Some(t(30));
+    store.update_gate(&decided).unwrap();
+    let (live, waiting) = asked_gate(&mut store, &run, 2);
+
+    let closed = store.close_decided_questions(t(50)).unwrap();
+    assert_eq!(closed.len(), 1);
+    let text = "answered: the gate was approved".to_owned();
+    assert_eq!(answers(&store), vec![(question.id.clone(), text)]);
+    assert_eq!(store.questions(true).unwrap(), vec![waiting]);
+    assert_eq!(
+        store.open_gates().unwrap(),
+        vec![live],
+        "an open gate waits"
+    );
+    assert!(store.close_decided_questions(t(51)).unwrap().is_empty());
+}

@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::notify::NotificationKind;
+use futures_util::FutureExt;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, Notify};
 
@@ -91,6 +92,7 @@ pub async fn reconcile(ctx: &DaemonContext) -> Result<(), ArchonError> {
     assert!(ctx.paths.data_dir.is_absolute());
     assert!(ctx.paths.worktrees.is_absolute());
     let mut pass = Pass::default();
+    Box::pin(super::gates::close_settled_questions(ctx)).await?;
     super::initiative_ship::reconcile(ctx, &mut pass).await?;
     super::restack::reconcile(ctx, &mut pass).await?;
     super::ship::pay_owed_merges(ctx).await?;
@@ -98,6 +100,34 @@ pub async fn reconcile(ctx: &DaemonContext) -> Result<(), ArchonError> {
     super::operator_merge::settle_stale(ctx).await?;
     ctx.dispatch.notify_one();
     Ok(())
+}
+
+/// Run `work` on `subject`'s data so that a panic on it is that subject's
+/// failure, logged with its name and returned as an error, not the daemon's.
+pub(super) async fn guarded<T>(
+    subject: &str,
+    work: impl std::future::Future<Output = Result<T, ArchonError>>,
+) -> Result<T, ArchonError> {
+    assert!(!subject.is_empty(), "a named subject");
+    match std::panic::AssertUnwindSafe(Box::pin(work))
+        .catch_unwind()
+        .await
+    {
+        Ok(result) => result,
+        Err(panic) => {
+            let said = panic
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_owned())
+                .or_else(|| panic.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "no message".into());
+            tracing::error!(%subject, panic = %said, "maintenance panicked; only this subject is affected");
+            Err(ArchonError::Protocol(format!(
+                "maintenance of {subject} hit a bug on its stored data ({said}); other work goes on. \
+                 Report it with `archon doctor`'s output, and cancel it with `archon initiatives cancel` \
+                 if it should not run"
+            )))
+        }
+    }
 }
 
 /// Record how maintaining `subject` went. A failure other than the store's
@@ -155,4 +185,25 @@ fn stuck(store: &archon_queue::Store, key: &str) -> Result<Option<Stuck>, Archon
         serde_json::from_str(&raw).map_err(|e| ArchonError::Store(format!("kv {key}: {e}")))?;
     assert!(found.failures > 0, "a recorded blocker failed");
     Ok(Some(found))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_panic_on_one_subject_is_its_error_and_the_rest_goes_on() {
+        let broken = guarded("initiative:ini_x", async {
+            if true {
+                panic!("bad stored data");
+            }
+            Ok(())
+        })
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(broken.contains("initiative:ini_x") && broken.contains("bad stored data"));
+        let fine = guarded("initiative:ini_y", async { Ok(7) }).await.unwrap();
+        assert_eq!(fine, 7);
+    }
 }

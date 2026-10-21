@@ -312,10 +312,22 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         title: &str,
         model_plan: ModelPlan,
     ) -> Result<QueueItem, ArchonError> {
+        self.enqueue_in_repo(REPO_NAME, pipeline, title, model_plan)
+            .await
+    }
+
+    /// Enqueue into `pipeline` of the registered repository `repo`.
+    pub async fn enqueue_in_repo(
+        &self,
+        repo: &str,
+        pipeline: &str,
+        title: &str,
+        model_plan: ModelPlan,
+    ) -> Result<QueueItem, ArchonError> {
         let request = EnqueueRequest {
             onto: None,
             stage_timeouts: Default::default(),
-            repo: Some(RepoRef(REPO_NAME.into())),
+            repo: Some(RepoRef(repo.into())),
             pipeline: Some(pipeline.into()),
             title: title.into(),
             brief: format!("brief for {title}"),

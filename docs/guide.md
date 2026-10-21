@@ -1163,8 +1163,11 @@ for either). Like an item, an initiative can be named by the start of its id:
 branches and PRs in place. `archon initiatives retry ini_…` resumes failed,
 cancelled and blocked members on their existing branches once no member is
 active. Successful members are preserved. A member failure holds queued siblings;
-retry the initiative to resume them. Retrying individual members does not reopen
-a failed or cancelled group.
+retry the initiative to resume them. Retrying an individual member of a `done` or
+`failed` initiative reopens the initiative (as `open`, announced again when it
+finishes), so its state always follows its members and its pull requests go back to
+draft until every member has succeeded. A member of a `cancelled` initiative is not
+retried alone: `archon initiatives retry ini_…` retries the group.
 
 ## Using Archon from Aether's remote app
 

@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use archon_core::catalog::{StageKind, WorkspaceMode};
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
+use archon_core::initiative::InitiativeState;
 use archon_core::model::{Effort, ModelPlan, ModelPlanDraft, ModelReasons, check_reason_lengths};
 use archon_core::notify::NotificationKind;
 use archon_core::protocol::{EnqueueRequest, ItemDetail, ItemPatch, ItemQuery, Reply};
@@ -591,6 +592,15 @@ fn check_retryable(store: &archon_queue::Store, item: &QueueItem) -> Result<(), 
             "only finished items are retried; {} is {}",
             item.id,
             item.state.kind()
+        )));
+    }
+    if let Some(id) = &item.initiative
+        && store.initiative(id)?.initiative.state == InitiativeState::Cancelled
+    {
+        return Err(ArchonError::InvalidTransition(format!(
+            "{} belongs to initiative {id}, which was cancelled, so maintenance would cancel \
+             the retry again; run `archon initiatives retry {id}` to retry the whole initiative",
+            item.id
         )));
     }
     if store.has_pending_stack_fix(&item.id)? {

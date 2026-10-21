@@ -152,6 +152,14 @@ pub(super) async fn orchestrator_replaced(ctx: &DaemonContext) {
     }
 }
 
+/// The server's process was replaced (an Archon upgrade): whatever
+/// orchestrator runs now holds the old tools, so it owes a restart.
+pub async fn owe_orchestrator_restart(ctx: &DaemonContext) {
+    let mut state = ctx.supervisor.mcp.lock().await;
+    state.relink_pending = true;
+    state.assert_consistent();
+}
+
 /// Check the server now rather than at the next interval: the pump calls
 /// this on every connect to Aether.
 pub fn check_mcp_soon(ctx: &DaemonContext) {

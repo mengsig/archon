@@ -104,6 +104,7 @@ pub async fn run(json: bool) -> anyhow::Result<ExitCode> {
     checks.push(check_locations(&archon_client::default_socket()));
     let archond = connect_existing().await;
     checks.push(check_archond(&archond));
+    checks.push(check_crash(&archon_core::paths::data_dir()));
     checks.push(orchestrator::check_orchestrator(&archond).await);
     let registry = Registry::read(&archond, config.aether.mode).await;
     checks.push(check_disk(&config)?);
@@ -591,6 +592,15 @@ fn mcp_verdict(health: &McpHealth) -> Check {
             "aetherd has not loaded the archon server; restart aetherd after `archon setup`",
         ),
         McpHealth::Unreachable { error } => check(NAME, Level::Fail, error.clone()),
+    }
+}
+
+/// The last panic or fatal stop of archond, which survives a reboot.
+fn check_crash(data_dir: &Path) -> Check {
+    match archon_core::crash::read_latest(data_dir) {
+        Ok(None) => check("crash", Level::Ok, "no archond crash is recorded"),
+        Ok(Some(record)) => check("crash", Level::Warn, record.describe()),
+        Err(error) => check("crash", Level::Warn, error.to_string()),
     }
 }
 

@@ -294,6 +294,30 @@ pub(super) async fn decide(
     settle::apply(ctx, table, run, actions).await
 }
 
+/// Close the questions of gates that no longer wait: withdrawn with their
+/// run, or decided whoever recorded the decision. A decision acted on but
+/// not answered (a failed step after it, a crash) would leave its question,
+/// and the notification it posted, open for good.
+pub(crate) async fn close_settled_questions(ctx: &DaemonContext) -> Result<(), ArchonError> {
+    let _answering = ctx.answering.lock().await;
+    let now = archon_core::now();
+    let answers = {
+        let mut store = ctx.store.lock().await;
+        let mut answers = store.close_withdrawn_questions(now)?;
+        answers.extend(store.close_decided_questions(now)?);
+        answers
+    };
+    if answers.is_empty() {
+        return Ok(());
+    }
+    tracing::info!(
+        count = answers.len(),
+        "closed questions of gates that no longer wait"
+    );
+    crate::feed::publish(ctx, answers);
+    Ok(())
+}
+
 /// `true` when `gate` is open; `false` when it holds `decision` already.
 fn check_open(gate: &OperatorGate, decision: &GateDecision) -> Result<bool, ArchonError> {
     let name = format!("the {} gate of {}", gate.subject.noun(), gate.item);

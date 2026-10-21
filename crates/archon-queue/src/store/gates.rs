@@ -4,7 +4,7 @@
 use archon_core::Timestamp;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QuestionId, QueueItemId, ReportId};
-use archon_core::notify::FeedItem;
+use archon_core::notify::{AnswerVia, FeedItem};
 use archon_core::run::{OperatorGate, PipelineRun, RunState};
 use rusqlite::types::Value;
 use rusqlite::{Connection, params, params_from_iter};
@@ -263,5 +263,34 @@ pub(super) fn close_withdrawn_questions(
         answers.extend(closed);
     }
     tx.commit().ctx("commit withdrawn questions")?;
+    Ok(answers)
+}
+
+/// Close every open question of a gate that was decided: the decision is
+/// the answer, whoever recorded it and whether or not the caller that
+/// persisted it went on to answer the question. Returns the feed answers.
+pub(super) fn close_decided_questions(
+    conn: &mut Connection,
+    at: Timestamp,
+) -> Result<Vec<FeedItem>, ArchonError> {
+    let tx = write_tx(conn)?;
+    let decided = select(
+        &tx,
+        "open = 0 AND question IN (SELECT id FROM questions WHERE open = 1)",
+        Vec::new(),
+    )?;
+    let mut answers = Vec::new();
+    for gate in decided {
+        let (Some(decision), Some(question), None) =
+            (&gate.decision, &gate.question, &gate.withdrawn)
+        else {
+            continue;
+        };
+        let text = format!("answered: the gate was {}", decision.word());
+        let closed = feed::settle_in(&tx, question, &text, AnswerVia::Archon, at)?;
+        assert!(closed.is_some(), "the question was selected as open");
+        answers.extend(closed);
+    }
+    tx.commit().ctx("commit decided gate questions")?;
     Ok(answers)
 }

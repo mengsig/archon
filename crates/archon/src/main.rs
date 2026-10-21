@@ -53,6 +53,12 @@ fn main() -> ExitCode {
     if let Some(logger) = &logger {
         logger.install_panic_hook();
     }
+    if matches!(
+        cli.command,
+        Some(Command::Daemon(DaemonCommand::Run { .. }))
+    ) {
+        install_crash_marker_hook();
+    }
     // The daemon logs its work; everything else stays quiet unless RUST_LOG
     // asks. `archon mcp` speaks JSON-RPC on stdout, so logs go to stderr.
     let default_level = match &cli.command {
@@ -114,6 +120,31 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Record every panic of archond under the data directory, where the next
+/// start finds it, then run the hook that was installed before.
+fn install_crash_marker_hook() {
+    let earlier = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let payload = info.payload();
+        let message = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or("no message");
+        let location = info.location().map(ToString::to_string);
+        let record = archon_core::crash::CrashRecord::new("panic", message, location);
+        if let Err(error) =
+            archon_core::crash::write_pending(&archon_core::paths::data_dir(), &record)
+        {
+            // A closed startup pipe must not trigger a second panic.
+            let said = format!("archon: could not record the panic: {error}\n");
+            let _closed_startup_pipe =
+                std::io::Write::write_all(&mut std::io::stderr(), said.as_bytes());
+        }
+        earlier(info);
+    }));
 }
 
 /// Rust ignores SIGPIPE, so `println!` panics once the reader of stdout is

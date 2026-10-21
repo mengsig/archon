@@ -19,6 +19,7 @@ pub mod catalog;
 pub mod config;
 pub mod config_files;
 pub mod cost;
+pub mod crash;
 pub mod error;
 pub mod feedback;
 pub mod github;

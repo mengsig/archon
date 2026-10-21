@@ -6,6 +6,7 @@ mod autonomy;
 mod chat_answer;
 mod chat_ops;
 mod common;
+mod crash_marker;
 mod delivery_safety;
 mod dependencies;
 mod disk;

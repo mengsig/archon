@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Follow-ups to #200: an initiative that was done or failed re-opens when
+  one of its members is retried (a cancelled one is retried with
+  `archon initiatives retry`); maintenance of one initiative that hits a bug
+  no longer stops the daemon or the other initiatives; a crash of archond
+  leaves a marker that the next start logs, shows in `archon status` and
+  `archon doctor`, and posts once to the operator chat; an `archon mcp`
+  bridge older than its daemon restarts itself once Archon was upgraded, and
+  `/upgrade` refreshes it; the question of a decided or withdrawn gate is
+  closed with the gate.
+
 - Notification center: an item's blockers (such as a stage's escalation) are
   resolved when the item is steered, one of its questions is answered, or it
   finishes, so "waiting" no longer counts what was acted on. A succeeded item

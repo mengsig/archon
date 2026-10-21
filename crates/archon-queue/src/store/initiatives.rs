@@ -198,6 +198,32 @@ fn replay(
     Ok(Some(current))
 }
 
+/// A member of a `done` or `failed` initiative is queued again: the
+/// initiative opens again, in the member's transaction, so its state follows
+/// its members and the next maintenance pass re-evaluates it (a new cycle,
+/// announced again when it finishes). A `cancelled` initiative stays so.
+pub(super) fn reopen_for_member_in(
+    tx: &Connection,
+    id: &InitiativeId,
+) -> Result<bool, ArchonError> {
+    let mut current = detail(tx, id)?;
+    if !matches!(
+        current.initiative.state,
+        InitiativeState::Done | InitiativeState::Failed
+    ) {
+        return Ok(false);
+    }
+    current.initiative.state = InitiativeState::Open;
+    save(tx, &mut current.initiative)?;
+    settings::kv_set(
+        tx,
+        &format!("initiative_cycle:{id}"),
+        &ts(&current.initiative.updated_at),
+    )?;
+    assert_eq!(current.initiative.state, InitiativeState::Open);
+    Ok(true)
+}
+
 fn detail(conn: &Connection, id: &InitiativeId) -> Result<InitiativeDetail, ArchonError> {
     let raw: Option<String> = conn
         .query_row(

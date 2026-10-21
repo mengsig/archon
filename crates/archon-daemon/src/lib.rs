@@ -152,9 +152,21 @@ pub async fn report_crash(ctx: &DaemonContext) -> Result<(), ArchonError> {
     };
     let text = record.describe();
     tracing::error!(kind = %record.kind, at = %record.at, "the previous run left a crash marker: {text}");
-    feed::notify(ctx, NotificationKind::Blocker, text, None, None).await?;
+    let reported = record.at.to_string();
+    let already = ctx.store.lock().await.kv_get(CRASH_REPORTED_KEY)?;
+    if already.as_deref() != Some(reported.as_str()) {
+        feed::notify(ctx, NotificationKind::Blocker, text, None, None).await?;
+        ctx.store
+            .lock()
+            .await
+            .kv_set(CRASH_REPORTED_KEY, &reported)?;
+    }
     archon_core::crash::acknowledge(data_dir)
 }
+
+/// `kv`: the time of the crash the chat was last told of, so a start cut off
+/// before the marker moved on does not tell it twice.
+const CRASH_REPORTED_KEY: &str = "crash_reported";
 
 /// Recover runs, with the disk hold read first so a low disk defers the
 /// spawns recovery would issue.

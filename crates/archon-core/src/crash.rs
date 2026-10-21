@@ -9,6 +9,7 @@
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +17,9 @@ use crate::error::ArchonError;
 
 /// Longest message kept, in bytes.
 pub const MAX_MESSAGE_BYTES: usize = 4096;
+/// Most bytes the two bounded fields take once serialized, with the rest.
+const MAX_RECORD_BYTES: usize = 4 * MAX_MESSAGE_BYTES;
+static WRITES: AtomicU64 = AtomicU64::new(0);
 const DIR: &str = "crash";
 
 /// Why archond stopped, when and where.
@@ -63,9 +67,15 @@ impl CrashRecord {
     }
 }
 
+/// Control characters become spaces, so JSON escaping at most doubles the
+/// bytes and the written record stays within [`MAX_RECORD_BYTES`].
 fn bounded(text: &str) -> String {
+    let text: String = text
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
     if text.len() <= MAX_MESSAGE_BYTES {
-        return text.to_owned();
+        return text;
     }
     let mut end = MAX_MESSAGE_BYTES;
     while !text.is_char_boundary(end) {
@@ -89,8 +99,15 @@ pub fn write_pending(data_dir: &Path, record: &CrashRecord) -> Result<(), Archon
     let dir = path.parent().expect("the marker has a directory");
     std::fs::create_dir_all(dir).map_err(|e| ArchonError::io("create the crash directory", e))?;
     let text = serde_json::to_string(record)?;
-    assert!(text.len() < 4 * MAX_MESSAGE_BYTES, "a bounded record");
-    let tmp = dir.join("pending.json.tmp");
+    if text.len() > MAX_RECORD_BYTES {
+        return Err(ArchonError::Invalid(format!(
+            "the crash record is {} bytes, over its {MAX_RECORD_BYTES}-byte bound",
+            text.len()
+        )));
+    }
+    // Panics on several threads each write their own file; none shares an inode.
+    let unique = WRITES.fetch_add(1, Ordering::Relaxed);
+    let tmp = dir.join(format!("pending.{}.{unique}.tmp", std::process::id()));
     let mut file =
         std::fs::File::create(&tmp).map_err(|e| ArchonError::io("write the crash marker", e))?;
     file.write_all(text.as_bytes())
@@ -149,6 +166,13 @@ mod tests {
         acknowledge(dir.path()).unwrap();
         assert_eq!(read_pending(dir.path()).unwrap(), None);
         assert_eq!(read_latest(dir.path()).unwrap(), Some(record));
+    }
+
+    #[test]
+    fn a_message_of_control_characters_still_fits_the_record_bound() {
+        let dir = tempfile::tempdir().unwrap();
+        let record = CrashRecord::new("panic", &"\u{1}".repeat(10_000), Some("\"".repeat(10_000)));
+        write_pending(dir.path(), &record).expect("a bounded record is written");
     }
 
     #[test]

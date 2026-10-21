@@ -829,6 +829,45 @@ async fn a_bridge_whose_binary_was_replaced_asks_to_restart_when_archond_refuses
 }
 
 #[tokio::test]
+async fn a_restart_waits_until_the_requests_already_read_are_answered() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("archond.sock");
+    let daemon = refuse_every_hello(&socket);
+    let bin = dir.path().join("archon");
+    std::fs::write(&bin, "the version the bridge started as").unwrap();
+    let mut mcp = Mcp::start(&socket, &bin);
+    let listed = mcp.request(1, "tools/list", json!({})).await;
+    assert!(listed["result"]["tools"].is_array());
+    let upgraded = dir.path().join("archon.upgraded");
+    std::fs::write(&upgraded, "the upgraded build").unwrap();
+    std::fs::rename(&upgraded, &bin).unwrap();
+
+    let call = |id: u64| {
+        json!({"jsonrpc": "2.0", "id": id, "method": "tools/call",
+               "params": {"name": "list_repos", "arguments": {}}})
+    };
+    mcp.send(call(2)).await;
+    mcp.send(call(3)).await;
+    let mut answered = [
+        mcp.recv().await["id"].clone(),
+        mcp.recv().await["id"].clone(),
+    ];
+    answered.sort_by_key(|id| id.as_u64());
+    assert_eq!(
+        answered,
+        [json!(2), json!(3)],
+        "no request read was dropped"
+    );
+    let served = tokio::time::timeout(Duration::from_secs(20), mcp.task)
+        .await
+        .expect("the bridge stops to restart")
+        .expect("serve did not panic")
+        .expect("serve ends cleanly");
+    assert_eq!(served, archon_mcp::Served::Restart);
+    daemon.abort();
+}
+
+#[tokio::test]
 async fn a_protocol_refusal_without_an_upgrade_is_reported_and_the_bridge_keeps_serving() {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("archond.sock");

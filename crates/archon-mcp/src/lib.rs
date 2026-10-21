@@ -75,17 +75,27 @@ where
     let mut calls = JoinSet::new();
     let mut line = Vec::new();
     let mut served = Served::InputEnded;
+    let mut restart_deferred = false;
     loop {
         let read = tokio::select! {
             read = read_line(&mut reader, &mut line) => read?,
-            () = server.restart_requested() => {
-                served = Served::Restart;
-                break;
+            () = server.restart_requested(), if !restart_deferred => {
+                // Bytes already consumed from stdin would be lost to the new
+                // process, so restart only between messages.
+                if line.is_empty() && reader.buffer().is_empty() {
+                    served = Served::Restart;
+                    break;
+                }
+                restart_deferred = true;
+                continue;
             }
         };
         let dispatch = match read {
             Line::End => break,
-            Line::Blank => continue,
+            Line::Blank => {
+                line.clear();
+                continue;
+            }
             Line::Oversized => Dispatch::Now(Some(Response::error(
                 serde_json::Value::Null,
                 PARSE_ERROR,
@@ -93,6 +103,7 @@ where
             ))),
             Line::Message => server::intake(&line),
         };
+        line.clear();
         while let Some(finished) = calls.try_join_next() {
             call_ended(finished)?;
         }
@@ -114,6 +125,10 @@ where
             calls.len() <= MAX_CONCURRENT_CALLS,
             "calls in flight are bounded"
         );
+        if restart_deferred && reader.buffer().is_empty() {
+            served = Served::Restart;
+            break;
+        }
     }
     while let Some(finished) = calls.join_next().await {
         call_ended(finished)?;
@@ -150,7 +165,6 @@ where
     R: AsyncBufRead + Unpin,
 {
     let failed = |e| ArchonError::io("reading MCP messages from stdin", e);
-    line.clear();
     let limit = MAX_MESSAGE_BYTES as u64 + 1;
     let read = (&mut *reader)
         .take(limit)

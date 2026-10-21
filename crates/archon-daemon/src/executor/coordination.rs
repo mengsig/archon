@@ -88,11 +88,12 @@ async fn isolated_pass(ctx: &Arc<DaemonContext>) -> Result<(), ArchonError> {
 /// A recoverable maintenance pass, also used by the deterministic harness:
 /// GitHub is asked once per repository for its open pull requests.
 pub async fn reconcile(ctx: &DaemonContext) -> Result<(), ArchonError> {
+    // Before the serial lock: an answer holds `answering` while its shipping waits for `serial`.
+    Box::pin(super::gates::close_settled_questions(ctx)).await?;
     let _serial = ctx.coordination.serial.lock().await;
     assert!(ctx.paths.data_dir.is_absolute());
     assert!(ctx.paths.worktrees.is_absolute());
     let mut pass = Pass::default();
-    Box::pin(super::gates::close_settled_questions(ctx)).await?;
     super::initiative_ship::reconcile(ctx, &mut pass).await?;
     super::restack::reconcile(ctx, &mut pass).await?;
     super::ship::pay_owed_merges(ctx).await?;

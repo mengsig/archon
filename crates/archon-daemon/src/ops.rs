@@ -16,6 +16,7 @@ use archon_core::config::AetherMode;
 use archon_core::error::ArchonError;
 use archon_core::notify::NotificationKind;
 use archon_core::ops::{ProgramVersions, UpgradeRequest, UpgradeTarget, Versions, bare_version};
+use archon_core::protocol::McpHealth;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, Notify};
 use tokio::time::Instant;
@@ -494,11 +495,18 @@ async fn refresh_bridge(ctx: &DaemonContext) -> String {
         .refresh_mcp(archon_core::mcp_tools::SERVER_NAME)
         .await
     {
-        Ok(_) => {
+        Ok(McpHealth::Ready { .. }) => {
             crate::supervisor::owe_orchestrator_restart(ctx).await;
             crate::supervisor::check_mcp_soon(ctx);
             " Refreshed Archon's MCP server in Aether; the orchestrator restarts to get its tools."
                 .to_owned()
+        }
+        Ok(health) => {
+            tracing::warn!(
+                ?health,
+                "the archon MCP server is not ready after the refresh"
+            );
+            format!(" Aether refreshed the MCP server but it is not ready ({health:?}). {by_hand}")
         }
         Err(error) => {
             tracing::warn!(%error, "the archon MCP server was not refreshed after the upgrade");

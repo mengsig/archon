@@ -206,7 +206,9 @@ fn mismatch(
     current: Option<&RepoIdentity>,
 ) -> Option<String> {
     assert!(!name.is_empty(), "a repository has a name");
-    if recorded == current {
+    let allowed = RepoIdentity::allowed(recorded);
+    let admitted = current.is_none_or(|now| now.emails.iter().all(|e| allowed.contains(e)));
+    if admitted && (current.is_some() || recorded.is_none()) {
         return None;
     }
     let show = |identity: Option<&RepoIdentity>| match identity {
@@ -260,5 +262,16 @@ mod tests {
         assert!(why.contains("<op@example.com>") && why.contains(DAEMON_EMAIL));
         assert!(why.contains("archon repo set r"));
         assert!(mismatch("r", Some(&known), None).is_some());
+        let renamed = RepoIdentity {
+            name: "Other".into(),
+            ..known.clone()
+        };
+        assert_eq!(mismatch("r", Some(&known), Some(&renamed)), None);
+        let daemon = RepoIdentity {
+            name: DAEMON_NAME.into(),
+            email: DAEMON_EMAIL.into(),
+            emails: vec![DAEMON_EMAIL.into()],
+        };
+        assert_eq!(mismatch("r", Some(&known), Some(&daemon)), None);
     }
 }

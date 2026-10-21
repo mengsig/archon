@@ -161,6 +161,7 @@ pub(super) fn commit_leftovers(
     add.extend([":(exclude,glob)**/*.pyc", ":(exclude,glob)**/*.pyo"]);
     add.extend(nested.iter().map(String::as_str));
     git(path, &add)?;
+    unstage_caches(path)?;
     let staged = nul_paths(path, &["diff", "--cached", "--name-only"])?;
     let saved = match staged.is_empty() {
         true => None,
@@ -213,6 +214,29 @@ fn commit_staged(
         commit,
         files,
     })
+}
+
+/// Take caches the role staged itself out of the index; its files stay.
+fn unstage_caches(path: &Path) -> Result<(), ArchonError> {
+    let staged = nul_paths(path, &["diff", "--cached", "--name-only"])?;
+    let caches: Vec<String> = staged
+        .iter()
+        .filter(|name| is_python_cache(name))
+        .map(|name| format!(":(literal){name}"))
+        .collect();
+    if caches.is_empty() {
+        return Ok(());
+    }
+    let mut reset = vec!["reset", "--quiet", "--"];
+    reset.extend(caches.iter().map(String::as_str));
+    git(path, &reset)?;
+    debug_assert!(
+        nul_paths(path, &["diff", "--cached", "--name-only"])?
+            .iter()
+            .all(|name| !is_python_cache(name)),
+        "no cache stays staged"
+    );
+    Ok(())
 }
 
 /// Bytecode a worker's test run leaves: never committed on its behalf, and

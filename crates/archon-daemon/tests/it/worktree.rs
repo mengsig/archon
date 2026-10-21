@@ -624,6 +624,7 @@ fn a_roles_python_caches_are_left_out_of_its_leftover_commit() {
     std::fs::write(api.join("pkg/__pycache__/mod.cpython-312.pyc"), "x").expect("write");
     std::fs::write(api.join("loose.pyc"), "x").expect("write");
     std::fs::write(api.join("api.txt"), "api\n").expect("write");
+    git(&api, &["add", "-f", "loose.pyc"]);
     let plan = plan(&run, &[("api", &api_branch)]);
 
     assert_eq!(merge(&f, &run, &plan).expect("merge"), MergeOutcome::Merged);

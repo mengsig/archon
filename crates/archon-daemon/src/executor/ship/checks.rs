@@ -132,7 +132,7 @@ fn is_unshippable(path: &str) -> bool {
 fn unshippable_files(tree: &Path, base: &str) -> Result<Result<(), String>, ArchonError> {
     assert!(is_floor(base), "a full ref name or a commit id");
     let range = format!("{base}...HEAD");
-    let raw = DaemonGit::sealed_in(tree)
+    let ran = DaemonGit::sealed_in(tree)
         .args([
             "diff",
             "--name-only",
@@ -140,10 +140,20 @@ fn unshippable_files(tree: &Path, base: &str) -> Result<Result<(), String>, Arch
             "-z",
             range.as_str(),
         ])
-        .text()?;
-    let found: Vec<&str> = raw
-        .split('\0')
-        .filter(|path| !path.is_empty() && is_unshippable(path))
+        .output()?;
+    if !ran.status.success() {
+        return Err(ran.failure());
+    }
+    let names: Vec<String> = ran
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty())
+        .map(|name| String::from_utf8_lossy(name).into_owned())
+        .collect();
+    let found: Vec<&str> = names
+        .iter()
+        .map(String::as_str)
+        .filter(|path| is_unshippable(path))
         .collect();
     if found.is_empty() {
         return Ok(Ok(()));

@@ -153,13 +153,24 @@ pub async fn report_crash(ctx: &DaemonContext) -> Result<(), ArchonError> {
     let text = record.describe();
     tracing::error!(kind = %record.kind, at = %record.at, "the previous run left a crash marker: {text}");
     let reported = record.at.to_string();
-    let already = ctx.store.lock().await.kv_get(CRASH_REPORTED_KEY)?;
-    if already.as_deref() != Some(reported.as_str()) {
-        feed::notify(ctx, NotificationKind::Blocker, text, None, None).await?;
-        ctx.store
-            .lock()
-            .await
-            .kv_set(CRASH_REPORTED_KEY, &reported)?;
+    let mut store = ctx.store.lock().await;
+    if store.kv_get(CRASH_REPORTED_KEY)?.as_deref() != Some(reported.as_str()) {
+        let notification = archon_core::notify::Notification {
+            id: archon_core::id::NotificationId::new(),
+            kind: NotificationKind::Blocker,
+            text,
+            item: None,
+            run: None,
+            at: archon_core::now(),
+        };
+        let entry = archon_core::notify::FeedEntry::Notification(notification);
+        let item = store.append_feed_with_kv(
+            entry,
+            archon_core::now(),
+            &[(CRASH_REPORTED_KEY, reported.as_str())],
+        )?;
+        drop(store);
+        feed::publish(ctx, vec![item]);
     }
     archon_core::crash::acknowledge(data_dir)
 }

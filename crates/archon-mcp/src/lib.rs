@@ -12,9 +12,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use archon_core::error::ArchonError;
-use tokio::io::{
-    AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt,
-};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Mutex;
 use tokio::task::{JoinError, JoinSet};
 
@@ -73,16 +71,16 @@ where
     let server = Arc::new(Server::new(DaemonLink::new(socket, archon_bin)));
     let output = Arc::new(Mutex::new(output));
     let mut calls = JoinSet::new();
-    let mut line = Vec::new();
+    let mut framer = Framer::default();
     let mut served = Served::InputEnded;
     let mut restart_deferred = false;
     loop {
         let read = tokio::select! {
-            read = read_line(&mut reader, &mut line) => read?,
+            read = framer.next(&mut reader) => read?,
             () = server.restart_requested(), if !restart_deferred => {
                 // Bytes already consumed from stdin would be lost to the new
                 // process, so restart only between messages.
-                if line.is_empty() && reader.buffer().is_empty() {
+                if framer.is_idle() && reader.buffer().is_empty() {
                     served = Served::Restart;
                     break;
                 }
@@ -92,18 +90,15 @@ where
         };
         let dispatch = match read {
             Line::End => break,
-            Line::Blank => {
-                line.clear();
-                continue;
-            }
+            Line::Blank => Dispatch::Now(None),
             Line::Oversized => Dispatch::Now(Some(Response::error(
                 serde_json::Value::Null,
                 PARSE_ERROR,
                 format!("message exceeds the {MAX_MESSAGE_BYTES}-byte limit"),
             ))),
-            Line::Message => server::intake(&line),
+            Line::Message => server::intake(framer.message()),
         };
-        line.clear();
+        framer.done();
         while let Some(finished) = calls.try_join_next() {
             call_ended(finished)?;
         }
@@ -160,40 +155,78 @@ enum Line {
     End,
 }
 
-async fn read_line<R>(reader: &mut R, line: &mut Vec<u8>) -> Result<Line, ArchonError>
-where
-    R: AsyncBufRead + Unpin,
-{
-    let failed = |e| ArchonError::io("reading MCP messages from stdin", e);
-    let limit = MAX_MESSAGE_BYTES as u64 + 1;
-    let read = (&mut *reader)
-        .take(limit)
-        .read_until(b'\n', line)
-        .await
-        .map_err(failed)?;
-    if read == 0 {
-        return Ok(Line::End);
+/// Splits stdin into lines. Waiting for input never loses a byte, so a read
+/// may be dropped and started again, and `is_idle` says whether nothing of a
+/// message has been taken yet.
+#[derive(Debug, Default)]
+struct Framer {
+    line: Vec<u8>,
+    skipping: bool,
+}
+
+impl Framer {
+    fn is_idle(&self) -> bool {
+        self.line.is_empty() && !self.skipping
     }
-    let complete = line.last() == Some(&b'\n');
-    if !complete && line.len() > MAX_MESSAGE_BYTES {
-        let mut rest = Vec::new();
+
+    /// The bytes of the last [`Line::Message`]; call [`Framer::done`] after.
+    fn message(&self) -> &[u8] {
+        &self.line
+    }
+
+    fn done(&mut self) {
+        self.line.clear();
+        self.skipping = false;
+    }
+
+    async fn next<R>(&mut self, reader: &mut R) -> Result<Line, ArchonError>
+    where
+        R: AsyncBufRead + Unpin,
+    {
+        assert!(
+            self.line.len() <= MAX_MESSAGE_BYTES,
+            "a kept line is bounded"
+        );
         loop {
-            rest.clear();
-            let n = (&mut *reader)
-                .take(64 * 1024)
-                .read_until(b'\n', &mut rest)
+            let chunk = reader
+                .fill_buf()
                 .await
-                .map_err(failed)?;
-            if n == 0 || rest.last() == Some(&b'\n') {
-                break;
+                .map_err(|e| ArchonError::io("reading MCP messages from stdin", e))?;
+            if chunk.is_empty() {
+                return Ok(self.at_end());
+            }
+            let newline = chunk.iter().position(|b| *b == b'\n');
+            let content = newline.unwrap_or(chunk.len());
+            if !self.skipping && self.line.len() + content > MAX_MESSAGE_BYTES {
+                self.line.clear();
+                self.skipping = true;
+            }
+            if !self.skipping {
+                self.line.extend_from_slice(&chunk[..content]);
+            }
+            let taken = newline.map_or(chunk.len(), |n| n + 1);
+            reader.consume(taken);
+            if newline.is_some() {
+                return Ok(self.finished());
             }
         }
-        line.clear();
-        return Ok(Line::Oversized);
     }
-    match line.iter().all(u8::is_ascii_whitespace) {
-        true => Ok(Line::Blank),
-        false => Ok(Line::Message),
+
+    /// Input ended: a last line without a newline is still a message.
+    fn at_end(&mut self) -> Line {
+        match (self.skipping, self.line.is_empty()) {
+            (true, _) => Line::Oversized,
+            (false, true) => Line::End,
+            (false, false) => self.finished(),
+        }
+    }
+
+    fn finished(&self) -> Line {
+        match (self.skipping, self.line.iter().all(u8::is_ascii_whitespace)) {
+            (true, _) => Line::Oversized,
+            (false, true) => Line::Blank,
+            (false, false) => Line::Message,
+        }
     }
 }
 
@@ -210,4 +243,45 @@ where
     let mut output = output.lock().await;
     output.write_all(&bytes).await.map_err(failed)?;
     output.flush().await.map_err(failed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_dropped_read_loses_nothing_and_the_last_line_needs_no_newline() {
+        let (mut writer, server_in) = tokio::io::duplex(64);
+        let mut reader = tokio::io::BufReader::new(server_in);
+        let mut framer = Framer::default();
+        writer.write_all(b"{\"a\":").await.unwrap();
+        let waiting = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            framer.next(&mut reader),
+        )
+        .await;
+        assert!(waiting.is_err(), "no whole line yet");
+        assert!(!framer.is_idle(), "part of a message was taken");
+        writer.write_all(b"1}").await.unwrap();
+        drop(writer);
+        assert!(matches!(framer.next(&mut reader).await, Ok(Line::Message)));
+        assert_eq!(framer.message(), b"{\"a\":1}");
+        framer.done();
+        assert!(matches!(framer.next(&mut reader).await, Ok(Line::End)));
+    }
+
+    #[tokio::test]
+    async fn the_size_cap_counts_bytes_across_dropped_reads() {
+        let mut input = vec![b' '; MAX_MESSAGE_BYTES];
+        input.extend_from_slice(b" {}\nnext\n");
+        let mut reader = tokio::io::BufReader::with_capacity(1024, &input[..]);
+        let mut framer = Framer::default();
+        assert!(matches!(
+            framer.next(&mut reader).await,
+            Ok(Line::Oversized)
+        ));
+        framer.done();
+        assert!(matches!(framer.next(&mut reader).await, Ok(Line::Message)));
+        assert_eq!(framer.message(), b"next");
+    }
 }

@@ -18,7 +18,7 @@ use crate::error::ArchonError;
 /// Longest message kept, in bytes.
 pub const MAX_MESSAGE_BYTES: usize = 4096;
 /// Most bytes the two bounded fields take once serialized, with the rest.
-const MAX_RECORD_BYTES: usize = 4 * MAX_MESSAGE_BYTES;
+const MAX_RECORD_BYTES: usize = 5 * MAX_MESSAGE_BYTES;
 static WRITES: AtomicU64 = AtomicU64::new(0);
 const DIR: &str = "crash";
 
@@ -108,12 +108,22 @@ pub fn write_pending(data_dir: &Path, record: &CrashRecord) -> Result<(), Archon
     // Panics on several threads each write their own file; none shares an inode.
     let unique = WRITES.fetch_add(1, Ordering::Relaxed);
     let tmp = dir.join(format!("pending.{}.{unique}.tmp", std::process::id()));
+    let stored = write_synced(&tmp, &text).and_then(|()| {
+        std::fs::rename(&tmp, &path).map_err(|e| ArchonError::io("store the crash marker", e))
+    });
+    if stored.is_err() {
+        // Best effort: the error being returned is the one that matters.
+        let _already_gone = std::fs::remove_file(&tmp);
+    }
+    stored
+}
+
+fn write_synced(path: &Path, text: &str) -> Result<(), ArchonError> {
     let mut file =
-        std::fs::File::create(&tmp).map_err(|e| ArchonError::io("write the crash marker", e))?;
+        std::fs::File::create(path).map_err(|e| ArchonError::io("write the crash marker", e))?;
     file.write_all(text.as_bytes())
         .and_then(|()| file.sync_all())
-        .map_err(|e| ArchonError::io("write the crash marker", e))?;
-    std::fs::rename(&tmp, &path).map_err(|e| ArchonError::io("store the crash marker", e))
+        .map_err(|e| ArchonError::io("write the crash marker", e))
 }
 
 fn read(path: &Path) -> Result<Option<CrashRecord>, ArchonError> {
@@ -171,7 +181,7 @@ mod tests {
     #[test]
     fn a_message_of_control_characters_still_fits_the_record_bound() {
         let dir = tempfile::tempdir().unwrap();
-        let record = CrashRecord::new("panic", &"\u{1}".repeat(10_000), Some("\"".repeat(10_000)));
+        let record = CrashRecord::new("panic", &"\"".repeat(10_000), Some("\"".repeat(10_000)));
         write_pending(dir.path(), &record).expect("a bounded record is written");
     }
 

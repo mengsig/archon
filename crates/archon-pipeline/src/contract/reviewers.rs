@@ -143,17 +143,12 @@ fn unplaced_model<'a>(
     policy: &'a ModelPolicy,
     governed: bool,
 ) -> Option<&'a ModelRef> {
-    let listed = policy
-        .allow
-        .iter()
-        .flatten()
-        .find(|model| policy.permits_model(model));
-    let model = if policy.permits_model(own) {
-        own
-    } else {
-        listed?
+    let eligible = |model: &&ModelRef| {
+        policy.permits_model(model) && (!governed || provider_reports_cost(&model.provider))
     };
-    (!governed || provider_reports_cost(&model.provider)).then_some(model)
+    std::iter::once(own)
+        .chain(policy.allow.iter().flatten())
+        .find(eligible)
 }
 
 /// Neither the catalog nor the policy places a model: name one the policy
@@ -224,10 +219,28 @@ mod tests {
     }
 
     #[test]
+    fn a_codex_lead_may_fall_back_to_an_allowed_unplaced_claude_reviewer() {
+        let own: ModelRef = "codex/balanced".parse().unwrap();
+        let both = ModelPolicy::from_lists(
+            &[
+                "codex/balanced".parse().unwrap(),
+                "claude-code/opus".parse().unwrap(),
+            ],
+            &[],
+            None,
+        );
+        let config = ReviewConfig::default();
+        let none = ModelCatalog::default();
+        assert!(governed_review_refusal(None, &own, &both, (&config, &none)).is_none());
+        let rules = governed_reviewer_rules(None, &own, &both, (&config, &none), true);
+        assert!(rules.contains("claude-code/opus"), "{rules}");
+    }
+
+    #[test]
     fn review_is_refused_up_front_when_no_reviewer_reports_cost() {
         let own: ModelRef = "codex/balanced".parse().unwrap();
         let config = ReviewConfig::default();
-        let only_codex = ModelPolicy::from_lists(&[], &["codex/balanced".parse().unwrap()], None);
+        let only_codex = ModelPolicy::from_lists(&["codex/balanced".parse().unwrap()], &[], None);
         let args = (&config, &catalog());
         let why = governed_review_refusal(None, &own, &only_codex, args).expect("refused");
         assert!(why.contains("reports a dollar cost"), "{why}");

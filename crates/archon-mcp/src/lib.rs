@@ -44,27 +44,53 @@ pub const MAX_CONCURRENT_CALLS: usize = 64;
 /// archond only for a call that changes something, and re-opened after a drop. When Archon
 /// was upgraded under it, the bridge starts the new binary in its place and does not return.
 pub async fn serve_stdio(socket: &Path, archon_bin: &Path) -> Result<(), ArchonError> {
-    let served = match pipe_stdin()? {
-        Some(input) => serve(input, tokio::io::stdout(), socket, archon_bin).await,
-        None => serve(tokio::io::stdin(), tokio::io::stdout(), socket, archon_bin).await,
+    let (served, cancel_safe) = match pipe_stdin()? {
+        Some(input) => (
+            serve(input, tokio::io::stdout(), socket, archon_bin).await,
+            true,
+        ),
+        None => (
+            serve(tokio::io::stdin(), tokio::io::stdout(), socket, archon_bin).await,
+            false,
+        ),
     };
     restore_blocking_stdin()?;
     if served? == Served::InputEnded {
         return Ok(());
+    }
+    if !cancel_safe {
+        return Err(ArchonError::Unavailable(
+            "archon was upgraded and this MCP bridge reads a terminal or socket, which it cannot \
+             hand over without losing a request; run `archon aether mcp refresh archon` to restart it"
+                .into(),
+        ));
     }
     Err(exec_current(archon_bin))
 }
 
 /// Stdin as a pipe read that can be dropped without a thread still reading
 /// behind it, so a restart never loses a request. `None` when stdin is not a
-/// pipe (a terminal or file), where tokio's own stdin serves.
+/// pipe (a terminal or socket), where tokio's own stdin serves and a restart
+/// is refused.
 fn pipe_stdin() -> Result<Option<tokio::net::unix::pipe::Receiver>, ArchonError> {
     use std::os::fd::AsFd as _;
-    let fd = std::io::stdin()
+    let stdin = std::io::stdin();
+    let stat = rustix::fs::fstat(stdin.as_fd())
+        .map_err(|e| ArchonError::io("inspecting stdin", e.into()))?;
+    if rustix::fs::FileType::from_raw_mode(stat.st_mode) != rustix::fs::FileType::Fifo {
+        return Ok(None);
+    }
+    let fd = stdin
         .as_fd()
         .try_clone_to_owned()
         .map_err(|e| ArchonError::io("duplicating stdin for the MCP bridge", e))?;
-    Ok(tokio::net::unix::pipe::Receiver::from_file(std::fs::File::from(fd)).ok())
+    match tokio::net::unix::pipe::Receiver::from_file(std::fs::File::from(fd)) {
+        Ok(receiver) => Ok(Some(receiver)),
+        Err(error) => {
+            restore_blocking_stdin()?;
+            Err(ArchonError::io("reading the MCP pipe on stdin", error))
+        }
+    }
 }
 
 /// The pipe reader switched the shared stdin to non-blocking; the process

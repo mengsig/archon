@@ -134,13 +134,13 @@ pub fn id_prefix(text: &str, kind: &str, what: &str) -> Result<String, ArchonErr
     if ulid.is_empty() || ulid.len() > ULID_LEN {
         return Err(ArchonError::Invalid(format!(
             "{text:?} is not a {what} id or its start: expected `{kind}_` plus 1 to \
-             {ULID_LEN} characters"
+             {ULID_LEN} characters, such as `{kind}_01HZX`"
         )));
     }
     if let Some(bad) = ulid.chars().find(|c| !ULID_ALPHABET.contains(*c)) {
         return Err(ArchonError::Invalid(format!(
             "{text:?} is not a {what} id or its start: expected `{kind}_` plus characters \
-             from 0-9 and A-Z without I, L, O or U, but found {bad:?}"
+             from 0-9 and A-Z without I, L, O or U, such as `{kind}_01HZX`, but found {bad:?}"
         )));
     }
     let prefix = format!("{kind}_{ulid}");

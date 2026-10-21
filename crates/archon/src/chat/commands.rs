@@ -56,6 +56,8 @@ pub enum SlashCommand {
         states: Vec<String>,
     },
     Item(String),
+    Repos,
+    Lessons,
     /// Attach the image file at this path to the next message.
     Image(String),
     Merge {
@@ -97,6 +99,8 @@ fn parse_command(name: &str, rest: &str) -> Result<SlashCommand, String> {
         "progress" | "verbose" => no_args(SlashCommand::ToggleProgress),
         "questions" => no_args(SlashCommand::Questions),
         "status" => no_args(SlashCommand::Status),
+        "repos" => no_args(SlashCommand::Repos),
+        "lessons" => no_args(SlashCommand::Lessons),
         "queue" => Ok(SlashCommand::Queue {
             states: rest.split_whitespace().map(str::to_owned).collect(),
         }),
@@ -189,6 +193,19 @@ fn split_word(text: &str) -> (&str, &str) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn repos_and_lessons_take_no_arguments() {
+        assert_eq!(
+            parse_line("/repos"),
+            ChatInput::Command(SlashCommand::Repos)
+        );
+        assert_eq!(
+            parse_line("/lessons"),
+            ChatInput::Command(SlashCommand::Lessons)
+        );
+        assert!(matches!(parse_line("/repos x"), ChatInput::Invalid(_)));
+    }
+
     use archon_core::id::QuestionId;
 
     use super::*;

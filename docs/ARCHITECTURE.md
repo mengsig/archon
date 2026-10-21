@@ -646,6 +646,10 @@ validation refuses `[aether] socket` or `address`.
   `tui-host-commands.json` in the data directory and passes
   `--host-commands <file>` (`"host": "archon"`), so they join the TUI's
   slash menu and are sent as ordinary messages for archond to apply.
+  The file also carries an optional `welcome` block (title `Archon`, up to
+  eight lines: repositories, queue counts, an example request, the `/` hint)
+  built from archond's status at launch; when archond does not answer within
+  one second the block is a plain fallback line. Older Aether ignores it.
   `/pause` and `/resume` are Aether built-ins and stay `archon chat` commands. An Aether whose
   `tui --help` lists no `--host-commands` gets a warning and no host
   commands. There is no additional renderer or refresh loop.

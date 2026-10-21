@@ -277,7 +277,7 @@ fn dedicated_tui_seeds_calm_and_overrides_inherited_mode() {
             std::fs::read_to_string(env.path("config/aether/modes/calm.toml")).unwrap();
         assert!(definition.contains("role = \"archon-orchestrator\""));
         assert!(!env.path("aether/modes/calm.toml").exists());
-        assert_eq!(server.join().unwrap().len(), 2);
+        assert_eq!(server.join().unwrap().len(), 3);
     }
 }
 

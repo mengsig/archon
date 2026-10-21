@@ -113,6 +113,14 @@ async fn run_remote(
             let text = views::queue_text(client, query).await?;
             chat.print(&text)
         }
+        SlashCommand::Repos => {
+            let text = crate::format::repos(&views::fetch_repos(client).await?);
+            chat.print(&text)
+        }
+        SlashCommand::Lessons => {
+            let text = views::proposed_lessons_text(client).await?;
+            chat.print(&text)
+        }
         SlashCommand::Item(id) => {
             let item = views::resolve_item(client, &id).await?;
             let text = views::item_text(client, item, false).await?;

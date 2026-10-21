@@ -3,6 +3,7 @@
 
 use archon_client::ArchonClient;
 use archon_core::id::{QueueItemId, queue_item_prefix};
+use archon_core::lesson::{LessonQuery, LessonState};
 use archon_core::protocol::{DaemonStatus, ItemQuery, ItemSummary, Reply, Request};
 use archon_core::queue::QueueState;
 use archon_core::repo::Repo;
@@ -105,6 +106,18 @@ pub async fn queue_text(client: &ArchonClient, query: ItemQuery) -> anyhow::Resu
     let rows = fetch_summaries(client, query).await?;
     let names = format::repo_names(&fetch_repos(client).await?);
     Ok(format::items(&rows, &names, archon_core::now()))
+}
+
+/// The proposed lessons, and how to accept or retract one.
+pub async fn proposed_lessons_text(client: &ArchonClient) -> anyhow::Result<String> {
+    let query = LessonQuery {
+        state: Some(LessonState::Proposed),
+        ..LessonQuery::default()
+    };
+    match client.request(Request::Lessons(query)).await? {
+        Reply::Lessons(lessons) => Ok(crate::cmd::lessons::proposed_text(&lessons)),
+        other => Err(unexpected(&other, "lessons")),
+    }
 }
 
 /// `full` shows every stage's whole summary instead of its first lines.

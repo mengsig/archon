@@ -316,7 +316,7 @@ fn tui_start_gives_the_instance_its_own_voice_toml() {
         env.path("data/tui-host-commands.json").display()
     );
     assert_eq!(verbs, [tui.clone(), tui], "the TUI started both times");
-    assert_eq!(server.join().unwrap().len(), 4);
+    assert_eq!(server.join().unwrap().len(), 6);
     assert_eq!(contents(&env.path("operator-aether")), operator_before);
 }
 

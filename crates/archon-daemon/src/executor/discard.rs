@@ -50,8 +50,14 @@ pub(super) async fn discard(
         let store = ctx.store.lock().await;
         let finished = store.run(run)?;
         assert_eq!(&finished.id, run, "the store returns the run asked for");
-        if !item_stopped(&store, &table.in_flight, &finished.item)? {
-            return Ok(FollowUp::default());
+        match item_stopped(&store, &table.in_flight, &finished.item) {
+            Ok(true) => {}
+            Ok(false) => return Ok(FollowUp::default()),
+            Err(error) if !error.is_store() => {
+                tracing::warn!(%run, %error, "experiments kept: the item's records are unreadable");
+                return Ok(FollowUp::default());
+            }
+            Err(error) => return Err(error),
         }
         assert!(
             !table.drivers.contains_key(run),

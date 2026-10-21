@@ -48,11 +48,11 @@ pub(super) async fn finish_run(
     let now = archon_core::now();
     let finished = {
         let mut store = ctx.store.lock().await;
-        let stages = store.stage_runs(&run.id)?;
         run.cost_usd = store.spend_for_run(&run.id, archon_core::cost::API_EQUIVALENT)?;
         run.shipped = match &proof {
             ShippingProof::Daemon => true,
-            ShippingProof::Stage(id) => stages
+            ShippingProof::Stage(id) => store
+                .stage_runs(&run.id)?
                 .iter()
                 .any(|s| &s.stage_id == id && s.state == StageState::Completed),
             ShippingProof::None => false,
@@ -178,7 +178,11 @@ fn item_state(run: &PipelineRun) -> QueueState {
 
 /// The newest `pr_url` a completed stage reported (the ship stage's).
 async fn pr_url(ctx: &DaemonContext, run: &PipelineRun) -> Result<Option<String>, ArchonError> {
-    let stages = ctx.store.lock().await.stage_runs(&run.id)?;
+    let stages = match ctx.store.lock().await.stage_runs(&run.id) {
+        Ok(stages) => stages,
+        Err(error) if !error.is_store() => return Ok(None),
+        Err(error) => return Err(error),
+    };
     Ok(archon_core::run::pr_url(stages.iter()).map(str::to_owned))
 }
 
@@ -290,7 +294,13 @@ pub(super) async fn announce(
     let summary = outcome_text(item);
     let notice = if matches!(item.state, QueueState::Failed { .. }) {
         let stages = match run {
-            Some(run) => ctx.store.lock().await.stage_runs(&run.id)?,
+            Some(run) => match ctx.store.lock().await.stage_runs(&run.id) {
+                Err(error) if !error.is_store() => {
+                    tracing::warn!(run = %run.id, %error, "stage rows unreadable; notice without them");
+                    Vec::new()
+                }
+                other => other?,
+            },
             None => Vec::new(),
         };
         failure_notice(item, run, &stages)

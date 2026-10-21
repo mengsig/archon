@@ -49,7 +49,7 @@ pub(super) fn to_json<T: Serialize>(value: &T, what: &str) -> Result<String, Arc
 
 /// A row that no longer decodes is corrupted storage, never a caller error.
 pub(super) fn from_json<T: DeserializeOwned>(raw: &str, what: &str) -> Result<T, ArchonError> {
-    serde_json::from_str(raw).map_err(|e| ArchonError::Store(format!("decode {what}: {e}")))
+    serde_json::from_str(raw).map_err(|e| ArchonError::Corrupt(format!("decode {what}: {e}")))
 }
 
 pub(super) fn to_i64(value: u64, what: &str) -> Result<i64, ArchonError> {

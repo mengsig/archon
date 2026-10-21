@@ -285,10 +285,11 @@ fn a_stored_ship_mode_that_is_none_is_an_error_naming_the_repository() {
     drop(conn);
 
     let store = Store::open(&path).unwrap();
-    let expected = "store: decode repository \"web\": ship mode \"gated\" is not one of pr, local";
+    let expected =
+        "corrupt record: decode repository \"web\": ship mode \"gated\" is not one of pr, local";
     for reference in [web.name.clone(), web.id.to_string()] {
         let error = store.repo(&RepoRef(reference)).unwrap_err();
-        assert!(matches!(error, ArchonError::Store(_)), "{error}");
+        assert!(matches!(error, ArchonError::Corrupt(_)), "{error}");
         assert!(error.to_string().starts_with(expected), "{error}");
     }
     let listed = store.repos().unwrap_err();

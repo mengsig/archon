@@ -178,6 +178,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "futures-util",
+ "rusqlite",
  "rustix",
  "serde",
  "serde_json",

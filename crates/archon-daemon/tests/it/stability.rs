@@ -189,3 +189,33 @@ async fn an_unusable_quarantine_directory_does_not_stop_recovery() {
         QueueState::Running { .. }
     ));
 }
+
+/// A stage row that no longer decodes fails its run with the way out;
+/// recovery still serves the other item.
+#[tokio::test]
+async fn an_undecodable_stage_row_fails_its_run_and_recovery_serves_the_rest() {
+    let mut h = Harness::new().await;
+    let broken = h.enqueue("broken stage row").await;
+    let fine = h.enqueue("fine").await;
+    h.dispatch().await;
+    let run = h.run(&broken.id).await;
+    let db = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    db.execute(
+        "UPDATE stage_runs SET data = '{' WHERE run = ?1",
+        [run.id.as_str()],
+    )
+    .unwrap();
+    drop(db);
+
+    h.restart();
+    executor::recover(&h.ctx).await.expect("recovery succeeds");
+
+    let QueueState::Failed { error, .. } = h.state(&broken.id).await else {
+        panic!("the item with the unreadable stage row fails");
+    };
+    assert!(error.contains("archon queue retry"), "{error}");
+    assert!(matches!(
+        h.state(&fine.id).await,
+        QueueState::Running { .. }
+    ));
+}

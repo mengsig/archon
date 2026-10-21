@@ -201,8 +201,8 @@ async fn read_cursor(ctx: &DaemonContext, key: &str) -> Result<Option<u64>, Arch
         Some(raw) => match raw.parse() {
             Ok(seq) => Ok(Some(seq)),
             Err(error) => {
-                tracing::warn!(key, %raw, %error, "unreadable event cursor; reading from the start");
-                Ok(None)
+                tracing::warn!(key, %raw, %error, "unreadable event cursor; replaying from the start");
+                Ok(Some(0))
             }
         },
     }

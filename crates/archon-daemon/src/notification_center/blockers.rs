@@ -22,14 +22,6 @@ fn load(store: &archon_queue::Store, item: &QueueItemId) -> Result<Vec<String>, 
         .map_err(|e| ArchonError::Corrupt(format!("blockers posted for item {item}: {e}")))
 }
 
-/// Whether some notification posted for `item` is still open.
-pub(crate) fn any_open(
-    store: &archon_queue::Store,
-    item: &QueueItemId,
-) -> Result<bool, ArchonError> {
-    Ok(!load(store, item)?.is_empty())
-}
-
 /// Note that the blocker or outcome `posted` is open for `item`.
 pub(super) async fn remember(
     ctx: &DaemonContext,

@@ -209,11 +209,10 @@ pub(super) async fn list(ctx: &DaemonContext, query: &ItemQuery) -> Result<Reply
     Ok(Reply::Items(ctx.store.lock().await.items(query)?))
 }
 
-/// Run costs include stages and descendants, whose ledger costs remain current even
-/// after they settle. Persisted finish-time snapshots are not authoritative.
 /// Viewing an item reads its outcome: what the notification center holds for
 /// it, or is yet to be posted for it, is resolved in feed order, so the center
-/// counts only what needs action. A settled item asks once per feed head.
+/// counts only what needs action. Only a settled item asks, so a blocker still
+/// awaiting its answer stays; it asks once per feed head.
 async fn mark_viewed(ctx: &DaemonContext, id: &QueueItemId) -> Result<(), ArchonError> {
     let asked = {
         let store = ctx.store.lock().await;
@@ -222,10 +221,9 @@ async fn mark_viewed(ctx: &DaemonContext, id: &QueueItemId) -> Result<(), Archon
             archon_queue::store::keys::NOTIFICATION_CENTER_VIEWED
         );
         let head = store.last_feed_seq()?.to_string();
-        let open = crate::notification_center::blockers::any_open(&store, id)?;
         let settled = store.item(id)?.state.is_terminal();
         let unasked = store.kv_get(&key)?.as_deref() != Some(head.as_str());
-        open || (settled && unasked)
+        settled && unasked
     };
     if !asked {
         return Ok(());
@@ -240,6 +238,8 @@ async fn mark_viewed(ctx: &DaemonContext, id: &QueueItemId) -> Result<(), Archon
     store.kv_set(&key, &head)
 }
 
+/// Run costs include stages and descendants, whose ledger costs remain current even
+/// after they settle. Persisted finish-time snapshots are not authoritative.
 pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, ArchonError> {
     mark_viewed(ctx, id).await?;
     let waiting = super::waiting::WaitingView::read(ctx).await?;

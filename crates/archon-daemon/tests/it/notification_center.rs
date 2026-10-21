@@ -717,30 +717,61 @@ async fn clear(h: &Harness, item: Option<archon_core::id::QueueItemId>) {
 }
 
 #[tokio::test]
-async fn viewing_an_item_resolves_its_outcome_so_it_stops_counting_as_unread() {
+async fn viewing_a_settled_item_resolves_its_outcome_but_a_live_one_keeps_its_blocker() {
     let h = Harness::new().await;
     let center = Center::default();
     center.install(&h);
     let _bridge = bridge(&h, h.connect().await).await;
+    let live = crate::link_common::queued_item(&h.ctx, h.dir.path()).await;
     let item = crate::link_common::queued_item(&h.ctx, h.dir.path()).await;
-    let outcome = feed::notify(
+    let key = |posted: &archon_core::notify::FeedItem| match &posted.entry {
+        FeedEntry::Notification(n) => n.id.to_string(),
+        other => panic!("a notification, not {other:?}"),
+    };
+    let blocker = feed::notify(
+        &h.ctx,
+        NotificationKind::Blocker,
+        "needs you",
+        Some(live.clone()),
+        None,
+    )
+    .await
+    .unwrap();
+    let blocker = key(&blocker);
+    posted(&h, &center, &blocker).await;
+    let view = |item: archon_core::id::QueueItemId| {
+        let h = &h;
+        async move {
+            let request = Request::GetItem { item };
+            let reply = handlers::handle(&h.ctx, ClientKind::ArchonCli, request).await;
+            assert!(matches!(reply, Ok(Reply::ItemDetail(_))), "{reply:?}");
+        }
+    };
+    view(live).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(center.by_key(&blocker).unwrap()["state"], "unread");
+
+    let done = feed::notify(
         &h.ctx,
         NotificationKind::Outcome,
-        "Item finished",
+        "Item cancelled",
         Some(item.clone()),
         None,
     )
     .await
     .unwrap();
-    let key = match &outcome.entry {
-        FeedEntry::Notification(n) => n.id.to_string(),
-        other => panic!("a notification, not {other:?}"),
-    };
-    posted(&h, &center, &key).await;
-    assert_eq!(center.by_key(&key).unwrap()["state"], "unread");
-
-    let request = Request::GetItem { item };
-    let reply = handlers::handle(&h.ctx, ClientKind::ArchonCli, request).await;
-    assert!(matches!(reply, Ok(Reply::ItemDetail(_))), "{reply:?}");
-    assert_eq!(wait_for_state(&center, &key, "resolved").await, "resolved");
+    let done = key(&done);
+    posted(&h, &center, &done).await;
+    h.ctx
+        .store
+        .lock()
+        .await
+        .transition_item(
+            &item,
+            archon_core::queue::QueueState::Cancelled { reason: None },
+            archon_core::now(),
+        )
+        .unwrap();
+    view(item).await;
+    assert_eq!(wait_for_state(&center, &done, "resolved").await, "resolved");
 }

@@ -10,7 +10,7 @@
 //! the questions with what Aether holds and applies answers given meanwhile.
 
 mod answers;
-pub(crate) mod blockers;
+mod blockers;
 mod posts;
 
 use std::time::Duration;

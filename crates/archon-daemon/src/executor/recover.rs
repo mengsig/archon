@@ -148,24 +148,21 @@ pub(super) async fn recover(ctx: &DaemonContext) -> Result<FollowUp, ArchonError
     reset_quarantine(ctx).await?;
     let (runs, answers) = {
         let mut store = ctx.store.lock().await;
-        let requeued = startup_sweep(
-            ctx,
-            "requeue-orphans",
-            store.requeue_orphaned_dispatching(now),
-        )?;
+        let requeued = startup_sweep(ctx, "requeue-orphans", || {
+            store.requeue_orphaned_dispatching(now)
+        })?;
         if !requeued.is_empty() {
             tracing::info!(
                 count = requeued.len(),
                 "requeued dispatching items without a run"
             );
         }
-        let mut answers =
-            startup_sweep(ctx, "close-withdrawn", store.close_withdrawn_questions(now))?;
-        answers.extend(startup_sweep(
-            ctx,
-            "close-decided",
-            store.close_decided_questions(now),
-        )?);
+        let mut answers = startup_sweep(ctx, "close-withdrawn", || {
+            store.close_withdrawn_questions(now)
+        })?;
+        answers.extend(startup_sweep(ctx, "close-decided", || {
+            store.close_decided_questions(now)
+        })?);
         if !answers.is_empty() {
             tracing::info!(
                 count = answers.len(),
@@ -174,7 +171,19 @@ pub(super) async fn recover(ctx: &DaemonContext) -> Result<FollowUp, ArchonError
         }
         let (runs, unreadable) = store.active_runs_lenient()?;
         for bad in &unreadable {
-            set_aside_unreadable_run(ctx, &mut store, bad, now)?;
+            let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                set_aside_unreadable_run(ctx, &mut store, bad, now)
+            }));
+            match done {
+                Ok(Err(error)) if error.is_store() => return Err(error),
+                Ok(Err(error)) => {
+                    tracing::error!(run = %bad.run, %error, "an unreadable run could not be set aside; it is left as it is");
+                }
+                Ok(Ok(())) => {}
+                Err(_) => {
+                    tracing::error!(run = %bad.run, "an unreadable run record failed an internal check; it is left as it is")
+                }
+            }
         }
         let mut kept = Vec::with_capacity(runs.len());
         for run in runs {
@@ -188,11 +197,11 @@ pub(super) async fn recover(ctx: &DaemonContext) -> Result<FollowUp, ArchonError
         (kept, answers)
     };
     crate::feed::publish(ctx, answers);
-    startup_sweep(
-        ctx,
-        "close-stale-questions",
-        crate::reports::close_stale_questions(ctx).await,
-    )?;
+    let stale = super::coordination::guarded("close-stale-questions", async {
+        crate::reports::close_stale_questions(ctx).await
+    })
+    .await;
+    startup_sweep(ctx, "close-stale-questions", || stale)?;
     ctx.recovery.count(runs.len());
     let mut follow = FollowUp::poke();
     // One run at a time, each under the store's lock only briefly, so
@@ -224,8 +233,13 @@ pub(super) async fn recover(ctx: &DaemonContext) -> Result<FollowUp, ArchonError
 fn startup_sweep<T: Default>(
     ctx: &DaemonContext,
     sweep: &str,
-    result: Result<T, ArchonError>,
+    run: impl FnOnce() -> Result<T, ArchonError>,
 ) -> Result<T, ArchonError> {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).unwrap_or_else(|_| {
+        Err(ArchonError::Corrupt(format!(
+            "a stored record made the {sweep} sweep fail an internal check"
+        )))
+    });
     match result {
         Err(error) if !error.is_store() => {
             tracing::error!(%sweep, %error, "a startup sweep met a record it cannot read and was skipped");
@@ -294,7 +308,11 @@ fn set_aside_unreadable_run(
     );
     let record = archon_core::quarantine::Quarantined::new(
         "run",
-        &bad.run,
+        if bad.run.is_empty() {
+            "unnamed-run"
+        } else {
+            &bad.run
+        },
         &format!("item {item}: {message}"),
         &format!("archon queue retry {item}"),
         &format!("archon queue cancel {item}"),

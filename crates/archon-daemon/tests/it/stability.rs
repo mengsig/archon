@@ -578,3 +578,29 @@ async fn unreadable_records_in_the_startup_sweeps_do_not_stop_recovery() {
         .collect();
     assert!(kinds.contains(&"startup".to_owned()), "{kinds:?}");
 }
+
+/// A run row whose indexed id is empty is left as it is; recovery goes on.
+#[tokio::test]
+async fn a_run_row_with_an_empty_id_does_not_stop_recovery() {
+    let mut h = Harness::new().await;
+    let broken = h.enqueue("empty run id").await;
+    let fine = h.enqueue("fine").await;
+    h.dispatch().await;
+    let run = h.run(&broken.id).await;
+    let db = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    db.execute("PRAGMA foreign_keys = OFF", []).unwrap();
+    db.execute(
+        "UPDATE runs SET id = '', data = '{' WHERE id = ?1",
+        [run.id.as_str()],
+    )
+    .unwrap();
+    drop(db);
+
+    h.restart();
+    executor::recover(&h.ctx).await.expect("recovery succeeds");
+
+    assert!(matches!(
+        h.state(&fine.id).await,
+        QueueState::Running { .. }
+    ));
+}

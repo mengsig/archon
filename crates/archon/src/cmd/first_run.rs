@@ -168,7 +168,8 @@ fn remember_declined(file: &Path, top: &Path) -> anyhow::Result<()> {
         .append(true)
         .open(file)
         .with_context(|| format!("opening {}", file.display()))?;
-    writeln!(list, "{}", top.display()).with_context(|| format!("writing {}", file.display()))
+    // The leading newline keeps a hand-edited, unterminated last line apart.
+    writeln!(list, "\n{}", top.display()).with_context(|| format!("writing {}", file.display()))
 }
 
 async fn offer_repo(input: &mut impl BufRead, out: &mut impl Write) -> anyhow::Result<bool> {
@@ -273,6 +274,10 @@ mod tests {
         assert!(!is_declined(&file, two).unwrap(), "a prefix is not a match");
         remember_declined(&file, two).unwrap();
         assert!(is_declined(&file, one).unwrap() && is_declined(&file, two).unwrap());
+        std::fs::write(&file, "/work/a").unwrap();
+        remember_declined(&file, Path::new("/work/b")).unwrap();
+        assert!(is_declined(&file, Path::new("/work/a")).unwrap());
+        assert!(is_declined(&file, Path::new("/work/b")).unwrap());
     }
 
     #[test]

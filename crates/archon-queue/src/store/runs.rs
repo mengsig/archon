@@ -486,6 +486,41 @@ pub(super) fn live_stages(conn: &Connection) -> Result<Vec<StageRun>, ArchonErro
     Ok(out)
 }
 
+/// Delete the stage rows of `run` that no longer decode, returning their ids
+/// and raw data. Their agents stay mapped to the run in `agent_runs`.
+pub(super) fn drop_unreadable_stages(
+    conn: &mut Connection,
+    run: &PipelineRunId,
+) -> Result<Vec<(String, String)>, ArchonError> {
+    let tx = write_tx(conn)?;
+    let rows: Vec<(String, String)> = {
+        let mut stmt = tx
+            .prepare_cached("SELECT id, data FROM stage_runs WHERE run = ?1")
+            .ctx("list stage runs")?;
+        let found = stmt
+            .query_map([run.as_str()], |row| Ok((row.get(0)?, row.get(1)?)))
+            .ctx("list stage runs")?;
+        found
+            .collect::<rusqlite::Result<_>>()
+            .ctx("read stage runs")?
+    };
+    let bad: Vec<(String, String)> = rows
+        .into_iter()
+        .filter(|(_, data)| from_json::<StageRun>(data, "stage run").is_err())
+        .collect();
+    for (id, _) in &bad {
+        tx.execute(
+            "UPDATE operator_feedback SET stage_run = NULL WHERE stage_run = ?1",
+            [id],
+        )
+        .ctx("detach feedback")?;
+        tx.execute("DELETE FROM stage_runs WHERE id = ?1", [id])
+            .ctx("delete unreadable stage run")?;
+    }
+    tx.commit().ctx("commit unreadable stage runs")?;
+    Ok(bad)
+}
+
 pub(super) fn stages_of(
     conn: &Connection,
     run: &PipelineRunId,

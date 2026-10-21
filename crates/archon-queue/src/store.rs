@@ -363,6 +363,14 @@ impl Store {
     pub fn upsert_stage_run(&mut self, stage: &StageRun) -> Result<(), ArchonError> {
         runs::upsert_stage(&mut self.conn, stage)
     }
+    /// Delete `run`'s stage rows that do not decode; the `(id, raw data)` of
+    /// each is returned so the caller can keep them for the operator.
+    pub fn drop_unreadable_stages(
+        &mut self,
+        run: &PipelineRunId,
+    ) -> Result<Vec<(String, String)>, ArchonError> {
+        runs::drop_unreadable_stages(&mut self.conn, run)
+    }
     /// Ordered by started_at, attempt, fan_index.
     pub fn stage_runs(&self, run: &PipelineRunId) -> Result<Vec<StageRun>, ArchonError> {
         runs::stages_of(&self.conn, run)

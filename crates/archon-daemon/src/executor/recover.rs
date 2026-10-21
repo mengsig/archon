@@ -270,6 +270,10 @@ async fn fail_unreadable(
     error: ArchonError,
 ) -> Result<FollowUp, ArchonError> {
     quarantine_run(ctx, &run, &error);
+    let dropped = ctx.store.lock().await.drop_unreadable_stages(&run.id)?;
+    for (id, data) in &dropped {
+        tracing::error!(run = %run.id, stage_run = %id, %data, "unreadable stage row removed");
+    }
     let stage = run.state.live_stage().unwrap_or("recovery").to_owned();
     let message = unresumable_message(&run, &error);
     let failed = finish::fail_run(ctx, table, run.clone(), stage, message, true);

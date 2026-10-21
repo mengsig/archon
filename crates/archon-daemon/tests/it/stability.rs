@@ -218,6 +218,9 @@ async fn an_undecodable_stage_row_fails_its_run_and_recovery_serves_the_rest() {
         h.state(&fine.id).await,
         QueueState::Running { .. }
     ));
+    let store = h.ctx.store.lock().await;
+    assert!(store.stage_runs(&run.id).expect("readable now").is_empty());
+    assert!(store.stage_runs_for_item(&broken.id).is_ok());
 }
 
 /// After an undecodable live stage row is set aside, the sweeps over live

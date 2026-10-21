@@ -486,8 +486,8 @@ pub(super) fn live_stages(conn: &Connection) -> Result<Vec<StageRun>, ArchonErro
     Ok(out)
 }
 
-/// Delete the stage rows of `run` that no longer decode, returning their ids
-/// and raw data. Their agents stay mapped to the run in `agent_runs`.
+/// Delete the stage rows of `run` that no longer decode and no operator
+/// feedback cites, returning their ids and raw data. Their agents stay mapped to the run in `agent_runs`.
 pub(super) fn drop_unreadable_stages(
     conn: &mut Connection,
     run: &PipelineRunId,
@@ -508,17 +508,27 @@ pub(super) fn drop_unreadable_stages(
         .into_iter()
         .filter(|(_, data)| from_json::<StageRun>(data, "stage run").is_err())
         .collect();
-    for (id, _) in &bad {
-        tx.execute(
-            "UPDATE operator_feedback SET stage_run = NULL WHERE stage_run = ?1",
-            [id],
-        )
-        .ctx("detach feedback")?;
-        tx.execute("DELETE FROM stage_runs WHERE id = ?1", [id])
+    let mut dropped = Vec::with_capacity(bad.len());
+    for (id, data) in bad {
+        // Feedback rows tie stage_run to model/effort/revision by CHECK
+        // constraints, so a row they cite is kept rather than detached.
+        let cited: bool = tx
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM operator_feedback WHERE stage_run = ?1)",
+                [&id],
+                |row| row.get(0),
+            )
+            .ctx("check feedback on unreadable stage run")?;
+        if cited {
+            tracing::warn!(stage_run = %id, "an unreadable stage run is kept: operator feedback cites it");
+            continue;
+        }
+        tx.execute("DELETE FROM stage_runs WHERE id = ?1", [&id])
             .ctx("delete unreadable stage run")?;
+        dropped.push((id, data));
     }
     tx.commit().ctx("commit unreadable stage runs")?;
-    Ok(bad)
+    Ok(dropped)
 }
 
 pub(super) fn stages_of(

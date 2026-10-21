@@ -252,3 +252,51 @@ async fn an_undecodable_live_stage_row_does_not_hide_the_healthy_ones() {
     assert!(live.iter().any(|stage| stage.run == healthy.id));
     assert!(live.iter().all(|stage| stage.run != run.id));
 }
+
+/// A stage row that operator feedback cites is kept: detaching it would
+/// break the feedback table's CHECK constraints.
+#[tokio::test]
+async fn an_unreadable_stage_row_cited_by_feedback_is_kept() {
+    let h = Harness::new().await;
+    let broken = h.enqueue("cited stage row").await;
+    h.dispatch().await;
+    let run = h.run(&broken.id).await;
+    let db = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    let stage: String = db
+        .query_row(
+            "SELECT id FROM stage_runs WHERE run = ?1",
+            [run.id.as_str()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    db.execute(
+        "INSERT INTO operator_feedback (id, request_key, item, run, stage, stage_run, model,
+             effort, repo, pipeline, revision, review, task_class, cause, reason, observed_at, data)
+         VALUES ('fb1', 'k', ?1, ?2, 's', ?3, 'm', 'medium', 'r', 'p', 'rev', 'rv', 'tc',
+             'quality', 'why', '2026-01-01T00:00:00Z', '{}')",
+        [broken.id.as_str(), run.id.as_str(), stage.as_str()],
+    )
+    .unwrap();
+    db.execute("UPDATE stage_runs SET data = '{' WHERE id = ?1", [&stage])
+        .unwrap();
+    drop(db);
+
+    let dropped = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .drop_unreadable_stages(&run.id)
+        .expect("a cited row is skipped, not an error");
+
+    assert!(dropped.is_empty(), "{dropped:?}");
+    let db = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    let kept: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM stage_runs WHERE id = ?1",
+            [&stage],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(kept, 1);
+}

@@ -558,15 +558,26 @@ async fn a_done_initiative_with_a_rerun_member_ships_and_reconciles_without_pani
     archon_daemon::executor::coordination::reconcile(&h.ctx)
         .await
         .unwrap();
+    assert!(
+        prs(&h)
+            .as_object()
+            .unwrap()
+            .values()
+            .all(|p| p["isDraft"] == true)
+    );
     finish_rerun(&h, again).await;
     archon_daemon::executor::coordination::reconcile(&h.ctx)
         .await
         .unwrap();
     assert!(matches!(h.state(again).await, QueueState::Succeeded { .. }));
-    assert!(matches!(
-        state().await,
-        InitiativeState::Done | InitiativeState::Shipping
-    ));
+    assert!(
+        prs(&h)
+            .as_object()
+            .unwrap()
+            .values()
+            .all(|p| p["isDraft"] == false)
+    );
+    assert_eq!(state().await, InitiativeState::Done);
     let other = &detail.members[1].id;
     assert!(matches!(h.state(other).await, QueueState::Succeeded { .. }));
 }

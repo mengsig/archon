@@ -255,6 +255,14 @@ async fn reconcile_one(
     if !initiative.state.is_terminal() {
         deliver_contract(ctx, &detail).await?;
         advance(ctx, &detail, pass).await?;
+    } else if initiative.state == InitiativeState::Done {
+        // A member that ran again drafts the pull requests; they turn ready
+        // once every member has succeeded again.
+        let passed = detail
+            .members
+            .iter()
+            .all(|m| matches!(m.state, QueueState::Succeeded { .. }));
+        sync_prs(ctx, &detail, passed, pass).await?;
     }
     announce(ctx, id).await
 }

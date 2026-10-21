@@ -69,15 +69,18 @@ pub(crate) async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
 /// One [`reconcile`] pass in its own task, so a panic on one record's data
 /// is logged and retried on the next pass instead of stopping the daemon.
 async fn isolated_pass(ctx: &Arc<DaemonContext>) -> Result<(), ArchonError> {
-    let pass = tokio::spawn({
+    // A JoinSet aborts its task when dropped, so stopping the worker stops the pass.
+    let mut pass = tokio::task::JoinSet::new();
+    pass.spawn({
         let ctx = ctx.clone();
         async move { reconcile(&ctx).await }
     });
-    match pass.await {
-        Ok(result) => result,
-        Err(error) => Err(ArchonError::Protocol(format!(
+    match pass.join_next().await {
+        Some(Ok(result)) => result,
+        Some(Err(error)) => Err(ArchonError::Protocol(format!(
             "a coordination pass panicked or was cancelled: {error}"
         ))),
+        None => unreachable!("one task was spawned"),
     }
 }
 

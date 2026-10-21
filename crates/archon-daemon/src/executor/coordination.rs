@@ -45,7 +45,7 @@ pub(crate) async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     let mut observed: Option<Instant> = None;
     loop {
         if ctx.aether.is_connected() {
-            match reconcile(&ctx).await {
+            match isolated_pass(&ctx).await {
                 Ok(()) => {}
                 Err(error) if error.is_store() => return Err(error),
                 Err(error) => tracing::warn!(%error, "coordination will retry"),
@@ -63,6 +63,21 @@ pub(crate) async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
             () = ctx.coordination.changed.notified() => {}
             () = tokio::time::sleep(FALLBACK_EVERY) => {}
         }
+    }
+}
+
+/// One [`reconcile`] pass in its own task, so a panic on one record's data
+/// is logged and retried on the next pass instead of stopping the daemon.
+async fn isolated_pass(ctx: &Arc<DaemonContext>) -> Result<(), ArchonError> {
+    let pass = tokio::spawn({
+        let ctx = ctx.clone();
+        async move { reconcile(&ctx).await }
+    });
+    match pass.await {
+        Ok(result) => result,
+        Err(error) => Err(ArchonError::Protocol(format!(
+            "a coordination pass panicked or was cancelled: {error}"
+        ))),
     }
 }
 

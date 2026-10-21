@@ -43,7 +43,12 @@ pub(super) async fn record(
         return Err(ArchonError::Protocol("invalid initiative PR URL".into()));
     }
     assert_eq!(item.id, run.item);
-    assert!(!run.branch.is_empty());
+    if run.branch.is_empty() {
+        return Err(ArchonError::Protocol(format!(
+            "run {} of initiative member {} has no branch",
+            run.id, item.id
+        )));
+    }
     ctx.store
         .lock()
         .await
@@ -58,12 +63,17 @@ pub(super) async fn record(
 /// The repository of the stacked item `owner`, as registered.
 fn stack_repo(store: &archon_queue::Store, owner: &QueueItemId) -> Result<Repo, ArchonError> {
     let Some(repo) = store.item(owner)?.repo else {
-        return Err(ArchonError::Store(format!(
+        return Err(ArchonError::Protocol(format!(
             "stacked item {owner} has no repository"
         )));
     };
     let repo = store.repo(&crate::resolve::repo_ref(&repo))?;
-    assert!(repo.path.is_absolute(), "registered paths are canonical");
+    if !repo.path.is_absolute() {
+        return Err(ArchonError::Protocol(format!(
+            "repository of stacked item {owner} has a relative path {}",
+            repo.path.display()
+        )));
+    }
     Ok(repo)
 }
 
@@ -79,7 +89,11 @@ async fn check_stack_base(ctx: &DaemonContext, run: &PipelineRun) -> Result<(), 
         let repo = stack_repo(&store, &owner)?;
         (owner, base, repo)
     };
-    assert!(is_plain_branch(&base), "recorded at the fork");
+    if !is_plain_branch(&base) {
+        return Err(ArchonError::Protocol(format!(
+            "stacked item {owner} recorded {base:?}, which is no plain branch name"
+        )));
+    }
     let binary = &ctx.config.github.binary;
     let pr = gh::view(binary, &repo, &run.branch).await?;
     if pr.base_ref_name != base {
@@ -126,7 +140,11 @@ pub(super) async fn verify_stack(
         }
         (needed, stack_repo(&store, &owner)?)
     };
-    assert!(needed.iter().all(|(sha, _)| stack::is_commit_id(sha)));
+    if let Some((sha, _)) = needed.iter().find(|(sha, _)| !stack::is_commit_id(sha)) {
+        return Err(ArchonError::Protocol(format!(
+            "stack records {sha:?}, which is no commit id"
+        )));
+    }
     let rev = rev.to_owned();
     tokio::task::spawn_blocking(move || {
         for (sha, why) in &needed {
@@ -146,9 +164,13 @@ pub(crate) async fn deliver_contract(
     ctx: &DaemonContext,
     detail: &InitiativeDetail,
 ) -> Result<(), ArchonError> {
-    assert!(!detail.members.is_empty());
     let ceiling = archon_core::initiative::InitiativeLimits::CEILING;
-    assert!(detail.initiative.contract.len() <= ceiling.contract_bytes);
+    if detail.members.is_empty() || detail.initiative.contract.len() > ceiling.contract_bytes {
+        return Err(ArchonError::Protocol(format!(
+            "initiative {} has no members or an oversized contract",
+            detail.initiative.id
+        )));
+    }
     for item in &detail.members {
         let stages = {
             let store = ctx.store.lock().await;
@@ -194,8 +216,12 @@ pub(crate) async fn cancel_members(
     id: &InitiativeId,
 ) -> Result<(), ArchonError> {
     let detail = ctx.store.lock().await.initiative(id)?;
-    assert_eq!(detail.initiative.state, InitiativeState::Cancelled);
-    assert!(!detail.members.is_empty());
+    if detail.initiative.state != InitiativeState::Cancelled {
+        return Err(ArchonError::InvalidTransition(format!(
+            "initiative {id} is {}, not cancelled",
+            detail.initiative.state.as_str()
+        )));
+    }
     for item in detail.members.iter().filter(|m| !m.state.is_terminal()) {
         super::cancel_item(ctx, &item.id, "initiative cancelled").await?;
     }
@@ -238,8 +264,11 @@ async fn advance(
     detail: &InitiativeDetail,
     pass: &mut Pass,
 ) -> Result<(), ArchonError> {
-    assert!(!detail.members.is_empty());
     assert!(!detail.initiative.state.is_terminal());
+    if detail.members.is_empty() {
+        tracing::warn!(initiative = %detail.initiative.id, "initiative has no members; left as it is");
+        return Ok(());
+    }
     let failed = detail.members.iter().any(|m| {
         matches!(
             m.state,
@@ -328,8 +357,21 @@ async fn sync_prs(
         .members
         .iter()
         .all(|m| matches!(m.state, QueueState::Succeeded { .. }));
-    assert!(!ready || passed);
-    assert!(!detail.members.is_empty());
+    // Stored state can disagree (a Done initiative whose member was retried):
+    // such an initiative is not ready, and its pull requests return to draft.
+    let ready = ready && passed;
+    if !ready && detail.initiative.state == InitiativeState::Done {
+        tracing::warn!(
+            initiative = %detail.initiative.id,
+            "initiative is done but not every member succeeded; treated as not ready"
+        );
+    }
+    if detail.members.is_empty() {
+        return Err(ArchonError::Protocol(format!(
+            "initiative {} has no members",
+            detail.initiative.id
+        )));
+    }
     let receipt = format!("initiative_links:{}", detail.initiative.id);
     let desired = serde_json::to_string(&(
         ready,

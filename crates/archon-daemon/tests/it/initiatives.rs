@@ -516,3 +516,90 @@ async fn atomic_members_keep_manual_merge_after_enqueue_and_success() {
         assert_eq!(h.item(id).await.autonomy.merge, MergeMode::Manual);
     }
 }
+
+/// A Done initiative whose member runs again (retried by the operator) must
+/// neither stop the daemon when the member ships nor on a later maintenance pass.
+#[tokio::test]
+async fn a_done_initiative_with_a_rerun_member_ships_and_reconciles_without_panicking() {
+    let h = setup().await;
+    let detail = enqueue(&h, request()).await;
+    h.dispatch().await;
+    for member in &detail.members {
+        finish_item(&h, &member.id).await;
+    }
+    h.dispatch().await;
+    let state = || async {
+        h.ctx
+            .store
+            .lock()
+            .await
+            .initiative(&detail.initiative.id)
+            .unwrap()
+            .initiative
+            .state
+    };
+    assert_eq!(state().await, InitiativeState::Done);
+    let again = &detail.members[0].id;
+    h.cli(Request::RetryItem {
+        item: again.clone(),
+        model_plan: None,
+        model_reasons: None,
+        fresh: false,
+        brief_append: None,
+        stage_timeouts: Default::default(),
+    })
+    .await
+    .unwrap();
+    h.dispatch().await;
+    assert!(!matches!(
+        h.state(again).await,
+        QueueState::Succeeded { .. }
+    ));
+    archon_daemon::executor::coordination::reconcile(&h.ctx)
+        .await
+        .unwrap();
+    finish_rerun(&h, again).await;
+    archon_daemon::executor::coordination::reconcile(&h.ctx)
+        .await
+        .unwrap();
+    assert!(matches!(h.state(again).await, QueueState::Succeeded { .. }));
+    assert!(matches!(
+        state().await,
+        InitiativeState::Done | InitiativeState::Shipping
+    ));
+    let other = &detail.members[1].id;
+    assert!(matches!(h.state(other).await, QueueState::Succeeded { .. }));
+}
+
+async fn finish_rerun(h: &Harness, item: &archon_core::id::QueueItemId) {
+    for _ in 0..5 {
+        let run = h
+            .ctx
+            .store
+            .lock()
+            .await
+            .runs_for_item(item)
+            .unwrap()
+            .pop()
+            .unwrap();
+        for stage in h.running().await.iter().filter(|s| s.run == run.id) {
+            let outcome = if stage.stage_id == "review" {
+                common::verdict(true)
+            } else {
+                common::completed("passed")
+            };
+            archon_daemon::executor::stage_settled(
+                &h.ctx,
+                stage.aether_agent.as_ref().unwrap(),
+                outcome,
+            )
+            .await
+            .unwrap();
+        }
+        h.dispatch().await;
+        if matches!(h.state(item).await, QueueState::Succeeded { .. }) {
+            return;
+        }
+    }
+    panic!("rerun did not succeed: {:?}", h.state(item).await);
+}

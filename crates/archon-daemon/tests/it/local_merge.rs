@@ -191,3 +191,22 @@ async fn an_agents_request_needs_the_operators_confirmation() {
     h.cli(answer).await.expect("the operator confirms");
     assert_eq!(git(&h.repo, &["rev-parse", "main"]), head);
 }
+
+#[tokio::test]
+async fn an_ignored_local_file_the_branch_would_replace_is_never_overwritten() {
+    let h = Harness::new().await;
+    let (item, _, _) = delivered_locally(&h).await;
+    let exclude = h.repo.join(".git/info/exclude");
+    std::fs::write(&exclude, "change.txt\n").unwrap();
+    std::fs::write(h.repo.join("change.txt"), "USER DATA\n").unwrap();
+    let before = git(&h.repo, &["rev-parse", "main"]);
+
+    let merge = merged(&h, &item).await;
+    assert!(
+        matches!(merge.state, MergeState::Refused { .. }),
+        "{merge:?}"
+    );
+    assert_eq!(git(&h.repo, &["rev-parse", "main"]), before);
+    let kept = std::fs::read_to_string(h.repo.join("change.txt")).unwrap();
+    assert_eq!(kept, "USER DATA\n");
+}

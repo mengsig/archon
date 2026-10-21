@@ -142,7 +142,8 @@ fn dirty(tree: &Path) -> Result<Option<String>, ArchonError> {
     Ok((count > 0).then(|| format!("{count} changed file{}", if count == 1 { "" } else { "s" })))
 }
 
-/// Do what `plan` says. `Err` is a refusal found at the last moment.
+/// Do what `plan` says, after checking again that the checkout and the base
+/// are as `check` found them. `Err` is a refusal found at the last moment.
 pub(super) fn land(landing: Landing<'_>, plan: &Plan) -> Result<Result<(), String>, ArchonError> {
     let Plan::FastForward { base_tip, tree } = plan else {
         return Ok(Ok(()));
@@ -154,24 +155,65 @@ pub(super) fn land(landing: Landing<'_>, plan: &Plan) -> Result<Result<(), Strin
         crate::worktree::stack::is_commit_id(base_tip),
         "a full commit"
     );
-    let Some(tree) = tree else {
+    if let Some(why) = changed_since_check(landing, base_tip, tree.as_deref())? {
+        return Ok(Err(why));
+    }
+    let landed = match tree {
         // The old value makes git refuse when the base moved meanwhile.
-        let args = [
-            "update-ref",
-            "-m",
-            "archon merge",
-            &heads(base),
-            head,
-            base_tip,
-        ];
-        return Ok(git(repo, &args)
-            .map(drop)
-            .map_err(|e| moved_meanwhile(base, &e)));
+        None => {
+            let reference = heads(base);
+            let args = [
+                "update-ref",
+                "-m",
+                "archon merge",
+                &reference,
+                head,
+                base_tip,
+            ];
+            git(repo, &args).map(drop)
+        }
+        Some(tree) => git(tree, &["merge", "--ff-only", "--no-overwrite-ignore", head]).map(drop),
     };
-    let args = ["merge", "--ff-only", head];
-    Ok(git(tree, &args)
-        .map(drop)
-        .map_err(|e| moved_meanwhile(base, &e)))
+    if let Err(error) = landed {
+        return Ok(Err(moved_meanwhile(base, &error)));
+    }
+    let now = worktree::commit_id(repo, &heads(base))?;
+    if now.as_deref() != Some(head) {
+        return Ok(Err(format!(
+            "`{base}` does not hold the reviewed commit after the merge; check `git status` in {}",
+            repo.display()
+        )));
+    }
+    Ok(Ok(()))
+}
+
+/// Why the plan no longer holds: the base moved, or its checkout appeared,
+/// went away, moved to another work tree or gained local changes.
+fn changed_since_check(
+    landing: Landing<'_>,
+    base_tip: &str,
+    planned: Option<&Path>,
+) -> Result<Option<String>, ArchonError> {
+    let Landing {
+        item, repo, base, ..
+    } = landing;
+    let tip = worktree::commit_id(repo, &heads(base))?;
+    if tip.as_deref() != Some(base_tip) {
+        return Ok(Some(format!(
+            "`{base}` moved while the merge was starting; nothing was changed, run \
+             `archon merge {item}` again"
+        )));
+    }
+    let now = checked_out(repo, base)?;
+    if now.as_deref() != planned {
+        return Ok(Some(format!(
+            "`{base}` was checked out or switched away from while the merge was starting; \
+             nothing was changed, run `archon merge {item}` again"
+        )));
+    }
+    let Some(tree) = now else { return Ok(None) };
+    Ok(dirty(&tree)?
+        .map(|why| format!("`{base}` gained local changes ({why}); nothing was changed")))
 }
 
 fn moved_meanwhile(base: &str, error: &ArchonError) -> String {
@@ -208,4 +250,63 @@ pub(super) fn review(landing: Landing<'_>, full: bool) -> Result<LocalReview, Ar
         diffstat: stat,
         blocker,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn git_in(dir: &Path, args: &[&str]) -> String {
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t.invalid",
+                "-c",
+                "commit.gpgsign=false",
+            ][..]
+                .iter()
+                .chain(args)
+                .copied()
+                .collect::<Vec<_>>()
+                .as_slice(),
+        )
+        .expect("git")
+    }
+
+    #[test]
+    fn a_checkout_switched_after_the_check_refuses_and_moves_no_other_branch() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let repo = dir.path();
+        git_in(repo, &["init", "--quiet", "--initial-branch=main"]);
+        git_in(repo, &["commit", "--quiet", "--allow-empty", "-m", "one"]);
+        git_in(repo, &["checkout", "--quiet", "-b", "item"]);
+        git_in(repo, &["commit", "--quiet", "--allow-empty", "-m", "two"]);
+        let head = git_in(repo, &["rev-parse", "item"]);
+        git_in(repo, &["checkout", "--quiet", "main"]);
+        let item = QueueItemId::new();
+        let landing = Landing {
+            item: &item,
+            repo,
+            branch: "item",
+            base: "main",
+            head: &head,
+        };
+
+        let plan = check(landing).expect("git").expect("mergeable");
+        assert!(matches!(plan, Plan::FastForward { tree: Some(_), .. }));
+        git_in(repo, &["checkout", "--quiet", "-b", "other"]);
+        let refused = land(landing, &plan).expect("git").expect_err("refused");
+
+        assert!(refused.contains("switched away"), "{refused}");
+        let main = git_in(repo, &["rev-parse", "main"]);
+        assert_eq!(
+            git_in(repo, &["rev-parse", "other"]),
+            main,
+            "other untouched"
+        );
+        assert_ne!(main, head, "main untouched");
+    }
 }

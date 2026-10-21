@@ -74,6 +74,9 @@ pub mod keys {
     pub const NOTIFICATION_CENTER_REFUSED: &str = "notification_center_refused:";
     /// Prefix: + queue item id → the JSON list of keys of the blockers posted for it.
     pub const NOTIFICATION_CENTER_BLOCKERS: &str = "notification_center_blockers:";
+    /// `<item>`: the feed head when a view of the settled item last asked the
+    /// notification center to resolve what it holds for it.
+    pub const NOTIFICATION_CENTER_VIEWED: &str = "notification_center_viewed:";
 }
 
 /// Latest absolute usage for one Aether agent (`agent.usage_updated`).

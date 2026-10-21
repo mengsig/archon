@@ -143,6 +143,25 @@ pub(super) fn check_unchanged(target: &Target) -> Result<Result<(), String>, Arc
             listed(dirty.lines())
         )));
     }
+    let status = git(
+        tree,
+        &[
+            "--no-optional-locks",
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+        ],
+    )?;
+    let present = status
+        .lines()
+        .filter(|line| !is_unshippable(line.get(3..).unwrap_or_default()))
+        .collect::<Vec<_>>();
+    if !present.is_empty() {
+        return Ok(Err(format!(
+            "the run worktree has staged or untracked files, so a change exists: {}",
+            listed(present.into_iter())
+        )));
+    }
     let base = match floor(tree, target)? {
         Ok(base) => base,
         Err(refusal) => return Ok(Err(refusal)),

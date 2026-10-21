@@ -478,7 +478,15 @@ async fn a_no_change_claim_beside_a_commit_or_a_dirty_tree_fails_the_stage() {
     settle_with(&h, json!({"no_change": {"reason": "nothing to do"}})).await;
     let error = failed(&h, &item).await;
     assert!(error.contains("uncommitted changes"), "{error}");
-    assert!(gh.calls().is_empty() && gh2.calls().is_empty());
+
+    let (h, gh3) = delivering().await;
+    let (item, run) = started(&h, "direct").await;
+    std::fs::write(run.workspace.join("new_module.rs"), "fn main() {}\n").unwrap();
+    settle_with(&h, json!({"no_change": {"reason": "nothing to do"}})).await;
+    let error = failed(&h, &item).await;
+    assert!(error.contains("staged or untracked"), "{error}");
+    assert!(error.contains("new_module.rs"), "{error}");
+    assert!(gh.calls().is_empty() && gh2.calls().is_empty() && gh3.calls().is_empty());
 }
 
 /// A stage that leaves no usable record is told what is missing before

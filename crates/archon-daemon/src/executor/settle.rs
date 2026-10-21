@@ -28,7 +28,7 @@ pub(super) async fn settle(
         let mut table = ctx.runs.lock().await;
         return settle_locked(ctx, &mut table, id, outcome).await;
     }
-    let (stage, run, review, daemon_ships, planner) = {
+    let (stage, run, review, daemon_ships, planner, record_stage) = {
         let table = ctx.runs.lock().await;
         let store = ctx.store.lock().await;
         let stage = store.stage_run(id)?;
@@ -43,14 +43,18 @@ pub(super) async fn settle(
         };
         let daemon_ships = driver.is_some_and(|d| d.ships_by_daemon());
         let planner = driver.and_then(|d| swarm::Planner::of(d.spec(), &stage.stage_id));
-        (stage, run, review, daemon_ships, planner)
+        let record_stage = driver.and_then(|d| d.spec().ship_record_stage().map(|s| s.id.clone()));
+        (stage, run, review, daemon_ships, planner, record_stage)
     };
     // Leave the stage live until verification is persisted. If interrupted,
     // reconnect reconciliation reads the task outcome and verifies it again.
     let outcome = ship::verify(ctx, &run, &stage, daemon_ships, outcome).await?;
-    let outcome = match review.records_ship {
-        true => ship::verify_no_change(ctx, &run, outcome).await?,
-        false => outcome,
+    let outcome = match (review.records_ship, &record_stage) {
+        (true, _) => ship::verify_no_change(ctx, &run, outcome).await?,
+        (false, Some(record)) => {
+            ship::verify_standing_no_change(ctx, &run, record, &stage, outcome).await?
+        }
+        (false, None) => outcome,
     };
     let outcome = super::review::verify(ctx, &run, &stage, review, outcome).await?;
     let planned = planner.is_some();

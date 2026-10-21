@@ -15,7 +15,7 @@ pub(crate) mod risk;
 use archon_core::catalog::StageKind;
 use archon_core::error::ArchonError;
 use archon_core::repo::Repo;
-use archon_core::run::{PipelineRun, StageOutcome, StageRun};
+use archon_core::run::{PipelineRun, StageOutcome, StageRun, StageState};
 use serde_json::Value;
 
 use super::{frozen, recover};
@@ -107,6 +107,43 @@ pub(super) async fn verify_no_change(
             error: format!(
                 "the stage reported no change needed ({reason}), but that is not so: {why}. \
                  Either drop the claim and write the ship record with its review, or undo the change."
+            ),
+            infra: false,
+        }),
+    }
+}
+
+/// `outcome`, failed when a stage after the record stage ends with the record
+/// stage's earlier "no change needed" claim no longer true.
+pub(super) async fn verify_standing_no_change(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+    record_stage: &str,
+    stage: &StageRun,
+    outcome: StageOutcome,
+) -> Result<StageOutcome, ArchonError> {
+    if !matches!(outcome, StageOutcome::Completed { .. }) {
+        return Ok(outcome);
+    }
+    let claimed = {
+        let store = ctx.store.lock().await;
+        let latest = store
+            .stage_runs(&run.id)?
+            .into_iter()
+            .filter(|s| s.stage_id == record_stage && s.state == StageState::Completed)
+            .filter(|s| s.started_at <= stage.started_at)
+            .max_by_key(|s| s.started_at);
+        latest.and_then(|s| archon_pipeline::ship::no_change_reason(s.structured.as_ref()))
+    };
+    let Some(reason) = claimed else {
+        return Ok(outcome);
+    };
+    match deliver::prove_unchanged(ctx, run).await? {
+        Ok(()) => Ok(outcome),
+        Err(why) => Ok(StageOutcome::Failed {
+            error: format!(
+                "stage `{record_stage}` reported no change needed ({reason}), but this stage \
+                 left the run branch changed: {why}. Review and ship the change, or undo it."
             ),
             infra: false,
         }),

@@ -240,3 +240,64 @@ fn a_start_that_races_the_stopped_aetherd_is_retried_until_the_store_is_free() {
     stop(&shim.instance, &shim.program).unwrap();
     daemon.join().unwrap();
 }
+
+fn bind_after(socket: PathBuf, delay: Duration) -> JoinHandle<UnixListener> {
+    std::thread::spawn(move || {
+        std::thread::sleep(delay);
+        UnixListener::bind(&socket).unwrap()
+    })
+}
+
+#[test]
+fn a_slow_start_is_waited_for_while_the_daemon_is_healthy() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("aetherd.sock");
+    let listener = bind_after(socket.clone(), Duration::from_millis(600));
+    wait_for_slow_start(&socket, Duration::from_secs(5), Duration::from_secs(10)).unwrap();
+    drop(listener.join().unwrap());
+}
+
+#[test]
+fn a_slow_start_that_keeps_logging_outlasts_the_silence_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("aetherd.sock");
+    let log = dir.path().join("aetherd.startup.log");
+    let quiet = Duration::from_millis(400);
+    let writer = {
+        let log = log.clone();
+        std::thread::spawn(move || {
+            for step in 0..8 {
+                std::fs::write(&log, "recovering\n".repeat(step + 1)).unwrap();
+                std::thread::sleep(Duration::from_millis(150));
+            }
+        })
+    };
+    let listener = bind_after(socket.clone(), Duration::from_millis(1_300));
+    wait_for_slow_start(&socket, quiet, Duration::from_secs(10)).unwrap();
+    writer.join().unwrap();
+    drop(listener.join().unwrap());
+}
+
+#[test]
+fn a_silent_daemon_that_never_answers_fails_the_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("aetherd.sock");
+    let error = wait_for_slow_start(&socket, Duration::from_millis(300), Duration::from_secs(5))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("wrote nothing"), "{error}");
+}
+
+#[test]
+fn aether_giving_up_on_a_living_daemon_is_waited_out_not_failed() {
+    let shim = shim(
+        "echo 'Error: io: the daemon did not answer on the socket within 10s; it is still \
+         running, and anything it wrote while starting is in the log' >&2; exit 1",
+    );
+    let listener = bind_after(shim.instance.socket.clone(), Duration::from_millis(800));
+    std::fs::create_dir_all(shim.instance.socket.parent().unwrap()).unwrap();
+    let start = ensure_running(&shim.instance, &shim.program).unwrap();
+    assert_eq!(start, Start::Started);
+    assert_eq!(shim.calls().len(), 1, "aether daemon ran once, not retried");
+    drop(listener.join().unwrap());
+}

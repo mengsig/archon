@@ -23,6 +23,12 @@ const STORE_HELD: &str = "another aether daemon is already running";
 /// How long an aetherd that stopped answering may take to release its store.
 const RELEASE_WAIT: Duration = Duration::from_secs(15);
 const RELEASE_POLL: Duration = Duration::from_millis(250);
+/// What `aether daemon` says when it gave up waiting for a daemon that lives.
+const STILL_STARTING: [&str; 2] = ["did not answer", "it is still running"];
+/// How long a slow-starting aetherd may stay silent in its startup log.
+const SLOW_START_QUIET: Duration = Duration::from_secs(120);
+/// The longest wait for an aetherd that keeps logging while it starts.
+const SLOW_START_MAX: Duration = Duration::from_secs(30 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Start {
@@ -126,12 +132,62 @@ fn start_daemon(instance: &Instance, aether: &Path) -> anyhow::Result<()> {
             Ok(()) => return Ok(()),
             Err(error) => error,
         };
-        let store_held = format!("{error:#}").contains(STORE_HELD);
+        let said = format!("{error:#}");
+        if STILL_STARTING.iter().all(|part| said.contains(part)) {
+            tracing::info!(socket = %instance.socket.display(), "aetherd is still starting");
+            return wait_for_slow_start(&instance.socket, SLOW_START_QUIET, SLOW_START_MAX);
+        }
+        let store_held = said.contains(STORE_HELD);
         if !store_held || Instant::now() >= deadline {
             return Err(error);
         }
         std::thread::sleep(RELEASE_POLL);
     }
+}
+
+/// Wait for an aetherd that `aether daemon` left running but unanswering,
+/// as it does while startup recovery of a big store runs past its own 10 s.
+/// It is given up on only once its startup log stops growing for `quiet`, or
+/// after `max`: a healthy daemon that is slow never fails the start.
+fn wait_for_slow_start(socket: &Path, quiet: Duration, max: Duration) -> anyhow::Result<()> {
+    assert!(quiet <= max, "the silence limit fits in the total");
+    let log = socket.with_extension("startup.log");
+    let started = Instant::now();
+    let mut seen = log_state(&log);
+    let mut last_progress = started;
+    loop {
+        if is_listening(socket) {
+            return Ok(());
+        }
+        let now = Instant::now();
+        let state = log_state(&log);
+        if state != seen {
+            seen = state;
+            last_progress = now;
+        }
+        if now.duration_since(last_progress) >= quiet {
+            anyhow::bail!(
+                "Archon's aetherd was started but did not answer on {} and wrote nothing to {} \
+                 for {quiet:?}",
+                socket.display(),
+                log.display()
+            );
+        }
+        if now.duration_since(started) >= max {
+            anyhow::bail!(
+                "Archon's aetherd was still starting on {} after {max:?}; see {}",
+                socket.display(),
+                log.display()
+            );
+        }
+        std::thread::sleep(POLL);
+    }
+}
+
+/// Size and modification time of the startup log, `None` while it is absent.
+fn log_state(log: &Path) -> Option<(u64, std::time::SystemTime)> {
+    let meta = std::fs::metadata(log).ok()?;
+    Some((meta.len(), meta.modified().ok()?))
 }
 
 /// Stop the instance's `aetherd` with `aether stop`, and wait until it is

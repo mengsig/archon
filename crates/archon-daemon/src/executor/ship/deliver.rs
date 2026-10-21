@@ -38,6 +38,10 @@ const MAX_ATTEMPTS: u32 = 5;
 /// The wait before the second try; each later one waits twice as long.
 const FIRST_RETRY_WAIT: Duration = Duration::from_secs(15);
 
+/// The record stage's field holding the commit a `local` delivery left on the
+/// run branch, which the merge of that branch is pinned to.
+pub(in crate::executor) const LOCAL_COMMIT_KEY: &str = "local_commit";
+
 fn ship_key(run: &PipelineRunId) -> String {
     format!("{SHIP_KEY_PREFIX}{run}")
 }
@@ -543,16 +547,20 @@ fn persist(
     plan: &ShipPlan,
     outcome: &ShipOutcome,
 ) -> Result<(), ArchonError> {
-    if let ShipOutcome::Shipped {
-        pr_url: Some(url), ..
-    } = outcome
-    {
-        assert!(url.starts_with("https://"), "a pull request GitHub listed");
+    if let ShipOutcome::Shipped { pr_url, commit, .. } = outcome {
+        if let Some(url) = pr_url {
+            assert!(url.starts_with("https://"), "a pull request GitHub listed");
+        }
         let stages = store.stage_runs(&run.id)?;
         let wrote = |s: &&archon_core::run::StageRun| {
             s.stage_id == plan.record_stage && s.state == StageState::Completed
         };
         let Some(record) = stages.iter().rev().find(wrote) else {
+            // A local delivery without a record is still delivered; its
+            // merge then says it has no commit to land.
+            if pr_url.is_none() {
+                return store.kv_set(&ship_key(&run.id), &serde_json::to_string(outcome)?);
+            }
             return Err(ArchonError::Protocol(format!(
                 "run {} ships a record no completed `{}` stage wrote",
                 run.id, plan.record_stage
@@ -563,10 +571,15 @@ fn persist(
         let mut data = data
             .and_then(|d| d.as_object().cloned())
             .unwrap_or_default();
-        data.insert("pr_url".into(), url.clone().into());
+        match pr_url {
+            Some(url) => data.insert("pr_url".into(), url.clone().into()),
+            None => data.insert(LOCAL_COMMIT_KEY.into(), commit.clone().into()),
+        };
         stage.structured = Some(data.into());
         store.upsert_stage_run(&stage)?;
-        super::super::pull_requests::record_delivery(store, &run.id, url)?;
+        if let Some(url) = pr_url {
+            super::super::pull_requests::record_delivery(store, &run.id, url)?;
+        }
     }
     store.kv_set(&ship_key(&run.id), &serde_json::to_string(outcome)?)
 }

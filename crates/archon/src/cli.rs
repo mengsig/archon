@@ -20,7 +20,8 @@ Everyday:
   queue           Inspect and change queue items
   status          Daemon, orchestrator, caps, spend and Aether link
   repo            Register and configure repositories
-  merge           Merge a succeeded item's pull request now
+  merge           Merge a succeeded item's pull request, or land its local branch
+  diff            Review what a local-ship item changed before merging it
 
 Setup:
   setup, doctor   Set Archon up, and check that it works
@@ -122,13 +123,25 @@ pub enum Command {
     },
     /// Merge a succeeded item's pull request now. archond merges only an
     /// open, mergeable pull request at the reviewed commit, on its base,
-    /// with green checks; never with --admin or --auto.
+    /// with green checks; never with --admin or --auto. For a repository
+    /// that ships `local` it fast-forwards the base branch to the item's
+    /// branch instead, refusing when the base moved or has local changes.
     Merge {
         /// The item's qi_… id, or enough of its start to name one item.
         item: String,
         /// Merge although checks are failing, pending or missing.
         #[arg(long)]
         ignore_checks: bool,
+    },
+    /// Show what a succeeded item of a `ship = local` repository changed:
+    /// its branch, the repository, the diffstat, and whether `merge` would
+    /// land it now.
+    Diff {
+        /// The item's qi_… id, or enough of its start to name one item.
+        item: String,
+        /// Every changed file, not one summary line.
+        #[arg(long)]
+        full: bool,
     },
     /// Promote a repository's integration branch into its release branch:
     /// refused unless the full check is green on its exact head; merges the
@@ -1475,6 +1488,15 @@ mod tests {
                 Cli::try_parse_from(std::iter::once("archon").chain(bad.iter().copied())).is_err()
             );
         }
+    }
+
+    #[test]
+    fn diff_names_one_item_and_may_ask_for_every_file() {
+        let Command::Diff { item, full } = parse(&["diff", "qi_01", "--full"]) else {
+            panic!("diff is a command");
+        };
+        assert_eq!((item.as_str(), full), ("qi_01", true));
+        assert!(Cli::try_parse_from(["archon", "diff"]).is_err());
     }
 
     #[test]

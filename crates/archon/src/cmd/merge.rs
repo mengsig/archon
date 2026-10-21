@@ -23,6 +23,20 @@ pub async fn run(item: &str, ignore_checks: bool, json: bool) -> anyhow::Result<
     })
 }
 
+/// Shows the branch a local-ship item left, with its diffstat; fails when the
+/// item has no local branch.
+pub async fn diff(item: &str, full: bool, json: bool) -> anyhow::Result<ExitCode> {
+    let client = connect_or_start().await?;
+    let item = views::resolve_item(&client, item).await?;
+    let review = ops::diff(&client, item, full).await?;
+    emit(
+        json,
+        || to_json(&review),
+        &crate::wrap::sanitize(&review.describe()),
+    )?;
+    Ok(ExitCode::SUCCESS)
+}
+
 /// Fails unless the release branch holds the integration head afterwards;
 /// a refusal names its reason and changes nothing.
 pub async fn promote(repo: &str, json: bool) -> anyhow::Result<ExitCode> {

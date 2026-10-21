@@ -295,7 +295,11 @@ pub(super) async fn announce(
         };
         failure_notice(item, run, &stages)
     } else {
-        clip(&summary, MAX_NOTICE_CHARS)
+        let clipped = clip(&summary, MAX_NOTICE_CHARS);
+        match local_notice(ctx, item).await {
+            Some(extra) => format!("{clipped}\n{extra}"),
+            None => clipped,
+        }
     };
     let needs_operator = blocker || failed_blocked(item);
     let run = run.map(|r| &r.id);
@@ -477,6 +481,31 @@ fn notice_sentence(text: &str) -> String {
 /// success never does, whatever words its summary holds.
 fn failed_blocked(item: &QueueItem) -> bool {
     matches!(&item.state, QueueState::Failed { error, .. } if error.contains(StageOutcome::BLOCKED_PREFIX))
+}
+
+/// Where a succeeded `ship = local` item's change is, what it changed, and
+/// the commands to review and land it; `None` for any other item.
+async fn local_notice(ctx: &DaemonContext, item: &QueueItem) -> Option<String> {
+    if !matches!(item.state, QueueState::Succeeded { .. }) {
+        return None;
+    }
+    let review = match super::operator_merge::local_review(ctx, &item.id, false).await {
+        Ok(review) => review,
+        // Not a local delivery, or nothing left to land: no extra line.
+        Err(error) => {
+            tracing::debug!(item = %item.id, %error, "no local review for the done notice");
+            return None;
+        }
+    };
+    Some(format!(
+        "Branch `{}` in {} holds it ({}). Review: `archon diff {}`; land it in `{}`: `archon merge {}`.",
+        review.branch,
+        review.repo_path.display(),
+        review.diffstat.trim(),
+        item.id,
+        review.base,
+        item.id
+    ))
 }
 
 pub(super) fn outcome_text(item: &QueueItem) -> String {

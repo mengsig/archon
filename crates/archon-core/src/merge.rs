@@ -166,7 +166,24 @@ pub struct MergeRequest {
     pub updated_at: Timestamp,
 }
 
+/// Starts the `pr_url` of a request to fast-forward a `ship = local` item's
+/// branch into its base, which has no pull request.
+pub const LOCAL_REF_PREFIX: &str = "local:";
+
 impl MergeRequest {
+    /// The item branch a local request lands, `None` for a pull request.
+    pub fn local_branch(&self) -> Option<&str> {
+        self.pr_url.strip_prefix(LOCAL_REF_PREFIX)
+    }
+
+    /// What is merged, in words: the pull request or the local branch.
+    pub fn subject(&self) -> String {
+        match self.local_branch() {
+            Some(branch) => format!("branch `{branch}`"),
+            None => self.pr_url.clone(),
+        }
+    }
+
     /// The confirmation question's number while the operator is asked.
     pub fn waiting_on(&self) -> Option<u64> {
         match (&self.state, &self.authority) {
@@ -179,6 +196,9 @@ impl MergeRequest {
 
     /// One line on where the request stands, for `archon queue show`.
     pub fn line(&self) -> String {
+        if let Some(branch) = self.local_branch() {
+            return self.local_line(branch);
+        }
         let head = short(&self.head);
         match &self.state {
             MergeState::AwaitingOperator => format!(
@@ -205,6 +225,67 @@ impl MergeRequest {
                 format!("{} not merged: {reason}", self.pr_url)
             }
         }
+    }
+}
+
+impl MergeRequest {
+    fn local_line(&self, branch: &str) -> String {
+        let head = short(&self.head);
+        let what = format!("branch `{branch}` at {head}");
+        match &self.state {
+            MergeState::AwaitingOperator => format!(
+                "{what} awaits the operator's answer to Q{}",
+                self.waiting_on().unwrap_or_default()
+            ),
+            MergeState::AwaitingChecks | MergeState::Merging | MergeState::Queued => {
+                format!("{what} is being fast-forwarded into its base")
+            }
+            MergeState::Merged { .. } => {
+                format!("{what} fast-forwarded into its base; the branch is kept")
+            }
+            MergeState::Declined => format!("{what} not merged: the operator said no"),
+            MergeState::Refused { reason } => format!("{what} not merged: {reason}"),
+        }
+    }
+}
+
+/// What a `ship = local` item left on its branch, for review before
+/// `archon merge` lands it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalReview {
+    pub item: QueueItemId,
+    pub repo_path: std::path::PathBuf,
+    pub branch: String,
+    pub base: String,
+    /// The reviewed commit the branch ends at.
+    pub head: String,
+    /// `git diff --stat` against the base, or a one-line summary of it.
+    pub diffstat: String,
+    /// Why `archon merge` would refuse now; `None` when it would go ahead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<String>,
+}
+
+impl LocalReview {
+    /// Branch, repository, base, changes and the next command, in words.
+    pub fn describe(&self) -> String {
+        let mut text = format!(
+            "{}: branch `{}` at {} in {}, to be merged into `{}`.\n{}",
+            self.item,
+            self.branch,
+            short(&self.head),
+            self.repo_path.display(),
+            self.base,
+            self.diffstat
+        );
+        match &self.blocker {
+            Some(why) => text.push_str(&format!("\nNot mergeable now: {why}")),
+            None => text.push_str(&format!(
+                "\nLand it with `archon merge {}` (fast-forward only; the branch is kept).",
+                self.item
+            )),
+        }
+        text
     }
 }
 

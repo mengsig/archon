@@ -14,16 +14,17 @@ use archon_core::config::RepoConfig;
 use archon_core::error::ArchonError;
 use archon_core::id::{MergeRequestId, PipelineRunId, QuestionId, QueueItemId};
 use archon_core::merge::{
-    self, ChecksSeen, Expected, MERGE_OPTIONS, MergeAnswer, MergeAuthority, MergeRequest,
-    MergeState,
+    self, ChecksSeen, Expected, LOCAL_REF_PREFIX, MERGE_OPTIONS, MergeAnswer, MergeAuthority,
+    MergeRequest, MergeState,
 };
 use archon_core::notify::{AnswerVia, NotificationKind, Question};
 use archon_core::queue::{QueueItem, QueueState};
-use archon_core::repo::Repo;
+use archon_core::repo::{Repo, ShipMode};
 use archon_core::run::{StageRun, StageState};
 use archon_queue::Store;
 
-use super::ship::{MergeRefusal, merge_method, pin_auto_merge};
+use super::local_merge::{self, Landing};
+use super::ship::{LOCAL_COMMIT_KEY, MergeRefusal, merge_method, pin_auto_merge};
 use super::{clip, coordination, finish, gh, recover};
 use crate::context::DaemonContext;
 use crate::triggers::{self, TriggerEvent};
@@ -75,6 +76,31 @@ struct Shipped {
     head: String,
 }
 
+impl Shipped {
+    /// The item branch of a `ship = local` delivery.
+    fn local_branch(&self) -> Option<&str> {
+        self.pr_url.strip_prefix(LOCAL_REF_PREFIX)
+    }
+
+    /// What is merged, in words.
+    fn subject(&self) -> String {
+        match self.local_branch() {
+            Some(branch) => format!("branch `{branch}`"),
+            None => self.pr_url.clone(),
+        }
+    }
+
+    fn landing<'a>(&'a self, base: &'a str) -> Option<Landing<'a>> {
+        Some(Landing {
+            item: &self.item.id,
+            repo: &self.repo.path,
+            branch: self.local_branch()?,
+            base,
+            head: &self.head,
+        })
+    }
+}
+
 /// The item's delivered pull request; `Err` says why it has none to merge.
 fn shipped(store: &Store, id: &QueueItemId) -> Result<Shipped, ArchonError> {
     let item = store.item(id)?;
@@ -96,11 +122,17 @@ fn shipped(store: &Store, id: &QueueItemId) -> Result<Shipped, ArchonError> {
             onto.pr.url()
         )));
     }
-    let Some((pr_url, head)) = delivered(&store.stage_runs(&run)?) else {
-        return Err(ArchonError::Invalid(format!(
-            "run {run} of {id} delivered no pull request: its repository ships `local`, or \
-             its pipeline opened none"
-        )));
+    let stages = store.stage_runs(&run)?;
+    let Some((pr_url, head)) = delivered(&stages).or_else(|| {
+        (repo.ship == ShipMode::Local)
+            .then(|| local_delivery(store, &run, &stages))
+            .flatten()
+    }) else {
+        let why = match repo.ship {
+            ShipMode::Local => "left no commit on its branch to merge",
+            ShipMode::Pr => "delivered no pull request: its pipeline opened none",
+        };
+        return Err(ArchonError::Invalid(format!("run {run} of {id} {why}")));
     };
     assert!(is_commit_id(&head), "checked by delivered");
     Ok(Shipped {
@@ -124,6 +156,23 @@ fn delivered(stages: &[StageRun]) -> Option<(String, String)> {
     })?;
     let commit = record.structured.as_ref()?.get("commit")?.as_str()?;
     is_commit_id(commit).then(|| (url.to_owned(), commit.to_owned()))
+}
+
+/// `(local:<branch>, commit)` of a `ship = local` delivery: the commit its
+/// delivery recorded, which the branch must still end at.
+fn local_delivery(
+    store: &Store,
+    run: &PipelineRunId,
+    stages: &[StageRun],
+) -> Option<(String, String)> {
+    let commit = stages
+        .iter()
+        .rev()
+        .filter(|s| s.state == StageState::Completed)
+        .find_map(|s| s.structured.as_ref()?.get(LOCAL_COMMIT_KEY)?.as_str())?;
+    let branch = store.run(run).ok()?.branch;
+    (is_commit_id(commit) && !branch.is_empty())
+        .then(|| (format!("{LOCAL_REF_PREFIX}{branch}"), commit.to_owned()))
 }
 
 /// The branch the pull request must target; `Err` refuses the merge.
@@ -252,17 +301,30 @@ pub(crate) async fn request(
         (shipped, base)
     };
     let base = base.map_err(|why| refused_early(&shipped, &why))?;
-    let facts = gh::merge_facts(&ctx.config.github.binary, &shipped.repo, &shipped.pr_url);
-    let expected = Expected {
-        head: &shipped.head,
-        base: &base,
-        ignore_checks: true,
+    let seen = match shipped.local_branch() {
+        Some(_) => {
+            local_plan(&shipped, &base)
+                .await?
+                .map_err(|w| refused_early(&shipped, &w))?;
+            ChecksSeen::default()
+        }
+        None => {
+            let facts = gh::merge_facts(&ctx.config.github.binary, &shipped.repo, &shipped.pr_url);
+            let expected = Expected {
+                head: &shipped.head,
+                base: &base,
+                ignore_checks: true,
+            };
+            merge::evaluate(&facts.await?, expected).map_err(|w| refused_early(&shipped, &w))?
+        }
     };
-    let seen = merge::evaluate(&facts.await?, expected).map_err(|w| refused_early(&shipped, &w))?;
     supersede_stale_requests(&mut *ctx.store.lock().await, &shipped)?;
     let reviewed = shipped.item.autonomy.review != ReviewLevel::None;
     if !(shipped.repo.grant_merge && reviewed) {
         return ask(ctx, &shipped, reason, &seen).await;
+    }
+    if shipped.local_branch().is_some() {
+        return grant_local(ctx, shipped, reason).await;
     }
     match grant_route(&shipped.repo.merge_waive_checks, &base, &seen) {
         GrantRoute::Ask => ask(ctx, &shipped, reason, &seen).await,
@@ -281,6 +343,90 @@ pub(crate) async fn request(
             execute(ctx, request).await
         }
     }
+}
+
+/// A granted request for a local branch: no checks to wait for, so the
+/// fast-forward goes ahead.
+async fn grant_local(
+    ctx: &DaemonContext,
+    shipped: Shipped,
+    reason: Option<String>,
+) -> Result<MergeRequest, ArchonError> {
+    let request = fresh(
+        &shipped,
+        MergeAuthority::Grant,
+        false,
+        reason,
+        MergeState::Merging,
+    );
+    ctx.store.lock().await.insert_merge(&request)?;
+    execute(ctx, request).await
+}
+
+/// What fast-forwarding the branch would do now, git read off the runtime.
+async fn local_plan(
+    shipped: &Shipped,
+    base: &str,
+) -> Result<Result<local_merge::Plan, String>, ArchonError> {
+    let landing = shipped.landing(base).expect("a local branch");
+    let owned = (landing.item.clone(), landing.repo.to_path_buf());
+    let (branch, base, head) = (
+        landing.branch.to_owned(),
+        base.to_owned(),
+        shipped.head.clone(),
+    );
+    tokio::task::spawn_blocking(move || {
+        let landing = Landing {
+            item: &owned.0,
+            repo: &owned.1,
+            branch: &branch,
+            base: &base,
+            head: &head,
+        };
+        local_merge::check(landing)
+    })
+    .await
+    .map_err(|e| ArchonError::io("local merge check task", std::io::Error::other(e)))?
+}
+
+/// What a `ship = local` item's branch changes against its base, for
+/// `archon diff`; also whether `archon merge` would land it now.
+pub(crate) async fn local_review(
+    ctx: &DaemonContext,
+    item: &QueueItemId,
+    full: bool,
+) -> Result<archon_core::merge::LocalReview, ArchonError> {
+    let (shipped, base) = {
+        let store = ctx.store.lock().await;
+        let shipped = shipped(&store, item)?;
+        let base = expected_base(&store, &shipped)?;
+        (shipped, base)
+    };
+    let base = base.map_err(ArchonError::InvalidTransition)?;
+    let Some(branch) = shipped.local_branch() else {
+        return Err(ArchonError::Invalid(format!(
+            "{item} was delivered as {}, not as a local branch; review it there",
+            shipped.pr_url
+        )));
+    };
+    let (id, repo, branch, head) = (
+        item.clone(),
+        shipped.repo.path.clone(),
+        branch.to_owned(),
+        shipped.head.clone(),
+    );
+    tokio::task::spawn_blocking(move || {
+        let landing = Landing {
+            item: &id,
+            repo: &repo,
+            branch: &branch,
+            base: &base,
+            head: &head,
+        };
+        local_merge::review(landing, full)
+    })
+    .await
+    .map_err(|e| ArchonError::io("local review task", std::io::Error::other(e)))?
 }
 
 /// Close an open request that waits on a commit other than the one the pull
@@ -349,9 +495,14 @@ pub(crate) async fn enable_auto_merge(
         assert!(!why.is_empty(), "a refusal gives its reason");
         ArchonError::InvalidTransition(format!(
             "auto-merge of {} of {item} cannot be turned on: {why}",
-            shipped.pr_url
+            shipped.subject()
         ))
     };
+    if shipped.local_branch().is_some() {
+        return Err(refused(
+            "a local branch has no pull request; use `archon merge`",
+        ));
+    }
     let base = base.map_err(|why| refused(&why))?;
     let binary = &ctx.config.github.binary;
     let facts = gh::merge_facts(binary, &shipped.repo, &shipped.pr_url).await?;
@@ -385,7 +536,8 @@ fn refused_early(shipped: &Shipped, why: &str) -> ArchonError {
     assert!(!why.is_empty(), "a refusal gives its reason");
     ArchonError::InvalidTransition(format!(
         "{} of {} cannot be merged now: {why}",
-        shipped.pr_url, shipped.item.id
+        shipped.subject(),
+        shipped.item.id
     ))
 }
 
@@ -419,7 +571,7 @@ async fn ask(
         reason,
         MergeState::AwaitingOperator,
     );
-    waiting.checks = Some(seen.describe());
+    waiting.checks = shipped.local_branch().is_none().then(|| seen.describe());
     let (merge, feed_item) = ctx.store.lock().await.ask_merge(&question, waiting)?;
     assert!(
         merge.waiting_on().is_some_and(|n| n > 0),
@@ -432,7 +584,7 @@ async fn ask(
 fn question_text(shipped: &Shipped, reason: Option<&str>, seen: &ChecksSeen) -> String {
     let mut text = format!(
         "Merge {} of {} ({}) at {}?\nThe orchestrator asked",
-        shipped.pr_url,
+        shipped.subject(),
         shipped.item.id,
         shipped.item.title,
         merge::short(&shipped.head)
@@ -440,6 +592,11 @@ fn question_text(shipped: &Shipped, reason: Option<&str>, seen: &ChecksSeen) -> 
     match reason {
         Some(reason) => text.push_str(&format!(": {reason}")),
         None => text.push('.'),
+    }
+    if shipped.local_branch().is_some() {
+        text.push_str("\nIt is fast-forwarded into its base branch; the branch is kept.");
+        text.push_str("\nAnswer `yes` or `no`.");
+        return text;
     }
     text.push_str(&format!("\nChecks: {}.", seen.describe()));
     if !seen.all_green() {
@@ -487,6 +644,9 @@ async fn execute(
     mut merge: MergeRequest,
 ) -> Result<MergeRequest, ArchonError> {
     assert_eq!(merge.state, MergeState::Merging, "recorded before GitHub");
+    if merge.local_branch().is_some() {
+        return execute_local(ctx, merge).await;
+    }
     let ready = match ready(ctx, &merge).await? {
         Ok(ready) => ready,
         Err(why) => {
@@ -520,6 +680,77 @@ async fn execute(
         // Left `merging`: the coordination pass settles it from GitHub.
         None => Ok(merge),
     }
+}
+
+/// Fast-forward the base to the reviewed commit of a local branch, then
+/// record how that ended. The branch is kept either way.
+async fn execute_local(
+    ctx: &DaemonContext,
+    mut merge: MergeRequest,
+) -> Result<MergeRequest, ArchonError> {
+    assert!(merge.local_branch().is_some(), "a local request");
+    merge.state = match land_local(ctx, &merge).await? {
+        Ok(method) => MergeState::Merged {
+            method,
+            actor: None,
+            observed: false,
+        },
+        Err(reason) => MergeState::Refused { reason },
+    };
+    finish_merge(ctx, merge).await
+}
+
+/// Everything a local merge needs, read again just before it, then the
+/// fast-forward. `Ok` names the method; `Err` is the refusal.
+async fn land_local(
+    ctx: &DaemonContext,
+    merge: &MergeRequest,
+) -> Result<Result<String, String>, ArchonError> {
+    let (shipped, base) = {
+        let store = ctx.store.lock().await;
+        let shipped = match shipped(&store, &merge.item) {
+            Ok(shipped) => shipped,
+            Err(error) if error.is_store() => return Err(error),
+            Err(error) => return Ok(Err(error.to_string())),
+        };
+        let base = match expected_base(&store, &shipped) {
+            Ok(Ok(base)) => base,
+            Ok(Err(why)) => return Ok(Err(why)),
+            Err(error) => return Err(error),
+        };
+        (shipped, base)
+    };
+    if (&shipped.run, &shipped.pr_url, &shipped.head) != (&merge.run, &merge.pr_url, &merge.head) {
+        return Ok(Err(
+            "the item was delivered again since it was asked for; ask again".into(),
+        ));
+    }
+    let (item, repo) = (shipped.item.id.clone(), shipped.repo.path.clone());
+    let branch = shipped.local_branch().expect("a local delivery").to_owned();
+    let (head, into) = (shipped.head.clone(), base.clone());
+    let resuming = merge.requested_at < ctx.started_at;
+    let landed = tokio::task::spawn_blocking(move || {
+        let landing = Landing {
+            item: &item,
+            repo: &repo,
+            branch: &branch,
+            base: &into,
+            head: &head,
+        };
+        let plan = match local_merge::check(landing)? {
+            Ok(local_merge::Plan::AlreadyIn) if !resuming => {
+                return Ok(Err(format!(
+                    "`{into}` already holds `{branch}`; nothing to merge"
+                )));
+            }
+            Ok(plan) => plan,
+            Err(why) => return Ok(Err(why)),
+        };
+        local_merge::land(landing, &plan)
+    })
+    .await
+    .map_err(|e| ArchonError::io("local merge task", std::io::Error::other(e)))??;
+    Ok(landed.map(|()| format!("fast-forward into `{base}`")))
 }
 
 /// A request whose pull request may be merged now.
@@ -671,33 +902,44 @@ async fn report(ctx: &DaemonContext, merge: &MergeRequest) -> Result<(), ArchonE
                 (_, Some(checks)) => format!("; checks: {checks}"),
                 (_, None) => String::new(),
             };
-            let text = format!(
-                "Merged {} of {} at {} ({method}); {}; requested on {who}{checks}.",
-                merge.pr_url,
-                merge.item,
-                merge::short(&merge.head),
-                merge::merged_attribution(actor.as_deref(), *observed)
-            );
+            let text = match merge.local_branch() {
+                Some(_) => format!(
+                    "Merged {} of {} at {} ({method}); requested on {who}. The branch is kept.",
+                    merge.subject(),
+                    merge.item,
+                    merge::short(&merge.head)
+                ),
+                None => format!(
+                    "Merged {} of {} at {} ({method}); {}; requested on {who}{checks}.",
+                    merge.pr_url,
+                    merge.item,
+                    merge::short(&merge.head),
+                    merge::merged_attribution(actor.as_deref(), *observed)
+                ),
+            };
             (NotificationKind::Outcome, text)
         }
         MergeState::Queued => (
             NotificationKind::Outcome,
             format!(
                 "Queued {} of {} at GitHub on {who}; waiting for it to merge or close.",
-                merge.pr_url, merge.item
+                merge.subject(),
+                merge.item
             ),
         ),
         MergeState::Declined => {
             let text = format!(
                 "Not merged: the operator declined {} of {}.",
-                merge.pr_url, merge.item
+                merge.subject(),
+                merge.item
             );
             (NotificationKind::Outcome, text)
         }
         MergeState::Refused { reason } => {
             let text = format!(
                 "Not merged: {} of {}, on {who}: {reason}",
-                merge.pr_url, merge.item
+                merge.subject(),
+                merge.item
             );
             (NotificationKind::Blocker, text)
         }
@@ -730,6 +972,16 @@ pub(crate) async fn settle_stale(ctx: &DaemonContext) -> Result<usize, ArchonErr
     let mut ended = 0;
     for merge in open {
         let stale = merge.updated_at < ctx.started_at || merge.updated_at < cutoff;
+        if merge.local_branch().is_some() {
+            if merge.state == MergeState::Merging && stale {
+                let (subject, item) = (format!("merge:{}", merge.id), merge.item.clone());
+                let result = execute_local(ctx, merge).await.map(|_| ());
+                ended += usize::from(result.is_ok());
+                let what = format!("Settling the interrupted merge of {item}");
+                coordination::isolate(ctx, &subject, Some(&item), &what, result).await?;
+            }
+            continue;
+        }
         if merge.state == MergeState::AwaitingChecks {
             let (subject, item) = (format!("merge:{}", merge.id), merge.item.clone());
             let result = resume_waiting(ctx, merge).await;

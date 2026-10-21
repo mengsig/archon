@@ -449,6 +449,14 @@ pub enum Request {
         #[serde(default)]
         chat: bool,
     },
+    /// What a `ship = local` item's branch changes against its base, and
+    /// whether `MergeItem` would land it now.
+    ItemDiff {
+        item: QueueItemId,
+        /// The full per-file stat, not one summary line.
+        #[serde(default)]
+        full: bool,
+    },
     /// Whole-message command on the operator socket; never exposed over MCP.
     OperatorCommand {
         text: String,
@@ -526,6 +534,7 @@ impl Request {
             | Self::LessonStats { .. }
             | Self::LearningWhy { .. }
             | Self::ListArtifacts { .. }
+            | Self::ItemDiff { .. }
             | Self::ReadArtifact { .. } => Read,
             Self::CheckUpdates => OperatorRead,
             Self::OperatorCommand { .. }
@@ -887,6 +896,7 @@ pub enum Reply {
     Feedback(Box<FeedbackReceipt>),
     LearningWhy(Box<LearningWhy>),
     Merge(Box<MergeRequest>),
+    LocalReview(Box<crate::merge::LocalReview>),
     Promotion(Box<crate::integration::Promotion>),
     Settings(Box<crate::settings::SettingsView>),
 }

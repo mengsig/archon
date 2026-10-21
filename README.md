@@ -102,7 +102,18 @@ archond](docs/guide.md#which-commands-start-archond)).
   With `merge = auto` GitHub merges once its checks allow. Otherwise
   `archon merge <item>`, or asking the orchestrator and confirming, merges
   it at the reviewed commit; a repository's `grant_merge` skips the
-  confirmation. `local` mode keeps the commits on the run branch.
+  confirmation.
+- **Local mode:** with `ship = local` nothing leaves your machine. The item
+  succeeds when its commits are on its run branch, and the Done notice names
+  the branch, the repository, the diffstat and the next commands.
+  `archon diff <item>` (`/diff` in the chat) shows what changed;
+  `archon merge <item>` (or asking the orchestrator and confirming) then
+  fast-forwards the base branch to the reviewed commit and keeps the branch.
+  It is refused, changing nothing, when the base moved (`archon queue
+  refresh <item>` brings the branch up to date), when the branch shares no
+  history with the base, or when the base is checked out with local changes.
+  It never forces or merges, and `grant_merge` skips the confirmation as it
+  does for pull requests.
 - **Risk label:** every pull request Archon opens or updates carries one
   label, `risk: low`, `risk: medium` or `risk: high`, and a "Risk" section
   at the top of its body that says why, with the evidence. Low may be

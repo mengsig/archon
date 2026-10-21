@@ -13,6 +13,7 @@ const CHAT_HELP: &str = "\
   /archon answer|approve|reject|merge   the same as /answer, /approve, /reject, /merge
   /archon undo N          undo operator change N from the Authority feed
   /archon reset [--repo NAME]   forget the saved settings of a scope
+  /diff <id>              show the branch a local-ship item left, before /merge
   /image <path>           attach an image file to the next message
   /progress               show or hide progress notes (also /verbose)
   /help                   this list
@@ -64,6 +65,8 @@ pub enum SlashCommand {
         item: String,
         ignore_checks: bool,
     },
+    /// Show a local-ship item's branch and diffstat.
+    Diff(String),
     Pause(PauseTarget),
     Resume(PauseTarget),
 }
@@ -117,6 +120,10 @@ fn parse_command(name: &str, rest: &str) -> Result<SlashCommand, String> {
             Ok(SlashCommand::Authority(format!("/{name} {rest}")))
         }
         "merge" => parse_merge(rest),
+        "diff" => match split_word(rest) {
+            (id, "") if !id.is_empty() => Ok(SlashCommand::Diff(id.to_owned())),
+            _ => Err("usage: /diff <id>".to_owned()),
+        },
         "a" => Err("use /answer <n> <text>".to_owned()),
         "answer" => parse_answer(rest),
         "pause" => parse_pause_target(rest, "pause").map(SlashCommand::Pause),

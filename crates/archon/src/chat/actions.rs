@@ -134,6 +134,11 @@ async fn run_remote(
             let merge = ops::merge(client, item, ignore_checks, true).await?;
             chat.print(&format::merge(&merge))
         }
+        SlashCommand::Diff(item) => {
+            let item = views::resolve_item(client, &item).await?;
+            let review = ops::diff(client, item, true).await?;
+            chat.print(&crate::wrap::sanitize(&review.describe()))
+        }
         SlashCommand::Pause(target) => pause(chat, client, target, true).await,
         SlashCommand::Resume(target) => pause(chat, client, target, false).await,
         SlashCommand::Help

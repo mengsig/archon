@@ -105,6 +105,17 @@ pub async fn promote(client: &ArchonClient, repo: RepoRef) -> anyhow::Result<Pro
     }
 }
 
+pub async fn diff(
+    client: &ArchonClient,
+    item: QueueItemId,
+    full: bool,
+) -> anyhow::Result<archon_core::merge::LocalReview> {
+    match client.request(Request::ItemDiff { item, full }).await? {
+        Reply::LocalReview(review) => Ok(*review),
+        other => Err(unexpected(&other, "diff")),
+    }
+}
+
 pub async fn merge(
     client: &ArchonClient,
     item: QueueItemId,

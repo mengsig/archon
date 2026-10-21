@@ -55,6 +55,7 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
             item,
             ignore_checks,
         } => merge::run(&item, ignore_checks, json).await,
+        Command::Diff { item, full } => merge::diff(&item, full, json).await,
         Command::Promote { repo } => merge::promote(&repo, json).await,
         Command::Log {
             limit,
@@ -145,6 +146,7 @@ fn json_refusal(command: Option<&Command>) -> Option<&'static str> {
         | Command::Questions
         | Command::ClearNotifications { .. }
         | Command::Merge { .. }
+        | Command::Diff { .. }
         | Command::Promote { .. }
         | Command::Status { .. }
         | Command::Cost { .. }

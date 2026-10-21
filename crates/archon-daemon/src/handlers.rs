@@ -297,6 +297,10 @@ pub(crate) async fn route(
             let merge = operator_merge::merge_now(ctx, &item, authority, ignore_checks).await?;
             Ok(Reply::Merge(Box::new(merge)))
         }
+        Request::ItemDiff { item, full } => {
+            let review = operator_merge::local_review(ctx, &item, full).await?;
+            Ok(Reply::LocalReview(Box::new(review)))
+        }
         Request::RequestAuthority {
             action,
             utterance,

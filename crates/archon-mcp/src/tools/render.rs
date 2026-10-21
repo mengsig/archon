@@ -74,6 +74,7 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         Reply::Lesson(lesson) => lessons::recorded(lesson),
         Reply::Merge(request) => merge_text(request),
         Reply::Promotion(promotion) => promotion.describe(),
+        Reply::LocalReview(review) => review.describe(),
         Reply::Settings(view) => view.describe(),
         Reply::Artifacts(listing) => artifacts::listing(listing),
         Reply::ArtifactPage(page) => artifacts::page(page),

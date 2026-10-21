@@ -49,6 +49,7 @@ mod link_reports;
 mod link_status;
 mod link_supervisor;
 mod link_triggers;
+mod local_merge;
 mod mirrors;
 mod model_evidence;
 mod model_reasons;

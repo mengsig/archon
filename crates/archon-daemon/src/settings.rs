@@ -39,6 +39,37 @@ impl SettingsBook {
         Ok(Self { global, repos })
     }
 
+    /// Like [`SettingsBook::load`], but an overlay that no longer parses is
+    /// left out (that scope runs on its defaults) and returned as its key
+    /// with the error, so one bad record cannot stop the daemon.
+    pub fn load_lenient(store: &Store) -> Result<(Self, Vec<(String, ArchonError)>), ArchonError> {
+        let mut book = Self::default();
+        let mut bad = Vec::new();
+        if let Some(json) = store.kv_get(GLOBAL_KEY)? {
+            match parse(GLOBAL_KEY, &json) {
+                Ok(global) => book.global = global,
+                Err(error) => bad.push((GLOBAL_KEY.to_owned(), error)),
+            }
+        }
+        for (key, json) in store.kv_prefix(REPO_PREFIX)? {
+            let id = RepoId::parse(&key[REPO_PREFIX.len()..]);
+            match id.and_then(|id| Ok((id, parse(&key, &json)?))) {
+                Ok((id, overlay)) => {
+                    book.repos.insert(id, overlay);
+                }
+                Err(error) => bad.push((key, error)),
+            }
+        }
+        Ok((book, bad))
+    }
+
+    /// Whether the overlay stored under `key` still fails to parse.
+    pub fn is_corrupt(store: &Store, key: &str) -> Result<bool, ArchonError> {
+        Ok(store
+            .kv_get(key)?
+            .is_some_and(|json| parse(key, &json).is_err()))
+    }
+
     pub fn get(&self, repo: Option<&RepoId>) -> OperatorSettings {
         match repo {
             Some(id) => self.repos.get(id).cloned().unwrap_or_default(),

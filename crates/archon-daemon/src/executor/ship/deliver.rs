@@ -748,13 +748,18 @@ pub(crate) fn prune_finished_ships(store: &mut Store) -> Result<usize, ArchonErr
 fn prune_finished(store: &mut Store, prefix: &str) -> Result<usize, ArchonError> {
     let mut pruned = 0;
     for (key, _) in store.kv_prefix(prefix)? {
-        let raw_run = key.strip_prefix(prefix).expect("ranged by prefix");
-        let run = PipelineRunId::parse(raw_run)
-            .map_err(|e| ArchonError::Corrupt(format!("delivery key {key}: {e}")))?;
+        let Some(Ok(run)) = key.strip_prefix(prefix).map(PipelineRunId::parse) else {
+            tracing::error!(%key, "a delivery record under a malformed key is left alone");
+            continue;
+        };
         let finished = match store.run(&run) {
             Ok(found) => found.state.is_terminal(),
             Err(ArchonError::NotFound(_)) => true,
-            Err(error) => return Err(error),
+            Err(error) if error.is_store() => return Err(error),
+            Err(error) => {
+                tracing::error!(%run, %error, "a run record is unreadable; its delivery record is left alone");
+                continue;
+            }
         };
         if finished {
             store.kv_delete(&key)?;

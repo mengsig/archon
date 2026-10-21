@@ -88,30 +88,36 @@ pub(super) fn forked_base(
 pub(crate) fn prune_finished_run_vars(store: &mut Store) -> Result<usize, ArchonError> {
     let mut pruned = 0;
     for (key, _) in store.kv_prefix(RUN_VARS_KEY_PREFIX)? {
-        let raw = key
-            .strip_prefix(RUN_VARS_KEY_PREFIX)
-            .expect("ranged by prefix");
-        let run = PipelineRunId::parse(raw)
-            .map_err(|e| ArchonError::Corrupt(format!("run variables key {key}: {e}")))?;
+        let Some(raw) = key.strip_prefix(RUN_VARS_KEY_PREFIX) else {
+            continue;
+        };
+        let Ok(run) = PipelineRunId::parse(raw) else {
+            tracing::error!(%key, "run variables under a malformed key are left alone");
+            continue;
+        };
         let found = match store.run(&run) {
             Ok(found) => Some(found),
             Err(ArchonError::NotFound(_)) => None,
-            Err(error) => return Err(error),
+            Err(error) if error.is_store() => return Err(error),
+            Err(error) => {
+                tracing::error!(%run, %error, "a run record is unreadable; its variables are left alone");
+                continue;
+            }
         };
         let finished = match &found {
-            Some(found) => {
-                assert_eq!(
-                    found.state.is_terminal(),
-                    found.finished_at.is_some(),
-                    "a run has a finish time exactly when it finished"
-                );
-                found.state.is_terminal()
-            }
+            Some(found) => found.state.is_terminal(),
             None => true,
         };
         if finished {
             if found.is_some() && store.kv_get(&format!("run_base:{run}"))?.is_none() {
-                let vars = load_run_vars(store, &run)?;
+                let vars = match load_run_vars(store, &run) {
+                    Ok(vars) => vars,
+                    Err(error) if error.is_store() => return Err(error),
+                    Err(error) => {
+                        tracing::error!(%run, %error, "run variables are unreadable and left alone");
+                        continue;
+                    }
+                };
                 if let Some(base) = vars.get("base_branch") {
                     store.kv_set(&format!("run_base:{run}"), base)?;
                 }
@@ -217,7 +223,12 @@ async fn reset_quarantine(ctx: &DaemonContext) -> Result<(), ArchonError> {
     for record in listed {
         let recent = archon_core::now() - record.at < chrono::Duration::days(RULED_OUT_DAYS);
         let ruled_out = matches!(record.kind.as_str(), "owed-merge" | "checks-watch") && recent;
-        if ruled_out || (record.kind == "run" && store.run_item_failed(&record.id)?) {
+        let waiting = match record.kind.as_str() {
+            "run" => store.run_item_failed(&record.id)?,
+            "settings" => crate::settings::SettingsBook::is_corrupt(&store, &record.id)?,
+            _ => false,
+        };
+        if ruled_out || waiting {
             continue;
         }
         if let Err(error) = archon_core::quarantine::clear(data_dir, &record.kind, &record.id) {
@@ -331,7 +342,22 @@ async fn resume_isolated(
     let stage = run.state.live_stage().unwrap_or("recovery").to_owned();
     let message = unresumable_message(&run, &error);
     let failed = finish::fail_run(ctx, table, run, stage, message, true);
-    super::coordination::guarded(&subject, failed).await
+    settled(
+        &subject,
+        super::coordination::guarded(&subject, failed).await,
+    )
+}
+
+/// Failing a damaged run can hit the same damage: that is logged, the run
+/// stays quarantined for `archon queue cancel`, and recovery goes on.
+fn settled(subject: &str, failed: Result<FollowUp, ArchonError>) -> Result<FollowUp, ArchonError> {
+    match failed {
+        Err(error) if !error.is_store() => {
+            tracing::error!(%subject, %error, "the damaged run could not be failed; it stays set aside");
+            Ok(FollowUp::default())
+        }
+        other => other,
+    }
 }
 
 /// A run whose stage rows cannot be read fails with the way out, so the
@@ -354,7 +380,11 @@ async fn fail_unreadable(
     let stage = run.state.live_stage().unwrap_or("recovery").to_owned();
     let message = unresumable_message(&run, &error);
     let failed = finish::fail_run(ctx, table, run.clone(), stage, message, true);
-    super::coordination::guarded(&format!("run {}", run.id), failed).await
+    let subject = format!("run {}", run.id);
+    settled(
+        &subject,
+        super::coordination::guarded(&subject, failed).await,
+    )
 }
 
 /// Rebuild `run`'s driver and apply what it still owes. A run whose

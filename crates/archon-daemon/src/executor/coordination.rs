@@ -158,7 +158,7 @@ pub(super) async fn isolate(
         }
     };
     let before = stuck(&*ctx.store.lock().await, &key)?;
-    let failures = before.as_ref().map_or(0, |s| s.failures) + 1;
+    let failures = before.as_ref().map_or(0, |s| s.failures).saturating_add(1);
     let transient = matches!(error, ArchonError::Unavailable(_));
     let due = !transient || failures >= TRANSIENT_PASSES;
     if due {

@@ -75,20 +75,45 @@ pub async fn prune_once(ctx: &DaemonContext, now: Timestamp) -> Result<Pruned, A
     let cutoff = now - retention();
     assert!(cutoff < now, "the retention is positive");
     // One statement per lock: a guard lives until its statement ends.
-    let spawn_requests = executor::prune_settled_requests(&mut *ctx.store.lock().await)?;
-    let run_vars = executor::prune_finished_run_vars(&mut *ctx.store.lock().await)?;
-    let team_merges = executor::prune_finished_merges(&mut *ctx.store.lock().await)?;
-    let ships = executor::prune_finished_ships(&mut *ctx.store.lock().await)?;
-    let team_rosters = executor::prune_settled_rosters(&mut *ctx.store.lock().await)?;
-    let node_agents = executor::prune_retired_node_agents(&mut *ctx.store.lock().await, cutoff)?;
+    let spawn_requests = category(
+        "spawn_requests",
+        executor::prune_settled_requests(&mut *ctx.store.lock().await),
+    )?;
+    let run_vars = category(
+        "run_vars",
+        executor::prune_finished_run_vars(&mut *ctx.store.lock().await),
+    )?;
+    let team_merges = category(
+        "team_merges",
+        executor::prune_finished_merges(&mut *ctx.store.lock().await),
+    )?;
+    let ships = category(
+        "ships",
+        executor::prune_finished_ships(&mut *ctx.store.lock().await),
+    )?;
+    let team_rosters = category(
+        "team_rosters",
+        executor::prune_settled_rosters(&mut *ctx.store.lock().await),
+    )?;
+    let node_agents = category(
+        "node_agents",
+        executor::prune_retired_node_agents(&mut *ctx.store.lock().await, cutoff),
+    )?;
     let reports = {
         let _files = ctx.report_files.lock().await;
-        reports::prune(&mut *ctx.store.lock().await, &ctx.paths.reports, cutoff)?
+        let pruned = reports::prune(&mut *ctx.store.lock().await, &ctx.paths.reports, cutoff);
+        category("reports", pruned)?
     };
-    let retired_keys = supervisor::prune_retired_keys(&mut *ctx.store.lock().await)?;
-    let children = pump::prune_children(ctx, now, cutoff).await?;
-    let stage_agents = pump::prune_stage_agents(ctx, cutoff).await?;
-    let retired_orchestrators = supervisor::prune_retired_orchestrators(ctx, cutoff).await?;
+    let retired_keys = category(
+        "retired_keys",
+        supervisor::prune_retired_keys(&mut *ctx.store.lock().await),
+    )?;
+    let children = category("children", pump::prune_children(ctx, now, cutoff).await)?;
+    let stage_agents = category("stage_agents", pump::prune_stage_agents(ctx, cutoff).await)?;
+    let retired_orchestrators = category(
+        "retired_orchestrators",
+        supervisor::prune_retired_orchestrators(ctx, cutoff).await,
+    )?;
     Ok(Pruned {
         spawn_requests,
         run_vars,
@@ -102,4 +127,17 @@ pub async fn prune_once(ctx: &DaemonContext, now: Timestamp) -> Result<Pruned, A
         retired_keys,
         retired_orchestrators,
     })
+}
+
+/// One kind of record that cannot be read ends that kind's pruning for this
+/// pass, with a log line, and the other kinds still go; a store failure
+/// still fails the pass.
+fn category(kind: &str, pruned: Result<usize, ArchonError>) -> Result<usize, ArchonError> {
+    match pruned {
+        Err(error) if !error.is_store() => {
+            tracing::error!(%kind, %error, "pruning skipped a kind of record it cannot read; run `archon doctor`");
+            Ok(0)
+        }
+        other => other,
+    }
 }

@@ -438,7 +438,10 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
             .map_err(|e| ArchonError::io(format!("creating {}", dir.display()), e))?;
     }
     let store = open_store(&paths, &config)?;
-    let operator_settings = settings::SettingsBook::load(&store)?;
+    let (operator_settings, unreadable) = settings::SettingsBook::load_lenient(&store)?;
+    for (key, error) in &unreadable {
+        set_aside_settings(&paths.data_dir, key, error);
+    }
     let lavish = Lavish::detect(&config.lavish)?;
     let aether = Arc::new(AetherLink::new());
     let backend = Arc::new(AetherBackend::new(aether.clone(), config.models.policy()));
@@ -538,6 +541,27 @@ fn remove_socket(socket: &Path) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => tracing::warn!(path = %path.display(), %error, "not removed at exit"),
         }
+    }
+}
+
+/// An overlay that does not parse runs on its defaults and is listed with
+/// the command that clears it.
+fn set_aside_settings(data_dir: &std::path::Path, key: &str, error: &ArchonError) {
+    let repo = key.strip_prefix("operator_settings/repo/");
+    let reset = match repo {
+        Some(repo) => format!("archon settings --repo {repo} --reset"),
+        None => "archon settings --reset".to_owned(),
+    };
+    let record = archon_core::quarantine::Quarantined::new(
+        "settings",
+        key,
+        &format!("{error}; that scope runs on its defaults"),
+        &reset,
+        &reset,
+    );
+    tracing::error!(%key, %error, "stored settings unreadable; defaults apply to that scope");
+    if let Err(write) = archon_core::quarantine::write(data_dir, &record) {
+        tracing::error!(%write, "the quarantine record was not written");
     }
 }
 

@@ -492,3 +492,51 @@ async fn a_run_record_with_another_id_is_set_aside() {
         QueueState::Running { .. }
     ));
 }
+
+/// A stored settings overlay that does not parse is reported, not fatal;
+/// the other scopes load.
+#[tokio::test]
+async fn an_unparsable_settings_overlay_does_not_stop_loading() {
+    let h = Harness::new().await;
+    let mut store = h.ctx.store.lock().await;
+    store.kv_set("operator_settings/global", "{").unwrap();
+    store
+        .kv_set("operator_settings/repo/not a repo id", "{}")
+        .unwrap();
+
+    let (_book, bad) = archon_daemon::settings::SettingsBook::load_lenient(&store)
+        .expect("a bad overlay is not an error");
+
+    let keys: Vec<_> = bad.iter().map(|(key, _)| key.as_str()).collect();
+    assert!(keys.contains(&"operator_settings/global"), "{keys:?}");
+    assert!(
+        archon_daemon::settings::SettingsBook::is_corrupt(&store, "operator_settings/global")
+            .unwrap()
+    );
+}
+
+/// Pruning goes past a run record it cannot read and a malformed key.
+#[tokio::test]
+async fn pruning_goes_past_an_unreadable_run_and_a_malformed_key() {
+    let h = Harness::new().await;
+    let broken = h.enqueue("unreadable for pruning").await;
+    h.dispatch().await;
+    let run = h.run(&broken.id).await;
+    let db = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    db.execute(
+        "UPDATE runs SET data = '{' WHERE id = ?1",
+        [run.id.as_str()],
+    )
+    .unwrap();
+    drop(db);
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set("run_vars:not-an-id", "{}")
+        .unwrap();
+
+    archon_daemon::prune::prune_once(&h.ctx, archon_core::now())
+        .await
+        .expect("one bad record does not fail the pass");
+}

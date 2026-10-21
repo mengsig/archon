@@ -77,25 +77,62 @@ fn parse(key: &str, raw: &str) -> Result<Watch, ArchonError> {
     serde_json::from_str(raw).map_err(|e| ArchonError::Corrupt(format!("checks watch {key}: {e}")))
 }
 
-/// Look once at every watch that is due; returns how many ended.
+/// Look once at every watch that is due; returns how many ended. An unusable
+/// watch is removed and a failing one logged, so the others are still looked at.
 pub(crate) async fn look(ctx: &DaemonContext) -> Result<usize, ArchonError> {
     let watched = ctx.store.lock().await.kv_prefix(WATCH_PREFIX)?;
     let mut ended = 0;
     for (raw_key, raw) in watched {
-        let run = raw_key
-            .strip_prefix(WATCH_PREFIX)
-            .expect("ranged by prefix");
-        let run = PipelineRunId::parse(run)
-            .map_err(|e| ArchonError::Corrupt(format!("checks watch {raw_key}: {e}")))?;
-        let watch = parse(&raw_key, &raw)?;
+        let decoded = decode(&raw_key, &raw);
+        let (run, watch) = match decoded {
+            Ok(found) => found,
+            Err(error) => {
+                reject(ctx, &raw_key, &raw, &error).await?;
+                continue;
+            }
+        };
         if watch.next_at > archon_core::now() {
             continue;
         }
-        if look_once(ctx, &run, watch).await? {
-            ended += 1;
+        match look_once(ctx, &run, watch).await {
+            Ok(true) => ended += 1,
+            Ok(false) => {}
+            Err(error) if error.is_store() => return Err(error),
+            Err(error) => tracing::error!(%run, %error, "a checks watch failed; the rest go on"),
         }
     }
     Ok(ended)
+}
+
+fn decode(raw_key: &str, raw: &str) -> Result<(PipelineRunId, Watch), ArchonError> {
+    let run = raw_key
+        .strip_prefix(WATCH_PREFIX)
+        .ok_or_else(|| ArchonError::Corrupt(format!("checks watch {raw_key}: foreign key")))?;
+    let run = PipelineRunId::parse(run)
+        .map_err(|e| ArchonError::Corrupt(format!("checks watch {raw_key}: {e}")))?;
+    Ok((run, parse(raw_key, raw)?))
+}
+
+/// Remove a watch that cannot be read and say how to look at the checks by hand.
+async fn reject(
+    ctx: &DaemonContext,
+    raw_key: &str,
+    raw: &str,
+    error: &ArchonError,
+) -> Result<(), ArchonError> {
+    let id = raw_key.strip_prefix(WATCH_PREFIX).unwrap_or(raw_key);
+    let record = archon_core::quarantine::Quarantined::new(
+        "checks-watch",
+        id,
+        &format!("the stored checks watch ({raw}) is unusable: {error}"),
+        "look at the pull request's checks on GitHub yourself",
+        "nothing more to do: the watch was removed",
+    );
+    tracing::error!(%raw_key, %error, "a checks watch is unusable and was removed");
+    if let Err(write) = archon_core::quarantine::write(&ctx.paths.data_dir, &record) {
+        tracing::error!(%write, "the quarantine record was not written");
+    }
+    ctx.store.lock().await.kv_delete(raw_key)
 }
 
 /// Read the checks of `watch` once: `true` when the watch ended.

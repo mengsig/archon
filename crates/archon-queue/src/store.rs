@@ -27,6 +27,7 @@ mod pull_requests;
 mod repos;
 mod run_edits;
 mod runs;
+pub use runs::UnreadableRun;
 mod schema;
 mod settings;
 mod snapshot;
@@ -364,14 +365,34 @@ impl Store {
         runs::upsert_stage(&mut self.conn, stage)
     }
     /// Delete `run`'s stage rows that do not decode; the `(id, raw data)` of
-    /// each is returned so the caller can keep them for the operator.
+    /// each is returned and saved under `archive` for the operator.
     pub fn drop_unreadable_stages(
         &mut self,
         run: &PipelineRunId,
+        archive: &std::path::Path,
     ) -> Result<Vec<(String, String)>, ArchonError> {
-        runs::drop_unreadable_stages(&mut self.conn, run)
+        runs::drop_unreadable_stages(&mut self.conn, run, archive)
     }
-    /// Ordered by started_at, attempt, fan_index.
+    /// Active runs that decode and those that do not.
+    pub fn active_runs_lenient(
+        &self,
+    ) -> Result<(Vec<PipelineRun>, Vec<UnreadableRun>), ArchonError> {
+        runs::active_lenient(&self.conn)
+    }
+    /// Mark an undecodable run terminal so its item can be retried.
+    pub fn retire_unreadable_run(&self, run: &str) -> Result<(), ArchonError> {
+        runs::retire_unreadable(&self.conn, run)
+    }
+    /// Whether the item of run `run` is in the `failed` state.
+    pub fn run_item_failed(&self, run: &str) -> Result<bool, ArchonError> {
+        runs::item_failed(&self.conn, run)
+    }
+    /// Like [`Store::stage_runs`], but an undecodable row is an error.
+    pub fn stage_runs_strict(&self, run: &PipelineRunId) -> Result<Vec<StageRun>, ArchonError> {
+        runs::stages_of_strict(&self.conn, run)
+    }
+    /// Ordered by started_at, attempt, fan_index; an undecodable row is
+    /// logged and left out.
     pub fn stage_runs(&self, run: &PipelineRunId) -> Result<Vec<StageRun>, ArchonError> {
         runs::stages_of(&self.conn, run)
     }

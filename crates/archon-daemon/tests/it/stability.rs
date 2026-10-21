@@ -286,7 +286,7 @@ async fn an_unreadable_stage_row_cited_by_feedback_is_kept() {
         .store
         .lock()
         .await
-        .drop_unreadable_stages(&run.id)
+        .drop_unreadable_stages(&run.id, &h.ctx.paths.data_dir.join("quarantine-rows"))
         .expect("a cited row is skipped, not an error");
 
     assert!(dropped.is_empty(), "{dropped:?}");
@@ -299,4 +299,82 @@ async fn an_unreadable_stage_row_cited_by_feedback_is_kept() {
         )
         .unwrap();
     assert_eq!(kept, 1);
+    let store = h.ctx.store.lock().await;
+    assert!(store.stage_runs(&run.id).expect("lenient read").is_empty());
+    assert!(store.stage_runs_strict(&run.id).is_err());
+}
+
+/// An undecodable run record fails its item, is listed, and neither stops
+/// recovery of the healthy run nor vanishes at the next restart.
+#[tokio::test]
+async fn an_undecodable_run_record_fails_its_item_and_stays_listed_across_restarts() {
+    let mut h = Harness::new().await;
+    let broken = h.enqueue("broken run").await;
+    let fine = h.enqueue("fine").await;
+    h.dispatch().await;
+    let run = h.run(&broken.id).await;
+    let db = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    db.execute(
+        "UPDATE runs SET data = '{' WHERE id = ?1",
+        [run.id.as_str()],
+    )
+    .unwrap();
+    drop(db);
+
+    for _ in 0..2 {
+        h.restart();
+        executor::recover(&h.ctx).await.expect("recovery succeeds");
+
+        let QueueState::Failed { error, .. } = h.state(&broken.id).await else {
+            panic!("the item with the unreadable run fails");
+        };
+        assert!(error.contains("archon queue retry"), "{error}");
+        assert!(matches!(
+            h.state(&fine.id).await,
+            QueueState::Running { .. }
+        ));
+        let set_aside = archon_core::quarantine::list(&h.ctx.paths.data_dir).unwrap();
+        assert_eq!(set_aside.len(), 1, "{set_aside:?}");
+        assert_eq!(set_aside[0].id, run.id.as_str());
+    }
+}
+
+/// An owed auto-merge that cannot be decoded is removed and listed; a watch
+/// of checks that cannot be decoded likewise, and the pass goes on.
+#[tokio::test]
+async fn unusable_owed_merge_and_watch_records_are_set_aside_by_a_pass() {
+    let h = Harness::new().await;
+    let run = "run_00000000000000000000000000";
+    {
+        let mut store = h.ctx.store.lock().await;
+        store
+            .kv_set(&format!("ship_automerge:{run}"), "not json")
+            .unwrap();
+        store.kv_set(&format!("ship_checks:{run}"), "{}").unwrap();
+    }
+
+    executor::coordination::reconcile(&h.ctx)
+        .await
+        .expect("the pass survives bad records");
+
+    let store = h.ctx.store.lock().await;
+    assert!(
+        store
+            .kv_get(&format!("ship_automerge:{run}"))
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .kv_get(&format!("ship_checks:{run}"))
+            .unwrap()
+            .is_none()
+    );
+    let kinds: Vec<_> = archon_core::quarantine::list(&h.ctx.paths.data_dir)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.kind)
+        .collect();
+    assert!(kinds.contains(&"owed-merge".to_owned()), "{kinds:?}");
+    assert!(kinds.contains(&"checks-watch".to_owned()), "{kinds:?}");
 }

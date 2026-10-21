@@ -77,24 +77,75 @@ pub(crate) fn withdraw(store: &mut Store, run: &PipelineRunId) -> Result<bool, A
 }
 
 /// Try every owed auto-merge that is due once; returns how many GitHub took.
+/// A record that cannot be used is set aside and one that fails is logged,
+/// so the others are still tried.
 pub(crate) async fn pay(ctx: &DaemonContext) -> Result<usize, ArchonError> {
     let owed = ctx.store.lock().await.kv_prefix(OWED_PREFIX)?;
     let mut taken = 0;
     for (raw_key, raw) in owed {
-        let run = raw_key.strip_prefix(OWED_PREFIX).expect("ranged by prefix");
-        let run = PipelineRunId::parse(run)
-            .map_err(|e| ArchonError::Corrupt(format!("owed auto-merge {raw_key}: {e}")))?;
-        let owed: Owed = serde_json::from_str(&raw)
-            .map_err(|e| ArchonError::Corrupt(format!("owed auto-merge {raw_key}: {e}")))?;
-        assert_eq!(raw_key, key(&run), "one key per run");
+        let usable = usable_owed(&raw_key, &raw);
+        let (run, owed) = match usable {
+            Ok(found) => found,
+            Err(why) => {
+                reject_owed(ctx, &raw_key, &raw, &why).await?;
+                continue;
+            }
+        };
         if owed.next_at > archon_core::now() {
             continue;
         }
-        if pay_one(ctx, &run, owed).await? {
-            taken += 1;
+        match pay_one(ctx, &run, owed).await {
+            Ok(true) => taken += 1,
+            Ok(false) => {}
+            Err(error) if error.is_store() => return Err(error),
+            Err(error) => {
+                tracing::error!(%run, %error, "an owed auto-merge failed; the rest go on")
+            }
         }
     }
     Ok(taken)
+}
+
+/// Decode one stored owed auto-merge and check what [`pay_one`] relies on.
+fn usable_owed(raw_key: &str, raw: &str) -> Result<(PipelineRunId, Owed), String> {
+    let run = raw_key
+        .strip_prefix(OWED_PREFIX)
+        .ok_or("a key outside its prefix")?;
+    let run = PipelineRunId::parse(run).map_err(|e| e.to_string())?;
+    let owed: Owed = serde_json::from_str(raw).map_err(|e| e.to_string())?;
+    if raw_key != key(&run) {
+        return Err("its key is not the run's".into());
+    }
+    if owed.tries >= MAX_TRIES || !owed.url.contains("/pull/") {
+        return Err(format!(
+            "tries {} and url {:?} are not a pending merge",
+            owed.tries, owed.url
+        ));
+    }
+    Ok((run, owed))
+}
+
+/// Drop an owed auto-merge that cannot be used and tell the operator how to
+/// finish it by hand.
+async fn reject_owed(
+    ctx: &DaemonContext,
+    raw_key: &str,
+    raw: &str,
+    why: &str,
+) -> Result<(), ArchonError> {
+    let id = raw_key.strip_prefix(OWED_PREFIX).unwrap_or(raw_key);
+    let record = archon_core::quarantine::Quarantined::new(
+        "owed-merge",
+        id,
+        &format!("the stored auto-merge ({raw}) is unusable: {why}"),
+        "merge the pull request on GitHub yourself, or `archon doctor` for its link",
+        "nothing more to do: the record was removed",
+    );
+    tracing::error!(%raw_key, %why, "an owed auto-merge is unusable and was removed");
+    if let Err(error) = archon_core::quarantine::write(&ctx.paths.data_dir, &record) {
+        tracing::error!(%error, "the quarantine record was not written");
+    }
+    ctx.store.lock().await.kv_delete(raw_key)
 }
 
 /// Ask GitHub for `owed` once and record how that ended: `true` once it took it.

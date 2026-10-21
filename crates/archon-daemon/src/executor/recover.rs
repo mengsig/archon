@@ -139,10 +139,7 @@ pub(super) async fn recover(ctx: &DaemonContext) -> Result<FollowUp, ArchonError
         "recovery runs once, before dispatch"
     );
     let now = archon_core::now();
-    // Rebuilt below from what is still unusable.
-    if let Err(error) = archon_core::quarantine::clear_all(&ctx.paths.data_dir) {
-        tracing::error!(%error, "the quarantine list could not be reset; recovery goes on");
-    }
+    reset_quarantine(ctx).await?;
     let (runs, answers) = {
         let mut store = ctx.store.lock().await;
         let requeued = store.requeue_orphaned_dispatching(now)?;
@@ -160,7 +157,10 @@ pub(super) async fn recover(ctx: &DaemonContext) -> Result<FollowUp, ArchonError
                 "closed questions of withdrawn or decided gates"
             );
         }
-        let runs = store.active_runs()?;
+        let (runs, unreadable) = store.active_runs_lenient()?;
+        for bad in &unreadable {
+            set_aside_unreadable_run(ctx, &mut store, bad, now)?;
+        }
         let mut kept = Vec::with_capacity(runs.len());
         for run in runs {
             // A crash between insert_run and the item's transition.
@@ -179,7 +179,7 @@ pub(super) async fn recover(ctx: &DaemonContext) -> Result<FollowUp, ArchonError
     // One run at a time, each under the store's lock only briefly, so
     // `status` and other reads are answered between them.
     for run in runs {
-        let stages = ctx.store.lock().await.stage_runs(&run.id);
+        let stages = ctx.store.lock().await.stage_runs_strict(&run.id);
         let followed = match stages {
             Ok(stages) => resume_isolated(ctx, &mut table, run, &stages).await?,
             Err(error) => fail_unreadable(ctx, &mut table, run, error).await?,
@@ -197,6 +197,70 @@ pub(super) async fn recover(ctx: &DaemonContext) -> Result<FollowUp, ArchonError
         poke: true,
         ..FollowUp::default()
     })
+}
+
+/// Forget the quarantine list, which recovery rebuilds from what is still
+/// unusable, except runs that failed and wait for the operator's retry or cancel.
+async fn reset_quarantine(ctx: &DaemonContext) -> Result<(), ArchonError> {
+    let data_dir = &ctx.paths.data_dir;
+    let listed = match archon_core::quarantine::list(data_dir) {
+        Ok(listed) => listed,
+        Err(error) => {
+            tracing::error!(%error, "the quarantine list could not be read; recovery goes on");
+            Vec::new()
+        }
+    };
+    let store = ctx.store.lock().await;
+    let mut waiting = Vec::new();
+    for record in listed {
+        if record.kind == "run" && store.run_item_failed(&record.id)? {
+            waiting.push(record);
+        }
+    }
+    drop(store);
+    if let Err(error) = archon_core::quarantine::clear_all(data_dir) {
+        tracing::error!(%error, "the quarantine list could not be reset; recovery goes on");
+    }
+    for record in &waiting {
+        if let Err(error) = archon_core::quarantine::write(data_dir, record) {
+            tracing::error!(%error, run = %record.id, "a quarantine record was not kept");
+        }
+    }
+    Ok(())
+}
+
+/// A live run whose stored record does not decode fails its item and is
+/// retired, so the item can be retried; recovery goes on with the others.
+fn set_aside_unreadable_run(
+    ctx: &DaemonContext,
+    store: &mut Store,
+    bad: &archon_queue::store::UnreadableRun,
+    now: archon_core::Timestamp,
+) -> Result<(), ArchonError> {
+    let item = archon_core::id::QueueItemId::parse(&bad.item)?;
+    let message = format!(
+        "the run record is unreadable ({}). `archon queue retry {item}` runs it again; \
+         `archon queue cancel {item}` gives it up",
+        bad.error
+    );
+    let record = archon_core::quarantine::Quarantined::new(
+        "run",
+        &bad.run,
+        &format!("item {item}: {message}"),
+        &format!("archon queue retry {item}"),
+        &format!("archon queue cancel {item}"),
+    );
+    tracing::error!(run = %bad.run, %item, error = %bad.error, "run record unreadable; its item fails");
+    store.retire_unreadable_run(&bad.run)?;
+    let failed = QueueState::Failed {
+        run: None,
+        error: message,
+    };
+    store.transition_item(&item, failed, now)?;
+    if let Err(write) = archon_core::quarantine::write(&ctx.paths.data_dir, &record) {
+        tracing::error!(%write, "the quarantine record was not written");
+    }
+    Ok(())
 }
 
 /// A `dispatching` item whose run exists moves on to `running`.
@@ -270,9 +334,13 @@ async fn fail_unreadable(
     error: ArchonError,
 ) -> Result<FollowUp, ArchonError> {
     quarantine_run(ctx, &run, &error);
-    let dropped = ctx.store.lock().await.drop_unreadable_stages(&run.id)?;
+    let dropped = ctx
+        .store
+        .lock()
+        .await
+        .drop_unreadable_stages(&run.id, &ctx.paths.data_dir.join("quarantine-rows"))?;
     for (id, data) in &dropped {
-        tracing::error!(run = %run.id, stage_run = %id, %data, "unreadable stage row removed");
+        tracing::error!(run = %run.id, stage_run = %id, bytes = data.len(), "unreadable stage row removed; saved under quarantine-rows");
     }
     let stage = run.state.live_stage().unwrap_or("recovery").to_owned();
     let message = unresumable_message(&run, &error);

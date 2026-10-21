@@ -180,6 +180,49 @@ async fn load(ctx: &DaemonContext, repo: &RepoId) -> Result<Option<RepoIdentity>
     Ok(Some(identity))
 }
 
+/// Refuse to start a run while git's identity in `repo` is no longer the one
+/// recorded: its commits would be refused at ship after the work is done.
+pub(crate) async fn ensure_current(ctx: &DaemonContext, repo: &Repo) -> Result<(), ArchonError> {
+    assert!(repo.path.is_absolute(), "registered paths are canonical");
+    let recorded = of(ctx, repo).await?;
+    let path = repo.path.clone();
+    let current = tokio::task::spawn_blocking(move || capture(&path))
+        .await
+        .map_err(|e| {
+            ArchonError::io(
+                "reading the repository's git identity",
+                std::io::Error::other(e),
+            )
+        })??;
+    mismatch(&repo.name, recorded.as_ref(), current.as_ref())
+        .map_or(Ok(()), |why| Err(ArchonError::Invalid(why)))
+}
+
+/// Why commits made under `current` would be refused at ship against the
+/// `recorded` identity, if they would.
+fn mismatch(
+    name: &str,
+    recorded: Option<&RepoIdentity>,
+    current: Option<&RepoIdentity>,
+) -> Option<String> {
+    assert!(!name.is_empty(), "a repository has a name");
+    if recorded == current {
+        return None;
+    }
+    let show = |identity: Option<&RepoIdentity>| match identity {
+        Some(i) => format!("<{}>", i.email),
+        None => format!("none (Archon's own <{DAEMON_EMAIL}>)"),
+    };
+    Some(format!(
+        "git in `{name}` now commits as {}, but the identity Archon recorded for it is {}, so \
+         the commits of a run would be refused at ship. Run `archon repo set {name}` to record \
+         the current identity, or set `user.name` and `user.email` in the repository's own git \
+         config first",
+        show(current),
+        show(recorded)
+    ))
+}
+
 /// Forget an unregistered repository's identity.
 pub(crate) fn forget(store: &mut archon_queue::Store, repo: &RepoId) -> Result<(), ArchonError> {
     store.kv_delete(&key(repo))
@@ -202,5 +245,20 @@ mod tests {
         assert_eq!(allowed.last().map(String::as_str), Some(DAEMON_EMAIL));
         assert_eq!(allowed.len(), 3);
         assert_eq!(RepoIdentity::merger(Some(&known)).name, "Op");
+    }
+
+    #[test]
+    fn a_changed_git_identity_is_named_before_a_run_starts() {
+        let known = RepoIdentity {
+            name: "Op".into(),
+            email: "op@example.com".into(),
+            emails: vec!["op@example.com".into()],
+        };
+        assert_eq!(mismatch("r", Some(&known), Some(&known)), None);
+        assert_eq!(mismatch("r", None, None), None);
+        let why = mismatch("r", None, Some(&known)).expect("a mismatch");
+        assert!(why.contains("<op@example.com>") && why.contains(DAEMON_EMAIL));
+        assert!(why.contains("archon repo set r"));
+        assert!(mismatch("r", Some(&known), None).is_some());
     }
 }

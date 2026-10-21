@@ -396,6 +396,17 @@ open: `archond` does not wait for your CI and does not repair a failing
 check. Ask for a fix, or run `archon queue retry <id> --append "…"`, which
 delivers into the same PR. See [Shipping](PIPELINES.md#shipping).
 
+The identity is whatever `git var GIT_AUTHOR_IDENT` and `GIT_COMMITTER_IDENT`
+print in the repository when you run `archon repo add` or `archon repo set`,
+global config included. A repository with no local `user.name` and
+`user.email` therefore records, and its agents commit under, your global
+identity; with none anywhere, only Archon's own `Archon <archon@localhost>`
+ships. Set `user.name` and `user.email` in the repository (`git config user.email
+…`) before `archon repo add`, or run `archon repo set <repo>` after you change
+them. A run does not start while git's identity there differs from the recorded
+one, and commits made under another identity are refused at ship: a plain
+`archon queue retry` keeps them, so use `archon queue retry --fresh`.
+
 The PR body ends with an `Archon item: <id>` line. `archon repo set <repo>
 --attribution none` omits it (the run-to-PR link stays in Archon's store),
 and from then on a delivery whose PR body or commit messages carry a

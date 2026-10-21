@@ -321,6 +321,7 @@ async fn workspace(
     }
     match (mode, &env.repo) {
         (WorkspaceMode::Worktree, Some(repo)) => {
+            super::repo_identity::ensure_current(ctx, repo).await?;
             add_worktree(ctx, repo, item, (base, release), team).await
         }
         (WorkspaceMode::Worktree, None) => Err(ArchonError::Invalid(

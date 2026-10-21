@@ -289,7 +289,9 @@ fn foreign_commits(
     Ok(Err(format!(
         "{} commit(s) on the run branch were not made under this repository's git identity \
          (<{}>): {}. Commits must inherit the local git configuration; Archon records it at \
-         `archon repo add`, and again at `archon repo set` after a deliberate change",
+         `archon repo add`, and again at `archon repo set` after a deliberate change. \
+         A plain `archon queue retry` keeps these commits and is refused again: run `archon repo \
+         set` if their identity is the one to accept, else `archon queue retry --fresh`",
         foreign.len(),
         allowed[0],
         listed(foreign.iter().map(String::as_str))

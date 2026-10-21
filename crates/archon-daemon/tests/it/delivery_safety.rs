@@ -349,11 +349,11 @@ async fn a_stacked_run_missing_a_parent_commit_pushes_nothing() {
 #[tokio::test]
 async fn the_identity_a_ship_admits_is_the_one_recorded_by_the_operator() {
     let (h, _gh) = delivering().await;
+    let (item, run) = started(&h, "direct").await;
     git(
         &h.repo,
         &["config", "user.email", "agent@elsewhere.invalid"],
     );
-    let (item, run) = started(&h, "direct").await;
     std::fs::write(run.workspace.join("change.txt"), "a change\n").unwrap();
     git(&run.workspace, &["add", "change.txt"]);
     let committed = std::process::Command::new("git")
@@ -389,6 +389,46 @@ async fn the_identity_a_ship_admits_is_the_one_recorded_by_the_operator() {
     h.cli(update).await.expect("repo update");
     let stored = h.kv(&format!("repo_identity:{}", run_repo(&h).await)).await;
     assert!(stored.is_some_and(|s| s.contains("agent@elsewhere.invalid")));
+}
+
+/// A run does not start, and so does no work, while git's identity in the
+/// repository differs from the one recorded.
+#[tokio::test]
+async fn a_changed_git_identity_stops_a_run_before_it_works() {
+    let (h, _gh) = delivering().await;
+    git(
+        &h.repo,
+        &["config", "user.email", "changed@elsewhere.invalid"],
+    );
+    let request = EnqueueRequest {
+        onto: None,
+        stage_timeouts: Default::default(),
+        repo: Some(RepoRef(REPO_NAME.into())),
+        pipeline: Some("direct".into()),
+        title: "a change".into(),
+        brief: "brief".into(),
+        priority: Default::default(),
+        depends_on: Vec::new(),
+        tags: Vec::new(),
+        model_plan: ModelPlan::default().into(),
+        model_reasons: None,
+        budget_usd: None,
+        idempotency_key: None,
+        autonomy: AutonomyPatch::default(),
+        origin: None,
+    };
+    let Reply::Item(item) = h.cli(Request::Enqueue(request)).await.expect("enqueue") else {
+        panic!("enqueue replies with the item");
+    };
+    h.dispatch().await;
+
+    let error = match h.state(&item.id).await {
+        QueueState::Failed { error, .. } => error,
+        other => panic!("the item fails before it works: {other:?}"),
+    };
+    assert!(error.contains("<changed@elsewhere.invalid>"), "{error}");
+    assert!(error.contains("archon repo set"), "{error}");
+    assert!(h.running().await.is_empty(), "no agent ran");
 }
 
 async fn run_repo(h: &Harness) -> String {

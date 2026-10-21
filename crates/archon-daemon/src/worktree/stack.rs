@@ -281,7 +281,8 @@ pub(crate) fn push(
 struct Pinned {
     /// New for each command, so no config file can set anything for it.
     name: String,
-    /// `-c` arguments defining it; an empty value clears what came before.
+    /// `-c` arguments defining it. No empty value resets the list first: git
+    /// before 2.46 keeps it as an entry, and the name is new so none is set.
     args: Vec<String>,
 }
 
@@ -296,9 +297,7 @@ impl Pinned {
         let name = format!("archon-pinned-{}-{n}-{nanos}", std::process::id());
         let mut args = Vec::new();
         for key in ["url", "pushurl"] {
-            for value in ["", url] {
-                args.extend(["-c".to_owned(), format!("remote.{name}.{key}={value}")]);
-            }
+            args.extend(["-c".to_owned(), format!("remote.{name}.{key}={url}")]);
         }
         Self { name, args }
     }
@@ -318,8 +317,17 @@ pub(crate) fn pinned_url(shadow: &Shadow, url: &str) -> Result<String, ArchonErr
     let pinned = Pinned::new(&url);
     let args = pinned.before(&["ls-remote", "--get-url", &pinned.name]);
     let resolved = shadow.git(None, Config::Operator)?.args(args).text()?;
-    assert!(!resolved.is_empty() && !resolved.contains('\n'), "one URL");
-    Ok(resolved)
+    one_url(resolved)
+}
+
+/// `resolved`, if it is the one URL `git ls-remote --get-url` prints.
+fn one_url(resolved: String) -> Result<String, ArchonError> {
+    match resolved.is_empty() || resolved.contains('\n') {
+        true => Err(ArchonError::Invalid(format!(
+            "git resolved the push remote to {resolved:?}, not one URL"
+        ))),
+        false => Ok(resolved),
+    }
 }
 
 /// [`push`] of `commit` to `branch` only while `url` holds `expected` there,
@@ -630,6 +638,31 @@ mod tests {
         }
         assert!(is_local("/srv/r.git") && is_local("file:///srv/r") && is_local("./a:b"));
         assert!(!is_local("git@github.com:o/r.git") && !is_local("ssh://h/r"));
+    }
+
+    /// The remote has one `url` and one `pushurl` entry, as git before 2.46
+    /// would otherwise keep an empty one first and resolve it to nothing.
+    #[test]
+    fn a_pinned_remote_defines_each_url_once_and_never_empty() {
+        let pinned = Pinned::new("https://github.com/o/r.git");
+        let url = "https://github.com/o/r.git";
+        assert_eq!(
+            pinned.args,
+            [
+                "-c".to_owned(),
+                format!("remote.{}.url={url}", pinned.name),
+                "-c".to_owned(),
+                format!("remote.{}.pushurl={url}", pinned.name),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unexpected_resolution_is_an_error_not_a_panic() {
+        assert_eq!(one_url("/srv/r.git".to_owned()).unwrap(), "/srv/r.git");
+        for bad in ["", "a\nb"] {
+            assert!(one_url(bad.to_owned()).is_err(), "{bad:?}");
+        }
     }
 
     fn run_git(dir: &Path, args: &[&str]) -> String {

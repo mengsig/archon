@@ -120,10 +120,10 @@ async fn task_settled(
     event: &AetherEvent,
     agent: &AetherAgentId,
 ) -> Result<(), ArchonError> {
-    let outcome = event
-        .kind
-        .stage_outcome()
-        .unwrap_or_else(|| unreachable!("only task.* events reach here"));
+    let Some(outcome) = event.kind.stage_outcome() else {
+        tracing::warn!(kind = ?event.kind, %agent, "a task event without a stage outcome is ignored");
+        return Ok(());
+    };
     let Some(stage) = stage_awaiting_spawn(ctx, event, agent).await? else {
         return Ok(());
     };
@@ -165,7 +165,10 @@ async fn agent_died(
         EventKind::AgentCancelled { reason } => StageOutcome::Cancelled {
             reason: reason.clone(),
         },
-        other => unreachable!("agent_died got {other:?}"),
+        other => {
+            tracing::warn!(kind = ?other, %agent, "an event that does not end an agent is ignored");
+            return Ok(());
+        }
     };
     executor::stage_settled(ctx, agent, outcome).await
 }

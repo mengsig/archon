@@ -36,6 +36,7 @@ pub mod status_health;
 mod storage;
 pub mod supervisor;
 pub mod triggers;
+mod workers;
 pub mod worktree;
 
 mod knobs;
@@ -43,7 +44,6 @@ pub mod learned;
 mod resolve;
 pub mod settings;
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -58,12 +58,12 @@ use archon_lavish::Lavish;
 use archon_queue::Store;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::{Mutex, Notify, broadcast};
-use tokio::task::{JoinError, JoinSet};
 
 use crate::context::{DaemonContext, DaemonPaths};
 use crate::github::GithubState;
 use crate::supervisor::Supervisor;
 use crate::triggers::TriggerQueue;
+use crate::workers::{Ended, Policy, Workers};
 
 /// Feed items buffered per subscriber before it lags (and catches up from
 /// the store).
@@ -256,57 +256,6 @@ impl Signals {
     }
 }
 
-type TaskResult = (&'static str, Result<(), ArchonError>);
-
-/// The daemon's worker tasks, each known by name until it has ended.
-#[derive(Default)]
-struct Workers {
-    tasks: JoinSet<TaskResult>,
-    names: HashMap<tokio::task::Id, &'static str>,
-}
-
-impl Workers {
-    fn spawn<F>(&mut self, name: &'static str, work: F)
-    where
-        F: Future<Output = Result<(), ArchonError>> + Send + 'static,
-    {
-        let handle = self.tasks.spawn(async move { (name, work.await) });
-        let earlier = self.names.insert(handle.id(), name);
-        assert!(earlier.is_none(), "task ids are unique");
-    }
-
-    /// The next worker to end; `None` once none is left.
-    async fn join_next(&mut self) -> Option<Result<TaskResult, JoinError>> {
-        let done = self.tasks.join_next_with_id().await?;
-        let id = match &done {
-            Ok((id, _)) => *id,
-            Err(error) => error.id(),
-        };
-        assert!(self.names.remove(&id).is_some(), "a worker ends once");
-        Some(done.map(|(_, result)| result))
-    }
-
-    /// Abort every worker and wait up to `limit` for them to end. One busy
-    /// outside any `.await` cannot be aborted: it is named, left behind and
-    /// returned.
-    async fn stop(mut self, limit: Duration) -> Vec<&'static str> {
-        self.tasks.abort_all();
-        let deadline = tokio::time::Instant::now() + limit;
-        while let Ok(Some(_)) = tokio::time::timeout_at(deadline, self.join_next()).await {}
-        let left: Vec<&'static str> = self.names.into_values().collect();
-        for task in &left {
-            tracing::warn!(
-                task,
-                ?limit,
-                "daemon task still running after abort; exiting without it"
-            );
-        }
-        assert_eq!(left.len(), self.tasks.len(), "every running task is named");
-        self.tasks.detach_all();
-        left
-    }
-}
-
 /// The server and every worker task; the first to end stops the daemon.
 /// Only the server ends cleanly (on `Shutdown`); a worker ending is a
 /// failure, and one on a full disk turns the daemon to standby. An
@@ -319,35 +268,21 @@ async fn supervise(
     signals: &mut Signals,
 ) -> Result<(), ArchonError> {
     assert!(ctx.recovery.is_recovered(), "workers start once recovered");
-    let mut workers = Workers::default();
-    workers.spawn("event pump", pump::run(ctx.clone(), endpoint, starter));
-    workers.spawn("dispatcher", dispatcher::run(ctx.clone()));
-    workers.spawn("coordination", executor::coordination::run(ctx.clone()));
-    workers.spawn("trigger delivery", triggers::deliver_loop(ctx.clone()));
-    workers.spawn("store pruning", prune::run(ctx.clone()));
-    workers.spawn("repository mirrors", mirror::run(ctx.clone()));
-    workers.spawn("learning", learned::run(ctx.clone()));
-    workers.spawn("upgrades", ops::run(ctx.clone()));
-    let auto_gc = ctx.config.worktrees.auto_gc;
-    if auto_gc {
-        workers.spawn("worktree gc", gc::run(ctx.clone()));
-    }
-    let verifies = ctx.config.integration.enabled;
-    if verifies {
-        workers.spawn("integration verification", integration::run(ctx.clone()));
-    }
-    assert_eq!(
-        workers.names.len(),
-        8 + usize::from(auto_gc) + usize::from(verifies),
-        "every daemon worker is supervised"
-    );
-    let result = tokio::select! {
-        stopped = signals.stop() => stopped,
-        served = &mut server => server_ended(served),
-        Some(done) = workers.join_next() => task_ended(done),
-        () = ctx.ops.stopping() => {
-            tracing::info!("stopping for an upgrade's restart");
-            Ok(())
+    let mut workers = Workers::new(Policy::DAEMON);
+    spawn_workers(&mut workers, &ctx, endpoint, starter);
+    let result = loop {
+        tokio::select! {
+            stopped = signals.stop() => break stopped,
+            served = &mut server => break server_ended(served),
+            Some(ended) = workers.next_ended() => {
+                if let Some(fatal) = worker_ended(&ctx, ended).await {
+                    break Err(fatal);
+                }
+            }
+            () = ctx.ops.stopping() => {
+                tracing::info!("stopping for an upgrade's restart");
+                break Ok(());
+            }
         }
     };
     workers.stop(WORKER_STOP).await;
@@ -363,26 +298,102 @@ async fn supervise(
     }
 }
 
+fn spawn_workers(
+    workers: &mut Workers,
+    ctx: &Arc<DaemonContext>,
+    endpoint: Endpoint,
+    starter: Option<Arc<dyn pump::AetherStarter>>,
+) {
+    macro_rules! worker {
+        ($name:expr, $run:path) => {{
+            let ctx = ctx.clone();
+            workers.spawn($name, move || $run(ctx.clone()));
+        }};
+    }
+    {
+        let ctx = ctx.clone();
+        workers.spawn("event pump", move || {
+            pump::run(ctx.clone(), endpoint.clone(), starter.clone())
+        });
+    }
+    worker!("dispatcher", dispatcher::run);
+    worker!("coordination", executor::coordination::run);
+    worker!("trigger delivery", triggers::deliver_loop);
+    worker!("store pruning", prune::run);
+    worker!("repository mirrors", mirror::run);
+    worker!("learning", learned::run);
+    worker!("upgrades", ops::run);
+    let auto_gc = ctx.config.worktrees.auto_gc;
+    if auto_gc {
+        worker!("worktree gc", gc::run);
+    }
+    let verifies = ctx.config.integration.enabled;
+    if verifies {
+        worker!("integration verification", integration::run);
+    }
+    assert_eq!(
+        workers.len(),
+        8 + usize::from(auto_gc) + usize::from(verifies),
+        "every daemon worker is supervised"
+    );
+}
+
+/// Log what became of a worker and tell the operator when it keeps failing;
+/// `Some` only for a failure the daemon cannot go on past.
+async fn worker_ended(ctx: &DaemonContext, ended: Ended) -> Option<ArchonError> {
+    let (text, tell) = match ended {
+        Ended::Fatal(error) => return Some(error),
+        Ended::Restarting {
+            name,
+            error,
+            failures,
+            pause,
+            tell,
+        } => {
+            tracing::error!(task = name, %error, failures, ?pause, "daemon task failed; restarting it");
+            let text = format!(
+                "The {name} task of archond has failed {failures} times in a row ({error}) and is \
+                 restarted every time. Everything else keeps running. If it persists, run \
+                 `archon doctor` and report its output."
+            );
+            (text, tell)
+        }
+        Ended::Disabled {
+            name,
+            error,
+            failures,
+        } => {
+            tracing::error!(task = name, %error, failures, "daemon task disabled");
+            let text = format!(
+                "The {name} task of archond failed {failures} times in a row ({error}) and is \
+                 switched off. Everything else keeps running. Run `archon daemon restart` to start it \
+                 again, and report `archon doctor`'s output if it fails again."
+            );
+            (text, true)
+        }
+    };
+    if tell {
+        if let Err(error) = feed::notify(ctx, NotificationKind::Blocker, text, None, None).await {
+            tracing::error!(%error, "the operator could not be told of a failing daemon task");
+        }
+    }
+    None
+}
+
 /// The server ends cleanly only on `Shutdown`.
 fn server_ended(
     served: Result<Result<(), ArchonError>, tokio::task::JoinError>,
 ) -> Result<(), ArchonError> {
-    task_ended(served.map(|result| ("server", result)))
+    task_ended(served)
 }
 
-fn task_ended(done: Result<TaskResult, tokio::task::JoinError>) -> Result<(), ArchonError> {
+fn task_ended(
+    done: Result<Result<(), ArchonError>, tokio::task::JoinError>,
+) -> Result<(), ArchonError> {
     match done {
-        Ok(("server", Ok(()))) => Ok(()),
-        Ok((name, Ok(()))) => Err(ArchonError::io(
-            format!("the {name} task"),
-            std::io::Error::other("stopped unexpectedly"),
-        )),
-        Ok((name, Err(error))) => {
-            tracing::error!(task = name, %error, "daemon task failed");
-            Err(error)
-        }
+        Ok(result) => result,
         Err(error) => Err(ArchonError::io(
-            "a daemon task",
+            "the server task",
             std::io::Error::other(format!("panicked or was cancelled: {error}")),
         )),
     }
@@ -537,27 +548,5 @@ mod tests {
             .unwrap();
         assert_eq!(kept.kind, "panic");
         assert_eq!(kept.location.as_deref(), Some("a.rs:1"));
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn stopping_leaves_a_worker_that_never_yields_behind() {
-        let (started, running) = tokio::sync::oneshot::channel();
-        let (release, blocked) = std::sync::mpsc::channel::<()>();
-        let mut workers = Workers::default();
-        workers.spawn("waits", std::future::pending());
-        workers.spawn("blocks", async move {
-            started.send(()).expect("the test waits for the start");
-            // Blocks its thread outside any `.await`, so an abort cannot land.
-            let _released = blocked.recv();
-            Ok(())
-        });
-        running.await.expect("the blocking worker started");
-
-        let stop = workers.stop(Duration::from_millis(200));
-        let stopped = tokio::time::timeout(Duration::from_secs(2), stop).await;
-        release.send(()).expect("the blocked worker still waits");
-
-        let left = stopped.expect("the stop is bounded");
-        assert_eq!(left, ["blocks"], "only the blocked worker is left behind");
     }
 }

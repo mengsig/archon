@@ -248,13 +248,19 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<OrchestratorCommand>,
     },
-    /// Install the latest released archon over this one.
+    /// Update archon and Aether, then restart what runs them.
     ///
     /// Downloads the release for this machine, verifies its SHA-256 and
-    /// replaces this binary in place. Restarts nothing: a running archond
-    /// keeps the old version until you restart it. Exit 0: up to date or
-    /// updated; 10 with --check: a newer release exists; 1: error.
-    #[command(after_help = "Example: archon update --check || archon update")]
+    /// replaces this binary in place. Then, after you confirm (or with
+    /// --yes), runs `aether update` and restarts archond, Archon's own
+    /// aetherd and the orchestrator in order, so the update takes effect
+    /// now; running items resume as after any archond restart. Your own
+    /// aetherd is never restarted. Without --yes and a terminal, or with
+    /// --no-restart, nothing is restarted and the commands for it are
+    /// printed. Exit 0: up to date or updated; 10 with --check: a newer
+    /// release exists; 1: error.
+    #[command(after_help = "Examples:\n  archon update --check || archon update\n  \
+                            archon update --yes --wait 600")]
     Update(UpdateArgs),
 }
 
@@ -274,7 +280,7 @@ pub enum ReleaseCommand {
     },
 }
 
-#[derive(Debug, Default, Args)]
+#[derive(Debug, Args)]
 pub struct UpdateArgs {
     /// Only report whether a newer release exists (exit 10 when one does).
     #[arg(long, conflicts_with = "version")]
@@ -286,6 +292,20 @@ pub struct UpdateArgs {
     /// Print the Aether protocols this archon speaks, for the installer.
     #[arg(long, conflicts_with_all = ["check", "version"])]
     pub requirements: bool,
+    /// Update Aether and restart without asking; for scripts.
+    #[arg(long, conflicts_with_all = ["check", "requirements", "no_restart"])]
+    pub yes: bool,
+    /// Install archon only: update no Aether and restart nothing.
+    #[arg(long, conflicts_with_all = ["check", "requirements"])]
+    pub no_restart: bool,
+    /// Longest wait, in seconds, for running stage agents to finish before
+    /// archond restarts.
+    #[arg(long, value_name = "SECS", default_value_t = archon_core::ops::DEFAULT_DRAIN_SECS)]
+    pub wait: u64,
+    /// When the wait runs out, restart anyway: stages stopped with aetherd
+    /// are retried. Without it the restart is given up.
+    #[arg(long)]
+    pub requeue: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1469,6 +1489,12 @@ mod tests {
             panic!()
         };
         assert!(!args.check && !args.requirements && args.version.is_none());
+        assert!(!args.yes && !args.no_restart && !args.requeue);
+        assert_eq!(args.wait, archon_core::ops::DEFAULT_DRAIN_SECS);
+        let Command::Update(args) = parse(&["update", "--yes", "--wait", "60", "--requeue"]) else {
+            panic!()
+        };
+        assert!(args.yes && args.requeue && args.wait == 60);
         let Command::Update(args) = parse(&["update", "--version", "v1.2.3"]) else {
             panic!()
         };
@@ -1481,6 +1507,8 @@ mod tests {
             &["update", "--check", "--version", "v1.2.3"][..],
             &["update", "--requirements", "--check"],
             &["update", "--version"],
+            &["update", "--yes", "--no-restart"],
+            &["update", "--yes", "--check"],
         ] {
             let args = [&["archon"], refused].concat();
             assert!(Cli::try_parse_from(args).is_err(), "{refused:?}");

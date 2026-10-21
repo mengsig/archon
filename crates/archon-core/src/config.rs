@@ -66,6 +66,7 @@ pub struct Config {
     pub learning: LearningConfig,
     pub integration: IntegrationConfig,
     pub notify: crate::push::NotifyConfig,
+    pub update: UpdateConfig,
 }
 
 /// How archond verifies each repository's integration branch off the items'
@@ -659,6 +660,25 @@ pub struct DispatcherConfig {
 impl Default for DispatcherConfig {
     fn default() -> Self {
         Self { tick_secs: 15 }
+    }
+}
+
+/// The release check a launch of `archon` makes (docs/configuration.md).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct UpdateConfig {
+    /// `false`: a launch never asks GitHub for releases and never offers an update.
+    pub check_on_launch: bool,
+    /// A release answer younger than this is reused instead of asked again.
+    pub cache_for: Age,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            check_on_launch: true,
+            cache_for: Age::from_secs(60 * 60),
+        }
     }
 }
 

@@ -1,10 +1,12 @@
 //! `archon update`: replace this archon with a released one, from the assets
-//! and with the SHA-256 check of `install.sh`. It restarts nothing.
+//! and with the SHA-256 check of `install.sh`; then, when asked, update Aether
+//! and restart what runs them (`restart`).
 
 mod aether;
 mod interrupt;
 mod location;
 mod release;
+mod restart;
 mod tools;
 pub(super) mod version;
 
@@ -22,6 +24,7 @@ use self::version::Version;
 use super::{emit, to_json};
 use crate::cli::UpdateArgs;
 use crate::connect::{archon_bin, connect_existing};
+use archon_core::config::{AetherMode, Config};
 
 /// `archon update --check` exits with this when a newer release exists.
 const UPDATE_AVAILABLE: u8 = 10;
@@ -80,11 +83,79 @@ pub async fn run(args: UpdateArgs, json: bool) -> anyhow::Result<ExitCode> {
         prepared = prepare(&args, place.as_ref(), json) => prepared?,
     };
     // No signal is waited for from here on: the swap and its report end whole.
-    match (prepared, place) {
-        (Prepared::Reported(code), _) => Ok(code),
-        (Prepared::Staged(staged), Some(place)) => commit(&staged, &place, json),
+    let (code, installed) = match (prepared, place) {
+        (Prepared::Reported(code), _) => (code, None),
+        (Prepared::Staged(staged), Some(place)) => {
+            (commit(&staged, &place, json)?, Some(staged.wanted))
+        }
         (Prepared::Staged(_), None) => unreachable!("--check stages nothing"),
+    };
+    if args.check || args.no_restart {
+        return Ok(code);
     }
+    restart_after(&args, json, code, installed).await
+}
+
+/// Update Aether and restart, after the operator confirms or `--yes`. A run
+/// that cannot ask has printed the commands for it, and stops there.
+async fn restart_after(
+    args: &UpdateArgs,
+    json: bool,
+    code: ExitCode,
+    installed: Option<Version>,
+) -> anyhow::Result<ExitCode> {
+    use restart::Steps as _;
+    let config = Config::load_default().context("loading the config to restart from")?;
+    let plan = restart::Plan {
+        installed: installed
+            .clone()
+            .unwrap_or_else(Version::current)
+            .to_string(),
+        archon_changed: installed.is_some(),
+        dedicated: config.aether.mode == AetherMode::Dedicated,
+        drain_secs: args.wait,
+        requeue: args.requeue,
+    };
+    let running = restart::Live.running_archond().await?;
+    if !args.yes && !confirmed(&plan, running.as_ref(), json)? {
+        return Ok(code);
+    }
+    let outcome = restart::apply(&restart::Live, &plan).await?;
+    let value = serde_json::json!({
+        "restarted": outcome.restarted, "steps": outcome.lines, "warnings": outcome.warnings,
+    });
+    emit(json, || Ok(value), &outcome.lines.join("\n"))?;
+    for warning in &outcome.warnings {
+        eprintln!("archon: warning: {warning}");
+    }
+    Ok(match outcome.warnings.is_empty() {
+        true => code,
+        false => ExitCode::FAILURE,
+    })
+}
+
+/// Say what will restart and ask. `false` where nothing is asked: no
+/// terminal, `--json`, or nothing stale to restart.
+fn confirmed(
+    plan: &restart::Plan,
+    running: Option<&restart::Running>,
+    json: bool,
+) -> anyhow::Result<bool> {
+    use std::io::IsTerminal as _;
+    let stale = running
+        .is_some_and(|archond| archon_core::ops::bare_version(&archond.version) != plan.installed);
+    let asks = !json && std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    if !asks || !(plan.archon_changed || stale) {
+        return Ok(false);
+    }
+    println!("{}", restart::announce(plan, running));
+    print!("Update Aether and restart now? [Y/n] ");
+    std::io::Write::flush(&mut std::io::stdout()).context("writing the question")?;
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .context("reading the answer")?;
+    Ok(restart::is_yes(&answer))
 }
 
 /// How the part of an update that a signal may still stop has ended.

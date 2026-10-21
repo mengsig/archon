@@ -30,6 +30,11 @@ impl Registry {
         self.repos.as_deref().map_err(String::as_str)
     }
 
+    /// True when `gh` is certainly unused: every repository ships locally and the watcher is off.
+    pub(super) fn gh_unused(&self) -> bool {
+        gh_need(self) == GhNeed::NotNeeded
+    }
+
     pub(super) async fn read(
         archond: &anyhow::Result<Option<ArchonClient>>,
         mode: AetherMode,
@@ -117,8 +122,9 @@ fn gh_verdict(binary: &Path, login: Result<(), String>, need: GhNeed) -> Check {
         GhNeed::Needed(what) => check(NAME, Level::Fail, format!("{problem}; {what}")),
         GhNeed::NotNeeded => check(
             NAME,
-            Level::Warn,
-            format!("{problem}; no repository ships in pr mode and the GitHub watcher is off"),
+            Level::Ok,
+            "not logged in, and nothing needs it: every repository ships locally and the GitHub \
+             watcher is off (`gh auth login` if you later ship in pr mode)",
         ),
         GhNeed::Unknown(why) => check(
             NAME,
@@ -299,7 +305,13 @@ pub(super) mod tests {
             fail.detail
         );
         let warn = check_gh(&bad, &unneeded).await;
-        assert_eq!(warn.level, Level::Warn);
+        assert_eq!(
+            warn.level,
+            Level::Ok,
+            "no warning when all repos ship local"
+        );
+        assert!(warn.detail.contains("ship"), "{}", warn.detail);
+        assert!(unneeded.gh_unused() && !needed.gh_unused());
         for c in [&fail, &warn] {
             assert!(!c.detail.contains("gho_"), "{}", c.detail);
         }

@@ -9,8 +9,8 @@ use std::time::Duration;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::model::{Effort, ModelRef};
 use archon_core::protocol::{
-    ClientFrame, ErrorReply, OrchestratorInfo, PROTOCOL_VERSION, Reply, Request, ServerFrame,
-    Welcome,
+    ClientFrame, ErrorCode, ErrorReply, OrchestratorInfo, PROTOCOL_VERSION, Reply, Request,
+    ServerFrame, Welcome,
 };
 
 pub fn orchestrator() -> Reply {
@@ -53,6 +53,10 @@ pub fn serve(
                         }))
                     }
                     Request::OrchestratorAttach => replies.next().expect("a scripted attach reply"),
+                    Request::Status(_) => Err(ErrorReply {
+                        code: ErrorCode::Internal,
+                        message: "no status in this canned archond".into(),
+                    }),
                     other => panic!("unexpected launcher request {other:?}"),
                 };
                 requests.push(frame.request);

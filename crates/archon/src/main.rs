@@ -201,6 +201,25 @@ fn stop_runtime(runtime: tokio::runtime::Runtime) {
     }
 }
 
+/// For an unknown subcommand, the commands that exist and where to read more.
+fn unknown_command_hint(error: &clap::Error) -> Option<String> {
+    use clap::CommandFactory as _;
+    if error.kind() != clap::error::ErrorKind::InvalidSubcommand {
+        return None;
+    }
+    let command = Cli::command();
+    let names: Vec<&str> = command
+        .get_subcommands()
+        .filter(|sub| !sub.is_hide_set())
+        .map(clap::Command::get_name)
+        .collect();
+    assert!(!names.is_empty(), "archon has subcommands");
+    Some(format!(
+        "Commands: {}. Run `archon --help` for what each does.",
+        names.join(", ")
+    ))
+}
+
 /// A command line that does not parse: what clap prints, or under `--json`
 /// the usual error envelope on stdout. Either way with clap's exit status.
 fn usage_error(error: &clap::Error) -> ExitCode {
@@ -209,7 +228,12 @@ fn usage_error(error: &clap::Error) -> ExitCode {
     // Help and the version are no error: clap prints them to stdout.
     if !error.use_stderr() || !wants_json {
         return match error.print() {
-            Ok(()) => ExitCode::from(status),
+            Ok(()) => {
+                if let Some(hint) = unknown_command_hint(error) {
+                    eprintln!("{hint}");
+                }
+                ExitCode::from(status)
+            }
             Err(_) => ExitCode::FAILURE,
         };
     }
@@ -225,6 +249,16 @@ fn usage_error(error: &clap::Error) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unknown_command_lists_the_real_ones() {
+        let error = Cli::try_parse_from(["archon", "bogus"]).unwrap_err();
+        let hint = unknown_command_hint(&error).expect("a hint");
+        assert!(hint.contains("queue") && hint.contains("say"), "{hint}");
+        assert!(hint.contains("`archon --help`"), "{hint}");
+        let other = Cli::try_parse_from(["archon", "say", "--nope"]).unwrap_err();
+        assert!(unknown_command_hint(&other).is_none());
+    }
 
     #[test]
     fn only_a_broken_stdout_is_quiet() {

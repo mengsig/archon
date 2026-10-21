@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use archon_client::ArchonClient;
 use archon_core::attachment::check_images;
@@ -10,11 +11,17 @@ use archon_core::notify::Question;
 use archon_core::protocol::{Reply, Request};
 
 use super::{emit, to_json};
-use crate::connect::{connect_or_start, connect_running, unexpected};
+use crate::connect::{await_link, connect_or_start, connect_running, unexpected};
 use crate::format;
 use crate::images::read_image_file;
 use crate::ops;
 use crate::questions::{QuestionRef, find_open};
+
+const SAID: &str = "Sent to the orchestrator. Follow its work with `archon log --follow`, \
+                    or talk with it in `archon chat`.";
+const LINK_WAIT: Duration = Duration::from_secs(10);
+const MAYBE_SENT: &str = "the message may or may not have arrived: check `archon log --follow` \
+                          before sending it again";
 
 pub async fn say(words: &[String], paths: &[PathBuf], json: bool) -> anyhow::Result<ExitCode> {
     let text = words.join(" ");
@@ -31,12 +38,19 @@ pub async fn say(words: &[String], paths: &[PathBuf], json: bool) -> anyhow::Res
     check_images(&images).map_err(|e| archon_core::ArchonError::Invalid(e.to_string()))?;
     assert_eq!(images.len(), paths.len(), "one attachment per --image");
     let client = connect_or_start().await?;
-    ops::say(&client, text, images).await?;
-    emit(
-        json,
-        || Ok(serde_json::json!({"ok": true})),
-        "Sent to the orchestrator.",
-    )?;
+    // Waiting is safe before the send; a send is never replayed, as it may have arrived.
+    await_link(&client, LINK_WAIT).await?;
+    if let Err(error) = ops::say(&client, text, images).await {
+        let unavailable = matches!(
+            error.downcast_ref::<archon_core::ArchonError>(),
+            Some(archon_core::ArchonError::Unavailable(_))
+        );
+        return Err(match unavailable {
+            true => error.context(MAYBE_SENT),
+            false => error,
+        });
+    }
+    emit(json, || Ok(serde_json::json!({"ok": true})), SAID)?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -122,4 +136,20 @@ async fn open_questions(client: &ArchonClient) -> anyhow::Result<Vec<Question>> 
     open.retain(Question::is_open);
     open.sort_by_key(|q| q.number);
     Ok(open)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_reply_names_the_next_commands() {
+        assert!(SAID.contains("`archon log --follow`") && SAID.contains("`archon chat`"));
+    }
+
+    #[test]
+    fn a_failed_send_says_it_may_have_arrived_and_where_to_look() {
+        assert!(MAYBE_SENT.contains("may or may not have arrived"));
+        assert!(MAYBE_SENT.contains("`archon log --follow`"));
+    }
 }

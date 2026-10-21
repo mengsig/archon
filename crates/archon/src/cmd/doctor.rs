@@ -113,7 +113,7 @@ pub async fn run(json: bool) -> anyhow::Result<ExitCode> {
     checks.push(registry::check_gh(&config.github.binary, &registry).await);
     checks.push(gh_users::check_gh_users(&config.github.binary, &registry).await);
     checks.push(registry::check_repos(&registry).await);
-    checks.extend(release_checks(&config.github.binary).await);
+    checks.extend(release_checks(&config.github.binary, registry.gh_unused()).await);
     checks.push(check_lavish(&config));
     checks.push(check_agent_cli("claude"));
     checks.push(check_agent_cli("codex"));
@@ -784,17 +784,19 @@ pub(super) fn find_program(program: &Path) -> Option<PathBuf> {
         .find(|candidate| executable(candidate))
 }
 
-async fn release_checks(binary: &Path) -> Vec<Check> {
+/// `gh_unused`: nothing ships through GitHub, so a release lookup that fails is not worth a warning.
+async fn release_checks(binary: &Path, gh_unused: bool) -> Vec<Check> {
     let mut checks = Vec::new();
     for repo in ["mengsig/archon", "mengsig/aether"] {
         let (level, detail) = match super::release::inspect(binary, repo, None).await {
             Ok(problems) if problems.is_empty() => (Level::Ok, format!("{repo}: healthy")),
             Ok(problems) => (Level::Fail, format!("{repo}: {}", problems.join("; "))),
+            Err(_) if gh_unused => continue,
             Err(error) => (Level::Warn, format!("{repo}: could not check: {error:#}")),
         };
         checks.push(check("releases", level, detail));
     }
-    assert_eq!(checks.len(), 2);
+    assert!(checks.len() <= 2);
     assert!(checks.iter().all(|check| !check.detail.is_empty()));
     checks
 }

@@ -26,6 +26,8 @@ use crate::instance::{
 };
 use crate::setup;
 
+/// How long a launch waits for archond's status before a plain welcome.
+const WELCOME_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 const HOST_COMMANDS: &str = "--host-commands";
 const TOO_OLD: &str =
@@ -346,6 +348,10 @@ async fn tui_command(mut args: TuiArgs, checked: bool) -> anyhow::Result<Command
     let agent = attach(&client).await.context(
         "attaching to Archon's orchestrator; try `archon tui` again after Aether reconnects",
     )?;
+    let welcome = match config.aether.mode == AetherMode::Dedicated {
+        true => operator_commands::welcome_lines(welcome_facts(&client).await.as_ref()),
+        false => Vec::new(),
+    };
     drop(client);
     let mut command = aether_command(&config, &tui_args(&agent, &args, config.aether.mode))?;
     if let Some(socket) = &config.aether.socket {
@@ -367,15 +373,36 @@ async fn tui_command(mut args: TuiArgs, checked: bool) -> anyhow::Result<Command
         ensure_tui_options(&command, &help)?;
     }
     if dedicated {
-        offer_host_commands(&mut command, &help, &paths::tui_host_commands_path());
+        let path = paths::tui_host_commands_path();
+        offer_host_commands(&mut command, &help, &path, &welcome);
     }
     Ok(command)
+}
+
+/// The launch-time facts for the TUI's welcome block; `None` when archond
+/// does not answer within [`WELCOME_TIMEOUT`].
+async fn welcome_facts(
+    client: &archon_client::ArchonClient,
+) -> Option<operator_commands::WelcomeFacts> {
+    let ask = async {
+        let status = crate::views::fetch_status(client).await?;
+        let repos = crate::views::fetch_repos(client).await?;
+        anyhow::Ok(operator_commands::WelcomeFacts {
+            repos: repos.into_iter().map(|r| r.name).collect(),
+            running: status.running_agents,
+            queued: status.queued_items,
+            waiting_for_you: status.open_questions
+                + status.open_gates
+                + u32::try_from(status.merges_waiting.len()).unwrap_or(u32::MAX),
+        })
+    };
+    tokio::time::timeout(WELCOME_TIMEOUT, ask).await.ok()?.ok()
 }
 
 /// Write Archon's operator commands to `path` and pass it as
 /// `--host-commands`, so `/answer` and the rest join the TUI's / menu. An
 /// `aether` that predates the option, or a failed write, costs only the menu.
-fn offer_host_commands(command: &mut Command, help: &str, path: &Path) {
+fn offer_host_commands(command: &mut Command, help: &str, path: &Path, welcome: &[String]) {
     if !missing_options(help, [OsStr::new(HOST_COMMANDS)].into_iter()).is_empty() {
         eprintln!(
             "Warning: this Aether's terminal UI takes no {HOST_COMMANDS}, so /answer and \
@@ -383,19 +410,20 @@ fn offer_host_commands(command: &mut Command, help: &str, path: &Path) {
         );
         return;
     }
-    if let Err(error) = write_host_commands(path) {
+    if let Err(error) = write_host_commands(path, welcome) {
         eprintln!("Warning: Archon's commands are not in the terminal UI's / menu: {error:#}");
         return;
     }
     command.arg(HOST_COMMANDS).arg(path);
 }
 
-fn write_host_commands(path: &Path) -> anyhow::Result<()> {
+fn write_host_commands(path: &Path, welcome: &[String]) -> anyhow::Result<()> {
     let dir = path
         .parent()
         .context("the host commands path has no directory")?;
     std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-    let text = serde_json::to_string_pretty(&operator_commands::host_commands_json())?;
+    let file = operator_commands::host_commands_json(Some(welcome).filter(|w| !w.is_empty()));
+    let text = serde_json::to_string_pretty(&file)?;
     seed::write_atomically(path, &text)
 }
 
@@ -626,13 +654,18 @@ mod tests {
         let path = dir.path().join("data/tui-host-commands.json");
         let help = format!("{HELP}      --host-commands <PATH>  A host's slash commands\n");
         let mut command = tui();
-        offer_host_commands(&mut command, &help, &path);
+        let welcome = operator_commands::welcome_lines(None);
+        offer_host_commands(&mut command, &help, &path, &welcome);
         let args: Vec<&OsStr> = command.get_args().collect();
         assert_eq!(&args[3..], [OsStr::new(HOST_COMMANDS), path.as_os_str()]);
         assert!(ensure_tui_options(&command, &help).is_ok());
         let written: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(written, operator_commands::host_commands_json());
+        assert_eq!(
+            written,
+            operator_commands::host_commands_json(Some(&welcome))
+        );
+        assert_eq!(written["welcome"]["title"], "Archon");
         let names: Vec<&str> = written["commands"]
             .as_array()
             .unwrap()
@@ -653,9 +686,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("tui-host-commands.json");
         let mut command = tui();
-        offer_host_commands(&mut command, HELP, &path);
+        offer_host_commands(&mut command, HELP, &path, &[]);
         assert_eq!(command.get_args().count(), 3, "no --host-commands");
         assert!(!path.exists());
         assert!(ensure_tui_options(&command, HELP).is_ok());
+    }
+
+    #[test]
+    fn an_empty_welcome_leaves_the_field_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("host.json");
+        write_host_commands(&path, &[]).unwrap();
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(written.get("welcome").is_none());
+        assert_eq!(written, operator_commands::host_commands_json(None));
     }
 }

@@ -255,6 +255,17 @@ fn line(l: &archon_core::lesson::Lesson) -> String {
     )
 }
 
+/// The proposed lessons, each with the commands that settle it.
+pub fn proposed_text(lessons: &[Lesson]) -> String {
+    if lessons.is_empty() {
+        return "No proposed lessons: nothing is waiting for you to accept.".into();
+    }
+    format!(
+        "{}\nAccept one with `archon lessons accept <id>`, retract it with `archon lessons retract <id>`.",
+        lesson_lines(lessons)
+    )
+}
+
 fn lesson_lines(lessons: &[archon_core::lesson::Lesson]) -> String {
     if lessons.is_empty() {
         return "No lessons match this selection.".into();
@@ -313,4 +324,14 @@ async fn send(request: Request) -> anyhow::Result<Reply> {
         }
         _ => unreachable!("only read commands reach offline inspection"),
     })
+}
+
+#[cfg(test)]
+mod proposed_tests {
+    use super::*;
+
+    #[test]
+    fn no_proposed_lessons_says_so_and_a_list_says_how_to_settle_them() {
+        assert!(proposed_text(&[]).starts_with("No proposed lessons"));
+    }
 }

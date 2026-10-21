@@ -213,11 +213,13 @@ fn a_bare_archon_on_a_terminal_opens_the_terminal_ui_as_archon_tui_does() {
         );
         let written: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&commands).unwrap()).unwrap();
+        let plain = archon_core::operator_commands::welcome_lines(None);
         assert_eq!(
             written,
-            archon_core::operator_commands::host_commands_json()
+            archon_core::operator_commands::host_commands_json(Some(&plain)),
+            "an archond with no status gets the plain welcome"
         );
-        assert_eq!(server.join().unwrap().len(), 2);
+        assert_eq!(server.join().unwrap().len(), 3, "hello, attach, status");
     }
 }
 
@@ -240,7 +242,7 @@ fn an_aether_without_host_commands_opens_the_terminal_ui_without_them_and_says_s
             "archon {args:?}"
         );
         assert!(!env.path("data/tui-host-commands.json").exists());
-        assert_eq!(server.join().unwrap().len(), 2);
+        assert_eq!(server.join().unwrap().len(), 3);
     }
 }
 
@@ -284,7 +286,7 @@ fn an_aether_that_rejects_the_terminal_ui_options_is_an_error_before_the_handoff
         }
         assert!(!stderr.contains("opening the line chat"), "{stderr}");
         assert!(!env.path("launched").exists(), "Aether must not launch");
-        assert_eq!(server.join().unwrap().len(), 2, "no chat request was made");
+        assert_eq!(server.join().unwrap().len(), 3, "no chat request was made");
 
         // `archon tui` hands over: it warns of the missing / menu, then Aether refuses.
         std::fs::remove_file(env.path("archond.sock")).unwrap();
@@ -300,7 +302,7 @@ fn an_aether_that_rejects_the_terminal_ui_options_is_an_error_before_the_handoff
             env.path("launched").exists(),
             "`archon tui` launches Aether"
         );
-        assert_eq!(server.join().unwrap().len(), 2);
+        assert_eq!(server.join().unwrap().len(), 3);
     }
 }
 

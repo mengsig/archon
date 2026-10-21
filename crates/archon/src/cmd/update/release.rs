@@ -57,6 +57,11 @@ impl Source {
         format!("{}/latest/download/{VERSION_ASSET}", self.base)
     }
 
+    /// The release page of `version`, where its notes are.
+    pub fn notes_url(&self, version: &Version) -> String {
+        format!("{}/tag/{}", self.base, version.tag())
+    }
+
     /// One asset of the release tagged for `version`.
     pub fn asset_url(&self, version: &Version, asset: &str) -> String {
         assert!(

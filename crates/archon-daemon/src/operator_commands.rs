@@ -176,7 +176,7 @@ async fn execute(
 /// Host commands an Aether chat message may carry; shared mode refuses them
 /// all, because its `user` actor includes `[listen]` token clients.
 const SHARED_CHAT_COMMANDS: &[&str] = &[
-    "/answer", "/approve", "/reject", "/merge", "/archon", "/upgrade", "/watch", "/a",
+    "/answer", "/approve", "/reject", "/merge", "/archon", "/upgrade", "/update", "/watch", "/a",
 ];
 
 const SHARED_REFUSAL: &str = "Operator commands are disabled in shared-mode Aether chat; use Archon's dedicated Aether or the operator socket.";

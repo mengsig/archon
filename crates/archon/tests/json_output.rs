@@ -147,6 +147,54 @@ fn repo_queue_pipeline_and_autonomy_commands_print_json() {
     common::stop_daemon(&env, daemon);
 }
 
+/// What a real archond answers once it is connected to aetherd, which `say`
+/// waits for before it sends.
+fn linked_status() -> archon_core::protocol::DaemonStatus {
+    use archon_core::autonomy::{AutonomyConfig, AutonomyPolicy};
+    use archon_core::protocol::AetherLinkStatus;
+    use archon_core::queue::{Caps, PauseState};
+    let aether = AetherLinkStatus::Connected {
+        daemon_version: "fake".into(),
+        protocol_version: 17,
+        instance_id: "01FAKE".into(),
+    };
+    archon_core::protocol::DaemonStatus {
+        waiting_items: vec![],
+        waiting_total: 0,
+        waiting_next_offset: None,
+        daemon_version: "fake".into(),
+        pid: std::process::id(),
+        started_at: archon_core::now(),
+        aether,
+        orchestrator: None,
+        caps: Caps::default(),
+        pause: PauseState::default(),
+        running_agents: 0,
+        active_runs: 0,
+        queued_items: 0,
+        blocked_items: 0,
+        open_questions: 0,
+        spend_today_usd: 0.0,
+        spend_total_usd: 0.0,
+        lavish_available: false,
+        autonomy: AutonomyPolicy::resolve(&AutonomyConfig::default(), None, None),
+        directives: vec![],
+        open_gates: 0,
+        merges_waiting: vec![],
+        merge_granted: vec![],
+        held_news: 0,
+        mcp: None,
+        github: None,
+        disk: None,
+        versions: None,
+        upgrade: None,
+        health: None,
+        quota: None,
+        recovery: None,
+        integration: vec![],
+    }
+}
+
 /// Canned replies for the requests a real archond answers only with a live
 /// orchestrator or an existing queue item.
 struct Canned {
@@ -217,6 +265,7 @@ impl Canned {
             Request::Status(_) if self.status.is_some() => {
                 Reply::Status(Box::new(self.status.clone().unwrap()))
             }
+            Request::Status(_) => Reply::Status(Box::new(linked_status())),
             Request::ListItemSummaries(_) => {
                 Reply::ItemSummaries(vec![archon_core::protocol::ItemSummary {
                     item: self.item.clone(),

@@ -10,6 +10,13 @@
   `archon status` list as quarantined with the exact retry and cancel
   commands.
 
+- Update suggestions (#208): `archon status` ends with `run archon update`
+  when a checked latest release is newer; the launch prompt links the
+  release notes and says that running agents are waited for and what
+  restarts; `/update` (terminal UI menu, `archon chat`, Aether chat) is
+  `/upgrade both latest`; a declined first-run offer to register a checkout
+  is remembered per directory and not asked again.
+
 - Follow-ups to #200: an initiative that was done or failed re-opens when
   one of its members is retried (a cancelled one is retried with
   `archon initiatives retry`); maintenance of one initiative that hits a bug

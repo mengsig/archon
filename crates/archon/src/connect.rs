@@ -124,7 +124,7 @@ async fn ensure_aether() -> anyhow::Result<bool> {
 
 /// Wait, for `limit` at most, until archond is connected to the aetherd just
 /// started. A command that needs no Aether still runs and says what it did not wait out.
-async fn await_link(client: &ArchonClient, limit: Duration) -> anyhow::Result<()> {
+pub async fn await_link(client: &ArchonClient, limit: Duration) -> anyhow::Result<()> {
     assert!(LINK_POLL < LINK_WAIT, "the wait allows a second look");
     let deadline = Instant::now() + limit;
     loop {
@@ -137,8 +137,8 @@ async fn await_link(client: &ArchonClient, limit: Duration) -> anyhow::Result<()
         }
         if Instant::now() >= deadline {
             eprintln!(
-                "archon: archond has not connected to Archon's restarted aetherd after \
-                 {limit:?}; it keeps trying, and `archon status` shows when it has."
+                "archon: archond has not connected to aetherd after {limit:?}; it keeps \
+                 trying, and `archon status` shows when it has."
             );
             return Ok(());
         }

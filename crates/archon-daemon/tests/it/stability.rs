@@ -540,3 +540,41 @@ async fn pruning_goes_past_an_unreadable_run_and_a_malformed_key() {
         .await
         .expect("one bad record does not fail the pass");
 }
+
+/// Records the startup sweeps cannot read are listed and skipped; the healthy
+/// run still recovers.
+#[tokio::test]
+async fn unreadable_records_in_the_startup_sweeps_do_not_stop_recovery() {
+    let mut h = Harness::new().await;
+    let orphan = h.enqueue("orphan").await;
+    let fine = h.enqueue("fine").await;
+    h.dispatch().await;
+    let db = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    db.execute(
+        "UPDATE items SET state = 'dispatching', data = '{' WHERE id = ?1",
+        [orphan.id.as_str()],
+    )
+    .unwrap();
+    db.execute(
+        "DELETE FROM stage_runs WHERE run IN (SELECT id FROM runs WHERE item = ?1)",
+        [orphan.id.as_str()],
+    )
+    .unwrap();
+    db.execute("DELETE FROM runs WHERE item = ?1", [orphan.id.as_str()])
+        .unwrap();
+    drop(db);
+
+    h.restart();
+    executor::recover(&h.ctx).await.expect("recovery succeeds");
+
+    assert!(matches!(
+        h.state(&fine.id).await,
+        QueueState::Running { .. }
+    ));
+    let kinds: Vec<_> = archon_core::quarantine::list(&h.ctx.paths.data_dir)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.kind)
+        .collect();
+    assert!(kinds.contains(&"startup".to_owned()), "{kinds:?}");
+}

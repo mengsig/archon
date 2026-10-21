@@ -522,12 +522,13 @@ pub(super) fn requeue_orphaned_dispatching(
     let mut requeued = Vec::with_capacity(ids.len());
     for raw in ids {
         let mut item = load(&tx, &QueueItemId::parse(&raw)?)?;
-        assert_eq!(
-            item.state,
-            QueueState::Dispatching,
-            "query returned {}",
-            item.id
-        );
+        if item.state != QueueState::Dispatching {
+            return Err(ArchonError::Corrupt(format!(
+                "item {} is indexed dispatching but its record says {}",
+                item.id,
+                item.state.kind()
+            )));
+        }
         item.state = QueueState::Queued;
         item.updated_at = at.max(item.updated_at);
         write_columns(&tx, &item)?;

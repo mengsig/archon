@@ -148,15 +148,24 @@ pub(super) async fn recover(ctx: &DaemonContext) -> Result<FollowUp, ArchonError
     reset_quarantine(ctx).await?;
     let (runs, answers) = {
         let mut store = ctx.store.lock().await;
-        let requeued = store.requeue_orphaned_dispatching(now)?;
+        let requeued = startup_sweep(
+            ctx,
+            "requeue-orphans",
+            store.requeue_orphaned_dispatching(now),
+        )?;
         if !requeued.is_empty() {
             tracing::info!(
                 count = requeued.len(),
                 "requeued dispatching items without a run"
             );
         }
-        let mut answers = store.close_withdrawn_questions(now)?;
-        answers.extend(store.close_decided_questions(now)?);
+        let mut answers =
+            startup_sweep(ctx, "close-withdrawn", store.close_withdrawn_questions(now))?;
+        answers.extend(startup_sweep(
+            ctx,
+            "close-decided",
+            store.close_decided_questions(now),
+        )?);
         if !answers.is_empty() {
             tracing::info!(
                 count = answers.len(),
@@ -179,7 +188,11 @@ pub(super) async fn recover(ctx: &DaemonContext) -> Result<FollowUp, ArchonError
         (kept, answers)
     };
     crate::feed::publish(ctx, answers);
-    crate::reports::close_stale_questions(ctx).await?;
+    startup_sweep(
+        ctx,
+        "close-stale-questions",
+        crate::reports::close_stale_questions(ctx).await,
+    )?;
     ctx.recovery.count(runs.len());
     let mut follow = FollowUp::poke();
     // One run at a time, each under the store's lock only briefly, so
@@ -203,6 +216,33 @@ pub(super) async fn recover(ctx: &DaemonContext) -> Result<FollowUp, ArchonError
         poke: true,
         ..FollowUp::default()
     })
+}
+
+/// A cleanup sweep over stored records that runs before any run is recovered:
+/// a record it cannot read is listed and skipped (the sweep is retried at the
+/// next start), so it never keeps healthy runs from recovering.
+fn startup_sweep<T: Default>(
+    ctx: &DaemonContext,
+    sweep: &str,
+    result: Result<T, ArchonError>,
+) -> Result<T, ArchonError> {
+    match result {
+        Err(error) if !error.is_store() => {
+            tracing::error!(%sweep, %error, "a startup sweep met a record it cannot read and was skipped");
+            let record = archon_core::quarantine::Quarantined::new(
+                "startup",
+                sweep,
+                &format!("the {sweep} sweep stopped on a stored record: {error}"),
+                "archon doctor (names the record); repair or remove it, then restart archond",
+                "archon doctor",
+            );
+            if let Err(write) = archon_core::quarantine::write(&ctx.paths.data_dir, &record) {
+                tracing::error!(%write, "the quarantine record was not written");
+            }
+            Ok(T::default())
+        }
+        other => other,
+    }
 }
 
 /// Days a removed owed merge or checks watch stays listed; nothing else can rebuild it.

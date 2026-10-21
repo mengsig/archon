@@ -11,7 +11,7 @@ use archon_core::notify::Question;
 use archon_core::protocol::{Reply, Request};
 
 use super::{emit, to_json};
-use crate::connect::{connect_or_start, connect_running, unexpected};
+use crate::connect::{await_link, connect_or_start, connect_running, unexpected};
 use crate::format;
 use crate::images::read_image_file;
 use crate::ops;
@@ -19,47 +19,9 @@ use crate::questions::{QuestionRef, find_open};
 
 const SAID: &str = "Sent to the orchestrator. Follow its work with `archon log --follow`, \
                     or talk with it in `archon chat`.";
-const SAY_ATTEMPTS: u32 = 4;
-const SAY_RETRY_DELAY: Duration = Duration::from_secs(3);
-
-/// Run `op` up to `attempts` times, waiting `delay` after each `Unavailable` (aetherd
-/// restarting); any other error, or the last one, is returned with what was tried.
-async fn retry_unavailable<T, F, Fut>(
-    attempts: u32,
-    delay: Duration,
-    mut op: F,
-) -> anyhow::Result<T>
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = anyhow::Result<T>>,
-{
-    assert!(attempts > 0, "at least one attempt");
-    let mut tried = 1;
-    loop {
-        let error = match op().await {
-            Ok(done) => return Ok(done),
-            Err(error) => error,
-        };
-        let unavailable = matches!(
-            error.downcast_ref::<archon_core::ArchonError>(),
-            Some(archon_core::ArchonError::Unavailable(_))
-        );
-        if !unavailable {
-            return Err(error);
-        }
-        if tried == attempts {
-            return Err(error.context(format!(
-                "the message was not sent: tried {tried} times over {}s; aetherd may still be \
-                 restarting, so retry in a few seconds with the same `archon say`, or check \
-                 `archon doctor`",
-                delay.as_secs() * u64::from(tried - 1)
-            )));
-        }
-        eprintln!("archon: the orchestrator is not reachable yet; retrying ({tried}/{attempts})");
-        tokio::time::sleep(delay).await;
-        tried += 1;
-    }
-}
+const LINK_WAIT: Duration = Duration::from_secs(10);
+const MAYBE_SENT: &str = "the message may or may not have arrived: check `archon log --follow` \
+                          before sending it again";
 
 pub async fn say(words: &[String], paths: &[PathBuf], json: bool) -> anyhow::Result<ExitCode> {
     let text = words.join(" ");
@@ -76,10 +38,18 @@ pub async fn say(words: &[String], paths: &[PathBuf], json: bool) -> anyhow::Res
     check_images(&images).map_err(|e| archon_core::ArchonError::Invalid(e.to_string()))?;
     assert_eq!(images.len(), paths.len(), "one attachment per --image");
     let client = connect_or_start().await?;
-    retry_unavailable(SAY_ATTEMPTS, SAY_RETRY_DELAY, || {
-        ops::say(&client, text.clone(), images.clone())
-    })
-    .await?;
+    // Waiting is safe before the send; a send is never replayed, as it may have arrived.
+    await_link(&client, LINK_WAIT).await?;
+    if let Err(error) = ops::say(&client, text, images).await {
+        let unavailable = matches!(
+            error.downcast_ref::<archon_core::ArchonError>(),
+            Some(archon_core::ArchonError::Unavailable(_))
+        );
+        return Err(match unavailable {
+            true => error.context(MAYBE_SENT),
+            false => error,
+        });
+    }
     emit(json, || Ok(serde_json::json!({"ok": true})), SAID)?;
     Ok(ExitCode::SUCCESS)
 }
@@ -171,58 +141,15 @@ async fn open_questions(client: &ArchonClient) -> anyhow::Result<Vec<Question>> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use archon_core::ArchonError;
-    use std::cell::Cell;
-
-    fn down() -> anyhow::Error {
-        ArchonError::Unavailable("not connected to aetherd".into()).into()
-    }
-
-    #[tokio::test]
-    async fn an_unavailable_send_is_retried_until_it_goes_through() {
-        let calls = Cell::new(0);
-        let result = retry_unavailable(4, Duration::ZERO, || async {
-            calls.set(calls.get() + 1);
-            if calls.get() < 3 { Err(down()) } else { Ok(()) }
-        })
-        .await;
-        assert!(result.is_ok());
-        assert_eq!(calls.get(), 3);
-    }
-
-    #[tokio::test]
-    async fn a_send_that_stays_unavailable_ends_with_the_next_step() {
-        let calls = Cell::new(0);
-        let error = retry_unavailable(3, Duration::ZERO, || async {
-            calls.set(calls.get() + 1);
-            Err::<(), _>(down())
-        })
-        .await
-        .unwrap_err();
-        assert_eq!(calls.get(), 3);
-        let said = format!("{error:#}");
-        assert!(
-            said.contains("not sent") && said.contains("retry in a few seconds"),
-            "{said}"
-        );
-        assert!(said.contains("not connected to aetherd"), "{said}");
-    }
-
-    #[tokio::test]
-    async fn another_error_is_not_retried() {
-        let calls = Cell::new(0);
-        let error = retry_unavailable(4, Duration::ZERO, || async {
-            calls.set(calls.get() + 1);
-            Err::<(), _>(ArchonError::Invalid("bad".into()).into())
-        })
-        .await
-        .unwrap_err();
-        assert_eq!(calls.get(), 1);
-        assert!(error.to_string().contains("bad"));
-    }
 
     #[test]
     fn the_reply_names_the_next_commands() {
         assert!(SAID.contains("`archon log --follow`") && SAID.contains("`archon chat`"));
+    }
+
+    #[test]
+    fn a_failed_send_says_it_may_have_arrived_and_where_to_look() {
+        assert!(MAYBE_SENT.contains("may or may not have arrived"));
+        assert!(MAYBE_SENT.contains("`archon log --follow`"));
     }
 }

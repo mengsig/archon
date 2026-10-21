@@ -214,6 +214,7 @@ async fn refresh_installed(ctx: &DaemonContext) {
 /// installed versions current and runs each accepted upgrade.
 pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     report_restart(&ctx).await?;
+    release_interrupted(&ctx).await?;
     loop {
         refresh_installed(&ctx).await;
         if tokio::time::timeout(PROBE_EVERY, ctx.ops.wake.notified())
@@ -231,6 +232,22 @@ pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
             return std::future::pending().await;
         }
     }
+}
+
+/// An upgrade the worker was restarted in the middle of will never finish:
+/// release dispatch and say so, so the operator can ask again.
+async fn release_interrupted(ctx: &DaemonContext) -> Result<(), ArchonError> {
+    let interrupted = {
+        let job = ctx.ops.job.lock().await;
+        job.queued.is_none() && job.phase.is_some()
+    };
+    if !interrupted {
+        return Ok(());
+    }
+    let why = "An upgrade was interrupted by a failure in archond's upgrade task, so nothing more \
+               was installed and dispatch goes on. Ask again with `archon update`."
+        .to_owned();
+    give_up(ctx, why).await
 }
 
 /// One upgrade; `true` once the restart is handed off. Any other end is

@@ -169,3 +169,23 @@ async fn a_branch_deleted_on_the_remote_degrades_to_the_local_branch() {
         .any(|f| format!("{:?}", f.entry).contains("Could not fetch"));
     assert!(told, "the operator is told the base was not fetched");
 }
+
+/// A quarantine list that cannot be reset (a file where its directory
+/// belongs) is logged, and every healthy run still recovers.
+#[tokio::test]
+async fn an_unusable_quarantine_directory_does_not_stop_recovery() {
+    let mut h = Harness::new().await;
+    let item = h.enqueue("recovers anyway").await;
+    h.dispatch().await;
+    let blocked = h.ctx.paths.data_dir.join("quarantine");
+    let _ = std::fs::remove_dir_all(&blocked);
+    std::fs::write(&blocked, "not a directory").unwrap();
+
+    h.restart();
+    executor::recover(&h.ctx).await.expect("recovery succeeds");
+
+    assert!(matches!(
+        h.state(&item.id).await,
+        QueueState::Running { .. }
+    ));
+}

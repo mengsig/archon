@@ -198,10 +198,13 @@ async fn read_cursor(ctx: &DaemonContext, key: &str) -> Result<Option<u64>, Arch
     let raw = ctx.store.lock().await.kv_get(key)?;
     match raw.filter(|v| !v.is_empty()) {
         None => Ok(None),
-        Some(raw) => raw
-            .parse()
-            .map(Some)
-            .map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}"))),
+        Some(raw) => match raw.parse() {
+            Ok(seq) => Ok(Some(seq)),
+            Err(error) => {
+                tracing::warn!(key, %raw, %error, "unreadable event cursor; reading from the start");
+                Ok(None)
+            }
+        },
     }
 }
 

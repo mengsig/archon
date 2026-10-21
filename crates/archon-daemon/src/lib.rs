@@ -256,6 +256,9 @@ impl Signals {
     }
 }
 
+/// How long telling the operator of a failing task may hold up supervision.
+const NOTICE_LIMIT: Duration = Duration::from_secs(5);
+
 /// The server and every worker task; the first to end stops the daemon.
 /// Only the server ends cleanly (on `Shutdown`); a worker ending is a
 /// failure, and one on a full disk turns the daemon to standby. An
@@ -378,9 +381,16 @@ async fn worker_ended(ctx: &DaemonContext, ended: Ended) -> Option<ArchonError> 
             (text, true)
         }
     };
-    if tell && let Err(error) = feed::notify(ctx, NotificationKind::Blocker, text, None, None).await
-    {
-        tracing::error!(%error, "the operator could not be told of a failing daemon task");
+    if !tell {
+        return None;
+    }
+    let notice = feed::notify(ctx, NotificationKind::Blocker, text, None, None);
+    match tokio::time::timeout(NOTICE_LIMIT, notice).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => {
+            tracing::error!(%error, "the operator could not be told of a failing daemon task");
+        }
+        Err(_) => tracing::error!("telling the operator of a failing daemon task timed out"),
     }
     None
 }

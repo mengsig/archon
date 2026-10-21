@@ -140,7 +140,9 @@ pub(super) async fn recover(ctx: &DaemonContext) -> Result<FollowUp, ArchonError
     );
     let now = archon_core::now();
     // Rebuilt below from what is still unusable.
-    archon_core::quarantine::clear_all(&ctx.paths.data_dir)?;
+    if let Err(error) = archon_core::quarantine::clear_all(&ctx.paths.data_dir) {
+        tracing::error!(%error, "the quarantine list could not be reset; recovery goes on");
+    }
     let (runs, answers) = {
         let mut store = ctx.store.lock().await;
         let requeued = store.requeue_orphaned_dispatching(now)?;
@@ -177,8 +179,12 @@ pub(super) async fn recover(ctx: &DaemonContext) -> Result<FollowUp, ArchonError
     // One run at a time, each under the store's lock only briefly, so
     // `status` and other reads are answered between them.
     for run in runs {
-        let stages = ctx.store.lock().await.stage_runs(&run.id)?;
-        follow.merge(resume_isolated(ctx, &mut table, run, &stages).await?);
+        let stages = ctx.store.lock().await.stage_runs(&run.id);
+        let followed = match stages {
+            Ok(stages) => resume_isolated(ctx, &mut table, run, &stages).await?,
+            Err(error) => fail_unreadable(ctx, &mut table, run, error).await?,
+        };
+        follow.merge(followed);
         ctx.recovery.advance();
     }
     // Aether calls wait for the dispatcher; local cleanup, team merges and
@@ -253,6 +259,21 @@ async fn resume_isolated(
     let message = unresumable_message(&run, &error);
     let failed = finish::fail_run(ctx, table, run, stage, message, true);
     super::coordination::guarded(&subject, failed).await
+}
+
+/// A run whose stage rows cannot be read fails with the way out, so the
+/// healthy runs still recover.
+async fn fail_unreadable(
+    ctx: &DaemonContext,
+    table: &mut RunTable,
+    run: PipelineRun,
+    error: ArchonError,
+) -> Result<FollowUp, ArchonError> {
+    quarantine_run(ctx, &run, &error);
+    let stage = run.state.live_stage().unwrap_or("recovery").to_owned();
+    let message = unresumable_message(&run, &error);
+    let failed = finish::fail_run(ctx, table, run.clone(), stage, message, true);
+    super::coordination::guarded(&format!("run {}", run.id), failed).await
 }
 
 /// Rebuild `run`'s driver and apply what it still owes. A run whose

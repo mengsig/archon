@@ -231,7 +231,8 @@ async fn record_publication(
 /// failure, a panic included, is its report's.
 pub async fn supervise(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     let Some(lavish) = ctx.lavish.clone() else {
-        return Ok(());
+        // Nothing to poll without Lavish; stay idle rather than look like a failed task.
+        return std::future::pending().await;
     };
     let mut feed = ctx.feed.subscribe();
     let mut polls = Polls::default();

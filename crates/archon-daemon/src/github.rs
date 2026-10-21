@@ -549,7 +549,8 @@ pub fn check_github_soon(ctx: &DaemonContext) {
 /// is logged and the next check tries again. Idle in shared mode.
 pub async fn watch_github(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     if ctx.config.aether.mode == AetherMode::Shared {
-        return Ok(());
+        // Nothing to watch in shared mode; stay idle rather than look like a failed task.
+        return std::future::pending().await;
     }
     let mut orchestrator = ctx.supervisor.watch();
     loop {

@@ -149,7 +149,7 @@ pub(super) async fn isolate(
         Err(error) if error.is_store() => return Err(error),
         Err(error) => error,
         Ok(()) => {
-            set_aside(ctx, subject, None);
+            set_aside(ctx, subject, item, None);
             let mut store = ctx.store.lock().await;
             if store.kv_get(&key)?.is_some() {
                 store.kv_delete(&key)?;
@@ -162,7 +162,7 @@ pub(super) async fn isolate(
     let transient = matches!(error, ArchonError::Unavailable(_));
     let due = !transient || failures >= TRANSIENT_PASSES;
     if due {
-        set_aside(ctx, subject, Some(&error));
+        set_aside(ctx, subject, item, Some(&error));
     }
     let told = before.as_ref().is_some_and(|s| s.told);
     let now = Stuck {
@@ -187,7 +187,12 @@ pub(super) async fn isolate(
 
 /// Keep `subject` (`kind:id`) in the quarantine list while its maintenance
 /// fails, with the commands that fix or cancel it; drop it once it passes.
-fn set_aside(ctx: &DaemonContext, subject: &str, failed: Option<&ArchonError>) {
+fn set_aside(
+    ctx: &DaemonContext,
+    subject: &str,
+    item: Option<&QueueItemId>,
+    failed: Option<&ArchonError>,
+) {
     let (kind, id) = subject.split_once(':').unwrap_or(("record", subject));
     let data_dir = &ctx.paths.data_dir;
     let outcome = match failed {
@@ -198,10 +203,13 @@ fn set_aside(ctx: &DaemonContext, subject: &str, failed: Option<&ArchonError>) {
                     format!("archon initiatives retry {id}"),
                     format!("archon initiatives cancel {id}"),
                 ),
-                _ => (
-                    format!("archon queue retry {id}"),
-                    format!("archon queue cancel {id}"),
-                ),
+                _ => {
+                    let item = item.map_or_else(|| id.to_owned(), ToString::to_string);
+                    (
+                        format!("archon queue retry {item}"),
+                        format!("archon queue cancel {item}"),
+                    )
+                }
             };
             let record = archon_core::quarantine::Quarantined::new(
                 kind,
@@ -222,15 +230,29 @@ fn stuck(store: &archon_queue::Store, key: &str) -> Result<Option<Stuck>, Archon
     let Some(raw) = store.kv_get(key)? else {
         return Ok(None);
     };
-    let found: Stuck =
-        serde_json::from_str(&raw).map_err(|e| ArchonError::Corrupt(format!("kv {key}: {e}")))?;
-    assert!(found.failures > 0, "a recorded blocker failed");
-    Ok(Some(found))
+    match serde_json::from_str::<Stuck>(&raw) {
+        Ok(found) if found.failures > 0 => Ok(Some(found)),
+        _ => {
+            tracing::warn!(key, "unreadable maintenance record; starting it over");
+            Ok(None)
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unreadable_blocker_record_starts_over_instead_of_failing_the_pass() {
+        let mut store = archon_queue::Store::open_in_memory().unwrap();
+        store.kv_set("k", "{").unwrap();
+        assert!(stuck(&store, "k").unwrap().is_none());
+        store
+            .kv_set("k", r#"{"error":"e","failures":0,"told":false}"#)
+            .unwrap();
+        assert!(stuck(&store, "k").unwrap().is_none());
+    }
 
     #[tokio::test]
     async fn a_panic_on_one_subject_is_its_error_and_the_rest_goes_on() {

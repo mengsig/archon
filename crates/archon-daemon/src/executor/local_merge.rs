@@ -257,23 +257,11 @@ mod tests {
     use super::*;
 
     fn git_in(dir: &Path, args: &[&str]) -> String {
-        git(
-            dir,
-            &[
-                "-c",
-                "user.name=t",
-                "-c",
-                "user.email=t@t.invalid",
-                "-c",
-                "commit.gpgsign=false",
-            ][..]
-                .iter()
-                .chain(args)
-                .copied()
-                .collect::<Vec<_>>()
-                .as_slice(),
-        )
-        .expect("git")
+        let identity = ["-c", "user.name=t", "-c", "user.email=t@t.invalid"];
+        let mut all = identity.to_vec();
+        all.extend(["-c", "commit.gpgsign=false"]);
+        all.extend(args);
+        git(dir, &all).expect("git")
     }
 
     #[test]

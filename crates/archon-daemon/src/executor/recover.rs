@@ -214,21 +214,14 @@ async fn reset_quarantine(ctx: &DaemonContext) -> Result<(), ArchonError> {
         }
     };
     let store = ctx.store.lock().await;
-    let mut waiting = Vec::new();
     for record in listed {
         let recent = archon_core::now() - record.at < chrono::Duration::days(RULED_OUT_DAYS);
         let ruled_out = matches!(record.kind.as_str(), "owed-merge" | "checks-watch") && recent;
         if ruled_out || (record.kind == "run" && store.run_item_failed(&record.id)?) {
-            waiting.push(record);
+            continue;
         }
-    }
-    drop(store);
-    if let Err(error) = archon_core::quarantine::clear_all(data_dir) {
-        tracing::error!(%error, "the quarantine list could not be reset; recovery goes on");
-    }
-    for record in &waiting {
-        if let Err(error) = archon_core::quarantine::write(data_dir, record) {
-            tracing::error!(%error, run = %record.id, "a quarantine record was not kept");
+        if let Err(error) = archon_core::quarantine::clear(data_dir, &record.kind, &record.id) {
+            tracing::error!(%error, id = %record.id, "a quarantine record was not cleared");
         }
     }
     Ok(())

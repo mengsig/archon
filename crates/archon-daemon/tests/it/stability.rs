@@ -462,3 +462,33 @@ async fn an_unreadable_stage_row_is_archived_safely_or_kept() {
         .expect("an archive failure is not an error");
     assert!(dropped.is_empty(), "{dropped:?}");
 }
+
+/// A run record that names another run than its index row is set aside
+/// instead of being resumed against the wrong id.
+#[tokio::test]
+async fn a_run_record_with_another_id_is_set_aside() {
+    let mut h = Harness::new().await;
+    let broken = h.enqueue("wrong id").await;
+    let fine = h.enqueue("fine").await;
+    h.dispatch().await;
+    let run = h.run(&broken.id).await;
+    let db = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    db.execute(
+        "UPDATE runs SET data = json_set(data, '$.id', 'run_zzzzzzzzzzzzzzzzzzzzzzzzzz') WHERE id = ?1",
+        [run.id.as_str()],
+    )
+    .unwrap();
+    drop(db);
+
+    h.restart();
+    executor::recover(&h.ctx).await.expect("recovery succeeds");
+
+    assert!(matches!(
+        h.state(&broken.id).await,
+        QueueState::Failed { .. }
+    ));
+    assert!(matches!(
+        h.state(&fine.id).await,
+        QueueState::Running { .. }
+    ));
+}

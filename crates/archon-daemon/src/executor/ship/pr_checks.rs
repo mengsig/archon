@@ -60,7 +60,8 @@ pub(super) fn owe(
 ) -> Result<(), ArchonError> {
     assert!(url.starts_with("https://"), "a pull request GitHub listed");
     for (earlier, raw) in store.kv_prefix(WATCH_PREFIX)? {
-        if parse(&earlier, &raw)?.url == url {
+        // A malformed watch is left for `look` to set aside.
+        if parse(&earlier, &raw).is_ok_and(|watch| watch.url == url) {
             store.kv_delete(&earlier)?;
         }
     }

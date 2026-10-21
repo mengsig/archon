@@ -315,6 +315,13 @@ pub(super) fn active_lenient(
     for row in rows {
         let (run, item, data) = row.ctx("read run")?;
         match from_json::<PipelineRun>(&data, "pipeline run") {
+            Ok(decoded) if decoded.id.as_str() != run || decoded.item.as_str() != item => {
+                bad.push(UnreadableRun {
+                    run,
+                    item,
+                    error: "the run record names another run or item than its index row".into(),
+                });
+            }
             Ok(decoded) if decoded.state.is_terminal() => bad.push(UnreadableRun {
                 run,
                 item,

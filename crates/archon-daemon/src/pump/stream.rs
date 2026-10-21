@@ -133,11 +133,17 @@ async fn pass(
         Err(error) if error.is_store() => return Err(error),
         Err(error) => return Ok(PassEnd::stalled(false, error.to_string())),
     };
-    assert!(
-        cursor.is_none_or(|c| subscription.last_seq >= c),
-        "a subscription after the cursor starts at or after it"
-    );
-    if cursor.is_none() {
+    // An Aether whose history was reset reports a sequence before ours:
+    // follow it from its own end rather than from a cursor it never had.
+    let reset = cursor.is_some_and(|c| subscription.last_seq < c);
+    if reset {
+        tracing::warn!(
+            key,
+            last_seq = subscription.last_seq,
+            "Aether's event history is behind the stored cursor; following from its end"
+        );
+    }
+    if cursor.is_none() || reset {
         save_cursor(ctx, key, subscription.last_seq).await?;
     }
     tokio::pin!(until);

@@ -204,6 +204,7 @@ version = "1.4.1"
 dependencies = [
  "archon-client",
  "archon-core",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

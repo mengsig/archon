@@ -34,11 +34,23 @@ pub async fn status(check_updates: bool, json: bool) -> anyhow::Result<ExitCode>
     }
     if json {
         let status = views::fetch_status(&client).await?;
-        emit(true, || to_json(&status), "")?;
+        emit(true, || status_json(&status), "")?;
         return Ok(ExitCode::SUCCESS);
     }
     println!("{}{}", views::status_text(&client).await?, crash_note());
     Ok(ExitCode::SUCCESS)
+}
+
+/// The status with the last archond crash under `crash`, `null` when none.
+fn status_json(status: &impl serde::Serialize) -> anyhow::Result<serde_json::Value> {
+    let mut value = to_json(status)?;
+    let crash = archon_core::crash::read_latest(&archon_core::paths::data_dir())
+        .map_err(|e| anyhow::anyhow!("reading the crash record: {e}"))?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("the daemon status is not a JSON object"))?;
+    object.insert("crash".into(), to_json(&crash)?);
+    Ok(value)
 }
 
 /// A line on the last archond crash, empty when none is recorded.

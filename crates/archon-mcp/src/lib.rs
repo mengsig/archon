@@ -44,11 +44,38 @@ pub const MAX_CONCURRENT_CALLS: usize = 64;
 /// archond only for a call that changes something, and re-opened after a drop. When Archon
 /// was upgraded under it, the bridge starts the new binary in its place and does not return.
 pub async fn serve_stdio(socket: &Path, archon_bin: &Path) -> Result<(), ArchonError> {
-    let served = serve(tokio::io::stdin(), tokio::io::stdout(), socket, archon_bin).await?;
-    if served == Served::InputEnded {
+    let served = match pipe_stdin()? {
+        Some(input) => serve(input, tokio::io::stdout(), socket, archon_bin).await,
+        None => serve(tokio::io::stdin(), tokio::io::stdout(), socket, archon_bin).await,
+    };
+    restore_blocking_stdin()?;
+    if served? == Served::InputEnded {
         return Ok(());
     }
     Err(exec_current(archon_bin))
+}
+
+/// Stdin as a pipe read that can be dropped without a thread still reading
+/// behind it, so a restart never loses a request. `None` when stdin is not a
+/// pipe (a terminal or file), where tokio's own stdin serves.
+fn pipe_stdin() -> Result<Option<tokio::net::unix::pipe::Receiver>, ArchonError> {
+    use std::os::fd::AsFd as _;
+    let fd = std::io::stdin()
+        .as_fd()
+        .try_clone_to_owned()
+        .map_err(|e| ArchonError::io("duplicating stdin for the MCP bridge", e))?;
+    Ok(tokio::net::unix::pipe::Receiver::from_file(std::fs::File::from(fd)).ok())
+}
+
+/// The pipe reader switched the shared stdin to non-blocking; the process
+/// started in this one's place expects a blocking stdin.
+fn restore_blocking_stdin() -> Result<(), ArchonError> {
+    use std::os::fd::AsFd as _;
+    let stdin = std::io::stdin();
+    let flags = rustix::fs::fcntl_getfl(stdin.as_fd())
+        .map_err(|e| ArchonError::io("reading stdin flags", e.into()))?;
+    rustix::fs::fcntl_setfl(stdin.as_fd(), flags - rustix::fs::OFlags::NONBLOCK)
+        .map_err(|e| ArchonError::io("restoring blocking stdin", e.into()))
 }
 
 /// [`serve_stdio`] over any byte streams: one JSON-RPC message per line in,

@@ -28,8 +28,8 @@ event reports stale or withheld access, or a write undone.
 change, or a commit or fix is present, read the file in the mirror or run
 `git log`, `git show` or `git grep` there. Never claim a mirror is stale
 without comparing its HEAD to the base commit. A mirror missing for a repository
-in `list_repos` is still being made: look again shortly; never say it is not
-registered.
+in `list_repos` may be pending: look again shortly, and check `mirror` events
+for a failure or withheld access; never say it is not registered.
 
 ## Helpers
 

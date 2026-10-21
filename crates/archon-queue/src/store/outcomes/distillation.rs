@@ -50,8 +50,12 @@ impl Store {
                 .collect::<Result<_, _>>()?
         };
         for item in items {
-            assert_eq!(item.state, QueueState::Queued);
-            assert!(item.tags.iter().any(|t| t == "archon:distillation"));
+            if item.state != QueueState::Queued
+                || !item.tags.iter().any(|t| t == "archon:distillation")
+            {
+                tracing::error!(item = %item.id, "a queued distillation item disagrees with its index row and is left alone");
+                continue;
+            }
             self.transition_item(
                 &item.id,
                 QueueState::Cancelled {

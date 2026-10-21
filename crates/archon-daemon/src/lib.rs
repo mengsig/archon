@@ -501,8 +501,11 @@ fn open_store(paths: &DaemonPaths, config: &Config) -> Result<Store, ArchonError
     let lock = archon_queue::DataLock::acquire(&paths.data_dir, &paths.socket)?;
     let mut store = Store::open_owned(&paths.store, lock)?;
     store.configure_learning(&config.learning)?;
-    if !config.learning.enabled {
-        store.cancel_queued_distillations()?;
+    if !config.learning.enabled
+        && let Err(error) = store.cancel_queued_distillations()
+    {
+        // Housekeeping only: a queued item it cannot read must not stop startup.
+        tracing::error!(%error, "queued distillations were not cancelled; `archon doctor` names unreadable items");
     }
     Ok(store)
 }

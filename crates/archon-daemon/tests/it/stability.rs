@@ -604,3 +604,25 @@ async fn a_run_row_with_an_empty_id_does_not_stop_recovery() {
         QueueState::Running { .. }
     ));
 }
+
+/// With learning disabled, a queued item that cannot be read does not stop
+/// the cleanup of distillations from reporting back.
+#[tokio::test]
+async fn a_corrupt_queued_item_does_not_fail_the_distillation_cleanup() {
+    let h = Harness::new().await;
+    let broken = h.enqueue("unreadable queued item").await;
+    let db = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    db.execute(
+        "UPDATE items SET data = '{' WHERE id = ?1",
+        [broken.id.as_str()],
+    )
+    .unwrap();
+    drop(db);
+
+    let outcome = h.ctx.store.lock().await.cancel_queued_distillations();
+
+    assert!(
+        outcome.is_err(),
+        "the store reports it; startup tolerates it"
+    );
+}

@@ -473,7 +473,14 @@ pub(super) fn live_stages(conn: &Connection) -> Result<Vec<StageRun>, ArchonErro
         .ctx("list live stage runs")?;
     let mut out: Vec<StageRun> = Vec::new();
     for data in rows {
-        out.push(from_json(&data.ctx("read stage run")?, "stage run")?);
+        match from_json(&data.ctx("read stage run")?, "stage run") {
+            Ok(stage) => out.push(stage),
+            // One unreadable row must not hide every healthy live stage from the sweeps.
+            Err(error @ ArchonError::Corrupt(_)) => {
+                tracing::error!(%error, "a live stage run is unreadable and skipped");
+            }
+            Err(error) => return Err(error),
+        }
     }
     debug_assert!(out.iter().all(|s| !s.state.is_terminal()));
     Ok(out)

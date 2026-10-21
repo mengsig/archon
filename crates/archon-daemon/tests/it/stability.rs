@@ -219,3 +219,33 @@ async fn an_undecodable_stage_row_fails_its_run_and_recovery_serves_the_rest() {
         QueueState::Running { .. }
     ));
 }
+
+/// After an undecodable live stage row is set aside, the sweeps over live
+/// stages still see the healthy ones.
+#[tokio::test]
+async fn an_undecodable_live_stage_row_does_not_hide_the_healthy_ones() {
+    let h = Harness::new().await;
+    let broken = h.enqueue("broken stage row").await;
+    let fine = h.enqueue("fine").await;
+    h.dispatch().await;
+    let run = h.run(&broken.id).await;
+    let db = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    db.execute(
+        "UPDATE stage_runs SET data = '{' WHERE run = ?1",
+        [run.id.as_str()],
+    )
+    .unwrap();
+    drop(db);
+
+    let live = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .live_stage_runs()
+        .expect("sweep read");
+
+    let healthy = h.run(&fine.id).await;
+    assert!(live.iter().any(|stage| stage.run == healthy.id));
+    assert!(live.iter().all(|stage| stage.run != run.id));
+}

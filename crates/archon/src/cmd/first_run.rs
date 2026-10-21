@@ -99,9 +99,10 @@ async fn is_registered(top: &Path) -> bool {
     }
 }
 
-pub async fn offer(config: &Config) -> anyhow::Result<()> {
+/// Whether the terminal UI may open: `false` when the user declined setup.
+pub async fn offer(config: &Config) -> anyhow::Result<bool> {
     if std::env::var_os(SKIP_ENV).is_some() {
-        return Ok(());
+        return Ok(true);
     }
     let stdin = std::io::stdin();
     let (mut input, mut out) = (stdin.lock(), std::io::stdout());
@@ -110,8 +111,8 @@ pub async fn offer(config: &Config) -> anyhow::Result<()> {
         let question = "Archon is not set up yet. Set up its own Aether now \
                         (writes its config under ~/.config/archon)?";
         if !ask(&mut input, &mut out, question, true)? {
-            println!("Skipped. `archon setup` does it later.");
-            return Ok(());
+            println!("Skipped. `archon setup` does it later; then run `archon` again.");
+            return Ok(false);
         }
         instance::setup(false, false, false).await?;
         changed = true;
@@ -129,7 +130,7 @@ pub async fn offer(config: &Config) -> anyhow::Result<()> {
         println!("Checking the setup:");
         doctor::run(false).await?;
     }
-    Ok(())
+    Ok(true)
 }
 
 async fn offer_repo(input: &mut impl BufRead, out: &mut impl Write) -> anyhow::Result<bool> {

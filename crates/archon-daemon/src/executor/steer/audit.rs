@@ -20,7 +20,7 @@ pub(crate) fn records(store: &Store, item: &QueueItemId) -> Result<Vec<SteerReco
         return Ok(Vec::new());
     };
     let records: Vec<SteerRecord> = serde_json::from_str(&raw)
-        .map_err(|e| ArchonError::Store(format!("steer history of item {item}: {e}")))?;
+        .map_err(|e| ArchonError::Corrupt(format!("steer history of item {item}: {e}")))?;
     assert!(records.len() <= MAX_STEER_RECORDS, "the history is capped");
     assert!(
         records.windows(2).all(|pair| pair[0].at <= pair[1].at),

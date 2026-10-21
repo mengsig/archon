@@ -54,7 +54,11 @@ pub(crate) async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
         }
         if observed.is_none_or(|at| at.elapsed() >= PULL_REQUESTS_EVERY) {
             observed = Some(Instant::now());
-            match super::pull_requests::observe(&ctx).await {
+            let seen = guarded(
+                "observing pull requests",
+                super::pull_requests::observe(&ctx),
+            );
+            match seen.await {
                 Ok(seen) => tracing::debug!(?seen, "pull requests of finished runs observed"),
                 Err(error) if error.is_store() => return Err(error),
                 Err(error) => tracing::warn!(%error, "pull requests are observed again later"),
@@ -105,7 +109,7 @@ pub async fn reconcile(ctx: &DaemonContext) -> Result<(), ArchonError> {
 
 /// Run `work` on `subject`'s data so that a panic on it is that subject's
 /// failure, logged with its name and returned as an error, not the daemon's.
-pub(super) async fn guarded<T>(
+pub(crate) async fn guarded<T>(
     subject: &str,
     work: impl std::future::Future<Output = Result<T, ArchonError>>,
 ) -> Result<T, ArchonError> {
@@ -123,9 +127,8 @@ pub(super) async fn guarded<T>(
                 .unwrap_or_else(|| "no message".into());
             tracing::error!(%subject, panic = %said, "maintenance panicked; only this subject is affected");
             Err(ArchonError::Protocol(format!(
-                "maintenance of {subject} hit a bug on its stored data ({said}); other work goes on. \
-                 Report it with `archon doctor`'s output, and cancel it with `archon initiatives cancel` \
-                 if it should not run"
+                "{subject} hit a bug on its stored data ({said}); other work goes on. \
+                 Run `archon doctor` and report its output"
             )))
         }
     }
@@ -146,6 +149,7 @@ pub(super) async fn isolate(
         Err(error) if error.is_store() => return Err(error),
         Err(error) => error,
         Ok(()) => {
+            set_aside(ctx, subject, None);
             let mut store = ctx.store.lock().await;
             if store.kv_get(&key)?.is_some() {
                 store.kv_delete(&key)?;
@@ -157,6 +161,9 @@ pub(super) async fn isolate(
     let failures = before.as_ref().map_or(0, |s| s.failures) + 1;
     let transient = matches!(error, ArchonError::Unavailable(_));
     let due = !transient || failures >= TRANSIENT_PASSES;
+    if due {
+        set_aside(ctx, subject, Some(&error));
+    }
     let told = before.as_ref().is_some_and(|s| s.told);
     let now = Stuck {
         error: error.to_string(),
@@ -178,12 +185,45 @@ pub(super) async fn isolate(
     super::finish::notify(ctx, NotificationKind::Blocker, &text, item, None).await
 }
 
+/// Keep `subject` (`kind:id`) in the quarantine list while its maintenance
+/// fails, with the commands that fix or cancel it; drop it once it passes.
+fn set_aside(ctx: &DaemonContext, subject: &str, failed: Option<&ArchonError>) {
+    let (kind, id) = subject.split_once(':').unwrap_or(("record", subject));
+    let data_dir = &ctx.paths.data_dir;
+    let outcome = match failed {
+        None => archon_core::quarantine::clear(data_dir, kind, id),
+        Some(error) => {
+            let (fix, cancel) = match kind {
+                "initiative" => (
+                    format!("archon initiatives retry {id}"),
+                    format!("archon initiatives cancel {id}"),
+                ),
+                _ => (
+                    format!("archon queue retry {id}"),
+                    format!("archon queue cancel {id}"),
+                ),
+            };
+            let record = archon_core::quarantine::Quarantined::new(
+                kind,
+                id,
+                &error.to_string(),
+                &fix,
+                &cancel,
+            );
+            archon_core::quarantine::write(data_dir, &record)
+        }
+    };
+    if let Err(error) = outcome {
+        tracing::error!(%subject, %error, "the quarantine list was not updated");
+    }
+}
+
 fn stuck(store: &archon_queue::Store, key: &str) -> Result<Option<Stuck>, ArchonError> {
     let Some(raw) = store.kv_get(key)? else {
         return Ok(None);
     };
     let found: Stuck =
-        serde_json::from_str(&raw).map_err(|e| ArchonError::Store(format!("kv {key}: {e}")))?;
+        serde_json::from_str(&raw).map_err(|e| ArchonError::Corrupt(format!("kv {key}: {e}")))?;
     assert!(found.failures > 0, "a recorded blocker failed");
     Ok(Some(found))
 }

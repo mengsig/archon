@@ -126,7 +126,7 @@ fn read(store: &Store) -> Result<Option<Origin>, ArchonError> {
     };
     serde_json::from_str(&raw)
         .map(Some)
-        .map_err(|e| ArchonError::Store(format!("kv {ORIGIN_KEY}: {e}")))
+        .map_err(|e| ArchonError::Corrupt(format!("kv {ORIGIN_KEY}: {e}")))
 }
 
 /// The lessons a generation created now would be given.

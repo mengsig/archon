@@ -816,7 +816,7 @@ fn read_outbox(store: &Store) -> Result<Outbox, ArchonError> {
         return Ok(Outbox::default());
     };
     let outbox: Outbox = serde_json::from_str(&raw)
-        .map_err(|e| ArchonError::Store(format!("kv {OUTBOX_KEY} = {raw:?}: {e}")))?;
+        .map_err(|e| ArchonError::Corrupt(format!("kv {OUTBOX_KEY} = {raw:?}: {e}")))?;
     let keyed = outbox.in_flight.as_ref();
     assert!(
         keyed.is_none_or(|batch| !batch.events.is_empty() && !batch.key.is_empty()),
@@ -861,7 +861,7 @@ fn batch_key(store: &mut Store, store_id: &StoreId, len: usize) -> Result<String
         None => 0,
         Some(raw) => raw
             .parse()
-            .map_err(|e| ArchonError::Store(format!("kv {TRIGGER_SEQ_KEY} = {raw:?}: {e}")))?,
+            .map_err(|e| ArchonError::Corrupt(format!("kv {TRIGGER_SEQ_KEY} = {raw:?}: {e}")))?,
     };
     let last = delivered + len as u64;
     store.kv_set(TRIGGER_SEQ_KEY, &last.to_string())?;

@@ -198,7 +198,11 @@ pub(crate) async fn merge_facts(
     repo: &Repo,
     url: &str,
 ) -> Result<PullRequestFacts, ArchonError> {
-    assert!(is_plain_url(url), "a pull request URL archond recorded");
+    if !is_plain_url(url) {
+        return Err(ArchonError::Invalid(format!(
+            "the recorded pull request URL {url:?} is not a plain URL; `archon queue show` names the run's pull request"
+        )));
+    }
     let args = ["pr", "view", url, "--json", MERGE_FIELDS];
     let raw = text(binary, repo, &args).await?;
     let view: MergeView = serde_json::from_str(&raw)
@@ -472,7 +476,11 @@ pub(crate) async fn of_branch(
     let filter = ["--head", branch, "--state", state, "--limit", MAX_OF_BRANCH];
     let doing = format!("looking up the pull request of `{branch}`");
     let prs = list(binary, repo, &filter, Some(branch), &doing).await?;
-    assert!(!only_open || prs.iter().all(PullRequest::is_open));
+    if only_open && !prs.iter().all(PullRequest::is_open) {
+        return Err(ArchonError::Protocol(format!(
+            "GitHub listed a pull request of `{branch}` that is not open when asked for open ones"
+        )));
+    }
     Ok(prs)
 }
 
@@ -702,7 +710,7 @@ pub(crate) fn settled(
         .as_deref()
         .is_some_and(|s| !matches!(s, "MERGED" | "CLOSED"))
     {
-        return Err(ArchonError::Store(format!("kv {key}: {state:?}")));
+        return Err(ArchonError::Corrupt(format!("kv {key}: {state:?}")));
     }
     Ok(state)
 }
@@ -783,6 +791,64 @@ mod tests {
             .map(|(n, o)| ((*n).to_owned(), *o))
             .collect();
         assert_eq!(outcomes, expected);
+    }
+
+    fn registered(path: &Path) -> Repo {
+        use archon_core::repo::{Attribution, Checks, RepoTiers, ShipMode};
+        Repo {
+            id: archon_core::id::RepoId::new(),
+            name: "r".into(),
+            path: path.to_owned(),
+            ship: ShipMode::Local,
+            base_branch: None,
+            default_pipeline: None,
+            autonomy_max: Default::default(),
+            grant_merge: false,
+            merge_waive_checks: Vec::new(),
+            attribution: Attribution::None,
+            gh_user: None,
+            tiers: RepoTiers {
+                checks: Checks::default(),
+                ..RepoTiers::default()
+            },
+            confirmed_fast_check: None,
+            confirmed_full_check: None,
+            confirmed_release_check: None,
+            added_at: archon_core::now(),
+        }
+    }
+
+    /// A `gh` that prints `stdout` and succeeds.
+    fn gh_printing(dir: &Path, stdout: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let script = dir.join("gh");
+        std::fs::write(&script, format!("#!/bin/sh\ncat <<'EOF'\n{stdout}\nEOF\n")).unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        script
+    }
+
+    #[tokio::test]
+    async fn malformed_or_contradicting_gh_output_is_an_error_not_a_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let repo = registered(&root);
+        let closed = r#"[{"number":7,"url":"https://github.com/o/r/pull/7","state":"CLOSED","headRefName":"a/b","baseRefName":"main"}]"#;
+        for said in ["not json at all", "[{\"number\":1}]", "{}", closed] {
+            let binary = gh_printing(&root, said);
+            let found = of_branch(&binary, &repo, "a/b", true).await;
+            assert!(
+                matches!(found, Err(ArchonError::Protocol(_))),
+                "{said}: {found:?}"
+            );
+        }
+        let binary = gh_printing(&root, "{}");
+        let facts = merge_facts(&binary, &repo, "https://github.com/o/r/pull/7").await;
+        assert!(matches!(facts, Err(ArchonError::Protocol(_))), "{facts:?}");
+        let refused = merge_facts(&binary, &repo, "not a url").await;
+        assert!(
+            matches!(refused, Err(ArchonError::Invalid(_))),
+            "{refused:?}"
+        );
     }
 
     #[test]

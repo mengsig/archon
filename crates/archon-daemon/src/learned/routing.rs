@@ -48,7 +48,7 @@ pub(crate) fn plan_for_item(
         .kv_get(&saved_key)?
         .map(|raw| {
             serde_json::from_str::<(ModelPlan, BTreeMap<String, String>)>(&raw)
-                .map_err(|e| ArchonError::Store(format!("stored model defaults: {e}")))
+                .map_err(|e| ArchonError::Corrupt(format!("stored model defaults: {e}")))
         })
         .transpose()?;
     let (mut plan, mut reasons) = match saved {
@@ -72,7 +72,7 @@ pub(crate) fn plan_for_item(
     store.save_learning_value(
         &saved_key,
         &serde_json::to_string(&(plan.clone(), reasons.clone()))
-            .map_err(|e| ArchonError::Store(format!("encode learned plan: {e}")))?,
+            .map_err(|e| ArchonError::Corrupt(format!("encode learned plan: {e}")))?,
     )?;
     plan.0.retain(|stage, _| !explicit.0.contains_key(stage));
     assert!(plan.0.keys().all(|stage| !explicit.0.contains_key(stage)));
@@ -80,7 +80,7 @@ pub(crate) fn plan_for_item(
     store.save_learning_value(
         &key,
         &serde_json::to_string(&reasons)
-            .map_err(|e| ArchonError::Store(format!("encode routing evidence: {e}")))?,
+            .map_err(|e| ArchonError::Corrupt(format!("encode routing evidence: {e}")))?,
     )?;
     Ok(plan)
 }
@@ -92,7 +92,7 @@ pub(crate) fn item_size(
     if let Some(raw) = store.kv_get(&format!("learning/size/{item}"))? {
         return serde_json::from_str(&raw)
             .map(Some)
-            .map_err(|e| ArchonError::Store(format!("diff-size hint: {e}")));
+            .map_err(|e| ArchonError::Corrupt(format!("diff-size hint: {e}")));
     }
     let item = match store.item(item) {
         Ok(item) => item,
@@ -175,7 +175,7 @@ fn route_context(
         .flatten()
         .map(|raw| serde_json::from_str(&raw))
         .transpose()
-        .map_err(|e| ArchonError::Store(format!("routing context: {e}")))
+        .map_err(|e| ArchonError::Corrupt(format!("routing context: {e}")))
 }
 
 /// A stage's permitted evidence, on models no higher than `max_tier` in
@@ -393,7 +393,7 @@ pub(crate) fn hint_size(
         store.save_learning_value(
             &format!("learning/size/{item}"),
             &serde_json::to_string(&size)
-                .map_err(|e| ArchonError::Store(format!("diff-size hint: {e}")))?,
+                .map_err(|e| ArchonError::Corrupt(format!("diff-size hint: {e}")))?,
         )?;
     }
     Ok(())

@@ -61,7 +61,9 @@ pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     assert!(!tick.is_zero(), "config validation refuses tick_secs = 0");
     loop {
         if ctx.aether.is_connected() {
-            match dispatch_once(&ctx).await {
+            let pass =
+                crate::executor::coordination::guarded("a dispatch pass", dispatch_once(&ctx));
+            match pass.await {
                 Ok(_) => {}
                 Err(error) if error.is_store() => return Err(error),
                 Err(error) => tracing::error!(%error, "dispatch pass failed"),

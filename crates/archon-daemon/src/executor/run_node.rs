@@ -202,8 +202,8 @@ pub(crate) fn prune_retired_node_agents(
     // Keep routing for one additional retention window, then forget it.
     let expired_cutoff = cutoff - crate::prune::retention();
     for (key, raw) in store.kv_prefix(MESSAGE_NODE_KEY_PREFIX)? {
-        let run =
-            PipelineRunId::parse(&raw).map_err(|e| ArchonError::Store(format!("kv {key}: {e}")))?;
+        let run = PipelineRunId::parse(&raw)
+            .map_err(|e| ArchonError::Corrupt(format!("kv {key}: {e}")))?;
         let remove = match store.run(&run) {
             Ok(run) => run.finished_at.is_some_and(|at| at < expired_cutoff),
             Err(ArchonError::NotFound(_)) => true,
@@ -216,7 +216,7 @@ pub(crate) fn prune_retired_node_agents(
     }
     for (key, raw) in store.kv_prefix(NODE_AGENT_KEY_PREFIX)? {
         let run = PipelineRunId::parse(&raw)
-            .map_err(|e| ArchonError::Store(format!("kv {key} = {raw:?}: {e}")))?;
+            .map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}")))?;
         let (retired, expired) = match store.run(&run) {
             Ok(found) => {
                 assert_eq!(
@@ -261,7 +261,7 @@ pub(crate) fn node_run(
     };
     PipelineRunId::parse(&raw)
         .map(Some)
-        .map_err(|e| ArchonError::Store(format!("kv {key} = {raw:?}: {e}")))
+        .map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}")))
 }
 
 pub(crate) async fn recover_message_node(
@@ -315,8 +315,8 @@ fn index_node_agent(
 fn run_of_key(key: &str) -> Result<PipelineRunId, ArchonError> {
     let raw = key
         .strip_prefix(NODE_KEY_PREFIX)
-        .ok_or_else(|| ArchonError::Store(format!("kv key {key} is not a run node")))?;
-    PipelineRunId::parse(raw).map_err(|e| ArchonError::Store(format!("run node key {key}: {e}")))
+        .ok_or_else(|| ArchonError::Corrupt(format!("kv key {key} is not a run node")))?;
+    PipelineRunId::parse(raw).map_err(|e| ArchonError::Corrupt(format!("run node key {key}: {e}")))
 }
 
 pub(crate) fn idempotency_key(run: &PipelineRunId, generation: u32) -> String {
@@ -330,7 +330,7 @@ pub(crate) fn load_node(store: &Store, run: &PipelineRunId) -> Result<StoredNode
         return Ok(StoredNode::fresh());
     };
     let node: StoredNode = serde_json::from_str(&raw)
-        .map_err(|e| ArchonError::Store(format!("run node of {run}: {e}")))?;
+        .map_err(|e| ArchonError::Corrupt(format!("run node of {run}: {e}")))?;
     node.check();
     Ok(node)
 }

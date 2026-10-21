@@ -264,7 +264,7 @@ fn cursor(store: &mut archon_queue::Store) -> Result<u64, ArchonError> {
     let raw = store.kv_get(keys::CURSOR_NOTIFICATION_CENTER)?;
     if let Some(raw) = raw.filter(|raw| !raw.is_empty()) {
         return raw.parse().map_err(|_| {
-            ArchonError::Store(format!(
+            ArchonError::Corrupt(format!(
                 "kv {} = {raw:?} is not a feed seq",
                 keys::CURSOR_NOTIFICATION_CENTER
             ))

@@ -105,6 +105,7 @@ pub async fn run(json: bool) -> anyhow::Result<ExitCode> {
     let archond = connect_existing().await;
     checks.push(check_archond(&archond));
     checks.push(check_crash(&archon_core::paths::data_dir()));
+    checks.push(check_quarantine(&archon_core::paths::data_dir()));
     checks.push(orchestrator::check_orchestrator(&archond).await);
     let registry = Registry::read(&archond, config.aether.mode).await;
     checks.push(check_disk(&config)?);
@@ -601,6 +602,20 @@ fn check_crash(data_dir: &Path) -> Check {
         Ok(None) => check("crash", Level::Ok, "no archond crash is recorded"),
         Ok(Some(record)) => check("crash", Level::Warn, record.describe()),
         Err(error) => check("crash", Level::Warn, error.to_string()),
+    }
+}
+
+/// Records archond set aside at its start, each with the commands that fix or cancel it.
+fn check_quarantine(data_dir: &Path) -> Check {
+    match archon_core::quarantine::list(data_dir) {
+        Ok(set_aside) if set_aside.is_empty() => {
+            check("quarantine", Level::Ok, "no record is set aside")
+        }
+        Ok(set_aside) => {
+            let lines: Vec<String> = set_aside.iter().map(|q| q.describe()).collect();
+            check("quarantine", Level::Warn, lines.join("\n  "))
+        }
+        Err(error) => check("quarantine", Level::Warn, error.to_string()),
     }
 }
 

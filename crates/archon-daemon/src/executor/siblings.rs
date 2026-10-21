@@ -52,7 +52,7 @@ pub(super) fn owed(store: &Store) -> Result<Vec<StageRunId>, ArchonError> {
     for (key, _) in store.kv_prefix(STOP_KEY_PREFIX)? {
         let raw = key.strip_prefix(STOP_KEY_PREFIX).expect("ranged by prefix");
         let stage = StageRunId::parse(raw)
-            .map_err(|e| ArchonError::Store(format!("sibling stop key {key}: {e}")))?;
+            .map_err(|e| ArchonError::Corrupt(format!("sibling stop key {key}: {e}")))?;
         stages.push(stage);
     }
     Ok(stages)
@@ -66,7 +66,7 @@ pub(super) async fn stop(ctx: &DaemonContext, stage: &StageRunId) -> Result<Foll
         return Ok(FollowUp::default());
     };
     let owed: OwedStop = serde_json::from_str(&raw)
-        .map_err(|e| ArchonError::Store(format!("sibling stop of stage run {stage}: {e}")))?;
+        .map_err(|e| ArchonError::Corrupt(format!("sibling stop of stage run {stage}: {e}")))?;
     match ctx.backend.cancel(&owed.agent, &owed.reason).await {
         Ok(()) => {}
         Err(ArchonError::NotFound(why)) => {

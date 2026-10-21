@@ -55,7 +55,9 @@ pub(super) async fn start_item(
         return Ok(FollowUp::default());
     };
     let run_id = PipelineRunId::new();
-    let prepared = match prepare(ctx, &item, run_id.clone()).await {
+    let subject = format!("starting item {}", item.id);
+    let preparing = super::coordination::guarded(&subject, prepare(ctx, &item, run_id.clone()));
+    let prepared = match preparing.await {
         Ok(prepared) => prepared,
         Err(error) => {
             frozen::discard(&ctx.paths.data_dir, &run_id);
@@ -784,7 +786,9 @@ async fn fail_unstarted_locked(
         }
         let failed = QueueState::Failed {
             run: None,
-            error: format!("could not start: {error}"),
+            error: format!(
+                "could not start: {error}. `archon queue retry {id}` queues it again once fixed"
+            ),
         };
         store.transition_item(id, failed, archon_core::now())?
     };

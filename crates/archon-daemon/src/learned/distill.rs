@@ -79,7 +79,7 @@ async fn queue(ctx: &DaemonContext, repo: &RepoId) -> Result<(), ArchonError> {
         .kv_get(&key)?
         .map(|s| {
             s.parse::<usize>()
-                .map_err(|e| ArchonError::Store(format!("distillation cursor: {e}")))
+                .map_err(|e| ArchonError::Corrupt(format!("distillation cursor: {e}")))
         })
         .transpose()?
         .unwrap_or(0);
@@ -92,7 +92,7 @@ async fn queue(ctx: &DaemonContext, repo: &RepoId) -> Result<(), ArchonError> {
     let draft_key = format!("learning/distill-draft/{repo}/{consumed}");
     let item = match store.kv_get(&draft_key)? {
         Some(raw) => serde_json::from_str(&raw)
-            .map_err(|e| ArchonError::Store(format!("distillation draft: {e}")))?,
+            .map_err(|e| ArchonError::Corrupt(format!("distillation draft: {e}")))?,
         None => {
             let choice = cheap_choice(&window, &policy, ctx)?;
             let evidence = distillation_input(&store, repo, &window)?;
@@ -100,7 +100,7 @@ async fn queue(ctx: &DaemonContext, repo: &RepoId) -> Result<(), ArchonError> {
             store.save_learning_value(
                 &draft_key,
                 &serde_json::to_string(&item)
-                    .map_err(|e| ArchonError::Store(format!("save distillation draft: {e}")))?,
+                    .map_err(|e| ArchonError::Corrupt(format!("save distillation draft: {e}")))?,
             )?;
             item
         }
@@ -140,7 +140,7 @@ fn distillation_input(
     assert_eq!(compact.len(), outcomes.len());
     assert!(outcomes.iter().all(|o| o.repo.as_ref() == Some(repo)));
     serde_json::to_string(&serde_json::json!({"outcomes":compact,"late_corrections":corrections,"existing_lessons":lessons}))
-        .map_err(|e|ArchonError::Store(format!("distillation input: {e}")))
+        .map_err(|e|ArchonError::Corrupt(format!("distillation input: {e}")))
 }
 
 fn cheap_choice(
@@ -278,7 +278,7 @@ async fn diff_stat(
     let vars: std::collections::BTreeMap<String, String> = raw
         .map(|raw| {
             serde_json::from_str(&raw)
-                .map_err(|e| ArchonError::Store(format!("outcome run variables: {e}")))
+                .map_err(|e| ArchonError::Corrupt(format!("outcome run variables: {e}")))
         })
         .transpose()?
         .unwrap_or_default();

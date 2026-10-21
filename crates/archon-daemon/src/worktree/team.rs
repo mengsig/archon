@@ -177,6 +177,7 @@ fn prefixed(error: ArchonError, prefix: &str) -> ArchonError {
         ArchonError::NotFound(why) => ArchonError::NotFound(with(why)),
         ArchonError::InvalidTransition(why) => ArchonError::InvalidTransition(with(why)),
         ArchonError::Store(why) => ArchonError::Store(with(why)),
+        ArchonError::Corrupt(why) => ArchonError::Corrupt(with(why)),
         ArchonError::DiskFull(why) => ArchonError::DiskFull(with(why)),
         ArchonError::Aether(why) => ArchonError::Aether(with(why)),
         ArchonError::Pipeline(why) => ArchonError::Pipeline(with(why)),

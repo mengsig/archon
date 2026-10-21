@@ -61,7 +61,7 @@ impl SettingsBook {
 
 fn parse(key: &str, json: &str) -> Result<OperatorSettings, ArchonError> {
     serde_json::from_str(json)
-        .map_err(|e| ArchonError::Store(format!("stored settings {key:?} do not parse: {e}")))
+        .map_err(|e| ArchonError::Corrupt(format!("stored settings {key:?} do not parse: {e}")))
 }
 
 fn key(repo: Option<&RepoId>) -> String {

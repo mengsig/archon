@@ -176,7 +176,9 @@ async fn handle_one(
     event: &AetherEvent,
 ) -> Result<Option<String>, ArchonError> {
     assert!(event.seq > 0, "event seqs start at 1");
-    match stream.handle(ctx, event).await {
+    let subject = format!("Aether event {} ({})", event.seq, stream.name());
+    let handled = crate::executor::coordination::guarded(&subject, stream.handle(ctx, event));
+    match handled.await {
         Ok(()) => Ok(None),
         Err(error) if error.is_store() => Err(error),
         Err(ArchonError::Unavailable(reason)) => Ok(Some(reason)),
@@ -199,7 +201,7 @@ async fn read_cursor(ctx: &DaemonContext, key: &str) -> Result<Option<u64>, Arch
         Some(raw) => raw
             .parse()
             .map(Some)
-            .map_err(|e| ArchonError::Store(format!("kv {key} = {raw:?}: {e}"))),
+            .map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}"))),
     }
 }
 

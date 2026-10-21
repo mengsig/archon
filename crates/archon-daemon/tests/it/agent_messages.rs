@@ -384,7 +384,7 @@ async fn run_node_agent_refusals_are_delivered_and_retried_when_unavailable() {
 }
 
 #[tokio::test]
-async fn a_corrupt_counter_is_a_store_failure_and_does_not_consume_the_message() {
+async fn a_corrupt_counter_is_a_corrupt_record_and_does_not_consume_the_message() {
     let (h, stage) = running().await;
     let node = h.backend.node_ids().remove(0);
     let key = format!("message_count:{}", stage.aether_agent.as_ref().unwrap());
@@ -397,16 +397,16 @@ async fn a_corrupt_counter_is_a_store_failure_and_does_not_consume_the_message()
         }}}
     }))
     .unwrap();
-    assert!(matches!(
-        pump::handle_fleet_event(&h.ctx, &event).await,
-        Err(ArchonError::Store(_))
-    ));
-    assert_eq!(h.kv(&format!("message_inbox:{node}")).await, None);
-    assert!(h.backend.messages().is_empty());
-    assert!(messages(&h).await.is_empty());
-    h.ctx.store.lock().await.kv_set(&key, "0").unwrap();
     pump::handle_fleet_event(&h.ctx, &event).await.unwrap();
-    assert_eq!(messages(&h).await.len(), 1);
+    assert!(messages(&h).await.is_empty(), "the message is not recorded");
+    assert!(
+        h.backend
+            .messages()
+            .iter()
+            .any(|(_, text)| text.contains("corrupt")),
+        "the sender is told why: {:?}",
+        h.backend.messages()
+    );
 }
 
 #[tokio::test]

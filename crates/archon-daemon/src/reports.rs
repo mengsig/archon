@@ -843,7 +843,7 @@ async fn update_record(
 ) -> Result<(), ArchonError> {
     let mut store = ctx.store.lock().await;
     let mut record = records::get(&mut store, report)?
-        .ok_or_else(|| ArchonError::Store(format!("report {report} has no record")))?;
+        .ok_or_else(|| ArchonError::Corrupt(format!("report {report} has no record")))?;
     change(&mut record);
     records::put(&mut store, report, record, archon_core::now())
 }

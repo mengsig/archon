@@ -54,7 +54,7 @@ fn stop_key(stage: &StageRunId) -> String {
 }
 
 fn parse(key: &str, raw: &str) -> Result<OwedStop, ArchonError> {
-    serde_json::from_str(raw).map_err(|e| ArchonError::Store(format!("kv {key} = {raw:?}: {e}")))
+    serde_json::from_str(raw).map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}")))
 }
 
 /// Owe the stop of what `settled`'s agent delegated, if it could delegate. Call
@@ -79,7 +79,12 @@ pub(super) fn owe(store: &mut Store, settled: &StageRun) -> Result<bool, ArchonE
     let owed = OwedStop {
         run: settled.run.clone(),
         agent: agent.clone(),
-        settled_at: settled.finished_at.expect("a settled stage has finished"),
+        settled_at: settled.finished_at.ok_or_else(|| {
+            ArchonError::Corrupt(format!(
+                "settled stage run {} has no finish time",
+                settled.id
+            ))
+        })?,
         cancelled_at: None,
         reported: false,
         keep: kept && settled.state == StageState::Completed,
@@ -94,7 +99,7 @@ pub(super) fn owed(store: &Store) -> Result<Vec<StageRunId>, ArchonError> {
     for (key, _) in store.kv_prefix(STOP_KEY_PREFIX)? {
         let raw = key.strip_prefix(STOP_KEY_PREFIX).expect("ranged by prefix");
         let stage = StageRunId::parse(raw)
-            .map_err(|e| ArchonError::Store(format!("descendant stop key {key}: {e}")))?;
+            .map_err(|e| ArchonError::Corrupt(format!("descendant stop key {key}: {e}")))?;
         stages.push(stage);
     }
     Ok(stages)
@@ -244,9 +249,11 @@ async fn still_owed(
     now: Timestamp,
 ) -> Result<FollowUp, ArchonError> {
     assert!(!live.is_empty(), "nothing live is a stop made");
-    let since = owed
-        .cancelled_at
-        .expect("only a cancelled subtree is waited for");
+    let Some(since) = owed.cancelled_at else {
+        return Err(ArchonError::Corrupt(format!(
+            "the stop owed by stage run {stage} waits on a subtree that was never cancelled"
+        )));
+    };
     tracing::debug!(agent = %owed.agent, live = live.len(), "delegated agents are still ending");
     if owed.reported || since + chrono::Duration::seconds(SLOW_STOP_SECS) >= now {
         return Ok(FollowUp::default());

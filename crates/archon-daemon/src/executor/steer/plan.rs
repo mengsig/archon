@@ -97,7 +97,12 @@ pub(super) async fn plan(
     delivering: bool,
 ) -> Result<Change, ArchonError> {
     assert!(stages.iter().all(|stage| stage.run == run.id));
-    let live_stage = run.state.live_stage().expect("a live run is at a stage");
+    let Some(live_stage) = run.state.live_stage() else {
+        return Err(ArchonError::InvalidTransition(format!(
+            "run {} is no longer at a stage, so it cannot be steered; `archon queue show {}` shows where it ended",
+            run.id, run.item
+        )));
+    };
     let target = asked.steer.stage.as_deref().unwrap_or(live_stage);
     let at = At {
         run,
@@ -152,8 +157,13 @@ fn amend(change: &mut Change, steer: &Steer, at: &At<'_>) -> Result<(), ArchonEr
     };
     let blueprint = &mut change.blueprint;
     blueprint.item.amend_brief(note, archon_core::now())?;
-    let brief = blueprint.vars.get_mut(BRIEF_VARIABLE);
-    *brief.expect("run variables hold the brief") = blueprint.item.brief.clone();
+    let Some(brief) = blueprint.vars.get_mut(BRIEF_VARIABLE) else {
+        return Err(ArchonError::Corrupt(format!(
+            "the variables of run {} hold no brief; `archon queue cancel {}` gives the item up",
+            at.run.id, at.run.item
+        )));
+    };
+    *brief = blueprint.item.brief.clone();
     for stage in at.live() {
         change.live.entry(stage.id.clone()).or_default();
     }

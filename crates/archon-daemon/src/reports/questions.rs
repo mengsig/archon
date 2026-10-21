@@ -46,7 +46,7 @@ pub(super) async fn disconnected(
     let asked = {
         let mut store = ctx.store.lock().await;
         let mut record = records::get(&mut store, report)?
-            .ok_or_else(|| ArchonError::Store(format!("report {report} has no record")))?;
+            .ok_or_else(|| ArchonError::Corrupt(format!("report {report} has no record")))?;
         record.state = ReportState::Disconnected;
         let gate = store.open_gate_by_report(report)?;
         let asked = match gate {

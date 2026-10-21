@@ -30,7 +30,7 @@ fn pauses_double_up_to_the_longest() {
 async fn a_panicking_worker_is_restarted_and_the_others_keep_running() {
     let runs = Arc::new(AtomicU32::new(0));
     let mut workers = Workers::new(FAST);
-    workers.spawn("steady", || std::future::pending());
+    workers.spawn("steady", std::future::pending);
     let counted = runs.clone();
     workers.spawn("flaky", move || {
         let attempt = counted.fetch_add(1, Ordering::SeqCst);
@@ -139,7 +139,7 @@ async fn stopping_leaves_a_worker_that_never_yields_behind() {
     let started = std::sync::Mutex::new(Some(started));
     let blocked = Arc::new(std::sync::Mutex::new(Some(blocked)));
     let mut workers = Workers::new(FAST);
-    workers.spawn("waits", || std::future::pending());
+    workers.spawn("waits", std::future::pending);
     workers.spawn("blocks", move || {
         let started = started.lock().unwrap().take();
         let blocked = blocked.lock().unwrap().take();

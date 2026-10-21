@@ -403,7 +403,10 @@ fn wakes_orchestrator(item: &QueueItem, wake_on_success: bool) -> bool {
 /// full error. Read the failing member instead of the engine's nested report.
 fn failure_notice(item: &QueueItem, run: Option<&PipelineRun>, stages: &[StageRun]) -> String {
     let QueueState::Failed { error, .. } = &item.state else {
-        unreachable!("failure notice requires a failed item");
+        return format!(
+            "{} did not fail; `archon queue show {}` says where it stands",
+            item.title, item.id
+        );
     };
     let (stage, fallback) = match run.map(|r| &r.state) {
         Some(RunState::Failed { stage_id, error }) => (stage_id.as_str(), error.as_str()),
@@ -485,7 +488,7 @@ pub(super) fn outcome_text(item: &QueueItem) -> String {
         QueueState::Failed { error, .. } => format!("Failed: {}. {error}", item.title),
         QueueState::Cancelled { reason: Some(r) } => format!("Cancelled: {}. {r}", item.title),
         QueueState::Cancelled { reason: None } => format!("Cancelled: {}.", item.title),
-        other => unreachable!("outcome of a {} item", other.kind()),
+        other => format!("{}: {} is {}.", item.id, item.title, other.kind()),
     };
     text.trim().to_owned()
 }

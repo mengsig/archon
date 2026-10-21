@@ -35,7 +35,7 @@ pub(super) fn section(
     let vars = recover::load_run_vars(store, &run.id)?;
     let base = vars.get("base_branch").filter(|base| !base.is_empty());
     let base = base.ok_or_else(|| {
-        ArchonError::Store(format!("run {} of a worktree item records no base", run.id))
+        ArchonError::Corrupt(format!("run {} of a worktree item records no base", run.id))
     })?;
     let mut found = Vec::with_capacity(item.dependencies.len());
     for id in &item.dependencies {
@@ -71,10 +71,12 @@ pub(super) fn initiative_brief(
     assert!(detail.members.iter().any(|m| m.id == item.id));
     let mut siblings = Vec::new();
     for member in detail.members.iter().filter(|m| m.id != item.id) {
-        let repo = member
-            .repo
-            .as_ref()
-            .expect("initiative members have repositories");
+        let repo = member.repo.as_ref().ok_or_else(|| {
+            ArchonError::Corrupt(format!(
+                "initiative member {} has no repository; `archon queue cancel {}` gives it up",
+                member.id, member.id
+            ))
+        })?;
         let name = store.repo(&crate::resolve::repo_ref(repo))?.name;
         let fact = dependency(store, &member.id, member.repo.as_ref())?;
         siblings.push(archon_core::initiative::Sibling {

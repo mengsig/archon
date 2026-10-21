@@ -433,7 +433,7 @@ pub(crate) fn last_pass(store: &Store) -> Result<Option<GcStatus>, ArchonError> 
         .kv_get(LAST_PASS_KEY)?
         .map(|raw| {
             serde_json::from_str(&raw)
-                .map_err(|e| ArchonError::Store(format!("kv {LAST_PASS_KEY}: {e}")))
+                .map_err(|e| ArchonError::Corrupt(format!("kv {LAST_PASS_KEY}: {e}")))
         })
         .transpose()
 }

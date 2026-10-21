@@ -512,11 +512,11 @@ pub(crate) fn fill_plan(
 ) -> Result<ModelPlan, ArchonError> {
     let learned = learned::default_plan(store, repo, spec, policy, max_tier)?;
     for (stage, choices) in learned.0 {
-        assert!(
-            spec.stage(&stage).is_some(),
-            "{stage:?} is no stage of the pipeline"
-        );
-        assert!(!choices.is_empty(), "a learned default names a choice");
+        // A default learned on an earlier version of the pipeline may name a stage it dropped.
+        if spec.stage(&stage).is_none() || choices.is_empty() {
+            tracing::debug!(stage = %stage, "a learned default does not fit the pipeline and is skipped");
+            continue;
+        }
         plan.0.entry(stage).or_insert(choices);
     }
     fill_static_stages(base, spec, plan, fallback)
@@ -540,11 +540,9 @@ pub(crate) fn fill_static_stages(
             plan.0.insert(stage.id.clone(), vec![choice.clone()]);
         }
     }
-    let first = base
-        .file
-        .stages
-        .first()
-        .expect("validated pipelines have stages");
+    let Some(first) = base.file.stages.first() else {
+        return Ok(plan);
+    };
     let Some(choice) = plan.choices_for(&first.id).and_then(|c| c.first()).cloned() else {
         return Ok(plan);
     };
@@ -553,7 +551,6 @@ pub(crate) fn fill_static_stages(
             plan.0.insert(stage.id.clone(), vec![choice.clone()]);
         }
     }
-    debug_assert!(plan.0.len() <= spec.file.stages.len() + base.file.stages.len());
     Ok(plan)
 }
 

@@ -430,7 +430,7 @@ fn frozen_explanation(
         return Ok(None);
     };
     let mut reasons: BTreeMap<String, String> =
-        serde_json::from_str(&raw).map_err(|e| ArchonError::Store(format!("kv {key}: {e}")))?;
+        serde_json::from_str(&raw).map_err(|e| ArchonError::Corrupt(format!("kv {key}: {e}")))?;
     Ok(reasons.remove(&feedback.stage))
 }
 

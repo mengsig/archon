@@ -181,7 +181,7 @@ fn sent_version(store: &Store, stage: &StageRunId) -> Result<u32, ArchonError> {
         return Ok(0);
     };
     raw.parse()
-        .map_err(|e| ArchonError::Store(format!("roster version of stage run {stage}: {e}")))
+        .map_err(|e| ArchonError::Corrupt(format!("roster version of stage run {stage}: {e}")))
 }
 
 /// Send one roster message. A transient failure is left to the sweep; a
@@ -234,7 +234,7 @@ pub(crate) fn prune_settled_rosters(store: &mut Store) -> Result<usize, ArchonEr
     for (key, _) in store.kv_prefix(SENT_KEY_PREFIX)? {
         let raw = key.strip_prefix(SENT_KEY_PREFIX).expect("ranged by prefix");
         let id = StageRunId::parse(raw)
-            .map_err(|e| ArchonError::Store(format!("roster key {key}: {e}")))?;
+            .map_err(|e| ArchonError::Corrupt(format!("roster key {key}: {e}")))?;
         let settled = match store.stage_run(&id) {
             Ok(stage) => stage.state.is_terminal(),
             Err(ArchonError::NotFound(_)) => true,

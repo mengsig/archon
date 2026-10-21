@@ -146,7 +146,7 @@ pub(crate) fn load(store: &Store, repo: &RepoId) -> Result<Option<BranchState>, 
         return Ok(None);
     };
     let state: BranchState = serde_json::from_str(&raw)
-        .map_err(|e| ArchonError::Store(format!("kv {key} = {raw:?}: {e}")))?;
+        .map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}")))?;
     assert!(!state.branch.is_empty(), "a saved state names its branch");
     Ok(Some(state))
 }
@@ -173,7 +173,7 @@ pub(crate) fn all(store: &Store) -> Result<Vec<(RepoId, BranchState)>, ArchonErr
     let mut states = Vec::new();
     for (key, _) in store.kv_prefix(KEY_PREFIX)? {
         let id = key.strip_prefix(KEY_PREFIX).expect("ranged by prefix");
-        let repo = RepoId::parse(id).map_err(|e| ArchonError::Store(format!("kv {key}: {e}")))?;
+        let repo = RepoId::parse(id).map_err(|e| ArchonError::Corrupt(format!("kv {key}: {e}")))?;
         if let Some(state) = load(store, &repo)? {
             states.push((repo, state));
         }

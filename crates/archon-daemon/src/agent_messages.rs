@@ -40,7 +40,7 @@ fn read<T: serde::de::DeserializeOwned>(
     store
         .kv_get(key)?
         .map(|raw| {
-            serde_json::from_str(&raw).map_err(|e| ArchonError::Store(format!("kv {key}: {e}")))
+            serde_json::from_str(&raw).map_err(|e| ArchonError::Corrupt(format!("kv {key}: {e}")))
         })
         .transpose()
 }

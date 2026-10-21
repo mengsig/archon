@@ -91,7 +91,9 @@ async fn record_ended(
 ) -> Result<(), ArchonError> {
     let mut store = ctx.store.lock().await;
     let Some(current) = records::get(&mut store, report)? else {
-        return Err(ArchonError::Store(format!("report {report} has no record")));
+        return Err(ArchonError::Corrupt(format!(
+            "report {report} has no record"
+        )));
     };
     if current != *seen {
         tracing::info!(%report, state = current.state.as_str(), "the report changed while its session ended");

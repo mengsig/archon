@@ -114,10 +114,8 @@ pub async fn run(
     endpoint: Endpoint,
     starter: Option<Arc<dyn AetherStarter>>,
 ) -> Result<(), ArchonError> {
-    let saved = ctx.store.lock().await.kv_get(REPLY_STATE_KEY)?;
-    *ctx.replies.lock().await = feed::restore_replies(saved.as_deref())?;
     tokio::try_join!(
-        link_loop(ctx.clone(), endpoint, OwnAetherd::new(starter)),
+        link_to_aether(ctx.clone(), endpoint, starter),
         reports::supervise(ctx.clone()),
         supervisor::revive_when_due(ctx.clone()),
         supervisor::sweep_when_owed(ctx.clone()),
@@ -126,6 +124,24 @@ pub async fn run(
         crate::handlers::deliver_memory_feedback(ctx.clone())
     )?;
     Ok(())
+}
+
+/// The link to Aether alone: [`run`] without the loops beside it, which the
+/// daemon supervises one by one so that none takes the others down.
+pub async fn link_to_aether(
+    ctx: Arc<DaemonContext>,
+    endpoint: Endpoint,
+    starter: Option<Arc<dyn AetherStarter>>,
+) -> Result<(), ArchonError> {
+    let saved = ctx.store.lock().await.kv_get(REPLY_STATE_KEY)?;
+    *ctx.replies.lock().await = match feed::restore_replies(saved.as_deref()) {
+        Ok(replies) => replies,
+        Err(error) => {
+            tracing::warn!(%error, "the saved chat reply state is unusable; starting it afresh");
+            feed::ReplyTracker::default()
+        }
+    };
+    link_loop(ctx, endpoint, OwnAetherd::new(starter)).await
 }
 
 /// Connect, serve one session until the connection drops, and repeat.

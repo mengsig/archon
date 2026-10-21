@@ -47,7 +47,7 @@ pub(super) fn target_base(
         return Ok(Some(open.parent_branch.clone()));
     }
     let Some(repo) = store.item(&owner)?.repo else {
-        return Err(ArchonError::Store(format!(
+        return Err(ArchonError::Corrupt(format!(
             "stacked item {owner} has no repository"
         )));
     };

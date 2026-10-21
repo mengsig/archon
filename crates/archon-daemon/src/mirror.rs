@@ -368,7 +368,7 @@ fn stored_state(store: &Store, repo: &RepoId) -> Result<MirrorState, ArchonError
     match store.kv_get(&key)? {
         None => Ok(MirrorState::default()),
         Some(raw) => serde_json::from_str(&raw)
-            .map_err(|e| ArchonError::Store(format!("kv {key} = {raw:?}: {e}"))),
+            .map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}"))),
     }
 }
 

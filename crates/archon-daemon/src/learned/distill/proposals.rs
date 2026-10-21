@@ -40,7 +40,7 @@ pub(super) async fn reconcile(ctx: &DaemonContext) -> Result<(), ArchonError> {
         .kv_prefix("learning/proposal-pending/")?;
     for (key, raw) in pending {
         let value = serde_json::from_str(&raw)
-            .map_err(|e| ArchonError::Store(format!("proposal outbox: {e}")))?;
+            .map_err(|e| ArchonError::Corrupt(format!("proposal outbox: {e}")))?;
         match stage(ctx, value).await {
             Ok(()) => ctx.store.lock().await.kv_delete(&key)?,
             Err(error) if error.is_store() => return Err(error),

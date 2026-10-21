@@ -92,7 +92,7 @@ pub(super) async fn owner(
     let key = watchdog::child_key(agent);
     if let Some(raw) = store.kv_get(&key)? {
         let item = serde_json::from_str(&raw)
-            .map_err(|e| ArchonError::Store(format!("kv {key} = {raw:?}: {e}")))?;
+            .map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}")))?;
         return Ok(Some(Owner::Child { item }));
     }
     let key = watchdog::stage_agent_key(agent);
@@ -100,7 +100,7 @@ pub(super) async fn owner(
         return Ok(None);
     };
     let item = QueueItemId::parse(&raw)
-        .map_err(|e| ArchonError::Store(format!("kv {key} = {raw:?}: {e}")))?;
+        .map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}")))?;
     Ok(Some(Owner::StageAgent { item }))
 }
 

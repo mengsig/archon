@@ -100,7 +100,7 @@ pub async fn post_reply(
     tracing::info!(%thread, %url, "posted a GitHub reply");
     if let Err(error) = feed::notify(ctx, NotificationKind::Progress, note, None, None).await {
         // Posted already: a retry would post twice, so say where it went.
-        return Err(ArchonError::Store(format!(
+        return Err(ArchonError::Corrupt(format!(
             "posted {url} but could not record it: {error}"
         )));
     }

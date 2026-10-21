@@ -175,7 +175,7 @@ async fn load(ctx: &DaemonContext, repo: &RepoId) -> Result<Option<RepoIdentity>
         return Ok(None);
     };
     let identity: RepoIdentity = serde_json::from_str(&raw)
-        .map_err(|e| ArchonError::Store(format!("invalid {}: {e}", key(repo))))?;
+        .map_err(|e| ArchonError::Corrupt(format!("invalid {}: {e}", key(repo))))?;
     assert!(!identity.emails.is_empty(), "an identity has an address");
     Ok(Some(identity))
 }

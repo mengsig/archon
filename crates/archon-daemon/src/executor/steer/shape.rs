@@ -306,9 +306,9 @@ fn kept_name(store: &Store, item: &QueueItemId) -> Result<Option<String>, Archon
         return Ok(None);
     };
     let whole: RunEdit = serde_json::from_str(&raw)
-        .map_err(|e| ArchonError::Store(format!("steered stages of item {item}: {e}")))?;
+        .map_err(|e| ArchonError::Corrupt(format!("steered stages of item {item}: {e}")))?;
     let RunEdit::SwitchPipeline { pipeline, .. } = whole else {
-        return Err(ArchonError::Store(format!(
+        return Err(ArchonError::Corrupt(format!(
             "steered stages of item {item} are kept as a {} edit, not a switch",
             whole.kind()
         )));
@@ -352,7 +352,7 @@ pub(crate) async fn shaped(
         return Ok(spec);
     };
     let whole: RunEdit = serde_json::from_str(&raw)
-        .map_err(|e| ArchonError::Store(format!("steered stages of item {}: {e}", item.id)))?;
+        .map_err(|e| ArchonError::Corrupt(format!("steered stages of item {}: {e}", item.id)))?;
     let shaped = reshape::apply(&spec, &whole).map_err(|error| {
         ArchonError::Pipeline(format!(
             "the stages steered into item {} no longer fit pipeline {:?}: {error}; steer it \

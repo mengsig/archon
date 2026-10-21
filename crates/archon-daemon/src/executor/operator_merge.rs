@@ -702,7 +702,7 @@ async fn report(ctx: &DaemonContext, merge: &MergeRequest) -> Result<(), ArchonE
             (NotificationKind::Blocker, text)
         }
         MergeState::AwaitingOperator | MergeState::AwaitingChecks | MergeState::Merging => {
-            unreachable!("an open request")
+            return Ok(());
         }
     };
     finish::notify(ctx, kind, &text, Some(&merge.item), Some(&merge.run)).await?;

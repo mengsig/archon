@@ -109,7 +109,7 @@ pub(crate) fn load_spawn(store: &Store, id: &StageRunId) -> Result<StoredSpawn, 
         .kv_get(&request_key(id))?
         .ok_or_else(|| ArchonError::NotFound(format!("spawn request of stage run {id}")))?;
     let stored: StoredSpawn = serde_json::from_str(&raw)
-        .map_err(|e| ArchonError::Store(format!("spawn request of stage run {id}: {e}")))?;
+        .map_err(|e| ArchonError::Corrupt(format!("spawn request of stage run {id}: {e}")))?;
     assert_eq!(
         stored.request.idempotency_key,
         id.as_str(),
@@ -155,7 +155,7 @@ pub(crate) fn prune_settled_requests(store: &mut Store) -> Result<usize, ArchonE
             .strip_prefix(REQUEST_KEY_PREFIX)
             .expect("ranged by prefix");
         let id = StageRunId::parse(raw)
-            .map_err(|e| ArchonError::Store(format!("spawn request key {key}: {e}")))?;
+            .map_err(|e| ArchonError::Corrupt(format!("spawn request key {key}: {e}")))?;
         let settled = match store.stage_run(&id) {
             Ok(stage) => stage.state.is_terminal() && !resume::request_in_use(store, &stage)?,
             Err(ArchonError::NotFound(_)) => true,

@@ -88,7 +88,7 @@ fn load(store: &Store, stage: &StageRunId) -> Result<Vec<Delivery>, ArchonError>
         return Ok(Vec::new());
     };
     serde_json::from_str(&raw)
-        .map_err(|e| ArchonError::Store(format!("steer owed to stage run {stage}: {e}")))
+        .map_err(|e| ArchonError::Corrupt(format!("steer owed to stage run {stage}: {e}")))
 }
 
 /// Owe `delivery` to live `stage`, after what it is owed already; store it
@@ -115,7 +115,7 @@ pub(crate) fn owed(store: &Store) -> Result<Vec<StageRunId>, ArchonError> {
     for (key, _) in store.kv_prefix(KEY_PREFIX)? {
         let raw = key.strip_prefix(KEY_PREFIX).expect("ranged by prefix");
         let stage = StageRunId::parse(raw)
-            .map_err(|e| ArchonError::Store(format!("steer owed key {key}: {e}")))?;
+            .map_err(|e| ArchonError::Corrupt(format!("steer owed key {key}: {e}")))?;
         stages.push(stage);
     }
     Ok(stages)

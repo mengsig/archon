@@ -18,7 +18,7 @@ fn load(store: &archon_queue::Store, item: &QueueItemId) -> Result<Vec<String>, 
         return Ok(Vec::new());
     };
     serde_json::from_str(&raw)
-        .map_err(|e| ArchonError::Store(format!("blockers posted for item {item}: {e}")))
+        .map_err(|e| ArchonError::Corrupt(format!("blockers posted for item {item}: {e}")))
 }
 
 /// Note that the blocker `posted` is open for `item`.
@@ -67,7 +67,7 @@ pub(super) async fn resolve_all(
         .kv_prefix(keys::NOTIFICATION_CENTER_BLOCKERS)?;
     for (listed, raw) in &tracked {
         let posted: Vec<String> = serde_json::from_str(raw)
-            .map_err(|e| ArchonError::Store(format!("blockers listed under {listed}: {e}")))?;
+            .map_err(|e| ArchonError::Corrupt(format!("blockers listed under {listed}: {e}")))?;
         for key in &posted {
             client.resolve_notification(key).await?;
         }

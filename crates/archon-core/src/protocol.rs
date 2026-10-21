@@ -1833,6 +1833,7 @@ impl From<&ArchonError> for ErrorReply {
             ArchonError::Recovering(_) => ErrorCode::Recovering,
             ArchonError::Unavailable(_) | ArchonError::Aether(_) => ErrorCode::Unavailable,
             ArchonError::Store(_)
+            | ArchonError::Corrupt(_)
             | ArchonError::DiskFull(_)
             | ArchonError::Io { .. }
             | ArchonError::Protocol(_) => ErrorCode::Internal,

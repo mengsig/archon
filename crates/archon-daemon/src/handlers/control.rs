@@ -295,12 +295,12 @@ async fn recorded_orchestrator(
         return Ok(None);
     };
     let agent = AetherAgentId::parse(&agent)
-        .map_err(|e| ArchonError::Store(format!("stored orchestrator id {agent:?}: {e}")))?;
+        .map_err(|e| ArchonError::Corrupt(format!("stored orchestrator id {agent:?}: {e}")))?;
     let generation: u64 = generation
         .as_deref()
         .unwrap_or("0")
         .parse()
-        .map_err(|e| ArchonError::Store(format!("stored orchestrator generation: {e}")))?;
+        .map_err(|e| ArchonError::Corrupt(format!("stored orchestrator generation: {e}")))?;
     Ok(Some((agent, generation)))
 }
 

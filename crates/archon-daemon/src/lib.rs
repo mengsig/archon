@@ -313,9 +313,15 @@ fn spawn_workers(
     {
         let ctx = ctx.clone();
         workers.spawn("event pump", move || {
-            pump::run(ctx.clone(), endpoint.clone(), starter.clone())
+            pump::link_to_aether(ctx.clone(), endpoint.clone(), starter.clone())
         });
     }
+    worker!("report polls", reports::supervise);
+    worker!("orchestrator revival", supervisor::revive_when_due);
+    worker!("orchestrator sweeps", supervisor::sweep_when_owed);
+    worker!("mcp health", supervisor::watch_mcp);
+    worker!("github watcher", github::watch_github);
+    worker!("memory feedback", handlers::deliver_memory_feedback);
     worker!("dispatcher", dispatcher::run);
     worker!("coordination", executor::coordination::run);
     worker!("trigger delivery", triggers::deliver_loop);
@@ -333,7 +339,7 @@ fn spawn_workers(
     }
     assert_eq!(
         workers.len(),
-        8 + usize::from(auto_gc) + usize::from(verifies),
+        14 + usize::from(auto_gc) + usize::from(verifies),
         "every daemon worker is supervised"
     );
 }
@@ -372,10 +378,9 @@ async fn worker_ended(ctx: &DaemonContext, ended: Ended) -> Option<ArchonError> 
             (text, true)
         }
     };
-    if tell {
-        if let Err(error) = feed::notify(ctx, NotificationKind::Blocker, text, None, None).await {
-            tracing::error!(%error, "the operator could not be told of a failing daemon task");
-        }
+    if tell && let Err(error) = feed::notify(ctx, NotificationKind::Blocker, text, None, None).await
+    {
+        tracing::error!(%error, "the operator could not be told of a failing daemon task");
     }
     None
 }

@@ -83,9 +83,9 @@ pub(crate) async fn pay(ctx: &DaemonContext) -> Result<usize, ArchonError> {
     for (raw_key, raw) in owed {
         let run = raw_key.strip_prefix(OWED_PREFIX).expect("ranged by prefix");
         let run = PipelineRunId::parse(run)
-            .map_err(|e| ArchonError::Store(format!("owed auto-merge {raw_key}: {e}")))?;
+            .map_err(|e| ArchonError::Corrupt(format!("owed auto-merge {raw_key}: {e}")))?;
         let owed: Owed = serde_json::from_str(&raw)
-            .map_err(|e| ArchonError::Store(format!("owed auto-merge {raw_key}: {e}")))?;
+            .map_err(|e| ArchonError::Corrupt(format!("owed auto-merge {raw_key}: {e}")))?;
         assert_eq!(raw_key, key(&run), "one key per run");
         if owed.next_at > archon_core::now() {
             continue;

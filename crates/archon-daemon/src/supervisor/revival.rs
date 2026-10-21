@@ -76,9 +76,9 @@ pub(super) async fn load(ctx: &DaemonContext) -> Result<Backoff, ArchonError> {
         return Ok(Backoff::default());
     };
     let backoff: Backoff = serde_json::from_str(&raw)
-        .map_err(|e| ArchonError::Store(format!("kv {BACKOFF_KEY} = {raw:?}: {e}")))?;
+        .map_err(|e| ArchonError::Corrupt(format!("kv {BACKOFF_KEY} = {raw:?}: {e}")))?;
     if backoff.last.is_some() != (backoff.revivals > 0) {
-        return Err(ArchonError::Store(format!(
+        return Err(ArchonError::Corrupt(format!(
             "kv {BACKOFF_KEY} = {raw:?}: revivals and their time disagree"
         )));
     }

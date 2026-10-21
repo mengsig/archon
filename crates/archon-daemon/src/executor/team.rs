@@ -220,7 +220,7 @@ async fn claim(
     let recorded = recorded
         .map(|raw| serde_json::from_str::<MergeOutcome>(&raw))
         .transpose()
-        .map_err(|e| ArchonError::Store(format!("team merge outcome of run {run_id}: {e}")))?;
+        .map_err(|e| ArchonError::Corrupt(format!("team merge outcome of run {run_id}: {e}")))?;
     table.merging.insert(run_id.clone());
     Ok(Some((plan, run, repo_path, recorded)))
 }
@@ -274,12 +274,12 @@ pub(super) fn replay_merges(
             .rsplit_once(':')
             .and_then(|(stage, attempt)| Some((stage, attempt.parse::<u32>().ok()?)));
         let Some((stage, attempt)) = parsed else {
-            return Err(ArchonError::Store(format!(
+            return Err(ArchonError::Corrupt(format!(
                 "malformed team merge key {key}"
             )));
         };
-        let outcome: MergeOutcome =
-            serde_json::from_str(&raw).map_err(|e| ArchonError::Store(format!("kv {key}: {e}")))?;
+        let outcome: MergeOutcome = serde_json::from_str(&raw)
+            .map_err(|e| ArchonError::Corrupt(format!("kv {key}: {e}")))?;
         driver.record_merge(stage, attempt, outcome)?;
     }
     Ok(())
@@ -295,7 +295,7 @@ pub(crate) fn prune_finished_merges(store: &mut Store) -> Result<usize, ArchonEr
             .expect("ranged by prefix");
         let raw_run = rest.split(':').next().unwrap_or_default();
         let run = PipelineRunId::parse(raw_run)
-            .map_err(|e| ArchonError::Store(format!("team merge key {key}: {e}")))?;
+            .map_err(|e| ArchonError::Corrupt(format!("team merge key {key}: {e}")))?;
         let finished = match store.run(&run) {
             Ok(found) => found.state.is_terminal(),
             Err(ArchonError::NotFound(_)) => true,

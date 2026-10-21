@@ -13,6 +13,10 @@ pub enum ArchonError {
     InvalidTransition(String),
     #[error("store: {0}")]
     Store(String),
+    /// One stored record (a run variable, a key's value, a row) that cannot
+    /// be used: only what depends on it fails, never the daemon.
+    #[error("corrupt record: {0}")]
+    Corrupt(String),
     /// The store's disk is full (SQLite `SQLITE_FULL`): a store failure
     /// that names its cause, so the daemon can say so instead of crashing.
     #[error("store: disk full: {0}")]
@@ -73,6 +77,7 @@ impl ArchonError {
             Self::NotFound(m) => Self::NotFound(add(m)),
             Self::InvalidTransition(m) => Self::InvalidTransition(add(m)),
             Self::Store(m) => Self::Store(add(m)),
+            Self::Corrupt(m) => Self::Corrupt(add(m)),
             Self::DiskFull(m) => Self::DiskFull(add(m)),
             Self::Aether(m) => Self::Aether(add(m)),
             Self::Pipeline(m) => Self::Pipeline(add(m)),

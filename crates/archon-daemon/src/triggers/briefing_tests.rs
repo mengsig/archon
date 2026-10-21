@@ -52,7 +52,10 @@ fn an_old_briefing_is_pinned_when_a_backlog_is_compacted() {
 fn corrupt_frozen_state_is_visible_instead_of_replaced() {
     let mut store = Store::open_in_memory().unwrap();
     store.kv_set(FROZEN_KEY, "not json").unwrap();
-    assert!(matches!(frozen(&mut store, 1), Err(ArchonError::Store(_))));
+    assert!(matches!(
+        frozen(&mut store, 1),
+        Err(ArchonError::Corrupt(_))
+    ));
     assert_eq!(
         store.kv_get(FROZEN_KEY).unwrap().as_deref(),
         Some("not json")
@@ -65,7 +68,7 @@ fn a_generation_reset_reports_corrupt_state_without_overwriting_the_briefing() {
     frozen(&mut store, 2).unwrap();
     let before = store.kv_get(FROZEN_KEY).unwrap();
     let error = frozen(&mut store, 1).unwrap_err();
-    assert!(matches!(error, ArchonError::Store(_)));
+    assert!(matches!(error, ArchonError::Corrupt(_)));
     assert!(error.to_string().contains("ahead of current generation 1"));
     assert_eq!(store.kv_get(FROZEN_KEY).unwrap(), before);
 }

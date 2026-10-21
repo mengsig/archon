@@ -150,7 +150,7 @@ pub(crate) fn owed_releases(store: &Store) -> Result<Vec<(QueueItemId, String)>,
             .strip_prefix(RELEASE_KEY_PREFIX)
             .expect("ranged by prefix");
         let item = QueueItemId::parse(raw)
-            .map_err(|e| ArchonError::Store(format!("build release key {key}: {e}")))?;
+            .map_err(|e| ArchonError::Corrupt(format!("build release key {key}: {e}")))?;
         owed.push((item, repo_name));
     }
     Ok(owed)

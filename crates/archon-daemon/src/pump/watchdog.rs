@@ -183,7 +183,7 @@ fn depth_of(store: &Store, agent: &AetherAgentId) -> Result<u32, ArchonError> {
         return Ok(0);
     };
     raw.parse()
-        .map_err(|e| ArchonError::Store(format!("kv {key} = {raw:?}: {e}")))
+        .map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}")))
 }
 
 /// Why a child `depth` delegations down may not run, if it is too deep.
@@ -543,9 +543,9 @@ async fn watched_children(
             .strip_prefix(CHILD_KEY_PREFIX)
             .expect("ranged by prefix");
         let agent = AetherAgentId::parse(id)
-            .map_err(|e| ArchonError::Store(format!("kv key {key}: {e}")))?;
+            .map_err(|e| ArchonError::Corrupt(format!("kv key {key}: {e}")))?;
         let item = serde_json::from_str(&raw)
-            .map_err(|e| ArchonError::Store(format!("kv {key} = {raw:?}: {e}")))?;
+            .map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}")))?;
         children.push((agent, item));
     }
     Ok(children)
@@ -578,7 +578,7 @@ async fn ended_before(
     if let Some(raw) = ctx.store.lock().await.kv_get(&key)? {
         let ended: Timestamp = raw
             .parse()
-            .map_err(|e| ArchonError::Store(format!("kv {key} = {raw:?}: {e}")))?;
+            .map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}")))?;
         return Ok(ended < cutoff);
     }
     if *checks_left == 0 {
@@ -620,9 +620,9 @@ pub(crate) async fn prune_stage_agents(
         let id = key
             .strip_prefix(STAGE_AGENT_KEY_PREFIX)
             .expect("ranged by prefix");
-        AetherAgentId::parse(id).map_err(|e| ArchonError::Store(format!("kv key {key}: {e}")))?;
+        AetherAgentId::parse(id).map_err(|e| ArchonError::Corrupt(format!("kv key {key}: {e}")))?;
         let item = QueueItemId::parse(&raw)
-            .map_err(|e| ArchonError::Store(format!("kv {key} = {raw:?}: {e}")))?;
+            .map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}")))?;
         if item_finished_before(ctx, &item, cutoff).await? {
             ctx.store.lock().await.kv_delete(&key)?;
             pruned += 1;

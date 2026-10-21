@@ -81,10 +81,12 @@ impl WaitingView {
             Code::DependencyFailed | Code::DependencyWaiting => dependency(store, item, code)?,
             Code::GlobalPause => ("Global dispatch is paused".into(), "archon resume".into()),
             Code::RepoPause => {
-                let repo = item
-                    .repo
-                    .as_ref()
-                    .expect("repository pause has a repository");
+                let repo = item.repo.as_ref().ok_or_else(|| {
+                    ArchonError::Corrupt(format!(
+                        "item {} waits on a repository pause but names no repository",
+                        item.id
+                    ))
+                })?;
                 let name = store.repo(&crate::resolve::repo_ref(repo))?.name;
                 (
                     format!("Repository {name} is paused"),
@@ -193,11 +195,13 @@ impl WaitingView {
                 actions.push(format!("archon queue caps --max-parallel-agents {wanted}"));
             }
             if own.is_some_and(|cap| cap != 0 && cap < wanted) {
-                let repo = store.repo(&crate::resolve::repo_ref(
-                    item.repo
-                        .as_ref()
-                        .expect("a repository cap has a repository"),
-                ))?;
+                let Some(item_repo) = item.repo.as_ref() else {
+                    return Err(ArchonError::Corrupt(format!(
+                        "item {} waits on a repository cap but names no repository",
+                        item.id
+                    )));
+                };
+                let repo = store.repo(&crate::resolve::repo_ref(item_repo))?;
                 actions.push(format!(
                     "Set [limits].max_per_repo = {wanted} in {}",
                     repo.path.join(".archon/config.toml").display()

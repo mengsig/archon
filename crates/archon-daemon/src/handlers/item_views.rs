@@ -94,10 +94,9 @@ pub(super) fn waiting_on(
     let QueueState::Running { run } = &item.state else {
         return Ok(None);
     };
-    let current = runs
-        .iter()
-        .find(|r| &r.id == run)
-        .ok_or_else(|| ArchonError::Store(format!("current run {run} missing for {}", item.id)))?;
+    let current = runs.iter().find(|r| &r.id == run).ok_or_else(|| {
+        ArchonError::Corrupt(format!("current run {run} missing for {}", item.id))
+    })?;
     if let RunState::AwaitingOperator {
         stage_id,
         attempt,

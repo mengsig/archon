@@ -31,7 +31,7 @@ pub(super) fn load(store: &Store, repo: &RepoId) -> Result<Option<Pending>, Arch
         return Ok(None);
     };
     let pending: Pending = serde_json::from_str(&raw)
-        .map_err(|e| ArchonError::Store(format!("kv {key} = {raw:?}: {e}")))?;
+        .map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}")))?;
     assert!(stack::is_commit_id(&pending.head), "a saved verified head");
     assert!(!pending.pull_request.is_empty(), "a saved pull request");
     assert_ne!(pending.branch, pending.release, "a saved pair of branches");
@@ -53,7 +53,7 @@ pub(super) fn clear(store: &mut Store, repo: &RepoId) -> Result<(), ArchonError>
 pub(crate) fn forget_unregistered(store: &mut Store, kept: &[RepoId]) -> Result<(), ArchonError> {
     for (key, _) in store.kv_prefix(KEY_PREFIX)? {
         let id = key.strip_prefix(KEY_PREFIX).expect("ranged by prefix");
-        let id = RepoId::parse(id).map_err(|e| ArchonError::Store(format!("kv {key}: {e}")))?;
+        let id = RepoId::parse(id).map_err(|e| ArchonError::Corrupt(format!("kv {key}: {e}")))?;
         if !kept.contains(&id) {
             store.kv_delete(&key)?;
         }

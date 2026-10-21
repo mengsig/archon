@@ -104,7 +104,7 @@ fn changes_from(store: &Store) -> Result<Option<u64>, ArchonError> {
     };
     let first = raw
         .parse()
-        .map_err(|e| ArchonError::Store(format!("kv {CHANGES_FROM_KEY} = {raw:?}: {e}")))?;
+        .map_err(|e| ArchonError::Corrupt(format!("kv {CHANGES_FROM_KEY} = {raw:?}: {e}")))?;
     Ok(Some(first))
 }
 
@@ -134,7 +134,7 @@ fn read_told(store: &Store) -> Result<Option<Told>, ArchonError> {
     };
     serde_json::from_str(&raw)
         .map(Some)
-        .map_err(|e| ArchonError::Store(format!("kv {TOLD_KEY} = {raw:?}: {e}")))
+        .map_err(|e| ArchonError::Corrupt(format!("kv {TOLD_KEY} = {raw:?}: {e}")))
 }
 
 /// What differs between the directives `told` and those in force `now`, a

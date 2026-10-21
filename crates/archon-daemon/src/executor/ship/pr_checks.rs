@@ -74,7 +74,7 @@ pub(super) fn owe(
 }
 
 fn parse(key: &str, raw: &str) -> Result<Watch, ArchonError> {
-    serde_json::from_str(raw).map_err(|e| ArchonError::Store(format!("checks watch {key}: {e}")))
+    serde_json::from_str(raw).map_err(|e| ArchonError::Corrupt(format!("checks watch {key}: {e}")))
 }
 
 /// Look once at every watch that is due; returns how many ended.
@@ -86,7 +86,7 @@ pub(crate) async fn look(ctx: &DaemonContext) -> Result<usize, ArchonError> {
             .strip_prefix(WATCH_PREFIX)
             .expect("ranged by prefix");
         let run = PipelineRunId::parse(run)
-            .map_err(|e| ArchonError::Store(format!("checks watch {raw_key}: {e}")))?;
+            .map_err(|e| ArchonError::Corrupt(format!("checks watch {raw_key}: {e}")))?;
         let watch = parse(&raw_key, &raw)?;
         if watch.next_at > archon_core::now() {
             continue;

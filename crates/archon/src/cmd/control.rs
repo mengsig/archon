@@ -21,7 +21,7 @@ pub async fn status(check_updates: bool, json: bool) -> anyhow::Result<ExitCode>
         return Err(archon_core::error::ArchonError::Unavailable(format!(
             "{}; aether: disconnected (cannot observe its link without archond){}",
             not_running_text(),
-            crash_note()
+            crash_note() + &quarantine_note()
         ))
         .into());
     };
@@ -37,7 +37,12 @@ pub async fn status(check_updates: bool, json: bool) -> anyhow::Result<ExitCode>
         emit(true, || status_json(&status), "")?;
         return Ok(ExitCode::SUCCESS);
     }
-    println!("{}{}", views::status_text(&client).await?, crash_note());
+    println!(
+        "{}{}{}",
+        views::status_text(&client).await?,
+        crash_note(),
+        quarantine_note()
+    );
     Ok(ExitCode::SUCCESS)
 }
 
@@ -50,6 +55,9 @@ fn status_json(status: &impl serde::Serialize) -> anyhow::Result<serde_json::Val
         .as_object_mut()
         .ok_or_else(|| anyhow::anyhow!("the daemon status is not a JSON object"))?;
     object.insert("crash".into(), to_json(&crash)?);
+    let set_aside = archon_core::quarantine::list(&archon_core::paths::data_dir())
+        .map_err(|e| anyhow::anyhow!("reading the quarantine records: {e}"))?;
+    object.insert("quarantined".into(), to_json(&set_aside)?);
     Ok(value)
 }
 
@@ -59,6 +67,18 @@ fn crash_note() -> String {
         Ok(Some(record)) => format!("\ncrash: {}", record.describe()),
         Ok(None) => String::new(),
         Err(error) => format!("\ncrash: {error}"),
+    }
+}
+
+/// Lines on the records archond set aside, empty when there are none.
+fn quarantine_note() -> String {
+    match archon_core::quarantine::list(&archon_core::paths::data_dir()) {
+        Ok(set_aside) if set_aside.is_empty() => String::new(),
+        Ok(set_aside) => format!(
+            "\nset aside: {} record(s) archond could not use; `archon doctor` lists them with the command to fix or cancel each",
+            set_aside.len()
+        ),
+        Err(error) => format!("\nset aside: {error}"),
     }
 }
 

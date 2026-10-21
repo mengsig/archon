@@ -186,7 +186,7 @@ fn split_legacy(store: &mut Store) -> Result<(), ArchonError> {
         return Ok(());
     };
     let legacy: BTreeMap<ReportId, ReportRecord> = serde_json::from_str(&raw)
-        .map_err(|e| ArchonError::Store(format!("kv {LEGACY_KEY} does not decode: {e}")))?;
+        .map_err(|e| ArchonError::Corrupt(format!("kv {LEGACY_KEY} does not decode: {e}")))?;
     for (report, record) in &legacy {
         store.kv_set(&key(report), &serde_json::to_string(record)?)?;
     }
@@ -198,13 +198,13 @@ fn split_legacy(store: &mut Store) -> Result<(), ArchonError> {
 fn id_of_key(key: &str) -> Result<ReportId, ArchonError> {
     let raw = key
         .strip_prefix(KEY_PREFIX)
-        .ok_or_else(|| ArchonError::Store(format!("kv key {key} is not a report")))?;
-    ReportId::parse(raw).map_err(|e| ArchonError::Store(format!("report key {key}: {e}")))
+        .ok_or_else(|| ArchonError::Corrupt(format!("kv key {key} is not a report")))?;
+    ReportId::parse(raw).map_err(|e| ArchonError::Corrupt(format!("report key {key}: {e}")))
 }
 
 fn decode(key: &str, raw: &str) -> Result<ReportRecord, ArchonError> {
     serde_json::from_str(raw)
-        .map_err(|e| ArchonError::Store(format!("kv {key} does not decode: {e}")))
+        .map_err(|e| ArchonError::Corrupt(format!("kv {key} does not decode: {e}")))
 }
 
 #[cfg(test)]
@@ -241,7 +241,7 @@ mod tests {
         store.kv_set(&key(&report), "{").unwrap();
         assert!(matches!(
             get(&mut store, &report),
-            Err(ArchonError::Store(_))
+            Err(ArchonError::Corrupt(_))
         ));
     }
 

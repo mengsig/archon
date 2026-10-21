@@ -482,7 +482,10 @@ async fn publication_store_error_removes_a_first_copy_and_restores_a_refresh() {
             .unwrap();
         fs::write(service.path().join("release"), "go").unwrap();
         let error = task.await.unwrap().unwrap_err();
-        assert!(error.is_store(), "{error}");
+        assert!(
+            matches!(error, archon_core::error::ArchonError::Corrupt(_)),
+            "{error}"
+        );
         h.ctx
             .store
             .lock()
@@ -703,7 +706,10 @@ async fn a_failed_legacy_refresh_keeps_the_record_and_leaves_its_new_copy_for_or
         .kv_set(reports::LEGACY_KEY, "{")
         .unwrap();
     fs::write(service.path().join("release"), "go").unwrap();
-    assert!(task.await.unwrap().unwrap_err().is_store());
+    assert!(matches!(
+        task.await.unwrap().unwrap_err(),
+        archon_core::error::ArchonError::Corrupt(_)
+    ));
     h.ctx
         .store
         .lock()

@@ -65,7 +65,11 @@ pub(crate) async fn of_pull_request(
     url: &str,
     waited_long: bool,
 ) -> Result<Checks, ArchonError> {
-    assert!(url.contains("/pull/"), "a pull request's URL");
+    if !url.contains("/pull/") {
+        return Err(ArchonError::Invalid(format!(
+            "{url:?} is not a pull request URL; `archon queue show` names the run's pull request"
+        )));
+    }
     let fields = "name,bucket,startedAt,link";
     let args = ["pr", "checks", url, "--json", fields];
     let ran = run(binary, repo, &args, None).await?;
@@ -146,7 +150,8 @@ pub(crate) fn classify(
         return Checks::Failed { names };
     }
     if !not_started.is_empty() {
-        let reason = reason.expect("a job never started for a reason");
+        let reason =
+            reason.unwrap_or_else(|| "GitHub did not say why the jobs never started".to_owned());
         return Checks::NotStarted {
             names: not_started,
             reason,

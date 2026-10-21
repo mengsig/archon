@@ -58,8 +58,12 @@ pub(super) fn load_run_vars(
         .kv_get(&run_vars_key(run))?
         .ok_or_else(|| ArchonError::NotFound(format!("template variables of run {run}")))?;
     let vars: BTreeMap<String, String> = serde_json::from_str(&raw)
-        .map_err(|e| ArchonError::Store(format!("template variables of run {run}: {e}")))?;
-    assert!(!vars.is_empty(), "stored run variables are never empty");
+        .map_err(|e| ArchonError::Corrupt(format!("template variables of run {run}: {e}")))?;
+    if vars.is_empty() {
+        return Err(ArchonError::Corrupt(format!(
+            "template variables of run {run} are empty"
+        )));
+    }
     Ok(vars)
 }
 
@@ -88,7 +92,7 @@ pub(crate) fn prune_finished_run_vars(store: &mut Store) -> Result<usize, Archon
             .strip_prefix(RUN_VARS_KEY_PREFIX)
             .expect("ranged by prefix");
         let run = PipelineRunId::parse(raw)
-            .map_err(|e| ArchonError::Store(format!("run variables key {key}: {e}")))?;
+            .map_err(|e| ArchonError::Corrupt(format!("run variables key {key}: {e}")))?;
         let found = match store.run(&run) {
             Ok(found) => Some(found),
             Err(ArchonError::NotFound(_)) => None,
@@ -135,6 +139,8 @@ pub(super) async fn recover(ctx: &DaemonContext) -> Result<FollowUp, ArchonError
         "recovery runs once, before dispatch"
     );
     let now = archon_core::now();
+    // Rebuilt below from what is still unusable.
+    archon_core::quarantine::clear_all(&ctx.paths.data_dir)?;
     let (runs, answers) = {
         let mut store = ctx.store.lock().await;
         let requeued = store.requeue_orphaned_dispatching(now)?;
@@ -153,16 +159,16 @@ pub(super) async fn recover(ctx: &DaemonContext) -> Result<FollowUp, ArchonError
             );
         }
         let runs = store.active_runs()?;
-        for run in &runs {
+        let mut kept = Vec::with_capacity(runs.len());
+        for run in runs {
             // A crash between insert_run and the item's transition.
-            if store.item(&run.item)?.state == QueueState::Dispatching {
-                let running = QueueState::Running {
-                    run: run.id.clone(),
-                };
-                store.transition_item(&run.item, running, now)?;
+            match repair_item(&mut store, &run, now) {
+                Ok(()) => kept.push(run),
+                Err(error) if error.is_store() => return Err(error),
+                Err(error) => quarantine_run(ctx, &run, &error),
             }
         }
-        (runs, answers)
+        (kept, answers)
     };
     crate::feed::publish(ctx, answers);
     crate::reports::close_stale_questions(ctx).await?;
@@ -172,7 +178,7 @@ pub(super) async fn recover(ctx: &DaemonContext) -> Result<FollowUp, ArchonError
     // `status` and other reads are answered between them.
     for run in runs {
         let stages = ctx.store.lock().await.stage_runs(&run.id)?;
-        follow.merge(resume_run(ctx, &mut table, run, &stages).await?);
+        follow.merge(resume_isolated(ctx, &mut table, run, &stages).await?);
         ctx.recovery.advance();
     }
     // Aether calls wait for the dispatcher; local cleanup, team merges and
@@ -185,6 +191,68 @@ pub(super) async fn recover(ctx: &DaemonContext) -> Result<FollowUp, ArchonError
         poke: true,
         ..FollowUp::default()
     })
+}
+
+/// A `dispatching` item whose run exists moves on to `running`.
+fn repair_item(
+    store: &mut Store,
+    run: &PipelineRun,
+    now: archon_core::Timestamp,
+) -> Result<(), ArchonError> {
+    if store.item(&run.item)?.state == QueueState::Dispatching {
+        let running = QueueState::Running {
+            run: run.id.clone(),
+        };
+        store.transition_item(&run.item, running, now)?;
+    }
+    Ok(())
+}
+
+/// Set `run` aside with why and the commands that fix or cancel its item.
+fn quarantine_run(ctx: &DaemonContext, run: &PipelineRun, error: &ArchonError) {
+    let item = run.item.to_string();
+    let record = archon_core::quarantine::Quarantined::new(
+        "run",
+        run.id.as_str(),
+        &format!("item {item}: {error}"),
+        &format!("archon queue retry {item}"),
+        &format!("archon queue cancel {item}"),
+    );
+    tracing::error!(run = %run.id, %item, %error, "run set aside; archond starts without it");
+    if let Err(write) = archon_core::quarantine::write(&ctx.paths.data_dir, &record) {
+        tracing::error!(%write, "the quarantine record was not written");
+    }
+}
+
+fn unresumable_message(run: &PipelineRun, error: &ArchonError) -> String {
+    format!(
+        "cannot resume the run: {error}. `archon queue retry {item}` runs it again once \
+         fixed; `archon queue cancel {item}` gives it up",
+        item = run.item
+    )
+}
+
+/// [`resume_run`] for one run whose stored state may be unusable: a failure
+/// or panic on it fails that run's item with a blocker and sets the run aside,
+/// and recovery goes on with the others. Only a store failure stops recovery.
+async fn resume_isolated(
+    ctx: &DaemonContext,
+    table: &mut RunTable,
+    run: PipelineRun,
+    stages: &[StageRun],
+) -> Result<FollowUp, ArchonError> {
+    let subject = format!("run {}", run.id);
+    let resumed =
+        super::coordination::guarded(&subject, resume_run(ctx, table, run.clone(), stages));
+    let error = match resumed.await {
+        Err(error) if !error.is_store() => error,
+        other => return other,
+    };
+    quarantine_run(ctx, &run, &error);
+    let stage = run.state.live_stage().unwrap_or("recovery").to_owned();
+    let message = unresumable_message(&run, &error);
+    let failed = finish::fail_run(ctx, table, run, stage, message, true);
+    super::coordination::guarded(&subject, failed).await
 }
 
 /// Rebuild `run`'s driver and apply what it still owes. A run whose
@@ -200,12 +268,9 @@ pub(super) async fn resume_run(
     let mut driver = match build_driver(ctx, &run).await {
         Ok(driver) => driver,
         Err(error) => {
-            let stage = run
-                .state
-                .live_stage()
-                .expect("checked live above")
-                .to_owned();
-            let message = format!("cannot resume the run: {error}");
+            let stage = run.state.live_stage().unwrap_or("recovery").to_owned();
+            quarantine_run(ctx, &run, &error);
+            let message = unresumable_message(&run, &error);
             return finish::fail_run(ctx, table, run, stage, message, true).await;
         }
     };

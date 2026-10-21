@@ -59,12 +59,12 @@ fn frozen(store: &mut Store, generation: u64) -> Result<TriggerPayload, ArchonEr
     assert!(generation > 0, "briefings belong to an existing generation");
     if let Some(raw) = store.kv_get(FROZEN_KEY)? {
         let saved: Frozen = serde_json::from_str(&raw)
-            .map_err(|e| ArchonError::Store(format!("kv {FROZEN_KEY}: {e}")))?;
+            .map_err(|e| ArchonError::Corrupt(format!("kv {FROZEN_KEY}: {e}")))?;
         if saved.generation == generation {
             return Ok(saved.payload);
         }
         if saved.generation > generation {
-            return Err(ArchonError::Store(format!(
+            return Err(ArchonError::Corrupt(format!(
                 "kv {FROZEN_KEY} belongs to generation {}, ahead of current generation {generation}",
                 saved.generation
             )));

@@ -159,7 +159,7 @@ pub fn restore_replies(raw: Option<&str>) -> Result<ReplyTracker, ArchonError> {
     match raw.filter(|raw| !raw.is_empty()) {
         None => Ok(ReplyTracker::default()),
         Some(raw) => serde_json::from_str(raw)
-            .map_err(|e| ArchonError::Store(format!("kv {REPLY_STATE_KEY} = {raw:?}: {e}"))),
+            .map_err(|e| ArchonError::Corrupt(format!("kv {REPLY_STATE_KEY} = {raw:?}: {e}"))),
     }
 }
 
@@ -635,7 +635,7 @@ mod tests {
         assert_eq!(restore_replies(None).unwrap(), ReplyTracker::default());
         assert!(matches!(
             restore_replies(Some("{")),
-            Err(ArchonError::Store(_))
+            Err(ArchonError::Corrupt(_))
         ));
     }
 }

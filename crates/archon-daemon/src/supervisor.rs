@@ -640,7 +640,7 @@ async fn info_for(
     let agent = ctx.aether.client()?.get_agent(id).await?;
     let restarts = kv(ctx, RESTARTS_KEY).await?.map_or(Ok(0), |raw| {
         raw.parse::<u32>()
-            .map_err(|e| ArchonError::Store(format!("kv {RESTARTS_KEY} = {raw:?}: {e}")))
+            .map_err(|e| ArchonError::Corrupt(format!("kv {RESTARTS_KEY} = {raw:?}: {e}")))
     })?;
     let generation = parse_generation(kv(ctx, keys::ORCHESTRATOR_GENERATION).await?)?;
     Ok(OrchestratorInfo {
@@ -1083,7 +1083,7 @@ async fn create_orchestrator(
     let frozen: Option<HostContext> = match store.kv_get(HOST_CONTEXT_KEY)? {
         Some(raw) => Some(
             serde_json::from_str(&raw)
-                .map_err(|error| ArchonError::Store(format!("kv {HOST_CONTEXT_KEY}: {error}")))?,
+                .map_err(|error| ArchonError::Corrupt(format!("kv {HOST_CONTEXT_KEY}: {error}")))?,
         ),
         None => None,
     };
@@ -1129,7 +1129,7 @@ fn parse_generation(raw: Option<String>) -> Result<u64, ArchonError> {
     match raw.filter(|v| !v.is_empty()) {
         None => Ok(0),
         Some(raw) => raw.parse().map_err(|e| {
-            ArchonError::Store(format!(
+            ArchonError::Corrupt(format!(
                 "kv {} = {raw:?}: {e}",
                 keys::ORCHESTRATOR_GENERATION
             ))

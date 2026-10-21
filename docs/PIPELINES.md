@@ -623,7 +623,9 @@ roles' branches onto the run branch. The run still ships one pull request.
   still admitted partially. An item whose pipeline has a team stage with
   more roles than `max_parallel_agents`, the repository's `max_per_repo`
   or the pipeline's `max_per_pipeline` allow is refused at enqueue and at
-  retry, naming the stage, its role count and the cap. If the caps are
+  retry, naming the stage, its role count and the cap. `swarm` needs
+  `max_parallel_agents` (and `max_per_repo`, `max_per_pipeline`) of at
+  least 2, or it is refused at enqueue with that setting named. If the caps are
   lowered below a team's size afterwards, it waits without holding back
   other work, and the operator gets one blocker naming the team stage (or
   the queued item whose first stage it is), its size and the cap.

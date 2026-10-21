@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use archon_core::error::ArchonError;
 use archon_core::repo::Attribution;
 use archon_pipeline::risk::DiffStat;
+use archon_pipeline::swarm::PLAN_FILE;
 use archon_pipeline::{ShipRecord, attribution_lines};
 
 use crate::worktree::daemon_git::{Config, DaemonGit};
@@ -104,6 +105,9 @@ pub(super) fn check(
     {
         return Ok(Err(refusal));
     }
+    if let Err(refusal) = unshippable_files(tree, &base)? {
+        return Ok(Err(refusal));
+    }
     let diff = match diff_stat(tree, &base) {
         Ok(diff) => Some(diff),
         Err(error) => {
@@ -112,6 +116,43 @@ pub(super) fn check(
         }
     };
     Ok(Ok(Checked { commit, diff }))
+}
+
+/// Whether `path` is output that is never part of a change: a Python
+/// bytecode cache, or the swarm plan the workers built from.
+fn is_unshippable(path: &str) -> bool {
+    path == PLAN_FILE
+        || path.split('/').any(|part| part == "__pycache__")
+        || path.ends_with(".pyc")
+        || path.ends_with(".pyo")
+}
+
+/// Refuse a change that adds a build cache or the swarm plan file, naming
+/// each so the author removes it in a commit.
+fn unshippable_files(tree: &Path, base: &str) -> Result<Result<(), String>, ArchonError> {
+    assert!(is_floor(base), "a full ref name or a commit id");
+    let range = format!("{base}...HEAD");
+    let raw = DaemonGit::sealed_in(tree)
+        .args([
+            "diff",
+            "--name-only",
+            "--diff-filter=d",
+            "-z",
+            range.as_str(),
+        ])
+        .text()?;
+    let found: Vec<&str> = raw
+        .split('\0')
+        .filter(|path| !path.is_empty() && is_unshippable(path))
+        .collect();
+    if found.is_empty() {
+        return Ok(Ok(()));
+    }
+    Ok(Err(format!(
+        "the change carries files that must not ship: {}. Remove them in a commit \
+         (`git rm --cached`; a build cache belongs in `.gitignore`)",
+        listed(found.iter().copied())
+    )))
 }
 
 /// What the commits after `base`, a [`floor`], change up to `HEAD`.
@@ -363,4 +404,24 @@ fn listed<'a>(items: impl Iterator<Item = &'a str>) -> String {
         text.push_str(&format!("; and {} more", items.len() - MAX_LISTED));
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn caches_and_the_swarm_plan_are_unshippable() {
+        for path in [
+            ".archon/swarm-plan.json",
+            "pkg/__pycache__/m.cpython-312.pyc",
+            "x.pyc",
+            "src/y.pyo",
+        ] {
+            assert!(is_unshippable(path), "{path}");
+        }
+        for path in [".archon/config.toml", "src/lib.rs", "docs/swarm-plan.json"] {
+            assert!(!is_unshippable(path), "{path}");
+        }
+    }
 }

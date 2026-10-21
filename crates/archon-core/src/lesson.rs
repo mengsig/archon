@@ -185,7 +185,7 @@ pub fn checked_text(text: &str) -> Result<String, ArchonError> {
 
 /// Keep learned text as quoted advice, never contract syntax or a new authority.
 pub fn sanitized_text(text: &str) -> Result<String, ArchonError> {
-    let plain = checked_text(text)?;
+    let plain = normalized_colons(&checked_text(text)?);
     if let Some(reason) = disallowed_syntax(&plain) {
         return Err(ArchonError::Invalid(reason));
     }
@@ -238,6 +238,22 @@ pub fn sanitized_text(text: &str) -> Result<String, ArchonError> {
         "learned text is never contract syntax"
     );
     Ok(plain)
+}
+
+/// A colon that ends a word (`run: make`, `note:`) is prose, so it becomes a comma
+/// or goes; one inside a word (`https://`, `a:b`) stays and is refused later.
+fn normalized_colons(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        let ends_word = chars.peek().is_none_or(|next| next.is_whitespace());
+        match (c, ends_word) {
+            (':', true) if chars.peek().is_some() => out.push(','),
+            (':', true) => {}
+            _ => out.push(c),
+        }
+    }
+    out.trim_end().to_owned()
 }
 
 /// Why the first word with a character outside plain prose is refused.
@@ -411,6 +427,17 @@ mod tests {
                 .unwrap()
                 .contains(text)
         );
+    }
+
+    #[test]
+    fn a_colon_ending_a_word_is_normalised_not_refused() {
+        assert_eq!(
+            sanitized_text("Before shipping run: make lint").unwrap(),
+            "Before shipping run, make lint"
+        );
+        assert_eq!(sanitized_text("Remember this:").unwrap(), "Remember this");
+        assert!(sanitized_text("Read https://example.com").is_err());
+        assert!(sanitized_text("Use a:b keys").is_err());
     }
 
     #[test]

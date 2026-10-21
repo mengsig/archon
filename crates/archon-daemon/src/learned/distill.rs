@@ -172,7 +172,7 @@ fn cheap_choice(
 /// What a distillation errand returns; a proposed pipeline is held to the
 /// rules of any user pipeline, archond's own delivery included (§8.7).
 const DISTILL_ASK: &str = "Return structured JSON with `lessons`: [{kind: routing|practice|\
-    pitfall|pipeline, text: one line of at most 300 characters, replaces: an existing lesson id, \
+    pitfall|pipeline, text: one plain sentence of at most 300 characters using only letters, digits, spaces and , . \' - ( ) _ with no backticks, URLs or paths, replaces: an existing lesson id, \
     optional}]. Merge or rewrite repeated advice; operator and pinned lessons are immutable. Only \
     when a kind of brief recurs at least three times, add `pipeline_proposal`: {name, files: \
     {\"pipeline.toml\": ..., \"<prompt>.md\": ...}} in Archon's pipeline format. One that changes \

@@ -284,7 +284,8 @@ reads, and to `[models]` alone when it reads none. It may delegate once
 more, and no deeper ([`max_delegation_depth`](#structural-limits)).
 Helpers' spend counts toward the daily and total
 budgets. `max_parallel_agents` and the other caps count stage agents
-only, so the orchestrator is told to keep its helpers within them. If your
+only (the `swarm` pipeline needs a cap of at least 2, and is refused at
+enqueue under a lower one), so the orchestrator is told to keep its helpers within them. If your
 Aether config sets `[scheduler] run_budget_usd`, Archon's instance inherits
 it, and it is cumulative: once the orchestrator's run has spent it, Aether
 refuses every delegation until `archon orchestrator restart`.

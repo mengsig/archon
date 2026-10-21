@@ -613,6 +613,28 @@ fn a_role_s_uncommitted_work_is_committed_and_merged() {
     );
 }
 
+/// A test run's bytecode cache is never committed for the role, and does
+/// not make the merge refuse its branch.
+#[test]
+fn a_roles_python_caches_are_left_out_of_its_leftover_commit() {
+    let f = fixture();
+    let (run, _) = team_run(&f);
+    let (api, api_branch) = worker(&f, &run, "api", 1);
+    std::fs::create_dir_all(api.join("pkg/__pycache__")).expect("mkdir");
+    std::fs::write(api.join("pkg/__pycache__/mod.cpython-312.pyc"), "x").expect("write");
+    std::fs::write(api.join("loose.pyc"), "x").expect("write");
+    std::fs::write(api.join("api.txt"), "api\n").expect("write");
+    let plan = plan(&run, &[("api", &api_branch)]);
+
+    assert_eq!(merge(&f, &run, &plan).expect("merge"), MergeOutcome::Merged);
+    let tracked = git(&run.path, &["ls-files"]);
+    assert!(tracked.contains("api.txt"), "{tracked}");
+    assert!(
+        !tracked.contains("pyc") && !tracked.contains("__pycache__"),
+        "{tracked}"
+    );
+}
+
 /// Work a role committed on a branch of its own is not on its worker
 /// branch: the merge is refused rather than shipping without it.
 #[test]

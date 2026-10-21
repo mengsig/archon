@@ -32,7 +32,9 @@ complete at once, saying so. Otherwise fix what it says about your task.
    work alone from the plan.
 4. Run your task's acceptance commands until they pass, plus the
    repository's checks that cover your paths.
-5. Commit on your branch with the repository's commit conventions. Do not
+5. Never commit build caches (`__pycache__`, `*.pyc`) or `.archon/` files; Archon
+   leaves caches out and refuses to ship the plan file.
+6. Commit on your branch with the repository's commit conventions. Do not
    push. Finish with a clean `git status`.
 
 ## Report

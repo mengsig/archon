@@ -932,6 +932,14 @@ pub(super) async fn check_runs_here(
         };
         assert!(roles >= MIN_ROLES, "a validated team stage has roles");
         let roles = u32::try_from(roles).expect("a team has few roles");
+        if cap != 0 && roles > cap && stage.awaits_roles() {
+            return Err(ArchonError::Invalid(format!(
+                "{:?} plans its team at run time and needs at least {MIN_ROLES} parallel agents, \
+                 but the agent caps allow at most {cap} here; raise max_parallel_agents to \
+                 {MIN_ROLES} or more (and max_per_repo and max_per_pipeline if they are lower)",
+                spec.name()
+            )));
+        }
         if cap != 0 && roles > cap {
             return Err(ArchonError::Invalid(format!(
                 "team stage {:?} of {:?} runs its {roles} roles at once, but the agent caps \

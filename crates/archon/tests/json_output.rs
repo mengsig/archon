@@ -301,6 +301,7 @@ impl Canned {
             Request::CancelItem { .. } | Request::RetryItem { .. } | Request::SteerItem { .. } => {
                 Reply::Item(self.item.clone())
             }
+            Request::Lessons(_) => Reply::Lessons(Vec::new()),
             Request::OrchestratorRestart => Reply::Orchestrator(OrchestratorInfo {
                 agent: AetherAgentId::parse("agt_fake").unwrap(),
                 model: ModelRef::new("anthropic", "claude-test"),

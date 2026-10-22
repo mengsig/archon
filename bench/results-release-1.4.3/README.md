@@ -54,7 +54,7 @@ on the head. Runs were interleaved (head, v1.4.2, head, ...), one at a time.
 ## Findings
 
 - **Pass rate.** Over the gate runs Archon scored 11/12 on the head against
-  12/12 on v1.4.2, and 15/16 on the head counting both confirmation runs. The
+  12/12 on v1.4.2, and 19/20 on the head counting both confirmation runs. The
   single miss is Luna head run 1's `review-seeded-bug`, scored 0.5. Its
   answer named `verify`, the empty-signature prefix match and that the
   payload "is returned as authenticated". The rubric's second check wants

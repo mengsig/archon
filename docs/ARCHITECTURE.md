@@ -4803,7 +4803,13 @@ operator). The types are in
   operator instead, and a moved head or closed pull request refuses it. The
   `merge_finished` news says it waited. The operator's own `merge` replaces a
   waiting request, a read of GitHub that fails is retried on the next pass, and
-  turning the grant off makes the pass ask instead of merge. Red checks, no checks or `review =
+  turning the grant off makes the pass ask instead of merge. While GitHub still
+  reports `mergeable` as `UNKNOWN` (after the base moved), a request, granted or
+  confirmed by the operator, is recorded as `awaiting_mergeability` (also kept
+  as `queued`) and keeps its confirmation: the `mergeability waits` worker reads
+  the pull request again after 5 s, growing to 60 s, and merges once it is
+  `MERGEABLE` and the other conditions hold; `CONFLICTING`, a moved head or
+  60 minutes without an answer refuses it, naming the `gh pr view` to run. Red checks, no checks or `review =
   none` are still asked at once. A change to the grant posts a `System` note.
 - `merge_waive_checks = ["next"]` on a repository (operator only, set by
   `/archon set --repo R merge_waive_checks=next` or a `repo_update` patch;

@@ -329,6 +329,10 @@ fn spawn_workers(
     worker!("memory feedback", handlers::deliver_memory_feedback);
     worker!("dispatcher", dispatcher::run);
     worker!("coordination", executor::coordination::run);
+    worker!(
+        "mergeability waits",
+        executor::coordination::watch_mergeability
+    );
     worker!("trigger delivery", triggers::deliver_loop);
     worker!("store pruning", prune::run);
     worker!("repository mirrors", mirror::run);
@@ -344,7 +348,7 @@ fn spawn_workers(
     }
     assert_eq!(
         workers.len(),
-        15 + usize::from(auto_gc) + usize::from(verifies),
+        16 + usize::from(auto_gc) + usize::from(verifies),
         "every daemon worker is supervised"
     );
 }

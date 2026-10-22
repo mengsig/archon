@@ -1069,3 +1069,134 @@ async fn the_operators_merge_replaces_a_waiting_grant() {
     assert_eq!(merge.state.kind(), "merged", "{merge:?}");
     assert!(gh.merged());
 }
+
+/// Makes the one request of `item` look `minutes` old, so its pause is over
+/// and, past an hour, its wait has run out.
+async fn age_request(h: &Harness, item: &QueueItem, minutes: i64) {
+    let then = archon_core::now() - chrono::TimeDelta::minutes(minutes);
+    let then = then.to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
+    let db = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    let changed = db
+        .execute(
+            "UPDATE merge_requests SET requested_at = ?1, updated_at = ?1,
+             data = json_set(data, '$.requested_at', ?1, '$.updated_at', ?1) WHERE item = ?2",
+            [then.as_str(), item.id.as_str()],
+        )
+        .unwrap();
+    assert_eq!(changed, 1, "one request aged");
+}
+
+/// While GitHub computes mergeability a confirmed request keeps its
+/// confirmation, says what it waits for, and merges once GitHub decides.
+#[tokio::test]
+async fn a_confirmed_request_survives_the_wait_for_mergeability_and_merges() {
+    let (h, gh) = delivering(Config::default()).await;
+    let (item, head) = shipped(&h).await;
+    gh.show(&head, "MERGEABLE", green());
+    let asked = merge_of(h.orchestrator(request_merge(&item)).await);
+    let MergeAuthority::Confirmed { question, .. } = asked.authority.clone() else {
+        panic!("confirmed by a question: {asked:?}")
+    };
+
+    gh.show(&head, "UNKNOWN", green());
+    let yes = Request::Answer {
+        chat: false,
+        question,
+        text: "yes".into(),
+    };
+    h.cli(yes).await.expect("the operator confirms");
+    let [waiting] = merges(&h, &item).await.try_into().expect("one request");
+    assert_eq!(waiting.state, MergeState::AwaitingMergeability);
+    assert!(matches!(
+        waiting.authority,
+        MergeAuthority::Confirmed { .. }
+    ));
+    assert!(
+        waiting.line().contains("mergeability check"),
+        "{}",
+        waiting.line()
+    );
+    assert!(!gh.merged());
+
+    age_request(&h, &item, 1).await;
+    coordination::poll_mergeability(&h.ctx).await.unwrap();
+    let [still] = merges(&h, &item).await.try_into().expect("one request");
+    assert_eq!(
+        still.state,
+        MergeState::AwaitingMergeability,
+        "still unknown"
+    );
+
+    gh.show(&head, "MERGEABLE", green());
+    age_request(&h, &item, 1).await;
+    coordination::poll_mergeability(&h.ctx).await.unwrap();
+    let [done] = merges(&h, &item).await.try_into().expect("one request");
+    assert_eq!(done.state.kind(), "merged", "{done:?}");
+    assert!(gh.merged());
+    let questions = h.ctx.store.lock().await.questions(true).unwrap();
+    assert!(questions.is_empty(), "never asked again: {questions:?}");
+}
+
+/// Under a grant an undecided mergeability asks nothing, and a conflict found
+/// while waiting refuses the request.
+#[tokio::test]
+async fn a_grant_waits_for_mergeability_then_refuses_a_conflict() {
+    let (h, gh) = delivering(Config::default()).await;
+    grant_merge(&h).await;
+    let (item, head) = reviewed(&h).await;
+    gh.show(&head, "UNKNOWN", green());
+    let waiting = merge_of(h.orchestrator(request_merge(&item)).await);
+    assert_eq!(waiting.state, MergeState::AwaitingMergeability);
+    assert!(h.ctx.store.lock().await.questions(true).unwrap().is_empty());
+
+    gh.show(&head, "CONFLICTING", green());
+    age_request(&h, &item, 1).await;
+    coordination::poll_mergeability(&h.ctx).await.unwrap();
+    let [refused] = merges(&h, &item).await.try_into().expect("one request");
+    let MergeState::Refused { reason } = &refused.state else {
+        panic!("refused: {refused:?}")
+    };
+    assert!(reason.contains("conflicts"), "{reason}");
+    assert!(merge_calls(&gh).is_empty() && !gh.merged());
+}
+
+/// Under a grant the request merges as soon as GitHub says it is mergeable.
+#[tokio::test]
+async fn a_grant_merges_once_github_decides_it_is_mergeable() {
+    let (h, gh) = delivering(Config::default()).await;
+    grant_merge(&h).await;
+    let (item, head) = reviewed(&h).await;
+    gh.show(&head, "UNKNOWN", green());
+    let waiting = merge_of(h.orchestrator(request_merge(&item)).await);
+    assert_eq!(waiting.state, MergeState::AwaitingMergeability);
+
+    gh.show(&head, "MERGEABLE", green());
+    age_request(&h, &item, 1).await;
+    coordination::poll_mergeability(&h.ctx).await.unwrap();
+    let [done] = merges(&h, &item).await.try_into().expect("one request");
+    assert_eq!(done.state.kind(), "merged", "{done:?}");
+    assert!(gh.merged());
+    assert!(h.ctx.store.lock().await.questions(true).unwrap().is_empty());
+}
+
+/// A wait that outlasts the hour refuses and says what to do next.
+#[tokio::test]
+async fn a_wait_for_mergeability_that_times_out_says_what_to_do() {
+    let (h, gh) = delivering(Config::default()).await;
+    grant_merge(&h).await;
+    let (item, head) = reviewed(&h).await;
+    gh.show(&head, "UNKNOWN", green());
+    merge_of(h.orchestrator(request_merge(&item)).await);
+
+    age_request(&h, &item, 61).await;
+    coordination::poll_mergeability(&h.ctx).await.unwrap();
+    let [refused] = merges(&h, &item).await.try_into().expect("one request");
+    let MergeState::Refused { reason } = &refused.state else {
+        panic!("refused: {refused:?}")
+    };
+    assert!(
+        reason.contains("gh pr view") && reason.contains("ask for the merge again"),
+        "{reason}"
+    );
+    assert!(merge_calls(&gh).is_empty() && !gh.merged());
+}

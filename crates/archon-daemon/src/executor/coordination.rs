@@ -71,6 +71,28 @@ pub(crate) async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     }
 }
 
+/// How often requests waiting for GitHub's mergeability check are looked at;
+/// each decides for itself whether its pause is over.
+const MERGEABILITY_TICK: Duration = Duration::from_secs(5);
+
+/// Read pull requests whose mergeability GitHub was still computing, until
+/// the daemon stops.
+pub(crate) async fn watch_mergeability(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
+    loop {
+        tokio::time::sleep(MERGEABILITY_TICK).await;
+        if ctx.aether.is_connected() {
+            poll_mergeability(&ctx).await?;
+        }
+    }
+}
+
+/// One look at the requests waiting for GitHub's mergeability check, also
+/// used by the deterministic harness. Returns how many left the wait.
+pub async fn poll_mergeability(ctx: &DaemonContext) -> Result<usize, ArchonError> {
+    let _serial = ctx.coordination.serial.lock().await;
+    super::operator_merge::poll_mergeability(ctx).await
+}
+
 /// One [`reconcile`] pass in its own task, so a panic on one record's data
 /// is logged and retried on the next pass instead of stopping the daemon.
 async fn isolated_pass(ctx: &Arc<DaemonContext>) -> Result<(), ArchonError> {

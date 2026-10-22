@@ -14,8 +14,8 @@ use archon_core::config::RepoConfig;
 use archon_core::error::ArchonError;
 use archon_core::id::{MergeRequestId, PipelineRunId, QuestionId, QueueItemId};
 use archon_core::merge::{
-    self, ChecksSeen, Expected, LOCAL_REF_PREFIX, MERGE_OPTIONS, MergeAnswer, MergeAuthority,
-    MergeRequest, MergeState, PullRequestFacts,
+    self, Assessment, ChecksSeen, Expected, LOCAL_REF_PREFIX, MERGE_OPTIONS, MergeAnswer,
+    MergeAuthority, MergeRequest, MergeState, PullRequestFacts,
 };
 use archon_core::notify::{AnswerVia, NotificationKind, Question};
 use archon_core::queue::{QueueItem, QueueState};
@@ -42,6 +42,13 @@ const GITHUB_UNREADABLE: &str = "GitHub could not be read";
 /// A granted request waits this long for pending checks before the operator
 /// is asked.
 const WAIT_FOR_CHECKS: chrono::TimeDelta = chrono::TimeDelta::minutes(60);
+/// A request waits this long for GitHub to decide whether the pull request
+/// merges cleanly before it is refused.
+const WAIT_FOR_MERGEABILITY: chrono::TimeDelta = chrono::TimeDelta::minutes(60);
+/// GitHub is asked about mergeability again after at least this pause, which
+/// grows with the time waited up to [`MERGEABILITY_PAUSE_MAX`].
+const MERGEABILITY_PAUSE_MIN: chrono::TimeDelta = chrono::TimeDelta::seconds(5);
+const MERGEABILITY_PAUSE_MAX: chrono::TimeDelta = chrono::TimeDelta::seconds(60);
 
 /// What `grant_merge` does with a reviewed request, from its checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -325,7 +332,11 @@ pub(crate) async fn merge_now(
 /// its checks.
 fn end_waiting_for_checks(store: &mut Store, item: &QueueItemId) -> Result<(), ArchonError> {
     for mut waiting in store.merges_for_item(item)? {
-        if waiting.state != MergeState::AwaitingChecks {
+        let waits = matches!(
+            waiting.state,
+            MergeState::AwaitingChecks | MergeState::AwaitingMergeability
+        );
+        if !waits {
             continue;
         }
         waiting.state = MergeState::Refused {
@@ -358,12 +369,12 @@ pub(crate) async fn request(
         (shipped, base)
     };
     let base = base.map_err(|why| refused_early(&shipped, &why))?;
-    let seen = match shipped.local_branch() {
+    let (seen, undecided) = match shipped.local_branch() {
         Some(_) => {
             local_plan(&shipped, &base)
                 .await?
                 .map_err(|w| refused_early(&shipped, &w))?;
-            ChecksSeen::default()
+            (ChecksSeen::default(), false)
         }
         None => {
             let facts = gh::merge_facts(&ctx.config.github.binary, &shipped.repo, &shipped.pr_url);
@@ -372,7 +383,11 @@ pub(crate) async fn request(
                 base: &base,
                 ignore_checks: true,
             };
-            merge::evaluate(&facts.await?, expected).map_err(|w| refused_early(&shipped, &w))?
+            match merge::assess(&facts.await?, expected) {
+                Ok(Assessment::Ready(seen)) => (seen, false),
+                Ok(Assessment::Undecided(seen)) => (seen, true),
+                Err(why) => return Err(refused_early(&shipped, &why)),
+            }
         }
     };
     supersede_stale_requests(&mut *ctx.store.lock().await, &shipped)?;
@@ -382,6 +397,9 @@ pub(crate) async fn request(
     }
     if shipped.local_branch().is_some() {
         return grant_local(ctx, shipped, reason).await;
+    }
+    if undecided {
+        return wait_for_github(ctx, &shipped, reason, &seen).await;
     }
     match grant_route(&shipped.repo.merge_waive_checks, &base, &seen) {
         GrantRoute::Ask => ask(ctx, &shipped, reason, &seen).await,
@@ -492,7 +510,9 @@ fn supersede_stale_requests(store: &mut Store, shipped: &Shipped) -> Result<(), 
     for mut stale in store.merges_for_item(&shipped.item.id)? {
         let waiting = matches!(
             stale.state,
-            MergeState::AwaitingOperator | MergeState::AwaitingChecks
+            MergeState::AwaitingOperator
+                | MergeState::AwaitingChecks
+                | MergeState::AwaitingMergeability
         );
         if !waiting || stale.head == shipped.head {
             continue;
@@ -529,6 +549,26 @@ async fn wait_for_checks(
         MergeState::AwaitingChecks,
     );
     waiting.waited = true;
+    waiting.checks = Some(seen.describe());
+    ctx.store.lock().await.insert_merge(&waiting)?;
+    Ok(waiting)
+}
+
+/// Record a granted request waiting for GitHub to decide whether the pull
+/// request merges cleanly.
+async fn wait_for_github(
+    ctx: &DaemonContext,
+    shipped: &Shipped,
+    reason: Option<String>,
+    seen: &ChecksSeen,
+) -> Result<MergeRequest, ArchonError> {
+    let mut waiting = fresh(
+        shipped,
+        MergeAuthority::Grant,
+        false,
+        reason,
+        MergeState::AwaitingMergeability,
+    );
     waiting.checks = Some(seen.describe());
     ctx.store.lock().await.insert_merge(&waiting)?;
     Ok(waiting)
@@ -706,8 +746,9 @@ async fn execute(
         return execute_local(ctx, merge).await;
     }
     let ready = match ready(ctx, &merge).await? {
-        Ok(ready) => ready,
-        Err(why) => {
+        Readiness::Ready(ready) => ready,
+        Readiness::Undecided => return park_for_github(ctx, merge).await,
+        Readiness::Refused(why) => {
             merge.state = MergeState::Refused { reason: why };
             return finish_merge(ctx, merge).await;
         }
@@ -814,20 +855,26 @@ async fn land_local(
 /// A request whose pull request may be merged now.
 struct Ready {
     repo: Repo,
+    base: String,
     seen: ChecksSeen,
 }
 
+/// What reading the pull request again just before a merge decided.
+enum Readiness {
+    Ready(Box<Ready>),
+    /// GitHub has not decided whether it merges cleanly.
+    Undecided,
+    Refused(String),
+}
+
 /// Check again, just before merging, everything a merge needs.
-async fn ready(
-    ctx: &DaemonContext,
-    merge: &MergeRequest,
-) -> Result<Result<Ready, String>, ArchonError> {
+async fn ready(ctx: &DaemonContext, merge: &MergeRequest) -> Result<Readiness, ArchonError> {
     let (shipped, base) = {
         let mut store = ctx.store.lock().await;
         let shipped = match shipped(&store, &merge.item) {
             Ok(shipped) => shipped,
             Err(error) if error.is_store() => return Err(error),
-            Err(error) => return Ok(Err(error.to_string())),
+            Err(error) => return Ok(Readiness::Refused(error.to_string())),
         };
         let base = match expected_base(&mut store, &shipped) {
             Ok(base) => base,
@@ -837,32 +884,39 @@ async fn ready(
         (shipped, base)
     };
     if (&shipped.run, &shipped.pr_url, &shipped.head) != (&merge.run, &merge.pr_url, &merge.head) {
-        return Ok(Err(
+        return Ok(Readiness::Refused(
             "the item was delivered again since it was asked for; ask again".into(),
         ));
     }
     let base = match base {
         Ok(base) => base,
-        Err(why) => return Ok(Err(why)),
+        Err(why) => return Ok(Readiness::Refused(why)),
     };
     let binary = &ctx.config.github.binary;
     let facts = match gh::merge_facts(binary, &shipped.repo, &merge.pr_url).await {
         Ok(facts) => facts,
-        Err(error) => return Ok(Err(format!("{GITHUB_UNREADABLE}: {error}"))),
+        Err(error) => {
+            return Ok(Readiness::Refused(format!("{GITHUB_UNREADABLE}: {error}")));
+        }
     };
     let facts = match retargeted(ctx, &shipped, &base, facts).await {
         Ok(facts) => facts,
-        Err(why) => return Ok(Err(why)),
+        Err(why) => return Ok(Readiness::Refused(why)),
     };
     let expected = Expected {
         head: &merge.head,
         base: &base,
         ignore_checks: merge.ignore_checks,
     };
-    Ok(merge::evaluate(&facts, expected).map(|seen| Ready {
-        repo: shipped.repo.clone(),
-        seen,
-    }))
+    Ok(match merge::assess(&facts, expected) {
+        Ok(Assessment::Ready(seen)) => Readiness::Ready(Box::new(Ready {
+            repo: shipped.repo.clone(),
+            base,
+            seen,
+        })),
+        Ok(Assessment::Undecided(_)) => Readiness::Undecided,
+        Err(why) => Readiness::Refused(why),
+    })
 }
 
 /// A pull request still aimed at a parent branch that has merged is moved
@@ -969,7 +1023,10 @@ async fn finish_merge(
     assert!(
         !matches!(
             merge.state,
-            MergeState::AwaitingOperator | MergeState::AwaitingChecks | MergeState::Merging
+            MergeState::AwaitingOperator
+                | MergeState::AwaitingChecks
+                | MergeState::AwaitingMergeability
+                | MergeState::Merging
         ),
         "only a known outcome is reported"
     );
@@ -1044,7 +1101,10 @@ async fn report(ctx: &DaemonContext, merge: &MergeRequest) -> Result<(), ArchonE
             );
             (NotificationKind::Blocker, text)
         }
-        MergeState::AwaitingOperator | MergeState::AwaitingChecks | MergeState::Merging => {
+        MergeState::AwaitingOperator
+        | MergeState::AwaitingChecks
+        | MergeState::AwaitingMergeability
+        | MergeState::Merging => {
             return Ok(());
         }
     };
@@ -1122,10 +1182,18 @@ async fn resume_waiting(ctx: &DaemonContext, mut merge: MergeRequest) -> Result<
     };
     let timed_out = archon_core::now() - merge.requested_at >= WAIT_FOR_CHECKS;
     let seen = match ready(ctx, &probe).await? {
-        Ok(ready) => ready.seen,
+        Readiness::Ready(ready) => ready.seen,
         // A read that failed is retried on the next pass, until the wait ends.
-        Err(why) if why.starts_with(GITHUB_UNREADABLE) && !timed_out => return Ok(false),
-        Err(why) => {
+        Readiness::Refused(why) if why.starts_with(GITHUB_UNREADABLE) && !timed_out => {
+            return Ok(false);
+        }
+        Readiness::Undecided => {
+            merge.state = MergeState::AwaitingMergeability;
+            merge.updated_at = archon_core::now();
+            ctx.store.lock().await.update_merge(&merge)?;
+            return Ok(false);
+        }
+        Readiness::Refused(why) => {
             merge.state = MergeState::Refused { reason: why };
             finish_merge(ctx, merge).await?;
             return Ok(true);
@@ -1157,6 +1225,155 @@ async fn resume_waiting(ctx: &DaemonContext, mut merge: MergeRequest) -> Result<
     ctx.store.lock().await.update_merge(&merge)?;
     ask(ctx, &shipped, merge.reason.clone(), &seen).await?;
     Ok(true)
+}
+
+/// GitHub has not decided whether the pull request merges cleanly: keep the
+/// request, and any confirmation it holds, and read the pull request again
+/// later (see [`poll_mergeability`]).
+async fn park_for_github(
+    ctx: &DaemonContext,
+    mut merge: MergeRequest,
+) -> Result<MergeRequest, ArchonError> {
+    assert_eq!(merge.state, MergeState::Merging, "parked from a merge");
+    merge.state = MergeState::AwaitingMergeability;
+    merge.updated_at = archon_core::now();
+    ctx.store.lock().await.update_merge(&merge)?;
+    Ok(merge)
+}
+
+/// How long to leave a request waiting for GitHub before reading it again:
+/// as long as it has waited, from 5 to 60 seconds.
+fn mergeability_pause(waited: chrono::TimeDelta) -> chrono::TimeDelta {
+    waited.clamp(MERGEABILITY_PAUSE_MIN, MERGEABILITY_PAUSE_MAX)
+}
+
+/// Read again every request waiting for GitHub's mergeability check whose
+/// pause is over. Returns how many left the waiting state.
+pub(crate) async fn poll_mergeability(ctx: &DaemonContext) -> Result<usize, ArchonError> {
+    let now = archon_core::now();
+    let open = ctx.store.lock().await.open_merges()?;
+    let mut ended = 0;
+    for merge in open {
+        let due = merge.state == MergeState::AwaitingMergeability
+            && now - merge.updated_at >= mergeability_pause(now - merge.requested_at);
+        if !due {
+            continue;
+        }
+        let (subject, item) = (format!("merge:{}", merge.id), merge.item.clone());
+        let result = resume_undecided(ctx, merge).await;
+        if let Ok(settled) = &result {
+            ended += usize::from(*settled);
+        }
+        let what = format!("Waiting for GitHub's mergeability check of the merge of {item}");
+        coordination::isolate(ctx, &subject, Some(&item), &what, result.map(drop)).await?;
+    }
+    Ok(ended)
+}
+
+/// What a request does once GitHub says the pull request merges cleanly.
+enum Next {
+    Merge { waived_by: Option<String> },
+    WaitForChecks,
+    AskOperator(&'static str),
+}
+
+/// Under a grant the request takes the route its checks give; one the
+/// operator confirmed merges, its checks judged as they were confirmed.
+fn next_step(merge: &MergeRequest, shipped: &Shipped, ready: &Ready) -> Next {
+    if merge.authority != MergeAuthority::Grant {
+        return Next::Merge { waived_by: None };
+    }
+    let granted = shipped.repo.grant_merge && shipped.item.autonomy.review != ReviewLevel::None;
+    if !granted {
+        return Next::AskOperator("the repository no longer grants the merge");
+    }
+    match grant_route(&shipped.repo.merge_waive_checks, &ready.base, &ready.seen) {
+        GrantRoute::Waived => Next::Merge {
+            waived_by: Some(ready.base.clone()),
+        },
+        GrantRoute::Green => Next::Merge { waived_by: None },
+        GrantRoute::Wait => Next::WaitForChecks,
+        GrantRoute::Ask => Next::AskOperator("its checks did not all pass"),
+    }
+}
+
+/// Read a request waiting for GitHub again: merge once it merges cleanly,
+/// refuse when it conflicts, its head moved or the wait ran out. `true` when
+/// the request left the waiting state.
+async fn resume_undecided(
+    ctx: &DaemonContext,
+    mut merge: MergeRequest,
+) -> Result<bool, ArchonError> {
+    assert_eq!(
+        merge.state,
+        MergeState::AwaitingMergeability,
+        "only a waiting request resumes"
+    );
+    let probe = MergeRequest {
+        ignore_checks: true,
+        ..merge.clone()
+    };
+    let timed_out = archon_core::now() - merge.requested_at >= WAIT_FOR_MERGEABILITY;
+    let refusal = match ready(ctx, &probe).await? {
+        Readiness::Ready(ready) => return proceed_when_mergeable(ctx, merge, *ready).await,
+        Readiness::Undecided if timed_out => format!(
+            "GitHub did not finish its mergeability check within {} minutes; run `gh pr view \
+             {} --json mergeable`, and once it says MERGEABLE ask for the merge again",
+            WAIT_FOR_MERGEABILITY.num_minutes(),
+            merge.pr_url
+        ),
+        // A read that failed is retried on the next pass, until the wait ends.
+        Readiness::Refused(why) if why.starts_with(GITHUB_UNREADABLE) && !timed_out => {
+            merge.updated_at = archon_core::now();
+            ctx.store.lock().await.update_merge(&merge)?;
+            return Ok(false);
+        }
+        Readiness::Undecided => {
+            merge.updated_at = archon_core::now();
+            ctx.store.lock().await.update_merge(&merge)?;
+            return Ok(false);
+        }
+        Readiness::Refused(why) => why,
+    };
+    merge.state = MergeState::Refused { reason: refusal };
+    finish_merge(ctx, merge).await?;
+    Ok(true)
+}
+
+async fn proceed_when_mergeable(
+    ctx: &DaemonContext,
+    mut merge: MergeRequest,
+    ready: Ready,
+) -> Result<bool, ArchonError> {
+    let shipped = shipped(&*ctx.store.lock().await, &merge.item)?;
+    match next_step(&merge, &shipped, &ready) {
+        Next::Merge { waived_by } => {
+            merge.ignore_checks |= waived_by.is_some();
+            merge.waived_by = waived_by;
+            merge.state = MergeState::Merging;
+            merge.updated_at = archon_core::now();
+            ctx.store.lock().await.update_merge(&merge)?;
+            let after = execute(ctx, merge).await?;
+            Ok(after.state != MergeState::AwaitingMergeability)
+        }
+        Next::WaitForChecks => {
+            merge.state = MergeState::AwaitingChecks;
+            merge.waited = true;
+            merge.checks = Some(ready.seen.describe());
+            merge.updated_at = archon_core::now();
+            ctx.store.lock().await.update_merge(&merge)?;
+            Ok(false)
+        }
+        Next::AskOperator(why) => {
+            merge.state = MergeState::Refused {
+                reason: format!("{why}; the operator was asked instead"),
+            };
+            merge.updated_at = archon_core::now();
+            ctx.store.lock().await.update_merge(&merge)?;
+            ask(ctx, &shipped, merge.reason.clone(), &ready.seen).await?;
+            Ok(true)
+        }
+    }
 }
 
 async fn settle_one(ctx: &DaemonContext, mut merge: MergeRequest) -> Result<bool, ArchonError> {

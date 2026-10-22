@@ -287,6 +287,36 @@ fn a_pass_preview_reports_removals_and_cache_output_but_changes_nothing() {
 }
 
 #[test]
+fn a_preview_does_not_promise_to_remove_a_worktree_git_has_locked() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().canonicalize().unwrap();
+    let tree = tree_with_secrets(&base);
+    let repo = base.join("repo");
+    let locked = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["worktree", "lock"])
+        .arg(&tree)
+        .status()
+        .unwrap();
+    assert!(locked.success(), "the worktree is locked");
+    let found = Found {
+        candidates: vec![candidate(&tree, Some(&repo), Action::Remove)],
+        ..Found::default()
+    };
+    let plan = ItemPlan {
+        item: QueueItemId::new(),
+        updated_at: archon_core::now(),
+        runs: 0,
+        found,
+    };
+
+    let report = preview::preview(&[plan], &roots_in(&base), &policy(true));
+    assert!(report.removed.is_empty(), "{report:?}");
+    assert!(tree.exists());
+}
+
+#[test]
 fn reclaiming_refuses_a_directory_inside_a_worktree() {
     let dir = tempfile::tempdir().unwrap();
     let base = dir.path().canonicalize().unwrap();

@@ -254,13 +254,6 @@ fn listed(locations: &[Location]) -> String {
 /// Whether starting archond on `socket` would mix moved and default
 /// locations; such a start is refused unless the operator runs it directly.
 pub fn partial_override(socket: &Path) -> Option<PartialOverride> {
-    let overridden = [CONFIG_DIR_VAR, DATA_DIR_VAR, SOCKET_VAR]
-        .iter()
-        .any(|var| std::env::var_os(var).is_some());
-    // Only the XDG directories moved: nothing of Archon's own was mixed.
-    if !overridden {
-        return None;
-    }
     PartialOverride::among(locations(socket))
 }
 

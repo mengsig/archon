@@ -8,7 +8,7 @@ use archon_core::catalog::is_snapshot_of;
 use archon_core::protocol::{GcReport, WouldDelete};
 
 use super::plan::{Action, Candidate, ItemPlan, Kind};
-use super::sweep::{self, Verdict, is_inside, is_listed_worktree, unremovable};
+use super::sweep::{self, Verdict, is_inside, is_listed_worktree, is_locked_worktree, unremovable};
 use super::{Policy, Roots, cache};
 
 /// The report of a pass over `plans` that removes nothing: `removed` holds
@@ -170,6 +170,9 @@ fn worktree_outcome(
     let caches = || cache::preview_worktree(path, &policy.cache_dirs).map_err(|e| e.to_string());
     if !remove {
         return Ok(Outcome::Delete(caches()?));
+    }
+    if is_locked_worktree(repo, path).map_err(|e| e.to_string())? {
+        return skip("git has it locked; `git worktree unlock` it, then run gc again".into());
     }
     if policy.force {
         return Ok(Outcome::Remove);

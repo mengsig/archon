@@ -322,6 +322,7 @@ fn spawn_workers(
     worker!("report polls", reports::supervise);
     worker!("orchestrator revival", supervisor::revive_when_due);
     worker!("orchestrator sweeps", supervisor::sweep_when_owed);
+    worker!("orchestrator stall check", supervisor::watch_stalls);
     worker!("mcp health", supervisor::watch_mcp);
     worker!("github watcher", github::watch_github);
     worker!("memory feedback", handlers::deliver_memory_feedback);

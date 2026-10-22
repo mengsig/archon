@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- archond tells the operator when the orchestrator has had a turn open for 30
+  minutes with no message, tool result or usage update (a hung model request,
+  issue #223), and says to message it or run `archon orchestrator restart`.
+
 ## 1.4.2
 
 Released 2026-10-22.

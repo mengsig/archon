@@ -1542,3 +1542,48 @@ async fn operator_answer_carries_clipped_question_context() {
         text
     );
 }
+
+#[tokio::test]
+async fn a_turn_silent_for_half_an_hour_is_reported_to_the_operator_once() {
+    use archon_aether::events::EventKind;
+    let harness = Harness::new().await;
+    let orch = agent_id(ORCH);
+    let started = EventKind::AgentStarted { turn: 241 };
+    harness.ctx.supervisor.saw_event(&orch, &started);
+
+    let soon = archon_core::now() + chrono::TimeDelta::minutes(5);
+    assert!(!supervisor::report_stall(&harness.ctx, soon).await.unwrap());
+    assert!(
+        harness
+            .notifications(NotificationKind::Blocker)
+            .await
+            .is_empty()
+    );
+
+    let later = archon_core::now() + chrono::TimeDelta::minutes(31);
+    assert!(supervisor::report_stall(&harness.ctx, later).await.unwrap());
+    let blockers = harness.notifications(NotificationKind::Blocker).await;
+    assert_eq!(blockers.len(), 1, "{blockers:?}");
+    assert!(
+        blockers[0].contains("without a message")
+            && blockers[0].contains("archon orchestrator restart"),
+        "{blockers:?}"
+    );
+    assert!(!supervisor::report_stall(&harness.ctx, later).await.unwrap());
+    assert_eq!(
+        harness.notifications(NotificationKind::Blocker).await.len(),
+        1
+    );
+
+    let ended = EventKind::AgentTurnCompleted {
+        turn: 241,
+        next: Some("ready".into()),
+    };
+    harness.ctx.supervisor.saw_event(&orch, &ended);
+    let much_later = archon_core::now() + chrono::TimeDelta::hours(5);
+    assert!(
+        !supervisor::report_stall(&harness.ctx, much_later)
+            .await
+            .unwrap()
+    );
+}

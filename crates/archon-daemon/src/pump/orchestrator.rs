@@ -24,6 +24,7 @@ pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(
     if supervisor::current_orchestrator(ctx).await?.as_ref() != Some(agent) {
         return Ok(());
     }
+    ctx.supervisor.saw_event(agent, &event.kind);
     match &event.kind {
         EventKind::InboxDelivered {
             seq,

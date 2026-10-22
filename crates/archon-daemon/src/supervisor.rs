@@ -8,6 +8,7 @@ mod mcp;
 mod origin;
 mod retired;
 mod revival;
+mod stall;
 
 use std::path::Path;
 use std::time::Duration;
@@ -51,6 +52,7 @@ pub(crate) use revival::prune_retired_keys;
 pub use revival::{
     Backoff, REVIVAL_BACKOFF, REVIVALS_BEFORE_BLOCKER, pause_after, revive_when_due, turn_ended,
 };
+pub use stall::{STALL_AFTER, STALL_CHECK_INTERVAL, report_stall, watch_stalls};
 
 pub const ORCHESTRATOR_ROLE: &str = "archon-orchestrator";
 
@@ -94,6 +96,7 @@ pub struct Supervisor {
     sweeps: Notify,
     mcp: Mutex<mcp::HealState>,
     mcp_check: Notify,
+    liveness: std::sync::Mutex<stall::Liveness>,
 }
 
 impl Default for Supervisor {
@@ -106,6 +109,7 @@ impl Default for Supervisor {
             sweeps: Notify::new(),
             mcp: Mutex::new(mcp::HealState::default()),
             mcp_check: Notify::new(),
+            liveness: Default::default(),
         }
     }
 }
@@ -114,6 +118,15 @@ impl Supervisor {
     /// Sees every change of the orchestrator's agent id.
     pub fn watch(&self) -> watch::Receiver<Option<AetherAgentId>> {
         self.current.subscribe()
+    }
+
+    /// Record an event of the current orchestrator for the stall check.
+    pub fn saw_event(&self, agent: &AetherAgentId, kind: &archon_aether::events::EventKind) {
+        let mut liveness = self
+            .liveness
+            .lock()
+            .expect("liveness is never held across a panic");
+        liveness.saw(agent, kind, archon_core::now());
     }
 
     /// When a deferred revival of a stopped orchestrator will run.

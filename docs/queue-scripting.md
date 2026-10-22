@@ -41,6 +41,11 @@ model = "codex/gpt-6.1-sol"
 effort = "high"
 ```
 
+Each choice's `model` is written `provider/model`, such as
+`codex/gpt-6.1-sol`; a bare model name is refused. Instead of `model` a choice
+may give a `tier` (`fast`, `balanced`, `strong` or `frontier`), and `effort` is
+optional. `archon aether models` lists the models you can name.
+
 Use `archon pipelines list` to find stage ids. Optional
 `--model-reasons-file` takes a JSON or TOML map from stage ids to short,
 single-line explanations, e.g. `{"answer":"Inspect the cache implementation"}`.

@@ -4581,8 +4581,9 @@ enqueue against the ceiling, and it checks again when a run starts in case
 the operator lowered it in the meantime. A refusal names what is allowed:
 
 ```
-autonomy above the ceiling for repo api: merge=auto (allowed: manual); only the
-operator can raise it (`[autonomy] max` in config.toml or `archon repo set --autonomy-max`)
+autonomy for repo api asks for more than its ceiling allows: merge=auto (allowed: manual).
+The ceiling lists the values each knob may take; choose one of them, or have the operator
+raise the ceiling (`[autonomy] max` in config.toml or `archon repo set --autonomy-max`)
 ```
 
 Nothing that reaches Archon over MCP can raise a ceiling. `RepoUpdate` and a

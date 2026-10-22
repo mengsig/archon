@@ -19,6 +19,17 @@ and the orchestrator picks a model and effort for each stage of each item.
 instead of a model and a new model release needs no Archon change. Defaults
 never pick above `max_default_tier`; set it to `"frontier"` to let them.
 
+A `model_plan` (`archon queue add --model-plan-file`, or MCP `enqueue`) maps a
+stage id to a list of choices. A choice's `model` must be `provider/model`; a
+bare name is refused. A choice may give a `tier` instead of a `model`. For
+example, in TOML:
+
+```toml
+[[build]]
+model = "codex/gpt-6.1-sol"
+effort = "high"
+```
+
 A tier without a provider runs on the orchestrator's provider, unless
 `provider_weights` is set. Then each item is given one provider, picked by
 weight from a hash of its id, and all of its tier-only choices run there,

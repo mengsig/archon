@@ -867,7 +867,11 @@ pub struct QueueAddArgs {
     #[arg(long, value_name = "PATH|-")]
     pub brief_file: PathBuf,
     /// JSON or TOML stage-to-choice-array map, as MCP model_plan. Stages it
-    /// leaves out, or all without it, get the daemon's defaults.
+    /// leaves out, or all without it, get the daemon's defaults. Each choice
+    /// names `model` as `provider/model` (not a bare model name) or a `tier`
+    /// (fast, balanced, strong or frontier), plus an optional `effort`, e.g.
+    /// {"build": [{"model": "codex/gpt-6.1-sol", "effort": "high"}]}.
+    /// `archon aether models` lists the models you can name.
     #[arg(long)]
     pub model_plan_file: Option<PathBuf>,
     /// Optional JSON or TOML stage-to-reason map, as MCP model_reasons.
@@ -1161,6 +1165,18 @@ mod tests {
         for deep in ["archon queue caps max_per_repo", "archon daemon run json"] {
             assert!(seen.iter().any(|s| s == deep), "the walk missed {deep}");
         }
+    }
+
+    #[test]
+    fn queue_add_help_documents_the_model_plan_format() {
+        let mut command = Cli::command();
+        let add = command
+            .find_subcommand_mut("queue")
+            .and_then(|queue| queue.find_subcommand_mut("add"))
+            .expect("archon queue add");
+        let help = add.render_long_help().to_string();
+        assert!(help.contains("provider/model"), "{help}");
+        assert!(help.contains("codex/gpt-6.1-sol"), "{help}");
     }
 
     #[test]

@@ -412,7 +412,7 @@ impl AutonomyPolicy {
         policy
     }
 
-    /// Refuse `autonomy` knobs above the ceiling, naming what is allowed.
+    /// Refuse `autonomy` knobs the ceiling does not allow, naming what is allowed.
     /// `applies` filters knobs that mean nothing for the item's pipeline.
     pub fn check(
         &self,
@@ -430,7 +430,9 @@ impl AutonomyPolicy {
             return Ok(());
         }
         Err(ArchonError::Forbidden(format!(
-            "autonomy above the ceiling for {scope}: {}; only the operator can raise it (`[autonomy] max` in config.toml or `archon repo set --autonomy-max`)",
+            "autonomy for {scope} asks for more than its ceiling allows: {}. The ceiling lists the \
+             values each knob may take; choose one of them, or have the operator raise the ceiling \
+             (`[autonomy] max` in config.toml or `archon repo set --autonomy-max`)",
             excess.join("; ")
         )))
     }
@@ -568,6 +570,26 @@ mod tests {
             "review=strict|standard|none, proposal=lavish|off, report=before-pr|with-pr|off, \
              merge=manual, tools=guarded|yolo"
         );
+    }
+
+    #[test]
+    fn a_refusal_says_what_the_ceiling_allows_and_how_to_raise_it() {
+        let policy = AutonomyPolicy::resolve(&AutonomyConfig::default(), None, None);
+        let wanted = Autonomy {
+            merge: MergeMode::Auto,
+            ..Autonomy::default()
+        };
+        let text = policy
+            .check(wanted, |_| true, "repo web")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            text.contains("asks for more than its ceiling allows"),
+            "{text}"
+        );
+        assert!(text.contains("values each knob may take"), "{text}");
+        assert!(text.contains("archon repo set --autonomy-max"), "{text}");
+        assert!(!text.contains("above the ceiling"), "{text}");
     }
 
     #[test]

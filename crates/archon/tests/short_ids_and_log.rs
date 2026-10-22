@@ -250,10 +250,7 @@ fn a_short_id_names_one_item_and_a_bad_one_is_explained() {
     let unknown = refusal(&env, &["queue", "show", "7z"]);
     assert!(unknown.contains("qi_7Z not found"), "{unknown}");
     let malformed = refusal(&env, &["log", "--item", "01-k"]);
-    assert!(
-        malformed.contains("is not a queue item id or its start"),
-        "{malformed}"
-    );
+    assert!(malformed.contains("is not a valid item id"), "{malformed}");
 }
 
 fn seqs(value: &serde_json::Value) -> Vec<u64> {

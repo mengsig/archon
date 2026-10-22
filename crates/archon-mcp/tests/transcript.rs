@@ -496,8 +496,8 @@ fn refuse_auto_merge(request: &Request) -> Result<Reply, ErrorReply> {
         "passed through as asked"
     );
     Err(ErrorReply::from(&ArchonError::Forbidden(
-        "autonomy above the ceiling for repo web: merge=auto (allowed: manual); only the \
-         operator can raise it"
+        "autonomy for repo web asks for more than its ceiling allows: merge=auto \
+         (allowed: manual). Choose an allowed value or have the operator raise the ceiling"
             .into(),
     )))
 }

@@ -41,13 +41,11 @@ macro_rules! prefixed_id {
             /// Accepts only `<prefix>_<ULID>`; anything else is a caller bug or
             /// corrupted storage, never silently accepted.
             pub fn parse(raw: &str) -> Result<Self, ArchonError> {
-                let invalid = || {
-                    ArchonError::Invalid(format!(
-                        "{raw:?} is not a valid id here (expected `{}_` plus {ULID_LEN} characters)",
-                        $prefix
-                    ))
-                };
-                let rest = raw.strip_prefix(concat!($prefix, "_")).ok_or_else(invalid)?;
+                let invalid =
+                    || ArchonError::Invalid(bad_id_message(raw, $prefix, kind_name($prefix)));
+                let rest = raw
+                    .strip_prefix(concat!($prefix, "_"))
+                    .ok_or_else(invalid)?;
                 ulid::Ulid::from_string(rest).map_err(|_| invalid())?;
                 Ok(Self(raw.to_owned()))
             }
@@ -117,7 +115,31 @@ pub(crate) const ULID_LEN: usize = 26;
 /// The start of a queue item id as an operator types it: `01k2`, `QI_01K2`
 /// or a whole id. Returns it as ids are stored, `qi_` and upper case.
 pub fn queue_item_prefix(text: &str) -> Result<String, ArchonError> {
-    id_prefix(text, QueueItemId::PREFIX, "queue item")
+    id_prefix(text, QueueItemId::PREFIX, "item")
+}
+
+fn kind_name(kind: &str) -> &str {
+    match kind {
+        "qi" => "item",
+        "prun" => "pipeline run",
+        "q" => "question",
+        other => other,
+    }
+}
+
+/// What to tell an operator who typed something that is not an id of `kind`:
+/// the value, the expected format and where to find real ids.
+fn bad_id_message(text: &str, kind: &str, what: &str) -> String {
+    let listing = if kind == QueueItemId::PREFIX {
+        "run `archon queue` to list item ids"
+    } else {
+        "list them with the matching `archon` list command"
+    };
+    format!(
+        "'{}' is not a valid {what} id. Expected `{kind}_` followed by {ULID_LEN} characters \
+         (0-9 and A-Z without I, L, O or U), or the start of one, such as `{kind}_01HZX`; {listing}",
+        text.trim()
+    )
 }
 
 /// The start of an id of `kind` (its prefix, such as `ini`) as an operator
@@ -131,17 +153,11 @@ pub fn id_prefix(text: &str, kind: &str, what: &str) -> Result<String, ArchonErr
         _ => trimmed,
     };
     let ulid = bare.to_ascii_uppercase();
-    if ulid.is_empty() || ulid.len() > ULID_LEN {
-        return Err(ArchonError::Invalid(format!(
-            "{text:?} is not a {what} id or its start: expected `{kind}_` plus 1 to \
-             {ULID_LEN} characters, such as `{kind}_01HZX`"
-        )));
-    }
-    if let Some(bad) = ulid.chars().find(|c| !ULID_ALPHABET.contains(*c)) {
-        return Err(ArchonError::Invalid(format!(
-            "{text:?} is not a {what} id or its start: expected `{kind}_` plus characters \
-             from 0-9 and A-Z without I, L, O or U, such as `{kind}_01HZX`, but found {bad:?}"
-        )));
+    let well_formed = !ulid.is_empty()
+        && ulid.len() <= ULID_LEN
+        && ulid.chars().all(|c| ULID_ALPHABET.contains(c));
+    if !well_formed {
+        return Err(ArchonError::Invalid(bad_id_message(text, kind, what)));
     }
     let prefix = format!("{kind}_{ulid}");
     assert!(prefix.is_ascii(), "a checked prefix is plain ASCII");
@@ -172,6 +188,23 @@ mod tests {
     }
 
     #[test]
+    fn a_malformed_item_id_is_named_with_the_format_and_where_to_look() {
+        let error = queue_item_prefix("nonexistent").unwrap_err().to_string();
+        assert!(
+            error.contains("'nonexistent' is not a valid item id"),
+            "{error}"
+        );
+        assert!(error.contains("`qi_` followed by 26 characters"), "{error}");
+        assert!(error.contains("archon queue"), "{error}");
+        assert!(!error.contains("found"), "{error}");
+        let parsed = QueueItemId::parse("nonexistent").unwrap_err().to_string();
+        assert!(
+            parsed.contains("'nonexistent' is not a valid item id"),
+            "{parsed}"
+        );
+    }
+
+    #[test]
     fn prefixes_of_other_kinds_take_their_own_prefix() {
         let id = InitiativeId::new();
         assert_eq!(
@@ -187,7 +220,7 @@ mod tests {
         assert!(
             wrong
                 .to_string()
-                .contains("is not a initiative id or its start"),
+                .contains("'qi_01K2' is not a valid initiative id"),
             "{wrong}"
         );
     }

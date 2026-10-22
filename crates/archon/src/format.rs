@@ -110,7 +110,7 @@ pub fn status(status: &DaemonStatus, names: &RepoNames) -> String {
     );
     let _ = writeln!(
         out,
-        "autonomy ceiling: {}",
+        "autonomy ceiling (values each knob allows): {}",
         status.autonomy.ceiling.describe_allowed()
     );
     let _ = writeln!(
@@ -431,7 +431,7 @@ pub fn autonomy(view: &AutonomyView) -> String {
         .as_ref()
         .map_or_else(|| "global".to_owned(), |repo| format!("repo {repo}"));
     let mut out = format!(
-        "autonomy ({scope})\ndefault: {}\nceiling: {}\n",
+        "autonomy ({scope})\ndefault: {}\nceiling (values each knob allows): {}\n",
         view.policy.default.describe(),
         view.policy.ceiling.describe_allowed()
     );
@@ -1527,7 +1527,7 @@ pub(crate) mod tests {
         let text = autonomy(&view);
         assert!(text.starts_with("autonomy (repo api)\ndefault: review=standard"));
         assert!(
-            text.contains("\nceiling: review=strict|standard|none, proposal=lavish|off,"),
+            text.contains("\nceiling (values each knob allows): review=strict|standard|none, proposal=lavish|off,"),
             "the ceiling lists what it allows: {text}"
         );
         assert!(

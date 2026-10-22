@@ -359,7 +359,11 @@ pub(super) async fn update_within(
     }
     let replaces_plan = patch.model_plan.is_some();
     let mut plan = None;
-    let budget_changes = patch.budget_usd.is_some() || replaces_plan;
+    let review = revision
+        .as_ref()
+        .map_or(current.autonomy.review, |r| r.after.review);
+    let budget_changes =
+        patch.budget_usd.is_some() || replaces_plan || review != current.autonomy.review;
     if budget_changes || patch.model_reasons.is_some() || !patch.stage_timeouts.is_empty() {
         let (env, base, spec) = item_pipeline(ctx, &current).await?;
         if let Some(draft) = patch.model_plan.take() {
@@ -373,7 +377,7 @@ pub(super) async fn update_within(
         if budget_changes {
             let budgeted = Budgeted {
                 budget_usd: patch.budget_usd.or(current.budget_usd),
-                review: current.autonomy.review,
+                review,
                 repo: env.repo.as_ref(),
             };
             let checked = plan.as_ref().unwrap_or(&current.model_plan);

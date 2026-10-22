@@ -480,3 +480,34 @@ async fn retry_refuses_a_new_blind_reviewer_plan_on_a_budgeted_item() {
     .await;
     assert_names_the_fixes(&message);
 }
+
+fn review_and_budget(review: archon_core::autonomy::ReviewLevel) -> ItemPatch {
+    ItemPatch {
+        budget_usd: Some(1.0),
+        autonomy: Some(archon_core::autonomy::AutonomyPatch {
+            review: Some(review),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn a_combined_update_is_checked_against_the_review_it_leaves() {
+    use archon_core::autonomy::ReviewLevel;
+    let h = Harness::new().await;
+    let Request::Enqueue(mut request) = reviewer_enqueue() else {
+        unreachable!()
+    };
+    request.model_plan = blind_reviewers();
+    let queued = item(&h, Request::Enqueue(request)).await;
+    let update = |patch| Request::UpdateItem {
+        item: queued.id.clone(),
+        patch,
+    };
+    let message = refusal(&h, update(review_and_budget(ReviewLevel::Strict))).await;
+    assert_names_the_fixes(&message);
+    h.cli(update(review_and_budget(ReviewLevel::None)))
+        .await
+        .expect("no review owed, so no reviewer to refuse");
+}

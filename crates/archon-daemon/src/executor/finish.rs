@@ -45,6 +45,7 @@ pub(super) async fn finish_run(
         RunState::Succeeded { .. } => shipping_proof(ctx, &run).await,
         _ => ShippingProof::None,
     };
+    Box::pin(delete_role_branches(ctx, &run)).await?;
     let now = archon_core::now();
     let finished = {
         let mut store = ctx.store.lock().await;
@@ -73,7 +74,6 @@ pub(super) async fn finish_run(
     crate::feed::publish(ctx, finished.answers);
     crate::reports::close_stale_questions(ctx).await?;
     let pr_url = pr_url(ctx, &run).await?;
-    delete_role_branches(ctx, &item, &run).await?;
     announce(ctx, &item, Some(&run), blocker, pr_url).await?;
     let mut follow = FollowUp::poke();
     follow.stop.push(run.id.clone());
@@ -84,18 +84,28 @@ pub(super) async fn finish_run(
 }
 
 /// A team run's role branches that reached its run branch go with the run,
-/// whether or not the cleanup after their merge ran.
-async fn delete_role_branches(
-    ctx: &DaemonContext,
-    item: &QueueItem,
-    run: &PipelineRun,
-) -> Result<(), ArchonError> {
-    assert!(run.state.is_terminal(), "only a finished run is cleaned up");
-    let (Some(_), Some(repo_id)) = (&run.team_root, &item.repo) else {
+/// whether or not the cleanup after their merge ran. This is before the run
+/// is persisted as finished, so a crash in between repeats it.
+async fn delete_role_branches(ctx: &DaemonContext, run: &PipelineRun) -> Result<(), ArchonError> {
+    assert!(
+        run.team_root.is_none() || !run.branch.is_empty(),
+        "team runs have a branch"
+    );
+    if run.team_root.is_none() {
         return Ok(());
+    }
+    let (item, repo) = {
+        let store = ctx.store.lock().await;
+        let item = store.item(&run.item)?;
+        let repo = match &item.repo {
+            Some(id) => Some(store.repo(&resolve::repo_ref(id))?),
+            None => None,
+        };
+        (item, repo)
     };
-    let repo = ctx.store.lock().await.repo(&resolve::repo_ref(repo_id))?;
-    super::team::delete_branches(ctx, &item.id, &run.id, repo.path, run.branch.clone()).await;
+    if let Some(repo) = repo {
+        super::team::delete_branches(ctx, &item.id, &run.id, repo.path, run.branch.clone()).await;
+    }
     Ok(())
 }
 

@@ -148,6 +148,14 @@ fn uncommitted_plan(workspace: &Path) -> Result<String, String> {
             swarm::MAX_PLAN_BYTES
         ));
     }
+    let staged = worktree::git(workspace, &["ls-files", "--", PLAN_FILE])
+        .map_err(|e| format!("its plan's status is unread: {e}"))?;
+    if !staged.is_empty() {
+        return Err(format!(
+            "`{PLAN_FILE}` is staged or tracked; keep the plan untracked so it never enters \
+             the branch (`git rm --cached {PLAN_FILE}`)"
+        ));
+    }
     let added = worktree::git(
         workspace,
         &[

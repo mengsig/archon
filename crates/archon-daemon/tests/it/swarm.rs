@@ -425,8 +425,7 @@ async fn a_committed_plan_is_refused() {
     h.dispatch().await;
     let sent = h.backend.requests().pop().expect("the planner again");
     assert!(
-        sent.objective
-            .contains("it committed `.archon/swarm-plan.json`"),
+        sent.objective.contains("is staged or tracked"),
         "{}",
         sent.objective
     );
@@ -458,6 +457,28 @@ async fn a_plan_committed_then_untracked_is_refused() {
     assert!(
         sent.objective
             .contains("it committed `.archon/swarm-plan.json`"),
+        "{}",
+        sent.objective
+    );
+}
+
+#[tokio::test]
+async fn a_staged_plan_is_refused() {
+    let h = Harness::new().await;
+    let item = h
+        .enqueue_in("swarm", "plan staged", swarm_model_plan())
+        .await
+        .expect("the swarm built-in enqueues");
+    h.dispatch().await;
+    let run = h.run(&item.id).await;
+    let text = serde_json::to_string_pretty(&swarm_plan(&TASKS)).expect("json");
+    write_plan(&run.workspace, &text);
+    git(&run.workspace, &["add", "-f", ".archon/swarm-plan.json"]);
+    h.settle_running(|_| completed("split into tasks")).await;
+    h.dispatch().await;
+    let sent = h.backend.requests().pop().expect("the planner again");
+    assert!(
+        sent.objective.contains("is staged or tracked"),
         "{}",
         sent.objective
     );

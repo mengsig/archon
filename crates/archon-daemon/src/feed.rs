@@ -231,7 +231,8 @@ impl ReplyTracker {
             "consumed messages are no longer pending"
         );
         if self.answering && self.text.is_none() {
-            self.batch += count;
+            // An answer saved before batches were tracked covers one message.
+            self.batch = self.batch.max(1) + count;
             return None;
         }
         let finished = if self.answering {
@@ -598,6 +599,19 @@ mod tests {
             Some("Replying to your 4 messages:\n\nQ1: yes\n\nQ2: no\n\nQ3: 3\n\nQ4: later")
         );
         assert!(!tracker.awaiting_reply());
+    }
+
+    #[test]
+    fn a_legacy_active_answer_joined_by_another_message_keeps_every_text() {
+        let saved = r#"{"pending":[2],"answering":true,"text":null,"seen":3}"#;
+        let mut tracker = restore_replies(Some(saved)).unwrap();
+        assert_eq!(tracker.consumed(2), None);
+        tracker.assistant_text("A1");
+        tracker.assistant_text("A2");
+        assert_eq!(
+            tracker.turn_completed(Some("ready")).as_deref(),
+            Some("Replying to your 2 messages:\n\nA1\n\nA2")
+        );
     }
 
     #[test]

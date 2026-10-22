@@ -76,7 +76,7 @@ impl Liveness {
     /// Whether `agent`'s state is still unknown: no event seen and no probe
     /// of Aether made since archond started.
     pub fn needs_probe(&self, agent: &AetherAgentId) -> bool {
-        self.agent.as_ref() != Some(agent) || (!self.probed && self.last_event.is_none())
+        self.agent.as_ref() != Some(agent) || !self.probed
     }
 
     /// Start watching `agent` from `now` after archond restarted into a turn
@@ -89,10 +89,11 @@ impl Liveness {
             };
         }
         self.probed = true;
-        if turn_open && self.last_event.is_none() {
-            self.turn_open = true;
-            self.last_event = Some(now);
+        if !turn_open {
+            return;
         }
+        self.turn_open = true;
+        self.last_event.get_or_insert(now);
     }
 
     /// The open turn, once, when it has been silent past `STALL_AFTER`.
@@ -118,16 +119,29 @@ impl Liveness {
     }
 }
 
-pub(super) fn stall_text(silent: Duration) -> String {
+/// What the operator reads; `nudge` says how the nudge to the orchestrator went.
+pub(super) fn stall_text(silent: Duration, nudge: Nudge) -> String {
     let minutes = silent.as_secs() / 60;
     assert!(minutes > 0, "a stall is minutes long");
+    let nudge = match nudge {
+        Nudge::Sent => "Archon sent it a nudge to continue; if it stays silent".to_owned(),
+        Nudge::Spent => {
+            format!("Archon already nudged it {MAX_NUDGES} times and sends no more; to recover it")
+        }
+        Nudge::Failed(error) => format!("Archon could not nudge it ({error}); to recover it"),
+    };
     format!(
         "The orchestrator has been in one turn for {minutes} minutes without a message, tool \
          result or usage update; its model request may be hung, and nothing will wake it by \
-         itself. Archon sent it a nudge to continue; if it stays silent, run \
-         `archon orchestrator restart` to start a fresh one. Ignore this if you know it is \
-         waiting on a long command."
+         itself. {nudge}, run `archon orchestrator restart` to start a fresh one. Ignore this \
+         if you know it is waiting on a long command."
     )
+}
+
+pub(super) enum Nudge {
+    Sent,
+    Spent,
+    Failed(ArchonError),
 }
 
 /// Checks every [`STALL_CHECK_INTERVAL`]. Only a store failure ends it.
@@ -156,17 +170,25 @@ pub async fn report_stall(ctx: &DaemonContext, now: Timestamp) -> Result<bool, A
     let Some(stall) = stall else {
         return Ok(false);
     };
+    let outcome = if stall.nudge {
+        match nudge(ctx, &stall, now).await {
+            Ok(()) => Nudge::Sent,
+            Err(error) => {
+                tracing::warn!(%error, "nudging the stalled orchestrator failed");
+                Nudge::Failed(error)
+            }
+        }
+    } else {
+        Nudge::Spent
+    };
     feed::notify(
         ctx,
         NotificationKind::Blocker,
-        stall_text(stall.silent),
+        stall_text(stall.silent, outcome),
         None,
         None,
     )
     .await?;
-    if stall.nudge {
-        nudge(ctx, &stall, now).await?;
-    }
     Ok(true)
 }
 
@@ -330,6 +352,18 @@ mod tests {
     }
 
     #[test]
+    fn a_progress_event_before_the_probe_does_not_skip_it() {
+        let mut live = Liveness::default();
+        let usage = EventKind::Other {
+            type_name: "tool.result".into(),
+        };
+        live.saw(&agent(A), &usage, at(0));
+        assert!(live.needs_probe(&agent(A)));
+        live.probed(&agent(A), true, at(5));
+        assert!(live.take_stall(at(STALL)).is_some());
+    }
+
+    #[test]
     fn an_idle_orchestrator_found_by_the_probe_is_not_watched() {
         let mut live = Liveness::default();
         live.probed(&agent(A), false, at(0));
@@ -338,9 +372,14 @@ mod tests {
 
     #[test]
     fn the_notice_says_what_happened_and_what_to_do() {
-        let text = stall_text(Duration::from_secs(3 * 3600));
+        let hours = Duration::from_secs(3 * 3600);
+        let text = stall_text(hours, Nudge::Sent);
         assert!(text.contains("180 minutes"), "{text}");
         assert!(text.contains("archon orchestrator restart"), "{text}");
-        assert!(text.contains("nudge"), "{text}");
+        assert!(text.contains("sent it a nudge"), "{text}");
+        let spent = stall_text(hours, Nudge::Spent);
+        assert!(spent.contains("sends no more"), "{spent}");
+        let failed = stall_text(hours, Nudge::Failed(ArchonError::Invalid("no".into())));
+        assert!(failed.contains("could not nudge"), "{failed}");
     }
 }

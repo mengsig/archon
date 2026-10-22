@@ -40,7 +40,13 @@ impl Liveness {
             };
         }
         match kind {
-            EventKind::AgentStarted { .. } => self.turn_open = true,
+            // A message or a consumed inbox item also proves a turn is open, as
+            // after an archond restart that skipped its `agent.started`.
+            EventKind::AgentStarted { .. }
+            | EventKind::AgentMessage {
+                assistant: true, ..
+            }
+            | EventKind::InboxConsumed { .. } => self.turn_open = true,
             EventKind::AgentTurnCompleted { .. }
             | EventKind::AgentFailed { .. }
             | EventKind::AgentCancelled { .. }
@@ -162,6 +168,17 @@ mod tests {
         live.saw(&agent(A), &message, at(STALL + 10));
         assert_eq!(live.take_stall(at(STALL + 20)), None);
         assert!(live.take_stall(at(2 * STALL + 10)).is_some());
+    }
+
+    #[test]
+    fn a_turn_seen_only_by_its_messages_after_a_restart_is_watched() {
+        let mut live = Liveness::default();
+        let message = EventKind::AgentMessage {
+            assistant: true,
+            text: "pushing the tag".into(),
+        };
+        live.saw(&agent(A), &message, at(0));
+        assert!(live.take_stall(at(STALL)).is_some());
     }
 
     #[test]

@@ -13,9 +13,9 @@ use super::stack::is_commit_id;
 /// Git's mode of a submodule's entry in an index.
 const GITLINK_MODE: &str = "160000";
 /// Untracked build and tool caches that are never work, ignored or not: the
-/// directories by name at any depth, `target` and Archon's own `.archon/`
-/// scratch only at the top level.
-const CACHE_PATTERNS: [&str; 12] = [
+/// directories by name at any depth, `target` and Archon's own report pages and swarm plan
+/// under `.archon/` only at the top level; its config and pipelines are work.
+const CACHE_PATTERNS: [&str; 13] = [
     "__pycache__/",
     "*.pyc",
     "*.pyo",
@@ -27,7 +27,8 @@ const CACHE_PATTERNS: [&str; 12] = [
     ".coverage",
     "node_modules/",
     "/target/",
-    "/.archon/",
+    "/.archon/reports/",
+    "/.archon/swarm-plan.json",
 ];
 
 /// Why `git worktree remove` would refuse `tree` without `--force`, if it would: a submodule,
@@ -274,7 +275,8 @@ mod tests {
             "web/node_modules/left-pad/index.js",
             "target/debug/app",
             "web/build/app.js",
-            ".archon/scratch/notes.json",
+            ".archon/reports/proposal/index.html",
+            ".archon/swarm-plan.json",
         ] {
             write(cache);
         }

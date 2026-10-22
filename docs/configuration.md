@@ -559,8 +559,9 @@ whole, with whatever is in them, with or without `--force`:
   Each goes `gc_after` (or `--older-than`) after the item's last run
   finished. Before that, once `cache_after` has passed, only the
   `cache_dirs` directories in it are deleted, and nothing when `cache_dirs`
-  is unset. Archon's own untracked `.archon/` directory at the top of a
-  worktree is disposable and does not count as uncommitted work.
+  is unset. Archon's own untracked `.archon/reports/` pages and
+  `.archon/swarm-plan.json` at the top of a worktree are disposable and do
+  not count as uncommitted work; `.archon/config.toml` and pipelines do.
 - The scratch directory of an item that ran without a repository, at the
   same age.
 - A snapshot that a read-only stage left behind, as soon as `cache_after`

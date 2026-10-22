@@ -40,15 +40,15 @@ pub(in crate::executor) async fn reviewer_settled(
         return Ok(());
     };
     let mut tally = load(ctx, &stage.id).await?;
-    if tally.fails.iter().any(|f| f.agent == reviewer.as_str()) {
-        return Ok(());
+    // A replayed reviewer adds no round, but may still owe the notice.
+    if !tally.fails.iter().any(|f| f.agent == reviewer.as_str()) {
+        tally.fails.push(Fail {
+            agent: reviewer.to_string(),
+            head: verdict.head,
+            titles: verdict.titles,
+        });
+        save(ctx, &stage.id, &tally).await?;
     }
-    tally.fails.push(Fail {
-        agent: reviewer.to_string(),
-        head: verdict.head,
-        titles: verdict.titles,
-    });
-    save(ctx, &stage.id, &tally).await?;
     let rounds = rounds_of(&tally.fails);
     if rounds < REVIEW_ROUNDS_BEFORE_NOTICE || tally.told {
         return Ok(());

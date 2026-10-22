@@ -1245,6 +1245,12 @@ async fn park_for_github(
     Ok(merge)
 }
 
+/// When the request began waiting for GitHub. A request stored before the
+/// start was recorded counts from its last update, so its wait is not cut short.
+fn wait_started(merge: &MergeRequest) -> archon_core::Timestamp {
+    merge.mergeability_wait_since.unwrap_or(merge.updated_at)
+}
+
 /// How long to leave a request waiting for GitHub before reading it again:
 /// as long as it had waited at its last read, from 5 to 60 seconds.
 fn mergeability_pause(waited_at_last_read: chrono::TimeDelta) -> chrono::TimeDelta {
@@ -1258,13 +1264,9 @@ pub(crate) async fn poll_mergeability(ctx: &DaemonContext) -> Result<usize, Arch
     let open = ctx.store.lock().await.open_merges()?;
     let mut ended = 0;
     for merge in open {
-        let due = match (&merge.state, merge.mergeability_wait_since) {
-            (MergeState::AwaitingMergeability, Some(since)) => {
-                now - merge.updated_at >= mergeability_pause(merge.updated_at - since)
-            }
-            (MergeState::AwaitingMergeability, None) => unreachable!("a wait has a start"),
-            _ => false,
-        };
+        let due = merge.state == MergeState::AwaitingMergeability
+            && now - merge.updated_at
+                >= mergeability_pause(merge.updated_at - wait_started(&merge));
         if !due {
             continue;
         }
@@ -1322,8 +1324,7 @@ async fn resume_undecided(
         ignore_checks: true,
         ..merge.clone()
     };
-    let since = merge.mergeability_wait_since.expect("a wait has a start");
-    let timed_out = archon_core::now() - since >= WAIT_FOR_MERGEABILITY;
+    let timed_out = archon_core::now() - wait_started(&merge) >= WAIT_FOR_MERGEABILITY;
     let refusal = match ready(ctx, &probe).await? {
         Readiness::Ready(ready) => return proceed_when_mergeable(ctx, merge, *ready).await,
         Readiness::Undecided if timed_out => format!(
@@ -1459,6 +1460,16 @@ mod tests {
             merged_by: None,
             auto_merge: false,
         }
+    }
+
+    #[test]
+    fn a_wait_stored_without_its_start_counts_from_its_last_update() {
+        let mut merge = request();
+        merge.state = MergeState::AwaitingMergeability;
+        assert_eq!(wait_started(&merge), merge.updated_at);
+        let begun = merge.updated_at - chrono::TimeDelta::minutes(3);
+        merge.mergeability_wait_since = Some(begun);
+        assert_eq!(wait_started(&merge), begun);
     }
 
     #[test]

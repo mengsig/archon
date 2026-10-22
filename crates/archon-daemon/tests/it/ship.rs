@@ -1212,3 +1212,175 @@ async fn every_builtin_runs_without_a_model_plan_or_a_ship_agent() {
         "adaptive, direct, swarm, refactor and performance ship"
     );
 }
+
+/// [`delivering`], with the automatic repair retry on or off.
+async fn delivering_repairing(auto_repair: bool) -> (Harness, FakeGh) {
+    let mut config = archon_core::config::Config::default();
+    config.review.auto_repair = auto_repair;
+    let h = Harness::with_config(config).await;
+    h.add_pipeline(REVIEWED, REVIEWED_TOML);
+    add_origin(&h);
+    let gh = FakeGh::install(&h);
+    (h, gh)
+}
+
+async fn brief_of(h: &Harness, item: &QueueItem) -> String {
+    h.ctx.store.lock().await.item(&item.id).unwrap().brief
+}
+
+const REPAIR_OPENING: &str = "Automatic repair (archond retries a refused record once).";
+const TOO_FEW: &str = "it names 2 reviewer(s), and this item's review level needs 3";
+
+/// A strict item whose lead names 2 of the 3 reviewers it owes is refused.
+async fn refused_lead(h: &Harness, strict: &QueueItem) {
+    assert_eq!(h.state(&strict.id).await.kind(), "running");
+    settle_reviewed_by(h, 2, 2).await;
+}
+
+#[tokio::test]
+async fn a_refused_review_is_repaired_by_one_automatic_retry_that_passes() {
+    let (h, gh) = delivering_repairing(true).await;
+    let item = enqueue(&h, "adaptive", asking(ReviewLevel::Strict))
+        .await
+        .unwrap();
+    h.dispatch().await;
+    let first = h.run(&item.id).await;
+    refused_lead(&h, &item).await;
+
+    assert_eq!(
+        h.state(&item.id).await.kind(),
+        "running",
+        "retried, not failed"
+    );
+    let brief = brief_of(&h, &item).await;
+    assert!(brief.contains(REPAIR_OPENING), "{brief}");
+    assert!(brief.contains(TOO_FEW), "{brief}");
+    assert!(brief.contains("Repair the record only."), "{brief}");
+    let notices = h.notices(NotificationKind::Progress).await;
+    let line = notices
+        .iter()
+        .find(|n| n.starts_with("review gate refused"));
+    let line = line.unwrap_or_else(|| panic!("{notices:?}"));
+    assert!(
+        line.contains("retrying once to repair the record"),
+        "{line}"
+    );
+    assert!(h.notices(NotificationKind::Outcome).await.is_empty());
+
+    let runs = h.ctx.store.lock().await.runs_for_item(&item.id).unwrap();
+    let second = runs.last().expect("a second run").clone();
+    assert_eq!(
+        (&second.branch, &second.workspace),
+        (&first.branch, &first.workspace)
+    );
+    settle_reviewed_by(&h, 3, 3).await;
+    succeeded(&h, &item).await;
+    let runs = h.ctx.store.lock().await.runs_for_item(&item.id).unwrap();
+    assert_eq!(runs.len(), 2, "the failed run stays in the history");
+    assert!(matches!(
+        runs[0].state,
+        archon_core::run::RunState::Failed { .. }
+    ));
+    assert_eq!(gh.count("pr create"), 1, "{:?}", gh.calls());
+}
+
+#[tokio::test]
+async fn a_second_refusal_fails_the_item_with_both_reasons() {
+    let (h, _gh) = delivering_repairing(true).await;
+    let item = enqueue(&h, "adaptive", asking(ReviewLevel::Strict))
+        .await
+        .unwrap();
+    h.dispatch().await;
+    refused_lead(&h, &item).await;
+    refused_lead(&h, &item).await;
+
+    let error = failed(&h, &item).await;
+    assert!(
+        error.contains("the review this pipeline declares is not on record"),
+        "{error}"
+    );
+    let first = format!(
+        "The first refusal was: the review this pipeline declares is not on record: {TOO_FEW}"
+    );
+    assert!(error.contains(&first), "both reasons: {error}");
+    assert!(error.matches(TOO_FEW).count() >= 2, "both reasons: {error}");
+    let brief = brief_of(&h, &item).await;
+    assert_eq!(brief.matches(REPAIR_OPENING).count(), 1, "repaired once");
+    assert_eq!(
+        h.notices(NotificationKind::Outcome).await.len(),
+        1,
+        "told once"
+    );
+}
+
+#[tokio::test]
+async fn a_failure_that_is_not_a_record_refusal_is_not_repaired() {
+    let (h, _gh) = delivering_repairing(true).await;
+    let (item, _) = started(&h, "direct").await;
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "the build is broken".into(),
+        infra: false,
+    })
+    .await;
+    h.dispatch().await;
+    failed(&h, &item).await;
+    assert!(!brief_of(&h, &item).await.contains(REPAIR_OPENING));
+}
+
+#[tokio::test]
+async fn the_config_switch_turns_the_automatic_repair_off() {
+    let (h, _gh) = delivering_repairing(false).await;
+    let item = enqueue(&h, "adaptive", asking(ReviewLevel::Strict))
+        .await
+        .unwrap();
+    h.dispatch().await;
+    refused_lead(&h, &item).await;
+
+    let error = failed(&h, &item).await;
+    assert!(error.contains(TOO_FEW), "{error}");
+    assert!(!brief_of(&h, &item).await.contains(REPAIR_OPENING));
+}
+
+#[tokio::test]
+async fn a_cancelled_item_is_not_repaired() {
+    let (h, _gh) = delivering_repairing(true).await;
+    let item = enqueue(&h, "adaptive", asking(ReviewLevel::Strict))
+        .await
+        .unwrap();
+    h.dispatch().await;
+    let cancel = Request::CancelItem {
+        item: item.id.clone(),
+        reason: None,
+    };
+    h.cli(cancel).await.expect("cancelled");
+    h.dispatch().await;
+
+    assert_eq!(h.state(&item.id).await.kind(), "cancelled");
+    assert!(!brief_of(&h, &item).await.contains(REPAIR_OPENING));
+}
+
+#[tokio::test]
+async fn a_steered_run_is_not_repaired() {
+    let (h, _gh) = delivering_repairing(true).await;
+    let item = enqueue(&h, "adaptive", asking(ReviewLevel::Strict))
+        .await
+        .unwrap();
+    h.dispatch().await;
+    let steer = Request::SteerItem {
+        item: item.id.clone(),
+        steer: Steer {
+            abort: Some(archon_core::steer::Then::Retry),
+            ..Steer::default()
+        },
+    };
+    h.orchestrator(steer).await.expect("steered");
+    h.dispatch().await;
+    let run = h.run(&item.id).await;
+    let edits = h.ctx.store.lock().await.run_edits(&run.id).unwrap();
+    assert!(!edits.is_empty(), "the steer is on record");
+    h.dispatch().await;
+    refused_lead(&h, &item).await;
+
+    failed(&h, &item).await;
+    assert!(!brief_of(&h, &item).await.contains(REPAIR_OPENING));
+}

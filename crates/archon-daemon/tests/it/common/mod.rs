@@ -165,9 +165,12 @@ impl Drop for Harness {
 }
 
 impl Harness {
-    /// Default config with the scripted backend.
+    /// Default config with the scripted backend. A refused review fails the
+    /// item at once: the automatic repair retry is off unless a test asks.
     pub async fn new() -> Self {
-        Self::with_config(Config::default()).await
+        let mut config = Config::default();
+        config.review.auto_repair = false;
+        Self::with_config(config).await
     }
 
     pub async fn with_config(config: Config) -> Self {

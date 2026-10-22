@@ -12,6 +12,23 @@ use crate::spec::{Owed, StageSpec};
 /// cannot blow up the next agent's objective.
 pub const MAX_FEEDBACK_CHARS: usize = 32_000;
 
+const SHIP_REFUSAL: &str = "the ship record archond delivers is not on record";
+const REVIEW_REFUSAL: &str = "the review this pipeline declares is not on record";
+
+/// The refusal a failed run's `error` reports when the run failed only
+/// because the gate refused the ship record or review a finished stage owes;
+/// `None` for every other failure. The error is `stage `id` failed[..]: {headline}`.
+pub fn record_refusal(error: &str) -> Option<&str> {
+    let headline_block = error.split("\n\n").next().unwrap_or(error);
+    [SHIP_REFUSAL, REVIEW_REFUSAL].iter().find_map(|marker| {
+        let at = headline_block.find(marker)?;
+        let prefix = &headline_block[..at];
+        let is_stage_failure =
+            prefix.starts_with("stage `") && prefix.contains("` failed") && prefix.ends_with(": ");
+        is_stage_failure.then(|| headline_block[at..].trim())
+    })
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum GroupResult {
     /// Summary of the group: the completed members' summaries joined.
@@ -93,9 +110,7 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
     if owed.ship_record
         && let Err(why) = ShipRecord::read(structured)
     {
-        return unrecorded(format!(
-            "the ship record archond delivers is not on record: {why}"
-        ));
+        return unrecorded(format!("{SHIP_REFUSAL}: {why}"));
     }
     let Some(duty) = owed.review else {
         return GroupResult::Pass { summary };
@@ -104,9 +119,7 @@ fn recorded(stage: &StageSpec, attempt: u32, members: &[&StageRun], owed: Owed) 
         Ok(evidence) => GroupResult::Pass {
             summary: format!("{summary}\n\n{}", evidence.line()),
         },
-        Err(why) => unrecorded(format!(
-            "the review this pipeline declares is not on record: {why}"
-        )),
+        Err(why) => unrecorded(format!("{REVIEW_REFUSAL}: {why}")),
     }
 }
 
@@ -279,6 +292,25 @@ pub(crate) fn clip(text: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn record_refusal_names_only_record_refusals() {
+        let review =
+            format!("stage `implement` failed: {REVIEW_REFUSAL}: no review object\n\nreport");
+        assert_eq!(
+            record_refusal(&review),
+            Some("the review this pipeline declares is not on record: no review object")
+        );
+        let ship = format!("stage `a` failed after 2 of 2 fix loop(s): {SHIP_REFUSAL}: bad tree");
+        assert!(record_refusal(&ship).unwrap().ends_with("bad tree"));
+        assert_eq!(
+            record_refusal("stage `a` failed: 1 of 1 agent(s) did not complete"),
+            None
+        );
+        let quoted =
+            format!("stage `a` failed: gate any failed: the agent wrote \"{REVIEW_REFUSAL}\"");
+        assert_eq!(record_refusal(&quoted), None);
+    }
 
     #[test]
     fn clip_keeps_short_text_and_cuts_on_char_boundaries() {

@@ -15,6 +15,7 @@ use archon_core::run::{PipelineRun, RunState, StageOutcome, StageRun, StageState
 use archon_queue::Store;
 use chrono::TimeDelta;
 
+use super::repair::{self, Decision, Repair};
 use super::{Cleanup, FollowUp, ItemBuild, RunTable, clip, frozen};
 use crate::context::DaemonContext;
 use crate::resolve;
@@ -37,10 +38,16 @@ pub(super) async fn finish_run(
     ctx: &DaemonContext,
     table: &mut RunTable,
     mut run: PipelineRun,
-    state: RunState,
+    mut state: RunState,
     blocker: bool,
 ) -> Result<FollowUp, ArchonError> {
     assert!(state.is_terminal(), "finish_run needs a terminal state");
+    let mut repair = None;
+    match repair::decide(ctx, &run, &state).await? {
+        Decision::Finish => {}
+        Decision::Repair(planned) => repair = Some(planned),
+        Decision::Spent { first } => state = repair::with_first_refusal(state, &first),
+    }
     let proof = match &state {
         RunState::Succeeded { .. } => shipping_proof(ctx, &run).await,
         _ => ShippingProof::None,
@@ -59,11 +66,20 @@ pub(super) async fn finish_run(
             ShippingProof::None => false,
         };
         run.finish(state, now)?;
-        store.finish_run(&run, item_state(&run), now)?
+        let mut finished = store.finish_run(&run, item_state(&run), now)?;
+        if let Some(planned) = &repair {
+            match planned.requeue(&mut store) {
+                Ok(queued) => finished.item = queued,
+                Err(error) => {
+                    tracing::error!(item = %run.item, %error, "automatic repair not queued; the item stays failed");
+                    repair = None;
+                }
+            }
+        }
+        finished
     };
     crate::learned::finished(ctx, &run).await;
     let item = finished.item;
-    assert!(item.state.is_terminal(), "finish_run settles the item");
     frozen::discard(&ctx.paths.data_dir, &run.id);
     table.drivers.remove(&run.id);
     table.pending.remove(&run.id);
@@ -73,12 +89,38 @@ pub(super) async fn finish_run(
     table.gates.forget(&run.id);
     crate::feed::publish(ctx, finished.answers);
     crate::reports::close_stale_questions(ctx).await?;
+    if let Some(repaired) = repair {
+        return repaired_follow_up(ctx, &run, &repaired).await;
+    }
+    assert!(item.state.is_terminal(), "finish_run settles the item");
     let pr_url = pr_url(ctx, &run).await?;
     announce(ctx, &item, Some(&run), blocker, pr_url).await?;
     let mut follow = FollowUp::poke();
     follow.stop.push(run.id.clone());
     follow.cleanup.extend(cleanup_for(ctx, &item, &run).await?);
     follow.release_builds.extend(item_build(ctx, &item).await?);
+    follow.discard.push(run.id.clone());
+    Ok(follow)
+}
+
+/// The run of an item queued for its one repair retry has ended: say so in
+/// the feed instead of announcing a failure. The worktree and the item's
+/// build output stay for the retry.
+async fn repaired_follow_up(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+    repair: &Repair,
+) -> Result<FollowUp, ArchonError> {
+    notify(
+        ctx,
+        NotificationKind::Progress,
+        &repair.feed_text(),
+        Some(&repair.item),
+        Some(&run.id),
+    )
+    .await?;
+    let mut follow = FollowUp::poke();
+    follow.stop.push(run.id.clone());
     follow.discard.push(run.id.clone());
     Ok(follow)
 }

@@ -127,6 +127,9 @@ pub struct ReviewConfig {
     pub default_tier: Tier,
     pub default_effort: Effort,
     pub prefer_other_provider: bool,
+    /// Queue one retry of an item whose run failed only because the review
+    /// or ship record it owes was refused.
+    pub auto_repair: bool,
 }
 
 impl Default for ReviewConfig {
@@ -135,6 +138,7 @@ impl Default for ReviewConfig {
             default_tier: Tier::Balanced,
             default_effort: Effort::Low,
             prefer_other_provider: true,
+            auto_repair: true,
         }
     }
 }
@@ -1181,12 +1185,14 @@ mod tests {
         assert_eq!(default.review.default_tier, Tier::Balanced);
         assert_eq!(default.review.default_effort, Effort::Low);
         assert!(default.review.prefer_other_provider);
+        assert!(default.review.auto_repair);
         let configured: Config = toml::from_str(
-            "[review]\ndefault_tier = 'strong'\ndefault_effort = 'medium'\nprefer_other_provider = false",
+            "[review]\ndefault_tier = 'strong'\ndefault_effort = 'medium'\nprefer_other_provider = false\nauto_repair = false",
         ).unwrap();
         assert_eq!(configured.review.default_tier, Tier::Strong);
         assert_eq!(configured.review.default_effort, Effort::Medium);
         assert!(!configured.review.prefer_other_provider);
+        assert!(!configured.review.auto_repair);
         for invalid in [
             "default_tier = 'typo'",
             "default_effort = 'typo'",

@@ -27,6 +27,7 @@ mod pages;
 pub mod pull_requests;
 mod recover;
 pub(crate) mod refresh;
+mod repair;
 pub(crate) mod repo_identity;
 pub(crate) mod restack;
 mod resume;

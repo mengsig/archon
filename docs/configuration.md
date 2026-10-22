@@ -70,11 +70,22 @@ names the best permitted one, or the lead's own model, and says so; the agent is
 never sent to look for a model the policy would refuse. The model policy's effort
 cap still applies. An explicit `<stage>.review` plan is unchanged.
 
+`auto_repair` (default `true`) covers a run that fails only because the gate
+refused the review or the ship record it owes (a delta read not anchored, a
+mistyped reviewer id, no review object, an unreadable verdict, an invalid ship
+record). archond then queues one retry of the item in the same worktree and
+branch, with a repair note in the brief that quotes the refusal and tells the
+agent to repair the record only; the feed says so and the item's history keeps
+the failed run. A second refusal fails the item with both reasons. Coverage and
+verdict rules are unchanged, and a cancelled or steered run is never repaired.
+Set it to `false` to retry such items by hand with `retry_item`.
+
 ```toml
 [review]                       # reviewers with no explicit <stage>.review plan
 default_tier = "balanced"
 default_effort = "low"
 prefer_other_provider = true
+auto_repair = true             # one automatic retry when the review or ship record is refused
 
 [models]                       # optional: leave it out to allow every ready model
 allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-sol"]

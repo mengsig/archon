@@ -14,8 +14,8 @@ use chrono::{Local, NaiveDate};
 use crate::style::{DEFAULT_WIDTH, Palette, Style};
 use crate::wrap::{report_link, sanitize, wrap};
 
-/// Right-aligned label column; the longest labels are `question`/`decision`.
-const LABEL_WIDTH: usize = 8;
+/// Right-aligned label column; the longest label is `orchestrator`.
+const LABEL_WIDTH: usize = 12;
 /// Text never gets fewer columns than this, however narrow the terminal.
 const MIN_TEXT_WIDTH: usize = 24;
 
@@ -190,7 +190,7 @@ fn describe(entry: &FeedEntry, labels: &QuestionLabels) -> Parts {
         FeedEntry::Operator { text, images } => {
             simple("you", Style::Bold, &with_image_labels(text, images))
         }
-        FeedEntry::Orchestrator { text } => simple("archon", Style::Cyan, text),
+        FeedEntry::Orchestrator { text } => simple("orchestrator", Style::Cyan, text),
         FeedEntry::System { text } => simple("system", Style::Dim, text),
         FeedEntry::Notification(n) => {
             let (label, tone) = notification_style(n.kind);
@@ -336,7 +336,7 @@ mod tests {
         });
         assert_eq!(
             head(&render_feed_item(&reply, false).unwrap()),
-            "archon  Queued on api."
+            "orchestrator  Queued on api."
         );
     }
 
@@ -402,7 +402,7 @@ mod tests {
         let q = question(&["yes", "no"]);
         let mut labels = QuestionLabels::default();
         labels.insert(q.id.clone(), 2);
-        let renderer = Renderer::new(Palette::new(false), 80);
+        let renderer = Renderer::new(Palette::new(false), 100);
         let rendered = renderer
             .render(&item(FeedEntry::Question(q.clone())), false, &labels)
             .unwrap();

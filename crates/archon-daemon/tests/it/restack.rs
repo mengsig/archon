@@ -389,6 +389,130 @@ async fn a_merged_child_is_not_changed_by_later_parent_commits() {
     assert!(restack_fixes(&h, &child.id).await.is_empty());
 }
 
+/// The restacked child on `origin`, with an outside commit on its pull
+/// request: the parent has moved on, and the head GitHub shows is returned.
+struct Outside {
+    h: Harness,
+    child: QueueItem,
+    branch: String,
+    new_parent: String,
+    outside: String,
+    other: std::path::PathBuf,
+}
+
+async fn outside_commit(local_commit: bool) -> Outside {
+    let (h, parent, child) = stack_pair().await;
+    let parent_run = h.run(&parent.id).await;
+    let child_run = h.run(&child.id).await;
+    if local_commit {
+        commit(&child_run.workspace, "local.txt", "local\n");
+    }
+    finish_item(&h, &child.id).await;
+    let branch = child_run.branch.clone();
+    let remote = h.dir.path().join("remote.git");
+    let base = git(&h.repo, &["rev-parse", &branch]);
+    let before_local = if local_commit {
+        git(&h.repo, &["rev-parse", &format!("{branch}~1")])
+    } else {
+        base.clone()
+    };
+    git(
+        &h.repo,
+        &[
+            "push",
+            "origin",
+            &format!("{before_local}:refs/heads/{branch}"),
+        ],
+    );
+    let other = h.dir.path().join("other-clone");
+    git(
+        &h.repo,
+        &["clone", remote.to_str().unwrap(), other.to_str().unwrap()],
+    );
+    git(&other, &["checkout", &branch]);
+    let outside = commit(&other, "outside.txt", "outside\n");
+    git(&other, &["push", "origin", &branch]);
+    set_pr(&h, &branch, "headRefOid", json!(outside));
+    let new_parent = advance_branch(&h, &parent_run.branch, "parent2.txt", "new parent\n");
+    Outside {
+        h,
+        child,
+        branch,
+        new_parent,
+        outside,
+        other,
+    }
+}
+
+async fn recorded_parent_sha(h: &Harness, child: &QueueItem) -> String {
+    h.ctx
+        .store
+        .lock()
+        .await
+        .stack_base(&child.id)
+        .unwrap()
+        .unwrap()
+        .1
+}
+
+#[tokio::test]
+async fn an_outside_commit_on_the_child_is_kept_by_a_fast_forward_push() {
+    let o = outside_commit(false).await;
+    reconcile(&o.h.ctx).await.unwrap();
+    let remote = o.h.dir.path().join("remote.git");
+    let pushed = git(&remote, &["rev-parse", &format!("refs/heads/{}", o.branch)]);
+    for kept in [&o.outside, &o.new_parent] {
+        git(&remote, &["merge-base", "--is-ancestor", kept, &pushed]);
+    }
+    assert_eq!(git(&o.h.repo, &["rev-parse", &o.branch]), pushed);
+    assert_eq!(recorded_parent_sha(&o.h, &o.child).await, o.new_parent);
+}
+
+#[tokio::test]
+async fn a_child_that_holds_the_parent_records_it_and_pushes_nothing() {
+    let o = outside_commit(false).await;
+    git(
+        &o.other,
+        &["fetch", o.h.repo.to_str().unwrap(), &o.new_parent],
+    );
+    git(&o.other, &["merge", "--no-edit", &o.new_parent]);
+    let head = git(&o.other, &["rev-parse", "HEAD"]);
+    git(&o.other, &["push", "origin", &o.branch]);
+    set_pr(&o.h, &o.branch, "headRefOid", json!(head));
+    reconcile(&o.h.ctx).await.unwrap();
+    let remote = o.h.dir.path().join("remote.git");
+    let pushed = git(&remote, &["rev-parse", &format!("refs/heads/{}", o.branch)]);
+    assert_eq!(pushed, head, "nothing was pushed over it");
+    assert_eq!(recorded_parent_sha(&o.h, &o.child).await, o.new_parent);
+}
+
+#[tokio::test]
+async fn a_rejected_push_is_told_once_and_not_retried_until_the_head_moves() {
+    let o = outside_commit(true).await;
+    let told = |notes: Vec<String>| {
+        notes
+            .iter()
+            .filter(|n| n.contains("rejected the push"))
+            .count()
+    };
+    for _ in 0..3 {
+        reconcile(&o.h.ctx).await.unwrap();
+    }
+    assert_eq!(told(o.h.notices(NotificationKind::Blocker).await), 1);
+    let remote = o.h.dir.path().join("remote.git");
+    let reference = format!("refs/heads/{}", o.branch);
+    assert_eq!(git(&remote, &["rev-parse", &reference]), o.outside);
+    let stale = recorded_parent_sha(&o.h, &o.child).await;
+    assert_ne!(stale, o.new_parent, "the parent is not recorded as merged");
+
+    let moved = commit(&o.other, "more.txt", "more\n");
+    git(&o.other, &["push", "origin", &o.branch]);
+    set_pr(&o.h, &o.branch, "headRefOid", json!(moved));
+    reconcile(&o.h.ctx).await.unwrap();
+    assert_eq!(told(o.h.notices(NotificationKind::Blocker).await), 2);
+    assert_eq!(git(&remote, &["rev-parse", &reference]), moved);
+}
+
 /// The GitHub calls one maintenance pass made.
 async fn pass(h: &Harness) -> Vec<Vec<String>> {
     let before = gh_calls(h).len();

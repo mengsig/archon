@@ -21,6 +21,10 @@ pub struct StackParent {
     pub merged: bool,
     #[serde(default)]
     pub conflict: Option<String>,
+    /// The child pull request head whose push `origin` rejected: nothing is
+    /// retried until that head changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub needs_attention: Option<String>,
 }
 
 impl Store {

@@ -3044,6 +3044,8 @@ async fn review_round_fails(h: &Harness, lead: &StageRun, n: usize) {
         },
     };
     pump::handle_fleet_event(&h.ctx, &event).await.unwrap();
+    // Aether replays an event it was not told was handled.
+    pump::handle_fleet_event(&h.ctx, &event).await.unwrap();
 }
 
 /// Three failing rounds are no signal; the fourth posts one notice with the

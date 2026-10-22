@@ -10,31 +10,19 @@ use archon_core::ports::{Descendant, DescendantState};
 use archon_core::run::StageRun;
 use archon_pipeline::contract::REVIEW_ROUNDS_BEFORE_NOTICE;
 use archon_pipeline::review::Verdict;
+use serde::{Deserialize, Serialize};
 
-use super::{result_of, transient, verdict_in};
+use super::{result_of, verdict_in};
 use crate::context::DaemonContext;
 
 /// Finding titles a notice lists.
 const MAX_TITLES: usize = 5;
 
-/// Count `lead`'s failing review rounds now that `reviewer` settled, and post the
-/// notice when this is the round that reaches the limit. Aether not answering
-/// skips the count: the next settled reviewer counts again.
+/// Add `reviewer`'s failing verdict to its stage attempt's tally and post the notice
+/// when the tally reaches the limit. The tally is kept per stage attempt and grows only
+/// by settled reviewers seen here, so a lead reused by a later attempt starts at none.
+/// An Aether answer that fails is returned, so the pump repeats the event.
 pub(in crate::executor) async fn reviewer_settled(
-    ctx: &DaemonContext,
-    lead: &AetherAgentId,
-    reviewer: &AetherAgentId,
-) -> Result<(), ArchonError> {
-    match count_and_notify(ctx, lead, reviewer).await {
-        Err(error) if transient(&error) => {
-            tracing::warn!(%lead, %reviewer, %error, "review rounds not counted; the next settled reviewer counts them again");
-            Ok(())
-        }
-        other => other,
-    }
-}
-
-async fn count_and_notify(
     ctx: &DaemonContext,
     lead: &AetherAgentId,
     reviewer: &AetherAgentId,
@@ -44,20 +32,28 @@ async fn count_and_notify(
         return Ok(());
     };
     let beneath = ctx.backend.descendants(lead).await?;
-    let children = settled_children(&beneath, lead);
-    let Some(settled) = children.iter().find(|c| c.agent == *reviewer) else {
+    let settled = settled_children(&beneath, lead);
+    let Some(child) = settled.into_iter().find(|c| c.agent == *reviewer) else {
         return Ok(());
     };
-    // Only a failing verdict can add a round: a pass or prose is no new round.
-    if !matches!(verdict_of(ctx, settled).await?, Some(v) if !v.pass) {
+    let Some(verdict) = verdict_of(ctx, child).await?.filter(|v| !v.pass) else {
+        return Ok(());
+    };
+    let mut tally = load(ctx, &stage.id).await?;
+    if tally.fails.iter().any(|f| f.agent == reviewer.as_str()) {
         return Ok(());
     }
-    let fails = failing_verdicts(ctx, &children).await?;
-    let rounds = rounds_of(&fails);
-    if rounds < REVIEW_ROUNDS_BEFORE_NOTICE || already_told(ctx, &stage.id).await? {
+    tally.fails.push(Fail {
+        agent: reviewer.to_string(),
+        head: verdict.head,
+        titles: verdict.titles,
+    });
+    save(ctx, &stage.id, &tally).await?;
+    let rounds = rounds_of(&tally.fails);
+    if rounds < REVIEW_ROUNDS_BEFORE_NOTICE || tally.told {
         return Ok(());
     }
-    notify_once(ctx, &stage, rounds, &fails).await
+    notify_once(ctx, &stage, rounds, tally).await
 }
 
 /// The direct children of `lead` that completed a task, in the order Aether lists them.
@@ -84,19 +80,36 @@ async fn verdict_of(
     Ok(verdict_in(outcome).ok())
 }
 
-async fn failing_verdicts(
-    ctx: &DaemonContext,
-    children: &[&Descendant],
-) -> Result<Vec<Verdict>, ArchonError> {
-    let mut fails = Vec::new();
-    for child in children {
-        if let Some(verdict) = verdict_of(ctx, child).await?
-            && !verdict.pass
-        {
-            fails.push(verdict);
-        }
-    }
-    Ok(fails)
+/// A failing verdict one reviewer returned in a stage attempt.
+#[derive(Debug, Serialize, Deserialize)]
+struct Fail {
+    agent: String,
+    head: String,
+    titles: Vec<String>,
+}
+
+/// The failing verdicts of one stage attempt, and whether the operator was told.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct Tally {
+    fails: Vec<Fail>,
+    told: bool,
+}
+
+fn tally_key(stage: &StageRunId) -> String {
+    format!("review_rounds:{stage}")
+}
+
+async fn load(ctx: &DaemonContext, stage: &StageRunId) -> Result<Tally, ArchonError> {
+    let key = tally_key(stage);
+    let Some(raw) = ctx.store.lock().await.kv_get(&key)? else {
+        return Ok(Tally::default());
+    };
+    serde_json::from_str(&raw).map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}")))
+}
+
+async fn save(ctx: &DaemonContext, stage: &StageRunId, tally: &Tally) -> Result<(), ArchonError> {
+    let raw = serde_json::to_string(tally)?;
+    ctx.store.lock().await.kv_set(&tally_key(stage), &raw)
 }
 
 /// Whether two commit ids, each possibly abbreviated, can name one commit.
@@ -104,23 +117,18 @@ fn same_commit(a: &str, b: &str) -> bool {
     a.starts_with(b) || b.starts_with(a)
 }
 
-/// The commits `fails` read, each once.
-fn failed_heads(fails: &[Verdict]) -> Vec<&str> {
+fn rounds_of(fails: &[Fail]) -> usize {
     let mut heads: Vec<&str> = Vec::new();
     for fail in fails {
         if !heads.iter().any(|head| same_commit(head, &fail.head)) {
             heads.push(&fail.head);
         }
     }
-    heads
+    heads.len()
 }
 
-fn rounds_of(fails: &[Verdict]) -> usize {
-    failed_heads(fails).len()
-}
-
-/// The titles of the findings of the last failing verdict, which read the latest round.
-fn latest_titles(fails: &[Verdict]) -> Vec<&str> {
+/// The titles of the findings of the last failing verdict's round, the latest one.
+fn latest_titles(fails: &[Fail]) -> Vec<&str> {
     let Some(last) = fails.last() else {
         return Vec::new();
     };
@@ -129,48 +137,29 @@ fn latest_titles(fails: &[Verdict]) -> Vec<&str> {
     titles.take(MAX_TITLES).collect()
 }
 
-fn told_key(stage: &StageRunId) -> String {
-    format!("review_rounds_told:{stage}")
-}
-
-async fn already_told(ctx: &DaemonContext, stage: &StageRunId) -> Result<bool, ArchonError> {
-    Ok(ctx.store.lock().await.kv_get(&told_key(stage))?.is_some())
-}
-
-/// Post the notice, marking the stage as told first so a second settling reviewer
-/// cannot post it again; the mark is dropped if the post fails.
+/// Post the notice, then mark the attempt as told. A crash between the two repeats the
+/// notice when the event is replayed: a repeat is preferred to a notice lost for good.
 async fn notify_once(
     ctx: &DaemonContext,
     stage: &StageRun,
     rounds: usize,
-    fails: &[Verdict],
+    mut tally: Tally,
 ) -> Result<(), ArchonError> {
     assert!(
-        rounds >= REVIEW_ROUNDS_BEFORE_NOTICE,
-        "a notice is for a long loop"
+        rounds >= REVIEW_ROUNDS_BEFORE_NOTICE && !tally.told,
+        "a notice is for a long loop and is posted once"
     );
-    let key = told_key(&stage.id);
-    let item = {
-        let mut store = ctx.store.lock().await;
-        if store.kv_get(&key)?.is_some() {
-            return Ok(());
-        }
-        store.kv_set(&key, &rounds.to_string())?;
-        store.run(&stage.run)?.item
-    };
-    let text = notice_text(&item.to_string(), stage, rounds, &latest_titles(fails));
-    let posted = crate::executor::notify(
-        ctx,
-        NotificationKind::Blocker,
-        &text,
-        Some(&item),
-        Some(&stage.run),
-    )
-    .await;
-    if posted.is_err() {
-        ctx.store.lock().await.kv_delete(&key)?;
-    }
-    posted
+    let item = ctx.store.lock().await.run(&stage.run)?.item;
+    let text = notice_text(
+        &item.to_string(),
+        stage,
+        rounds,
+        &latest_titles(&tally.fails),
+    );
+    let kind = NotificationKind::Blocker;
+    crate::executor::notify(ctx, kind, &text, Some(&item), Some(&stage.run)).await?;
+    tally.told = true;
+    save(ctx, &stage.id, &tally).await
 }
 
 fn notice_text(item: &str, stage: &StageRun, rounds: usize, titles: &[&str]) -> String {
@@ -190,16 +179,13 @@ fn notice_text(item: &str, stage: &StageRun, rounds: usize, titles: &[&str]) -> 
 mod tests {
     use super::*;
 
-    fn fail(head: &str, titles: &[&str]) -> Verdict {
-        Verdict {
-            pass: false,
+    fn fail(head: &str, titles: &[&str]) -> Fail {
+        Fail {
+            agent: "agt_x".into(),
             head: head.into(),
-            base: None,
-            findings: Some(titles.len()),
             titles: titles.iter().map(|t| (*t).to_owned()).collect(),
         }
     }
-
     #[test]
     fn parallel_reviewers_of_one_head_are_one_round() {
         let fails = [

@@ -13,10 +13,9 @@ This is attempt {{attempt}} of at most 3.
 
 ## The plan and the workers' reports
 
-The plan is `.archon/swarm-plan.json` on `{{branch}}`: each task's
-objective, owned paths, interfaces, acceptance commands and the plan's
-checks. An earlier attempt may have removed it; read it from history then:
-`git show "$(git log -1 --format=%H --diff-filter=A -- .archon/swarm-plan.json)":.archon/swarm-plan.json`.
+The plan is `.archon/swarm-plan.json` in `{{workspace}}`, an uncommitted
+file: each task's objective, owned paths, interfaces, acceptance commands
+and the plan's checks. It is not on `{{branch}}`; never commit it.
 The planner summarised it:
 
 {{previous.plan.summary}}
@@ -50,10 +49,8 @@ The workers report (claims to verify, not evidence):
 4. **Commit** the settled change on `{{branch}}` under the repository's
    own commit rules (Conventional Commits with a lowercase imperative
    subject where it states none), with the configured Git identity, never
-   overridden, and no model or tool attribution. Remove the plan in your
-   last commit (`git rm .archon/swarm-plan.json`) unless the repository
-   tracks `.archon/` on purpose: it is not part of the change. Do not
-   push.
+   overridden, and no model or tool attribution. Do not commit the plan
+   file, which is not part of the change. Do not push.
 5. **Review.** Delegate the reviewers your contract's Review on record
    section asks for, on the committed change, with `wait: false`: each a
    fresh leaf that shares your workspace and only reads, on a model other

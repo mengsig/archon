@@ -44,10 +44,9 @@ no product code.
 
 ## The plan file
 
-Write `.archon/swarm-plan.json`, then commit it on `{{branch}}`
-(`git add -f .archon/swarm-plan.json` and commit). The workers fork from
-that commit, and Archon reads the committed file, not the working tree.
-Finish with a clean `git status`.
+Write `.archon/swarm-plan.json` in the workspace and leave it
+uncommitted: never `git add` or commit it, so it stays out of the branch
+history. Archon reads the file and hides it from `git status`.
 
 ```json
 {

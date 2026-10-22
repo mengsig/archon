@@ -64,6 +64,13 @@ fn commit_file(tree: &Path, file: &str, text: &str) {
     git(tree, &["commit", "--quiet", "-m", &format!("write {file}")]);
 }
 
+/// The planner's file: written to the run worktree, never committed.
+fn write_plan(tree: &Path, text: &str) {
+    let file = tree.join(".archon/swarm-plan.json");
+    std::fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");
+    std::fs::write(file, text).expect("write");
+}
+
 fn worker_tree(run: &PipelineRun, task: &str) -> PathBuf {
     let root = run.team_root.as_ref().expect("a team run");
     root.join(format!("build-{task}"))
@@ -86,7 +93,7 @@ async fn planned(h: &Harness, title: &str, plan: Option<&Value>) -> (QueueItem, 
             Value::String(raw) => raw.clone(),
             plan => serde_json::to_string_pretty(plan).expect("json"),
         };
-        commit_file(&run.workspace, ".archon/swarm-plan.json", &text);
+        write_plan(&run.workspace, &text);
     }
     h.settle_running(|_| completed("split into tasks")).await;
     h.dispatch().await;
@@ -105,6 +112,22 @@ async fn running_workers(h: &Harness, attempt: u32) -> Vec<StageRun> {
     running
 }
 
+/// No commit of the run branch ever held the plan file.
+fn assert_no_plan_in_history(tree: &Path) {
+    let log = git(
+        tree,
+        &["log", "--format=%h %s", "--", ".archon/swarm-plan.json"],
+    );
+    assert_eq!(log, "", "the plan is in the branch history");
+}
+
+/// The merged workers' branches are gone; only the run branch is left.
+fn assert_no_role_branches(run: &PipelineRun) {
+    let pattern = format!("{}--*", run.branch);
+    let left = git(&run.workspace, &["branch", "--list", &pattern]);
+    assert_eq!(left, "", "role branches outlive their merge");
+}
+
 /// Each worker commits in its own paths on its own branch and completes.
 async fn build_round(h: &Harness, run: &PipelineRun, attempt: u32) {
     running_workers(h, attempt).await;
@@ -113,8 +136,8 @@ async fn build_round(h: &Harness, run: &PipelineRun, attempt: u32) {
         let branch = worker_branch(&run.branch, &run.id, task, attempt);
         assert_eq!(git(&tree, &["rev-parse", "--abbrev-ref", "HEAD"]), branch);
         assert!(
-            tree.join(".archon/swarm-plan.json").exists(),
-            "{task} forks from the plan"
+            !tree.join(".archon/swarm-plan.json").exists(),
+            "{task} forks from a branch without the plan"
         );
         commit_file(&tree, &format!("{task}/v{attempt}.txt"), "work\n");
     }
@@ -181,7 +204,7 @@ fn assert_worker_prompts(h: &Harness, run: &PipelineRun) {
 }
 
 #[tokio::test]
-async fn a_committed_plan_gives_each_task_a_worker_with_its_task_and_peers() {
+async fn a_written_plan_gives_each_task_a_worker_with_its_task_and_peers() {
     let h = Harness::new().await;
     let (_, run) = planned(&h, "split three ways", Some(&swarm_plan(&TASKS))).await;
     let workers = running_workers(&h, 1).await;
@@ -220,14 +243,7 @@ async fn a_restart_keeps_the_assigned_workers() {
     let (_, run) = planned(&h, "restart mid-swarm", Some(&swarm_plan(&TASKS))).await;
     running_workers(&h, 1).await;
     let created = h.backend.created();
-    git(
-        &run.workspace,
-        &["rm", "--quiet", ".archon/swarm-plan.json"],
-    );
-    git(
-        &run.workspace,
-        &["commit", "--quiet", "-m", "drop the plan"],
-    );
+    std::fs::remove_file(run.workspace.join(".archon/swarm-plan.json")).expect("drop the plan");
     h.restart();
     executor::recover(&h.ctx).await.expect("recover");
     h.dispatch().await;
@@ -250,6 +266,8 @@ async fn the_integrator_sends_tasks_back_at_most_twice() {
         );
         let merged = format!("cli/v{attempt}.txt");
         assert!(run.workspace.join(&merged).exists(), "{merged} is merged");
+        assert_no_plan_in_history(&run.workspace);
+        assert_no_role_branches(&run);
         h.settle_running(|_| redispatch("cli")).await;
         h.dispatch().await;
         if attempt < 3 {
@@ -280,7 +298,7 @@ async fn replan(h: &Harness, run: &PipelineRun, plan: Option<&Value>) {
     assert_eq!(running[0].stage_id, "plan");
     if let Some(plan) = plan {
         let text = serde_json::to_string_pretty(plan).expect("json");
-        commit_file(&run.workspace, ".archon/swarm-plan.json", &text);
+        write_plan(&run.workspace, &text);
     }
     h.settle_running(|_| completed("fixed the plan")).await;
     h.dispatch().await;
@@ -393,6 +411,28 @@ async fn a_planner_s_own_failure_is_never_sent_back() {
 }
 
 #[tokio::test]
+async fn a_committed_plan_is_refused() {
+    let h = Harness::new().await;
+    let item = h
+        .enqueue_in("swarm", "plan committed", swarm_model_plan())
+        .await
+        .expect("the swarm built-in enqueues");
+    h.dispatch().await;
+    let run = h.run(&item.id).await;
+    let text = serde_json::to_string_pretty(&swarm_plan(&TASKS)).expect("json");
+    commit_file(&run.workspace, ".archon/swarm-plan.json", &text);
+    h.settle_running(|_| completed("split into tasks")).await;
+    h.dispatch().await;
+    let sent = h.backend.requests().pop().expect("the planner again");
+    assert!(
+        sent.objective
+            .contains("it committed `.archon/swarm-plan.json`"),
+        "{}",
+        sent.objective
+    );
+}
+
+#[tokio::test]
 async fn an_invalid_or_missing_plan_fails_the_plan_stage_with_every_problem() {
     let h = Harness::new().await;
     let mut overlapping = swarm_plan(&TASKS);
@@ -406,7 +446,7 @@ async fn an_invalid_or_missing_plan_fails_the_plan_stage_with_every_problem() {
     );
     let solo = swarm_plan(&["solo"]);
     plan_refusal(&h, Some(&solo), "a plan has 2 to 8 tasks, found 1").await;
-    let missing = "it committed no `.archon/swarm-plan.json` on the run branch";
+    let missing = "it wrote no `.archon/swarm-plan.json` in the run worktree";
     plan_refusal(&h, None, missing).await;
     let blank = Value::String(" \n".into());
     plan_refusal(&h, Some(&blank), "its `.archon/swarm-plan.json` is blank").await;

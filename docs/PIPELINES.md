@@ -715,7 +715,10 @@ roles' branches onto the run branch. The run still ships one pull request.
   when its loops are used up, the run fails. Roles merged before the
   conflict stay on the run branch. The feedback of a conflict or a refusal
   lists every role's branch, and whether it was merged, since the next
-  attempt forks afresh from the run branch.
+  attempt forks afresh from the run branch. Once a merge succeeded and is
+  recorded, Archon deletes every role's local branch (a role worktree still
+  on it is detached, and is reused by the next attempt); role branches are
+  never pushed.
 - **Budget.** Each role's agent gets an even share of what is left of the
   item's budget when that agent is reserved: the remainder divided by the
   number of roles. A role's agent replaced after an infrastructure failure
@@ -1146,15 +1149,16 @@ them in parallel; a strong lead integrates, has the change reviewed and
 hands it in for shipping. For a change one author can make, or whose parts
 are coupled, `direct` or `adaptive` costs less.
 
-1. `plan` (work, tier `strong`) researches the change and commits a plan
-   at `.archon/swarm-plan.json` on the run branch (see "Swarm plans").
-   When it passes, archond reads the committed file, checks it and gives
+1. `plan` (work, tier `strong`) researches the change and writes a plan
+   to `.archon/swarm-plan.json` in the run worktree and leaves it
+   uncommitted (see "Swarm plans"). When it passes, archond reads the
+   file, hides it from git through `info/exclude`, refuses a plan the
+   planner committed, checks it and gives
    `build` one role per task. A plan it refuses fails the stage with
    every problem listed. A change that does not split is escalated
    instead, recommending `adaptive` or `direct`.
 2. `build` (team, `roles_from = "plan"`, tier `fast`) runs one worker per
-   task, each in its own worktree and branch forked from the plan's
-   commit. A worker's prompt holds its own task, the paths it owns, the
+   task, each in its own worktree and branch forked from the run branch. A worker's prompt holds its own task, the paths it owns, the
    interfaces it provides and consumes, every interface of the plan and
    its acceptance commands, never the brief or another task's objective.
    Archon sends each worker the team roster so that peers can settle an
@@ -1167,8 +1171,7 @@ are coupled, `direct` or `adaptive` costs less.
    the integrator fails with `REDISPATCH: <task ids>` and what to fix,
    `on_fail` returns to `build`, and the workers not named finish at
    once. That happens at most twice; on the third attempt the integrator
-   fixes what remains itself or fails. It removes the plan file in its
-   last commit, delegates the reviewers the item's review level asks for
+   fixes what remains itself or fails. It never commits the plan file, delegates the reviewers the item's review level asks for
    (`[pipeline.review] level = "standard"` on `integrate`), and returns
    the ship record; archond ships it.
 

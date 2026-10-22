@@ -1,6 +1,6 @@
 //! Swarm plans (docs/PIPELINES.md "Swarm plans"): the split a planner stage
-//! commits for the team stage that names it in `roles_from`. The daemon
-//! reads the file; this module parses it, enforces its rules and renders
+//! keeps uncommitted for the team stage that names it in `roles_from`. The
+//! daemon reads the file; this module parses it, enforces its rules and renders
 //! the prompt each task's worker gets. No I/O.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::reshape;
 use crate::spec::{MAX_ROLE_LEN, MAX_ROLES, MIN_ROLES, PipelineSpec, valid_role};
 
-/// Where the planner commits its plan, relative to the run worktree.
+/// Where the planner writes its plan, uncommitted, relative to the run worktree.
 pub const PLAN_FILE: &str = ".archon/swarm-plan.json";
 pub const PLAN_VERSION: u32 = 1;
 pub const MAX_PLAN_BYTES: usize = 64 * 1024;
@@ -115,12 +115,13 @@ pub fn planner_limits(cap: u32) -> String {
     )
 }
 
-/// What a planner is told when Archon refused the plan it committed.
+/// What a planner is told when Archon refused the plan it wrote.
 pub fn correction(refusal: &str, attempt: usize) -> String {
     format!(
         "\n\n## Your plan was refused (correction {attempt} of {MAX_CORRECTIONS})\n\n\
-         You committed `{PLAN_FILE}`, and Archon refused it. Fix the file in this \
-         workspace, check it, commit it on the same branch and finish. Change nothing else.\n\n\
+         Archon refused your `{PLAN_FILE}`. Fix the file in this workspace, check it, \
+         leave it uncommitted (if you committed it, `git rm --cached` it and drop that \
+         commit) and finish. Change nothing else.\n\n\
          {refusal}\n"
     )
 }

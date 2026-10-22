@@ -303,12 +303,19 @@ fn only_a_team_waiting_for_a_plan_takes_assigned_roles() {
 }
 
 #[test]
-fn the_integrator_can_read_the_plan_after_an_earlier_attempt_removed_it() {
-    let prompt = include_str!("../../../pipelines/swarm/integrate.md");
-    assert!(prompt.contains("git rm .archon/swarm-plan.json"));
+fn the_prompts_keep_the_plan_out_of_the_branch() {
+    let plan = include_str!("../../../pipelines/swarm/plan.md");
+    let integrate = include_str!("../../../pipelines/swarm/integrate.md");
+    assert!(plan.contains("leave it\nuncommitted"), "{plan}");
     assert!(
-        prompt.contains("--diff-filter=A -- .archon/swarm-plan.json"),
-        "a retry must be told how to recover the removed plan from history"
+        !plan.contains("git add -f"),
+        "the planner must not commit it"
+    );
+    assert!(integrate.contains("never commit it"), "{integrate}");
+    assert!(!integrate.contains("git rm .archon/swarm-plan.json"));
+    assert!(
+        !integrate.contains("git show"),
+        "the plan is not in history"
     );
 }
 

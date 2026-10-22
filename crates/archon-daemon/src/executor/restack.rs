@@ -14,6 +14,7 @@ use crate::worktree::shadow::Shadow;
 use crate::worktree::stack::{self, Identity, Merge};
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId};
+use archon_core::notify::NotificationKind;
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::{Repo, ShipMode};
 use archon_core::run::PipelineRun;
@@ -113,6 +114,7 @@ pub(super) async fn parents(
             repository_base: None,
             merged: false,
             conflict: None,
+            needs_attention: None,
         });
     }
     assert!(parents.len() <= item.dependencies.len());
@@ -261,14 +263,45 @@ fn merge_branch(
 ) -> Result<Option<String>, ArchonError> {
     assert!(is_plain_branch(branch), "a run branch");
     assert!(stack::is_commit_id(sha), "a parent commit");
-    match stack::merge(shadow, repo, branch, sha, identity)? {
-        Merge::Contained => Ok(None),
-        Merge::Merged { from, to } => {
-            stack::advance(shadow, repo, worktrees, branch, &from, &to)?;
-            Ok(None)
-        }
+    match merge_and_advance(shadow, repo, worktrees, branch, sha, identity)? {
         Merge::Conflict(files) => Ok(Some(files)),
+        Merge::Contained | Merge::Merged { .. } => Ok(None),
     }
+}
+
+/// [`stack::merge`], with the branch and its worktree moved onto a merge commit.
+fn merge_and_advance(
+    shadow: &Shadow,
+    repo: &Path,
+    worktrees: &Path,
+    branch: &str,
+    sha: &str,
+    identity: &Identity,
+) -> Result<Merge, ArchonError> {
+    let merge = stack::merge(shadow, repo, branch, sha, identity)?;
+    if let Merge::Merged { from, to } = &merge {
+        stack::advance(shadow, repo, worktrees, branch, from, to)?;
+    }
+    Ok(merge)
+}
+
+/// Fast-forward the local `branch` to `head`, the commit its pull request has
+/// on GitHub, when it is behind it: commits made outside Archon are kept.
+fn fast_forward_to_head(
+    shadow: &Shadow,
+    repo: &Path,
+    worktrees: &Path,
+    branch: &str,
+    head: &str,
+) -> Result<(), ArchonError> {
+    assert!(is_plain_branch(branch), "a run branch");
+    assert!(stack::is_commit_id(head), "a pull request head");
+    stack::fetch(shadow, repo, branch, head)?;
+    let local = stack::sha(repo, branch)?;
+    if local == head || !stack::contains(repo, &local, head)? {
+        return Ok(());
+    }
+    stack::advance(shadow, repo, worktrees, branch, &local, head)
 }
 
 /// Merge the parents a fresh worktree did not fork from into its branch;
@@ -357,7 +390,8 @@ async fn reconcile_item(
         },
         false => None,
     };
-    update_parents(ctx, &repo, &item, &run, parents, pass).await?;
+    let child_head = pr.as_ref().and_then(|pr| pr.head_ref_oid.clone());
+    update_parents(ctx, (&repo, &item, &run), child_head, parents, pass).await?;
     if let Some(pr) = pr {
         retarget(ctx, &repo, &run, pr).await?;
     }
@@ -366,9 +400,8 @@ async fn reconcile_item(
 
 async fn update_parents(
     ctx: &DaemonContext,
-    repo: &Repo,
-    item: &QueueItem,
-    run: &PipelineRun,
+    (repo, item, run): (&Repo, &QueueItem, &PipelineRun),
+    child_head: Option<String>,
     parents: Vec<StackParent>,
     pass: &mut Pass,
 ) -> Result<(), ArchonError> {
@@ -392,8 +425,22 @@ async fn update_parents(
             continue;
         }
         let sha = parent_sha(ctx, repo, &parent.parent_branch, head).await?;
+        let rejected_at_this_head = parent
+            .needs_attention
+            .as_deref()
+            .is_some_and(|seen| seen == child_head.as_deref().unwrap_or_default());
+        if rejected_at_this_head {
+            continue;
+        }
         if sha != parent.parent_sha || parent.conflict.is_some() {
-            merge_parent(ctx, repo, item, run, &mut parent, &sha).await?;
+            merge_parent(
+                ctx,
+                (repo, item, run),
+                child_head.as_deref(),
+                &mut parent,
+                &sha,
+            )
+            .await?;
         }
     }
     Ok(())
@@ -401,9 +448,8 @@ async fn update_parents(
 
 async fn merge_parent(
     ctx: &DaemonContext,
-    repo: &Repo,
-    item: &QueueItem,
-    run: &PipelineRun,
+    (repo, item, run): (&Repo, &QueueItem, &PipelineRun),
+    child_head: Option<&str>,
     parent: &mut StackParent,
     sha: &str,
 ) -> Result<(), ArchonError> {
@@ -423,36 +469,70 @@ async fn merge_parent(
         };
         mark
     };
-    let conflict = merge_into_branch(ctx, repo, run, sha, mark).await?;
+    let restacked = merge_into_branch(ctx, repo, run, (sha, child_head), mark).await?;
     assert_eq!(parent.item, item.id);
     assert_ne!(parent.parent_item, item.id);
-    parent.conflict = conflict;
-    if let Some(conflict) = &parent.conflict {
-        ctx.store
-            .lock()
-            .await
-            .enqueue_stack_fix(item, run, parent, sha, conflict)?;
-    } else {
-        parent.parent_sha = sha.to_owned();
+    parent.conflict = None;
+    parent.needs_attention = None;
+    match &restacked {
+        Restacked::Conflict(conflict) => {
+            parent.conflict = Some(conflict.clone());
+            let mut store = ctx.store.lock().await;
+            store.enqueue_stack_fix(item, run, parent, sha, conflict)?;
+        }
+        Restacked::Rejected(said) => {
+            parent.needs_attention = Some(child_head.unwrap_or_default().to_owned());
+            tell_rejected(ctx, item, run, said).await?;
+        }
+        Restacked::Done => parent.parent_sha = sha.to_owned(),
     }
     ctx.store.lock().await.save_stack_parent(parent)?;
     Ok(())
 }
 
-/// Merge `sha` into the run branch, and in `pr` mode push the branch once
-/// it merged: the conflicting files when it does not.
+/// Tell the operator `origin` refused the restacked branch; this is said once
+/// per pull request head, as the parent is left alone until it changes.
+async fn tell_rejected(
+    ctx: &DaemonContext,
+    item: &QueueItem,
+    run: &PipelineRun,
+    said: &str,
+) -> Result<(), ArchonError> {
+    let text = format!(
+        "Restacking item {} merged the moved parent into `{b}`, but `origin` rejected the push \
+         as not a fast-forward ({said}): the pull request has commits Archon does not have. \
+         Archon never force-pushes and leaves `{b}` alone until its head on GitHub changes: \
+         merge `origin/{b}` into the branch by hand, or push it yourself",
+        item.id,
+        b = run.branch
+    );
+    super::finish::notify(ctx, NotificationKind::Blocker, &text, Some(&item.id), None).await
+}
+
+/// How restacking a branch onto a moved parent ended.
+enum Restacked {
+    /// The branch holds the parent, pushed where it needed to be.
+    Done,
+    Conflict(String),
+    /// `origin` refused the push as not a fast-forward.
+    Rejected(String),
+}
+
+/// Fast-forward the run branch to the pull request's head `child_head`, merge
+/// `sha` into it, and in `pr` mode push it unless GitHub already has `sha`.
 async fn merge_into_branch(
     ctx: &DaemonContext,
     repo: &Repo,
     run: &PipelineRun,
-    sha: &str,
+    (sha, child_head): (&str, Option<&str>),
     mark: crate::gc::Mark,
-) -> Result<Option<String>, ArchonError> {
+) -> Result<Restacked, ArchonError> {
     assert!(run.workspace.starts_with(&ctx.paths.worktrees));
     assert!(is_plain_branch(&run.branch), "a run branch");
     let identity = RepoIdentity::merger(repo_identity::of(ctx, repo).await?.as_ref());
     let (data_dir, worktrees) = (ctx.paths.data_dir.clone(), ctx.paths.worktrees.clone());
     let (path, branch, sha) = (repo.path.clone(), run.branch.clone(), sha.to_owned());
+    let child_head = child_head.map(str::to_owned);
     let push = repo.ship == ShipMode::Pr;
     let token = match push {
         true => gh::token(&ctx.config.github.binary, repo).await?,
@@ -461,24 +541,42 @@ async fn merge_into_branch(
     tokio::task::spawn_blocking(move || {
         let _mark = mark;
         let shadow = Shadow::of(&data_dir, &path)?;
-        let conflict = merge_branch(&shadow, &path, &worktrees, &branch, &sha, &identity)?;
-        if conflict.is_none() && push {
-            push_branch(&shadow, &path, &branch, token.as_ref())?;
+        if let Some(head) = &child_head {
+            fast_forward_to_head(&shadow, &path, &worktrees, &branch, head)?;
         }
-        Ok(conflict)
+        let merge = merge_and_advance(&shadow, &path, &worktrees, &branch, &sha, &identity)?;
+        let remote_has_parent = match &child_head {
+            Some(head) => stack::contains(&path, &sha, head)?,
+            None => merge == Merge::Contained,
+        };
+        match merge {
+            Merge::Conflict(files) => Ok(Restacked::Conflict(files)),
+            _ if !push || remote_has_parent => Ok(Restacked::Done),
+            _ => match push_branch(&shadow, &path, &branch, token.as_ref())? {
+                Pushed::Accepted => Ok(Restacked::Done),
+                Pushed::Rejected(said) => Ok(Restacked::Rejected(said)),
+            },
+        }
     })
     .await
     .map_err(|e| ArchonError::io("restack merge task", std::io::Error::other(e)))?
 }
 
+/// What `origin` made of a push.
+enum Pushed {
+    Accepted,
+    Rejected(String),
+}
+
 /// Push `branch` of `repo` to `origin` as it stands, never forced, as
-/// `token`'s login when given.
+/// `token`'s login when given. A non-fast-forward refusal is an outcome; any
+/// other failure is an error.
 fn push_branch(
     shadow: &Shadow,
     repo: &Path,
     branch: &str,
     token: Option<&Token>,
-) -> Result<(), ArchonError> {
+) -> Result<Pushed, ArchonError> {
     let url = match token {
         Some(token) => gh_account::push_url(repo, token.user())?
             .map_err(|why| ArchonError::Invalid(format!("BLOCKED: {why}")))?,
@@ -490,17 +588,24 @@ fn push_branch(
     };
     let commit = stack::sha(repo, branch)?;
     let pushed = stack::push(shadow, &url, branch, &commit, token)?;
-    match (pushed.status.success(), token) {
-        (true, _) => {}
-        (false, None) => return Err(pushed.failure()),
-        (false, Some(token)) => {
-            let said = token.redact(&pushed.stderr_text());
-            let what = format!("git push of the restacked `{branch}` as {}", token.user());
-            return Err(ArchonError::io(what, std::io::Error::other(said)));
+    if !pushed.status.success() {
+        let refused = pushed.stdout_text()?.contains("[rejected]");
+        if refused {
+            let said = pushed.stderr_text();
+            let said = token.map_or(said.clone(), |t| t.redact(&said));
+            return Ok(Pushed::Rejected(said.trim().to_owned()));
         }
+        return Err(match token {
+            None => pushed.failure(),
+            Some(token) => {
+                let said = token.redact(&pushed.stderr_text());
+                let what = format!("git push of the restacked `{branch}` as {}", token.user());
+                ArchonError::io(what, std::io::Error::other(said))
+            }
+        });
     }
     assert!(stack::is_commit_id(&commit), "the pushed commit");
-    Ok(())
+    Ok(Pushed::Accepted)
 }
 
 async fn fix_pending(

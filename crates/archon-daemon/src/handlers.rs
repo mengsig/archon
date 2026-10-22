@@ -2,6 +2,7 @@
 //! operator-channel requests call into `supervisor`, `feed` and `reports`.
 
 mod autonomy;
+mod budget_cost;
 mod control;
 mod cost;
 mod initiatives;

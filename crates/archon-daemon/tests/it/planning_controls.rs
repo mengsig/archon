@@ -361,3 +361,122 @@ async fn a_running_runs_timeout_steer_applies_to_the_next_spawn() {
         );
     }
 }
+
+const BLIND_REVIEWER: &str = "codex/gpt-6-luna";
+
+fn blind_reviewers() -> ModelPlanDraft {
+    let mut plan = draft("implement", None);
+    plan.0.insert(
+        "implement.review".into(),
+        vec![ModelChoiceDraft {
+            model: Some(BLIND_REVIEWER.parse().unwrap()),
+            effort: Some(Effort::Low),
+            ..Default::default()
+        }],
+    );
+    plan
+}
+
+fn budgeted(mut request: Request, plan: Option<ModelPlanDraft>) -> Request {
+    let Request::Enqueue(inner) = &mut request else {
+        unreachable!()
+    };
+    inner.budget_usd = Some(1.0);
+    if let Some(plan) = plan {
+        inner.model_plan = plan;
+    }
+    request
+}
+
+fn assert_names_the_fixes(message: &str) {
+    assert!(message.contains(BLIND_REVIEWER), "{message}");
+    assert!(message.contains("reports no dollar cost"), "{message}");
+    assert!(message.contains("drop the item budget"), "{message}");
+    assert!(message.contains("claude-code reviewer"), "{message}");
+}
+
+#[tokio::test]
+async fn enqueue_refuses_a_budget_with_a_reviewer_that_reports_no_cost() {
+    let h = Harness::new().await;
+    let message = refusal(&h, budgeted(reviewer_enqueue(), Some(blind_reviewers()))).await;
+    assert_names_the_fixes(&message);
+    item(&h, reviewer_enqueue()).await;
+    let mut unbudgeted = reviewer_enqueue();
+    if let Request::Enqueue(request) = &mut unbudgeted {
+        request.model_plan = blind_reviewers();
+    }
+    item(&h, unbudgeted).await;
+    item(&h, budgeted(reviewer_enqueue(), None)).await;
+}
+
+#[tokio::test]
+async fn update_refuses_a_budget_on_an_item_whose_reviewer_reports_no_cost() {
+    let h = Harness::new().await;
+    let Request::Enqueue(mut request) = reviewer_enqueue() else {
+        unreachable!()
+    };
+    request.model_plan = blind_reviewers();
+    let queued = item(&h, Request::Enqueue(request)).await;
+    let update = |patch| Request::UpdateItem {
+        item: queued.id.clone(),
+        patch,
+    };
+    let message = refusal(
+        &h,
+        update(ItemPatch {
+            budget_usd: Some(1.0),
+            ..Default::default()
+        }),
+    )
+    .await;
+    assert_names_the_fixes(&message);
+    assert_eq!(h.item(&queued.id).await.budget_usd, None);
+}
+
+#[tokio::test]
+async fn update_refuses_a_blind_reviewer_plan_on_a_budgeted_item() {
+    let h = Harness::new().await;
+    let queued = item(&h, budgeted(reviewer_enqueue(), None)).await;
+    let message = refusal(
+        &h,
+        Request::UpdateItem {
+            item: queued.id.clone(),
+            patch: ItemPatch {
+                model_plan: Some(blind_reviewers()),
+                ..Default::default()
+            },
+        },
+    )
+    .await;
+    assert_names_the_fixes(&message);
+    let kept = h.item(&queued.id).await;
+    assert_eq!(
+        kept.model_plan.0["implement.review"][0].model.to_string(),
+        REVIEWER
+    );
+}
+
+#[tokio::test]
+async fn retry_refuses_a_new_blind_reviewer_plan_on_a_budgeted_item() {
+    let h = Harness::new().await;
+    let queued = item(&h, budgeted(reviewer_enqueue(), None)).await;
+    h.cli(Request::CancelItem {
+        item: queued.id.clone(),
+        reason: None,
+    })
+    .await
+    .unwrap();
+    let message = refusal(
+        &h,
+        Request::RetryItem {
+            item: queued.id.clone(),
+            model_plan: Some(blind_reviewers()),
+            model_reasons: None,
+            fresh: false,
+            brief_append: None,
+            stage_timeouts: Default::default(),
+        },
+    )
+    .await;
+    assert_names_the_fixes(&message);
+}

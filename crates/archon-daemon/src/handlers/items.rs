@@ -15,6 +15,7 @@ use archon_core::repo::Repo;
 use archon_pipeline::PipelineSpec;
 use archon_pipeline::spec::MIN_ROLES;
 
+use super::budget_cost::{Budgeted, check_budget_models};
 use super::revise::{self, Ceiling};
 use crate::context::DaemonContext;
 use crate::executor::operator_merge;
@@ -53,6 +54,12 @@ pub(super) async fn enqueue(
     check_stage_timeouts(ctx, &resolved.spec, &req.stage_timeouts)?;
     let plan = filled_plan(ctx, route, &env, &resolved.base, &resolved.spec, given).await?;
     check_plan(ctx, &env, &resolved.spec, &plan)?;
+    let budgeted = Budgeted {
+        budget_usd: req.budget_usd,
+        review: resolved.autonomy.review,
+        repo: env.repo.as_ref(),
+    };
+    check_budget_models(ctx, &env, &id, &resolved.spec, (&plan, &budgeted))?;
     check_reasons(&resolved.spec, req.model_reasons.as_ref())?;
     let key = req
         .idempotency_key
@@ -352,7 +359,8 @@ pub(super) async fn update_within(
     }
     let replaces_plan = patch.model_plan.is_some();
     let mut plan = None;
-    if replaces_plan || patch.model_reasons.is_some() || !patch.stage_timeouts.is_empty() {
+    let budget_changes = patch.budget_usd.is_some() || replaces_plan;
+    if budget_changes || patch.model_reasons.is_some() || !patch.stage_timeouts.is_empty() {
         let (env, base, spec) = item_pipeline(ctx, &current).await?;
         if let Some(draft) = patch.model_plan.take() {
             let route = ItemRoute::new(&current);
@@ -361,6 +369,15 @@ pub(super) async fn update_within(
             let filled = filled_plan(ctx, route, &env, &base, &spec, given).await?;
             check_plan(ctx, &env, &spec, &filled)?;
             plan = Some(filled);
+        }
+        if budget_changes {
+            let budgeted = Budgeted {
+                budget_usd: patch.budget_usd.or(current.budget_usd),
+                review: current.autonomy.review,
+                repo: env.repo.as_ref(),
+            };
+            let checked = plan.as_ref().unwrap_or(&current.model_plan);
+            check_budget_models(ctx, &env, id, &spec, (checked, &budgeted))?;
         }
         check_reasons(&spec, patch.model_reasons.as_ref())?;
         check_stage_timeouts(ctx, &spec, &patch.stage_timeouts)?;
@@ -565,6 +582,14 @@ pub(super) async fn retry(
     };
     let plan = filled_plan(ctx, route, &env, &base, &spec, plan).await?;
     check_plan(ctx, &env, &spec, &plan)?;
+    if replaces_plan {
+        let budgeted = Budgeted {
+            budget_usd: current.budget_usd,
+            review: current.autonomy.review,
+            repo: env.repo.as_ref(),
+        };
+        check_budget_models(ctx, &env, id, &spec, (&plan, &budgeted))?;
+    }
     check_reasons(&spec, retry.model_reasons.as_ref())?;
     check_stage_timeouts(ctx, &spec, &retry.stage_timeouts)?;
     check_runs_here(ctx, &env, &spec).await?;

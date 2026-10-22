@@ -2,12 +2,13 @@
 //! decides it but deleting nothing.
 
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use archon_core::catalog::is_snapshot_of;
 use archon_core::protocol::{GcReport, WouldDelete};
 
 use super::plan::{Action, Candidate, ItemPlan, Kind};
-use super::sweep::{is_inside, is_listed_worktree, unremovable};
+use super::sweep::{self, Verdict, is_inside, is_listed_worktree, unremovable};
 use super::{Policy, Roots, cache};
 
 /// The report of a pass over `plans` that removes nothing: `removed` holds
@@ -41,13 +42,15 @@ fn preview_candidate(candidate: &Candidate, roots: &Roots, policy: &Policy, repo
             return;
         }
     };
-    if !matches!(candidate.kind, Kind::Worktree) {
-        if candidate.action == Action::Remove {
-            report.removed.push(path);
+    let outcome = match &candidate.kind {
+        Kind::Worktree => worktree_outcome(candidate, &path, roots, policy),
+        Kind::KeptWorktree { within } => {
+            kept_outcome(&path, within, candidate.action, &policy.cache_dirs)
         }
-        return;
-    }
-    match worktree_outcome(candidate, &path, roots, policy) {
+        Kind::KeptGitDir { within } => kept_outcome(&path, within, candidate.action, &[]),
+        Kind::Snapshot { .. } => snapshot_outcome(candidate, &path, roots),
+    };
+    match outcome {
         Ok(Outcome::Remove) => report.removed.push(path),
         Ok(Outcome::Delete(paths)) if paths.is_empty() => {}
         Ok(Outcome::Delete(paths)) => report.would_delete.push(WouldDelete { path, paths }),
@@ -61,6 +64,63 @@ fn preview_candidate(candidate: &Candidate, roots: &Roots, policy: &Policy, repo
             report.skipped.push((path, why));
         }
         Err(why) => report.failed.push((path, why)),
+    }
+}
+
+/// A set-aside tree runs no git: it goes whole, or only its configured
+/// `cache_dirs` that are real directories go, as [`cache::reclaim_kept`] does.
+fn kept_outcome(
+    path: &Path,
+    within: &Path,
+    action: Action,
+    cache_dirs: &[PathBuf],
+) -> Result<Outcome, String> {
+    if let Some(Verdict::Skipped(why)) = sweep::check_kept(path, within) {
+        return Ok(Outcome::Skip {
+            why,
+            caches: Vec::new(),
+        });
+    }
+    if action == Action::Remove {
+        return Ok(Outcome::Remove);
+    }
+    let real_dirs = cache_dirs.iter().filter(|dir| {
+        let at = path.join(dir);
+        let is_dir = std::fs::symlink_metadata(&at).is_ok_and(|m| m.file_type().is_dir());
+        is_dir && at.canonicalize().ok().as_ref() == Some(&at)
+    });
+    Ok(Outcome::Delete(
+        real_dirs.map(|dir| format!("{}/", dir.display())).collect(),
+    ))
+}
+
+/// A snapshot goes whole once it is `item`'s own, inside the worktree root,
+/// and listed by its repository, as [`super::snapshot::remove`] checks.
+fn snapshot_outcome(candidate: &Candidate, path: &Path, roots: &Roots) -> Result<Outcome, String> {
+    let Kind::Snapshot { item } = &candidate.kind else {
+        unreachable!("only snapshots come here");
+    };
+    let skip = |why: String| {
+        Ok(Outcome::Skip {
+            why,
+            caches: Vec::new(),
+        })
+    };
+    let real_dir =
+        std::fs::symlink_metadata(&candidate.workspace).is_ok_and(|m| m.file_type().is_dir());
+    if !real_dir || !is_snapshot_of(path, item) || !is_inside(path, &roots.worktrees) {
+        return skip(format!(
+            "not the snapshot directory of {item} inside {}",
+            roots.worktrees.display()
+        ));
+    }
+    let Some(repo) = &candidate.repo else {
+        return skip("its repository is no longer registered and its `.git` names none".into());
+    };
+    match is_listed_worktree(repo, path) {
+        Ok(true) => Ok(Outcome::Remove),
+        Ok(false) => skip(format!("not a worktree of {}", repo.display())),
+        Err(e) => Err(e.to_string()),
     }
 }
 

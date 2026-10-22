@@ -321,6 +321,37 @@ fn a_set_aside_worktree_loses_only_its_real_cache_dirs() {
     assert!(elsewhere.exists(), "a symlinked cache dir is not followed");
 }
 
+#[test]
+fn a_preview_of_a_set_aside_worktree_lists_its_cache_dirs_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().canonicalize().unwrap();
+    let within = base.join("sets");
+    let kept = within.join("role");
+    build_in(&kept, 4096);
+    let found = ItemPlan {
+        item: QueueItemId::new(),
+        updated_at: archon_core::now(),
+        runs: 0,
+        found: Found {
+            candidates: vec![Candidate {
+                workspace: kept.clone(),
+                repo: None,
+                kind: Kind::KeptWorktree { within },
+                action: Action::Reclaim,
+            }],
+            ..Found::default()
+        },
+    };
+    let policy = Policy {
+        cache_dirs: vec![PathBuf::from("target")],
+        ..policy(false)
+    };
+    let report = preview::preview(&[found], &roots_in(&base), &policy);
+    assert_eq!(report.would_delete.len(), 1, "{report:?}");
+    assert_eq!(report.would_delete[0].paths, ["target/"]);
+    assert!(kept.join("target/debug/app").exists(), "nothing deleted");
+}
+
 /// A finished team run of `qi_1`: its run worktree, a role's clean
 /// worktree, a dirty one, a worktree set aside and its git directory,
 /// beside the set-aside git directory of a live item `qi_2`.

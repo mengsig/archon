@@ -59,7 +59,9 @@ use crate::steer::Steer;
 /// 17: a repository's `merge_waive_checks`, which an older archond would drop.
 /// 18: `say` may carry `images`, which an older archond would drop; a
 /// text-only `say` is the frame it always was.
-pub const PROTOCOL_VERSION: u32 = 18;
+/// 19: `gc` may ask for a `preview`, which an older archond would ignore and
+/// collect for real.
+pub const PROTOCOL_VERSION: u32 = 19;
 
 /// Said beside an item whose `budget_usd` was set while budgets are off.
 pub const BUDGETS_OFF_NOTE: &str = "Dollar budgets are globally off ([limits] budgets_enabled = \

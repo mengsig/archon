@@ -203,7 +203,7 @@ fn reclaim_kept(path: &Path, within: &Path, policy: &Policy) -> Verdict {
 
 /// `None` when the canonical `path` is strictly inside the real directory
 /// `within`; else the skip that says why not.
-fn check_kept(path: &Path, within: &Path) -> Option<Verdict> {
+pub(super) fn check_kept(path: &Path, within: &Path) -> Option<Verdict> {
     assert!(path.is_absolute(), "canonical paths are absolute");
     let real_dir = std::fs::symlink_metadata(within).is_ok_and(|m| m.file_type().is_dir());
     let inside = within

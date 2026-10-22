@@ -73,6 +73,7 @@ pub(super) async fn finish_run(
     crate::feed::publish(ctx, finished.answers);
     crate::reports::close_stale_questions(ctx).await?;
     let pr_url = pr_url(ctx, &run).await?;
+    delete_role_branches(ctx, &item, &run).await?;
     announce(ctx, &item, Some(&run), blocker, pr_url).await?;
     let mut follow = FollowUp::poke();
     follow.stop.push(run.id.clone());
@@ -80,6 +81,22 @@ pub(super) async fn finish_run(
     follow.release_builds.extend(item_build(ctx, &item).await?);
     follow.discard.push(run.id.clone());
     Ok(follow)
+}
+
+/// A team run's role branches that reached its run branch go with the run,
+/// whether or not the cleanup after their merge ran.
+async fn delete_role_branches(
+    ctx: &DaemonContext,
+    item: &QueueItem,
+    run: &PipelineRun,
+) -> Result<(), ArchonError> {
+    assert!(run.state.is_terminal(), "only a finished run is cleaned up");
+    let (Some(_), Some(repo_id)) = (&run.team_root, &item.repo) else {
+        return Ok(());
+    };
+    let repo = ctx.store.lock().await.repo(&resolve::repo_ref(repo_id))?;
+    super::team::delete_branches(ctx, &item.id, &run.id, repo.path, run.branch.clone()).await;
+    Ok(())
 }
 
 /// The build directory a settled item leaves behind, if it has a repository,

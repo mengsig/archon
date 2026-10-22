@@ -148,12 +148,23 @@ fn uncommitted_plan(workspace: &Path) -> Result<String, String> {
             swarm::MAX_PLAN_BYTES
         ));
     }
-    let tracked = worktree::git(workspace, &["ls-files", "--", PLAN_FILE])
-        .map_err(|e| format!("its plan's status is unread: {e}"))?;
-    if !tracked.is_empty() {
+    let added = worktree::git(
+        workspace,
+        &[
+            "log",
+            "-1",
+            "--format=%h",
+            "--diff-filter=A",
+            "HEAD",
+            "--",
+            PLAN_FILE,
+        ],
+    )
+    .map_err(|e| format!("its plan's history is unread: {e}"))?;
+    if !added.is_empty() {
         return Err(format!(
-            "it committed `{PLAN_FILE}`; keep the plan uncommitted so it never enters the \
-             branch history (`git rm --cached {PLAN_FILE}` and amend or remove the commit)"
+            "it committed `{PLAN_FILE}` (in {added}); keep the plan uncommitted so it never \
+             enters the branch history: remove that commit, leaving the file in the workspace"
         ));
     }
     let text = std::fs::read_to_string(&file).map_err(|e| format!("its plan is unread: {e}"))?;

@@ -137,7 +137,7 @@ pub(super) async fn merge(
     let result = match merged {
         Ok(merged) => {
             if merged.outcome == MergeOutcome::Merged {
-                cleanup = Some((run.workspace.clone(), run.item.clone()));
+                cleanup = Some((run.item.clone(), run.branch.clone()));
             }
             record(ctx, &mut table, run, &plan, merged).await
         }
@@ -151,38 +151,32 @@ pub(super) async fn merge(
         return result;
     }
     drop(table);
-    if let Some((tree, item)) = cleanup {
-        delete_branches(ctx, &item, run_id, repo_path, tree, plan).await;
+    if let (Some((item, branch)), Some(repo_path)) = (cleanup, repo_path) {
+        delete_branches(ctx, &item, run_id, repo_path, branch).await;
     }
     result
 }
 
-/// Delete the branches of a team that merged, now its outcome is
-/// persisted. The merge is done and a retry finds the branches gone or
-/// deletes them again, so a failure is posted to the run's progress rather
+/// Delete the merged role branches of `run`, once a team merge is
+/// persisted and again when the run ends. The merge is done and a repeat
+/// finds the rest, so a failure is posted to the run's progress rather
 /// than failing the run.
-async fn delete_branches(
+pub(super) async fn delete_branches(
     ctx: &DaemonContext,
     item: &QueueItemId,
     run: &PipelineRunId,
-    repo_path: Option<PathBuf>,
-    tree: PathBuf,
-    plan: MergePlan,
+    repo_path: PathBuf,
+    branch: String,
 ) {
-    let Some(repo_path) = repo_path else {
-        return;
-    };
-    assert!(tree.is_absolute(), "run worktrees are absolute");
-    let stage = plan.stage_id.clone();
+    let id = run.clone();
     let cleaned = tokio::task::spawn_blocking(move || {
-        git_team::delete_merged_branches(&repo_path, &tree, &plan)
+        git_team::delete_merged_role_branches(&repo_path, &branch, &id)
     })
     .await
     .map_err(|e| ArchonError::io("team cleanup task", std::io::Error::other(e)))
     .and_then(|done| done);
     if let Err(error) = cleaned {
-        let text =
-            format!("The merged role branches of team stage `{stage}` were not deleted: {error}");
+        let text = format!("The merged role branches of this run were not deleted: {error}");
         post_kept(ctx, item, run, &text).await;
     }
 }

@@ -22,8 +22,9 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use archon_core::error::ArchonError;
+use archon_core::id::PipelineRunId;
 use archon_pipeline::team::{
-    MergeOutcome, MergePlan, RoleBranch, team_root, worker_branch_role, worker_dir,
+    MergeOutcome, MergePlan, RoleBranch, team_root, worker_branch, worker_branch_role, worker_dir,
 };
 
 use super::{Head, branch_exists, git_failure, head, path_arg};
@@ -505,71 +506,95 @@ pub fn merge_team(
     Ok(TeamMerge { outcome, saved })
 }
 
-/// Delete each role's branch of a merged team once it is on the run
-/// branch checked out in `run_tree`, so shipping leaves none behind. A
-/// role's worktree still on its branch is detached first; the worktree
-/// stays for the next attempt, which forks a new branch. A branch not
-/// merged is an error, never deleted. Returns the branches deleted.
-pub fn delete_merged_branches(
+/// Delete every role branch of run `run` (of `run_branch`) that is on the
+/// run branch, so shipping leaves none behind. A role's worktree still on
+/// one is detached first and kept for the next attempt, which forks a new
+/// branch. A branch not on the run branch holds unmerged work and is kept.
+/// Safe to repeat. Returns the branches deleted.
+pub fn delete_merged_role_branches(
     repo_path: &Path,
-    run_tree: &Path,
-    plan: &MergePlan,
+    run_branch: &str,
+    run: &PipelineRunId,
 ) -> Result<Vec<String>, ArchonError> {
     assert!(repo_path.is_absolute(), "repository paths are canonical");
-    assert!(!plan.roles.is_empty(), "a team has roles to clean up");
+    assert!(
+        !run_branch.starts_with('-'),
+        "run branches are branch names"
+    );
     let common = common_dir(repo_path)?;
-    check_tree(run_tree, &common)?;
-    let root = team_root(run_tree).ok_or_else(|| {
-        ArchonError::Invalid(format!(
-            "{} is not the run worktree of a team run",
-            run_tree.display()
-        ))
-    })?;
+    let pattern = format!("refs/heads/{run_branch}--*");
+    let listed = git(
+        repo_path,
+        &["for-each-ref", "--format=%(refname:short)", &pattern],
+    )?;
+    let checked_out = checked_out_branches(repo_path)?;
+    let run_ref = format!("refs/heads/{run_branch}");
     let mut deleted = Vec::new();
-    for role in &plan.roles {
-        let worker = root.join(worker_dir(&plan.stage_id, &role.role));
-        if delete_merged_branch(run_tree, &worker, &common, &role.branch)? {
-            deleted.push(role.branch.clone());
+    for branch in listed
+        .lines()
+        .filter(|b| is_worker_branch_of(run_branch, run, b))
+    {
+        let reference = format!("refs/heads/{branch}");
+        if !is_ancestor(repo_path, &reference, &run_ref)? {
+            continue;
         }
+        if let Some(worker) = checked_out.iter().find(|(name, _)| name == branch) {
+            detach(&worker.1, &common, branch)?;
+        }
+        git(repo_path, &["update-ref", "-d", &reference])?;
+        deleted.push(branch.to_owned());
     }
+    debug_assert!(
+        deleted
+            .iter()
+            .all(|b| !branch_exists(repo_path, b).unwrap_or(true))
+    );
     Ok(deleted)
 }
 
-/// Delete `branch` if it exists, after proving it is on `run_tree`'s
-/// `HEAD` and detaching `worker` from it.
-fn delete_merged_branch(
-    run_tree: &Path,
-    worker: &Path,
-    common: &Path,
-    branch: &str,
-) -> Result<bool, ArchonError> {
-    assert!(
-        !branch.is_empty() && !branch.starts_with('-'),
-        "worker branches are derived from a valid run branch"
-    );
-    if !branch_exists(run_tree, branch)? {
-        return Ok(false);
-    }
-    let reference = format!("refs/heads/{branch}");
-    if !is_ancestor(run_tree, &reference, "HEAD")? {
-        return Err(ArchonError::Invalid(format!(
-            "worker branch {branch:?} is not on the run branch, so it is kept"
-        )));
-    }
-    if present(worker)? {
-        check_worktree(worker, common)?;
-        if head(worker)?.is_branch(branch) {
-            let commit = git(worker, &["rev-parse", "--verify", "HEAD^{commit}"])?;
-            let reason = format!("archon: leave {branch}, merged into the run branch");
-            git(
-                worker,
-                &["update-ref", "--no-deref", "-m", &reason, "HEAD", &commit],
-            )?;
+/// Whether `branch` is a [`worker_branch`] of `run_branch` made for `run`.
+fn is_worker_branch_of(run_branch: &str, run: &PipelineRunId, branch: &str) -> bool {
+    let Some(role) = worker_branch_role(run_branch, branch) else {
+        return false;
+    };
+    let attempt = branch
+        .rsplit_once("-a")
+        .and_then(|(_, n)| n.parse::<u32>().ok());
+    attempt.is_some_and(|n| n >= 1 && worker_branch(run_branch, run, role, n) == branch)
+}
+
+/// Every branch checked out in a worktree of `repo_path`, with that worktree.
+fn checked_out_branches(repo_path: &Path) -> Result<Vec<(String, PathBuf)>, ArchonError> {
+    let listing = git(repo_path, &["worktree", "list", "--porcelain"])?;
+    let mut found = Vec::new();
+    let mut path = None;
+    for line in listing.lines() {
+        if let Some(tree) = line.strip_prefix("worktree ") {
+            path = Some(PathBuf::from(tree));
+        } else if let (Some(branch), Some(tree)) = (line.strip_prefix("branch refs/heads/"), &path)
+        {
+            found.push((branch.to_owned(), tree.clone()));
         }
     }
-    git(run_tree, &["update-ref", "-d", &reference])?;
-    debug_assert!(!branch_exists(run_tree, branch)?);
-    Ok(true)
+    Ok(found)
+}
+
+/// Detach the worktree `path` from `branch`, keeping its files and index.
+fn detach(path: &Path, common: &Path, branch: &str) -> Result<(), ArchonError> {
+    check_worktree(path, common)?;
+    let commit = git(path, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    let reason = format!("archon: leave {branch}, merged into the run branch");
+    git(
+        path,
+        &["update-ref", "--no-deref", "-m", &reason, "HEAD", &commit],
+    )?;
+    if head(path)? != Head::Detached {
+        return Err(ArchonError::Invalid(format!(
+            "{} still has {branch:?} checked out",
+            path.display()
+        )));
+    }
+    Ok(())
 }
 
 /// The run worktree `run_tree`, proven a worktree of the repository whose

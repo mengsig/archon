@@ -5,7 +5,7 @@
 - swarm (issue #195): the planner's `.archon/swarm-plan.json` stays an
   uncommitted file in the run worktree, hidden through `info/exclude`, so no
   shipped history carries it (archond refuses a plan the planner committed);
-  Archon deletes each role's local branch once its merge is recorded. Role
+  Archon deletes each role's local branch once its merge is recorded and again when the run ends. Role
   branches are never pushed.
 - archond tells the operator, and nudges the orchestrator to continue, when
   it has had a turn open for 30 minutes with no message, tool result or usage

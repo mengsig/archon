@@ -120,8 +120,8 @@ pub fn correction(refusal: &str, attempt: usize) -> String {
     format!(
         "\n\n## Your plan was refused (correction {attempt} of {MAX_CORRECTIONS})\n\n\
          Archon refused your `{PLAN_FILE}`. Fix the file in this workspace, check it, \
-         leave it uncommitted (if you committed it, `git rm --cached` it and drop that \
-         commit) and finish. Change nothing else.\n\n\
+         leave it uncommitted (if you committed it, drop that commit and keep the file) \
+         and finish. Change nothing else.\n\n\
          {refusal}\n"
     )
 }

@@ -432,6 +432,57 @@ async fn a_committed_plan_is_refused() {
     );
 }
 
+/// Committing the plan and then untracking it still leaves it in history.
+#[tokio::test]
+async fn a_plan_committed_then_untracked_is_refused() {
+    let h = Harness::new().await;
+    let item = h
+        .enqueue_in("swarm", "plan untracked", swarm_model_plan())
+        .await
+        .expect("the swarm built-in enqueues");
+    h.dispatch().await;
+    let run = h.run(&item.id).await;
+    let text = serde_json::to_string_pretty(&swarm_plan(&TASKS)).expect("json");
+    commit_file(&run.workspace, ".archon/swarm-plan.json", &text);
+    git(
+        &run.workspace,
+        &["rm", "--cached", "--quiet", ".archon/swarm-plan.json"],
+    );
+    git(
+        &run.workspace,
+        &["commit", "--quiet", "-m", "untrack the plan"],
+    );
+    h.settle_running(|_| completed("split into tasks")).await;
+    h.dispatch().await;
+    let sent = h.backend.requests().pop().expect("the planner again");
+    assert!(
+        sent.objective
+            .contains("it committed `.archon/swarm-plan.json`"),
+        "{}",
+        sent.objective
+    );
+}
+
+/// A merged role branch a crash left behind goes when the run ends.
+#[tokio::test]
+async fn a_run_that_ends_deletes_the_role_branches_left_merged() {
+    let h = Harness::new().await;
+    let (item, run) = planned(&h, "branch left", Some(&swarm_plan(&TASKS))).await;
+    for attempt in 1..=3 {
+        build_round(&h, &run, attempt).await;
+        running_integrator(&h, attempt).await;
+        if attempt == 3 {
+            let stray = worker_branch(&run.branch, &run.id, "api", 1);
+            git(&run.workspace, &["branch", &stray, "HEAD"]);
+        }
+        h.settle_running(|_| redispatch("cli")).await;
+        h.dispatch().await;
+    }
+    let state = h.state(&item.id).await;
+    assert!(matches!(state, QueueState::Failed { .. }), "{state:?}");
+    assert_no_role_branches(&run);
+}
+
 #[tokio::test]
 async fn an_invalid_or_missing_plan_fails_the_plan_stage_with_every_problem() {
     let h = Harness::new().await;

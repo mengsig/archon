@@ -2,27 +2,120 @@
 
 ## Unreleased
 
-- review gate (issue #237): a reviewer's result is also read from one fenced
-  JSON block or a final `VERDICT: PASS|FAIL` line with `head:`/`base:` lines;
-  prose without a verdict is refused with what to send instead. A reviewer id
-  the lead mistyped is resolved to the one lead child it resembles, else to the
-  lead's completed reviewers with a verdict, and coverage is checked as before;
-  a refusal lists the lead's reviewer ids. The stage record keeps each
-  reviewer's verdict, head, base and finding count, shown by `archon show`.
-- review gate (issue #237): when a lead's review-fix loop has had four
-  commits failed by a reviewer, archond posts one blocker notification with the
-  item, the round count and the latest finding titles, and the run goes on.
-  Three parallel reviewers of one commit are one round; the count restarts with
-  each stage attempt.
-- swarm (issue #195): the planner's `.archon/swarm-plan.json` stays an
-  uncommitted file in the run worktree, hidden through `info/exclude`, so no
-  shipped history carries it (archond refuses a plan the planner committed);
-  Archon deletes each role's local branch once its merge is recorded and again when the run ends. Role
-  branches are never pushed.
+## 1.4.3
+
+Released 2026-10-22.
+
+A patch release on 1.4.2, with no store migration. The daemon protocol is now
+19 (`archon gc --preview`, #234; a 1.4.2 archond would ignore the preview and
+collect for real). archond and `archon` must speak the same protocol, so a
+1.4.2 archond refuses a 1.4.3 client until it is restarted.
+
+Archon 1.4.3 needs **Aether 1.2.3**, the release it is tested on and that the
+installer and `archon update` install. Archon still asks Aether for protocol
+24 and checks no Aether version, so an older aetherd is not refused, but only
+Aether 1.2.3 is supported with this release.
+
+**After upgrading**, run `archon update`. It installs Aether 1.2.3 and
+restarts both daemons, archond and Archon's own aetherd, through the drained
+restart, so the new protocol, settings and watchers take effect.
+
+New settings, all in `config.toml`:
+
+- `[limits] max_load_per_cpu` and `[limits] min_available_memory_gb`, both
+  off unless you set them (#72).
+- `[review] auto_repair`, on by default (#237).
+
+### Review gate
+
+- A reviewer's result is also read from one fenced JSON block or a final
+  `VERDICT: PASS|FAIL` line with `head:`/`base:` lines; prose without a
+  verdict is refused with what to send instead, and a fenced verdict that
+  contradicts the final line is refused. A reviewer id the lead mistyped is
+  resolved to the one lead child it resembles, else to the lead's completed
+  reviewers with a verdict, and coverage is checked as before; a refusal
+  lists the lead's reviewer ids. The stage record keeps each reviewer's
+  verdict, head, base and finding count, shown by `archon show` (#237).
+- When a lead's review-fix loop has had four commits failed by a reviewer,
+  archond posts one blocker notification with the item, the round count and
+  the latest finding titles, and the run goes on. Three parallel reviewers
+  of one commit are one round; the count restarts with each stage attempt
+  (#237).
+- A run that fails only because the gate refused its review or ship record
+  is retried once, automatically, in the same worktree and branch, with a
+  note that quotes the refusal and asks for the record to be repaired. The
+  feed says so and the failed run stays in the item's history; a second
+  refusal fails the item with both reasons. Cancelled and steered runs and
+  every other failure are untouched. `[review] auto_repair = false` turns it
+  off (#237).
+- Under an item budget, a reviewer that cannot report its cost is refused
+  when the item is queued, and a combined autonomy and budget update is
+  checked against the review it leaves (#191).
+
+### Merge, stacks and queue
+
+- A merge request no longer fails while GitHub is still computing whether
+  the pull request can merge. It waits, reading again with a 5-60 s pause
+  for up to 60 minutes from when the wait began; it merges once GitHub says
+  it can, refuses on a conflict, a moved head or the timeout, and never asks
+  the operator again for the same pull request at the same head (#241).
+- A stacked item can be merged and diffed after its parent merged; a pull
+  request still aimed at the merged parent is retargeted onto the base, and
+  the not-merged error names the parent to merge first. Steer on a cancelled
+  item is refused and points at retry (#225).
+- Restack first fast-forwards the branch to its pull request's head, so
+  commits made outside Archon are kept, and records parents the branch
+  already contains. A push the remote refuses as not a fast-forward is told
+  to the operator once per pull request head and not retried until the
+  parent moves, instead of looping (#203).
+
+### Host resources and gc
+
+- Dispatch holds new work while the host is too busy: past
+  `[limits] max_load_per_cpu` (1-minute load per CPU) or below
+  `[limits] min_available_memory_gb` (`MemAvailable`), no item and no stage
+  agent starts until load is below 90% of its limit and memory 10% above;
+  running agents finish. `archon status` and each waiting item show the
+  measured values and the next step. Both are off by default (#72).
+- `archon gc --preview` lists the worktrees gc would remove and the build
+  output it would delete, and deletes nothing. With `[worktrees] cache_dirs`
+  unset, gc now deletes only known build output (`target`, `node_modules`,
+  `.venv`, `__pycache__`, `dist` and similar) and keeps other ignored files
+  such as `.env` (#72, #226).
+- Archon's own `.archon/reports/` pages and `.archon/swarm-plan.json` no
+  longer make a worktree count as dirty, so gc removes it as it should;
+  `.archon/config.toml` and pipelines still count (#226).
+- The "mixed locations" guard no longer blocks archond from starting (after
+  a crash, for instance) when private XDG config and data directories sit
+  beside an `ARCHON_SOCKET`; `archon doctor` uses the same check (#226).
+
+### Orchestrator and feed
+
 - archond tells the operator, and nudges the orchestrator to continue, when
-  it has had a turn open for 30 minutes with no message, tool result or usage
-  update (a hung model request, issue #223). At most three nudges per
-  orchestrator; an archond restart into an open turn still watches it.
+  it has had a turn open for 30 minutes with no message, tool result or
+  usage update (a hung model request). At most three nudges per
+  orchestrator; an archond restart into an open turn still watches it
+  (#223).
+- A batch of operator messages queued while the orchestrator was busy gets
+  one reply that names them all, so none is left without an answer; the log
+  labels the orchestrator by its `--kind` name (#227).
+
+### Pipelines
+
+- Swarm: the planner's `.archon/swarm-plan.json` stays an uncommitted file
+  in the run worktree, hidden through `info/exclude`, so no shipped history
+  carries it (archond refuses a plan the planner committed or staged, or
+  that appears anywhere in the history). Archon deletes each role's local
+  branch once its merge is recorded and again before the run is marked
+  finished. Role branches are never pushed (#195).
+
+### CLI and docs
+
+- A malformed item id reads "'x' is not a valid item id" with the expected
+  format and `archon queue list` to find ids. The autonomy ceiling refusal
+  and `archon status` say which values the ceiling allows and how to raise
+  it. `archon queue add --help` and the docs show the `provider/model`
+  model plan format (#228).
 
 ## 1.4.2
 

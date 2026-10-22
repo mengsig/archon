@@ -41,6 +41,7 @@ pub(super) async fn build(
     };
     snapshot.caps = caps;
     snapshot.low_disk = ctx.disk.holding();
+    snapshot.host_load = ctx.host.hold();
     snapshot.draining = ctx.ops.draining();
     for candidate in &mut snapshot.queued {
         envs.read_late(ctx, candidate.repo.as_ref(), true).await?;

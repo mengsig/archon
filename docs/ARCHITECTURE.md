@@ -1754,7 +1754,17 @@ repo and pipeline, pause state, spend) plus `Caps`, and returns a
    (below), or while daily or total spend has reached its budget. Hitting a
    budget posts one `Blocker` to the feed and a `budget` trigger. The holds
    are checked in that order, and `held_by` names the first that applies
-   (`GlobalPause`, `LowDisk`, `TotalBudget`, `DailyBudget`).
+   (`GlobalPause`, `LowDisk`, `HostLoad`, `TotalBudget`, `DailyBudget`).
+
+**Host-load hold.** With `limits.max_load_per_cpu` or
+`limits.min_available_memory_gb` set (both off by default), each admission
+pass reads `/proc/loadavg` (1-minute load divided by the CPU count) and
+`MemAvailable` from `/proc/meminfo`. Load above its limit, or memory below
+its limit, holds all new work (`Hold::HostLoad`, after `LowDisk`); running
+agents are never touched. A held resource resumes only when load is below 90%
+of its limit and memory is above 110% of it, so dispatch does not flap. A
+failed read is logged and shown in `archon status`, and the hold stays as it
+was; a platform without `/proc` does not hold, and status says so.
 
 **Carrying out a plan.** Independent work runs in parallel lanes
 (`executor::lanes`, at most 8 at once), and each lane runs its work in
@@ -1786,7 +1796,7 @@ An otherwise `next_in_line` item uses `aether_disconnected` while Aether
 is unreachable, with `archon doctor` as its next action.
 
 Explanation precedence: `operator_gate`, `dependency_failed`,
-`dependency_waiting`, `global_pause`, `low_disk`, `total_budget`, `daily_budget`,
+`dependency_waiting`, `global_pause`, `low_disk`, `host_load`, `total_budget`, `daily_budget`,
 `repo_pause`, `pipeline_pause`, `capacity`, `next_in_line`. A blocked item with
 no unmet dependencies uses `blocked` and points to its recorded detail; retry
 of a failed/cancelled dependency normally requeues eligible blocked dependents

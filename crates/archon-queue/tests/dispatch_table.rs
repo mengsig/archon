@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use archon_core::host_load::{Breach, HostLoadHold};
 use archon_core::id::{PipelineRunId, QueueItemId, RepoId};
 use archon_core::queue::{Caps, PauseState, Priority};
 use archon_queue::dispatch::{
@@ -37,6 +38,7 @@ impl Fx {
             repo_max_per_repo: BTreeMap::new(),
             pause: PauseState::default(),
             low_disk: false,
+            host_load: None,
             draining: false,
             running_total: 0,
             running_by_repo: BTreeMap::new(),
@@ -127,6 +129,25 @@ fn low_disk(fx: &Fx) -> DispatchSnapshot {
     s.pending_spawns = vec![fx.pending(0, 7, 0, Normal, 0, 1)];
     s.queued = vec![fx.item(0, 0, Normal, 1), fx.item(1, 0, Normal, 2)];
     s.queued[1].deps = DependencyState::Broken;
+    s
+}
+
+fn host_load(fx: &Fx) -> DispatchSnapshot {
+    let mut s = low_disk(fx);
+    s.low_disk = false;
+    s.host_load = Some(HostLoadHold {
+        load: Some(Breach {
+            measured: 3.2,
+            limit: 1.5,
+        }),
+        memory: None,
+    });
+    s
+}
+
+fn host_load_on_low_disk(fx: &Fx) -> DispatchSnapshot {
+    let mut s = host_load(fx);
+    s.low_disk = true;
     s
 }
 
@@ -457,6 +478,14 @@ fn hold_cases() -> Vec<Case> {
         ("low disk holds all but blocking", low_disk, |fx| {
             fx.plan(&[], &[], &[1], Some(Hold::LowDisk))
         }),
+        ("host load holds all but blocking", host_load, |fx| {
+            fx.plan(&[], &[], &[1], Some(Hold::HostLoad))
+        }),
+        (
+            "low disk reported before host load",
+            host_load_on_low_disk,
+            |fx| fx.plan(&[], &[], &[1], Some(Hold::LowDisk)),
+        ),
         (
             "a draining upgrade holds all but blocking",
             draining,
@@ -622,7 +651,7 @@ fn gang_cases() -> Vec<Case> {
 fn plan_dispatch_table() {
     let fx = Fx::new();
     let all = [hold_cases(), order_cases(), cap_cases(), gang_cases()].concat();
-    assert_eq!(all.len(), 35);
+    assert_eq!(all.len(), 37);
     for (name, build, expect) in all {
         let snapshot = build(&fx);
         assert_eq!(plan_dispatch(&snapshot), expect(&fx), "case: {name}");
@@ -858,6 +887,15 @@ fn waiting_reason_precedence_matches_admission_holds() {
     s.pause.global = false;
     assert_eq!(reason(&s), Code::LowDisk);
     s.low_disk = false;
+    s.host_load = Some(HostLoadHold {
+        load: Some(Breach {
+            measured: 3.2,
+            limit: 1.5,
+        }),
+        memory: None,
+    });
+    assert_eq!(reason(&s), Code::HostLoad);
+    s.host_load = None;
     assert_eq!(reason(&s), Code::TotalBudget);
     s.caps.budget_usd_total = 0.0;
     assert_eq!(reason(&s), Code::DailyBudget);

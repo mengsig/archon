@@ -21,8 +21,8 @@ use archon_core::model::{Effort, ModelPlan, ModelReasons};
 use archon_core::notify::Question;
 use archon_core::policy::ModelPolicy;
 use archon_core::protocol::{
-    AetherLinkStatus, DaemonStatus, DiskStatus, ItemDetail, OrchestratorInfo, QuotaStatus, Reply,
-    ReportPublished, StatusHealth, gib,
+    AetherLinkStatus, DaemonStatus, DiskStatus, HostLoadStatus, ItemDetail, OrchestratorInfo,
+    QuotaStatus, Reply, ReportPublished, StatusHealth, gib,
 };
 use archon_core::queue::{Caps, QueueItem, QueueState};
 use archon_core::repo::Repo;
@@ -695,7 +695,7 @@ fn daemon_status(status: &DaemonStatus) -> String {
         "archond {} (pid {}), up since {}. Aether: {aether}. Orchestrator: {orchestrator}.\n\
          Paused: {}.\nAgents running {} (max {}), active runs {} (max {}), queued {}, blocked {}, \
          open questions {}, operator gates waiting {}.\n{} Lavish {}.\nAutonomy defaults {}; the ceiling allows {}; directives {}/{MAX_DIRECTIVES} \
-         in force (autonomy_policy lists them).{}{}{}",
+         in force (autonomy_policy lists them).{}{}{}{}",
         status.daemon_version,
         status.pid,
         status.started_at.to_rfc3339(),
@@ -718,6 +718,7 @@ fn daemon_status(status: &DaemonStatus) -> String {
         status.autonomy.ceiling.describe_allowed(),
         status.directives.len(),
         status.github.as_ref().map_or(String::new(), github_text),
+        status.host_load.as_ref().map_or(String::new(), host_text),
         status.disk.as_ref().map_or(String::new(), disk_text),
         upkeep_text(status)
     ) + &quota_text(status.quota.as_ref())
@@ -799,6 +800,24 @@ pub(super) fn spend_text(caps: &Caps, today_usd: f64, total_usd: f64) -> String 
         budget(caps.budget_usd_total),
         budget(caps.budget_usd_per_item)
     )
+}
+
+/// Host load and memory, and whether they hold dispatch.
+fn host_text(host: &HostLoadStatus) -> String {
+    let line = match &host.hold {
+        Some(hold) => format!("{}. Next: {}.", hold.describe(), hold.next_action()),
+        None => "not holding dispatch.".to_owned(),
+    };
+    match (&host.sample, &host.unreadable) {
+        (Some(s), _) => format!(
+            "\nHost: load {:.2}/cpu, {:.1} GiB memory available; {line}",
+            s.load_per_cpu, s.available_gb
+        ),
+        (None, why) => format!(
+            "\nHost: load unknown ({}); {line}",
+            why.as_deref().unwrap_or("no reading")
+        ),
+    }
 }
 
 /// Free space where archond writes, and whether it holds dispatch.

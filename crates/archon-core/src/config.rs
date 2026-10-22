@@ -483,6 +483,12 @@ pub struct LimitsConfig {
     /// Dispatch holds while the data dir or worktree root has less free
     /// space than this, in GiB; 0 disables the hold (ARCHITECTURE §7.3).
     pub min_free_gb: u64,
+    /// Dispatch holds while the 1-minute load average per CPU is above
+    /// this; unset leaves the host-load hold off.
+    pub max_load_per_cpu: Option<f64>,
+    /// Dispatch holds while `MemAvailable` is below this, in GiB; unset
+    /// leaves the memory hold off.
+    pub min_available_memory_gb: Option<f64>,
     pub per_pipeline: BTreeMap<String, u32>,
     /// Most delegations below a stage agent or the orchestrator (§7.4).
     pub max_delegation_depth: u32,
@@ -509,6 +515,8 @@ impl Default for LimitsConfig {
             count_estimated_cost: true,
             infra_retries: 1,
             min_free_gb: 10,
+            max_load_per_cpu: None,
+            min_available_memory_gb: None,
             per_pipeline: BTreeMap::new(),
             max_delegation_depth: DEFAULT_DELEGATION_DEPTH,
             max_stage_timeout_minutes: DEFAULT_STAGE_TIMEOUT_MINUTES,
@@ -523,6 +531,14 @@ impl LimitsConfig {
     /// `min_free_gb` in bytes; 0 when the disk hold is off.
     pub fn min_free_bytes(&self) -> u64 {
         self.min_free_gb.saturating_mul(1 << 30)
+    }
+
+    /// The host-load hold's limits.
+    pub fn host_limits(&self) -> crate::host_load::HostLimits {
+        crate::host_load::HostLimits {
+            max_load_per_cpu: self.max_load_per_cpu,
+            min_available_memory_gb: self.min_available_memory_gb,
+        }
     }
 
     /// The size an initiative may have here.
@@ -554,6 +570,17 @@ impl LimitsConfig {
             return Err(ArchonError::Config(format!(
                 "limits.min_free_gb must be at most {MAX_MIN_FREE_GB} (0 = no disk hold)"
             )));
+        }
+        for (key, value) in [
+            ("max_load_per_cpu", self.max_load_per_cpu),
+            ("min_available_memory_gb", self.min_available_memory_gb),
+        ] {
+            if value.is_some_and(|v| !v.is_finite() || v <= 0.0) {
+                return Err(ArchonError::Config(format!(
+                    "limits.{key} must be a positive number, not {}; remove the key to turn the check off",
+                    value.unwrap_or_default()
+                )));
+            }
         }
         for (key, value, _, most) in self.configurable() {
             if !(1..=most).contains(&value) {
@@ -1377,6 +1404,32 @@ mod tests {
         let huge = format!("[limits]\nmin_free_gb = {}", MAX_MIN_FREE_GB + 1);
         let refused: Config = toml::from_str(&huge).unwrap();
         assert!(matches!(refused.validate(), Err(ArchonError::Config(_))));
+    }
+
+    #[test]
+    fn the_host_hold_is_off_by_default_and_its_limits_must_be_positive() {
+        let config = Config::default();
+        assert_eq!(config.limits.max_load_per_cpu, None);
+        assert_eq!(config.limits.min_available_memory_gb, None);
+        let on: Config =
+            toml::from_str("[limits]\nmax_load_per_cpu = 1.5\nmin_available_memory_gb = 2")
+                .unwrap();
+        on.validate().unwrap();
+        assert_eq!(on.limits.host_limits().max_load_per_cpu, Some(1.5));
+        for bad in [
+            "max_load_per_cpu = 0",
+            "max_load_per_cpu = -1.0",
+            "min_available_memory_gb = 0.0",
+            "min_available_memory_gb = nan",
+            "min_available_memory_gb = inf",
+        ] {
+            let config: Config = toml::from_str(&format!("[limits]\n{bad}")).unwrap();
+            let error = config.validate().unwrap_err().to_string();
+            assert!(
+                error.contains("must be a positive number"),
+                "{bad}: {error}"
+            );
+        }
     }
 
     #[test]

@@ -162,6 +162,7 @@ async fn admit(ctx: &DaemonContext) -> Result<Admission, ArchonError> {
     {
         tracing::warn!(%error, "provider quota refresh failed; using the last reading");
     }
+    ctx.host.check(ctx.config.limits.host_limits());
     let mut table = ctx.runs.lock().await;
     let snapshot = snapshot::build(ctx, &table, caps.clone(), envs).await?;
     let plan = archon_queue::plan_dispatch(&snapshot);

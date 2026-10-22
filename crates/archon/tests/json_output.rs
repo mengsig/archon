@@ -186,6 +186,7 @@ fn linked_status() -> archon_core::protocol::DaemonStatus {
         mcp: None,
         github: None,
         disk: None,
+        host_load: None,
         versions: None,
         upgrade: None,
         health: None,

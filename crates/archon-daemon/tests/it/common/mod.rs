@@ -557,6 +557,7 @@ pub fn context(
         github: archon_daemon::github::GithubState::default(),
         started_at: archon_core::now(),
         disk,
+        host: archon_daemon::host_load::HostWatch::system(),
         standby: OnceLock::new(),
         recovery: Default::default(),
         gc: Mutex::new(None),

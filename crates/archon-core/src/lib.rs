@@ -23,6 +23,7 @@ pub mod crash;
 pub mod error;
 pub mod feedback;
 pub mod github;
+pub mod host_load;
 pub mod id;
 pub mod initiative;
 pub mod integration;

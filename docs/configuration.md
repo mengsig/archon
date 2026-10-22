@@ -80,6 +80,8 @@ max_per_repo = 2
 budget_usd_daily = 50.0
 # budgets_enabled = false      # no dollar budget is enforced at all; spend is still recorded
 min_free_gb = 10               # nothing new starts below this much free disk; 0 = off
+# max_load_per_cpu = 1.5       # nothing new starts above this 1-minute load per CPU; unset = off
+# min_available_memory_gb = 2.0   # nothing new starts below this much MemAvailable; unset = off
 [limits.per_pipeline]
 adaptive = 3
 
@@ -522,6 +524,8 @@ disk is full:
 | `[worktrees] cache_dirs` | unset | What counts as a build cache. Unset: every file git ignores in the worktree. `["target"]`: only ignored files under `target/`. |
 | `[worktrees] gc_after` | `"7d"` | This long after an item's last run finished, its worktree is removed. A worktree with uncommitted changes is kept; [three kinds of directory](#what-is-deleted-with-uncommitted-work) are not. |
 | `[limits] min_free_gb` | `10` | While the data directory's or the worktree root's filesystem has less free space than this, in GiB, no item and no stage agent starts; running agents finish. `0` turns the check off. |
+| `[limits] max_load_per_cpu` | unset (off) | While the host's 1-minute load average (`/proc/loadavg`) divided by the CPU count is above this, no item and no stage agent starts; running agents finish. Dispatch resumes once load is below 90% of the limit. Must be positive; remove the key to turn the check off. Off by default so a busy build machine is not held unless you choose a limit; `1.5` is a sensible start. `archon status` and each waiting item show the measured load and the next step. Without `/proc` (not Linux) the check cannot run and does not hold; `archon status` says so. |
+| `[limits] min_available_memory_gb` | unset (off) | While `MemAvailable` in `/proc/meminfo` is below this, in GiB, no item and no stage agent starts; running agents finish. Dispatch resumes once it is 10% above the limit. Must be positive; remove the key to turn the check off. `2.0` is a sensible start. A failed `/proc` read is logged and shown in `archon status`; the hold stays as it was. |
 
 Ages are a number and a unit: `90s`, `30m`, `12h`, `7d`, `2w`. Apart from
 this, the worktree of a run that shipped in the `pr` ship mode is removed

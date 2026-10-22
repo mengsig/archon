@@ -94,6 +94,7 @@ impl Harness {
             lavish,
             started_at: archon_core::now(),
             disk: DiskWatch::new(Arc::new(|_: &Path| Ok(u64::MAX)), Duration::ZERO),
+            host: archon_daemon::host_load::HostWatch::system(),
             standby: OnceLock::new(),
             recovery: Default::default(),
             gc: Mutex::new(None),

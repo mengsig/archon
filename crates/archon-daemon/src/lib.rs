@@ -18,6 +18,7 @@ pub mod gc;
 mod gh_account;
 pub mod github;
 pub mod handlers;
+pub mod host_load;
 pub mod integration;
 pub mod mirror;
 pub mod notification_center;
@@ -478,6 +479,7 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
         github: GithubState::default(),
         started_at: archon_core::now(),
         disk: disk::DiskWatch::system(),
+        host: host_load::HostWatch::system(),
         standby: std::sync::OnceLock::new(),
         recovery: Default::default(),
         gc: Mutex::new(None),

@@ -127,6 +127,14 @@ impl WaitingView {
                 "Dispatch held by low disk space or a recent disk-full failure".into(),
                 "archon gc".into(),
             ),
+            Code::HostLoad => {
+                let hold = self
+                    .snapshot
+                    .host_load
+                    .as_ref()
+                    .expect("a host-load reason names its hold");
+                (hold.describe(), hold.next_action())
+            }
             Code::Capacity => self.capacity(store, item)?,
             Code::ProviderQuota => self.provider_quota(item),
             Code::AetherDisconnected => (

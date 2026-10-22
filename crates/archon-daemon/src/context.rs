@@ -16,6 +16,7 @@ use crate::disk::DiskWatch;
 use crate::executor::RunTable;
 use crate::feed::ReplyTracker;
 use crate::github::GithubState;
+use crate::host_load::HostWatch;
 use crate::mirror::MirrorQueue;
 use crate::supervisor::Supervisor;
 use crate::triggers::TriggerQueue;
@@ -129,6 +130,8 @@ pub struct DaemonContext {
     pub started_at: archon_core::Timestamp,
     /// Free disk space and the dispatch hold it drives.
     pub disk: DiskWatch,
+    /// Host load and free memory, and the dispatch hold they drive.
+    pub host: HostWatch,
     /// Set once archond's store hit a full disk: its work has stopped and it
     /// serves only reads until it restarts (see `standby`).
     pub standby: OnceLock<String>,

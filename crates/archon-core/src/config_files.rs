@@ -45,6 +45,8 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 # budgets_enabled = true    # false: no dollar budget is enforced (spend still recorded)
 # budget_usd_daily = 50.0   # 0 = no daily budget
 # min_free_gb = 10          # nothing new starts below this much free disk
+# max_load_per_cpu = 1.5    # nothing new starts above this 1-minute load per CPU; unset = off
+# min_available_memory_gb = 2.0   # nothing new starts below this much MemAvailable; unset = off
 
 # [learning]
 # enabled = true            # outcomes, learned defaults, lessons and distillation

@@ -1120,6 +1120,10 @@ pub struct DaemonStatus {
     /// `None` from an archond that predates the check.
     #[serde(default)]
     pub disk: Option<DiskStatus>,
+    /// The host-load hold's last reading. `None` while neither
+    /// `max_load_per_cpu` nor `min_available_memory_gb` is set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_load: Option<HostLoadStatus>,
     /// Running, installed and latest versions of archon and aether as
     /// archond last read them. `None` before the first reading.
     #[serde(default)]
@@ -1326,6 +1330,20 @@ pub fn gib(bytes: u64) -> String {
     format!("{gib:.1} GiB")
 }
 
+/// The host-load hold as archond last judged it (ARCHITECTURE §7.3).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HostLoadStatus {
+    /// `None` when the host could not be read; `unreadable` says why.
+    pub sample: Option<crate::host_load::HostSample>,
+    pub max_load_per_cpu: Option<f64>,
+    pub min_available_memory_gb: Option<f64>,
+    /// Dispatch is held, and why.
+    pub hold: Option<crate::host_load::HostLoadHold>,
+    /// Why there is no reading, and whether the check is off for good.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unreadable: Option<String>,
+}
+
 /// Aether's view of one MCP server (its `mcp_servers` reply).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -1505,6 +1523,8 @@ pub enum WaitingReasonCode {
     /// An operator's upgrade drains Archon before it restarts.
     Draining,
     LowDisk,
+    /// Host load or available memory is past its `[limits]` bound.
+    HostLoad,
     TotalBudget,
     DailyBudget,
     RepoPause,

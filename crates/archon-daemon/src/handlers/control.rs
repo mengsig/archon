@@ -66,6 +66,7 @@ pub(super) async fn status(ctx: &DaemonContext, query: StatusQuery) -> Result<Re
         mcp: Some(aether.mcp),
         github: aether.github,
         disk: Some(disk),
+        host_load: ctx.host.status(ctx.config.limits.host_limits()),
         versions: Some(ops::versions(ctx).await),
         upgrade: ops::phase(ctx).await,
         merges_waiting: counts.merges.waiting,

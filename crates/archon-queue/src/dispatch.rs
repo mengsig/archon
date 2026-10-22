@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use archon_core::host_load::HostLoadHold;
 use archon_core::id::{PipelineRunId, QueueItemId, RepoId};
 use archon_core::protocol::WaitingReasonCode;
 use archon_core::queue::{Caps, PauseState, Priority};
@@ -24,6 +25,8 @@ pub struct DispatchSnapshot {
     /// The daemon's disk hold: free space below `limits.min_free_gb`, or a
     /// recent failure on a full disk.
     pub low_disk: bool,
+    /// The daemon's host-load hold: load or free memory past its limit.
+    pub host_load: Option<HostLoadHold>,
     /// An operator's upgrade drains Archon: running agents finish, and
     /// nothing new starts until archond restarts or the upgrade gives up.
     pub draining: bool,
@@ -122,6 +125,8 @@ pub enum Hold {
     Draining,
     /// Too little free disk space, or a recent disk-full failure.
     LowDisk,
+    /// Host load or available memory is past its `[limits]` bound.
+    HostLoad,
     DailyBudget,
     TotalBudget,
     Capacity,
@@ -134,7 +139,7 @@ pub enum Hold {
 /// 1. Items whose dependencies broke are always listed in `block`, even
 ///    while admission is held, since blocking starts no work.
 /// 2. Nothing is admitted while globally paused, while an upgrade drains,
-///    while the disk hold is on, or while total or daily spend has reached
+///    while the disk or host-load hold is on, or while total or daily spend has reached
 ///    its budget (reported in that order; no budget holds while budgets
 ///    are off).
 /// 3. Pending spawns of running runs come first, by item priority then
@@ -160,7 +165,7 @@ pub fn plan_dispatch(snapshot: &DispatchSnapshot) -> DispatchPlan {
     };
     if let Some(hold) = admission_hold(snapshot, None) {
         plan.held_by = Some(hold.clone());
-        if matches!(hold, Hold::GlobalPause | Hold::LowDisk)
+        if matches!(hold, Hold::GlobalPause | Hold::LowDisk | Hold::HostLoad)
             || snapshot.repo_budgets_enabled.is_empty()
         {
             return plan;
@@ -223,6 +228,7 @@ pub fn waiting_reasons(snapshot: &DispatchSnapshot) -> BTreeMap<QueueItemId, Wai
                         Hold::GlobalPause => WaitingReasonCode::GlobalPause,
                         Hold::Draining => WaitingReasonCode::Draining,
                         Hold::LowDisk => WaitingReasonCode::LowDisk,
+                        Hold::HostLoad => WaitingReasonCode::HostLoad,
                         Hold::TotalBudget => WaitingReasonCode::TotalBudget,
                         Hold::DailyBudget => WaitingReasonCode::DailyBudget,
                         Hold::Capacity | Hold::ProviderQuota => {
@@ -349,6 +355,8 @@ fn admission_hold(snapshot: &DispatchSnapshot, repo: Option<&RepoId>) -> Option<
         Some(Hold::Draining)
     } else if snapshot.low_disk {
         Some(Hold::LowDisk)
+    } else if snapshot.host_load.is_some() {
+        Some(Hold::HostLoad)
     } else if reached(caps.budget_usd_total, snapshot.spend_total_usd) {
         Some(Hold::TotalBudget)
     } else if reached(caps.budget_usd_daily, snapshot.spend_today_usd) {

@@ -13,8 +13,8 @@ use archon_core::id::RepoId;
 use archon_core::merge::MergeRequest;
 use archon_core::notify::Question;
 use archon_core::protocol::{
-    AetherLinkStatus, DaemonStatus, DiskStatus, McpHealth, McpStatus, OrchestratorInfo,
-    PauseTarget, ReportPublished, ReportState, ReportSummary, gib,
+    AetherLinkStatus, DaemonStatus, DiskStatus, HostLoadStatus, McpHealth, McpStatus,
+    OrchestratorInfo, PauseTarget, ReportPublished, ReportState, ReportSummary, gib,
 };
 use archon_core::queue::{Caps, PauseState};
 use archon_core::repo::{Attribution, Repo, ShipMode};
@@ -164,6 +164,9 @@ fn link_lines(out: &mut String, status: &DaemonStatus) {
     for branch in &status.integration {
         let _ = writeln!(out, "integration {}", sanitize_line(&branch.describe()));
     }
+    if let Some(host) = &status.host_load {
+        let _ = writeln!(out, "host: {}", host_load_line(host));
+    }
     if let Some(disk) = &status.disk {
         let _ = writeln!(out, "disk: {}", disk_line(disk));
         for usage in &disk.storage {
@@ -179,6 +182,36 @@ fn link_lines(out: &mut String, status: &DaemonStatus) {
             let _ = writeln!(out, "storage {}: {size}", usage.kind);
         }
     }
+}
+
+/// Host load and free memory against their limits, and the hold, if any.
+pub fn host_load_line(host: &HostLoadStatus) -> String {
+    let mut line = match (&host.sample, &host.unreadable) {
+        (Some(s), _) => format!(
+            "load {:.2}/cpu, {:.1} GiB memory available",
+            s.load_per_cpu, s.available_gb
+        ),
+        (None, why) => format!(
+            "host load unknown ({})",
+            sanitize_line(why.as_deref().unwrap_or("no reading"))
+        ),
+    };
+    if let Some(limit) = host.max_load_per_cpu {
+        let _ = write!(line, ", holds above {limit:.2}/cpu");
+    }
+    if let Some(limit) = host.min_available_memory_gb {
+        let _ = write!(line, ", holds below {limit:.1} GiB");
+    }
+    if let Some(hold) = &host.hold {
+        let _ = write!(
+            line,
+            "; dispatch HELD: {}",
+            sanitize_line(&hold.next_action())
+        );
+    } else if host.sample.is_none() {
+        line.push_str("; the check is not running, so dispatch is not held for host load");
+    }
+    line
 }
 
 /// Free space where archond writes, and the disk hold or standby, if any.
@@ -895,6 +928,7 @@ pub(crate) mod tests {
             mcp: None,
             github: None,
             disk: None,
+            host_load: None,
             versions: None,
             upgrade: None,
             merges_waiting: Vec::new(),
@@ -1085,6 +1119,47 @@ pub(crate) mod tests {
         assert!(text.contains("\nbudgets: off (no dollar budget"), "{text}");
         assert!(text.contains("saved across restarts"), "{text}");
         assert!(text.contains("archon queue caps --budgets on"), "{text}");
+    }
+
+    #[test]
+    fn status_shows_the_host_load_hold_with_the_next_step() {
+        use archon_core::host_load::{Breach, HostLoadHold, HostSample};
+        let mut host = HostLoadStatus {
+            sample: Some(HostSample {
+                load_per_cpu: 3.2,
+                available_gb: 8.0,
+            }),
+            max_load_per_cpu: Some(1.5),
+            min_available_memory_gb: None,
+            hold: None,
+            unreadable: None,
+        };
+        assert_eq!(
+            host_load_line(&host),
+            "load 3.20/cpu, 8.0 GiB memory available, holds above 1.50/cpu"
+        );
+        host.hold = Some(HostLoadHold {
+            load: Some(Breach {
+                measured: 3.2,
+                limit: 1.5,
+            }),
+            memory: None,
+        });
+        let line = host_load_line(&host);
+        assert!(
+            line.contains("dispatch HELD: waiting for host load to drop below 1.35/cpu"),
+            "{line}"
+        );
+        assert!(line.contains("raise [limits] max_load_per_cpu"), "{line}");
+        host.sample = None;
+        host.hold = None;
+        host.unreadable = Some("no /proc here".into());
+        let line = host_load_line(&host);
+        assert!(line.contains("host load unknown (no /proc here)"), "{line}");
+        assert!(
+            line.contains("dispatch is not held for host load"),
+            "{line}"
+        );
     }
 
     #[test]

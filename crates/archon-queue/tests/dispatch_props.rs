@@ -119,6 +119,7 @@ fn random_snapshot(rng: &mut Rng) -> DispatchSnapshot {
                 .collect(),
         },
         low_disk: rng.below(12) == 0,
+        host_load: None,
         draining: rng.below(12) == 0,
         running_total: 0,
         running_by_repo: BTreeMap::new(),
@@ -243,6 +244,7 @@ fn check_rules(s: &DispatchSnapshot, plan: &DispatchPlan) {
             Hold::GlobalPause
             | Hold::Draining
             | Hold::LowDisk
+            | Hold::HostLoad
             | Hold::DailyBudget
             | Hold::TotalBudget,
         ) => {

@@ -171,14 +171,17 @@ fn worktree_outcome(
     if !remove {
         return Ok(Outcome::Delete(caches()?));
     }
-    if is_locked_worktree(repo, path).map_err(|e| e.to_string())? {
-        return skip("git has it locked; `git worktree unlock` it, then run gc again".into());
-    }
+    let removal = || -> Result<Outcome, String> {
+        if is_locked_worktree(repo, path).map_err(|e| e.to_string())? {
+            return skip("git has it locked; `git worktree unlock` it, then run gc again".into());
+        }
+        Ok(Outcome::Remove)
+    };
     if policy.force {
-        return Ok(Outcome::Remove);
+        return removal();
     }
     match unremovable(&roots.data_dir, repo, path, &policy.cache_dirs) {
-        Ok(None) => Ok(Outcome::Remove),
+        Ok(None) => removal(),
         Ok(Some(why)) => {
             let caches = if policy.reclaim_before == archon_core::Timestamp::MIN_UTC {
                 Vec::new()

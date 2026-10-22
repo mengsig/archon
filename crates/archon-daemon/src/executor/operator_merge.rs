@@ -287,6 +287,7 @@ fn fresh(
         reason,
         waived_by: None,
         waited: false,
+        mergeability_wait_since: None,
         checks: None,
         state,
         requested_at: now,
@@ -569,6 +570,7 @@ async fn wait_for_github(
         reason,
         MergeState::AwaitingMergeability,
     );
+    waiting.mergeability_wait_since = Some(waiting.requested_at);
     waiting.checks = Some(seen.describe());
     ctx.store.lock().await.insert_merge(&waiting)?;
     Ok(waiting)
@@ -1190,6 +1192,7 @@ async fn resume_waiting(ctx: &DaemonContext, mut merge: MergeRequest) -> Result<
         Readiness::Undecided => {
             merge.state = MergeState::AwaitingMergeability;
             merge.updated_at = archon_core::now();
+            merge.mergeability_wait_since = Some(merge.updated_at);
             ctx.store.lock().await.update_merge(&merge)?;
             return Ok(false);
         }
@@ -1237,14 +1240,15 @@ async fn park_for_github(
     assert_eq!(merge.state, MergeState::Merging, "parked from a merge");
     merge.state = MergeState::AwaitingMergeability;
     merge.updated_at = archon_core::now();
+    merge.mergeability_wait_since = Some(merge.updated_at);
     ctx.store.lock().await.update_merge(&merge)?;
     Ok(merge)
 }
 
 /// How long to leave a request waiting for GitHub before reading it again:
-/// as long as it has waited, from 5 to 60 seconds.
-fn mergeability_pause(waited: chrono::TimeDelta) -> chrono::TimeDelta {
-    waited.clamp(MERGEABILITY_PAUSE_MIN, MERGEABILITY_PAUSE_MAX)
+/// as long as it had waited at its last read, from 5 to 60 seconds.
+fn mergeability_pause(waited_at_last_read: chrono::TimeDelta) -> chrono::TimeDelta {
+    waited_at_last_read.clamp(MERGEABILITY_PAUSE_MIN, MERGEABILITY_PAUSE_MAX)
 }
 
 /// Read again every request waiting for GitHub's mergeability check whose
@@ -1254,8 +1258,13 @@ pub(crate) async fn poll_mergeability(ctx: &DaemonContext) -> Result<usize, Arch
     let open = ctx.store.lock().await.open_merges()?;
     let mut ended = 0;
     for merge in open {
-        let due = merge.state == MergeState::AwaitingMergeability
-            && now - merge.updated_at >= mergeability_pause(now - merge.requested_at);
+        let due = match (&merge.state, merge.mergeability_wait_since) {
+            (MergeState::AwaitingMergeability, Some(since)) => {
+                now - merge.updated_at >= mergeability_pause(merge.updated_at - since)
+            }
+            (MergeState::AwaitingMergeability, None) => unreachable!("a wait has a start"),
+            _ => false,
+        };
         if !due {
             continue;
         }
@@ -1313,7 +1322,8 @@ async fn resume_undecided(
         ignore_checks: true,
         ..merge.clone()
     };
-    let timed_out = archon_core::now() - merge.requested_at >= WAIT_FOR_MERGEABILITY;
+    let since = merge.mergeability_wait_since.expect("a wait has a start");
+    let timed_out = archon_core::now() - since >= WAIT_FOR_MERGEABILITY;
     let refusal = match ready(ctx, &probe).await? {
         Readiness::Ready(ready) => return proceed_when_mergeable(ctx, merge, *ready).await,
         Readiness::Undecided if timed_out => format!(
@@ -1430,6 +1440,7 @@ mod tests {
             reason: None,
             waived_by: None,
             waited: false,
+            mergeability_wait_since: None,
             checks: None,
             state: MergeState::Merging,
             requested_at: now,

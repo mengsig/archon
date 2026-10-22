@@ -166,6 +166,10 @@ pub struct MergeRequest {
     /// The orchestrator's grant request waited for pending checks first.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub waited: bool,
+    /// When the request began waiting for GitHub's mergeability check; the
+    /// wait's limit and pauses count from here, not from the request.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mergeability_wait_since: Option<Timestamp>,
     /// The checks as last read, in words.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checks: Option<String>,
@@ -674,6 +678,7 @@ mod tests {
             reason: Some("the operator said merge it".into()),
             waived_by: None,
             waited: false,
+            mergeability_wait_since: None,
             checks: None,
             state: MergeState::AwaitingOperator,
             requested_at: now,

@@ -185,6 +185,13 @@ pub struct ReplyTracker {
     /// task, a deadline): the turn after it continues the same answer.
     #[serde(default)]
     resumes: bool,
+    /// Operator messages the current answer covers; above one, the reply
+    /// says so and keeps every text written for them.
+    #[serde(default)]
+    batch: u32,
+    /// Earlier texts of a batched answer, before `text`.
+    #[serde(default)]
+    earlier: Vec<String>,
 }
 
 impl ReplyTracker {
@@ -208,35 +215,61 @@ impl ReplyTracker {
 
     /// `inbox.consumed`: the running turn read the inbox up to `up_to`, at
     /// its start or mid-turn. Text written before it read a first operator
-    /// message cannot answer it. When a further operator message is read
-    /// while an answer is begun, that answer is returned to be shown now
-    /// and the new message starts a fresh one.
+    /// message cannot answer it. Messages read together, or before the
+    /// answer has any text, share one reply. When a further one is read
+    /// after text was written, that answer is returned to be shown now and
+    /// the new message starts a fresh one.
     pub fn consumed(&mut self, up_to: u64) -> Option<String> {
         let before = self.pending.len();
         self.pending.retain(|seq| *seq > up_to);
-        if self.pending.len() == before {
+        let count = u32::try_from(before - self.pending.len()).expect("a short inbox");
+        if count == 0 {
             return None;
         }
         assert!(
             self.pending.iter().all(|seq| *seq > up_to),
             "consumed messages are no longer pending"
         );
+        if self.answering && self.text.is_none() {
+            self.batch += count;
+            return None;
+        }
         let finished = if self.answering {
-            self.text.take()
+            self.take_reply()
         } else {
             None
         };
         self.answering = true;
-        self.text = None;
+        self.batch = count;
         finished
+    }
+
+    /// The text of the answer so far, and clears it. A batched answer keeps
+    /// every text written for its messages and names how many it covers.
+    fn take_reply(&mut self) -> Option<String> {
+        let last = self.text.take()?;
+        let mut parts = std::mem::take(&mut self.earlier);
+        parts.push(last);
+        let body = parts.join("\n\n");
+        if self.batch > 1 {
+            return Some(format!(
+                "Replying to your {} messages:\n\n{body}",
+                self.batch
+            ));
+        }
+        Some(body)
     }
 
     /// `agent.message {role: assistant}`. Whitespace-only text (a message
     /// that was all tool calls or thinking) does not replace it.
     pub fn assistant_text(&mut self, text: &str) {
-        if self.answering && !text.trim().is_empty() {
-            self.text = Some(text.to_owned());
+        if !self.answering || text.trim().is_empty() {
+            return;
         }
+        if self.batch > 1 {
+            self.earlier.extend(self.text.take());
+        }
+        self.text = Some(text.to_owned());
     }
 
     /// `agent.waiting`, sent before the `agent.turn_completed` of the turn
@@ -258,13 +291,18 @@ impl ReplyTracker {
             return None;
         }
         self.answering = resumes;
-        self.text.take()
+        let reply = self.take_reply();
+        if !resumes {
+            self.batch = 0;
+        }
+        reply
     }
 
     /// The orchestrator failed or was cancelled mid-turn and is revived in
     /// place: half an answer is dropped, the message stays awaited.
     pub fn interrupted(&mut self) {
         self.text = None;
+        self.earlier.clear();
     }
 
     /// Another agent now orchestrates. Inbox seqs are per agent, so pending
@@ -273,6 +311,7 @@ impl ReplyTracker {
     pub fn agent_replaced(&mut self, kept_conversation: bool) {
         self.pending.clear();
         self.text = None;
+        self.earlier.clear();
         self.resumes = false;
         self.answering &= kept_conversation;
     }
@@ -502,19 +541,70 @@ mod tests {
         tracker.assistant_text("Both done.");
         assert_eq!(
             tracker.turn_completed(Some("ready")).as_deref(),
-            Some("Both done.")
+            Some("Replying to your 2 messages:\n\nBoth done.")
         );
     }
 
     #[test]
-    fn messages_consumed_together_give_one_reply() {
+    fn messages_consumed_together_give_one_reply_with_every_text() {
+        let mut tracker = ReplyTracker::default();
+        for seq in 1..=4 {
+            tracker.delivered(seq, OPERATOR);
+        }
+        assert_eq!(tracker.consumed(4), None);
+        for text in ["A1", "A2", "", "A3", "A4"] {
+            tracker.assistant_text(text);
+        }
+        let reply = tracker.turn_completed(Some("ready")).unwrap();
+        assert_eq!(
+            reply,
+            "Replying to your 4 messages:\n\nA1\n\nA2\n\nA3\n\nA4"
+        );
+        assert!(!tracker.awaiting_reply());
+        assert_eq!(turn(&mut tracker, 5, &["trigger"]), None);
+    }
+
+    #[test]
+    fn a_single_message_keeps_its_plain_reply() {
         let mut tracker = ReplyTracker::default();
         tracker.delivered(1, OPERATOR);
-        tracker.delivered(2, OPERATOR);
-        assert_eq!(tracker.consumed(2), None);
-        tracker.assistant_text("A");
-        tracker.assistant_text("B");
-        assert_eq!(tracker.turn_completed(Some("ready")).as_deref(), Some("B"));
+        tracker.consumed(1);
+        tracker.assistant_text("Looking.");
+        tracker.assistant_text("Done.");
+        assert_eq!(
+            tracker.turn_completed(Some("ready")).as_deref(),
+            Some("Done.")
+        );
+    }
+
+    #[test]
+    fn messages_queued_in_a_busy_turn_are_all_answered_by_the_next_one() {
+        let mut tracker = ReplyTracker::default();
+        tracker.delivered(1, !OPERATOR);
+        tracker.consumed(1);
+        tracker.assistant_text("busy with a trigger");
+        for seq in 2..=5 {
+            tracker.delivered(seq, OPERATOR);
+        }
+        assert_eq!(tracker.turn_completed(Some("ready")), None);
+        assert!(tracker.awaiting_reply());
+        let shown = turn(
+            &mut tracker,
+            5,
+            &["Q1: yes", "Q2: no", "Q3: 3", "Q4: later"],
+        );
+        assert_eq!(
+            shown.as_deref(),
+            Some("Replying to your 4 messages:\n\nQ1: yes\n\nQ2: no\n\nQ3: 3\n\nQ4: later")
+        );
+        assert!(!tracker.awaiting_reply());
+    }
+
+    #[test]
+    fn a_saved_tracker_without_batch_fields_is_restored() {
+        let saved = r#"{"pending":[],"answering":true,"text":"Hi.","seen":3}"#;
+        let mut tracker = restore_replies(Some(saved)).unwrap();
+        assert_eq!(tracker.turn_completed(None).as_deref(), Some("Hi."));
     }
 
     #[test]

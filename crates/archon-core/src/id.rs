@@ -41,8 +41,9 @@ macro_rules! prefixed_id {
             /// Accepts only `<prefix>_<ULID>`; anything else is a caller bug or
             /// corrupted storage, never silently accepted.
             pub fn parse(raw: &str) -> Result<Self, ArchonError> {
-                let invalid =
-                    || ArchonError::Invalid(bad_id_message(raw, $prefix, kind_name($prefix)));
+                let invalid = || {
+                    ArchonError::Invalid(bad_id_message(raw, $prefix, kind_name($prefix), false))
+                };
                 let rest = raw
                     .strip_prefix(concat!($prefix, "_"))
                     .ok_or_else(invalid)?;
@@ -128,16 +129,22 @@ fn kind_name(kind: &str) -> &str {
 }
 
 /// What to tell an operator who typed something that is not an id of `kind`:
-/// the value, the expected format and where to find real ids.
-fn bad_id_message(text: &str, kind: &str, what: &str) -> String {
+/// the value, the expected format and where to find real ids. `or_start`
+/// adds that a prefix is accepted, which only `id_prefix` callers do.
+fn bad_id_message(text: &str, kind: &str, what: &str, or_start: bool) -> String {
     let listing = if kind == QueueItemId::PREFIX {
-        "run `archon queue` to list item ids"
+        "run `archon queue list` to list item ids"
     } else {
         "list them with the matching `archon` list command"
     };
+    let start = if or_start {
+        format!(", or the start of one, such as `{kind}_01HZX`")
+    } else {
+        String::new()
+    };
     format!(
         "'{}' is not a valid {what} id. Expected `{kind}_` followed by {ULID_LEN} characters \
-         (0-9 and A-Z without I, L, O or U), or the start of one, such as `{kind}_01HZX`; {listing}",
+         (0-9 and A-Z without I, L, O or U){start}; {listing}",
         text.trim()
     )
 }
@@ -157,7 +164,7 @@ pub fn id_prefix(text: &str, kind: &str, what: &str) -> Result<String, ArchonErr
         && ulid.len() <= ULID_LEN
         && ulid.chars().all(|c| ULID_ALPHABET.contains(c));
     if !well_formed {
-        return Err(ArchonError::Invalid(bad_id_message(text, kind, what)));
+        return Err(ArchonError::Invalid(bad_id_message(text, kind, what, true)));
     }
     let prefix = format!("{kind}_{ulid}");
     assert!(prefix.is_ascii(), "a checked prefix is plain ASCII");
@@ -195,7 +202,7 @@ mod tests {
             "{error}"
         );
         assert!(error.contains("`qi_` followed by 26 characters"), "{error}");
-        assert!(error.contains("archon queue"), "{error}");
+        assert!(error.contains("`archon queue list`"), "{error}");
         assert!(!error.contains("found"), "{error}");
         let parsed = QueueItemId::parse("nonexistent").unwrap_err().to_string();
         assert!(

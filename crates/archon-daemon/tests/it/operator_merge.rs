@@ -1219,3 +1219,40 @@ async fn a_wait_for_mergeability_that_times_out_says_what_to_do() {
     );
     assert!(merge_calls(&gh).is_empty() && !gh.merged());
 }
+
+/// A wait stored before its start was recorded keeps its original start
+/// through retries, so its hour still runs out.
+#[tokio::test]
+async fn a_legacy_wait_for_mergeability_keeps_its_start_and_times_out() {
+    let (h, gh) = delivering(Config::default()).await;
+    grant_merge(&h).await;
+    let (item, head) = reviewed(&h).await;
+    gh.show(&head, "UNKNOWN", green());
+    merge_of(h.orchestrator(request_merge(&item)).await);
+    age_request(&h, &item, 30).await;
+    let db = rusqlite::Connection::open(&h.ctx.paths.store).unwrap();
+    db.execute(
+        "UPDATE merge_requests SET data = json_remove(data, '$.mergeability_wait_since')",
+        [],
+    )
+    .unwrap();
+
+    coordination::poll_mergeability(&h.ctx).await.unwrap();
+    let [kept] = merges(&h, &item).await.try_into().expect("one request");
+    assert_eq!(kept.state, MergeState::AwaitingMergeability);
+    let since = kept.mergeability_wait_since.expect("the start is kept");
+    assert!(
+        archon_core::now() - since >= chrono::TimeDelta::minutes(29),
+        "{since}"
+    );
+
+    age_request(&h, &item, 61).await;
+    db.execute(
+        "UPDATE merge_requests SET data = json_remove(data, '$.mergeability_wait_since')",
+        [],
+    )
+    .unwrap();
+    coordination::poll_mergeability(&h.ctx).await.unwrap();
+    let [done] = merges(&h, &item).await.try_into().expect("one request");
+    assert!(matches!(done.state, MergeState::Refused { .. }), "{done:?}");
+}

@@ -1320,6 +1320,8 @@ async fn resume_undecided(
         MergeState::AwaitingMergeability,
         "only a waiting request resumes"
     );
+    // Kept from here on, so a retry's new `updated_at` never moves the start.
+    merge.mergeability_wait_since = Some(wait_started(&merge));
     let probe = MergeRequest {
         ignore_checks: true,
         ..merge.clone()

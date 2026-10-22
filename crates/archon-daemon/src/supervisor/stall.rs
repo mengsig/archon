@@ -126,7 +126,9 @@ pub(super) fn stall_text(silent: Duration, nudge: Nudge) -> String {
     let nudge = match nudge {
         Nudge::Sent => "Archon sent it a nudge to continue; if it stays silent".to_owned(),
         Nudge::Spent => {
-            format!("Archon already nudged it {MAX_NUDGES} times and sends no more; to recover it")
+            format!(
+                "Archon has used its {MAX_NUDGES} nudge attempts on it and sends no more; to recover it"
+            )
         }
         Nudge::Failed(error) => format!("Archon could not nudge it ({error}); to recover it"),
     };

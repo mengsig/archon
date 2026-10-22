@@ -1192,7 +1192,9 @@ async fn resume_waiting(ctx: &DaemonContext, mut merge: MergeRequest) -> Result<
         Readiness::Undecided => {
             merge.state = MergeState::AwaitingMergeability;
             merge.updated_at = archon_core::now();
-            merge.mergeability_wait_since = Some(merge.updated_at);
+            merge
+                .mergeability_wait_since
+                .get_or_insert(merge.updated_at);
             ctx.store.lock().await.update_merge(&merge)?;
             return Ok(false);
         }
@@ -1240,7 +1242,9 @@ async fn park_for_github(
     assert_eq!(merge.state, MergeState::Merging, "parked from a merge");
     merge.state = MergeState::AwaitingMergeability;
     merge.updated_at = archon_core::now();
-    merge.mergeability_wait_since = Some(merge.updated_at);
+    merge
+        .mergeability_wait_since
+        .get_or_insert(merge.updated_at);
     ctx.store.lock().await.update_merge(&merge)?;
     Ok(merge)
 }
@@ -1371,6 +1375,7 @@ async fn proceed_when_mergeable(
         }
         Next::WaitForChecks => {
             merge.state = MergeState::AwaitingChecks;
+            merge.mergeability_wait_since = None;
             merge.waited = true;
             merge.checks = Some(ready.seen.describe());
             merge.updated_at = archon_core::now();

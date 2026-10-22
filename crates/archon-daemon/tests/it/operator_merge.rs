@@ -1256,3 +1256,23 @@ async fn a_legacy_wait_for_mergeability_keeps_its_start_and_times_out() {
     let [done] = merges(&h, &item).await.try_into().expect("one request");
     assert!(matches!(done.state, MergeState::Refused { .. }), "{done:?}");
 }
+
+/// A poll that finds GitHub still undecided keeps the wait's original start.
+#[tokio::test]
+async fn a_repeated_poll_keeps_the_original_wait_start() {
+    let (h, gh) = delivering(Config::default()).await;
+    grant_merge(&h).await;
+    let (item, head) = reviewed(&h).await;
+    gh.show(&head, "UNKNOWN", green());
+    merge_of(h.orchestrator(request_merge(&item)).await);
+    age_request(&h, &item, 30).await;
+    let [before] = merges(&h, &item).await.try_into().expect("one request");
+
+    coordination::poll_mergeability(&h.ctx).await.unwrap();
+    let [after] = merges(&h, &item).await.try_into().expect("one request");
+    assert_eq!(after.state, MergeState::AwaitingMergeability);
+    assert_eq!(
+        after.mergeability_wait_since,
+        before.mergeability_wait_since
+    );
+}

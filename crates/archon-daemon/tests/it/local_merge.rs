@@ -15,6 +15,11 @@ use common::delivery::shipped_by;
 use common::{Harness, REPO_NAME, git};
 
 async fn delivered_locally(h: &Harness) -> (QueueItem, String, String) {
+    set_local(h).await;
+    deliver_local(h, "a local change", Vec::new()).await
+}
+
+async fn set_local(h: &Harness) {
     let local = RepoPatch {
         ship: Some(ShipMode::Local),
         ..RepoPatch::default()
@@ -24,14 +29,21 @@ async fn delivered_locally(h: &Harness) -> (QueueItem, String, String) {
         patch: local,
     };
     h.cli(update).await.expect("ship = local");
+}
+
+async fn deliver_local(
+    h: &Harness,
+    title: &str,
+    depends_on: Vec<archon_core::id::QueueItemId>,
+) -> (QueueItem, String, String) {
     let request = EnqueueRequest {
         onto: None,
         repo: Some(RepoRef(REPO_NAME.into())),
         pipeline: Some("direct".into()),
-        title: "a local change".into(),
+        title: title.into(),
         brief: "brief".into(),
         priority: Default::default(),
-        depends_on: Vec::new(),
+        depends_on,
         tags: Vec::new(),
         model_plan: ModelPlan::default().into(),
         stage_timeouts: Default::default(),
@@ -224,4 +236,116 @@ async fn the_users_merge_options_cannot_turn_the_fast_forward_into_a_squash() {
     );
     assert_eq!(git(&h.repo, &["rev-parse", "main"]), head);
     assert_eq!(git(&h.repo, &["status", "--porcelain"]), "", "index clean");
+}
+
+/// A parent delivered and merged, and a child stacked on it and delivered.
+async fn stacked_pair(h: &Harness) -> (QueueItem, QueueItem) {
+    set_local(h).await;
+    let (parent, _, _) = deliver_local(h, "the parent", Vec::new()).await;
+    let (child, _, _) = deliver_local(h, "the child", vec![parent.id.clone()]).await;
+    assert!(
+        !h.ctx.store.lock().await.stack_parents(&child.id).unwrap()[0].merged,
+        "the child was stacked on an unmerged parent"
+    );
+    (parent, child)
+}
+
+#[tokio::test]
+async fn a_child_is_refused_with_the_parent_to_merge_first_until_it_merges() {
+    let h = Harness::new().await;
+    let (parent, child) = stacked_pair(&h).await;
+    let why = review(&h, &child, false)
+        .await
+        .expect_err("parent unmerged");
+    assert!(
+        why.to_string()
+            .contains(&format!("run `archon merge {}` first", parent.id)),
+        "{why}"
+    );
+}
+
+#[tokio::test]
+async fn a_child_merges_and_diffs_after_its_parent_was_fast_forwarded() {
+    let h = Harness::new().await;
+    let (parent, child) = stacked_pair(&h).await;
+    let landed = merged(&h, &parent).await;
+    assert!(
+        matches!(landed.state, MergeState::Merged { .. }),
+        "{landed:?}"
+    );
+
+    let shown = review(&h, &child, true).await.expect("child review");
+    assert_eq!(shown.base, "main");
+    assert!(shown.blocker.is_none(), "{:?}", shown.blocker);
+    let merge = merged(&h, &child).await;
+    assert!(
+        matches!(merge.state, MergeState::Merged { .. }),
+        "{merge:?}"
+    );
+    let parents = h.ctx.store.lock().await.stack_parents(&child.id).unwrap();
+    assert!(parents.iter().all(|p| p.merged), "recorded as merged");
+}
+
+#[tokio::test]
+async fn a_parent_fast_forwarded_by_hand_counts_as_merged_from_git() {
+    let h = Harness::new().await;
+    let (parent, child) = stacked_pair(&h).await;
+    let branch = h.run(&parent.id).await.branch;
+    git(&h.repo, &["merge", "--ff-only", &branch]);
+
+    let shown = review(&h, &child, true).await.expect("child review");
+    assert_eq!(shown.base, "main");
+    let merge = merged(&h, &child).await;
+    assert!(
+        matches!(merge.state, MergeState::Merged { .. }),
+        "{merge:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_child_of_a_squash_merged_parent_is_told_to_refresh_not_to_merge_the_parent() {
+    let h = Harness::new().await;
+    let (parent, child) = stacked_pair(&h).await;
+    let run = h.run(&parent.id).await;
+    git(&h.repo, &["merge", "--squash", &run.branch]);
+    git(&h.repo, &["commit", "--quiet", "-m", "squashed parent"]);
+    let now = archon_core::now();
+    let squashed = MergeRequest {
+        id: archon_core::id::MergeRequestId::new(),
+        item: parent.id.clone(),
+        run: run.id.clone(),
+        repo: h
+            .ctx
+            .store
+            .lock()
+            .await
+            .item(&parent.id)
+            .unwrap()
+            .repo
+            .unwrap(),
+        pr_url: format!("local:{}", run.branch),
+        head: git(&h.repo, &["rev-parse", &run.branch]),
+        authority: MergeAuthority::Cli,
+        ignore_checks: false,
+        reason: None,
+        waived_by: None,
+        waited: false,
+        checks: None,
+        state: MergeState::Merged {
+            method: "squash".into(),
+            actor: None,
+            observed: true,
+        },
+        requested_at: now,
+        updated_at: now,
+    };
+    h.ctx.store.lock().await.insert_merge(&squashed).unwrap();
+
+    let merge = merged(&h, &child).await;
+    let why = refusal(&merge);
+    assert!(!why.contains("not merged yet"), "{why}");
+    assert!(
+        why.contains(&format!("archon queue refresh {}", child.id)),
+        "{why}"
+    );
 }

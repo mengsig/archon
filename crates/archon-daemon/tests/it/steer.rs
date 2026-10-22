@@ -1105,14 +1105,11 @@ async fn states_that_cannot_be_steered_say_so() {
         reason: None,
     };
     h.cli(cancel).await.expect("cancelled");
-    let retry_first = refused(&h, &stopped.id, switch("steer-quick")).await;
-    assert!(
-        retry_first.contains("retry it, then steer its stages"),
-        "{retry_first}"
-    );
-    steer(&h, &stopped.id, note(NOTE))
-        .await
-        .expect("a note is always taken");
+    for change in [switch("steer-quick"), note(NOTE)] {
+        let cancelled = refused(&h, &stopped.id, change).await;
+        assert!(cancelled.contains("was cancelled"), "{cancelled}");
+        assert!(cancelled.contains("queue retry"), "{cancelled}");
+    }
 
     let empty = steer(&h, &stopped.id, Steer::default())
         .await

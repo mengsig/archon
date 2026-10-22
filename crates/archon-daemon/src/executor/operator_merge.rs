@@ -15,19 +15,21 @@ use archon_core::error::ArchonError;
 use archon_core::id::{MergeRequestId, PipelineRunId, QuestionId, QueueItemId};
 use archon_core::merge::{
     self, ChecksSeen, Expected, LOCAL_REF_PREFIX, MERGE_OPTIONS, MergeAnswer, MergeAuthority,
-    MergeRequest, MergeState,
+    MergeRequest, MergeState, PullRequestFacts,
 };
 use archon_core::notify::{AnswerVia, NotificationKind, Question};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::{Repo, ShipMode};
 use archon_core::run::{StageRun, StageState};
 use archon_queue::Store;
+use archon_queue::store::stacks::StackParent;
 
 use super::local_merge::{self, Landing};
 use super::ship::{LOCAL_COMMIT_KEY, MergeRefusal, merge_method, pin_auto_merge};
 use super::{clip, coordination, finish, gh, recover};
 use crate::context::DaemonContext;
 use crate::triggers::{self, TriggerEvent};
+use crate::worktree;
 use crate::worktree::stack::is_commit_id;
 
 /// The orchestrator's reason is kept to this.
@@ -176,12 +178,17 @@ fn local_delivery(
 }
 
 /// The branch the pull request must target; `Err` refuses the merge.
-fn expected_base(store: &Store, shipped: &Shipped) -> Result<Result<String, String>, ArchonError> {
+fn expected_base(
+    store: &mut Store,
+    shipped: &Shipped,
+) -> Result<Result<String, String>, ArchonError> {
+    settle_merged_parents(store, shipped)?;
     let parents = store.stack_parents(&shipped.item.id)?;
     if let Some(open) = parents.iter().find(|p| !p.merged) {
         return Ok(Err(format!(
-            "it is stacked on {}'s `{}`, which is not merged yet: merge that first",
-            open.parent_item, open.parent_branch
+            "it is stacked on {}'s `{}`, which is not merged yet: run `archon merge {}` first, \
+             then merge this item again",
+            open.parent_item, open.parent_branch, open.parent_item
         )));
     }
     if let Some(base) = super::restack::target_base(store, &shipped.item.id)? {
@@ -201,6 +208,50 @@ fn expected_base(store: &Store, shipped: &Shipped) -> Result<Result<String, Stri
             shipped.repo.name
         ))),
     }
+}
+
+/// Record as merged every unmerged parent that the ledger or git shows
+/// merged, so a squash or fast-forward the restack sweep has not seen yet
+/// does not block the item.
+fn settle_merged_parents(store: &mut Store, shipped: &Shipped) -> Result<(), ArchonError> {
+    for mut parent in store.stack_parents(&shipped.item.id)? {
+        if parent.merged || !parent_is_merged(store, shipped, &parent)? {
+            continue;
+        }
+        parent.merged = true;
+        store.save_stack_parent(&parent)?;
+    }
+    Ok(())
+}
+
+fn parent_is_merged(
+    store: &Store,
+    shipped: &Shipped,
+    parent: &StackParent,
+) -> Result<bool, ArchonError> {
+    let in_ledger = store
+        .merges_for_item(&parent.parent_item)?
+        .iter()
+        .any(|m| matches!(m.state, MergeState::Merged { .. }));
+    if in_ledger {
+        return Ok(true);
+    }
+    let base = shipped
+        .repo
+        .base_branch
+        .as_ref()
+        .or(parent.repository_base.as_ref());
+    let repo = &shipped.repo.path;
+    let Some(base) = base else {
+        return Ok(false);
+    };
+    let Some(base_tip) = worktree::commit_id(repo, &format!("refs/heads/{base}"))? else {
+        return Ok(false);
+    };
+    let branch_ref = format!("refs/heads/{}", parent.parent_branch);
+    let tip = worktree::commit_id(repo, &branch_ref)?.unwrap_or_else(|| parent.parent_sha.clone());
+    assert!(is_commit_id(&tip), "a commit id");
+    worktree::is_ancestor(repo, &tip, &base_tip)
 }
 
 fn fresh(
@@ -295,9 +346,9 @@ pub(crate) async fn request(
         .filter(|r| !r.is_empty())
         .map(|r| clip(&r, MAX_REASON_CHARS));
     let (shipped, base) = {
-        let store = ctx.store.lock().await;
+        let mut store = ctx.store.lock().await;
         let shipped = shipped(&store, item)?;
-        let base = expected_base(&store, &shipped)?;
+        let base = expected_base(&mut store, &shipped)?;
         (shipped, base)
     };
     let base = base.map_err(|why| refused_early(&shipped, &why))?;
@@ -397,9 +448,9 @@ pub(crate) async fn local_review(
     full: bool,
 ) -> Result<archon_core::merge::LocalReview, ArchonError> {
     let (shipped, base) = {
-        let store = ctx.store.lock().await;
+        let mut store = ctx.store.lock().await;
         let shipped = shipped(&store, item)?;
-        let base = expected_base(&store, &shipped)?;
+        let base = expected_base(&mut store, &shipped)?;
         (shipped, base)
     };
     let base = base.map_err(ArchonError::InvalidTransition)?;
@@ -486,9 +537,9 @@ pub(crate) async fn enable_auto_merge(
     item: &QueueItemId,
 ) -> Result<(QueueItem, String), ArchonError> {
     let (shipped, base) = {
-        let store = ctx.store.lock().await;
+        let mut store = ctx.store.lock().await;
         let shipped = shipped(&store, item)?;
-        let base = expected_base(&store, &shipped)?;
+        let base = expected_base(&mut store, &shipped)?;
         (shipped, base)
     };
     let refused = |why: &str| {
@@ -708,13 +759,13 @@ async fn land_local(
     merge: &MergeRequest,
 ) -> Result<Result<String, String>, ArchonError> {
     let (shipped, base) = {
-        let store = ctx.store.lock().await;
+        let mut store = ctx.store.lock().await;
         let shipped = match shipped(&store, &merge.item) {
             Ok(shipped) => shipped,
             Err(error) if error.is_store() => return Err(error),
             Err(error) => return Ok(Err(error.to_string())),
         };
-        let base = match expected_base(&store, &shipped) {
+        let base = match expected_base(&mut store, &shipped) {
             Ok(Ok(base)) => base,
             Ok(Err(why)) => return Ok(Err(why)),
             Err(error) => return Err(error),
@@ -766,13 +817,13 @@ async fn ready(
     merge: &MergeRequest,
 ) -> Result<Result<Ready, String>, ArchonError> {
     let (shipped, base) = {
-        let store = ctx.store.lock().await;
+        let mut store = ctx.store.lock().await;
         let shipped = match shipped(&store, &merge.item) {
             Ok(shipped) => shipped,
             Err(error) if error.is_store() => return Err(error),
             Err(error) => return Ok(Err(error.to_string())),
         };
-        let base = match expected_base(&store, &shipped) {
+        let base = match expected_base(&mut store, &shipped) {
             Ok(base) => base,
             Err(error) if error.is_store() => return Err(error),
             Err(error) => Err(error.to_string()),
@@ -793,6 +844,10 @@ async fn ready(
         Ok(facts) => facts,
         Err(error) => return Ok(Err(format!("{GITHUB_UNREADABLE}: {error}"))),
     };
+    let facts = match retargeted(ctx, &shipped, &base, facts).await {
+        Ok(facts) => facts,
+        Err(why) => return Ok(Err(why)),
+    };
     let expected = Expected {
         head: &merge.head,
         base: &base,
@@ -802,6 +857,45 @@ async fn ready(
         repo: shipped.repo.clone(),
         seen,
     }))
+}
+
+/// A pull request still aimed at a parent branch that has merged is moved
+/// onto the base, then read again.
+async fn retargeted(
+    ctx: &DaemonContext,
+    shipped: &Shipped,
+    base: &str,
+    facts: PullRequestFacts,
+) -> Result<PullRequestFacts, String> {
+    if facts.base == base || facts.state != "OPEN" {
+        return Ok(facts);
+    }
+    let stacked = {
+        let store = ctx.store.lock().await;
+        let parents = store
+            .stack_parents(&shipped.item.id)
+            .map_err(|e| e.to_string())?;
+        parents
+            .iter()
+            .any(|p| p.merged && p.parent_branch == facts.base)
+    };
+    if !stacked {
+        return Ok(facts);
+    }
+    let binary = &ctx.config.github.binary;
+    let moved = ["pr", "edit", &shipped.pr_url, "--base", base];
+    gh::text(binary, &shipped.repo, &moved)
+        .await
+        .map_err(|error| {
+            format!(
+                "its parent merged but the pull request could not be retargeted to `{base}`: \
+             {error}; run `gh pr edit {} --base {base}`, then merge again",
+                shipped.pr_url
+            )
+        })?;
+    gh::merge_facts(binary, &shipped.repo, &shipped.pr_url)
+        .await
+        .map_err(|error| format!("{GITHUB_UNREADABLE}: {error}"))
 }
 
 /// How the merge ended, read back from GitHub; `None` when it cannot be

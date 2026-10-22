@@ -213,8 +213,10 @@ fn check_steerable(item: &QueueItem, steer: &Steer) -> Result<(), ArchonError> {
         QueueState::Succeeded { .. } => {
             return refuse("already succeeded; retry it, then steer it");
         }
-        QueueState::Cancelled { .. } if steer.changes_shape() => {
-            return refuse("was cancelled; retry it, then steer its stages");
+        QueueState::Cancelled { .. } => {
+            return refuse(
+                "was cancelled, so nothing was steered; `archon queue retry` brings it back",
+            );
         }
         _ => {}
     }

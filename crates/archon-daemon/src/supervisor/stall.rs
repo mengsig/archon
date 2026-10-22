@@ -20,6 +20,16 @@ use crate::feed;
 /// otherwise emits a message or a usage update at least every few minutes.
 pub const STALL_AFTER: Duration = Duration::from_secs(30 * 60);
 pub const STALL_CHECK_INTERVAL: Duration = Duration::from_secs(60);
+/// Nudges one orchestrator generation gets in total, however often it stalls.
+pub const MAX_NUDGES: u8 = 3;
+
+/// A stalled turn found by [`Liveness::take_stall`].
+#[derive(Debug, PartialEq, Eq)]
+pub struct Stall {
+    pub agent: AetherAgentId,
+    pub silent: Duration,
+    pub nudge: bool,
+}
 
 /// What the event stream last showed of the orchestrator's turn.
 #[derive(Debug, Default)]
@@ -28,6 +38,8 @@ pub struct Liveness {
     turn_open: bool,
     last_event: Option<Timestamp>,
     reported: bool,
+    nudges: u8,
+    probed: bool,
 }
 
 impl Liveness {
@@ -38,6 +50,10 @@ impl Liveness {
                 agent: Some(agent.clone()),
                 ..Self::default()
             };
+        }
+        if matches!(kind, EventKind::InboxDelivered { .. }) {
+            // Mail arriving proves nothing about a turn that is not reading it.
+            return;
         }
         match kind {
             // A message or a consumed inbox item also proves a turn is open, as
@@ -57,9 +73,32 @@ impl Liveness {
         self.reported = false;
     }
 
-    /// How long the open turn has been silent, once, when it passes
-    /// `STALL_AFTER`. Reported once per silence: any event rearms it.
-    pub fn take_stall(&mut self, now: Timestamp) -> Option<Duration> {
+    /// Whether `agent`'s state is still unknown: no event seen and no probe
+    /// of Aether made since archond started.
+    pub fn needs_probe(&self, agent: &AetherAgentId) -> bool {
+        self.agent.as_ref() != Some(agent) || (!self.probed && self.last_event.is_none())
+    }
+
+    /// Start watching `agent` from `now` after archond restarted into a turn
+    /// already open: the events that opened it were consumed before.
+    pub fn probed(&mut self, agent: &AetherAgentId, turn_open: bool, now: Timestamp) {
+        if self.agent.as_ref() != Some(agent) {
+            *self = Self {
+                agent: Some(agent.clone()),
+                ..Self::default()
+            };
+        }
+        self.probed = true;
+        if turn_open && self.last_event.is_none() {
+            self.turn_open = true;
+            self.last_event = Some(now);
+        }
+    }
+
+    /// The open turn, once, when it has been silent past `STALL_AFTER`.
+    /// Reported once per silence: any progress event rearms it. It asks for
+    /// a nudge for the first `MAX_NUDGES` stalls of this agent only.
+    pub fn take_stall(&mut self, now: Timestamp) -> Option<Stall> {
         let last = self.last_event?;
         if !self.turn_open || self.reported {
             return None;
@@ -69,7 +108,13 @@ impl Liveness {
             return None;
         }
         self.reported = true;
-        Some(silent)
+        let nudge = self.nudges < MAX_NUDGES;
+        self.nudges += u8::from(nudge);
+        Some(Stall {
+            agent: self.agent.clone()?,
+            silent,
+            nudge,
+        })
     }
 }
 
@@ -79,8 +124,9 @@ pub(super) fn stall_text(silent: Duration) -> String {
     format!(
         "The orchestrator has been in one turn for {minutes} minutes without a message, tool \
          result or usage update; its model request may be hung, and nothing will wake it by \
-         itself. Send it a message to see if it answers, or run `archon orchestrator restart` \
-         to start a fresh one. Ignore this if you know it is waiting on a long command."
+         itself. Archon sent it a nudge to continue; if it stays silent, run \
+         `archon orchestrator restart` to start a fresh one. Ignore this if you know it is \
+         waiting on a long command."
     )
 }
 
@@ -100,24 +146,73 @@ pub async fn watch_stalls(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
 /// Tell the operator if the orchestrator's turn is stalled as of `now`.
 /// Returns whether it did.
 pub async fn report_stall(ctx: &DaemonContext, now: Timestamp) -> Result<bool, ArchonError> {
-    let silent = ctx
+    probe_after_restart(ctx, now).await?;
+    let stall = ctx
         .supervisor
         .liveness
         .lock()
         .expect("liveness is never held across a panic")
         .take_stall(now);
-    let Some(silent) = silent else {
+    let Some(stall) = stall else {
         return Ok(false);
     };
     feed::notify(
         ctx,
         NotificationKind::Blocker,
-        stall_text(silent),
+        stall_text(stall.silent),
         None,
         None,
     )
     .await?;
+    if stall.nudge {
+        nudge(ctx, &stall, now).await?;
+    }
     Ok(true)
+}
+
+async fn nudge(ctx: &DaemonContext, stall: &Stall, now: Timestamp) -> Result<(), ArchonError> {
+    assert!(stall.nudge, "only a stall that asked for a nudge gets one");
+    let minutes = stall.silent.as_secs() / 60;
+    let text = format!(
+        "Continue: your turn has made no progress for {minutes} minutes. If you ended it with \
+         work still pending, such as watching a release build, pick that work up now."
+    );
+    let key = format!("stall-nudge:{}:{}", stall.agent, now.timestamp());
+    ctx.backend.send_message(&stall.agent, &text, &key).await
+}
+
+/// Learn once from Aether whether the orchestrator is mid-turn, for an
+/// archond that restarted into a turn whose events it had already consumed.
+async fn probe_after_restart(ctx: &DaemonContext, now: Timestamp) -> Result<(), ArchonError> {
+    let Some(agent) = super::current_orchestrator(ctx).await? else {
+        return Ok(());
+    };
+    let unknown = ctx
+        .supervisor
+        .liveness
+        .lock()
+        .expect("liveness is never held across a panic")
+        .needs_probe(&agent);
+    if !unknown {
+        return Ok(());
+    }
+    let found = match ctx.aether.client() {
+        Ok(client) => client.get_agent(&agent).await,
+        Err(error) => Err(error),
+    };
+    let running = match found {
+        Ok(found) => found.status["state"] == "running",
+        Err(error) => {
+            tracing::warn!(%error, "could not read the orchestrator's state for the stall check");
+            return Ok(());
+        }
+    };
+    ctx.supervisor
+        .liveness
+        .lock()
+        .expect("liveness is never held across a panic")
+        .probed(&agent, running, now);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -152,7 +247,7 @@ mod tests {
         let mut live = Liveness::default();
         live.saw(&agent(A), &started(), at(0));
         assert_eq!(live.take_stall(at(STALL - 1)), None);
-        assert_eq!(live.take_stall(at(STALL)), Some(STALL_AFTER));
+        assert_eq!(live.take_stall(at(STALL)).unwrap().silent, STALL_AFTER);
         assert_eq!(live.take_stall(at(STALL + 60)), None, "told once");
     }
 
@@ -199,9 +294,53 @@ mod tests {
     }
 
     #[test]
+    fn mail_delivered_to_a_hung_turn_does_not_rearm_the_report() {
+        let mut live = Liveness::default();
+        live.saw(&agent(A), &started(), at(0));
+        let mail = EventKind::InboxDelivered {
+            seq: 7,
+            from_operator: false,
+            message: None,
+        };
+        live.saw(&agent(A), &mail, at(STALL - 10));
+        assert!(live.take_stall(at(STALL)).is_some());
+    }
+
+    #[test]
+    fn nudges_are_bounded_per_agent() {
+        let mut live = Liveness::default();
+        let mut nudged = 0;
+        for round in 0..10 {
+            let base = round * (STALL + 100);
+            live.saw(&agent(A), &started(), at(base));
+            let stall = live.take_stall(at(base + STALL)).expect("stalls again");
+            nudged += i32::from(stall.nudge);
+        }
+        assert_eq!(nudged, i32::from(MAX_NUDGES));
+    }
+
+    #[test]
+    fn a_turn_found_open_after_a_restart_is_watched_from_the_probe() {
+        let mut live = Liveness::default();
+        assert!(live.needs_probe(&agent(A)));
+        live.probed(&agent(A), true, at(0));
+        assert!(!live.needs_probe(&agent(A)));
+        assert!(live.take_stall(at(STALL - 1)).is_none());
+        assert!(live.take_stall(at(STALL)).is_some());
+    }
+
+    #[test]
+    fn an_idle_orchestrator_found_by_the_probe_is_not_watched() {
+        let mut live = Liveness::default();
+        live.probed(&agent(A), false, at(0));
+        assert!(live.take_stall(at(10 * STALL)).is_none());
+    }
+
+    #[test]
     fn the_notice_says_what_happened_and_what_to_do() {
         let text = stall_text(Duration::from_secs(3 * 3600));
         assert!(text.contains("180 minutes"), "{text}");
         assert!(text.contains("archon orchestrator restart"), "{text}");
+        assert!(text.contains("nudge"), "{text}");
     }
 }

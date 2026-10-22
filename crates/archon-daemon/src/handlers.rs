@@ -446,9 +446,14 @@ async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, Ar
         Request::Gc {
             older_than_secs,
             force,
+            preview,
         } => {
             let older_than = older_than_secs.map(archon_core::age::Age::from_secs);
-            let report = crate::gc::collect(ctx, older_than, force).await?;
+            let report = if preview {
+                crate::gc::preview(ctx, older_than, force).await?
+            } else {
+                crate::gc::collect(ctx, older_than, force).await?
+            };
             Ok(Reply::Gc(Box::new(report)))
         }
         request => handle_operator(ctx, request).await,

@@ -193,6 +193,7 @@ async fn stage_callers_and_nested_privileged_requests_are_refused() {
         Request::Gc {
             older_than_secs: None,
             force: true,
+            preview: false,
         },
         cited(grant(true), 1, "grant requested merges"),
     ] {

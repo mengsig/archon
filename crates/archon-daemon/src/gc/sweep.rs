@@ -287,7 +287,7 @@ pub(super) fn is_listed_worktree(repo: &Path, path: &Path) -> Result<bool, Archo
 
 /// Why `git worktree remove` would refuse `worktree` without `--force`, untracked
 /// caches aside, asked through `repo`'s shadow under `data_dir` so no filter runs.
-fn unremovable(
+pub(super) fn unremovable(
     data_dir: &Path,
     repo: &Path,
     worktree: &Path,

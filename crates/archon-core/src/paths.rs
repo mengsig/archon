@@ -150,12 +150,12 @@ fn resolved(path: &Path) -> std::io::Result<PathBuf> {
 /// The config directory, the data directory and `socket` as this process
 /// resolves them; an unset socket without a runtime dir moves with the data.
 pub fn locations(socket: &Path) -> [Location; 3] {
-    let default_data = default_data_dir();
+    let default_data = shared_default(default_data_dir(), "XDG_DATA_HOME", ".local/share");
     [
         Location {
             variable: CONFIG_DIR_VAR,
             path: config_dir(),
-            default: default_config_dir(),
+            default: shared_default(default_config_dir(), "XDG_CONFIG_HOME", ".config"),
         },
         Location {
             variable: DATA_DIR_VAR,
@@ -168,6 +168,34 @@ pub fn locations(socket: &Path) -> [Location; 3] {
             default: default_socket_in(&default_data),
         },
     ]
+}
+
+/// The default of a directory every setup of this user shares: the one under
+/// the home directory, even where `xdg_var` moves the platform default to a
+/// private place, so private XDG directories count as moved, not as defaults.
+fn shared_default(platform_default: PathBuf, xdg_var: &str, under_home: &str) -> PathBuf {
+    let xdg = std::env::var_os(xdg_var);
+    shared_default_of(
+        platform_default,
+        xdg.as_deref(),
+        dirs::home_dir(),
+        under_home,
+    )
+}
+
+fn shared_default_of(
+    platform_default: PathBuf,
+    xdg: Option<&std::ffi::OsStr>,
+    home: Option<PathBuf>,
+    under_home: &str,
+) -> PathBuf {
+    let (Some(xdg), Some(home)) = (xdg.filter(|v| !v.is_empty()), home) else {
+        return platform_default;
+    };
+    if platform_default != Path::new(xdg).join("archon") {
+        return platform_default;
+    }
+    home.join(under_home).join("archon")
 }
 
 /// Some locations point away from their defaults and some do not, such as a private config and
@@ -226,6 +254,13 @@ fn listed(locations: &[Location]) -> String {
 /// Whether starting archond on `socket` would mix moved and default
 /// locations; such a start is refused unless the operator runs it directly.
 pub fn partial_override(socket: &Path) -> Option<PartialOverride> {
+    let overridden = [CONFIG_DIR_VAR, DATA_DIR_VAR, SOCKET_VAR]
+        .iter()
+        .any(|var| std::env::var_os(var).is_some());
+    // Only the XDG directories moved: nothing of Archon's own was mixed.
+    if !overridden {
+        return None;
+    }
     PartialOverride::among(locations(socket))
 }
 
@@ -251,6 +286,31 @@ mod tests {
             at(DATA_DIR_VAR, data, "/home/u/.local/share/archon"),
             at(SOCKET_VAR, socket, "/run/user/1/archon/archond.sock"),
         ])
+    }
+
+    #[test]
+    fn private_xdg_dirs_are_not_the_shared_default() {
+        let home = || Some(PathBuf::from("/home/u"));
+        let xdg = std::ffi::OsStr::new("/sandbox/data");
+        let platform = PathBuf::from("/sandbox/data/archon");
+        let shared = shared_default_of(platform.clone(), Some(xdg), home(), ".local/share");
+        assert_eq!(shared, Path::new("/home/u/.local/share/archon"));
+        let unset = shared_default_of(platform.clone(), None, home(), ".local/share");
+        assert_eq!(unset, platform, "no XDG variable: the platform default");
+        let mixed = PartialOverride::among([
+            at(
+                CONFIG_DIR_VAR,
+                "/sandbox/c/archon",
+                "/home/u/.config/archon",
+            ),
+            at(DATA_DIR_VAR, "/sandbox/data/archon", shared),
+            at(
+                SOCKET_VAR,
+                "/sandbox/s.sock",
+                "/run/user/1/archon/archond.sock",
+            ),
+        ]);
+        assert_eq!(mixed, None, "private XDG dirs and a private socket agree");
     }
 
     #[test]

@@ -24,6 +24,7 @@ pub(crate) mod cache;
 mod extras;
 mod mark;
 mod plan;
+mod preview;
 mod snapshot;
 mod sweep;
 mod team;
@@ -75,7 +76,7 @@ pub struct Policy {
     pub reclaim_before: Timestamp,
     /// Remove worktrees with uncommitted changes too.
     pub force: bool,
-    /// `worktrees.cache_dirs`: empty reclaims everything git ignores.
+    /// `worktrees.cache_dirs`: empty reclaims the known build-output roots.
     pub cache_dirs: Vec<PathBuf>,
     /// A shipped, succeeded run's worktree archond should have removed at once
     /// (`keep_on_success` off), and did not, goes with its caches.
@@ -251,6 +252,24 @@ pub async fn collect(
 ) -> Result<GcReport, ArchonError> {
     let pass = plan(ctx, older_than, force).await?;
     collect_planned(ctx, pass).await
+}
+
+/// What a pass would delete from run worktrees, deleting nothing.
+pub async fn preview(
+    ctx: &DaemonContext,
+    older_than: Option<Age>,
+    force: bool,
+) -> Result<GcReport, ArchonError> {
+    let Pass {
+        policy,
+        roots,
+        pressure,
+        plans,
+        ..
+    } = plan(ctx, older_than, force).await?;
+    let mut report = blocking(move || preview::preview(&plans, &roots, &policy)).await?;
+    report.pressure = pressure;
+    Ok(report)
 }
 
 /// A planned pass; it holds off any other until it is collected or dropped.
@@ -492,17 +511,47 @@ pub fn collect_offline(
     let _data = archon_queue::DataLock::share(&paths.data_dir)?;
     let _lock = crate::server::lock_daemon(&paths.socket)?;
     let store = Store::open_read_only(&paths.store)?;
+    let (policy, pressure) = offline_policy(config, paths, older_than, force)?;
+    let extras = Extras::new(config, archon_core::now(), older_than, pressure)?;
+    let roots = Roots::resolve(paths)?;
+    let mut report = collect_locked(&store, &roots, &policy, &extras)?;
+    report.pressure = pressure;
+    Ok(report)
+}
+
+/// [`preview`] without archond, under the same locks as [`collect_offline`].
+pub fn preview_offline(
+    config: &Config,
+    paths: &DaemonPaths,
+    older_than: Option<Age>,
+    force: bool,
+) -> Result<GcReport, ArchonError> {
+    let _data = archon_queue::DataLock::share(&paths.data_dir)?;
+    let _lock = crate::server::lock_daemon(&paths.socket)?;
+    let store = Store::open_read_only(&paths.store)?;
+    let (policy, pressure) = offline_policy(config, paths, older_than, force)?;
+    let roots = Roots::resolve(paths)?;
+    let settled = plan::settled(&store, policy.settled_before())?;
+    let plans = plan::plan_all(&settled, &roots, &policy);
+    let mut report = preview::preview(&plans, &roots, &policy);
+    report.pressure = pressure;
+    Ok(report)
+}
+
+/// The policy of an offline pass and whether the disk is under pressure.
+fn offline_policy(
+    config: &Config,
+    paths: &DaemonPaths,
+    older_than: Option<Age>,
+    force: bool,
+) -> Result<(Policy, bool), ArchonError> {
     let now = archon_core::now();
     let pressure = below_minimum_free(config, paths);
     let mut policy = Policy::new(&config.worktrees, now, older_than, force)?;
     if pressure && older_than.is_none() {
         policy = policy.under_pressure(&config.worktrees, now)?;
     }
-    let extras = Extras::new(config, now, older_than, pressure)?;
-    let roots = Roots::resolve(paths)?;
-    let mut report = collect_locked(&store, &roots, &policy, &extras)?;
-    report.pressure = pressure;
-    Ok(report)
+    Ok((policy, pressure))
 }
 
 /// Whether the data dir has less free than `limits.min_free_gb`, the level

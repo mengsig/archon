@@ -399,6 +399,7 @@ async fn gc_collects_a_leftover_snapshot() {
     let request = Request::Gc {
         older_than_secs: None,
         force: false,
+        preview: false,
     };
     let Ok(Reply::Gc(report)) = h.cli(request).await else {
         panic!("gc replies with its report");

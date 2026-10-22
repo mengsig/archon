@@ -62,6 +62,7 @@ async fn gc(h: &Harness, older_than_secs: Option<u64>) -> GcReport {
     let request = Request::Gc {
         older_than_secs,
         force: false,
+        preview: false,
     };
     match h.cli(request).await {
         Ok(Reply::Gc(report)) => *report,

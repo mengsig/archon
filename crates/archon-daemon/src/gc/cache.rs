@@ -1,6 +1,7 @@
-//! Deleting a finished run's build caches while keeping its source: what
-//! git ignores in a worktree (`git clean -dX`), or only the configured
-//! `worktrees.cache_dirs`, and measuring the space that frees.
+//! Deleting a finished run's build caches while keeping its source: the
+//! ignored files in the configured `worktrees.cache_dirs`, or in the known
+//! build-output roots when none are set (`git clean -dX`), and measuring the
+//! space that frees.
 
 use std::io::ErrorKind;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
@@ -13,15 +14,9 @@ use crate::worktree::{git, toplevel};
 /// `st_blocks` counts 512-byte units whatever the filesystem's block size.
 const BLOCK_BYTES: u64 = 512;
 
-/// Delete the ignored files of the worktree `tree`, within `cache_dirs`
-/// when any are configured. Untracked source, changes and commits stay.
-/// `None` when there was nothing to delete; else the bytes freed.
-pub(crate) fn reclaim_worktree(
-    tree: &Path,
-    cache_dirs: &[PathBuf],
-) -> Result<Option<u64>, ArchonError> {
+/// Git looks upwards for a repository: never clean some enclosing one.
+fn ensure_top_level(tree: &Path) -> Result<(), ArchonError> {
     assert!(tree.is_absolute(), "worktree paths are absolute");
-    // Git looks upwards for a repository: never clean some enclosing one.
     let real = tree
         .canonicalize()
         .map_err(|e| ArchonError::io(format!("resolving {}", tree.display()), e))?;
@@ -33,6 +28,29 @@ pub(crate) fn reclaim_worktree(
             top.display()
         )));
     }
+    Ok(())
+}
+
+/// Build output at the top of a worktree that `cache_dirs` replaces when set.
+const DEFAULT_CACHE_ROOTS: [&str; 6] = ["target", "dist", "build", ".venv", "venv", ".tox"];
+/// Build and tool caches named at any depth, such as a nested package's.
+const DEFAULT_CACHE_NAMES: [&str; 5] = [
+    "node_modules",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+];
+
+/// Delete the ignored files of the worktree `tree` within `cache_dirs`, or
+/// within the known build-output roots when none are configured; other ignored
+/// files such as `.env` stay, as do untracked source, changes and commits.
+/// `None` when there was nothing to delete; else the bytes freed.
+pub(crate) fn reclaim_worktree(
+    tree: &Path,
+    cache_dirs: &[PathBuf],
+) -> Result<Option<u64>, ArchonError> {
+    ensure_top_level(tree)?;
     let clean = |mode| {
         let args = clean_args(mode, cache_dirs);
         git(tree, &args.iter().map(String::as_str).collect::<Vec<_>>())
@@ -47,15 +65,42 @@ pub(crate) fn reclaim_worktree(
 }
 
 /// `git clean -dX` with `mode` (`-n` or `-f`): ignored files only, never
-/// nested repositories (that takes `-ff`), limited to `cache_dirs` if set.
+/// nested repositories (that takes `-ff`), limited to `cache_dirs` if set,
+/// else to the known build-output roots.
 fn clean_args(mode: &str, cache_dirs: &[PathBuf]) -> Vec<String> {
     assert!(matches!(mode, "-n" | "-f"), "a dry run or the real one");
     let mut args: Vec<String> = ["clean", mode, "-d", "-X", "--"].map(String::from).into();
+    if cache_dirs.is_empty() {
+        args.extend(DEFAULT_CACHE_ROOTS.map(|dir| format!(":(literal){dir}")));
+        args.extend(DEFAULT_CACHE_NAMES.map(|name| format!(":(glob)**/{name}")));
+        return args;
+    }
     for dir in cache_dirs {
         assert!(dir.is_relative(), "config validation keeps them relative");
         args.push(format!(":(literal){}", dir.display()));
     }
     args
+}
+
+/// What [`reclaim_worktree`] would delete from `tree`, one path as git lists
+/// it each, with nothing deleted.
+pub(crate) fn preview_worktree(
+    tree: &Path,
+    cache_dirs: &[PathBuf],
+) -> Result<Vec<String>, ArchonError> {
+    ensure_top_level(tree)?;
+    let args = clean_args("-n", cache_dirs);
+    let listed = git(tree, &args.iter().map(String::as_str).collect::<Vec<_>>())?;
+    let paths: Vec<String> = listed
+        .lines()
+        .map(|line| {
+            line.strip_prefix("Would remove ")
+                .unwrap_or(line)
+                .to_owned()
+        })
+        .collect();
+    assert!(paths.iter().all(|p| !p.is_empty()), "git names each path");
+    Ok(paths)
 }
 
 /// Delete each of `cache_dirs` from the set-aside worktree `tree`, in which

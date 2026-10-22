@@ -87,7 +87,7 @@ adaptive = 3
 auto_gc = true                 # archond collects finished runs' worktrees itself
 cache_after = "1h"             # then deletes their build caches (git-ignored files)
 gc_after = "7d"                # and removes worktrees without uncommitted changes
-cache_dirs = ["target"]        # only these caches; unset = everything git ignores
+cache_dirs = ["target"]        # only these caches; unset = target, node_modules, .venv and similar build output
 item_cache = true              # each item builds in its own cargo target dir, deleted when it ends
 lean_builds = true             # no incremental state, line-table debuginfo (dev and test)
 shared_cache = false           # true: one cargo target dir per repository instead
@@ -519,7 +519,7 @@ disk is full:
 | --- | --- | --- |
 | `[worktrees] auto_gc` | `true` | `archond` collects by itself: when it starts, every 30 minutes, and when low disk space holds dispatch. `false` leaves collecting to `archon gc`. |
 | `[worktrees] cache_after` | `"1h"` | This long after an item's last run finished, the build caches in its worktree are deleted. Source files, uncommitted changes and commits stay. |
-| `[worktrees] cache_dirs` | unset | What counts as a build cache. Unset: every file git ignores in the worktree. `["target"]`: only ignored files under `target/`. |
+| `[worktrees] cache_dirs` | unset | What counts as a build cache. Unset: the ignored files under the known build-output directories: `target`, `dist`, `build`, `.venv`, `venv` and `.tox` at the top of the worktree, and `node_modules`, `__pycache__`, `.pytest_cache`, `.mypy_cache` and `.ruff_cache` at any depth. Other ignored files such as `.env` or a local database stay. `["target"]`: only ignored files under `target/`. |
 | `[worktrees] gc_after` | `"7d"` | This long after an item's last run finished, its worktree is removed. A worktree with uncommitted changes is kept; [three kinds of directory](#what-is-deleted-with-uncommitted-work) are not. |
 | `[limits] min_free_gb` | `10` | While the data directory's or the worktree root's filesystem has less free space than this, in GiB, no item and no stage agent starts; running agents finish. `0` turns the check off. |
 
@@ -536,6 +536,9 @@ it skipped:
 - `--force` also removes worktrees with uncommitted changes, which are then
   lost. It is not what guards the directories listed below: those go
   without it.
+- `--preview` lists the worktrees gc would remove and the build output it
+  would delete from the others, and deletes nothing. It does not list shared
+  build caches, artifacts or report snapshots.
 - `--offline` collects without `archond`, which must not be running, for a
   disk too full to start it. Without the flag, `archon gc` does the same
   when no `archond` answers.
@@ -556,7 +559,8 @@ whole, with whatever is in them, with or without `--force`:
   Each goes `gc_after` (or `--older-than`) after the item's last run
   finished. Before that, once `cache_after` has passed, only the
   `cache_dirs` directories in it are deleted, and nothing when `cache_dirs`
-  is unset.
+  is unset. Archon's own untracked `.archon/` directory at the top of a
+  worktree is disposable and does not count as uncommitted work.
 - The scratch directory of an item that ran without a repository, at the
   same age.
 - A snapshot that a read-only stage left behind, as soon as `cache_after`

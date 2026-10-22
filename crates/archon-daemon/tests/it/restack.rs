@@ -205,6 +205,7 @@ async fn a_merge_conflict_enqueues_one_fix_on_the_child_branch_and_survives_rest
     h.cli(Request::Gc {
         older_than_secs: Some(0),
         force: true,
+        preview: false,
     })
     .await
     .unwrap();

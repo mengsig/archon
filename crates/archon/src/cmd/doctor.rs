@@ -643,7 +643,7 @@ fn check_archond(archond: &anyhow::Result<Option<ArchonClient>>) -> Check {
 fn check_locations(socket: &Path) -> Check {
     let locations = archon_core::paths::locations(socket);
     assert_eq!(locations[2].path, socket, "the socket checked is this one");
-    match archon_core::paths::PartialOverride::among(locations) {
+    match archon_core::paths::partial_override(socket) {
         Some(mix) => check(
             "locations",
             Level::Warn,

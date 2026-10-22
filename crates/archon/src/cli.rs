@@ -296,6 +296,10 @@ pub enum Command {
         /// too full to start it. Reads the store without writing to it.
         #[arg(long)]
         offline: bool,
+        /// List the worktrees gc would remove and the build output it would
+        /// delete from the others, and delete nothing.
+        #[arg(long)]
+        preview: bool,
     },
     /// Run, start, stop or check archond.
     #[command(subcommand)]
@@ -1685,11 +1689,15 @@ mod tests {
             older_than,
             force,
             offline,
-        } = parse(&["gc", "--force"])
+            preview,
+        } = parse(&["gc", "--force", "--preview"])
         else {
             panic!()
         };
-        assert_eq!((older_than, force, offline), (None, true, false));
+        assert_eq!(
+            (older_than, force, offline, preview),
+            (None, true, false, true)
+        );
         let Command::Gc {
             older_than,
             offline,

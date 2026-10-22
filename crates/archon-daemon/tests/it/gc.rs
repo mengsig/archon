@@ -89,6 +89,7 @@ async fn gc_request(h: &Harness, older_than_secs: Option<u64>, force: bool) -> G
     let request = Request::Gc {
         older_than_secs,
         force,
+        preview: false,
     };
     match h.cli(request).await {
         Ok(Reply::Gc(report)) => *report,
@@ -118,7 +119,8 @@ async fn a_settled_worktree_loses_its_caches_then_goes_but_keeps_its_branch() {
     );
     assert_eq!(report.bytes_freed, report.reclaimed[0].bytes);
     assert!(report.removed.is_empty(), "removal waits for gc_after");
-    assert!(!tree.join("target").exists() && !tree.join("build.log").exists());
+    assert!(!tree.join("target").exists(), "known build output goes");
+    assert!(tree.join("build.log").exists(), "other ignored files stay");
     assert!(tree.join("notes.md").exists(), "untracked source stays");
     assert!(tree.join("README.md").exists());
 
@@ -392,7 +394,8 @@ async fn shipping_deletes_the_caches_even_of_a_worktree_it_cannot_remove() {
         tree.join("stray.txt").exists(),
         "an unforced remove keeps it"
     );
-    assert!(!tree.join("target").exists() && !tree.join("build.log").exists());
+    assert!(!tree.join("target").exists(), "known build output goes");
+    assert!(tree.join("build.log").exists(), "other ignored files stay");
     let feed = h
         .ctx
         .store

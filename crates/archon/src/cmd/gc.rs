@@ -23,15 +23,17 @@ pub async fn run(
     older_than: Option<&str>,
     force: bool,
     offline: bool,
+    preview: bool,
     json: bool,
 ) -> anyhow::Result<ExitCode> {
     let older_than = older_than.map(Age::parse).transpose()?;
     let report = if offline {
-        collect_offline(older_than, force).await?
+        collect_offline(older_than, force, preview).await?
     } else if let Some(client) = connect_existing().await? {
         let request = Request::Gc {
             older_than_secs: older_than.map(Age::secs),
             force,
+            preview,
         };
         match client.request_within(request, PASS_TIMEOUT).await? {
             Reply::Gc(report) => *report,
@@ -40,13 +42,22 @@ pub async fn run(
     } else {
         // Starting archond just to collect would fail on the full disk
         // that is the usual reason to collect.
-        collect_offline(older_than, force).await?
+        collect_offline(older_than, force, preview).await?
     };
-    emit(json, || to_json(&report), &summary(&report))?;
+    let text = if preview {
+        preview_summary(&report)
+    } else {
+        summary(&report)
+    };
+    emit(json, || to_json(&report), &text)?;
     Ok(exit_code(&report))
 }
 
-async fn collect_offline(older_than: Option<Age>, force: bool) -> anyhow::Result<GcReport> {
+async fn collect_offline(
+    older_than: Option<Age>,
+    force: bool,
+    preview: bool,
+) -> anyhow::Result<GcReport> {
     let socket = archon_client::default_socket();
     if let Some(mix) = archon_core::paths::partial_override(&socket) {
         return Err(ArchonError::Unavailable(format!(
@@ -57,7 +68,11 @@ async fn collect_offline(older_than: Option<Age>, force: bool) -> anyhow::Result
     let config = Config::load_default()?;
     let paths = DaemonPaths::resolve(&config, archon_bin()?);
     let pass = tokio::task::spawn_blocking(move || {
-        archon_daemon::gc::collect_offline(&config, &paths, older_than, force)
+        if preview {
+            archon_daemon::gc::preview_offline(&config, &paths, older_than, force)
+        } else {
+            archon_daemon::gc::collect_offline(&config, &paths, older_than, force)
+        }
     });
     match pass.await.context("running gc offline")? {
         Ok(report) => Ok(report),
@@ -75,6 +90,35 @@ fn exit_code(report: &GcReport) -> ExitCode {
     } else {
         ExitCode::FAILURE
     }
+}
+
+/// What `--preview` found: nothing was deleted, and what it did not look at.
+fn preview_summary(report: &GcReport) -> String {
+    let mut lines = vec![format!(
+        "Preview only, nothing was deleted: gc would remove {} worktree(s) and delete ignored \
+         build output from {}.",
+        report.removed.len(),
+        report.would_delete.len()
+    )];
+    for path in &report.removed {
+        lines.push(format!("would remove the worktree {}", path.display()));
+    }
+    for entry in &report.would_delete {
+        lines.push(format!("would delete in {}:", entry.path.display()));
+        lines.extend(entry.paths.iter().map(|p| format!("  {p}")));
+    }
+    for (path, reason) in &report.skipped {
+        lines.push(format!("would skip {}: {reason}", path.display()));
+    }
+    for (path, reason) in &report.failed {
+        lines.push(format!("could not check {}: {reason}", path.display()));
+    }
+    lines.push(
+        "Shared build caches, artifacts and report snapshots are not listed; \
+         run `archon gc` to collect everything."
+            .into(),
+    );
+    lines.join("\n")
 }
 
 fn summary(report: &GcReport) -> String {
@@ -137,6 +181,7 @@ mod tests {
             artifacts: vec![],
             item_caches: vec![],
             reports: vec![],
+            would_delete: vec![],
             bytes_freed: 3 << 30,
             pressure: false,
         };

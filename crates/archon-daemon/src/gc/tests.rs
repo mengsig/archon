@@ -9,7 +9,7 @@ use archon_queue::Store;
 
 use super::plan::{self, Action, Candidate, Found, ItemPlan, Kind, Settled};
 use super::sweep::{self, Verdict, is_inside};
-use super::{Policy, Roots, cache, canonical_root, team};
+use super::{Policy, Roots, cache, canonical_root, preview, team};
 use crate::worktree::git;
 
 mod snapshot;
@@ -32,7 +32,11 @@ fn git_ok(dir: &Path, args: &[&str]) {
 fn init_repo(repo: &Path) {
     std::fs::create_dir_all(repo).unwrap();
     git_ok(repo, &["init", "-q"]);
-    std::fs::write(repo.join(".gitignore"), "target/\n*.log\n").unwrap();
+    std::fs::write(
+        repo.join(".gitignore"),
+        "target/\n*.log\n.env\nnode_modules/\n",
+    )
+    .unwrap();
     std::fs::write(repo.join("README.md"), "demo\n").unwrap();
     git_ok(repo, &["add", "."]);
     git_ok(repo, &["commit", "-q", "-m", "init"]);
@@ -201,6 +205,7 @@ fn reclaiming_deletes_ignored_build_output_and_keeps_source() {
         "outside the configured dirs"
     );
 
+    build_in(&tree, 256 << 10);
     let report = sweep_of(
         vec![candidate(&tree, Some(&repo), Action::Reclaim)],
         &roots_in(&base),
@@ -208,11 +213,77 @@ fn reclaiming_deletes_ignored_build_output_and_keeps_source() {
     );
     assert_eq!(report.reclaimed.len(), 1, "{report:?}");
     assert!(report.removed.is_empty() && report.skipped.is_empty());
-    assert!(!tree.join("build.log").exists());
+    assert!(tree.join("build.log").exists(), "not a known cache root");
     assert!(tree.join("src/new.rs").exists(), "untracked source stays");
     let readme = std::fs::read_to_string(tree.join("README.md")).unwrap();
     assert_eq!(readme, "changed\n", "changes stay");
     assert_eq!(cache::reclaim_worktree(&tree, &[]).unwrap(), None);
+}
+
+/// A worktree with build output, an ignored `.env`, and a nested package.
+fn tree_with_secrets(base: &Path) -> PathBuf {
+    let repo = base.join("repo");
+    init_repo(&repo);
+    let tree = base.join("trees/repo/qi_1");
+    add_worktree(&repo, &tree, "gc-default");
+    build_in(&tree, 64 << 10);
+    std::fs::write(tree.join(".env"), "TOKEN=1\n").unwrap();
+    std::fs::create_dir_all(tree.join("web/node_modules/dep")).unwrap();
+    std::fs::write(tree.join("web/node_modules/dep/i.js"), "x").unwrap();
+    tree
+}
+
+#[test]
+fn by_default_only_known_build_output_goes_and_an_ignored_env_stays() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().canonicalize().unwrap();
+    let tree = tree_with_secrets(&base);
+
+    let freed = cache::reclaim_worktree(&tree, &[]).unwrap();
+    assert!(freed.is_some_and(|b| b >= 64 << 10), "{freed:?}");
+    assert!(!tree.join("target").exists());
+    assert!(!tree.join("web/node_modules").exists(), "at any depth");
+    assert!(tree.join(".env").exists(), "an ignored secret stays");
+    assert!(tree.join("build.log").exists());
+}
+
+#[test]
+fn a_preview_lists_what_would_go_and_deletes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().canonicalize().unwrap();
+    let tree = tree_with_secrets(&base);
+
+    let listed = cache::preview_worktree(&tree, &[]).unwrap().join("\n");
+    assert!(listed.contains("target/"), "{listed}");
+    assert!(listed.contains("web/node_modules/"), "{listed}");
+    assert!(!listed.contains(".env"), "{listed}");
+    assert!(tree.join("target/debug/app").exists() && tree.join(".env").exists());
+    assert!(tree.join("web/node_modules/dep/i.js").exists());
+}
+
+#[test]
+fn a_pass_preview_reports_removals_and_cache_output_but_changes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().canonicalize().unwrap();
+    let tree = tree_with_secrets(&base);
+    let repo = base.join("repo");
+    let plan_of = |action| ItemPlan {
+        item: QueueItemId::new(),
+        updated_at: archon_core::now(),
+        runs: 0,
+        found: Found {
+            candidates: vec![candidate(&tree, Some(&repo), action)],
+            ..Found::default()
+        },
+    };
+    let roots = roots_in(&base);
+
+    let reclaim = preview::preview(&[plan_of(Action::Reclaim)], &roots, &policy(false));
+    assert_eq!(reclaim.would_delete.len(), 1, "{reclaim:?}");
+    assert!(reclaim.removed.is_empty() && reclaim.bytes_freed == 0);
+    let forced = preview::preview(&[plan_of(Action::Remove)], &roots, &policy(true));
+    assert_eq!(forced.removed, vec![tree.clone()]);
+    assert!(tree.join("target/debug/app").exists() && tree.join(".env").exists());
 }
 
 #[test]

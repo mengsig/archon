@@ -250,6 +250,9 @@ fn run_lines(out: &mut String, detail: &ItemDetail, run: &PipelineRun, full: boo
         if let Some(review) = archon_pipeline::review::on_record(stage.structured.as_ref()) {
             let _ = writeln!(out, "    {}", sanitize_line(&review));
         }
+        for line in archon_pipeline::review::verdict_lines(stage.structured.as_ref()) {
+            let _ = writeln!(out, "      {}", sanitize_line(&line));
+        }
         let summary = stage.summary.as_deref().unwrap_or_default();
         for line in summary_lines(summary, full) {
             let _ = writeln!(out, "    {line}");

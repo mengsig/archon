@@ -2536,6 +2536,122 @@ async fn adaptive_records_the_reviewer_it_found_not_the_one_the_lead_names() {
     assert_eq!(review.get("unverified"), None);
 }
 
+/// The lead's build, naming `named` as its reviewer, settled once its `children`
+/// returned `verdicts` (`None`: prose with no verdict).
+async fn build_naming(
+    h: &Harness,
+    named: &str,
+    children: &[(&AetherAgentId, Option<serde_json::Value>)],
+) -> StageOutcome {
+    let lead = h.running().await.remove(0);
+    let claim = pass_by(&[AetherAgentId::parse(named).unwrap()]);
+    let built = shipped_by(h, &lead, "Verified", claim).await;
+    for (child, verdict) in children {
+        match verdict {
+            Some(verdict) => h.backend.complete_delegated(child, verdict.clone()),
+            None => h.backend.complete_delegated_with(
+                child,
+                StageOutcome::Completed {
+                    summary: "Blocking findings: none, looks fine".into(),
+                    structured: None,
+                },
+            ),
+        }
+    }
+    built
+}
+
+/// A reviewer id with the right start and a mistyped tail is the lead's one
+/// reviewer: Archon records the correction and what the reviewer returned.
+#[tokio::test]
+async fn a_mistyped_reviewer_id_is_resolved_to_the_one_child_and_recorded() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = lead_agent(&h.running().await[0]);
+    let real = h.backend.delegate(&lead, REVIEW_MODEL);
+    let built = build_naming(&h, "agt_child0009", &[]).await;
+    h.backend
+        .complete_delegated(&real, verdict_on(&built, "pass"));
+    let build = h.settle_running(|_| built.clone()).await;
+    let stored = h.ctx.store.lock().await.stage_run(&build[0].id).unwrap();
+    let review = &stored.structured.as_ref().unwrap()["review"];
+    assert_eq!(
+        review["reviewer_agents"],
+        serde_json::json!([real.as_str()])
+    );
+    let fixed = format!("agt_child0009 -> {real}");
+    assert_eq!(
+        review["reviewer_id_corrections"],
+        serde_json::json!([fixed])
+    );
+    let read = &review["reviewer_verdicts"][0];
+    assert_eq!(read["agent"], real.as_str());
+    assert_eq!(read["verdict"], "pass");
+    assert_eq!(read["findings"], 0);
+    assert_eq!(read["head"], verdict_on(&built, "pass")["head"]);
+}
+
+/// Two children resemble the mistyped id: Archon takes the lead's completed
+/// reviewers that returned a verdict instead, and says so on the record.
+#[tokio::test]
+async fn an_ambiguous_reviewer_id_falls_back_to_the_completed_reviewers_with_a_verdict() {
+    let h = Harness::new().await;
+    adaptive_item(&h).await;
+    let lead = lead_agent(&h.running().await[0]);
+    let (one, two) = (
+        h.backend.delegate(&lead, REVIEW_MODEL),
+        h.backend.delegate(&lead, REVIEW_MODEL),
+    );
+    let built = build_naming(&h, "agt_child0099", &[]).await;
+    h.backend
+        .complete_delegated(&one, verdict_on(&built, "pass"));
+    h.backend
+        .complete_delegated(&two, verdict_on(&built, "pass"));
+    let build = h.settle_running(|_| built.clone()).await;
+    let stored = h.ctx.store.lock().await.stage_run(&build[0].id).unwrap();
+    let review = &stored.structured.as_ref().unwrap()["review"];
+    assert_eq!(review["reviewer_agents"].as_array().unwrap().len(), 2);
+    let note = review["reviewer_id_corrections"][0].as_str().unwrap();
+    assert!(
+        note.contains("agt_child0099") && note.contains("completed reviewers"),
+        "{note}"
+    );
+    assert_eq!(review["reviewer_verdicts"].as_array().unwrap().len(), 2);
+}
+
+/// A named id no child resembles, and no completed child with a verdict to
+/// fall back on: refused, with the lead's real reviewer ids in the message.
+#[tokio::test]
+async fn an_absent_reviewer_id_is_refused_with_the_lead_s_reviewer_ids() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let lead = lead_agent(&h.running().await[0]);
+    let prose = h.backend.delegate(&lead, REVIEW_MODEL);
+    let built = build_naming(&h, "agt_unrelatedname", &[(&prose, None)]).await;
+    h.settle_running(|_| built.clone()).await;
+    let error = refused_review(&h, &item).await;
+    assert!(
+        error.contains(&format!("{prose} on {REVIEW_MODEL}")),
+        "{error}"
+    );
+    assert!(error.contains("agt_unrelatedname"), "{error}");
+}
+
+/// A corrected id changes nothing about coverage: a reviewer that read some
+/// other commit still leaves the branch head unreviewed.
+#[tokio::test]
+async fn a_corrected_reviewer_id_still_needs_a_read_of_the_head() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let lead = lead_agent(&h.running().await[0]);
+    let real = h.backend.delegate(&lead, REVIEW_MODEL);
+    let elsewhere = serde_json::json!({"verdict": "pass", "head": "deadbeefdeadbeef"});
+    let built = build_naming(&h, "agt_child0009", &[(&real, Some(elsewhere))]).await;
+    h.settle_running(|_| built.clone()).await;
+    let error = refused_review(&h, &item).await;
+    assert!(error.contains(real.as_str()), "{error}");
+}
+
 /// While Aether cannot be asked, the stage is not settled on a guess: it
 /// stays live and the same outcome settles it once Aether answers.
 #[tokio::test]

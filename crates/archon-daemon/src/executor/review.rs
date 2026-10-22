@@ -26,6 +26,18 @@ const MAX_LISTED: usize = 6;
 struct Found {
     reviewers: Vec<Reviewer>,
     implicit: Vec<String>,
+    /// What every reviewer read returned, fails included.
+    reads: Vec<Read>,
+    /// The reviewer ids Archon resolved other than as the lead named them.
+    corrections: Vec<String>,
+}
+
+/// The reviewers a review rests on, the verdicts they returned and how their
+/// ids were resolved.
+struct Chosen<'a> {
+    picked: Vec<&'a Descendant>,
+    verdicts: Vec<Read>,
+    corrections: Vec<String>,
 }
 
 /// What Archon puts on the record: the review it found, or why not.
@@ -84,15 +96,23 @@ pub(super) async fn verify(
         }
         _ => None,
     };
-    let implicit = match &found {
-        Some(Ok(found)) => found.implicit.clone(),
-        _ => Vec::new(),
+    let (implicit, reads, corrections) = match &found {
+        Some(Ok(found)) => (
+            found.implicit.clone(),
+            found.reads.clone(),
+            found.corrections.clone(),
+        ),
+        _ => Default::default(),
     };
     if !implicit.is_empty() {
         tracing::info!(stage = %stage.id, ?implicit, "anchored named delta reviews on the lead's earlier reviewers");
     }
     review::record_check(&mut structured, found.map(|f| f.map(|f| f.reviewers)));
     review::record_implicit(&mut structured, &implicit);
+    if !reads.is_empty() {
+        review::record_reads(&mut structured, &reads);
+    }
+    review::record_corrections(&mut structured, &corrections);
     Ok(StageOutcome::Completed {
         summary,
         structured: Some(structured),
@@ -122,14 +142,15 @@ async fn reviewers(
             )));
         }
     };
-    let picked = match pick_named(lead, &beneath, named, owed) {
-        Ok(picked) => picked,
+    let chosen = match choose(ctx, lead, &beneath, named, owed).await? {
+        Ok(chosen) => chosen,
         Err(why) => return Ok(Err(why)),
     };
-    let verdicts = match verdicts_of(ctx, &picked).await? {
-        Ok(verdicts) => verdicts,
-        Err(why) => return Ok(Err(why)),
-    };
+    let Chosen {
+        picked,
+        verdicts,
+        corrections,
+    } = chosen;
     assert!(
         picked.len() >= owed as usize,
         "the review level's reviewers were picked"
@@ -147,7 +168,10 @@ async fn reviewers(
         checked => checked,
     };
     Ok(match checked {
-        Checked::Held(held) => Ok(found(&picked, held)),
+        Checked::Held(held) => Ok(found(&picked, held, verdicts, corrections)),
+        Checked::Refused(why) if !corrections.is_empty() => {
+            Err(format!("{why} ({})", lead_children(&beneath, lead)))
+        }
         Checked::Refused(why) => Err(why),
         Checked::Unanchored(_) => unreachable!("the earlier reviewers were read"),
     })
@@ -182,7 +206,7 @@ async fn earlier_reads(
 }
 
 /// The `picked` reviewers whose passes `held` counts, and the earlier ones it added.
-fn found(picked: &[&Descendant], held: Held) -> Found {
+fn found(picked: &[&Descendant], held: Held, reads: Vec<Read>, corrections: Vec<String>) -> Found {
     assert!(!held.passes.is_empty(), "a review that holds has a pass");
     assert!(
         held.passes.iter().all(|i| *i < picked.len()),
@@ -195,7 +219,170 @@ fn found(picked: &[&Descendant], held: Held) -> Found {
     Found {
         reviewers: reviewers.collect(),
         implicit: held.implicit,
+        reads,
+        corrections,
     }
+}
+
+/// The reviewers `named` as the lead's children, the ids it mistyped resolved
+/// where one child is the unique near match, else the lead's completed
+/// children with a readable verdict, or why none can be taken.
+async fn choose<'a>(
+    ctx: &DaemonContext,
+    lead: &AetherAgentId,
+    beneath: &'a [Descendant],
+    named: &[String],
+    owed: u32,
+) -> Result<Result<Chosen<'a>, String>, ArchonError> {
+    let children: Vec<&Descendant> = beneath.iter().filter(|d| d.parent == *lead).collect();
+    let (names, mut corrections) = correct_names(&children, named);
+    let unknown = names
+        .iter()
+        .find(|n| !children.iter().any(|d| d.agent.as_str() == n.as_str()));
+    let Some(unknown) = unknown else {
+        let picked = match pick_named(lead, beneath, &names, owed) {
+            Ok(picked) => picked,
+            Err(why) => return Ok(Err(why)),
+        };
+        return Ok(verdicts_of(ctx, &picked).await?.map(|verdicts| Chosen {
+            picked,
+            verdicts,
+            corrections,
+        }));
+    };
+    corrections.push(format!(
+        "{unknown} is none of the lead's agents and matches none uniquely: used its completed reviewers with a verdict"
+    ));
+    let fallback = completed_readers(ctx, lead, beneath, owed, unknown).await?;
+    Ok(fallback.map(|(picked, verdicts)| Chosen {
+        picked,
+        verdicts,
+        corrections,
+    }))
+}
+
+/// The lead's completed children whose results are verdicts, with those verdicts,
+/// or why they cannot stand for the review: one still running may yet fail the head.
+async fn completed_readers<'a>(
+    ctx: &DaemonContext,
+    lead: &AetherAgentId,
+    beneath: &'a [Descendant],
+    owed: u32,
+    unknown: &str,
+) -> Result<Result<(Vec<&'a Descendant>, Vec<Read>), String>, ArchonError> {
+    let children: Vec<&Descendant> = beneath.iter().filter(|d| d.parent == *lead).collect();
+    let refuse = |why: &str| {
+        format!(
+            "{}, and {why}: name the reviewers by the ids listed",
+            missing(&children, unknown)
+        )
+    };
+    if children.iter().any(|d| d.state == DescendantState::Live) {
+        return Ok(Err(refuse(
+            "a reviewer still runs, so Archon cannot pick among them; wait for it or cancel it",
+        )));
+    }
+    let done: Vec<&Descendant> = children
+        .iter()
+        .copied()
+        .filter(|d| d.state == DescendantState::Completed && d.task.is_some())
+        .collect();
+    let reads = match earlier_verdicts(ctx, &done).await? {
+        Ok(reads) => reads,
+        Err(why) => return Ok(Err(why)),
+    };
+    let picked: Vec<&Descendant> = done
+        .into_iter()
+        .filter(|d| reads.iter().any(|(agent, _)| agent == d.agent.as_str()))
+        .collect();
+    assert_eq!(picked.len(), reads.len(), "one verdict per picked reviewer");
+    if picked.len() < owed as usize {
+        return Ok(Err(refuse(&format!(
+            "only {} completed reviewer(s) returned a readable verdict and this item's review level needs {owed}",
+            picked.len()
+        ))));
+    }
+    Ok(Ok((picked, reads)))
+}
+
+/// The lead's children as a refusal names them.
+fn lead_children(beneath: &[Descendant], lead: &AetherAgentId) -> String {
+    let children: Vec<&Descendant> = beneath.iter().filter(|d| d.parent == *lead).collect();
+    format!("the lead's reviewers: {}", lead_children_listed(&children))
+}
+
+fn lead_children_listed(children: &[&Descendant]) -> String {
+    match children.is_empty() {
+        true => "none".to_owned(),
+        false => listed(children),
+    }
+}
+
+/// Fewest leading characters two agent ids share for one to be a mistyped tail of the other.
+const MIN_SHARED_PREFIX: usize = 14;
+/// Most single-character edits between a named id and the child it is taken for.
+const MAX_ID_EDITS: usize = 3;
+
+/// `named` with each id that is no child of the lead replaced by the one
+/// completed child it unambiguously resembles, and a line for each such fix.
+fn correct_names(children: &[&Descendant], named: &[String]) -> (Vec<String>, Vec<String>) {
+    let exact = |name: &str| children.iter().any(|d| d.agent.as_str() == name);
+    let mut corrections = Vec::new();
+    let names = named
+        .iter()
+        .map(|name| {
+            if exact(name) {
+                return name.clone();
+            }
+            let near: Vec<&&Descendant> = children
+                .iter()
+                .filter(|d| d.state == DescendantState::Completed && d.task.is_some())
+                .filter(|d| !named.iter().any(|n| n == d.agent.as_str()))
+                .filter(|d| resembles(name, d.agent.as_str()))
+                .collect();
+            match near.as_slice() {
+                [only] => {
+                    let real = only.agent.to_string();
+                    corrections.push(format!("{name} -> {real}"));
+                    real
+                }
+                _ => name.clone(),
+            }
+        })
+        .collect();
+    (names, corrections)
+}
+
+/// Whether `name` is a mistyped `real`: a long shared start or few edits apart.
+fn resembles(name: &str, real: &str) -> bool {
+    let shared = name
+        .bytes()
+        .zip(real.bytes())
+        .take_while(|(a, b)| a == b)
+        .count();
+    shared >= MIN_SHARED_PREFIX || edit_distance(name, real, MAX_ID_EDITS).is_some()
+}
+
+/// The edit distance between `a` and `b` if it is at most `max`.
+fn edit_distance(a: &str, b: &str, max: usize) -> Option<usize> {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    if a.len().abs_diff(b.len()) > max {
+        return None;
+    }
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut diagonal = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let above = row[j + 1];
+            row[j + 1] = (above + 1)
+                .min(row[j] + 1)
+                .min(diagonal + usize::from(ca != cb));
+            diagonal = above;
+        }
+    }
+    let distance = row[b.len()];
+    (distance <= max).then_some(distance)
 }
 
 /// The verdict of each `picked` reviewer, in order, or why one is none.

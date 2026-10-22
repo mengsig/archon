@@ -882,6 +882,7 @@ mod tests {
             pass: true,
             head: head.clone(),
             base: Some(upstream.clone()),
+            findings: None,
         };
         let named = [("agt_r".to_owned(), verdict)];
 
@@ -942,6 +943,7 @@ mod tests {
             pass: true,
             head: head.to_owned(),
             base: Some(from.to_owned()),
+            findings: None,
         };
         let named = [("agt_r".to_owned(), verdict)];
         let base = Base {

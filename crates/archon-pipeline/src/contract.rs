@@ -498,8 +498,9 @@ or, only where the stage prompt lets a change go without review:\n\n\
 ```\n\n";
 
 const REVIEWER_VERDICT_RULES: &str = "\
-- In each reviewer's instructions require `complete_task(summary=..., structured=\
-<JSON below>)`, not final text. `base` starts the diff read:\n\n\
+- Paste this JSON into each reviewer's instructions as its `complete_task` `structured`, \
+never prose alone; a result without `verdict` and `head` counts for nothing. `base` \
+starts the diff read:\n\n\
 ```json\n\
 {\"verdict\": \"pass\", \"head\": \"<commit>\", \"base\": \"<commit>\", \"findings\": []}\n\
 ```\n\n\
@@ -1393,8 +1394,8 @@ mod tests {
             "reviewed by an agent you delegate to that wrote none of it",
             "{\"review\": {\"verdict\": \"pass\", \"reviewers\": [\"<agent id>\"]}}",
             "{\"review\": {\"verdict\": \"skipped\", \"reason\": \"<why this change needed none>\"}}",
-            "In each reviewer's instructions require `complete_task(summary=..., structured=<JSON below>)`",
-            "not final text",
+            "Paste this JSON into each reviewer's instructions",
+            "never prose alone",
             "{\"verdict\": \"pass\", \"head\": \"<commit>\", \"base\": \"<commit>\"",
             "Use `\"fail\"` with findings for failures",
             "Each agent named must be a different one you delegated to yourself",

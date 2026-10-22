@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- review gate (issue #237): a reviewer's result is also read from one fenced
+  JSON block or a final `VERDICT: PASS|FAIL` line with `head:`/`base:` lines;
+  prose without a verdict is refused with what to send instead. A reviewer id
+  the lead mistyped is resolved to the one lead child it resembles, else to the
+  lead's completed reviewers with a verdict, and coverage is checked as before;
+  a refusal lists the lead's reviewer ids. The stage record keeps each
+  reviewer's verdict, head, base and finding count, shown by `archon show`.
 - swarm (issue #195): the planner's `.archon/swarm-plan.json` stays an
   uncommitted file in the run worktree, hidden through `info/exclude`, so no
   shipped history carries it (archond refuses a plan the planner committed);

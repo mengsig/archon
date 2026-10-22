@@ -21,9 +21,15 @@ const UNVERIFIED: &str = archon_core::run::REVIEW_REFUSED_KEY;
 /// beside the model its lead named.
 const LEGACY_REVIEWER_AGENT: &str = "reviewer_agent";
 const LEGACY_REVIEWER_MODEL: &str = "reviewer_model";
-const ARCHON_KEYS: [&str; 6] = [
+/// What each reviewer Archon read returned: verdict, head, base and finding count.
+const REVIEWER_VERDICTS: &str = "reviewer_verdicts";
+/// Reviewer ids the lead named that Archon corrected to the agents it delegated to.
+const REVIEWER_CORRECTIONS: &str = "reviewer_id_corrections";
+const ARCHON_KEYS: [&str; 8] = [
     REVIEWER_AGENTS,
     REVIEWER_MODELS,
+    REVIEWER_VERDICTS,
+    REVIEWER_CORRECTIONS,
     IMPLICIT_REVIEWER_AGENTS,
     UNVERIFIED,
     LEGACY_REVIEWER_AGENT,
@@ -46,36 +52,77 @@ pub struct Verdict {
     pub head: String,
     /// Where the diff it read starts; `None` for the whole change.
     pub base: Option<String>,
+    /// How many findings it listed; `None` when its result gave no list.
+    pub findings: Option<usize>,
 }
+
+/// What a reviewer must do when its result gives no verdict Archon can read.
+const VERDICT_HOWTO: &str = "complete the task with `structured` set to \
+{\"verdict\": \"pass\"|\"fail\", \"head\": \"<commit>\", \"base\": \"<commit>\", \"findings\": []}, \
+or end the summary with a line `VERDICT: PASS` or `VERDICT: FAIL` beside lines \
+`head: <commit>` and `base: <commit>`";
 
 impl Verdict {
     /// Prefer the task's `structured` field. Aether can auto-complete a Codex
-    /// review with its final JSON text in `summary` and no structured field:
-    /// the verdict itself, or the `complete_task` arguments `{summary, structured}`.
-    /// Accept only a whole JSON value there, never a verdict inferred from prose.
+    /// review with its final text in `summary` and no structured field: the
+    /// verdict as JSON (bare, wrapped as the `complete_task` arguments
+    /// `{summary, structured}`, or in one fenced block), or a final
+    /// `VERDICT: PASS|FAIL` line beside `head:` and `base:` lines.
+    /// Prose with none of these is never read as a verdict.
     pub fn read_result(summary: &str, structured: Option<&Value>) -> Result<Self, String> {
         if structured.is_some() {
             return Self::read(structured);
         }
-        let data: Value = serde_json::from_str(summary).map_err(|error| {
-            format!(
-                "its result carries no structured verdict and its summary is not a JSON verdict: {error}"
-            )
-        })?;
+        let json = serde_json::from_str::<Value>(summary)
+            .ok()
+            .or_else(|| fenced_json(summary));
+        if let Some(data) = json {
+            return Self::read_json(&data);
+        }
+        match verdict_line(summary) {
+            Some(pass) => Self::from_lines(summary, pass),
+            None => Err(format!(
+                "its result carries no readable verdict: {VERDICT_HOWTO}"
+            )),
+        }
+    }
+
+    fn read_json(data: &Value) -> Result<Self, String> {
         let wrapped = data.get("verdict").is_none()
             && data.get("summary").is_some_and(Value::is_string)
             && data.get("structured").is_some_and(Value::is_object);
         match wrapped {
             true => Self::read(data.get("structured")),
-            false => Self::read(Some(&data)),
+            false => Self::read(Some(data)),
         }
+    }
+
+    /// A verdict given as a `VERDICT:` line: the commit it read comes from `head:`/`base:` lines.
+    fn from_lines(summary: &str, pass: bool) -> Result<Self, String> {
+        let Some(head) = labelled(summary, "head").and_then(|v| commit_of(Some(&Value::from(v))))
+        else {
+            return Err(format!(
+                "its summary has a `VERDICT:` line but no `head: <commit>` line naming the commit it read: {VERDICT_HOWTO}"
+            ));
+        };
+        let base = labelled(summary, "base")
+            .map(|v| commit_of(Some(&Value::from(v))).ok_or("its `base:` line names no commit"))
+            .transpose()?;
+        Ok(Self {
+            pass,
+            head,
+            base,
+            findings: None,
+        })
     }
 
     /// Read a reviewer's `{"verdict", "head", "base"}`; `Err` says, in words
     /// for the operator, what keeps it from being a verdict on a commit.
     pub fn read(structured: Option<&Value>) -> Result<Self, String> {
         let Some(data) = structured.and_then(Value::as_object) else {
-            return Err("its result carries no structured verdict".into());
+            return Err(format!(
+                "its result carries no structured verdict: {VERDICT_HOWTO}"
+            ));
         };
         let pass = match data.get("verdict").and_then(Value::as_str) {
             Some(word) if word.trim().eq_ignore_ascii_case("pass") => true,
@@ -86,7 +133,9 @@ impl Verdict {
                     one_line(other)
                 ));
             }
-            None => return Err("its result carries no `verdict`".into()),
+            None => {
+                return Err(format!("its result carries no `verdict`: {VERDICT_HOWTO}"));
+            }
         };
         let head = commit_of(data.get("head")).ok_or("its `head` names no commit it read")?;
         let base = match data.get("base") {
@@ -94,8 +143,58 @@ impl Verdict {
             given => Some(commit_of(given).ok_or("its `base` names no commit")?),
         };
         assert!(head.len() >= MIN_COMMIT_CHARS, "a checked commit id");
-        Ok(Self { pass, head, base })
+        let findings = data.get("findings").and_then(Value::as_array).map(Vec::len);
+        Ok(Self {
+            pass,
+            head,
+            base,
+            findings,
+        })
     }
+}
+
+/// The one fenced block of `text` that holds a JSON value; `None` for no block or several.
+fn fenced_json(text: &str) -> Option<Value> {
+    let mut blocks = text.split("```").skip(1).step_by(2);
+    let block = blocks.next()?;
+    if blocks.next().is_some() {
+        return None;
+    }
+    let body = block.strip_prefix("json").unwrap_or(block);
+    serde_json::from_str(body.trim()).ok()
+}
+
+/// The verdict a final non-empty `VERDICT: PASS|FAIL` line gives, in any letter case.
+fn verdict_line(text: &str) -> Option<bool> {
+    let last = text.lines().rev().find(|l| !l.trim().is_empty())?;
+    let word = strip_label(last, "verdict")?;
+    match word
+        .trim_matches(|c: char| !c.is_alphanumeric())
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "pass" => Some(true),
+        "fail" => Some(false),
+        _ => None,
+    }
+}
+
+/// The value of the last line of `text` that reads `label: value`.
+fn labelled(text: &str, label: &str) -> Option<String> {
+    let value = text.lines().rev().find_map(|l| strip_label(l, label))?;
+    Some(value.trim().trim_matches('`').to_owned())
+}
+
+/// `line` without a leading `label:` (any letter case, light markdown allowed).
+fn strip_label<'a>(line: &'a str, label: &str) -> Option<&'a str> {
+    let line = line.trim().trim_start_matches(['*', '-', '_', '`', ' ']);
+    let (head, rest) = line.split_at_checked(label.len())?;
+    if !head.eq_ignore_ascii_case(label) {
+        return None;
+    }
+    let rest = rest.trim_start_matches(['*', '_']);
+    rest.strip_prefix(':')
+        .map(|v| v.trim_start_matches(['*', '_', ' ']))
 }
 
 /// Shortest abbreviated commit id a verdict may give.
@@ -272,6 +371,66 @@ pub fn record_check(structured: &mut Value, found: Option<Result<Vec<Reviewer>, 
     debug_assert!(!(review.contains_key(REVIEWER_AGENTS) && review.contains_key(UNVERIFIED)));
 }
 
+/// Put on a checked pass what each of the `reads` returned, by reviewer agent id.
+pub fn record_reads(structured: &mut Value, reads: &[(String, Verdict)]) {
+    let review = structured.get_mut("review").and_then(Value::as_object_mut);
+    let review = review.expect("read verdicts belong to a checked pass");
+    assert!(!reads.is_empty(), "a checked pass has a verdict read");
+    let entries = reads.iter().map(|(agent, v)| {
+        serde_json::json!({
+            "agent": agent,
+            "verdict": if v.pass { "pass" } else { "fail" },
+            "head": v.head,
+            "base": v.base,
+            "findings": v.findings,
+        })
+    });
+    review.insert(REVIEWER_VERDICTS.into(), entries.collect());
+}
+
+/// Put on a checked pass the reviewer ids Archon corrected, one line each.
+/// None adds no key.
+pub fn record_corrections(structured: &mut Value, corrections: &[String]) {
+    if corrections.is_empty() {
+        return;
+    }
+    let review = structured.get_mut("review").and_then(Value::as_object_mut);
+    let review = review.expect("a corrected id belongs to a checked pass");
+    review.insert(REVIEWER_CORRECTIONS.into(), corrections.to_vec().into());
+}
+
+/// One line per reviewer verdict and id correction a result records, for `archon show`.
+pub fn verdict_lines(structured: Option<&Value>) -> Vec<String> {
+    let review = structured.and_then(|s| s.get("review"));
+    let mut lines = Vec::new();
+    let corrections = review.and_then(|r| r.get(REVIEWER_CORRECTIONS));
+    for note in corrections.and_then(Value::as_array).into_iter().flatten() {
+        lines.push(format!(
+            "reviewer id corrected: {}",
+            note.as_str().unwrap_or("?")
+        ));
+    }
+    let reads = review.and_then(|r| r.get(REVIEWER_VERDICTS));
+    for read in reads.and_then(Value::as_array).into_iter().flatten() {
+        let text = |key: &str| read.get(key).and_then(Value::as_str).unwrap_or("?");
+        let base = read
+            .get("base")
+            .and_then(Value::as_str)
+            .unwrap_or("whole change");
+        let findings = match read.get("findings").and_then(Value::as_u64) {
+            Some(n) => format!("{n} finding(s)"),
+            None => "findings not counted".to_owned(),
+        };
+        lines.push(format!(
+            "reviewer {}: {} at {} from {base}, {findings}",
+            text("agent"),
+            text("verdict"),
+            text("head")
+        ));
+    }
+    lines
+}
+
 /// Put on a checked pass the `agents` Archon added to anchor its named delta
 /// reads, so the record shows what its coverage rests on. None adds no key.
 pub fn record_implicit(structured: &mut Value, agents: &[String]) {
@@ -315,6 +474,65 @@ mod tests {
 
     fn read(structured: Value) -> Result<Evidence, String> {
         Evidence::read(Some(&structured), ONE_OR_SKIP)
+    }
+
+    const HEAD: &str = "abcdef1234567";
+
+    #[test]
+    fn a_result_in_a_fenced_json_block_or_a_verdict_line_is_a_verdict() {
+        let fenced = format!(
+            "Done.\n```json\n{{\"verdict\": \"FAIL\", \"head\": \"{HEAD}\", \"findings\": [{{}}, {{}}]}}\n```\n"
+        );
+        let read = Verdict::read_result(&fenced, None).unwrap();
+        assert!(!read.pass && read.head == HEAD && read.findings == Some(2));
+        let line = format!("Looks right.\nhead: {HEAD}\nbase: 1234567abc\nverdict: Pass\n");
+        let read = Verdict::read_result(&line, None).unwrap();
+        assert!(read.pass && read.head == HEAD && read.base.as_deref() == Some("1234567abc"));
+        assert_eq!(read.findings, None);
+    }
+
+    #[test]
+    fn prose_without_a_verdict_is_refused_with_what_to_do() {
+        let prose = "Blocking findings: the parser drops the tail.";
+        let error = Verdict::read_result(prose, None).unwrap_err();
+        assert!(
+            error.contains("VERDICT: PASS") && error.contains("structured"),
+            "{error}"
+        );
+        let two = "```json\n{}\n```\n```json\n{}\n```";
+        assert!(
+            Verdict::read_result(two, None).is_err(),
+            "two blocks are no verdict"
+        );
+        let headless = Verdict::read_result("VERDICT: PASS", None).unwrap_err();
+        assert!(headless.contains("head: <commit>"), "{headless}");
+        let mid = format!("VERDICT: PASS\nhead: {HEAD}\nThen more prose.");
+        assert!(
+            Verdict::read_result(&mid, None).is_err(),
+            "the line must be last"
+        );
+    }
+
+    #[test]
+    fn what_each_reviewer_returned_is_recorded_and_shown() {
+        let mut result = json!({"review": {"verdict": "pass"}});
+        let read = Verdict {
+            pass: false,
+            head: HEAD.into(),
+            base: None,
+            findings: Some(3),
+        };
+        record_reads(&mut result, &[("agt_r".into(), read)]);
+        record_corrections(&mut result, &["agt_x -> agt_r".to_owned()]);
+        let lines = verdict_lines(Some(&result));
+        assert_eq!(lines[0], "reviewer id corrected: agt_x -> agt_r");
+        let shown = format!("reviewer agt_r: fail at {HEAD} from whole change, 3 finding(s)");
+        assert_eq!(lines[1], shown);
+        record_check(&mut result, None);
+        assert!(
+            verdict_lines(Some(&result)).is_empty(),
+            "Archon's finding replaces it"
+        );
     }
 
     #[test]
@@ -622,7 +840,6 @@ mod tests {
             "".to_owned(),
             "Reviewed; no findings. VERDICT: PASS".to_owned(),
             format!("Reviewed: {pass}"),
-            format!("```json\n{pass}\n```"),
             format!("{pass}\nVERDICT: PASS"),
             format!("{pass}{pass}"),
             "{\"verdict\":\"pass\"".to_owned(),

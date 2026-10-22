@@ -161,6 +161,7 @@ fn uncommitted_plan(workspace: &Path) -> Result<String, String> {
         &[
             "log",
             "-1",
+            "--full-history",
             "--format=%h",
             "--diff-filter=A",
             "HEAD",

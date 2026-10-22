@@ -5,6 +5,7 @@
 //! earlier reviewers, which Archon finds, checks and records itself.
 
 mod coverage;
+mod rounds;
 
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
@@ -16,6 +17,7 @@ use archon_pipeline::review::{self, MAX_NAMED_REVIEWERS, Reviewer, Verdict};
 use super::recover;
 use crate::context::DaemonContext;
 use coverage::{Base, Held, History};
+pub(super) use rounds::reviewer_settled;
 
 /// Agents named in a refusal: enough to see what the lead delegated to.
 const MAX_LISTED: usize = 6;

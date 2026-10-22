@@ -9,6 +9,11 @@
   lead's completed reviewers with a verdict, and coverage is checked as before;
   a refusal lists the lead's reviewer ids. The stage record keeps each
   reviewer's verdict, head, base and finding count, shown by `archon show`.
+- review gate (issue #237): when a lead's review-fix loop has had four
+  commits failed by a reviewer, archond posts one blocker notification with the
+  item, the round count and the latest finding titles, and the run goes on.
+  Three parallel reviewers of one commit are one round; the count restarts with
+  each stage attempt.
 - swarm (issue #195): the planner's `.archon/swarm-plan.json` stays an
   uncommitted file in the run worktree, hidden through `info/exclude`, so no
   shipped history carries it (archond refuses a plan the planner committed);

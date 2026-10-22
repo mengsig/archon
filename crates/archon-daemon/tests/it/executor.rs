@@ -3015,3 +3015,56 @@ async fn a_leaf_stage_owes_no_stop() {
     assert!(h.backend.cancelled().is_empty());
     assert_eq!(stage_labels(&h), ["implement", "review", "review"]);
 }
+
+/// The lead's reviewer `n` returns a failing verdict on its own head, and
+/// Aether reports its task completed.
+async fn review_round_fails(h: &Harness, lead: &StageRun, n: usize) {
+    let lead_id = lead_agent(lead);
+    let reviewer = h.backend.delegate(&lead_id, REVIEW_MODEL);
+    let finding = serde_json::json!({"severity": "high", "title": format!("finding {n}")});
+    let verdict = serde_json::json!({
+        "verdict": "fail",
+        "head": format!("{n:07}abcdef"),
+        "findings": [finding],
+    });
+    h.backend.complete_delegated(&reviewer, verdict.clone());
+    let event = AetherEvent {
+        seq: n as u64,
+        at: archon_core::now(),
+        agent: Some(reviewer),
+        task: None,
+        parent: Some(lead_id),
+        run: None,
+        kind: EventKind::TaskCompleted {
+            result: archon_aether::wire::TaskResult {
+                summary: "reviewed".into(),
+                artifacts: Vec::new(),
+                structured: Some(verdict),
+            },
+        },
+    };
+    pump::handle_fleet_event(&h.ctx, &event).await.unwrap();
+}
+
+/// Three failing rounds are no signal; the fourth posts one notice with the
+/// latest finding, and a fifth round posts nothing more. The run goes on.
+#[tokio::test]
+async fn the_fourth_failing_review_round_notifies_the_operator_once() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    for n in 1..=3 {
+        review_round_fails(&h, &lead, n).await;
+    }
+    assert!(h.notices(NotificationKind::Blocker).await.is_empty());
+    review_round_fails(&h, &lead, 4).await;
+    review_round_fails(&h, &lead, 5).await;
+    let notices = h.notices(NotificationKind::Blocker).await;
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    let text = &notices[0];
+    assert!(text.contains(item.id.as_str()), "{text}");
+    assert!(text.contains("failed 4 rounds"), "{text}");
+    assert!(text.contains("finding 4"), "{text}");
+    assert!(!text.contains("finding 3"), "{text}");
+    assert_eq!(h.running().await.len(), 1, "the lead keeps running");
+}

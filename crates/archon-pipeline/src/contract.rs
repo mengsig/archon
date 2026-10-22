@@ -506,6 +506,13 @@ starts the diff read:\n\n\
 ```\n\n\
 Use `\"fail\"` with findings for failures.\n\n";
 
+/// Failing review rounds of one stage attempt after which Archon tells the operator, once.
+/// A round is one commit that at least one of the lead's reviewers failed, so three
+/// parallel reviewers of one head are one round. The notice lists the latest findings'
+/// titles and the run goes on: nothing stops the loop but a pass, the operator or a
+/// budget. The lead is told nothing; the rules below stay as they are.
+pub const REVIEW_ROUNDS_BEFORE_NOTICE: usize = 4;
+
 const REVIEW_CHECK_RULES: &str = "\
 - Delegate with `wait: false`, then use `wait_for` with `any: true`. On a blocking \
 fail, `cancel_agent` the reviewers still reading before you edit: they share your \

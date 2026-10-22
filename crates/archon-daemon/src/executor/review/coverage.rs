@@ -883,6 +883,7 @@ mod tests {
             head: head.clone(),
             base: Some(upstream.clone()),
             findings: None,
+            titles: Vec::new(),
         };
         let named = [("agt_r".to_owned(), verdict)];
 
@@ -944,6 +945,7 @@ mod tests {
             head: head.to_owned(),
             base: Some(from.to_owned()),
             findings: None,
+            titles: Vec::new(),
         };
         let named = [("agt_r".to_owned(), verdict)];
         let base = Base {

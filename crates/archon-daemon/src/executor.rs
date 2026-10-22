@@ -337,6 +337,16 @@ pub async fn stage_settled(
     run_follow_up(ctx, follow).await
 }
 
+/// Called by the event pump when `reviewer`, an agent `lead` delegated to, settled
+/// its task: tells the operator once when the lead's review-fix loop runs long.
+pub async fn reviewer_settled(
+    ctx: &DaemonContext,
+    lead: &AetherAgentId,
+    reviewer: &AetherAgentId,
+) -> Result<(), ArchonError> {
+    review::reviewer_settled(ctx, lead, reviewer).await
+}
+
 /// Called by the event pump when an agent's turn ended: an attempt resumed
 /// on a kept agent settles on what it said (§6.7); any other is left alone.
 pub async fn turn_ended(ctx: &DaemonContext, agent: &AetherAgentId) -> Result<(), ArchonError> {

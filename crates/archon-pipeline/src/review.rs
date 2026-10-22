@@ -54,6 +54,8 @@ pub struct Verdict {
     pub base: Option<String>,
     /// How many findings it listed; `None` when its result gave no list.
     pub findings: Option<usize>,
+    /// The title of each finding that has one, one line each.
+    pub titles: Vec<String>,
 }
 
 /// What a reviewer must do when its result gives no verdict Archon can read.
@@ -119,6 +121,7 @@ impl Verdict {
             head,
             base,
             findings: None,
+            titles: Vec::new(),
         })
     }
 
@@ -149,14 +152,25 @@ impl Verdict {
             given => Some(commit_of(given).ok_or("its `base` names no commit")?),
         };
         assert!(head.len() >= MIN_COMMIT_CHARS, "a checked commit id");
-        let findings = data.get("findings").and_then(Value::as_array).map(Vec::len);
+        let listed = data.get("findings").and_then(Value::as_array);
+        let titles = listed.map(|list| finding_titles(list)).unwrap_or_default();
         Ok(Self {
             pass,
             head,
             base,
-            findings,
+            findings: listed.map(Vec::len),
+            titles,
         })
     }
+}
+
+/// The `title` of each finding in `list` that has a non-empty one.
+fn finding_titles(list: &[Value]) -> Vec<String> {
+    list.iter()
+        .filter_map(|finding| finding.get("title")?.as_str())
+        .map(one_line)
+        .filter(|title| !title.is_empty())
+        .collect()
 }
 
 /// The one fenced block of `text` that holds a JSON value; `None` for no block or several.
@@ -529,6 +543,16 @@ mod tests {
     }
 
     #[test]
+    fn a_verdict_keeps_the_titles_of_its_findings() {
+        let findings =
+            json!([{"title": " Leaks  the\nhandle "}, {"severity": "low"}, {"title": ""}]);
+        let data = json!({"verdict": "fail", "head": HEAD, "findings": findings});
+        let read = Verdict::read(Some(&data)).unwrap();
+        assert_eq!(read.findings, Some(3));
+        assert_eq!(read.titles, ["Leaks the handle"]);
+    }
+
+    #[test]
     fn what_each_reviewer_returned_is_recorded_and_shown() {
         let mut result = json!({"review": {"verdict": "pass"}});
         let read = Verdict {
@@ -536,6 +560,7 @@ mod tests {
             head: HEAD.into(),
             base: None,
             findings: Some(3),
+            titles: Vec::new(),
         };
         record_reads(&mut result, &[("agt_r".into(), read)]);
         record_corrections(&mut result, &["agt_x -> agt_r".to_owned()]);

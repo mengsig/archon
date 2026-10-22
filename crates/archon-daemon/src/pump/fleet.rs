@@ -125,7 +125,7 @@ async fn task_settled(
         return Ok(());
     };
     let Some(stage) = stage_awaiting_spawn(ctx, event, agent).await? else {
-        return Ok(());
+        return child_settled(ctx, event, agent).await;
     };
     let same_task = match (&stage.aether_task, &event.task) {
         (Some(ours), Some(theirs)) => ours == theirs,
@@ -138,6 +138,21 @@ async fn task_settled(
         return Ok(());
     }
     executor::stage_settled(ctx, agent, outcome).await
+}
+
+/// A completed task of an agent a stage agent delegated to may be a reviewer's
+/// verdict, which can make the stage's review-fix loop long enough to tell the operator.
+async fn child_settled(
+    ctx: &DaemonContext,
+    event: &AetherEvent,
+    agent: &AetherAgentId,
+) -> Result<(), ArchonError> {
+    match (&event.kind, &event.parent) {
+        (EventKind::TaskCompleted { .. }, Some(lead)) => {
+            executor::reviewer_settled(ctx, lead, agent).await
+        }
+        _ => Ok(()),
+    }
 }
 
 /// A stage agent that died without its task settling (engine crash, operator

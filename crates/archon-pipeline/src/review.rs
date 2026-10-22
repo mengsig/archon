@@ -77,7 +77,13 @@ impl Verdict {
             .ok()
             .or_else(|| fenced_json(summary));
         if let Some(data) = json {
-            return Self::read_json(&data);
+            let read = Self::read_json(&data)?;
+            return match verdict_line(summary) {
+                Some(line) if line != read.pass => Err(format!(
+                    "its summary's JSON verdict and its final `VERDICT:` line disagree: {VERDICT_HOWTO}"
+                )),
+                _ => Ok(read),
+            };
         }
         match verdict_line(summary) {
             Some(pass) => Self::from_lines(summary, pass),
@@ -489,6 +495,15 @@ mod tests {
         let read = Verdict::read_result(&line, None).unwrap();
         assert!(read.pass && read.head == HEAD && read.base.as_deref() == Some("1234567abc"));
         assert_eq!(read.findings, None);
+    }
+
+    #[test]
+    fn a_fenced_verdict_contradicting_the_final_line_is_refused() {
+        let text = format!(
+            "```json\n{{\"verdict\": \"pass\", \"head\": \"{HEAD}\"}}\n```\nhead: {HEAD}\nVERDICT: FAIL"
+        );
+        let error = Verdict::read_result(&text, None).unwrap_err();
+        assert!(error.contains("disagree"), "{error}");
     }
 
     #[test]

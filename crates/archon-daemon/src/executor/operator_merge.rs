@@ -229,10 +229,16 @@ fn parent_is_merged(
     shipped: &Shipped,
     parent: &StackParent,
 ) -> Result<bool, ArchonError> {
-    let in_ledger = store
-        .merges_for_item(&parent.parent_item)?
-        .iter()
-        .any(|m| matches!(m.state, MergeState::Merged { .. }));
+    let mut in_ledger = false;
+    for merge in store.merges_for_item(&parent.parent_item)? {
+        // A retried parent delivers a new branch; only this branch's merge counts.
+        if matches!(merge.state, MergeState::Merged { .. })
+            && store.run(&merge.run)?.branch == parent.parent_branch
+        {
+            in_ledger = true;
+            break;
+        }
+    }
     if in_ledger {
         return Ok(true);
     }

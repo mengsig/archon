@@ -349,3 +349,52 @@ async fn a_child_of_a_squash_merged_parent_is_told_to_refresh_not_to_merge_the_p
         "{why}"
     );
 }
+
+#[tokio::test]
+async fn a_merge_of_another_branch_of_the_parent_does_not_settle_the_child() {
+    let h = Harness::new().await;
+    let (parent, child) = stacked_pair(&h).await;
+    let run = h.run(&parent.id).await;
+    let now = archon_core::now();
+    let earlier = MergeRequest {
+        id: archon_core::id::MergeRequestId::new(),
+        item: parent.id.clone(),
+        run: run.id.clone(),
+        repo: h
+            .ctx
+            .store
+            .lock()
+            .await
+            .item(&parent.id)
+            .unwrap()
+            .repo
+            .unwrap(),
+        pr_url: format!("local:{}", run.branch),
+        head: git(&h.repo, &["rev-parse", &run.branch]),
+        authority: MergeAuthority::Cli,
+        ignore_checks: false,
+        reason: None,
+        waived_by: None,
+        waited: false,
+        checks: None,
+        state: MergeState::Merged {
+            method: "squash".into(),
+            actor: None,
+            observed: true,
+        },
+        requested_at: now,
+        updated_at: now,
+    };
+    {
+        let mut store = h.ctx.store.lock().await;
+        store.insert_merge(&earlier).unwrap();
+        let mut stacked = store.stack_parents(&child.id).unwrap().remove(0);
+        stacked.parent_branch = "archon/a-fresh-retry-of-the-parent".into();
+        store.save_stack_parent(&stacked).unwrap();
+    }
+
+    let why = review(&h, &child, false)
+        .await
+        .expect_err("parent unmerged");
+    assert!(why.to_string().contains("not merged yet"), "{why}");
+}

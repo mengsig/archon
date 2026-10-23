@@ -151,12 +151,14 @@ async fn look_once(
 ) -> Result<bool, ArchonError> {
     let now = archon_core::now();
     let waited = |limit| now >= after(watch.delivered_at, limit);
-    let repo = match ctx
+    // Not in the match head: its store guard would live through the arms, and
+    // `end` takes the store again (a self-deadlock that hung archond).
+    let found = ctx
         .store
         .lock()
         .await
-        .repo(&crate::resolve::repo_ref(&watch.repo))
-    {
+        .repo(&crate::resolve::repo_ref(&watch.repo));
+    let repo = match found {
         Ok(repo) => repo,
         Err(ArchonError::NotFound(_)) => return end(ctx, run, &watch, "repository removed").await,
         Err(error) => return Err(error),

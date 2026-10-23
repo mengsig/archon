@@ -520,6 +520,27 @@ async fn passing_checks_end_the_watch_quietly() {
     assert!(pr_checks_news(&h).await.is_empty());
 }
 
+/// A watch whose repository was removed ends quietly, and the pass returns:
+/// it once held the store's lock while ending the watch and hung archond.
+#[tokio::test]
+async fn a_watch_of_a_removed_repository_ends_without_hanging_the_pass() {
+    let (h, gh) = delivering().await;
+    let (item, run) = shipped(&h, "the change").await;
+    {
+        let mut store = h.ctx.store.lock().await;
+        store.remove_repo(item.repo.as_ref().unwrap()).unwrap();
+    }
+    age_watch(&h, &run, 3).await;
+    let pass = executor::coordination::reconcile(&h.ctx);
+    tokio::time::timeout(std::time::Duration::from_secs(30), pass)
+        .await
+        .expect("the pass returns instead of deadlocking on the store")
+        .unwrap();
+    assert_eq!(h.kv(&format!("ship_checks:{}", run.id)).await, None);
+    assert_eq!(gh.count("pr checks"), 0, "{:?}", gh.calls());
+    assert!(pr_checks_news(&h).await.is_empty());
+}
+
 /// Past the probes a billing refusal stops the other Actions jobs too, not a
 /// check outside Actions; a probe GitHub refuses leaves its check failed.
 #[tokio::test]

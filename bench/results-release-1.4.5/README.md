@@ -80,9 +80,9 @@ on the head. The runs alternated between head and v1.4.4, one at a time.
   gate runs, against $0.1370 on v1.4.4. Leaving out v1.4.4's `strict`
   review run, each head run ($0.1108-0.1205) cost more than v1.4.4's run 1
   ($0.0967). Every head run still falls within the 1.4.3 gate's range for
-  both builds ($0.0982-0.1280). Most of the gap is `quality-retry-budget`
-  ($0.029-0.040 on the head against $0.022-0.025), where the review gate did
-  extra work in two head runs. In run 1 the reviewer read a commit the run's
+  both builds ($0.0982-0.1280). About 60% of the gap is
+  `quality-retry-budget`, at $0.0375-0.0471 per trial on the head against
+  $0.0305-0.0317, where the review gate did extra work in two head runs. In run 1 the reviewer read a commit the run's
   workspace no longer held, so the automatic repair retry (#237, since 1.4.3)
   ran a second implement attempt. In run 3 the agent fixed a reviewer's
   finding after the review, so a second reviewer read that change. Both

@@ -180,6 +180,15 @@ verifies itself ([operator authority](docs/operator-authority.md)). Read
 [SECURITY.md](SECURITY.md) and the
 [GitHub watcher guide](docs/github-watcher.md) before widening access.
 
+## Contributors
+
+- [@mengsig](https://github.com/mengsig): maintainer
+- [@devGunnin](https://github.com/devGunnin): maintainer
+- [@Markfds01](https://github.com/Markfds01): fix for the ship-stage "one URL"
+  panic on git older than 2.46 (#185, #186, landed in #189)
+
+Contributors are listed by GitHub handle, and the list is maintained by hand.
+
 ## Documentation
 
 [User guide](docs/guide.md) · [Install](docs/install.md) ·

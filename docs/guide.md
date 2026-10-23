@@ -471,7 +471,7 @@ applies. A configured `[aether] address` (TCP) is rejected before attachment
 because the stock TUI requires a Unix socket. Raw `archon aether` passthrough
 keeps Aether's own endpoint selection.
 
-The native board shows new stage agents as `#q69g5fav implement · Chat polish`,
+The native board shows new stage agents as `implement`, `review 2/3`,
 with fan slots when needed and attempt/retry notes only above one. Run nodes
 use the item title; the default orchestrator name is `Archon`. Configured names
 and existing agents keep their names. Aether owns state colours, layout,

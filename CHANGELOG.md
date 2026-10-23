@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+## 1.4.5
+
+Released 2026-10-24.
+
+A patch release on 1.4.4, with no store migration and the same daemon
+protocol (19). The stack parent's new `closed` mark is a defaulted field in
+the stack row's JSON, so older rows read as before.
+
+Archon 1.4.5 needs **Aether 1.2.4**, the release it is tested on and that the
+installer and `archon update` install. Archon still asks Aether for protocol
+24 and checks no Aether version, so an older aetherd is not refused, but only
+Aether 1.2.4 is supported with this release.
+
+**After upgrading**, run `archon update`. It installs Aether 1.2.4 and
+restarts both daemons, archond and Archon's own aetherd, through the drained
+restart.
+
+### Stacks
+
+- restack: a stack parent whose pull request closed without merging no
+  longer pins its child. Before, it stayed "unmerged" forever, so every
+  restack pass moved the child's pull request back onto the dead branch with
+  `gh pr edit --base`, undoing a manual retarget, and merged that branch into
+  the child again. The parent is now marked closed when its pull request
+  settles unmerged; the base, the fork, restack merges, the delivery proof,
+  the operator merge and refresh skip it, so the child falls back to the next
+  open parent or the repository base and stays there. A reopened pull
+  request does not make the parent open again (#244).
+
+### Agents tree
+
+- Stage agents under a run node are named by their stage alone
+  (`implement`, `review 2/3`, `ship`), with attempt and retry notes only
+  above one, because the run node's row already names the item and its
+  title. Agents created before the upgrade keep their names. Aether 1.2.4
+  shows such a passive run node as a group header with the subtree's status
+  and cost (#247, #248).
+
 ## 1.4.4
 
 Released 2026-10-23.

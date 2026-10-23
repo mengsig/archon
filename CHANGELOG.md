@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+## 1.4.4
+
+Released 2026-10-23.
+
+A hotfix release on 1.4.3, with no store migration and the same daemon
+protocol (19). Archon 1.4.4 still needs **Aether 1.2.3**. Anyone who removes
+repositories should upgrade: `archon update` restarts archond on the fix.
+
+- daemon: archond no longer hangs when it watches the checks of a delivered
+  pull request whose repository was since removed (`archon repo remove`).
+  Ending that watch took the store's lock while the lookup that found the
+  repository missing still held it, so archond deadlocked at its next
+  maintenance pass: every `archon` command, the TUI and the `archon` MCP
+  tools waited forever, and a restart hung again within minutes because the
+  watch was never deleted. The watch now ends quietly, as intended. An
+  archond already hung does not answer `archon update`: stop it with
+  `kill $(cat $XDG_RUNTIME_DIR/archon/archond.pid)`, install 1.4.4 and start
+  it, and it clears the watch. Agents running in Aether are picked up again.
+
 ## 1.4.3
 
 Released 2026-10-22.

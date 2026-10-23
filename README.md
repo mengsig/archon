@@ -197,5 +197,5 @@ Contributors are listed by GitHub handle, and the list is maintained by hand.
 [GitHub watcher](docs/github-watcher.md) ·
 [Operator authority](docs/operator-authority.md) · [Architecture](docs/ARCHITECTURE.md)
 
-Project version: **1.4.3**. Licensed under [MIT](LICENSE). For development,
+Project version: **1.4.4**. Licensed under [MIT](LICENSE). For development,
 see [CONTRIBUTING.md](CONTRIBUTING.md).

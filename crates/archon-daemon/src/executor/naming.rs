@@ -1,6 +1,7 @@
-//! Human-readable Aether agent names (ARCHITECTURE §4.5). Aether's TUI and
-//! `aether agents` truncate names, so the part that tells agents apart
-//! comes first and the item's title last.
+//! Human-readable Aether agent names (ARCHITECTURE §4.5). Under a run node
+//! the node's row carries the item and its title, so a stage agent is named
+//! by its stage alone; without one the name leads with the item and ends
+//! with the title.
 
 use archon_core::id::QueueItemId;
 use archon_pipeline::SpawnPlan;
@@ -13,12 +14,25 @@ const MAX_TITLE_CHARS: usize = 40;
 /// long id cannot push the title out of a truncated name column.
 const MAX_STAGE_CHARS: usize = 24;
 
-/// Item id and stage lead so narrow board columns distinguish work.
+/// Where a stage agent sits in Aether's tree.
+pub(crate) enum Placement<'a> {
+    /// Under the run node, which names the item and its title.
+    UnderRunNode,
+    /// A root agent, which has to name its item and title itself. Every
+    /// stage Archon spawns today is bound to a node, so only tests build it.
+    #[cfg_attr(not(test), allow(dead_code))]
+    Standalone {
+        item: &'a QueueItemId,
+        title: &'a str,
+    },
+}
+
+/// The stage, fan slot and attempt notes, led by the item and followed by
+/// the title when the agent has no run node above it.
 pub(crate) fn stage_agent_name(
-    item: &QueueItemId,
+    placement: Placement<'_>,
     plan: &SpawnPlan,
     retry: Option<usize>,
-    title: &str,
 ) -> String {
     assert!(plan.attempt >= 1, "attempts are counted from one");
     assert!(
@@ -28,11 +42,13 @@ pub(crate) fn stage_agent_name(
         plan.fan_count
     );
     assert!(!plan.stage_id.is_empty(), "stages have ids");
-    let mut name = format!(
-        "#{} {}",
-        crate::worktree::item_short(item),
-        clip(&plan.stage_id, MAX_STAGE_CHARS)
-    );
+    let stage = clip(&plan.stage_id, MAX_STAGE_CHARS);
+    let mut name = match placement {
+        Placement::UnderRunNode => stage,
+        Placement::Standalone { item, .. } => {
+            format!("#{} {stage}", crate::worktree::item_short(item))
+        }
+    };
     if plan.fan_count > 1 {
         name.push_str(&format!(" {}/{}", plan.fan_index + 1, plan.fan_count));
     }
@@ -49,11 +65,14 @@ pub(crate) fn stage_agent_name(
     if !notes.is_empty() {
         name.push_str(&format!(" ({})", notes.join(", ")));
     }
-    let title = short_title(title);
-    if !title.is_empty() {
-        name.push_str(" · ");
-        name.push_str(&title);
+    if let Placement::Standalone { title, .. } = placement {
+        let title = short_title(title);
+        if !title.is_empty() {
+            name.push_str(" · ");
+            name.push_str(&title);
+        }
     }
+    assert!(!name.is_empty(), "an agent name is never empty");
     name
 }
 
@@ -112,27 +131,54 @@ mod tests {
         }
     }
 
+    fn named(plan: &SpawnPlan, retry: Option<usize>, title: &str) -> String {
+        stage_agent_name(
+            Placement::Standalone {
+                item: &item(),
+                title,
+            },
+            plan,
+            retry,
+        )
+    }
+
+    fn under_node(plan: &SpawnPlan, retry: Option<usize>) -> String {
+        stage_agent_name(Placement::UnderRunNode, plan, retry)
+    }
+
     #[test]
-    fn the_stage_leads_and_the_title_follows() {
-        let name = stage_agent_name(&item(), &plan("implement", 1, 0, 1), None, "add a greeting");
+    fn a_standalone_agent_leads_with_the_item_and_ends_with_the_title() {
+        let name = named(&plan("implement", 1, 0, 1), None, "add a greeting");
         assert_eq!(name, "#q69g5fav implement · add a greeting");
     }
 
     #[test]
+    fn under_a_run_node_only_the_stage_and_its_slot_remain() {
+        assert_eq!(under_node(&plan("implement", 1, 0, 1), None), "implement");
+        assert_eq!(under_node(&plan("review", 1, 1, 3), None), "review 2/3");
+        assert_eq!(
+            under_node(&plan("implement", 3, 0, 1), Some(2)),
+            "implement (attempt 3, retry 2)"
+        );
+        let name = under_node(&plan("review", 2, 0, 2), Some(1));
+        assert!(!name.contains('#') && !name.contains('·'), "{name}");
+    }
+
+    #[test]
     fn fan_out_slots_count_from_one() {
-        let name = stage_agent_name(&item(), &plan("review", 1, 1, 3), None, "add a greeting");
+        let name = named(&plan("review", 1, 1, 3), None, "add a greeting");
         assert_eq!(name, "#q69g5fav review 2/3 · add a greeting");
-        let single = stage_agent_name(&item(), &plan("ship", 1, 0, 1), None, "add a greeting");
+        let single = named(&plan("ship", 1, 0, 1), None, "add a greeting");
         assert!(!single.contains('/'), "{single}");
     }
 
     #[test]
     fn attempts_and_retries_show_only_when_they_happened() {
-        let second = stage_agent_name(&item(), &plan("implement", 2, 0, 1), None, "t");
+        let second = named(&plan("implement", 2, 0, 1), None, "t");
         assert_eq!(second, "#q69g5fav implement (attempt 2) · t");
-        let retried = stage_agent_name(&item(), &plan("review", 1, 0, 2), Some(1), "t");
+        let retried = named(&plan("review", 1, 0, 2), Some(1), "t");
         assert_eq!(retried, "#q69g5fav review 1/2 · t");
-        let both = stage_agent_name(&item(), &plan("implement", 3, 0, 1), Some(2), "t");
+        let both = named(&plan("implement", 3, 0, 1), Some(2), "t");
         assert_eq!(both, "#q69g5fav implement (attempt 3, retry 2) · t");
     }
 
@@ -151,32 +197,27 @@ mod tests {
         let short = short_title(&long);
         assert_eq!(short.chars().count(), MAX_TITLE_CHARS);
         assert!(short.ends_with('…'));
-        assert_eq!(
-            stage_agent_name(&item(), &plan("ship", 1, 0, 1), None, "   "),
-            "#q69g5fav ship"
-        );
+        assert_eq!(named(&plan("ship", 1, 0, 1), None, "   "), "#q69g5fav ship");
     }
 
     #[test]
-    fn a_long_stage_id_leaves_the_title_visible() {
+    fn a_long_stage_id_is_clipped_in_both_placements() {
         let stage = "a".repeat(64);
         assert!(
             archon_pipeline::spec::valid_id(&stage),
             "the longest valid id"
         );
-        let name = stage_agent_name(&item(), &plan(&stage, 2, 1, 2), Some(1), "add a greeting");
         let clipped = format!("{}…", "a".repeat(MAX_STAGE_CHARS - 1));
+        let name = named(&plan(&stage, 2, 1, 2), Some(1), "add a greeting");
         assert_eq!(
             name,
             format!("#q69g5fav {clipped} 2/2 (attempt 2) · add a greeting")
         );
-        assert!(name.chars().count() < 80, "{name}");
-        let short = stage_agent_name(
-            &item(),
-            &plan(&"b".repeat(MAX_STAGE_CHARS), 1, 0, 1),
-            None,
-            "t",
+        assert_eq!(
+            under_node(&plan(&stage, 2, 1, 2), Some(1)),
+            format!("{clipped} 2/2 (attempt 2)")
         );
+        let short = named(&plan(&"b".repeat(MAX_STAGE_CHARS), 1, 0, 1), None, "t");
         assert!(
             !short.contains('…'),
             "an id within the limit is whole: {short}"
@@ -184,18 +225,23 @@ mod tests {
     }
 
     #[test]
-    fn names_are_deterministic_and_distinguish_items_with_the_same_title() {
+    fn standalone_names_are_deterministic_and_distinguish_items_with_the_same_title() {
         let stage = plan("implement", 1, 0, 1);
-        let name = stage_agent_name(&item(), &stage, None, "same title");
-        assert_eq!(name, stage_agent_name(&item(), &stage, None, "same title"));
+        let name = named(&stage, None, "same title");
+        assert_eq!(name, named(&stage, None, "same title"));
         let other = QueueItemId::parse("qi_01ARZ3NDEKTSV4RRFFQ69G5FAW").unwrap();
-        assert_eq!(
-            stage_agent_name(&other, &stage, None, "same title"),
-            "#q69g5faw implement · same title"
+        let other_name = stage_agent_name(
+            Placement::Standalone {
+                item: &other,
+                title: "same title",
+            },
+            &stage,
+            None,
         );
-        assert_ne!(name, stage_agent_name(&other, &stage, None, "same title"));
+        assert_eq!(other_name, "#q69g5faw implement · same title");
+        assert_ne!(name, other_name);
         assert_eq!(
-            stage_agent_name(&item(), &stage, None, "a\n\tb\u{202e}\u{1b}"),
+            named(&stage, None, "a\n\tb\u{202e}\u{1b}"),
             "#q69g5fav implement · a b"
         );
     }
@@ -203,6 +249,6 @@ mod tests {
     #[test]
     #[should_panic(expected = "outside fan_out")]
     fn a_slot_beyond_the_fan_out_is_a_bug() {
-        stage_agent_name(&item(), &plan("review", 1, 2, 2), None, "t");
+        named(&plan("review", 1, 2, 2), None, "t");
     }
 }

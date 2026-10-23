@@ -712,7 +712,8 @@ fn build_request(
         host_context: Default::default(),
         idempotency_key: id.as_str().to_owned(),
         role: format!("archon-stage:{}/{}", run.pipeline, plan.stage_id),
-        name: naming::stage_agent_name(&item.id, plan, retry, &item.title),
+        // Every reserved spawn is bound to the run's node before it is sent.
+        name: naming::stage_agent_name(naming::Placement::UnderRunNode, plan, retry),
         objective: plan.prompt.clone(),
         instructions: target.instructions(plan),
         choice: plan.choice.clone(),

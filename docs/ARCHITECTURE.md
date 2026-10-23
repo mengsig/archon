@@ -338,10 +338,10 @@ In `archon tui` (Aether's TUI) an item therefore reads as
 ```
 Archon                                  archon-orchestrator
 split the parser                        archon-run:refactor
-  #q69g5fav baseline · split the parser           archon-stage:refactor/baseline
-  #q69g5fav refactor · split the parser           archon-stage:refactor/refactor
-  #q69g5fav verify · split the parser             archon-stage:refactor/verify
-  #q69g5fav review · split the parser             archon-stage:refactor/review
+  baseline                                archon-stage:refactor/baseline
+  refactor                                archon-stage:refactor/refactor
+  verify                                  archon-stage:refactor/verify
+  review                                  archon-stage:refactor/review
 ```
 
 `archon aether agents` passes through to Aether's flat table, which shows
@@ -445,7 +445,7 @@ carries each agent's `parent`.
 ```jsonc
 {"cmd":"create_agent",
  "role":"archon-stage:<pipeline>/<stage>",
- "name":"<stage>[ <fan>/<fan_out>][ (attempt <n>[, retry <r>])] · <item title>",
+ "name":"<stage>[ <fan>/<fan_out>][ (attempt <n>[, retry <r>])]",
  "objective":"<rendered stage prompt>",
  "model":{"provider":"…","model":"…"},                 // ModelChoice from the item's ModelPlan
  "scope":{"workspace_root":"<worktree>", "repository":"<repo.name>",
@@ -467,18 +467,19 @@ carries each agent's `parent`.
  "start":true}
 ```
 
-- **Names are for people.** Aether's TUI and `aether agents` truncate names,
-  so the part that tells agents apart comes first and the item's title last:
-  `#q69g5fav implement · add a greeting`, `#q69g5fav review 2/3 · add a greeting`,
-  `#q69g5fav implement (attempt 2) · add a greeting`,
-  `#q69g5fav ship (retry 2) · add a greeting`.
+- **Names are for people.** A stage agent sits under its run node, whose
+  row names the item by its title and carries the pipeline and item in its
+  role and labels, so the stage agent is named by its stage alone:
+  `implement`, `review 2/3`, `implement (attempt 2)`, `ship (retry 2)`.
   The fan slot appears only when the stage fans out, the attempt only from
   the second one, the retry only above one for an infrastructure replacement (§6.3).
-  The short item id is the same lower-case eight-character ULID suffix used
-  in worktree branch names; labels remain authoritative for identity.
-  The title is whitespace-collapsed and clipped to 40 characters, and the
-  stage id (valid up to 64) to 24, each independently, so a long id cannot
-  push the title out of a truncated column. Nothing
+  The stage id (valid up to 64) is clipped to 24 characters. Every reserved
+  spawn is bound to its run's node before it is sent, so Archon creates no
+  stage agent without one; the namer still has the standalone form for an
+  agent with no node above it, `#q69g5fav implement · add a greeting`,
+  led by the lower-case eight-character ULID suffix used in worktree branch
+  names and ended by the title, whitespace-collapsed and clipped to 40
+  characters. Nothing
   parses names: the `archon.*` labels and the role carry the exact identity,
   and the store maps agent ids to stage runs.
 - The stored `SpawnRequest` (§6.3) is reserved with `parent: pending`. The

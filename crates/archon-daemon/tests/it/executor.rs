@@ -67,8 +67,8 @@ fn assert_implementer(h: &Harness, run: &PipelineRun, title: &str) {
         implement.idempotency_key
     );
     assert_eq!(
-        implement.name,
-        format!("#{} implement · {title}", short_item(&run.item))
+        implement.name, "implement",
+        "the run node's row carries the item and its title"
     );
     assert!(implement.leaf && implement.deadline.is_some());
     assert_run_node(h, run, title);
@@ -168,10 +168,7 @@ async fn review_failure_loops_back_then_ships() {
         .collect();
     assert_eq!(
         reviewers,
-        BTreeSet::from([
-            format!("#{} review 1/2 · add a greeting", short_item(&item.id)),
-            format!("#{} review 2/2 · add a greeting", short_item(&item.id))
-        ])
+        BTreeSet::from(["review 1/2".to_owned(), "review 2/2".to_owned()])
     );
 
     for expected in ["implement", "review", "ship"] {
@@ -697,8 +694,8 @@ async fn infra_failure_respawns_the_slot_once() {
     assert_eq!(keys.len(), 2);
     assert_ne!(keys[0], keys[1], "the replacement is a new agent");
     assert_eq!(
-        requests[1].name,
-        format!("#{} implement · flaky engine", short_item(&item.id))
+        requests[1].name, "implement",
+        "an infrastructure replacement is named by its stage"
     );
     assert_eq!(
         requests[1].parent, requests[0].parent,
@@ -1445,10 +1442,6 @@ async fn failure_notices_handle_empty_errors_and_bound_unicode_causes() {
         assert!(notices[0].chars().count() < 400, "{}", notices[0]);
         assert!(notices[0].ends_with(&format!("archon queue show {} --full", item.id)));
     }
-}
-
-fn short_item(item: &archon_core::id::QueueItemId) -> String {
-    item.as_str()[item.as_str().len() - 8..].to_ascii_lowercase()
 }
 
 #[tokio::test]

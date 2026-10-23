@@ -290,14 +290,7 @@ fn assert_children_of(creates: &[Value], node: &str) {
 /// planned model and effort, the stage contract and the worktree.
 fn assert_create_agent(frame: &Value, stage: &StageRun, workspace: &std::path::Path) {
     assert_eq!(frame["idempotency_key"], json!(stage.id.as_str()));
-    let item = frame["scope"]["labels"]["archon.item"]
-        .as_str()
-        .expect("item label");
-    let short = item[item.len() - 8..].to_ascii_lowercase();
-    assert_eq!(
-        frame["name"],
-        json!(format!("#{short} implement · wire the greeting"))
-    );
+    assert_eq!(frame["name"], json!("implement"));
     assert_eq!(frame["model"], model(MODEL));
     assert_eq!(frame["config"]["effort"], effort(Effort::Medium));
     let instructions = frame["config"]["instructions"].as_str().expect("contract");
@@ -347,16 +340,9 @@ async fn pipeline_runs_to_success_through_a_fake_aetherd() {
     let creates = aether.wait_for("create_agent", 4, WAIT).await;
     assert_reviewers(&creates[2..]);
     assert_children_of(&creates[2..], &node_id(1));
-    let short = item.id.as_str()[item.id.as_str().len() - 8..].to_ascii_lowercase();
     let names: Vec<&Value> = creates[2..].iter().map(|c| &c["name"]).collect();
-    assert!(
-        names.contains(&&json!(format!("#{short} review 1/2 · wire the greeting"))),
-        "{names:?}"
-    );
-    assert!(
-        names.contains(&&json!(format!("#{short} review 2/2 · wire the greeting"))),
-        "{names:?}"
-    );
+    assert!(names.contains(&&json!("review 1/2")), "{names:?}");
+    assert!(names.contains(&&json!("review 2/2")), "{names:?}");
 
     let pass =
         json!({"summary": "VERDICT: pass", "structured": {"verdict": "pass", "findings": []}});

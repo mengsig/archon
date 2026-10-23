@@ -777,8 +777,7 @@ starts either ([which commands start archond](#which-commands-start-archond)).
 `archon aether <args…>` runs any `aether` command against Archon's instance,
 for example `archon aether agents`. `archon daemon stop` stops both
 daemons (`--keep-aether` stops only archond). In the TUI's tree each work item is one subtree: a node named after
-the item, with its stage agents (`implement · <title>`, `review 1/2 · <title>`,
-`ship · <title>`) underneath, beside the `archon` orchestrator.
+the item, with its stage agents (`implement`, `review 1/2`, `ship`) underneath, beside the `archon` orchestrator.
 
 ```sh
 archon repo add ~/code/api --ship pr

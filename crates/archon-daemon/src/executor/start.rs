@@ -365,7 +365,7 @@ async fn add_worktree(
     );
     let target = ctx.store.lock().await.stack_fix(&item.id)?;
     let parents = parents(ctx, repo, item, target.as_ref(), base.as_deref()).await?;
-    let stacked_on = parents.iter().find(|p| !p.merged);
+    let stacked_on = parents.iter().find(|p| p.is_open());
     let branch = target
         .as_ref()
         .map(|t| t.branch.clone())

@@ -191,7 +191,7 @@ fn expected_base(
 ) -> Result<Result<String, String>, ArchonError> {
     settle_merged_parents(store, shipped)?;
     let parents = store.stack_parents(&shipped.item.id)?;
-    if let Some(open) = parents.iter().find(|p| !p.merged) {
+    if let Some(open) = parents.iter().find(|p| p.is_open()) {
         return Ok(Err(format!(
             "it is stacked on {}'s `{}`, which is not merged yet: run `archon merge {}` first, \
              then merge this item again",
@@ -222,7 +222,7 @@ fn expected_base(
 /// does not block the item.
 fn settle_merged_parents(store: &mut Store, shipped: &Shipped) -> Result<(), ArchonError> {
     for mut parent in store.stack_parents(&shipped.item.id)? {
-        if parent.merged || !parent_is_merged(store, shipped, &parent)? {
+        if !parent.is_open() || !parent_is_merged(store, shipped, &parent)? {
             continue;
         }
         parent.merged = true;
@@ -921,8 +921,8 @@ async fn ready(ctx: &DaemonContext, merge: &MergeRequest) -> Result<Readiness, A
     })
 }
 
-/// A pull request still aimed at a parent branch that has merged is moved
-/// onto the base, then read again.
+/// A pull request still aimed at a parent branch whose pull request merged or
+/// closed is moved onto the base, then read again.
 async fn retargeted(
     ctx: &DaemonContext,
     shipped: &Shipped,
@@ -939,7 +939,7 @@ async fn retargeted(
             .map_err(|e| e.to_string())?;
         parents
             .iter()
-            .any(|p| p.merged && p.parent_branch == facts.base)
+            .any(|p| !p.is_open() && p.parent_branch == facts.base)
     };
     if !stacked {
         return Ok(facts);

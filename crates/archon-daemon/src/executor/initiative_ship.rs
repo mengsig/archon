@@ -128,7 +128,7 @@ pub(super) async fn verify_stack(
         let parents = store.stack_parents(&owner)?;
         let mut needed: Vec<(String, String)> = parents
             .into_iter()
-            .filter(|p| !p.merged)
+            .filter(|p| p.is_open())
             .map(|p| {
                 let why = format!(
                     "stack is missing parent {} at {}",

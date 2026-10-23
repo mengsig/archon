@@ -19,6 +19,10 @@ pub struct StackParent {
     pub repository_base: Option<String>,
     #[serde(default)]
     pub merged: bool,
+    /// The parent's pull request closed unmerged: the child no longer stacks
+    /// on it, and a reopened pull request does not make it a parent again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub closed: bool,
     #[serde(default)]
     pub conflict: Option<String>,
     /// The child pull request head whose push `origin` rejected: nothing is
@@ -27,14 +31,21 @@ pub struct StackParent {
     pub needs_attention: Option<String>,
 }
 
+impl StackParent {
+    /// Whether the child still stacks on this parent: neither merged nor closed.
+    pub fn is_open(&self) -> bool {
+        !self.merged && !self.closed
+    }
+}
+
 impl Store {
-    /// The first unmerged parent's branch and last incorporated SHA.
+    /// The first open parent's branch and last incorporated SHA.
     #[cfg(feature = "testing")]
     pub fn stack_base(&self, item: &QueueItemId) -> Result<Option<(String, String)>, ArchonError> {
         Ok(self
             .stack_parents(item)?
             .into_iter()
-            .find(|p| !p.merged)
+            .find(StackParent::is_open)
             .map(|p| (p.parent_branch, p.parent_sha)))
     }
 
@@ -302,8 +313,14 @@ fn validate_parent(conn: &rusqlite::Connection, parent: &StackParent) -> Result<
 fn write_parent(conn: &rusqlite::Connection, parent: &StackParent) -> Result<(), ArchonError> {
     assert!(!conn.is_autocommit());
     assert!(matches!(parent.parent_sha.len(), 40 | 64));
+    assert!(
+        !(parent.merged && parent.closed),
+        "a pull request merged or closed"
+    );
     let state = if parent.merged {
         "merged"
+    } else if parent.closed {
+        "closed"
     } else if parent.conflict.is_some() {
         "conflict"
     } else {

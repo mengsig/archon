@@ -51,7 +51,7 @@ pub(super) fn section(
     let mut rules = contract::dependency_rules(current_base.as_ref().unwrap_or(base), &found);
     if parents.iter().any(|p| p.conflict.is_some()) {
         rules.push_str("Before starting the requested change, merge (`git merge <sha>`, never rebase) each parent SHA below that `git merge-base --is-ancestor <sha> HEAD` says the branch lacks:\n");
-        for parent in parents.iter().filter(|p| !p.merged) {
+        for parent in parents.iter().filter(|p| p.is_open()) {
             rules.push_str(&format!("- {}\n", parent.parent_sha));
         }
     }

@@ -141,6 +141,53 @@ async fn child_forks_parent_targets_it_and_retargets_after_merge_across_restart(
     assert_eq!(prs(&h)[&child_run.branch]["baseRefName"], "main");
 }
 
+/// A parent whose pull request closed unmerged is stacked on no more: the
+/// child moves to the repository's base and stays there, even if it reopens.
+#[tokio::test]
+async fn a_parent_closed_unmerged_retargets_the_child_for_good() {
+    let (h, parent, child) = stack_pair().await;
+    finish_item(&h, &child.id).await;
+    let parent_run = h.run(&parent.id).await;
+    let child_run = h.run(&child.id).await;
+    assert_eq!(prs(&h)[&child_run.branch]["baseRefName"], parent_run.branch);
+    let delivered = gh_calls(&h).len();
+    set_pr(&h, &parent_run.branch, "state", json!("CLOSED"));
+    h.dispatch().await;
+    assert_eq!(prs(&h)[&child_run.branch]["baseRefName"], "main");
+    let parents = h.ctx.store.lock().await.stack_parents(&child.id).unwrap();
+    assert!(parents[0].closed && !parents[0].merged, "{parents:?}");
+
+    let child_head = git(&h.repo, &["rev-parse", &child_run.branch]);
+    let dead = advance_branch(&h, &parent_run.branch, "parent2.txt", "dead parent\n");
+    set_pr(&h, &parent_run.branch, "state", json!("OPEN"));
+    for _ in 0..2 {
+        reconcile(&h.ctx).await.unwrap();
+        h.dispatch().await;
+    }
+    assert_eq!(prs(&h)[&child_run.branch]["baseRefName"], "main");
+    assert_eq!(git(&h.repo, &["rev-parse", &child_run.branch]), child_head);
+    assert_ne!(
+        child_head, dead,
+        "the dead parent's commit is not merged in"
+    );
+    let moved_back = gh_calls(&h)[delivered..]
+        .iter()
+        .any(|call| call[..2] == ["pr", "edit"] && call.contains(&parent_run.branch));
+    assert!(
+        !moved_back,
+        "the child is never moved back onto the dead parent"
+    );
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .stack_base(&child.id)
+            .unwrap()
+            .is_none()
+    );
+}
+
 #[tokio::test]
 async fn a_moved_parent_is_merged_forward_and_pushed_without_rewriting_child() {
     let (h, parent, child) = stack_pair().await;

@@ -95,7 +95,7 @@ async fn target(
             "{id} has no run branch to refresh"
         )));
     };
-    if let Some(parent) = store.stack_parents(id)?.iter().find(|p| !p.merged) {
+    if let Some(parent) = store.stack_parents(id)?.iter().find(|p| p.is_open()) {
         return Err(ArchonError::Invalid(format!(
             "{id} is stacked on `{}`, which restacking merges in as it moves",
             parent.parent_branch

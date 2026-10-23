@@ -2479,8 +2479,8 @@ table and delivers it off every lock:
    recorded and has not seen merged (§8.8), checked here so that a missing
    parent pushes nothing and opens no pull request. The base is what
    `restack::target_base` reads from the stack (§8.8): the branch of the
-   item's first unmerged parent, the repository's base once every parent
-   merged, and the run variable `base_branch` for an item that is not stacked.
+   item's first open parent, the repository's base once every parent
+   merged or closed, and the run variable `base_branch` for an item that is not stacked.
 
    **The fast check gate** (`ship::gate`) follows a proof, where the
    repository has a trusted fast check: the registry's `checks.fast`, or
@@ -2669,18 +2669,20 @@ to do what archond does in seconds.
 
 An item queued after others (`depends_on`) starts after their successful
 pipeline runs, including delivery; it does not wait for a merge.
-`executor/start.rs` forks its branch from the first unmerged
-same-repository parent's branch and merges the other parents in. `stacks`
-persists each parent's item, branch, SHA and order, and
-`Store::stack_base(item)` returns the first unmerged parent's branch and
-SHA, or `None`. Cross-repository and scratch dependencies are no stack
+`executor/start.rs` forks its branch from the first open
+same-repository parent's branch and merges the other parents in. A parent
+is open until its pull request merges or closes unmerged; one already
+settled at the fork is no stack parent. `stacks` persists each parent's
+item, branch, SHA, order and whether it merged or closed, and
+`Store::stack_base(item)` returns the first open parent's branch and SHA,
+or `None`. Cross-repository and scratch dependencies are no stack
 parents. The `## Dependencies` section of the contract (§8.6,
 `contract::dependency_rules`) names the base the branch was prepared from
 and each dependency's item, branch and pull request as bounded JSON.
 
 `restack::target_base` is the base a stacked change is for now: that first
-unmerged parent's branch, or the repository's base once every parent
-merged. Delivery (§8.7) proves the run against it and opens or moves the
+open parent's branch, or the repository's base once every parent merged or
+closed. Delivery (§8.7) proves the run against it and opens or moves the
 pull request onto it, so a child ships onto its parent's branch.
 
 `executor/restack.rs` reconciles persisted stacks in the coordination worker
@@ -2703,8 +2705,11 @@ every 10 minutes, but by number: one it lacks is shown with `gh pr view
 <url>`, so a newer pull request of the same branch never stands in for a
 run's.
 
-A merged parent has the child's pull request moved with `gh pr edit
---base` to the next unmerged parent or the repository's base. Commits a
+A merged or closed parent has the child's pull request moved with `gh pr
+edit --base` to the next open parent or the repository's base, and is never
+merged into the child again. A closed parent stays closed for good: its pull
+request is settled, so a reopening is not seen, and the child stays where it
+moved. Commits a
 parent gains later are merged into the child's branch and pushed: never
 rebased or force-pushed. The merge is `git merge-tree --write-tree` and
 `commit-tree` in the repository's shadow (§13.4), made by the repository's

@@ -30,7 +30,8 @@ enum Pr {
 }
 
 /// The base a stacked `item` (or the item a restack fix repairs) is for now:
-/// its first unmerged parent's branch, else the repository's (§8.8).
+/// its first open parent's branch, else the repository's (§8.8). A parent
+/// whose pull request merged or closed unmerged is open no more, for good.
 pub(super) fn target_base(
     store: &archon_queue::Store,
     item: &QueueItemId,
@@ -43,7 +44,7 @@ pub(super) fn target_base(
         return Ok(None);
     };
     assert_eq!(first.item, owner, "the parents are the stacked item's");
-    if let Some(open) = parents.iter().find(|p| !p.merged) {
+    if let Some(open) = parents.iter().find(|p| p.is_open()) {
         assert!(is_plain_branch(&open.parent_branch), "recorded at the fork");
         return Ok(Some(open.parent_branch.clone()));
     }
@@ -60,7 +61,7 @@ pub(super) fn target_base(
 }
 
 /// The parents `item` forks from: the shipped runs of its same-repository
-/// dependencies whose pull request has not merged.
+/// dependencies whose pull request is not settled, merged or closed.
 pub(super) async fn parents(
     ctx: &DaemonContext,
     item: &QueueItem,
@@ -98,8 +99,7 @@ pub(super) async fn parents(
             ShipMode::Local => None,
             ShipMode::Pr => {
                 match pull_request(ctx, &mut pass, repo, &run.branch, Some(&run.id)).await? {
-                    Pr::Settled { merged: true } => continue,
-                    Pr::Settled { merged: false } => None,
+                    Pr::Settled { .. } => continue,
                     Pr::Open(pr) => pr.head_ref_oid,
                 }
             }
@@ -113,6 +113,7 @@ pub(super) async fn parents(
             position: parents.len(),
             repository_base: None,
             merged: false,
+            closed: false,
             conflict: None,
             needs_attention: None,
         });
@@ -319,7 +320,7 @@ pub(super) async fn merge_others(
     );
     assert!(is_plain_branch(branch));
     let identity = RepoIdentity::merger(repo_identity::of(ctx, repo).await?.as_ref());
-    for parent in parents.iter().filter(|p| !p.merged) {
+    for parent in parents.iter().filter(|p| p.is_open()) {
         let (data_dir, worktrees) = (ctx.paths.data_dir.clone(), ctx.paths.worktrees.clone());
         let (path, branch) = (repo.path.clone(), branch.to_owned());
         let (sha, identity) = (parent.parent_sha.clone(), identity.clone());
@@ -408,16 +409,16 @@ async fn update_parents(
     assert_eq!(run.item, item.id);
     assert!(parents.iter().all(|p| p.item == item.id));
     let can_merge = run.shipped && matches!(item.state, QueueState::Succeeded { .. });
-    for mut parent in parents.into_iter().filter(|p| !p.merged) {
+    for mut parent in parents.into_iter().filter(StackParent::is_open) {
         let head = match repo.ship {
             ShipMode::Local => None,
             ShipMode::Pr => match parent_pr(ctx, pass, repo, &parent).await? {
-                Pr::Settled { merged: true } => {
-                    parent.merged = true;
+                Pr::Settled { merged } => {
+                    parent.merged = merged;
+                    parent.closed = !merged;
                     ctx.store.lock().await.save_stack_parent(&parent)?;
                     continue;
                 }
-                Pr::Settled { merged: false } => None,
                 Pr::Open(pr) => pr.head_ref_oid,
             },
         };

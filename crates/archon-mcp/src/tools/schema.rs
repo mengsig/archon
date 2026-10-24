@@ -8,6 +8,7 @@ use archon_core::mcp_tools::{TOOLS, ToolClass};
 use archon_core::model::MAX_MODEL_REASON_CHARS;
 use archon_core::protocol::{MAX_ARTIFACT_PAGE_BYTES, MAX_STAGE_PAGE_CHARS, STAGE_PAGE_CHARS};
 use archon_core::queue::{NOTIFY_TAG, QueueState};
+use archon_core::tracked::{KEYED_TOOLS, MAX_KEY_BYTES};
 use serde_json::{Value, json};
 
 use super::ToolDefinition;
@@ -58,6 +59,7 @@ pub(super) fn all() -> Vec<ToolDefinition> {
         guide(),
         settings(),
         clear_notifications(),
+        request_status(),
     ]
 }
 
@@ -162,11 +164,12 @@ fn read_artifact() -> ToolDefinition {
     )
 }
 
+/// A keyed tool (`KEYED_TOOLS`) also takes an `idempotency_key`.
 fn define(
     name: &'static str,
     title: &'static str,
     description: &'static str,
-    input_schema: Value,
+    mut input_schema: Value,
     destructive: bool,
 ) -> ToolDefinition {
     let listed = TOOLS.iter().find(|t| t.name == name);
@@ -181,6 +184,12 @@ fn define(
         !(listed.read_only() && destructive),
         "`{name}` cannot be both"
     );
+    if KEYED_TOOLS.contains(&name) {
+        let properties = input_schema["properties"].as_object_mut();
+        let properties = properties.unwrap_or_else(|| panic!("`{name}` declares its properties"));
+        let earlier = properties.insert("idempotency_key".into(), idempotency_key());
+        assert!(earlier.is_none(), "`{name}` declares no key of its own");
+    }
     ToolDefinition {
         name,
         title,
@@ -190,6 +199,16 @@ fn define(
         destructive,
         open_world: listed.class == ToolClass::External,
     }
+}
+
+fn idempotency_key() -> Value {
+    json!({
+        "type": "string",
+        "minLength": 1,
+        "maxLength": MAX_KEY_BYTES,
+        "description": "For 24 h a repeat with this key and the same arguments returns the \
+            first result, applying nothing; other arguments are refused.",
+    })
 }
 
 /// The `brief_append` property shared by `update_item` and `retry_item`.
@@ -856,6 +875,21 @@ fn settings() -> ToolDefinition {
         "Show operator settings",
         "Read the saved global or repository operator overlay and effective values with their sources. Preserve unrelated scoped fields when requesting set_settings through request_authority.",
         object(json!({"repo": repo_ref("Omit for global settings.")}), &[]),
+        false,
+    )
+}
+
+fn request_status() -> ToolDefinition {
+    define(
+        "request_status",
+        "Request status",
+        "What became of a change whose answer never came: a call that returned `pending: \
+         req_…`. Answers pending, applied (with the call's result), failed (with why) or \
+         interrupted. Only your own calls of the last 24 h are found.",
+        object(
+            json!({"request": {"type": "string", "description": "The `req_…` id the call returned."}}),
+            &["request"],
+        ),
         false,
     )
 }

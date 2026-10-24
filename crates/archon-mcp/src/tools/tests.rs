@@ -8,7 +8,9 @@ use archon_core::catalog::{
     CatalogListing, Gate, Nudges, PipelineProblem, PipelineSource, PipelineSummary, StageKind,
     StageSummary, WorkspaceMode,
 };
-use archon_core::id::{DirectiveId, InitiativeId, PipelineRunId, QuestionId, QueueItemId};
+use archon_core::id::{
+    DirectiveId, InitiativeId, PipelineRunId, QuestionId, QueueItemId, RequestId,
+};
 use archon_core::mcp_tools::TOOLS;
 use archon_core::model::Effort;
 use archon_core::protocol::{PauseTarget, Request};
@@ -37,7 +39,7 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
     let mut samples = vec![
         (
             "message_orchestrator",
-            json!({"text": "a blocker", "kind": "escalation"}),
+            json!({"text": "a blocker", "kind": "escalation", "idempotency_key": "blocker-1"}),
         ),
         (
             "list_pipelines",
@@ -80,19 +82,25 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
         ),
         (
             "update_item",
-            json!({"item": qi(), "priority": "low", "model_plan": plan(), "model_reasons": {"implement": "Apply supplied fix"}, "tags": [], "add_depends_on": [qi()], "budget_usd": 2.5, "stage_timeouts": {"implement": 90}, "brief_append": "Do Y.", "autonomy": {"merge": "auto", "tools": "yolo"}}),
+            json!({"item": qi(), "priority": "low", "model_plan": plan(), "model_reasons": {"implement": "Apply supplied fix"}, "tags": [], "add_depends_on": [qi()], "budget_usd": 2.5, "stage_timeouts": {"implement": 90}, "brief_append": "Do Y.", "autonomy": {"merge": "auto", "tools": "yolo"}, "idempotency_key": "lower-1"}),
         ),
-        ("cancel_item", json!({"item": qi(), "reason": "superseded"})),
+        (
+            "cancel_item",
+            json!({"item": qi(), "reason": "superseded", "idempotency_key": "cancel-1"}),
+        ),
         (
             "retry_item",
-            json!({"item": qi(), "model_plan": plan(), "model_reasons": {"implement": "Retry with more reasoning"}, "fresh": true, "stage_timeouts": {"implement": 90}, "brief_append": "Do Y."}),
+            json!({"item": qi(), "model_plan": plan(), "model_reasons": {"implement": "Retry with more reasoning"}, "fresh": true, "stage_timeouts": {"implement": 90}, "brief_append": "Do Y.", "idempotency_key": "retry-1"}),
         ),
-        ("refresh_item", json!({"item": qi()})),
+        (
+            "refresh_item",
+            json!({"item": qi(), "idempotency_key": "refresh-1"}),
+        ),
         ("pause", json!({"scope": "repo", "name": "web"})),
         ("resume", json!({"scope": "pipeline", "name": "direct"})),
         (
             "notify",
-            json!({"kind": "decision", "text": "Split the work in two.", "item": qi()}),
+            json!({"kind": "decision", "text": "Split the work in two.", "item": qi(), "idempotency_key": "split-1"}),
         ),
         ("clear_notifications", json!({"item": qi()})),
         ("clear_notifications", json!({"all": true})),
@@ -126,12 +134,16 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
         ("clear_directive", json!({"all": true})),
         (
             "request_merge",
-            json!({"item": qi(), "reason": "operator: merge it"}),
+            json!({"item": qi(), "reason": "operator: merge it", "idempotency_key": "merge-1"}),
         ),
         ("promote", json!({"repo": "web"})),
         (
             "github_reply",
-            json!({"repository": "Acme/Web", "number": 42, "body": "Queued as qi_1."}),
+            json!({"repository": "Acme/Web", "number": 42, "body": "Queued as qi_1.", "idempotency_key": "reply-1"}),
+        ),
+        (
+            "request_status",
+            json!({"request": RequestId::new().to_string()}),
         ),
     ];
     samples.extend(adaptive_samples());
@@ -158,7 +170,7 @@ fn adaptive_samples() -> Vec<(&'static str, Value)> {
         ),
         (
             "steer_item",
-            json!({"item": qi(), "stage_timeouts": {"implement": 180}, "note": "Use the v2 client.", "stage": "implement", "model": "codex/astra", "effort": "high", "budget_usd": 12.5, "extend_minutes": 30, "abort_stage": true, "then": "goto", "goto": "review", "insert_stage": {"stage": "review", "from": "refactor", "after": "implement"}, "autonomy": {"merge": "auto"}}),
+            json!({"item": qi(), "stage_timeouts": {"implement": 180}, "note": "Use the v2 client.", "stage": "implement", "model": "codex/astra", "effort": "high", "budget_usd": 12.5, "extend_minutes": 30, "abort_stage": true, "then": "goto", "goto": "review", "insert_stage": {"stage": "review", "from": "refactor", "after": "implement"}, "autonomy": {"merge": "auto"}, "idempotency_key": "steer-1"}),
         ),
         (
             "steer_item",
@@ -1167,13 +1179,13 @@ fn shown_bytes(definition: &ToolDefinition) -> usize {
 }
 
 /// Every orchestrator turn pays for the tool list: 1.0's 25 tools (30,071 bytes
-/// then) stay within 62% of that (61% before model_plan tiers, 18,500 bytes before stage_timeouts), and all of
-/// them within 29 KiB (28 KiB before `promote` and `onto`, 29 KiB before `clear_notifications`).
+/// then) stay within 67% of that (62% before `idempotency_key`, 61% before model_plan tiers, 18,500 bytes before stage_timeouts), and all of
+/// them within 32 KiB (28 KiB before `promote` and `onto`, 30 KiB before `idempotency_key` and `request_status`).
 #[test]
 fn the_tool_list_stays_within_its_budget() {
     const FROM_1_0: usize = 25;
-    const FROM_1_0_BUDGET_BYTES: usize = 18_700;
-    const BUDGET_BYTES: usize = 30 * 1024;
+    const FROM_1_0_BUDGET_BYTES: usize = 20_000;
+    const BUDGET_BYTES: usize = 32 * 1024;
     let definitions = definitions();
     assert_eq!(definitions[FROM_1_0 - 1].name, "message_orchestrator");
     let carried: usize = definitions[..FROM_1_0].iter().map(shown_bytes).sum();

@@ -259,6 +259,17 @@ fn reading_tool_violations() -> Vec<(&'static str, Value)> {
             "message_orchestrator",
             json!({"text": "é".repeat(archon_core::agent_message::MAX_MESSAGE_CHARS + 1)}),
         ),
+        (
+            "notify",
+            json!({"kind": "decision", "text": "t", "idempotency_key": ""}),
+        ),
+        (
+            "cancel_item",
+            json!({"item": qi(), "idempotency_key": "k".repeat(archon_core::tracked::MAX_KEY_BYTES + 1)}),
+        ),
+        ("get_item", json!({"item": qi(), "idempotency_key": "k"})),
+        ("request_status", json!({})),
+        ("request_status", json!({"request": 7})),
         ("get_item", json!({})),
         ("get_stage", json!({"item": qi(), "stage": ""})),
         (
@@ -382,4 +393,24 @@ fn descriptions_promise_only_what_the_daemon_does() {
         steer.contains("without cancelling it") && steer.contains("queued again on its branch"),
         "{steer}"
     );
+}
+
+/// A keyed tool hands its key beside the request; one the schema cannot
+/// express (a space) is refused by the handler alone.
+#[test]
+fn a_keyed_tool_carries_its_key_beside_the_request() {
+    let call = to_call(
+        "refresh_item",
+        json!({"item": qi(), "idempotency_key": "r-1"}),
+    )
+    .unwrap();
+    assert_eq!(call.idempotency_key.as_deref(), Some("r-1"));
+    assert!(matches!(call.request, Request::RefreshItem { .. }));
+    let unkeyed = to_call("refresh_item", json!({"item": qi()})).unwrap();
+    assert_eq!(unkeyed.idempotency_key, None);
+    let spaced = json!({"item": qi(), "idempotency_key": "two words"});
+    let Err(ToolError(refused)) = to_call("refresh_item", spaced) else {
+        panic!("a key with a space is refused");
+    };
+    assert!(refused.contains("printable ASCII"), "{refused}");
 }

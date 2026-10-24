@@ -228,7 +228,11 @@ fn a_reader_shares_its_writer_s_learning_config_and_model_catalog() {
         is_default: false,
     }]));
 
-    assert_eq!(reader.learning_config().unwrap(), config, "set after it opened");
+    assert_eq!(
+        reader.learning_config().unwrap(),
+        config,
+        "set after it opened"
+    );
     assert_eq!(reader.learning_models(), vec![model]);
     assert!(!reader.learning_models_stale());
 }

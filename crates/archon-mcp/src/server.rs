@@ -13,6 +13,7 @@ use std::time::Duration;
 use archon_client::ArchonClient;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
+use archon_core::id::RequestId;
 use archon_core::protocol::{ClientKind, ErrorReply, Reply, Request};
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, Notify};
@@ -289,7 +290,19 @@ impl Server {
         deadline: Instant,
     ) -> Value {
         let name = definition.name;
-        let check = (!definition.read_only).then(|| how_to_check(&request));
+        let tracking = tracking(&request).map(|(id, key)| (id.clone(), key.map(str::to_owned)));
+        let check = tracking.as_ref().map(|(_, key)| {
+            let check = how_to_check(&request);
+            match key {
+                Some(key) => format!("{check}; or repeat it with idempotency_key `{key}`, which never applies it twice"),
+                None => check,
+            }
+        });
+        assert_eq!(
+            check.is_some(),
+            !definition.read_only,
+            "every change of `{name}` is tracked"
+        );
         let answer = tokio::time::timeout_at(deadline, self.daemon.call(request)).await;
         match answer {
             Ok(Ok(Ok(reply))) => tool_result(name, &reply),
@@ -299,7 +312,10 @@ impl Server {
             }
             Ok(Err(_)) if self.daemon.restart_wanted() => tool_error(&upgraded(name), None),
             Ok(Err(error)) => tool_error(&unavailable(name, check.as_deref(), &error), None),
-            Err(_elapsed) => tool_error(&timed_out(name, check.as_deref()), None),
+            Err(_elapsed) => match (tracking, check) {
+                (Some((id, key)), Some(check)) => pending(name, &id, key.as_deref(), &check),
+                _ => tool_error(&timed_out(name), None),
+            },
         }
     }
 }
@@ -311,9 +327,13 @@ fn request_with_caller(
     arguments: Value,
     params: &Value,
 ) -> Result<Request, tools::ToolError> {
-    let mut request = tools::to_request(name, arguments)?;
+    let tools::ToolCall {
+        mut request,
+        idempotency_key,
+    } = tools::to_call(name, arguments)?;
     let caller = caller_identity(params)?;
     name_caller(name, &mut request, caller.as_ref())?;
+    let request = tracked(request, idempotency_key);
     let Some(caller) = caller else {
         return Ok(request);
     };
@@ -321,6 +341,33 @@ fn request_with_caller(
         caller,
         request: Box::new(request),
     })
+}
+
+/// A change goes under a new request id, so `request_status` can report it
+/// if its answer does not come in time; a read is always safe to repeat.
+fn tracked(request: Request, idempotency_key: Option<String>) -> Request {
+    if request.is_read_only() {
+        assert!(idempotency_key.is_none(), "a read takes no key");
+        return request;
+    }
+    Request::Tracked {
+        request_id: RequestId::new(),
+        idempotency_key,
+        request: Box::new(request),
+    }
+}
+
+/// The request id and key of a tracked change, under its caller.
+fn tracking(request: &Request) -> Option<(&RequestId, Option<&str>)> {
+    match request {
+        Request::ForAgent { request, .. } => tracking(request),
+        Request::Tracked {
+            request_id,
+            idempotency_key,
+            ..
+        } => Some((request_id, idempotency_key.as_deref())),
+        _ => None,
+    }
 }
 
 /// Record the caller in the requests that keep it, refusing the ones that
@@ -463,22 +510,31 @@ fn unavailable(tool: &str, check: Option<&str>, error: &ArchonError) -> String {
     text
 }
 
-/// `check` is `None` for a read-only tool, which is always safe to retry.
-fn timed_out(tool: &str, check: Option<&str>) -> String {
+/// A change archond did not answer in time: the request id to ask
+/// `request_status` about comes first, as the caller branches on it.
+fn pending(tool: &str, id: &RequestId, key: Option<&str>, check: &str) -> Value {
     let secs = CALL_BUDGET.as_secs();
-    match check {
-        None => format!("The Archon daemon did not answer `{tool}` within {secs}s. Retry shortly."),
-        Some(check) => format!(
-            "The Archon daemon did not answer `{tool}` within {secs}s and may still carry the \
-             call out: {check}."
-        ),
-    }
+    let text = format!(
+        "pending: {id}\nThe Archon daemon did not answer `{tool}` within {secs}s and may still \
+         carry it out. Call request_status with request `{id}` to learn whether it was applied, \
+         failed or is still pending. Do not make the call again blindly: {check}."
+    );
+    let structured = json!({"pending": id, "tool": tool, "idempotency_key": key});
+    content(text, Some(structured), false)
+}
+
+/// A read archond did not answer in time, which is always safe to retry.
+fn timed_out(tool: &str) -> String {
+    let secs = CALL_BUDGET.as_secs();
+    format!("The Archon daemon did not answer `{tool}` within {secs}s. Retry shortly.")
 }
 
 /// How to learn whether a change whose answer never came took effect.
 fn how_to_check(request: &Request) -> String {
     match request {
-        Request::ForAgent { request, .. } => how_to_check(request),
+        Request::ForAgent { request, .. } | Request::Tracked { request, .. } => {
+            how_to_check(request)
+        }
         Request::MessageOrchestrator { .. } => "the message may already be recorded; check the item's archon log before repeating it, and keep working on your stage".into(),
         Request::PublishArtifact { .. } => "the files may already be stored; list_artifacts for your item shows them, and publishing a name again replaces it".into(),
         Request::GithubReply { thread, .. } => thread.check_before_retry(),
@@ -496,13 +552,68 @@ fn how_to_check(request: &Request) -> String {
 mod tests {
     use super::*;
 
-    /// The request archond is asked to run for `agt_1`.
+    /// The request archond is asked to run for `agt_1`, out of its `tracked`
+    /// wrapper when it is a change.
     fn for_agent_1(request: Request) -> Request {
         let Request::ForAgent { caller, request } = request else {
             panic!("a named caller travels with the request, got {request:?}");
         };
         assert_eq!(caller.as_str(), "agt_1");
-        *request
+        untracked(*request)
+    }
+
+    fn untracked(request: Request) -> Request {
+        match request {
+            Request::Tracked { request, .. } => *request,
+            request => request,
+        }
+    }
+
+    #[test]
+    fn every_change_goes_under_a_new_request_id_and_a_keyed_one_keeps_its_key() {
+        let params = json!({"_meta": {"aether/agent_id": "agt_1"}});
+        let args = json!({"item": "qi_01J0000000000000000000000Q", "idempotency_key": "once"});
+        let keyed = request_with_caller("refresh_item", args.clone(), &params).unwrap();
+        let (first, key) = tracking(&keyed).expect("a change is tracked");
+        assert_eq!(key, Some("once"));
+        let again = request_with_caller("refresh_item", args, &params).unwrap();
+        assert_ne!(
+            tracking(&again).unwrap().0,
+            first,
+            "every call has its own id"
+        );
+        assert!(matches!(for_agent_1(keyed), Request::RefreshItem { .. }));
+
+        let pause = request_with_caller("pause", json!({"scope": "global"}), &json!({})).unwrap();
+        assert!(matches!(tracking(&pause), Some((_, None))), "{pause:?}");
+        let read = request_with_caller("list_repos", json!({}), &params).unwrap();
+        assert_eq!(tracking(&read), None, "a read is not tracked");
+        let unkeyed = json!({"scope": "global", "idempotency_key": "once"});
+        let refused = request_with_caller("pause", unkeyed, &json!({})).unwrap_err();
+        assert!(
+            refused.0.contains("unknown argument(s) `idempotency_key`"),
+            "{}",
+            refused.0
+        );
+        let spaced = json!({"item": "qi_01J0000000000000000000000Q", "idempotency_key": "a b"});
+        let refused = request_with_caller("refresh_item", spaced, &json!({})).unwrap_err();
+        assert!(refused.0.contains("printable ASCII"), "{}", refused.0);
+    }
+
+    #[test]
+    fn a_change_past_its_deadline_is_pending_under_its_request_id_with_its_own_check() {
+        let id = RequestId::new();
+        let check = "check get_item first";
+        let result = pending("cancel_item", &id, Some("k"), check);
+        assert_eq!(result["isError"], false, "pending is no failure");
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.starts_with(&format!("pending: {id}\n")), "{text}");
+        assert!(
+            text.contains("request_status") && text.contains(check),
+            "{text}"
+        );
+        assert_eq!(result["structuredContent"]["pending"], id.as_str());
+        assert_eq!(result["structuredContent"]["idempotency_key"], "k");
     }
 
     #[test]
@@ -560,7 +671,7 @@ mod tests {
         let args = json!({"text": "Ship to prod?"});
         let unvouched = request_with_caller("ask_operator", args.clone(), &json!({})).unwrap();
         assert!(matches!(
-            unvouched,
+            untracked(unvouched),
             Request::AskOperator { caller: None, .. }
         ));
         let params = json!({"_meta": {"aether/agent_id": "agt_1"}});
@@ -587,7 +698,7 @@ mod tests {
         assert_eq!(for_agent_1(read), Request::RepoList);
 
         let unnamed = request_with_caller("pause", pause.clone(), &json!({})).unwrap();
-        assert!(matches!(unnamed, Request::Pause(_)), "{unnamed:?}");
+        assert!(matches!(untracked(unnamed), Request::Pause(_)));
         let malformed = json!({"_meta": {"aether/agent_id": 7}});
         let refused = request_with_caller("pause", pause, &malformed).unwrap_err();
         assert!(refused.0.contains("invalid Aether caller identity"));

@@ -440,7 +440,12 @@ impl Store {
     /// The connected models, sorted; empty before the first refresh.
     pub fn learning_models(&self) -> Vec<archon_core::model::ModelRef> {
         let learned = self.learned();
-        let mut models: Vec<_> = learned.catalog.models().iter().map(|m| m.model.clone()).collect();
+        let mut models: Vec<_> = learned
+            .catalog
+            .models()
+            .iter()
+            .map(|m| m.model.clone())
+            .collect();
         models.sort();
         models
     }

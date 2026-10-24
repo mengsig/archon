@@ -17,6 +17,7 @@ use archon_core::protocol::{
 };
 use archon_core::queue::QueueState;
 use archon_core::repo::Repo;
+use archon_core::tracked::{KEYED_TOOLS, check_key};
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
@@ -26,17 +27,34 @@ mod initiatives;
 mod lessons;
 mod steer;
 
-pub(super) fn to_request(tool: &str, arguments: Value) -> Result<Request, ToolError> {
+/// The request for `tool`, and the `idempotency_key` a keyed tool was given.
+pub(super) fn to_request(
+    tool: &str,
+    arguments: Value,
+) -> Result<(Request, Option<String>), ToolError> {
     let Some(definition) = definition(tool) else {
         return Err(ToolError(format!("unknown tool `{tool}`")));
     };
     let mut args = Args::new(definition, arguments)?;
+    let key = idempotency_key(&mut args)?;
     let request = match query_request(tool, &mut args)? {
         Some(request) => request,
         None => action_request(tool, &mut args)?,
     };
     args.finish()?;
-    Ok(request)
+    Ok((request, key))
+}
+
+/// Only a keyed tool declares `idempotency_key`, so `Args` refuses it elsewhere.
+fn idempotency_key(args: &mut Args) -> Result<Option<String>, ToolError> {
+    if !KEYED_TOOLS.contains(&args.tool) {
+        return Ok(None);
+    }
+    let Some(key) = args.optional::<String>("idempotency_key")? else {
+        return Ok(None);
+    };
+    check_key(&key).map_err(|e| args.refusal(e))?;
+    Ok(Some(key))
 }
 
 /// The tools that only read state.
@@ -73,6 +91,9 @@ fn query_request(tool: &str, args: &mut Args) -> Result<Option<Request>, ToolErr
         "queue_status" => Request::Status(Default::default()),
         "cost_report" => cost_report(args)?,
         "model_evidence" => model_evidence(args)?,
+        "request_status" => Request::RequestStatus {
+            request: args.required("request")?,
+        },
         _ => return Ok(None),
     };
     Ok(Some(request))

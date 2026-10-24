@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use archon_client::framing::{read_frame, write_frame};
 use archon_core::autonomy::MergeMode;
 use archon_core::error::ArchonError;
-use archon_core::id::QueueItemId;
+use archon_core::id::{QueueItemId, RequestId};
 use archon_core::protocol::{
     ClientFrame, ClientKind, ErrorCode, ErrorReply, PROTOCOL_VERSION, Reply, Request, ServerFrame,
     Welcome,
@@ -25,11 +25,19 @@ type Answer = fn(&Request) -> Result<Reply, ErrorReply>;
 type Withhold = fn(&Request) -> bool;
 
 /// A scripted `archond`: answers `hello`, records every other request and
-/// answers it with `answer`, unless `withhold` picks it. Dropping it closes
-/// every connection.
+/// answers it with `answer`, unless `withhold` picks it. A change is recorded
+/// and answered out of its `tracked` wrapper, whose request id is kept apart.
+/// Dropping it closes every connection.
 struct FakeDaemon {
     requests: Arc<Mutex<Vec<Request>>>,
+    tracked: Arc<Mutex<Vec<RequestId>>>,
     accept: JoinHandle<()>,
+}
+
+#[derive(Clone)]
+struct Recorded {
+    requests: Arc<Mutex<Vec<Request>>>,
+    tracked: Arc<Mutex<Vec<RequestId>>>,
 }
 
 impl FakeDaemon {
@@ -39,8 +47,11 @@ impl FakeDaemon {
 
     fn withholding(socket: &Path, answer: Answer, withhold: Withhold) -> Self {
         let listener = UnixListener::bind(socket).expect("bind the fake archond");
-        let requests = Arc::new(Mutex::new(Vec::new()));
-        let recorded = requests.clone();
+        let recorded = Recorded {
+            requests: Arc::new(Mutex::new(Vec::new())),
+            tracked: Arc::new(Mutex::new(Vec::new())),
+        };
+        let (requests, tracked) = (recorded.requests.clone(), recorded.tracked.clone());
         let accept = tokio::spawn(async move {
             let mut connections = JoinSet::new();
             while let Ok((stream, _)) = listener.accept().await {
@@ -48,11 +59,20 @@ impl FakeDaemon {
                 connections.spawn(serve_connection(stream, answer, withhold, recorded));
             }
         });
-        Self { requests, accept }
+        Self {
+            requests,
+            tracked,
+            accept,
+        }
     }
 
     fn requests(&self) -> Vec<Request> {
         self.requests.lock().unwrap().clone()
+    }
+
+    /// The request id of every change, in arrival order.
+    fn tracked(&self) -> Vec<RequestId> {
+        self.tracked.lock().unwrap().clone()
     }
 }
 
@@ -66,7 +86,7 @@ async fn serve_connection(
     stream: UnixStream,
     answer: Answer,
     withhold: Withhold,
-    recorded: Arc<Mutex<Vec<Request>>>,
+    recorded: Recorded,
 ) {
     let (read, mut write) = stream.into_split();
     let mut read = BufReader::new(read);
@@ -82,11 +102,18 @@ async fn serve_connection(
             }
             request => {
                 assert!(!request.is_operator_only(), "MCP forwarded {request:?}");
-                recorded.lock().unwrap().push(request.clone());
-                if withhold(request) {
+                let (id, request) = untracked(request.clone());
+                assert_eq!(
+                    id.is_some(),
+                    !request.is_read_only(),
+                    "every change is tracked"
+                );
+                recorded.tracked.lock().unwrap().extend(id);
+                recorded.requests.lock().unwrap().push(request.clone());
+                if withhold(&request) {
                     continue;
                 }
-                answer(request)
+                answer(&request)
             }
         };
         let reply = ServerFrame::Reply {
@@ -96,6 +123,23 @@ async fn serve_connection(
         if write_frame(&mut write, &reply).await.is_err() {
             return;
         }
+    }
+}
+
+/// `request` without its `tracked` wrapper, inside its `for_agent` one.
+fn untracked(request: Request) -> (Option<RequestId>, Request) {
+    match request {
+        Request::ForAgent { caller, request } => {
+            let (id, request) = untracked(*request);
+            let request = Box::new(request);
+            (id, Request::ForAgent { caller, request })
+        }
+        Request::Tracked {
+            request_id,
+            request,
+            ..
+        } => (Some(request_id), *request),
+        request => (None, request),
     }
 }
 
@@ -675,10 +719,21 @@ async fn a_slow_call_holds_up_neither_the_calls_behind_it_nor_their_deadlines() 
             "{response}"
         );
     }
-    // A comment may be up on GitHub: the thread says, not the queue.
-    let reply = text(&slow.iter().find(|r| r["id"] == 5).unwrap()["result"]);
+    // A comment may be up on GitHub: request_status says, then the thread, not the queue.
+    let pending = &slow.iter().find(|r| r["id"] == 5).unwrap()["result"];
+    let reply = text(pending);
+    let tracked = daemon.tracked();
+    assert_eq!(tracked.len(), 1, "only the reply is a change");
     assert!(
-        reply.contains("https://github.com/o/r/issues/7") && reply.contains("never repeat"),
+        reply.starts_with(&format!("pending: {}\n", tracked[0])),
+        "{reply}"
+    );
+    assert_eq!(pending["isError"], false, "{pending}");
+    assert_eq!(pending["structuredContent"]["pending"], tracked[0].as_str());
+    assert!(
+        reply.contains("request_status")
+            && reply.contains("https://github.com/o/r/issues/7")
+            && reply.contains("never repeat"),
         "{reply}"
     );
     assert!(!reply.contains("list_queue"), "{reply}");

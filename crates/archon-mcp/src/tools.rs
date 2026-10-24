@@ -83,15 +83,36 @@ fn catalog() -> &'static [ToolDefinition] {
     CATALOG.get_or_init(schema::all)
 }
 
+/// One validated tool call: the daemon request, and the `idempotency_key` a
+/// keyed tool (`archon_core::tracked::KEYED_TOOLS`) was given.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolCall {
+    pub request: Request,
+    pub idempotency_key: Option<String>,
+}
+
 /// Validate arguments and build the daemon request. Operator-only requests
 /// are never produced (`register_repo` forces `auto_merge` and `github_watch` off).
-pub fn to_request(tool: &str, arguments: Value) -> Result<Request, ToolError> {
-    let request = args::to_request(tool, arguments)?;
+pub fn to_call(tool: &str, arguments: Value) -> Result<ToolCall, ToolError> {
+    let (request, idempotency_key) = args::to_request(tool, arguments)?;
     assert!(
         !request.is_operator_only(),
         "tool `{tool}` built an operator-only request"
     );
-    Ok(request)
+    assert!(
+        idempotency_key.is_none() || !request.is_read_only(),
+        "tool `{tool}` keyed a read"
+    );
+    Ok(ToolCall {
+        request,
+        idempotency_key,
+    })
+}
+
+/// The request alone, for tests of the argument mapping.
+#[cfg(test)]
+pub fn to_request(tool: &str, arguments: Value) -> Result<Request, ToolError> {
+    to_call(tool, arguments).map(|call| call.request)
 }
 
 /// `content[0].text`: a compact human summary of the reply; the reply data

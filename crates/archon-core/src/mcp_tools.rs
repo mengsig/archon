@@ -136,7 +136,10 @@ mod tests {
     fn keyed_tools_are_changes_and_stage_tools_exist() {
         for keyed in crate::tracked::KEYED_TOOLS {
             let listed = TOOLS.iter().find(|t| t.name == keyed);
-            assert!(listed.is_some_and(|t| !t.read_only()), "{keyed} is a listed change");
+            assert!(
+                listed.is_some_and(|t| !t.read_only()),
+                "{keyed} is a listed change"
+            );
         }
         for kept in STAGE_TOOLS {
             assert!(TOOLS.iter().any(|t| t.name == kept), "{kept} is listed");

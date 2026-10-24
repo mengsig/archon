@@ -2618,10 +2618,13 @@ look; when all eight never started, neither did the rest, and a refused ask
 leaves its check failed): GitHub's "The job was not started because …"
 (billing, a spending limit) means the check never ran, and so does a check still queued, never
 started, 30 minutes after delivery (no runner). Checks that ran and failed
-are an outcome in the feed and a `pr_checks` event (`state: "failed"`);
-checks that never started are a blocker and a `pr_checks` event (`state:
-"not_started"` with GitHub's reason), never reported as the change failing.
-Either is told once and ends the watch. Passing checks, no checks 30 minutes
+are an outcome in the feed and a `pr_checks` event (`state: "failed"`),
+told once. Checks that never started are a `pr_checks` event (`state:
+"not_started"` with GitHub's reason), never reported as the change failing:
+first a quiet one that joins the orchestrator's next turn, then, when they
+are still not started 30 minutes later, a blocker and a waking one, told
+once. A repository whose settings overlay holds `checks = "waived"` (§18.2)
+gets the quiet event only, and the watch ends. Passing checks, no checks 30 minutes
 after delivery, or a day without an answer end it quietly; a `gh` failure is
 logged and the next look tries again.
 

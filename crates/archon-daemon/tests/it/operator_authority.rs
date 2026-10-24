@@ -279,6 +279,28 @@ async fn explicit_chat_commands_apply_without_model_confirmation() {
     assert!(!granted(&h).await);
 }
 
+/// `checks=waived` is a bare word in a chat command, stored in the overlay.
+#[tokio::test]
+async fn a_chat_command_waives_a_repositorys_checks() {
+    use archon_core::settings::ChecksMode;
+    let h = harness(AetherMode::Dedicated).await;
+    let command = format!("/archon set --repo {REPO_NAME} checks=waived");
+    deliver(&h, 1, user(&command)).await;
+    let id = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .repo(&RepoRef(REPO_NAME.into()))
+        .unwrap()
+        .id;
+    let stored = archon_daemon::settings::read(&h.ctx, Some(&id))
+        .await
+        .unwrap();
+    assert_eq!(stored.checks, Some(ChecksMode::Waived));
+    assert_eq!(stored.autonomy_max, Default::default(), "nothing else set");
+}
+
 async fn attribution(h: &Harness) -> Attribution {
     let store = h.ctx.store.lock().await;
     store.repo(&RepoRef(REPO_NAME.into())).unwrap().attribution

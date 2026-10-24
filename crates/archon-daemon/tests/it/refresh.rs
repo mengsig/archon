@@ -424,12 +424,8 @@ async fn pr_checks_news(h: &Harness) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Jobs GitHub never started for billing are the operator's blocker and a
-/// `not_started` event, never a failure of the change; told once.
-#[tokio::test]
-async fn checks_github_never_started_are_not_reported_as_failing() {
-    let (h, gh) = delivering().await;
-    let (_, run) = shipped(&h, "the change").await;
+/// Checks GitHub never started for billing, as GitHub reports them.
+fn billing_refusal(gh: &FakeGh) -> &'static str {
     let started = "2026-10-15T09:20:44Z";
     gh.set_checks(&json!([
         job("lint", "fail", started, 11),
@@ -437,6 +433,44 @@ async fn checks_github_never_started_are_not_reported_as_failing() {
     ]));
     let why = "The job was not started because recent account payments have failed";
     gh.set_annotations(&json!([{"message": why, "annotation_level": "failure"}]));
+    why
+}
+
+/// Move the quiet `not_started` line of `run`'s watch `minutes` into the past.
+async fn age_not_started(h: &Harness, run: &PipelineRun, minutes: i64) {
+    let key = format!("ship_checks:{}", run.id);
+    let mut watch: Value = serde_json::from_str(&h.kv(&key).await.expect("watched")).unwrap();
+    assert!(watch["not_started_at"].is_string(), "told quietly first");
+    watch["not_started_at"] = json!(archon_core::now() - chrono::Duration::minutes(minutes));
+    watch["next_at"] = json!("2000-01-01T00:00:00Z");
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&key, &watch.to_string())
+        .unwrap();
+}
+
+/// Whether each held `pr_checks` event waits quietly, oldest first.
+async fn pr_checks_quiet(h: &Harness) -> Vec<bool> {
+    let raw = h.kv("trigger_outbox").await.expect("news is held");
+    let outbox: Value = serde_json::from_str(&raw).unwrap();
+    let pending = outbox["pending"].as_array().expect("pending news");
+    pending
+        .iter()
+        .filter(|news| news["type"] == "pr_checks")
+        .map(|news| news["quiet"] == json!(true))
+        .collect()
+}
+
+/// Jobs GitHub never started for billing are a `not_started` event, never a
+/// failure of the change: a quiet feed line first, and the operator's
+/// blocker and a wake once they stay unstarted half an hour; told once.
+#[tokio::test]
+async fn checks_github_never_started_are_not_reported_as_failing() {
+    let (h, gh) = delivering().await;
+    let (_, run) = shipped(&h, "the change").await;
+    let why = billing_refusal(&gh);
     executor::coordination::reconcile(&h.ctx).await.unwrap();
     assert!(
         gh.count("pr checks") == 0,
@@ -445,9 +479,6 @@ async fn checks_github_never_started_are_not_reported_as_failing() {
 
     age_watch(&h, &run, 3).await;
     executor::coordination::reconcile(&h.ctx).await.unwrap();
-    let blockers = h.notices(NotificationKind::Blocker).await;
-    let told = |n: &&String| n.contains("never started") && n.contains(why) && n.contains(PR_ONE);
-    assert_eq!(blockers.iter().filter(told).count(), 1, "{blockers:?}");
     let news = pr_checks_news(&h).await;
     assert_eq!(news.len(), 1, "{news:?}");
     assert_eq!(news[0].0, "not_started");
@@ -455,6 +486,26 @@ async fn checks_github_never_started_are_not_reported_as_failing() {
         news[0].1.starts_with("lint, test: The job was not started"),
         "{news:?}"
     );
+    assert_eq!(pr_checks_quiet(&h).await, [true], "a quiet line");
+    let blockers = h.notices(NotificationKind::Blocker).await;
+    assert!(
+        !blockers.iter().any(|n| n.contains("never started")),
+        "{blockers:?}"
+    );
+
+    age_not_started(&h, &run, 10).await;
+    executor::coordination::reconcile(&h.ctx).await.unwrap();
+    assert_eq!(pr_checks_news(&h).await.len(), 1, "not yet long enough");
+
+    age_not_started(&h, &run, 31).await;
+    executor::coordination::reconcile(&h.ctx).await.unwrap();
+    let blockers = h.notices(NotificationKind::Blocker).await;
+    let told = |n: &&String| n.contains("never started") && n.contains(why) && n.contains(PR_ONE);
+    assert_eq!(blockers.iter().filter(told).count(), 1, "{blockers:?}");
+    let news = pr_checks_news(&h).await;
+    assert_eq!(news.len(), 2, "{news:?}");
+    assert_eq!(news[1].0, "not_started");
+    assert_eq!(pr_checks_quiet(&h).await, [true, false], "then a wake");
     let failed = h.notices(NotificationKind::Outcome).await;
     assert!(
         !failed.iter().any(|n| n.contains("checks of")),
@@ -465,6 +516,36 @@ async fn checks_github_never_started_are_not_reported_as_failing() {
         None,
         "told once"
     );
+}
+
+/// Under a repository's `checks = "waived"`, checks that never started are
+/// a quiet feed line only: no wake, no blocker, and the watch ends.
+#[tokio::test]
+async fn waived_checks_that_never_started_are_a_quiet_line_only() {
+    use archon_core::settings::{ChecksMode, OperatorSettings};
+    let (h, gh) = delivering().await;
+    let waive = Request::SetSettings {
+        repo: Some(RepoRef(REPO_NAME.into())),
+        settings: OperatorSettings {
+            checks: Some(ChecksMode::Waived),
+            ..OperatorSettings::default()
+        },
+    };
+    h.cli(waive).await.expect("waived");
+    let (_, run) = shipped(&h, "the change").await;
+    billing_refusal(&gh);
+    age_watch(&h, &run, 3).await;
+    executor::coordination::reconcile(&h.ctx).await.unwrap();
+    let news = pr_checks_news(&h).await;
+    assert_eq!(news.len(), 1, "{news:?}");
+    assert_eq!(news[0].0, "not_started");
+    assert_eq!(pr_checks_quiet(&h).await, [true], "no wake");
+    let blockers = h.notices(NotificationKind::Blocker).await;
+    assert!(
+        !blockers.iter().any(|n| n.contains("never started")),
+        "{blockers:?}"
+    );
+    assert_eq!(h.kv(&format!("ship_checks:{}", run.id)).await, None);
 }
 
 /// Checks that ran and failed are a `failed` event; pending ones are looked

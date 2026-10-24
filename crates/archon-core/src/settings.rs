@@ -53,6 +53,21 @@ pub struct OperatorSettings {
     /// Reserved: enabling is refused until full-auto exists.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub full_auto: Option<bool>,
+    /// How a delivered pull request's checks that never start are told.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checks: Option<ChecksMode>,
+}
+
+/// How a delivered pull request's checks that never start (billing, no
+/// runner) reach the orchestrator.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChecksMode {
+    /// A quiet feed line first; a wake once they stay unstarted.
+    #[default]
+    Watched,
+    /// The operator does without checks: a quiet feed line, never a wake.
+    Waived,
 }
 
 /// Where an overlay applies.
@@ -241,6 +256,8 @@ pub struct EffectiveSettings {
     pub autonomy: AutonomyPolicy,
     pub caps: Caps,
     pub default_pipeline: Option<String>,
+    #[serde(default)]
+    pub checks: ChecksMode,
     /// Field (`caps.budget_usd_daily`, `autonomy.max.merge`, …) to the
     /// layer that decided it.
     pub sources: BTreeMap<String, SettingSource>,
@@ -304,11 +321,24 @@ impl Layers<'_> {
             sources.insert("default_pipeline".into(), source);
             name
         });
+        let (checks, source) = self.checks();
+        sources.insert("checks".into(), source);
         EffectiveSettings {
             autonomy,
             caps,
             default_pipeline,
+            checks,
             sources,
+        }
+    }
+
+    /// The repository overlay, then the global one, then `watched`.
+    pub fn checks(&self) -> (ChecksMode, SettingSource) {
+        let repo = self.repo.as_ref().and_then(|r| r.overlay.checks);
+        match (repo, self.global.checks) {
+            (Some(mode), _) => (mode, SettingSource::Repo),
+            (None, Some(mode)) => (mode, SettingSource::Global),
+            (None, None) => (ChecksMode::default(), SettingSource::Builtin),
         }
     }
 
@@ -556,6 +586,12 @@ impl SettingsView {
                 source("default_pipeline")
             ));
         }
+        if effective.checks == ChecksMode::Waived {
+            lines.push(format!(
+                "pull request checks: waived ({})",
+                source("checks")
+            ));
+        }
         lines.join("\n")
     }
 }
@@ -757,6 +793,39 @@ mod tests {
             with_file.default_pipeline(),
             Some(("team".into(), SettingSource::Repo))
         );
+    }
+
+    #[test]
+    fn checks_are_watched_unless_an_overlay_waives_them() {
+        let config = Config::default();
+        let none = OperatorSettings::default();
+        let file = RepoConfig::default();
+        let registry = AutonomyPatch::default();
+        let waived = OperatorSettings {
+            checks: Some(ChecksMode::Waived),
+            ..OperatorSettings::default()
+        };
+        let bare = Layers {
+            config: &config,
+            global: &none,
+            repo: Some(repo(&registry, &none, &file)),
+        };
+        assert_eq!(bare.checks(), (ChecksMode::Watched, SettingSource::Builtin));
+        let repo_waived = Layers {
+            repo: Some(repo(&registry, &waived, &file)),
+            ..bare
+        };
+        let effective = repo_waived.effective();
+        assert_eq!(effective.checks, ChecksMode::Waived);
+        assert_eq!(effective.sources["checks"], SettingSource::Repo);
+        let global_waived = Layers {
+            global: &waived,
+            ..bare
+        };
+        assert_eq!(global_waived.checks().1, SettingSource::Global);
+        let parsed: OperatorSettings = serde_json::from_str(r#"{"checks":"waived"}"#).unwrap();
+        assert_eq!(parsed, waived);
+        assert!(waived.validate(SettingsScope::Repo).is_ok());
     }
 
     #[test]

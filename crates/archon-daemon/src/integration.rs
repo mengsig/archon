@@ -172,7 +172,7 @@ pub async fn pass(ctx: &DaemonContext) -> Result<(), ArchonError> {
 
 /// The integration branches, as `status` shows them.
 pub async fn status(ctx: &DaemonContext) -> Result<Vec<IntegrationStatus>, ArchonError> {
-    let store = ctx.store.lock().await;
+    let store = ctx.read_store().await;
     let repos = store.repos()?;
     let name = |id: &RepoId| repos.iter().find(|r| &r.id == id).map(|r| r.name.clone());
     Ok(state::all(&store)?

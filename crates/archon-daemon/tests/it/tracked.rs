@@ -7,9 +7,10 @@ use std::time::{Duration, Instant};
 
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
-use archon_core::id::RequestId;
+use archon_core::id::{QueueItemId, RequestId};
 use archon_core::notify::NotificationKind;
-use archon_core::protocol::{ClientKind, ItemQuery, Reply, Request};
+use archon_core::protocol::{ClientKind, ItemQuery, Reply, Request, StatusQuery};
+use archon_core::queue::QueueState;
 use archon_core::tracked::TrackedState;
 use archon_daemon::context::DaemonContext;
 use archon_daemon::handlers;
@@ -215,6 +216,8 @@ async fn hold_the_writer(ctx: Arc<DaemonContext>) -> tokio::task::JoinHandle<()>
 async fn read_tools_answer_while_the_writer_is_held() {
     let h = Harness::new().await;
     let item = h.enqueue("read me").await;
+    let settled = h.enqueue("read me settled").await;
+    settle(&h, &settled.id).await;
     let reads = [
         (
             "list_queue",
@@ -226,6 +229,13 @@ async fn read_tools_answer_while_the_writer_is_held() {
                 item: item.id.clone(),
             },
         ),
+        (
+            "get_item of a settled item",
+            Request::GetItem {
+                item: settled.id.clone(),
+            },
+        ),
+        ("queue_status", Request::Status(StatusQuery::default())),
         ("list_repos", Request::RepoList),
     ];
     let holder = hold_the_writer(Arc::clone(&h.ctx)).await;
@@ -241,4 +251,46 @@ async fn read_tools_answer_while_the_writer_is_held() {
     assert!(!holder.is_finished(), "every read answered within the hold");
     assert!(started.elapsed() < HOLD);
     holder.await.expect("the holder ends");
+    assert_eq!(
+        viewed_at(&h, &settled.id).await,
+        None,
+        "a busy writer is not waited on"
+    );
+    let reply = h
+        .cli(Request::GetItem {
+            item: settled.id.clone(),
+        })
+        .await;
+    assert!(reply.is_ok(), "{reply:?}");
+    let head = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .last_feed_seq()
+        .expect("the feed head");
+    assert_eq!(
+        viewed_at(&h, &settled.id).await,
+        Some(head.to_string()),
+        "a later view acknowledges the settled item"
+    );
+}
+
+async fn settle(h: &Harness, item: &QueueItemId) {
+    let cancelled = QueueState::Cancelled { reason: None };
+    let mut store = h.ctx.store.lock().await;
+    store
+        .transition_item(item, cancelled, archon_core::now())
+        .expect("cancelled");
+    assert!(store.item(item).expect("the item").state.is_terminal());
+}
+
+async fn viewed_at(h: &Harness, item: &QueueItemId) -> Option<String> {
+    let key = format!("{}{item}", keys::NOTIFICATION_CENTER_VIEWED);
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_get(&key)
+        .expect("the view mark")
 }

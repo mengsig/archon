@@ -221,12 +221,12 @@ pub(super) async fn list(ctx: &DaemonContext, query: &ItemQuery) -> Result<Reply
 /// counts only what needs action. Only a settled item asks, so a blocker still
 /// awaiting its answer stays; it asks once per feed head.
 async fn mark_viewed(ctx: &DaemonContext, id: &QueueItemId) -> Result<(), ArchonError> {
+    let key = format!(
+        "{}{id}",
+        archon_queue::store::keys::NOTIFICATION_CENTER_VIEWED
+    );
     let asked = {
         let store = ctx.read_store().await;
-        let key = format!(
-            "{}{id}",
-            archon_queue::store::keys::NOTIFICATION_CENTER_VIEWED
-        );
         let head = store.last_feed_seq()?.to_string();
         let settled = store.item(id)?.state.is_terminal();
         let unasked = store.kv_get(&key)?.as_deref() != Some(head.as_str());
@@ -235,14 +235,20 @@ async fn mark_viewed(ctx: &DaemonContext, id: &QueueItemId) -> Result<(), Archon
     if !asked {
         return Ok(());
     }
-    super::operator::clear_notifications(ctx, Some(id.clone())).await?;
-    let mut store = ctx.store.lock().await;
-    let key = format!(
-        "{}{id}",
-        archon_queue::store::keys::NOTIFICATION_CENTER_VIEWED
-    );
-    let head = store.last_feed_seq()?.to_string();
-    store.kv_set(&key, &head)
+    // A read never waits on a busy writer: a later view at this head asks again.
+    let Ok(mut store) = ctx.store.try_lock() else {
+        return Ok(());
+    };
+    let cleared = store.append_feed(
+        super::operator::clearing(Some(id.clone())),
+        archon_core::now(),
+    )?;
+    let head = store.last_feed_seq()?;
+    assert_eq!(head, cleared.seq, "the clearing line is the feed head");
+    store.kv_set(&key, &head.to_string())?;
+    drop(store);
+    crate::feed::publish(ctx, vec![cleared]);
+    Ok(())
 }
 
 /// Run costs include stages and descendants, whose ledger costs remain current even

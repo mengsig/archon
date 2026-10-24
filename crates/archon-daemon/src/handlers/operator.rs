@@ -84,16 +84,20 @@ pub(super) async fn clear_notifications(
     if let Some(id) = &item {
         ctx.store.lock().await.item(id)?;
     }
-    let entry = FeedEntry::Notification(Notification {
+    feed::append(ctx, clearing(item)).await?;
+    Ok(Reply::Ok)
+}
+
+/// The progress line that resolves the center's notifications for `item`.
+pub(super) fn clearing(item: Option<QueueItemId>) -> FeedEntry {
+    FeedEntry::Notification(Notification {
         id: NotificationId::new(),
         kind: NotificationKind::Progress,
         text: crate::notification_center::clearing_line(item.as_ref()),
         item,
         run: None,
         at: archon_core::now(),
-    });
-    feed::append(ctx, entry).await?;
-    Ok(Reply::Ok)
+    })
 }
 
 /// Record a non-blocking question; the answer comes back as a trigger.

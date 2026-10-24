@@ -814,6 +814,39 @@ async fn a_stage_cost_includes_its_delegated_agents_and_counts_each_once() {
     assert_eq!(listing.stages[0].delegation.as_ref(), Some(split));
 }
 
+/// A delegated agent's effort is read from Aether when it is created, so
+/// the split of a stage still running shows it rather than `effort unknown`.
+#[tokio::test]
+async fn a_running_stage_shows_the_effort_of_the_agents_it_delegated_to() {
+    let h = Harness::new().await;
+    let item = h.enqueue("delegating stage").await;
+    h.dispatch().await;
+    let lead = h.running().await.remove(0);
+    let lead_agent = lead.aether_agent.clone().unwrap();
+    let held = h.backend.delegate(&lead_agent, common::MODEL);
+    let child = delegate(&h, &lead_agent, held.as_str()).await;
+    let unknown = delegate(&h, &child, "agt_effort_unread").await;
+    child_usage(&h, &child, 0.5).await;
+
+    let shown = detail(&h, &item.id).await;
+    assert_eq!(h.running().await.len(), 1, "the stage still runs");
+    let agents = &shown.delegations[&lead.id].agents;
+    let efforts: Vec<_> = agents.iter().map(|a| (a.agent.clone(), a.effort)).collect();
+    assert_eq!(
+        efforts,
+        [
+            (child, Some(archon_core::model::Effort::Medium)),
+            (unknown, None)
+        ],
+        "Aether holds no effort for the second"
+    );
+    assert!(
+        agents[0].line().contains("(medium)"),
+        "{}",
+        agents[0].line()
+    );
+}
+
 #[tokio::test]
 async fn delegated_descendant_cost_stays_with_its_run_after_retry_and_restart() {
     let mut h = Harness::new().await;

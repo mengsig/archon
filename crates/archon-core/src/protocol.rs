@@ -1609,8 +1609,8 @@ pub struct DelegatedAgent {
     /// The stage agent, or the delegated agent that delegated further.
     pub parent: AetherAgentId,
     pub model: ModelRef,
-    /// `None` until Archon reads it from Aether, which it does when the
-    /// stage has ended.
+    /// Read from Aether when the agent is created and again when the stage
+    /// has ended; `None` while Aether has not said.
     pub effort: Option<Effort>,
     pub cost_usd: f64,
 }

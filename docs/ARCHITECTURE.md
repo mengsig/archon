@@ -921,8 +921,9 @@ A stage that delegated also reports the split (`delegations` in `GetItem`,
 `delegation` in `GetStage`): its own agent's cost, the delegated agents'
 cost, and each delegated agent with its parent, model, effort and cost.
 Schema V8 (`delegated_agents`) records who delegated to whom as the watcher
-links each child, and the child's effort when the stage's owed stop is
-confirmed (§6.3); until then the effort reads as unknown. A run's and an
+links each child, and the child's effort, read from Aether's agent record
+as it is linked and again when the stage's owed stop is confirmed (§6.3);
+the effort reads as unknown only while neither read has answered. A run's and an
 item's totals sum each agent once, so the split adds nothing to them. Model
 evidence compares the same complete stage cost.
 The persisted finish-time run cost is retained for compatibility, but is not

@@ -1287,6 +1287,12 @@ impl AgentBackend for FakeBackend {
         Ok(found)
     }
 
+    async fn agent_effort(&self, agent: &AetherAgentId) -> Result<Option<Effort>, ArchonError> {
+        let state = self.state();
+        let delegated = state.delegated.iter().find(|d| d.agent == *agent);
+        Ok(delegated.and_then(|d| d.effort))
+    }
+
     async fn task_outcome(&self, task: &AetherTaskId) -> Result<Option<StageOutcome>, ArchonError> {
         let mut state = self.state();
         if let Some(error) = state.outcome_failures.pop_front() {

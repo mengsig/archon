@@ -282,6 +282,10 @@ pub trait AgentBackend: Send + Sync {
     /// when Aether no longer knows `agent`.
     async fn descendants(&self, agent: &AetherAgentId) -> Result<Vec<Descendant>, ArchonError>;
 
+    /// The effort `agent` was created with; `None` when its config states
+    /// none Archon can read, or Aether no longer knows it.
+    async fn agent_effort(&self, agent: &AetherAgentId) -> Result<Option<Effort>, ArchonError>;
+
     /// `None` while the task is still open; the settled outcome otherwise.
     async fn task_outcome(&self, task: &AetherTaskId) -> Result<Option<StageOutcome>, ArchonError>;
 

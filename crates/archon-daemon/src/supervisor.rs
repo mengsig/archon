@@ -690,7 +690,7 @@ pub async fn freshness(
             }
         }
     }
-    let store = ctx.store.lock().await;
+    let store = ctx.read_store().await;
     origin::freshness(
         &store,
         generation,

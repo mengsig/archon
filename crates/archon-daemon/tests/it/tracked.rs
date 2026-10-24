@@ -218,6 +218,8 @@ async fn read_tools_answer_while_the_writer_is_held() {
     let item = h.enqueue("read me").await;
     let settled = h.enqueue("read me settled").await;
     settle(&h, &settled.id).await;
+    // queue_status reads a recorded orchestrator's freshness too.
+    orchestrator_named(&h).await;
     let reads = [
         (
             "list_queue",

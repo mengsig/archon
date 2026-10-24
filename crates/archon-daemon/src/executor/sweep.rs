@@ -215,6 +215,7 @@ async fn stall(
         return Ok(FollowUp::default());
     }
     tracing::warn!(stage = %id, reason, "stage watchdog fired");
+    stall::mark_intent(&mut *ctx.store.lock().await, id, reason)?;
     let failed = || StageOutcome::Failed {
         error: reason.to_owned(),
         infra: true,

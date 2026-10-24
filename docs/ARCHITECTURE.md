@@ -1385,7 +1385,8 @@ in a new worktree off the base branch (§13).
   `running` (it waits on a wake: a task, a message or a deadline). Archond
   starts a tree's silence when it first looks, so a restart restarts the
   watch, and reads a silent tree from Aether at most once a minute. A stalled stage is cancelled and settles as an `infra` failure
-  ("agent stalled: no engine and no events for N min"), so
+  ("agent stalled: no engine and no events for N min"; recorded before the
+  cancel goes out, so the cancel's own events settle it the same way), so
   `limits.infra_retries` re-spawns it on the same worktree once; a second
   stall is final. The retry shows in the feed, and the failure in the
   stage's error in `get_item` and the item's outcome. `stall_minutes = 0`

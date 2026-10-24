@@ -8,23 +8,27 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
-use archon_aether::events::EventKind;
 use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::config::LimitsConfig;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::ports::TreePulse;
-use archon_core::run::{StageRun, StageState};
+use archon_core::run::{StageOutcome, StageRun, StageState};
+use archon_queue::Store;
 
 use crate::context::DaemonContext;
+
+/// The key of a stage the watchdog is stopping, holding the reason.
+const INTENT_KEY_PREFIX: &str = "stall_intent:";
 
 /// How often one stage's tree may be read from Aether: the watchdog must not
 /// add much load to an Aether whose store is already contended.
 const PULSE_EVERY: chrono::Duration = chrono::Duration::minutes(1);
 
 /// When archond last heard an Aether event of each agent, kept in memory:
-/// a restart starts the watch over rather than guessing.
+/// a restart starts the watch over rather than guessing. Entries older than
+/// any silence the watchdog waits for are pruned.
 #[derive(Debug, Default)]
 pub struct Activity {
     agents: std::sync::Mutex<BTreeMap<AetherAgentId, Timestamp>>,
@@ -33,27 +37,29 @@ pub struct Activity {
 }
 
 impl Activity {
-    /// Record an event of `agent` seen at `now`. An ended agent is forgotten.
-    /// Any event makes the last read of its tree stale.
-    pub fn saw(&self, agent: &AetherAgentId, kind: &EventKind, now: Timestamp) {
+    /// Record an event of `agent` seen at `now`; its end counts too, as its
+    /// parent may be about to act on it. Any event makes the last read of
+    /// its tree stale.
+    pub fn saw(&self, agent: &AetherAgentId, now: Timestamp) {
         self.looked.lock().expect("activity lock").remove(agent);
         let mut agents = self.agents.lock().expect("activity lock");
-        if matches!(
-            kind,
-            EventKind::AgentCompleted
-                | EventKind::AgentFailed { .. }
-                | EventKind::AgentCancelled { .. }
-        ) {
-            agents.remove(agent);
-            return;
-        }
         let at = agents.entry(agent.clone()).or_insert(now);
         *at = (*at).max(now);
     }
 
+    /// Forget what was heard or read before `cutoff`: an entry that old
+    /// cannot keep any tree from stalling.
+    fn prune(&self, cutoff: Timestamp) {
+        let mut agents = self.agents.lock().expect("activity lock");
+        agents.retain(|_, at| *at >= cutoff);
+        drop(agents);
+        let mut looked = self.looked.lock().expect("activity lock");
+        looked.retain(|_, at| *at >= cutoff);
+    }
+
     /// The newest event of `lead` and the agents `beneath` it. The first
     /// look at a lead starts its silence at `now`; an agent beneath it that
-    /// was never heard of (or has ended) adds nothing.
+    /// was never heard of adds nothing.
     fn newest(&self, lead: &AetherAgentId, beneath: &[AetherAgentId], now: Timestamp) -> Timestamp {
         assert!(!beneath.contains(lead), "a lead is not beneath itself");
         let mut book = self.agents.lock().expect("activity lock");
@@ -174,9 +180,12 @@ pub(super) async fn scan(
     stages: &[StageRun],
     now: Timestamp,
 ) -> Result<Vec<(StageRunId, String)>, ArchonError> {
+    forget_settled_intents(&mut *ctx.store.lock().await)?;
     let Some(policy) = Policy::of(&ctx.config.limits) else {
         return Ok(Vec::new());
     };
+    let kept = chrono::Duration::from_std(policy.fallback * 2).expect("minutes fit a duration");
+    ctx.activity.prune(now - kept);
     let waiting = Waiting::read(ctx).await?;
     let mut stalled = Vec::new();
     for stage in stages {
@@ -244,6 +253,64 @@ fn read_tree(now: Timestamp, seen: Timestamp, waiting: bool, pulse: TreePulse) -
         running: pulse.running,
         waiting: waiting || pulse.held,
     }
+}
+
+fn intent_key(stage: &StageRunId) -> String {
+    format!("{INTENT_KEY_PREFIX}{stage}")
+}
+
+/// Record, before its cancel goes out, that the watchdog stops `stage` for
+/// `reason`: the cancel's own events must not settle it as cancelled.
+pub(super) fn mark_intent(
+    store: &mut Store,
+    stage: &StageRunId,
+    reason: &str,
+) -> Result<(), ArchonError> {
+    assert!(
+        reason.starts_with("agent stalled"),
+        "only the watchdog marks: {reason}"
+    );
+    store.kv_set(&intent_key(stage), reason)
+}
+
+/// The outcome `stage` settles with: a cancel the watchdog caused is the
+/// stall's infrastructure failure; any other outcome stands.
+pub(super) fn intended(
+    store: &Store,
+    stage: &StageRunId,
+    outcome: StageOutcome,
+) -> Result<StageOutcome, ArchonError> {
+    if !matches!(outcome, StageOutcome::Cancelled { .. }) {
+        return Ok(outcome);
+    }
+    let Some(reason) = store.kv_get(&intent_key(stage))? else {
+        return Ok(outcome);
+    };
+    assert!(!reason.is_empty(), "a marked stall names its reason");
+    Ok(StageOutcome::Failed {
+        error: reason,
+        infra: true,
+    })
+}
+
+/// Delete the marks of stages that settled or no longer exist.
+fn forget_settled_intents(store: &mut Store) -> Result<(), ArchonError> {
+    for (key, _) in store.kv_prefix(INTENT_KEY_PREFIX)? {
+        let raw = key
+            .strip_prefix(INTENT_KEY_PREFIX)
+            .expect("ranged by prefix");
+        let id = StageRunId::parse(raw)
+            .map_err(|e| ArchonError::Corrupt(format!("stall intent key {key}: {e}")))?;
+        let settled = match store.stage_run(&id) {
+            Ok(stage) => stage.state.is_terminal(),
+            Err(ArchonError::NotFound(_)) => true,
+            Err(error) => return Err(error),
+        };
+        if settled {
+            store.kv_delete(&key)?;
+        }
+    }
+    Ok(())
 }
 
 /// The runs and items an operator gate or question holds open.
@@ -445,24 +512,37 @@ mod tests {
         let book = Activity::default();
         let lead = AetherAgentId::parse("agt_01M5PSP3TDHS01R20WX39T6P5W").unwrap();
         let child = AetherAgentId::parse("agt_01M5PSP3TDHS01R20WX39T6P5X").unwrap();
-        book.saw(&lead, &EventKind::AgentStarted { turn: 1 }, at(0));
-        book.saw(&child, &EventKind::AgentWaiting { idle: false }, at(3));
-        book.saw(&lead, &EventKind::AgentStarted { turn: 1 }, at(1));
+        book.saw(&lead, at(0));
+        book.saw(&child, at(3));
+        book.saw(&lead, at(1));
         assert_eq!(
             book.newest(&lead, std::slice::from_ref(&child), at(10)),
             at(3)
         );
         assert_eq!(book.newest(&lead, &[], at(10)), at(1), "never older");
-        book.saw(&child, &EventKind::AgentCompleted, at(4));
+        book.saw(&child, at(4));
         assert_eq!(
             book.newest(&lead, std::slice::from_ref(&child), at(10)),
-            at(1),
-            "an ended agent beneath the lead adds nothing"
+            at(4),
+            "a child's end is the tree's newest event"
         );
+        let stranger = AetherAgentId::parse("agt_01M5PSP3TDHS01R20WX39T6P5Y").unwrap();
         assert_eq!(
-            book.newest(&child, &[], at(10)),
+            book.newest(&stranger, &[], at(10)),
             at(10),
             "a lead never heard of starts its silence at the first look"
+        );
+        book.prune(at(2));
+        assert_eq!(
+            book.newest(&lead, std::slice::from_ref(&child), at(11)),
+            at(11),
+            "a pruned lead is looked at anew; its pruned events are gone"
+        );
+        book.prune(at(5));
+        assert_eq!(
+            book.newest(&child, &[], at(12)),
+            at(12),
+            "the child's end was pruned"
         );
     }
 
@@ -473,7 +553,7 @@ mod tests {
         assert!(book.may_read(&lead, at(30)));
         assert!(!book.may_read(&lead, at(30)), "read moments ago");
         assert!(book.may_read(&lead, at(31)), "a minute later");
-        book.saw(&lead, &EventKind::AgentStarted { turn: 2 }, at(31));
+        book.saw(&lead, at(31));
         assert!(
             book.may_read(&lead, at(31)),
             "an event makes the read stale"

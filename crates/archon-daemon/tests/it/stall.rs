@@ -4,8 +4,9 @@
 
 use crate::common;
 
-use archon_aether::events::EventKind;
+use archon_aether::events::{AetherEvent, EventKind};
 use archon_core::aether_ids::AetherAgentId;
+use archon_core::error::ArchonError;
 use archon_core::notify::NotificationKind;
 use archon_core::ports::TreePulse;
 use archon_core::protocol::{Reply, Request};
@@ -33,9 +34,7 @@ fn lead(stage: &StageRun) -> AetherAgentId {
 /// Recording it also lets the next sweep read the tree's pulse again.
 fn went_silent(h: &Harness, agent: &AetherAgentId, minutes: i64) {
     let then = archon_core::now() - chrono::Duration::minutes(minutes);
-    h.ctx
-        .activity
-        .saw(agent, &EventKind::AgentStarted { turn: 1 }, then);
+    h.ctx.activity.saw(agent, then);
 }
 
 async fn sweep(h: &Harness) {
@@ -173,4 +172,51 @@ async fn without_the_engine_report_a_running_tree_stalls_after_the_fallback() {
         error.starts_with("agent stalled: no events for 46 min"),
         "{error}"
     );
+}
+
+/// Aether's own `task.cancelled` for the stage, as the fleet stream hears it.
+async fn cancelled_event(h: &Harness, stage: &StageRun) {
+    let event = AetherEvent {
+        seq: 1,
+        at: archon_core::now(),
+        agent: stage.aether_agent.clone(),
+        task: stage.aether_task.clone(),
+        parent: None,
+        run: None,
+        kind: EventKind::TaskCancelled {
+            reason: Some("agent stalled".into()),
+        },
+    };
+    archon_daemon::pump::handle_fleet_event(&h.ctx, &event)
+        .await
+        .expect("fleet event");
+}
+
+#[tokio::test]
+async fn the_cancels_own_event_settling_first_still_retries_the_stall() {
+    let h = Harness::new().await;
+    let item = h.enqueue("cancel event before its reply").await;
+    h.dispatch().await;
+    let first = the_only_running(&h).await;
+    went_silent(&h, &lead(&first), 21);
+    h.backend.set_pulse(&lead(&first), DEAD);
+    h.backend
+        .fail_next_cancel(ArchonError::Unavailable("reply lost".into()));
+    sweep(&h).await;
+    assert_eq!(
+        the_only_running(&h).await.id,
+        first.id,
+        "an unanswered cancel leaves the stage to the next sweep"
+    );
+
+    cancelled_event(&h, &first).await;
+    let failed = h.stages(&item.id).await.remove(0);
+    let StageState::Failed { error } = &failed.state else {
+        panic!("the watchdog's cancel is its stall: {:?}", failed.state);
+    };
+    assert!(error.starts_with("agent stalled: no engine"), "{error}");
+    assert!(failed.infrastructure_failure);
+    sweep(&h).await;
+    let retry = the_only_running(&h).await;
+    assert_ne!(retry.id, first.id, "the stall is retried, not cancelled");
 }

@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use archon_core::aether_ids::{AetherAgentId, AetherTaskId};
 use archon_core::error::ArchonError;
+use archon_core::model::Effort;
 use archon_core::policy::ModelPolicy;
 use archon_core::ports::{
     AgentBackend, AgentUpdate, CreatedNode, Descendant, DescendantState, RunNodeRequest,
@@ -502,6 +503,15 @@ impl AgentBackend for AetherBackend {
             ..AgentQuery::default()
         };
         Ok(subtree(agent, &client.list_agents(query).await?))
+    }
+
+    async fn agent_effort(&self, agent: &AetherAgentId) -> Result<Option<Effort>, ArchonError> {
+        let found = match self.link.client()?.get_agent(agent).await {
+            Ok(found) => found,
+            Err(ArchonError::NotFound(_)) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        Ok(found.config.effort.as_deref().and_then(|e| e.parse().ok()))
     }
 
     async fn pulse(&self, agent: &AetherAgentId) -> Result<Option<TreePulse>, ArchonError> {

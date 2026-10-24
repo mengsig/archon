@@ -21,6 +21,7 @@ mod gc;
 mod gh_user;
 mod handle_order;
 mod handlers;
+mod inbox_health;
 mod initiatives;
 mod integration_branch;
 mod integration_github;

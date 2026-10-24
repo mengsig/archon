@@ -297,6 +297,10 @@ pub trait AgentBackend: Send + Sync {
     /// when Aether no longer knows `agent`.
     async fn descendants(&self, agent: &AetherAgentId) -> Result<Vec<Descendant>, ArchonError>;
 
+    /// The effort `agent` was created with; `None` when its config states
+    /// none Archon can read, or Aether no longer knows it.
+    async fn agent_effort(&self, agent: &AetherAgentId) -> Result<Option<Effort>, ArchonError>;
+
     /// The pulse of `agent` and everything beneath it; `None` when Aether no
     /// longer knows `agent`. A backend that cannot tell reports an empty pulse.
     async fn pulse(&self, _agent: &AetherAgentId) -> Result<Option<TreePulse>, ArchonError> {

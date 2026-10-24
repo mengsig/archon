@@ -57,6 +57,8 @@ pub const ORCHESTRATOR_EVENT_TYPES: &[&str] = &[
 
 pub const FLEET_EVENT_TYPES: &[&str] = &[
     "inbox.delivered",
+    // Items a stage's agent leaves unread are a health warning.
+    "inbox.consumed",
     "agent.created",
     "task.completed",
     "task.failed",

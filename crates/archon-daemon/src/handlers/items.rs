@@ -258,6 +258,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
     let waiting = super::waiting::WaitingView::read(ctx).await?;
     let estimates = ctx.config.limits.count_estimated_cost;
     let default_efforts = default_efforts(ctx, id).await?;
+    let stage_warnings = crate::inbox_health::warnings(ctx, archon_core::now(), Some(id)).await?;
     let store = ctx.read_store().await;
     let item = store.item(id)?;
     let mut runs = store.runs_for_item(id)?;
@@ -301,6 +302,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
         gates,
         delegations,
         merges,
+        stage_warnings,
     })))
 }
 
@@ -547,8 +549,12 @@ pub(super) async fn cancel(
 }
 
 /// Queue the item that merges `id`'s base branch into its branch.
-pub(super) async fn refresh(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, ArchonError> {
-    let refresh = executor::refresh::refresh_item(ctx, id).await?;
+pub(super) async fn refresh(
+    ctx: &DaemonContext,
+    id: &QueueItemId,
+    asked: executor::refresh::Asked,
+) -> Result<Reply, ArchonError> {
+    let refresh = executor::refresh::refresh_item(ctx, id, asked).await?;
     Ok(Reply::Item(refresh))
 }
 
@@ -907,7 +913,7 @@ pub(super) async fn filled_plan(
 
 /// Every stage has 1 to `choice_limit` choices, no unknown stage is named, and
 /// every choice passes the effective model policy.
-pub(super) fn check_plan(
+pub(crate) fn check_plan(
     ctx: &DaemonContext,
     env: &RepoEnv,
     spec: &PipelineSpec,
@@ -954,7 +960,7 @@ pub(crate) fn check_stage_timeouts(
     Ok(())
 }
 
-pub(super) fn check_reasons(
+pub(crate) fn check_reasons(
     spec: &PipelineSpec,
     reasons: Option<&ModelReasons>,
 ) -> Result<(), ArchonError> {

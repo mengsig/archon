@@ -23,7 +23,7 @@ use archon_core::notify::Question;
 use archon_core::policy::ModelPolicy;
 use archon_core::protocol::{
     AetherLinkStatus, DaemonStatus, DiskStatus, HostLoadStatus, ItemDetail, OrchestratorInfo,
-    QuotaStatus, Reply, ReportPublished, StatusHealth, gib,
+    QuotaStatus, Reply, ReportPublished, StageWarning, StatusHealth, gib,
 };
 use archon_core::queue::{Caps, QueueItem, QueueState};
 use archon_core::repo::Repo;
@@ -312,6 +312,9 @@ fn item_detail(detail: &ItemDetail) -> String {
             let _ = write!(text, "\n  - {}", stage_line(&item.id, older, stage));
             if let Some(delegation) = detail.delegations.get(&stage.id) {
                 let _ = write!(text, "\n    cost split: {}", delegation.line());
+            }
+            for warning in detail.stage_warnings.iter().filter(|w| w.stage == stage.id) {
+                let _ = write!(text, "\n    health: {}", warning.describe());
             }
         }
     }
@@ -725,7 +728,15 @@ fn daemon_status(status: &DaemonStatus) -> String {
         upkeep_text(status)
     ) + &quota_text(status.quota.as_ref())
         + &integration_text(&status.integration)
+        + &stage_warnings_text(&status.stage_warnings)
         + &stale_text(status.health.as_ref())
+}
+
+/// Agents of running stages that leave inbox items unread.
+pub(super) fn stage_warnings_text(warnings: &[StageWarning]) -> String {
+    (warnings.iter())
+        .map(|warning| format!("\nStage health: {}.", warning.describe()))
+        .collect()
 }
 
 /// Each provider's quota headroom, reserve and next reset, as Aether last

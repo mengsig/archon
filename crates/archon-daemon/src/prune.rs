@@ -9,7 +9,7 @@ use archon_core::Timestamp;
 use archon_core::error::ArchonError;
 
 use crate::context::DaemonContext;
-use crate::{executor, pump, reports, supervisor};
+use crate::{executor, inbox_health, pump, reports, supervisor};
 
 /// How often the pass runs; the first runs at startup.
 const INTERVAL: Duration = Duration::from_secs(10 * 60);
@@ -31,6 +31,7 @@ pub struct Pruned {
     pub node_agents: usize,
     pub children: usize,
     pub stage_agents: usize,
+    pub unread_inboxes: usize,
     pub reports: usize,
     pub retired_keys: usize,
     pub retired_orchestrators: usize,
@@ -47,6 +48,7 @@ impl Pruned {
             + self.node_agents
             + self.children
             + self.stage_agents
+            + self.unread_inboxes
             + self.reports
             + self.retired_keys
             + self.retired_orchestrators
@@ -68,8 +70,8 @@ pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     }
 }
 
-/// One pass as of `now`. Entries of settled stages and finished runs, and
-/// keys no version reads any more, go at once; node agents, watched
+/// One pass as of `now`. Entries of settled stages, finished runs and
+/// items, and keys no version reads any more, go at once; node agents, watched
 /// children, stage agents, replaced orchestrators and settled reports go
 /// once older than [`retention`], finished tracked requests after a day. The store is locked per kind, not for the
 /// whole pass.
@@ -112,6 +114,10 @@ pub async fn prune_once(ctx: &DaemonContext, now: Timestamp) -> Result<Pruned, A
     )?;
     let children = category("children", pump::prune_children(ctx, now, cutoff).await)?;
     let stage_agents = category("stage_agents", pump::prune_stage_agents(ctx, cutoff).await)?;
+    let unread_inboxes = category(
+        "unread_inboxes",
+        inbox_health::prune_finished(&mut *ctx.store.lock().await),
+    )?;
     let retired_orchestrators = category(
         "retired_orchestrators",
         supervisor::prune_retired_orchestrators(ctx, cutoff).await,
@@ -129,6 +135,7 @@ pub async fn prune_once(ctx: &DaemonContext, now: Timestamp) -> Result<Pruned, A
         node_agents,
         children,
         stage_agents,
+        unread_inboxes,
         reports,
         retired_keys,
         retired_orchestrators,

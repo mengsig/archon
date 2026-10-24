@@ -519,10 +519,16 @@ at-least-once, so every handler is idempotent.
 | Subscription | Query | Handles |
 | --- | --- | --- |
 | `orchestrator` | `{agent: <orchestrator>, types:["agent.message","agent.turn_completed","agent.waiting","agent.started","question.asked","agent.failed","agent.cancelled","agent.completed","agent.restarted","agent.usage_updated","inbox.delivered","inbox.consumed","compaction.completed"]}` | Chat replies (§12), questions, supervisor, adopting an Aether restart (§16), orchestrator spend, restating the directives after a compaction (§18.5). |
-| `fleet` | `{types:["agent.created","task.completed","task.failed","task.cancelled","agent.failed","agent.cancelled","agent.completed","agent.usage_updated","question.asked","inbox.delivered"]}` | Stage completion, spend ledger, stage questions, model-policy watchdog, run-node inbox forwarding and authenticated relay provenance. An agent's end (`agent.completed`, `agent.failed`, `agent.cancelled`) also wakes the dispatcher, which stops what a settled stage agent delegated (§6.3). |
+| `fleet` | `{types:["agent.created","task.completed","task.failed","task.cancelled","agent.failed","agent.cancelled","agent.completed","agent.usage_updated","question.asked","inbox.delivered","inbox.consumed"]}` | Stage completion, spend ledger, stage questions, model-policy watchdog, run-node inbox forwarding, authenticated relay provenance and unread-inbox health. An agent's end (`agent.completed`, `agent.failed`, `agent.cancelled`) also wakes the dispatcher, which stops what a settled stage agent delegated (§6.3). |
 
 The `fleet` subscription also forwards message inbox entries addressed to
-run nodes (§5.5). `agent.created` events whose `parent_agent_id` is
+run nodes (§5.5). It also keeps, per agent that works for an item, the
+inbox items delivered and not yet consumed (`kv.inbox_unread_<agent>`,
+cleared by `inbox.consumed` and by the agent's end). An agent of a running
+stage, the stage agent or one beneath it, that leaves an item unread past
+`[dispatcher] inbox_unread_after` (15 minutes by default) is a stage health
+warning (`stage_warnings`) in `get_item` and `status`: a lead that died while
+the agents it delegated to finished looks like this. `agent.created` events whose `parent_agent_id` is
 a known Archon agent (the orchestrator, a stage agent or a watched child) are
 checked against `ModelPolicy`, and an offending agent is cancelled (§7.4).
 The event's `kind` carries the model and effort Aether admitted. A stage
@@ -921,8 +927,9 @@ A stage that delegated also reports the split (`delegations` in `GetItem`,
 `delegation` in `GetStage`): its own agent's cost, the delegated agents'
 cost, and each delegated agent with its parent, model, effort and cost.
 Schema V8 (`delegated_agents`) records who delegated to whom as the watcher
-links each child, and the child's effort when the stage's owed stop is
-confirmed (§6.3); until then the effort reads as unknown. A run's and an
+links each child, and the child's effort, read from Aether's agent record
+as it is linked and again when the stage's owed stop is confirmed (§6.3);
+the effort reads as unknown only while neither read has answered. A run's and an
 item's totals sum each agent once, so the split adds nothing to them. Model
 evidence compares the same complete stage cost.
 The persisted finish-time run cost is retained for compatibility, but is not
@@ -2637,12 +2644,16 @@ look; when all eight never started, neither did the rest, and a refused ask
 leaves its check failed): GitHub's "The job was not started because …"
 (billing, a spending limit) means the check never ran, and so does a check still queued, never
 started, 30 minutes after delivery (no runner). Checks that ran and failed
-are an outcome in the feed and a `pr_checks` event (`state: "failed"`);
-checks that never started are a blocker and a `pr_checks` event (`state:
-"not_started"` with GitHub's reason), never reported as the change failing.
-Either is told once and ends the watch. Passing checks, no checks 30 minutes
-after delivery, or a day without an answer end it quietly; a `gh` failure is
-logged and the next look tries again.
+are an outcome in the feed and a `pr_checks` event (`state: "failed"`),
+told once. Checks that never started are a `pr_checks` event (`state:
+"not_started"` with GitHub's reason), never reported as the change failing:
+first a quiet one that joins the orchestrator's next turn, then, when they
+are still not started 30 minutes later, a blocker and a waking one, told
+once. A repository whose settings overlay holds `checks = "waived"` (§18.2)
+gets the quiet event only, and the watch ends. No checks 30 minutes after
+delivery is a quiet `pr_checks` event (`state: "absent"`) in either mode, never
+a wake, and ends the watch. Passing checks or a day without an answer end it
+quietly; a `gh` failure is logged and the next look tries again.
 
 **Risk labels.** Every pull request archond opens or updates carries one
 label, `risk: low`, `risk: medium` or `risk: high` (`archon_core::risk`),
@@ -3073,7 +3084,7 @@ defined in `archon_core::protocol` and served by `archon-daemon`.
 - `Tracked {request_id, idempotency_key?, request}` carries one change
   under the `req_…` id `archon mcp` gave it, inside any `ForAgent`, and
   `RequestStatus {request}` reads what became of it (§11.1). Neither wraps
-  a read, the other or a `ForAgent`. Protocol 20 added both; an older
+  a read, the other or a `ForAgent`. Protocol 21 added both; an older
   archond is refused at hello.
 - The CLI takes an item id or its start. A whole id is sent as it is; a
   start goes to `ResolveItem {prefix}` first, which `archond` answers from
@@ -3203,7 +3214,7 @@ can reach the socket (§5.5).
 | `update_initiative` | `{initiative, contract_append \| contract}` | `UpdateInitiative` (§8.9) |
 | `cancel_item` | `{item, reason?}` | `CancelItem` |
 | `retry_item` | `{item, model_plan?, model_reasons?, fresh?, brief_append?}` | `RetryItem` (§13: `fresh` starts again from the base branch) |
-| `refresh_item` | `{item}` | `RefreshItem` (§13: a finished item's base, fetched from `origin`, merged into the same branch and pull request) |
+| `refresh_item` | `{item, model_plan?, model_reasons?, stage_timeouts?}` | `RefreshItem` (§13: a finished item's base, fetched from `origin`, merged into the same branch and pull request) |
 | `queue_status` | `{}` | `Status` |
 | `model_evidence` | `{repo?, pipeline?, stage?, since?}` | `ModelEvidence` (30 local days by default; stage attempt observations, at most 60 groups) |
 | `cost_report` | `{since?, until?, by?: day\|repo\|pipeline\|model\|item\|stage}` | `CostReport` (§5.3) |
@@ -3431,10 +3442,11 @@ object per line under `--json`).
   head (`origin`'s in `pr` mode, else the local branch) and queues a new
   item, titled `Refresh <item> onto <base>`, that runs the owner's pipeline
   on the owner's branch and worktree like a restack fix (§8.8). Proposal and
-  report are always off; review, merge and tools are retained. The model plan
-  is mapped to that pipeline's stages (a steered `build` supplies `implement`
-  and its reviewer choices); missing or no longer permitted choices use the
-  refresh default within model policy. The plan is validated before enqueue.
+  report are always off; review, merge and tools are retained. The owner's
+  model plan, model reasons and stage timeouts are not: the refresh takes the
+  `model_plan`, `model_reasons` and `stage_timeouts` the request gives, shaped
+  and checked as in `enqueue`, and the stage defaults within model policy for
+  the rest. The plan is validated before enqueue.
   The run's base branch is retained separately from expiring prompt templates;
   older runs with neither use the repository's configured base, or require
   `archon repo set` when none is configured. Its agent
@@ -3806,14 +3818,27 @@ of the item. A team root that is itself a symlink is never followed:
 nothing under it is collected, it is reported as skipped, and a removed
 root is reported by its real path.
 
-A live run's directories are never touched. Items that are not terminal,
-or changed after the cutoff, are not looked at. Holding the run table,
+A live run's directories are never touched. Whether a workspace may go is
+decided by its path, not by the item whose run left it: an item's worktree
+is also the workspace of each restack fix and refresh of it, and of every
+retry of any of them (`worktree::users`). Its age is that of the latest run
+any of those items had in it, and it is kept, reported as skipped with the
+item that uses it, while any non-terminal item (queued, dispatching,
+running or blocked) would work there or a live run works in it, inside it
+or in a directory holding it. `archond`'s own removal after shipping (§13)
+asks the same. Items that are not terminal, or changed after the cutoff,
+are not looked at. Holding the run table,
 which an item retry and a dispatch take too, `archond` checks that the
 store still shows the item terminal with the `updated_at` and the number
-of runs the pass planned with, and marks it as being collected
+of runs the pass planned with, and the same runs, by id, of the other
+items of its worktree (a refresh queued again for one base commit replaces
+the earlier in the store), leaves out what a live item uses as read then, and marks the
+item and its worktree's owner as being collected
 (`DaemonContext::collecting`); an item retried in between, whose new run
 would reuse the worktree, is left alone, even when a clock stepped back
-leaves its `updated_at` as it was. It then collects the item without the
+leaves its `updated_at` as it was. A refresh or restack fix queued after
+that check waits, as the dispatcher holds every item whose own id or whose
+worktree's owner is marked. It then collects the item without the
 run table, so git and the filesystem hold up no live run. A retry of a
 marked item still queues it, but the dispatcher leaves it queued until the
 mark is gone, which pokes dispatch; a fresh retry of it, which would move
@@ -4445,6 +4470,7 @@ so a pass costs what is still stored.
 | `run_node_agent:<agent>` | Its run finished more than 7 days ago and its node was retired (`run_node:<run>` is gone). A later event of that node at most waits the 5 s spawn grace (§4.6). |
 | `link_child_<agent>`, `link_unchecked_<agent>`, `link_cancelled_<agent>` | The child's item is terminal and last changed more than 7 days ago. For the orchestrator's children, which have no item, the pass asks `get_agent` (at most 32 a pass). The first pass that finds the child ended records when, in `link_ended_<agent>`, and all its entries go 7 days after that. |
 | `link_stage_agent_<agent>` | Its item is terminal and last changed more than 7 days ago (or is gone). A recorded stage agent is also found through its stage run (§4.6). |
+| `inbox_unread_<agent>` | Its item is terminal (or is gone): no stage of it runs, so nothing warns from it. |
 | `report:<id>` | The report is settled and last changed more than 7 days ago (§14). An ended or disconnected report is kept while its HTML file exists. |
 | An entry of `orchestrator_retired` | The orchestrator was replaced more than 7 days ago and the sweep of what it left running is no longer owed (§16). |
 | `descendant_stop:<stage run>` | Not by this pass: the dispatcher deletes it once Aether has confirmed the stop (§6.3). |

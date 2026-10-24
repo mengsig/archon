@@ -271,6 +271,7 @@ fn a_pass_preview_reports_removals_and_cache_output_but_changes_nothing() {
         item: QueueItemId::new(),
         updated_at: archon_core::now(),
         runs: 0,
+        borrowed: Default::default(),
         found: Found {
             candidates: vec![candidate(&tree, Some(&repo), action)],
             ..Found::default()
@@ -308,6 +309,7 @@ fn a_preview_does_not_promise_to_remove_a_worktree_git_has_locked() {
         item: QueueItemId::new(),
         updated_at: archon_core::now(),
         runs: 0,
+        borrowed: Default::default(),
         found,
     };
 
@@ -362,6 +364,7 @@ fn a_preview_of_a_set_aside_worktree_lists_its_cache_dirs_only() {
         item: QueueItemId::new(),
         updated_at: archon_core::now(),
         runs: 0,
+        borrowed: Default::default(),
         found: Found {
             candidates: vec![Candidate {
                 workspace: kept.clone(),
@@ -697,6 +700,7 @@ fn only_items_settled_before_the_cutoff_are_planned_and_a_retry_unsettles() {
         item: old.id.clone(),
         updated_at: old.updated_at,
         runs: 0,
+        borrowed: Default::default(),
         found: Found::default(),
     };
     assert!(plan::still_settled(&store, &item_plan).unwrap());
@@ -730,6 +734,7 @@ fn a_retry_that_failed_again_across_a_clock_step_unsettles() {
         item: item.id.clone(),
         updated_at: item.updated_at,
         runs: 0,
+        borrowed: Default::default(),
         found: Found::default(),
     };
     assert!(plan::still_settled(&store, &item_plan).unwrap());
@@ -793,7 +798,12 @@ fn settled(item: QueueItem, runs: Vec<PipelineRun>, repo: Option<&Path>) -> Sett
         confirmed_release_check: None,
         added_at: archon_core::now(),
     });
-    Settled { item, runs, repo }
+    Settled {
+        item,
+        runs,
+        borrowed: Vec::new(),
+        repo,
+    }
 }
 
 #[test]
@@ -992,10 +1002,26 @@ fn a_workspace_is_as_recent_as_its_latest_run() {
         run_in(b, Some(900)),
         run_in(b, None),
     ];
-    let last = plan::last_use(&runs);
+    let last = plan::last_use(&runs, &[]);
     let old = |path: &Path| last[path].is_some_and(|at| at < ago(60));
     assert!(!old(a), "a recent retry keeps the worktree");
     assert!(!old(b), "an unfinished run keeps the worktree");
+    assert_eq!(last.len(), 2);
+}
+
+#[test]
+fn a_workspace_is_as_recent_as_the_latest_run_another_item_had_in_it() {
+    let [a, b, c] = [Path::new("/w/a"), Path::new("/w/b"), Path::new("/w/c")];
+    let runs = [run_in(a, Some(900)), run_in(b, Some(900))];
+    let borrowed = [run_in(a, Some(10)), run_in(b, None), run_in(c, Some(900))];
+    let last = plan::last_use(&runs, &borrowed);
+    let old = |path: &Path| last[path].is_some_and(|at| at < ago(60));
+    assert!(!old(a), "a refresh that finished since keeps it");
+    assert!(!old(b), "a refresh still running keeps it");
+    assert!(
+        !last.contains_key(c),
+        "another item's own workspace is not ours"
+    );
     assert_eq!(last.len(), 2);
 }
 

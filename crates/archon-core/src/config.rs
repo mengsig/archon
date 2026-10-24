@@ -710,11 +710,17 @@ impl LimitsConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct DispatcherConfig {
     pub tick_secs: u64,
+    /// An inbox item a running stage's agent leaves unread this long is a
+    /// stage health warning in `get_item` and `status`.
+    pub inbox_unread_after: Age,
 }
 
 impl Default for DispatcherConfig {
     fn default() -> Self {
-        Self { tick_secs: 15 }
+        Self {
+            tick_secs: 15,
+            inbox_unread_after: Age::from_secs(15 * 60),
+        }
     }
 }
 
@@ -1109,6 +1115,11 @@ impl Config {
                 "dispatcher.tick_secs must be > 0".into(),
             ));
         }
+        if self.dispatcher.inbox_unread_after.secs() == 0 {
+            return Err(ArchonError::Config(
+                "dispatcher.inbox_unread_after must be > 0s".into(),
+            ));
+        }
         self.limits.validate()?;
         self.autonomy.validate()?;
         self.worktrees.validate()?;
@@ -1250,6 +1261,24 @@ mod tests {
         assert_eq!(config, Config::default());
         assert_eq!(config.limits.caps().max_parallel_agents, 8);
         assert!(config.orchestrator.wake_on_success);
+    }
+
+    #[test]
+    fn an_unread_inbox_warns_after_fifteen_minutes_unless_configured() {
+        let default = Config::default().dispatcher.inbox_unread_after;
+        assert_eq!(default, Age::from_secs(15 * 60));
+        let config: Config = toml::from_str("[dispatcher]\ninbox_unread_after = '40m'").unwrap();
+        config.validate().unwrap();
+        assert_eq!(
+            config.dispatcher.inbox_unread_after,
+            Age::from_secs(40 * 60)
+        );
+        let zero: Config = toml::from_str("[dispatcher]\ninbox_unread_after = '0s'").unwrap();
+        let refused = zero.validate().unwrap_err();
+        assert!(
+            refused.to_string().contains("inbox_unread_after"),
+            "{refused}"
+        );
     }
 
     #[test]

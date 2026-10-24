@@ -87,13 +87,18 @@ pub(super) async fn agent_created(
     let Some(item) = parent_item(ctx, parent).await? else {
         return Ok(());
     };
-    {
+    let delegated = {
         let mut store = ctx.store.lock().await;
-        if let Some(run) = store.agent_run(parent)? {
-            store.link_agent_run(agent, &run)?;
-            // Its stage's cost includes it; the effort is read when the stage ends.
+        let run = store.agent_run(parent)?;
+        if let Some(run) = &run {
+            store.link_agent_run(agent, run)?;
+            // Its stage's cost includes it, with the effort Aether holds.
             store.record_delegated(agent, parent, model, None)?;
         }
+        run.is_some()
+    };
+    if delegated {
+        record_effort(ctx, agent, parent, model).await?;
     }
     if already_checked(ctx, agent).await? {
         return Ok(());
@@ -108,6 +113,28 @@ pub(super) async fn agent_created(
         Some(refusal) => cancel_child(ctx, agent, model, item, &refusal).await,
         None => ctx.store.lock().await.kv_delete(&unchecked_key(agent)),
     }
+}
+
+/// Record the effort Aether created the delegated `agent` with, so a stage
+/// still running shows it. Unread, it stays unknown until the stage ends and
+/// Archon reads its whole subtree from Aether (ARCHITECTURE §6.3).
+async fn record_effort(
+    ctx: &DaemonContext,
+    agent: &AetherAgentId,
+    parent: &AetherAgentId,
+    model: &ModelRef,
+) -> Result<(), ArchonError> {
+    assert_ne!(agent, parent, "an agent is not its own parent");
+    let effort = match ctx.backend.agent_effort(agent).await {
+        Ok(Some(effort)) => effort,
+        Ok(None) => return Ok(()),
+        Err(error) => {
+            tracing::info!(%agent, %error, "delegated effort not read; read when its stage ends");
+            return Ok(());
+        }
+    };
+    let mut store = ctx.store.lock().await;
+    store.record_delegated(agent, parent, model, Some(effort))
 }
 
 /// Every stage agent's `agent.created` precedes its children's in the

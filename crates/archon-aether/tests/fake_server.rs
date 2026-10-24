@@ -722,6 +722,38 @@ async fn descendants_lists_the_agents_run_once_and_keeps_only_its_subtree() {
     assert_eq!(fake.received_named("list_agents").len(), 1);
 }
 
+/// A delegated agent's effort is its config's; an agent Aether forgot, or
+/// one whose config states none, has none.
+#[tokio::test]
+async fn agent_effort_reads_the_agents_config() {
+    let (_dir, fake) = fake_aether().await;
+    let mut helper = fake::agent(AGENT, None);
+    helper["config"] = json!({"effort": "high"});
+    fake.script("get_agent", Scripted::reply("agent", helper));
+    fake.script(
+        "get_agent",
+        Scripted::reply("agent", fake::agent(AGENT, None)),
+    );
+    fake.script("get_agent", Scripted::refuse("not_found", "no such agent"));
+    let backend = backend(&fake, any_model()).await;
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    assert_eq!(
+        backend.agent_effort(&agent).await.unwrap(),
+        Some(Effort::High)
+    );
+    assert_eq!(
+        backend.agent_effort(&agent).await.unwrap(),
+        None,
+        "none stated"
+    );
+    assert_eq!(
+        backend.agent_effort(&agent).await.unwrap(),
+        None,
+        "forgotten"
+    );
+    assert_eq!(fake.received_named("get_agent").len(), 3);
+}
+
 #[tokio::test]
 async fn spawn_without_a_connection_is_unavailable() {
     let backend = AetherBackend::new(Arc::new(AetherLink::new()), any_model());

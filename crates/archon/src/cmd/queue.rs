@@ -117,7 +117,12 @@ async fn refresh(item: &str, json: bool) -> anyhow::Result<()> {
     let client = connect_or_start().await?;
     let item = views::resolve_item(&client, item).await?;
     let reply = client
-        .request(Request::RefreshItem { item: item.clone() })
+        .request(Request::RefreshItem {
+            item: item.clone(),
+            model_plan: None,
+            model_reasons: None,
+            stage_timeouts: Default::default(),
+        })
         .await?;
     let Reply::Item(refresh) = &reply else {
         return Err(unexpected(&reply, "item"));

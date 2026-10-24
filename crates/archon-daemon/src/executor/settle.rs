@@ -140,12 +140,13 @@ pub(super) async fn settle_locked(
         !matches!(outcome, StageOutcome::Completed { .. }),
         "completed outcomes must use unlocked verification"
     );
-    let (stage, run, all) = {
+    let (stage, run, all, outcome) = {
         let store = ctx.store.lock().await;
         let stage = store.stage_run(id)?;
         let run = store.run(&stage.run)?;
         let all = store.stage_runs(&run.id)?;
-        (stage, run, all)
+        let outcome = blame_missing_workspace(&store, &stage, &run, outcome)?;
+        (stage, run, all, outcome)
     };
     if stage.state.is_terminal() {
         return Ok(FollowUp::default());
@@ -154,6 +155,40 @@ pub(super) async fn settle_locked(
         return Ok(follow);
     }
     persist(ctx, table, stage, run, &all, outcome).await
+}
+
+/// A stage that failed with its workspace gone failed for that, whatever
+/// its engine made of the missing directory, and no retry in it can pass;
+/// the engine's own error follows. Other outcomes are returned as they are.
+fn blame_missing_workspace(
+    store: &archon_queue::Store,
+    stage: &StageRun,
+    run: &PipelineRun,
+    outcome: StageOutcome,
+) -> Result<StageOutcome, ArchonError> {
+    assert_eq!(stage.run, run.id, "the stage belongs to the run");
+    let StageOutcome::Failed { error, .. } = &outcome else {
+        return Ok(outcome);
+    };
+    // A team slot works in its own worktree; a stage without a stored request, in the run's.
+    let workspace = match spawn::load_spawn(store, &stage.id) {
+        Ok(spawn) => spawn.request.workspace,
+        Err(error) if error.is_store() => return Err(error),
+        Err(_) => run.workspace.clone(),
+    };
+    assert!(workspace.is_absolute(), "run workspaces are absolute");
+    if workspace.is_dir() || error.starts_with(spawn::WORKSPACE_MISSING) {
+        return Ok(outcome);
+    }
+    let error = format!(
+        "{} {}; the engine said: {error}",
+        spawn::WORKSPACE_MISSING,
+        workspace.display()
+    );
+    Ok(StageOutcome::Failed {
+        error,
+        infra: false,
+    })
 }
 
 /// Record a final outcome and apply the driver's resulting decision.

@@ -195,8 +195,8 @@ pub enum TriggerEvent {
         state: String,
         detail: String,
     },
-    /// A delivered pull request's checks `failed` (they ran), or are `not_started`:
-    /// GitHub never ran them (billing, no runner), which only the operator fixes.
+    /// A delivered pull request's checks `failed` (they ran), are `not_started`
+    /// (billing, no runner: the operator's to fix), or are `absent` altogether.
     PrChecks {
         item: QueueItemId,
         url: String,

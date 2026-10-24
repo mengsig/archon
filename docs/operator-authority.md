@@ -127,8 +127,15 @@ Details:
 
 - `/archon set` edits the global overlay, or a repository's with `--repo`.
   `default.<knob>` and `max.<knob>` change defaults and ceilings. Other keys
-  match `OperatorSettings`, including `budgets_enabled`, `budget_usd_per_item`
-  and `default_pipeline`. Omitted fields are preserved.
+  match `OperatorSettings`, including `budgets_enabled`, `budget_usd_per_item`,
+  `default_pipeline` and `checks`. Omitted fields are preserved.
+- `checks=waived` (`{"checks":"waived"}` in JSON) tells Archon the operator
+  does without pull request checks, for example while GitHub Actions billing
+  fails: checks that never start are a quiet feed line, never a wake of the
+  orchestrator or an operator blocker. Unset (or `watched`), such checks are
+  a quiet feed line first and wake the orchestrator once if they are still
+  not started 30 minutes later. A pull request with no checks at all is a
+  quiet feed line either way. Checks that ran and failed are told either way.
 - Registry settings `grant_merge`, `merge_waive_checks`, `ship`, `base_branch`, `attribution` and `gh_user` use a separate
   `/archon set --repo` message; mixing them with overlay fields is refused.
 - `/archon reset [--repo NAME]` clears the scope's overlay. Registry settings

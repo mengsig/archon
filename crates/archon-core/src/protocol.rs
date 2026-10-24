@@ -61,9 +61,11 @@ use crate::steer::Steer;
 /// text-only `say` is the frame it always was.
 /// 19: `gc` may ask for a `preview`, which an older archond would ignore and
 /// collect for real.
-/// 20: `tracked` changes with an `idempotency_key`, and `request_status`; an
+/// 20: `refresh_item` may carry `model_plan`, `model_reasons` and
+/// `stage_timeouts`, which an older archond would drop.
+/// 21: `tracked` changes with an `idempotency_key`, and `request_status`; an
 /// older archond knows neither request.
-pub const PROTOCOL_VERSION: u32 = 20;
+pub const PROTOCOL_VERSION: u32 = 21;
 
 /// Said beside an item whose `budget_usd` was set while budgets are off.
 pub const BUDGETS_OFF_NOTE: &str = "Dollar budgets are globally off ([limits] budgets_enabled = \
@@ -232,8 +234,17 @@ pub enum Request {
     },
     /// Merge the finished item's base branch, fetched afresh, into its branch:
     /// a new item on the same branch and pull request (ARCHITECTURE §13).
+    /// Its plan and stage timeouts are the stage defaults unless given here,
+    /// never the finished item's own.
     RefreshItem {
         item: QueueItemId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model_plan: Option<ModelPlanDraft>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model_reasons: Option<ModelReasons>,
+        /// Stage id to minutes; within the configured maximum.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        stage_timeouts: BTreeMap<String, u32>,
     },
     Pause(PauseTarget),
     Resume(PauseTarget),
@@ -1181,6 +1192,9 @@ pub struct DaemonStatus {
     /// its last green commit and the merges since.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub integration: Vec<crate::integration::IntegrationStatus>,
+    /// Agents of running stages that leave inbox items unread, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stage_warnings: Vec<StageWarning>,
 }
 
 /// `DaemonStatus::recovery`: how far archond is in recovering its runs.
@@ -1618,6 +1632,9 @@ pub struct ItemDetail {
     /// Requests to merge the item's pull request, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub merges: Vec<MergeRequest>,
+    /// Agents of its running stages that leave inbox items unread.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stage_warnings: Vec<StageWarning>,
 }
 
 /// An agent a stage agent delegated to, itself or through another.
@@ -1627,8 +1644,8 @@ pub struct DelegatedAgent {
     /// The stage agent, or the delegated agent that delegated further.
     pub parent: AetherAgentId,
     pub model: ModelRef,
-    /// `None` until Archon reads it from Aether, which it does when the
-    /// stage has ended.
+    /// Read from Aether when the agent is created and again when the stage
+    /// has ended; `None` while Aether has not said.
     pub effort: Option<Effort>,
     pub cost_usd: f64,
 }
@@ -1641,6 +1658,36 @@ impl DelegatedAgent {
             .map_or("effort unknown".to_owned(), |e| e.to_string());
         let cost = crate::cost::format_usd(self.cost_usd);
         format!("{} {} ({effort}) {cost}", self.agent, self.model)
+    }
+}
+
+/// An agent of a running stage that leaves inbox items unread: what a lead
+/// that died while the agents it delegated to finished looks like.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StageWarning {
+    pub item: QueueItemId,
+    pub stage: StageRunId,
+    /// The stage's name in its pipeline.
+    pub stage_id: String,
+    /// The stage agent, or an agent beneath it.
+    pub agent: AetherAgentId,
+    pub unread: u32,
+    /// When the oldest unread item was delivered.
+    pub since: Timestamp,
+}
+
+impl StageWarning {
+    /// `stage build of qi_…: agt_… has left 2 inbox item(s) unread since …`.
+    pub fn describe(&self) -> String {
+        format!(
+            "stage {} of {}: {} has left {} inbox item(s) unread since {}; \
+             the agent that should read them may have died while the agents it delegated to finished",
+            self.stage_id,
+            self.item,
+            self.agent,
+            self.unread,
+            self.since.to_rfc3339()
+        )
     }
 }
 

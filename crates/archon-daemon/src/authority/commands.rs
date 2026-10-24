@@ -90,11 +90,12 @@ const REPO_KEYS: [&str; 6] = [
 ];
 
 /// Repository-scope overlay keys; the rest of the settings are global only.
-const REPO_OVERLAY_KEYS: [&str; 6] = [
+const REPO_OVERLAY_KEYS: [&str; 7] = [
     "budgets_enabled",
     "budget_usd_per_item",
     "max_per_repo",
     "default_pipeline",
+    "checks",
     "autonomy_default",
     "autonomy_max",
 ];
@@ -219,7 +220,7 @@ async fn overlay_settings(
             if repo.is_some() && !REPO_OVERLAY_KEYS.contains(&key) {
                 return Err(unknown_repo_key(key));
             }
-            value[key] = if key == "default_pipeline" {
+            value[key] = if matches!(key, "default_pipeline" | "checks") {
                 serde_json::json!(raw)
             } else {
                 serde_json::from_str(raw)

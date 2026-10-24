@@ -124,6 +124,9 @@ async fn shipped(h: &Harness, title: &str) -> (QueueItem, PipelineRun) {
 async fn refresh(h: &Harness, item: &QueueItem) -> Result<QueueItem, ArchonError> {
     let request = Request::RefreshItem {
         item: item.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        stage_timeouts: Default::default(),
     };
     match h.orchestrator(request).await? {
         Reply::Item(item) => Ok(item),
@@ -424,12 +427,8 @@ async fn pr_checks_news(h: &Harness) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Jobs GitHub never started for billing are the operator's blocker and a
-/// `not_started` event, never a failure of the change; told once.
-#[tokio::test]
-async fn checks_github_never_started_are_not_reported_as_failing() {
-    let (h, gh) = delivering().await;
-    let (_, run) = shipped(&h, "the change").await;
+/// Checks GitHub never started for billing, as GitHub reports them.
+fn billing_refusal(gh: &FakeGh) -> &'static str {
     let started = "2026-10-15T09:20:44Z";
     gh.set_checks(&json!([
         job("lint", "fail", started, 11),
@@ -437,6 +436,44 @@ async fn checks_github_never_started_are_not_reported_as_failing() {
     ]));
     let why = "The job was not started because recent account payments have failed";
     gh.set_annotations(&json!([{"message": why, "annotation_level": "failure"}]));
+    why
+}
+
+/// Move the quiet `not_started` line of `run`'s watch `minutes` into the past.
+async fn age_not_started(h: &Harness, run: &PipelineRun, minutes: i64) {
+    let key = format!("ship_checks:{}", run.id);
+    let mut watch: Value = serde_json::from_str(&h.kv(&key).await.expect("watched")).unwrap();
+    assert!(watch["not_started_at"].is_string(), "told quietly first");
+    watch["not_started_at"] = json!(archon_core::now() - chrono::Duration::minutes(minutes));
+    watch["next_at"] = json!("2000-01-01T00:00:00Z");
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&key, &watch.to_string())
+        .unwrap();
+}
+
+/// Whether each held `pr_checks` event waits quietly, oldest first.
+async fn pr_checks_quiet(h: &Harness) -> Vec<bool> {
+    let raw = h.kv("trigger_outbox").await.expect("news is held");
+    let outbox: Value = serde_json::from_str(&raw).unwrap();
+    let pending = outbox["pending"].as_array().expect("pending news");
+    pending
+        .iter()
+        .filter(|news| news["type"] == "pr_checks")
+        .map(|news| news["quiet"] == json!(true))
+        .collect()
+}
+
+/// Jobs GitHub never started for billing are a `not_started` event, never a
+/// failure of the change: a quiet feed line first, and the operator's
+/// blocker and a wake once they stay unstarted half an hour; told once.
+#[tokio::test]
+async fn checks_github_never_started_are_not_reported_as_failing() {
+    let (h, gh) = delivering().await;
+    let (_, run) = shipped(&h, "the change").await;
+    let why = billing_refusal(&gh);
     executor::coordination::reconcile(&h.ctx).await.unwrap();
     assert!(
         gh.count("pr checks") == 0,
@@ -445,9 +482,6 @@ async fn checks_github_never_started_are_not_reported_as_failing() {
 
     age_watch(&h, &run, 3).await;
     executor::coordination::reconcile(&h.ctx).await.unwrap();
-    let blockers = h.notices(NotificationKind::Blocker).await;
-    let told = |n: &&String| n.contains("never started") && n.contains(why) && n.contains(PR_ONE);
-    assert_eq!(blockers.iter().filter(told).count(), 1, "{blockers:?}");
     let news = pr_checks_news(&h).await;
     assert_eq!(news.len(), 1, "{news:?}");
     assert_eq!(news[0].0, "not_started");
@@ -455,6 +489,26 @@ async fn checks_github_never_started_are_not_reported_as_failing() {
         news[0].1.starts_with("lint, test: The job was not started"),
         "{news:?}"
     );
+    assert_eq!(pr_checks_quiet(&h).await, [true], "a quiet line");
+    let blockers = h.notices(NotificationKind::Blocker).await;
+    assert!(
+        !blockers.iter().any(|n| n.contains("never started")),
+        "{blockers:?}"
+    );
+
+    age_not_started(&h, &run, 10).await;
+    executor::coordination::reconcile(&h.ctx).await.unwrap();
+    assert_eq!(pr_checks_news(&h).await.len(), 1, "not yet long enough");
+
+    age_not_started(&h, &run, 31).await;
+    executor::coordination::reconcile(&h.ctx).await.unwrap();
+    let blockers = h.notices(NotificationKind::Blocker).await;
+    let told = |n: &&String| n.contains("never started") && n.contains(why) && n.contains(PR_ONE);
+    assert_eq!(blockers.iter().filter(told).count(), 1, "{blockers:?}");
+    let news = pr_checks_news(&h).await;
+    assert_eq!(news.len(), 2, "{news:?}");
+    assert_eq!(news[1].0, "not_started");
+    assert_eq!(pr_checks_quiet(&h).await, [true, false], "then a wake");
     let failed = h.notices(NotificationKind::Outcome).await;
     assert!(
         !failed.iter().any(|n| n.contains("checks of")),
@@ -465,6 +519,70 @@ async fn checks_github_never_started_are_not_reported_as_failing() {
         None,
         "told once"
     );
+}
+
+/// Under a repository's `checks = "waived"`, checks that never started are
+/// a quiet feed line only: no wake, no blocker, and the watch ends.
+#[tokio::test]
+async fn waived_checks_that_never_started_are_a_quiet_line_only() {
+    use archon_core::settings::{ChecksMode, OperatorSettings};
+    let (h, gh) = delivering().await;
+    let waive = Request::SetSettings {
+        repo: Some(RepoRef(REPO_NAME.into())),
+        settings: OperatorSettings {
+            checks: Some(ChecksMode::Waived),
+            ..OperatorSettings::default()
+        },
+    };
+    h.cli(waive).await.expect("waived");
+    let (_, run) = shipped(&h, "the change").await;
+    billing_refusal(&gh);
+    age_watch(&h, &run, 3).await;
+    executor::coordination::reconcile(&h.ctx).await.unwrap();
+    let news = pr_checks_news(&h).await;
+    assert_eq!(news.len(), 1, "{news:?}");
+    assert_eq!(news[0].0, "not_started");
+    assert_eq!(pr_checks_quiet(&h).await, [true], "no wake");
+    let blockers = h.notices(NotificationKind::Blocker).await;
+    assert!(
+        !blockers.iter().any(|n| n.contains("never started")),
+        "{blockers:?}"
+    );
+    assert_eq!(h.kv(&format!("ship_checks:{}", run.id)).await, None);
+}
+
+/// A pull request that has no checks half an hour after delivery is a quiet
+/// `absent` line, watched or waived alike, and the watch ends.
+#[tokio::test]
+async fn absent_checks_are_a_quiet_line_watched_or_waived() {
+    use archon_core::settings::{ChecksMode, OperatorSettings};
+    for mode in [None, Some(ChecksMode::Waived)] {
+        let (h, gh) = delivering().await;
+        let settings = OperatorSettings {
+            checks: mode,
+            ..OperatorSettings::default()
+        };
+        let repo = Some(RepoRef(REPO_NAME.into()));
+        h.cli(Request::SetSettings { repo, settings })
+            .await
+            .unwrap();
+        let (_, run) = shipped(&h, "the change").await;
+        gh.set_checks(&json!([]));
+        age_watch(&h, &run, 3).await;
+        executor::coordination::reconcile(&h.ctx).await.unwrap();
+        assert!(
+            pr_checks_news(&h).await.is_empty(),
+            "{mode:?}: checks may yet appear"
+        );
+
+        age_watch(&h, &run, 31).await;
+        executor::coordination::reconcile(&h.ctx).await.unwrap();
+        let news = pr_checks_news(&h).await;
+        assert_eq!(news.len(), 1, "{mode:?}: {news:?}");
+        assert_eq!(news[0].0, "absent");
+        assert_eq!(pr_checks_quiet(&h).await, [true], "{mode:?}: no wake");
+        assert_eq!(h.kv(&format!("ship_checks:{}", run.id)).await, None);
+    }
 }
 
 /// Checks that ran and failed are a `failed` event; pending ones are looked
@@ -587,46 +705,86 @@ async fn many_unstarted_jobs_and_refused_probes_are_told_right() {
     assert_eq!(news[2], ("failed".to_owned(), "failed: test".to_owned()));
 }
 
-/// Steering changes a run's plan without changing the item's pipeline name.
+/// A refresh runs on the stage defaults, not the plan, reasons and stage
+/// timeouts its owner was given for other work.
 #[tokio::test]
-async fn a_refresh_maps_a_steered_build_and_its_reviewers_to_implement() {
+async fn a_refresh_runs_the_stage_defaults_not_its_owner_s_overrides() {
     let (h, _gh) = delivering().await;
-    let (owner, _) = shipped(&h, "steered change").await;
+    let (owner, _) = shipped(&h, "overridden change").await;
+    let defaults = owner.model_plan.clone();
     let mut stored = h.ctx.store.lock().await.item(&owner.id).unwrap();
-    let implement = stored.model_plan.0.remove("implement").unwrap();
-    stored
-        .model_plan
-        .0
-        .insert("build".into(), implement.clone());
-    let reviewers = vec![common::choice(
+    let pricey = vec![common::choice(
         REVIEW_MODEL,
-        archon_core::model::Effort::Medium,
+        archon_core::model::Effort::Max,
     )];
-    stored
-        .model_plan
-        .0
-        .insert("build.review".into(), reviewers.clone());
-    stored.model_reasons = Some([("build".into(), "retain the implementer".into())].into());
+    assert_ne!(defaults.choices_for("implement"), Some(pricey.as_slice()));
+    stored.model_plan.0.insert("implement".into(), pricey);
+    stored.model_reasons = Some([("implement".into(), "a hard change".into())].into());
+    stored.stage_timeouts = [("implement".to_owned(), 45)].into();
     h.ctx.store.lock().await.update_item(&stored).unwrap();
     advance_origin(&h, "upstream.txt", "elsewhere\n");
     let fix = refresh(&h, &owner).await.unwrap();
     assert_eq!(fix.pipeline, "direct");
-    assert_eq!(
-        fix.model_plan.choices_for("implement"),
-        Some(implement.as_slice())
-    );
-    assert_eq!(
-        fix.model_plan.choices_for("implement.review"),
-        Some(reviewers.as_slice())
-    );
-    assert!(!fix.model_plan.0.contains_key("build"));
-    assert_eq!(
-        fix.model_reasons.unwrap()["implement"],
-        "retain the implementer"
-    );
+    assert_eq!(fix.model_plan, defaults, "the stage defaults");
+    assert_eq!(fix.model_reasons, None);
+    assert!(fix.stage_timeouts.is_empty(), "{:?}", fix.stage_timeouts);
     h.dispatch().await;
     assert_eq!(h.running().await[0].stage_id, "implement");
-    assert!(matches!(h.state(&fix.id).await, QueueState::Running { .. }));
+}
+
+/// A refresh asked for a plan, reasons and stage timeouts runs on them,
+/// checked as an enqueue's are.
+#[tokio::test]
+async fn a_refresh_takes_the_plan_and_stage_timeouts_it_is_given() {
+    let (h, _gh) = delivering().await;
+    let (owner, _) = shipped(&h, "the change").await;
+    advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let asked = |stage: &str, minutes: u32| Request::RefreshItem {
+        item: owner.id.clone(),
+        model_plan: Some(
+            serde_json::from_value(
+                json!({"implement": [{"model": REVIEW_MODEL, "effort": "high"}]}),
+            )
+            .unwrap(),
+        ),
+        model_reasons: Some([("implement".into(), "conflicts to resolve".into())].into()),
+        stage_timeouts: [(stage.to_owned(), minutes)].into(),
+    };
+    let refused = h
+        .orchestrator(asked("ship_it", 30))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refused.contains("stage_timeouts names stage \"ship_it\""),
+        "{refused}"
+    );
+    let two = [("medium", REVIEW_MODEL), ("low", REVIEW_MODEL)]
+        .map(|(effort, model)| json!({"model": model, "effort": effort}));
+    let too_many = Request::RefreshItem {
+        item: owner.id.clone(),
+        model_plan: Some(serde_json::from_value(json!({"implement": two})).unwrap()),
+        model_reasons: None,
+        stage_timeouts: Default::default(),
+    };
+    let refused = h.orchestrator(too_many).await.unwrap_err().to_string();
+    assert!(
+        refused.contains("1 to 1 model choice(s), not 2"),
+        "{refused}"
+    );
+    let Reply::Item(fix) = h.orchestrator(asked("implement", 30)).await.unwrap() else {
+        panic!("a refresh item");
+    };
+    let high = common::choice(REVIEW_MODEL, archon_core::model::Effort::High);
+    assert_eq!(
+        fix.model_plan.choices_for("implement"),
+        Some([high].as_slice())
+    );
+    assert_eq!(
+        fix.model_reasons.unwrap()["implement"],
+        "conflicts to resolve"
+    );
+    assert_eq!(fix.stage_timeouts, [("implement".to_owned(), 30)].into());
 }
 
 #[tokio::test]

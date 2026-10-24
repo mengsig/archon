@@ -19,6 +19,7 @@ mod gh_account;
 pub mod github;
 pub mod handlers;
 pub mod host_load;
+mod inbox_health;
 pub mod integration;
 pub mod mirror;
 pub mod notification_center;

@@ -30,6 +30,7 @@ const PREFIXES: &[&str] = &[
     "link_ended_",
     "link_stage_agent_",
     "report:",
+    "inbox_unread_",
 ];
 
 fn passing(stage: &StageRun) -> StageOutcome {

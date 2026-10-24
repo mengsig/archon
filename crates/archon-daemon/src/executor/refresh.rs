@@ -5,12 +5,13 @@
 //! ships into the pull request the branch already has. The base of an `onto`
 //! item is the head of its pull request, which other deliveries move.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use archon_core::autonomy::{ProposalMode, ReportMode};
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
-use archon_core::model::{ModelPlan, reviewers_key};
+use archon_core::model::{ModelPlan, ModelPlanDraft, ModelReasons};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::{Repo, ShipMode};
 use archon_core::run::PipelineRun;
@@ -30,6 +31,7 @@ use crate::worktree::stack;
 pub(crate) async fn refresh_item(
     ctx: &DaemonContext,
     id: &QueueItemId,
+    asked: Asked,
 ) -> Result<QueueItem, ArchonError> {
     let (owner, run, repo) = target(ctx, id).await?;
     let env = RepoEnv::new(Some(repo.clone()))?;
@@ -38,7 +40,7 @@ pub(crate) async fn refresh_item(
         None => base_of(ctx, &run, &env).await?,
     };
     let catalog = crate::learned::catalog(ctx).await?;
-    let prepared = refresh_owner(ctx, &owner, &env, &catalog)?;
+    let prepared = refresh_owner(ctx, &owner, &env, &catalog, asked)?;
     if repo.ship == ShipMode::Pr && run.shipped {
         check_pr_open(ctx, &repo, &run).await?;
     }
@@ -112,18 +114,31 @@ async fn target(
     Ok((item, run, repo))
 }
 
-/// Keep the owner's pipeline, but discard stale stage choices left by steering.
+/// What a refresh is asked to run with; the stage defaults where unset.
+#[derive(Debug, Default)]
+pub(crate) struct Asked {
+    pub model_plan: Option<ModelPlanDraft>,
+    pub model_reasons: Option<ModelReasons>,
+    pub stage_timeouts: BTreeMap<String, u32>,
+}
+
+/// The owner's pipeline and knobs, proposal and report off, on the plan and
+/// stage timeouts `asked` names, else the stage defaults: never the owner's
+/// own, which were chosen for other work.
 fn refresh_owner(
     ctx: &DaemonContext,
     owner: &QueueItem,
     env: &RepoEnv,
     catalog: &archon_core::model_tier::ModelCatalog,
+    asked: Asked,
 ) -> Result<QueueItem, ArchonError> {
     let mut item = owner.clone();
     item.autonomy.proposal = ProposalMode::Off;
     item.autonomy.report = ReportMode::Off;
     let (base, spec) = knobs::item_specs(env, &item)?;
     knobs::check_ceiling(&env.autonomy(ctx), env, &base, item.autonomy)?;
+    crate::handlers::check_reasons(&spec, asked.model_reasons.as_ref())?;
+    crate::handlers::check_stage_timeouts(ctx, &spec, &asked.stage_timeouts)?;
     let policy = env.policy(&ctx.config);
     let weights = env.provider_weights(&ctx.config);
     let quota = crate::quota::view(ctx);
@@ -131,51 +146,14 @@ fn refresh_owner(
     let tiers = knobs::TierScope::new(&ctx.config, &policy, catalog).routed(route);
     let max_tier = env.max_default_tier(&ctx.config);
     let fallback = knobs::default_choice(&ctx.config, tiers, max_tier, &spec);
-    let mut plan = ModelPlan::default();
-    let mut reasons = archon_core::model::ModelReasons::default();
-    for stage in &spec.file.stages {
-        let source = if stage.id == "implement" && !owner.model_plan.0.contains_key("implement") {
-            "build"
-        } else {
-            &stage.id
-        };
-        for (target, source, limit) in [
-            (
-                stage.id.clone(),
-                source.to_owned(),
-                stage.choice_limit() as usize,
-            ),
-            (
-                reviewers_key(&stage.id),
-                reviewers_key(source),
-                archon_pipeline::spec::STRICT_REVIEWERS as usize,
-            ),
-        ] {
-            if target.ends_with(".review") && spec.reviewers_key().as_ref() != Some(&target) {
-                continue;
-            }
-            if let Some(choices) = owner.model_plan.choices_for(&source) {
-                let choices: Vec<_> = choices
-                    .iter()
-                    .filter(|choice| policy.check(choice).is_ok())
-                    .take(limit)
-                    .cloned()
-                    .collect();
-                if !choices.is_empty() {
-                    plan.0.insert(target.clone(), choices);
-                    if let Some(reason) = owner.model_reasons.as_ref().and_then(|r| r.get(&source))
-                    {
-                        reasons.insert(target, reason.clone());
-                    }
-                }
-            }
-        }
-    }
-    let plan = knobs::fill_stage_tiers(tiers, max_tier, &spec, plan);
+    let given = match asked.model_plan {
+        Some(draft) => knobs::resolve_plan(&spec, draft, asked.model_reasons.as_ref(), tiers)?,
+        None => ModelPlan::default(),
+    };
+    let plan = knobs::fill_stage_tiers(tiers, max_tier, &spec, given);
     item.model_plan = knobs::fill_static_stages(&base, &spec, plan, fallback.as_ref())?;
-    item.model_reasons = Some(reasons);
-    item.stage_timeouts
-        .retain(|stage, _| spec.stage(stage).is_some());
+    item.model_reasons = asked.model_reasons;
+    item.stage_timeouts = asked.stage_timeouts;
     for stage in &spec.file.stages {
         if item
             .model_plan
@@ -188,8 +166,7 @@ fn refresh_owner(
             )));
         }
     }
-    spec.check_plan_keys(&item.model_plan)?;
-    policy.check_plan(&item.model_plan)?;
+    crate::handlers::check_plan(ctx, env, &spec, &item.model_plan)?;
     Ok(item)
 }
 

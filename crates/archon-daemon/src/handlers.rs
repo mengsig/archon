@@ -8,7 +8,7 @@ mod cost;
 mod initiatives;
 mod item_views;
 mod items;
-pub(crate) use items::check_stage_timeouts;
+pub(crate) use items::{check_plan, check_reasons, check_stage_timeouts};
 mod learning;
 
 pub use learning::memory_feedback::{
@@ -449,7 +449,19 @@ async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, Ar
             };
             items::retry(ctx, &item, retry).await
         }
-        Request::RefreshItem { item } => items::refresh(ctx, &item).await,
+        Request::RefreshItem {
+            item,
+            model_plan,
+            model_reasons,
+            stage_timeouts,
+        } => {
+            let asked = crate::executor::refresh::Asked {
+                model_plan,
+                model_reasons,
+                stage_timeouts,
+            };
+            items::refresh(ctx, &item, asked).await
+        }
         Request::Status(query) => control::status(ctx, query).await,
         Request::SetCaps { caps } => control::set_caps(ctx, caps).await,
         Request::Settings { repo } => settings::view(ctx, repo.as_ref()).await,

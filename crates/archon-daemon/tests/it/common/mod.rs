@@ -1300,6 +1300,12 @@ impl AgentBackend for FakeBackend {
         Ok(found)
     }
 
+    async fn agent_effort(&self, agent: &AetherAgentId) -> Result<Option<Effort>, ArchonError> {
+        let state = self.state();
+        let delegated = state.delegated.iter().find(|d| d.agent == *agent);
+        Ok(delegated.and_then(|d| d.effort))
+    }
+
     async fn pulse(&self, agent: &AetherAgentId) -> Result<Option<TreePulse>, ArchonError> {
         let state = self.state();
         if !state.knows(agent) {

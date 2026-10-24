@@ -155,6 +155,7 @@ impl Fake {
                 delegations: Default::default(),
                 switched_to: None,
                 merges: Vec::new(),
+                stage_warnings: Vec::new(),
             })),
             Request::RepoList => Reply::Repos(vec![]),
             Request::ListQuestions { .. } => Reply::Questions(vec![]),

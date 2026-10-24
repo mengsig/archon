@@ -8,6 +8,7 @@ pub(crate) mod shadow;
 pub mod snapshot;
 pub(crate) mod stack;
 pub mod team;
+pub(crate) mod users;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

@@ -1,14 +1,18 @@
 //! The checks of a delivered pull request, watched as an owed look
 //! (ARCHITECTURE §8.7). Archon tells the orchestrator and the operator once
 //! when they fail, and separately when GitHub never started them: that is the
-//! operator's to fix (billing, runners), not the change's. Checks that pass,
-//! or a look GitHub keeps refusing, end the watch quietly.
+//! operator's to fix (billing, runners), not the change's. Checks that never
+//! started are a quiet feed line first, and wake the orchestrator only once
+//! they stay so; under a repository's `checks = "waived"` they never wake.
+//! No checks at all is a quiet feed line in either mode, never a wake.
+//! Checks that pass, or a look GitHub keeps refusing, end the watch quietly.
 
 use std::time::Duration;
 
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, RepoId};
 use archon_core::notify::NotificationKind;
+use archon_core::settings::ChecksMode;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +31,8 @@ const LOOK_EVERY: Duration = Duration::from_secs(600);
 const QUEUED_LIMIT: Duration = Duration::from_secs(1_800);
 /// A pull request with no checks this long after delivery has none to watch.
 const NO_CHECKS_LIMIT: Duration = Duration::from_secs(1_800);
+/// Checks told quietly as never started wake the orchestrator this much later.
+const NOT_STARTED_LIMIT: Duration = Duration::from_secs(1_800);
 /// The watch ends, logged, this long after delivery.
 const GIVE_UP: Duration = Duration::from_secs(24 * 3_600);
 
@@ -37,6 +43,9 @@ struct Watch {
     url: String,
     delivered_at: DateTime<Utc>,
     next_at: DateTime<Utc>,
+    /// When checks that never started were told as a quiet feed line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    not_started_at: Option<DateTime<Utc>>,
 }
 
 fn key(run: &PipelineRunId) -> String {
@@ -72,6 +81,7 @@ pub(super) fn owe(
         url: url.to_owned(),
         delivered_at: now,
         next_at: after(now, FIRST_LOOK),
+        not_started_at: None,
     };
     store.kv_set(&key(run), &serde_json::to_string(&watch)?)
 }
@@ -147,7 +157,7 @@ async fn reject(
 async fn look_once(
     ctx: &DaemonContext,
     run: &PipelineRunId,
-    mut watch: Watch,
+    watch: Watch,
 ) -> Result<bool, ArchonError> {
     let now = archon_core::now();
     let waited = |limit| now >= after(watch.delivered_at, limit);
@@ -176,7 +186,7 @@ async fn look_once(
     };
     match checks {
         Checks::Passed => end(ctx, run, &watch, "checks passed").await,
-        Checks::None if waited(NO_CHECKS_LIMIT) => end(ctx, run, &watch, "no checks").await,
+        Checks::None if waited(NO_CHECKS_LIMIT) => no_checks(ctx, run, &watch).await,
         Checks::None | Checks::Pending if waited(GIVE_UP) => {
             end(
                 ctx,
@@ -186,17 +196,86 @@ async fn look_once(
             )
             .await
         }
-        Checks::None | Checks::Pending => {
-            watch.next_at = after(now, LOOK_EVERY);
-            let raw = serde_json::to_string(&watch)?;
-            ctx.store.lock().await.kv_set(&key(run), &raw)?;
-            Ok(false)
-        }
+        Checks::None | Checks::Pending => look_later(ctx, run, watch).await,
         Checks::Failed { names } => report_failed(ctx, run, &watch, &names).await,
-        Checks::NotStarted { names, reason } => {
-            report_not_started(ctx, run, &watch, &names, &reason).await
-        }
+        Checks::NotStarted { names, reason } => not_started(ctx, run, watch, &names, &reason).await,
     }
+}
+
+async fn look_later(
+    ctx: &DaemonContext,
+    run: &PipelineRunId,
+    mut watch: Watch,
+) -> Result<bool, ArchonError> {
+    let now = archon_core::now();
+    watch.next_at = after(now, LOOK_EVERY);
+    assert!(watch.next_at > now, "the next look is later");
+    let raw = serde_json::to_string(&watch)?;
+    ctx.store.lock().await.kv_set(&key(run), &raw)?;
+    Ok(false)
+}
+
+/// Checks GitHub never started: a quiet feed line, then a wake once they
+/// stay so past [`NOT_STARTED_LIMIT`]; only the quiet line when waived.
+async fn not_started(
+    ctx: &DaemonContext,
+    run: &PipelineRunId,
+    mut watch: Watch,
+    names: &[String],
+    reason: &str,
+) -> Result<bool, ArchonError> {
+    assert!(!names.is_empty(), "some check never started");
+    let event = TriggerEvent::PrChecks {
+        item: watch.item.clone(),
+        url: watch.url.clone(),
+        state: "not_started".to_owned(),
+        detail: format!("{}: {reason}", names.join(", ")),
+    };
+    if checks_mode(ctx, &watch.repo) == ChecksMode::Waived {
+        tracing::info!(%run, url = %watch.url, "checks never started; waived, told quietly");
+        ctx.store.lock().await.kv_delete(&key(run))?;
+        triggers::push_quiet(ctx, event).await?;
+        return Ok(true);
+    }
+    let Some(since) = watch.not_started_at else {
+        tracing::info!(%run, url = %watch.url, "checks never started; told quietly for now");
+        watch.not_started_at = Some(archon_core::now());
+        triggers::push_quiet(ctx, event).await?;
+        return look_later(ctx, run, watch).await;
+    };
+    if archon_core::now() < after(since, NOT_STARTED_LIMIT) {
+        return look_later(ctx, run, watch).await;
+    }
+    report_not_started(ctx, run, &watch, names, reason).await
+}
+
+/// A pull request with no checks long after delivery: a quiet feed line, as
+/// a repository without CI has nothing to wake the orchestrator for.
+async fn no_checks(
+    ctx: &DaemonContext,
+    run: &PipelineRunId,
+    watch: &Watch,
+) -> Result<bool, ArchonError> {
+    let event = TriggerEvent::PrChecks {
+        item: watch.item.clone(),
+        url: watch.url.clone(),
+        state: "absent".to_owned(),
+        detail: format!(
+            "no checks {} minutes after delivery",
+            NO_CHECKS_LIMIT.as_secs() / 60
+        ),
+    };
+    let ended = end(ctx, run, watch, "no checks").await?;
+    assert!(ended, "the watch ends");
+    triggers::push_quiet(ctx, event).await?;
+    Ok(ended)
+}
+
+/// The repository's `checks` setting over the global one.
+fn checks_mode(ctx: &DaemonContext, repo: &RepoId) -> ChecksMode {
+    let book = crate::settings::mirror(ctx);
+    let mode = book.get(Some(repo)).checks.or(book.global.checks);
+    mode.unwrap_or_default()
 }
 
 async fn report_failed(

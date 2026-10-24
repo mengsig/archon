@@ -58,9 +58,8 @@ impl Overflow {
         self.count = self.count.saturating_add(1);
     }
 
-    /// What is left unread once items up to `up_to` were taken. Past the
-    /// oldest, its delivery time is unknown: the newest's is used, so a
-    /// warning may come late but never early.
+    /// What is left unread once items up to `up_to` were taken; past the oldest,
+    /// the newest's delivery time stands in, so a warning comes late, never early.
     fn after_taking(self, up_to: u64) -> Option<Self> {
         if self.last.0 <= up_to {
             return None;

@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+Store migration 16 (`tracked_requests`) and daemon protocol 20: `archon mcp`
+and archond must be upgraded together.
+
+### MCP tools
+
+- `refresh_item`, `retry_item`, `steer_item`, `update_item`, `cancel_item`,
+  `notify`, `github_reply`, `request_merge` and `message_orchestrator` take
+  an optional `idempotency_key`. For 24 h a repeat with the same key and
+  arguments returns the first result and changes nothing; the key with other
+  arguments is refused. Keys are kept in the store, so they hold across a
+  restart.
+- A change archond does not answer within the 15 s budget now returns
+  `pending: req_…` instead of a timeout error, and the new read-only
+  `request_status` tool reports whether it was applied, failed, is still
+  pending, or was interrupted by a restart, with its result.
+
+### Daemon
+
+- The read tools the orchestrator polls (`list_queue`, `get_item`,
+  `get_stage`, `list_repos`, `queue_status`) read on read-only connections
+  of their own, so they no longer wait behind a write: with a write held for 3 s, `list_queue`
+  answered in 6 ms instead of 3 s. WAL checkpoints run every 2 s on their
+  own connection, off the writer's lock.
+
 ## 1.4.5
 
 Released 2026-10-24.

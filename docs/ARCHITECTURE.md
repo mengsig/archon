@@ -102,7 +102,7 @@ archon-core ◀── archon-aether ◀──┐
 | --- | --- | --- |
 | `archon-core` | Ids (Archon's and Aether's), domain records (repo, queue item, run, stage run, feed), `Config` schema and loading, `ModelPolicy`, the Archon daemon protocol (`protocol`), the `AgentBackend` port trait (`ports`), pipeline catalog vocabulary (`catalog`), and the MCP tool names (`mcp_tools`). | Do I/O beyond reading config files. |
 | `archon-aether` | Rust client for Aether protocol v24 (falls back to 23 down to 14): transport, handshake, request multiplexing, subscriptions, typed subset of commands and events (`wire`, `events`), the reconnecting `AetherLink`, and `AetherBackend: AgentBackend`. | Know about queues or pipelines. |
-| `archon-queue` | `Store` (SQLite, migrations): repos, items, dependencies, runs, stage runs, feed, questions, spend ledger, pause state, kv cursors. Pure scheduler `plan_dispatch`. | Talk to Aether. |
+| `archon-queue` | `Store` (SQLite, migrations): repos, items, dependencies, runs, stage runs, feed, questions, spend ledger, pause state, kv cursors, tracked requests. Its read-only readers and `Checkpointer` (§16). Pure scheduler `plan_dispatch`. | Talk to Aether. |
 | `archon-pipeline` | Pipeline discovery (built-in, user, repo), TOML parse and validation, prompt templating, and the `RunDriver` state machine (gates, loops, fan-out). | Do I/O except reading pipeline files; spawn anything. |
 | `archon-client` | Async client for the Archon daemon socket (`connect`, `connect_or_start`, `request`, `subscribe_feed`), and the NDJSON framing shared with the server. | Contain daemon logic. |
 | `archon-mcp` | MCP stdio server (JSON-RPC 2.0): tool schemas, tool-name to `Request` mapping, result rendering. | Hold state; everything goes to `archond`. |
@@ -3070,6 +3070,11 @@ defined in `archon_core::protocol` and served by `archon-daemon`.
   and applies the inner request as one step (§11). A request from
   `archon-mcp` that changes Archon and comes without this wrapper is an
   unnamed call. It wraps no operator-only request and no second `ForAgent`.
+- `Tracked {request_id, idempotency_key?, request}` carries one change
+  under the `req_…` id `archon mcp` gave it, inside any `ForAgent`, and
+  `RequestStatus {request}` reads what became of it (§11.1). Neither wraps
+  a read, the other or a `ForAgent`. Protocol 20 added both; an older
+  archond is refused at hello.
 - The CLI takes an item id or its start. A whole id is sent as it is; a
   start goes to `ResolveItem {prefix}` first, which `archond` answers from
   one indexed range query: the one item, `not_found`, or `invalid_argument`
@@ -3112,8 +3117,9 @@ the moment its line was read, daemon autostart included, so a slow call
 cannot push the calls behind it past Aether's 20 s MCP timeout. Responses
 carry their request's id and may leave in a different order than the
 requests. `notifications/cancelled` is only logged: the call still ends
-within its 15 s. When stdin closes, the calls in flight are answered before
-the server exits.
+within its 15 s. A change that runs out of its 15 s answers `pending:
+req_…` instead (§11.1); a read answers a tool error. When stdin closes, the
+calls in flight are answered before the server exits.
 
 Every message, in either direction, is one line of at most 4 MiB, because
 Aether treats a longer one as a dead server. Request ids may be at most 256
@@ -3213,6 +3219,11 @@ can reach the socket (§5.5).
 | `github_reply` | `{repository, number, body}` | `GithubReply` (Archon's watched repositories only; see `docs/github-watcher.md`) |
 | `record_lesson` | `{kind: routing\|practice\|pitfall\|pipeline, text, repo?, pipeline?, item?}` | `RecordLesson` (§19; active at once, advice only) |
 | `request_merge` | `{item, reason?}` | `RequestMerge` (the orchestrator only, for the operator's own request; archond asks the operator to confirm unless `grant_merge` covers it; §18.6) |
+| `request_status` | `{request}` | `RequestStatus` (§11.1; the caller's own changes only) |
+
+`refresh_item`, `retry_item`, `steer_item`, `update_item`, `cancel_item`,
+`notify`, `github_reply`, `request_merge` and `message_orchestrator` also
+take `idempotency_key?` (§11.1), beside the arguments above.
 
 `get_stage` reads the item's latest run, or the one `run` names; attempts
 restart at 1 in each run. Without `stage` it lists every
@@ -3246,6 +3257,39 @@ request came from; the item's `item_finished` event carries it back.
 `{provider, model}` object, and `effort` accepts `xhigh` for `x_high`. The
 advertised schemas say exactly this: a test validates accepted arguments
 against each schema, and checks that arguments the schema refuses are refused.
+
+### 11.1 Tracked changes and `request_status`
+
+A change can take effect after its call timed out: the 15 s budget ends the
+call, not the work in `archond`. So `archon mcp` sends every change as
+`Tracked` under a new `req_…` id (`archon_core::tracked`), and a change it
+gets no answer to in time comes back as a result, not an error, whose text
+starts `pending: req_…` (`structuredContent: {pending, tool,
+idempotency_key}`), followed by the tool's own advice on checking it.
+
+- `archond` registers a tracked change in memory when it reads it, before
+  recovery, standby or the caller check can refuse it, and records its
+  outcome in `tracked_requests` (store migration 16) when it ends: the
+  reply when applied, the error when refused or failed.
+- `request_status {request}` answers from memory while the change runs,
+  then from the store: `pending`, `applied` with the change's reply,
+  `failed` with its error, or `interrupted` when `archond` stopped while it
+  ran. A caller sees only its own requests (by Aether agent id, or none);
+  any other id is `not_found`.
+- With `idempotency_key` (1-128 bytes of printable ASCII, one of the nine
+  keyed tools of §11) the change is claimed in the store before it runs,
+  scoped by caller, command and key. A repeat with the same key and the
+  same arguments, compared as canonical JSON, runs nothing: an applied
+  change returns its first reply, a pending, failed or interrupted one its
+  status. The same key with other arguments is refused (`invalid_argument`,
+  naming the first request), and nothing is changed. A failed change keeps
+  its failure; a new key tries again.
+- At start `archond` marks what was left pending `interrupted`. The prune
+  pass (§16) deletes finished requests 24 h after they started; a pending
+  one is never pruned. An unkeyed change's outcome is written once, when it
+  ends, so one interrupted by a restart is not found afterwards.
+- A refusal by recovery or standby is not recorded, so the key stays free
+  for the retry the refusal asks for.
 
 ## 12. Operator chat and filtering
 
@@ -4335,7 +4379,7 @@ rubric), and a review task (seeded bug must be reported).
 | A report poll fails or panics | Poll error, feedback Archon cannot act on, or the poll task ends abnormally. | Contained to that report (§14): a `System` note, a retry with backoff, and after 5 failures in a row the report is `stopped`. Only a store failure stops the event pump. |
 | Restart during a team merge | Startup: a passed team stage without `kv.team_merge:<run>:<stage>:<attempt>`. | The rebuilt driver emits `MergeTeam` again. The merge aborts a half-done `git merge` and skips branches already on the run branch, so nothing lands twice (§13.1). |
 | Restart while a run waits at an operator gate | Startup. | The gate row and any decision are persisted, and the rebuilt driver reads them. An open gate is not asked again; one whose answer was recorded without its decision is asked again (§18.3). |
-| SQLite busy | rusqlite error. | WAL mode, `busy_timeout = 5s`. Only `archond` writes, and CLI reads also go through `archond`. |
+| SQLite busy | rusqlite error. | WAL mode, `busy_timeout = 5s`. Only `archond` writes, and CLI reads also go through `archond`. Read tools run on four read-only connections of their own, so they never wait on the writer or its synced commits; the dispatcher reads on the writer. The WAL is checkpointed (`PASSIVE`) every 2 s on its own connection, off the writer's lock; the writer's own autocheckpoint is a backstop at 20000 pages. |
 | Store growth | The pruning pass, at startup and every 10 minutes. | `kv` entries nothing reads any more are deleted (below). Only a store failure stops the pass; anything else is logged and retried next pass. |
 
 **The `archon` MCP server.** Aether runs `archon mcp` as the `archon`

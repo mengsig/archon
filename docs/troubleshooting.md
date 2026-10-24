@@ -12,3 +12,7 @@ Inspect it with `archon initiatives list` and `archon initiatives show <id>`. Th
 ## The daemon stops soon after every start
 
 Read `archond`'s log (the `archond stopped error=...` line names the failing task). A panic in the coordination pass is logged and retried on the next pass, so a single bad record no longer stops the daemon. If an older version panics at start (for example `assertion failed: !ready || passed` in `initiative_ship.rs`, issue #200), update Archon: the bad record needs no manual repair, and no offline tool to edit the store exists.
+
+## A tool call answered `pending: req_…`
+
+The daemon did not answer the change within the MCP call's 15 s budget, but may still carry it out, so do not repeat it blindly. Call `request_status` with that `req_…` id: it answers `applied` with the change's result, `failed` with its error, `pending` while it still runs, or `interrupted` if archond stopped during it. A change made with an `idempotency_key` can also be repeated with the same key and arguments: it is never applied twice, and the repeat answers with the first result or status. `request_status` only shows the caller's own requests, and finished ones are kept for 24 h.

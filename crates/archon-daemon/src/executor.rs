@@ -441,7 +441,8 @@ pub async fn cancel_item(
     };
     assert_eq!(&item.id, id, "the store returns the item asked for");
     assert!(item.state.is_terminal(), "a cancelled item is settled");
-    run_follow_up(ctx, follow).await?;
+    // Boxed: inline, the round's future overflows a 2 MB stack in debug.
+    Box::pin(run_follow_up(ctx, follow)).await?;
     Ok(item)
 }
 

@@ -47,11 +47,10 @@ pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(
     };
     match &event.kind {
         EventKind::InboxDelivered { seq, message, .. } => {
-            inbox_delivered(ctx, event, agent, *seq).await?;
-            match message {
-                Some(message) => crate::agent_messages::inbox(ctx, agent, *seq, message).await,
-                None => Ok(()),
+            if let Some(message) = message {
+                crate::agent_messages::inbox(ctx, agent, *seq, message).await?;
             }
+            inbox_delivered(ctx, event, agent, *seq).await
         }
         EventKind::InboxConsumed { up_to } => inbox_health::consumed(ctx, agent, *up_to).await,
         EventKind::AgentCreated { model, .. } => {

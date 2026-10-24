@@ -260,6 +260,7 @@ fn item_detail(stage: StageRun) -> ItemDetail {
         delegations: Default::default(),
         switched_to: None,
         merges: Vec::new(),
+        stage_warnings: Vec::new(),
     }
 }
 
@@ -360,5 +361,37 @@ fn get_item_names_the_provider_weights_routed_the_item_to() {
     assert!(
         text.contains("\nRouted provider: codex (tier-only choices"),
         "{text}"
+    );
+}
+
+#[test]
+fn get_item_and_queue_status_show_an_agent_that_leaves_its_inbox_unread() {
+    let mut detail = item_detail(long_review(PipelineRunId::new()));
+    let stage = &detail.stages[0];
+    let warning = archon_core::protocol::StageWarning {
+        item: detail.item.id.clone(),
+        stage: stage.id.clone(),
+        stage_id: stage.stage_id.clone(),
+        agent: archon_core::aether_ids::AetherAgentId::parse("agt_lead").expect("agent id"),
+        unread: 2,
+        since: archon_core::now(),
+    };
+    detail.stage_warnings.push(warning.clone());
+    let text = render("get_item", &Reply::ItemDetail(Box::new(detail)));
+    let line = format!("\n    health: {}", warning.describe());
+    assert!(text.contains(&line), "{text}");
+    assert!(
+        warning
+            .describe()
+            .contains("agt_lead has left 2 inbox item(s) unread"),
+        "{}",
+        warning.describe()
+    );
+
+    let status = render::stage_warnings_text(std::slice::from_ref(&warning));
+    assert_eq!(status, format!("\nStage health: {}.", warning.describe()));
+    assert!(
+        render::stage_warnings_text(&[]).is_empty(),
+        "nothing when healthy"
     );
 }

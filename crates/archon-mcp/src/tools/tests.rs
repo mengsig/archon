@@ -88,6 +88,10 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
             json!({"item": qi(), "model_plan": plan(), "model_reasons": {"implement": "Retry with more reasoning"}, "fresh": true, "stage_timeouts": {"implement": 90}, "brief_append": "Do Y."}),
         ),
         ("refresh_item", json!({"item": qi()})),
+        (
+            "refresh_item",
+            json!({"item": qi(), "model_plan": plan(), "model_reasons": {"implement": "Rebase only"}, "stage_timeouts": {"implement": 30}}),
+        ),
         ("pause", json!({"scope": "repo", "name": "web"})),
         ("resume", json!({"scope": "pipeline", "name": "direct"})),
         (
@@ -952,6 +956,7 @@ fn get_item_shows_recorded_reasons_next_to_choices_and_omits_missing_reasons() {
         delegations: Default::default(),
         switched_to: None,
         merges: Vec::new(),
+        stage_warnings: Vec::new(),
     };
     let text = render("get_item", &Reply::ItemDetail(Box::new(detail.clone())));
     assert!(
@@ -1013,6 +1018,7 @@ fn get_item_lists_the_steers_made_to_the_item() {
         delegations: Default::default(),
         switched_to: None,
         merges: Vec::new(),
+        stage_warnings: Vec::new(),
     };
     let text = render("get_item", &Reply::ItemDetail(Box::new(detail.clone())));
     let expected = format!(
@@ -1088,6 +1094,7 @@ fn list_queue_and_get_item_expose_stable_waiting_reasons_in_text_and_json() {
                 waiting_reason: Some(wait.clone()),
                 switched_to: None,
                 merges: Vec::new(),
+                stage_warnings: Vec::new(),
             })),
         ),
     ];
@@ -1145,6 +1152,7 @@ fn dependency_titles_are_escaped_in_waiting_text() {
                 waiting_reason: Some(wait),
                 switched_to: None,
                 merges: Vec::new(),
+                stage_warnings: Vec::new(),
             })),
         ),
     ];

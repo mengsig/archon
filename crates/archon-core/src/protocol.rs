@@ -1174,6 +1174,9 @@ pub struct DaemonStatus {
     /// its last green commit and the merges since.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub integration: Vec<crate::integration::IntegrationStatus>,
+    /// Agents of running stages that leave inbox items unread, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stage_warnings: Vec<StageWarning>,
 }
 
 /// `DaemonStatus::recovery`: how far archond is in recovering its runs.
@@ -1611,6 +1614,9 @@ pub struct ItemDetail {
     /// Requests to merge the item's pull request, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub merges: Vec<MergeRequest>,
+    /// Agents of its running stages that leave inbox items unread.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stage_warnings: Vec<StageWarning>,
 }
 
 /// An agent a stage agent delegated to, itself or through another.
@@ -1634,6 +1640,36 @@ impl DelegatedAgent {
             .map_or("effort unknown".to_owned(), |e| e.to_string());
         let cost = crate::cost::format_usd(self.cost_usd);
         format!("{} {} ({effort}) {cost}", self.agent, self.model)
+    }
+}
+
+/// An agent of a running stage that leaves inbox items unread: what a lead
+/// that died while the agents it delegated to finished looks like.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StageWarning {
+    pub item: QueueItemId,
+    pub stage: StageRunId,
+    /// The stage's name in its pipeline.
+    pub stage_id: String,
+    /// The stage agent, or an agent beneath it.
+    pub agent: AetherAgentId,
+    pub unread: u32,
+    /// When the oldest unread item was delivered.
+    pub since: Timestamp,
+}
+
+impl StageWarning {
+    /// `stage build of qi_…: agt_… has left 2 inbox item(s) unread since …`.
+    pub fn describe(&self) -> String {
+        format!(
+            "stage {} of {}: {} has left {} inbox item(s) unread since {}; \
+             the agent that should read them may have died while the agents it delegated to finished",
+            self.stage_id,
+            self.item,
+            self.agent,
+            self.unread,
+            self.since.to_rfc3339()
+        )
     }
 }
 

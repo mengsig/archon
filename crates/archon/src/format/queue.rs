@@ -247,6 +247,9 @@ fn run_lines(out: &mut String, detail: &ItemDetail, run: &PipelineRun, full: boo
                 let _ = writeln!(out, "      {}", sanitize_line(&agent.line()));
             }
         }
+        for warning in detail.stage_warnings.iter().filter(|w| w.stage == stage.id) {
+            let _ = writeln!(out, "    health: {}", sanitize_line(&warning.describe()));
+        }
         if let Some(review) = archon_pipeline::review::on_record(stage.structured.as_ref()) {
             let _ = writeln!(out, "    {}", sanitize_line(&review));
         }
@@ -608,6 +611,7 @@ mod tests {
             delegations: Default::default(),
             switched_to: None,
             merges: Vec::new(),
+            stage_warnings: Vec::new(),
         }
     }
 
@@ -862,6 +866,7 @@ mod tests {
             delegations: Default::default(),
             switched_to: None,
             merges: Vec::new(),
+            stage_warnings: Vec::new(),
         };
         let text = item_detail(&detail, &RepoNames::new(), true);
         assert_inert(&text);

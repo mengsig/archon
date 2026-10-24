@@ -252,6 +252,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
     let waiting = super::waiting::WaitingView::read(ctx).await?;
     let estimates = ctx.config.limits.count_estimated_cost;
     let default_efforts = default_efforts(ctx, id).await?;
+    let stage_warnings = crate::inbox_health::warnings(ctx, archon_core::now(), Some(id)).await?;
     let store = ctx.store.lock().await;
     let item = store.item(id)?;
     let mut runs = store.runs_for_item(id)?;
@@ -295,6 +296,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
         gates,
         delegations,
         merges,
+        stage_warnings,
     })))
 }
 

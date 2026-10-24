@@ -519,10 +519,16 @@ at-least-once, so every handler is idempotent.
 | Subscription | Query | Handles |
 | --- | --- | --- |
 | `orchestrator` | `{agent: <orchestrator>, types:["agent.message","agent.turn_completed","agent.waiting","agent.started","question.asked","agent.failed","agent.cancelled","agent.completed","agent.restarted","agent.usage_updated","inbox.delivered","inbox.consumed","compaction.completed"]}` | Chat replies (§12), questions, supervisor, adopting an Aether restart (§16), orchestrator spend, restating the directives after a compaction (§18.5). |
-| `fleet` | `{types:["agent.created","task.completed","task.failed","task.cancelled","agent.failed","agent.cancelled","agent.completed","agent.usage_updated","question.asked","inbox.delivered"]}` | Stage completion, spend ledger, stage questions, model-policy watchdog, run-node inbox forwarding and authenticated relay provenance. An agent's end (`agent.completed`, `agent.failed`, `agent.cancelled`) also wakes the dispatcher, which stops what a settled stage agent delegated (§6.3). |
+| `fleet` | `{types:["agent.created","task.completed","task.failed","task.cancelled","agent.failed","agent.cancelled","agent.completed","agent.usage_updated","question.asked","inbox.delivered","inbox.consumed"]}` | Stage completion, spend ledger, stage questions, model-policy watchdog, run-node inbox forwarding, authenticated relay provenance and unread-inbox health. An agent's end (`agent.completed`, `agent.failed`, `agent.cancelled`) also wakes the dispatcher, which stops what a settled stage agent delegated (§6.3). |
 
 The `fleet` subscription also forwards message inbox entries addressed to
-run nodes (§5.5). `agent.created` events whose `parent_agent_id` is
+run nodes (§5.5). It also keeps, per agent that works for an item, the
+inbox items delivered and not yet consumed (`kv.inbox_unread_<agent>`,
+cleared by `inbox.consumed` and by the agent's end). An agent of a running
+stage, the stage agent or one beneath it, that leaves an item unread past
+`[dispatcher] inbox_unread_after` (15 minutes by default) is a stage health
+warning (`stage_warnings`) in `get_item` and `status`: a lead that died while
+the agents it delegated to finished looks like this. `agent.created` events whose `parent_agent_id` is
 a known Archon agent (the orchestrator, a stage agent or a watched child) are
 checked against `ModelPolicy`, and an offending agent is cancelled (§7.4).
 The event's `kind` carries the model and effort Aether admitted. A stage
@@ -4387,6 +4393,7 @@ so a pass costs what is still stored.
 | `run_node_agent:<agent>` | Its run finished more than 7 days ago and its node was retired (`run_node:<run>` is gone). A later event of that node at most waits the 5 s spawn grace (§4.6). |
 | `link_child_<agent>`, `link_unchecked_<agent>`, `link_cancelled_<agent>` | The child's item is terminal and last changed more than 7 days ago. For the orchestrator's children, which have no item, the pass asks `get_agent` (at most 32 a pass). The first pass that finds the child ended records when, in `link_ended_<agent>`, and all its entries go 7 days after that. |
 | `link_stage_agent_<agent>` | Its item is terminal and last changed more than 7 days ago (or is gone). A recorded stage agent is also found through its stage run (§4.6). |
+| `inbox_unread_<agent>` | Its item is terminal (or is gone): no stage of it runs, so nothing warns from it. |
 | `report:<id>` | The report is settled and last changed more than 7 days ago (§14). An ended or disconnected report is kept while its HTML file exists. |
 | An entry of `orchestrator_retired` | The orchestrator was replaced more than 7 days ago and the sweep of what it left running is no longer owed (§16). |
 | `descendant_stop:<stage run>` | Not by this pass: the dispatcher deletes it once Aether has confirmed the stop (§6.3). |

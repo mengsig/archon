@@ -15,7 +15,7 @@ use serde_json::Value;
 
 use super::watchdog;
 use crate::context::DaemonContext;
-use crate::{executor, feed};
+use crate::{executor, feed, inbox_health};
 
 /// How long a settle for an unknown agent that could be a spawning stage's
 /// waits for its spawn reply to be recorded (the reply and the first
@@ -46,11 +46,14 @@ pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(
         return Ok(());
     };
     match &event.kind {
-        EventKind::InboxDelivered {
-            seq,
-            message: Some(message),
-            ..
-        } => crate::agent_messages::inbox(ctx, agent, *seq, message).await,
+        EventKind::InboxDelivered { seq, message, .. } => {
+            inbox_delivered(ctx, event, agent, *seq).await?;
+            match message {
+                Some(message) => crate::agent_messages::inbox(ctx, agent, *seq, message).await,
+                None => Ok(()),
+            }
+        }
+        EventKind::InboxConsumed { up_to } => inbox_health::consumed(ctx, agent, *up_to).await,
         EventKind::AgentCreated { model, .. } => {
             watchdog::agent_created(ctx, event, agent, model).await
         }
@@ -58,11 +61,13 @@ pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(
         | EventKind::TaskFailed { .. }
         | EventKind::TaskCancelled { .. } => task_settled(ctx, event, agent).await,
         EventKind::AgentFailed { .. } | EventKind::AgentCancelled { .. } => {
+            inbox_health::ended(ctx, agent).await?;
             agent_died(ctx, event, agent).await?;
             turn_ended(ctx);
             Ok(())
         }
         EventKind::AgentCompleted => {
+            inbox_health::ended(ctx, agent).await?;
             turn_ended(ctx);
             Ok(())
         }
@@ -71,6 +76,22 @@ pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(
         EventKind::QuestionAsked { question } => question_asked(ctx, event, agent, question).await,
         _ => Ok(()),
     }
+}
+
+/// Inbox items of agents that work for an item are watched until taken.
+async fn inbox_delivered(
+    ctx: &DaemonContext,
+    event: &AetherEvent,
+    agent: &AetherAgentId,
+    seq: u64,
+) -> Result<(), ArchonError> {
+    let Some(owner) = owner(ctx, agent).await? else {
+        return Ok(());
+    };
+    let Some(item) = item_of(ctx, &owner).await? else {
+        return Ok(());
+    };
+    inbox_health::delivered(ctx, agent, item, seq, event.at).await
 }
 
 /// An agent ended for good: the stop of what it delegated, which waited for

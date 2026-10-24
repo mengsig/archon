@@ -29,7 +29,7 @@ const POLL: Duration = Duration::from_millis(50);
 /// descendants; Aether also runs from versioned copies (`aether-1.2.4-…`).
 const DAEMON_NAMES: [&str; 4] = ["archon", "archond", "aether", "aetherd"];
 
-/// Bounds the ancestor walk, so a cyclic fake /proc cannot hang it.
+/// Bounds the ancestor walk; a deeper chain is spared as untraceable.
 const MAX_DEPTH: usize = 256;
 
 /// One process found under a worktree.
@@ -343,39 +343,54 @@ impl Scan<'_> {
         pid == self.me || is_daemon(&name_of(&self.proc_root.join(pid.to_string())))
     }
 
-    /// Whether `pid` is this process or a daemon, or descends from one.
+    /// Whether `pid` is this process or a daemon, or descends from one; an
+    /// ancestry that cannot be traced to the top counts as protected.
     fn descends_from_root(&self, pid: i32) -> bool {
-        self.lineage(pid).iter().any(|&p| self.is_root(p))
+        self.lineage(pid)
+            .is_none_or(|chain| chain.iter().any(|&p| self.is_root(p)))
     }
 
     /// The ancestors of this process and of the daemons, roots included.
     fn ancestors_of_roots(&self) -> Result<HashSet<i32>, ArchonError> {
-        let mut spared = HashSet::new();
+        let mut roots = vec![self.me];
         for pid in pids(self.proc_root)? {
-            if self.is_root(pid) {
-                spared.extend(self.lineage(pid));
+            if pid != self.me && self.is_root(pid) {
+                roots.push(pid);
             }
         }
-        spared.extend(self.lineage(self.me));
+        let mut spared = HashSet::from([self.me]);
+        for root in roots {
+            match self.lineage(root) {
+                Some(chain) => spared.extend(chain),
+                // It exited during the scan, so it has no ancestors to spare.
+                None if !self.proc_root.join(root.to_string()).exists() => {}
+                None => {
+                    return Err(ArchonError::Invalid(format!(
+                        "cannot trace the ancestors of process {root}, so nothing is reaped"
+                    )));
+                }
+            }
+        }
         assert!(spared.contains(&self.me), "this process is spared");
+        assert!(spared.iter().all(|&p| p > 0), "only real pids are spared");
         Ok(spared)
     }
 
-    /// `pid` and its ancestors, nearest first, as /proc reads now.
-    fn lineage(&self, pid: i32) -> Vec<i32> {
+    /// `pid` and its ancestors, nearest first, as /proc reads now; `None`
+    /// when an unreadable link, a cycle or the depth bound stops the walk.
+    fn lineage(&self, pid: i32) -> Option<Vec<i32>> {
+        assert!(pid > 0, "a lineage starts at a real pid");
         let mut chain = Vec::new();
         let mut pid = pid;
-        for _ in 0..MAX_DEPTH {
-            if pid <= 0 || chain.contains(&pid) {
-                break;
+        while pid > 0 {
+            if chain.len() >= MAX_DEPTH || chain.contains(&pid) {
+                return None;
             }
             chain.push(pid);
             let dir = self.proc_root.join(pid.to_string());
-            pid = status_field(&dir, "PPid:")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(0);
+            pid = status_field(&dir, "PPid:")?.parse().ok()?;
         }
-        chain
+        Some(chain)
     }
 }
 
@@ -461,6 +476,8 @@ mod tests {
         }
         let proc = base.join("proc");
         std::fs::create_dir_all(&proc).unwrap();
+        // Init, where every walk ends; never selected, even under the tree.
+        fake_proc(&proc, 1, UID, 0, &tree, &tree);
         Fixture {
             _tmp: tmp,
             proc,
@@ -546,7 +563,6 @@ mod tests {
     #[test]
     fn spares_other_users_pid_one_and_the_daemons_with_their_kin() {
         let f = fixture();
-        fake_proc(&f.proc, 1, UID, 0, &f.tree, &f.tree);
         fake_proc(&f.proc, 200, UID + 1, 1, &f.tree, &f.tree);
         fake_proc(&f.proc, 300, UID, 1, &f.tree, &f.tree);
         fake_proc(&f.proc, 301, UID, 300, &f.tree, &f.tree.join("archon"));
@@ -641,6 +657,43 @@ mod tests {
         assert_eq!(*fake.sent.borrow(), expected);
         let text = report.describe(&f.tree);
         assert!(text.contains("Still running after SIGKILL: 602"));
+    }
+
+    #[test]
+    fn an_ancestry_that_cannot_be_traced_is_spared() {
+        let f = fixture();
+        fake_proc(&f.proc, 2, UID, 1, &f.outside, &f.outside.join("aether"));
+        // A tool deeper below the daemon than the walk reaches.
+        let deepest = 3 + MAX_DEPTH as i32;
+        for pid in 3..=deepest {
+            fake_proc(&f.proc, pid, UID, pid - 1, &f.tree, &f.tree);
+        }
+        // A cycle, and a parent whose status does not parse.
+        fake_proc(&f.proc, 5000, UID, 5001, &f.tree, &f.tree);
+        fake_proc(&f.proc, 5001, UID, 5000, &f.tree, &f.tree);
+        fake_proc(&f.proc, 5002, UID, 5003, &f.tree, &f.tree);
+        std::fs::create_dir_all(f.proc.join("5003")).unwrap();
+        std::fs::write(f.proc.join("5003/status"), "PPid:\tnope\n").unwrap();
+        fake_proc(&f.proc, 5004, UID, 1, &f.tree, &f.tree);
+        assert_eq!(selected(&f), vec![5004]);
+    }
+
+    #[test]
+    fn a_daemon_whose_ancestry_cannot_be_traced_fails_the_reap() {
+        let f = fixture();
+        fake_proc(&f.proc, 10, UID, 11, &f.outside, &f.outside.join("archon"));
+        fake_proc(&f.proc, 11, UID, 10, &f.outside, &f.outside);
+        fake_proc(&f.proc, 12, UID, 1, &f.tree, &f.tree);
+        let fake = Fake::new(&f.proc);
+        let none = Duration::ZERO;
+        let reaped = reap_with(&f.proc, &f.tree, UID, none, none, &fake);
+        assert!(
+            reaped
+                .unwrap_err()
+                .to_string()
+                .contains("ancestors of process 10")
+        );
+        assert!(fake.sent.borrow().is_empty(), "no signal sent");
     }
 
     #[test]

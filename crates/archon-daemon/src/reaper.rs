@@ -90,8 +90,10 @@ impl Report {
 /// reused by another process is never signalled; faked in tests.
 trait Signaller {
     type Handle;
-    /// A handle on whatever process holds `pid` now.
-    fn open(&self, pid: i32) -> Option<Self::Handle>;
+    /// A handle on whatever process holds `pid` now; `None` once it is gone.
+    fn open(&self, pid: i32) -> Result<Option<Self::Handle>, ArchonError>;
+    /// Only a confirmed exit is true: a process that cannot be observed is
+    /// kept, so it is killed and reported rather than taken for gone.
     fn exited(&self, handle: &Self::Handle) -> bool;
     /// SIGTERM, or SIGKILL when `kill`; a process already gone is ignored.
     fn signal(&self, handle: &Self::Handle, kill: bool);
@@ -156,9 +158,17 @@ struct PidFds;
 impl Signaller for PidFds {
     type Handle = std::os::fd::OwnedFd;
 
-    fn open(&self, pid: i32) -> Option<Self::Handle> {
-        let pid = rustix::process::Pid::from_raw(pid)?;
-        rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty()).ok()
+    fn open(&self, raw: i32) -> Result<Option<Self::Handle>, ArchonError> {
+        assert!(raw > 1, "pid 1 is never opened");
+        let pid = rustix::process::Pid::from_raw(raw).expect("a positive pid");
+        match rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty()) {
+            Ok(fd) => Ok(Some(fd)),
+            Err(rustix::io::Errno::SRCH) => Ok(None),
+            Err(e) => Err(ArchonError::io(
+                format!("opening a pidfd for process {raw}"),
+                e.into(),
+            )),
+        }
     }
 
     fn exited(&self, handle: &Self::Handle) -> bool {
@@ -171,7 +181,16 @@ impl Signaller for PidFds {
             tv_sec: 0,
             tv_nsec: 0,
         };
-        rustix::event::poll(&mut fds, Some(&now)).map_or(true, |ready| ready > 0)
+        loop {
+            match rustix::event::poll(&mut fds, Some(&now)) {
+                Ok(ready) => return ready > 0,
+                Err(rustix::io::Errno::INTR) => continue,
+                Err(error) => {
+                    tracing::warn!(%error, "cannot poll a process handle; it counts as running");
+                    return false;
+                }
+            }
+        }
     }
 
     fn signal(&self, handle: &Self::Handle, kill: bool) {
@@ -180,8 +199,12 @@ impl Signaller for PidFds {
         } else {
             rustix::process::Signal::TERM
         };
-        // ESRCH: it exited since the scan, which is what was wanted.
-        let _ = rustix::process::pidfd_send_signal(handle, signal);
+        match rustix::process::pidfd_send_signal(handle, signal) {
+            // ESRCH: it exited since the scan, which is what was wanted.
+            Ok(()) | Err(rustix::io::Errno::SRCH) => {}
+            // It stays running, so it is killed or reported as a survivor.
+            Err(error) => tracing::warn!(%error, ?signal, "cannot signal a process"),
+        }
     }
 }
 
@@ -207,7 +230,7 @@ fn reap_with<S: Signaller>(
         uid,
         me: std::process::id() as i32,
     };
-    let found = scan.find(signaller);
+    let found = scan.find(signaller)?;
     if found.is_empty() {
         return Ok(Report::default());
     }
@@ -256,14 +279,14 @@ fn wait_exit<'h, S: Signaller>(
 impl Scan<'_> {
     /// The processes under the worktree now, each held by a handle opened
     /// before it was checked, so the checks are of the process it signals.
-    fn find<S: Signaller>(&self, signaller: &S) -> Vec<Held<S::Handle>> {
-        let spared = self.ancestors_of_roots();
+    fn find<S: Signaller>(&self, signaller: &S) -> Result<Vec<Held<S::Handle>>, ArchonError> {
+        let spared = self.ancestors_of_roots()?;
         let mut found = Vec::new();
-        for pid in pids(self.proc_root) {
+        for pid in pids(self.proc_root)? {
             if pid <= 1 || spared.contains(&pid) || self.matches(pid).is_none() {
                 continue;
             }
-            let Some(handle) = signaller.open(pid) else {
+            let Some(handle) = signaller.open(pid)? else {
                 continue;
             };
             // Checked again under the handle, and the lineage as it is now:
@@ -286,7 +309,7 @@ impl Scan<'_> {
                 .all(|p| p.found.pid > 1 && p.found.pid != self.me),
             "pid 1 and this process are never selected"
         );
-        found
+        Ok(found)
     }
 
     fn matches(&self, pid: i32) -> Option<String> {
@@ -326,16 +349,16 @@ impl Scan<'_> {
     }
 
     /// The ancestors of this process and of the daemons, roots included.
-    fn ancestors_of_roots(&self) -> HashSet<i32> {
+    fn ancestors_of_roots(&self) -> Result<HashSet<i32>, ArchonError> {
         let mut spared = HashSet::new();
-        for pid in pids(self.proc_root) {
+        for pid in pids(self.proc_root)? {
             if self.is_root(pid) {
                 spared.extend(self.lineage(pid));
             }
         }
         spared.extend(self.lineage(self.me));
         assert!(spared.contains(&self.me), "this process is spared");
-        spared
+        Ok(spared)
     }
 
     /// `pid` and its ancestors, nearest first, as /proc reads now.
@@ -363,14 +386,17 @@ fn is_daemon(name: &str) -> bool {
             .is_some_and(|version| version.starts_with(|c: char| c.is_ascii_digit()))
 }
 
-fn pids(proc_root: &Path) -> Vec<i32> {
-    let Ok(entries) = std::fs::read_dir(proc_root) else {
-        return Vec::new();
-    };
-    entries
-        .filter_map(Result::ok)
-        .filter_map(|e| e.file_name().to_str()?.parse().ok())
-        .collect()
+/// Every pid listed, so an unreadable /proc fails rather than finds nothing.
+fn pids(proc_root: &Path) -> Result<Vec<i32>, ArchonError> {
+    let context = || format!("listing {}", proc_root.display());
+    let mut pids = Vec::new();
+    for entry in std::fs::read_dir(proc_root).map_err(|e| ArchonError::io(context(), e))? {
+        let entry = entry.map_err(|e| ArchonError::io(context(), e))?;
+        if let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse().ok()) {
+            pids.push(pid);
+        }
+    }
+    Ok(pids)
 }
 
 fn status_field(dir: &Path, key: &str) -> Option<String> {
@@ -466,9 +492,12 @@ mod tests {
     impl Signaller for Fake<'_> {
         type Handle = i32;
 
-        fn open(&self, pid: i32) -> Option<i32> {
+        fn open(&self, pid: i32) -> Result<Option<i32>, ArchonError> {
             (self.on_open)(pid);
-            self.proc.join(pid.to_string()).exists().then_some(pid)
+            if self.proc.join(pid.to_string()).join("unopenable").exists() {
+                return Err(ArchonError::Invalid(format!("no handle on {pid}")));
+            }
+            Ok(self.proc.join(pid.to_string()).exists().then_some(pid))
         }
 
         fn exited(&self, handle: &i32) -> bool {
@@ -488,7 +517,7 @@ mod tests {
             uid: UID,
             me: std::process::id() as i32,
         };
-        let found = scan.find(fake);
+        let found = scan.find(fake).unwrap();
         found.iter().map(|p| p.found.pid).collect()
     }
 
@@ -615,6 +644,21 @@ mod tests {
     }
 
     #[test]
+    fn a_process_that_cannot_be_held_or_listed_fails_the_reap() {
+        let f = fixture();
+        fake_proc(&f.proc, 900, UID, 1, &f.tree, &f.tree);
+        std::fs::write(f.proc.join("900/unopenable"), "").unwrap();
+        let fake = Fake::new(&f.proc);
+        let none = Duration::ZERO;
+        let held = reap_with(&f.proc, &f.tree, UID, none, none, &fake);
+        assert!(held.unwrap_err().to_string().contains("no handle on 900"));
+        let missing = f.proc.join("missing");
+        let listed = reap_with(&missing, &f.tree, UID, none, none, &fake);
+        assert!(listed.is_err(), "an unreadable /proc is no empty one");
+        assert!(fake.sent.borrow().is_empty(), "no signal sent");
+    }
+
+    #[test]
     fn nothing_found_sends_nothing() {
         let f = fixture();
         fake_proc(&f.proc, 700, UID, 1, &f.outside, &f.outside);
@@ -679,7 +723,7 @@ mod tests {
 
         impl Drop for Orphan {
             fn drop(&mut self) {
-                if let Some(handle) = PidFds.open(self.0) {
+                if let Ok(Some(handle)) = PidFds.open(self.0) {
                     PidFds.signal(&handle, true);
                 }
             }

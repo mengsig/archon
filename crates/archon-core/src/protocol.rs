@@ -61,7 +61,9 @@ use crate::steer::Steer;
 /// text-only `say` is the frame it always was.
 /// 19: `gc` may ask for a `preview`, which an older archond would ignore and
 /// collect for real.
-pub const PROTOCOL_VERSION: u32 = 19;
+/// 20: `refresh_item` may carry `model_plan`, `model_reasons` and
+/// `stage_timeouts`, which an older archond would drop.
+pub const PROTOCOL_VERSION: u32 = 20;
 
 /// Said beside an item whose `budget_usd` was set while budgets are off.
 pub const BUDGETS_OFF_NOTE: &str = "Dollar budgets are globally off ([limits] budgets_enabled = \
@@ -216,8 +218,17 @@ pub enum Request {
     },
     /// Merge the finished item's base branch, fetched afresh, into its branch:
     /// a new item on the same branch and pull request (ARCHITECTURE §13).
+    /// Its plan and stage timeouts are the stage defaults unless given here,
+    /// never the finished item's own.
     RefreshItem {
         item: QueueItemId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model_plan: Option<ModelPlanDraft>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model_reasons: Option<ModelReasons>,
+        /// Stage id to minutes; within the configured maximum.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        stage_timeouts: BTreeMap<String, u32>,
     },
     Pause(PauseTarget),
     Resume(PauseTarget),

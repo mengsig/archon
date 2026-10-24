@@ -91,6 +91,9 @@ fn action_request(tool: &str, args: &mut Args) -> Result<Request, ToolError> {
         "retry_item" => retry_item(args)?,
         "refresh_item" => Request::RefreshItem {
             item: args.required("item")?,
+            model_plan: args.optional_plan("model_plan")?,
+            model_reasons: args.optional_reasons()?,
+            stage_timeouts: args.optional("stage_timeouts")?.unwrap_or_default(),
         },
         "pause" => Request::Pause(pause_target(args)?),
         "resume" => Request::Resume(pause_target(args)?),

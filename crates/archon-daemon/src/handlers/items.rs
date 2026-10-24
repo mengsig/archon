@@ -541,8 +541,12 @@ pub(super) async fn cancel(
 }
 
 /// Queue the item that merges `id`'s base branch into its branch.
-pub(super) async fn refresh(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, ArchonError> {
-    let refresh = executor::refresh::refresh_item(ctx, id).await?;
+pub(super) async fn refresh(
+    ctx: &DaemonContext,
+    id: &QueueItemId,
+    asked: executor::refresh::Asked,
+) -> Result<Reply, ArchonError> {
+    let refresh = executor::refresh::refresh_item(ctx, id, asked).await?;
     Ok(Reply::Item(refresh))
 }
 
@@ -948,7 +952,7 @@ pub(crate) fn check_stage_timeouts(
     Ok(())
 }
 
-pub(super) fn check_reasons(
+pub(crate) fn check_reasons(
     spec: &PipelineSpec,
     reasons: Option<&ModelReasons>,
 ) -> Result<(), ArchonError> {

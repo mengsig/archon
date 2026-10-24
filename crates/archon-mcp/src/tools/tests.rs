@@ -1213,6 +1213,10 @@ const DESCRIBED_RULES: &[(&str, &str)] = &[
     ("refresh_item", "branch and same pull request"),
     (
         "refresh_item",
+        "not the item's own model_plan or stage_timeouts",
+    ),
+    (
+        "refresh_item",
         "reads from the new merge base, conflict fixes included",
     ),
     ("update_item", "steered into its run without cancelling it"),

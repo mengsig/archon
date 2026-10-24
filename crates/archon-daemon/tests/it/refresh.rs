@@ -124,6 +124,9 @@ async fn shipped(h: &Harness, title: &str) -> (QueueItem, PipelineRun) {
 async fn refresh(h: &Harness, item: &QueueItem) -> Result<QueueItem, ArchonError> {
     let request = Request::RefreshItem {
         item: item.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        stage_timeouts: Default::default(),
     };
     match h.orchestrator(request).await? {
         Reply::Item(item) => Ok(item),
@@ -668,46 +671,73 @@ async fn many_unstarted_jobs_and_refused_probes_are_told_right() {
     assert_eq!(news[2], ("failed".to_owned(), "failed: test".to_owned()));
 }
 
-/// Steering changes a run's plan without changing the item's pipeline name.
+/// A refresh runs on the stage defaults, not the plan, reasons and stage
+/// timeouts its owner was given for other work.
 #[tokio::test]
-async fn a_refresh_maps_a_steered_build_and_its_reviewers_to_implement() {
+async fn a_refresh_runs_the_stage_defaults_not_its_owner_s_overrides() {
     let (h, _gh) = delivering().await;
-    let (owner, _) = shipped(&h, "steered change").await;
+    let (owner, _) = shipped(&h, "overridden change").await;
+    let defaults = owner.model_plan.clone();
     let mut stored = h.ctx.store.lock().await.item(&owner.id).unwrap();
-    let implement = stored.model_plan.0.remove("implement").unwrap();
-    stored
-        .model_plan
-        .0
-        .insert("build".into(), implement.clone());
-    let reviewers = vec![common::choice(
+    let pricey = vec![common::choice(
         REVIEW_MODEL,
-        archon_core::model::Effort::Medium,
+        archon_core::model::Effort::Max,
     )];
-    stored
-        .model_plan
-        .0
-        .insert("build.review".into(), reviewers.clone());
-    stored.model_reasons = Some([("build".into(), "retain the implementer".into())].into());
+    assert_ne!(defaults.choices_for("implement"), Some(pricey.as_slice()));
+    stored.model_plan.0.insert("implement".into(), pricey);
+    stored.model_reasons = Some([("implement".into(), "a hard change".into())].into());
+    stored.stage_timeouts = [("implement".to_owned(), 45)].into();
     h.ctx.store.lock().await.update_item(&stored).unwrap();
     advance_origin(&h, "upstream.txt", "elsewhere\n");
     let fix = refresh(&h, &owner).await.unwrap();
     assert_eq!(fix.pipeline, "direct");
-    assert_eq!(
-        fix.model_plan.choices_for("implement"),
-        Some(implement.as_slice())
-    );
-    assert_eq!(
-        fix.model_plan.choices_for("implement.review"),
-        Some(reviewers.as_slice())
-    );
-    assert!(!fix.model_plan.0.contains_key("build"));
-    assert_eq!(
-        fix.model_reasons.unwrap()["implement"],
-        "retain the implementer"
-    );
+    assert_eq!(fix.model_plan, defaults, "the stage defaults");
+    assert_eq!(fix.model_reasons, None);
+    assert!(fix.stage_timeouts.is_empty(), "{:?}", fix.stage_timeouts);
     h.dispatch().await;
     assert_eq!(h.running().await[0].stage_id, "implement");
-    assert!(matches!(h.state(&fix.id).await, QueueState::Running { .. }));
+}
+
+/// A refresh asked for a plan, reasons and stage timeouts runs on them,
+/// checked as an enqueue's are.
+#[tokio::test]
+async fn a_refresh_takes_the_plan_and_stage_timeouts_it_is_given() {
+    let (h, _gh) = delivering().await;
+    let (owner, _) = shipped(&h, "the change").await;
+    advance_origin(&h, "upstream.txt", "elsewhere\n");
+    let asked = |stage: &str, minutes: u32| Request::RefreshItem {
+        item: owner.id.clone(),
+        model_plan: Some(
+            serde_json::from_value(
+                json!({"implement": [{"model": REVIEW_MODEL, "effort": "high"}]}),
+            )
+            .unwrap(),
+        ),
+        model_reasons: Some([("implement".into(), "conflicts to resolve".into())].into()),
+        stage_timeouts: [(stage.to_owned(), minutes)].into(),
+    };
+    let refused = h
+        .orchestrator(asked("ship_it", 30))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refused.contains("stage_timeouts names stage \"ship_it\""),
+        "{refused}"
+    );
+    let Reply::Item(fix) = h.orchestrator(asked("implement", 30)).await.unwrap() else {
+        panic!("a refresh item");
+    };
+    let high = common::choice(REVIEW_MODEL, archon_core::model::Effort::High);
+    assert_eq!(
+        fix.model_plan.choices_for("implement"),
+        Some([high].as_slice())
+    );
+    assert_eq!(
+        fix.model_reasons.unwrap()["implement"],
+        "conflicts to resolve"
+    );
+    assert_eq!(fix.stage_timeouts, [("implement".to_owned(), 30)].into());
 }
 
 #[tokio::test]

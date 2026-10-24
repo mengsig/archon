@@ -3182,7 +3182,7 @@ can reach the socket (§5.5).
 | `update_initiative` | `{initiative, contract_append \| contract}` | `UpdateInitiative` (§8.9) |
 | `cancel_item` | `{item, reason?}` | `CancelItem` |
 | `retry_item` | `{item, model_plan?, model_reasons?, fresh?, brief_append?}` | `RetryItem` (§13: `fresh` starts again from the base branch) |
-| `refresh_item` | `{item}` | `RefreshItem` (§13: a finished item's base, fetched from `origin`, merged into the same branch and pull request) |
+| `refresh_item` | `{item, model_plan?, model_reasons?, stage_timeouts?}` | `RefreshItem` (§13: a finished item's base, fetched from `origin`, merged into the same branch and pull request) |
 | `queue_status` | `{}` | `Status` |
 | `model_evidence` | `{repo?, pipeline?, stage?, since?}` | `ModelEvidence` (30 local days by default; stage attempt observations, at most 60 groups) |
 | `cost_report` | `{since?, until?, by?: day\|repo\|pipeline\|model\|item\|stage}` | `CostReport` (§5.3) |
@@ -3372,10 +3372,11 @@ object per line under `--json`).
   head (`origin`'s in `pr` mode, else the local branch) and queues a new
   item, titled `Refresh <item> onto <base>`, that runs the owner's pipeline
   on the owner's branch and worktree like a restack fix (§8.8). Proposal and
-  report are always off; review, merge and tools are retained. The model plan
-  is mapped to that pipeline's stages (a steered `build` supplies `implement`
-  and its reviewer choices); missing or no longer permitted choices use the
-  refresh default within model policy. The plan is validated before enqueue.
+  report are always off; review, merge and tools are retained. The owner's
+  model plan, model reasons and stage timeouts are not: the refresh takes the
+  `model_plan`, `model_reasons` and `stage_timeouts` the request gives, shaped
+  and checked as in `enqueue`, and the stage defaults within model policy for
+  the rest. The plan is validated before enqueue.
   The run's base branch is retained separately from expiring prompt templates;
   older runs with neither use the repository's configured base, or require
   `archon repo set` when none is configured. Its agent

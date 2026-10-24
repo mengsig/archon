@@ -662,6 +662,9 @@ async fn a_delivered_onto_item_is_neither_stacked_on_nor_refreshed() {
 
     let refresh = Request::RefreshItem {
         item: parent.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        stage_timeouts: Default::default(),
     };
     let refused = h.orchestrator(refresh).await.unwrap_err().to_string();
     let advice = format!("`onto` {}", parent.id);
@@ -845,6 +848,9 @@ fn change_elsewhere(workspace: &Path) -> Value {
 async fn refresh(h: &Harness, item: &QueueItem) -> Result<QueueItem, ArchonError> {
     let request = Request::RefreshItem {
         item: item.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        stage_timeouts: Default::default(),
     };
     match h.orchestrator(request).await? {
         Reply::Item(item) => Ok(item),

@@ -326,6 +326,7 @@ pub(super) fn git_worktree_remove(
     forces: usize,
 ) -> Result<(), ArchonError> {
     assert!(forces <= 2, "git knows no stronger force");
+    crate::reaper::clear_for_removal(path)?;
     let path_text = path
         .to_str()
         .ok_or_else(|| ArchonError::Invalid(format!("{} is not UTF-8", path.display())))?;

@@ -114,6 +114,7 @@ impl WorktreeManager {
             return remove_if_empty(item_dir);
         }
         check_worktree(path, &common_dir(repo_path)?)?;
+        crate::reaper::clear_for_removal(path)?;
         let args = ["worktree", "remove", "--force", "--force", path_arg(path)?];
         git(repo_path, &args)?;
         debug_assert!(!path.exists(), "git reported success but left the tree");

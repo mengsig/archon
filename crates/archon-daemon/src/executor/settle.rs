@@ -175,6 +175,7 @@ async fn persist(
     table.spawn_errors.remove(&settled.id);
     let mut follow = decide(ctx, table, run, &settled, all).await?;
     follow.kept.extend(kept);
+    follow.reap.push(settled.id.clone());
     if owes_stop {
         follow.descendant_stops.push(settled.id);
     }

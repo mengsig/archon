@@ -204,6 +204,7 @@ impl WorktreeManager {
                 worktree.display()
             )));
         }
+        crate::reaper::clear_for_removal(worktree)?;
         // A locked worktree is still refused: that takes `--force` twice.
         let args = ["worktree", "remove", "--force", path_arg(worktree)?];
         daemon_git::DaemonGit::sealed_in(repo_path)

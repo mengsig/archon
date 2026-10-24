@@ -29,6 +29,7 @@ pub mod prune;
 pub mod pump;
 pub mod push;
 pub mod quota;
+pub mod reaper;
 pub mod recovery;
 pub mod reports;
 pub mod server;

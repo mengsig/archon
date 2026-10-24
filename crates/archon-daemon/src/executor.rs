@@ -25,6 +25,7 @@ pub(crate) mod onto;
 pub(crate) mod operator_merge;
 mod pages;
 pub mod pull_requests;
+mod reap;
 mod recover;
 pub(crate) mod refresh;
 mod repair;
@@ -155,6 +156,8 @@ pub(crate) struct FollowUp {
     pub sibling_stops: Vec<StageRunId>,
     /// Settled stage runs of delegating agents whose descendants to stop.
     pub descendant_stops: Vec<StageRunId>,
+    /// Settled stage runs whose worktree processes to end.
+    pub reap: Vec<StageRunId>,
     /// Runs whose team roster may be owed to their running roles.
     pub roster: Vec<PipelineRunId>,
     pub cleanup: Vec<Cleanup>,
@@ -198,6 +201,7 @@ impl FollowUp {
         self.cancel_agents.extend(other.cancel_agents);
         self.sibling_stops.extend(other.sibling_stops);
         self.descendant_stops.extend(other.descendant_stops);
+        self.reap.extend(other.reap);
         self.roster.extend(other.roster);
         self.cleanup.extend(other.cleanup);
         self.release_builds.extend(other.release_builds);
@@ -221,6 +225,7 @@ impl FollowUp {
             && self.cancel_agents.is_empty()
             && self.sibling_stops.is_empty()
             && self.descendant_stops.is_empty()
+            && self.reap.is_empty()
             && self.roster.is_empty()
             && self.cleanup.is_empty()
             && self.release_builds.is_empty()
@@ -527,6 +532,10 @@ async fn stop_and_spawn(ctx: &DaemonContext, round: &mut Round, follow: &mut Fol
     for stage in dedup(take(&mut follow.descendant_stops)) {
         round.record(descendants::stop(ctx, &stage).await);
     }
+    // Before any spawn of the same run, whose processes it must not end.
+    for stage in dedup(take(&mut follow.reap)) {
+        round.record(reap::stage_end(ctx, &stage).await);
+    }
     match issuable(ctx, take(&mut follow.issue)).await {
         Ok(issue) => issue_by_run(ctx, round, issue).await,
         Err(error) => round.record(Err(error)),
@@ -560,7 +569,7 @@ async fn stop_and_spawn(ctx: &DaemonContext, round: &mut Round, follow: &mut Fol
 /// gates, pages, merges, kept agents and the worktrees of ended runs.
 async fn deliver_and_tidy(ctx: &DaemonContext, round: &mut Round, follow: FollowUp) {
     assert!(
-        follow.descendant_stops.is_empty() && follow.issue.is_empty(),
+        follow.descendant_stops.is_empty() && follow.issue.is_empty() && follow.reap.is_empty(),
         "stops and spawns are made first"
     );
     assert!(

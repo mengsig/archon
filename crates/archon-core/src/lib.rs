@@ -54,6 +54,7 @@ pub mod settings;
 pub mod steer;
 #[cfg(feature = "testing")]
 pub mod testing;
+pub mod tracked;
 
 pub use error::{ArchonError, Result};
 

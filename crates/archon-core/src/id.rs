@@ -105,6 +105,8 @@ prefixed_id!(InitiativeId, "ini");
 prefixed_id!(LessonId, "lsn");
 prefixed_id!(FeedbackId, "fb");
 prefixed_id!(MergeRequestId, "mr");
+// One change `archon mcp` forwarded, as `request_status` names it.
+prefixed_id!(RequestId, "req");
 // One Archon store's identity. Keeps Archon's idempotency keys distinct
 // across stores, since a fresh store restarts its counters.
 prefixed_id!(StoreId, "store");
@@ -124,6 +126,7 @@ fn kind_name(kind: &str) -> &str {
         "qi" => "item",
         "prun" => "pipeline run",
         "q" => "question",
+        "req" => "request",
         other => other,
     }
 }

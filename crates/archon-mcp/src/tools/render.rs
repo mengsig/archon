@@ -7,6 +7,7 @@ mod cost;
 mod initiatives;
 mod lessons;
 mod stages;
+mod tracked;
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -78,6 +79,7 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         Reply::Settings(view) => view.describe(),
         Reply::Artifacts(listing) => artifacts::listing(listing),
         Reply::ArtifactPage(page) => artifacts::page(page),
+        Reply::RequestStatus(status) => tracked::status(status),
         Reply::Questions(_)
         | Reply::Lessons(_)
         | Reply::LessonsWhy(_)

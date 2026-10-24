@@ -498,8 +498,29 @@ HAVING COUNT(DISTINCT p.host || '/' || p.repository || '#' || p.number) = 1;
 DELETE FROM kv WHERE key GLOB 'pr_settled:*' AND key NOT GLOB 'pr_settled:*/*#*';
 "#;
 
+/// Version 16: the changes `archon mcp` forwards under a request id, with their
+/// outcome and optional idempotency key, kept for `tracked::RETENTION`.
+const V16: &str = r#"
+CREATE TABLE tracked_requests (
+    id              TEXT PRIMARY KEY,
+    caller          TEXT NOT NULL,
+    command         TEXT NOT NULL,
+    idempotency_key TEXT CHECK (idempotency_key <> ''),
+    request         TEXT NOT NULL,
+    state           TEXT NOT NULL
+        CHECK (state IN ('pending', 'applied', 'failed', 'interrupted')),
+    outcome         TEXT,
+    started_at      TEXT NOT NULL,
+    finished_at     TEXT,
+    CHECK ((state = 'pending') = (finished_at IS NULL))
+);
+CREATE UNIQUE INDEX tracked_requests_by_key ON tracked_requests (caller, command, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+CREATE INDEX tracked_requests_by_start ON tracked_requests (started_at);
+"#;
+
 pub(super) const MIGRATIONS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16,
 ];
 
 /// Pragmas every connection needs. `on_disk` connections must end up in
@@ -525,6 +546,38 @@ pub(super) fn configure(conn: &Connection, on_disk: bool) -> Result<(), ArchonEr
         return Err(ArchonError::Store(
             "foreign keys could not be enabled".into(),
         ));
+    }
+    Ok(())
+}
+
+/// The WAL size, in pages, at which archond's writer checkpoints itself after
+/// all: only when its [`super::Checkpointer`] has fallen far behind.
+const WRITER_AUTOCHECKPOINT_PAGES: i64 = 20_000;
+
+/// Leave checkpoints to archond's [`super::Checkpointer`], off the writer.
+pub(super) fn defer_checkpoints(conn: &Connection) -> Result<(), ArchonError> {
+    conn.pragma_update(None, "wal_autocheckpoint", WRITER_AUTOCHECKPOINT_PAGES)
+        .ctx("set wal_autocheckpoint")?;
+    let pages: i64 = conn
+        .pragma_query_value(None, "wal_autocheckpoint", |row| row.get(0))
+        .ctx("read wal_autocheckpoint")?;
+    assert_eq!(
+        pages, WRITER_AUTOCHECKPOINT_PAGES,
+        "the writer defers checkpoints"
+    );
+    Ok(())
+}
+
+/// Refuses a connection whose store is not in WAL mode: its reads would
+/// then wait on the writer.
+pub(super) fn check_wal(conn: &Connection) -> Result<(), ArchonError> {
+    let mode: String = conn
+        .pragma_query_value(None, "journal_mode", |row| row.get(0))
+        .ctx("read journal_mode")?;
+    if !mode.eq_ignore_ascii_case("wal") {
+        return Err(ArchonError::Store(format!(
+            "journal_mode is {mode}, WAL is required"
+        )));
     }
     Ok(())
 }
@@ -1084,7 +1137,7 @@ mod tests {
         .unwrap();
         insert_feedback(&conn, "fb_old", V11_ROW).unwrap();
         conn.execute_batch(
-            "DROP TABLE run_pull_requests; DROP TABLE merge_requests;
+            "DROP TABLE run_pull_requests; DROP TABLE merge_requests; DROP TABLE tracked_requests;
              DELETE FROM schema_migrations WHERE version >= 12",
         )
         .unwrap();

@@ -9,8 +9,9 @@
 //! Archon's or Aether's daemons, their ancestors or their descendants. A
 //! live engine and its tools descend from Aether, which reaps them itself;
 //! what escaped was reparented away. Off Linux nothing is scanned or killed.
+#![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -85,29 +86,44 @@ impl Report {
     }
 }
 
+/// How the reaper holds and signals a process: by pidfd on Linux, so a pid
+/// reused by another process is never signalled; faked in tests.
+trait Signaller {
+    type Handle;
+    /// A handle on whatever process holds `pid` now.
+    fn open(&self, pid: i32) -> Option<Self::Handle>;
+    fn exited(&self, handle: &Self::Handle) -> bool;
+    /// SIGTERM, or SIGKILL when `kill`; a process already gone is ignored.
+    fn signal(&self, handle: &Self::Handle, kill: bool);
+}
+
+/// One selected process and the handle it is signalled through.
+struct Held<H> {
+    found: Found,
+    handle: H,
+}
+
 /// Where to look and whom to spare.
 struct Scan<'a> {
     proc_root: &'a Path,
     worktree: PathBuf,
     uid: u32,
-    protected: HashSet<i32>,
+    me: i32,
 }
 
 /// End every process of the current user whose cwd or executable lies under
-/// `worktree`, as described in the module docs. A no-op off Linux.
+/// `worktree`, as described in the module docs.
+#[cfg(target_os = "linux")]
 pub fn reap(worktree: &Path) -> Result<Report, ArchonError> {
-    if !cfg!(target_os = "linux") {
-        return Ok(Report::default());
-    }
     let uid = rustix::process::getuid().as_raw();
-    reap_with(
-        Path::new("/proc"),
-        worktree,
-        uid,
-        TERM_GRACE,
-        KILL_GRACE,
-        &|pid, kill| send(pid, kill),
-    )
+    let proc_root = Path::new("/proc");
+    reap_with(proc_root, worktree, uid, TERM_GRACE, KILL_GRACE, &PidFds)
+}
+
+/// Nothing is scanned or killed off Linux.
+#[cfg(not(target_os = "linux"))]
+pub fn reap(_worktree: &Path) -> Result<Report, ArchonError> {
+    Ok(Report::default())
 }
 
 /// [`reap`] before `worktree` is removed: what was running is ended and
@@ -133,26 +149,49 @@ pub fn clear_for_removal(worktree: &Path) -> Result<(), ArchonError> {
     )))
 }
 
-fn send(pid: i32, kill: bool) {
-    let Some(pid) = rustix::process::Pid::from_raw(pid) else {
-        return;
-    };
-    let signal = if kill {
-        rustix::process::Signal::KILL
-    } else {
-        rustix::process::Signal::TERM
-    };
-    // The process may have exited since the scan; nothing to report then.
-    let _ = rustix::process::kill_process(pid, signal);
+#[cfg(target_os = "linux")]
+struct PidFds;
+
+#[cfg(target_os = "linux")]
+impl Signaller for PidFds {
+    type Handle = std::os::fd::OwnedFd;
+
+    fn open(&self, pid: i32) -> Option<Self::Handle> {
+        let pid = rustix::process::Pid::from_raw(pid)?;
+        rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty()).ok()
+    }
+
+    fn exited(&self, handle: &Self::Handle) -> bool {
+        // A pidfd polls readable once its process has exited.
+        let mut fds = [rustix::event::PollFd::new(
+            handle,
+            rustix::event::PollFlags::IN,
+        )];
+        let now = rustix::event::Timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        rustix::event::poll(&mut fds, Some(&now)).map_or(true, |ready| ready > 0)
+    }
+
+    fn signal(&self, handle: &Self::Handle, kill: bool) {
+        let signal = if kill {
+            rustix::process::Signal::KILL
+        } else {
+            rustix::process::Signal::TERM
+        };
+        // ESRCH: it exited since the scan, which is what was wanted.
+        let _ = rustix::process::pidfd_send_signal(handle, signal);
+    }
 }
 
-fn reap_with(
+fn reap_with<S: Signaller>(
     proc_root: &Path,
     worktree: &Path,
     uid: u32,
     term_grace: Duration,
     kill_grace: Duration,
-    signal: &dyn Fn(i32, bool),
+    signaller: &S,
 ) -> Result<Report, ArchonError> {
     assert!(worktree.is_absolute(), "worktree paths are absolute");
     assert!(
@@ -166,24 +205,25 @@ fn reap_with(
             .canonicalize()
             .unwrap_or_else(|_| worktree.to_path_buf()),
         uid,
-        protected: protected_pids(proc_root),
+        me: std::process::id() as i32,
     };
-    let found = scan.find();
+    let found = scan.find(signaller);
     if found.is_empty() {
         return Ok(Report::default());
     }
     for p in &found {
-        signal(p.pid, false);
+        signaller.signal(&p.handle, false);
     }
-    let remaining = scan.wait_gone(&found, term_grace);
+    let remaining = wait_exit(signaller, found.iter().collect(), term_grace);
     for p in &remaining {
-        signal(p.pid, true);
+        signaller.signal(&p.handle, true);
     }
-    let survivors = scan.wait_gone(&remaining, kill_grace);
+    let survivors = wait_exit(signaller, remaining.clone(), kill_grace);
+    let names = |held: &[&Held<S::Handle>]| held.iter().map(|p| p.found.clone()).collect();
     let report = Report {
-        found,
-        killed: remaining,
-        survivors,
+        found: found.iter().map(|p| p.found.clone()).collect(),
+        killed: names(&remaining),
+        survivors: names(&survivors),
     };
     assert!(
         report.killed.len() <= report.found.len(),
@@ -196,19 +236,57 @@ fn reap_with(
     Ok(report)
 }
 
+/// The members of `watched` that have not exited after waiting up to `grace`.
+fn wait_exit<'h, S: Signaller>(
+    signaller: &S,
+    watched: Vec<&'h Held<S::Handle>>,
+    grace: Duration,
+) -> Vec<&'h Held<S::Handle>> {
+    let deadline = Instant::now() + grace;
+    let mut left = watched;
+    loop {
+        left.retain(|p| !signaller.exited(&p.handle));
+        if left.is_empty() || Instant::now() >= deadline {
+            return left;
+        }
+        std::thread::sleep(POLL);
+    }
+}
+
 impl Scan<'_> {
-    /// The processes under the worktree right now, by pid.
-    fn find(&self) -> Vec<Found> {
-        let mut found: BTreeSet<Found> = BTreeSet::new();
+    /// The processes under the worktree now, each held by a handle opened
+    /// before it was checked, so the checks are of the process it signals.
+    fn find<S: Signaller>(&self, signaller: &S) -> Vec<Held<S::Handle>> {
+        let spared = self.ancestors_of_roots();
+        let mut found = Vec::new();
         for pid in pids(self.proc_root) {
-            if pid <= 1 || self.protected.contains(&pid) {
+            if pid <= 1 || spared.contains(&pid) || self.matches(pid).is_none() {
                 continue;
             }
-            if let Some(name) = self.matches(pid) {
-                found.insert(Found { pid, name });
+            let Some(handle) = signaller.open(pid) else {
+                continue;
+            };
+            // Checked again under the handle, and the lineage as it is now:
+            // a live engine's tool forked a moment ago is spared too.
+            let Some(name) = self.matches(pid) else {
+                continue;
+            };
+            if self.descends_from_root(pid) || signaller.exited(&handle) {
+                continue;
             }
+            found.push(Held {
+                found: Found { pid, name },
+                handle,
+            });
         }
-        found.into_iter().collect()
+        found.sort_by_key(|p| p.found.pid);
+        assert!(
+            found
+                .iter()
+                .all(|p| p.found.pid > 1 && p.found.pid != self.me),
+            "pid 1 and this process are never selected"
+        );
+        found
     }
 
     fn matches(&self, pid: i32) -> Option<String> {
@@ -238,20 +316,43 @@ impl Scan<'_> {
         resolved.starts_with(&self.worktree)
     }
 
-    /// The members of `watched` still found after waiting up to `grace`.
-    fn wait_gone(&self, watched: &[Found], grace: Duration) -> Vec<Found> {
-        let deadline = Instant::now() + grace;
-        loop {
-            let now: Vec<Found> = self
-                .find()
-                .into_iter()
-                .filter(|p| watched.contains(p))
-                .collect();
-            if now.is_empty() || Instant::now() >= deadline {
-                return now;
+    fn is_root(&self, pid: i32) -> bool {
+        pid == self.me || is_daemon(&name_of(&self.proc_root.join(pid.to_string())))
+    }
+
+    /// Whether `pid` is this process or a daemon, or descends from one.
+    fn descends_from_root(&self, pid: i32) -> bool {
+        self.lineage(pid).iter().any(|&p| self.is_root(p))
+    }
+
+    /// The ancestors of this process and of the daemons, roots included.
+    fn ancestors_of_roots(&self) -> HashSet<i32> {
+        let mut spared = HashSet::new();
+        for pid in pids(self.proc_root) {
+            if self.is_root(pid) {
+                spared.extend(self.lineage(pid));
             }
-            std::thread::sleep(POLL);
         }
+        spared.extend(self.lineage(self.me));
+        assert!(spared.contains(&self.me), "this process is spared");
+        spared
+    }
+
+    /// `pid` and its ancestors, nearest first, as /proc reads now.
+    fn lineage(&self, pid: i32) -> Vec<i32> {
+        let mut chain = Vec::new();
+        let mut pid = pid;
+        for _ in 0..MAX_DEPTH {
+            if pid <= 0 || chain.contains(&pid) {
+                break;
+            }
+            chain.push(pid);
+            let dir = self.proc_root.join(pid.to_string());
+            pid = status_field(&dir, "PPid:")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+        }
+        chain
     }
 }
 
@@ -260,47 +361,6 @@ fn is_daemon(name: &str) -> bool {
         || name
             .strip_prefix("aether-")
             .is_some_and(|version| version.starts_with(|c: char| c.is_ascii_digit()))
-}
-
-/// This process and the daemons, with all their ancestors and descendants.
-fn protected_pids(proc_root: &Path) -> HashSet<i32> {
-    let mut parent_of = HashMap::new();
-    let mut children: HashMap<i32, Vec<i32>> = HashMap::new();
-    let mut roots = vec![std::process::id() as i32];
-    for pid in pids(proc_root) {
-        let dir = proc_root.join(pid.to_string());
-        let ppid: i32 = status_field(&dir, "PPid:")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0);
-        parent_of.insert(pid, ppid);
-        children.entry(ppid).or_default().push(pid);
-        if is_daemon(&name_of(&dir)) {
-            roots.push(pid);
-        }
-    }
-    let mut protected = HashSet::new();
-    for &root in &roots {
-        let mut pid = root;
-        for _ in 0..MAX_DEPTH {
-            if pid <= 0 || !protected.insert(pid) {
-                break;
-            }
-            pid = parent_of.get(&pid).copied().unwrap_or(0);
-        }
-    }
-    let mut below = roots.clone();
-    let mut seen = HashSet::new();
-    while let Some(pid) = below.pop() {
-        if seen.insert(pid) {
-            protected.insert(pid);
-            below.extend(children.get(&pid).into_iter().flatten());
-        }
-    }
-    assert!(
-        roots.iter().all(|r| protected.contains(r)),
-        "every root is spared"
-    );
-    protected
 }
 
 fn pids(proc_root: &Path) -> Vec<i32> {
@@ -383,14 +443,57 @@ mod tests {
         }
     }
 
-    fn selected(f: &Fixture) -> Vec<i32> {
+    /// Handles are pids, and a process has exited once its fake /proc
+    /// entry is gone; `on_open` and `on_signal` stage what happens meanwhile.
+    struct Fake<'a> {
+        proc: &'a Path,
+        sent: RefCell<Vec<(i32, bool)>>,
+        on_open: &'a dyn Fn(i32),
+        on_signal: &'a dyn Fn(i32, bool),
+    }
+
+    impl<'a> Fake<'a> {
+        fn new(proc: &'a Path) -> Fake<'a> {
+            Fake {
+                proc,
+                sent: RefCell::new(Vec::new()),
+                on_open: &|_| {},
+                on_signal: &|_, _| {},
+            }
+        }
+    }
+
+    impl Signaller for Fake<'_> {
+        type Handle = i32;
+
+        fn open(&self, pid: i32) -> Option<i32> {
+            (self.on_open)(pid);
+            self.proc.join(pid.to_string()).exists().then_some(pid)
+        }
+
+        fn exited(&self, handle: &i32) -> bool {
+            !self.proc.join(handle.to_string()).exists()
+        }
+
+        fn signal(&self, handle: &i32, kill: bool) {
+            self.sent.borrow_mut().push((*handle, kill));
+            (self.on_signal)(*handle, kill);
+        }
+    }
+
+    fn selected_with(f: &Fixture, fake: &Fake) -> Vec<i32> {
         let scan = Scan {
             proc_root: &f.proc,
             worktree: f.tree.clone(),
             uid: UID,
-            protected: protected_pids(&f.proc),
+            me: std::process::id() as i32,
         };
-        scan.find().into_iter().map(|p| p.pid).collect()
+        let found = scan.find(fake);
+        found.iter().map(|p| p.found.pid).collect()
+    }
+
+    fn selected(f: &Fixture) -> Vec<i32> {
+        selected_with(f, &Fake::new(&f.proc))
     }
 
     #[test]
@@ -446,58 +549,79 @@ mod tests {
     }
 
     #[test]
+    fn a_pid_taken_over_before_its_handle_opens_is_rechecked() {
+        let f = fixture();
+        fake_proc(&f.proc, 302, UID, 1, &f.outside, &f.outside.join("aether"));
+        fake_proc(&f.proc, 800, UID, 1, &f.tree, &f.tree);
+        fake_proc(&f.proc, 801, UID, 1, &f.tree, &f.tree);
+        fake_proc(&f.proc, 802, UID, 1, &f.tree, &f.tree);
+        let proc = f.proc.clone();
+        let outside = f.outside.clone();
+        // Between the first check and the handle, 800 exits and its pid goes
+        // to an unrelated process, and 801 to a tool the engine just forked.
+        let on_open = move |pid: i32| {
+            let dir = proc.join(pid.to_string());
+            if pid == 800 {
+                std::fs::remove_file(dir.join("cwd")).unwrap();
+                std::fs::remove_file(dir.join("exe")).unwrap();
+                symlink(&outside, dir.join("cwd")).unwrap();
+                symlink(&outside, dir.join("exe")).unwrap();
+            }
+            if pid == 801 {
+                let status = format!("PPid:\t302\nUid:\t{UID}\n");
+                std::fs::write(dir.join("status"), status).unwrap();
+            }
+        };
+        let fake = Fake {
+            on_open: &on_open,
+            ..Fake::new(&f.proc)
+        };
+        assert_eq!(selected_with(&f, &fake), vec![802]);
+    }
+
+    #[test]
     fn terminates_then_kills_what_ignores_term_and_reports_survivors() {
         let f = fixture();
         fake_proc(&f.proc, 600, UID, 1, &f.tree, &f.tree);
         fake_proc(&f.proc, 601, UID, 1, &f.tree, &f.tree);
         fake_proc(&f.proc, 602, UID, 1, &f.tree, &f.tree);
-        let sent = RefCell::new(Vec::new());
         let proc = f.proc.clone();
         // 600 exits on TERM, 601 on KILL, 602 never.
-        let signal = |pid: i32, kill: bool| {
-            sent.borrow_mut().push((pid, kill));
+        let on_signal = move |pid: i32, kill: bool| {
             if pid == 600 || (pid == 601 && kill) {
                 std::fs::remove_dir_all(proc.join(pid.to_string())).unwrap();
             }
         };
+        let fake = Fake {
+            on_signal: &on_signal,
+            ..Fake::new(&f.proc)
+        };
         let none = Duration::from_millis(1);
-        let report = reap_with(&f.proc, &f.tree, UID, none, none, &signal).unwrap();
+        let report = reap_with(&f.proc, &f.tree, UID, none, none, &fake).unwrap();
         let pids = |v: &[Found]| v.iter().map(|p| p.pid).collect::<Vec<_>>();
         assert_eq!(pids(&report.found), vec![600, 601, 602]);
         assert_eq!(pids(&report.killed), vec![601, 602]);
         assert_eq!(pids(&report.survivors), vec![602]);
-        assert_eq!(
-            *sent.borrow(),
-            vec![
-                (600, false),
-                (601, false),
-                (602, false),
-                (601, true),
-                (602, true)
-            ]
-        );
-        assert!(
-            report
-                .describe(&f.tree)
-                .contains("Still running after SIGKILL: 602")
-        );
+        let expected = [
+            (600, false),
+            (601, false),
+            (602, false),
+            (601, true),
+            (602, true),
+        ];
+        assert_eq!(*fake.sent.borrow(), expected);
+        let text = report.describe(&f.tree);
+        assert!(text.contains("Still running after SIGKILL: 602"));
     }
 
     #[test]
     fn nothing_found_sends_nothing() {
         let f = fixture();
         fake_proc(&f.proc, 700, UID, 1, &f.outside, &f.outside);
-        let signal = |_: i32, _: bool| panic!("no signal expected");
-        let report = reap_with(
-            &f.proc,
-            &f.tree,
-            UID,
-            Duration::ZERO,
-            Duration::ZERO,
-            &signal,
-        )
-        .unwrap();
-        assert!(report.is_empty());
+        let fake = Fake::new(&f.proc);
+        let report = reap_with(&f.proc, &f.tree, UID, Duration::ZERO, Duration::ZERO, &fake);
+        assert!(report.unwrap().is_empty());
+        assert!(fake.sent.borrow().is_empty(), "no signal sent");
     }
 
     #[cfg(target_os = "linux")]
@@ -555,8 +679,8 @@ mod tests {
 
         impl Drop for Orphan {
             fn drop(&mut self) {
-                if self.alive() {
-                    send(self.0, true);
+                if let Some(handle) = PidFds.open(self.0) {
+                    PidFds.signal(&handle, true);
                 }
             }
         }
@@ -564,7 +688,15 @@ mod tests {
         fn real_reap(tree: &Path, term_grace: Duration) -> Report {
             let uid = rustix::process::getuid().as_raw();
             let kill_grace = Duration::from_secs(5);
-            reap_with(Path::new("/proc"), tree, uid, term_grace, kill_grace, &send).unwrap()
+            reap_with(
+                Path::new("/proc"),
+                tree,
+                uid,
+                term_grace,
+                kill_grace,
+                &PidFds,
+            )
+            .unwrap()
         }
 
         fn dirs() -> (tempfile::TempDir, PathBuf, PathBuf) {

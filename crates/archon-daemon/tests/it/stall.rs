@@ -30,6 +30,7 @@ fn lead(stage: &StageRun) -> AetherAgentId {
 
 /// The stuck state: the lead's turn opened `minutes` ago and nothing has
 /// been heard since. The event is back-dated: archond's clock stays real.
+/// Recording it also lets the next sweep read the tree's pulse again.
 fn went_silent(h: &Harness, agent: &AetherAgentId, minutes: i64) {
     let then = archon_core::now() - chrono::Duration::minutes(minutes);
     h.ctx
@@ -70,6 +71,7 @@ async fn a_stalled_stage_is_retried_once_then_failed_as_infrastructure() {
     );
 
     h.backend.set_pulse(&lead(&first), DEAD);
+    went_silent(&h, &lead(&first), 21);
     sweep(&h).await;
     let retry = the_only_running(&h).await;
     assert_ne!(retry.id, first.id, "the stage was re-spawned");
@@ -118,7 +120,6 @@ async fn a_held_or_live_tree_never_stalls() {
     h.enqueue("waiting on an approval").await;
     h.dispatch().await;
     let stage = the_only_running(&h).await;
-    went_silent(&h, &lead(&stage), 600);
     for pulse in [
         TreePulse { held: true, ..DEAD },
         TreePulse {
@@ -131,6 +132,7 @@ async fn a_held_or_live_tree_never_stalls() {
         },
     ] {
         h.backend.set_pulse(&lead(&stage), pulse);
+        went_silent(&h, &lead(&stage), 600);
         sweep(&h).await;
         assert_eq!(the_only_running(&h).await.id, stage.id, "{pulse:?}");
     }
@@ -161,6 +163,7 @@ async fn without_the_engine_report_a_running_tree_stalls_after_the_fallback() {
         ..waiting
     };
     h.backend.set_pulse(&lead(&stage), running);
+    went_silent(&h, &lead(&stage), 46);
     sweep(&h).await;
     let failed = h.stages(&item.id).await.remove(0);
     let StageState::Failed { error } = &failed.state else {

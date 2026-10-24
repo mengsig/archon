@@ -19,16 +19,24 @@ use archon_core::run::{StageRun, StageState};
 
 use crate::context::DaemonContext;
 
+/// How often one stage's tree may be read from Aether: the watchdog must not
+/// add much load to an Aether whose store is already contended.
+const PULSE_EVERY: chrono::Duration = chrono::Duration::minutes(1);
+
 /// When archond last heard an Aether event of each agent, kept in memory:
 /// a restart starts the watch over rather than guessing.
 #[derive(Debug, Default)]
 pub struct Activity {
     agents: std::sync::Mutex<BTreeMap<AetherAgentId, Timestamp>>,
+    /// When each lead's tree was last read from Aether.
+    looked: std::sync::Mutex<BTreeMap<AetherAgentId, Timestamp>>,
 }
 
 impl Activity {
     /// Record an event of `agent` seen at `now`. An ended agent is forgotten.
+    /// Any event makes the last read of its tree stale.
     pub fn saw(&self, agent: &AetherAgentId, kind: &EventKind, now: Timestamp) {
+        self.looked.lock().expect("activity lock").remove(agent);
         let mut agents = self.agents.lock().expect("activity lock");
         if matches!(
             kind,
@@ -43,16 +51,28 @@ impl Activity {
         *at = (*at).max(now);
     }
 
-    /// The newest event over `agents`. The first look at an agent starts
-    /// its silence at `now`.
-    fn newest(&self, agents: &[AetherAgentId], now: Timestamp) -> Timestamp {
-        assert!(!agents.is_empty(), "a tree has a lead");
+    /// The newest event of `lead` and the agents `beneath` it. The first
+    /// look at a lead starts its silence at `now`; an agent beneath it that
+    /// was never heard of (or has ended) adds nothing.
+    fn newest(&self, lead: &AetherAgentId, beneath: &[AetherAgentId], now: Timestamp) -> Timestamp {
+        assert!(!beneath.contains(lead), "a lead is not beneath itself");
         let mut book = self.agents.lock().expect("activity lock");
-        let newest = agents
+        let first = *book.entry(lead.clone()).or_insert(now);
+        beneath
             .iter()
-            .map(|agent| *book.entry(agent.clone()).or_insert(now))
-            .max();
-        newest.expect("a non-empty tree has an event")
+            .filter_map(|agent| book.get(agent).copied())
+            .fold(first, Timestamp::max)
+    }
+
+    /// Whether `lead`'s tree may be read from Aether at `now`, recording the
+    /// read when it may.
+    fn may_read(&self, lead: &AetherAgentId, now: Timestamp) -> bool {
+        let mut looked = self.looked.lock().expect("activity lock");
+        if looked.get(lead).is_some_and(|at| now < *at + PULSE_EVERY) {
+            return false;
+        }
+        looked.insert(lead.clone(), now);
+        true
     }
 }
 
@@ -185,9 +205,12 @@ async fn judge_stage(
     waiting: bool,
     now: Timestamp,
 ) -> Result<Verdict, ArchonError> {
-    let last_event = ctx.activity.newest(std::slice::from_ref(lead), now);
+    let last_event = ctx.activity.newest(lead, &[], now);
     let quiet = policy.silence.min(policy.fallback);
     if waiting || (now - last_event).to_std().unwrap_or(Duration::ZERO) < quiet {
+        return Ok(Verdict::Healthy);
+    }
+    if !ctx.activity.may_read(lead, now) {
         return Ok(Verdict::Healthy);
     }
     let pulse = match ctx.backend.pulse(lead).await {
@@ -199,15 +222,14 @@ async fn judge_stage(
         }
         Err(error) => return Err(error),
     };
-    let mut tree = vec![lead.clone()];
-    tree.extend(
-        ctx.backend
-            .descendants(lead)
-            .await?
-            .into_iter()
-            .map(|d| d.agent),
-    );
-    let seen = ctx.activity.newest(&tree, now);
+    let beneath: Vec<AetherAgentId> = ctx
+        .backend
+        .descendants(lead)
+        .await?
+        .into_iter()
+        .map(|d| d.agent)
+        .collect();
+    let seen = ctx.activity.newest(lead, &beneath, now);
     Ok(judge(policy, &read_tree(now, seen, waiting, pulse)))
 }
 
@@ -426,17 +448,35 @@ mod tests {
         book.saw(&lead, &EventKind::AgentStarted { turn: 1 }, at(0));
         book.saw(&child, &EventKind::AgentWaiting { idle: false }, at(3));
         book.saw(&lead, &EventKind::AgentStarted { turn: 1 }, at(1));
-        assert_eq!(book.newest(&[lead.clone(), child.clone()], at(10)), at(3));
         assert_eq!(
-            book.newest(std::slice::from_ref(&lead), at(10)),
-            at(1),
-            "never older"
+            book.newest(&lead, std::slice::from_ref(&child), at(10)),
+            at(3)
         );
+        assert_eq!(book.newest(&lead, &[], at(10)), at(1), "never older");
         book.saw(&child, &EventKind::AgentCompleted, at(4));
         assert_eq!(
-            book.newest(std::slice::from_ref(&child), at(10)),
+            book.newest(&lead, std::slice::from_ref(&child), at(10)),
+            at(1),
+            "an ended agent beneath the lead adds nothing"
+        );
+        assert_eq!(
+            book.newest(&child, &[], at(10)),
             at(10),
-            "an ended agent is forgotten, then looked at anew"
+            "a lead never heard of starts its silence at the first look"
+        );
+    }
+
+    #[test]
+    fn a_trees_pulse_is_read_at_most_once_a_minute_until_it_is_heard_from() {
+        let book = Activity::default();
+        let lead = AetherAgentId::parse("agt_01M5PSP3TDHS01R20WX39T6P5W").unwrap();
+        assert!(book.may_read(&lead, at(30)));
+        assert!(!book.may_read(&lead, at(30)), "read moments ago");
+        assert!(book.may_read(&lead, at(31)), "a minute later");
+        book.saw(&lead, &EventKind::AgentStarted { turn: 2 }, at(31));
+        assert!(
+            book.may_read(&lead, at(31)),
+            "an event makes the read stale"
         );
     }
 }

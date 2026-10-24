@@ -2650,9 +2650,10 @@ told once. Checks that never started are a `pr_checks` event (`state:
 first a quiet one that joins the orchestrator's next turn, then, when they
 are still not started 30 minutes later, a blocker and a waking one, told
 once. A repository whose settings overlay holds `checks = "waived"` (§18.2)
-gets the quiet event only, and the watch ends. Passing checks, no checks 30 minutes
-after delivery, or a day without an answer end it quietly; a `gh` failure is
-logged and the next look tries again.
+gets the quiet event only, and the watch ends. No checks 30 minutes after
+delivery is a quiet `pr_checks` event (`state: "absent"`) in either mode, never
+a wake, and ends the watch. Passing checks or a day without an answer end it
+quietly; a `gh` failure is logged and the next look tries again.
 
 **Risk labels.** Every pull request archond opens or updates carries one
 label, `risk: low`, `risk: medium` or `risk: high` (`archon_core::risk`),

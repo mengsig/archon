@@ -4,6 +4,7 @@
 //! operator's to fix (billing, runners), not the change's. Checks that never
 //! started are a quiet feed line first, and wake the orchestrator only once
 //! they stay so; under a repository's `checks = "waived"` they never wake.
+//! No checks at all is a quiet feed line in either mode, never a wake.
 //! Checks that pass, or a look GitHub keeps refusing, end the watch quietly.
 
 use std::time::Duration;
@@ -185,7 +186,7 @@ async fn look_once(
     };
     match checks {
         Checks::Passed => end(ctx, run, &watch, "checks passed").await,
-        Checks::None if waited(NO_CHECKS_LIMIT) => end(ctx, run, &watch, "no checks").await,
+        Checks::None if waited(NO_CHECKS_LIMIT) => no_checks(ctx, run, &watch).await,
         Checks::None | Checks::Pending if waited(GIVE_UP) => {
             end(
                 ctx,
@@ -246,6 +247,28 @@ async fn not_started(
         return look_later(ctx, run, watch).await;
     }
     report_not_started(ctx, run, &watch, names, reason).await
+}
+
+/// A pull request with no checks long after delivery: a quiet feed line, as
+/// a repository without CI has nothing to wake the orchestrator for.
+async fn no_checks(
+    ctx: &DaemonContext,
+    run: &PipelineRunId,
+    watch: &Watch,
+) -> Result<bool, ArchonError> {
+    let event = TriggerEvent::PrChecks {
+        item: watch.item.clone(),
+        url: watch.url.clone(),
+        state: "absent".to_owned(),
+        detail: format!(
+            "no checks {} minutes after delivery",
+            NO_CHECKS_LIMIT.as_secs() / 60
+        ),
+    };
+    let ended = end(ctx, run, watch, "no checks").await?;
+    assert!(ended, "the watch ends");
+    triggers::push_quiet(ctx, event).await?;
+    Ok(ended)
 }
 
 /// The repository's `checks` setting over the global one.

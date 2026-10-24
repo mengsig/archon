@@ -134,7 +134,8 @@ Details:
   fails: checks that never start are a quiet feed line, never a wake of the
   orchestrator or an operator blocker. Unset (or `watched`), such checks are
   a quiet feed line first and wake the orchestrator once if they are still
-  not started 30 minutes later. Checks that ran and failed are told either way.
+  not started 30 minutes later. A pull request with no checks at all is a
+  quiet feed line either way. Checks that ran and failed are told either way.
 - Registry settings `grant_merge`, `merge_waive_checks`, `ship`, `base_branch`, `attribution` and `gh_user` use a separate
   `/archon set --repo` message; mixing them with overlay fields is refused.
 - `/archon reset [--repo NAME]` clears the scope's overlay. Registry settings

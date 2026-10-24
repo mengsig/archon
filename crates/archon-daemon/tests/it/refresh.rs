@@ -551,6 +551,40 @@ async fn waived_checks_that_never_started_are_a_quiet_line_only() {
     assert_eq!(h.kv(&format!("ship_checks:{}", run.id)).await, None);
 }
 
+/// A pull request that has no checks half an hour after delivery is a quiet
+/// `absent` line, watched or waived alike, and the watch ends.
+#[tokio::test]
+async fn absent_checks_are_a_quiet_line_watched_or_waived() {
+    use archon_core::settings::{ChecksMode, OperatorSettings};
+    for mode in [None, Some(ChecksMode::Waived)] {
+        let (h, gh) = delivering().await;
+        let settings = OperatorSettings {
+            checks: mode,
+            ..OperatorSettings::default()
+        };
+        let repo = Some(RepoRef(REPO_NAME.into()));
+        h.cli(Request::SetSettings { repo, settings })
+            .await
+            .unwrap();
+        let (_, run) = shipped(&h, "the change").await;
+        gh.set_checks(&json!([]));
+        age_watch(&h, &run, 3).await;
+        executor::coordination::reconcile(&h.ctx).await.unwrap();
+        assert!(
+            pr_checks_news(&h).await.is_empty(),
+            "{mode:?}: checks may yet appear"
+        );
+
+        age_watch(&h, &run, 31).await;
+        executor::coordination::reconcile(&h.ctx).await.unwrap();
+        let news = pr_checks_news(&h).await;
+        assert_eq!(news.len(), 1, "{mode:?}: {news:?}");
+        assert_eq!(news[0].0, "absent");
+        assert_eq!(pr_checks_quiet(&h).await, [true], "{mode:?}: no wake");
+        assert_eq!(h.kv(&format!("ship_checks:{}", run.id)).await, None);
+    }
+}
+
 /// Checks that ran and failed are a `failed` event; pending ones are looked
 /// at again later, and one queued half an hour never started.
 #[tokio::test]

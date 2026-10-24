@@ -196,3 +196,38 @@ async fn a_finished_items_unread_inboxes_are_pruned() {
     assert_eq!(pruned.unread_inboxes, 1, "{pruned:?}");
     assert_eq!(unread_keys(&h).await, 0);
 }
+
+/// Past the items kept one by one, the rest are still counted, and taking
+/// only the kept ones leaves them warning.
+#[tokio::test]
+async fn items_past_the_kept_ones_still_warn_once_the_kept_ones_are_taken() {
+    let h = Harness::new().await;
+    let item = h.enqueue("a flooded inbox").await;
+    h.dispatch().await;
+    let stage_agent = h.running().await.remove(0).aether_agent.unwrap();
+    for seq in 1..=66 {
+        deliver(&h, &stage_agent, seq, 20).await;
+    }
+    deliver(&h, &stage_agent, 65, 20).await;
+    assert_eq!(
+        item_warnings(&h, &item.id).await[0].unread,
+        66,
+        "a replay counts once"
+    );
+
+    let consumed = |up_to: u64| json!({"type": "inbox.consumed", "up_to": up_to});
+    send(&h, &stage_agent, consumed(64), archon_core::now()).await;
+    let left = item_warnings(&h, &item.id).await;
+    assert_eq!(left.len(), 1, "seq 65 and 66 are unread: {left:?}");
+    assert_eq!(left[0].unread, 2);
+
+    send(&h, &stage_agent, consumed(65), archon_core::now()).await;
+    assert_eq!(item_warnings(&h, &item.id).await[0].unread, 1);
+    send(&h, &stage_agent, consumed(66), archon_core::now()).await;
+    assert!(item_warnings(&h, &item.id).await.is_empty());
+    assert_eq!(
+        unread_keys(&h).await,
+        0,
+        "the record goes with the last item"
+    );
+}

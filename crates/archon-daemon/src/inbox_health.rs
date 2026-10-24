@@ -16,7 +16,7 @@ use crate::context::DaemonContext;
 
 const KEY_PREFIX: &str = "inbox_unread_";
 /// The oldest items are what the warning needs; past this many an agent's
-/// newest are not kept, only counted.
+/// newest are only counted, between the oldest and newest of them.
 const MAX_KEPT: usize = 64;
 
 /// `kv`: what one agent has been delivered and not yet taken.
@@ -30,8 +30,65 @@ struct Unread {
     /// Inbox sequence numbers and delivery times, oldest first.
     pending: Vec<(u64, Timestamp)>,
     /// Items delivered past `MAX_KEPT`, not yet known to be taken.
-    #[serde(default)]
-    overflow: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    overflow: Option<Overflow>,
+}
+
+/// Unread items not kept one by one: their lowest and highest sequence
+/// numbers with delivery times, and how many there are at most.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct Overflow {
+    first: (u64, Timestamp),
+    last: (u64, Timestamp),
+    count: u32,
+}
+
+impl Overflow {
+    fn covers(&self, seq: u64) -> bool {
+        (self.first.0..=self.last.0).contains(&seq)
+    }
+
+    fn add(&mut self, seq: u64, at: Timestamp) {
+        assert!(!self.covers(seq), "a replay was filtered out");
+        if seq < self.first.0 {
+            self.first = (seq, at);
+        } else {
+            self.last = (seq, at);
+        }
+        self.count = self.count.saturating_add(1);
+    }
+
+    /// What is left unread once items up to `up_to` were taken. Past the
+    /// oldest, its delivery time is unknown: the newest's is used, so a
+    /// warning may come late but never early.
+    fn after_taking(self, up_to: u64) -> Option<Self> {
+        if self.last.0 <= up_to {
+            return None;
+        }
+        if up_to < self.first.0 {
+            return Some(self);
+        }
+        let most = u32::try_from(self.last.0 - up_to).unwrap_or(u32::MAX);
+        Some(Self {
+            first: self.last,
+            last: self.last,
+            count: self.count.min(most),
+        })
+    }
+}
+
+impl Unread {
+    /// When the oldest unread item was delivered; `None` when none is.
+    fn since(&self) -> Option<Timestamp> {
+        let kept = self.pending.first().map(|&(_, at)| at);
+        let overflowed = self.overflow.map(|o| o.first.1);
+        kept.into_iter().chain(overflowed).min()
+    }
+
+    fn count(&self) -> u64 {
+        let overflowed = self.overflow.map_or(0, |o| o.count);
+        self.pending.len() as u64 + u64::from(overflowed)
+    }
 }
 
 fn read(store: &Store, agent: &AetherAgentId) -> Result<Option<Unread>, ArchonError> {
@@ -49,7 +106,7 @@ fn read(store: &Store, agent: &AetherAgentId) -> Result<Option<Unread>, ArchonEr
 }
 
 fn write(store: &mut Store, agent: &AetherAgentId, unread: &Unread) -> Result<(), ArchonError> {
-    if unread.pending.is_empty() {
+    if unread.since().is_none() {
         return store.kv_delete(&key(agent));
     }
     let raw = serde_json::to_string(unread).expect("plain data encodes");
@@ -69,13 +126,25 @@ pub(crate) async fn delivered(
     let mut unread = read(&store, agent)?.unwrap_or(Unread {
         item,
         pending: Vec::new(),
-        overflow: 0,
+        overflow: None,
     });
-    if unread.pending.iter().any(|(kept, _)| *kept == seq) {
+    let replayed = unread.pending.iter().any(|(kept, _)| *kept == seq)
+        || unread.overflow.is_some_and(|o| o.covers(seq));
+    if replayed {
         return Ok(());
     }
     if unread.pending.len() >= MAX_KEPT {
-        unread.overflow = unread.overflow.saturating_add(1);
+        match &mut unread.overflow {
+            Some(overflow) => overflow.add(seq, at),
+            None => {
+                let first = (seq, at);
+                unread.overflow = Some(Overflow {
+                    first,
+                    last: first,
+                    count: 1,
+                });
+            }
+        }
     } else {
         let at_seq = unread.pending.partition_point(|(kept, _)| *kept < seq);
         unread.pending.insert(at_seq, (seq, at));
@@ -95,9 +164,11 @@ pub(crate) async fn consumed(
         return Ok(());
     };
     unread.pending.retain(|(seq, _)| *seq > up_to);
-    if unread.pending.is_empty() {
-        unread.overflow = 0;
-    }
+    unread.overflow = unread.overflow.and_then(|o| o.after_taking(up_to));
+    assert!(
+        unread.pending.iter().all(|(seq, _)| *seq > up_to),
+        "taken items are gone"
+    );
     write(&mut store, agent, &unread)
 }
 
@@ -123,7 +194,7 @@ pub(crate) async fn warnings(
             .map_err(|e| ArchonError::Corrupt(format!("kv key {key}: {e}")))?;
         let unread: Unread = serde_json::from_str(&raw)
             .map_err(|e| ArchonError::Corrupt(format!("kv {key} = {raw:?}: {e}")))?;
-        let Some(&(_, since)) = unread.pending.first() else {
+        let Some(since) = unread.since() else {
             continue;
         };
         if since > cutoff || only.is_some_and(|item| *item != unread.item) {
@@ -132,7 +203,7 @@ pub(crate) async fn warnings(
         let Some(stage) = running_stage_of(&store, &unread.item, &agent)? else {
             continue;
         };
-        let count = unread.pending.len() as u64 + u64::from(unread.overflow);
+        let count = unread.count();
         found.push(StageWarning {
             item: unread.item,
             stage: stage.id,

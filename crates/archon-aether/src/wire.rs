@@ -489,6 +489,13 @@ pub struct Agent {
     pub successor: Option<AetherAgentId>,
     #[serde(default)]
     pub config: AgentSettings,
+    /// Whether a live engine drives the agent; absent from an Aether that
+    /// does not report it.
+    #[serde(default)]
+    pub engine_alive: Option<bool>,
+    /// When the agent last logged an event; absent or null when unknown.
+    #[serde(default)]
+    pub last_event_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]

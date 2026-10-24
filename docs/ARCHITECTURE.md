@@ -1372,6 +1372,24 @@ in a new worktree off the base branch (§13).
 - `infra` failures (`agent.failed` before its task settles, or Aether restart
   recovery failures) get `limits.infra_retries` (default 1) automatic
   re-spawns. These retries do not count against a stage's `max_attempts`.
+- **Stage watchdog.** Each sweep checks every `running` stage's agent tree.
+  A tree is stalled when Aether holds one of its agents `running`, none of
+  its engines is alive, and no Aether event of the tree (archond's stream or
+  Aether's `last_event_at`) came for `limits.stall_minutes` (default 20). An
+  Aether that does not report `engine_alive` cannot tell a turn in flight
+  from a dead one, so its trees are judged by silence alone, for
+  `limits.stall_fallback_minutes` (default 45). A tree is never stalled
+  while an operator gate or question of its item is open, while one of its
+  agents waits for an approval or is `blocked`, while any of its engines is
+  reported alive (a turn in flight), or while none of its agents is
+  `running` (it waits on a wake: a task, a message or a deadline). Archond
+  starts a tree's silence when it first looks, so a restart restarts the
+  watch. A stalled stage is cancelled and settles as an `infra` failure
+  ("agent stalled: no engine and no events for N min"), so
+  `limits.infra_retries` re-spawns it on the same worktree once; a second
+  stall is final. The retry shows in the feed, and the failure in the
+  stage's error in `get_item` and the item's outcome. `stall_minutes = 0`
+  turns the watchdog off.
 - A stage that failed on a full disk gets up to 5 re-spawns of its own.
   Its error text must say so, as above, and come from Aether's
   infrastructure (`infra`). A failure the agent reported itself counts only

@@ -152,6 +152,8 @@ budget_usd_per_item = 0.0      # one item may spend this much; 0 = no cap
 budget_usd_total = 0.0         # all spend ever; 0 = no cap
 count_estimated_cost = true    # API-equivalent estimates (such as Codex usage) count toward budgets
 infra_retries = 1              # re-spawns after an infrastructure failure, per stage run
+stall_minutes = 20             # stage watchdog: minutes a `running` agent tree may go without an event or live engine; 0 = off
+stall_fallback_minutes = 45    # the same silence when Aether does not report `engine_alive` (older Aether)
 # [limits.per_pipeline] sets the most runs of one pipeline at once (see above)
 
 [autonomy]                     # the knobs, their defaults and the ceiling

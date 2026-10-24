@@ -220,3 +220,18 @@ async fn the_cancels_own_event_settling_first_still_retries_the_stall() {
     let retry = the_only_running(&h).await;
     assert_ne!(retry.id, first.id, "the stall is retried, not cancelled");
 }
+
+#[tokio::test]
+async fn zero_stall_minutes_leaves_a_dead_tree_to_its_timeout() {
+    let mut config = archon_core::config::Config::default();
+    config.review.auto_repair = false;
+    config.limits.stall_minutes = 0;
+    let h = Harness::with_config(config).await;
+    h.enqueue("watchdog off").await;
+    h.dispatch().await;
+    let stage = the_only_running(&h).await;
+    h.backend.set_pulse(&lead(&stage), DEAD);
+    went_silent(&h, &lead(&stage), 600);
+    sweep(&h).await;
+    assert_eq!(the_only_running(&h).await.id, stage.id);
+}

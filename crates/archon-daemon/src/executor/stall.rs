@@ -182,6 +182,8 @@ pub(super) async fn scan(
 ) -> Result<Vec<(StageRunId, String)>, ArchonError> {
     forget_settled_intents(&mut *ctx.store.lock().await)?;
     let Some(policy) = Policy::of(&ctx.config.limits) else {
+        // Off: the fleet still records events, so nothing may be kept.
+        ctx.activity.prune(now);
         return Ok(Vec::new());
     };
     let kept = chrono::Duration::from_std(policy.fallback * 2).expect("minutes fit a duration");

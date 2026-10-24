@@ -725,6 +725,19 @@ async fn a_refresh_takes_the_plan_and_stage_timeouts_it_is_given() {
         refused.contains("stage_timeouts names stage \"ship_it\""),
         "{refused}"
     );
+    let two = [("medium", REVIEW_MODEL), ("low", REVIEW_MODEL)]
+        .map(|(effort, model)| json!({"model": model, "effort": effort}));
+    let too_many = Request::RefreshItem {
+        item: owner.id.clone(),
+        model_plan: Some(serde_json::from_value(json!({"implement": two})).unwrap()),
+        model_reasons: None,
+        stage_timeouts: Default::default(),
+    };
+    let refused = h.orchestrator(too_many).await.unwrap_err().to_string();
+    assert!(
+        refused.contains("1 to 1 model choice(s), not 2"),
+        "{refused}"
+    );
     let Reply::Item(fix) = h.orchestrator(asked("implement", 30)).await.unwrap() else {
         panic!("a refresh item");
     };

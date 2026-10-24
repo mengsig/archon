@@ -166,8 +166,7 @@ fn refresh_owner(
             )));
         }
     }
-    spec.check_plan_keys(&item.model_plan)?;
-    policy.check_plan(&item.model_plan)?;
+    crate::handlers::check_plan(ctx, env, &spec, &item.model_plan)?;
     Ok(item)
 }
 

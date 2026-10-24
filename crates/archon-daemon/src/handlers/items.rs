@@ -907,7 +907,7 @@ pub(super) async fn filled_plan(
 
 /// Every stage has 1 to `choice_limit` choices, no unknown stage is named, and
 /// every choice passes the effective model policy.
-pub(super) fn check_plan(
+pub(crate) fn check_plan(
     ctx: &DaemonContext,
     env: &RepoEnv,
     spec: &PipelineSpec,

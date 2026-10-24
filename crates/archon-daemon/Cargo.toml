@@ -19,7 +19,7 @@ archon-queue = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
 futures-util = { workspace = true }
-rustix = { workspace = true }
+rustix = { workspace = true, features = ["event"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

@@ -47,6 +47,9 @@ pub(super) fn remove(
         Ok(bytes) => bytes,
         Err(e) => return Verdict::Failed(e.to_string()),
     };
+    if let Err(e) = crate::reaper::clear_for_removal(&roots.worktrees, path) {
+        return Verdict::Failed(e.to_string());
+    }
     // Twice: a lock its agent took keeps nothing worth keeping.
     if let Err(e) = git_worktree_remove(repo, path, 2) {
         return Verdict::Failed(e.to_string());

@@ -197,6 +197,8 @@ impl WorktreeManager {
             worktree.display()
         );
         assert!(repo_path.is_absolute(), "repository paths are canonical");
+        // Reaped first: a process ending on SIGTERM may still write work.
+        crate::reaper::clear_for_removal(&self.root, worktree)?;
         let shadow = shadow::Shadow::of(data_dir, repo_path)?;
         if let Some(why) = clean::unremovable(&shadow, worktree, &self.cache_dirs)? {
             return Err(ArchonError::Invalid(format!(
@@ -665,6 +667,33 @@ mod tests {
             root.join("smudged").exists() && root.join("hooked").exists(),
             "the planted filter and hook are real: plain git runs them"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_removal_keeps_what_a_process_saved_as_it_was_ended() {
+        use crate::reaper::orphan::{Orphan, wait_file};
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let repo = planted_repo(&root);
+        let manager = WorktreeManager::new(root.join("worktrees"), "archon/".into());
+        let item = QueueItemId::parse("qi_01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap();
+        let branch = manager.branch_name(&item, "saved", 0);
+        let created = manager.create(&repo, "demo", &item, &branch, None).unwrap();
+        let ready = root.join("ready");
+        let script = format!(
+            "trap 'echo saved > late.txt; exit 0' TERM; touch {}; while :; do sleep 0.1; done",
+            ready.display()
+        );
+        let writer = Orphan::start(&script, &created.path);
+        wait_file(&ready);
+
+        let kept = manager.remove(&root.join("data"), &repo, &created.path);
+        let why = kept.unwrap_err().to_string();
+        assert!(why.contains("uncommitted changes"), "{why}");
+        assert!(writer.gone(), "the writer was ended");
+        let saved = std::fs::read_to_string(created.path.join("late.txt")).unwrap();
+        assert_eq!(saved, "saved\n", "what it saved on SIGTERM stays");
     }
 
     #[test]

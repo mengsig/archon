@@ -176,6 +176,7 @@ async fn persist(
     table.spawn_errors.remove(&settled.id);
     let mut follow = decide(ctx, table, run, &settled, all).await?;
     follow.kept.extend(kept);
+    follow.reap.push(settled.id.clone());
     if owes_stop {
         follow.descendant_stops.push(settled.id);
     }
@@ -374,10 +375,11 @@ async fn infra_retry(
     );
     progress(ctx, run, text).await?;
     // Issued at once, or by the sweep once a disk hold ends; in either
-    // case after what the failed agent delegated is stopped.
+    // case after what the failed agent delegated is stopped and reaped.
     Ok(Some(FollowUp {
         issue: vec![replacement],
         descendant_stops: vec![stage.id.clone()],
+        reap: vec![stage.id.clone()],
         poke: kind == RetryKind::DiskFull,
         ..FollowUp::default()
     }))

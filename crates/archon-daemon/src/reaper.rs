@@ -12,7 +12,7 @@
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use archon_core::error::ArchonError;
@@ -24,6 +24,10 @@ const TERM_GRACE: Duration = Duration::from_secs(5);
 const KILL_GRACE: Duration = Duration::from_secs(2);
 
 const POLL: Duration = Duration::from_millis(50);
+
+/// How many times the tree is scanned and its processes ended before what
+/// still appears counts as surviving.
+const ROUNDS: usize = 3;
 
 /// Executable names of the daemons, spared with their ancestors and
 /// descendants; Aether also runs from versioned copies (`aether-1.2.4-…`).
@@ -42,7 +46,7 @@ pub struct Found {
 /// What a reap did.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Report {
-    /// Processes that were running when the reap began.
+    /// Processes found running, by the first scan or a later one.
     pub found: Vec<Found>,
     /// Those that needed SIGKILL after the grace period.
     pub killed: Vec<Found>,
@@ -114,24 +118,25 @@ struct Scan<'a> {
 }
 
 /// End every process of the current user whose cwd or executable lies under
-/// `worktree`, as described in the module docs.
+/// `worktree`, a tree below the worktree `root`, as the module docs describe.
 #[cfg(target_os = "linux")]
-pub fn reap(worktree: &Path) -> Result<Report, ArchonError> {
+pub fn reap(root: &Path, worktree: &Path) -> Result<Report, ArchonError> {
     let uid = rustix::process::getuid().as_raw();
     let proc_root = Path::new("/proc");
-    reap_with(proc_root, worktree, uid, TERM_GRACE, KILL_GRACE, &PidFds)
+    let graces = (TERM_GRACE, KILL_GRACE);
+    reap_with(proc_root, root, worktree, uid, graces, &PidFds)
 }
 
 /// Nothing is scanned or killed off Linux.
 #[cfg(not(target_os = "linux"))]
-pub fn reap(_worktree: &Path) -> Result<Report, ArchonError> {
+pub fn reap(_root: &Path, _worktree: &Path) -> Result<Report, ArchonError> {
     Ok(Report::default())
 }
 
 /// [`reap`] before `worktree` is removed: what was running is ended and
 /// logged, and a process that survives SIGKILL refuses the removal.
-pub fn clear_for_removal(worktree: &Path) -> Result<(), ArchonError> {
-    let report = reap(worktree)?;
+pub fn clear_for_removal(root: &Path, worktree: &Path) -> Result<(), ArchonError> {
+    let report = reap(root, worktree)?;
     if report.is_empty() {
         return Ok(());
     }
@@ -149,6 +154,43 @@ pub fn clear_for_removal(worktree: &Path) -> Result<(), ArchonError> {
             .collect::<Vec<_>>()
             .join(", ")
     )))
+}
+
+/// `worktree` as the kernel names it, refused when it is not strictly below
+/// `root` or a symbolic link below `root` leads it elsewhere.
+fn resolve_within(root: &Path, worktree: &Path) -> Result<PathBuf, ArchonError> {
+    let refuse = |why: String| {
+        Err(ArchonError::Invalid(format!(
+            "{} {why}, so nothing is reaped",
+            worktree.display()
+        )))
+    };
+    let real_root = root
+        .canonicalize()
+        .map_err(|e| ArchonError::io(format!("resolving {}", root.display()), e))?;
+    let Ok(below) = worktree
+        .strip_prefix(root)
+        .or_else(|_| worktree.strip_prefix(&real_root))
+    else {
+        return refuse(format!("is outside the worktree root {}", root.display()));
+    };
+    let plain = below
+        .components()
+        .all(|c| matches!(c, Component::Normal(_)));
+    if below.as_os_str().is_empty() || !plain {
+        return refuse(format!("is not a tree below {}", root.display()));
+    }
+    let expected = real_root.join(below);
+    match worktree.canonicalize() {
+        Ok(real) if real == expected => Ok(real),
+        Ok(real) => refuse(format!("leads to {} by a symbolic link", real.display())),
+        // Nothing redirects a path that does not exist.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(expected),
+        Err(e) => Err(ArchonError::io(
+            format!("resolving {}", worktree.display()),
+            e,
+        )),
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -210,10 +252,10 @@ impl Signaller for PidFds {
 
 fn reap_with<S: Signaller>(
     proc_root: &Path,
+    root: &Path,
     worktree: &Path,
     uid: u32,
-    term_grace: Duration,
-    kill_grace: Duration,
+    graces: (Duration, Duration),
     signaller: &S,
 ) -> Result<Report, ArchonError> {
     assert!(worktree.is_absolute(), "worktree paths are absolute");
@@ -224,17 +266,48 @@ fn reap_with<S: Signaller>(
     );
     let scan = Scan {
         proc_root,
-        worktree: worktree
-            .canonicalize()
-            .unwrap_or_else(|_| worktree.to_path_buf()),
+        worktree: resolve_within(root, worktree)?,
         uid,
         me: std::process::id() as i32,
     };
-    let found = scan.find(signaller)?;
-    if found.is_empty() {
-        return Ok(Report::default());
+    let mut report = Report::default();
+    // Rescanned: a process may fork a child as it ends, or a supervisor
+    // restart one, and the tree is clear only once a scan finds nothing.
+    for _ in 0..ROUNDS {
+        let found = scan.find(signaller)?;
+        if found.is_empty() {
+            return Ok(report);
+        }
+        end_round(signaller, &found, graces, &mut report);
+        if !report.survivors.is_empty() {
+            return Ok(report);
+        }
     }
-    for p in &found {
+    let respawned: Vec<Found> = scan.find(signaller)?.into_iter().map(|p| p.found).collect();
+    report.found.extend(respawned.iter().cloned());
+    report.survivors = respawned;
+    assert!(
+        report.killed.len() <= report.found.len(),
+        "kills are a subset"
+    );
+    assert!(
+        report.survivors.len() <= report.found.len(),
+        "survivors were found"
+    );
+    Ok(report)
+}
+
+/// SIGTERM `found`, SIGKILL what outlasts the term grace, and add to `report`
+/// what was found, killed and survived the kill grace.
+fn end_round<S: Signaller>(
+    signaller: &S,
+    found: &[Held<S::Handle>],
+    (term_grace, kill_grace): (Duration, Duration),
+    report: &mut Report,
+) {
+    assert!(!found.is_empty(), "a round ends something");
+    assert!(report.survivors.is_empty(), "no round follows a survivor");
+    for p in found {
         signaller.signal(&p.handle, false);
     }
     let remaining = wait_exit(signaller, found.iter().collect(), term_grace);
@@ -242,21 +315,17 @@ fn reap_with<S: Signaller>(
         signaller.signal(&p.handle, true);
     }
     let survivors = wait_exit(signaller, remaining.clone(), kill_grace);
-    let names = |held: &[&Held<S::Handle>]| held.iter().map(|p| p.found.clone()).collect();
-    let report = Report {
-        found: found.iter().map(|p| p.found.clone()).collect(),
-        killed: names(&remaining),
-        survivors: names(&survivors),
-    };
+    report.found.extend(found.iter().map(|p| p.found.clone()));
+    report
+        .killed
+        .extend(remaining.iter().map(|p| p.found.clone()));
+    report
+        .survivors
+        .extend(survivors.iter().map(|p| p.found.clone()));
     assert!(
-        report.killed.len() <= report.found.len(),
-        "kills are a subset"
-    );
-    assert!(
-        report.survivors.len() <= report.killed.len(),
+        report.survivors.len() <= remaining.len(),
         "survivors were killed"
     );
-    Ok(report)
 }
 
 /// The members of `watched` that have not exited after waiting up to `grace`.
@@ -462,6 +531,7 @@ mod tests {
     struct Fixture {
         _tmp: tempfile::TempDir,
         proc: PathBuf,
+        root: PathBuf,
         tree: PathBuf,
         outside: PathBuf,
     }
@@ -481,6 +551,7 @@ mod tests {
         Fixture {
             _tmp: tmp,
             proc,
+            root: base.join("worktrees"),
             tree,
             outside,
         }
@@ -642,7 +713,7 @@ mod tests {
             ..Fake::new(&f.proc)
         };
         let none = Duration::from_millis(1);
-        let report = reap_with(&f.proc, &f.tree, UID, none, none, &fake).unwrap();
+        let report = reap_with(&f.proc, &f.root, &f.tree, UID, (none, none), &fake).unwrap();
         let pids = |v: &[Found]| v.iter().map(|p| p.pid).collect::<Vec<_>>();
         assert_eq!(pids(&report.found), vec![600, 601, 602]);
         assert_eq!(pids(&report.killed), vec![601, 602]);
@@ -686,7 +757,7 @@ mod tests {
         fake_proc(&f.proc, 12, UID, 1, &f.tree, &f.tree);
         let fake = Fake::new(&f.proc);
         let none = Duration::ZERO;
-        let reaped = reap_with(&f.proc, &f.tree, UID, none, none, &fake);
+        let reaped = reap_with(&f.proc, &f.root, &f.tree, UID, (none, none), &fake);
         assert!(
             reaped
                 .unwrap_err()
@@ -703,10 +774,10 @@ mod tests {
         std::fs::write(f.proc.join("900/unopenable"), "").unwrap();
         let fake = Fake::new(&f.proc);
         let none = Duration::ZERO;
-        let held = reap_with(&f.proc, &f.tree, UID, none, none, &fake);
+        let held = reap_with(&f.proc, &f.root, &f.tree, UID, (none, none), &fake);
         assert!(held.unwrap_err().to_string().contains("no handle on 900"));
         let missing = f.proc.join("missing");
-        let listed = reap_with(&missing, &f.tree, UID, none, none, &fake);
+        let listed = reap_with(&missing, &f.root, &f.tree, UID, (none, none), &fake);
         assert!(listed.is_err(), "an unreadable /proc is no empty one");
         assert!(fake.sent.borrow().is_empty(), "no signal sent");
     }
@@ -716,84 +787,95 @@ mod tests {
         let f = fixture();
         fake_proc(&f.proc, 700, UID, 1, &f.outside, &f.outside);
         let fake = Fake::new(&f.proc);
-        let report = reap_with(&f.proc, &f.tree, UID, Duration::ZERO, Duration::ZERO, &fake);
+        let none = Duration::ZERO;
+        let report = reap_with(&f.proc, &f.root, &f.tree, UID, (none, none), &fake);
         assert!(report.unwrap().is_empty());
         assert!(fake.sent.borrow().is_empty(), "no signal sent");
+    }
+
+    #[test]
+    fn a_tree_redirected_by_a_symbolic_link_or_outside_the_root_is_refused() {
+        let f = fixture();
+        fake_proc(&f.proc, 950, UID, 1, &f.outside, &f.outside);
+        let moved = f.tree.with_file_name("moved");
+        std::fs::rename(&f.tree, &moved).unwrap();
+        symlink(&f.outside, &f.tree).unwrap();
+        let fake = Fake::new(&f.proc);
+        let none = Duration::ZERO;
+        let reap = |tree: &Path| reap_with(&f.proc, &f.root, tree, UID, (none, none), &fake);
+        let redirected = reap(&f.tree).unwrap_err().to_string();
+        assert!(redirected.contains("by a symbolic link"), "{redirected}");
+        let outside = reap(&f.outside).unwrap_err().to_string();
+        assert!(outside.contains("outside the worktree root"), "{outside}");
+        let whole_root = reap(&f.root.join("repo/..")).unwrap_err().to_string();
+        assert!(whole_root.contains("not a tree below"), "{whole_root}");
+        assert!(fake.sent.borrow().is_empty(), "no signal sent");
+        assert!(reap(&moved).unwrap().is_empty(), "the real tree is reaped");
+    }
+
+    #[test]
+    fn a_child_forked_while_ending_is_found_by_the_next_scan() {
+        let f = fixture();
+        fake_proc(&f.proc, 960, UID, 1, &f.tree, &f.tree);
+        let (proc, tree) = (f.proc.clone(), f.tree.clone());
+        // 960 forks 961 into the tree as it exits on TERM; 961 exits on TERM.
+        let on_signal = move |pid: i32, _kill: bool| {
+            std::fs::remove_dir_all(proc.join(pid.to_string())).unwrap();
+            if pid == 960 {
+                fake_proc(&proc, 961, UID, 1, &tree, &tree);
+            }
+        };
+        let fake = Fake {
+            on_signal: &on_signal,
+            ..Fake::new(&f.proc)
+        };
+        let none = Duration::ZERO;
+        let report = reap_with(&f.proc, &f.root, &f.tree, UID, (none, none), &fake).unwrap();
+        let pids: Vec<i32> = report.found.iter().map(|p| p.pid).collect();
+        assert_eq!(pids, vec![960, 961]);
+        assert!(report.survivors.is_empty(), "the tree is clear");
+        assert_eq!(*fake.sent.borrow(), [(960, false), (961, false)]);
+    }
+
+    #[test]
+    fn a_tree_still_respawning_after_every_round_reports_a_survivor() {
+        let f = fixture();
+        fake_proc(&f.proc, 970, UID, 1, &f.tree, &f.tree);
+        let (proc, tree) = (f.proc.clone(), f.tree.clone());
+        // A supervisor outside the scan restarts each child as it ends.
+        let on_signal = move |pid: i32, _kill: bool| {
+            std::fs::remove_dir_all(proc.join(pid.to_string())).unwrap();
+            fake_proc(&proc, pid + 1, UID, 1, &tree, &tree);
+        };
+        let fake = Fake {
+            on_signal: &on_signal,
+            ..Fake::new(&f.proc)
+        };
+        let none = Duration::ZERO;
+        let report = reap_with(&f.proc, &f.root, &f.tree, UID, (none, none), &fake).unwrap();
+        let last = 970 + ROUNDS as i32;
+        let survivors: Vec<i32> = report.survivors.iter().map(|p| p.pid).collect();
+        assert_eq!(survivors, vec![last]);
+        assert_eq!(fake.sent.borrow().len(), ROUNDS, "one TERM a round");
+        assert!(
+            report
+                .describe(&f.tree)
+                .contains("Still running after SIGKILL")
+        );
     }
 
     #[cfg(target_os = "linux")]
     mod live {
         use super::*;
+        use crate::reaper::orphan::Orphan;
         use std::process::Command;
-
-        /// A process this test started and orphaned, as `nohup cmd &` from a
-        /// shell that then exits; killed on drop should a test fail first.
-        struct Orphan(i32);
-
-        impl Orphan {
-            fn start(script: &str, cwd: &Path) -> Orphan {
-                let line = format!("sh -c \"{script}\" </dev/null >/dev/null 2>&1 & echo $!");
-                let out = Command::new("sh")
-                    .args(["-c", &line])
-                    .current_dir(cwd)
-                    .output()
-                    .unwrap();
-                assert!(out.status.success(), "the launching shell exits");
-                let pid: i32 = String::from_utf8(out.stdout)
-                    .unwrap()
-                    .trim()
-                    .parse()
-                    .unwrap();
-                assert!(pid > 1, "a real pid");
-                Orphan(pid)
-            }
-
-            fn alive(&self) -> bool {
-                Path::new(&format!("/proc/{}/cwd", self.0))
-                    .read_link()
-                    .is_ok()
-            }
-
-            /// Wait until its shell has exec'd `comm`, past any `trap`.
-            fn wait_exec(&self, comm: &str) {
-                let deadline = Instant::now() + Duration::from_secs(5);
-                let path = format!("/proc/{}/comm", self.0);
-                while std::fs::read_to_string(&path).unwrap_or_default().trim() != comm {
-                    assert!(Instant::now() < deadline, "{comm} never started");
-                    std::thread::sleep(POLL);
-                }
-            }
-
-            /// Whether it is gone within a few seconds, once init reaped it.
-            fn gone(&self) -> bool {
-                let deadline = Instant::now() + Duration::from_secs(5);
-                while self.alive() && Instant::now() < deadline {
-                    std::thread::sleep(POLL);
-                }
-                !self.alive()
-            }
-        }
-
-        impl Drop for Orphan {
-            fn drop(&mut self) {
-                if let Ok(Some(handle)) = PidFds.open(self.0) {
-                    PidFds.signal(&handle, true);
-                }
-            }
-        }
 
         fn real_reap(tree: &Path, term_grace: Duration) -> Report {
             let uid = rustix::process::getuid().as_raw();
             let kill_grace = Duration::from_secs(5);
-            reap_with(
-                Path::new("/proc"),
-                tree,
-                uid,
-                term_grace,
-                kill_grace,
-                &PidFds,
-            )
-            .unwrap()
+            let root = tree.parent().unwrap();
+            let graces = (term_grace, kill_grace);
+            reap_with(Path::new("/proc"), root, tree, uid, graces, &PidFds).unwrap()
         }
 
         fn dirs() -> (tempfile::TempDir, PathBuf, PathBuf) {
@@ -844,6 +926,85 @@ mod tests {
             child.wait().unwrap();
             assert!(report.is_empty());
             assert!(spared);
+        }
+    }
+}
+
+/// Processes tests start and orphan, for the reaper's own live tests and
+/// those of the removals it guards.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) mod orphan {
+    use super::{POLL, PidFds, Signaller};
+    use std::path::Path;
+    use std::process::Command;
+    use std::time::{Duration, Instant};
+
+    /// A process this test started and orphaned, as `nohup cmd &` from a
+    /// shell that then exits; killed on drop should a test fail first.
+    pub(crate) struct Orphan(pub(crate) i32);
+
+    impl Orphan {
+        pub(crate) fn start(script: &str, cwd: &Path) -> Orphan {
+            let line = format!("sh -c \"{script}\" </dev/null >/dev/null 2>&1 & echo $!");
+            let out = Command::new("sh")
+                .args(["-c", &line])
+                .current_dir(cwd)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "the launching shell exits");
+            let pid: i32 = String::from_utf8(out.stdout)
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            assert!(pid > 1, "a real pid");
+            Orphan(pid)
+        }
+
+        pub(crate) fn alive(&self) -> bool {
+            Path::new(&format!("/proc/{}/cwd", self.0))
+                .read_link()
+                .is_ok()
+        }
+
+        /// Wait until its shell has exec'd `comm`, past any `trap`.
+        pub(crate) fn wait_exec(&self, comm: &str) {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let path = format!("/proc/{}/comm", self.0);
+            while std::fs::read_to_string(&path).unwrap_or_default().trim() != comm {
+                assert!(Instant::now() < deadline, "{comm} never started");
+                std::thread::sleep(POLL);
+            }
+        }
+
+        /// Whether it is gone within a few seconds, once init reaped it.
+        pub(crate) fn gone(&self) -> bool {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while self.alive() && Instant::now() < deadline {
+                std::thread::sleep(POLL);
+            }
+            !self.alive()
+        }
+    }
+
+    /// Wait until `path` exists, as a started script's sign it is ready.
+    pub(crate) fn wait_file(path: &Path) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !path.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "{} never appeared",
+                path.display()
+            );
+            std::thread::sleep(POLL);
+        }
+    }
+
+    impl Drop for Orphan {
+        fn drop(&mut self) {
+            if let Ok(Some(handle)) = PidFds.open(self.0) {
+                PidFds.signal(&handle, true);
+            }
         }
     }
 }

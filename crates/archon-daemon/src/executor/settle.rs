@@ -374,10 +374,11 @@ async fn infra_retry(
     );
     progress(ctx, run, text).await?;
     // Issued at once, or by the sweep once a disk hold ends; in either
-    // case after what the failed agent delegated is stopped.
+    // case after what the failed agent delegated is stopped and reaped.
     Ok(Some(FollowUp {
         issue: vec![replacement],
         descendant_stops: vec![stage.id.clone()],
+        reap: vec![stage.id.clone()],
         poke: kind == RetryKind::DiskFull,
         ..FollowUp::default()
     }))

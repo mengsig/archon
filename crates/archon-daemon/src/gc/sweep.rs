@@ -233,6 +233,10 @@ fn remove_dir(path: &Path) -> Verdict {
 /// `path` is canonical, inside the worktree root, and a worktree of
 /// `repo`. One with uncommitted changes stays, without its caches.
 fn remove_worktree(repo: &Path, path: &Path, roots: &Roots, policy: &Policy) -> Verdict {
+    // Reaped first: a process ending on SIGTERM may still write work.
+    if let Err(e) = crate::reaper::clear_for_removal(&roots.worktrees, path) {
+        return Verdict::Failed(e.to_string());
+    }
     if !policy.force {
         match unremovable(&roots.data_dir, repo, path, &policy.cache_dirs) {
             Ok(None) => {}
@@ -326,7 +330,6 @@ pub(super) fn git_worktree_remove(
     forces: usize,
 ) -> Result<(), ArchonError> {
     assert!(forces <= 2, "git knows no stronger force");
-    crate::reaper::clear_for_removal(path)?;
     let path_text = path
         .to_str()
         .ok_or_else(|| ArchonError::Invalid(format!("{} is not UTF-8", path.display())))?;

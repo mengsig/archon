@@ -10,7 +10,7 @@ use crate::context::DaemonContext;
 
 /// Reap the worktree of the run `stage` belongs to, once no other stage of
 /// the run is live, and record what was ended or survived in the stage run
-/// and the feed.
+/// and the feed. A replacement not yet sent to Aether runs nothing yet.
 pub(super) async fn stage_end(
     ctx: &DaemonContext,
     stage: &StageRunId,
@@ -20,17 +20,20 @@ pub(super) async fn stage_end(
         let stage = store.stage_run(stage)?;
         assert!(stage.state.is_terminal(), "only a settled stage is reaped");
         let run = store.run(&stage.run)?;
-        let siblings_live = store
-            .stage_runs(&run.id)?
-            .iter()
-            .any(|s| s.id != stage.id && !s.state.is_terminal());
-        if siblings_live || !run.workspace.is_absolute() {
+        let mut siblings_live = false;
+        for s in store.stage_runs(&run.id)? {
+            let live = s.id != stage.id && !s.state.is_terminal();
+            siblings_live |= live && !super::spawn::never_sent(&store, &s.id)?;
+        }
+        let workspace = run.team_root.unwrap_or(run.workspace);
+        // Only the trees Archon made are reaped, never a checkout elsewhere.
+        if siblings_live || !workspace.starts_with(&ctx.paths.worktrees) {
             return Ok(FollowUp::default());
         }
-        run.team_root.unwrap_or(run.workspace)
+        workspace
     };
-    let tree = workspace.clone();
-    let report = tokio::task::spawn_blocking(move || crate::reaper::reap(&tree))
+    let (root, tree) = (ctx.paths.worktrees.clone(), workspace.clone());
+    let report = tokio::task::spawn_blocking(move || crate::reaper::reap(&root, &tree))
         .await
         .map_err(|e| ArchonError::io("process reaping task", std::io::Error::other(e)))??;
     if report.is_empty() {

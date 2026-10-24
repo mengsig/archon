@@ -128,12 +128,21 @@ pub struct Refresh {
 
 impl Store {
     pub fn has_pending_stack_fix(&self, owner: &QueueItemId) -> Result<bool, ArchonError> {
-        for (_, id) in self.kv_prefix(&format!("restack_fix:{owner}:"))? {
-            if !self.item(&QueueItemId::parse(&id)?)?.state.is_terminal() {
+        for id in self.stack_fixes_of(owner)? {
+            if !self.item(&id)?.state.is_terminal() {
                 return Ok(true);
             }
         }
         Ok(false)
+    }
+
+    /// The restack fixes and refreshes queued for `owner`, which work on its
+    /// branch in its worktree; the latest one for each base commit.
+    pub fn stack_fixes_of(&self, owner: &QueueItemId) -> Result<Vec<QueueItemId>, ArchonError> {
+        self.kv_prefix(&format!("restack_fix:{owner}:"))?
+            .into_iter()
+            .map(|(_, id)| QueueItemId::parse(&id))
+            .collect()
     }
 
     pub fn stack_fix(&self, item: &QueueItemId) -> Result<Option<StackFix>, ArchonError> {

@@ -46,6 +46,9 @@ const MAX_TRANSPORT_ERRORS: u32 = 5;
 /// the cap ends the loop when the full disk is one Archon cannot see.
 const MAX_DISK_FULL_SPAWNS: u32 = 5;
 
+/// How a stage whose workspace is gone fails, before the path.
+pub(super) const WORKSPACE_MISSING: &str = "workspace missing:";
+
 /// The persisted spawn of one stage run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct StoredSpawn {
@@ -926,7 +929,9 @@ async fn issue_claimed(ctx: &DaemonContext, id: &StageRunId) -> Result<FollowUp,
     // have reached Aether, a live agent may be working in it.
     let prepare = allowed.is_ok() && !unsent && spawn.parent == ParentBinding::Pending;
     let reviews = allowed.is_ok() && !unsent && can_review(&stage, &spawn);
-    let ready = ready_to_spawn(ctx, id, worker.filter(|_| prepare), reviews, &item).await;
+    let workspace = prepare.then_some(spawn.request.workspace.as_path());
+    let worker = worker.filter(|_| prepare);
+    let ready = ready_to_spawn(ctx, id, (worker, workspace), reviews, &item).await;
     if let Err(error) = ready {
         let mut table = ctx.runs.lock().await;
         let was_claimed = table.in_flight.remove(id);
@@ -954,11 +959,12 @@ fn can_review(stage: &StageRun, spawn: &StoredSpawn) -> bool {
 }
 
 /// What must be on disk before claimed stage run `id`'s agent is created: a team
-/// slot's worktree, and the item's experiments directory when the agent `reviews`.
+/// slot's worktree, the `workspace` the agent works in, and the item's
+/// experiments directory when the agent `reviews`.
 async fn ready_to_spawn(
     ctx: &DaemonContext,
     id: &StageRunId,
-    worker: Option<team::Worker>,
+    (worker, workspace): (Option<team::Worker>, Option<&Path>),
     reviews: bool,
     item: &QueueItemId,
 ) -> Result<(), String> {
@@ -967,6 +973,11 @@ async fn ready_to_spawn(
         team::ready_worker(ctx, worker)
             .await
             .map_err(|e| format!("preparing the role's worktree failed: {e}"))?;
+    }
+    // An engine started in a directory that is gone says something else.
+    if let Some(workspace) = workspace.filter(|path| !path.is_dir()) {
+        assert!(workspace.is_absolute(), "run workspaces are absolute");
+        return Err(format!("{WORKSPACE_MISSING} {}", workspace.display()));
     }
     if !reviews {
         return Ok(());

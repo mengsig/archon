@@ -3762,14 +3762,26 @@ of the item. A team root that is itself a symlink is never followed:
 nothing under it is collected, it is reported as skipped, and a removed
 root is reported by its real path.
 
-A live run's directories are never touched. Items that are not terminal,
-or changed after the cutoff, are not looked at. Holding the run table,
+A live run's directories are never touched. Whether a workspace may go is
+decided by its path, not by the item whose run left it: an item's worktree
+is also the workspace of each restack fix and refresh of it, and of every
+retry of any of them (`worktree::users`). Its age is that of the latest run
+any of those items had in it, and it is kept, reported as skipped with the
+item that uses it, while any non-terminal item (queued, dispatching,
+running or blocked) would work there or a live run works in it, inside it
+or in a directory holding it. `archond`'s own removal after shipping (§13)
+asks the same. Items that are not terminal, or changed after the cutoff,
+are not looked at. Holding the run table,
 which an item retry and a dispatch take too, `archond` checks that the
 store still shows the item terminal with the `updated_at` and the number
-of runs the pass planned with, and marks it as being collected
+of runs, its own and those of the other items of its worktree, the pass
+planned with, leaves out what a live item uses as read then, and marks the
+item and its worktree's owner as being collected
 (`DaemonContext::collecting`); an item retried in between, whose new run
 would reuse the worktree, is left alone, even when a clock stepped back
-leaves its `updated_at` as it was. It then collects the item without the
+leaves its `updated_at` as it was. A refresh or restack fix queued after
+that check waits, as the dispatcher holds every item whose own id or whose
+worktree's owner is marked. It then collects the item without the
 run table, so git and the filesystem hold up no live run. A retry of a
 marked item still queues it, but the dispatcher leaves it queued until the
 mark is gone, which pokes dispatch; a fresh retry of it, which would move

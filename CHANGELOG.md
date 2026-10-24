@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Worktrees
+
+- gc: a worktree is kept while any non-terminal item uses it, not only
+  while the item whose run left it is live. A refresh or restack fix works
+  in its owner's worktree, so a pass that collected an earlier, settled
+  refresh of an item removed the worktree a later refresh of it was
+  running in. A pass now decides by path: it ages a worktree by the latest
+  run any of its items had there, leaves out every place a queued,
+  dispatching, running or blocked item or a live run uses, and marks the
+  worktree's owner too, so dispatch holds a refresh queued meanwhile until
+  the pass is done. `archond`'s removal after shipping asks the same.
+- A stage whose workspace is gone fails with `workspace missing: <path>`,
+  its engine's error after it, instead of only that error (such as an engine
+  "not installed"), and is not retried as an infrastructure failure there;
+  a stage is never spawned into a missing workspace. A retry adds the
+  worktree again from the item's kept branch.
+
 ## 1.4.5
 
 Released 2026-10-24.

@@ -58,6 +58,7 @@ use archon_pipeline::team::MergePlan;
 use archon_pipeline::{RunDriver, ShipPlan, SpawnPlan};
 
 use crate::context::DaemonContext;
+use crate::worktree::users::LiveWorkspaces;
 
 pub(crate) use discard::item_stopped;
 pub(crate) use finish::notify;
@@ -710,6 +711,11 @@ async fn remove_ended_worktree(
         if !store.item(&cleanup.item)?.state.is_terminal()
             || store.has_pending_stack_fix(&cleanup.item)?
         {
+            return Ok(FollowUp::default());
+        }
+        let live = LiveWorkspaces::read(&store, &ctx.paths.worktrees)?;
+        if let Some(user) = live.user_of(&cleanup.worktree) {
+            tracing::info!(worktree = %cleanup.worktree.display(), %user, "worktree kept: a live item uses it");
             return Ok(FollowUp::default());
         }
         let Some(mark) = ctx.collecting.mark(cleanup.item.clone()) else {

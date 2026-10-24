@@ -678,3 +678,181 @@ async fn releasing_zero_bytes_posts_no_notice_but_real_bytes_do() {
         .expect("feed");
     assert_eq!(notices(feed), 1);
 }
+
+/// Queue a refresh of the finished `owner`, which works in its worktree.
+async fn queue_refresh(h: &Harness, owner: &QueueItem) -> QueueItem {
+    let mut store = h.ctx.store.lock().await;
+    let owner = store.item(&owner.id).expect("owner");
+    let run = store
+        .runs_for_item(&owner.id)
+        .expect("runs")
+        .pop()
+        .expect("a run");
+    let sha = git(&h.repo, &["rev-parse", "main"]);
+    let refresh = archon_queue::store::stacks::Refresh {
+        base: "main".into(),
+        sha,
+    };
+    store
+        .enqueue_refresh(&owner, &run, &refresh)
+        .expect("refresh queued")
+}
+
+async fn cancel(h: &Harness, item: &QueueItem) {
+    let cancel = Request::CancelItem {
+        item: item.id.clone(),
+        reason: None,
+    };
+    h.cli(cancel).await.expect("cancel");
+    h.dispatch().await;
+    assert!(matches!(
+        h.state(&item.id).await,
+        QueueState::Cancelled { .. }
+    ));
+}
+
+/// A cancelled owner and a cancelled first refresh that ran in its worktree,
+/// both settled long enough ago for gc to remove it.
+async fn owner_and_finished_refresh(h: &Harness) -> (QueueItem, QueueItem, PathBuf) {
+    let (owner, tree) = cancelled_run(h, "refreshed twice").await;
+    let first = queue_refresh(h, &owner).await;
+    h.dispatch().await;
+    assert_eq!(
+        h.run(&first.id).await.workspace,
+        tree,
+        "it borrows the worktree"
+    );
+    cancel(h, &first).await;
+    age_finished_runs(h, &first).await;
+    (owner, first, tree)
+}
+
+fn kept_for(report: &GcReport, tree: &Path, user: &QueueItem) -> bool {
+    report
+        .skipped
+        .iter()
+        .any(|(path, why)| path == tree && why.contains(user.id.as_str()))
+}
+
+/// The worktree of a finished item is kept while a refresh of it is queued
+/// or running, even though an earlier refresh that ran there has settled,
+/// and goes once all of them have finished.
+#[tokio::test]
+async fn a_worktree_stays_while_any_refresh_of_its_item_is_queued_or_running() {
+    let h = harness(caches_due_at_once()).await;
+    let (owner, _, tree) = Box::pin(owner_and_finished_refresh(&h)).await;
+    let second = queue_refresh(&h, &owner).await;
+
+    let report = gc_request(&h, Some(0), true).await;
+    assert!(report.removed.is_empty(), "{report:?}");
+    assert!(kept_for(&report, &tree, &second), "{report:?}");
+    assert!(
+        tree.join("target/debug/app").exists(),
+        "nothing was deleted"
+    );
+
+    h.dispatch().await;
+    assert!(matches!(
+        h.state(&second.id).await,
+        QueueState::Running { .. }
+    ));
+    assert_eq!(h.run(&second.id).await.workspace, tree);
+    let report = gc_request(&h, Some(0), true).await;
+    assert!(report.removed.is_empty(), "{report:?}");
+    assert!(tree.join("target/debug/app").exists() && tree.join("README.md").exists());
+
+    cancel(&h, &second).await;
+    age_finished_runs(&h, &second).await;
+    let report = gc_request(&h, Some(0), true).await;
+    assert!(report.failed.is_empty(), "{report:?}");
+    assert_eq!(report.removed.len(), 1, "{report:?}");
+    assert!(!tree.exists(), "it goes once every user finished");
+}
+
+/// A refresh queued after a pass planned the settled first refresh: the
+/// pass checks again under the run table, keeps the worktree, and the new
+/// refresh starts in it.
+#[tokio::test]
+async fn a_refresh_queued_after_a_pass_planned_keeps_the_worktree() {
+    let h = harness(caches_due_at_once()).await;
+    let (owner, first, tree) = Box::pin(owner_and_finished_refresh(&h)).await;
+    let pass = gc::plan(&h.ctx, Some(Age::from_secs(0)), true)
+        .await
+        .expect("plan");
+    assert!(pass.items() >= 1, "{pass:?}");
+    let second = queue_refresh(&h, &owner).await;
+
+    let report = gc::collect_planned(&h.ctx, pass).await.expect("pass");
+    assert!(report.removed.is_empty(), "{report:?}");
+    assert!(kept_for(&report, &tree, &second), "{report:?}");
+    assert!(
+        tree.join("target/debug/app").exists(),
+        "nothing was deleted"
+    );
+    assert!(!h.ctx.collecting.contains(&first.id) && !h.ctx.collecting.contains(&owner.id));
+    h.dispatch().await;
+    assert_eq!(h.run(&second.id).await.workspace, tree, "it starts in it");
+}
+
+/// While a pass collects any item's share of a worktree, it holds the
+/// worktree's owner: a pass meets the owner held and leaves the settled
+/// refresh alone, and dispatch holds a new refresh until the owner is free.
+#[tokio::test]
+async fn a_pass_holds_every_item_of_the_worktree_it_collects() {
+    let h = harness(caches_due_at_once()).await;
+    let (owner, first, tree) = Box::pin(owner_and_finished_refresh(&h)).await;
+    let sweeping = h.ctx.collecting.mark(owner.id.clone()).expect("unmarked");
+
+    let report = gc_request(&h, Some(0), true).await;
+    assert!(report.removed.is_empty(), "{report:?}");
+    assert!(
+        report
+            .skipped
+            .iter()
+            .any(|(path, why)| path == &tree && why.contains("stopped gc pass")),
+        "{report:?}"
+    );
+    assert!(
+        tree.join("target/debug/app").exists(),
+        "nothing was deleted"
+    );
+    assert!(
+        !h.ctx.collecting.contains(&first.id),
+        "the held pass let go"
+    );
+
+    let second = queue_refresh(&h, &owner).await;
+    h.dispatch().await;
+    h.dispatch().await;
+    assert_eq!(h.state(&second.id).await, QueueState::Queued, "held back");
+    drop(sweeping);
+    h.dispatch().await;
+    assert_eq!(
+        h.run(&second.id).await.workspace,
+        tree,
+        "it starts once let go"
+    );
+}
+
+/// A worktree deleted from under a settled item, by gc or by hand, is added
+/// again from the item's kept branch when the item is retried.
+#[tokio::test]
+async fn a_retry_recreates_a_missing_worktree_from_the_item_s_branch() {
+    let h = harness(caches_due_at_once()).await;
+    let (item, tree) = cancelled_run(&h, "lost its worktree").await;
+    let branch = h.run(&item.id).await.branch;
+    std::fs::write(tree.join("work.md"), "kept on the branch\n").expect("work");
+    git(&tree, &["add", "work.md"]);
+    git(&tree, &["commit", "--quiet", "-m", "work"]);
+    let head = git(&tree, &["rev-parse", "HEAD"]);
+    std::fs::remove_dir_all(&tree).expect("removed by hand");
+
+    retry(&h, &item).await;
+    h.dispatch().await;
+    let runs = runs_of(&h, &item).await;
+    assert_eq!(runs.len(), 2, "the retry started");
+    assert_eq!(runs[1].workspace, tree, "in the same place");
+    assert_eq!(git(&tree, &["rev-parse", "HEAD"]), head, "from the branch");
+    assert_eq!(git(&tree, &["branch", "--show-current"]), branch);
+    assert!(tree.join("work.md").exists());
+}

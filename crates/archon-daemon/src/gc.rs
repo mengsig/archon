@@ -47,6 +47,7 @@ use tokio::sync::MutexGuard;
 
 use crate::context::{DaemonContext, DaemonPaths};
 use crate::feed;
+use crate::worktree::users::{self, LiveWorkspaces};
 
 pub use extras::Extras;
 pub(crate) use extras::{is_claimed, set_aside};
@@ -264,12 +265,31 @@ pub async fn preview(
         policy,
         roots,
         pressure,
-        plans,
+        mut plans,
         ..
     } = plan(ctx, older_than, force).await?;
+    let store = ctx.store.lock().await;
+    let in_use = leave_out_live_places(&store, &ctx.paths.worktrees, &mut plans)?;
+    drop(store);
     let mut report = blocking(move || preview::preview(&plans, &roots, &policy)).await?;
+    report.skipped.extend(in_use);
     report.pressure = pressure;
     Ok(report)
+}
+
+/// Leave the places live items use out of `plans`; returns them with why.
+fn leave_out_live_places(
+    store: &Store,
+    worktrees: &Path,
+    plans: &mut [plan::ItemPlan],
+) -> Result<Vec<(PathBuf, String)>, ArchonError> {
+    let live = LiveWorkspaces::read(store, worktrees)?;
+    let in_use: Vec<_> = plans
+        .iter_mut()
+        .flat_map(|plan| plan.found.keep_in_use(&live))
+        .collect();
+    debug_assert!(in_use.iter().all(|(path, _)| live.user_of(path).is_some()));
+    Ok(in_use)
 }
 
 /// A planned pass; it holds off any other until it is collected or dropped.
@@ -320,10 +340,12 @@ pub async fn plan(
 }
 
 /// Collect each planned item that is still as settled as it was planned:
-/// one retried meanwhile may be using its worktree again. Each item is
-/// marked (see [`Collecting`]) holding the run table, which a retry takes
-/// too, then collected off the workers without the table. Its mark pokes
-/// dispatch as it goes, for a retry it held back.
+/// one retried meanwhile may be using its worktree again, and so may a
+/// refresh or restack fix of the item that owns it. Each item, and that
+/// owner, is marked (see [`Collecting`]) holding the run table, which
+/// dispatch and a retry take too, the places live items use are left out,
+/// then the rest is collected off the workers without the table. Its marks
+/// poke dispatch as they go, for an item they held back.
 pub async fn collect_planned(ctx: &DaemonContext, pass: Pass<'_>) -> Result<GcReport, ArchonError> {
     let Pass {
         mut last_pass,
@@ -334,9 +356,12 @@ pub async fn collect_planned(ctx: &DaemonContext, pass: Pass<'_>) -> Result<GcRe
         plans,
     } = pass;
     let mut report = GcReport::default();
-    for item in plans {
-        let mark = match mark_if_settled(ctx, &item).await? {
-            Marking::Marked(mark) => mark,
+    for mut item in plans {
+        let marks = match mark_if_settled(ctx, &mut item).await? {
+            Marking::Marked { marks, in_use } => {
+                report.skipped.extend(in_use);
+                marks
+            }
             Marking::Unsettled => continue,
             Marking::Held => {
                 report.absorb(held_by_a_sweep(&item));
@@ -345,7 +370,7 @@ pub async fn collect_planned(ctx: &DaemonContext, pass: Pass<'_>) -> Result<GcRe
         };
         let (r, p) = (roots.clone(), policy.clone());
         let swept = blocking(move || {
-            let _mark = mark;
+            let _marks = marks;
             sweep::sweep(item.found, &r, &p)
         });
         report.absorb(swept.await?);
@@ -459,27 +484,49 @@ pub(crate) fn last_pass(store: &Store) -> Result<Option<GcStatus>, ArchonError> 
 
 /// Whether a pass may collect a planned item now.
 enum Marking {
-    Marked(Mark),
+    /// The marks of the item and of its worktree's owner, with the places
+    /// left out of its plan because live items use them.
+    Marked {
+        marks: Vec<Mark>,
+        in_use: Vec<(PathBuf, String)>,
+    },
     /// Retried or changed since it was planned.
     Unsettled,
     /// An earlier pass was stopped mid-sweep; its sweep collects the item.
     Held,
 }
 
-/// The item's mark, taken holding the run table, while the store still
-/// shows it as settled as `item` planned it and no sweep holds its mark.
+/// The marks of the item and of the owner of its worktree, taken holding
+/// the run table, while the store still shows it as settled as `item`
+/// planned it and no sweep holds either mark. Dispatch holds back any item
+/// of that worktree while they last; what a live item uses already leaves
+/// `item`'s plan here, under the same table.
 async fn mark_if_settled(
     ctx: &DaemonContext,
-    item: &plan::ItemPlan,
+    item: &mut plan::ItemPlan,
 ) -> Result<Marking, ArchonError> {
     let _table = ctx.runs.lock().await;
-    if !plan::still_settled(&*ctx.store.lock().await, item)? {
+    let store = ctx.store.lock().await;
+    if !plan::still_settled(&store, item)? {
         return Ok(Marking::Unsettled);
     }
-    Ok(match ctx.collecting.mark(item.item.clone()) {
-        Some(mark) => Marking::Marked(mark),
-        None => Marking::Held,
-    })
+    let owner = users::owner(&store, &item.item)?;
+    let live = LiveWorkspaces::read(&store, &ctx.paths.worktrees)?;
+    drop(store);
+    let mut marks = Vec::with_capacity(2);
+    for id in [Some(&item.item), (owner != item.item).then_some(&owner)] {
+        match id.map(|id| ctx.collecting.mark(id.clone())) {
+            Some(Some(mark)) => marks.push(mark),
+            Some(None) => return Ok(Marking::Held),
+            None => {}
+        }
+    }
+    assert!(
+        ctx.collecting.contains(&owner),
+        "the worktree's owner is marked"
+    );
+    let in_use = item.found.keep_in_use(&live);
+    Ok(Marking::Marked { marks, in_use })
 }
 
 /// A report that leaves every place `item` planned to the sweep that still
@@ -514,7 +561,7 @@ pub fn collect_offline(
     let (policy, pressure) = offline_policy(config, paths, older_than, force)?;
     let extras = Extras::new(config, archon_core::now(), older_than, pressure)?;
     let roots = Roots::resolve(paths)?;
-    let mut report = collect_locked(&store, &roots, &policy, &extras)?;
+    let mut report = collect_locked(&store, (&roots, &paths.worktrees), &policy, &extras)?;
     report.pressure = pressure;
     Ok(report)
 }
@@ -532,8 +579,10 @@ pub fn preview_offline(
     let (policy, pressure) = offline_policy(config, paths, older_than, force)?;
     let roots = Roots::resolve(paths)?;
     let settled = plan::settled(&store, policy.settled_before())?;
-    let plans = plan::plan_all(&settled, &roots, &policy);
+    let mut plans = plan::plan_all(&settled, &roots, &policy);
+    let in_use = leave_out_live_places(&store, &paths.worktrees, &mut plans)?;
     let mut report = preview::preview(&plans, &roots, &policy);
+    report.skipped.extend(in_use);
     report.pressure = pressure;
     Ok(report)
 }
@@ -564,13 +613,16 @@ fn below_minimum_free(config: &Config, paths: &DaemonPaths) -> bool {
 /// A pass over `store` while the daemon lock is held.
 fn collect_locked(
     store: &Store,
-    roots: &Roots,
+    (roots, worktrees): (&Roots, &Path),
     policy: &Policy,
     extras: &Extras,
 ) -> Result<GcReport, ArchonError> {
     let settled = plan::settled(store, policy.settled_before())?;
     let mut report = GcReport::default();
-    for item in plan::plan_all(&settled, roots, policy) {
+    let mut plans = plan::plan_all(&settled, roots, policy);
+    let in_use = leave_out_live_places(store, worktrees, &mut plans)?;
+    report.skipped.extend(in_use);
+    for item in plans {
         if plan::still_settled(store, &item)? {
             report.absorb(sweep::sweep(item.found, roots, policy));
         }

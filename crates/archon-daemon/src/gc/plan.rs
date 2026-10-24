@@ -18,6 +18,7 @@ use archon_queue::Store;
 use super::sweep::is_inside;
 use super::{Policy, Roots, team};
 use crate::worktree::git;
+use crate::worktree::users::{self, LiveWorkspaces};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Candidate {
@@ -102,6 +103,26 @@ impl Found {
     fn is_empty(&self) -> bool {
         self.candidates.is_empty() && self.unreadable.is_empty() && self.team_roots.is_empty()
     }
+
+    /// Leave out each candidate and team root a live item uses; returned
+    /// with why, for the report.
+    pub fn keep_in_use(&mut self, live: &LiveWorkspaces) -> Vec<(PathBuf, String)> {
+        let before = self.candidates.len() + self.team_roots.len();
+        let mut kept = Vec::new();
+        let mut free = |path: &Path| match live.user_of(path) {
+            Some(user) => {
+                let why = format!("item {user} still uses it and has not finished");
+                kept.push((path.to_path_buf(), why));
+                false
+            }
+            None => true,
+        };
+        self.candidates.retain(|c| free(&c.workspace));
+        self.team_roots.retain(|root| free(root));
+        let after = self.candidates.len() + self.team_roots.len();
+        assert_eq!(after + kept.len(), before, "each place is kept or left");
+        kept
+    }
 }
 
 /// A settled item with its runs and registered repository, as the store
@@ -110,6 +131,8 @@ impl Found {
 pub(super) struct Settled {
     pub item: QueueItem,
     pub runs: Vec<PipelineRun>,
+    /// The runs of the other items that work in the item's worktree.
+    pub borrowed: Vec<PipelineRun>,
     pub repo: Option<Repo>,
 }
 
@@ -122,6 +145,8 @@ pub(super) struct ItemPlan {
     /// Runs are never deleted, so a retry since shows as another run even
     /// when the clock stepped back to the planned `updated_at`.
     pub runs: usize,
+    /// How many runs the other items of its worktree had.
+    pub borrowed: usize,
     pub found: Found,
 }
 
@@ -145,8 +170,14 @@ pub(super) fn settled(store: &Store, before: Timestamp) -> Result<Vec<Settled>, 
             continue;
         }
         let runs = store.runs_for_item(&item.id)?;
+        let borrowed = borrowed_runs(store, &item.id)?;
         let repo = item.repo.as_ref().and_then(|id| repos.get(id)).cloned();
-        settled.push(Settled { item, runs, repo });
+        settled.push(Settled {
+            item,
+            runs,
+            borrowed,
+            repo,
+        });
     }
     debug_assert!(settled.iter().all(|s| s.item.state.is_terminal()));
     Ok(settled)
@@ -169,7 +200,23 @@ pub(super) fn still_settled(store: &Store, plan: &ItemPlan) -> Result<bool, Arch
     }
     let runs = store.runs_for_item(&plan.item)?.len();
     assert!(runs >= plan.runs, "runs are never deleted");
-    Ok(runs == plan.runs)
+    // A fix queued again for the same base commit replaces the earlier one.
+    let borrowed = borrowed_runs(store, &plan.item)?.len();
+    Ok(runs == plan.runs && borrowed == plan.borrowed)
+}
+
+/// The runs of the other items that work in `item`'s worktree: its owner's,
+/// and those of each restack fix and refresh of that owner.
+fn borrowed_runs(store: &Store, item: &QueueItemId) -> Result<Vec<PipelineRun>, ArchonError> {
+    let owner = users::owner(store, item)?;
+    let mut borrowed = Vec::new();
+    for sharer in users::sharers(store, &owner)? {
+        if &sharer != item {
+            borrowed.extend(store.runs_for_item(&sharer)?);
+        }
+    }
+    debug_assert!(borrowed.iter().all(|run| &run.item != item));
+    Ok(borrowed)
 }
 
 /// The plans of the items that hold something to collect.
@@ -192,7 +239,7 @@ fn plan_item(settled: &Settled, roots: &Roots, policy: &Policy) -> ItemPlan {
     let owed = owed_workspace(settled, policy);
     let item = &settled.item.id;
     let mut found = Found::default();
-    for (workspace, finished) in last_use(&settled.runs) {
+    for (workspace, finished) in last_use(&settled.runs, &settled.borrowed) {
         if registered == Some(workspace.as_path()) {
             continue;
         }
@@ -232,6 +279,7 @@ fn plan_item(settled: &Settled, roots: &Roots, policy: &Policy) -> ItemPlan {
         item: settled.item.id.clone(),
         updated_at: settled.item.updated_at,
         runs: settled.runs.len(),
+        borrowed: settled.borrowed.len(),
         found: found.deduplicated(),
     }
 }
@@ -332,16 +380,32 @@ fn repo_of(
     Some(common)
 }
 
-/// When each workspace was last used: the latest finish of the runs in it,
-/// or `None` while any of them has not finished.
-pub(super) fn last_use(runs: &[PipelineRun]) -> BTreeMap<PathBuf, Option<Timestamp>> {
+/// When each workspace of `runs` was last used: the latest finish of the
+/// runs in it, `borrowed` runs of other items included, or `None` while any
+/// of them has not finished.
+pub(super) fn last_use(
+    runs: &[PipelineRun],
+    borrowed: &[PipelineRun],
+) -> BTreeMap<PathBuf, Option<Timestamp>> {
+    let latest = |at: &mut Option<Timestamp>, finished: Option<Timestamp>| {
+        *at = at.zip(finished).map(|(a, b)| a.max(b));
+    };
     let mut last: BTreeMap<PathBuf, Option<Timestamp>> = BTreeMap::new();
     for run in runs {
         let finished = run.finished_at;
         last.entry(run.workspace.clone())
-            .and_modify(|at| *at = at.zip(finished).map(|(a, b)| a.max(b)))
+            .and_modify(|at| latest(at, finished))
             .or_insert(finished);
     }
-    debug_assert!(last.len() <= runs.len());
+    let own = last.len();
+    for run in borrowed {
+        if let Some(at) = last.get_mut(&run.workspace) {
+            latest(at, run.finished_at);
+        }
+    }
+    debug_assert!(
+        own <= runs.len() && last.len() == own,
+        "borrowed runs add no workspace"
+    );
     last
 }

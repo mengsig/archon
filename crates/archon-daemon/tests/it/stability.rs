@@ -4,6 +4,7 @@
 use crate::common::Harness;
 
 use archon_core::queue::QueueState;
+use archon_core::run::{StageOutcome, StageState};
 use archon_daemon::executor;
 
 /// Corrupt variables of one run, including an empty object that used to trip
@@ -118,6 +119,69 @@ async fn an_item_whose_worktree_is_gone_does_not_stop_the_others() {
         "the other item goes on: {:?}",
         h.state(&fine.id).await
     );
+}
+
+/// A stage that fails after its worktree went says so, not what its
+/// engine made of the missing directory.
+#[tokio::test]
+async fn a_stage_that_lost_its_workspace_fails_with_workspace_missing() {
+    let h = Harness::new().await;
+    let item = h.enqueue("worktree deleted mid-stage").await;
+    h.dispatch().await;
+    let tree = h.run(&item.id).await.workspace;
+    std::fs::remove_dir_all(&tree).unwrap();
+
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "codex failed: codex is not installed or not on PATH".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!("the item fails: {:?}", h.state(&item.id).await);
+    };
+    let missing = format!("workspace missing: {}", tree.display());
+    assert!(error.contains(&missing), "{error}");
+    assert!(
+        error.contains("not on PATH"),
+        "the engine's error is kept: {error}"
+    );
+    let stages = h.stages(&item.id).await;
+    assert_eq!(
+        stages.len(),
+        1,
+        "no infrastructure retry in a missing workspace"
+    );
+}
+
+/// The next stages of a run whose worktree went are never sent to Aether:
+/// each fails with the missing workspace.
+#[tokio::test]
+async fn a_stage_is_not_spawned_into_a_missing_workspace() {
+    let h = Harness::new().await;
+    let item = h.enqueue("worktree deleted between stages").await;
+    h.dispatch().await;
+    let tree = h.run(&item.id).await.workspace;
+    let created = h.backend.created();
+    std::fs::remove_dir_all(&tree).unwrap();
+
+    h.settle_running(|_| crate::common::completed("done")).await;
+    h.dispatch().await;
+    let missing = format!("workspace missing: {}", tree.display());
+    let reviews: Vec<_> = h
+        .stages(&item.id)
+        .await
+        .into_iter()
+        .filter(|s| s.stage_id == "review")
+        .collect();
+    assert_eq!(reviews.len(), 2, "{reviews:?}");
+    for review in &reviews {
+        let StageState::Failed { error } = &review.state else {
+            panic!("the review fails: {review:?}");
+        };
+        assert_eq!(error, &missing);
+    }
+    assert_eq!(h.backend.created(), created, "no agent was created");
 }
 
 /// An event type this archon has never heard of, aimed at a live stage's

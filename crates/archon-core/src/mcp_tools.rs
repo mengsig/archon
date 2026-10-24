@@ -77,15 +77,18 @@ pub const TOOLS: &[ToolName] = &[
     tool("guide", ToolClass::ReadOnly),
     tool("settings", ToolClass::ReadOnly),
     tool("clear_notifications", ToolClass::Mutation),
+    tool("request_status", ToolClass::ReadOnly),
 ];
 
 /// The tools a stage agent keeps whatever its item's `tools` mode: its
-/// messages to the orchestrator and its item's artifacts.
-pub const STAGE_TOOLS: [&str; 4] = [
+/// messages to the orchestrator, its item's artifacts, and what became of a
+/// message whose answer never came.
+pub const STAGE_TOOLS: [&str; 5] = [
     "message_orchestrator",
     "publish_artifact",
     "list_artifacts",
     "read_artifact",
+    "request_status",
 ];
 
 const fn tool(name: &'static str, class: ToolClass) -> ToolName {
@@ -127,5 +130,17 @@ mod tests {
         assert!(!mutating.contains(&"mcp__archon__get_stage".to_owned()));
         assert!(mutating.contains(&"mcp__archon__github_reply".to_owned()));
         assert!(mutating.iter().all(|name| names.contains(name)));
+    }
+
+    #[test]
+    fn keyed_tools_are_changes_and_stage_tools_exist() {
+        for keyed in crate::tracked::KEYED_TOOLS {
+            let listed = TOOLS.iter().find(|t| t.name == keyed);
+            assert!(listed.is_some_and(|t| !t.read_only()), "{keyed} is a listed change");
+        }
+        for kept in STAGE_TOOLS {
+            assert!(TOOLS.iter().any(|t| t.name == kept), "{kept} is listed");
+        }
+        assert!(!mutating_names().contains(&qualified("request_status")));
     }
 }

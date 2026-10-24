@@ -213,7 +213,7 @@ fn onto_with_dependencies() -> ArchonError {
 }
 
 pub(super) async fn list(ctx: &DaemonContext, query: &ItemQuery) -> Result<Reply, ArchonError> {
-    Ok(Reply::Items(ctx.store.lock().await.items(query)?))
+    Ok(Reply::Items(ctx.read_store().await.items(query)?))
 }
 
 /// Viewing an item reads its outcome: what the notification center holds for
@@ -222,7 +222,7 @@ pub(super) async fn list(ctx: &DaemonContext, query: &ItemQuery) -> Result<Reply
 /// awaiting its answer stays; it asks once per feed head.
 async fn mark_viewed(ctx: &DaemonContext, id: &QueueItemId) -> Result<(), ArchonError> {
     let asked = {
-        let store = ctx.store.lock().await;
+        let store = ctx.read_store().await;
         let key = format!(
             "{}{id}",
             archon_queue::store::keys::NOTIFICATION_CENTER_VIEWED
@@ -252,7 +252,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
     let waiting = super::waiting::WaitingView::read(ctx).await?;
     let estimates = ctx.config.limits.count_estimated_cost;
     let default_efforts = default_efforts(ctx, id).await?;
-    let store = ctx.store.lock().await;
+    let store = ctx.read_store().await;
     let item = store.item(id)?;
     let mut runs = store.runs_for_item(id)?;
     let mut stages = Vec::new();
@@ -304,7 +304,7 @@ async fn default_efforts(
     ctx: &DaemonContext,
     id: &QueueItemId,
 ) -> Result<BTreeMap<String, Effort>, ArchonError> {
-    let item = ctx.store.lock().await.item(id)?;
+    let item = ctx.read_store().await.item(id)?;
     let spec = match item_pipeline(ctx, &item).await {
         Ok((_, _, spec)) => spec,
         Err(error) if error.is_store() => return Err(error),

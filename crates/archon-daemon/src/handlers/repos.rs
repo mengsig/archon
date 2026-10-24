@@ -157,7 +157,7 @@ async fn watch_origin(
 }
 
 pub(super) async fn list(ctx: &DaemonContext) -> Result<Reply, ArchonError> {
-    Ok(Reply::Repos(ctx.store.lock().await.repos()?))
+    Ok(Reply::Repos(ctx.read_store().await.repos()?))
 }
 
 /// `auto_merge` at registration is the ceiling `merge=auto`, as before

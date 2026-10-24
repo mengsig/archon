@@ -29,6 +29,7 @@ pub mod prune;
 pub mod pump;
 pub mod push;
 pub mod quota;
+pub mod readers;
 pub mod recovery;
 pub mod reports;
 pub mod server;
@@ -36,6 +37,7 @@ mod standby;
 pub mod status_health;
 mod storage;
 pub mod supervisor;
+mod tracked;
 pub mod triggers;
 mod workers;
 pub mod worktree;
@@ -335,6 +337,7 @@ fn spawn_workers(
     );
     worker!("trigger delivery", triggers::deliver_loop);
     worker!("store pruning", prune::run);
+    worker!("wal checkpoints", readers::checkpoint);
     worker!("repository mirrors", mirror::run);
     worker!("learning", learned::run);
     worker!("upgrades", ops::run);
@@ -348,7 +351,7 @@ fn spawn_workers(
     }
     assert_eq!(
         workers.len(),
-        16 + usize::from(auto_gc) + usize::from(verifies),
+        17 + usize::from(auto_gc) + usize::from(verifies),
         "every daemon worker is supervised"
     );
 }
@@ -443,7 +446,9 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
         std::fs::create_dir_all(dir)
             .map_err(|e| ArchonError::io(format!("creating {}", dir.display()), e))?;
     }
-    let store = open_store(&paths, &config)?;
+    let mut store = open_store(&paths, &config)?;
+    tracked::interrupt_left_pending(&mut store)?;
+    let readers = readers::Readers::open(&store, &paths.store, readers::READERS)?;
     let (operator_settings, unreadable) = settings::SettingsBook::load_lenient(&store)?;
     for (key, error) in &unreadable {
         set_aside_settings(&paths.data_dir, key, error);
@@ -462,6 +467,8 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
         config,
         paths,
         store: Mutex::new(store),
+        readers,
+        tracked: Default::default(),
         aether,
         backend,
         feed,

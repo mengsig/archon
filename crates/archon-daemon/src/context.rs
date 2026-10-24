@@ -86,8 +86,13 @@ pub struct DaemonContext {
     pub status_probes: crate::status_health::StatusProbes,
     pub paths: DaemonPaths,
     /// The only writer of `archon.db`. Held briefly; never across an await
-    /// on Aether.
+    /// on Aether. Reads served to clients take a reader instead
+    /// ([`Self::read_store`]).
     pub store: Mutex<Store>,
+    /// Read-only connections beside the writer; none for an in-memory store.
+    pub readers: crate::readers::Readers,
+    /// Tracked changes running now, for `request_status`.
+    pub tracked: crate::tracked::InFlight,
     pub aether: Arc<AetherLink>,
     pub backend: Arc<dyn AgentBackend>,
     /// Every appended feed item, for `SubscribeFeed` connections.

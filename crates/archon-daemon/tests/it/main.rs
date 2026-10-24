@@ -83,6 +83,7 @@ mod swarm;
 mod team;
 mod team_coordination;
 mod team_pr;
+mod tracked;
 mod trigger_summaries;
 mod upgrade;
 mod workspace_hygiene;

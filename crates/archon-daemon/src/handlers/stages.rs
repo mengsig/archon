@@ -18,7 +18,7 @@ use crate::context::DaemonContext;
 pub(super) async fn get(ctx: &DaemonContext, query: &StageQuery) -> Result<Reply, ArchonError> {
     query.check().map_err(ArchonError::Invalid)?;
     let estimates = ctx.config.limits.count_estimated_cost;
-    let store = ctx.store.lock().await;
+    let store = ctx.read_store().await;
     let item = store.item(&query.item)?;
     let run = chosen_run(&store, &item, query)?;
     assert_eq!(run.item, item.id, "a run belongs to its item");

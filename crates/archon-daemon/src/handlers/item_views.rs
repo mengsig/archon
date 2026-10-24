@@ -31,13 +31,14 @@ pub(super) async fn read_summaries(
 ) -> Result<Vec<ItemSummary>, ArchonError> {
     let waiting = super::waiting::WaitingView::read(ctx).await?;
     let estimates = ctx.config.limits.count_estimated_cost;
-    let items = ctx.store.lock().await.items(query)?;
+    let store = ctx.read_store().await;
+    let items = store.items(query)?;
     let count = items.len();
     let mut summaries = Vec::with_capacity(count);
     for item in items {
-        let store = ctx.store.lock().await;
         summaries.push(summarize(&store, item, estimates, &waiting)?);
     }
+    drop(store);
     assert_eq!(summaries.len(), count, "one summary per listed item");
     Ok(summaries)
 }

@@ -22,19 +22,20 @@ use super::settings;
 
 impl Store {
     pub fn learning_config(&self) -> Result<LearningConfig, ArchonError> {
-        Ok(self.learning.borrow().clone())
+        Ok(self.learned().config.clone())
     }
 
     pub fn configure_learning(&self, config: &LearningConfig) -> Result<(), ArchonError> {
         config.validate()?;
-        if !self.learning_config_loaded.get() {
+        if !self.learned().config_loaded {
             if self.kv_get("learning/live-since")?.is_none() {
                 self.save_learning_value("learning/live-since", &ts(&archon_core::now()))?;
             }
-            self.learning_config_loaded.set(true);
+            self.learned().config_loaded = true;
         }
-        if *self.learning.borrow() != *config {
-            *self.learning.borrow_mut() = config.clone();
+        let mut learned = self.learned();
+        if learned.config != *config {
+            learned.config = config.clone();
         }
         Ok(())
     }
@@ -406,8 +407,8 @@ impl Store {
 
 impl Store {
     pub fn learning_models_stale(&self) -> bool {
-        self.learning_models_at
-            .get()
+        self.learned()
+            .catalog_at
             .is_none_or(|at| archon_core::now() - at >= chrono::Duration::minutes(5))
     }
 
@@ -431,21 +432,22 @@ impl Store {
                 .iter()
                 .all(|m| !m.model.provider.is_empty() && !m.model.model.is_empty())
         );
-        *self.learning_models.borrow_mut() = catalog;
-        self.learning_models_at.set(Some(archon_core::now()));
+        let mut learned = self.learned();
+        learned.catalog = catalog;
+        learned.catalog_at = Some(archon_core::now());
     }
 
     /// The connected models, sorted; empty before the first refresh.
     pub fn learning_models(&self) -> Vec<archon_core::model::ModelRef> {
-        let catalog = self.learning_models.borrow();
-        let mut models: Vec<_> = catalog.models().iter().map(|m| m.model.clone()).collect();
+        let learned = self.learned();
+        let mut models: Vec<_> = learned.catalog.models().iter().map(|m| m.model.clone()).collect();
         models.sort();
         models
     }
 
     /// The connected models in Aether's order, with their tiers.
     pub fn model_catalog(&self) -> ModelCatalog {
-        self.learning_models.borrow().clone()
+        self.learned().catalog.clone()
     }
 }
 

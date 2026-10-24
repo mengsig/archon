@@ -35,7 +35,7 @@ use tokio::sync::RwLockReadGuard;
 
 use crate::context::DaemonContext;
 use crate::executor::operator_merge;
-use crate::{github, integration, ops, recovery, reports, standby, supervisor};
+use crate::{github, integration, ops, recovery, reports, standby, supervisor, tracked};
 
 /// `update_item` with only `autonomy`, above the item's ceiling. Only the
 /// operator's confirmed request calls this; no request field reaches it.
@@ -56,26 +56,52 @@ pub async fn update_item_autonomy_above_ceiling(
 /// client; a request that changes Archon for an agent is made only for the
 /// orchestrator archond has now (ARCHITECTURE §11). In standby and while
 /// start-up recovery runs only reads are served. The steps run in this order.
+///
+/// A `tracked` change is known as pending before anything can refuse it; a
+/// repeat under its idempotency key answers with the first outcome. One
+/// function: a debug build's deepest request already nears a test's stack.
 pub async fn handle(
     ctx: &DaemonContext,
     client: ClientKind,
     request: Request,
 ) -> Result<Reply, ArchonError> {
     let (caller, request) = unwrap_for_agent(request)?;
-    refuse_early(ctx, client, caller.as_ref(), &request).await?;
-    if let Some(reply) = prepare_watcher(ctx, &request).await? {
-        return Ok(reply);
-    }
-    // Held to the end of the call: the orchestrator is not replaced under it.
-    let _authority = take_authority(ctx, client, caller.as_ref(), &request).await?;
-    // Serialize the state whose before/after authority confirmations observe.
-    // Lifecycle and chat delivery can replace the orchestrator, so they must
-    // never hold this mutex while waiting for its authority write lock.
-    let _changes = match request.changes_authority_state() {
-        true => Some(ctx.authority_changes.lock().await),
-        false => None,
+    let (tracking, request) = tracked::unwrap(request)?;
+    let ticket = tracking
+        .map(|tracking| tracked::enter(ctx, caller.as_ref(), tracking, &request))
+        .transpose()?;
+    let caller = caller.as_ref();
+    refuse_early(ctx, client, caller, &request).await?;
+    let ticket = match ticket {
+        Some(ticket) => match tracked::claim(ticket).await? {
+            tracked::Begun::Run(ticket) => Some(ticket),
+            tracked::Begun::Replay(reply) => return Ok(*reply),
+        },
+        None => None,
     };
-    special_routes(ctx, client, caller.as_ref(), request).await
+    let result = 'handled: {
+        match prepare_watcher(ctx, &request).await {
+            Ok(None) => {}
+            answered => break 'handled answered.map(|reply| reply.expect("answered")),
+        }
+        // Held to the end of the call: the orchestrator is not replaced under it.
+        let _authority = match take_authority(ctx, client, caller, &request).await {
+            Ok(authority) => authority,
+            Err(error) => break 'handled Err(error),
+        };
+        // Serialize the state whose before/after authority confirmations observe.
+        // Lifecycle and chat delivery can replace the orchestrator, so they must
+        // never hold this mutex while waiting for its authority write lock.
+        let _changes = match request.changes_authority_state() {
+            true => Some(ctx.authority_changes.lock().await),
+            false => None,
+        };
+        special_routes(ctx, client, caller, request).await
+    };
+    if let Some(ticket) = ticket {
+        tracked::finish(ticket, &result).await;
+    }
+    result
 }
 
 /// The agent a request is forwarded for, and the request it carries.
@@ -173,6 +199,9 @@ async fn special_routes(
         )
     {
         return crate::authority::socket_settings(ctx, request).await;
+    }
+    if let Request::RequestStatus { request } = &request {
+        return tracked::status(ctx, caller, request).await;
     }
     if let Request::Promote { repo } = &request {
         let by = match for_an_agent(client, caller) {
@@ -509,6 +538,12 @@ async fn handle_operator(ctx: &DaemonContext, request: Request) -> Result<Reply,
         Request::GithubReply { thread, body } => {
             let url = github::post_reply(ctx, &thread, &body).await?;
             Ok(Reply::GithubComment { url })
+        }
+        Request::Tracked { .. } | Request::RequestStatus { .. } | Request::ForAgent { .. } => {
+            Err(ArchonError::Invalid(format!(
+                "{} is only valid as a request of its own",
+                command_name(&request)
+            )))
         }
         other => unreachable!("{} is routed above", command_name(&other)),
     }

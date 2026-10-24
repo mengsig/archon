@@ -122,14 +122,21 @@ pub struct FinishedRun {
     pub answers: Vec<FeedItem>,
 }
 
+/// What a store keeps in memory beside its connection.
+#[derive(Debug, Default)]
+struct Learned {
+    config: archon_core::config::LearningConfig,
+    config_loaded: bool,
+    /// Aether's connected models with their tiers, refreshed while stale.
+    catalog: archon_core::model_tier::ModelCatalog,
+    catalog_at: Option<archon_core::Timestamp>,
+}
+
 #[derive(Debug)]
 pub struct Store {
     conn: rusqlite::Connection,
-    learning: std::cell::RefCell<archon_core::config::LearningConfig>,
-    learning_config_loaded: std::cell::Cell<bool>,
-    /// Aether's connected models with their tiers, refreshed while stale.
-    learning_models: std::cell::RefCell<archon_core::model_tier::ModelCatalog>,
-    learning_models_at: std::cell::Cell<Option<archon_core::Timestamp>>,
+    /// Shared with the readers opened beside this store, so they read alike.
+    learned: std::sync::Arc<std::sync::Mutex<Learned>>,
     /// The data directory's lock for an on-disk store opened read-write.
     /// Declared last, so it is released only after the connection closes.
     lock: Option<DataLock>,
@@ -195,18 +202,16 @@ impl Store {
         schema::check_read_only(&conn)?;
         Ok(Self {
             conn,
-            learning: Default::default(),
-            learning_config_loaded: Default::default(),
-            learning_models: Default::default(),
-            learning_models_at: Default::default(),
+            learned: Default::default(),
             lock: None,
         })
     }
 
     /// A read-only connection to the store archond writes, for the reads it
     /// serves: in WAL mode it reads the last commit and never waits on the
-    /// writer. Unlike [`Self::open_read_only`] it is never immutable.
-    pub fn open_reader(path: &Path) -> Result<Self, ArchonError> {
+    /// writer. Unlike [`Self::open_read_only`] it is never immutable. It
+    /// shares this store's learning config and model catalog.
+    pub fn open_reader(&self, path: &Path) -> Result<Self, ArchonError> {
         use rusqlite::OpenFlags;
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let conn = rusqlite::Connection::open_with_flags(path, flags)
@@ -215,12 +220,14 @@ impl Store {
         schema::check_wal(&conn)?;
         Ok(Self {
             conn,
-            learning: Default::default(),
-            learning_config_loaded: Default::default(),
-            learning_models: Default::default(),
-            learning_models_at: Default::default(),
+            learned: std::sync::Arc::clone(&self.learned),
             lock: None,
         })
+    }
+
+    /// Held only to read or set a field; no store call is made under it.
+    fn learned(&self) -> std::sync::MutexGuard<'_, Learned> {
+        self.learned.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     pub fn open_in_memory() -> Result<Self, ArchonError> {
@@ -235,10 +242,7 @@ impl Store {
         debug_assert_eq!(version, schema::MIGRATIONS.len());
         Ok(Self {
             conn,
-            learning: Default::default(),
-            learning_config_loaded: Default::default(),
-            learning_models: Default::default(),
-            learning_models_at: Default::default(),
+            learned: Default::default(),
             lock: None,
         })
     }

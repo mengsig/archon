@@ -348,7 +348,7 @@ pub(crate) async fn shaped(
     spec: PipelineSpec,
 ) -> Result<PipelineSpec, ArchonError> {
     assert_eq!(spec.name(), item.pipeline, "the item's own pipeline");
-    let Some(raw) = ctx.store.lock().await.kv_get(&key(&item.id))? else {
+    let Some(raw) = ctx.read_store().await.kv_get(&key(&item.id))? else {
         return Ok(spec);
     };
     let whole: RunEdit = serde_json::from_str(&raw)

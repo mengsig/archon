@@ -18,19 +18,21 @@ use archon_queue::dispatch::{PendingSpawn, QueuedCandidate};
 
 use crate::context::DaemonContext;
 use crate::executor::RunTable;
+use crate::readers::ReadOn;
 use crate::resolve::{self, RepoEnv};
 
 /// Called with the run table held, so pending spawns match the drivers.
 /// `envs` was read before the table was taken (`Envs::prefetch`).
 pub(super) async fn build(
     ctx: &DaemonContext,
+    on: ReadOn,
     table: &RunTable,
     caps: Caps,
     mut envs: Envs,
 ) -> Result<DispatchSnapshot, ArchonError> {
     let now = archon_core::now();
     let mut snapshot = {
-        let store = ctx.store.lock().await;
+        let store = ctx.read_on(on).await;
         let mut snapshot = store.dispatch_snapshot(now)?;
         if !ctx.config.limits.count_estimated_cost {
             (snapshot.spend_today_usd, snapshot.spend_total_usd) =
@@ -44,13 +46,14 @@ pub(super) async fn build(
     snapshot.host_load = ctx.host.hold();
     snapshot.draining = ctx.ops.draining();
     for candidate in &mut snapshot.queued {
-        envs.read_late(ctx, candidate.repo.as_ref(), true).await?;
+        envs.read_late(ctx, on, candidate.repo.as_ref(), true)
+            .await?;
         (candidate.first_stage_agents, candidate.gang) = envs.first_stage(candidate);
     }
     for spawn in &snapshot.pending_spawns {
-        envs.read_late(ctx, spawn.repo.as_ref(), false).await?;
+        envs.read_late(ctx, on, spawn.repo.as_ref(), false).await?;
     }
-    quota_holds(ctx, table, &mut snapshot, &envs).await?;
+    quota_holds(ctx, on, table, &mut snapshot, &envs).await?;
     snapshot.repo_caps = envs.repo_caps();
     snapshot.repo_max_per_repo = crate::settings::mirror(ctx)
         .repos
@@ -74,6 +77,7 @@ pub(super) async fn build(
 /// and pipelines this pass read; none unless some provider is out of quota.
 async fn quota_holds(
     ctx: &DaemonContext,
+    on: ReadOn,
     table: &RunTable,
     snapshot: &mut DispatchSnapshot,
     envs: &Envs,
@@ -81,7 +85,7 @@ async fn quota_holds(
     let Some(view) = crate::quota::view(ctx).filter(QuotaView::any_exhausted) else {
         return Ok(());
     };
-    let (catalog, items) = holdable(ctx, &snapshot.pending_spawns).await?;
+    let (catalog, items) = holdable(ctx, on, &snapshot.pending_spawns).await?;
     let global = RepoEnv::new(None)?;
     let env_of = |repo: Option<&RepoId>| match repo {
         Some(id) => envs.configs.get(id).and_then(Option::as_ref),
@@ -127,9 +131,10 @@ async fn quota_holds(
 /// The model catalog, and every queued item and each of `spawns`' items by id.
 async fn holdable(
     ctx: &DaemonContext,
+    on: ReadOn,
     spawns: &[PendingSpawn],
 ) -> Result<(ModelCatalog, BTreeMap<QueueItemId, QueueItem>), ArchonError> {
-    let store = ctx.store.lock().await;
+    let store = ctx.read_on(on).await;
     let query = ItemQuery {
         states: vec!["queued".into()],
         ..ItemQuery::default()
@@ -208,9 +213,9 @@ impl Envs {
     /// Read the files of every repository with a queued or running item,
     /// before the run table is taken and off the async workers, so file
     /// I/O never holds up settles, spawns or `status`.
-    pub(super) async fn prefetch(ctx: &DaemonContext) -> Result<Self, ArchonError> {
+    pub(super) async fn prefetch(ctx: &DaemonContext, on: ReadOn) -> Result<Self, ArchonError> {
         let wanted = {
-            let store = ctx.store.lock().await;
+            let store = ctx.read_on(on).await;
             let queued = store.item_repos("queued")?;
             let running = store.item_repos("running")?;
             let mut wanted = Vec::with_capacity(queued.len() + running.len());
@@ -276,6 +281,7 @@ impl Envs {
     async fn read_late(
         &mut self,
         ctx: &DaemonContext,
+        on: ReadOn,
         id: Option<&RepoId>,
         queued: bool,
     ) -> Result<(), ArchonError> {
@@ -285,7 +291,7 @@ impl Envs {
             return Ok(());
         }
         let repo = match id {
-            Some(id) => Some(ctx.store.lock().await.repo(&resolve::repo_ref(id))?),
+            Some(id) => Some(ctx.read_on(on).await.repo(&resolve::repo_ref(id))?),
             None => None,
         };
         let id = id.cloned();

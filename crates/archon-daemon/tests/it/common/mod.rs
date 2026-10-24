@@ -272,8 +272,10 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
         repo
     }
 
+    /// Boxed, as a socket connection's task holds it: a debug build's deepest
+    /// request would otherwise sit inside every test's own future.
     pub async fn cli(&self, request: Request) -> Result<Reply, ArchonError> {
-        handlers::handle(&self.ctx, ClientKind::ArchonCli, request).await
+        Box::pin(handlers::handle(&self.ctx, ClientKind::ArchonCli, request)).await
     }
 
     /// `request` as `archon mcp` forwards it for the orchestrator, which is
@@ -292,7 +294,7 @@ printf '[{"url":"https://github.com/o/r/pull/1","number":1,"headRefName":"%s","s
             caller: AetherAgentId::parse(&caller)?,
             request: Box::new(request),
         };
-        handlers::handle(&self.ctx, ClientKind::ArchonMcp, request).await
+        Box::pin(handlers::handle(&self.ctx, ClientKind::ArchonMcp, request)).await
     }
 
     /// Enqueue `title` on the test pipeline with [`plan`].
@@ -527,6 +529,7 @@ pub fn context(
     };
     create_context_dirs(&paths);
     let store = Store::open(&paths.store).expect("store");
+    let readers = archon_daemon::readers::Readers::open(&store, &paths.store, 2).expect("readers");
     let operator_settings = archon_daemon::settings::SettingsBook::load(&store).expect("settings");
     let (feed, _) = broadcast::channel(1024);
     let dispatch = Arc::new(Notify::new());
@@ -539,6 +542,8 @@ pub fn context(
         config,
         paths,
         store: Mutex::new(store),
+        readers,
+        tracked: Default::default(),
         aether,
         backend,
         feed,

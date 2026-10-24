@@ -73,6 +73,8 @@ impl Harness {
             paths: paths(dir.path()),
             config,
             store: Mutex::new(Store::open_in_memory().expect("in-memory store")),
+            readers: Default::default(),
+            tracked: Default::default(),
             aether: link,
             backend,
             feed: broadcast::channel(256).0,

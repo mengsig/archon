@@ -1134,7 +1134,7 @@ async fn blocker_once(ctx: &DaemonContext, text: &str) -> Result<(), ArchonError
 /// A `kv` value; an empty string, as earlier versions wrote to clear a key,
 /// also means unset.
 async fn kv(ctx: &DaemonContext, key: &str) -> Result<Option<String>, ArchonError> {
-    let value = ctx.store.lock().await.kv_get(key)?;
+    let value = ctx.read_store().await.kv_get(key)?;
     Ok(value.filter(|v| !v.is_empty()))
 }
 

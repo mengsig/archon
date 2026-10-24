@@ -34,6 +34,7 @@ pub struct Pruned {
     pub reports: usize,
     pub retired_keys: usize,
     pub retired_orchestrators: usize,
+    pub tracked_requests: usize,
 }
 
 impl Pruned {
@@ -49,6 +50,7 @@ impl Pruned {
             + self.reports
             + self.retired_keys
             + self.retired_orchestrators
+            + self.tracked_requests
     }
 }
 
@@ -69,7 +71,7 @@ pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
 /// One pass as of `now`. Entries of settled stages and finished runs, and
 /// keys no version reads any more, go at once; node agents, watched
 /// children, stage agents, replaced orchestrators and settled reports go
-/// once older than [`retention`]. The store is locked per kind, not for the
+/// once older than [`retention`], finished tracked requests after a day. The store is locked per kind, not for the
 /// whole pass.
 pub async fn prune_once(ctx: &DaemonContext, now: Timestamp) -> Result<Pruned, ArchonError> {
     let cutoff = now - retention();
@@ -114,6 +116,10 @@ pub async fn prune_once(ctx: &DaemonContext, now: Timestamp) -> Result<Pruned, A
         "retired_orchestrators",
         supervisor::prune_retired_orchestrators(ctx, cutoff).await,
     )?;
+    let tracked_requests = category(
+        "tracked_requests",
+        ctx.store.lock().await.prune_tracked(tracked_cutoff(now)),
+    )?;
     Ok(Pruned {
         spawn_requests,
         run_vars,
@@ -126,7 +132,20 @@ pub async fn prune_once(ctx: &DaemonContext, now: Timestamp) -> Result<Pruned, A
         reports,
         retired_keys,
         retired_orchestrators,
+        tracked_requests,
     })
+}
+
+/// Tracked requests are kept [`archon_core::tracked::RETENTION`], not [`retention`].
+fn tracked_cutoff(now: Timestamp) -> Timestamp {
+    let kept = chrono::Duration::from_std(archon_core::tracked::RETENTION)
+        .expect("the retention fits a chrono duration");
+    let cutoff = now - kept;
+    assert!(
+        cutoff < now && cutoff > now - retention(),
+        "kept a day, less than the rest"
+    );
+    cutoff
 }
 
 /// One kind of record that cannot be read ends that kind's pruning for this

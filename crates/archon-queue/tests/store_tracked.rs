@@ -142,7 +142,7 @@ fn a_reader_answers_at_once_while_a_writer_holds_the_lock() {
     let path = dir.path().join("archon.db");
     let mut writer = Store::open(&path).unwrap();
     writer.insert_repo(&repo("alpha")).unwrap();
-    let reader = Store::open_reader(&path).unwrap();
+    let reader = writer.open_reader(&path).unwrap();
     let held = hold_write_lock(&path);
 
     let started = Instant::now();
@@ -159,7 +159,7 @@ fn a_reader_answers_at_once_while_a_writer_holds_the_lock() {
     let took = started.elapsed();
     assert!(took < Duration::from_secs(1), "the reader waited {took:?}");
     let refused = reader.kv_get("held").and_then(|_| {
-        let mut reader = Store::open_reader(&path)?;
+        let mut reader = writer.open_reader(&path)?;
         reader.kv_set("x", "y")
     });
     assert!(refused.is_err(), "a reader cannot write");
@@ -201,6 +201,34 @@ fn a_reader_refuses_a_store_that_is_not_in_wal_mode() {
     let conn = rusqlite::Connection::open(&path).unwrap();
     conn.pragma_update(None, "journal_mode", "DELETE").unwrap();
     drop(conn);
-    let refused = Store::open_reader(&path).unwrap_err().to_string();
+    let writer = Store::open_in_memory().unwrap();
+    let refused = writer.open_reader(&path).unwrap_err().to_string();
     assert!(refused.contains("WAL is required"), "{refused}");
+}
+
+#[test]
+fn a_reader_shares_its_writer_s_learning_config_and_model_catalog() {
+    use archon_core::model::ModelRef;
+    use archon_core::model_tier::{CatalogModel, ModelCatalog};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("archon.db");
+    let writer = Store::open(&path).unwrap();
+    let reader = writer.open_reader(&path).unwrap();
+    let mut config = writer.learning_config().unwrap();
+    config.enabled = !config.enabled;
+    writer.configure_learning(&config).unwrap();
+    let model = ModelRef {
+        provider: "codex".into(),
+        model: "gpt".into(),
+    };
+    writer.set_model_catalog(ModelCatalog::new(vec![CatalogModel {
+        model: model.clone(),
+        tier: None,
+        is_default: false,
+    }]));
+
+    assert_eq!(reader.learning_config().unwrap(), config, "set after it opened");
+    assert_eq!(reader.learning_models(), vec![model]);
+    assert!(!reader.learning_models_stale());
 }

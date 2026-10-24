@@ -26,6 +26,10 @@ use crate::readers::ReadOn;
 use crate::resolve;
 use crate::triggers::{self, TriggerEvent};
 
+/// The longest a read waits for the run table, which an admission pass holds
+/// across its writes; past it the read goes on without pending spawns.
+const READ_TABLE_WAIT: Duration = Duration::from_millis(100);
+
 /// The read-only view uses the dispatcher's complete snapshot and lock order,
 /// on a reader connection. It does not check disk, collect worktrees, reserve
 /// slots, or dispatch work.
@@ -36,15 +40,22 @@ pub(crate) async fn read_snapshot(
     let envs = snapshot::Envs::prefetch(ctx, ReadOn::Reader).await?;
     // Recovery holds the run table while it rebuilds the drivers; no spawn is
     // pending before they are, so an empty table reads the same without waiting.
-    if !ctx.recovery.is_recovered() {
-        let rebuilding = executor::RunTable::default();
-        assert!(
-            rebuilding.pending.is_empty(),
-            "an empty table owes no spawn"
-        );
-        return snapshot::build(ctx, ReadOn::Reader, &rebuilding, caps, envs).await;
-    }
-    let table = ctx.runs.lock().await;
+    let recovered = ctx.recovery.is_recovered();
+    let table = if recovered {
+        tokio::time::timeout(READ_TABLE_WAIT, ctx.runs.lock())
+            .await
+            .ok()
+    } else {
+        None
+    };
+    let Some(table) = table else {
+        if recovered {
+            tracing::debug!("the run table is busy; the view leaves out pending spawns");
+        }
+        let unseen = executor::RunTable::default();
+        assert!(unseen.pending.is_empty(), "an empty table owes no spawn");
+        return snapshot::build(ctx, ReadOn::Reader, &unseen, caps, envs).await;
+    };
     snapshot::build(ctx, ReadOn::Reader, &table, caps, envs).await
 }
 

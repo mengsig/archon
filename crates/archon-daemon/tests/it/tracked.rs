@@ -196,16 +196,19 @@ fn hold_write_transaction(ctx: &DaemonContext) -> rusqlite::Connection {
     conn
 }
 
-/// Hold archond's writer and an open SQLite write for [`HOLD`], as a commit
-/// stalled on a loaded disk does; resolves once both are released.
+/// Hold archond's run table, its writer and an open SQLite write for [`HOLD`],
+/// as an admission pass on a commit stalled by a loaded disk does; resolves
+/// once all are released.
 async fn hold_the_writer(ctx: Arc<DaemonContext>) -> tokio::task::JoinHandle<()> {
     let (taken, held) = tokio::sync::oneshot::channel();
     let holder = tokio::spawn(async move {
         let transaction = hold_write_transaction(&ctx);
+        let table = ctx.runs.lock().await;
         let writer = ctx.store.lock().await;
         taken.send(()).expect("the test waits");
         tokio::time::sleep(HOLD).await;
         drop(writer);
+        drop(table);
         transaction.execute_batch("ROLLBACK").expect("released");
     });
     held.await.expect("the writer is held");

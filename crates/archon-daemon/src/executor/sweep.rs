@@ -1,9 +1,11 @@
 //! Driving live stage runs from the store: re-issuing `spawning` ones,
-//! stopping agents of finished runs, and the deadline timer. Everything
+//! stopping agents of finished runs, the deadline timer and the stage
+//! watchdog. Everything
 //! here is derived from persisted state, so it also repairs a crash.
 
 use std::collections::BTreeMap;
 
+use archon_core::Timestamp;
 use archon_core::aether_ids::{AetherAgentId, AetherTaskId};
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
@@ -11,7 +13,7 @@ use archon_core::run::{StageOutcome, StageRun, StageState};
 
 use super::{
     FollowUp, descendants, load_spawn, resume, run_follow_up, run_node, settle, ship, siblings,
-    team,
+    stall, team,
 };
 use crate::context::DaemonContext;
 
@@ -32,9 +34,10 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
         ship,
         ..FollowUp::default()
     };
-    {
+    let running = {
         let store = ctx.store.lock().await;
         let mut finished: BTreeMap<PipelineRunId, bool> = BTreeMap::new();
+        let mut running: Vec<StageRun> = Vec::new();
         for stage in store.live_stage_runs()? {
             if in_flight.contains(&stage.id) {
                 continue;
@@ -68,6 +71,8 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
             };
             if deadline.is_some_and(|d| d + grace < now) {
                 follow.time_out.push(stage.id);
+            } else if stage.state == StageState::Running {
+                running.push(stage);
             }
         }
         follow.retire = run_node::runs_to_retire(&store)?;
@@ -78,8 +83,33 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
             .into_iter()
             .map(|(item, repo_name)| super::ItemBuild { item, repo_name })
             .collect();
+        running
+    };
+    let stalled = settle_stalled(ctx, &running, now, &mut follow).await;
+    run_follow_up(ctx, follow).await?;
+    stalled
+}
+
+/// Settle the stages of `running` the watchdog finds stalled, adding what
+/// each owes to `follow`. One that fails leaves the others to settle; the
+/// first error is kept, as a follow-up round keeps it.
+async fn settle_stalled(
+    ctx: &DaemonContext,
+    running: &[StageRun],
+    now: Timestamp,
+    follow: &mut FollowUp,
+) -> Result<(), ArchonError> {
+    let mut first_error = None;
+    for (stage, reason) in stall::scan(ctx, running, now).await? {
+        match stall(ctx, &stage, &reason).await {
+            Ok(more) => follow.merge(more),
+            Err(error) => {
+                tracing::error!(stage = %stage, %error, "settling a stalled stage failed");
+                first_error.get_or_insert(error);
+            }
+        }
     }
-    run_follow_up(ctx, follow).await
+    first_error.map_or(Ok(()), Err)
 }
 
 /// A spawn whose task already settled (its event may predate the stage
@@ -169,6 +199,32 @@ pub(super) async fn time_out(
             cancel_and_settle(ctx, id, agent, task, reason, StageOutcome::TimedOut).await
         }
         (Some(agent), None) => resume::stop(ctx, id, agent, reason, StageOutcome::TimedOut).await,
+        (None, _) => Ok(FollowUp::default()),
+    }
+}
+
+/// Fail a `running` stage whose agents the watchdog found stalled: an
+/// infrastructure failure, which the stage's retry budget may re-spawn.
+async fn stall(
+    ctx: &DaemonContext,
+    id: &StageRunId,
+    reason: &str,
+) -> Result<FollowUp, ArchonError> {
+    let stage = ctx.store.lock().await.stage_run(id)?;
+    if stage.state != StageState::Running {
+        return Ok(FollowUp::default());
+    }
+    tracing::warn!(stage = %id, reason, "stage watchdog fired");
+    stall::mark_intent(&mut *ctx.store.lock().await, id, reason)?;
+    let failed = || StageOutcome::Failed {
+        error: reason.to_owned(),
+        infra: true,
+    };
+    match (&stage.aether_agent, &stage.aether_task) {
+        (Some(agent), Some(task)) => {
+            cancel_and_settle(ctx, id, agent, task, reason, failed()).await
+        }
+        (Some(agent), None) => resume::stop(ctx, id, agent, reason, failed()).await,
         (None, _) => Ok(FollowUp::default()),
     }
 }

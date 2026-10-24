@@ -204,6 +204,21 @@ pub struct Descendant {
     pub task: Option<AetherTaskId>,
 }
 
+/// What Aether reports of an agent tree's pulse, for the stage watchdog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TreePulse {
+    /// The lead agent's `engine_alive`, or `Some(true)` when any agent of
+    /// the tree reports a live engine; `None` from an Aether that lacks it.
+    pub engine_alive: Option<bool>,
+    /// The latest `last_event_at` over the tree; `None` when none reports one.
+    pub last_event_at: Option<Timestamp>,
+    /// An agent of the tree waits for an approval or is `blocked` on a
+    /// person or a quota: silence is expected then.
+    pub held: bool,
+    /// Aether holds an agent of the tree `running`, so it owes events.
+    pub running: bool,
+}
+
 /// A change to a live agent; `None` leaves that part as it is.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AgentUpdate {
@@ -285,6 +300,12 @@ pub trait AgentBackend: Send + Sync {
     /// The effort `agent` was created with; `None` when its config states
     /// none Archon can read, or Aether no longer knows it.
     async fn agent_effort(&self, agent: &AetherAgentId) -> Result<Option<Effort>, ArchonError>;
+
+    /// The pulse of `agent` and everything beneath it; `None` when Aether no
+    /// longer knows `agent`. A backend that cannot tell reports an empty pulse.
+    async fn pulse(&self, _agent: &AetherAgentId) -> Result<Option<TreePulse>, ArchonError> {
+        Ok(Some(TreePulse::default()))
+    }
 
     /// `None` while the task is still open; the settled outcome otherwise.
     async fn task_outcome(&self, task: &AetherTaskId) -> Result<Option<StageOutcome>, ArchonError>;

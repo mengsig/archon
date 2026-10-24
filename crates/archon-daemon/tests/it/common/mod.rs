@@ -26,7 +26,7 @@ use archon_core::model::{Effort, ModelChoice, ModelPlan};
 use archon_core::notify::{FeedEntry, NotificationKind};
 use archon_core::ports::{
     AgentBackend, AgentUpdate, CreatedNode, Descendant, DescendantState, NetworkPolicy,
-    RunNodeRequest, SpawnRequest, SpawnedAgent,
+    RunNodeRequest, SpawnRequest, SpawnedAgent, TreePulse,
 };
 use archon_core::protocol::{ClientKind, EnqueueRequest, Reply, RepoAdd, RepoRef, Request};
 use archon_core::queue::{QueueItem, QueueState};
@@ -535,6 +535,7 @@ pub fn context(
         status_probes: Default::default(),
         quota: Default::default(),
         push: Default::default(),
+        activity: Default::default(),
         config,
         paths,
         store: Mutex::new(store),
@@ -764,6 +765,8 @@ struct FakeState {
     answers: BTreeMap<AetherAgentId, StageOutcome>,
     /// Spawns whose objective holds the text wait for the gate to open.
     stalls: Vec<(String, Arc<tokio::sync::Semaphore>)>,
+    /// What `pulse` reports of an agent's tree; an empty pulse otherwise.
+    pulses: BTreeMap<AetherAgentId, TreePulse>,
 }
 
 impl FakeState {
@@ -962,6 +965,11 @@ impl FakeBackend {
         assert!(state.knows(agent), "kill knows only created agents");
         state.dead.insert(agent.clone());
         state.in_turn.remove(agent);
+    }
+
+    /// `pulse` reports `pulse` for `agent`'s tree from now on.
+    pub fn set_pulse(&self, agent: &AetherAgentId, pulse: TreePulse) {
+        self.state().pulses.insert(agent.clone(), pulse);
     }
 
     /// `network_default` reports `network` from now on: Aether's
@@ -1291,6 +1299,14 @@ impl AgentBackend for FakeBackend {
         let state = self.state();
         let delegated = state.delegated.iter().find(|d| d.agent == *agent);
         Ok(delegated.and_then(|d| d.effort))
+    }
+
+    async fn pulse(&self, agent: &AetherAgentId) -> Result<Option<TreePulse>, ArchonError> {
+        let state = self.state();
+        if !state.knows(agent) {
+            return Ok(None);
+        }
+        Ok(Some(state.pulses.get(agent).copied().unwrap_or_default()))
     }
 
     async fn task_outcome(&self, task: &AetherTaskId) -> Result<Option<StageOutcome>, ArchonError> {

@@ -45,6 +45,7 @@ pub(super) async fn handle(ctx: &DaemonContext, event: &AetherEvent) -> Result<(
     let Some(agent) = &event.agent else {
         return Ok(());
     };
+    ctx.activity.saw(agent, archon_core::now());
     match &event.kind {
         EventKind::InboxDelivered { seq, message, .. } => {
             if let Some(message) = message {

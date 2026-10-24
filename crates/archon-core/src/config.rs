@@ -31,6 +31,11 @@ pub const MAX_MIN_FREE_GB: u64 = 1 << 20;
 pub const DEFAULT_DELEGATION_DEPTH: u32 = 2;
 pub const DELEGATION_DEPTH_CEILING: u32 = 4;
 
+/// `limits.stall_minutes` by default.
+pub const DEFAULT_STALL_MINUTES: u32 = 20;
+/// `limits.stall_fallback_minutes` by default.
+pub const DEFAULT_STALL_FALLBACK_MINUTES: u32 = 45;
+
 /// `limits.max_stage_timeout_minutes` by default, and the most it may be (30
 /// days, a pipeline stage's own bound).
 pub const DEFAULT_STAGE_TIMEOUT_MINUTES: u32 = 24 * 60;
@@ -484,6 +489,13 @@ pub struct LimitsConfig {
     pub count_estimated_cost: bool,
     /// Automatic re-spawns after infrastructure failures, per stage run.
     pub infra_retries: u32,
+    /// Minutes of Aether silence, with an agent `running` and no engine
+    /// alive, after which a running stage is treated as stalled; 0 turns the
+    /// stage watchdog off.
+    pub stall_minutes: u32,
+    /// Minutes of silence that stall a stage when Aether does not report
+    /// whether the engine is alive (an Aether older than the watchdog).
+    pub stall_fallback_minutes: u32,
     /// Dispatch holds while the data dir or worktree root has less free
     /// space than this, in GiB; 0 disables the hold (ARCHITECTURE §7.3).
     pub min_free_gb: u64,
@@ -518,6 +530,8 @@ impl Default for LimitsConfig {
             budget_usd_total: caps.budget_usd_total,
             count_estimated_cost: true,
             infra_retries: 1,
+            stall_minutes: DEFAULT_STALL_MINUTES,
+            stall_fallback_minutes: DEFAULT_STALL_FALLBACK_MINUTES,
             min_free_gb: 10,
             max_load_per_cpu: None,
             min_available_memory_gb: None,
@@ -583,6 +597,16 @@ impl LimitsConfig {
                 return Err(ArchonError::Config(format!(
                     "limits.{key} must be a positive number, not {}; remove the key to turn the check off",
                     value.unwrap_or_default()
+                )));
+            }
+        }
+        for (key, value) in [
+            ("stall_minutes", self.stall_minutes),
+            ("stall_fallback_minutes", self.stall_fallback_minutes),
+        ] {
+            if value > STAGE_TIMEOUT_CEILING_MINUTES {
+                return Err(ArchonError::Config(format!(
+                    "limits.{key} must be at most {STAGE_TIMEOUT_CEILING_MINUTES} (0 = no stage watchdog), not {value}"
                 )));
             }
         }
@@ -1211,6 +1235,23 @@ mod tests {
         ] {
             assert!(toml::from_str::<Config>(&format!("[review]\n{invalid}")).is_err());
         }
+    }
+
+    #[test]
+    fn the_stage_watchdog_settings_default_and_are_bounded() {
+        let default = LimitsConfig::default();
+        assert_eq!(
+            (default.stall_minutes, default.stall_fallback_minutes),
+            (20, 45)
+        );
+        let off: Config = toml::from_str("[limits]\nstall_minutes = 0").unwrap();
+        assert!(off.limits.validate().is_ok(), "0 turns the watchdog off");
+        let typo = LimitsConfig {
+            stall_fallback_minutes: STAGE_TIMEOUT_CEILING_MINUTES + 1,
+            ..LimitsConfig::default()
+        };
+        let error = typo.validate().unwrap_err().to_string();
+        assert!(error.contains("limits.stall_fallback_minutes"), "{error}");
     }
 
     #[test]

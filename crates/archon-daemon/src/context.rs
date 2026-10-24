@@ -148,6 +148,8 @@ pub struct DaemonContext {
     pub quota: crate::quota::QuotaCache,
     /// The per-kind rate limit of push notifications (`[notify]`).
     pub push: crate::push::Pusher,
+    /// The newest Aether event of each agent, for the stage watchdog.
+    pub activity: crate::executor::Activity,
 }
 
 impl DaemonContext {

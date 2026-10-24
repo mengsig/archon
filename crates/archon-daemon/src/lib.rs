@@ -459,6 +459,7 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
         status_probes: Default::default(),
         quota: Default::default(),
         push: Default::default(),
+        activity: Default::default(),
         config,
         paths,
         store: Mutex::new(store),

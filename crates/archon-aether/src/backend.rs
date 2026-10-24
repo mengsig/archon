@@ -9,7 +9,7 @@ use archon_core::model::Effort;
 use archon_core::policy::ModelPolicy;
 use archon_core::ports::{
     AgentBackend, AgentUpdate, CreatedNode, Descendant, DescendantState, RunNodeRequest,
-    SpawnRequest, SpawnedAgent,
+    SpawnRequest, SpawnedAgent, TreePulse,
 };
 use archon_core::run::StageOutcome;
 use async_trait::async_trait;
@@ -75,6 +75,43 @@ pub fn agent_state(agent: &Agent) -> String {
 
 pub fn agent_is_live(agent: &Agent) -> bool {
     LIVE_STATES.contains(&agent_state(agent).as_str())
+}
+
+/// The pulse of `root` and the agents `beneath` it: whether any engine is
+/// alive, the newest event, and whether one is held or `running`.
+fn tree_pulse(root: &Agent, beneath: &[Agent]) -> TreePulse {
+    let tree = || std::iter::once(root).chain(beneath);
+    let engine_alive = match tree().any(|a| a.engine_alive == Some(true)) {
+        true => Some(true),
+        false => tree().find_map(|a| a.engine_alive),
+    };
+    TreePulse {
+        engine_alive,
+        last_event_at: tree().filter_map(|a| a.last_event_at).max(),
+        held: tree().any(is_held),
+        running: tree().any(|a| agent_state(a) == "running"),
+    }
+}
+
+/// Whether `agent` waits on a person or a quota: `blocked`, or `waiting`
+/// on a condition that names an approval.
+fn is_held(agent: &Agent) -> bool {
+    match agent_state(agent).as_str() {
+        "blocked" => true,
+        "waiting" => agent.status.get("condition").is_some_and(names_approval),
+        _ => false,
+    }
+}
+
+/// Whether a wait condition, or any it combines, is `{"on": "approval"}`.
+fn names_approval(condition: &serde_json::Value) -> bool {
+    if condition.get("on").and_then(serde_json::Value::as_str) == Some("approval") {
+        return true;
+    }
+    condition
+        .get("of")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|of| of.iter().any(names_approval))
 }
 
 /// How `agent` stands for whoever waits on it: an unknown state is `Live`, so
@@ -477,6 +514,32 @@ impl AgentBackend for AetherBackend {
         Ok(found.config.effort.as_deref().and_then(|e| e.parse().ok()))
     }
 
+    async fn pulse(&self, agent: &AetherAgentId) -> Result<Option<TreePulse>, ArchonError> {
+        let client = self.link.client()?;
+        let root = match client.get_agent(agent).await {
+            Ok(root) => root,
+            Err(ArchonError::NotFound(_)) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let Some(run) = root.run.clone() else {
+            return Ok(Some(tree_pulse(&root, &[])));
+        };
+        let query = AgentQuery {
+            run: Some(run),
+            ..AgentQuery::default()
+        };
+        let agents = client.list_agents(query).await?;
+        let beneath: BTreeSet<AetherAgentId> = subtree(agent, &agents)
+            .into_iter()
+            .map(|d| d.agent)
+            .collect();
+        let tree: Vec<Agent> = agents
+            .into_iter()
+            .filter(|a| beneath.contains(&a.id))
+            .collect();
+        Ok(Some(tree_pulse(&root, &tree)))
+    }
+
     async fn task_outcome(&self, task: &AetherTaskId) -> Result<Option<StageOutcome>, ArchonError> {
         let task = self.link.client()?.get_task(task).await?;
         Ok(task_outcome(&task))
@@ -519,6 +582,7 @@ impl AgentBackend for AetherBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use archon_core::Timestamp;
     use archon_core::model::{Effort, ModelChoice};
 
     fn node_id() -> AetherAgentId {
@@ -700,6 +764,46 @@ mod tests {
         );
         assert!(found.iter().all(|d| d.effort == Some(Effort::Medium)));
         assert!(subtree(&id("agt_grandchild"), &agents).is_empty());
+    }
+
+    #[test]
+    fn a_tree_pulse_reads_the_engine_the_newest_event_and_holds() {
+        let at = |m: i64| {
+            "2026-10-01T00:00:00Z".parse::<Timestamp>().unwrap() + chrono::Duration::minutes(m)
+        };
+        let old = held("agt_lead", Some("agt_node"), "running");
+        let bare = tree_pulse(&old, &[]);
+        let expected = TreePulse {
+            running: true,
+            ..TreePulse::default()
+        };
+        assert_eq!(bare, expected, "an Aether without the fields");
+        assert!(!tree_pulse(&held("agt_lead", None, "ready"), &[]).running);
+
+        let mut lead = old.clone();
+        lead.engine_alive = Some(false);
+        lead.last_event_at = Some(at(1));
+        let mut child = held("agt_child", Some("agt_lead"), "running");
+        child.last_event_at = Some(at(5));
+        let pulse = tree_pulse(&lead, std::slice::from_ref(&child));
+        assert_eq!(pulse.engine_alive, Some(false));
+        assert_eq!(pulse.last_event_at, Some(at(5)));
+        assert!(!pulse.held);
+
+        child.engine_alive = Some(true);
+        assert_eq!(
+            tree_pulse(&lead, std::slice::from_ref(&child)).engine_alive,
+            Some(true)
+        );
+
+        child.status = serde_json::json!({"state": "waiting", "condition":
+            {"on": "any", "of": [{"on": "deadline", "at": "2026-10-01T01:00:00Z"},
+                                 {"on": "approval", "id": "apr_1"}]}});
+        assert!(tree_pulse(&lead, std::slice::from_ref(&child)).held);
+        child.status = serde_json::json!({"state": "waiting", "condition": {"on": "inbox"}});
+        assert!(!tree_pulse(&lead, std::slice::from_ref(&child)).held);
+        child.status = serde_json::json!({"state": "blocked", "reason": {"block": "inspection", "detail": "x"}});
+        assert!(tree_pulse(&lead, &[child]).held);
     }
 
     #[test]

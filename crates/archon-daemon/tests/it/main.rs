@@ -78,6 +78,7 @@ mod ship_coordination;
 mod snapshot;
 mod stability;
 mod stages;
+mod stall;
 mod steer;
 mod swarm;
 mod team;

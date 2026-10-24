@@ -271,7 +271,7 @@ fn a_pass_preview_reports_removals_and_cache_output_but_changes_nothing() {
         item: QueueItemId::new(),
         updated_at: archon_core::now(),
         runs: 0,
-        borrowed: 0,
+        borrowed: Default::default(),
         found: Found {
             candidates: vec![candidate(&tree, Some(&repo), action)],
             ..Found::default()
@@ -309,7 +309,7 @@ fn a_preview_does_not_promise_to_remove_a_worktree_git_has_locked() {
         item: QueueItemId::new(),
         updated_at: archon_core::now(),
         runs: 0,
-        borrowed: 0,
+        borrowed: Default::default(),
         found,
     };
 
@@ -364,7 +364,7 @@ fn a_preview_of_a_set_aside_worktree_lists_its_cache_dirs_only() {
         item: QueueItemId::new(),
         updated_at: archon_core::now(),
         runs: 0,
-        borrowed: 0,
+        borrowed: Default::default(),
         found: Found {
             candidates: vec![Candidate {
                 workspace: kept.clone(),
@@ -700,7 +700,7 @@ fn only_items_settled_before_the_cutoff_are_planned_and_a_retry_unsettles() {
         item: old.id.clone(),
         updated_at: old.updated_at,
         runs: 0,
-        borrowed: 0,
+        borrowed: Default::default(),
         found: Found::default(),
     };
     assert!(plan::still_settled(&store, &item_plan).unwrap());
@@ -734,7 +734,7 @@ fn a_retry_that_failed_again_across_a_clock_step_unsettles() {
         item: item.id.clone(),
         updated_at: item.updated_at,
         runs: 0,
-        borrowed: 0,
+        borrowed: Default::default(),
         found: Found::default(),
     };
     assert!(plan::still_settled(&store, &item_plan).unwrap());

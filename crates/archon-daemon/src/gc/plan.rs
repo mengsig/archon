@@ -2,13 +2,13 @@
 //! for each, the workspaces its finished runs left, what to do with each,
 //! and the repository git removes a worktree through.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use archon_core::Timestamp;
 use archon_core::catalog::is_snapshot_of;
 use archon_core::error::ArchonError;
-use archon_core::id::{QueueItemId, RepoId};
+use archon_core::id::{PipelineRunId, QueueItemId, RepoId};
 use archon_core::protocol::ItemQuery;
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::{Repo, ShipMode};
@@ -145,8 +145,9 @@ pub(super) struct ItemPlan {
     /// Runs are never deleted, so a retry since shows as another run even
     /// when the clock stepped back to the planned `updated_at`.
     pub runs: usize,
-    /// How many runs the other items of its worktree had.
-    pub borrowed: usize,
+    /// The runs the other items of its worktree had. By id, as a refresh
+    /// queued again for the same base commit replaces the earlier one.
+    pub borrowed: BTreeSet<PipelineRunId>,
     pub found: Found,
 }
 
@@ -200,8 +201,10 @@ pub(super) fn still_settled(store: &Store, plan: &ItemPlan) -> Result<bool, Arch
     }
     let runs = store.runs_for_item(&plan.item)?.len();
     assert!(runs >= plan.runs, "runs are never deleted");
-    // A fix queued again for the same base commit replaces the earlier one.
-    let borrowed = borrowed_runs(store, &plan.item)?.len();
+    let borrowed: BTreeSet<_> = borrowed_runs(store, &plan.item)?
+        .into_iter()
+        .map(|run| run.id)
+        .collect();
     Ok(runs == plan.runs && borrowed == plan.borrowed)
 }
 
@@ -279,7 +282,7 @@ fn plan_item(settled: &Settled, roots: &Roots, policy: &Policy) -> ItemPlan {
         item: settled.item.id.clone(),
         updated_at: settled.item.updated_at,
         runs: settled.runs.len(),
-        borrowed: settled.borrowed.len(),
+        borrowed: settled.borrowed.iter().map(|run| run.id.clone()).collect(),
         found: found.deduplicated(),
     }
 }

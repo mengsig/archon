@@ -3774,8 +3774,9 @@ asks the same. Items that are not terminal, or changed after the cutoff,
 are not looked at. Holding the run table,
 which an item retry and a dispatch take too, `archond` checks that the
 store still shows the item terminal with the `updated_at` and the number
-of runs, its own and those of the other items of its worktree, the pass
-planned with, leaves out what a live item uses as read then, and marks the
+of runs the pass planned with, and the same runs, by id, of the other
+items of its worktree (a refresh queued again for one base commit replaces
+the earlier in the store), leaves out what a live item uses as read then, and marks the
 item and its worktree's owner as being collected
 (`DaemonContext::collecting`); an item retried in between, whose new run
 would reuse the worktree, is left alone, even when a clock stepped back

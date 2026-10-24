@@ -794,6 +794,31 @@ async fn a_refresh_queued_after_a_pass_planned_keeps_the_worktree() {
     assert_eq!(h.run(&second.id).await.workspace, tree, "it starts in it");
 }
 
+/// A refresh queued again for the base commit an earlier one merged
+/// replaces it in the store; one that ran and finished after a pass planned
+/// the worktree's owner leaves that plan stale, so the worktree it just used
+/// stays until it is as old as the retention asks.
+#[tokio::test]
+async fn a_refresh_that_ran_after_a_pass_planned_keeps_the_worktree_its_age() {
+    let h = harness(caches_due_at_once()).await;
+    let (owner, _, tree) = Box::pin(owner_and_finished_refresh(&h)).await;
+    let pass = gc::plan(&h.ctx, Some(Age::from_secs(1)), true)
+        .await
+        .expect("plan");
+    assert!(pass.items() >= 1, "{pass:?}");
+    let second = queue_refresh(&h, &owner).await;
+    h.dispatch().await;
+    assert_eq!(h.run(&second.id).await.workspace, tree, "it ran there");
+    cancel(&h, &second).await;
+
+    let report = gc::collect_planned(&h.ctx, pass).await.expect("pass");
+    assert!(report.removed.is_empty(), "{report:?}");
+    assert!(tree.join("README.md").exists(), "the worktree stays");
+    let report = gc_request(&h, Some(3600), true).await;
+    assert!(report.removed.is_empty(), "{report:?}");
+    assert!(tree.join("README.md").exists(), "it was used just now");
+}
+
 /// While a pass collects any item's share of a worktree, it holds the
 /// worktree's owner: a pass meets the owner held and leaves the settled
 /// refresh alone, and dispatch holds a new refresh until the owner is free.

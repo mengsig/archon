@@ -14,6 +14,9 @@ use crate::protocol::{ErrorReply, Reply};
 pub const RETENTION: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
 /// Longest idempotency key, in bytes.
 pub const MAX_KEY_BYTES: usize = 128;
+/// Most tracked requests archond holds in memory at once: running, or ended
+/// with an outcome the store refused. A change past it is refused unapplied.
+pub const HELD_MAX: usize = 128;
 
 /// The MCP tools that take an `idempotency_key` of their own beside their
 /// arguments; `enqueue` and `enqueue_initiative` keep theirs in the request.

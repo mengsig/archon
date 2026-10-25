@@ -3302,8 +3302,12 @@ idempotency_key}`), followed by the tool's own advice on checking it.
 - When the store refuses to record an outcome (a full disk), the caller
   gets the store's error, which says whether the change itself was applied
   or failed, and `archond` keeps that outcome in memory: `request_status`
-  and a repeat under the key report it until `archond` restarts, which
-  marks a keyed request left pending `interrupted`.
+  and a repeat under the key report it. Each prune pass writes the kept
+  outcomes again and forgets those the store now holds. A restart before
+  that loses them and marks a keyed request left pending `interrupted`.
+- Memory holds at most 128 tracked requests, running or kept
+  (`tracked::HELD_MAX`). A change past that is refused (`unavailable`)
+  before it runs, so nothing kept is dropped.
 - A refusal by recovery or standby is not recorded, so the key stays free
   for the retry the refusal asks for.
 - `RequestStatus` is a read and is served in standby too, so a caller can

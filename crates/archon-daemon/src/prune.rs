@@ -9,7 +9,7 @@ use archon_core::Timestamp;
 use archon_core::error::ArchonError;
 
 use crate::context::DaemonContext;
-use crate::{executor, inbox_health, pump, reports, supervisor};
+use crate::{executor, inbox_health, pump, reports, supervisor, tracked};
 
 /// How often the pass runs; the first runs at startup.
 const INTERVAL: Duration = Duration::from_secs(10 * 60);
@@ -73,8 +73,9 @@ pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
 /// One pass as of `now`. Entries of settled stages, finished runs and
 /// items, and keys no version reads any more, go at once; node agents, watched
 /// children, stage agents, replaced orchestrators and settled reports go
-/// once older than [`retention`], finished tracked requests after a day. The store is locked per kind, not for the
-/// whole pass.
+/// once older than [`retention`], finished tracked requests after a day,
+/// once outcomes the store refused before are recorded. The store is locked
+/// per kind, not for the whole pass.
 pub async fn prune_once(ctx: &DaemonContext, now: Timestamp) -> Result<Pruned, ArchonError> {
     let cutoff = now - retention();
     assert!(cutoff < now, "the retention is positive");
@@ -122,6 +123,7 @@ pub async fn prune_once(ctx: &DaemonContext, now: Timestamp) -> Result<Pruned, A
         "retired_orchestrators",
         supervisor::prune_retired_orchestrators(ctx, cutoff).await,
     )?;
+    tracked::record_kept(ctx).await;
     let tracked_requests = category(
         "tracked_requests",
         ctx.store.lock().await.prune_tracked(tracked_cutoff(now)),

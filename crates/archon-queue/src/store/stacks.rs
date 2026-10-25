@@ -137,7 +137,8 @@ impl Store {
     }
 
     /// The restack fixes and refreshes queued for `owner`, which work on its
-    /// branch in its worktree; the latest one for each base commit.
+    /// branch in its worktree, including a refresh that a later one for the
+    /// same base commit replaced.
     pub fn stack_fixes_of(&self, owner: &QueueItemId) -> Result<Vec<QueueItemId>, ArchonError> {
         self.kv_prefix(&format!("restack_fix:{owner}:"))?
             .into_iter()
@@ -221,11 +222,13 @@ impl Store {
         assert_eq!(run.item, owner.id, "the owner's own run");
         assert!(!run.branch.is_empty(), "a refresh works on a branch");
         let key = format!("restack_fix:{}:refresh:{}", owner.id, refresh.sha);
+        let mut replaced = None;
         if let Some(id) = self.kv_get(&key)? {
             let earlier = self.item(&QueueItemId::parse(&id)?)?;
             if !earlier.state.is_terminal() {
                 return Ok(earlier);
             }
+            replaced = Some(earlier.id);
         }
         if self.has_pending_stack_fix(&owner.id)? {
             return Err(ArchonError::InvalidTransition(format!(
@@ -265,6 +268,11 @@ impl Store {
             &format!("restack_target:{}", fix.id),
             &to_json(&target, "stack fix")?,
         )?;
+        // A retry of the replaced one still works in the owner's worktree.
+        if let Some(earlier) = &replaced {
+            assert_ne!(earlier, &fix.id, "a new refresh replaces an earlier one");
+            settings::kv_set(&tx, &format!("{key}:{earlier}"), earlier.as_str())?;
+        }
         tx.commit().ctx("enqueue refresh")?;
         assert_eq!(queued.id, fix.id, "a new item, no replay");
         Ok(queued)

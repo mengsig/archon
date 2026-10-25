@@ -769,6 +769,43 @@ async fn a_worktree_stays_while_any_refresh_of_its_item_is_queued_or_running() {
     assert!(!tree.exists(), "it goes once every user finished");
 }
 
+/// A refresh queued again for the same base commit takes the settled
+/// first one's place in its owner's index. A retry of that first one works
+/// in the worktree too, so its recent run keeps the worktree from a pass.
+#[tokio::test]
+async fn a_retried_replaced_refresh_keeps_the_worktree_it_just_used() {
+    let h = harness(caches_due_at_once()).await;
+    let (owner, first, tree) = Box::pin(owner_and_finished_refresh(&h)).await;
+    let second = queue_refresh(&h, &owner).await;
+    assert_ne!(second.id, first.id, "the settled refresh is not reused");
+    h.dispatch().await;
+    cancel(&h, &second).await;
+    for item in [&owner, &first, &second, &owner, &first, &second] {
+        age_finished_runs(&h, item).await;
+    }
+    let retry = Request::RetryItem {
+        item: first.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        fresh: false,
+        brief_append: None,
+        stage_timeouts: Default::default(),
+    };
+    h.cli(retry).await.expect("the first refresh retried");
+    h.dispatch().await;
+    let runs = h.ctx.store.lock().await.runs_for_item(&first.id).unwrap();
+    assert_eq!(runs.len(), 2, "a new run");
+    assert_eq!(runs[1].workspace, tree, "the retry works in the worktree");
+    cancel(&h, &first).await;
+
+    let report = gc_request(&h, Some(3), true).await;
+    assert!(report.removed.is_empty(), "{report:?}");
+    assert!(
+        tree.join("README.md").exists(),
+        "the worktree just used stays"
+    );
+}
+
 /// A refresh queued after a pass planned the settled first refresh: the
 /// pass checks again under the run table, keeps the worktree, and the new
 /// refresh starts in it.

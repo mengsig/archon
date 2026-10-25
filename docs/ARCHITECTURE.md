@@ -3301,6 +3301,8 @@ idempotency_key}`), followed by the tool's own advice on checking it.
   ends, so one interrupted by a restart is not found afterwards.
 - A refusal by recovery or standby is not recorded, so the key stays free
   for the retry the refusal asks for.
+- `RequestStatus` is a read and is served in standby too, so a caller can
+  learn what became of a change made before the disk filled.
 
 ## 12. Operator chat and filtering
 

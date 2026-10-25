@@ -299,3 +299,36 @@ async fn viewed_at(h: &Harness, item: &QueueItemId) -> Option<String> {
         .kv_get(&key)
         .expect("the view mark")
 }
+
+#[tokio::test]
+async fn standby_still_reports_what_became_of_a_tracked_change() {
+    let h = Harness::new().await;
+    let caller = orchestrator_named(&h).await;
+    let id = RequestId::new();
+    let applied = forward(
+        &h.ctx,
+        &caller,
+        tracked(&id, Some("before"), notify("sent")),
+    )
+    .await
+    .expect("applied before the disk filled");
+    h.ctx
+        .standby
+        .set("store: disk full: insert feed entry".into())
+        .expect("not in standby yet");
+    let Reply::RequestStatus(status) = status_of(&h.ctx, &caller, &id).await else {
+        panic!("the status of a tracked change");
+    };
+    assert_eq!(status.state, TrackedState::Applied);
+    assert_eq!(status.reply.as_deref(), Some(&applied));
+    let refused = forward(
+        &h.ctx,
+        &caller,
+        tracked(&RequestId::new(), None, notify("x")),
+    )
+    .await;
+    assert!(
+        matches!(refused, Err(ArchonError::DiskFull(_))),
+        "{refused:?}"
+    );
+}

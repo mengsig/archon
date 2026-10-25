@@ -8,7 +8,7 @@ use archon_core::id::RepoId;
 use archon_core::queue::{Caps, QueueItem};
 use rusqlite::Connection;
 
-use super::codec::{SqlContext, from_json, to_u64};
+use super::codec::{SqlContext, end_read_tx, from_json, read_tx, to_u64};
 use super::{settings, spend};
 use crate::dispatch::{DependencyState, DispatchSnapshot, QueuedCandidate};
 
@@ -137,16 +137,16 @@ fn active_runs(conn: &Connection) -> Result<u32, ArchonError> {
 /// drivers. Spend counts
 /// estimates (the default `count_estimated_cost = true`).
 pub(super) fn build(conn: &Connection, now: &Timestamp) -> Result<DispatchSnapshot, ArchonError> {
-    let tx = conn.unchecked_transaction().ctx("begin snapshot")?;
-    let running = running_agents(&tx)?;
-    let active_runs = active_runs(&tx)?;
-    let (spend_today_usd, spend_total_usd) = spend::totals(&tx, now, true)?;
+    let tx = read_tx(conn)?;
+    let running = running_agents(conn)?;
+    let active_runs = active_runs(conn)?;
+    let (spend_today_usd, spend_total_usd) = spend::totals(conn, now, true)?;
     let snapshot = DispatchSnapshot {
         caps: Caps::default(),
         repo_caps: BTreeMap::new(),
         repo_budgets_enabled: BTreeMap::new(),
         repo_max_per_repo: BTreeMap::new(),
-        pause: settings::pause(&tx)?,
+        pause: settings::pause(conn)?,
         low_disk: false,
         host_load: None,
         draining: false,
@@ -157,8 +157,8 @@ pub(super) fn build(conn: &Connection, now: &Timestamp) -> Result<DispatchSnapsh
         spend_today_usd,
         spend_total_usd,
         pending_spawns: Vec::new(),
-        queued: queued(&tx)?,
+        queued: queued(conn)?,
     };
-    tx.commit().ctx("end snapshot")?;
+    end_read_tx(tx, "end snapshot")?;
     Ok(snapshot)
 }

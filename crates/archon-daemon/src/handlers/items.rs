@@ -213,7 +213,7 @@ fn onto_with_dependencies() -> ArchonError {
 }
 
 pub(super) async fn list(ctx: &DaemonContext, query: &ItemQuery) -> Result<Reply, ArchonError> {
-    Ok(Reply::Items(ctx.read_store().await.items(query)?))
+    Ok(Reply::Items(ctx.read_store().await?.items(query)?))
 }
 
 /// Viewing an item reads its outcome: what the notification center holds for
@@ -226,7 +226,7 @@ async fn mark_viewed(ctx: &DaemonContext, id: &QueueItemId) -> Result<(), Archon
         archon_queue::store::keys::NOTIFICATION_CENTER_VIEWED
     );
     let asked = {
-        let store = ctx.read_store().await;
+        let store = ctx.read_store().await?;
         let head = store.last_feed_seq()?.to_string();
         let settled = store.item(id)?.state.is_terminal();
         let unasked = store.kv_get(&key)?.as_deref() != Some(head.as_str());
@@ -259,7 +259,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
     let estimates = ctx.config.limits.count_estimated_cost;
     let default_efforts = default_efforts(ctx, id).await?;
     let stage_warnings = crate::inbox_health::warnings(ctx, archon_core::now(), Some(id)).await?;
-    let store = ctx.read_store().await;
+    let store = ctx.read_store().await?;
     let item = store.item(id)?;
     let mut runs = store.runs_for_item(id)?;
     let mut stages = Vec::new();
@@ -312,7 +312,7 @@ async fn default_efforts(
     ctx: &DaemonContext,
     id: &QueueItemId,
 ) -> Result<BTreeMap<String, Effort>, ArchonError> {
-    let item = ctx.read_store().await.item(id)?;
+    let item = ctx.read_store().await?.item(id)?;
     let spec = match item_pipeline(ctx, &item).await {
         Ok((_, _, spec)) => spec,
         Err(error) if error.is_store() => return Err(error),

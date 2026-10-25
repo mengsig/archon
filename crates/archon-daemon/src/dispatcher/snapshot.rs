@@ -32,7 +32,7 @@ pub(super) async fn build(
 ) -> Result<DispatchSnapshot, ArchonError> {
     let now = archon_core::now();
     let mut snapshot = {
-        let store = ctx.read_on(on).await;
+        let store = ctx.read_on(on).await?;
         let mut snapshot = store.dispatch_snapshot(now)?;
         if !ctx.config.limits.count_estimated_cost {
             (snapshot.spend_today_usd, snapshot.spend_total_usd) =
@@ -134,7 +134,7 @@ async fn holdable(
     on: ReadOn,
     spawns: &[PendingSpawn],
 ) -> Result<(ModelCatalog, BTreeMap<QueueItemId, QueueItem>), ArchonError> {
-    let store = ctx.read_on(on).await;
+    let store = ctx.read_on(on).await?;
     let query = ItemQuery {
         states: vec!["queued".into()],
         ..ItemQuery::default()
@@ -215,7 +215,7 @@ impl Envs {
     /// I/O never holds up settles, spawns or `status`.
     pub(super) async fn prefetch(ctx: &DaemonContext, on: ReadOn) -> Result<Self, ArchonError> {
         let wanted = {
-            let store = ctx.read_on(on).await;
+            let store = ctx.read_on(on).await?;
             let queued = store.item_repos("queued")?;
             let running = store.item_repos("running")?;
             let mut wanted = Vec::with_capacity(queued.len() + running.len());
@@ -291,7 +291,7 @@ impl Envs {
             return Ok(());
         }
         let repo = match id {
-            Some(id) => Some(ctx.read_on(on).await.repo(&resolve::repo_ref(id))?),
+            Some(id) => Some(ctx.read_on(on).await?.repo(&resolve::repo_ref(id))?),
             None => None,
         };
         let id = id.cloned();

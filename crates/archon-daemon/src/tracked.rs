@@ -134,7 +134,7 @@ pub(crate) async fn claim(ticket: Ticket<'_>) -> Result<Begun<'_>, ArchonError> 
     if ticket.record.idempotency_key.is_none() {
         if ctx
             .read_store()
-            .await
+            .await?
             .tracked_status(&ticket.record.id)?
             .is_some()
         {
@@ -216,7 +216,7 @@ pub(crate) async fn status(
     let running = ctx.tracked.lock().get(id).cloned();
     let found = match running {
         Some(entry) => Some(entry),
-        None => ctx.read_store().await.tracked_status(id)?,
+        None => ctx.read_store().await?.tracked_status(id)?,
     };
     match found {
         Some((owner, status)) if owner == caller => {

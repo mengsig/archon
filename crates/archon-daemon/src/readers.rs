@@ -1,7 +1,9 @@
 //! archond's reader connections (ARCHITECTURE §16, "SQLite busy"). The
 //! reads it serves run on read-only WAL connections of their own, so they
-//! never queue behind the writer's lock or its synced commits. A context
-//! without readers (an in-memory store) reads on the writer.
+//! never queue behind the writer's lock or its synced commits. A reader
+//! holds one snapshot while it is borrowed, so its reads agree with each
+//! other as reads under the writer's lock do. A context without readers (an
+//! in-memory store) reads on the writer.
 
 use std::ops::Deref;
 use std::path::Path;
@@ -75,6 +77,10 @@ impl Drop for Pooled<'_> {
             .store
             .take()
             .expect("a pooled reader is held until dropped");
+        // Drop cannot fail; the reader's next borrow rolls back what is left open.
+        if let Err(error) = store.end_snapshot() {
+            tracing::warn!(%error, "a reader's snapshot did not end; its next borrow rolls it back");
+        }
         let mut idle = self.pool.idle.lock().unwrap_or_else(|e| e.into_inner());
         idle.push(store);
     }
@@ -93,13 +99,14 @@ impl Deref for ReadStore<'_> {
 
 impl DaemonContext {
     /// A reader connection when archond has them, else the writer.
-    pub async fn read_store(&self) -> ReadStore<'_> {
+    pub async fn read_store(&self) -> Result<ReadStore<'_>, ArchonError> {
         self.read_on(ReadOn::Reader).await
     }
 
-    pub async fn read_on(&self, on: ReadOn) -> ReadStore<'_> {
+    /// A reader holding one snapshot until it is dropped, or the writer.
+    pub async fn read_on(&self, on: ReadOn) -> Result<ReadStore<'_>, ArchonError> {
         let Some(pool) = self.readers.pool.as_ref().filter(|_| on == ReadOn::Reader) else {
-            return ReadStore::Writer(self.store.lock().await);
+            return Ok(ReadStore::Writer(self.store.lock().await));
         };
         let permit = pool
             .permits
@@ -108,11 +115,15 @@ impl DaemonContext {
             .expect("the reader pool is never closed");
         let store = pool.idle.lock().unwrap_or_else(|e| e.into_inner()).pop();
         assert!(store.is_some(), "a permit always finds an idle reader");
-        ReadStore::Reader(Box::new(Pooled {
+        // Pooled first: a failed begin still returns the connection to the pool.
+        let pooled = Pooled {
             store,
             pool,
             _permit: permit,
-        }))
+        };
+        let reader = ReadStore::Reader(Box::new(pooled));
+        reader.begin_snapshot()?;
+        Ok(reader)
     }
 }
 

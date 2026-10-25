@@ -38,6 +38,25 @@ pub(super) fn write_tx(conn: &mut Connection) -> Result<Transaction<'_>, ArchonE
         .ctx("begin write transaction")
 }
 
+/// A transaction over several reads, or none when the connection holds one
+/// already: a reader keeps one snapshot for as long as it is borrowed.
+pub(super) fn read_tx(conn: &Connection) -> Result<Option<Transaction<'_>>, ArchonError> {
+    if !conn.is_autocommit() {
+        return Ok(None);
+    }
+    conn.unchecked_transaction()
+        .ctx("begin read transaction")
+        .map(Some)
+}
+
+/// End a transaction [`read_tx`] began; reads leave nothing to keep.
+pub(super) fn end_read_tx(tx: Option<Transaction<'_>>, what: &str) -> Result<(), ArchonError> {
+    match tx {
+        Some(tx) => tx.finish().ctx(what),
+        None => Ok(()),
+    }
+}
+
 /// Fixed-width RFC 3339 with nanoseconds, so text order is time order.
 pub(super) fn ts(at: &Timestamp) -> String {
     at.to_rfc3339_opts(SecondsFormat::Nanos, true)

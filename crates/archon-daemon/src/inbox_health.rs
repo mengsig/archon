@@ -185,7 +185,7 @@ pub(crate) async fn warnings(
 ) -> Result<Vec<StageWarning>, ArchonError> {
     let cutoff = now - ctx.config.dispatcher.inbox_unread_after.chrono()?;
     assert!(cutoff < now, "the threshold is positive");
-    let store = ctx.read_store().await;
+    let store = ctx.read_store().await?;
     let mut found = Vec::new();
     for (key, raw) in store.kv_prefix(KEY_PREFIX)? {
         let id = key.strip_prefix(KEY_PREFIX).expect("ranged by prefix");

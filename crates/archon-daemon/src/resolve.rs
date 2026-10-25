@@ -61,7 +61,7 @@ impl RepoEnv {
     /// The lookup runs on a reader connection.
     pub async fn load(ctx: &DaemonContext, repo: Option<&RepoId>) -> Result<Self, ArchonError> {
         let repo = match repo {
-            Some(id) => Some(ctx.read_store().await.repo(&repo_ref(id))?),
+            Some(id) => Some(ctx.read_store().await?.repo(&repo_ref(id))?),
             None => None,
         };
         Self::new(repo)

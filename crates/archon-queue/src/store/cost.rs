@@ -7,7 +7,7 @@ use archon_core::error::ArchonError;
 use chrono::NaiveDate;
 use rusqlite::{Connection, params};
 
-use super::codec::SqlContext;
+use super::codec::{SqlContext, end_read_tx, read_tx};
 
 /// Rows and total are summed separately, so they may differ by rounding.
 const ROUNDING_USD: f64 = 1e-6;
@@ -202,10 +202,10 @@ pub(super) fn report(
             range.since, range.until
         )));
     }
-    let tx = conn.unchecked_transaction().ctx("begin the spend report")?;
-    let rows = grouped(&tx, range, by, estimates)?;
-    let total = total(&tx, range, estimates)?;
-    tx.finish().ctx("end the spend report")?;
+    let tx = read_tx(conn)?;
+    let rows = grouped(conn, range, by, estimates)?;
+    let total = total(conn, range, estimates)?;
+    end_read_tx(tx, "end the spend report")?;
     check_sums(&rows, &total)?;
     debug_assert!(
         by != CostGroup::Day || rows.windows(2).all(|w| w[0].key < w[1].key),

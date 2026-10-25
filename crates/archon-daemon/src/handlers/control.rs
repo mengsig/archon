@@ -97,7 +97,7 @@ struct StoreCounts {
 
 impl StoreCounts {
     async fn read(ctx: &DaemonContext) -> Result<Self, ArchonError> {
-        let store = ctx.read_store().await;
+        let store = ctx.read_store().await?;
         let now = archon_core::now();
         let mut snapshot = store.dispatch_snapshot(now)?;
         if !ctx.config.limits.count_estimated_cost {
@@ -251,7 +251,7 @@ async fn disk_status(
         held: ctx.disk.holding(),
         disk_full: ctx.disk.disk_full(),
         standby: ctx.standby.get().cloned(),
-        gc: crate::gc::last_pass(&*ctx.read_store().await)?,
+        gc: crate::gc::last_pass(&*ctx.read_store().await?)?,
         storage: ctx.storage.usage(&ctx.paths, deadline).await?,
     };
     assert_ne!(status.free_bytes.is_some(), status.error.is_some());
@@ -289,7 +289,7 @@ async fn recorded_orchestrator(
     ctx: &DaemonContext,
 ) -> Result<Option<(AetherAgentId, u64)>, ArchonError> {
     let (agent, generation) = {
-        let store = ctx.read_store().await;
+        let store = ctx.read_store().await?;
         let agent = store.kv_get(keys::ORCHESTRATOR_AGENT)?;
         let generation = store.kv_get(keys::ORCHESTRATOR_GENERATION)?;
         (agent, generation)
@@ -449,7 +449,7 @@ pub(super) async fn model_policy(
 
 async fn repo_env(ctx: &DaemonContext, repo: Option<&RepoRef>) -> Result<RepoEnv, ArchonError> {
     let repo = match repo {
-        Some(reference) => Some(ctx.read_store().await.repo(reference)?),
+        Some(reference) => Some(ctx.read_store().await?.repo(reference)?),
         None => None,
     };
     RepoEnv::new(repo)

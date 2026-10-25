@@ -225,6 +225,41 @@ impl Store {
         })
     }
 
+    /// Hold one read snapshot on this reader until [`Store::end_snapshot`],
+    /// so every read in between sees the same commit. A snapshot that a
+    /// failed end left open is rolled back first.
+    pub fn begin_snapshot(&self) -> Result<(), ArchonError> {
+        use codec::SqlContext;
+        let read_only = self
+            .conn
+            .is_readonly(rusqlite::MAIN_DB)
+            .ctx("ask whether the connection only reads")?;
+        assert!(read_only, "only a reader holds a snapshot");
+        if !self.conn.is_autocommit() {
+            self.conn
+                .execute_batch("ROLLBACK")
+                .ctx("roll back a reader's earlier snapshot")?;
+        }
+        self.conn
+            .execute_batch("BEGIN DEFERRED")
+            .ctx("begin a reader's snapshot")?;
+        assert!(!self.conn.is_autocommit(), "the snapshot is open");
+        Ok(())
+    }
+
+    /// End the snapshot [`Store::begin_snapshot`] opened, if one is open.
+    pub fn end_snapshot(&self) -> Result<(), ArchonError> {
+        use codec::SqlContext;
+        if self.conn.is_autocommit() {
+            return Ok(());
+        }
+        self.conn
+            .execute_batch("COMMIT")
+            .ctx("end a reader's snapshot")?;
+        assert!(self.conn.is_autocommit(), "the snapshot is closed");
+        Ok(())
+    }
+
     /// Held only to read or set a field; no store call is made under it.
     fn learned(&self) -> std::sync::MutexGuard<'_, Learned> {
         self.learned.lock().unwrap_or_else(|e| e.into_inner())

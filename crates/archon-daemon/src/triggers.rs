@@ -849,7 +849,7 @@ pub async fn due(ctx: &DaemonContext) -> Result<bool, ArchonError> {
 /// How many news events wait for the orchestrator (see [`held`]), read
 /// beside the writer for `status`.
 pub async fn held_news(ctx: &DaemonContext) -> Result<usize, ArchonError> {
-    let outbox = read_outbox(&*ctx.read_store().await)?;
+    let outbox = read_outbox(&*ctx.read_store().await?)?;
     let in_flight = outbox.in_flight.map_or(0, |batch| batch.events.len());
     Ok(in_flight + outbox.pending.len())
 }

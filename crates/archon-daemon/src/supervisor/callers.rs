@@ -40,7 +40,7 @@ pub(super) async fn record_delegation(
 
 /// Whether the next orchestrator may be given `delegate`.
 pub(super) async fn are_named(ctx: &DaemonContext) -> Result<bool, ArchonError> {
-    Ok(ctx.read_store().await.kv_get(UNNAMED_KEY)?.is_none())
+    Ok(ctx.read_store().await?.kv_get(UNNAMED_KEY)?.is_none())
 }
 
 /// An unnamed call that changes Archon arrived. `true` when it can only be

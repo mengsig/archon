@@ -332,3 +332,24 @@ async fn standby_still_reports_what_became_of_a_tracked_change() {
         "{refused:?}"
     );
 }
+
+#[tokio::test]
+async fn a_reader_sees_one_commit_for_as_long_as_it_is_held() {
+    let h = Harness::new().await;
+    h.enqueue("listed before the reader").await;
+    let everything = ItemQuery::default();
+    let reader = h.ctx.read_store().await.expect("a reader");
+    assert_eq!(reader.items(&everything).expect("items").len(), 1);
+    tokio::time::timeout(READ_LIMIT, h.enqueue("enqueued while it reads"))
+        .await
+        .expect("a held reader never holds the writer");
+    let again = reader.items(&everything).expect("items");
+    assert_eq!(
+        again.len(),
+        1,
+        "a held reader keeps the commit it started at"
+    );
+    drop(reader);
+    let fresh = h.ctx.read_store().await.expect("a reader");
+    assert_eq!(fresh.items(&everything).expect("items").len(), 2);
+}

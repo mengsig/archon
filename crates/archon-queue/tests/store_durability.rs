@@ -245,7 +245,7 @@ fn migrations_apply_once_and_a_newer_store_is_refused() {
     drop(Store::open(&path).unwrap());
     assert_eq!(
         schema_versions(&path),
-        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
     );
     let conn = rusqlite::Connection::open(&path).unwrap();
     let mode: String = conn
@@ -316,7 +316,7 @@ fn concurrent_first_opens_migrate_once() {
     }
     assert_eq!(
         schema_versions(&path),
-        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
     );
 }
 
@@ -592,7 +592,7 @@ fn v9_keeps_an_earlier_provider_reported_total_as_the_floor() {
     drop(conn);
 
     let mut store = Store::open(&path).unwrap();
-    assert_eq!(schema_versions(&path).last(), Some(&16));
+    assert_eq!(schema_versions(&path).last(), Some(&17));
     for n in [1, 2] {
         let settled = SpendRow {
             cost_complete: Some(true),

@@ -12,7 +12,8 @@ behind are reaped, gc no longer removes a worktree a live item uses, and
 changes made through MCP can be repeated safely and followed after a
 timeout.
 
-Store migration 16 adds the `tracked_requests` table; Archon 1.4.5 refuses
+Store migration 16 adds the `tracked_requests` table, and migration 17
+indexes the refreshes 1.4.5 replaced (see Worktrees); Archon 1.4.5 refuses
 the migrated store. The daemon protocol is 21 (was 19), as `refresh_item`
 gained fields and `request_status` is new: `archon mcp` and archond must be
 upgraded together, and each refuses the other's older version at hello. The
@@ -113,7 +114,8 @@ restart. Aether 1.2.5 migrates its own store to schema 27 on that start.
   the pass is done. `archond`'s removal after shipping asks the same. A
   refresh that replaced an earlier one for the same base commit still
   counts that one's runs, so retrying it does not let gc remove the
-  worktree it just used (#260, [#256](https://github.com/mengsig/archon/issues/256)).
+  worktree it just used. Store migration 17 does the same for a refresh
+  that 1.4.5 replaced (#260, [#256](https://github.com/mengsig/archon/issues/256)).
 - A stage whose workspace is gone fails with `workspace missing: <path>`,
   its engine's error after it, instead of only that error (such as an engine
   "not installed"), and is not retried as an infrastructure failure there.

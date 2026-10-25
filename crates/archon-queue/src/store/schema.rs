@@ -519,8 +519,28 @@ CREATE UNIQUE INDEX tracked_requests_by_key ON tracked_requests (caller, command
 CREATE INDEX tracked_requests_by_start ON tracked_requests (started_at);
 "#;
 
+/// Version 17: before 1.4.6 a refresh queued again for one base commit took
+/// the settled first refresh's place in its owner's index, and gc then missed a
+/// retry of the first in the owner's worktree. Each such refresh gets the
+/// entry under its own key that `enqueue_refresh` now writes.
+const V17: &str = r#"
+WITH targets AS (
+    SELECT substr(key, length('restack_target:') + 1) AS id,
+           CASE WHEN json_valid(value) THEN json_extract(value, '$.owner') END AS owner,
+           CASE WHEN json_valid(value) THEN json_extract(value, '$.refresh.sha') END AS sha
+    FROM kv WHERE key GLOB 'restack_target:*'
+), refreshes AS (
+    SELECT id, 'restack_fix:' || owner || ':refresh:' || sha AS latest FROM targets
+    WHERE typeof(owner) = 'text' AND typeof(sha) = 'text'
+      AND EXISTS (SELECT 1 FROM items WHERE items.id = targets.id)
+)
+INSERT OR IGNORE INTO kv (key, value)
+SELECT latest || ':' || id, id FROM refreshes
+WHERE NOT EXISTS (SELECT 1 FROM kv WHERE kv.key = latest AND kv.value = refreshes.id);
+"#;
+
 pub(super) const MIGRATIONS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17,
 ];
 
 /// Pragmas every connection needs. `on_disk` connections must end up in
@@ -697,6 +717,8 @@ pub(super) fn migrate(conn: &mut Connection) -> Result<usize, ArchonError> {
 mod merge_upgrade;
 #[cfg(test)]
 mod pr_identity;
+#[cfg(test)]
+mod refresh_index;
 #[cfg(test)]
 mod v1_replay;
 

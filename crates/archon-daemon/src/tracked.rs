@@ -36,16 +36,20 @@ impl InFlight {
 }
 
 /// A tracked request from the moment archond read it until it is recorded;
-/// dropping it forgets the request in memory, whatever became of it.
+/// dropping it forgets the request in memory, unless its outcome could not
+/// be recorded and memory keeps it instead.
 #[derive(Debug)]
 pub(crate) struct Ticket<'a> {
     ctx: &'a DaemonContext,
     record: TrackedRequest,
+    kept: bool,
 }
 
 impl Drop for Ticket<'_> {
     fn drop(&mut self) {
-        self.ctx.tracked.lock().remove(&self.record.id);
+        if !self.kept {
+            self.ctx.tracked.lock().remove(&self.record.id);
+        }
     }
 }
 
@@ -124,7 +128,11 @@ pub(crate) fn enter<'a>(
     }
     running.insert(record.id.clone(), (record.caller.clone(), pending));
     drop(running);
-    Ok(Ticket { ctx, record })
+    Ok(Ticket {
+        ctx,
+        record,
+        kept: false,
+    })
 }
 
 /// Claim the ticket's key in the store, or find the call it was used for.
@@ -148,7 +156,9 @@ pub(crate) async fn claim(ticket: Ticket<'_>) -> Result<Begun<'_>, ArchonError> 
     let claim = ctx.store.lock().await.claim_tracked(&ticket.record)?;
     match claim {
         Claim::New => Ok(Begun::Run(ticket)),
-        Claim::Earlier { request, status } => replay(&ticket.record, &request, status),
+        Claim::Earlier { request, status } => {
+            replay(&ticket.record, &request, kept_or(ctx, status))
+        }
     }
 }
 
@@ -184,9 +194,24 @@ fn replay(
     }
 }
 
-/// Record how the ticket's request ended, then forget it in memory. Failing
-/// to record is logged: the caller still gets the real outcome.
-pub(crate) async fn finish(ticket: Ticket<'_>, result: &Result<Reply, ArchonError>) {
+/// The status memory keeps for a request a store row still shows pending:
+/// its outcome, when archond could not record it.
+fn kept_or(ctx: &DaemonContext, stored: RequestStatus) -> RequestStatus {
+    if stored.state != TrackedState::Pending {
+        return stored;
+    }
+    let kept = ctx.tracked.lock().get(&stored.request).cloned();
+    kept.map_or(stored, |(_, status)| status)
+}
+
+/// Record how the ticket's request ended, then forget it in memory. When the
+/// store refuses the record, memory keeps the outcome for `request_status`
+/// until archond restarts, and the caller gets the store's error, saying
+/// what became of the change so that it is not repeated.
+pub(crate) async fn finish(
+    mut ticket: Ticket<'_>,
+    result: &Result<Reply, ArchonError>,
+) -> Result<(), ArchonError> {
     let error = result.as_ref().err().map(ErrorReply::from);
     let outcome = match (result, &error) {
         (Ok(reply), _) => Ok(reply),
@@ -200,8 +225,52 @@ pub(crate) async fn finish(ticket: Ticket<'_>, result: &Result<Reply, ArchonErro
         .lock()
         .await
         .finish_tracked(&ticket.record, outcome, at);
-    if let Err(failure) = written {
-        tracing::error!(request = %ticket.record.id, %failure, "a tracked request's outcome was not recorded; request_status will not find it");
+    let Err(failure) = written else {
+        return Ok(());
+    };
+    let status = ended(&ticket.record, result, error, at);
+    assert!(status.is_consistent(), "memory keeps a whole outcome");
+    let id = ticket.record.id.clone();
+    let entry = (ticket.record.caller.clone(), status);
+    ticket.ctx.tracked.lock().insert(id.clone(), entry);
+    ticket.kept = true;
+    tracing::error!(request = %id, %failure, "a tracked request's outcome was not recorded; memory keeps it until restart");
+    let did = match result {
+        Ok(_) => "was applied",
+        Err(_) => "failed",
+    };
+    Err(failure.with_detail(&format!(
+        "the change itself {did}, as request_status {id} reports until archond restarts; \
+         do not repeat it"
+    )))
+}
+
+/// The status of the ticket's request, ended at `at` with `result`.
+fn ended(
+    record: &TrackedRequest,
+    result: &Result<Reply, ArchonError>,
+    error: Option<ErrorReply>,
+    at: archon_core::Timestamp,
+) -> RequestStatus {
+    assert!(at >= record.started_at, "a request ends after it starts");
+    assert_eq!(
+        result.is_err(),
+        error.is_some(),
+        "only a failure has an error"
+    );
+    let (state, reply) = match result {
+        Ok(reply) => (TrackedState::Applied, Some(Box::new(reply.clone()))),
+        Err(_) => (TrackedState::Failed, None),
+    };
+    RequestStatus {
+        request: record.id.clone(),
+        command: record.command.clone(),
+        state,
+        idempotency_key: record.idempotency_key.clone(),
+        reply,
+        error,
+        started_at: record.started_at,
+        finished_at: Some(at),
     }
 }
 

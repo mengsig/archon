@@ -3299,6 +3299,11 @@ idempotency_key}`), followed by the tool's own advice on checking it.
   pass (§16) deletes finished requests 24 h after they started; a pending
   one is never pruned. An unkeyed change's outcome is written once, when it
   ends, so one interrupted by a restart is not found afterwards.
+- When the store refuses to record an outcome (a full disk), the caller
+  gets the store's error, which says whether the change itself was applied
+  or failed, and `archond` keeps that outcome in memory: `request_status`
+  and a repeat under the key report it until `archond` restarts, which
+  marks a keyed request left pending `interrupted`.
 - A refusal by recovery or standby is not recorded, so the key stays free
   for the retry the refusal asks for.
 - `RequestStatus` is a read and is served in standby too, so a caller can

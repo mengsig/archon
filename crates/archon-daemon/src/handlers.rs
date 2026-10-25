@@ -99,7 +99,7 @@ pub async fn handle(
         special_routes(ctx, client, caller, request).await
     };
     if let Some(ticket) = ticket {
-        tracked::finish(ticket, &result).await;
+        tracked::finish(ticket, &result).await?;
     }
     result
 }

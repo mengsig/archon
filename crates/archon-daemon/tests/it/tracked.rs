@@ -353,3 +353,49 @@ async fn a_reader_sees_one_commit_for_as_long_as_it_is_held() {
     let fresh = h.ctx.read_store().await.expect("a reader");
     assert_eq!(fresh.items(&everything).expect("items").len(), 2);
 }
+
+/// Make the store refuse every recorded outcome, as a full disk would.
+fn refuse_outcomes(h: &Harness) {
+    let conn = rusqlite::Connection::open(&h.ctx.paths.store).expect("the store");
+    conn.execute_batch(
+        "CREATE TRIGGER refuse_outcomes BEFORE UPDATE OF state ON tracked_requests
+         BEGIN SELECT RAISE(ABORT, 'outcome refused'); END;",
+    )
+    .expect("the trigger");
+}
+
+#[tokio::test]
+async fn an_outcome_archond_cannot_record_is_reported_not_hidden() {
+    let h = Harness::new().await;
+    let caller = orchestrator_named(&h).await;
+    refuse_outcomes(&h);
+    let id = RequestId::new();
+    let call = |id: &RequestId| tracked(id, Some("unrecorded"), notify("sent once"));
+    let answered = forward(&h.ctx, &caller, call(&id)).await;
+    let Err(error) = answered else {
+        panic!("an unrecorded outcome is an error: {answered:?}");
+    };
+    let text = error.to_string();
+    assert!(
+        text.contains("outcome refused") && text.contains("was applied"),
+        "{text}"
+    );
+
+    let Reply::RequestStatus(status) = status_of(&h.ctx, &caller, &id).await else {
+        panic!("the status of a tracked change");
+    };
+    assert_eq!(status.state, TrackedState::Applied, "{status:?}");
+    let repeated = forward(&h.ctx, &caller, call(&RequestId::new()))
+        .await
+        .expect("a repeat under the key");
+    assert_eq!(
+        Some(&repeated),
+        status.reply.as_deref(),
+        "the first reply, not pending"
+    );
+    assert_eq!(
+        h.notices(NotificationKind::Decision).await.len(),
+        1,
+        "applied once"
+    );
+}

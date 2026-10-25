@@ -1,44 +1,40 @@
 # Release 1.4.6 smoke gate
 
-**Verdict: PASS, no decrease.** On the release head `725ee998` (1.4.6),
-Archon passed 12 of 12 trials: two gate runs and one confirming Haiku run.
-v1.4.5 passed 8 of 8. Luna passed 4/4 on both builds.
+**Verdict: PASS, no decrease.** On the release head `f0bb6bef` (1.4.6, with
+the last pre-release fix), Archon passed 8 of 8 trials and v1.4.5 passed 8 of
+8. Luna passed 4/4 on both builds.
 
-`CARGO_BUILD_JOBS=4 make ci` passed on the same head: 3308 tests passed,
+`CARGO_BUILD_JOBS=4 make ci` passed on the same head: 3309 tests passed,
 0 failed and 9 ignored.
 
-**Cost: higher on the head, but from the orchestrator's choice of review level
-on one task, not from a change in this release.**
+**Cost: no increase.**
 
-- On the head, Haiku's Archon arm cost a mean of $0.1276 per run over the two
-  gate runs, against $0.0988 on v1.4.5.
-- On `quality-ledger-transfer` the orchestrator chose `strict` review in both
-  head gate runs ($0.0522 and $0.0797). The same task costs about $0.03 under
-  `standard`.
-- The confirming head run chose `standard` and cost $0.0916, level with
-  v1.4.5's $0.0910.
-- Over all six Haiku runs on head commits, the head cost a mean of $0.1147
-  against $0.1031 on v1.4.5. Leaving out that one task, the head cost less:
-  $0.0631 against $0.0674.
-- Luna's estimate was lower on the head ($0.0639 against $0.0764).
+- On the head, Haiku's Archon arm cost a mean of $0.1086 per run, against
+  $0.1404 on v1.4.5.
+- v1.4.5's first Haiku run chose `strict` review on
+  `quality-ledger-transfer` ($0.1095). Every head run chose `standard`.
+- Over all eight Haiku runs on head commits in the three rounds, the head
+  cost a mean of $0.1132, against $0.1155 on v1.4.5 over six. Leaving out
+  `quality-ledger-transfer`, the means were $0.0650 and $0.0680.
+- Luna's estimate was lower on the head ($0.0607 against $0.0678).
 
 | Run | Archon | Archon cost | Archon wall | Aether | Smoke |
 |---|---|---|---|---|---|
-| Haiku head, run 1 | 4/4 | ≥ $0.1131 | 356 s | 4/4 | PASS · ≥ $0.16 |
-| Haiku v1.4.5, run 1 | 4/4 | $0.1065 | 320 s | 4/4 | PASS · $0.14 |
-| Haiku head, run 2 | 4/4 | $0.1420 | 387 s | 4/4 | PASS · $0.18 |
-| Haiku v1.4.5, run 2 | 4/4 | $0.0910 | 280 s | 4/4 | PASS · ≥ $0.13 |
-| Luna head | 4/4 | $0.0639 * | 356 s | 3/4 | PASS · $0.08 * |
-| Luna v1.4.5 | 4/4 | $0.0764 * | 430 s | 3/4 | PASS · $0.09 * |
-| Haiku head, run 3 (confirmation) | 4/4 | $0.0916 | 281 s | 4/4 | PASS · $0.13 |
+| Haiku head, run 1 | 4/4 | $0.0997 | 336 s | 4/4 | PASS · $0.14 |
+| Haiku v1.4.5, run 1 | 4/4 | $0.1868 | 576 s | 4/4 | PASS · $0.22 |
+| Haiku head, run 2 | 4/4 | $0.1174 | 393 s | 4/4 | PASS · $0.16 |
+| Haiku v1.4.5, run 2 | 4/4 | $0.0940 | 300 s | 4/4 | PASS · $0.13 |
+| Luna head | 4/4 | $0.0607 * | 356 s | 3/4 | PASS · $0.07 * |
+| Luna v1.4.5 | 4/4 | $0.0678 * | 393 s | 4/4 | PASS · $0.08 * |
 
 - **Cost marks.** Haiku's costs are billed. Luna's (`*`) are Aether's
   estimates for a subscription engine, which bills $0, so they are not
   bounds. `≥` marks a cost that Aether reported as incomplete.
-- **Gate cost.** These seven runs cost $0.73 billed and $0.17 estimated.
-- **First round.** A first round of seven runs used `35b3b1ae`, the release
-  commit before the last pre-release fix (`c5b3a15d`). It cost $0.74 billed
-  and $0.13 estimated. Its results are under "First round" below.
+- **Gate cost.** These six runs cost $0.64 billed and $0.15 estimated.
+- **Earlier rounds.** Two earlier rounds of seven runs each ran on release
+  commits before the last two pre-release fixes. They cost $0.74 and $0.73
+  billed, and $0.13 and $0.17 estimated. Their results are under "Earlier
+  rounds" below.
 
 ## Method
 
@@ -50,11 +46,11 @@ The method is the 1.4.5 gate's:
   (Luna).
 
 The baselines, tasks and graders under `bench/` are byte-identical in v1.4.5
-and on the head. The runs alternated between the head and v1.4.5, one at a
-time.
+and on the head. In each round the runs alternated between the head and
+v1.4.5, one at a time.
 
 - **Head arm.**
-  - `archon` and `archon-bench` were built from `725ee998` with
+  - `archon` and `archon-bench` were built from `f0bb6bef` with
     `cargo build -p archon -p archon-bench --locked` (dev profile).
   - Aether was built (dev profile) from `ba46e719`, the head of the Aether
     1.2.5 release pull request (mengsig/aether#300). The binary reports
@@ -81,23 +77,22 @@ time.
 ## Findings
 
 - **Review level on `quality-ledger-transfer`.** Neither build changed the
-  review guidance.
-  - The orchestrator chose `strict` in 3 of 6 head Haiku runs over both
-    rounds, and in none of 4 on v1.4.5.
-  - v1.4.5's first Luna run chose `strict` on the same task too, and so did
-    v1.4.4's second run in the 1.4.5 gate.
+  review guidance, and both chose `strict` on this task in some runs.
+  - Over the three rounds, the orchestrator chose `strict` in 3 of 8 head
+    Haiku runs and 1 of 6 on v1.4.5. On Luna it chose `strict` in 2 of 3
+    v1.4.5 runs and none of 3 on the head. v1.4.4's second run in the 1.4.5
+    gate chose it too.
   - Orchestrators on both builds read `SPEC.md` before enqueueing in some
     runs. A brief that lists the spec's concurrency and overflow cases tends
     to get `strict`.
-  - Under `strict` the head trials passed and cost $0.0522-0.0850, against
+  - Under `strict` the Haiku trials passed and cost $0.0522-0.1095, against
     $0.0288-0.0503 under `standard` on either build.
-  - Every other task cost the same or less on the head, on average.
-- **New daemon behaviour.** The head's archond logs show no stall verdict, no
-  reap and no new warning, so the watchdog and the reaper stayed quiet on
-  healthy runs. The only warning lines were the usual tightening of the
-  sandbox's socket directory, and "usage total went down; keeping what was
-  already charged". That one dates from 1.0.0 and, across both rounds,
-  appeared in more trials on v1.4.5 (9) than on the head (3).
+- **New daemon behaviour.** The head's archond logs, in all three rounds,
+  show no stall verdict, no reap and no new warning, so the watchdog and the
+  reaper stayed quiet on healthy runs. The only warning lines were the usual
+  tightening of the sandbox's socket directory, and "usage total went down;
+  keeping what was already charged". That one dates from 1.0.0 and, across the three rounds,
+  appeared in more trials on v1.4.5 (11) than on the head (6).
 - **What reaches the agents.** Between v1.4.5 and the head, the pipelines and
   the stage contract did not change. The orchestrator's prompt changed in
   three ways:
@@ -119,10 +114,37 @@ time.
   - **Workaround.** With those four variables removed, the same tests pass.
     Every `make ci` reported here ran that way.
 
-## First round
+## Earlier rounds
 
-This round ran on `35b3b1ae`, before the fix `c5b3a15d`. That fix bounds the
-tracked outcomes archond keeps in memory and records them later.
+Neither round showed a decrease. Each fix that followed one changed the code,
+so the gate ran again on the new head.
+
+### Second round
+
+This round ran on `725ee998`, the release commit, before the fix `f0bb6bef`.
+That fix indexes, on upgrade, the refreshes 1.4.5 replaced, so gc counts a
+retry of one among its owner's worktree users.
+
+| Run | Archon | Archon cost | Archon wall | Aether | Smoke |
+|---|---|---|---|---|---|
+| Haiku head, run 1 | 4/4 | ≥ $0.1131 | 356 s | 4/4 | PASS · ≥ $0.16 |
+| Haiku v1.4.5, run 1 | 4/4 | $0.1065 | 320 s | 4/4 | PASS · $0.14 |
+| Haiku head, run 2 | 4/4 | $0.1420 | 387 s | 4/4 | PASS · $0.18 |
+| Haiku v1.4.5, run 2 | 4/4 | $0.0910 | 280 s | 4/4 | PASS · ≥ $0.13 |
+| Luna head | 4/4 | $0.0639 * | 356 s | 3/4 | PASS · $0.08 * |
+| Luna v1.4.5 | 4/4 | $0.0764 * | 430 s | 3/4 | PASS · $0.09 * |
+| Haiku head, run 3 (confirmation) | 4/4 | $0.0916 | 281 s | 4/4 | PASS · $0.13 |
+
+- **Cost.** Both head gate runs chose `strict` on `quality-ledger-transfer`
+  ($0.0522 and $0.0797), and the head's Haiku mean was $0.1276 against
+  $0.0988. A confirming run chose `standard` and cost $0.0916, level with
+  v1.4.5's $0.0910.
+
+### First round
+
+This round ran on `35b3b1ae`, an earlier release commit, before the fix
+`c5b3a15d`. That fix bounds the tracked outcomes archond keeps in memory and
+records them later.
 
 | Run | Archon | Archon cost | Archon wall | Aether | Smoke |
 |---|---|---|---|---|---|
@@ -143,18 +165,18 @@ tracked outcomes archond keeps in memory and records them later.
   - It then looked for a `session-lib` mirror and searched the disk against
     its instructions.
   - Finally it asked the operator which file to review.
-  - Every other `review-seeded-bug` Archon answer in both rounds and in the
-    1.4.5 gate reviewed the mirror.
+  - Every other `review-seeded-bug` Archon answer in the three rounds and in
+    the 1.4.5 gate reviewed the mirror.
 - **Head run 2.** It chose `strict` review on `quality-ledger-transfer`
   ($0.0850, 451 s).
-- **Round total.** The head passed 11 of 12 trials in this round, and both
-  rounds together 23 of 24. v1.4.5 passed 16 of 16.
+- **Totals.** The head passed 11 of 12 trials in this round, and the three
+  rounds together 31 of 32. v1.4.5 passed 24 of 24.
 
 ## Evidence
 
 This item's artifact (`release-1.4.6-gate-evidence`) keeps:
 
-- the results and logs of both rounds;
+- the results and logs of the three rounds;
 - the sandbox scripts (`scripts/gate.sh`, `scripts/run.sh`);
 - the `make ci` logs;
 - the sha256 of every binary.
@@ -163,7 +185,8 @@ Binary sha256 prefixes:
 
 | Binary | sha256 prefix |
 |---|---|
-| head `archon` (`725ee998`) | `ff766b0e` |
+| head `archon` (`f0bb6bef`) | `4332e2b1` |
+| second-round `archon` (`725ee998`) | `ff766b0e` |
 | first-round `archon` (`35b3b1ae`) | `e2abfb18` |
 | released v1.4.5 `archon` | `6918d4fa` |
 | Aether 1.2.5 PR head | `bb0f0ff2` |

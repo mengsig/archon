@@ -2,8 +2,59 @@
 
 ## Unreleased
 
-Store migration 16 (`tracked_requests`) and daemon protocol 21: `archon mcp`
-and archond must be upgraded together.
+## 1.4.6
+
+Released 2026-10-25.
+
+A patch release on 1.4.5 for long-running fleets: stalled stages are
+retried and then failed instead of waiting a day, processes a stage leaves
+behind are reaped, gc no longer removes a worktree a live item uses, and
+changes made through MCP can be repeated safely and followed after a
+timeout.
+
+Store migration 16 adds the `tracked_requests` table; Archon 1.4.5 refuses
+the migrated store. The daemon protocol is 21 (was 19), as `refresh_item`
+gained fields and `request_status` is new: `archon mcp` and archond must be
+upgraded together, and each refuses the other's older version at hello. The
+Aether protocol Archon asks for stays 24.
+
+Archon 1.4.6 needs **Aether 1.2.5**, the release it is tested on and that the
+installer and `archon update` install. The stage watchdog reads its
+`engine_alive` and `last_event_at` agent fields, and it reaps an agent's
+leftover processes itself. Archon checks no Aether version, so an older
+aetherd is not refused, but only Aether 1.2.5 is supported with this release.
+
+**After upgrading**, run `archon update`. It installs Aether 1.2.5 and
+restarts both daemons, archond and Archon's own aetherd, through the drained
+restart. Aether 1.2.5 migrates its own store to schema 27 on that start.
+
+### Stage watchdog
+
+- A stage whose agents Aether left `running` with no live engine and no
+  event for `limits.stall_minutes` (default 20) is stalled; on an Aether
+  that does not report `engine_alive`, silence alone over
+  `limits.stall_fallback_minutes` (default 45) is. An open gate or
+  question, an approval wait, a `blocked` agent or a live engine never
+  stalls. A stalled stage settles as an infrastructure failure ("agent
+  stalled: no engine and no events for N min"), so `limits.infra_retries`
+  runs it once more on the same worktree and a second stall is final. Before,
+  such a stage waited for its stage timeout, a day by default
+  (#257, [#251](https://github.com/mengsig/archon/issues/251)).
+- `stall_minutes = 0` turns the watchdog off.
+
+### Process reaping (Linux)
+
+- When a stage settles and no other stage of its run is live, archond ends
+  the processes still running in the item's worktree (SIGTERM, then
+  SIGKILL), such as a model server or a `nohup` job that escaped the
+  engine's process group. What was ended or survived is added to the stage
+  summary and the feed. Item cleanup and `archon gc` do the same before git
+  removes a worktree, and keep the worktree when a process survives
+  (#258, [#254](https://github.com/mengsig/archon/issues/254)).
+- Only processes of the same user that an Aether engine started (they carry
+  `AETHER_ENGINE_RUN` in their environment) are reaped; an operator's shell
+  or editor in a worktree is never touched, nor pid 1, the archon and aether
+  daemons, their ancestors or their descendants.
 
 ### MCP tools
 
@@ -12,19 +63,42 @@ and archond must be upgraded together.
   an optional `idempotency_key`. For 24 h a repeat with the same key and
   arguments returns the first result and changes nothing; the key with other
   arguments is refused. Keys are kept in the store, so they hold across a
-  restart.
+  restart (#259, [#252](https://github.com/mengsig/archon/issues/252)).
 - A change archond does not answer within the 15 s budget now returns
   `pending: req_…` instead of a timeout error, and the new read-only
   `request_status` tool reports whether it was applied, failed, is still
-  pending, or was interrupted by a restart, with its result.
+  pending, or was interrupted by a restart, with its result. It is answered
+  while archond is in standby too. When archond cannot record a change's
+  outcome, the call fails and says whether the change itself was applied.
+  `request_status` reports the outcome from memory until a later prune pass
+  records it. While 128 such requests are held, running or unrecorded, a new
+  change is refused before it runs (#259).
+- `refresh_item` takes optional `model_plan`, `model_reasons` and
+  `stage_timeouts`, checked as in `enqueue`. Without them a refresh runs on
+  the stage defaults instead of copying the finished item's plan
+  (#261, [#255](https://github.com/mengsig/archon/issues/255)).
+
+### Orchestration
+
+- Pull request checks GitHub never started (billing, no runner) are a quiet
+  `pr_checks` feed line first, and wake the orchestrator once only if they
+  are still unstarted 30 minutes later; under `checks = "waived"` they stay
+  a quiet line. A pull request with no checks is a quiet line too (#261).
+- A delegated agent's effort shows in `get_item`'s cost split while its
+  stage still runs, instead of "effort unknown" (#261).
+- An agent of a running stage that leaves an inbox item unread past
+  `[dispatcher] inbox_unread_after` (15 minutes by default) shows as a stage
+  health warning in `get_item` and `status`, the sign of a lead that died
+  while its children finished (#261).
 
 ### Daemon
 
 - The read tools the orchestrator polls (`list_queue`, `get_item`,
   `get_stage`, `list_repos`, `queue_status`) read on read-only connections
   of their own, so they no longer wait behind a write: with a write held for 3 s, `list_queue`
-  answered in 6 ms instead of 3 s. WAL checkpoints run every 2 s on their
-  own connection, off the writer's lock.
+  answered in 6 ms instead of 3 s. Each read holds one snapshot of the
+  store, so its parts agree with each other. WAL checkpoints run every 2 s on
+  their own connection, off the writer's lock (#259).
 
 ### Worktrees
 
@@ -36,12 +110,14 @@ and archond must be upgraded together.
   run any of its items had there, leaves out every place a queued,
   dispatching, running or blocked item or a live run uses, and marks the
   worktree's owner too, so dispatch holds a refresh queued meanwhile until
-  the pass is done. `archond`'s removal after shipping asks the same.
+  the pass is done. `archond`'s removal after shipping asks the same. A
+  refresh that replaced an earlier one for the same base commit still
+  counts that one's runs, so retrying it does not let gc remove the
+  worktree it just used (#260, [#256](https://github.com/mengsig/archon/issues/256)).
 - A stage whose workspace is gone fails with `workspace missing: <path>`,
   its engine's error after it, instead of only that error (such as an engine
-  "not installed"), and is not retried as an infrastructure failure there;
-  a stage is never spawned into a missing workspace. A retry adds the
-  worktree again from the item's kept branch.
+  "not installed"), and is not retried as an infrastructure failure there.
+  A retry adds the worktree again from the item's kept branch (#260).
 
 ## 1.4.5
 

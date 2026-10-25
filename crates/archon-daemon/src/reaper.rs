@@ -5,10 +5,13 @@
 //! look for processes whose working directory or executable lies under the
 //! worktree and end them: SIGTERM, a grace period, then SIGKILL.
 //!
-//! Selection is conservative: same user, never pid 1, never this process,
+//! Selection is conservative: same user, started for an agent (Aether's
+//! engine tag in its environment), never pid 1, never this process,
 //! Archon's or Aether's daemons, their ancestors or their descendants. A
 //! live engine and its tools descend from Aether, which reaps them itself;
-//! what escaped was reparented away. Off Linux nothing is scanned or killed.
+//! what escaped was reparented away. An operator's shell or editor in a
+//! worktree carries no tag and is left alone. Off Linux nothing is scanned
+//! or killed.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 use std::collections::HashSet;
@@ -32,6 +35,11 @@ const ROUNDS: usize = 3;
 /// Executable names of the daemons, spared with their ancestors and
 /// descendants; Aether also runs from versioned copies (`aether-1.2.4-…`).
 const DAEMON_NAMES: [&str; 4] = ["archon", "archond", "aether", "aetherd"];
+
+/// What Aether exports to each engine, and so to everything it starts
+/// (`aether_engine::orphans`, since Aether 1.2.3); an older Aether's tools
+/// carry none, so nothing is reaped under it.
+const ENGINE_TAG: &[u8] = b"AETHER_ENGINE_RUN=";
 
 /// Bounds the ancestor walk; a deeper chain is spared as untraceable.
 const MAX_DEPTH: usize = 256;
@@ -394,6 +402,9 @@ impl Scan<'_> {
         if !under("cwd") && !under("exe") {
             return None;
         }
+        if !started_for_an_agent(&dir) {
+            return None;
+        }
         Some(name_of(&dir))
     }
 
@@ -463,6 +474,16 @@ impl Scan<'_> {
     }
 }
 
+/// Whether the process's environment carries Aether's engine tag; one that
+/// cannot be read does not.
+fn started_for_an_agent(dir: &Path) -> bool {
+    std::fs::read(dir.join("environ")).is_ok_and(|environ| {
+        environ
+            .split(|&byte| byte == 0)
+            .any(|var| var.starts_with(ENGINE_TAG))
+    })
+}
+
 fn is_daemon(name: &str) -> bool {
     DAEMON_NAMES.contains(&name)
         || name
@@ -526,6 +547,7 @@ mod tests {
         .unwrap();
         symlink(cwd, dir.join("cwd")).unwrap();
         symlink(exe, dir.join("exe")).unwrap();
+        std::fs::write(dir.join("environ"), b"HOME=/h\0AETHER_ENGINE_RUN=01X\0").unwrap();
     }
 
     struct Fixture {
@@ -648,6 +670,28 @@ mod tests {
         fake_proc(&f.proc, 400, UID, 1, &f.tree, &f.tree);
         fake_proc(&f.proc, 401, UID, 1, &f.tree, &f.tree.join("aether-cli"));
         assert_eq!(selected(&f), vec![400, 401]);
+    }
+
+    #[test]
+    fn spares_what_no_engine_started_such_as_an_operator_shell() {
+        let f = fixture();
+        // The operator's shell in the worktree, under their terminal.
+        fake_proc(
+            &f.proc,
+            600,
+            UID,
+            1,
+            &f.outside,
+            &f.outside.join("alacritty"),
+        );
+        fake_proc(&f.proc, 601, UID, 600, &f.tree, &f.outside.join("bash"));
+        let shell_env = b"HOME=/h\0TERM=xterm\0NOT_AETHER_ENGINE_RUN=1\0";
+        std::fs::write(f.proc.join("601/environ"), shell_env).unwrap();
+        fake_proc(&f.proc, 602, UID, 1, &f.tree, &f.tree);
+        std::fs::remove_file(f.proc.join("602/environ")).unwrap();
+        // A tool that escaped its engine keeps the engine's environment.
+        fake_proc(&f.proc, 603, UID, 1, &f.tree, &f.outside.join("node"));
+        assert_eq!(selected(&f), vec![603]);
     }
 
     #[test]
@@ -948,6 +992,7 @@ pub(crate) mod orphan {
             let line = format!("sh -c \"{script}\" </dev/null >/dev/null 2>&1 & echo $!");
             let out = Command::new("sh")
                 .args(["-c", &line])
+                .env("AETHER_ENGINE_RUN", "archon-test")
                 .current_dir(cwd)
                 .output()
                 .unwrap();

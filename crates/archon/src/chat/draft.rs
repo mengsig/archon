@@ -1,6 +1,7 @@
 //! The images attached to the line being typed. Each shows in the line as a
 //! chip, `[image #1]`: deleting the chip (one Backspace) drops the image, and
 //! the message carries the images whose chips are still there when it is sent.
+//! The images stay attached until a message carrying them is sent.
 
 use std::path::Path;
 
@@ -19,6 +20,15 @@ pub struct Draft {
     last: u32,
 }
 
+/// What one line sends.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Message {
+    pub text: String,
+    pub images: Vec<ImageAttachment>,
+    /// The attached images whose chips the line does not hold: not sent.
+    pub left_out: Vec<u32>,
+}
+
 /// What a Ctrl+V does to the line: text to insert and something to say.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Pasted {
@@ -34,7 +44,7 @@ impl Draft {
     /// Attach `image` to a draft that reads `line` now; an image whose chip
     /// was deleted from it no longer counts. Returns the chip to insert.
     pub fn attach(&mut self, image: ImageAttachment, line: &str) -> Result<String, String> {
-        self.keep(line);
+        let _dropped = self.keep(line);
         if self.attached.len() >= MAX_IMAGES_PER_MESSAGE {
             return Err(format!(
                 "not attached: a message takes at most {MAX_IMAGES_PER_MESSAGE} images"
@@ -64,30 +74,55 @@ impl Draft {
     }
 
     /// The message `line` sends: its text without chips, and the images whose
-    /// chips it holds, in line order. The draft is empty afterwards.
-    pub fn take(&mut self, line: &str) -> (String, Vec<ImageAttachment>) {
-        let mut found: Vec<(usize, u32, ImageAttachment)> = std::mem::take(&mut self.attached)
-            .into_iter()
-            .filter_map(|(n, image)| line.find(&chip(n)).map(|at| (at, n, image)))
-            .collect();
-        self.last = 0;
+    /// chips it holds, in line order. The draft keeps every image until
+    /// [`Draft::clear`], so a send that fails loses none.
+    pub fn message(&self, line: &str) -> Message {
+        let mut found: Vec<(usize, u32, &ImageAttachment)> = Vec::new();
+        let mut left_out = Vec::new();
+        for (number, image) in &self.attached {
+            match line.find(&chip(*number)) {
+                Some(at) => found.push((at, *number, image)),
+                None => left_out.push(*number),
+            }
+        }
         found.sort_by_key(|(at, _, _)| *at);
         let mut text = line.to_owned();
         for (_, number, _) in &found {
             text = text.replace(&format!("{} ", chip(*number)), "");
             text = text.replace(&chip(*number), "");
         }
-        let images: Vec<ImageAttachment> = found.into_iter().map(|(_, _, image)| image).collect();
-        debug_assert!(self.attached.is_empty());
-        (text.trim().to_owned(), images)
+        let images: Vec<ImageAttachment> = found
+            .into_iter()
+            .map(|(_, _, image)| image.clone())
+            .collect();
+        assert_eq!(images.len() + left_out.len(), self.attached.len());
+        Message {
+            text: text.trim().to_owned(),
+            images,
+            left_out,
+        }
+    }
+
+    /// Forget every image, once the message carrying them was sent.
+    pub fn clear(&mut self) {
+        self.attached.clear();
+        self.last = 0;
     }
 
     /// Drop the images whose chips `line` no longer holds, as when a line
-    /// that sends nothing was entered; the rest stay attached.
-    pub fn keep(&mut self, line: &str) {
-        self.attached
-            .retain(|(number, _)| line.contains(&chip(*number)));
+    /// that sends nothing was entered; the rest stay attached. Returns the
+    /// numbers of the images dropped.
+    pub fn keep(&mut self, line: &str) -> Vec<u32> {
+        let mut dropped = Vec::new();
+        self.attached.retain(|(number, _)| {
+            let held = line.contains(&chip(*number));
+            if !held {
+                dropped.push(*number);
+            }
+            held
+        });
         debug_assert!(self.attached.iter().all(|(number, _)| *number <= self.last));
+        dropped
     }
 
     fn images(&self) -> impl Iterator<Item = &ImageAttachment> {

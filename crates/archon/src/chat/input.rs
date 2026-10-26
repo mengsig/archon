@@ -43,9 +43,33 @@ pub enum Incoming {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Ack {
     Continue,
-    /// Read the next line with this already typed (the chips `/image` attached).
-    Draft(String),
+    /// Read the next line with this already typed.
+    Draft(Typed),
     Stop,
+}
+
+/// What the next line starts with.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Typed {
+    /// The chips of the images still attached, each followed by a space.
+    pub chips: String,
+    /// The text of a message that was not sent, to edit and send again.
+    pub text: String,
+}
+
+/// The line the chat handles for `read`. An editor that cannot show what was
+/// typed ahead (input that is not a terminal) reads only what follows, so the
+/// chips go back in front; an unsent text does not, as it would be resent unseen.
+pub fn line_read(read: String, ahead: &Typed, editing: bool) -> String {
+    assert!(
+        ahead.chips.is_empty() || ahead.chips.ends_with(' '),
+        "chips are followed by a space: {:?}",
+        ahead.chips
+    );
+    if editing || ahead.chips.is_empty() {
+        return read;
+    }
+    format!("{}{read}", ahead.chips)
 }
 
 /// Where chat output goes: above the live prompt when stdin and stdout are
@@ -115,16 +139,18 @@ impl Input {
             )),
         }
         // ENOTTY when stdin or stdout is not a terminal: plain output is right then.
+        // The editor shows typed-ahead text exactly where it can print above the prompt.
         let output = match editor.create_external_printer() {
             Ok(printer) => Output::AbovePrompt(Box::new(printer)),
             Err(_) => Output::Stdout,
         };
+        let editing = matches!(output, Output::AbovePrompt(_));
         let (events_tx, events) = mpsc::channel(4);
         super::keys::bind(&mut editor, draft, events_tx.clone());
         let (acks, acks_rx) = std_mpsc::channel();
         let thread = std::thread::Builder::new()
             .name("archon-chat-input".into())
-            .spawn(move || run_editor(editor, history, notices, events_tx, acks_rx))
+            .spawn(move || run_editor(editor, editing, history, notices, events_tx, acks_rx))
             .context("starting the chat input thread")?;
         let input = Self {
             events,
@@ -160,6 +186,7 @@ impl Input {
 
 fn run_editor(
     mut editor: Editor<(), DefaultHistory>,
+    editing: bool,
     history: PathBuf,
     notices: Vec<String>,
     events: mpsc::Sender<Incoming>,
@@ -171,14 +198,17 @@ fn run_editor(
         }
     }
     let mut history_warned = false;
-    let mut typed = String::new();
+    let mut typed = Typed::default();
     loop {
-        let read = match std::mem::take(&mut typed) {
-            typed if typed.is_empty() => editor.readline(PROMPT),
-            typed => editor.readline_with_initial(PROMPT, (&typed, "")),
+        let ahead = std::mem::take(&mut typed);
+        let initial = format!("{}{}", ahead.chips, ahead.text);
+        let read = match initial.is_empty() {
+            true => editor.readline(PROMPT),
+            false => editor.readline_with_initial(PROMPT, (&initial, "")),
         };
         let event = match read {
             Ok(line) => {
+                let line = line_read(line, &ahead, editing);
                 let remembered = super::draft::without_chips(&line);
                 if let Err(e) = remember(&mut editor, &history, &remembered)
                     && !history_warned
@@ -204,7 +234,7 @@ fn run_editor(
         }
         match acks.recv() {
             Ok(Ack::Continue) => continue,
-            Ok(Ack::Draft(chips)) => typed = chips,
+            Ok(Ack::Draft(ahead)) => typed = ahead,
             Ok(Ack::Stop) | Err(_) => return,
         }
     }

@@ -812,7 +812,11 @@ The clipboard is read with `wl-paste` (package wl-clipboard) on Wayland and
 use `/image <path>`, which attaches it and starts the next line with its
 chip; a line that is only the path of an image file does the same. Enter
 sends the line with the images whose chips are still in it, and a line of
-only chips sends the images alone. Outside the chat, `archon say --image
+only chips sends the images alone; the chat warns about an image it lets go
+unsent. Where input is not a terminal, so no chip can be shown, the next line
+takes the attached images. A send archond does not take keeps the images and
+puts the text back on the prompt; nothing is resent until you press Enter.
+Outside the chat, `archon say --image
 shot.png "what is wrong here?"` does the same; repeat `--image` for more.
 
 If the clipboard offers an image but it cannot be read (or is a type other than

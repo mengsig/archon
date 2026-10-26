@@ -22,17 +22,34 @@ fn attached_images_leave_with_the_line_that_holds_their_chips() {
         draft.attach(png("b.png"), "[image #1] ").unwrap(),
         "[image #2]"
     );
-    let (text, images) = draft.take("[image #2] [image #1] which is newer?");
-    assert_eq!(text, "which is newer?");
-    let names: Vec<_> = images.iter().map(|i| i.name.as_deref().unwrap()).collect();
+    let message = draft.message("[image #2] [image #1] which is newer?");
+    assert_eq!(message.text, "which is newer?");
+    assert!(message.left_out.is_empty());
+    let names: Vec<_> = message
+        .images
+        .iter()
+        .map(|i| i.name.as_deref().unwrap())
+        .collect();
     assert_eq!(
         names,
         ["b.png", "a.png"],
         "in the order the line shows them"
     );
+    assert_eq!(draft.message("again").images.len(), 0);
     assert_eq!(
-        draft.take("[image #1] again"),
-        ("[image #1] again".into(), Vec::new())
+        draft.chips(),
+        "[image #1] [image #2]",
+        "nothing is sent yet"
+    );
+    draft.clear();
+    assert_eq!(
+        draft.message("[image #1] again"),
+        Message {
+            text: "[image #1] again".into(),
+            images: Vec::new(),
+            left_out: Vec::new(),
+        },
+        "a sent message takes its images with it"
     );
 }
 
@@ -41,9 +58,10 @@ fn deleting_a_chip_removes_its_image() {
     let mut draft = Draft::default();
     draft.attach(png("a.png"), "").unwrap();
     draft.attach(png("b.png"), "[image #1] ").unwrap();
-    let (text, images) = draft.take("only [image #2]");
-    assert_eq!((text.as_str(), images.len()), ("only", 1));
-    assert_eq!(images[0].name.as_deref(), Some("b.png"));
+    let message = draft.message("only [image #2]");
+    assert_eq!((message.text.as_str(), message.images.len()), ("only", 1));
+    assert_eq!(message.images[0].name.as_deref(), Some("b.png"));
+    assert_eq!(message.left_out, [1], "the deleted chip's image is named");
     assert_eq!(chip_before("look [image #12]"), Some("[image #12]".len()));
     assert_eq!(
         chip_before("look [image #1] "),
@@ -121,8 +139,9 @@ fn ctrl_v_on_a_copied_image_path_attaches_the_file() {
     let copied = Clipboard::Text(format!("'{}'", path.display()));
     let pasted = paste(&mut draft, "", Ok(copied), None);
     assert_eq!(pasted.insert.as_deref(), Some("[image #1] "));
-    let (_, images) = draft.take("[image #1]");
+    let images = draft.message("[image #1]").images;
     assert_eq!(images[0].name.as_deref(), Some("shot.png"));
+    draft.clear();
     let fake = dir.path().join("fake.png");
     std::fs::write(&fake, "not an image").unwrap();
     let copied = Clipboard::Text(fake.display().to_string());

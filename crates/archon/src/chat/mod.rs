@@ -20,7 +20,7 @@ use archon_core::notify::{FeedEntry, FeedItem};
 use archon_core::protocol::{AetherLinkStatus, Reply, Request};
 
 use crate::chat::draft::Draft;
-use crate::chat::input::{Ack, Incoming, Input, InputEvent, Output};
+use crate::chat::input::{Ack, Incoming, Input, InputEvent, Output, Typed};
 use crate::chat::link::{Link, LinkEvent};
 use crate::connect::unexpected;
 use crate::questions::QuestionBook;
@@ -53,6 +53,8 @@ struct Chat {
     draft: Arc<Mutex<Draft>>,
     /// What the next line starts with: the chips `/image` attached.
     prefill: Option<String>,
+    /// The text of a message that was not sent, for the next line to start with.
+    unsent: Option<String>,
 }
 
 pub async fn run(progress: bool) -> anyhow::Result<ExitCode> {
@@ -73,6 +75,7 @@ pub async fn run(progress: bool) -> anyhow::Result<ExitCode> {
         interrupts: 0,
         draft: Arc::default(),
         prefill: None,
+        unsent: None,
     };
     let feed = chat.open(&client, config.chat.history).await?;
     let (input, output) = Input::start(history, chat.draft.clone())?;
@@ -128,10 +131,7 @@ impl Chat {
                 incoming = input.next() => match incoming {
                     Incoming::Notice(notice) => self.warn(&notice)?,
                     Incoming::Event(event) => match self.on_input(event, &link).await? {
-                        Flow::Continue => match self.prefill.take() {
-                            Some(chips) => input.ack(Ack::Draft(chips)),
-                            None => input.ack(Ack::Continue),
-                        },
+                        Flow::Continue => input.ack(self.next_line()),
                         Flow::Quit => {
                             input.stop();
                             return Ok(ExitCode::SUCCESS);
@@ -219,6 +219,17 @@ impl Chat {
         }
     }
 
+    /// How the editor reads the next line: with the chips still attached and
+    /// any unsent text already typed.
+    fn next_line(&mut self) -> Ack {
+        let chips = self.prefill.take().unwrap_or_default();
+        let text = self.unsent.take().unwrap_or_default();
+        if chips.is_empty() && text.is_empty() {
+            return Ack::Continue;
+        }
+        Ack::Draft(Typed { chips, text })
+    }
+
     /// The draft; a poisoned lock only means a paste panicked mid-way.
     fn lock_draft(&self) -> std::sync::MutexGuard<'_, Draft> {
         self.draft.lock().unwrap_or_else(|e| e.into_inner())
@@ -297,7 +308,9 @@ impl Chat {
 mod tests {
     use std::path::Path;
 
-    use archon_core::protocol::{PROTOCOL_VERSION, ServerFrame, Welcome};
+    use archon_core::protocol::{
+        ClientFrame, ErrorCode, ErrorReply, PROTOCOL_VERSION, ServerFrame, Welcome,
+    };
     use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
     use tokio::net::UnixListener;
 
@@ -330,6 +343,73 @@ mod tests {
         client
     }
 
+    /// A client of a daemon that answers `hello`, then answers one request
+    /// with `answer`, or hangs up unanswered when it is `None`. The task
+    /// returns the request.
+    async fn client_of_a_daemon_answering_once(
+        socket: &Path,
+        answer: Option<Result<Reply, ErrorReply>>,
+    ) -> (ArchonClient, tokio::task::JoinHandle<Request>) {
+        let listener = UnixListener::bind(socket).unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (read, mut write) = stream.into_split();
+            let mut lines = BufReader::new(read).lines();
+            let hello = lines.next_line().await.unwrap().unwrap();
+            let hello: ClientFrame = serde_json::from_str(&hello).unwrap();
+            assert!(matches!(hello.request, Request::Hello { .. }), "{hello:?}");
+            let welcome = Welcome {
+                protocol_version: PROTOCOL_VERSION,
+                daemon_version: "test".into(),
+                pid: 1,
+            };
+            let frames = [(hello.id, Ok(Reply::Welcome(welcome)))];
+            write_frames(&mut write, frames).await;
+            let asked = lines.next_line().await.unwrap().unwrap();
+            let asked: ClientFrame = serde_json::from_str(&asked).unwrap();
+            if let Some(result) = answer {
+                write_frames(&mut write, [(asked.id, result)]).await;
+            }
+            asked.request
+        });
+        let client = ArchonClient::connect(socket, archon_core::protocol::ClientKind::ArchonCli)
+            .await
+            .unwrap();
+        (client, server)
+    }
+
+    async fn write_frames(
+        write: &mut tokio::net::unix::OwnedWriteHalf,
+        frames: impl IntoIterator<Item = (u64, Result<Reply, ErrorReply>)>,
+    ) {
+        for (id, result) in frames {
+            let frame = ServerFrame::Reply { id, result };
+            let line = format!("{}\n", serde_json::to_string(&frame).unwrap());
+            write.write_all(line.as_bytes()).await.unwrap();
+        }
+    }
+
+    /// A chat with `shot.png` attached by `/image`, and the chips it prefills.
+    async fn chat_with_an_image(dir: &Path) -> (Chat, String) {
+        let shot = dir.join("shot.png");
+        std::fs::write(&shot, b"\x89PNG\r\n\x1a\npixels").unwrap();
+        let mut chat = quiet_chat();
+        let attach = format!("/image {}", shot.display());
+        actions::handle_line(&mut chat, &attach, None)
+            .await
+            .unwrap();
+        let chips = chat.prefill.take().expect("the chip is prefilled");
+        assert_eq!(chips, "[image #1] ");
+        (chat, chips)
+    }
+
+    fn said(request: Request) -> (String, usize) {
+        match request {
+            Request::Say { text, images } => (text, images.len()),
+            other => panic!("not a say: {other:?}"),
+        }
+    }
+
     fn quiet_chat() -> Chat {
         Chat {
             output: Output::Stdout,
@@ -341,6 +421,7 @@ mod tests {
             interrupts: 0,
             draft: Arc::default(),
             prefill: None,
+            unsent: None,
         }
     }
 
@@ -365,6 +446,7 @@ mod tests {
         let unsent = "[image #1] what is this?";
         actions::handle_line(&mut chat, unsent, None).await.unwrap();
         assert_eq!(chat.prefill.take().as_deref(), Some("[image #1] "));
+        assert_eq!(chat.unsent.take().as_deref(), Some("what is this?"));
         actions::handle_line(&mut chat, "/image", None)
             .await
             .unwrap();
@@ -372,6 +454,65 @@ mod tests {
             chat.prefill, None,
             "a line without the chip drops its image"
         );
+    }
+
+    #[tokio::test]
+    async fn an_image_attached_with_slash_image_goes_with_the_next_typed_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut chat, chips) = chat_with_an_image(dir.path()).await;
+        let ahead = Typed {
+            chips,
+            text: String::new(),
+        };
+        // Input that is not a terminal reads the line without the chip shown.
+        let typed = "what does the image say?";
+        let line = input::line_read(typed.into(), &ahead, false);
+        assert_eq!(input::line_read(line.clone(), &ahead, true), line);
+        let socket = dir.path().join("d.sock");
+        let (client, server) =
+            client_of_a_daemon_answering_once(&socket, Some(Ok(Reply::Ok))).await;
+        actions::handle_line(&mut chat, &line, Some(&client))
+            .await
+            .unwrap();
+        assert_eq!(said(server.await.unwrap()), (typed.to_owned(), 1));
+        assert_eq!(chat.lock_draft().chips(), "", "a sent image is let go");
+        assert_eq!((chat.prefill.take(), chat.unsent.take()), (None, None));
+    }
+
+    #[tokio::test]
+    async fn a_refused_send_keeps_the_images_and_puts_the_text_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut chat, chips) = chat_with_an_image(dir.path()).await;
+        let refusal = ErrorReply {
+            code: ErrorCode::InvalidArgument,
+            message: "invalid argument: refused".into(),
+        };
+        let socket = dir.path().join("d.sock");
+        let (client, server) = client_of_a_daemon_answering_once(&socket, Some(Err(refusal))).await;
+        let line = format!("{chips}hello");
+        actions::handle_line(&mut chat, &line, Some(&client))
+            .await
+            .unwrap();
+        assert_eq!(said(server.await.unwrap()), ("hello".to_owned(), 1));
+        assert_eq!(chat.lock_draft().chips(), "[image #1]");
+        assert_eq!(chat.prefill.take(), Some(chips));
+        assert_eq!(chat.unsent.take().as_deref(), Some("hello"));
+    }
+
+    #[tokio::test]
+    async fn a_send_lost_on_the_way_keeps_the_draft_and_is_not_replayed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut chat, chips) = chat_with_an_image(dir.path()).await;
+        let socket = dir.path().join("d.sock");
+        let (client, server) = client_of_a_daemon_answering_once(&socket, None).await;
+        let line = format!("{chips}hello");
+        actions::handle_line(&mut chat, &line, Some(&client))
+            .await
+            .unwrap();
+        assert_eq!(said(server.await.unwrap()), ("hello".to_owned(), 1));
+        assert_eq!(chat.lock_draft().message(&line).images.len(), 1);
+        assert_eq!(chat.prefill.take(), Some(chips));
+        assert_eq!(chat.unsent.take().as_deref(), Some("hello"));
     }
 
     #[tokio::test]

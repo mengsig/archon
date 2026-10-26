@@ -7,7 +7,7 @@ use archon_client::ArchonClient;
 use archon_core::protocol::{ItemQuery, PauseTarget, Request};
 
 use super::commands::{ChatInput, SlashCommand, help, parse_line};
-use super::draft::without_chips;
+use super::draft::{chip, without_chips};
 use super::{Chat, Flow};
 use crate::format;
 use crate::images::{expand_home, pasted_image_path, read_image_file};
@@ -39,13 +39,13 @@ pub(super) async fn handle_line(
             return Ok(Flow::Continue);
         }
         ChatInput::Invalid(message) => {
-            keep_chips(chat, line);
+            keep_chips(chat, line)?;
             chat.error(&message)?;
             return Ok(Flow::Continue);
         }
         ChatInput::Command(command) => command,
     };
-    keep_chips(chat, line);
+    keep_chips(chat, line)?;
     match command {
         SlashCommand::Quit => return Ok(Flow::Quit),
         SlashCommand::Help => chat.note(&help())?,
@@ -151,25 +151,57 @@ async fn run_remote(
 }
 
 /// Send `line` with the images whose chips it holds; a line of nothing but
-/// stale chips sends nothing.
+/// stale chips sends nothing. The draft is let go only once archond took the
+/// message: a failed send keeps its images and puts its text back on the prompt.
 async fn say_line(
     chat: &mut Chat,
     client: Option<&ArchonClient>,
     line: &str,
 ) -> anyhow::Result<()> {
-    let Some(client) = connected(chat, client)? else {
-        keep_chips(chat, line);
-        return Ok(());
-    };
-    let (text, images) = chat.lock_draft().take(line);
-    if text.is_empty() && images.is_empty() {
-        return Ok(());
+    let message = chat.lock_draft().message(line);
+    if message.text.is_empty() && message.images.is_empty() {
+        return keep_chips(chat, line);
     }
+    let Some(client) = connected(chat, client)? else {
+        chat.unsent = (!message.text.is_empty()).then_some(message.text);
+        return keep_chips(chat, line);
+    };
     // archond records the line before delivering it, so the echo comes
     // even when delivery is refused.
-    chat.expect_echo(&text);
-    let result = ops::say(client, text, images).await;
-    report(chat, result)
+    chat.expect_echo(&message.text);
+    let text = message.text.clone();
+    match ops::say(client, message.text, message.images).await {
+        Ok(()) => {
+            chat.lock_draft().clear();
+            warn_not_sent(chat, &message.left_out)
+        }
+        Err(error) => not_taken(chat, line, text, &error),
+    }
+}
+
+/// Keep a message archond did not take for the operator to send again; never
+/// resend it here, as a request that failed on the way may have arrived.
+fn not_taken(
+    chat: &mut Chat,
+    line: &str,
+    text: String,
+    error: &anyhow::Error,
+) -> anyhow::Result<()> {
+    assert!(chat.unsent.is_none(), "one unsent message at a time");
+    let maybe_sent = matches!(
+        error.downcast_ref::<archon_core::ArchonError>(),
+        Some(archon_core::ArchonError::Unavailable(_))
+    );
+    chat.unsent = (!text.is_empty()).then_some(text);
+    keep_chips(chat, line)?;
+    chat.error(&format!("{error:#}"))?;
+    match maybe_sent {
+        true => chat.warn(
+            "the message may or may not have arrived: check the feed before sending it again; \
+             its images stay attached",
+        ),
+        false => chat.note("not sent; its images stay attached"),
+    }
 }
 
 /// `/image <path>`: the path as typed, or quoted or escaped as a paste has it.
@@ -184,7 +216,7 @@ fn attach_named(
     match found {
         Some(path) => attach_file(chat, line, &path),
         None => {
-            keep_chips(chat, line);
+            keep_chips(chat, line)?;
             chat.error("no home directory to find ~ in")
         }
     }
@@ -193,12 +225,10 @@ fn attach_named(
 /// Attach the image at `path` to the draft `line` holds, and start the next
 /// line with the chips still attached.
 fn attach_file(chat: &mut Chat, line: &str, path: &Path) -> anyhow::Result<()> {
+    keep_chips(chat, line)?;
     let image = match read_image_file(path) {
         Ok(image) => image,
-        Err(refused) => {
-            keep_chips(chat, line);
-            return chat.error(&refused);
-        }
+        Err(refused) => return chat.error(&refused),
     };
     let summary = image.reference().summary();
     let attached = chat.lock_draft().attach(image, line);
@@ -213,10 +243,23 @@ fn attach_file(chat: &mut Chat, line: &str, path: &Path) -> anyhow::Result<()> {
 }
 
 /// A line that sends nothing keeps the images whose chips it holds, and the
-/// next line starts with those chips again.
-fn keep_chips(chat: &mut Chat, line: &str) {
-    chat.lock_draft().keep(line);
+/// next line starts with those chips again. The others are dropped, with a warning.
+fn keep_chips(chat: &mut Chat, line: &str) -> anyhow::Result<()> {
+    let dropped = chat.lock_draft().keep(line);
     prefill_chips(chat);
+    warn_not_sent(chat, &dropped)
+}
+
+/// Say which attached images a line let go of because it did not hold their chips.
+fn warn_not_sent(chat: &mut Chat, dropped: &[u32]) -> anyhow::Result<()> {
+    if dropped.is_empty() {
+        return Ok(());
+    }
+    let chips: Vec<String> = dropped.iter().map(|n| chip(*n)).collect();
+    chat.warn(&format!(
+        "not sent and no longer attached: {} (the line did not hold the chip)",
+        chips.join(" ")
+    ))
 }
 
 fn prefill_chips(chat: &mut Chat) {

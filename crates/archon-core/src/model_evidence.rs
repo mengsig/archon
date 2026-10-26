@@ -196,10 +196,11 @@ impl ModelEvidenceReport {
         for p in &self.pipelines {
             let _ = writeln!(
                 text,
-                "Pipeline {} / {} n={} pass={:.0}% median=${:.3} wall={:.0}s corrected={:.0}%",
+                "Pipeline {} / {} n={} scored={} pass={:.0}% median=${:.3} wall={:.0}s corrected={:.0}%",
                 p.repo.as_ref().map_or("global", |repo| repo.as_str()),
                 p.pipeline,
                 p.runs,
+                p.scored,
                 p.pass_rate * 100.0,
                 p.median_cost_usd,
                 p.median_wall_secs,

@@ -254,6 +254,16 @@ impl Outcome {
     pub fn is_win(&self) -> bool {
         self.result == OutcomeResult::Succeeded && self.corrections.is_empty()
     }
+
+    /// Whether the run judged the work at all: a cancel, a budget cap, a
+    /// deadline or broken infrastructure stopped it, so it is neither win nor loss.
+    pub fn is_scored(&self) -> bool {
+        let stopped = matches!(
+            self.failure,
+            Some(FailureClass::Budget | FailureClass::Timeout | FailureClass::Infrastructure)
+        );
+        self.result != OutcomeResult::Cancelled && !stopped
+    }
 }
 
 /// A model choice the evidence makes the default for one kind of stage.
@@ -339,6 +349,27 @@ mod tests {
     }
 
     #[test]
+    fn cancels_caps_deadlines_and_infrastructure_are_not_scored() {
+        let mut cancelled = outcome();
+        cancelled.result = OutcomeResult::Cancelled;
+        assert!(!cancelled.is_scored());
+        for (class, scored) in [
+            (FailureClass::Budget, false),
+            (FailureClass::Timeout, false),
+            (FailureClass::Infrastructure, false),
+            (FailureClass::Review, true),
+            (FailureClass::Escalated, true),
+        ] {
+            let mut failed = outcome();
+            failed.result = OutcomeResult::Failed;
+            failed.failure = Some(class);
+            failed.check().unwrap();
+            assert_eq!(failed.is_scored(), scored, "{}", class.as_str());
+        }
+        assert!(outcome().is_scored());
+    }
+
+    #[test]
     fn check_refuses_records_that_would_skew_learning() {
         let mut unexplained = outcome();
         unexplained.result = OutcomeResult::Failed;
@@ -346,6 +377,7 @@ mod tests {
         unexplained.failure = Some(FailureClass::Review);
         unexplained.check().unwrap();
         assert!(!unexplained.is_win());
+        assert!(unexplained.is_scored());
 
         let mut classed_success = outcome();
         classed_success.failure = Some(FailureClass::Other);

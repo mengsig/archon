@@ -11,10 +11,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use anyhow::Context as _;
-use archon_aether::wire::{
-    ALLOWLIST_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION, OPERATOR_LOGINS_PROTOCOL_VERSION,
-    PROTOCOL_VERSION, Welcome,
-};
+use archon_aether::wire::{MIN_PROTOCOL_VERSION, PROTOCOL_VERSION, Welcome};
 use archon_aether::{AetherClient, ClientOptions, Endpoint};
 use archon_client::ArchonClient;
 use archon_core::config::{AetherMode, Config, Toggle};
@@ -69,7 +66,7 @@ pub async fn run(json: bool) -> anyhow::Result<ExitCode> {
     checks.push(check_mode(&config, &instance));
     let aether = connect_aether(&effective_aether(&config.aether, &instance)).await;
     checks.push(match &aether {
-        Ok(client) => aether_ok(client.welcome(), config.aether.mode),
+        Ok(client) => aether_ok(client.welcome()),
         Err(_) if dedicated && !crate::instance::lifecycle::is_listening(&instance.socket) => {
             let detail = format!(
                 "Archon's aetherd is not running ({}); `archon daemon start` starts it",
@@ -372,9 +369,8 @@ pub(super) async fn connect_aether(
     }
 }
 
-/// Whether Archon can use this aetherd. Only a dedicated one runs Archon's
-/// GitHub watcher, so only there does a list it cannot store matter.
-fn aether_ok(welcome: &Welcome, mode: AetherMode) -> Check {
+/// Whether Archon can use this aetherd: it speaks a protocol Archon speaks.
+fn aether_ok(welcome: &Welcome) -> Check {
     let served = MIN_PROTOCOL_VERSION..=PROTOCOL_VERSION;
     if !served.contains(&welcome.protocol_version) {
         let detail = format!(
@@ -390,14 +386,7 @@ fn aether_ok(welcome: &Welcome, mode: AetherMode) -> Check {
         "aetherd {} (protocol {}, instance {})",
         welcome.daemon_version, welcome.protocol_version, welcome.instance_id
     );
-    let gap = match mode {
-        AetherMode::Dedicated => watcher_gap(welcome.protocol_version),
-        AetherMode::Shared => None,
-    };
-    match gap {
-        Some(gap) => check("aether", Level::Warn, format!("{detail}; {gap}")),
-        None => check("aether", Level::Ok, detail),
-    }
+    check("aether", Level::Ok, detail)
 }
 
 fn check_host_context(
@@ -456,27 +445,6 @@ fn check_repository_identity(welcome: Option<&Welcome>) -> Check {
         None => (Level::Ok, "identity mode unknown until Aether connects"),
     };
     check("repo identity", level, mode)
-}
-
-/// What Archon's GitHub watcher cannot store at `protocol`, with the fix.
-fn watcher_gap(protocol: u32) -> Option<String> {
-    let lacking = if protocol < ALLOWLIST_PROTOCOL_VERSION {
-        format!(
-            "GitHub watcher allowlists need protocol {ALLOWLIST_PROTOCOL_VERSION} and operator \
-             logins {OPERATOR_LOGINS_PROTOCOL_VERSION}"
-        )
-    } else if protocol < OPERATOR_LOGINS_PROTOCOL_VERSION {
-        format!(
-            "GitHub operator logins (`archon github-watcher operators`) need protocol \
-             {OPERATOR_LOGINS_PROTOCOL_VERSION}"
-        )
-    } else {
-        return None;
-    };
-    Some(format!(
-        "{lacking}; to set them, install a newer `aether`, then `archon daemon stop --aether` \
-         and `archon daemon start`"
-    ))
 }
 
 fn check_registration(path: &Path, archon_bin: &Path, mode: AetherMode) -> Check {
@@ -920,68 +888,23 @@ mod tests {
     }
 
     #[test]
-    fn a_dedicated_aetherd_on_protocol_14_warns_that_allowlists_need_15() {
-        let dedicated = AetherMode::Dedicated;
-        let current = aether_ok(&welcome(PROTOCOL_VERSION), dedicated);
+    fn an_aetherd_is_usable_from_protocol_17_to_the_newest() {
+        let current = aether_ok(&welcome(PROTOCOL_VERSION));
         assert_eq!(current.level, Level::Ok);
         assert!(
             current
                 .detail
                 .ends_with(&format!("(protocol {PROTOCOL_VERSION}, instance i-1)"))
         );
-        let older = aether_ok(&welcome(14), dedicated);
-        assert_eq!(older.level, Level::Warn);
-        assert!(
-            older
-                .detail
-                .contains("allowlists need protocol 15 and operator logins 17"),
-            "{}",
-            older.detail
-        );
-        assert_eq!(aether_ok(&welcome(13), dedicated).level, Level::Fail);
-        let newer = aether_ok(&welcome(PROTOCOL_VERSION + 1), dedicated);
+        let floor = aether_ok(&welcome(17));
+        assert_eq!(floor.level, Level::Ok, "{}", floor.detail);
+        assert!(floor.detail.contains("protocol 17"), "{}", floor.detail);
+        let older = aether_ok(&welcome(16));
+        assert_eq!(older.level, Level::Fail);
+        let needs = format!("Archon needs 17..{PROTOCOL_VERSION}");
+        assert!(older.detail.contains(&needs), "{}", older.detail);
+        let newer = aether_ok(&welcome(PROTOCOL_VERSION + 1));
         assert_eq!(newer.level, Level::Fail);
-    }
-
-    #[test]
-    fn a_dedicated_aetherd_below_protocol_17_warns_that_operator_logins_need_it() {
-        for protocol in [15, 16] {
-            let older = aether_ok(&welcome(protocol), AetherMode::Dedicated);
-            assert_eq!(older.level, Level::Warn, "protocol {protocol}");
-            let detail = &older.detail;
-            assert!(
-                detail.contains(&format!("(protocol {protocol}, instance i-1)")),
-                "{detail}"
-            );
-            assert!(
-                detail.contains(
-                    "GitHub operator logins (`archon github-watcher operators`) need protocol 17"
-                ),
-                "{detail}"
-            );
-            assert!(detail.contains("archon daemon stop --aether"), "{detail}");
-            assert!(!detail.contains("allowlist"), "allowlists work: {detail}");
-        }
-    }
-
-    /// Archon runs no GitHub watcher on a shared aetherd, so 14 is fine there.
-    #[test]
-    fn a_shared_aetherd_on_protocol_14_is_ok() {
-        let shared = AetherMode::Shared;
-        let older = aether_ok(&welcome(14), shared);
-        assert_eq!(older.level, Level::Ok);
-        assert!(!older.detail.contains("allowlist"), "{}", older.detail);
-        assert!(older.detail.contains("protocol 14"), "{}", older.detail);
-        for protocol in [15, 16, 17] {
-            let check = aether_ok(&welcome(protocol), shared);
-            assert_eq!(check.level, Level::Ok, "protocol {protocol}");
-            assert!(
-                !check.detail.contains("operator logins"),
-                "{}",
-                check.detail
-            );
-        }
-        assert_eq!(aether_ok(&welcome(13), shared).level, Level::Fail);
     }
 
     #[test]

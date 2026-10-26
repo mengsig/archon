@@ -328,30 +328,3 @@ async fn restore_refuses_what_this_correction_did_not_forget_or_cannot_bring_bac
 async fn refusal(h: &Harness, request: Request) -> String {
     receipt(h, request).await.unwrap_err().to_string()
 }
-
-#[tokio::test]
-async fn an_aetherd_below_protocol_15_refuses_the_forget_before_anything_is_recorded() {
-    let h = Harness::new().await;
-    let fake = fake_aether(&h).await;
-    fake.set_protocol_window(13, 14);
-    connect(&h, &fake).await;
-    let run = sample(&h, &model("cheap"), 0.2).await;
-    let error = correct(&h, forgetting(&run, STALE)).await.unwrap_err();
-    assert!(matches!(error, ArchonError::Aether(_)), "{error:?}");
-    let text = error.to_string();
-    assert!(
-        text.contains("protocol 14") && text.contains("Nothing was changed"),
-        "{text}"
-    );
-    assert!(learning_why(&h, &run.item).await.feedback.is_empty());
-    for cmd in ["memories", "forget_memory"] {
-        assert!(fake.received_named(cmd).is_empty(), "{cmd} was never sent");
-    }
-    let plain = correct(&h, request(&run, "implement", Quality))
-        .await
-        .unwrap();
-    assert!(
-        plain.view.feedback.curation.is_none(),
-        "a plain correction still records"
-    );
-}

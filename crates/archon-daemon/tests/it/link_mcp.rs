@@ -12,9 +12,9 @@ use archon_aether::fake::{self, Scripted};
 use archon_core::Timestamp;
 use archon_core::notify::NotificationKind;
 use archon_core::protocol::{ClientKind, McpHealth, Reply, Request};
-use archon_daemon::{handlers, pump, supervisor};
+use archon_daemon::{handlers, supervisor};
 use archon_queue::store::keys;
-use link_common::{Harness, agent_id};
+use link_common::{Harness, agent_id, spawn_link};
 use serde_json::{Value, json};
 
 const ORCH: &str = "agt_0001";
@@ -651,11 +651,7 @@ async fn the_pump_checks_the_server_as_soon_as_it_connects() {
     let harness = Harness::new().await;
     running_orchestrator(&harness).await;
     install_server(&harness, failed("Broken pipe"), ready());
-    let pump = tokio::spawn(pump::run(
-        harness.ctx.clone(),
-        harness.fake.endpoint(),
-        None,
-    ));
+    let pump = spawn_link(&harness, harness.fake.endpoint(), None);
     harness
         .eventually("the orchestrator was restarted", || async {
             harness.kv(keys::ORCHESTRATOR_AGENT).await.as_deref() == Some(ORCH_2)

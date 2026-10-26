@@ -24,7 +24,7 @@ use tokio::time::Instant;
 
 use crate::context::DaemonContext;
 use crate::feed::{self, REPLY_STATE_KEY};
-use crate::{executor, github, reports, supervisor};
+use crate::{executor, github, supervisor};
 
 pub use aetherd::AetherStarter;
 use aetherd::OwnAetherd;
@@ -105,31 +105,8 @@ pub(crate) async fn fleet_role(
 /// An outage shorter than this stays out of the operator's chat.
 const QUIET_OUTAGE: Duration = Duration::from_secs(30);
 
-/// Runs until shutdown; never returns `Ok` early. Connection failures are
-/// retried with `BACKOFF_MIN..BACKOFF_MAX`; only a store failure is fatal.
-/// With a `starter` (dedicated mode) an aetherd that is gone is started again.
-/// Also supervises the Lavish report polls, the orchestrator's deferred
-/// revivals and owed sweeps, the `archon` MCP server's health and the
-/// GitHub watcher's target, which need an `Arc` context.
-pub async fn run(
-    ctx: Arc<DaemonContext>,
-    endpoint: Endpoint,
-    starter: Option<Arc<dyn AetherStarter>>,
-) -> Result<(), ArchonError> {
-    tokio::try_join!(
-        link_to_aether(ctx.clone(), endpoint, starter),
-        reports::supervise(ctx.clone()),
-        supervisor::revive_when_due(ctx.clone()),
-        supervisor::sweep_when_owed(ctx.clone()),
-        supervisor::watch_mcp(ctx.clone()),
-        github::watch_github(ctx.clone()),
-        crate::handlers::deliver_memory_feedback(ctx.clone())
-    )?;
-    Ok(())
-}
-
-/// The link to Aether alone: [`run`] without the loops beside it, which the
-/// daemon supervises one by one so that none takes the others down.
+/// The link to Aether: the event pump worker. The daemon supervises it and
+/// the loops beside it one by one, so that none takes the others down.
 pub async fn link_to_aether(
     ctx: Arc<DaemonContext>,
     endpoint: Endpoint,

@@ -71,6 +71,8 @@ use crate::supervisor::Supervisor;
 use crate::triggers::TriggerQueue;
 use crate::workers::{Ended, Policy, Workers};
 
+pub use crate::workers::Policy as WorkerPolicy;
+
 /// Feed items buffered per subscriber before it lags (and catches up from
 /// the store).
 const FEED_BROADCAST_CAPACITY: usize = 1024;
@@ -307,6 +309,81 @@ async fn supervise(
     }
 }
 
+/// Run the worker `$run(ctx)` as `$name` in `$workers`, restarted as it ends.
+macro_rules! supervised {
+    ($workers:expr, $ctx:expr, $name:expr, $run:path) => {{
+        let ctx = $ctx.clone();
+        $workers.spawn($name, move || $run(ctx.clone()));
+    }};
+}
+
+/// The workers that follow Aether: the event pump and the loops that act on
+/// what it brings. Production and the link tests both start exactly these.
+fn spawn_link_workers(
+    workers: &mut Workers,
+    ctx: &Arc<DaemonContext>,
+    endpoint: Endpoint,
+    starter: Option<Arc<dyn pump::AetherStarter>>,
+) {
+    let before = workers.len();
+    {
+        let ctx = ctx.clone();
+        workers.spawn("event pump", move || {
+            pump::link_to_aether(ctx.clone(), endpoint.clone(), starter.clone())
+        });
+    }
+    supervised!(workers, ctx, "report polls", reports::supervise);
+    supervised!(
+        workers,
+        ctx,
+        "orchestrator revival",
+        supervisor::revive_when_due
+    );
+    supervised!(
+        workers,
+        ctx,
+        "orchestrator sweeps",
+        supervisor::sweep_when_owed
+    );
+    supervised!(
+        workers,
+        ctx,
+        "orchestrator stall check",
+        supervisor::watch_stalls
+    );
+    supervised!(workers, ctx, "mcp health", supervisor::watch_mcp);
+    supervised!(workers, ctx, "github watcher", github::watch_github);
+    supervised!(
+        workers,
+        ctx,
+        "memory feedback",
+        handlers::deliver_memory_feedback
+    );
+    assert_eq!(workers.len(), before + 8, "every link worker is supervised");
+}
+
+/// The link workers ([`spawn_link_workers`]) under `policy`, handled as the
+/// daemon handles them, until one fails fatally: for tests without a server.
+pub async fn run_link_workers(
+    ctx: Arc<DaemonContext>,
+    endpoint: Endpoint,
+    starter: Option<Arc<dyn pump::AetherStarter>>,
+    policy: WorkerPolicy,
+) -> Result<(), ArchonError> {
+    assert!(ctx.recovery.is_recovered(), "workers start once recovered");
+    let mut workers = Workers::new(policy);
+    spawn_link_workers(&mut workers, &ctx, endpoint, starter);
+    assert_eq!(workers.len(), 8, "only the link workers run");
+    while let Some(ended) = workers.next_ended().await {
+        if let Some(fatal) = worker_ended(&ctx, ended).await {
+            return Err(fatal);
+        }
+    }
+    Err(ArchonError::Invalid(
+        "every link worker failed too often and is switched off".into(),
+    ))
+}
+
 fn spawn_workers(
     workers: &mut Workers,
     ctx: &Arc<DaemonContext>,
@@ -314,24 +391,11 @@ fn spawn_workers(
     starter: Option<Arc<dyn pump::AetherStarter>>,
 ) {
     macro_rules! worker {
-        ($name:expr, $run:path) => {{
-            let ctx = ctx.clone();
-            workers.spawn($name, move || $run(ctx.clone()));
-        }};
+        ($name:expr, $run:path) => {
+            supervised!(workers, ctx, $name, $run)
+        };
     }
-    {
-        let ctx = ctx.clone();
-        workers.spawn("event pump", move || {
-            pump::link_to_aether(ctx.clone(), endpoint.clone(), starter.clone())
-        });
-    }
-    worker!("report polls", reports::supervise);
-    worker!("orchestrator revival", supervisor::revive_when_due);
-    worker!("orchestrator sweeps", supervisor::sweep_when_owed);
-    worker!("orchestrator stall check", supervisor::watch_stalls);
-    worker!("mcp health", supervisor::watch_mcp);
-    worker!("github watcher", github::watch_github);
-    worker!("memory feedback", handlers::deliver_memory_feedback);
+    spawn_link_workers(workers, ctx, endpoint, starter);
     worker!("dispatcher", dispatcher::run);
     worker!("coordination", executor::coordination::run);
     worker!(

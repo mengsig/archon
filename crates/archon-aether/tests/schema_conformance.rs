@@ -1,4 +1,4 @@
-//! Shared commands match Aether v17/v15 schemas; optional memory and recovery
+//! Shared commands match Aether's v17 schema; optional memory and recovery
 //! commands match their published schema subsets, including nested fields;
 //! the notification commands match a subset transcribed from Aether.
 
@@ -17,14 +17,9 @@ use serde_json::{Value, json};
 /// v17 + host_context feature (operator logins and opt-in host context).
 /// Vendored schemas omit issue numbers from Aether's descriptions.
 const SCHEMA: &str = include_str!("fixtures/aether-protocol-v17.schema.json");
-const SCHEMA_V15: &str = include_str!("fixtures/aether-protocol-v15.schema.json");
 
 fn schema() -> Value {
     serde_json::from_str(SCHEMA).expect("the vendored schema is JSON")
-}
-
-fn schema_v15() -> Value {
-    serde_json::from_str(SCHEMA_V15).expect("the vendored v15 schema is JSON")
 }
 
 fn agent() -> AetherAgentId {
@@ -400,13 +395,11 @@ fn check(schema: &Value, node: &Value, value: &Value, path: &str) -> Vec<String>
 }
 
 #[test]
-fn the_vendored_schemas_are_protocols_17_and_15() {
+fn the_vendored_schema_is_protocol_17_the_oldest_archon_speaks() {
     let schema = schema();
     assert_eq!(schema["protocol_version"], 17);
     assert_eq!(schema["min_protocol_version"], 16);
-    let older = schema_v15();
-    assert_eq!(older["protocol_version"], 15);
-    assert_eq!(older["min_protocol_version"], 14);
+    assert_eq!(archon_aether::wire::MIN_PROTOCOL_VERSION, 17);
 }
 
 /// How `command`'s frame breaks `schema`; empty when it conforms.
@@ -429,39 +422,31 @@ fn violations(schema: &Value, command: &Command) -> Vec<String> {
 }
 
 #[test]
-fn every_command_archon_emits_matches_both_schemas() {
-    for schema in [schema(), schema_v15()] {
-        let version = &schema["protocol_version"];
-        let mut seen = BTreeSet::new();
-        let mut problems = Vec::new();
-        for command in samples() {
-            seen.insert(variant_name(&command));
-            problems.extend(violations(&schema, &command));
-        }
-        assert!(
-            problems.is_empty(),
-            "protocol {version} schema violations:\n{}",
-            problems.join("\n")
-        );
-        assert_eq!(
-            seen.len(),
-            28,
-            "every Command variant has a sample: {seen:?}"
-        );
+fn every_command_archon_emits_matches_the_schema() {
+    let schema = schema();
+    let mut seen = BTreeSet::new();
+    let mut problems = Vec::new();
+    for command in samples() {
+        seen.insert(variant_name(&command));
+        problems.extend(violations(&schema, &command));
     }
+    assert!(
+        problems.is_empty(),
+        "schema violations:\n{}",
+        problems.join("\n")
+    );
+    assert_eq!(
+        seen.len(),
+        28,
+        "every Command variant has a sample: {seen:?}"
+    );
 }
 
-/// `operator_users` exists from protocol 17 on. The v15 schema has no such
-/// key, which is why Archon refuses to send the list below 17.
 #[test]
-fn operator_logins_conform_to_v17_and_are_unknown_to_v15() {
+fn operator_logins_conform_to_v17() {
     let sample = operator_logins_sample();
     let current = violations(&schema(), &sample);
     assert!(current.is_empty(), "{current:?}");
-    assert_eq!(
-        violations(&schema_v15(), &sample),
-        ["configure_github_watcher.config.operator_users is not in the schema"]
-    );
     let config = &schema()["$defs"]["GithubWatcherConfig"];
     assert_eq!(
         config["properties"]["operator_users"]["items"]["type"],
@@ -531,41 +516,40 @@ fn the_agent_fields_archon_reads_exist_in_the_schema() {
     );
 }
 
-/// The memory record fields and replies curation reads, in both schemas.
+/// The memory record fields and replies curation reads.
 #[test]
-fn the_memory_fields_archon_reads_exist_in_both_schemas() {
-    for schema in [schema(), schema_v15()] {
-        let version = &schema["protocol_version"];
-        let (properties, required) = shape(&schema, &schema["$defs"]["MemoryRecord"]);
-        for key in ["id", "scope", "kind", "provenance", "created_at"] {
-            assert!(
-                required.contains(key),
-                "v{version} MemoryRecord.{key} is required"
-            );
-        }
-        for key in ["forgotten_at", "superseded_by", "pinned"] {
-            assert!(
-                properties.contains(key),
-                "v{version} MemoryRecord.{key} exists"
-            );
-        }
-        let replies = schema["$defs"]["Reply"]["oneOf"].as_array().unwrap();
-        let data = |kind: &str| {
-            let reply = replies
-                .iter()
-                .find(|r| r["properties"]["reply"]["const"] == kind)
-                .unwrap_or_else(|| panic!("v{version} has no `{kind}` reply"));
-            reply["properties"]["data"].clone()
-        };
-        assert_eq!(data("memory")["$ref"], "#/$defs/MemoryRecord");
-        assert_eq!(data("memories")["items"]["$ref"], "#/$defs/MemoryRecord");
-        let scope = schema["$defs"]["MemoryScope"]["oneOf"].as_array().unwrap();
-        assert_eq!(scope.len(), 6, "v{version}: every scope has a label");
+fn the_memory_fields_archon_reads_exist_in_the_schema() {
+    let schema = schema();
+    let version = &schema["protocol_version"];
+    let (properties, required) = shape(&schema, &schema["$defs"]["MemoryRecord"]);
+    for key in ["id", "scope", "kind", "provenance", "created_at"] {
+        assert!(
+            required.contains(key),
+            "v{version} MemoryRecord.{key} is required"
+        );
     }
+    for key in ["forgotten_at", "superseded_by", "pinned"] {
+        assert!(
+            properties.contains(key),
+            "v{version} MemoryRecord.{key} exists"
+        );
+    }
+    let replies = schema["$defs"]["Reply"]["oneOf"].as_array().unwrap();
+    let data = |kind: &str| {
+        let reply = replies
+            .iter()
+            .find(|r| r["properties"]["reply"]["const"] == kind)
+            .unwrap_or_else(|| panic!("v{version} has no `{kind}` reply"));
+        reply["properties"]["data"].clone()
+    };
+    assert_eq!(data("memory")["$ref"], "#/$defs/MemoryRecord");
+    assert_eq!(data("memories")["items"]["$ref"], "#/$defs/MemoryRecord");
+    let scope = schema["$defs"]["MemoryScope"]["oneOf"].as_array().unwrap();
+    assert_eq!(scope.len(), 6, "v{version}: every scope has a label");
 }
 
-/// The values a string schema allows: v15 writes `CostBasis` as one `enum`,
-/// v17 as a `oneOf` of an `enum` and a documented `const`.
+/// The values a string schema allows: a single `enum`, or (as v17 writes
+/// `CostBasis`) a `oneOf` of an `enum` and a documented `const`.
 fn allowed_strings(node: &Value) -> Vec<Value> {
     let options = node.get("oneOf").and_then(Value::as_array);
     let parts: Vec<&Value> = options.map_or_else(|| vec![node], |o| o.iter().collect());
@@ -580,23 +564,22 @@ fn allowed_strings(node: &Value) -> Vec<Value> {
 
 #[test]
 fn usage_fixtures_include_cost_provenance_in_the_vendored_schemas() {
-    for schema in [schema(), schema_v15()] {
-        for fixture in [
-            include_str!("fixtures/usage_list_price.json"),
-            include_str!("fixtures/usage_provider_reported.json"),
-        ] {
-            let event: Value = serde_json::from_str(fixture).unwrap();
-            let usage = &event["kind"]["total"];
-            let problems = check(&schema, &schema["$defs"]["Usage"], usage, "usage");
-            assert!(problems.is_empty(), "{problems:?}");
-            let basis = resolve(
-                &schema,
-                &schema["$defs"]["Usage"]["properties"]["cost_basis"],
-            );
-            let allowed = allowed_strings(basis);
-            assert_eq!(allowed.len(), 4, "{allowed:?}");
-            assert!(allowed.contains(&usage["cost_basis"]), "{allowed:?}");
-        }
+    let schema = schema();
+    for fixture in [
+        include_str!("fixtures/usage_list_price.json"),
+        include_str!("fixtures/usage_provider_reported.json"),
+    ] {
+        let event: Value = serde_json::from_str(fixture).unwrap();
+        let usage = &event["kind"]["total"];
+        let problems = check(&schema, &schema["$defs"]["Usage"], usage, "usage");
+        assert!(problems.is_empty(), "{problems:?}");
+        let basis = resolve(
+            &schema,
+            &schema["$defs"]["Usage"]["properties"]["cost_basis"],
+        );
+        let allowed = allowed_strings(basis);
+        assert_eq!(allowed.len(), 4, "{allowed:?}");
+        assert!(allowed.contains(&usage["cost_basis"]), "{allowed:?}");
     }
 }
 
@@ -608,10 +591,6 @@ fn lean_context_matches_the_feature_schema_without_changing_protocol() {
     let command = Command::CreateAgent(Box::new(create));
     let current = violations(&schema(), &command);
     assert!(current.is_empty(), "{current:?}");
-    assert_eq!(
-        violations(&schema_v15(), &command),
-        ["create_agent.config.host_context is not in the schema"]
-    );
     let current = schema();
     let config = &current["$defs"]["AgentConfig"];
     assert!(

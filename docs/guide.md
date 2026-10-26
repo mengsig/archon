@@ -312,8 +312,8 @@ the command prints "Correction recorded; memory forget pending/failed" and
 exits 1, and `retry-memory` retries the forget and pending feedback in their bound
 instance. The explicit forget still waits on Aether and can time out; background
 feedback does not delay it. A forget is refused before anything is recorded when
-`archond` has never connected to Aether or is switching to another instance, and
-when `aetherd` is older than protocol 15. `restore-memory` brings back a memory
+`archond` has never connected to Aether or is switching to another instance.
+`restore-memory` brings back a memory
 this correction forgot; it
 refuses when the memory was already forgotten or superseded before the
 correction, has been restored or forgotten again since, or is superseded now.
@@ -848,7 +848,7 @@ reference, `[image: shot.png, 14.2 KB]`, not the image. In the terminal UI
 | `archon say [--image <path>]… "…"` | send one message, with any images, to the orchestrator and exit |
 | `archon questions` / `archon answer <n> "…"` | list or answer open questions; `Q<n>` is permanent and the same in the chat |
 | `archon status` | waiting items and their next action, daemon, orchestrator, `archon` MCP server health, caps, spend, Aether link and total storage (`--verbose` lists each directory) |
-| `archon cost [--since <date\|7d>] [--until <date\|1d>] [--by day\|repo\|pipeline\|model\|provider\|item\|stage]` | spend as the budgets count it, grouped (by day over the last 7 days by default), with a total; spend with no owner in the grouping, such as the orchestrator's under `--by model`, is the `-` row |
+| `archon cost [--since <date\|7d>] [--until <date\|1d>] [--by day\|repo\|pipeline\|model\|provider\|item\|stage]` | spend as the budgets count it, grouped (by day over the last 7 days by default), with a total; spend with no owner in the grouping is the `(orchestrator)` row under `--by item` or `--by pipeline`, and `(no <group>)`, such as `(no repo)`, under the others |
 | `archon model-evidence [--repo <name\|id>] [--pipeline <name>] [--stage <id>] [--since <date\|30d>]` | recorded stage attempts, completed cost median/p90, median minutes and review/test pass shares; small samples marked, at most 60 groups; evidence only |
 | `archon queue add --title … --brief-file <path\|-> [--model-plan-file <json\|toml>] [--stage-timeout <stage>=<minutes>]…` | enqueue scripted work through the daemon's MCP-equivalent policy checks; stages the plan leaves out get Archon's default model; prints the id or the item with `--json`; a title is one line without control or bidirectional-override characters, and a brief is at most 1 MiB (1048576 bytes) with no NUL |
 | `archon queue wait <id>… [--timeout 30m]` | wait for every item to become terminal, bounded to 30m by default; exit 0 all succeeded, 3 failed/cancelled, 4 timeout, 5 failed/cancelled dependency |
@@ -1354,7 +1354,14 @@ repository and caps changes can be undone. See
 
 ## Schedules
 
-Scheduling belongs to Aether. Archon has no separate schedule command.
+You can ask the orchestrator for recurring work in chat, for example "every
+weekday at 9, list the items that failed overnight". It creates an Aether
+schedule that delivers the request to its own inbox (`create_schedule`), and
+shows or changes its schedules when you ask (`list_schedules`,
+`update_schedule`). Each delivery reaches it as a message to act on; work it
+enqueues goes through the queue like any other item.
+
+Scheduling itself belongs to Aether. Archon has no separate schedule command.
 Use `archon aether schedule --help` for the scheduling interface of the
 installed Aether version. It supports recurring inbox delivery and fresh-run
 schedules. Target Archon's orchestrator for recurring requests that should

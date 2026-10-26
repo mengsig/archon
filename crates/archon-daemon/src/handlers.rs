@@ -157,7 +157,6 @@ async fn prepare_watcher(
     }
     if let Request::ConfigureGithubWatcher { change } = request {
         github::require_dedicated(ctx)?;
-        github::check_storable(ctx, change)?;
         if github::enables(change) {
             github::prepare_enable(ctx).await?;
         }

@@ -20,11 +20,9 @@ use crate::memory::MemoryQuery;
 /// Archon asks for this first, and falls back to the newest protocol an
 /// older aetherd serves, down to [`MIN_PROTOCOL_VERSION`].
 pub const PROTOCOL_VERSION: u32 = 24;
-pub const MIN_PROTOCOL_VERSION: u32 = 14;
-/// The first protocol whose GitHub watcher stores `allowed_users`.
-pub const ALLOWLIST_PROTOCOL_VERSION: u32 = 15;
-/// The first protocol whose GitHub watcher stores `operator_users`.
-pub const OPERATOR_LOGINS_PROTOCOL_VERSION: u32 = 17;
+/// Aether's own floor: no supported aetherd serves an older protocol, and
+/// from 17 on its GitHub watcher stores `allowed_users` and `operator_users`.
+pub const MIN_PROTOCOL_VERSION: u32 = 17;
 /// The first protocol whose `send_message` carries images.
 pub const IMAGES_PROTOCOL_VERSION: u32 = 19;
 /// The first protocol that serves `append_note`.

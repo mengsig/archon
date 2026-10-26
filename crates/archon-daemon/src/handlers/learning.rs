@@ -289,13 +289,12 @@ fn bound_client(
             curation.memory
         )));
     }
-    client.check_memory_protocol()?;
     Ok(client)
 }
 
 /// The instance a requested forget binds to: the one archond last connected
-/// to, which its pump records before using a link. Without one, or with a
-/// connected instance that cannot curate memories, nothing is recorded.
+/// to, which its pump records before using a link. Without one nothing is
+/// recorded.
 async fn memory_instance(
     ctx: &DaemonContext,
     memory: &AetherMemoryId,
@@ -319,7 +318,6 @@ async fn memory_instance(
              was recorded, try again"
         )));
     }
-    client.check_memory_protocol()?;
     Ok(instance)
 }
 

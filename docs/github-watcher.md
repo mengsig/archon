@@ -97,26 +97,14 @@ policy in its instructions, and the new tools (`github_reply`, `enqueue`'s
   archon aether mcp refresh archon
   archon orchestrator restart
   ```
-- **Allowlists** need Archon's aetherd on Aether protocol 15. Against an
-  aetherd that serves only 14, Archon still connects (at 14) and every
-  other watcher command works, but setting an allowlist is refused with an
-  error that says to upgrade Aether. `archon doctor` warns about it when
-  Archon runs its own aetherd (shared mode runs no watcher).
-- **Operator logins** need Archon's aetherd on Aether protocol 17. Upgrade
-  in this order:
+- **Aether protocol 17.** Archon speaks Aether protocols 17 to 24, so every
+  aetherd it connects to stores allowlists and operator logins. An aetherd
+  older than 17 is refused at connect, and `archon doctor` fails naming
+  both ranges: install a newer `aether`, then run `archon daemon stop
+  --aether` and `archon daemon start`.
+- **Operator logins** come last, after the tools and the orchestrator:
 
-  1. **Archon first.** This build speaks Aether protocols 14 to 17, so it
-     keeps working against the aetherd you run now (15 or 16). The other
-     order does not work: an aetherd that speaks 17 serves only 16 and 17,
-     and an older Archon speaks 15 at most. Restart archond
-     (`archon daemon stop --keep-aether`, then `archon daemon start`). Everything works
-     as before, except that `archon github-watcher operators <LOGIN>...` is
-     refused and `archon doctor` warns, both naming protocol 17 and the
-     next step.
-  2. **Then Archon's aetherd.** Install an `aether` that speaks protocol 17,
-     then run `archon daemon stop`; the next `archon` command
-     starts both daemons. `archon doctor` then shows `protocol 17`.
-  3. **Then the tools and the orchestrator.**
+  1. **The tools and the orchestrator.**
 
      ```sh
      archon aether mcp refresh archon
@@ -126,9 +114,9 @@ policy in its instructions, and the new tools (`github_reply`, `enqueue`'s
      The restarted orchestrator runs this build's instructions, which have
      the rules for operator standing. They are harmless while no list is
      set: every request is still external.
-  4. **Then the list, last.** `archon github-watcher operators <LOGIN>...`
+  2. **Then the list.** `archon github-watcher operators <LOGIN>...`
 
-     archond refuses this step until step 3 is done, and says so: while a
+     archond refuses this step until step 1 is done, and says so: while a
      watched repository hands requests to an orchestrator started before
      it, nothing is written and the error says to run
      `archon orchestrator restart` and set the logins again.
@@ -137,18 +125,6 @@ policy in its instructions, and the new tools (`github_reply`, `enqueue`'s
   instructions from the moment the list is set, and an orchestrator started
   before the upgrade keeps instructions that call every GitHub request
   external and say nothing of operator standing.
-
-  **The way back.** Clear the list before you install an older aetherd:
-
-  ```sh
-  archon github-watcher operators --clear
-  archon github-watcher status --json    # "operator_users": null
-  ```
-
-  An aetherd older than protocol 17 cannot read stored operator logins. It
-  refuses the stored watcher settings rather than run without the list.
-  With the list cleared, go back in the reverse order: aetherd first, then
-  Archon.
 - **archond.** The `archon` CLI and archond speak Archon's protocol 3 now,
   so a CLI and an archond from either side of this change refuse each other
   at hello. After upgrading, restart archond (`archon daemon stop --keep-aether`, then
@@ -237,9 +213,7 @@ example-org/example-repo  on  -> orchestrator  only alice, bob  polled 1m ago, 3
   not starting or ending with a hyphen. At most 100 distinct logins fit one
   repository. The CLI checks these rules before sending, and an empty list
   is refused: `allow --clear` removes the list instead.
-- The allowlist is Aether's `allowed_users` field (protocol 15). Archon
-  refuses to set one against an aetherd that serves only protocol 14, which
-  would drop it and let every writer dispatch; upgrade Aether first.
+- The allowlist is Aether's `allowed_users` field.
 
 Operator logins never widen any of this. A login you list as an operator
 still needs write access, and a place on the repository's allowlist where
@@ -376,12 +350,8 @@ allowlists, operator logins) can never be changed from GitHub. Set
   one asking. It tells you in the terminal UI and `archon chat` what was
   asked and what it did.
 
-Operator logins need Archon's aetherd on Aether protocol 17 (the
-`operator_users` field). Against an aetherd that speaks 15 or 16, Archon
-works as before and refuses to set the list, before anything is sent, with
-an error that names the aetherd and how to upgrade it; `archon doctor` warns
-the same. See [Upgrading](#upgrading-an-existing-installation) for the
-order, and for clearing the list before going back to an older aetherd.
+Operator logins are Aether's `operator_users` field. See
+[Upgrading](#upgrading-an-existing-installation) for the order to set them in.
 
 The list belongs to the whole watcher, so it also covers repositories on
 Archon's aetherd that use Aether's automatic or thread dispatch. Those are

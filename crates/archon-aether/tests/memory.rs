@@ -1,5 +1,5 @@
 //! Curating one named memory against the fake daemon: the exact commands
-//! sent, the checks on Aether's answers, and refusal below protocol 15.
+//! sent and the checks on Aether's answers.
 
 mod common;
 
@@ -104,23 +104,4 @@ async fn answers_about_another_memory_or_without_the_change_are_refused() {
         client.forget_memory(&id(STALE), "why").await.is_err(),
         "refusals surface"
     );
-}
-
-#[tokio::test]
-async fn memory_curation_is_refused_below_protocol_15_without_sending_anything() {
-    let (_dir, fake) = fake_aether().await;
-    fake.set_protocol_window(13, 14);
-    let client = connect(&fake).await;
-    assert_eq!(client.welcome().protocol_version, 14);
-    let error = client.forget_memory(&id(STALE), "why").await.unwrap_err();
-    assert!(matches!(error, ArchonError::Aether(_)), "{error:?}");
-    assert!(
-        error.to_string().contains("protocol 14")
-            && error.to_string().contains("Nothing was changed")
-    );
-    assert!(client.memory(&id(STALE)).await.is_err());
-    assert!(client.restore_memory(&id(STALE)).await.is_err());
-    for cmd in ["memories", "forget_memory", "restore_memory"] {
-        assert!(fake.received_named(cmd).is_empty(), "{cmd} was never sent");
-    }
 }

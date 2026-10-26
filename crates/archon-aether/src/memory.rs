@@ -11,9 +11,6 @@ use serde_json::Value;
 use crate::client::AetherClient;
 use crate::wire::Command;
 
-/// The first protocol whose schema Archon checked the memory commands against.
-pub const MEMORY_PROTOCOL_VERSION: u32 = 15;
-
 /// Aether's `MemoryQuerySpec`, as Archon fills it: one record by id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MemoryQuery {
@@ -107,22 +104,8 @@ pub fn scope(scope: &Value) -> String {
 }
 
 impl AetherClient {
-    /// Refuses a protocol whose memory commands Archon has not checked.
-    pub fn check_memory_protocol(&self) -> Result<(), ArchonError> {
-        let speaking = self.welcome().protocol_version;
-        if speaking >= MEMORY_PROTOCOL_VERSION {
-            return Ok(());
-        }
-        Err(ArchonError::Aether(format!(
-            "aetherd {} speaks Aether protocol {speaking}; Archon curates memories only over \
-             {MEMORY_PROTOCOL_VERSION} or newer. Upgrade Archon's aetherd. Nothing was changed",
-            self.welcome().daemon_version
-        )))
-    }
-
     /// The record `id`, forgotten or superseded; `None` when Aether has none.
     pub async fn memory(&self, id: &AetherMemoryId) -> Result<Option<MemoryRecord>, ArchonError> {
-        self.check_memory_protocol()?;
         let query = MemoryQuery {
             id: id.clone(),
             include_forgotten: true,
@@ -147,7 +130,6 @@ impl AetherClient {
         id: &AetherMemoryId,
         reason: &str,
     ) -> Result<MemoryRecord, ArchonError> {
-        self.check_memory_protocol()?;
         assert!(!reason.trim().is_empty(), "a forget says why");
         let command = Command::ForgetMemory {
             id: id.clone(),
@@ -163,7 +145,6 @@ impl AetherClient {
     }
 
     pub async fn restore_memory(&self, id: &AetherMemoryId) -> Result<MemoryRecord, ArchonError> {
-        self.check_memory_protocol()?;
         let command = Command::RestoreMemory { id: id.clone() };
         let record: MemoryRecord = decode(self.request(command, "memory").await?, "memory")?;
         if &record.id != id || record.forgotten_at.is_some() {

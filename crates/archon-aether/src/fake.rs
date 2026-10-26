@@ -22,13 +22,7 @@ use tokio::sync::{Notify, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::client::Endpoint;
-use crate::wire::{ALLOWLIST_PROTOCOL_VERSION, OPERATOR_LOGINS_PROTOCOL_VERSION, PROTOCOL_VERSION};
-
-/// Aether's refusals of a watcher an older peer cannot carry (`compat.rs`).
-pub const ALLOWLIST_WATCHER_VERSION_ERROR: &str =
-    "GitHub watcher allowed_users requires protocol 15; upgrade the Aether client";
-pub const OPERATOR_USERS_WATCHER_VERSION_ERROR: &str =
-    "GitHub watcher operator_users requires protocol 17; upgrade the Aether client";
+use crate::wire::PROTOCOL_VERSION;
 
 /// What the fake answers one command with.
 #[derive(Debug, Clone, PartialEq)]
@@ -370,25 +364,13 @@ impl Session {
         };
         let req = frame["req"].as_u64().unwrap_or(0);
         let cmd = frame["cmd"].as_str().unwrap_or_default().to_owned();
-        let Some(version) = self.version else {
+        if self.version.is_none() {
             self.hello(req, &frame);
             return;
-        };
+        }
         lock(&self.state).received.push(frame.clone());
         self.changed.notify_waiters();
-        // Refused before any responder runs, so a refused save changes nothing.
-        let saved = (cmd == "configure_github_watcher").then(|| &frame["config"]);
-        if let Some(refusal) = saved.and_then(|config| watcher_gate(version, config)) {
-            self.answer(req, refusal);
-            return;
-        }
-        let scripted = self.scripted(&cmd, &frame).map(|reply| match &reply {
-            Scripted::Reply { kind, data } if kind == "github_watcher" => {
-                watcher_gate(version, &data["config"]).unwrap_or(reply)
-            }
-            _ => reply,
-        });
-        match (cmd.as_str(), scripted) {
+        match (cmd.as_str(), self.scripted(&cmd, &frame)) {
             ("subscribe", None) => self.subscribe(req, &frame),
             ("unsubscribe", None) => self.unsubscribe(req, &frame),
             (_, Some(reply)) => self.answer(req, reply),
@@ -500,28 +482,6 @@ impl Session {
         drop(state);
         self.send(reply_line(req, &Scripted::ok()));
     }
-}
-
-/// Aether's refusal of a watcher `config` that a peer speaking `version`
-/// cannot carry, sent or received; `None` when it can, or for no config.
-fn watcher_gate(version: u32, config: &Value) -> Option<Scripted> {
-    let set = |field: &Value| !field.is_null();
-    let narrowed = config["repositories"]
-        .as_array()
-        .is_some_and(|repos| repos.iter().any(|repo| set(&repo["allowed_users"])));
-    if version < ALLOWLIST_PROTOCOL_VERSION && narrowed {
-        return Some(Scripted::refuse(
-            "incompatible",
-            ALLOWLIST_WATCHER_VERSION_ERROR,
-        ));
-    }
-    if version < OPERATOR_LOGINS_PROTOCOL_VERSION && set(&config["operator_users"]) {
-        return Some(Scripted::refuse(
-            "incompatible",
-            OPERATOR_USERS_WATCHER_VERSION_ERROR,
-        ));
-    }
-    None
 }
 
 fn builtin(cmd: &str) -> Scripted {

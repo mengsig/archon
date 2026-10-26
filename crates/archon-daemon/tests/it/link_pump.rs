@@ -23,9 +23,9 @@ use archon_core::queue::NOTIFY_TAG;
 use archon_core::repo::{Repo, ShipMode};
 use archon_core::run::{StageRun, StageState};
 use archon_daemon::triggers::{self, TriggerEvent};
-use archon_daemon::{handlers, mirror, pump, supervisor};
+use archon_daemon::{handlers, mirror, supervisor};
 use archon_queue::store::keys;
-use link_common::{Harness, WAIT, running_stage, spawning_stage};
+use link_common::{Harness, WAIT, running_stage, spawn_link, spawning_stage};
 use serde_json::{Value, json};
 use tokio::task::JoinHandle;
 
@@ -107,11 +107,7 @@ async fn running_pump_beside(
     for agent in live {
         agents.set(agent, "running");
     }
-    let pump = tokio::spawn(pump::run(
-        harness.ctx.clone(),
-        harness.fake.endpoint(),
-        None,
-    ));
+    let pump = spawn_link(harness, harness.fake.endpoint(), None);
     wait_for_streams(harness, 1).await;
     (agents, pump)
 }
@@ -348,11 +344,7 @@ async fn an_answer_in_progress_survives_an_archond_restart_and_a_replay() {
     let _ = pump.await;
     // A fresh archond starts from what the store kept.
     *harness.ctx.replies.lock().await = Default::default();
-    let pump = tokio::spawn(pump::run(
-        harness.ctx.clone(),
-        harness.fake.endpoint(),
-        None,
-    ));
+    let pump = spawn_link(&harness, harness.fake.endpoint(), None);
     wait_for_streams(&harness, 2).await;
     orch(&harness, said("Yes, it merged.")).await;
     let seq = orch(&harness, completed()).await;
@@ -777,11 +769,7 @@ async fn a_sweep_aether_refuses_keeps_nothing_from_the_live_orchestrator() {
     harness
         .fake
         .set_default("cancel", Scripted::refuse("internal", "store busy"));
-    let pump = tokio::spawn(pump::run(
-        harness.ctx.clone(),
-        harness.fake.endpoint(),
-        None,
-    ));
+    let pump = spawn_link(&harness, harness.fake.endpoint(), None);
     wait_for_streams(&harness, 1).await;
     harness
         .eventually("the orchestrator's stream is attached", || async {
@@ -1684,11 +1672,7 @@ async fn an_aetherd_that_starts_late_is_found_within_a_second_or_so() {
     use archon_aether::client::Endpoint;
     let harness = Harness::new().await;
     let socket = harness.dir.path().join("late.sock");
-    let pump = tokio::spawn(pump::run(
-        harness.ctx.clone(),
-        Endpoint::Unix(socket.clone()),
-        None,
-    ));
+    let pump = spawn_link(&harness, Endpoint::Unix(socket.clone()), None);
     // A doubling interval would have its attempts 1, 3, 7 and 15 s in.
     tokio::time::sleep(Duration::from_secs(8)).await;
     assert!(!pump.is_finished(), "an absent aetherd is not fatal");

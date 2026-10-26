@@ -17,7 +17,7 @@ type TaskResult = (&'static str, Result<(), ArchonError>);
 
 /// How a failing worker is paused and when it is given up on.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Policy {
+pub struct Policy {
     /// The pause after a worker's first failure; it doubles up to `longest`.
     pub first: Duration,
     pub longest: Duration,

@@ -48,7 +48,7 @@ async fn an_incompatible_daemon_is_reported_with_its_window() {
     let error = AetherClient::connect(&fake.endpoint()).await.unwrap_err();
     assert_eq!(
         error.to_string(),
-        "aether: Archon speaks Aether protocol 14..24; the daemon serves 25..26"
+        "aether: Archon speaks Aether protocol 17..24; the daemon serves 25..26"
     );
     assert!(
         fake.received().is_empty(),
@@ -61,11 +61,11 @@ async fn an_incompatible_daemon_is_reported_with_its_window() {
     );
 }
 
-/// An aetherd not yet upgraded to 17 refuses the hello; Archon reconnects
-/// at the newest protocol it serves (16, 15 or 14) rather than losing Aether.
+/// An aetherd older than Archon refuses the hello; Archon reconnects at the
+/// newest protocol it serves, down to Aether's floor of 17, rather than losing Aether.
 #[tokio::test]
 async fn an_older_aetherd_is_spoken_to_at_the_newest_protocol_it_serves() {
-    for (window, spoken) in [((15, 16), 16), ((14, 15), 15), ((13, 14), 14)] {
+    for (window, spoken) in [((22, 23), 23), ((17, 18), 18), ((16, 17), 17)] {
         let (_dir, fake) = fake_aether().await;
         fake.set_protocol_window(window.0, window.1);
         let client = connect(&fake).await;
@@ -73,7 +73,7 @@ async fn an_older_aetherd_is_spoken_to_at_the_newest_protocol_it_serves() {
         assert_eq!(
             fake.connections_accepted(),
             2,
-            "refused at 17, then {spoken}"
+            "refused at 24, then {spoken}"
         );
         client.ping().await.unwrap();
         assert_eq!(fake.received_named("ping").len(), 1);
@@ -83,11 +83,11 @@ async fn an_older_aetherd_is_spoken_to_at_the_newest_protocol_it_serves() {
 #[tokio::test]
 async fn an_aetherd_older_than_archon_speaks_is_refused_with_both_windows() {
     let (_dir, fake) = fake_aether().await;
-    fake.set_protocol_window(12, 13);
+    fake.set_protocol_window(15, 16);
     let error = AetherClient::connect(&fake.endpoint()).await.unwrap_err();
     assert_eq!(
         error.to_string(),
-        "aether: Archon speaks Aether protocol 14..24; the daemon serves 12..13"
+        "aether: Archon speaks Aether protocol 17..24; the daemon serves 15..16"
     );
     assert_eq!(fake.connections_accepted(), 1, "nothing it serves to retry");
 }

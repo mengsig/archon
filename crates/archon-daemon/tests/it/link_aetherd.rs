@@ -13,9 +13,9 @@ use archon_aether::client::Endpoint;
 use archon_aether::fake::{self, FakeAether, Scripted};
 use archon_core::error::ArchonError;
 use archon_core::notify::NotificationKind;
-use archon_daemon::pump::{self, AetherStarter};
+use archon_daemon::pump::AetherStarter;
 use archon_queue::store::keys;
-use link_common::{Harness, running_stage};
+use link_common::{Harness, running_stage, spawn_link};
 use serde_json::{Value, json};
 
 const ORCH: &str = "agt_0001";
@@ -94,7 +94,7 @@ async fn connected_pump(
     let first = FakeAether::start(socket).await.unwrap();
     serve_stage(&first, json!({"state": "active"}));
     let endpoint = Endpoint::Unix(socket.to_owned());
-    let pump = tokio::spawn(pump::run(harness.ctx.clone(), endpoint, Some(starter)));
+    let pump = spawn_link(harness, endpoint, Some(starter));
     harness
         .eventually("the pump follows both streams", || async {
             first.live_subscriptions() == 2

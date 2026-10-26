@@ -1572,12 +1572,12 @@ pub(crate) mod tests {
         assert!(text.contains("questions: 1 open, 2 gates waiting for approval"));
         let up = status_with(AetherLinkStatus::Connected {
             daemon_version: "0.9.0".into(),
-            protocol_version: 14,
+            protocol_version: 17,
             instance_id: "i".into(),
         });
         assert!(
             status(&up, &RepoNames::new(), false)
-                .contains("aether: connected (aetherd 0.9.0, protocol 14)")
+                .contains("aether: connected (aetherd 0.9.0, protocol 17)")
         );
     }
 

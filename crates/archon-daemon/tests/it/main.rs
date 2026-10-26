@@ -50,6 +50,7 @@ mod link_reports;
 mod link_status;
 mod link_supervisor;
 mod link_triggers;
+mod link_workers;
 mod local_merge;
 mod mirrors;
 mod model_evidence;

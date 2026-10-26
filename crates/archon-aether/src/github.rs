@@ -17,25 +17,11 @@ pub struct WatcherConfig {
     pub poll_interval_secs: u64,
     pub repositories: Vec<RepositoryConfig>,
     /// The logins whose own requests carry the operator's authority, stored
-    /// lowercase (protocol 17). `None`: no GitHub login is an operator.
+    /// lowercase. `None`: no GitHub login is an operator.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operator_users: Option<Vec<String>>,
     #[serde(flatten)]
     pub rest: Map<String, Value>,
-}
-
-impl WatcherConfig {
-    /// Whether any repository narrows its requesters: what an aetherd on
-    /// protocol 14 cannot store.
-    pub fn has_allowlist(&self) -> bool {
-        self.repositories.iter().any(|r| r.allowed_users.is_some())
-    }
-
-    /// Whether operator logins are named: what an aetherd below protocol 17
-    /// cannot store.
-    pub fn has_operator_users(&self) -> bool {
-        self.operator_users.is_some()
-    }
 }
 
 /// Aether's `GithubRepositoryConfig`.
@@ -48,7 +34,7 @@ pub struct RepositoryConfig {
     /// `{"mode": "fixed" | "automatic" | "thread", ...}`.
     #[serde(default = "fixed_dispatch")]
     pub dispatch: Value,
-    /// The logins that alone may dispatch, stored lowercase (protocol 15).
+    /// The logins that alone may dispatch, stored lowercase.
     /// `None`: any collaborator with write access.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_users: Option<Vec<String>>,
@@ -163,14 +149,12 @@ mod tests {
     fn an_allowlist_round_trips_and_an_absent_one_stays_absent() {
         let mut config = aether_status()["config"].clone();
         let open: WatcherConfig = serde_json::from_value(config.clone()).unwrap();
-        assert!(!open.has_allowlist());
         assert_eq!(open.repositories[0].allowed_users, None);
         let written = serde_json::to_value(&open).unwrap();
         assert!(written["repositories"][0].get("allowed_users").is_none());
 
         config["repositories"][0]["allowed_users"] = json!(["monalisa", "hubot"]);
         let narrowed: WatcherConfig = serde_json::from_value(config.clone()).unwrap();
-        assert!(narrowed.has_allowlist());
         assert_eq!(
             narrowed.repositories[0].allowed_users.as_deref(),
             Some(&["monalisa".to_owned(), "hubot".to_owned()][..])
@@ -183,20 +167,21 @@ mod tests {
     fn operator_users_round_trip_and_an_absent_list_stays_absent() {
         let mut config = aether_status()["config"].clone();
         let unset: WatcherConfig = serde_json::from_value(config.clone()).unwrap();
-        assert!(!unset.has_operator_users());
         assert_eq!(unset.operator_users, None);
         let written = serde_json::to_value(&unset).unwrap();
         assert!(written.get("operator_users").is_none(), "{written}");
 
         config["operator_users"] = json!(["octocat", "monalisa"]);
         let set: WatcherConfig = serde_json::from_value(config.clone()).unwrap();
-        assert!(set.has_operator_users());
         assert_eq!(
             set.operator_users.as_deref(),
             Some(&["octocat".to_owned(), "monalisa".to_owned()][..])
         );
         assert!(set.rest.is_empty(), "a typed field, not an unknown one");
-        assert!(!set.has_allowlist(), "no repository was narrowed");
+        assert!(
+            set.repositories.iter().all(|r| r.allowed_users.is_none()),
+            "no repository was narrowed"
+        );
         assert_eq!(serde_json::to_value(&set).unwrap(), config);
     }
 

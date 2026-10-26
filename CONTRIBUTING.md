@@ -28,12 +28,28 @@ make fmt     # cargo fmt --all
 make ci      # fmt check, clippy -D warnings, rustdoc -D warnings, all tests
 ```
 
-`make ci` is what GitHub CI checks on every pull request that changes code,
-and it must pass before a change merges. The Makefile caps parallel jobs with
+`make ci` is what GitHub CI checks on every pull request into `main` that
+changes code, and it must pass before a change merges. The Makefile caps parallel jobs with
 `CARGO_BUILD_JOBS=4`; override it on the command line if you have cores to
 spare (`make ci CARGO_BUILD_JOBS=16`). CI runs the tests through
 [cargo-nextest](https://nexte.st/) (`make test-nextest`) because it is faster;
 it is optional locally.
+
+### CI on the release branch
+
+Maintainers gather fixes on `next` and release it to `main` in one pull
+request. A pull request into `next` runs only the `lint` job (format,
+clippy and rustdoc); the `test` job is skipped on purpose. The suite runs
+anyway on every push to `next`, so after each merge, and again on the pull
+request from `next` into `main`, which must pass before anything reaches
+`main`.
+
+The trade-off: a merge into `next` can break the tests, which the push run
+reports within minutes and before any release. In exchange each fix merges
+without a full suite run, the slowest job CI has, and `next` is tested
+once per merge rather than once per pull request update. So run
+`make ci` yourself before you open a pull request into `next`, and fix a
+red push run on `next` before you merge anything else.
 
 More on the layout, the benchmark and local installs is in
 [`docs/development.md`](docs/development.md).

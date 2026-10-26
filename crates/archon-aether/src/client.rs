@@ -21,11 +21,10 @@ use crate::connection::{BoxRead, BoxWrite, EventSink, Router, Shared, WRITE_QUEU
 use crate::events::AetherEvent;
 use crate::github::{WatcherConfig, WatcherStatus};
 use crate::wire::{
-    ALLOWLIST_PROTOCOL_VERSION, Agent, AgentPatch, AgentQuery, CLIENT_NAME, Command, CreateAgent,
-    DaemonDefaults, ErrorReply, EventQuery, Hello, IMAGES_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION,
-    ModelInfo, NOTE_LEVEL_PROTOCOL_VERSION, NOTES_FEATURE, NoteLevel,
-    OPERATOR_LOGINS_PROTOCOL_VERSION, PROTOCOL_VERSION, ProviderInfo, RawReply, Subscribed, Task,
-    Welcome,
+    Agent, AgentPatch, AgentQuery, CLIENT_NAME, Command, CreateAgent, DaemonDefaults, EventQuery,
+    Hello, IMAGES_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION, ModelInfo, NOTE_LEVEL_PROTOCOL_VERSION,
+    NOTES_FEATURE, NOTES_PROTOCOL_VERSION, NoteLevel, PROTOCOL_VERSION, ProviderInfo, RawReply,
+    Subscribed, Task, Welcome,
 };
 
 /// Default per-request timeout; nothing waits forever on a silent daemon.
@@ -198,7 +197,7 @@ enum Handshake {
 }
 
 impl AetherClient {
-    /// Handshake at protocol 24, falling back to the newest served version down to 14.
+    /// Handshake at protocol 24, falling back to the newest served version down to 17.
     /// Incompatible refusals report both protocol windows.
     pub async fn connect(endpoint: &Endpoint) -> Result<Self, ArchonError> {
         Self::connect_with(endpoint, ClientOptions::default()).await
@@ -222,8 +221,8 @@ impl AetherClient {
         };
         tracing::warn!(
             protocol = older,
-            "aetherd serves an older Aether protocol; GitHub watcher allowlists need \
-             {ALLOWLIST_PROTOCOL_VERSION} and operator logins {OPERATOR_LOGINS_PROTOCOL_VERSION}"
+            "aetherd serves an older Aether protocol; images need {IMAGES_PROTOCOL_VERSION} \
+             and command notes {NOTES_PROTOCOL_VERSION}"
         );
         match Self::connect_at(endpoint, options, older).await? {
             Handshake::Welcomed(client) => Ok(client),
@@ -650,87 +649,22 @@ impl AetherClient {
         self.watcher(Command::GetGithubWatcher).await
     }
 
-    /// One watcher command. Aether answers `incompatible` instead of a
-    /// watcher this protocol cannot carry; that is restated with its cause.
+    /// One watcher command.
     async fn watcher(&self, command: Command) -> Result<WatcherStatus, ArchonError> {
-        let raw = match self.shared.call(&command, None).await? {
-            Ok(raw) => raw,
-            Err(refusal) => return Err(self.watcher_refusal(refusal)),
-        };
+        let raw = self.shared.call(&command, None).await??;
         check_kind(&raw, "github_watcher")?;
         serde_json::from_value(raw.data).map_err(|error| {
             ArchonError::Protocol(format!("`github_watcher` reply did not decode: {error}"))
         })
     }
 
-    /// Aether's refusal of a watcher command, naming operator logins when
-    /// they are why: a list is set that this connection's protocol hides.
-    fn watcher_refusal(&self, refusal: ErrorReply) -> ArchonError {
-        let speaking = self.welcome.protocol_version;
-        let hidden_list = refusal.code == "incompatible"
-            && refusal.message.contains("operator_users")
-            && speaking < OPERATOR_LOGINS_PROTOCOL_VERSION;
-        if !hidden_list {
-            return refusal.into();
-        }
-        ArchonError::Aether(format!(
-            "aetherd {} has GitHub operator logins set, which Aether protocol {speaking} \
-             cannot carry (they need {OPERATOR_LOGINS_PROTOCOL_VERSION}), so Archon can \
-             neither read nor change the watcher without dropping them; clear the list \
-             with `archon aether github-watcher operator-users --clear`. \
-             Aether said: {}",
-            self.welcome.daemon_version, refusal.message
-        ))
-    }
-
-    /// Refuses unless aetherd speaks a protocol that stores GitHub watcher
-    /// allowlists; protocol 14 would silently drop one.
-    pub fn check_allowlists(&self) -> Result<(), ArchonError> {
-        let speaking = self.welcome.protocol_version;
-        assert!(speaking >= MIN_PROTOCOL_VERSION, "hello refuses older ones");
-        if speaking >= ALLOWLIST_PROTOCOL_VERSION {
-            return Ok(());
-        }
-        Err(ArchonError::Aether(format!(
-            "aetherd {} speaks Aether protocol {speaking}, which cannot store a GitHub \
-             watcher allowlist (it needs {ALLOWLIST_PROTOCOL_VERSION}); upgrade Archon's \
-             aetherd, then set the allowlist again. Nothing was changed",
-            self.welcome.daemon_version
-        )))
-    }
-
-    /// Refuses unless aetherd speaks a protocol that stores GitHub operator
-    /// logins; an older one cannot keep the list.
-    pub fn check_operator_users(&self) -> Result<(), ArchonError> {
-        let speaking = self.welcome.protocol_version;
-        assert!(speaking >= MIN_PROTOCOL_VERSION, "hello refuses older ones");
-        if speaking >= OPERATOR_LOGINS_PROTOCOL_VERSION {
-            return Ok(());
-        }
-        Err(ArchonError::Aether(format!(
-            "aetherd {} speaks Aether protocol {speaking}, which cannot store GitHub \
-             operator logins (they need {OPERATOR_LOGINS_PROTOCOL_VERSION}); upgrade \
-             Archon's aetherd (install the newer `aether`, then `archon daemon stop \
-             --aether`, then `archon daemon start`), then set the operator logins \
-             again. Nothing was changed",
-            self.welcome.daemon_version
-        )))
-    }
-
     /// Replace the watcher config if it is still at `expected_revision`;
-    /// the new status. Aether allows this for local operators only. An
-    /// allowlist or operator logins the protocol would drop are refused here.
+    /// the new status. Aether allows this for local operators only.
     pub async fn configure_github_watcher(
         &self,
         config: WatcherConfig,
         expected_revision: u64,
     ) -> Result<WatcherStatus, ArchonError> {
-        if config.has_allowlist() {
-            self.check_allowlists()?;
-        }
-        if config.has_operator_users() {
-            self.check_operator_users()?;
-        }
         let command = Command::ConfigureGithubWatcher {
             config,
             expected_revision,
@@ -947,10 +881,10 @@ mod tests {
         let text = "client protocol 17 is not served: this daemon speaks 25 to 26";
         assert_eq!(
             incompatible_message(text),
-            "Archon speaks Aether protocol 14..24; the daemon serves 25..26"
+            "Archon speaks Aether protocol 17..24; the daemon serves 25..26"
         );
         let odd = incompatible_message("go away");
-        assert!(odd.starts_with("Archon speaks Aether protocol 14..24"));
+        assert!(odd.starts_with("Archon speaks Aether protocol 17..24"));
         assert!(odd.ends_with("go away"));
     }
 
@@ -961,21 +895,12 @@ mod tests {
                 "client protocol 17 is not served: this daemon speaks {min} to {max}"
             ))
         };
-        assert_eq!(serving(15, 16), Some(16));
-        assert_eq!(
-            serving(14, 15),
-            Some(15),
-            "the aetherd before operator logins"
-        );
-        assert_eq!(serving(13, 14), Some(14));
-        assert_eq!(serving(14, 14), Some(14));
-        assert_eq!(serving(12, 13), None, "older than Archon speaks");
+        assert_eq!(serving(22, 23), Some(23), "the aetherd before note levels");
+        assert_eq!(serving(17, 18), Some(18));
+        assert_eq!(serving(16, 17), Some(17), "Aether's floor is still spoken");
+        assert_eq!(serving(15, 16), None, "older than Aether's own floor");
+        assert_eq!(serving(14, 15), None);
         assert_eq!(serving(24, 25), None, "newer: retrying older cannot help");
-        assert_eq!(
-            serving(16, 17),
-            Some(17),
-            "fall back to 17 before submissions could be resolved"
-        );
         assert_eq!(fallback_version("unauthorized"), None);
     }
 

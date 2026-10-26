@@ -191,46 +191,6 @@ async fn add_with_an_allowlist_saves_both_in_one_write() {
     assert!(stored.get("allowed_users").is_none(), "{stored}");
 }
 
-/// An aetherd still on protocol 14 would drop the list and let every writer
-/// dispatch: the edit is refused whole, before it starts an orchestrator or
-/// reads the watcher, and other edits still apply.
-#[tokio::test]
-async fn an_allowlist_is_refused_while_aetherd_speaks_protocol_14() {
-    let harness = Harness::new().await;
-    harness.fake.set_protocol_window(13, 14);
-    let client = harness.connect().await;
-    assert_eq!(client.welcome().protocol_version, 14);
-    let watcher = serve_watcher(&harness, json!([]));
-    let change = add_allowing("example-org/example-repo", &["monalisa"]);
-    let error = configure(&harness, ClientKind::ArchonCli, change)
-        .await
-        .unwrap_err();
-    let text = error.to_string();
-    assert!(
-        text.contains("protocol 14") && text.contains("allowlist"),
-        "{text}"
-    );
-    for command in [
-        "create_agent",
-        "get_github_watcher",
-        "configure_github_watcher",
-    ] {
-        let sent = harness.fake.received_named(command);
-        assert!(sent.is_empty(), "{command} was sent: {sent:?}");
-    }
-    assert_eq!(watcher.lock().unwrap().0, 1, "nothing was written");
-    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
-
-    let reply = configure(
-        &harness,
-        ClientKind::ArchonCli,
-        add("example-org/example-repo"),
-    )
-    .await;
-    assert!(matches!(reply, Ok(Reply::GithubWatcher(_))), "{reply:?}");
-    assert_eq!(targets(&watcher), [json!(ORCH)]);
-}
-
 fn operators(logins: &[&str]) -> WatcherChange {
     WatcherChange::Operators {
         operator_users: Some(OperatorUsers::parse(logins).unwrap()),
@@ -337,51 +297,6 @@ async fn every_watcher_change_keeps_the_operator_logins() {
     assert_eq!(sent.len(), count + 1, "one write per change");
     for write in sent {
         assert_eq!(write["config"]["operator_users"], list, "{write}");
-    }
-}
-
-/// An aetherd below protocol 17 cannot store the list: setting it is refused
-/// whole, before anything is sent, and every other edit still applies.
-#[tokio::test]
-async fn operator_logins_are_refused_while_aetherd_speaks_protocol_15_or_16() {
-    for speaking in [15, 16] {
-        let harness = Harness::new().await;
-        harness.fake.set_protocol_window(speaking - 1, speaking);
-        let client = harness.connect().await;
-        assert_eq!(client.welcome().protocol_version, speaking);
-        let watcher = serve_watcher(&harness, json!([]));
-        let error = configure(&harness, ClientKind::ArchonCli, operators(&["octocat"]))
-            .await
-            .unwrap_err();
-        let text = error.to_string();
-        assert!(
-            text.contains(&format!("speaks Aether protocol {speaking}"))
-                && text.contains("operator logins (they need 17)")
-                && text.contains("archon daemon stop --aether")
-                && text.contains("Nothing was changed"),
-            "{text}"
-        );
-        for command in [
-            "create_agent",
-            "get_github_watcher",
-            "configure_github_watcher",
-        ] {
-            let sent = harness.fake.received_named(command);
-            assert!(sent.is_empty(), "{command} was sent: {sent:?}");
-        }
-        assert_eq!(watcher.lock().unwrap().0, 1, "nothing was written");
-
-        harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
-        let change = add_allowing("example-org/example-repo", &["monalisa"]);
-        let reply = configure(&harness, ClientKind::ArchonCli, change).await;
-        assert!(matches!(reply, Ok(Reply::GithubWatcher(_))), "{reply:?}");
-        let reply = configure(&harness, ClientKind::ArchonCli, NO_OPERATORS).await;
-        let Ok(Reply::GithubWatcher(view)) = reply else {
-            panic!("clearing nothing replied {reply:?}");
-        };
-        assert_eq!(view.operator_users, None);
-        let stored = watcher.lock().unwrap().1.clone();
-        assert!(stored.get("operator_users").is_none(), "{stored}");
     }
 }
 

@@ -8,6 +8,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use crate::common::fake_ops;
+use archon_aether::client::Endpoint;
 use archon_aether::fake::FakeAether;
 use archon_aether::{AetherBackend, AetherClient, AetherLink};
 use archon_core::aether_ids::{AetherAgentId, AetherRunId, AetherTaskId};
@@ -21,19 +22,43 @@ use archon_core::protocol::{ClientKind, Reply, Request};
 use archon_core::queue::{Priority, QueueItem, QueueState};
 use archon_core::repo::{Repo, ShipMode};
 use archon_core::run::{PipelineRun, RunState, StageRun, StageState};
+use archon_daemon::WorkerPolicy;
 use archon_daemon::context::{DaemonContext, DaemonPaths};
 use archon_daemon::disk::DiskWatch;
 use archon_daemon::executor::RunTable;
 use archon_daemon::feed::ReplyTracker;
 use archon_daemon::handlers;
+use archon_daemon::pump::AetherStarter;
 use archon_daemon::supervisor::{Backoff, Supervisor};
 use archon_daemon::triggers::{self, TriggerEvent, TriggerQueue};
 use archon_lavish::Lavish;
 use archon_queue::Store;
 use tempfile::TempDir;
 use tokio::sync::{Mutex, Notify, broadcast};
+use tokio::task::JoinHandle;
 
 pub const WAIT: Duration = Duration::from_secs(5);
+
+/// The daemon's worker policy with restarts quick enough for a test to see.
+pub const WORKERS: WorkerPolicy = WorkerPolicy {
+    first: Duration::from_millis(50),
+    longest: Duration::from_millis(400),
+    healthy_for: Duration::from_secs(300),
+    give_up_after: 12,
+    tell_at: 3,
+};
+
+/// The link workers as archond supervises them, following `endpoint`.
+pub fn spawn_link(
+    harness: &Harness,
+    endpoint: Endpoint,
+    starter: Option<Arc<dyn AetherStarter>>,
+) -> JoinHandle<Result<(), ArchonError>> {
+    let ctx = harness.ctx.clone();
+    tokio::spawn(archon_daemon::run_link_workers(
+        ctx, endpoint, starter, WORKERS,
+    ))
+}
 
 pub struct Harness {
     pub dir: TempDir,

@@ -68,6 +68,9 @@ jobs:
       - name: make fmt-check lint doc
         run: make fmt-check lint doc
 
+  # Deliberately skipped for pull requests into `next`, which stay light;
+  # every push to `next` and every pull request into `main` runs it. See
+  # "CI on the release branch" in CONTRIBUTING.md.
   test:
     if: github.event_name != 'pull_request' || github.base_ref == 'main'
     runs-on: ubuntu-24.04

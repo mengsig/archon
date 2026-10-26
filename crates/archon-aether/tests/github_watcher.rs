@@ -4,7 +4,7 @@
 
 mod common;
 
-use archon_aether::fake::{OPERATOR_USERS_WATCHER_VERSION_ERROR, Scripted};
+use archon_aether::fake::Scripted;
 use archon_aether::github::{WatcherConfig, WatcherStatus};
 use archon_core::error::ArchonError;
 use common::{connect, fake_aether};
@@ -62,44 +62,6 @@ async fn an_allowlist_is_sent_in_the_configure_request() {
     let repo = &sent[0]["config"]["repositories"][0];
     assert_eq!(repo["allowed_users"], json!(TEAM));
     assert_eq!(sent[0]["expected_revision"], 1);
-}
-
-/// Protocol 14 has no `allowed_users`: an old aetherd would drop the list
-/// and let every writer dispatch, so Archon refuses before sending.
-#[tokio::test]
-async fn an_allowlist_is_refused_against_a_protocol_14_aetherd() {
-    let (_dir, fake) = fake_aether().await;
-    fake.set_protocol_window(13, 14);
-    let client = connect(&fake).await;
-    assert_eq!(client.welcome().protocol_version, 14);
-    let error = client
-        .configure_github_watcher(config(Some(TEAM)), 1)
-        .await
-        .unwrap_err();
-    assert!(matches!(error, ArchonError::Aether(_)), "{error:?}");
-    let text = error.to_string();
-    assert!(
-        text.contains("protocol 14") && text.contains("allowlist") && text.contains("upgrade"),
-        "{text}"
-    );
-    assert!(fake.received_named("configure_github_watcher").is_empty());
-
-    fake.script(
-        "configure_github_watcher",
-        Scripted::reply("github_watcher", status(2, repository(None))),
-    );
-    let open = client.configure_github_watcher(config(None), 1).await;
-    assert_eq!(
-        open.unwrap().revision,
-        2,
-        "a config without one still saves"
-    );
-    let sent = fake.received_named("configure_github_watcher");
-    assert!(
-        sent[0]["config"]["repositories"][0]
-            .get("allowed_users")
-            .is_none()
-    );
 }
 
 const OPERATORS: &[&str] = &["octocat", "monalisa"];
@@ -162,76 +124,6 @@ async fn an_unset_list_is_absent_from_the_configure_request() {
         sent[0]["config"].get("operator_users").is_none(),
         "{sent:?}"
     );
-}
-
-/// Protocols 15 and 16 have no `operator_users`: the aetherd could not keep
-/// the list, so Archon refuses before sending and says how to upgrade it.
-#[tokio::test]
-async fn operator_logins_are_refused_against_an_aetherd_below_protocol_17() {
-    for (window, spoken) in [((14, 15), 15), ((15, 16), 16)] {
-        let (_dir, fake) = fake_aether().await;
-        fake.set_protocol_window(window.0, window.1);
-        let client = connect(&fake).await;
-        assert_eq!(client.welcome().protocol_version, spoken);
-        let error = client
-            .configure_github_watcher(operator_config(), 1)
-            .await
-            .unwrap_err();
-        assert!(matches!(error, ArchonError::Aether(_)), "{error:?}");
-        let text = error.to_string();
-        assert!(
-            text.contains(&format!("speaks Aether protocol {spoken}"))
-                && text.contains("operator logins (they need 17)")
-                && text.contains("upgrade Archon's aetherd")
-                && text.contains("archon daemon stop --aether")
-                && text.ends_with("Nothing was changed"),
-            "{text}"
-        );
-        assert!(fake.received_named("configure_github_watcher").is_empty());
-
-        fake.script(
-            "configure_github_watcher",
-            Scripted::reply("github_watcher", status(2, repository(Some(TEAM)))),
-        );
-        let narrowed = client.configure_github_watcher(config(Some(TEAM)), 1).await;
-        assert_eq!(narrowed.unwrap().revision, 2, "an allowlist still saves");
-    }
-}
-
-/// An aetherd holding a list answers a protocol-16 peer `incompatible` for
-/// every watcher command; Archon names the cause and writes nothing.
-#[tokio::test]
-async fn a_watcher_hiding_operator_logins_is_a_clear_error_not_a_decode_failure() {
-    let (_dir, fake) = fake_aether().await;
-    fake.set_protocol_window(15, 16);
-    let held = with_operators(status(3, repository(None)), OPERATORS);
-    fake.set_default(
-        "get_github_watcher",
-        Scripted::reply("github_watcher", held),
-    );
-    fake.set_default(
-        "configure_github_watcher",
-        Scripted::refuse("incompatible", OPERATOR_USERS_WATCHER_VERSION_ERROR),
-    );
-    let client = connect(&fake).await;
-    assert_eq!(client.welcome().protocol_version, 16);
-    let saving = client.configure_github_watcher(config(None), 3).await;
-    for error in [
-        client.github_watcher().await.unwrap_err(),
-        saving.unwrap_err(),
-    ] {
-        assert!(matches!(error, ArchonError::Aether(_)), "{error:?}");
-        let text = error.to_string();
-        assert!(
-            text.contains("has GitHub operator logins set")
-                && text.contains("Aether protocol 16 cannot carry")
-                && text.contains("operator-users --clear")
-                && text.contains(OPERATOR_USERS_WATCHER_VERSION_ERROR),
-            "{text}"
-        );
-        assert!(!text.contains("did not decode"), "{text}");
-        assert!(!text.contains("upgrade Archon"), "{text}");
-    }
 }
 
 /// Any other refusal of a watcher command keeps Aether's own code and text.

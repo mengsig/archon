@@ -370,14 +370,12 @@ async fn check_operator_targets(
 /// edit made meanwhile through `archon aether` fails this one visibly.
 /// Archon's repositories are repointed in the same write, and no write
 /// hands requests to an orchestrator without the GitHub policy, nor sets
-/// operator logins while one takes requests. A list aetherd cannot store is
-/// refused before anything else happens.
+/// operator logins while one takes requests.
 pub async fn configure(
     ctx: &DaemonContext,
     change: WatcherChange,
 ) -> Result<GithubWatcherView, ArchonError> {
     require_dedicated(ctx)?;
-    check_storable(ctx, &change)?;
     if enables(&change) {
         prepare_enable(ctx).await?;
     }
@@ -405,7 +403,6 @@ pub(crate) async fn configure_existing(
     change: WatcherChange,
 ) -> Result<GithubWatcherView, ArchonError> {
     require_dedicated(ctx)?;
-    check_storable(ctx, &change)?;
     let enabling = matches!(
         change,
         WatcherChange::Add { .. } | WatcherChange::Enable { .. }
@@ -453,20 +450,6 @@ pub(crate) async fn configure_existing(
     Ok(view(&updated, orchestrator.as_ref()))
 }
 
-/// Refuse a list this aetherd's protocol cannot store, before any write.
-pub(crate) fn check_storable(
-    ctx: &DaemonContext,
-    change: &WatcherChange,
-) -> Result<(), ArchonError> {
-    if sets_allowlist(change) {
-        ctx.aether.client()?.check_allowlists()?;
-    }
-    if sets_operators(change) {
-        ctx.aether.client()?.check_operator_users()?;
-    }
-    Ok(())
-}
-
 /// Whether `change` sets operator logins; clearing them is not setting.
 fn sets_operators(change: &WatcherChange) -> bool {
     matches!(
@@ -494,19 +477,6 @@ fn check_operators_stored(
          sent; check `archon github-watcher status`",
         stored.operator_users
     )))
-}
-
-fn sets_allowlist(change: &WatcherChange) -> bool {
-    matches!(
-        change,
-        WatcherChange::Add {
-            allowed_users: Some(_),
-            ..
-        } | WatcherChange::Allow {
-            allowed_users: Some(_),
-            ..
-        }
-    )
 }
 
 /// Point Archon's repositories at the current orchestrator if any are

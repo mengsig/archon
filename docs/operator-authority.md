@@ -251,10 +251,8 @@ not asked. Nothing else changes with it. See
 - **Archon protocol 13** adds daemon-verified authority requests
   (`request_authority`, `undo_authority`) and the `guide` request. Older
   archond versions do not know them.
-- **Aether protocol 17** or newer is needed for GitHub operator standing,
-  because the watcher's envelope flag is read from it. On an older Aether,
-  GitHub operator commands and citations are not recognised. Chat authority
-  needs no more than before.
+- **Aether protocol 17**, the oldest Archon speaks, carries the watcher
+  envelope's `operator` flag that GitHub operator standing is read from.
 
 ## Storage decision
 

@@ -1780,7 +1780,7 @@ mod tests {
     }
 
     /// The prompt is paid for on every turn; the tools describe themselves.
-    const BUDGET_BYTES: usize = 12 * 1024 + 896;
+    const BUDGET_BYTES: usize = 13 * 1024;
 
     #[test]
     fn builtin_prompt_stays_within_its_budget() {

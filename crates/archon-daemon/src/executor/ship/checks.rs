@@ -21,6 +21,8 @@ use crate::worktree::team::{check_worktree, common_dir};
 
 /// Paths or commits named in one refusal.
 const MAX_LISTED: usize = 5;
+/// Where stages write the pages Archon shows the operator; never part of a change.
+const REPORTS_DIR: &str = ".archon/reports/";
 
 /// The worktree a run ships from and what it must hold.
 #[derive(Debug, Clone)]
@@ -171,16 +173,18 @@ pub(super) fn check_unchanged(target: &Target) -> Result<Result<(), String>, Arc
 }
 
 /// Whether `path` is output that is never part of a change: a Python
-/// bytecode cache, or the swarm plan the workers built from.
+/// bytecode cache, the swarm plan the workers built from, or a page Archon
+/// shows the operator (a proposal or change report).
 fn is_unshippable(path: &str) -> bool {
     path == PLAN_FILE
+        || path.starts_with(REPORTS_DIR)
         || path.split('/').any(|part| part == "__pycache__")
         || path.ends_with(".pyc")
         || path.ends_with(".pyo")
 }
 
-/// Refuse a change that adds a build cache or the swarm plan file, naming
-/// each so the author removes it in a commit.
+/// Refuse a change that adds a build cache, the swarm plan file or a report
+/// page, naming each so the author removes it in a commit.
 fn unshippable_files(tree: &Path, base: &str) -> Result<Result<(), String>, ArchonError> {
     assert!(is_floor(base), "a full ref name or a commit id");
     let range = format!("{base}...HEAD");
@@ -476,13 +480,21 @@ mod tests {
     fn caches_and_the_swarm_plan_are_unshippable() {
         for path in [
             ".archon/swarm-plan.json",
+            ".archon/reports/proposal/index.html",
+            ".archon/reports/change/diagram.svg",
             "pkg/__pycache__/m.cpython-312.pyc",
             "x.pyc",
             "src/y.pyo",
         ] {
             assert!(is_unshippable(path), "{path}");
         }
-        for path in [".archon/config.toml", "src/lib.rs", "docs/swarm-plan.json"] {
+        for path in [
+            ".archon/config.toml",
+            "src/lib.rs",
+            "docs/swarm-plan.json",
+            "docs/.archon/reports/a.html",
+            ".archon/reports.md",
+        ] {
             assert!(!is_unshippable(path), "{path}");
         }
     }

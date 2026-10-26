@@ -461,6 +461,20 @@ async fn a_no_change_result_on_a_clean_branch_succeeds_without_shipping() {
     assert!(gh.calls().is_empty(), "{:?}", gh.calls());
 }
 
+/// The proposal page a propose stage leaves untracked is Archon's, not a change.
+#[tokio::test]
+async fn a_no_change_result_beside_archon_s_own_report_pages_succeeds() {
+    let (h, gh) = delivering().await;
+    let (item, run) = started(&h, "direct").await;
+    let page = run.workspace.join(".archon/reports/proposal/index.html");
+    std::fs::create_dir_all(page.parent().unwrap()).unwrap();
+    std::fs::write(&page, "<p>the proposal</p>\n").unwrap();
+    settle_with(&h, json!({"no_change": {"reason": "already done"}})).await;
+    let summary = succeeded(&h, &item).await;
+    assert!(summary.contains("No change was needed"), "{summary}");
+    assert!(gh.calls().is_empty(), "{:?}", gh.calls());
+}
+
 /// A claim of no change never bypasses the review of a change that exists.
 #[tokio::test]
 async fn a_no_change_claim_beside_a_commit_or_a_dirty_tree_fails_the_stage() {

@@ -109,11 +109,14 @@ archond](docs/guide.md#which-commands-start-archond)).
   `archon diff <item>` (`/diff` in the chat) shows what changed;
   `archon merge <item>` (or asking the orchestrator and confirming) then
   fast-forwards the base branch to the reviewed commit and keeps the branch.
-  It is refused, changing nothing, when the base moved (`archon queue
-  refresh <item>` brings the branch up to date), when the branch shares no
-  history with the base, or when the base is checked out with local changes.
-  It never forces or merges, and `grant_merge` skips the confirmation as it
-  does for pull requests.
+  It is refused, changing nothing, when the base moved, when the branch
+  shares no history with the base, or when the base is checked out with
+  local changes. After the base moved, `archon queue refresh <item>` queues
+  a refresh: it merges the base into the branch, runs the checks and has the
+  result reviewed. Once the refresh succeeds, `archon merge <item>` lands its
+  reviewed commit; no retry is needed. A commit nobody reviewed still blocks
+  the merge until a retry reviews it. It never forces or merges, and
+  `grant_merge` skips the confirmation as it does for pull requests.
 - **Risk label:** every pull request Archon opens or updates carries one
   label, `risk: low`, `risk: medium` or `risk: high`, and a "Risk" section
   at the top of its body that says why, with the evidence. Low may be

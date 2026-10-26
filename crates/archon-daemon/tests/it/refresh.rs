@@ -363,6 +363,59 @@ async fn a_local_refresh_that_did_not_merge_the_base_fails() {
     );
 }
 
+/// A reviewed local item whose base moved merges with no retry once its
+/// refresh, reviewed in turn, brought the branch up to date.
+#[tokio::test]
+async fn a_refreshed_local_branch_merges_at_the_refresh_s_reviewed_head() {
+    use archon_core::merge::MergeState;
+    use archon_core::protocol::RepoPatch;
+    use archon_core::repo::ShipMode;
+    let h = Harness::new().await;
+    let local = Request::RepoUpdate {
+        repo: RepoRef(REPO_NAME.into()),
+        patch: RepoPatch {
+            ship: Some(ShipMode::Local),
+            ..RepoPatch::default()
+        },
+    };
+    h.cli(local).await.unwrap();
+    let (owner, run) = shipped(&h, "the change").await;
+    std::fs::write(h.repo.join("upstream.txt"), "elsewhere\n").unwrap();
+    git(&h.repo, &["add", "upstream.txt"]);
+    git(&h.repo, &["commit", "--quiet", "-m", "Local base moves"]);
+    let moved = git(&h.repo, &["rev-parse", "main"]);
+
+    let fix = refresh(&h, &owner).await.expect("queued");
+    h.dispatch().await;
+    let fixing = h.run(&fix.id).await;
+    assert_eq!(fixing.branch, run.branch, "the same branch");
+    git(
+        &fixing.workspace,
+        &["merge", "--quiet", "--no-edit", &moved],
+    );
+    settle_reviewed(&h, Some(&moved)).await;
+    let state = h.state(&fix.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+    let head = git(&h.repo, &["rev-parse", &run.branch]);
+
+    let merge = Request::MergeItem {
+        item: owner.id.clone(),
+        ignore_checks: false,
+        chat: false,
+    };
+    let merge = match h.cli(merge).await.expect("merge") {
+        Reply::Merge(merge) => *merge,
+        other => panic!("a merge request: {other:?}"),
+    };
+    assert!(
+        matches!(merge.state, MergeState::Merged { .. }),
+        "{merge:?}"
+    );
+    assert_eq!(merge.head, head, "the refreshed head, not the stale one");
+    assert_eq!(git(&h.repo, &["rev-parse", "main"]), head);
+    git(&h.repo, &["merge-base", "--is-ancestor", &moved, &head]);
+}
+
 /// Only a finished item with a branch of its own is refreshed.
 #[tokio::test]
 async fn a_refresh_is_refused_for_work_that_is_not_finished_or_is_a_refresh() {

@@ -278,10 +278,11 @@ async fn onto_a_stacked_or_team_item_is_refused() {
     assert!(teamed.contains("ran as a team"), "{teamed}");
 }
 
-/// The owner's merge lands the commit work queued onto it left on its
-/// branch; a grant covers it only when that work was reviewed too.
+/// The owner's merge lands the newest commit work queued onto it left on its
+/// branch; a grant covers it only when all that work was reviewed, so a
+/// reviewed item after an unreviewed one does not hide it.
 #[tokio::test]
-async fn the_owner_s_merge_lands_the_onto_commit_and_a_grant_needs_its_review() {
+async fn the_owner_s_merge_lands_the_onto_commit_and_a_grant_needs_every_review() {
     use archon_core::merge::{MergeAuthority, MergeState};
     let h = local().await;
     let grant = Request::RepoUpdate {
@@ -303,7 +304,16 @@ async fn the_owner_s_merge_lands_the_onto_commit_and_a_grant_needs_its_review() 
     h.dispatch().await;
     let state = h.state(&item.id).await;
     assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+    let unreviewed = git(&h.repo, &["rev-parse", &run.branch]);
+    let reviewed = enqueue_onto(&h, "reviewed", OntoTarget::Item(owner.id.clone()))
+        .await
+        .expect("queued");
+    h.dispatch().await;
+    settle_reviewed(&h).await;
+    let state = h.state(&reviewed.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
     let tip = git(&h.repo, &["rev-parse", &run.branch]);
+    assert_ne!(tip, unreviewed, "the reviewed item committed on top");
     let main = git(&h.repo, &["rev-parse", "main"]);
 
     let request = Request::RequestMerge {
@@ -314,7 +324,7 @@ async fn the_owner_s_merge_lands_the_onto_commit_and_a_grant_needs_its_review() 
         panic!("a merge request");
     };
     assert_eq!(waiting.state, MergeState::AwaitingOperator, "not granted");
-    assert_eq!(waiting.head, tip, "the onto commit, not the owner's");
+    assert_eq!(waiting.head, tip, "the newest onto commit, not the owner's");
     assert_eq!(git(&h.repo, &["rev-parse", "main"]), main, "nothing yet");
     let MergeAuthority::Confirmed { question, .. } = waiting.authority.clone() else {
         panic!("confirmed by a question: {waiting:?}");

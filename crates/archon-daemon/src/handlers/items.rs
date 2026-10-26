@@ -546,10 +546,10 @@ fn check_patchable(
             "item {id} already succeeded"
         )));
     }
-    if patch.title.is_some() && ran {
+    if patch.title.is_some() && (ran || item.state.is_active()) {
         return Err(ArchonError::InvalidTransition(format!(
-            "item {id} has run already, on a branch named after its title; the title changes \
-             only before the first run"
+            "item {id} has started a run, on a branch named after its title; the title \
+             changes only before the first run"
         )));
     }
     let steered = replaces_plan || patch.brief_append.is_some();

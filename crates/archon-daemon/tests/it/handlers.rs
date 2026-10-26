@@ -87,6 +87,29 @@ async fn a_title_changes_only_before_the_first_run() {
     let error = h.cli(retitle("bad\u{7}name")).await.unwrap_err();
     assert!(matches!(error, ArchonError::Invalid(_)), "{error}");
 
+    let claimed = h.enqueue("being claimed").await;
+    let now = archon_core::now();
+    let store = &h.ctx.store;
+    let state = archon_core::queue::QueueState::Dispatching;
+    store
+        .lock()
+        .await
+        .transition_item(&claimed.id, state, now)
+        .unwrap();
+    let claim = Request::UpdateItem {
+        item: claimed.id.clone(),
+        patch: ItemPatch {
+            title: Some("Too late".into()),
+            ..ItemPatch::default()
+        },
+    };
+    let error = h.cli(claim).await.unwrap_err();
+    assert!(
+        matches!(error, ArchonError::InvalidTransition(_)),
+        "{error}"
+    );
+    assert_eq!(h.item(&claimed.id).await.title, "being claimed");
+
     h.dispatch().await;
     let run = h.run(&item.id).await;
     assert!(run.branch.ends_with("-better-name"), "{}", run.branch);

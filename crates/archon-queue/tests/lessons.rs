@@ -2,6 +2,7 @@ mod common;
 use archon_core::lesson::{
     Lesson, LessonKind, LessonPatch, LessonScope, LessonSource, LessonState,
 };
+use archon_core::notify::FeedEntry;
 use archon_core::outcome::Correction;
 use archon_core::queue::QueueState;
 use common::*;
@@ -73,7 +74,79 @@ fn losing_lesson_retracts_but_pinned_lesson_survives() {
                 LessonState::Retracted
             }
         );
+        let posted = lesson_lines(&store, &lesson);
+        if pinned {
+            assert!(posted.is_empty(), "{posted:?}");
+            assert_eq!(scored.updated_at, lesson.updated_at);
+        } else {
+            assert_eq!(posted.len(), 1, "{posted:?}");
+            assert!(posted[0].contains("retracted automatically: 0 of 5 scored runs won"));
+            assert!(scored.updated_at > scored.created_at);
+        }
     }
+}
+
+/// The system feed lines that name `lesson`.
+fn lesson_lines(store: &archon_queue::Store, lesson: &Lesson) -> Vec<String> {
+    store
+        .feed_after(0, 100)
+        .unwrap()
+        .into_iter()
+        .filter_map(|item| match item.entry {
+            FeedEntry::System { text } if text.contains(lesson.id.as_str()) => Some(text),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn cancels_budget_caps_and_timeouts_neither_win_nor_lose_a_lesson() {
+    let mut store = store();
+    let lesson = advice(&store, false);
+    let endings = [
+        None,
+        Some("cancel"),
+        Some("the item budget of $5.00 is reached"),
+        Some("The stage timed out."),
+        None,
+    ];
+    for (n, ending) in endings.into_iter().enumerate() {
+        let item = store
+            .insert_item(&item(None, &format!("run {n}")), None)
+            .unwrap();
+        let run = start(&mut store, &item.id);
+        assert_eq!(
+            store
+                .lessons_for_run(&run.id, None, "direct")
+                .unwrap()
+                .len(),
+            1
+        );
+        let ending = match ending {
+            None => QueueState::Succeeded {
+                run: run.id.clone(),
+                summary: "done".into(),
+            },
+            Some("cancel") => QueueState::Cancelled {
+                reason: Some("operator cancelled".into()),
+            },
+            Some(error) => QueueState::Failed {
+                run: Some(run.id.clone()),
+                error: error.into(),
+            },
+        };
+        settle_run(&mut store, &run, ending, t(30));
+        store
+            .capture_outcome(&store.run(&run.id).unwrap(), None, true)
+            .unwrap();
+    }
+    let scored = store.lesson(&lesson.id).unwrap();
+    assert_eq!((scored.uses, scored.wins), (2, 2));
+    assert_eq!(scored.state, LessonState::Active);
+    assert!(lesson_lines(&store, &lesson).is_empty());
+    let stats = store.learning_stats(None).unwrap();
+    assert_eq!((stats.pipelines[0].runs, stats.pipelines[0].scored), (5, 2));
+    assert_eq!(stats.pipelines[0].pass_rate, 1.0);
 }
 
 #[test]

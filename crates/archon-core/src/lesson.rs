@@ -353,6 +353,9 @@ pub struct PipelineEvidence {
     pub repo: Option<RepoId>,
     pub pipeline: String,
     pub runs: u64,
+    /// Runs that judged the work; the pass rate is of these alone.
+    #[serde(default)]
+    pub scored: u64,
     pub pass_rate: f64,
     pub median_cost_usd: f64,
     pub median_wall_secs: f64,

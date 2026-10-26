@@ -2,6 +2,7 @@ use super::super::codec::SqlContext;
 use archon_core::error::ArchonError;
 use archon_core::id::LessonId;
 use archon_core::lesson::{Lesson, LessonState};
+use archon_core::notify::FeedEntry;
 use archon_core::outcome::Outcome;
 use rusqlite::{Connection, params};
 
@@ -15,40 +16,85 @@ pub(in crate::store) fn score_run(conn: &Connection, outcome: &Outcome) -> Resul
         .ctx("query used lessons")?
         .collect::<rusqlite::Result<Vec<_>>>()
         .ctx("read used lessons")?;
+    // An unscored use keeps `won` NULL, so it counts as neither a use nor a win.
+    let won = outcome.is_scored().then(|| outcome.is_win());
+    assert!(
+        !outcome.is_win() || won == Some(true),
+        "a win is always scored"
+    );
     for id in ids {
         conn.execute(
             "UPDATE lesson_uses SET won=?1 WHERE run=?2 AND lesson=?3",
-            params![outcome.is_win(), outcome.run.as_str(), id],
+            params![won, outcome.run.as_str(), id],
         )
         .ctx("score lesson use")?;
-        let mut lesson = super::load(conn, &LessonId::parse(&id)?)?;
-        let epoch = super::super::settings::kv_get(conn, &format!("learning/lesson-epoch/{id}"))?;
-        let (uses, wins): (u32, u32) = conn
-            .query_row(
-                "SELECT COUNT(won),COALESCE(SUM(won),0) FROM lesson_uses WHERE lesson=?1 AND (?2 IS NULL OR used_at>=?2)",
-                params![id,epoch],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .ctx("count lesson uses")?;
-        assert!(wins <= uses);
-        lesson.uses = uses;
-        lesson.wins = wins;
-        if outcome.is_win()
-            && lesson
-                .confirmed_at
-                .is_none_or(|at| at < outcome.finished_at)
-        {
-            lesson.confirmed_at = Some(outcome.finished_at);
-        }
-        if outcome.is_win()
-            && lesson.state == LessonState::Proposed
-            && lesson.source == archon_core::lesson::LessonSource::Orchestrator
-        {
-            lesson.state = LessonState::Active;
-        }
-        refresh(&mut lesson, archon_core::now());
-        super::write(conn, &lesson)?;
+        score_lesson(conn, outcome, &LessonId::parse(&id)?)?;
     }
+    Ok(())
+}
+
+fn score_lesson(conn: &Connection, outcome: &Outcome, id: &LessonId) -> Result<(), ArchonError> {
+    let mut lesson = super::load(conn, id)?;
+    let before = lesson.state;
+    let epoch = super::super::settings::kv_get(conn, &format!("learning/lesson-epoch/{id}"))?;
+    let (uses, wins): (u32, u32) = conn
+        .query_row(
+            "SELECT COUNT(won),COALESCE(SUM(won),0) FROM lesson_uses WHERE lesson=?1 AND (?2 IS NULL OR used_at>=?2)",
+            params![id.as_str(), epoch],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .ctx("count lesson uses")?;
+    assert!(wins <= uses);
+    lesson.uses = uses;
+    lesson.wins = wins;
+    if outcome.is_win()
+        && lesson
+            .confirmed_at
+            .is_none_or(|at| at < outcome.finished_at)
+    {
+        lesson.confirmed_at = Some(outcome.finished_at);
+    }
+    if outcome.is_win()
+        && lesson.state == LessonState::Proposed
+        && lesson.source == archon_core::lesson::LessonSource::Orchestrator
+    {
+        lesson.state = LessonState::Active;
+    }
+    let at = archon_core::now();
+    refresh(&mut lesson, at);
+    save_scored(conn, before, lesson, at)
+}
+
+/// Writes a lesson scoring changed. A state change scoring made by itself is
+/// stamped and posted to the feed, so no lesson is activated or retracted silently.
+pub(super) fn save_scored(
+    conn: &Connection,
+    before: LessonState,
+    mut lesson: Lesson,
+    at: archon_core::Timestamp,
+) -> Result<(), ArchonError> {
+    let changed = lesson.state != before;
+    if changed {
+        lesson.updated_at = at;
+    }
+    super::write(conn, &lesson)?;
+    if !changed {
+        return Ok(());
+    }
+    let verb = match lesson.state {
+        LessonState::Active => "activated",
+        LessonState::Retracted => "retracted",
+        LessonState::Proposed => unreachable!("scoring never proposes a lesson"),
+    };
+    assert!(lesson.wins <= lesson.uses);
+    let text = format!(
+        "Lesson {} {verb} automatically: {} of {} scored runs won. {}",
+        lesson.id,
+        lesson.wins,
+        lesson.uses,
+        serde_json::to_string(&lesson.text)?
+    );
+    super::super::feed::append_in(conn, FeedEntry::System { text }, at)?;
     Ok(())
 }
 

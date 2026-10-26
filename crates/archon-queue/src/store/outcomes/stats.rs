@@ -3,7 +3,7 @@ use super::super::codec::SqlContext;
 use archon_core::error::ArchonError;
 use archon_core::id::RepoId;
 use archon_core::lesson::{LessonStats, PipelineEvidence};
-use archon_core::outcome::OutcomeResult;
+use archon_core::outcome::{Outcome, OutcomeResult};
 use std::collections::BTreeMap;
 
 impl Store {
@@ -24,24 +24,9 @@ impl Store {
                 .push(outcome);
         }
         for ((repo, pipeline), values) in groups {
-            let mut costs: Vec<_> = values.iter().map(|o| o.cost_usd).collect();
-            let mut walls: Vec<_> = values.iter().map(|o| o.wall_secs as f64).collect();
-            assert!(!values.is_empty());
-            stats.pipelines.push(PipelineEvidence {
-                repo,
-                pipeline,
-                runs: values.len() as u64,
-                pass_rate: values
-                    .iter()
-                    .filter(|o| o.result == OutcomeResult::Succeeded)
-                    .count() as f64
-                    / values.len() as f64,
-                correction_rate: values.iter().filter(|o| !o.corrections.is_empty()).count() as f64
-                    / values.len() as f64,
-                median_cost_usd: median(&mut costs),
-                median_wall_secs: median(&mut walls),
-                estimated_saving_usd: None,
-            });
+            stats
+                .pipelines
+                .push(pipeline_evidence(repo, pipeline, &values));
         }
         let mut stmt = self
             .conn
@@ -66,6 +51,44 @@ impl Store {
         }
         assert!(stats.corrected <= stats.outcomes);
         Ok(stats)
+    }
+}
+
+/// One pipeline's runs in one repository. Its pass rate is of the runs that
+/// judged the work: a cancelled, capped or timed-out run is neither pass nor fail.
+fn pipeline_evidence(
+    repo: Option<RepoId>,
+    pipeline: String,
+    values: &[&Outcome],
+) -> PipelineEvidence {
+    assert!(!values.is_empty());
+    assert!(
+        values
+            .iter()
+            .all(|o| o.repo == repo && o.pipeline == pipeline)
+    );
+    let mut costs: Vec<_> = values.iter().map(|o| o.cost_usd).collect();
+    let mut walls: Vec<_> = values.iter().map(|o| o.wall_secs as f64).collect();
+    let scored: Vec<_> = values.iter().filter(|o| o.is_scored()).collect();
+    let passed = scored
+        .iter()
+        .filter(|o| o.result == OutcomeResult::Succeeded)
+        .count();
+    PipelineEvidence {
+        repo,
+        pipeline,
+        runs: values.len() as u64,
+        scored: scored.len() as u64,
+        pass_rate: if scored.is_empty() {
+            0.0
+        } else {
+            passed as f64 / scored.len() as f64
+        },
+        correction_rate: values.iter().filter(|o| !o.corrections.is_empty()).count() as f64
+            / values.len() as f64,
+        median_cost_usd: median(&mut costs),
+        median_wall_secs: median(&mut walls),
+        estimated_saving_usd: None,
     }
 }
 

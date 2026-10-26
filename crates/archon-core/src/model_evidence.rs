@@ -206,10 +206,11 @@ impl ModelEvidenceReport {
             });
             let _ = writeln!(
                 text,
-                "Pipeline {} / {} n={} pass={:.0}% median=${:.3} wall={:.0}s corrected={:.0}%",
+                "Pipeline {} / {} n={} scored={} pass={:.0}% median=${:.3} wall={:.0}s corrected={:.0}%",
                 repo,
                 p.pipeline,
                 p.runs,
+                p.scored,
                 p.pass_rate * 100.0,
                 p.median_cost_usd,
                 p.median_wall_secs,
@@ -232,6 +233,7 @@ mod tests {
             repo,
             pipeline: "adaptive".into(),
             runs: 4,
+            scored: 4,
             pass_rate: 0.5,
             median_cost_usd: 1.0,
             median_wall_secs: 60.0,
@@ -253,7 +255,10 @@ mod tests {
             ..report
         };
         let text = report.text();
-        assert!(text.contains("\nPipeline web / adaptive n=4"), "{text}");
+        assert!(
+            text.contains("\nPipeline web / adaptive n=4 scored=4"),
+            "{text}"
+        );
         assert!(
             text.contains(&format!("\nPipeline {gone} / adaptive")),
             "{text}"

@@ -105,7 +105,7 @@ impl Store {
             let previous = lesson.clone();
             scoring::refresh(&mut lesson, at);
             if lesson != previous {
-                write(&tx, &lesson)?;
+                scoring::save_scored(&tx, previous.state, lesson, at)?;
             }
         }
         tx.commit().ctx("commit lesson decay")

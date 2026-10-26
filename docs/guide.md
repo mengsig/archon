@@ -196,10 +196,23 @@ archon pipelines accept learned-check
 A run uses at most six lessons, with a 1,200-byte rendered section, preferring
 its repository and pipeline. Lessons are untrusted advice and cannot expand
 permissions. Duplicate text is merged; operator edits take precedence. Wins
-are successful runs without corrections. Five or more scored uses can retract
-a lesson whose raw Wilson lower bound drops below 0.3. Confidence decays since
-last use; age alone never retracts a winning lesson. Pinning prevents
-automatic retraction and decay; `pin --unpin` releases the pin.
+are successful runs without corrections; every other scored run is a loss.
+A run that a cancel, a budget cap, a timeout or an infrastructure failure
+stopped is not scored: it counts as neither a use nor a win, and `lessons
+stats` leaves it out of `pass=` (`scored=` says how many runs remain). Five or
+more scored uses can retract a lesson whose raw Wilson lower bound (z = 1.96)
+drops below 0.3, and that bound is strict: 2 wins in 5 retract, and so do 3
+wins in 5 (bound 0.23); 4 wins in 5 (0.38) keep the lesson. For example, a
+lesson given to five runs of which two succeed, one is cancelled, one hits
+its budget cap and one times out has 2 scored uses and 2 wins and stays
+active. When scoring activates or retracts a lesson by itself, the feed says
+so and the lesson's `updated_at` moves. Confidence decays since last use; age
+alone never retracts a winning lesson. Pinning prevents automatic retraction
+and decay; `pin --unpin` releases the pin.
+
+Archon does not turn outcomes into Aether memories. A failed or corrected run
+asks the orchestrator to record a lesson; Aether's memory holds only what an
+agent chose to remember, so it can stay empty after many items.
 
 Ordinary chat and scope or effort steers never count as model failures. To record
 an explicit correction, send a structured operator message:

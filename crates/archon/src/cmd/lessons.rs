@@ -134,10 +134,11 @@ fn stats_text(stats: &archon_core::lesson::LessonStats) -> String {
     );
     for p in &stats.pipelines {
         text.push_str(&format!(
-            "{} / {} n={} pass={:.0}% median=${:.3} wall={:.0}s corrections={:.0}% saving/run={}\n",
+            "{} / {} n={} scored={} pass={:.0}% median=${:.3} wall={:.0}s corrections={:.0}% saving/run={}\n",
             repo_name(stats, p.repo.as_ref()),
             p.pipeline,
             p.runs,
+            p.scored,
             p.pass_rate * 100.0,
             p.median_cost_usd,
             p.median_wall_secs,

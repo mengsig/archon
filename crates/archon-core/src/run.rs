@@ -181,6 +181,36 @@ pub fn pr_url<'a>(stages: impl DoubleEndedIterator<Item = &'a StageRun>) -> Opti
         .find_map(|s| s.structured.as_ref()?.get("pr_url")?.as_str())
 }
 
+/// For stage runs given as `(stage, attempt, slot)` in the order they started,
+/// how many earlier runs each slot had: 0 for its first run, `n` for its `n`th
+/// retry (a refused swarm plan's correction, an infrastructure retry).
+pub fn slot_retries<'a>(slots: impl IntoIterator<Item = (&'a str, u32, u32)>) -> Vec<u32> {
+    let mut seen: std::collections::BTreeMap<(&str, u32, u32), u32> = Default::default();
+    let retries: Vec<u32> = slots
+        .into_iter()
+        .map(|slot| {
+            let runs = seen.entry(slot).or_insert(0);
+            *runs += 1;
+            *runs - 1
+        })
+        .collect();
+    let total: u32 = seen.values().sum();
+    assert_eq!(
+        total as usize,
+        retries.len(),
+        "every stage run is counted once"
+    );
+    retries
+}
+
+/// What follows `attempt N slot M` in a stage run's line: its retry, if any.
+pub fn retry_label(retry: u32) -> String {
+    match retry {
+        0 => String::new(),
+        n => format!(" retry {n}"),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum RunState {
@@ -373,6 +403,23 @@ impl PipelineRun {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A refused swarm plan's correction reruns the same slot; each rerun is
+    /// numbered so `attempt 1 slot 0` is not shown twice alike.
+    #[test]
+    fn each_rerun_of_a_slot_is_numbered_in_start_order() {
+        let slots = [
+            ("plan", 1, 0),
+            ("plan", 1, 0),
+            ("build", 1, 0),
+            ("build", 1, 1),
+            ("plan", 1, 0),
+            ("plan", 2, 0),
+        ];
+        assert_eq!(slot_retries(slots), [0, 1, 0, 0, 2, 0]);
+        assert_eq!(retry_label(0), "");
+        assert_eq!(retry_label(2), " retry 2");
+    }
 
     #[test]
     fn verdict_prefers_structured_then_summary_line() {

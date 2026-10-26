@@ -14,8 +14,8 @@ the reference the refactorer and verifier must preserve.
 - Workspace: `{{workspace}}`, branch `{{branch}}`, based on `{{base_branch}}`,
   for repository `{{repo.name}}`.
 - `{{repo.path}}` is the operator's checkout. Do not touch it.
-- This is attempt {{attempt}}. Inspect `git log {{base_branch}}..HEAD` and
-  `git diff {{base_branch}}...HEAD` before working. On a revision, keep the
+- This is attempt {{attempt}}. Inspect `git log {{base_commit}}..HEAD` and
+  `git diff {{base_commit}}...HEAD` before working. On a revision, keep the
   original baseline reference and characterization tests; do not redefine
   expected behaviour to match the refactored code.
 

@@ -239,8 +239,13 @@ fn run_lines(out: &mut String, detail: &ItemDetail, run: &PipelineRun, full: boo
     for merge in detail.merges.iter().filter(|m| m.run == run.id) {
         let _ = writeln!(out, "  merge: {}", sanitize_line(&merge.line()));
     }
-    for stage in stages {
-        let _ = writeln!(out, "  {}", stage_line(stage));
+    let retries = run::slot_retries(
+        stages
+            .iter()
+            .map(|s| (s.stage_id.as_str(), s.attempt, s.fan_index)),
+    );
+    for (stage, retry) in stages.into_iter().zip(retries) {
+        let _ = writeln!(out, "  {}", stage_line(stage, retry));
         if let Some(delegation) = detail.delegations.get(&stage.id) {
             let _ = writeln!(out, "    cost: {}", delegation.split());
             for agent in &delegation.agents {
@@ -313,8 +318,8 @@ fn gate_line(gate: &OperatorGate) -> String {
 }
 
 /// `review attempt 2 slot 1: completed, verdict pass, $0.42, model (effort),
-/// agent agt_…`.
-fn stage_line(stage: &StageRun) -> String {
+/// agent agt_…`, with ` retry N` after the slot for the slot's `N`th retry.
+fn stage_line(stage: &StageRun, retry: u32) -> String {
     let state = match &stage.state {
         StageState::Spawning => "spawning".to_owned(),
         StageState::Running => "running".to_owned(),
@@ -332,10 +337,11 @@ fn stage_line(stage: &StageRun) -> String {
         .as_ref()
         .map_or_else(|| "no agent yet".to_owned(), |a| format!("agent {a}"));
     format!(
-        "{} attempt {} slot {}: {state}{verdict}, {}, {}, {agent}",
+        "{} attempt {} slot {}{}: {state}{verdict}, {}, {}, {agent}",
         stage.stage_id,
         stage.attempt,
         stage.fan_index,
+        run::retry_label(retry),
         archon_core::cost::format_usd(stage.cost_usd),
         attempt_choice(stage.current_choice()),
     )
@@ -613,6 +619,29 @@ mod tests {
             merges: Vec::new(),
             stage_warnings: Vec::new(),
         }
+    }
+
+    /// A refused swarm plan goes back to its planner in the same slot; the
+    /// second run is labelled its retry, not a second `attempt 1 slot 0`.
+    #[test]
+    fn a_rerun_of_a_slot_is_labelled_its_retry() {
+        let mut detail = detail_with_stages();
+        let run = &detail.runs[0];
+        let mut first = stage_run(run, "plan", "refused plan");
+        first.state = StageState::Failed {
+            error: "stage `plan` passed, but the plan is refused".into(),
+        };
+        let second = stage_run(run, "plan", "fixed plan");
+        detail.stages = vec![first, second];
+        let text = item_detail(&detail, &RepoNames::new(), false);
+        assert!(
+            text.contains("\n  plan attempt 1 slot 0: failed: "),
+            "{text}"
+        );
+        assert!(
+            text.contains("\n  plan attempt 1 slot 0 retry 1: completed"),
+            "{text}"
+        );
     }
 
     #[test]

@@ -157,12 +157,14 @@ pub struct Dependency {
 }
 
 /// The contract's section for an item queued after `dependencies`, whose own
-/// branch was forked from `base`: where their work is. Empty when there are none.
-pub fn dependency_rules(base: &str, dependencies: &[Dependency]) -> String {
+/// branch was forked from `base` at commit `fork`: where their work is. Empty
+/// when there are none.
+pub fn dependency_rules(base: &str, fork: &str, dependencies: &[Dependency]) -> String {
     if dependencies.is_empty() {
         return String::new();
     }
     assert!(!base.trim().is_empty(), "a worktree is forked from a base");
+    assert!(!fork.trim().is_empty(), "a worktree knows where it forked");
     let facts: String = dependencies.iter().map(dependency_fact).collect();
     assert_eq!(
         facts.lines().count(),
@@ -172,8 +174,8 @@ pub fn dependency_rules(base: &str, dependencies: &[Dependency]) -> String {
     format!(
         "\n## Dependencies\n\nArchon prepared this branch from `{base}`, with any other \
          parent in this repository merged in, and the change's pull request is for `{base}`. \
-         Diff and review against `{base}`, whatever base an older prompt names, and pass \
-         this base to reviewers.\n\n{facts}"
+         Diff and review against the fork point `{fork}` (`git diff {fork}...HEAD`), \
+         whatever base an older prompt names, and pass this base to reviewers.\n\n{facts}"
     )
 }
 
@@ -1237,7 +1239,8 @@ mod tests {
     /// Dependency facts accompany the actual base prepared by the daemon.
     #[test]
     fn dependency_rules_name_each_branch_and_the_base_of_a_stacked_change() {
-        assert_eq!(dependency_rules("main", &[]), "");
+        const FORK: &str = "0123456789abcdef0123456789abcdef01234567";
+        assert_eq!(dependency_rules("main", FORK, &[]), "");
         let stacked = Dependency {
             item: "qi_01".into(),
             artifacts: Some("/d/artifacts/qi_01".into()),
@@ -1250,7 +1253,7 @@ mod tests {
             branch: None,
             pull_request: None,
         };
-        let rules = dependency_rules("main", &[stacked, elsewhere]);
+        let rules = dependency_rules("main", FORK, &[stacked, elsewhere]);
         assert!(rules.starts_with("\n## Dependencies\n\n"), "{rules}");
         let facts: Vec<serde_json::Value> = rules
             .lines()
@@ -1264,6 +1267,15 @@ mod tests {
         ];
         assert_eq!(facts, expected);
         assert!(rules.contains("prepared this branch from `main`"));
+        assert!(rules.contains("pull request is for `main`"));
+        assert!(
+            rules.contains(&format!("`git diff {FORK}...HEAD`")),
+            "{rules}"
+        );
+        assert!(
+            !rules.contains("against `main`"),
+            "a stale local base adds commits"
+        );
         assert!(rules.contains("pass this base to reviewers"));
     }
 

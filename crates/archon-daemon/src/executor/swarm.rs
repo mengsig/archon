@@ -102,21 +102,19 @@ async fn assignment(
     run: &PipelineRun,
     planner: &Planner,
 ) -> Result<Result<Option<RunEdit>, String>, ArchonError> {
-    let plan = match read_plan(run.workspace.clone()).await {
-        Ok(text) => swarm::parse(&text).map_err(message),
-        Err(error) => Err(error),
-    };
-    let plan = match plan {
-        Ok(plan) => plan,
-        Err(error) => return Ok(Err(error)),
-    };
-    let (item, ran) = {
+    let (item, ran, base) = {
         let store = ctx.store.lock().await;
         let stages = store.stage_runs(&run.id)?;
         let ran = stages.iter().any(|s| s.stage_id == planner.team);
-        (store.item(&run.item)?, ran)
+        let vars = super::recover::load_run_vars(&store, &run.id)?;
+        let base = vars.get("base_commit").cloned().unwrap_or_default();
+        (store.item(&run.item)?, ran, base)
     };
     assert_eq!(item.id, run.item, "a run's plan is checked for its item");
+    let plan = match read_plan(run.workspace.clone(), base).await {
+        Ok(plan) => plan,
+        Err(error) => return Ok(Err(error)),
+    };
     let env = match RepoEnv::load(ctx, item.repo.as_ref()).await {
         Ok(env) => env,
         Err(error) => return Ok(Err(format!("its plan cannot be held to the caps: {error}"))),
@@ -128,10 +126,19 @@ async fn assignment(
 }
 
 /// The plan file the planner left in the run worktree, which must stay
-/// uncommitted so no shipped history carries it.
-async fn read_plan(workspace: PathBuf) -> Result<String, String> {
-    let read = tokio::task::spawn_blocking(move || uncommitted_plan(&workspace)).await;
-    read.map_err(|e| format!("reading its plan stopped: {e}"))?
+/// uncommitted so no shipped history carries it, checked against `base`: the
+/// commit the run forked at, whose paths a task may consume.
+async fn read_plan(workspace: PathBuf, base: String) -> Result<SwarmPlan, String> {
+    let read = tokio::task::spawn_blocking(move || {
+        let text = uncommitted_plan(&workspace)?;
+        let at_base = |path: &str| match base.is_empty() {
+            true => Ok(false),
+            false => worktree::has_path(&workspace, &base, path),
+        };
+        swarm::parse(&text, at_base).map_err(message)
+    });
+    read.await
+        .map_err(|e| format!("reading its plan stopped: {e}"))?
 }
 
 fn uncommitted_plan(workspace: &Path) -> Result<String, String> {

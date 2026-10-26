@@ -24,7 +24,7 @@ Attempt {{attempt}}: build on what the branch already holds.
    `pr.body`, names no model or tool: no `Co-Authored-By` or "Generated
    with" line.
 5. When review is required, delegate with `wait: false` on committed changes:
-   the base (`git merge-base {{base_branch}} HEAD`) and head commits,
+   the base (`{{base_commit}}`) and head commits,
    changed paths, the checks you ran and the verdict your contract shows.
    Apply your contract's command bounds, early fixes and delta re-review.
 

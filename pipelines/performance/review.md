@@ -21,7 +21,7 @@ is preserved and the measured gain justifies the readability cost.
 {{previous.verify.summary}}
 
 - Workspace: `{{workspace}}`, branch `{{branch}}`, based on `{{base_branch}}`.
-- Change: `git diff {{base_branch}}...HEAD` and `git log {{base_branch}}..HEAD`.
+- Change: `git diff {{base_commit}}...HEAD` and `git log {{base_commit}}..HEAD`.
 - Read-only: do not edit files, commit, push or switch branches. Running
   builds, tests and benchmarks is fine; follow your contract's command and
   reporting bounds.

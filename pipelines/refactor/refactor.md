@@ -21,8 +21,8 @@ verification and design review follow; their failures return here.
 
 - Workspace: `{{workspace}}`, branch `{{branch}}`, based on `{{base_branch}}`,
   for repository `{{repo.name}}`. Do not touch `{{repo.path}}`.
-- This is attempt {{attempt}}. Read `git log {{base_branch}}..HEAD` and
-  `git diff {{base_branch}}...HEAD`; prior commits are already here.
+- This is attempt {{attempt}}. Read `git log {{base_commit}}..HEAD` and
+  `git diff {{base_commit}}...HEAD`; prior commits are already here.
 
 ## How to refactor
 

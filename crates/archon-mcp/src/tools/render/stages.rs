@@ -25,8 +25,8 @@ pub(super) fn detail(detail: &StageDetail) -> String {
         ": stage {stage} attempt {attempt}, {} stage run(s).",
         detail.stages.len()
     );
-    for view in &detail.stages {
-        let _ = write!(text, "\n\n## {}", view_line(view));
+    for (view, retry) in detail.stages.iter().zip(retries(&detail.stages)) {
+        let _ = write!(text, "\n\n## {}", view_line(view, retry));
         if let Some(output) = &view.output {
             text.push('\n');
             text.push_str(&output.text);
@@ -51,21 +51,34 @@ fn listing(text: &mut String, stages: &[StageRunView]) {
          full summary and structured result.",
         stages.len()
     );
-    for view in stages {
-        let _ = write!(text, "\n- {}", view_line(view));
+    for (view, retry) in stages.iter().zip(retries(stages)) {
+        let _ = write!(text, "\n- {}", view_line(view, retry));
     }
+}
+
+fn retries(stages: &[StageRunView]) -> Vec<u32> {
+    archon_core::run::slot_retries(
+        stages
+            .iter()
+            .map(|s| (s.stage_id.as_str(), s.attempt, s.slot)),
+    )
 }
 
 /// Stage, attempt, slot, model, state, verdict, cost and agent; a failure's
 /// error is clipped here, as the stage's output holds it whole.
-fn view_line(view: &StageRunView) -> String {
+fn view_line(view: &StageRunView, retry: u32) -> String {
     let state = match &view.state {
         StageState::Failed { error } => format!("failed: {}", clip(error, LINE_CHARS)),
         other => snake(other).replace('_', " "),
     };
     let mut line = format!(
-        "{} attempt {} slot {}: {} {} [{state}]",
-        view.stage_id, view.attempt, view.slot, view.choice.model, view.choice.effort
+        "{} attempt {} slot {}{}: {} {} [{state}]",
+        view.stage_id,
+        view.attempt,
+        view.slot,
+        archon_core::run::retry_label(retry),
+        view.choice.model,
+        view.choice.effort
     );
     if let Some(verdict) = view.verdict {
         let _ = write!(line, " verdict {}", snake(&verdict));

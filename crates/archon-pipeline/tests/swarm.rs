@@ -32,7 +32,7 @@ fn plan() -> Value {
 }
 
 fn parse(plan: &Value) -> Result<SwarmPlan, String> {
-    swarm::parse(&plan.to_string()).map_err(|e| e.to_string())
+    swarm::parse(&plan.to_string(), |_| Ok(false)).map_err(|e| e.to_string())
 }
 
 fn assert_refused(plan: &Value, needle: &str) {
@@ -163,6 +163,19 @@ fn consumed_interfaces_are_provided_by_another_task() {
         &unknown,
         "task \"docs\" consumes \"render\", which no task provides",
     );
+    let mut many = plan();
+    let names: Vec<String> = (0..33).map(|n| format!("lib{n}.rs")).collect();
+    many["tasks"][2]["consumes"] = json!(names);
+    let looked_up = |_: &str| -> Result<bool, archon_core::error::ArchonError> {
+        panic!("an unbounded list is not looked up")
+    };
+    let error = swarm::parse(&many.to_string(), looked_up).expect_err("too many");
+    assert!(
+        error
+            .to_string()
+            .contains("consumes more than 32 interfaces"),
+        "{error}"
+    );
     let mut own = plan();
     own["tasks"][0]["consumes"] = json!(["parse"]);
     assert_refused(&own, "which it provides itself");
@@ -177,6 +190,53 @@ fn consumed_interfaces_are_provided_by_another_task() {
     assert_refused(&unsigned, "without a name and a signature");
 }
 
+/// A task may consume what the base already holds, such as an existing
+/// module; only a name that is neither provided nor there is refused.
+#[test]
+fn a_task_may_consume_a_path_the_base_already_holds() {
+    let mut existing = plan();
+    existing["tasks"][2]["consumes"] = json!(["greet.py", "src/", "../escape"]);
+    let asked = std::cell::RefCell::new(Vec::new());
+    let at_base = |path: &str| {
+        asked.borrow_mut().push(path.to_owned());
+        Ok(matches!(path, "greet.py" | "src/"))
+    };
+    let error = swarm::parse(&existing.to_string(), at_base).expect_err("escape is no path");
+    assert!(
+        error.to_string().contains(
+            "consumes \"../escape\", which no task provides and the base holds no such path"
+        ),
+        "{error}"
+    );
+    assert_eq!(
+        *asked.borrow(),
+        ["greet.py", "src/"],
+        "only valid paths are looked up"
+    );
+
+    existing["tasks"][2]["consumes"] = json!(["greet.py", "parse"]);
+    let held = |path: &str| Ok(path == "greet.py");
+    let plan = swarm::parse(&existing.to_string(), held).expect("greet.py is at the base");
+    assert!(plan.at_base.contains("greet.py"));
+    assert!(
+        !plan.at_base.contains("parse"),
+        "a provided name is never looked up"
+    );
+    let RunEdit::AssignRoles { role_prompts, .. } = plan.assignment("build") else {
+        panic!("a plan assigns roles");
+    };
+    let docs = &role_prompts["docs"];
+    assert!(
+        docs.contains("- `greet.py`, already in the repository at the base"),
+        "{docs}"
+    );
+    assert!(docs.contains("- `parse` from task `api`"), "{docs}");
+
+    let failing = |_: &str| Err(archon_core::error::ArchonError::Invalid("git broke".into()));
+    let error = swarm::parse(&existing.to_string(), failing).expect_err("the lookup failed");
+    assert!(error.to_string().contains("git broke"), "{error}");
+}
+
 #[test]
 fn the_file_is_bounded_versioned_and_strict() {
     let mut v2 = plan();
@@ -189,9 +249,13 @@ fn the_file_is_bounded_versioned_and_strict() {
     blank["summary"] = json!("");
     assert_refused(&blank, "summary is empty");
     let huge = " ".repeat(swarm::MAX_PLAN_BYTES + 1);
-    let error = swarm::parse(&huge).expect_err("too big").to_string();
+    let error = swarm::parse(&huge, |_| Ok(false))
+        .expect_err("too big")
+        .to_string();
     assert!(error.contains("a plan has at most 65536"), "{error}");
-    let error = swarm::parse("not json").expect_err("not json").to_string();
+    let error = swarm::parse("not json", |_| Ok(false))
+        .expect_err("not json")
+        .to_string();
     assert!(error.contains("it is not a plan"), "{error}");
 }
 

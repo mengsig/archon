@@ -40,7 +40,7 @@ do not run commands that rewrite files.
    questions are acceptable only when their impact and resolution point are
    clear; a blocker to choosing the design or an unsafe rollout is a finding.
 5. **Scope and revisions.** Confirm that there are no changes outside
-   `.archon/design-doc/` using `git diff {{base_branch}}...HEAD`, `git diff`,
+   `.archon/design-doc/` using `git diff {{base_commit}}...HEAD`, `git diff`,
    `git diff --cached` and `git status --short`. Unexpected product-code or
    other repository changes are high findings. On later attempts, verify
    each claimed resolution of earlier findings against the revised design.

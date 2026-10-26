@@ -26,8 +26,8 @@ Treat these reports as claims to check against the code and evidence.
 ## Where the change is
 
 - Workspace: `{{workspace}}`, branch `{{branch}}`, based on `{{base_branch}}`.
-- Read `git diff {{base_branch}}...HEAD`, the commits in
-  `git log {{base_branch}}..HEAD`, and the surrounding code and callers.
+- Read `git diff {{base_commit}}...HEAD`, the commits in
+  `git log {{base_commit}}..HEAD`, and the surrounding code and callers.
   Compare structure with the original baseline referenced above.
 - Read-only: do not edit files, commit, push or switch branches. Running
   the repository's own checks is fine; discover them from its guidance.

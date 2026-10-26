@@ -1240,7 +1240,11 @@ fn code_audit_scopes_then_spawns_three_independent_lenses() {
                 .prompt
                 .contains(&format!("Code auditor {slot} of 3"))
         );
-        assert!(auditor.prompt.contains(&format!("Apply only lens {slot}")));
+        assert!(
+            auditor
+                .prompt
+                .contains(&format!("Your lens is row {slot} of `lenses.md`"))
+        );
         assert!(auditor.prompt.contains(&format!(
             ".archon/reports/code-audit/auditor-{slot}/findings.md"
         )));

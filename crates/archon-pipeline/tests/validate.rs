@@ -3,6 +3,9 @@
 
 mod support;
 
+use std::collections::BTreeMap;
+
+use archon_core::autonomy::{Autonomy, ProposalMode, ReportMode};
 use archon_core::catalog::{Gate, StageKind};
 use archon_pipeline::builtin::BUILTINS;
 use archon_pipeline::{Catalog, autonomy, template};
@@ -734,7 +737,7 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
         "never see each other's findings",
         "full test suite once, and follow your contract's `wait_for` early-fix rule",
         "With no reviewer asked for, that run is the whole of this step",
-        "the exact base and head commits (`git merge-base {{base_branch}} HEAD`",
+        "the exact base and head commits (`{{base_commit}}` and `git rev-parse HEAD`",
         "medium for ordinary risk, high where security or an invariant is at stake",
         "never because a tree that passed was committed",
         "for any commit after a pass: Archon delivers only commits a passing reviewer read",
@@ -886,4 +889,94 @@ fn a_declared_review_names_one_work_stage_at_any_level() {
         let refused = check(&text).unwrap_err();
         assert!(refused.contains(why), "{why:?}: {refused}");
     }
+}
+
+/// Every built-in prompt, the shared proposal and report included, diffs and
+/// logs from the fork commit: a stale local base would add merged commits.
+#[test]
+fn every_builtin_prompt_diffs_from_the_fork_commit_not_the_local_base() {
+    let fork = support::FORK_COMMIT;
+    let catalog = Catalog::builtin();
+    let knobs = Autonomy {
+        proposal: ProposalMode::Lavish,
+        report: ReportMode::WithPr,
+        ..Autonomy::default()
+    };
+    let (mut rendered_prompts, mut diffs) = (Vec::new(), 0);
+    for builtin in BUILTINS {
+        let spec = catalog.get(builtin.name).expect("built-in loads");
+        let spec = match autonomy::ships(spec) {
+            true => autonomy::augment(spec, &knobs).expect("knobs apply"),
+            false => spec.clone(),
+        };
+        for (name, text) in &spec.prompts {
+            assert!(
+                !text.contains("{{base_branch}}..."),
+                "{}/{name}",
+                builtin.name
+            );
+            assert!(
+                !text.contains("{{base_branch}}..HEAD"),
+                "{}/{name}",
+                builtin.name
+            );
+            let mut vars: BTreeMap<String, String> = template::placeholders(text)
+                .expect("parses")
+                .into_iter()
+                .map(|placeholder| (placeholder.clone(), format!("<{placeholder}>")))
+                .collect();
+            vars.insert("base_branch".into(), "next".into());
+            vars.insert("base_commit".into(), fork.into());
+            let rendered = template::render(text, &vars).expect("renders");
+            for stale in ["next..", "merge-base next", "diff from `next`"] {
+                assert!(
+                    !rendered.contains(stale),
+                    "{}/{name}: {stale}",
+                    builtin.name
+                );
+            }
+            diffs += rendered
+                .matches(&format!("`git diff {fork}...HEAD`"))
+                .count();
+            rendered_prompts.push(name.clone());
+        }
+    }
+    assert!(
+        diffs >= 10,
+        "the built-ins diff from the fork, {diffs} times"
+    );
+    for shared in [autonomy::PROPOSE_PROMPT, autonomy::REPORT_PROMPT] {
+        assert!(
+            rendered_prompts.iter().any(|name| name == shared),
+            "{shared}"
+        );
+    }
+}
+
+/// A brief's own lenses win over the defaults: the scope lead numbers them
+/// and each auditor applies its row.
+#[test]
+fn code_audit_auditors_take_their_lens_from_the_brief_before_the_defaults() {
+    let catalog = Catalog::builtin();
+    let spec = catalog.get("code-audit").expect("built-in");
+    let flat = |name: &str| {
+        spec.prompts[name]
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let scope = flat("scope.md");
+    assert!(scope.contains("Write `.archon/code-audit/lenses.md`: a table numbered from 1"));
+    assert!(scope.contains("Lenses the brief names win"), "{scope}");
+    assert!(scope.contains("Fill only the rows the brief leaves open"));
+    let audit = flat("audit.md");
+    assert!(
+        audit.contains("Your lens is row {{fan.index}} of `lenses.md`"),
+        "{audit}"
+    );
+    assert!(audit.contains("A lens the brief assigns wins over the defaults below"));
+    assert!(
+        !audit.contains("Apply only lens {{fan.index}}"),
+        "no fixed lens"
+    );
 }

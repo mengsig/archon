@@ -57,12 +57,16 @@ pub(super) fn load_run_vars(
     let raw = store
         .kv_get(&run_vars_key(run))?
         .ok_or_else(|| ArchonError::NotFound(format!("template variables of run {run}")))?;
-    let vars: BTreeMap<String, String> = serde_json::from_str(&raw)
+    let mut vars: BTreeMap<String, String> = serde_json::from_str(&raw)
         .map_err(|e| ArchonError::Corrupt(format!("template variables of run {run}: {e}")))?;
     if vars.is_empty() {
         return Err(ArchonError::Corrupt(format!(
             "template variables of run {run} are empty"
         )));
+    }
+    // A run started before Archon recorded its fork diffs from its base by name.
+    if let Some(base) = vars.get("base_branch").cloned() {
+        vars.entry("base_commit".into()).or_insert(base);
     }
     Ok(vars)
 }
@@ -562,4 +566,34 @@ pub(super) async fn driver_of(
 async fn build_driver(ctx: &DaemonContext, run: &PipelineRun) -> Result<RunDriver, ArchonError> {
     let blueprint = blueprint(ctx, run).await?;
     driver_of(ctx, run, blueprint).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A run saved before Archon recorded `base_commit` still rebuilds its
+    /// driver, which needs every run variable, and diffs from its base by name.
+    #[test]
+    fn variables_saved_without_a_fork_commit_name_the_base_instead() {
+        let mut store = Store::open_in_memory().expect("store");
+        let run = PipelineRunId::new();
+        let saved = BTreeMap::from([
+            ("workspace".to_owned(), "/w".to_owned()),
+            ("base_branch".to_owned(), "next".to_owned()),
+        ]);
+        let raw = serde_json::to_string(&saved).expect("serializes");
+        store.kv_set(&run_vars_key(&run), &raw).expect("saved");
+        let vars = load_run_vars(&store, &run).expect("loads");
+        assert_eq!(vars["base_commit"], "next");
+
+        let fork = "0123456789abcdef0123456789abcdef01234567";
+        let mut current = vars;
+        current.insert("base_commit".into(), fork.into());
+        save_run_vars(&mut store, &run, &current).expect("saved");
+        assert_eq!(
+            load_run_vars(&store, &run).expect("loads")["base_commit"],
+            fork
+        );
+    }
 }

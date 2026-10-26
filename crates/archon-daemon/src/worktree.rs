@@ -514,6 +514,40 @@ pub(crate) fn merge_base(
     git_exit(dir, &args)
 }
 
+/// The newest commit of `base_branch` (local or `origin`'s) that `head` holds:
+/// where the change forked, however stale the local `base_branch` is.
+pub(crate) fn branch_fork(
+    dir: &Path,
+    base_branch: &str,
+    head: &str,
+) -> Result<Option<String>, ArchonError> {
+    if base_branch.is_empty() {
+        return Ok(None);
+    }
+    let remote = format!("refs/remotes/origin/{base_branch}");
+    let mut bases = Vec::with_capacity(2);
+    for name in [base_branch, remote.as_str()] {
+        if let Some(base) = commit_id(dir, name)? {
+            bases.push(base);
+        }
+    }
+    if bases.is_empty() {
+        return Ok(None);
+    }
+    merge_base(dir, head, &bases)
+}
+
+/// Whether `path` exists, as a file or a directory, in commit `rev`.
+pub(crate) fn has_path(dir: &Path, rev: &str, path: &str) -> Result<bool, ArchonError> {
+    assert!(!rev.is_empty(), "a path is looked up in a commit");
+    assert!(
+        !path.is_empty() && !path.starts_with('/'),
+        "a repository-relative path"
+    );
+    let object = format!("{rev}:{path}");
+    Ok(git_exit(dir, &["rev-parse", "-q", "--verify", object.as_str()])?.is_some())
+}
+
 /// `git` whose exit 1 answers no (`None`) rather than failing; stdout on success.
 /// Both `rev-parse -q --verify` and `merge-base --is-ancestor` exit 1 exactly so.
 fn git_exit(dir: &Path, args: &[&str]) -> Result<Option<String>, ArchonError> {

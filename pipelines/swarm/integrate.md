@@ -32,7 +32,7 @@ The workers report (claims to verify, not evidence):
 
 1. **Check.** Run every task's acceptance commands and the plan's
    `checks` on the merged tree, plus the fast checks your contract names.
-   Read the merged diff (`git diff {{base_branch}}...HEAD`): each task kept
+   Read the merged diff (`git diff {{base_commit}}...HEAD`): each task kept
    to its paths and its interfaces match the plan.
 2. **Send back what a worker should fix.** A task whose own part is wrong
    or incomplete goes back to its worker, while attempts remain (attempts
@@ -55,7 +55,7 @@ The workers report (claims to verify, not evidence):
    section asks for, on the committed change, with `wait: false`: each a
    fresh leaf that shares your workspace and only reads, on a model other
    than yours where the policy allows. Hand each the acceptance criteria,
-   the exact base and head commits (`git merge-base {{base_branch}} HEAD`
+   the exact base and head commits (`{{base_commit}}`
    and `git rev-parse HEAD`), the changed paths, the checks you ran with
    their results, and the risks you know of. While they read, run the
    project's build, lint and full test suite once.

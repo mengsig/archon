@@ -133,7 +133,11 @@ impl Chat {
                     Incoming::Event(event) => match self.on_input(event, &link).await? {
                         Flow::Continue => input.ack(self.next_line()),
                         Flow::Quit => {
+                            let unsent = self.unsent_on_leaving();
                             input.stop();
+                            if let Some(warning) = unsent {
+                                self.warn(&warning)?;
+                            }
                             return Ok(ExitCode::SUCCESS);
                         }
                     },
@@ -228,6 +232,13 @@ impl Chat {
             return Ack::Continue;
         }
         Ack::Draft(Typed { chips, text })
+    }
+
+    /// What leaving says of images still attached: they were never sent.
+    fn unsent_on_leaving(&self) -> Option<String> {
+        let chips = self.lock_draft().chips();
+        (!chips.is_empty())
+            .then(|| format!("not sent: {chips} (still attached when the chat ended)"))
     }
 
     /// The draft; a poisoned lock only means a paste panicked mid-way.
@@ -476,6 +487,7 @@ mod tests {
             .unwrap();
         assert_eq!(said(server.await.unwrap()), (typed.to_owned(), 1));
         assert_eq!(chat.lock_draft().chips(), "", "a sent image is let go");
+        assert_eq!(chat.unsent_on_leaving(), None);
         assert_eq!((chat.prefill.take(), chat.unsent.take()), (None, None));
     }
 
@@ -496,6 +508,8 @@ mod tests {
         assert_eq!(said(server.await.unwrap()), ("hello".to_owned(), 1));
         assert_eq!(chat.lock_draft().chips(), "[image #1]");
         assert_eq!(chat.prefill.take(), Some(chips));
+        let leaving = chat.unsent_on_leaving().expect("quitting now warns");
+        assert!(leaving.starts_with("not sent: [image #1]"), "{leaving}");
         assert_eq!(chat.unsent.take().as_deref(), Some("hello"));
     }
 

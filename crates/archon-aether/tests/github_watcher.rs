@@ -1,6 +1,5 @@
 //! The GitHub watcher's allowlist and operator logins on the wire: sent in
-//! the configure where the protocol stores them (15 and 17), refused before
-//! sending where it would drop them.
+//! the configure and read back, on every protocol Archon speaks (17 and up).
 
 mod common;
 

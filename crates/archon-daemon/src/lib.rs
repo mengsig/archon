@@ -362,7 +362,7 @@ fn spawn_link_workers(
     assert_eq!(workers.len(), before + 8, "every link worker is supervised");
 }
 
-/// The link workers ([`spawn_link_workers`]) under `policy`, handled as the
+/// The link workers (`spawn_link_workers`) under `policy`, handled as the
 /// daemon handles them, until one fails fatally: for tests without a server.
 pub async fn run_link_workers(
     ctx: Arc<DaemonContext>,

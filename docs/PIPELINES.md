@@ -763,6 +763,7 @@ Values are inserted as-is and never scanned again, so a brief that contains
 | `{{repo.name}}`, `{{repo.path}}` | The registry entry. Empty when there is no repository. `repo.path` is the operator's checkout, not the workspace. |
 | `{{workspace}}` | The absolute path the agent works in. |
 | `{{branch}}`, `{{base_branch}}` | The run branch and the branch it was forked from. |
+| `{{base_commit}}` | The commit the run branch forked from its base at: the newest commit of the local base or `origin`'s that the branch holds, so a stale local base adds nothing to `git diff {{base_commit}}...HEAD`. The base's name when no fork is known. Diff and log against it; target pull requests at `{{base_branch}}`. |
 | `{{ship.mode}}` | `pr` or `local`. |
 | `{{ship.auto_merge}}` | `true` when the item's `merge` knob is `auto`, else `false`. Only the operator can allow `merge = auto` ([Autonomy levels](guide.md#autonomy-levels)). |
 | `{{stage.id}}`, `{{attempt}}` | The current stage and its attempt number (1-based). |
@@ -1241,7 +1242,8 @@ Archon refuses it unless:
   not inside `.git` or `.archon`; no path of one task equals, contains or
   lies inside a path of another;
 - interface names are unique, each with a signature, and every name a
-  task `consumes` is provided by another task;
+  task `consumes` (at most 32) is provided by another task or is a path
+  the run's fork commit already holds, such as an existing module;
 - `depends_on` names only earlier tasks, so plan order is merge order.
 
 The roles a plan gives are recorded with the run, like a steer's edit, so

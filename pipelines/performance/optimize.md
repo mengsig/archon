@@ -20,8 +20,8 @@ identical, then commit a complete change for independent verification.
 
 {{feedback}}
 
-Address every finding before continuing. Inspect `git log {{base_branch}}..HEAD`
-and `git diff {{base_branch}}...HEAD` on retries and build on the existing
+Address every finding before continuing. Inspect `git log {{base_commit}}..HEAD`
+and `git diff {{base_commit}}...HEAD` on retries and build on the existing
 commits. Preserve the original baseline, workload, benchmark method, noise
 rules and target; never weaken them to make a disappointing result pass.
 

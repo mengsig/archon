@@ -52,7 +52,7 @@ read again.
    asked for, that run is the whole of this step. Hand a reviewer this and
    nothing more:
    - the acceptance criteria, in the few lines that settle what done means;
-   - the exact base and head commits (`git merge-base {{base_branch}} HEAD`
+   - the exact base and head commits (`{{base_commit}}`
      and `git rev-parse HEAD`; for a change stacked on another item's
      branch, the base your contract's Dependencies section defines) and the
      changed paths;

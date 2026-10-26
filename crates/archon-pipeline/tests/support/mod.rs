@@ -182,6 +182,9 @@ pub fn base_vars(run: &PipelineRunId, item: &QueueItemId) -> BTreeMap<String, St
     base_vars_merging(run, item, false)
 }
 
+/// The commit [`base_vars`] says the run's branch forked from `main` at.
+pub const FORK_COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+
 /// The run worktree of a team pipeline: `main` under the item's directory.
 pub const TEAM_WORKSPACE: &str = "/archon/worktrees/demo/w1/main";
 
@@ -218,6 +221,7 @@ pub fn base_vars_merging(
         workspace: Path::new("/archon/worktrees/demo/w1"),
         branch: "archon/w1-fix-the-widget",
         base_branch: "main",
+        base_commit: FORK_COMMIT,
         ship_mode: ShipMode::Pr,
         auto_merge,
         run_id: run,

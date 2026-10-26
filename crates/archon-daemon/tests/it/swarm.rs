@@ -236,6 +236,28 @@ async fn a_written_plan_gives_each_task_a_worker_with_its_task_and_peers() {
     assert!(notes.iter().any(|n| n == assigned), "{notes:?}");
 }
 
+/// A task consuming a module the base already holds is accepted (issue #275),
+/// and its worker is told to use that module as it is.
+#[tokio::test]
+async fn a_task_may_consume_a_file_already_in_the_repository() {
+    let h = Harness::new().await;
+    commit_file(&h.repo, "greet.py", "def greet():\n    return 'hi'\n");
+    let mut plan = swarm_plan(&TASKS);
+    plan["tasks"][2]["consumes"] = json!(["greet.py"]);
+    let (_, run) = planned(&h, "consume greet", Some(&plan)).await;
+    let workers = running_workers(&h, 1).await;
+    assert_eq!(workers.len(), TASKS.len(), "the plan was accepted");
+    let edits = h.ctx.store.lock().await.run_edits(&run.id).expect("edits");
+    let RunEdit::AssignRoles { role_prompts, .. } = &edits[0].edit else {
+        panic!("the plan assigns roles: {edits:?}");
+    };
+    let docs = &role_prompts["docs"];
+    assert!(
+        docs.contains("- `greet.py`, already in the repository at the base"),
+        "{docs}"
+    );
+}
+
 /// A restart rebuilds the run from the recorded assignment, never the file.
 #[tokio::test]
 async fn a_restart_keeps_the_assigned_workers() {

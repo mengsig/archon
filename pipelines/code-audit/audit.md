@@ -13,12 +13,16 @@ own directory; report defects without changing product code.
 
 {{previous.scope.summary}}
 
-Read `{{workspace}}/.archon/code-audit/scope.md` and `commands.md` next to it.
-Work in `{{workspace}}` on branch `{{branch}}` of `{{repo.name}}`.
+Read `{{workspace}}/.archon/code-audit/scope.md` and `commands.md` and
+`lenses.md` next to it. Work in `{{workspace}}` on branch `{{branch}}` of
+`{{repo.name}}`.
 
 ## Your lens
 
-Apply only lens {{fan.index}} as your primary focus:
+Your lens is row {{fan.index}} of `lenses.md`, which the scope lead numbered
+from the brief. A lens the brief assigns wins over the defaults below; use
+default {{fan.index}} only when `lenses.md` has no row {{fan.index}}. The
+defaults:
 
 1. **Security:** injection, authentication and authorization bypasses,
    secrets exposure, unsafe deserialization, SSRF, path traversal and supply

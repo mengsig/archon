@@ -18,8 +18,8 @@ change code in this stage.
 
 ## How to work
 
-1. Read `git log --oneline {{base_branch}}..HEAD` and
-   `git diff {{base_branch}}...HEAD`.
+1. Read `git log --oneline {{base_commit}}..HEAD` and
+   `git diff {{base_commit}}...HEAD`.
 2. Read the earlier stages' summaries below: the implementer's report and
    every review or test verdict.
 3. Treat claims as claims: where a summary says a check passed, quote the

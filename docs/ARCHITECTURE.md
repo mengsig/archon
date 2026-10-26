@@ -2314,6 +2314,7 @@ agent's task `objective`. The stage contract (§8.6) is added separately as
 | `{{repo.name}}`, `{{repo.path}}` | Registry entry (empty when no repo). |
 | `{{workspace}}` | Absolute path the agent works in. |
 | `{{branch}}`, `{{base_branch}}` | Run branch and its base. |
+| `{{base_commit}}` | Where the run branch forked from its base: the merge base with the local base and `origin/<base>`, the newer one; the base's name when none is known. Prompts diff against it, never the local base. |
 | `{{ship.mode}}` | `pr` or `local`. |
 | `{{ship.auto_merge}}` | `true` when the item's `merge` knob is `auto` (§18), else `false`. |
 | `{{stage.id}}`, `{{attempt}}`, `{{fan.index}}`, `{{fan.count}}` | Position. |
@@ -3401,7 +3402,8 @@ object per line under `--json`).
   and checkout are never touched. A repository without `origin` forks from
   the local base silently; a fetch that fails forks from it with a warning
   (a `decision` in the item's feed), and `refresh_item` can merge the newer
-  base in later. The run's `base_branch` stays the branch name.
+  base in later. The run's `base_branch` stays the branch name, and its
+  `base_commit` records the fork, which prompts diff against.
   **Uncommitted changes in the operator's checkout are not included**, unlike
   Aether's isolated-delegation snapshot.
 - `workspace = "repo-readonly"` runs the stage in a snapshot, never in the

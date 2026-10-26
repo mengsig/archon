@@ -54,6 +54,10 @@ pub struct SwarmPlan {
     pub checks: Vec<String>,
     /// In plan order, which is merge order: a task depends only on earlier ones.
     pub tasks: Vec<SwarmTask>,
+    /// Consumed paths no task provides that the base already holds; set by
+    /// [`parse`], never read from the file.
+    #[serde(skip)]
+    pub at_base: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,7 +71,7 @@ pub struct SwarmTask {
     pub paths: Vec<String>,
     #[serde(default)]
     pub provides: Vec<Interface>,
-    /// Names of interfaces other tasks provide.
+    /// Names of interfaces other tasks provide, or paths the base holds.
     #[serde(default)]
     pub consumes: Vec<String>,
     /// Commands that pass in the task's worktree once it is done.
@@ -105,7 +109,8 @@ pub fn planner_limits(cap: u32) -> String {
          - Every interface `signature` has at most {MAX_TEXT} bytes.\n\
          - The file has at most {MAX_PLAN_BYTES} bytes.\n\
          - `provides` holds objects with a `name` and a `signature`, never bare strings; \
-         `consumes` holds the interface names as strings.\n\n\
+         `consumes` holds strings: names of interfaces other tasks provide, or paths the \
+         repository already holds at the base (such as `src/greet.py`).\n\n\
          The exact shape, with an interface:\n\n\
          ```json\n{PLAN_SHAPE}\n```\n",
         why = match tasks < MAX_TASKS {
@@ -127,15 +132,24 @@ pub fn correction(refusal: &str, attempt: usize) -> String {
 }
 
 /// Parse and validate a plan file's text; the error lists every problem.
-pub fn parse(text: &str) -> Result<SwarmPlan, ArchonError> {
+/// `at_base` says whether the base holds a repository path a task consumes.
+pub fn parse(
+    text: &str,
+    at_base: impl Fn(&str) -> Result<bool, ArchonError>,
+) -> Result<SwarmPlan, ArchonError> {
     if text.len() > MAX_PLAN_BYTES {
         return Err(refused(&[format!(
             "the file has {} bytes; a plan has at most {MAX_PLAN_BYTES}",
             text.len()
         )]));
     }
-    let plan: SwarmPlan =
+    let mut plan: SwarmPlan =
         serde_json::from_str(text).map_err(|e| refused(&[format!("it is not a plan: {e}")]))?;
+    assert!(
+        plan.at_base.is_empty(),
+        "the file never sets what the base holds"
+    );
+    plan.at_base = consumed_at_base(&plan.tasks, at_base)?;
     let problems = plan.problems();
     if !problems.is_empty() {
         return Err(refused(&problems));
@@ -176,6 +190,30 @@ pub fn assign(
     Ok((assigned != *spec).then_some(edit))
 }
 
+/// The consumed names no task provides that are paths `at_base` finds, each
+/// looked up once; a task consuming too many is refused by its own check.
+fn consumed_at_base(
+    tasks: &[SwarmTask],
+    at_base: impl Fn(&str) -> Result<bool, ArchonError>,
+) -> Result<BTreeSet<String>, ArchonError> {
+    let provided: BTreeSet<&str> = tasks
+        .iter()
+        .flat_map(|t| t.provides.iter().map(|i| i.name.as_str()))
+        .collect();
+    let mut asked: BTreeSet<&str> = BTreeSet::new();
+    let mut found = BTreeSet::new();
+    let bounded = tasks.iter().filter(|t| t.consumes.len() <= MAX_INTERFACES);
+    for name in bounded.flat_map(|t| t.consumes.iter()) {
+        let unprovided = !provided.contains(name.as_str());
+        if unprovided && path_parts(name).is_ok() && asked.insert(name) && at_base(name)? {
+            found.insert(name.clone());
+        }
+    }
+    assert!(found.len() <= asked.len(), "only looked-up paths are found");
+    assert!(found.iter().all(|name| !provided.contains(name.as_str())));
+    Ok(found)
+}
+
 fn refused(problems: &[String]) -> ArchonError {
     assert!(!problems.is_empty(), "a refusal names a problem");
     let mut text = format!("swarm plan `{PLAN_FILE}` is refused:");
@@ -208,7 +246,7 @@ impl SwarmPlan {
         }
         check_order(&self.tasks, &mut problems);
         check_disjoint(&self.tasks, &mut problems);
-        check_interfaces(&self.tasks, &mut problems);
+        check_interfaces(&self.tasks, &self.at_base, &mut problems);
         problems
     }
 
@@ -294,9 +332,16 @@ impl SwarmPlan {
             text.push_str("None.\n");
         }
         for name in &task.consumes {
-            let (owner, interface) = self
-                .provider(name)
-                .expect("validated: consumed is provided");
+            let Some((owner, interface)) = self.provider(name) else {
+                assert!(
+                    self.at_base.contains(name),
+                    "validated: consumed is provided"
+                );
+                text.push_str(&format!(
+                    "- `{name}`, already in the repository at the base: use it as it is.\n"
+                ));
+                continue;
+            };
             text.push_str(&format!(
                 "- `{name}` from task `{owner}`, built in parallel: code against this, not \
                  its files:\n\n{}\n",
@@ -391,6 +436,11 @@ fn check_task(task: &SwarmTask, problems: &mut Vec<String>) {
             "task {id:?} provides more than {MAX_INTERFACES} interfaces"
         ));
     }
+    if task.consumes.len() > MAX_INTERFACES {
+        problems.push(format!(
+            "task {id:?} consumes more than {MAX_INTERFACES} interfaces"
+        ));
+    }
     for interface in &task.provides {
         let empty = interface.name.trim().is_empty() || interface.signature.trim().is_empty();
         if empty || interface.signature.len() > MAX_TEXT {
@@ -466,8 +516,9 @@ fn check_disjoint(tasks: &[SwarmTask], problems: &mut Vec<String>) {
     }
 }
 
-/// Interface names are unique, and each consumed one is another task's.
-fn check_interfaces(tasks: &[SwarmTask], problems: &mut Vec<String>) {
+/// Interface names are unique, and each consumed one is another task's or a
+/// path the base holds (`at_base`).
+fn check_interfaces(tasks: &[SwarmTask], at_base: &BTreeSet<String>, problems: &mut Vec<String>) {
     let mut owners: BTreeMap<&str, &str> = BTreeMap::new();
     for task in tasks {
         for interface in &task.provides {
@@ -482,8 +533,11 @@ fn check_interfaces(tasks: &[SwarmTask], problems: &mut Vec<String>) {
     for task in tasks {
         for name in &task.consumes {
             match owners.get(name.as_str()) {
+                None if at_base.contains(name) => {}
                 None => problems.push(format!(
-                    "task {:?} consumes {name:?}, which no task provides",
+                    "task {:?} consumes {name:?}, which no task provides and the base holds \
+                     no such path; name another task's interface, or a file or directory \
+                     already in the repository",
                     task.id
                 )),
                 Some(owner) if *owner == task.id => problems.push(format!(

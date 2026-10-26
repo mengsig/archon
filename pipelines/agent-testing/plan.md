@@ -20,7 +20,7 @@ never change product code.
 
 1. **Learn the product surface.** Read the README, the user docs, the CLI
    help, the API routes or UI entry points, and recent changes
-   (`git log -20 --oneline`, plus the diff from `{{base_branch}}` if the brief
+   (`git log -20 --oneline`, plus the diff from `{{base_commit}}` if the brief
    is about a change). Identify who the users are and what they are trying to
    do.
 2. **Make it runnable.** Work out how to build and start the product, and do

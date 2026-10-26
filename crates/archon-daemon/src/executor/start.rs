@@ -164,7 +164,11 @@ async fn prepare(
     let experiments = crate::experiments::item_dir(&ctx.paths, &item.id);
     let approved =
         super::proposal::approved_before(&*ctx.store.lock().await, item, &workspace.branch);
+    let in_git = env.repo.is_some() && header.workspace != WorkspaceMode::Scratch;
+    let fork = fork_commit(&workspace, in_git).await;
     let assembled = approved.and_then(|approved| {
+        let fork = fork?;
+        let workspace = (workspace, fork.as_str());
         assemble(item, &env, spec, run_id, workspace, (experiments, approved))
     });
     match assembled {
@@ -253,11 +257,15 @@ fn assemble(
     env: &RepoEnv,
     spec: Arc<PipelineSpec>,
     run_id: PipelineRunId,
-    workspace: Workspace,
+    (workspace, base_commit): (Workspace, &str),
     (experiments, approved): (PathBuf, Option<ApprovedProposal>),
 ) -> Result<Prepared, ArchonError> {
     assert!(!spec.file.stages.is_empty(), "pipelines have a first stage");
     assert!(workspace.path.is_absolute(), "run workspaces are absolute");
+    assert!(
+        workspace.base.is_empty() || !base_commit.is_empty(),
+        "a run with a base knows where it forked"
+    );
     let repo = env.repo.as_ref();
     let base_vars = RunVars {
         task_title: &item.title,
@@ -267,6 +275,7 @@ fn assemble(
         workspace: &workspace.path,
         branch: &workspace.branch,
         base_branch: &workspace.base,
+        base_commit,
         ship_mode: repo.map_or(ShipMode::Local, |r| r.ship),
         auto_merge: item.autonomy.merge == MergeMode::Auto,
         run_id: &run_id,
@@ -304,6 +313,27 @@ fn assemble(
         base_vars,
         added: workspace.added,
     })
+}
+
+/// Where the run's change starts: the newest commit of its base, local or
+/// fetched from `origin`, that the branch holds, so a stale local base adds
+/// no commits to its diff. The base's name outside git or with no fork found.
+async fn fork_commit(workspace: &Workspace, in_git: bool) -> Result<String, ArchonError> {
+    assert!(workspace.path.is_absolute(), "run workspaces are absolute");
+    if !in_git || workspace.base.is_empty() {
+        return Ok(workspace.base.clone());
+    }
+    let (dir, base) = (workspace.path.clone(), workspace.base.clone());
+    let fork =
+        tokio::task::spawn_blocking(move || crate::worktree::branch_fork(&dir, &base, "HEAD"))
+            .await
+            .map_err(|e| ArchonError::io("fork point task", std::io::Error::other(e)))??;
+    assert!(
+        fork.as_ref()
+            .is_none_or(|fork| matches!(fork.len(), 40 | 64)),
+        "merge-base prints a full commit id"
+    );
+    Ok(fork.unwrap_or_else(|| workspace.base.clone()))
 }
 
 async fn workspace(

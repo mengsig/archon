@@ -308,8 +308,15 @@ fn item_detail(detail: &ItemDetail) -> String {
         let _ = write!(text, "\nRun {}", run_line(run));
         // get_stage reads the latest run unless told which.
         let older = (Some(&run.id) != latest).then_some(&run.id);
-        for stage in detail.stages.iter().filter(|s| s.run == run.id) {
-            let _ = write!(text, "\n  - {}", stage_line(&item.id, older, stage));
+        let stages: Vec<&StageRun> = detail.stages.iter().filter(|s| s.run == run.id).collect();
+        let retries = archon_core::run::slot_retries(
+            stages
+                .iter()
+                .map(|s| (s.stage_id.as_str(), s.attempt, s.fan_index)),
+        );
+        for (stage, retry) in stages.into_iter().zip(retries) {
+            let line = stage_line(&item.id, older, (stage, retry));
+            let _ = write!(text, "\n  - {line}");
             if let Some(delegation) = detail.delegations.get(&stage.id) {
                 let _ = write!(text, "\n    cost split: {}", delegation.line());
             }
@@ -489,7 +496,11 @@ fn until(directive: &Directive) -> String {
 
 /// A stage attempt; clipped text says how `get_stage` shows all of it.
 /// `run` is the stage's run when it is not the item's latest.
-fn stage_line(item: &QueueItemId, run: Option<&PipelineRunId>, stage: &StageRun) -> String {
+fn stage_line(
+    item: &QueueItemId,
+    run: Option<&PipelineRunId>,
+    (stage, retry): (&StageRun, u32),
+) -> String {
     assert!(
         run.is_none_or(|run| *run == stage.run),
         "a stage is named by its own run"
@@ -506,8 +517,11 @@ fn stage_line(item: &QueueItemId, run: Option<&PipelineRunId>, stage: &StageRun)
     };
     let choice = stage.current_choice();
     let mut line = format!(
-        "{} attempt {} slot {}: {choice} [{state}]",
-        stage.stage_id, stage.attempt, stage.fan_index
+        "{} attempt {} slot {}{}: {choice} [{state}]",
+        stage.stage_id,
+        stage.attempt,
+        stage.fan_index,
+        archon_core::run::retry_label(retry)
     );
     if let Some(verdict) = stage.verdict {
         let _ = write!(line, " verdict {}", snake(&verdict));

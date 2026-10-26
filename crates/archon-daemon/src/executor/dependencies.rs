@@ -37,6 +37,12 @@ pub(super) fn section(
     let base = base.ok_or_else(|| {
         ArchonError::Corrupt(format!("run {} of a worktree item records no base", run.id))
     })?;
+    // Still where the item's own work starts after a parent merged and its pull
+    // request was retargeted.
+    let fork = vars.get("base_commit").filter(|fork| !fork.is_empty());
+    let fork = fork.ok_or_else(|| {
+        ArchonError::Corrupt(format!("run {} of a worktree item records no fork", run.id))
+    })?;
     let mut found = Vec::with_capacity(item.dependencies.len());
     for id in &item.dependencies {
         let mut fact = dependency(store, id, item.repo.as_ref())?;
@@ -48,7 +54,7 @@ pub(super) fn section(
     }
     let parents = store.stack_parents(&item.id)?;
     let current_base = restack::target_base(store, &item.id)?;
-    let mut rules = contract::dependency_rules(current_base.as_ref().unwrap_or(base), &found);
+    let mut rules = contract::dependency_rules(current_base.as_ref().unwrap_or(base), fork, &found);
     if parents.iter().any(|p| p.conflict.is_some()) {
         rules.push_str("Before starting the requested change, merge (`git merge <sha>`, never rebase) each parent SHA below that `git merge-base --is-ancestor <sha> HEAD` says the branch lacks:\n");
         for parent in parents.iter().filter(|p| p.is_open()) {

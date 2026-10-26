@@ -86,7 +86,8 @@ byte sizes) follow this brief.
   a path of another;
 - interface names are unique, each an object with a `name` and a
   `signature` (never a bare string), and every name in `consumes` is
-  provided by another task;
+  provided by another task or is a file or directory already in the
+  repository at the base (such as `src/greet.py`);
 - each `objective` and each `signature` has at most 8000 bytes, and the
   file at most 65536 bytes;
 - `depends_on` names only earlier tasks: list tasks so that each depends

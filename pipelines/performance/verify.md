@@ -17,7 +17,7 @@ prove the complete test suite passes before the change reaches review.
 {{previous.optimize.summary}}
 
 - Workspace: `{{workspace}}`, branch `{{branch}}`, based on `{{base_branch}}`.
-- Change: `git diff {{base_branch}}...HEAD` and `git log {{base_branch}}..HEAD`.
+- Change: `git diff {{base_commit}}...HEAD` and `git log {{base_commit}}..HEAD`.
 - Do not edit tracked files, commit, push or switch branches. Keep temporary
   measurements inside the workspace and remove temporary scripts before
   finishing; build outputs and caches are fine.

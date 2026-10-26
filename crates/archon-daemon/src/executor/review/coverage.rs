@@ -142,7 +142,9 @@ pub(super) fn holds_tree(
 /// An `onto` item's change starts at its frozen head, which the branch holds; a
 /// newer base a refresh merged is a start too, as both hold the item's change.
 fn fork_points(dir: &Path, base: Base, head: &str) -> Result<Vec<String>, ArchonError> {
-    let forks: Vec<String> = branch_fork(dir, base.branch, head)?.into_iter().collect();
+    let forks: Vec<String> = worktree::branch_fork(dir, base.branch, head)?
+        .into_iter()
+        .collect();
     let Some(onto) = base.onto_head else {
         return Ok(forks);
     };
@@ -161,24 +163,6 @@ fn fork_points(dir: &Path, base: Base, head: &str) -> Result<Vec<String>, Archon
     }
     starts.push(onto);
     Ok(starts)
-}
-
-/// The newest commit of `base_branch` (local or `origin`'s) that `head` holds.
-fn branch_fork(dir: &Path, base_branch: &str, head: &str) -> Result<Option<String>, ArchonError> {
-    if base_branch.is_empty() {
-        return Ok(None);
-    }
-    let remote = format!("refs/remotes/origin/{base_branch}");
-    let mut bases = Vec::with_capacity(2);
-    for name in [base_branch, remote.as_str()] {
-        if let Some(base) = worktree::commit_id(dir, name)? {
-            bases.push(base);
-        }
-    }
-    if bases.is_empty() {
-        return Ok(None);
-    }
-    worktree::merge_base(dir, head, &bases)
 }
 
 /// `agent`'s verdict with its head and base as full commit ids, the base

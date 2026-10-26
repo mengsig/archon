@@ -168,6 +168,37 @@ async fn an_item_forks_from_origin_s_integration_branch_and_its_pull_request_tar
     );
 }
 
+/// The local `next` is stale (issue #275): the lead hands reviewers the fork
+/// from `origin/next`, never the local `next`, whose diff would hold every
+/// commit merged upstream since.
+#[tokio::test]
+async fn a_stale_local_base_leaves_the_prompt_naming_the_fork_commit() {
+    let (h, _gh) = delivering().await;
+    git(&h.repo, &["branch", "next", "main"]);
+    git(&h.repo, &["push", "--quiet", "origin", "next"]);
+    let stale = git(&h.repo, &["rev-parse", "next"]);
+    let upstream = advance_origin(&h, "next", "integrated.txt");
+    integrate_into(&h, "next").await;
+
+    let item = enqueue(&h, "diff from the fork").await;
+    h.dispatch().await;
+    let run = h.run(&item.id).await;
+    let fork = git(
+        &run.workspace,
+        &["merge-base", "HEAD", "next", "origin/next"],
+    );
+    assert_eq!(fork, upstream, "the branch forked from origin/next");
+    let requests = requests_of(&h, &item);
+    let prompt = &requests[0].objective;
+    assert!(
+        prompt.contains(&format!("the base (`{upstream}`) and head commits")),
+        "{prompt}"
+    );
+    assert!(!prompt.contains(&stale), "{prompt}");
+    assert!(!prompt.contains("merge-base next"), "{prompt}");
+    assert_eq!(git(&h.repo, &["rev-parse", "next"]), stale, "never moved");
+}
+
 /// `origin` has no integration branch: it is made from `origin`'s release
 /// branch, ahead of the local one, the operator hears of it, and the item
 /// forks from it.

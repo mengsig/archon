@@ -37,10 +37,15 @@ start from the brief.
    and authorization, money, parsing, concurrency, persistence and external
    I/O. Mark absent areas explicitly rather than inventing them.
 3. Record likely hotspots and existing test coverage with source references.
-   These are inspection priorities, not confirmed findings. Describe the
-   three lenses: security; correctness and reliability; maintainability and
-   performance. All three auditors use this same scope independently.
-4. Write `.archon/code-audit/commands.md`: discover the actual build, test and
+   These are inspection priorities, not confirmed findings. All auditors use
+   this same scope independently.
+4. Write `.archon/code-audit/lenses.md`: a table numbered from 1, one row per
+   auditor (three unless the brief says otherwise), giving each lens and what
+   it covers. Lenses the brief names win: keep their names, wording and order.
+   Fill only the rows the brief leaves open, in this order, with the default
+   lenses: security; correctness and reliability; maintainability and
+   performance. State in the file which rows came from the brief.
+5. Write `.archon/code-audit/commands.md`: discover the actual build, test and
    lint commands from README, Makefile, package manifests and CI. Record
    prerequisites, safe isolated reproduction options, cleanup and any
    credential or service limitations. Distinguish commands you ran from
@@ -51,6 +56,7 @@ start from the brief.
 ## Handoff
 
 Your summary must stand alone: target and commit, components and boundaries,
-top risks, build/test commands and their verification status, both map paths,
-and assumptions or coverage limitations. The auditors receive this summary
+top risks, the numbered lens table, build/test commands and their
+verification status, the three map paths, and assumptions or coverage
+limitations. The auditors receive this summary
 and read the map files.

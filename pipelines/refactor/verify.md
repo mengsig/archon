@@ -20,7 +20,7 @@ claims to verify against the repository and executed checks.
 ## Where the change is
 
 - Workspace: `{{workspace}}`, branch `{{branch}}`, based on `{{base_branch}}`.
-- Inspect `git log {{base_branch}}..HEAD` and `git diff {{base_branch}}...HEAD`.
+- Inspect `git log {{base_commit}}..HEAD` and `git diff {{base_commit}}...HEAD`.
   Also compare the refactor against the baseline/characterization commits
   named above, so new baseline tests are distinct from structural changes.
 - Do not edit tracked files, commit, push or switch branches. Keep build

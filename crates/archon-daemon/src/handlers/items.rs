@@ -36,7 +36,7 @@ pub(super) async fn enqueue(
     check_enqueue(&req.title, &req.brief, &req.tags, req.budget_usd)?;
     let (env, resolved) = enqueue_context(ctx, &req).await?;
     let asked = Asked {
-        autonomy: req.autonomy.clone(),
+        autonomy: req.autonomy,
         model_plan: req.model_plan.clone(),
     };
     let id = QueueItemId::new();

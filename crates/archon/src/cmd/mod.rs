@@ -66,7 +66,8 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::Status {
             no_start: _,
             check_updates,
-        } => control::status(check_updates, json).await,
+            verbose,
+        } => control::status(check_updates, verbose, json).await,
         Command::Cost { since, until, by } => {
             cost::run(since.as_deref(), until.as_deref(), by, json).await
         }

@@ -102,7 +102,16 @@ pub enum MergeState {
     },
 }
 
+/// How a refusal ends when the base already holds the work: news for the
+/// operator, not a blocker.
+pub const NOTHING_TO_MERGE: &str = "nothing to merge";
+
 impl MergeState {
+    /// Whether this is a refusal only because the work already landed.
+    pub fn is_nothing_to_merge(&self) -> bool {
+        matches!(self, Self::Refused { reason } if reason.ends_with(NOTHING_TO_MERGE))
+    }
+
     /// The stored name of the state.
     pub fn kind(&self) -> &'static str {
         match self {
@@ -434,7 +443,11 @@ pub fn assess(pr: &PullRequestFacts, expected: Expected<'_>) -> Result<Assessmen
     assert!(!expected.base.is_empty(), "a base branch is expected");
     match pr.state.as_str() {
         "OPEN" => {}
-        "MERGED" => return Err("the pull request is already merged".into()),
+        "MERGED" => {
+            return Err(format!(
+                "the pull request is already merged; {NOTHING_TO_MERGE}"
+            ));
+        }
         state => return Err(format!("the pull request is {}", state.to_lowercase())),
     }
     if pr.is_draft {
@@ -579,6 +592,10 @@ mod tests {
         assert!(with(|pr| pr.is_draft = true).contains("draft"));
         assert!(with(|pr| pr.mergeable = "CONFLICTING".into()).contains("conflicts"));
         assert!(with(|pr| pr.mergeable = "UNKNOWN".into()).contains("ask again"));
+        let refused = |reason: String| MergeState::Refused { reason };
+        assert!(refused(with(|pr| pr.state = "MERGED".into())).is_nothing_to_merge());
+        assert!(!refused(with(|pr| pr.state = "CLOSED".into())).is_nothing_to_merge());
+        assert!(!MergeState::Declined.is_nothing_to_merge());
     }
 
     #[test]

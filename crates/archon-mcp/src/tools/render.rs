@@ -60,12 +60,7 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         Reply::Question(question) => question_text(tool, question),
         Reply::Report(report) => report_text(report),
         Reply::Autonomy(view) => autonomy_text(view),
-        Reply::Directive(directive) => format!(
-            "Recorded directive {}{}: {}. Every trigger restates it until it is cleared.",
-            directive.id,
-            until(directive),
-            directive.text
-        ),
+        Reply::Directive(directive) => directive_recorded(directive),
         Reply::Cleared(count) => format!("Cleared {count} directive(s)."),
         Reply::GithubComment { url } => format!("Posted {url}"),
         Reply::CostReport(report) => cost::report(report),
@@ -486,6 +481,22 @@ fn merge_text(request: &MergeRequest) -> String {
         );
     }
     text
+}
+
+fn directive_recorded(directive: &Directive) -> String {
+    let text = directive.text.trim();
+    assert!(!text.is_empty(), "archond refuses an empty directive");
+    let stop = if text.ends_with(['.', '!', '?']) {
+        ""
+    } else {
+        "."
+    };
+    format!(
+        "Recorded directive {}{}: {text}{stop} Every trigger restates it until it is cleared. {}",
+        directive.id,
+        until(directive),
+        archon_core::autonomy::DIRECTIVE_CEILING_NOTE
+    )
 }
 
 fn until(directive: &Directive) -> String {
@@ -1004,6 +1015,23 @@ fn clip_noting(text: &str, max: usize, note: &str) -> String {
 #[cfg(test)]
 mod storage_tests {
     use super::*;
+
+    #[test]
+    fn a_recorded_directive_ends_one_sentence_once_and_names_the_ceiling() {
+        let mut directive = Directive {
+            id: archon_core::id::DirectiveId::new(),
+            text: "auto-merge every succeeded item.".into(),
+            source: archon_core::autonomy::DirectiveSource::Orchestrator,
+            set_at: archon_core::now(),
+            expires_at: None,
+        };
+        let text = directive_recorded(&directive);
+        assert!(text.contains("succeeded item. Every trigger"), "{text}");
+        assert!(!text.contains(".."), "{text}");
+        assert!(text.ends_with("never raises it."), "{text}");
+        directive.text = "be bold".into();
+        assert!(directive_recorded(&directive).contains(": be bold. Every trigger"));
+    }
 
     #[test]
     fn queue_status_says_when_the_orchestrator_is_stale() {

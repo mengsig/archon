@@ -51,8 +51,9 @@ pub(super) fn check(landing: Landing<'_>) -> Result<Result<Plan, String>, Archon
     assert!(crate::worktree::stack::is_commit_id(head), "a full commit");
     let Some(tip) = worktree::commit_id(repo, &heads(branch))? else {
         return Ok(Err(format!(
-            "branch `{branch}` no longer exists in {}; nothing to merge",
-            repo.display()
+            "branch `{branch}` no longer exists in {}; {}",
+            repo.display(),
+            archon_core::merge::NOTHING_TO_MERGE
         )));
     };
     if tip != head {

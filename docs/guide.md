@@ -834,7 +834,7 @@ reference, `[image: shot.png, 14.2 KB]`, not the image. In the terminal UI
 | `archon chat [--progress]` | the quiet line chat with the orchestrator |
 | `archon say [--image <path>]… "…"` | send one message, with any images, to the orchestrator and exit |
 | `archon questions` / `archon answer <n> "…"` | list or answer open questions; `Q<n>` is permanent and the same in the chat |
-| `archon status` | waiting items and their next action, daemon, orchestrator, `archon` MCP server health, caps, spend and Aether link |
+| `archon status` | waiting items and their next action, daemon, orchestrator, `archon` MCP server health, caps, spend, Aether link and total storage (`--verbose` lists each directory) |
 | `archon cost [--since <date\|7d>] [--until <date\|1d>] [--by day\|repo\|pipeline\|model\|provider\|item\|stage]` | spend as the budgets count it, grouped (by day over the last 7 days by default), with a total; spend with no owner in the grouping, such as the orchestrator's under `--by model`, is the `-` row |
 | `archon model-evidence [--repo <name\|id>] [--pipeline <name>] [--stage <id>] [--since <date\|30d>]` | recorded stage attempts, completed cost median/p90, median minutes and review/test pass shares; small samples marked, at most 60 groups; evidence only |
 | `archon queue add --title … --brief-file <path\|-> [--model-plan-file <json\|toml>] [--stage-timeout <stage>=<minutes>]…` | enqueue scripted work through the daemon's MCP-equivalent policy checks; stages the plan leaves out get Archon's default model; prints the id or the item with `--json`; a title is one line without control or bidirectional-override characters, and a brief is at most 1 MiB (1048576 bytes) with no NUL |
@@ -920,7 +920,8 @@ the next page starts (`archon queue list` lists every item).
 
 Queue detail and list views put `awaiting approval` first when the current
 run needs a proposal/report decision or a blocking Aether question, with
-the prompt and `archon answer …` command. Status shows these items before
+the prompt and `archon answer …` command; until the gate's question is
+asked they say `preparing approval`. Status shows these items before
 its daemon summary. JSON queue detail/list responses add `waiting_on` with
 `subject`, `stage`, `question`, `prompt`, and `next_action` while preserving
 the stored `state` (`running`). It is omitted when nothing blocks the run;

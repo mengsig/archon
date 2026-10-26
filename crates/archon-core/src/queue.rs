@@ -313,6 +313,24 @@ fn budgets_on() -> bool {
     true
 }
 
+/// A count cap as status and settings both show it: zero is no limit.
+pub fn format_limit(value: u32) -> String {
+    match value {
+        0 => "unlimited".to_owned(),
+        n => n.to_string(),
+    }
+}
+
+/// A dollar cap as status and settings both show it: zero is no limit.
+pub fn format_budget_usd(value: f64) -> String {
+    assert!(value.is_finite(), "a budget is finite, got {value}");
+    if value <= 0.0 {
+        "unlimited".to_owned()
+    } else {
+        format!("${value:.2}")
+    }
+}
+
 impl Default for Caps {
     fn default() -> Self {
         Self {

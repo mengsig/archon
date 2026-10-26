@@ -41,6 +41,7 @@ pub(super) async fn status(ctx: &DaemonContext, query: StatusQuery) -> Result<Re
     let snapshot = counts.snapshot;
     let integration = crate::integration::status(ctx).await?;
     let stage_warnings = crate::inbox_health::warnings(ctx, archon_core::now(), None).await?;
+    let (held_news, held_news_due) = triggers::held_news_status(ctx).await?;
     let status = DaemonStatus {
         waiting_items: waiting.items,
         waiting_total: count(waiting.total),
@@ -63,7 +64,8 @@ pub(super) async fn status(ctx: &DaemonContext, query: StatusQuery) -> Result<Re
         autonomy,
         directives: counts.directives,
         open_gates: count(counts.open_gates),
-        held_news: count(triggers::held_news(ctx).await?),
+        held_news: count(held_news),
+        held_news_due,
         mcp: Some(aether.mcp),
         github: aether.github,
         disk: Some(disk),

@@ -113,9 +113,9 @@ pub enum Command {
     Questions,
     /// Resolve what archond posted to Aether's notification center: an
     /// item's open blockers, or every open blocker and outcome with --all.
+    #[command(group(clap::ArgGroup::new("target").required(true).args(["item", "all"])))]
     ClearNotifications {
         /// The item's qi_… id, or enough of its start to name one item.
-        #[arg(required_unless_present = "all", conflicts_with = "all")]
         item: Option<String>,
         /// Every open blocker and outcome, not one item's.
         #[arg(long)]
@@ -160,6 +160,10 @@ pub enum Command {
         /// archond never does by itself.
         #[arg(long)]
         check_updates: bool,
+        /// List each storage directory's size, not only the total and the
+        /// largest.
+        #[arg(long)]
+        verbose: bool,
     },
     /// Spend over a range of days, grouped, with a total.
     ///
@@ -174,8 +178,8 @@ pub enum Command {
         /// Last day: a date, or days back (1d ends yesterday). Today by default.
         #[arg(long)]
         until: Option<String>,
-        /// What to group spend by; `-` gathers spend with no such owner, such
-        /// as the orchestrator's.
+        /// What to group spend by; `(orchestrator)` or `(no <group>)` gathers
+        /// spend with no such owner.
         #[arg(long, value_enum, default_value_t = CostBy::Day)]
         by: CostBy,
     },
@@ -1335,8 +1339,13 @@ mod tests {
             parse(&["status"]),
             Command::Status {
                 check_updates: false,
+                verbose: false,
                 ..
             }
+        ));
+        assert!(matches!(
+            parse(&["status", "--verbose"]),
+            Command::Status { verbose: true, .. }
         ));
         assert!(matches!(
             parse(&["repo", "add", ".", "--github"]),
@@ -1510,6 +1519,19 @@ mod tests {
                 Cli::try_parse_from(std::iter::once("archon").chain(bad.iter().copied())).is_err()
             );
         }
+        let bare = Cli::try_parse_from(["archon", "clear-notifications"]).unwrap_err();
+        let usage = bare.render().to_string();
+        assert!(
+            usage.contains("clear-notifications <ITEM|--all>"),
+            "{usage}"
+        );
+        let mut command = <Cli as clap::CommandFactory>::command();
+        let help = command
+            .find_subcommand_mut("clear-notifications")
+            .expect("the subcommand")
+            .render_help()
+            .to_string();
+        assert!(help.contains("<ITEM|--all>"), "{help}");
     }
 
     #[test]

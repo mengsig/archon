@@ -237,7 +237,10 @@ fn member_report(stage: &StageSpec, member: &StageRun) -> String {
 /// an item's override, not the pipeline's `timeout_minutes`.
 fn ran_for(member: &StageRun) -> String {
     match member.finished_at {
-        Some(end) => format!("{} minutes", (end - member.started_at).num_minutes()),
+        Some(end) => match (end - member.started_at).num_minutes() {
+            1 => "1 minute".to_owned(),
+            minutes => format!("{minutes} minutes"),
+        },
         None => "its deadline".to_owned(),
     }
 }
@@ -346,5 +349,8 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(ran_for(&member), "150 minutes");
+        let mut short = member.clone();
+        short.finished_at = Some("2026-10-18T20:28:54Z".parse().unwrap());
+        assert_eq!(ran_for(&short), "1 minute");
     }
 }

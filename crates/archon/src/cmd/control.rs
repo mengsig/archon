@@ -15,8 +15,9 @@ use crate::views;
 
 /// Never starts archond or Aether: without archond, its link to Aether
 /// cannot be observed either.
-/// `check_updates` first has archond ask the network for the latest releases.
-pub async fn status(check_updates: bool, json: bool) -> anyhow::Result<ExitCode> {
+/// `check_updates` first has archond ask the network for the latest releases;
+/// `verbose` lists every storage directory.
+pub async fn status(check_updates: bool, verbose: bool, json: bool) -> anyhow::Result<ExitCode> {
     let Some(client) = connect_existing().await? else {
         return Err(archon_core::error::ArchonError::Unavailable(format!(
             "{}; aether: disconnected (cannot observe its link without archond){}",
@@ -39,7 +40,7 @@ pub async fn status(check_updates: bool, json: bool) -> anyhow::Result<ExitCode>
     }
     println!(
         "{}{}{}",
-        views::status_text(&client).await?,
+        views::status_text(&client, verbose).await?,
         crash_note(),
         quarantine_note()
     );

@@ -14,7 +14,7 @@ use crate::autonomy::{
     ReviewLevel, ToolsMode,
 };
 use crate::error::ArchonError;
-use crate::queue::Caps;
+use crate::queue::{Caps, format_budget_usd, format_limit};
 
 /// What the operator set at one scope; unset fields come from the layer
 /// beneath. An empty value is "nothing set".
@@ -563,22 +563,23 @@ impl SettingsView {
         };
         let caps = &effective.caps;
         lines.push(format!(
-            "in force: budgets {} ({}), per item ${} ({}), daily ${} ({}), total ${} ({}), max per repo {} ({})",
+            "in force: budgets {} ({}), per item {} ({}), daily {} ({}), total {} ({}), max per repo {} ({})",
             if caps.budgets_enabled { "on" } else { "off" },
             source("caps.budgets_enabled"),
-            caps.budget_usd_per_item,
+            format_budget_usd(caps.budget_usd_per_item),
             source("caps.budget_usd_per_item"),
-            caps.budget_usd_daily,
+            format_budget_usd(caps.budget_usd_daily),
             source("caps.budget_usd_daily"),
-            caps.budget_usd_total,
+            format_budget_usd(caps.budget_usd_total),
             source("caps.budget_usd_total"),
-            caps.max_per_repo,
+            format_limit(caps.max_per_repo),
             source("caps.max_per_repo"),
         ));
+        let default = knob_values(effective.autonomy.default);
         lines.push(format!(
-            "autonomy default: {}\nautonomy ceiling: {}",
-            traced_knobs(effective, "default", effective.autonomy.default),
-            traced_knobs(effective, "max", effective.autonomy.ceiling),
+            "autonomy default: {}\nautonomy ceiling (allowed): {}",
+            traced_knobs(effective, "default", default),
+            traced_knobs(effective, "max", effective.autonomy.ceiling.allowed()),
         ));
         if let Some(pipeline) = &effective.default_pipeline {
             lines.push(format!(
@@ -596,8 +597,12 @@ impl SettingsView {
     }
 }
 
-fn traced_knobs(effective: &EffectiveSettings, which: &str, values: Autonomy) -> String {
-    let pairs: Vec<String> = knob_values(values)
+fn traced_knobs(
+    effective: &EffectiveSettings,
+    which: &str,
+    values: [(&'static str, String); 5],
+) -> String {
+    let pairs: Vec<String> = values
         .into_iter()
         .map(|(knob, value)| {
             let source = effective
@@ -631,6 +636,41 @@ mod tests {
             overlay,
             file,
         }
+    }
+
+    #[test]
+    fn the_description_shows_budgets_and_the_ceiling_as_status_does() {
+        let config = Config::default();
+        let global = OperatorSettings {
+            budget_usd_per_item: Some(5.0),
+            ..OperatorSettings::default()
+        };
+        let layers = Layers {
+            config: &config,
+            global: &global,
+            repo: None,
+        };
+        let effective = layers.effective();
+        let view = SettingsView {
+            repo: None,
+            scoped: global.clone(),
+            global,
+            effective,
+        };
+        let text = view.describe();
+        assert!(text.contains("per item $5.00 ("), "{text}");
+        assert!(text.contains("daily unlimited ("), "{text}");
+        assert!(text.contains("total unlimited ("), "{text}");
+        assert!(text.contains("max per repo unlimited ("), "{text}");
+        let ceiling = view.effective.autonomy.ceiling.describe_allowed();
+        let ranges = ceiling.split(", ").map(|knob| format!("{knob} ("));
+        for knob in ranges {
+            assert!(text.contains(&knob), "{knob} in {text}");
+        }
+        assert!(
+            text.contains("autonomy ceiling (allowed): review="),
+            "{text}"
+        );
     }
 
     #[test]

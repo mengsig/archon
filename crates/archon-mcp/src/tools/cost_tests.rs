@@ -87,7 +87,7 @@ fn rendered_cost_report_lists_each_group_then_the_total() {
             "Spend from 2026-09-23 to 2026-09-29 by repo, as the budgets count it (reported cost \
              plus API-equivalent estimates):",
             "- web: $2.50 (billed $2.50, list-price/API estimate $0.00, unclassified $0.00)",
-            "- (none): $1.00 (billed $0.00, list-price/API estimate $1.00, unclassified $0.00)",
+            "- (no repo): $1.00 (billed $0.00, list-price/API estimate $1.00, unclassified $0.00)",
             "Total: $3.50 (billed $2.50, list-price/API estimate $1.00, unclassified $0.00).",
         ]
     );

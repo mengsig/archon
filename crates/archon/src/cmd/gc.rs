@@ -114,8 +114,9 @@ fn preview_summary(report: &GcReport) -> String {
         lines.push(format!("could not check {}: {reason}", path.display()));
     }
     lines.push(
-        "Shared build caches, artifacts and report snapshots are not listed; \
-         run `archon gc` to collect everything."
+        "Not listed: shared build caches, artifacts, report snapshots, experiment directories \
+         and the team directories a pass empties, so `archon gc` may remove more than this, \
+         as it may for runs that finish meanwhile."
             .into(),
     );
     lines.join("\n")
@@ -123,8 +124,8 @@ fn preview_summary(report: &GcReport) -> String {
 
 fn summary(report: &GcReport) -> String {
     let mut lines = vec![format!(
-        "Removed {} worktree(s), set-aside and emptied team directories and deleted the \
-         build caches of {}; {} freed.",
+        "Removed {} worktree(s) and directories (set-aside trees, emptied team directories \
+         and experiment directories) and deleted the build caches of {}; {} freed.",
         report.removed.len(),
         report.reclaimed.len(),
         gib(report.bytes_freed)
@@ -213,5 +214,22 @@ mod tests {
             .push((PathBuf::from("/w/qi_4"), "denied".into()));
         assert!(summary(&report).ends_with("failed /w/qi_4: denied"));
         assert_eq!(exit_code(&report), ExitCode::FAILURE);
+    }
+
+    #[test]
+    fn the_preview_says_the_pass_may_remove_more() {
+        let report = GcReport {
+            removed: vec![PathBuf::from("/w/qi_1")],
+            ..GcReport::default()
+        };
+        let text = preview_summary(&report);
+        assert!(text.contains("gc would remove 1 worktree(s)"), "{text}");
+        assert!(
+            text.ends_with(
+                "`archon gc` may remove more than this, as it may for runs that finish meanwhile."
+            ),
+            "{text}"
+        );
+        assert!(summary(&report).contains("experiment directories"));
     }
 }

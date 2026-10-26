@@ -12,7 +12,7 @@ use archon_core::config::{AetherMode, Config};
 use archon_core::error::ArchonError;
 use archon_core::id::{QuestionId, QueueItemId};
 use archon_core::notify::{AnswerVia, FeedEntry, Question};
-use archon_core::protocol::{ClientKind, EnqueueRequest, Reply, RepoRef, Request};
+use archon_core::protocol::{ClientKind, EnqueueRequest, Reply, RepoRef, Request, WaitingOn};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::{GateDecision, GateSubject, OperatorGate, StageOutcome, StageRun};
 use archon_daemon::triggers::{self, TriggerEvent};
@@ -275,6 +275,42 @@ async fn at_report_gate() -> (Harness, QueueItem, Question) {
     let (gate, asked) = open_gate(&h, &item.id).await;
     assert_eq!(gate.subject, GateSubject::Report);
     (h, item, asked)
+}
+
+/// Between opening a gate and asking its question the item does not point
+/// at `archon questions`, which cannot list the question yet.
+#[tokio::test]
+async fn a_gate_not_yet_asked_says_its_question_is_coming() {
+    let (h, item, asked) = at_report_gate().await;
+    let ready = waiting_on(&h, &item.id).await;
+    assert_eq!(ready.question.as_ref(), Some(&asked.id));
+    assert!(ready.next_action.starts_with("archon answer "), "{ready:?}");
+    {
+        let mut store = h.ctx.store.lock().await;
+        let mut gate = store.gates_for_item(&item.id).expect("gates").remove(0);
+        gate.question = None;
+        store
+            .update_gate(&gate)
+            .expect("the gate before its question");
+    }
+    let preparing = waiting_on(&h, &item.id).await;
+    assert_eq!(preparing.question, None);
+    assert_eq!(
+        preparing.next_action,
+        "wait until `archon questions` lists its question"
+    );
+    assert_eq!(
+        preparing.prompt,
+        "The change report is being prepared for approval"
+    );
+}
+
+async fn waiting_on(h: &Harness, item: &QueueItemId) -> WaitingOn {
+    let request = Request::GetItem { item: item.clone() };
+    match h.cli(request).await.expect("get item") {
+        Reply::ItemDetail(detail) => detail.waiting_on.expect("the item waits"),
+        other => panic!("get item replied {other:?}"),
+    }
 }
 
 /// Nothing was answered and the daemon said nothing about a command.

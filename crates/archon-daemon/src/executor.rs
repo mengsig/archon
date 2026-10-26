@@ -379,18 +379,18 @@ pub(crate) async fn check_item_budget(
 ) -> Result<(), ArchonError> {
     let follow = {
         let mut table = ctx.runs.lock().await;
-        let (run, left, unaccounted_usage) = {
+        let (run, budget, unaccounted_usage) = {
             let store = ctx.store.lock().await;
             let item = store.item(item)?;
-            let left =
-                spawn::budget_left(ctx, &store, &item, ctx.config.limits.count_estimated_cost)?;
+            let budget =
+                spawn::item_budget(ctx, &store, &item, ctx.config.limits.count_estimated_cost)?;
             let run = store
                 .runs_for_item(&item.id)?
                 .into_iter()
                 .find(|run| !run.state.is_terminal());
             // A hard cap can account at the end of a turn. Do not reject its
             // interim, incomplete usage while Aether still enforces that cap.
-            let unaccounted_usage = if unaccounted_usage && left.is_some() && run.is_some() {
+            let unaccounted_usage = if unaccounted_usage && budget.is_some() && run.is_some() {
                 match stage {
                     Some(stage) => {
                         match spawn::load_spawn(&store, stage) {
@@ -408,9 +408,9 @@ pub(crate) async fn check_item_budget(
             } else {
                 false
             };
-            (run, left, unaccounted_usage)
+            (run, budget, unaccounted_usage)
         };
-        let (Some(run), Some(left)) = (run, left) else {
+        let (Some(run), Some(budget)) = (run, budget) else {
             return Ok(());
         };
         let error = if unaccounted_usage {
@@ -418,11 +418,8 @@ pub(crate) async fn check_item_budget(
              without complete dollar cost or a usable subscription estimate; configure \
              model pricing in Aether or choose a cost-reporting model"
                 .to_owned()
-        } else if left <= 0.0 {
-            format!(
-                "BLOCKED: the item's budget is used up ({} over); raise it with `archon queue steer <item> --budget-usd <USD>` or retry",
-                archon_core::cost::format_usd(-left)
-            )
+        } else if budget.left() <= 0.0 {
+            budget.used_up(&run.item)
         } else {
             return Ok(());
         };

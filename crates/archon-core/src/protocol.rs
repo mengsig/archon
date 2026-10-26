@@ -1157,6 +1157,11 @@ pub struct DaemonStatus {
     /// News events (triggers) held until the orchestrator can take them.
     #[serde(default)]
     pub held_news: u32,
+    /// Whether that news is being delivered (a batch in flight, or news that
+    /// wakes the orchestrator); else it is quiet and rides along with the
+    /// next trigger. `false` from an older archond.
+    #[serde(default)]
+    pub held_news_due: bool,
     /// The `archon` MCP server in Aether, and archond's heals of it. `None`
     /// from an archond that predates the check.
     #[serde(default)]

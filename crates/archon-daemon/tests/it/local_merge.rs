@@ -127,6 +127,36 @@ async fn a_clean_fast_forward_lands_the_branch_and_keeps_it() {
     assert!(h.repo.join("change.txt").exists(), "the checkout followed");
 }
 
+/// A second merge finds the base holding the branch: the operator hears it
+/// as news, not as a blocker waiting for them.
+#[tokio::test]
+async fn merging_a_landed_item_again_is_news_not_a_blocker() {
+    use archon_core::notify::{FeedEntry, NotificationKind};
+    let h = Harness::new().await;
+    let (item, _, _) = delivered_locally(&h).await;
+    let first = merged(&h, &item).await;
+    assert!(
+        matches!(first.state, MergeState::Merged { .. }),
+        "{first:?}"
+    );
+
+    let again = merged(&h, &item).await;
+    assert!(refusal(&again).ends_with("nothing to merge"), "{again:?}");
+    let feed = h.ctx.store.lock().await.feed_after(0, 10_000).unwrap();
+    let kinds: Vec<NotificationKind> = feed
+        .iter()
+        .filter_map(|entry| match &entry.entry {
+            FeedEntry::Notification(n) if n.item.as_ref() == Some(&item.id) => Some(n.kind),
+            _ => None,
+        })
+        .collect();
+    assert!(!kinds.contains(&NotificationKind::Blocker), "{kinds:?}");
+    assert!(
+        kinds.ends_with(&[NotificationKind::Outcome, NotificationKind::Outcome]),
+        "the merge and the refusal are both outcomes: {kinds:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_moved_base_is_refused_with_the_refresh_command() {
     let h = Harness::new().await;

@@ -3,6 +3,7 @@
 
 use std::process::ExitCode;
 
+use archon_core::autonomy::Directive;
 use archon_core::id::DirectiveId;
 use archon_core::protocol::{Reply, RepoRef, Request};
 
@@ -51,8 +52,16 @@ async fn direct(text: &str, hours: Option<u32>, json: bool) -> anyhow::Result<()
         Reply::Directive(directive) => directive,
         other => return Err(unexpected(&other, "directive")),
     };
-    let text = format!("Directive in force: {}", format::directive_line(&directive));
-    emit(json, || to_json(&directive), &text)
+    emit(json, || to_json(&directive), &directive_reply(&directive))
+}
+
+/// The directive as recorded, and that the ceiling still bounds it.
+fn directive_reply(directive: &Directive) -> String {
+    format!(
+        "Directive in force: {}\n{} `archon autonomy` shows the ceiling.",
+        format::directive_line(directive),
+        archon_core::autonomy::DIRECTIVE_CEILING_NOTE
+    )
 }
 
 async fn clear(directive: Option<DirectiveId>, json: bool) -> anyhow::Result<()> {
@@ -85,6 +94,23 @@ fn parse_directive_id(text: &str) -> anyhow::Result<DirectiveId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_directive_reply_says_the_ceiling_still_applies() {
+        let directive = Directive {
+            id: DirectiveId::new(),
+            text: "auto-merge every succeeded item without asking".into(),
+            source: archon_core::autonomy::DirectiveSource::Operator,
+            set_at: archon_core::now(),
+            expires_at: None,
+        };
+        let text = directive_reply(&directive);
+        assert!(text.starts_with("Directive in force: dir_"), "{text}");
+        assert!(
+            text.contains("\nThe autonomy ceiling still applies"),
+            "{text}"
+        );
+    }
 
     #[test]
     fn directive_ids_must_be_directive_ids() {

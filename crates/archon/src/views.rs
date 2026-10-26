@@ -81,7 +81,7 @@ pub async fn fetch_summaries(
     }
 }
 
-pub async fn status_text(client: &ArchonClient) -> anyhow::Result<String> {
+pub async fn status_text(client: &ArchonClient, verbose: bool) -> anyhow::Result<String> {
     let mut status = fetch_status(client).await?;
     // Older daemons have no waiting_items field; preserve their approval view.
     if status.waiting_items.is_empty() && (status.open_questions > 0 || status.open_gates > 0) {
@@ -99,7 +99,7 @@ pub async fn status_text(client: &ArchonClient) -> anyhow::Result<String> {
         .collect();
     }
     let names = format::repo_names(&fetch_repos(client).await?);
-    let mut text = format::status(&status, &names);
+    let mut text = format::status(&status, &names, verbose);
     let lessons = proposed_lessons(client).await?;
     if !lessons.is_empty() {
         text.push_str("\n\nProposed lessons waiting for you:\n");

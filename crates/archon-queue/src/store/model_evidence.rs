@@ -377,6 +377,7 @@ fn finish(
         tiers,
         providers: Vec::new(),
         pipelines: Vec::new(),
+        repo_names: Default::default(),
     }
 }
 

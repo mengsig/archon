@@ -27,7 +27,7 @@ pub(super) fn report(report: &CostReport) -> String {
         report.by.name()
     );
     for row in &report.rows {
-        let key = row.key.as_deref().unwrap_or("(none)");
+        let key = row.key.clone().unwrap_or_else(|| report.by.ownerless());
         let _ = write!(text, "\n- {key}: {}", amounts(&row.amounts));
     }
     let _ = write!(text, "\nTotal: {}.", amounts(&report.total));

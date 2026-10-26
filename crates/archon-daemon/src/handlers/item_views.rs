@@ -124,12 +124,13 @@ pub(super) fn waiting_on(
             .into(),
             stage: stage_id.clone(),
             question: question.as_ref().map(|q| q.id.clone()),
+            // The gate opens before its page is shown and its question asked.
             prompt: question.as_ref().map_or_else(
-                || format!("Approve the {}", subject.noun()),
+                || format!("The {} is being prepared for approval", subject.noun()),
                 |q| q.text.clone(),
             ),
             next_action: question.as_ref().map_or_else(
-                || "archon questions".into(),
+                || "wait until `archon questions` lists its question".into(),
                 |q| format!("archon answer {} {}", q.id, approving_word(q)),
             ),
         }));

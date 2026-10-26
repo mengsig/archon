@@ -913,7 +913,8 @@ async fn land_local(
         let plan = match local_merge::check(landing)? {
             Ok(local_merge::Plan::AlreadyIn) if !resuming => {
                 return Ok(Err(format!(
-                    "`{into}` already holds `{branch}`; nothing to merge"
+                    "`{into}` already holds `{branch}`; {}",
+                    archon_core::merge::NOTHING_TO_MERGE
                 )));
             }
             Ok(plan) => plan,
@@ -1173,7 +1174,10 @@ async fn report(ctx: &DaemonContext, merge: &MergeRequest) -> Result<(), ArchonE
                 merge.subject(),
                 merge.item
             );
-            (NotificationKind::Blocker, text)
+            match merge.state.is_nothing_to_merge() {
+                true => (NotificationKind::Outcome, text),
+                false => (NotificationKind::Blocker, text),
+            }
         }
         MergeState::AwaitingOperator
         | MergeState::AwaitingChecks

@@ -41,6 +41,51 @@ pub fn format_usd(amount: f64) -> String {
     }
 }
 
+/// Dollars to a hundredth of a cent, for amounts whole cents would blur, such
+/// as a small budget overrun: `$0.0012`, `$5.00`, `<$0.0001`.
+pub fn format_usd_fine(amount: f64) -> String {
+    assert!(
+        amount.is_finite(),
+        "a dollar amount is finite, got {amount}"
+    );
+    if amount > 0.0 && amount < 0.0001 {
+        return "<$0.0001".into();
+    }
+    let fine = format!("{:.4}", if amount == 0.0 { 0.0 } else { amount });
+    let (whole, fraction) = fine.split_once('.').expect("four decimals have a point");
+    assert_eq!(fraction.len(), 4, "formatted to four decimals");
+    let kept = fraction.trim_end_matches('0');
+    let fraction = if kept.len() < 2 { &fraction[..2] } else { kept };
+    format!("${whole}.{fraction}")
+}
+
+/// An item's dollar cap and what it has spent against it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ItemBudget {
+    pub cap_usd: f64,
+    pub spent_usd: f64,
+}
+
+impl ItemBudget {
+    pub fn left(self) -> f64 {
+        self.cap_usd - self.spent_usd
+    }
+
+    /// The blocker a run of `item` stops on once the cap is used up, with
+    /// the commands that raise the cap and run the item again.
+    pub fn used_up(self, item: &crate::id::QueueItemId) -> String {
+        assert!(self.left() <= 0.0, "only a used-up budget blocks");
+        assert!(self.cap_usd > 0.0, "a zero cap is no budget");
+        format!(
+            "BLOCKED: the item's budget is used up: {} spent of its {} cap ({} over); raise \
+             it with `archon queue steer {item} --budget-usd <USD>`, then `archon queue retry {item}`",
+            format_usd_fine(self.spent_usd),
+            format_usd_fine(self.cap_usd),
+            format_usd_fine(-self.left())
+        )
+    }
+}
+
 /// The `estimates` argument of spend reads that learn from or report what work
 /// cost: the API-equivalent total, so unbilled subscription usage is never free.
 pub const API_EQUIVALENT: bool = true;
@@ -75,6 +120,15 @@ impl CostGroup {
         Self::Item,
         Self::Stage,
     ];
+
+    /// The key of spend with no such owner. With no item it is the
+    /// orchestrator's and its helpers'; a stage or model also misses delegates.
+    pub fn ownerless(self) -> String {
+        match self {
+            Self::Item | Self::Pipeline => "(orchestrator)".to_owned(),
+            other => format!("(no {})", other.name()),
+        }
+    }
 
     /// The wire name, e.g. `pipeline`.
     pub fn name(self) -> &'static str {
@@ -386,7 +440,50 @@ mod tests {
 
 #[cfg(test)]
 mod amount_tests {
-    use super::format_usd;
+    use super::{ItemBudget, format_usd, format_usd_fine};
+
+    #[test]
+    fn fine_amounts_keep_a_hundredth_of_a_cent() {
+        for (amount, expected) in [
+            (0.0, "$0.00"),
+            (0.0012, "$0.0012"),
+            (0.05, "$0.05"),
+            (0.0512, "$0.0512"),
+            (0.051, "$0.051"),
+            (5.0, "$5.00"),
+            (12.34567, "$12.3457"),
+            (0.000002, "<$0.0001"),
+        ] {
+            assert_eq!(format_usd_fine(amount), expected, "{amount}");
+        }
+    }
+
+    #[test]
+    fn a_used_up_budget_names_the_item_the_cap_and_the_retry() {
+        let item = crate::id::QueueItemId::new();
+        let budget = ItemBudget {
+            cap_usd: 0.05,
+            spent_usd: 0.0512,
+        };
+        let text = budget.used_up(&item);
+        assert!(
+            text.starts_with("BLOCKED: the item's budget is used up"),
+            "{text}"
+        );
+        assert!(
+            text.contains("$0.0512 spent of its $0.05 cap ($0.0012 over)"),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!("archon queue steer {item} --budget-usd")),
+            "{text}"
+        );
+        assert!(
+            text.contains(&format!("then `archon queue retry {item}`")),
+            "{text}"
+        );
+        assert!(!text.contains("<item>") && !text.contains("<$"), "{text}");
+    }
 
     #[test]
     fn budget_amounts_keep_positive_fractions_visible() {

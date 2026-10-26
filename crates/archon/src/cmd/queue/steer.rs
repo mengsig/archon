@@ -3,6 +3,7 @@
 use archon_client::ArchonClient;
 use archon_core::id::QueueItemId;
 use archon_core::protocol::{Reply, Request};
+use archon_core::queue::{QueueItem, QueueState};
 use archon_core::steer::{InsertStage, Steer, Then};
 
 use crate::cli::{AfterAbort, QueueSteerArgs};
@@ -21,18 +22,30 @@ pub async fn run(args: QueueSteerArgs, json: bool) -> anyhow::Result<()> {
         steer,
     };
     let reply = client.request(request).await?;
-    if !matches!(reply, Reply::Item(_) | Reply::ItemBudgetsOff(_)) {
+    let (Reply::Item(steered) | Reply::ItemBudgetsOff(steered)) = &reply else {
         return Err(unexpected(&reply, "item"));
-    }
+    };
     super::note_budgets_off(&reply);
     if json {
         return emit(true, || reply_data(&reply), "");
     }
     let done = format!(
-        "Steered {item}: {}.",
-        last_change(&client, item.clone()).await?
+        "Steered {item}: {}.{}",
+        last_change(&client, item.clone()).await?,
+        retry_hint(steered)
     );
     emit(false, || reply_data(&reply), &done)
+}
+
+/// A steer changes what a failed item runs next but does not run it.
+fn retry_hint(item: &QueueItem) -> String {
+    match item.state {
+        QueueState::Failed { .. } => format!(
+            " It is still failed: run `archon queue retry {}` to run it with this change.",
+            item.id
+        ),
+        _ => String::new(),
+    }
 }
 
 /// What archond recorded for the steer just made: the item's newest one.
@@ -113,6 +126,27 @@ mod tests {
         let to = "implement".to_owned();
         assert_eq!(back.abort, Some(Then::Goto { to }));
         assert_eq!(steer(&["--note", "n"]).abort, None);
+    }
+
+    #[test]
+    fn a_steered_failed_item_is_told_to_retry_and_a_queued_one_is_not() {
+        let mut item: QueueItem = serde_json::from_value(serde_json::json!({
+            "id": "qi_01M5WQSTZ3Q1YGFKNRNKJVM1JZ", "repo": null, "pipeline": "direct",
+            "title": "t", "brief": "b", "priority": "normal", "dependencies": [],
+            "tags": [], "model_plan": {}, "state": {"state": "queued"},
+            "created_at": "2026-10-26T00:00:00Z", "updated_at": "2026-10-26T00:00:00Z"
+        }))
+        .expect("an item");
+        assert_eq!(retry_hint(&item), "");
+        item.state = QueueState::Failed {
+            error: "budget".into(),
+            run: None,
+        };
+        let hint = retry_hint(&item);
+        assert!(
+            hint.contains("run `archon queue retry qi_01M5WQSTZ3Q1YGFKNRNKJVM1JZ`"),
+            "{hint}"
+        );
     }
 
     #[test]

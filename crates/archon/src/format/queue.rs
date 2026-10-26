@@ -4,7 +4,7 @@
 use std::fmt::Write as _;
 
 use archon_core::Timestamp;
-use archon_core::protocol::{ItemDetail, ItemSummary};
+use archon_core::protocol::{ItemDetail, ItemSummary, WaitingOn};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::{
     self, GateDecision, OperatorGate, PipelineRun, RunState, StageRun, StageState,
@@ -60,12 +60,10 @@ fn item_row(row: &ItemSummary, names: &RepoNames, now: Timestamp) -> [String; 8]
     }
     [
         item.id.to_string(),
-        if row.waiting_on.is_some() {
-            "awaiting approval"
-        } else {
-            item.state.kind()
-        }
-        .to_owned(),
+        row.waiting_on
+            .as_ref()
+            .map_or_else(|| item.state.kind(), approval_state)
+            .to_owned(),
         row.stage
             .as_deref()
             .map_or_else(|| "-".to_owned(), sanitize_line),
@@ -93,12 +91,27 @@ fn state_detail(state: &QueueState) -> String {
         QueueState::Succeeded { summary, .. } => {
             format!("succeeded: {}", sanitize_line(summary))
         }
-        QueueState::Failed { error, .. } => format!("failed: {}", sanitize_line(error)),
+        QueueState::Failed { error, .. } => format!("failed: {}", plain_line(error)),
         QueueState::Cancelled {
             reason: Some(reason),
         } => format!("cancelled: {}", sanitize_line(reason)),
         other => other.kind().to_owned(),
     }
+}
+
+/// A gate opens before its question is asked; until then nothing can be
+/// answered, so the item is not yet awaiting approval.
+fn approval_state(wait: &WaitingOn) -> &'static str {
+    if wait.question.is_some() {
+        "awaiting approval"
+    } else {
+        "preparing approval"
+    }
+}
+
+/// One line of a failure for plain output: no Markdown emphasis.
+fn plain_line(text: &str) -> String {
+    sanitize_line(&text.replace("**", ""))
 }
 
 /// The item, then each run with its pull request, stages and gates, then
@@ -110,7 +123,8 @@ pub fn item_detail(detail: &ItemDetail, names: &RepoNames, full: bool) -> String
     if let Some(wait) = &detail.waiting_on {
         let _ = writeln!(
             out,
-            "state: awaiting approval ({})",
+            "state: {} ({})",
+            approval_state(wait),
             sanitize_line(&wait.subject)
         );
         let _ = writeln!(out, "{}", sanitize_line(&wait.prompt));
@@ -229,7 +243,7 @@ fn run_lines(out: &mut String, detail: &ItemDetail, run: &PipelineRun, full: boo
         out,
         "run {}: {}{on_branch} in {}",
         run.id,
-        run_state(&run.state),
+        run_state(&run.state, &detail.item.state),
         run.workspace.display()
     );
     let stages: Vec<&StageRun> = detail.stages.iter().filter(|s| s.run == run.id).collect();
@@ -245,7 +259,7 @@ fn run_lines(out: &mut String, detail: &ItemDetail, run: &PipelineRun, full: boo
             .map(|s| (s.stage_id.as_str(), s.attempt, s.fan_index)),
     );
     for (stage, retry) in stages.into_iter().zip(retries) {
-        let _ = writeln!(out, "  {}", stage_line(stage, retry));
+        let _ = writeln!(out, "  {}", stage_line(stage, retry, &run.state));
         if let Some(delegation) = detail.delegations.get(&stage.id) {
             let _ = writeln!(out, "    cost: {}", delegation.split());
             for agent in &delegation.agents {
@@ -271,7 +285,13 @@ fn run_lines(out: &mut String, detail: &ItemDetail, run: &PipelineRun, full: boo
     }
 }
 
-fn run_state(state: &RunState) -> String {
+/// The run's state; a failure the item's state already printed is not
+/// repeated.
+fn run_state(state: &RunState, item: &QueueState) -> String {
+    let item_failure = match item {
+        QueueState::Failed { error, .. } => Some(error.as_str()),
+        _ => None,
+    };
     match state {
         RunState::Running { stage_id, attempt } => {
             format!("running {stage_id} (attempt {attempt})")
@@ -284,7 +304,10 @@ fn run_state(state: &RunState) -> String {
         ),
         RunState::Succeeded { .. } => "succeeded".to_owned(),
         RunState::Failed { stage_id, error } => {
-            format!("failed at {stage_id}: {}", sanitize_line(error))
+            match item_failure == Some(&format!("stage {stage_id}: {error}")) {
+                true => format!("failed at {stage_id}"),
+                false => format!("failed at {stage_id}: {}", plain_line(error)),
+            }
         }
         RunState::Cancelled { reason } => match reason {
             Some(reason) => format!("cancelled: {}", sanitize_line(reason)),
@@ -319,12 +342,18 @@ fn gate_line(gate: &OperatorGate) -> String {
 
 /// `review attempt 2 slot 1: completed, verdict pass, $0.42, model (effort),
 /// agent agt_…`, with ` retry N` after the slot for the slot's `N`th retry.
-fn stage_line(stage: &StageRun, retry: u32) -> String {
+/// A failure its run already names is not repeated.
+fn stage_line(stage: &StageRun, retry: u32, run: &RunState) -> String {
+    let run_failure = match run {
+        RunState::Failed { error, .. } => Some(error.as_str()),
+        _ => None,
+    };
     let state = match &stage.state {
         StageState::Spawning => "spawning".to_owned(),
         StageState::Running => "running".to_owned(),
         StageState::Completed => "completed".to_owned(),
-        StageState::Failed { error } => format!("failed: {}", sanitize_line(error)),
+        StageState::Failed { error } if run_failure == Some(error.as_str()) => "failed".to_owned(),
+        StageState::Failed { error } => format!("failed: {}", plain_line(error)),
         StageState::Cancelled => "cancelled".to_owned(),
         StageState::TimedOut => "timed out".to_owned(),
     };
@@ -398,7 +427,7 @@ fn summary_lines(summary: &str, full: bool) -> Vec<String> {
 mod tests {
     use archon_core::aether_ids::AetherAgentId;
     use archon_core::autonomy::Autonomy;
-    use archon_core::id::{PipelineRunId, QueueItemId, RepoId, StageRunId};
+    use archon_core::id::{PipelineRunId, QuestionId, QueueItemId, RepoId, StageRunId};
     use archon_core::model::{Effort, ModelChoice, ModelPlan};
     use archon_core::queue::{Priority, QueueItem};
     use archon_core::run::{GateSubject, Verdict};
@@ -538,7 +567,7 @@ mod tests {
         let wait = archon_core::protocol::WaitingOn {
             subject: "proposal".into(),
             stage: "propose".into(),
-            question: None,
+            question: Some(QuestionId::new()),
             prompt: format!("Approve this direction?\nSpoof{}", " evidence".repeat(200)),
             next_action: "archon answer q_test approve".into(),
         };
@@ -570,6 +599,31 @@ mod tests {
         let value = serde_json::to_value(&detail).unwrap();
         assert_eq!(value["item"]["state"]["state"], "running");
         assert_eq!(value["waiting_on"]["subject"], "proposal");
+    }
+
+    #[test]
+    fn a_gate_not_yet_asked_is_preparing_not_awaiting_approval() {
+        let mut detail = detail_with_stages();
+        detail.item.state = QueueState::Running {
+            run: detail.runs[0].id.clone(),
+        };
+        detail.waiting_on = Some(archon_core::protocol::WaitingOn {
+            subject: "report".into(),
+            stage: "report".into(),
+            question: None,
+            prompt: "The change report is being prepared for approval".into(),
+            next_action: "wait until `archon questions` lists its question".into(),
+        });
+        let text = item_detail(&detail, &RepoNames::new(), false);
+        assert_eq!(
+            text.lines().nth(1),
+            Some("state: preparing approval (report)")
+        );
+        let mut row = summary(detail.item.clone());
+        row.waiting_on = detail.waiting_on.clone();
+        let listing = items(&[row], &RepoNames::new(), archon_core::now());
+        assert!(listing.contains("preparing approval"), "{listing}");
+        assert!(!listing.contains("awaiting approval"), "{listing}");
     }
 
     #[test]
@@ -642,6 +696,44 @@ mod tests {
             text.contains("\n  plan attempt 1 slot 0 retry 1: completed"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn a_failure_is_printed_once_and_without_markdown() {
+        let mut detail = detail_with_stages();
+        let error = "**`implement` slot 0: timed out after 1 minute**";
+        detail.runs[0].state = RunState::Failed {
+            stage_id: "implement".into(),
+            error: error.into(),
+        };
+        detail.item.state = QueueState::Failed {
+            run: Some(detail.runs[0].id.clone()),
+            error: format!("stage implement: {error}"),
+        };
+        let mut implement = stage_run(&detail.runs[0], "implement", "");
+        implement.state = StageState::Failed {
+            error: error.into(),
+        };
+        detail.stages = vec![implement];
+        let text = item_detail(&detail, &RepoNames::new(), false);
+        assert_eq!(
+            text.matches("timed out after 1 minute").count(),
+            1,
+            "{text}"
+        );
+        assert!(
+            text.contains("state: failed: stage implement: `implement` slot 0: timed out"),
+            "{text}"
+        );
+        assert!(
+            text.contains(": failed at implement on archon/x in /w\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("implement attempt 1 slot 0: failed, "),
+            "{text}"
+        );
+        assert!(!text.contains("**"), "{text}");
     }
 
     #[test]

@@ -11,6 +11,7 @@ use archon_core::aether_ids::{AetherAgentId, AetherRunId};
 use archon_core::autonomy::ToolsMode;
 use archon_core::catalog::{StageKind, WorkspaceMode};
 use archon_core::config::{BuildCache, Config};
+use archon_core::cost::ItemBudget;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::lesson::CONTRACT_LESSONS;
@@ -234,16 +235,14 @@ pub(crate) fn deadline(start: Timestamp, timeout_minutes: u32) -> Timestamp {
     deadline
 }
 
-/// What is left of the item's budget (its own, else the per-item cap);
+/// The item's budget (its own, else the per-item cap) and its spend;
 /// `None` when neither is set or budgets are switched off.
-/// What is left of `item`'s budget under its repository's caps; `None`
-/// when nothing bounds it.
-pub(crate) fn budget_left(
+pub(crate) fn item_budget(
     ctx: &DaemonContext,
     store: &Store,
     item: &QueueItem,
     estimates: bool,
-) -> Result<Option<f64>, ArchonError> {
+) -> Result<Option<ItemBudget>, ArchonError> {
     let caps = resolve::item_caps(ctx, item.repo.as_ref());
     if !caps.budgets_enabled {
         return Ok(None);
@@ -254,7 +253,10 @@ pub(crate) fn budget_left(
         return Ok(None);
     }
     let spent = store.spend_for_item(&item.id, estimates)?;
-    Ok(Some(budget - spent))
+    Ok(Some(ItemBudget {
+        cap_usd: budget,
+        spent_usd: spent,
+    }))
 }
 
 /// Why the run cannot take more agents.
@@ -342,12 +344,9 @@ fn reserve_plans(
         }
     }
     let estimates = ctx.config.limits.count_estimated_cost;
-    let budget = budget_left(ctx, store, &item, estimates)?;
-    if let Some(left) = budget.filter(|left| *left <= 0.0) {
-        let error = format!(
-            "BLOCKED: the item's budget is used up ({} over); raise it with `archon queue steer <item> --budget-usd <USD>` or retry",
-            archon_core::cost::format_usd(-left)
-        );
+    let budget = item_budget(ctx, store, &item, estimates)?;
+    if let Some(used_up) = budget.filter(|budget| budget.left() <= 0.0) {
+        let error = used_up.used_up(&item.id);
         let stage = plans[0].stage_id.clone();
         return Ok(Reserved::Blocked(Exhausted { stage, error }));
     }
@@ -363,7 +362,8 @@ fn reserve_plans(
             super::swarm::brief(plan, spec, cap, None);
         }
     }
-    let ids = reserve_each(ctx, store, (&run, &item, repo.as_ref()), plans, budget)?;
+    let left = budget.map(|budget| budget.left());
+    let ids = reserve_each(ctx, store, (&run, &item, repo.as_ref()), plans, left)?;
     Ok(Reserved::Spawned(ids))
 }
 
@@ -802,7 +802,7 @@ pub(super) fn reserve_replacement(
     assert!(!run.state.is_terminal(), "replacements join live runs only");
     let item = store.item(&run.item)?;
     let estimates = ctx.config.limits.count_estimated_cost;
-    let budget = budget_left(ctx, store, &item, estimates)?;
+    let budget = item_budget(ctx, store, &item, estimates)?.map(ItemBudget::left);
     if budget.is_some_and(|left| left <= 0.0) {
         return Ok(None);
     }

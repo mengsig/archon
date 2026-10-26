@@ -1,5 +1,6 @@
 //! On-demand observations of recorded stage attempts, never model recommendations.
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use chrono::NaiveDate;
@@ -7,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ArchonError;
 use crate::cost::{CostQuery, DayBound, DayRange};
+use crate::id::RepoId;
 use crate::model::{Effort, ModelChoice};
 use crate::model_tier::Tier;
 use crate::protocol::RepoRef;
@@ -89,6 +91,9 @@ pub struct ModelEvidenceReport {
     pub providers: Vec<ProviderEvidenceRow>,
     #[serde(default)]
     pub pipelines: Vec<crate::lesson::PipelineEvidence>,
+    /// Names of the repositories `pipelines` cite, as `cost` names them.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub repo_names: BTreeMap<RepoId, String>,
 }
 
 /// `completed=… median=… p90=… median_min=…`, then any pass share and a
@@ -194,10 +199,15 @@ impl ModelEvidenceReport {
     }
     fn pipeline_text(&self, text: &mut String) {
         for p in &self.pipelines {
+            let repo = p.repo.as_ref().map_or("global", |repo| {
+                self.repo_names
+                    .get(repo)
+                    .map_or(repo.as_str(), String::as_str)
+            });
             let _ = writeln!(
                 text,
                 "Pipeline {} / {} n={} pass={:.0}% median=${:.3} wall={:.0}s corrected={:.0}%",
-                p.repo.as_ref().map_or("global", |repo| repo.as_str()),
+                repo,
                 p.pipeline,
                 p.runs,
                 p.pass_rate * 100.0,
@@ -206,5 +216,48 @@ impl ModelEvidenceReport {
                 p.correction_rate * 100.0
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lesson::PipelineEvidence;
+
+    #[test]
+    fn pipeline_evidence_names_the_repository_and_falls_back_to_its_id() {
+        let named = RepoId::new();
+        let gone = RepoId::new();
+        let evidence = |repo: Option<RepoId>| PipelineEvidence {
+            repo,
+            pipeline: "adaptive".into(),
+            runs: 4,
+            pass_rate: 0.5,
+            median_cost_usd: 1.0,
+            median_wall_secs: 60.0,
+            correction_rate: 0.0,
+            estimated_saving_usd: None,
+        };
+        let report: ModelEvidenceReport = serde_json::from_value(serde_json::json!({
+            "range": {"since": "2026-10-01", "until": "2026-10-26"},
+            "estimates_counted": true, "rows": [], "omitted": 0
+        }))
+        .expect("a report without the optional fields");
+        let report = ModelEvidenceReport {
+            pipelines: vec![
+                evidence(Some(named.clone())),
+                evidence(Some(gone.clone())),
+                evidence(None),
+            ],
+            repo_names: BTreeMap::from([(named, "web".to_owned())]),
+            ..report
+        };
+        let text = report.text();
+        assert!(text.contains("\nPipeline web / adaptive n=4"), "{text}");
+        assert!(
+            text.contains(&format!("\nPipeline {gone} / adaptive")),
+            "{text}"
+        );
+        assert!(text.contains("\nPipeline global / adaptive"), "{text}");
     }
 }

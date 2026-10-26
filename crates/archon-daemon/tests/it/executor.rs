@@ -1505,10 +1505,10 @@ async fn subcent_item_overshoot_is_visible_once_when_the_next_stage_is_refused()
     let QueueState::Failed { error, .. } = h.state(&item.id).await else {
         panic!("the next stage must be refused");
     };
-    assert!(error.contains("(<$0.01 over)"), "{error}");
+    assert!(error.contains("(<$0.0001 over)"), "{error}");
     let notices = h.notices(NotificationKind::Blocker).await;
     assert_eq!(notices.len(), 1);
-    assert!(notices[0].contains("(<$0.01 over)"));
+    assert!(notices[0].contains("(<$0.0001 over)"));
     assert!(h.notices(NotificationKind::Outcome).await.is_empty());
 }
 

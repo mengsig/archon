@@ -8,6 +8,7 @@ use archon_core::config::AetherMode;
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::notify::{self, Question};
+use archon_core::queue::QueueState;
 
 use crate::context::DaemonContext;
 
@@ -93,7 +94,7 @@ async fn reason(
 }
 
 /// The post of a blocker or outcome, keyed by its feed notification; `None`
-/// for any other kind.
+/// for any other kind, and for the cancel of an item that never ran.
 pub(super) async fn notice(
     ctx: &DaemonContext,
     notification: &notify::Notification,
@@ -107,6 +108,9 @@ pub(super) async fn notice(
         notify::NotificationKind::Outcome => NotificationKind::Outcome,
         _ => return Ok(None),
     };
+    if is_unstarted_cancel(ctx, notification).await? {
+        return Ok(None);
+    }
     let mut body = Vec::new();
     if let Some(item) = &notification.item {
         body.push(item_line(ctx, item).await?);
@@ -116,6 +120,26 @@ pub(super) async fn notice(
     let post = NotificationPost::new(kind, key, &notification.text, &body.join("\n\n"));
     assert_eq!(post.key, key, "a notice is keyed by its feed notification");
     Ok(Some(post))
+}
+
+/// Whether `notification` is the outcome of an item cancelled before any run
+/// started: nothing happened to read about, and a bulk cancel would post one each.
+async fn is_unstarted_cancel(
+    ctx: &DaemonContext,
+    notification: &notify::Notification,
+) -> Result<bool, ArchonError> {
+    let (notify::NotificationKind::Outcome, None, Some(item)) =
+        (notification.kind, &notification.run, &notification.item)
+    else {
+        return Ok(false);
+    };
+    let store = ctx.store.lock().await;
+    let cancelled = match store.item(item) {
+        Ok(found) => matches!(found.state, QueueState::Cancelled { .. }),
+        Err(ArchonError::NotFound(_)) => false,
+        Err(error) => return Err(error),
+    };
+    Ok(cancelled && store.runs_for_item(item)?.is_empty())
 }
 
 /// `Item `qi_…`: <title>`, or the id alone when the item is gone.

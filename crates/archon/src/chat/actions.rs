@@ -101,7 +101,7 @@ async fn run_remote(
             chat.print(&text)
         }
         SlashCommand::Status => {
-            let text = views::status_text(client).await?;
+            let text = views::status_text(client, false).await?;
             chat.print(&text)
         }
         SlashCommand::Queue { states } => {

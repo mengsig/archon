@@ -216,6 +216,16 @@ impl Autonomy {
     /// A ceiling as the values it allows, `review=strict|standard|none, …`.
     /// Its own `proposal=off` would read as "no proposals" when it allows both.
     pub fn describe_allowed(self) -> String {
+        let pairs: Vec<String> = self
+            .allowed()
+            .iter()
+            .map(|(knob, allowed)| format!("{knob}={allowed}"))
+            .collect();
+        pairs.join(", ")
+    }
+
+    /// Each knob of a ceiling with the values it allows, `strict|standard|none`.
+    pub fn allowed(self) -> [(&'static str, String); 5] {
         let knobs = [
             (ReviewLevel::NAME, allowed_up_to(self.review)),
             (ProposalMode::NAME, allowed_up_to(self.proposal)),
@@ -224,11 +234,7 @@ impl Autonomy {
             (ToolsMode::NAME, allowed_up_to(self.tools)),
         ];
         assert!(knobs.iter().all(|(_, allowed)| !allowed.is_empty()));
-        let pairs: Vec<String> = knobs
-            .iter()
-            .map(|(knob, allowed)| format!("{knob}={}", allowed.join("|")))
-            .collect();
-        pairs.join(", ")
+        knobs.map(|(knob, allowed)| (knob, allowed.join("|")))
     }
 }
 
@@ -442,6 +448,11 @@ impl AutonomyPolicy {
 pub const MAX_DIRECTIVE_CHARS: usize = 500;
 /// Most directives in force at once.
 pub const MAX_DIRECTIVES: usize = 20;
+
+/// Said whenever a directive is recorded, so one asking for more than the
+/// ceiling allows is not mistaken for permission.
+pub const DIRECTIVE_CEILING_NOTE: &str =
+    "The autonomy ceiling still applies: a directive steers choices within it and never raises it.";
 
 /// Who recorded a directive: the operator from the CLI, or the orchestrator
 /// relaying what the operator said in chat.

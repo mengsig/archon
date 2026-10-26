@@ -183,6 +183,7 @@ fn linked_status() -> archon_core::protocol::DaemonStatus {
         merges_waiting: vec![],
         merge_granted: vec![],
         held_news: 0,
+        held_news_due: false,
         mcp: None,
         github: None,
         disk: None,

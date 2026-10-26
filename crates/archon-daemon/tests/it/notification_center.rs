@@ -775,3 +775,33 @@ async fn viewing_a_settled_item_resolves_its_outcome_but_a_live_one_keeps_its_bl
     view(item).await;
     assert_eq!(wait_for_state(&center, &done, "resolved").await, "resolved");
 }
+
+#[tokio::test]
+async fn cancelling_items_that_never_ran_posts_nothing() {
+    let h = Harness::new().await;
+    let center = Center::default();
+    center.install(&h);
+    let _bridge = bridge(&h, h.connect().await).await;
+    for _ in 0..300 {
+        let item = crate::link_common::queued_item(&h.ctx, h.dir.path()).await;
+        let cancel = Request::CancelItem { item, reason: None };
+        let reply = handlers::handle(&h.ctx, ClientKind::ArchonCli, cancel).await;
+        assert!(matches!(reply, Ok(Reply::Item(_))), "{reply:?}");
+    }
+    // Mirrored in feed order: once this is posted, every cancel was seen.
+    let last = feed::notify(&h.ctx, NotificationKind::Outcome, "after", None, None)
+        .await
+        .unwrap();
+    let FeedEntry::Notification(last) = &last.entry else {
+        panic!("a notification");
+    };
+    posted(&h, &center, last.id.as_str()).await;
+    let posts = center.all();
+    assert_eq!(
+        posts.len(),
+        1,
+        "no cancel was posted, {} were",
+        posts.len() - 1
+    );
+    assert_eq!(posts[0]["title"], "after");
+}

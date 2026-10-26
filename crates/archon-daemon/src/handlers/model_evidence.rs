@@ -6,7 +6,7 @@ use std::collections::{HashMap, hash_map::Entry};
 use archon_core::catalog::StageKind;
 use archon_core::error::ArchonError;
 use archon_core::id::RepoId;
-use archon_core::model_evidence::ModelEvidenceQuery;
+use archon_core::model_evidence::{ModelEvidenceQuery, ModelEvidenceReport};
 use archon_core::protocol::Reply;
 use archon_core::run::StageState;
 use archon_pipeline::PipelineSpec;
@@ -63,13 +63,35 @@ pub(super) async fn report(
             .is_some_and(|s| matches!(s.kind, StageKind::Review | StageKind::Test)))
     })?;
     if ctx.config.learning.enabled {
-        let store = ctx.store.lock().await;
-        let repo = query.repo.as_ref().map(|r| store.repo(r)).transpose()?;
-        report.pipelines = store
-            .learning_stats(repo.as_ref().map(|r| &r.id))?
-            .pipelines;
+        add_pipelines(ctx, query, &mut report).await?;
     }
     Ok(Reply::ModelEvidence(Box::new(report)))
+}
+
+/// Learning's per-pipeline evidence, with the names of the repositories it
+/// cites so the report names them as `cost` does.
+async fn add_pipelines(
+    ctx: &DaemonContext,
+    query: &ModelEvidenceQuery,
+    report: &mut ModelEvidenceReport,
+) -> Result<(), ArchonError> {
+    assert!(report.pipelines.is_empty(), "pipelines are added once");
+    let store = ctx.store.lock().await;
+    let repo = query.repo.as_ref().map(|r| store.repo(r)).transpose()?;
+    let stats = store.learning_stats(repo.as_ref().map(|r| &r.id))?;
+    let cited: Vec<&RepoId> = stats
+        .pipelines
+        .iter()
+        .filter_map(|p| p.repo.as_ref())
+        .collect();
+    report.repo_names = stats
+        .repo_names
+        .into_iter()
+        .filter(|(id, _)| cited.contains(&id))
+        .collect();
+    report.pipelines = stats.pipelines;
+    debug_assert!(report.repo_names.len() <= report.pipelines.len());
+    Ok(())
 }
 
 async fn current_spec(

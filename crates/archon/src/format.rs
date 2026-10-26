@@ -14,9 +14,9 @@ use archon_core::merge::MergeRequest;
 use archon_core::notify::Question;
 use archon_core::protocol::{
     AetherLinkStatus, DaemonStatus, DiskStatus, HostLoadStatus, McpHealth, McpStatus,
-    OrchestratorInfo, PauseTarget, ReportPublished, ReportState, ReportSummary, gib,
+    OrchestratorInfo, PauseTarget, ReportPublished, ReportState, ReportSummary, StorageUsage, gib,
 };
-use archon_core::queue::{Caps, PauseState};
+use archon_core::queue::{Caps, PauseState, format_budget_usd, format_limit};
 use archon_core::repo::{Attribution, Repo, ShipMode};
 
 use crate::wrap::{sanitize, sanitize_line};
@@ -48,8 +48,8 @@ fn repo_label(names: &RepoNames, id: Option<&RepoId>) -> String {
 }
 
 /// One `key: value` line per fact; `aether: connected|disconnected` is what
-/// scripts and the end-to-end test look for.
-pub fn status(status: &DaemonStatus, names: &RepoNames) -> String {
+/// scripts and the end-to-end test look for. `verbose` lists each storage.
+pub fn status(status: &DaemonStatus, names: &RepoNames, verbose: bool) -> String {
     let mut out = String::new();
     if !status.waiting_items.is_empty() {
         let _ = writeln!(
@@ -89,7 +89,7 @@ pub fn status(status: &DaemonStatus, names: &RepoNames) -> String {
     if let Some(hint) = status.versions.as_ref().and_then(|v| v.update_hint()) {
         let _ = writeln!(out, "{hint}");
     }
-    link_lines(&mut out, status);
+    link_lines(&mut out, status, verbose);
     let _ = writeln!(
         out,
         "queue: {} queued, {} blocked, {} active runs, {} running agents",
@@ -138,7 +138,7 @@ pub fn status(status: &DaemonStatus, names: &RepoNames) -> String {
 }
 
 /// Aether, the orchestrator and what archond depends on, one line each.
-fn link_lines(out: &mut String, status: &DaemonStatus) {
+fn link_lines(out: &mut String, status: &DaemonStatus, verbose: bool) {
     let _ = writeln!(out, "aether: {}", aether_link(&status.aether));
     let orchestrator = status
         .orchestrator
@@ -153,7 +153,8 @@ fn link_lines(out: &mut String, status: &DaemonStatus) {
         let _ = writeln!(out, "health: STALE {}", sanitize_line(&stale.join("; ")));
     }
     if status.held_news > 0 {
-        let _ = writeln!(out, "news: {}", held_news_line(status.held_news));
+        let line = held_news_line(status.held_news, status.held_news_due);
+        let _ = writeln!(out, "news: {line}");
     }
     if let Some(github) = &status.github {
         let _ = writeln!(out, "github: {}", github_line(github));
@@ -172,7 +173,15 @@ fn link_lines(out: &mut String, status: &DaemonStatus) {
     }
     if let Some(disk) = &status.disk {
         let _ = writeln!(out, "disk: {}", disk_line(disk));
-        for usage in &disk.storage {
+        storage_lines(out, &disk.storage, verbose);
+    }
+}
+
+/// Every storage with its size when `verbose`, else one line: the total and
+/// the largest, so a dozen directories do not bury the rest of the status.
+fn storage_lines(out: &mut String, storage: &[StorageUsage], verbose: bool) {
+    if verbose {
+        for usage in storage {
             let size = usage.bytes.map_or_else(
                 || {
                     format!(
@@ -184,7 +193,47 @@ fn link_lines(out: &mut String, status: &DaemonStatus) {
             );
             let _ = writeln!(out, "storage {}: {size}", usage.kind);
         }
+        return;
     }
+    let Some(largest) = storage
+        .iter()
+        .filter(|u| u.bytes.is_some())
+        .max_by_key(|u| u.bytes)
+    else {
+        if !storage.is_empty() {
+            let _ = writeln!(
+                out,
+                "storage: unreadable; `archon status --verbose` says why"
+            );
+        }
+        return;
+    };
+    let total: u64 = storage.iter().filter_map(|u| u.bytes).sum();
+    let unread = storage.iter().filter(|u| u.bytes.is_none()).count();
+    assert!(
+        total >= largest.bytes.unwrap_or(0),
+        "the total holds the largest"
+    );
+    let unread = match unread {
+        0 => String::new(),
+        n => format!(" ({n} unreadable)"),
+    };
+    let _ = writeln!(
+        out,
+        "storage: {} in {} places{unread}, largest {} {}; `archon status --verbose` lists each",
+        storage_size(total),
+        storage.len(),
+        largest.kind,
+        storage_size(largest.bytes.unwrap_or(0)),
+    );
+}
+
+/// GiB as the disk line shows them, or MiB below one GiB.
+fn storage_size(bytes: u64) -> String {
+    if bytes >= 1 << 30 {
+        return gib(bytes);
+    }
+    format!("{:.1} MiB", bytes as f64 / f64::from(1u32 << 20))
 }
 
 /// Host load and free memory against their limits, and the hold, if any.
@@ -300,13 +349,17 @@ pub fn mcp_line(mcp: &McpStatus, now: Timestamp) -> String {
     format!("{health}{failing}{unlinked}{healed}")
 }
 
-/// Why the orchestrator has not heard about recent events yet.
-fn held_news_line(held: u32) -> String {
-    let events = match held {
-        1 => "1 event".to_owned(),
-        n => format!("{n} events"),
-    };
-    format!("{events} held for the orchestrator, delivered once it is reachable")
+/// Why the orchestrator has not heard about recent events yet: news being
+/// delivered, or quiet news that waits for its next trigger.
+fn held_news_line(held: u32, due: bool) -> String {
+    match (due, held) {
+        (true, 1) => "1 event held for the orchestrator, delivered once it is reachable".into(),
+        (true, n) => {
+            format!("{n} events held for the orchestrator, delivered once it is reachable")
+        }
+        (false, 1) => "1 quiet event rides along with the orchestrator's next trigger".into(),
+        (false, n) => format!("{n} quiet events ride along with the orchestrator's next trigger"),
+    }
 }
 
 pub fn orchestrator_line(info: &OrchestratorInfo) -> String {
@@ -325,30 +378,15 @@ pub fn orchestrator_line(info: &OrchestratorInfo) -> String {
     )
 }
 
-fn limit(value: u32) -> String {
-    match value {
-        0 => "unlimited".to_owned(),
-        n => n.to_string(),
-    }
-}
-
-fn dollars(value: f64) -> String {
-    if value <= 0.0 {
-        "unlimited".to_owned()
-    } else {
-        format!("${value:.2}")
-    }
-}
-
 pub fn caps_line(caps: &Caps) -> String {
     let mut line = format!(
         "{} agents, {} per repo, {} active runs",
-        limit(caps.max_parallel_agents),
-        limit(caps.max_per_repo),
-        limit(caps.max_active_runs)
+        format_limit(caps.max_parallel_agents),
+        format_limit(caps.max_per_repo),
+        format_limit(caps.max_active_runs)
     );
     for (pipeline, max) in &caps.max_per_pipeline {
-        let _ = write!(line, ", {pipeline} {}", limit(*max));
+        let _ = write!(line, ", {pipeline} {}", format_limit(*max));
     }
     line
 }
@@ -359,9 +397,9 @@ pub fn budgets_line(caps: &Caps) -> String {
     }
     format!(
         "{} per item, {} daily, {} total",
-        dollars(caps.budget_usd_per_item),
-        dollars(caps.budget_usd_daily),
-        dollars(caps.budget_usd_total)
+        format_budget_usd(caps.budget_usd_per_item),
+        format_budget_usd(caps.budget_usd_daily),
+        format_budget_usd(caps.budget_usd_total)
     )
 }
 
@@ -928,6 +966,7 @@ pub(crate) mod tests {
             directives: vec![],
             open_gates: 2,
             held_news: 0,
+            held_news_due: false,
             mcp: None,
             github: None,
             disk: None,
@@ -953,7 +992,7 @@ pub(crate) mod tests {
             error: "x".into(),
             retry_at: None,
         });
-        assert!(!status(&up, &RepoNames::new()).contains("integration"));
+        assert!(!status(&up, &RepoNames::new(), false).contains("integration"));
         up.integration = vec![IntegrationStatus {
             repo: "archon".into(),
             branch: "next".into(),
@@ -966,7 +1005,7 @@ pub(crate) mod tests {
             problem: None,
             verified_at: None,
         }];
-        let text = status(&up, &RepoNames::new());
+        let text = status(&up, &RepoNames::new(), false);
         assert!(
             text.contains(
                 "\nintegration archon/next: pending at 1a2b3c4d; last green 9f8e7d6c, 2 merge(s) since\n"
@@ -990,7 +1029,7 @@ pub(crate) mod tests {
             }))
             .unwrap(),
         );
-        let text = status(&up, &RepoNames::new());
+        let text = status(&up, &RepoNames::new(), false);
         assert!(
             text.contains(
                 "restarted 6 times; generation 7, created by 1.2.3; prompt outdated; \
@@ -1006,14 +1045,14 @@ pub(crate) mod tests {
             error: "x".into(),
             retry_at: None,
         });
-        let done = status(&up, &RepoNames::new());
+        let done = status(&up, &RepoNames::new(), false);
         assert!(!done.contains("recovery:"), "{done}");
 
         up.recovery = Some(archon_core::protocol::RecoveryProgress {
             runs_done: 40,
             runs_total: Some(120),
         });
-        let text = status(&up, &RepoNames::new());
+        let text = status(&up, &RepoNames::new(), false);
         assert!(
             text.contains("\nrecovery: recovering 40/120 runs; changes are refused"),
             "{text}"
@@ -1036,7 +1075,7 @@ pub(crate) mod tests {
             aether: program("1.0.7", "1.0.7"),
         });
         up.upgrade = Some("a drained restart: draining, 2 still running, 60s left".into());
-        let text = status(&up, &RepoNames::new());
+        let text = status(&up, &RepoNames::new(), false);
         assert!(
             text.contains("\nversions: archon running 1.2.2, installed 1.2.3\n"),
             "{text}"
@@ -1065,7 +1104,7 @@ pub(crate) mod tests {
             github: None,
         };
         up.health = Some(health.clone());
-        let text = status(&up, &RepoNames::new());
+        let text = status(&up, &RepoNames::new(), false);
         assert!(!text.contains("health:"), "{text}");
         assert!(!text.contains("more waiting"), "{text}");
 
@@ -1075,7 +1114,7 @@ pub(crate) mod tests {
         };
         up.health = Some(health);
         (up.waiting_total, up.waiting_next_offset) = (75, Some(50));
-        let text = status(&up, &RepoNames::new());
+        let text = status(&up, &RepoNames::new(), false);
         assert!(
             text.contains("\nhealth: STALE aether: last answer 0s ago, still asking\n"),
             "{text}"
@@ -1089,7 +1128,7 @@ pub(crate) mod tests {
             error: "x".into(),
             retry_at: None,
         });
-        assert!(!status(&up, &RepoNames::new()).contains("quota"));
+        assert!(!status(&up, &RepoNames::new(), false).contains("quota"));
         let reset = "2026-10-16T18:30:00Z".parse().unwrap();
         up.quota = Some(archon_core::protocol::QuotaStatus {
             as_of: archon_core::now(),
@@ -1101,7 +1140,7 @@ pub(crate) mod tests {
                 windows: vec![],
             }],
         });
-        let text = status(&up, &RepoNames::new());
+        let text = status(&up, &RepoNames::new(), false);
         assert!(
             text.contains(
                 "\nquota codex: headroom 1.25, reserve 0%, next reset 2026-10-16 18:30 UTC\n"
@@ -1116,10 +1155,10 @@ pub(crate) mod tests {
             error: "x".into(),
             retry_at: None,
         });
-        let text = status(&up, &RepoNames::new());
+        let text = status(&up, &RepoNames::new(), false);
         assert!(text.contains("\nbudgets: unlimited per item"), "{text}");
         up.caps.budgets_enabled = false;
-        let text = status(&up, &RepoNames::new());
+        let text = status(&up, &RepoNames::new(), false);
         assert!(text.contains("\nbudgets: off (no dollar budget"), "{text}");
         assert!(text.contains("saved across restarts"), "{text}");
         assert!(text.contains("archon queue caps --budgets on"), "{text}");
@@ -1185,7 +1224,7 @@ pub(crate) mod tests {
             retry_at: None,
         });
         with_disk.disk = Some(disk.clone());
-        let text = status(&with_disk, &RepoNames::new());
+        let text = status(&with_disk, &RepoNames::new(), false);
         assert!(
             text.contains("\ndisk: 40.0 GiB free at /data/archon, holds below 10.0 GiB\n"),
             "{text}"
@@ -1230,10 +1269,52 @@ pub(crate) mod tests {
             }))
             .unwrap(),
         );
-        let text = status(&up, &RepoNames::new());
+        let text = status(&up, &RepoNames::new(), true);
         assert!(
             text.contains("storage reports_lavish: 8192 bytes"),
             "{text}"
+        );
+    }
+
+    #[test]
+    fn status_sums_storage_on_one_line_unless_verbose() {
+        let mut up = status_with(AetherLinkStatus::Disconnected {
+            error: "down".into(),
+            retry_at: None,
+        });
+        let usage = |kind: &str, bytes: Option<u64>| serde_json::json!({"kind": kind, "path": "/data", "bytes": bytes, "error": "denied"});
+        let mut storage: Vec<_> = (0..14)
+            .map(|i| usage(&format!("kind{i}"), Some(1 << 20)))
+            .collect();
+        storage.push(usage("cargo_target", Some(3 << 30)));
+        storage.push(usage("reports", None));
+        up.disk = Some(
+            serde_json::from_value(serde_json::json!({
+                "path": "/data", "free_bytes": 1000000, "min_free_bytes": 0, "held": false,
+                "storage": storage
+            }))
+            .unwrap(),
+        );
+        let text = status(&up, &RepoNames::new(), false);
+        let lines: Vec<&str> = text.lines().filter(|l| l.starts_with("storage")).collect();
+        assert_eq!(
+            lines,
+            [
+                "storage: 3.0 GiB in 16 places (1 unreadable), largest cargo_target 3.0 GiB; \
+              `archon status --verbose` lists each"
+            ]
+        );
+        let verbose = status(&up, &RepoNames::new(), true);
+        assert_eq!(
+            verbose
+                .lines()
+                .filter(|l| l.starts_with("storage "))
+                .count(),
+            16
+        );
+        assert!(
+            verbose.contains("storage reports: unknown (denied)"),
+            "{verbose}"
         );
     }
 
@@ -1244,7 +1325,7 @@ pub(crate) mod tests {
             retry_at: None,
         });
         assert!(
-            !status(&down, &RepoNames::new()).contains("\nmcp:"),
+            !status(&down, &RepoNames::new(), false).contains("\nmcp:"),
             "an older archond reports nothing"
         );
         let healed = archon_core::now() - chrono::TimeDelta::minutes(5);
@@ -1254,7 +1335,7 @@ pub(crate) mod tests {
             failed_refreshes: 0,
             failed_relinks: 0,
         });
-        let text = status(&down, &RepoNames::new());
+        let text = status(&down, &RepoNames::new(), false);
         assert!(
             text.contains("\nmcp: ok (22 tools), last healed 5m ago\n"),
             "{text}"
@@ -1332,7 +1413,7 @@ pub(crate) mod tests {
             retry_at: None,
         });
         up.github = Some(GithubWatch::Watching(Box::new(view.clone())));
-        let text = status(&up, &RepoNames::new());
+        let text = status(&up, &RepoNames::new(), false);
         assert!(
             text.contains(
                 "\ngithub: on, 2 repositories route @archon to the orchestrator; \
@@ -1409,7 +1490,7 @@ pub(crate) mod tests {
             retry_at: None,
         });
         up.github = Some(GithubWatch::Watching(Box::new(view.clone())));
-        assert!(!status(&up, &RepoNames::new()).contains("operator logins"));
+        assert!(!status(&up, &RepoNames::new(), false).contains("operator logins"));
 
         view.operator_users = Some(vec!["octocat".into(), "monalisa".into()]);
         view.repositories[0].excluded_operators = vec!["octocat".into()];
@@ -1429,7 +1510,7 @@ pub(crate) mod tests {
         );
         assert_eq!(set.lines().count(), 8, "one note, for the one barred login");
         up.github = Some(GithubWatch::Watching(Box::new(view.clone())));
-        let text = status(&up, &RepoNames::new());
+        let text = status(&up, &RepoNames::new(), false);
         assert!(
             text.contains("to the orchestrator; operator logins: octocat, monalisa\n"),
             "{text}"
@@ -1448,9 +1529,10 @@ pub(crate) mod tests {
             error: "down".into(),
             retry_at: None,
         });
-        assert!(!status(&held, &RepoNames::new()).contains("news:"));
+        assert!(!status(&held, &RepoNames::new(), false).contains("news:"));
         held.held_news = 3;
-        let text = status(&held, &RepoNames::new());
+        held.held_news_due = true;
+        let text = status(&held, &RepoNames::new(), false);
         assert!(
             text.contains(
                 "\nnews: 3 events held for the orchestrator, delivered once it is reachable\n"
@@ -1458,7 +1540,17 @@ pub(crate) mod tests {
             "{text}"
         );
         held.held_news = 1;
-        assert!(status(&held, &RepoNames::new()).contains("news: 1 event held"));
+        assert!(status(&held, &RepoNames::new(), false).contains("news: 1 event held"));
+        held.held_news = 23;
+        held.held_news_due = false;
+        let quiet = status(&held, &RepoNames::new(), false);
+        assert!(
+            quiet.contains(
+                "\nnews: 23 quiet events ride along with the orchestrator's next trigger\n"
+            ),
+            "{quiet}"
+        );
+        assert!(!quiet.contains("held for the orchestrator"), "{quiet}");
     }
 
     #[test]
@@ -1467,7 +1559,7 @@ pub(crate) mod tests {
             error: "connection refused".into(),
             retry_at: None,
         });
-        let text = status(&down, &RepoNames::new());
+        let text = status(&down, &RepoNames::new(), false);
         assert!(
             text.contains("\naether: disconnected (connection refused)\n"),
             "{text}"
@@ -1484,7 +1576,7 @@ pub(crate) mod tests {
             instance_id: "i".into(),
         });
         assert!(
-            status(&up, &RepoNames::new())
+            status(&up, &RepoNames::new(), false)
                 .contains("aether: connected (aetherd 0.9.0, protocol 14)")
         );
     }

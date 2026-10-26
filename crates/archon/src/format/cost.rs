@@ -36,7 +36,7 @@ pub fn cost(report: &CostReport) -> String {
         let key = row
             .key
             .as_deref()
-            .map_or_else(|| "-".to_owned(), sanitize_line);
+            .map_or_else(|| report.by.ownerless(), sanitize_line);
         cells.push(row_cells(key, &row.amounts));
     }
     cells.push(row_cells("total".to_owned(), &report.total));
@@ -111,7 +111,7 @@ mod tests {
                  API-equivalent estimates.",
                 "pipeline           counted  billed  list-price/API estimate  unclassified",
                 "default-pr-review  $12.25   $10.00  $2.25                    $0.00",
-                "-                  $1.50    $0.00   $1.50                    $0.00",
+                "(orchestrator)     $1.50    $0.00   $1.50                    $0.00",
                 "total              $13.75   $10.00  $3.75                    $0.00",
             ]
         );
@@ -133,7 +133,7 @@ mod tests {
         assert_eq!(
             lines[lines.len() - 2..],
             [
-                "total     $2.00    $0.00   $2.00                    $1.00",
+                "total           $2.00    $0.00   $2.00                    $1.00",
                 "≈ $3.00 API-equivalent with the estimates.",
             ]
         );
@@ -156,6 +156,21 @@ mod tests {
         }
         assert!(lines[5].starts_with("total  "), "{text}");
         assert!(lines[5].contains("$0.01"), "{text}");
+    }
+
+    #[test]
+    fn spend_with_no_owner_names_what_it_lacks() {
+        let mut report = report(
+            vec![CostRow {
+                key: None,
+                amounts: amounts(1.0, 0.0),
+            }],
+            amounts(1.0, 0.0),
+        );
+        report.by = CostGroup::Item;
+        let text = cost(&report);
+        assert!(text.contains("\n(orchestrator)  $1.00"), "{text}");
+        assert!(!text.contains("\n- "), "{text}");
     }
 
     #[test]

@@ -593,8 +593,9 @@ pub(crate) fn wake(ctx: &DaemonContext) {
     ctx.triggers.news.notify_one();
 }
 
-/// Compact the news held behind a stuck batch, as keying it would; what is
-/// dropped is counted in a digest that a later compaction folds in.
+/// Compact the news held behind a stuck batch, or quiet news piling up for
+/// the next trigger, as keying it would; what is dropped is counted in a
+/// digest that a later compaction folds in.
 fn compact_pending(store: &mut Store, outbox: &mut Outbox) -> Result<(), ArchonError> {
     let held = std::mem::take(&mut outbox.pending);
     let before = held.len();
@@ -606,7 +607,18 @@ fn compact_pending(store: &mut Store, outbox: &mut Outbox) -> Result<(), ArchonE
         after > 0 && after <= before,
         "compaction keeps at least a digest and never grows the news"
     );
-    tracing::info!(before, after, "compacted news held behind a batch");
+    match outbox.in_flight.is_some() {
+        true => tracing::info!(
+            before,
+            after,
+            "compacted news held behind a batch in flight"
+        ),
+        false => tracing::info!(
+            before,
+            after,
+            "compacted quiet news waiting for the next trigger"
+        ),
+    }
     Ok(())
 }
 
@@ -849,9 +861,21 @@ pub async fn due(ctx: &DaemonContext) -> Result<bool, ArchonError> {
 /// How many news events wait for the orchestrator (see [`held`]), read
 /// beside the writer for `status`.
 pub async fn held_news(ctx: &DaemonContext) -> Result<usize, ArchonError> {
+    Ok(held_news_status(ctx).await?.0)
+}
+
+/// The held news count and whether it is [`due`], from one read beside the
+/// writer, so `status` tells delivery apart from quiet news riding along.
+pub async fn held_news_status(ctx: &DaemonContext) -> Result<(usize, bool), ArchonError> {
     let outbox = read_outbox(&*ctx.read_store().await?)?;
-    let in_flight = outbox.in_flight.map_or(0, |batch| batch.events.len());
-    Ok(in_flight + outbox.pending.len())
+    let due = outbox.in_flight.is_some() || outbox.is_due(archon_core::now());
+    let in_flight = outbox
+        .in_flight
+        .as_ref()
+        .map_or(0, |batch| batch.events.len());
+    let held = in_flight + outbox.pending.len();
+    assert!(!due || held > 0, "only held news can be due");
+    Ok((held, due))
 }
 
 /// `trg_<store>_<first>_<last>` over a persisted count of trigger events:

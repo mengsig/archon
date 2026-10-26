@@ -2490,6 +2490,13 @@ table and delivers it off every lock:
    commit that neither the base nor a remote holds has an author and a
    committer e-mail of the repository's recorded identity or
    `archon@localhost`, which archond's own merges use when git has none. The
+   clean check reads HEAD through a shadow and runs no program named by
+   repository or worktree config. A regular file whose HEAD blob is a strict
+   LFS v1 pointer (less than 1024 bytes, with sorted keys) is also clean when
+   its bytes equal that pointer, or its length and streamed SHA-256 match
+   the pointer's size and oid. Only paths reported by `diff-files` are
+   considered; mode changes and deletions remain dirty. Attributes do not
+   establish this equivalence: the committed pointer does. The
    identity is what `git var` yields in the repository under the
    operator's config (`GIT_*` identity variables removed), recorded in
    `kv` `repo_identity:<repo>` at `archon repo add` and again at `archon

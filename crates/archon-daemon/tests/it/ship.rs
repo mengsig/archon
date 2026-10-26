@@ -312,6 +312,162 @@ async fn uncommitted_changes_refuse_the_delivery() {
     assert!(gh.calls().is_empty());
 }
 
+const LFS_ABC_OID: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+fn lfs_pointer(size: u64) -> String {
+    format!("version https://git-lfs.github.com/spec/v1\noid sha256:{LFS_ABC_OID}\nsize {size}\n")
+}
+
+/// A committed pointer is the evidence, even without attributes or git-lfs.
+#[tokio::test]
+async fn local_mode_ships_smudged_lfs_and_unsmudged_pointers_without_running_filters() {
+    let (h, gh) = delivering().await;
+    update_repo(
+        &h,
+        RepoPatch {
+            ship: Some(ShipMode::Local),
+            ..RepoPatch::default()
+        },
+    )
+    .await;
+    let (item, run) = started(&h, "direct").await;
+    let pointer = lfs_pointer(3);
+    // Hundreds of candidates also exercise bounded, sequential blob and file reads.
+    for i in 0..128 {
+        std::fs::write(run.workspace.join(format!("asset-{i}.bin")), &pointer).unwrap();
+    }
+    std::fs::write(run.workspace.join("unsmudged.bin"), &pointer).unwrap();
+    std::fs::write(
+        run.workspace.join("asset without attributes.uasset"),
+        &pointer,
+    )
+    .unwrap();
+    std::fs::write(
+        run.workspace.join(".gitattributes"),
+        "*.bin filter=hostile\n",
+    )
+    .unwrap();
+    git(&run.workspace, &["add", "."]);
+    git(
+        &run.workspace,
+        &["commit", "--quiet", "-m", "Add LFS pointers"],
+    );
+    let verified = record(&run.workspace);
+    for i in 0..128 {
+        std::fs::write(run.workspace.join(format!("asset-{i}.bin")), b"abc").unwrap();
+    }
+    std::fs::write(
+        run.workspace.join("asset without attributes.uasset"),
+        b"abc",
+    )
+    .unwrap();
+    let marker = run.workspace.join("filter-ran");
+    let command = format!("touch {}; cat", marker.display());
+    git(
+        &run.workspace,
+        &["config", "filter.hostile.clean", &command],
+    );
+    git(
+        &run.workspace,
+        &["config", "filter.hostile.smudge", &command],
+    );
+    settle_with(&h, verified).await;
+
+    succeeded(&h, &item).await;
+    assert!(h.run(&item.id).await.shipped);
+    assert!(!marker.exists(), "repository filters never run as archond");
+    assert!(gh.calls().is_empty());
+}
+
+#[tokio::test]
+async fn local_mode_refuses_lfs_mismatches_deletions_and_type_changes() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    for case in [
+        "hash",
+        "size",
+        "deleted",
+        "symlink",
+        "directory",
+        "executable",
+        "normal",
+        "malformed",
+        "quoted-path",
+        "parent-symlink",
+    ] {
+        let (h, gh) = delivering().await;
+        update_repo(
+            &h,
+            RepoPatch {
+                ship: Some(ShipMode::Local),
+                ..RepoPatch::default()
+            },
+        )
+        .await;
+        let (item, run) = started(&h, "direct").await;
+        let relative = if case == "quoted-path" {
+            "asset\nname.bin"
+        } else if case == "parent-symlink" {
+            "nested/asset.bin"
+        } else {
+            "asset.bin"
+        };
+        let asset = run.workspace.join(relative);
+        std::fs::create_dir_all(asset.parent().unwrap()).unwrap();
+        let pointer = lfs_pointer(if case == "size" { 4 } else { 3 });
+        let committed = if case == "malformed" {
+            pointer.replace("size 3", "size +3")
+        } else {
+            pointer
+        };
+        std::fs::write(&asset, committed).unwrap();
+        git(&run.workspace, &["add", "."]);
+        git(
+            &run.workspace,
+            &["commit", "--quiet", "-m", "Add LFS pointer"],
+        );
+        let verified = record(&run.workspace);
+        std::fs::remove_file(&asset).unwrap();
+        match case {
+            "deleted" => {}
+            "symlink" => {
+                std::fs::write(run.workspace.join("content"), b"abc").unwrap();
+                symlink("content", &asset).unwrap();
+            }
+            "directory" => std::fs::create_dir(&asset).unwrap(),
+            "parent-symlink" => {
+                std::fs::remove_dir(run.workspace.join("nested")).unwrap();
+                std::fs::create_dir(run.workspace.join("other")).unwrap();
+                std::fs::write(run.workspace.join("other/asset.bin"), b"abc").unwrap();
+                symlink("other", run.workspace.join("nested")).unwrap();
+            }
+            "hash" | "quoted-path" => std::fs::write(&asset, b"abd").unwrap(),
+            _ => std::fs::write(&asset, b"abc").unwrap(),
+        }
+        if case == "executable" {
+            git(&run.workspace, &["config", "core.fileMode", "true"]);
+            std::fs::set_permissions(&asset, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        if case == "normal" {
+            std::fs::write(run.workspace.join("README.md"), "edited, not committed\n").unwrap();
+        }
+        settle_with(&h, verified).await;
+
+        let error = failed(&h, &item).await;
+        assert!(error.contains("uncommitted changes"), "{case}: {error}");
+        assert!(
+            error.contains(if case == "normal" {
+                "README.md"
+            } else {
+                "asset"
+            }),
+            "{case}: {error}"
+        );
+        assert!(!h.run(&item.id).await.shipped, "{case}");
+        assert!(gh.calls().is_empty(), "{case}");
+    }
+}
+
 /// A commit made under an identity the agent set itself is not the
 /// repository's: it is named, and the branch is not pushed.
 #[tokio::test]

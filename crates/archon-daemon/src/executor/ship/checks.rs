@@ -6,6 +6,8 @@
 //! Blocking git, none of it running a program the worktree's config names:
 //! callers run it off the async runtime.
 
+mod lfs;
+
 use std::path::{Path, PathBuf};
 
 use archon_core::error::ArchonError;
@@ -271,9 +273,13 @@ fn compare(
     };
     git()?.args(["read-tree", commit]).text()?;
     git()?.args(["update-index", "-q", "--refresh"]).text()?;
-    let changed = git()?.args(["diff-files", "--name-only"]).text()?;
-    assert!(!changed.contains('\0'), "one path per line");
-    Ok(changed)
+    let changed = git()?
+        .args(["diff-files", "--raw", "--no-abbrev", "-z"])
+        .output()?;
+    if !changed.status.success() {
+        return Err(changed.failure());
+    }
+    lfs::dirty_paths(shadow, tree, &changed.stdout)
 }
 
 /// Refuse a workspace that is not the worktree git registered for the run:

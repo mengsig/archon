@@ -10,7 +10,9 @@ use archon_core::model::{Effort, ModelPlan, ModelPlanDraft, ModelReasons, check_
 use archon_core::notify::NotificationKind;
 use archon_core::protocol::{EnqueueRequest, ItemDetail, ItemPatch, ItemQuery, Reply};
 use archon_core::pull_request::{OntoPullRequest, OntoTarget};
-use archon_core::queue::{QueueItem, QueueState, check_enqueue, check_item_budget, check_tags};
+use archon_core::queue::{
+    QueueItem, QueueState, check_enqueue, check_item_budget, check_tags, check_title,
+};
 use archon_core::repo::Repo;
 use archon_pipeline::PipelineSpec;
 use archon_pipeline::spec::MIN_ROLES;
@@ -350,6 +352,9 @@ pub(super) async fn update_within(
     if let Some(tags) = &patch.tags {
         check_tags(tags)?;
     }
+    if let Some(title) = &patch.title {
+        check_title(title)?;
+    }
     let current = ctx.store.lock().await.item(id)?;
     if matches!(current.state, QueueState::Succeeded { .. }) && patch.autonomy.is_some() {
         return after_success(ctx, current, patch, ceiling).await;
@@ -401,7 +406,8 @@ pub(super) async fn update_within(
         let table = ctx.runs.lock().await;
         let mut store = ctx.store.lock().await;
         let mut item = store.item(id)?;
-        check_patchable(&item, &patch, replaces_plan)?;
+        let ran = !store.runs_for_item(id)?.is_empty();
+        check_patchable(&item, &patch, (replaces_plan, ran))?;
         if let Some(revision) = &revision {
             revise::apply(&mut store, &table, &mut item, revision)?;
         }
@@ -484,12 +490,18 @@ async fn after_success(
 fn check_patchable(
     item: &QueueItem,
     patch: &ItemPatch,
-    replaces_plan: bool,
+    (replaces_plan, ran): (bool, bool),
 ) -> Result<(), ArchonError> {
     let id = &item.id;
     if matches!(item.state, QueueState::Succeeded { .. }) {
         return Err(ArchonError::InvalidTransition(format!(
             "item {id} already succeeded"
+        )));
+    }
+    if patch.title.is_some() && ran {
+        return Err(ArchonError::InvalidTransition(format!(
+            "item {id} has run already, on a branch named after its title; the title changes \
+             only before the first run"
         )));
     }
     let steered = replaces_plan || patch.brief_append.is_some();
@@ -514,6 +526,9 @@ fn apply_patch(
     }
     if let Some(text) = &patch.brief_append {
         item.amend_brief(text, archon_core::now())?;
+    }
+    if let Some(title) = patch.title {
+        item.title = title.trim().to_owned();
     }
     if let Some(priority) = patch.priority {
         item.priority = priority;

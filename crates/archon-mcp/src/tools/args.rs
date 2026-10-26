@@ -564,7 +564,12 @@ fn update_item(args: &mut Args) -> Result<Request, ToolError> {
     if tags.iter().flatten().any(|tag| tag.trim().is_empty()) {
         return Err(args.error("tags", "must not contain empty strings"));
     }
+    let title = args.optional_text("title")?;
+    if title.as_deref().is_some_and(|t| t.contains('\n')) {
+        return Err(args.error("title", "must be a single line; put the details in `brief`"));
+    }
     let patch = ItemPatch {
+        title,
         priority: args.optional("priority")?,
         model_plan: args.optional_plan("model_plan")?,
         model_reasons: args.optional_reasons()?,
@@ -577,8 +582,8 @@ fn update_item(args: &mut Args) -> Result<Request, ToolError> {
     };
     if patch == ItemPatch::default() {
         return Err(ToolError(
-            "update_item: nothing to change; pass at least one of priority, model_plan, model_reasons, tags, \
-             add_depends_on, budget_usd, stage_timeouts, brief_append, autonomy"
+            "update_item: nothing to change; pass at least one of title, priority, model_plan, \
+             model_reasons, tags, add_depends_on, budget_usd, stage_timeouts, brief_append, autonomy"
                 .into(),
         ));
     }

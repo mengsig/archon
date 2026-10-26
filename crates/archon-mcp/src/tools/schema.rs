@@ -585,6 +585,7 @@ fn update_item() -> ToolDefinition {
         object(
             json!({
                 "item": item_id(""),
+                "title": {"type": "string", "description": "Before the first run only."},
                 "priority": priority(),
                 "model_reasons": model_reasons(),
                 "model_plan": new_model_plan("Replaces the whole plan."),

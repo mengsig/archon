@@ -82,7 +82,7 @@ pub(super) fn samples() -> Vec<(&'static str, Value)> {
         ),
         (
             "update_item",
-            json!({"item": qi(), "priority": "low", "model_plan": plan(), "model_reasons": {"implement": "Apply supplied fix"}, "tags": [], "add_depends_on": [qi()], "budget_usd": 2.5, "stage_timeouts": {"implement": 90}, "brief_append": "Do Y.", "autonomy": {"merge": "auto", "tools": "yolo"}, "idempotency_key": "lower-1"}),
+            json!({"item": qi(), "title": "Renamed", "priority": "low", "model_plan": plan(), "model_reasons": {"implement": "Apply supplied fix"}, "tags": [], "add_depends_on": [qi()], "budget_usd": 2.5, "stage_timeouts": {"implement": 90}, "brief_append": "Do Y.", "autonomy": {"merge": "auto", "tools": "yolo"}, "idempotency_key": "lower-1"}),
         ),
         (
             "cancel_item",
@@ -568,6 +568,26 @@ fn update_item_takes_autonomy_alone_and_never_an_override() {
         );
         assert!(sent.contains(flag), "{sent}");
     }
+}
+
+#[test]
+fn update_item_takes_a_one_line_title_alone() {
+    let request = to_request(
+        "update_item",
+        json!({"item": qi(), "title": "Clearer name"}),
+    );
+    let Ok(Request::UpdateItem { patch, .. }) = request else {
+        panic!("a title alone is an update: {request:?}");
+    };
+    assert_eq!(patch.title.as_deref(), Some("Clearer name"));
+    assert_eq!(patch.priority, None);
+    let split = refusal("update_item", json!({"item": qi(), "title": "one\ntwo"}));
+    assert!(
+        split.contains("`title`") && split.contains("single line"),
+        "{split}"
+    );
+    let blank = refusal("update_item", json!({"item": qi(), "title": " "}));
+    assert!(blank.contains("`title`"), "{blank}");
 }
 
 #[test]
@@ -1188,12 +1208,13 @@ fn shown_bytes(definition: &ToolDefinition) -> usize {
 
 /// Every orchestrator turn pays for the tool list: 1.0's 25 tools (30,071 bytes
 /// then) stay within 67% of that (62% before `idempotency_key`, 61% before model_plan tiers, 18,500 bytes before stage_timeouts), and all of
-/// them within 32 KiB (28 KiB before `promote` and `onto`, 30 KiB before `idempotency_key` and `request_status`).
+/// them within 33 KiB (28 KiB before `promote` and `onto`, 30 KiB before `idempotency_key` and `request_status`,
+/// 32 KiB before `update_item`'s `title`).
 #[test]
 fn the_tool_list_stays_within_its_budget() {
     const FROM_1_0: usize = 25;
     const FROM_1_0_BUDGET_BYTES: usize = 20_000;
-    const BUDGET_BYTES: usize = 32 * 1024;
+    const BUDGET_BYTES: usize = 33 * 1024;
     let definitions = definitions();
     assert_eq!(definitions[FROM_1_0 - 1].name, "message_orchestrator");
     let carried: usize = definitions[..FROM_1_0].iter().map(shown_bytes).sum();

@@ -65,7 +65,8 @@ use crate::steer::Steer;
 /// `stage_timeouts`, which an older archond would drop.
 /// 21: `tracked` changes with an `idempotency_key`, and `request_status`; an
 /// older archond knows neither request.
-pub const PROTOCOL_VERSION: u32 = 21;
+/// 22: `update_item` may carry `title`, which an older archond would drop.
+pub const PROTOCOL_VERSION: u32 = 22;
 
 /// Said beside an item whose `budget_usd` was set while budgets are off.
 pub const BUDGETS_OFF_NOTE: &str = "Dollar budgets are globally off ([limits] budgets_enabled = \
@@ -830,6 +831,9 @@ pub struct ItemQuery {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ItemPatch {
+    /// A new one-line title; only before the item's first run, whose branch it names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     pub priority: Option<Priority>,
     pub model_plan: Option<ModelPlanDraft>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

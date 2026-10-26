@@ -28,19 +28,7 @@ pub fn check_enqueue(
     tags: &[String],
     budget: Option<f64>,
 ) -> Result<(), ArchonError> {
-    if title.trim().is_empty() {
-        return Err(ArchonError::Invalid("an item needs a title".into()));
-    }
-    if title.contains(['\u{2028}', '\u{2029}']) || title.trim().chars().count() > 200 {
-        return Err(ArchonError::Invalid(
-            "titles must be one line of at most 200 characters".into(),
-        ));
-    }
-    if title.chars().any(|c| c.is_control() || is_bidi_control(c)) {
-        return Err(ArchonError::Invalid(
-            "titles must not contain control or bidirectional-override characters".into(),
-        ));
-    }
+    check_title(title)?;
     if brief.trim().is_empty() {
         return Err(ArchonError::Invalid(
             "an item needs a nonempty brief".into(),
@@ -57,6 +45,25 @@ pub fn check_enqueue(
     }
     check_tags(tags)?;
     check_item_budget(budget)
+}
+
+/// A title an enqueue or an update accepts: one nonempty line of at most 200
+/// characters, with no control or bidirectional-override character.
+pub fn check_title(title: &str) -> Result<(), ArchonError> {
+    if title.trim().is_empty() {
+        return Err(ArchonError::Invalid("an item needs a title".into()));
+    }
+    if title.contains(['\u{2028}', '\u{2029}']) || title.trim().chars().count() > 200 {
+        return Err(ArchonError::Invalid(
+            "titles must be one line of at most 200 characters".into(),
+        ));
+    }
+    if title.chars().any(|c| c.is_control() || is_bidi_control(c)) {
+        return Err(ArchonError::Invalid(
+            "titles must not contain control or bidirectional-override characters".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// The tag that wakes the orchestrator when the item finishes, however it

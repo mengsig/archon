@@ -2011,8 +2011,15 @@ async fn late_completion_of_a_cancelled_run_strips_unverified_pr_urls() {
     );
 }
 
-/// Aether's scheduling tools: the orchestrator's, hidden from every stage agent.
-const SCHEDULE_TOOLS: [&str; 3] = ["create_schedule", "update_schedule", "list_schedules"];
+/// Aether's own tools hidden from every stage agent: its schedules, which
+/// outlive a stage, its `notify`, which bypasses Archon's feed, and quota probes.
+const HIDDEN_NATIVE_TOOLS: [&str; 5] = [
+    "create_schedule",
+    "update_schedule",
+    "list_schedules",
+    "notify",
+    "refresh_provider_usage",
+];
 
 /// What a guarded stage agent does not see, in a workspace it may write.
 fn guarded_hidden() -> Vec<String> {
@@ -2020,7 +2027,7 @@ fn guarded_hidden() -> Vec<String> {
     archon_core::mcp_tools::qualified_names()
         .into_iter()
         .filter(|name| !kept.contains(name))
-        .chain(SCHEDULE_TOOLS.map(str::to_owned))
+        .chain(HIDDEN_NATIVE_TOOLS.map(str::to_owned))
         .collect()
 }
 

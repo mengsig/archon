@@ -162,7 +162,10 @@ calls `request_authority` with:
 - `utterance`: the inbox sequence of your message;
 - `quote`: text that occurs verbatim in that message, on word boundaries, of
   at least 3 words or 12 non-space characters unless it is the whole message;
-  for an `answer` it must also contain the answer's first word;
+  for an `answer` it must also contain the answer's first word, with no
+  `no`, `not`, `never`, `nor`, `cannot`, `dont` or word ending in `n't` up
+  to 4 words before it in the same clause ("don't approve it yet" backs no
+  `approve`; "no, approve it" does);
 - `reason`: one line, 1–500 characters;
 - `action`: one command JSON from the allowlist above, or an `answer` for a
   proposal or report gate.

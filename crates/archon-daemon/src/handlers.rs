@@ -127,8 +127,14 @@ async fn refuse_early(
     request: &Request,
 ) -> Result<(), ArchonError> {
     if for_an_agent(client, caller) && request.is_operator_only() {
+        let shell = match (client, caller) {
+            (ClientKind::ArchonCli, Some(agent)) => {
+                format!(", and this archon CLI runs in a shell of Aether agent {agent}")
+            }
+            _ => String::new(),
+        };
         return Err(ArchonError::Forbidden(format!(
-            "{} is reserved for the operator's archon CLI",
+            "{} is reserved for the operator's archon CLI{shell}",
             command_name(request)
         )));
     }
@@ -172,10 +178,15 @@ async fn take_authority<'a>(
     caller: Option<&AetherAgentId>,
     request: &Request,
 ) -> Result<Option<RwLockReadGuard<'a, ()>>, ArchonError> {
+    // A CLI forwards for the agent its environment names, which says nothing
+    // of whether Aether names the callers of Archon's tools.
+    let named_by_aether = client == ClientKind::ArchonMcp;
     if orchestrators_alone(client, caller, request) {
-        return supervisor::authorize(ctx, caller).await.map(Some);
+        return supervisor::authorize(ctx, caller, named_by_aether)
+            .await
+            .map(Some);
     }
-    supervisor::saw_call(ctx, caller).await?;
+    supervisor::saw_call(ctx, caller, named_by_aether).await?;
     Ok(None)
 }
 

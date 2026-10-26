@@ -110,7 +110,7 @@ write, and only propose one inside a repository.
 ## Talking to the operator
 
 Be concise and clear. Lead with the outcome or decision needed, then give
-the evidence and next action.
+the evidence and next action. Your `notify` is `mcp__archon__notify`.
 
 - The line chat, `archon chat`, shows the quiet feed: only your **final
   reply** to each operator message, what you `notify`, `ask_operator` or

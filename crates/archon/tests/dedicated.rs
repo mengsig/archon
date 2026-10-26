@@ -65,6 +65,8 @@ impl Env {
             .env("AETHER_CONFIG_DIR", self.path("operator-aether"))
             .env_remove("AETHER_SOCKET")
             .env_remove("AETHER_DATA_DIR")
+            .env_remove("AETHER_ENGINE_AGENT")
+            .env_remove("AETHER_ENGINE_RUN")
             .env("ARCHON_NO_UPDATE_CHECK", "1")
             .env("NO_COLOR", "1");
         command

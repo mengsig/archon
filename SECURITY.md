@@ -72,15 +72,21 @@ repositories, allowlists and operator list) are refused on the MCP surface
 the orchestrator uses, and the prompts forbid them. That boundary is not the
 operating system. The orchestrator and the stage agents have a shell as your
 Unix user, the `archon` CLI talks to `archond` over a socket your user owns,
-and the client kind is self-declared. So an agent that runs `archon` in its
-shell is accepted as the CLI, with every operator-only command available to
-it, including adding a GitHub login to the operator list. Your `config.toml`
-is likewise a file that your user, and so an agent's shell, can write.
+and the client kind is self-declared.
 
-Nothing in Archon prevents this today. It is an open limitation, known
-before the first public release. The fixes under consideration are a peer
-check in `archond` and a typed confirmation at a terminal for the commands
-that grant authority.
+Aether marks every process it starts for an agent with `AETHER_ENGINE_RUN`
+and `AETHER_ENGINE_AGENT`. An `archon` CLI that finds them sends its
+requests for that agent, so `archond` refuses it operator-only commands
+and lets only the orchestrator change Archon; with no agent named it sends
+only reads. This stops an agent that simply runs `archon` in its shell, but
+not one that unsets the variables first: such a shell is then accepted as
+the CLI, with every operator-only command available to it, including adding
+a GitHub login to the operator list. Your `config.toml` is likewise a file
+that your user, and so an agent's shell, can write.
+
+This is an open limitation, known before the first public release. The
+fixes under consideration are a peer check in `archond` and a typed
+confirmation at a terminal for the commands that grant authority.
 
 Until then, treat anything that can steer an agent (a repository's files, an
 issue or comment from a collaborator, a web page an agent reads) as able to

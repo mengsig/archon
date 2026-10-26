@@ -88,6 +88,8 @@ impl Installed {
             .env("HOME", self.home.path())
             .env_remove("http_proxy")
             .env_remove("HTTP_PROXY")
+            .env_remove("AETHER_ENGINE_AGENT")
+            .env_remove("AETHER_ENGINE_RUN")
             .env("ARCHON_NO_UPDATE_CHECK", "1")
             .env("NO_COLOR", "1");
         command

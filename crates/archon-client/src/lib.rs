@@ -15,10 +15,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::notify::FeedItem;
 use archon_core::protocol::{
-    ClientKind, ErrorCode, ErrorReply, PROTOCOL_VERSION, Reply, Request, Welcome,
+    ClientKind, ErrorCode, ErrorReply, PROTOCOL_VERSION, Reply, Request, RequestClass, Welcome,
 };
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
@@ -48,7 +49,54 @@ impl Drop for Tasks {
 pub struct ArchonClient {
     welcome: Welcome,
     shared: Arc<Shared>,
+    principal: Principal,
     _tasks: Tasks,
+}
+
+/// Whom a client's requests are made for. archond applies an agent's rules
+/// to a request forwarded for it, whichever client sends it (ARCHITECTURE §11).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Principal {
+    /// The operator: each request goes as it is.
+    #[default]
+    Operator,
+    /// An Aether agent: each request is forwarded for it.
+    Agent(AetherAgentId),
+    /// An Aether agent that is not named: only requests any client may make are sent.
+    UnnamedAgent,
+}
+
+impl Principal {
+    /// `request` as this principal sends it; refused when no agent is named
+    /// for a request that is more than an ordinary read.
+    pub fn address(&self, request: Request) -> Result<Request, ArchonError> {
+        assert!(
+            !matches!(
+                request,
+                Request::Hello { .. } | Request::SubscribeFeed { .. }
+            ),
+            "hello and subscribe_feed are never forwarded"
+        );
+        match self {
+            Self::Operator => Ok(request),
+            Self::Agent(caller) => {
+                assert!(
+                    !matches!(request, Request::ForAgent { .. }),
+                    "a request is forwarded for one agent only"
+                );
+                Ok(Request::ForAgent {
+                    caller: caller.clone(),
+                    request: Box::new(request),
+                })
+            }
+            Self::UnnamedAgent if request.class() == RequestClass::Read => Ok(request),
+            Self::UnnamedAgent => Err(ArchonError::Forbidden(
+                "this client runs for an Aether agent that is not named, so it sends only \
+                 reads; the operator makes this request from their own shell"
+                    .into(),
+            )),
+        }
+    }
 }
 
 /// A live feed subscription; closes when the connection drops.
@@ -86,8 +134,15 @@ impl ArchonClient {
         Ok(Self {
             welcome,
             shared,
+            principal: Principal::Operator,
             _tasks: tasks,
         })
+    }
+
+    /// This client with its later requests made for `principal`.
+    pub fn acting_for(mut self, principal: Principal) -> Self {
+        self.principal = principal;
+        self
     }
 
     /// Connect, or spawn `<archon_bin> daemon run --detach` and retry until `START_TIMEOUT`,
@@ -138,12 +193,14 @@ impl ArchonClient {
             ),
             "hello and subscribe_feed have their own methods"
         );
+        let request = self.principal.address(request)?;
         let answer = self.shared.call(request, None, timeout).await?;
         answer.map_err(refusal_error)
     }
 
     /// Like [`Self::request`], but keeps the daemon's refusal as data: the
-    /// outer error is the transport, the inner one is archond saying no.
+    /// outer error is the transport, the inner one is archond (or the
+    /// client's [`Principal`]) saying no.
     pub async fn call(&self, request: Request) -> Result<Result<Reply, ErrorReply>, ArchonError> {
         assert!(
             !matches!(
@@ -152,6 +209,10 @@ impl ArchonClient {
             ),
             "hello and subscribe_feed have their own methods"
         );
+        let request = match self.principal.address(request) {
+            Ok(request) => request,
+            Err(refused) => return Ok(Err(ErrorReply::from(&refused))),
+        };
         self.shared.call(request, None, REQUEST_TIMEOUT).await
     }
 

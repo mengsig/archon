@@ -116,18 +116,59 @@ fn check_quote(message: &str, quote: &str) -> Result<(), ArchonError> {
     Ok(())
 }
 
-/// A gate answer must be backed by its answer word appearing in the quote.
+/// Words that negate an answer word they shortly precede; any word ending in
+/// `n't` (don't, won't, shouldn't) does too.
+const NEGATIONS: [&str; 6] = ["no", "not", "never", "nor", "cannot", "dont"];
+/// How many words before the answer word a negation reaches.
+const NEGATION_REACH: usize = 4;
+/// Punctuation that ends a clause: "no, approve it" negates nothing.
+const CLAUSE_ENDS: [char; 9] = [',', ';', '.', '!', '?', ':', '\n', '—', '–'];
+
+/// A gate answer must be backed by its answer word appearing in the quote,
+/// and not negated there: "don't approve it yet" backs no `approve`.
 pub(crate) fn check_answer_quote(quote: &str, answer: &str) -> Result<(), ArchonError> {
     let verb = answer
         .split_whitespace()
         .next()
         .ok_or_else(|| ArchonError::Invalid("a gate answer must not be empty".into()))?;
-    if !contains_on_word_boundaries(&quote.to_lowercase(), &verb.to_lowercase()) {
+    let quote = quote.to_lowercase().replace('’', "'");
+    let lowered = verb.to_lowercase();
+    if !contains_on_word_boundaries(&quote, &lowered) {
         return Err(ArchonError::Forbidden(format!(
             "the quote must contain the answer word `{verb}`"
         )));
     }
+    if negates(&quote, &lowered) {
+        return Err(ArchonError::Forbidden(format!(
+            "the quote negates the answer word `{verb}`: a no, not, never or n't stands up to \
+             {NEGATION_REACH} words before it in the same clause; ask the operator to say it plainly"
+        )));
+    }
     Ok(())
+}
+
+/// Whether a negation stands within [`NEGATION_REACH`] words before an
+/// occurrence of `verb` in the same clause. Both are lowercase.
+fn negates(quote: &str, verb: &str) -> bool {
+    assert!(!verb.is_empty(), "an answer word is never empty");
+    assert_eq!(
+        quote,
+        quote.to_lowercase(),
+        "the quote is compared lowercase"
+    );
+    quote.split(CLAUSE_ENDS).any(|clause| {
+        let words: Vec<&str> = clause
+            .split(|c: char| !is_word_char(c) && c != '\'')
+            .map(|word| word.trim_matches('\''))
+            .filter(|word| !word.is_empty())
+            .collect();
+        words.iter().enumerate().any(|(at, word)| {
+            *word == verb
+                && words[at.saturating_sub(NEGATION_REACH)..at]
+                    .iter()
+                    .any(|before| NEGATIONS.contains(before) || before.ends_with("n't"))
+        })
+    })
 }
 
 #[cfg(test)]
@@ -151,5 +192,40 @@ mod tests {
         assert!(check_answer_quote("please approve this proposal", "approve").is_ok());
         assert!(check_answer_quote("what is the status", "approve").is_err());
         assert!(check_answer_quote("anything", " ").is_err());
+    }
+
+    #[test]
+    fn a_negated_answer_word_is_refused() {
+        for negated in [
+            "don't approve the migration gate until CI is green",
+            "do not approve this yet",
+            "never approve it",
+            "Don’t Approve it",
+            "I do not want you to approve this",
+            "no, don't approve",
+        ] {
+            let refused = check_answer_quote(negated, "approve").unwrap_err();
+            assert!(
+                refused.to_string().contains("negates"),
+                "{negated}: {refused}"
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_approvals_are_accepted() {
+        for plain in [
+            "approve it",
+            "yes approve it",
+            "approve, it's not risky",
+            "no, approve it",
+            "no problem. approve the gate",
+            "approve it; do not wait for CI",
+            "please 'approve' it",
+        ] {
+            assert!(check_answer_quote(plain, "approve").is_ok(), "{plain}");
+        }
+        assert!(check_answer_quote("not now, reject it", "reject").is_ok());
+        assert!(check_answer_quote("I can't see why not to reject", "reject").is_err());
     }
 }

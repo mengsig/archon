@@ -755,8 +755,15 @@ fn labels(target: &Target<'_>, plan: &SpawnPlan, id: &StageRunId) -> BTreeMap<St
 }
 
 /// Aether tools no stage agent gets: a stage is bounded work, and a
-/// schedule would outlive it (ARCHITECTURE §18.4).
-const HIDDEN_NATIVE_TOOLS: [&str; 3] = ["create_schedule", "update_schedule", "list_schedules"];
+/// schedule would outlive it (ARCHITECTURE §18.4). It reports through Archon,
+/// never Aether's `notify`, and leaves quota probes to the orchestrator.
+const HIDDEN_NATIVE_TOOLS: [&str; 5] = [
+    "create_schedule",
+    "update_schedule",
+    "list_schedules",
+    "notify",
+    "refresh_provider_usage",
+];
 /// Hidden too where the workspace is read-only: nothing is integrated into it.
 const INTEGRATE_TOOL: &str = "integrate_workspace";
 

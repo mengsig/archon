@@ -123,7 +123,9 @@ impl Link {
     }
 
     async fn subscribe(&self, after: u64) -> Result<(ArchonClient, FeedSubscription), ArchonError> {
-        let client = ArchonClient::connect(&self.socket, ClientKind::ArchonCli).await?;
+        let client = ArchonClient::connect(&self.socket, ClientKind::ArchonCli)
+            .await?
+            .acting_for(crate::connect::principal());
         // Always verbose: /progress then filters locally without resubscribing.
         let feed = client.subscribe_feed(Some(after), true).await?;
         Ok((client, feed))

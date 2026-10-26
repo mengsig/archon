@@ -58,7 +58,8 @@ pub const ORCHESTRATOR_ROLE: &str = "archon-orchestrator";
 
 /// Aether tools the orchestrator does not get. It delegates, but a change to a
 /// repository is an item, never a child's edits (ARCHITECTURE §4.4, §18.4).
-pub const ORCHESTRATOR_HIDDEN_TOOLS: &[&str] = &["integrate_workspace"];
+/// Aether's own `notify` would bypass Archon's feed; Archon's is `mcp__archon__notify`.
+pub const ORCHESTRATOR_HIDDEN_TOOLS: &[&str] = &["integrate_workspace", "notify"];
 /// Hidden as well while Aether does not name callers (see `callers`).
 const DELEGATE_TOOL: &str = "delegate";
 
@@ -1205,6 +1206,14 @@ mod tests {
         assert!(
             names.contains("integrate_workspace"),
             "a change to a repository is an item, never a child's edits"
+        );
+        assert!(
+            names.contains("notify"),
+            "Aether's notify bypasses the feed"
+        );
+        assert!(
+            !names.contains(&archon_core::mcp_tools::qualified("notify")),
+            "Archon's own notify stays"
         );
         assert_eq!(
             create.scope.unwrap().workspace_root.as_deref(),

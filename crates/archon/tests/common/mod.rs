@@ -38,6 +38,9 @@ impl Env {
             .env("ARCHON_SOCKET", self.path("archond.sock"))
             .env("AETHER_SOCKET", self.path("no-aether.sock"))
             .env("AETHER_CONFIG_DIR", self.path("aether"))
+            // The test plays the operator, even when it runs in an agent's shell.
+            .env_remove("AETHER_ENGINE_AGENT")
+            .env_remove("AETHER_ENGINE_RUN")
             .env("ARCHON_NO_UPDATE_CHECK", "1")
             .env("NO_COLOR", "1");
         if args.contains(&"doctor") {

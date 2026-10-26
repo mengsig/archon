@@ -710,11 +710,17 @@ async fn the_ceiling_refuses_until_the_operator_raises_it() {
 /// that reach the orchestrator and the item's artifacts, and Aether's scheduling tools.
 fn stage_hidden(archon: Vec<String>) -> Vec<String> {
     let kept = archon_core::mcp_tools::STAGE_TOOLS.map(archon_core::mcp_tools::qualified);
-    let schedules = ["create_schedule", "update_schedule", "list_schedules"];
+    let native = [
+        "create_schedule",
+        "update_schedule",
+        "list_schedules",
+        "notify",
+        "refresh_provider_usage",
+    ];
     archon
         .into_iter()
         .filter(|name| !kept.contains(name))
-        .chain(schedules.map(str::to_owned))
+        .chain(native.map(str::to_owned))
         .collect()
 }
 

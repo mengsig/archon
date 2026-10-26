@@ -11,9 +11,11 @@ use crate::pump::FleetRole;
 
 /// Let `caller` change Archon only if the store says it is the orchestrator of
 /// now. The guard returned keeps the orchestrator from being replaced mid-call.
+/// Only a caller `named_by_aether` shows that Aether names callers (`callers`).
 pub(crate) async fn authorize<'a>(
     ctx: &'a DaemonContext,
     caller: Option<&AetherAgentId>,
+    named_by_aether: bool,
 ) -> Result<RwLockReadGuard<'a, ()>, ArchonError> {
     let held = ctx.supervisor.authority.read().await;
     let orchestrator = super::current_orchestrator(ctx).await?;
@@ -24,7 +26,9 @@ pub(crate) async fn authorize<'a>(
         };
     };
     if orchestrator.as_ref() == Some(caller) {
-        callers::named(ctx, caller).await?;
+        if named_by_aether {
+            callers::named(ctx, caller).await?;
+        }
         return Ok(held);
     }
     drop(held);
@@ -36,13 +40,14 @@ pub(crate) async fn authorize<'a>(
     )))
 }
 
-/// A call that needs no authority, such as a read. Named and from the
-/// orchestrator, it shows as well as any other that Aether names callers.
+/// A call that needs no authority, such as a read. Named by Aether and from
+/// the orchestrator, it shows as well as any other that Aether names callers.
 pub(crate) async fn saw_call(
     ctx: &DaemonContext,
     caller: Option<&AetherAgentId>,
+    named_by_aether: bool,
 ) -> Result<(), ArchonError> {
-    let Some(caller) = caller else {
+    let Some(caller) = caller.filter(|_| named_by_aether) else {
         return Ok(());
     };
     if callers::are_named(ctx).await? {

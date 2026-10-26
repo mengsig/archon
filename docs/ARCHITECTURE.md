@@ -197,7 +197,7 @@ or schedules, and never touches the GitHub watcher of an Aether it shares.
  "config":{"instructions":"<built-in orchestrator prompt + [orchestrator].instructions_file>",
            "effort":"high",
            "long_lived":true,
-           "tools":{"mode":"except","names":["integrate_workspace"]}},
+           "tools":{"mode":"except","names":["integrate_workspace", "notify"]}},
  "idempotency_key":"archon-orchestrator-<generation>",
  "start":true}
 ```
@@ -219,8 +219,10 @@ or schedules, and never touches the GitHub watcher of an Aether it shares.
   (`archon orchestrator restart` applies it at once; §18.4).
 - It keeps Bash, file tools, web tools and Aether's `ask_user`, `wait_for`,
   `remember`, `send_message`, `list_agents`, `read_task`, `read_artifact` and
-  `delegate`. It loses `integrate_workspace` (§18.4), and `delegate` too
-  while Aether does not name the agents that call Archon's tools (§11).
+  `delegate`. It loses `integrate_workspace` (§18.4), Aether's own `notify`,
+  which would bypass Archon's feed, push and notification center (Archon's
+  is `mcp__archon__notify`), and `delegate` too while Aether does not name
+  the agents that call Archon's tools (§11).
 - Its workspace holds `repos/<name>`, a mirror of each registered repository
   (§13.3), and `scratch/` for work in no repository. It reads code in the
   mirrors, which are read-only on disk. Its native tools are not confined
@@ -458,7 +460,8 @@ carries each agent's `parent`.
            "cost_budget":<remaining item budget, a team slot's share of it (§13.1), or omitted>,
            "deadline":"<now + stage.timeout_minutes>",
            "tools":{"mode":"except","names":["mcp__archon__enqueue", "…every archon tool…",  // yolo: only the mutating ones
-                                             "create_schedule", "update_schedule", "list_schedules"]}},  // §18.4
+                                             "create_schedule", "update_schedule", "list_schedules",  // §18.4
+                                             "notify", "refresh_provider_usage"]}},  // Aether's own
  "run":"<the run's Aether run id (its node's), if known when reserved>",
  "idempotency_key":"<stage run id>",
  "start":true}
@@ -3082,6 +3085,13 @@ defined in `archon_core::protocol` and served by `archon-daemon`.
   and applies the inner request as one step (§11). A request from
   `archon-mcp` that changes Archon and comes without this wrapper is an
   unnamed call. It wraps no operator-only request and no second `ForAgent`.
+  The `archon` CLI wraps every request but `hello` and `subscribe_feed` the
+  same way when it runs in an Aether engine child whose environment names
+  its agent (`AETHER_ENGINE_AGENT`), so an agent's shell gets that agent's
+  rules. In an engine child that names no agent (`AETHER_ENGINE_RUN` alone)
+  it sends only `Read` requests. Its forwarded calls never show that Aether
+  names callers (§11). The variables are the agent's to unset, so this is
+  defence in depth, not a boundary ([SECURITY.md](../SECURITY.md)).
 - `Tracked {request_id, idempotency_key?, request}` carries one change
   under the `req_…` id `archon mcp` gave it, inside any `ForAgent`, and
   `RequestStatus {request}` reads what became of it (§11.1). Neither wraps

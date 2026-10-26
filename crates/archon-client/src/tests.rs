@@ -114,6 +114,42 @@ async fn pair(dir: &Path) -> (ArchonClient, Conn, UnixListener) {
     (client.expect("connect"), conn, listener)
 }
 
+/// A client acting for an agent forwards each request for it; one acting
+/// for an unnamed agent sends only ordinary reads.
+#[tokio::test]
+async fn a_client_acting_for_an_agent_forwards_its_requests() {
+    let dir = tempfile::tempdir().unwrap();
+    let (client, mut conn, _listener) = pair(dir.path()).await;
+    let agent = AetherAgentId::parse("agt_01STAGE").unwrap();
+    let client = client.acting_for(Principal::Agent(agent.clone()));
+    let server = async {
+        let frame = conn.recv().await;
+        conn.reply(frame.id, Ok(Reply::Ok)).await;
+        frame.request
+    };
+    let (reply, sent) = tokio::join!(client.request(Request::Shutdown), server);
+    assert_eq!(reply.unwrap(), Reply::Ok);
+    let forwarded = Request::ForAgent {
+        caller: agent,
+        request: Box::new(Request::Shutdown),
+    };
+    assert_eq!(sent, forwarded);
+
+    let client = client.acting_for(Principal::UnnamedAgent);
+    let refused = client.call(Request::CheckUpdates).await.unwrap();
+    assert_eq!(refused.unwrap_err().code, ErrorCode::Forbidden);
+    let refused = client.request(Request::Shutdown).await.unwrap_err();
+    assert!(refused.to_string().contains("not named"), "{refused}");
+    let server = async {
+        let frame = conn.recv().await;
+        conn.reply(frame.id, Ok(Reply::Repos(vec![]))).await;
+        frame.request
+    };
+    let (reply, sent) = tokio::join!(client.request(Request::RepoList), server);
+    assert_eq!(reply.unwrap(), Reply::Repos(vec![]));
+    assert_eq!(sent, Request::RepoList, "a read goes as it is");
+}
+
 #[tokio::test]
 async fn replies_are_routed_by_id_even_out_of_order() {
     let dir = tempfile::tempdir().unwrap();

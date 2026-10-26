@@ -23,6 +23,8 @@ impl Detached {
             .env("ARCHON_CONFIG_DIR", "../config")
             .env("ARCHON_SOCKET", "../run/archond.sock")
             .env("AETHER_SOCKET", self.caller.join("no-aether.sock"))
+            .env_remove("AETHER_ENGINE_AGENT")
+            .env_remove("AETHER_ENGINE_RUN")
             .env("NO_COLOR", "1")
             .output()
             .expect("running archon")

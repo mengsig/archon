@@ -15,6 +15,7 @@ use archon_core::run::{
     GateDecision, GateSubject, PipelineRun, RunState, StageOutcome, StageRun, StageState,
 };
 use archon_core::steer::Then;
+use serde::{Deserialize, Serialize};
 
 use crate::autonomy::{self, OperatorGates};
 use crate::gate::{self, GroupResult};
@@ -88,6 +89,18 @@ pub struct SpawnPlan {
     pub reviewers: Option<Vec<ModelChoice>>,
 }
 
+/// A proposal the operator approved in an earlier run of the item, for the
+/// same brief: a run started past it never runs its propose stage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApprovedProposal {
+    /// The propose stage, first in the pipeline and its proposal gate.
+    pub stage_id: String,
+    /// The summary the gate showed, which later stages are directed by.
+    pub summary: String,
+    /// The operator's note on approving.
+    pub note: Option<String>,
+}
+
 /// Errors carried into `RunState::Failed` are capped; the full feedback
 /// stays in the stage runs.
 pub const MAX_ERROR_CHARS: usize = 8_000;
@@ -126,6 +139,8 @@ pub struct RunDriver {
     /// The item's directory for reviewers' experiment copies, which the
     /// contract names; `None` leaves them to `mktemp -d`.
     experiments: Option<PathBuf>,
+    /// The approved proposal the run started past; persisted by the daemon.
+    approved_proposal: Option<ApprovedProposal>,
 }
 
 /// A live role of a team group another role already failed, and why it is
@@ -192,8 +207,9 @@ struct Recorded {
 }
 
 impl Position {
-    /// The first stage's first attempt, recorded in `entries`.
-    fn first(entries: &mut [u32]) -> Self {
+    /// The first stage's first attempt, recorded in `entries`; with
+    /// `approved`, the stage after the propose stage, as if it passed so.
+    fn first(entries: &mut [u32], approved: Option<&ApprovedProposal>) -> Self {
         let mut at = Self {
             stage: 0,
             attempt: 0,
@@ -204,7 +220,16 @@ impl Position {
             record: None,
             no_change: None,
         };
-        at.enter(0, entries, String::new());
+        let Some(proposal) = approved else {
+            at.enter(0, entries, String::new());
+            return at;
+        };
+        assert!(entries.len() > 1, "a stage follows the proposal");
+        let variable = template::previous_variable(&proposal.stage_id);
+        at.previous.insert(variable, proposal.summary.clone());
+        at.approved
+            .insert(proposal.stage_id.clone(), proposal.note.clone());
+        at.enter(1, entries, String::new());
         at
     }
 
@@ -248,6 +273,7 @@ impl RunDriver {
             cancelling: BTreeSet::new(),
             aborts: BTreeMap::new(),
             experiments: None,
+            approved_proposal: None,
         };
         driver.check_prompts_render()?;
         Ok(driver)
@@ -274,6 +300,42 @@ impl RunDriver {
         }
         self.gates = gates;
         Ok(self)
+    }
+
+    /// Start past the proposal gate, which `proposal` was approved at in an
+    /// earlier run; set after [`Self::with_gates`].
+    pub fn with_approved_proposal(
+        mut self,
+        proposal: ApprovedProposal,
+    ) -> Result<Self, ArchonError> {
+        assert!(
+            self.emitted.is_empty() && !self.finished,
+            "the proposal is set before the driver acts"
+        );
+        let gated = self.gates.proposal.as_deref() == Some(proposal.stage_id.as_str());
+        if !gated || self.spec.file.stages.len() < 2 {
+            return Err(ArchonError::Pipeline(format!(
+                "approved proposal {:?} is not the proposal gate of pipeline {:?} with stages after it",
+                proposal.stage_id,
+                self.spec.name()
+            )));
+        }
+        let first = autonomy::propose_stage(&self.spec).map(|s| s.id.as_str());
+        assert_eq!(first, Some(proposal.stage_id.as_str()), "gated: first");
+        self.approved_proposal = Some(proposal);
+        Ok(self)
+    }
+
+    /// The approved proposal the run started past, if it did.
+    pub fn approved_proposal(&self) -> Option<&ApprovedProposal> {
+        self.approved_proposal.as_ref()
+    }
+
+    /// The stage a new run starts at: the first, or the one after an
+    /// approved proposal.
+    pub fn first_stage(&self) -> &str {
+        let at = usize::from(self.approved_proposal.is_some());
+        &self.spec.file.stages[at].id
     }
 
     /// Name `dir` in review contracts as where experiment copies go. The
@@ -821,7 +883,8 @@ impl RunDriver {
             loops: vec![0_u32; stages.len()],
             revisions: vec![0_u32; stages.len()],
         };
-        let mut at = Position::first(&mut counts.entries);
+        let approved = self.approved_proposal.as_ref();
+        let mut at = Position::first(&mut counts.entries, approved);
         // Each pass that does not return consumes a distinct, fully persisted
         // group or an abort, or steps over one removed stage towards one.
         let passes = (slots.len() + self.aborts.len() + 1) * (stages.len() + 1);

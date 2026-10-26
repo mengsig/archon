@@ -15,7 +15,9 @@ use archon_core::steer::Then;
 use archon_pipeline::autonomy::OperatorGates;
 use archon_pipeline::spec::PipelineSpec;
 use archon_pipeline::team::{MergeOutcome, MergePlan};
-use archon_pipeline::{EngineAction, OperatorWait, RunDriver, ShipOutcome, ShipPlan, SpawnPlan};
+use archon_pipeline::{
+    ApprovedProposal, EngineAction, OperatorWait, RunDriver, ShipOutcome, ShipPlan, SpawnPlan,
+};
 
 use crate::support;
 
@@ -72,6 +74,8 @@ pub struct Sim {
     pub writes_record: bool,
     /// Persisted steered aborts, oldest first.
     pub aborts: Vec<(String, u32, Then)>,
+    /// The approved proposal the run started past, as the daemon persists it.
+    pub approved_proposal: Option<ApprovedProposal>,
     clock: Timestamp,
 }
 
@@ -123,8 +127,21 @@ impl Sim {
             open_ship: None,
             writes_record: true,
             aborts: Vec::new(),
+            approved_proposal: None,
             clock,
         }
+    }
+
+    /// The run started past `proposal`, approved in an earlier run.
+    pub fn past_proposal(mut self, proposal: ApprovedProposal) -> Self {
+        assert!(self.stages.is_empty(), "set before the run starts");
+        self.approved_proposal = Some(proposal);
+        self.driver = self.new_driver();
+        self.run.state = RunState::Running {
+            stage_id: self.driver.first_stage().to_owned(),
+            attempt: 1,
+        };
+        self
     }
 
     /// Start the run and admit every spawn.
@@ -354,6 +371,10 @@ impl Sim {
     fn new_driver(&self) -> RunDriver {
         let mut driver = RunDriver::new(self.spec.clone(), self.plan.clone(), self.base.clone())
             .and_then(|d| d.with_gates(self.gates.clone()))
+            .and_then(|d| match &self.approved_proposal {
+                Some(proposal) => d.with_approved_proposal(proposal.clone()),
+                None => Ok(d),
+            })
             .expect("valid driver");
         for (stage, attempt, decision) in &self.decisions {
             driver

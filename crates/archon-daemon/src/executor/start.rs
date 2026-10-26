@@ -14,7 +14,7 @@ use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::{Repo, ShipMode};
 use archon_core::run::{PipelineRun, RunState};
 use archon_pipeline::autonomy::OperatorGates;
-use archon_pipeline::{PipelineSpec, RunDriver, RunVars};
+use archon_pipeline::{ApprovedProposal, PipelineSpec, RunDriver, RunVars};
 use archon_queue::store::stacks::{StackFix, StackParent};
 
 use super::{Cleanup, FollowUp, RunTable, finish, frozen, recover, settle};
@@ -162,7 +162,12 @@ async fn prepare(
     let workspace = workspace(ctx, &env, item, header.workspace, team).await?;
     let added = workspace.added.clone();
     let experiments = crate::experiments::item_dir(&ctx.paths, &item.id);
-    match assemble(item, &env, spec, run_id, workspace, experiments) {
+    let approved =
+        super::proposal::approved_before(&*ctx.store.lock().await, item, &workspace.branch);
+    let assembled = approved.and_then(|approved| {
+        assemble(item, &env, spec, run_id, workspace, (experiments, approved))
+    });
+    match assembled {
         Ok(prepared) => Ok(prepared),
         Err(error) => {
             abandon_worktree(ctx, added).await?;
@@ -241,14 +246,15 @@ fn without_retired_ship(item: &QueueItem, spec: &PipelineSpec) -> QueueItem {
 }
 
 /// The run in `workspace` and its driver, which may still refuse the
-/// pipeline's plan, prompts or gates. Its reviewers experiment in `experiments`.
+/// pipeline's plan, prompts or gates. Its reviewers experiment in `experiments`;
+/// it starts past the `approved` proposal of an earlier run, if any.
 fn assemble(
     item: &QueueItem,
     env: &RepoEnv,
     spec: Arc<PipelineSpec>,
     run_id: PipelineRunId,
     workspace: Workspace,
-    experiments: PathBuf,
+    (experiments, approved): (PathBuf, Option<ApprovedProposal>),
 ) -> Result<Prepared, ArchonError> {
     assert!(!spec.file.stages.is_empty(), "pipelines have a first stage");
     assert!(workspace.path.is_absolute(), "run workspaces are absolute");
@@ -271,6 +277,10 @@ fn assemble(
     let driver = RunDriver::new(spec.clone(), item.model_plan.clone(), base_vars.clone())?
         .with_gates(gates)?
         .with_experiments(experiments);
+    let driver = super::proposal::start_past(driver, approved)?;
+    if let Some(approved) = driver.approved_proposal() {
+        tracing::info!(item = %item.id, stage = %approved.stage_id, "starting past the proposal approved in an earlier run");
+    }
     let run = PipelineRun {
         id: run_id,
         item: item.id.clone(),
@@ -281,7 +291,7 @@ fn assemble(
         team_root: workspace.team_root,
         branch: workspace.branch,
         state: RunState::Running {
-            stage_id: spec.file.stages[0].id.clone(),
+            stage_id: driver.first_stage().to_owned(),
             attempt: 1,
         },
         cost_usd: 0.0,
@@ -719,6 +729,7 @@ async fn launch(
             return Ok(FollowUp::default());
         }
         recover::save_run_vars(&mut store, &run.id, &base_vars)?;
+        super::proposal::save_start(&mut store, &run.id, &driver, &base_vars["task.brief"])?;
         if let Err(error) = store.insert_run(&run) {
             drop(store);
             frozen::discard(&ctx.paths.data_dir, &run.id);

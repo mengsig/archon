@@ -13,7 +13,7 @@ use archon_core::run::{GateDecision, GateSubject, RunState};
 use archon_pipeline::autonomy::{OperatorGates, augment};
 use archon_pipeline::engine::MAX_REVISIONS;
 use archon_pipeline::spec::PipelineSpec;
-use archon_pipeline::{EngineAction, RunDriver};
+use archon_pipeline::{ApprovedProposal, EngineAction, RunDriver};
 use sim::{Agent, Sim, awaited, finish_state, ship_plans, slots, spawn_plans, spawned};
 
 fn gated_sim(name: &str, proposal: ProposalMode, report: ReportMode) -> Sim {
@@ -98,6 +98,69 @@ fn an_approved_proposal_reaches_the_implementer_with_the_note() {
     assert!(spawned(&ship).is_empty(), "no agent ships");
     assert_eq!(ship_plans(&ship).len(), 1, "{ship:#?}");
     assert_eq!(ship_plans(&ship)[0].record_stage, "implement");
+}
+
+/// The direction section of a stage prompt, up to the next section.
+fn direction_section(prompt: &str) -> &str {
+    let start = prompt
+        .find("## Direction from the propose stage")
+        .expect("directed");
+    let rest = &prompt[start + 2..];
+    let end = rest.find("\n## ").map_or(prompt.len(), |at| start + 2 + at);
+    &prompt[start..end]
+}
+
+/// A retry started past an approved proposal never proposes or waits again,
+/// and its implementer is directed exactly as in the run that approved it.
+#[test]
+fn a_run_started_past_an_approved_proposal_is_directed_alike() {
+    let mut original = direct_sim(ProposalMode::Lavish, ReportMode::Off);
+    original.start();
+    let gate = propose(&mut original, 1);
+    let decided = original.decide(approve(Some("keep the old flag working")));
+    let approved = ApprovedProposal {
+        stage_id: "propose".into(),
+        summary: awaited(&gate)[0].summary.clone(),
+        note: Some("keep the old flag working".into()),
+    };
+    let mut sim = direct_sim(ProposalMode::Lavish, ReportMode::Off).past_proposal(approved);
+    assert_eq!(sim.driver.first_stage(), "implement");
+    let first = sim.start();
+    assert_eq!(spawned(&first), slots(&[("implement", 1, 0)]));
+    let (retried, approving) = (&spawn_plans(&first)[0], &spawn_plans(&decided)[0]);
+    assert_eq!(
+        direction_section(&retried.prompt),
+        direction_section(&approving.prompt)
+    );
+    assert!(
+        retried
+            .prompt
+            .contains("note on approving: keep the old flag working")
+    );
+    let ship = sim.settle("implement", 0, Agent::Done("Added the flag."));
+    assert!(awaited(&ship).is_empty(), "no gate opens: {ship:#?}");
+    assert_eq!(ship_plans(&ship).len(), 1, "{ship:#?}");
+}
+
+#[test]
+fn only_a_proposal_gate_is_started_past() {
+    let spec = support::builtin("direct");
+    let plan = support::plan_for(&spec, &["claude-code/opus"]);
+    let base = support::base_vars_for(
+        &spec,
+        &archon_core::id::PipelineRunId::new(),
+        &archon_core::id::QueueItemId::new(),
+    );
+    let approved = ApprovedProposal {
+        stage_id: "propose".into(),
+        summary: "Add a flag.".into(),
+        note: None,
+    };
+    let ungated = RunDriver::new(spec, plan, base)
+        .and_then(|d| d.with_gates(OperatorGates::default()))
+        .and_then(|d| d.with_approved_proposal(approved));
+    let error = ungated.expect_err("no proposal gate").to_string();
+    assert!(error.contains("is not the proposal gate"), "{error}");
 }
 
 /// The planner follows an approved proposal; its workers see their own task

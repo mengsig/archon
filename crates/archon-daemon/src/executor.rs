@@ -24,6 +24,7 @@ mod naming;
 pub(crate) mod onto;
 pub(crate) mod operator_merge;
 mod pages;
+mod proposal;
 pub mod pull_requests;
 mod reap;
 mod recover;

@@ -345,6 +345,154 @@ async fn an_open_gate_survives_a_restart_without_asking_twice() {
     assert_eq!(running[0].stage_id, "implement");
 }
 
+fn retry(item: &QueueItemId, fresh: bool, brief_append: Option<&str>) -> Request {
+    Request::RetryItem {
+        item: item.clone(),
+        model_plan: None,
+        model_reasons: None,
+        fresh,
+        brief_append: brief_append.map(str::to_owned),
+        stage_timeouts: Default::default(),
+    }
+}
+
+/// Cancel `item`, retry it as `request` says, and return the stage it starts at.
+async fn cancel_and_retry(h: &Harness, item: &QueueItemId, request: Request) -> StageRun {
+    let cancel = Request::CancelItem {
+        item: item.clone(),
+        reason: None,
+    };
+    h.cli(cancel).await.expect("cancel");
+    assert!(matches!(h.state(item).await, QueueState::Cancelled { .. }));
+    let runs = h.ctx.store.lock().await.runs_for_item(item).expect("runs");
+    h.cli(request).await.expect("retry");
+    h.dispatch().await;
+    let after = h.ctx.store.lock().await.runs_for_item(item).expect("runs");
+    assert_eq!(after.len(), runs.len() + 1, "the retry started a run");
+    let running = h.running().await;
+    assert_eq!(running.len(), 1, "{running:?}");
+    assert_eq!(running[0].run, after.last().unwrap().id);
+    running.into_iter().next().unwrap()
+}
+
+/// Answer the item's one open proposal gate with `text`.
+async fn answer_open_proposal(h: &Harness, item: &QueueItemId, text: &str) {
+    let open: Vec<OperatorGate> = gates(h, item)
+        .await
+        .into_iter()
+        .filter(OperatorGate::is_open)
+        .collect();
+    assert_eq!(open.len(), 1, "one open gate: {open:?}");
+    assert_eq!(open[0].subject, GateSubject::Proposal);
+    let asked = open[0].question.clone().expect("the gate was asked");
+    let question = open_questions(h).await.into_iter().find(|q| q.id == asked);
+    answer(h, &question.expect("open question"), text).await;
+}
+
+/// The direction section of a stage objective, up to the next section.
+fn direction(objective: &str) -> &str {
+    let start = objective.find("## Direction from the propose stage");
+    let start = start.expect("the stage is directed by the proposal");
+    let rest = &objective[start + 2..];
+    let end = rest
+        .find("\n## ")
+        .map_or(objective.len(), |at| start + 2 + at);
+    &objective[start..end]
+}
+
+#[tokio::test]
+async fn a_retry_keeps_the_approved_proposal_across_a_restart() {
+    let mut h = Harness::new().await;
+    let item = to_first_gate(&h, "Keep the direction").await;
+    let (_, question) = waiting_gate(&h, &item.id, GateSubject::Proposal).await;
+    answer(&h, &question, "yes, keep it small").await;
+    let approving = h.backend.requests().last().unwrap().objective.clone();
+
+    let implement = cancel_and_retry(&h, &item.id, retry(&item.id, false, None)).await;
+    assert_eq!(
+        (implement.stage_id.as_str(), implement.attempt),
+        ("implement", 1)
+    );
+    let retried = h.backend.requests().last().unwrap().objective.clone();
+    assert_eq!(direction(&retried), direction(&approving));
+    assert!(retried.contains("The operator approved this proposal"));
+    assert!(retried.contains(PROPOSAL) && retried.contains("keep it small"));
+    assert_eq!(gates(&h, &item.id).await.len(), 1, "no gate opened again");
+
+    let spawned = h.backend.requests().len();
+    h.restart();
+    executor::recover(&h.ctx).await.expect("recover");
+    h.dispatch().await;
+    let running = h.running().await;
+    assert_eq!(
+        running.iter().map(|s| &s.id).collect::<Vec<_>>(),
+        [&implement.id]
+    );
+    assert_eq!(
+        h.backend.requests().len(),
+        spawned,
+        "nothing spawned on replay"
+    );
+    assert_eq!(gates(&h, &item.id).await.len(), 1, "no gate on replay");
+    assert!(open_questions(&h).await.is_empty());
+    for _ in 0..3 {
+        settle(&h).await;
+    }
+    assert!(matches!(
+        h.state(&item.id).await,
+        QueueState::Succeeded { .. }
+    ));
+    assert_eq!(gates(&h, &item.id).await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_fresh_retry_or_a_changed_brief_proposes_again() {
+    let h = Harness::new().await;
+    let item = to_first_gate(&h, "Propose again").await;
+    let (_, question) = waiting_gate(&h, &item.id, GateSubject::Proposal).await;
+    answer(&h, &question, "yes").await;
+
+    let fresh = cancel_and_retry(&h, &item.id, retry(&item.id, true, None)).await;
+    assert_eq!(fresh.stage_id, "propose", "a new branch proposes again");
+    h.settle_running(passing).await;
+    h.dispatch().await;
+    answer_open_proposal(&h, &item.id, "yes").await;
+    assert_eq!(h.running().await[0].stage_id, "implement");
+
+    let amended = retry(&item.id, false, Some("Also log the flag."));
+    let amended = cancel_and_retry(&h, &item.id, amended).await;
+    assert_eq!(amended.stage_id, "propose", "a new brief proposes again");
+    let ungated = cancel_and_retry(&h, &item.id, retry(&item.id, false, None)).await;
+    assert_eq!(
+        ungated.stage_id, "propose",
+        "the latest run approved nothing"
+    );
+    assert_eq!(gates(&h, &item.id).await.len(), 2);
+}
+
+#[tokio::test]
+async fn a_revised_or_rejected_proposal_is_proposed_again_on_retry() {
+    let h = Harness::new().await;
+    let item = to_first_gate(&h, "Undecided direction").await;
+    let (_, question) = waiting_gate(&h, &item.id, GateSubject::Proposal).await;
+    answer(&h, &question, "use an LRU instead").await;
+    assert_eq!(h.running().await[0].stage_id, "propose");
+
+    let revised = cancel_and_retry(&h, &item.id, retry(&item.id, false, None)).await;
+    assert_eq!((revised.stage_id.as_str(), revised.attempt), ("propose", 1));
+    h.settle_running(passing).await;
+    h.dispatch().await;
+    answer_open_proposal(&h, &item.id, "reject not now").await;
+    assert!(matches!(
+        h.state(&item.id).await,
+        QueueState::Cancelled { .. }
+    ));
+    h.cli(retry(&item.id, false, None)).await.expect("retry");
+    h.dispatch().await;
+    let running = h.running().await;
+    assert_eq!(running[0].stage_id, "propose", "a rejection proposes again");
+}
+
 #[tokio::test]
 async fn cancelling_withdraws_the_gate_and_closes_its_question() {
     let h = Harness::new().await;

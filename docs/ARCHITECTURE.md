@@ -4775,6 +4775,16 @@ transaction. At startup, `archond` also closes any question an older version
 left open on a withdrawn gate. A "Reopen it?" question about a gate's page
 closes with the gate, right after the decision or the finish (§14).
 
+A retry keeps an approved proposal. A new run of the item starts past its
+proposal gate when the item's latest run approved its last proposal gate
+(or started past one itself), works on the same branch, and started with
+the brief the item has now; `archond` keeps a fingerprint of a gated run's
+brief for that. The later stages get the approved summary and note as
+before, and a restart rebuilds the driver past the same proposal. A fresh
+retry (its new branch lacks the proposal page), an amended brief, and a
+proposal that was revised, rejected, left undecided or never gated all
+propose again.
+
 ### 18.4 Tool exposure
 
 | Agent | `tools = guarded` | `tools = yolo` |

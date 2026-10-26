@@ -520,8 +520,9 @@ pub(super) async fn blueprint(
     })
 }
 
-/// The driver `blueprint` describes, with every decision, merge outcome and
-/// delivery recorded so far. Errors when its parts do not fit together.
+/// The driver `blueprint` describes, past the approved proposal it started
+/// past, with every decision, merge outcome and delivery recorded so far.
+/// Errors when its parts do not fit together.
 pub(super) async fn driver_of(
     ctx: &DaemonContext,
     run: &PipelineRun,
@@ -534,12 +535,17 @@ pub(super) async fn driver_of(
         aborts,
     } = blueprint;
     assert_eq!(spec.name(), run.pipeline, "a run keeps its snapshot's name");
-    let gates = ctx.store.lock().await.gates_for_run(&run.id)?;
+    let (gates, approved) = {
+        let store = ctx.store.lock().await;
+        let approved = super::proposal::started_past(&store, &run.id)?;
+        (store.gates_for_run(&run.id)?, approved)
+    };
     let operator_gates = OperatorGates::for_run(&spec, &item.autonomy);
     let experiments = crate::experiments::item_dir(&ctx.paths, &item.id);
-    let mut driver = RunDriver::new(Arc::new(spec), item.model_plan, vars)?
+    let driver = RunDriver::new(Arc::new(spec), item.model_plan, vars)?
         .with_gates(operator_gates)?
         .with_experiments(experiments);
+    let mut driver = super::proposal::start_past(driver, approved)?;
     for gate in gates {
         assert_eq!(gate.run, run.id, "gates_for_run returns the run's gates");
         if let Some(decision) = gate.decision {

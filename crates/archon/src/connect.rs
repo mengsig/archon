@@ -1,6 +1,7 @@
 //! Reaching `archond` from the CLI. A command that only reads never starts it; one that changes
 //! something, or opens the chat or the terminal UI, starts it and says so.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -38,18 +39,18 @@ const ENGINE_RUN_VAR: &str = "AETHER_ENGINE_RUN";
 /// its rules and refuses what only the operator may do.
 pub fn principal() -> Principal {
     principal_from(
-        std::env::var(ENGINE_AGENT_VAR).ok(),
+        std::env::var_os(ENGINE_AGENT_VAR),
         std::env::var_os(ENGINE_RUN_VAR).is_some(),
     )
 }
 
-/// An agent id that does not parse, or a run without one, names no agent:
-/// such a shell is still an agent's, never the operator's.
-fn principal_from(agent: Option<String>, in_engine_run: bool) -> Principal {
-    let named = agent.as_deref().map(AetherAgentId::parse);
+/// An agent id that is not Unicode or does not parse, or a run without one,
+/// names no agent: such a shell is still an agent's, never the operator's.
+fn principal_from(agent: Option<OsString>, in_engine_run: bool) -> Principal {
+    let named = agent.map(|raw| raw.into_string().ok().map(|id| AetherAgentId::parse(&id)));
     match (named, in_engine_run) {
-        (Some(Ok(agent)), _) => Principal::Agent(agent),
-        (Some(Err(_)), _) | (None, true) => Principal::UnnamedAgent,
+        (Some(Some(Ok(agent))), _) => Principal::Agent(agent),
+        (Some(_), _) | (None, true) => Principal::UnnamedAgent,
         (None, false) => Principal::Operator,
     }
 }
@@ -317,7 +318,12 @@ mod tests {
         );
         assert_eq!(principal_from(None, true), Principal::UnnamedAgent);
         assert_eq!(
-            principal_from(Some(String::new()), false),
+            principal_from(Some(OsString::new()), false),
+            Principal::UnnamedAgent
+        );
+        let not_unicode = std::os::unix::ffi::OsStringExt::from_vec(vec![b'a', 0xff]);
+        assert_eq!(
+            principal_from(Some(not_unicode), false),
             Principal::UnnamedAgent
         );
     }

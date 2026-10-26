@@ -125,20 +125,28 @@ const NEGATION_REACH: usize = 4;
 const CLAUSE_ENDS: [char; 9] = [',', ';', '.', '!', '?', ':', '\n', '—', '–'];
 
 /// A gate answer must be backed by its answer word appearing in the quote,
-/// and not negated there: "don't approve it yet" backs no `approve`.
+/// and not negated there: "don't approve it yet" backs no `approve`. The word
+/// is read as `GateDecision::from_answer` reads it: `approve!` is `approve`.
 pub(crate) fn check_answer_quote(quote: &str, answer: &str) -> Result<(), ArchonError> {
-    let verb = answer
+    let first = answer
         .split_whitespace()
         .next()
         .ok_or_else(|| ArchonError::Invalid("a gate answer must not be empty".into()))?;
+    let verb = first
+        .trim_end_matches(|c: char| c.is_ascii_punctuation())
+        .to_lowercase();
+    if verb.is_empty() {
+        return Err(ArchonError::Invalid(format!(
+            "a gate answer must start with a word, not `{first}`"
+        )));
+    }
     let quote = quote.to_lowercase().replace('’', "'");
-    let lowered = verb.to_lowercase();
-    if !contains_on_word_boundaries(&quote, &lowered) {
+    if !contains_on_word_boundaries(&quote, &verb) {
         return Err(ArchonError::Forbidden(format!(
             "the quote must contain the answer word `{verb}`"
         )));
     }
-    if negates(&quote, &lowered) {
+    if negates(&quote, &verb) {
         return Err(ArchonError::Forbidden(format!(
             "the quote negates the answer word `{verb}`: a no, not, never or n't stands up to \
              {NEGATION_REACH} words before it in the same clause; ask the operator to say it plainly"
@@ -192,6 +200,7 @@ mod tests {
         assert!(check_answer_quote("please approve this proposal", "approve").is_ok());
         assert!(check_answer_quote("what is the status", "approve").is_err());
         assert!(check_answer_quote("anything", " ").is_err());
+        assert!(check_answer_quote("anything !", "!").is_err());
     }
 
     #[test]
@@ -204,11 +213,13 @@ mod tests {
             "I do not want you to approve this",
             "no, don't approve",
         ] {
-            let refused = check_answer_quote(negated, "approve").unwrap_err();
-            assert!(
-                refused.to_string().contains("negates"),
-                "{negated}: {refused}"
-            );
+            for answer in ["approve", "approve!", "Approve.", "approve, ship it"] {
+                let refused = check_answer_quote(negated, answer).unwrap_err();
+                assert!(
+                    refused.to_string().contains("negates"),
+                    "{negated} / {answer}: {refused}"
+                );
+            }
         }
     }
 
@@ -224,6 +235,7 @@ mod tests {
             "please 'approve' it",
         ] {
             assert!(check_answer_quote(plain, "approve").is_ok(), "{plain}");
+            assert!(check_answer_quote(plain, "approve!").is_ok(), "{plain}");
         }
         assert!(check_answer_quote("not now, reject it", "reject").is_ok());
         assert!(check_answer_quote("I can't see why not to reject", "reject").is_err());

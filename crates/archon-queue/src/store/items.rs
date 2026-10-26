@@ -7,6 +7,7 @@ use archon_core::autonomy::AutonomyPatch;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, RepoId};
 use archon_core::protocol::ItemQuery;
+use archon_core::pull_request::OntoTarget;
 use archon_core::queue::{QueueItem, QueueState};
 use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
@@ -254,13 +255,37 @@ pub(super) fn insert_in(
     key: Option<&str>,
     asked: &AutonomyPatch,
 ) -> Result<QueueItem, ArchonError> {
+    insert_requested_in(tx, item, key, asked, request_value(item))
+}
+
+/// [`insert_in`] for an item asked `onto` the branch `target` names, which
+/// stores no `onto` record: its fingerprint keeps the target as asked.
+pub(super) fn insert_onto_in(
+    tx: &Connection,
+    item: &QueueItem,
+    key: Option<&str>,
+    asked: &AutonomyPatch,
+    target: &OntoTarget,
+) -> Result<QueueItem, ArchonError> {
+    assert!(item.onto.is_none(), "no pull request to deliver into");
+    let mut request = request_value(item);
+    request["onto"] = serde_json::json!(target);
+    insert_requested_in(tx, item, key, asked, request)
+}
+
+fn insert_requested_in(
+    tx: &Connection,
+    item: &QueueItem,
+    key: Option<&str>,
+    asked: &AutonomyPatch,
+    request: serde_json::Value,
+) -> Result<QueueItem, ArchonError> {
     validate_new(item, key)?;
     assert_eq!(item.state, QueueState::Queued);
     assert!(
         !tx.is_autocommit(),
         "item insertion belongs to a transaction"
     );
-    let request = request_value(item);
     if let Some(key) = key
         && let Some((first, stored)) = find_by_key(tx, key)?
     {

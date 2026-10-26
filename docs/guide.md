@@ -1092,6 +1092,17 @@ branch of its own on `origin`, so it is not refreshed and an item depending
 on it in the same repository does not start: queue that work `onto` the
 item instead.
 
+In a `ship = local` repository there is no pull request: `onto` names a
+finished item (`{item: "qi_…"}`) or the branch its last run left
+(`{branch: "…"}`), and the new item, with its own pipeline, title and brief,
+works on that branch in that item's worktree, like a refresh: it waits while
+the item runs, its agents are told, its review reads the whole branch, and it
+ships as a local commit on top. Refused with the reason: `{pr: …}`, an item of
+another repository, one still running or without a branch, a refresh or
+earlier `onto` item itself (name its owner), one stacked on an unmerged
+parent, a team run, one with a fix, refresh or `onto` item still to finish,
+and a team pipeline; initiative members cannot take it there.
+
 ### Risk labels
 
 Every pull request Archon opens or updates carries exactly one label,

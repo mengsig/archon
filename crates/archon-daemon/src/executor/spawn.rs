@@ -433,8 +433,8 @@ fn reserve_each(
 }
 
 /// What the store adds to the contract of every agent of `run`: the pull
-/// request it delivers into, where the item's dependencies left their work,
-/// its initiative, and the run's lessons,
+/// request or other item's branch it delivers into, where the item's
+/// dependencies left their work, its initiative, and the run's lessons,
 /// then the repository's checks, the build cache and the artifact store.
 fn run_sections(
     ctx: &DaemonContext,
@@ -447,7 +447,10 @@ fn run_sections(
     assert_eq!(run.item, item.id, "the run is the item's");
     let artifacts = ctx.paths.artifacts();
     let onto = match mode {
-        WorkspaceMode::Worktree => super::onto::section(item.onto.as_deref()),
+        WorkspaceMode::Worktree if item.onto.is_some() => {
+            super::onto::section(item.onto.as_deref())
+        }
+        WorkspaceMode::Worktree => super::onto::local::section(store, &item.id)?,
         _ => String::new(),
     };
     let dependencies = dependencies::section(store, run, item, mode, &artifacts)?;

@@ -889,6 +889,7 @@ pub struct QueueAddArgs {
     pub depends_on: Vec<String>,
     /// Deliver into this open pull request instead of opening one: an item
     /// (`qi_…`) that delivered it, its number (`123` or `#123`), or its head branch.
+    /// In a `ship = local` repository, commit onto a finished item's branch instead.
     #[arg(long, value_name = "ITEM|NUMBER|BRANCH")]
     pub onto: Option<String>,
     /// Item tag; repeat for several.

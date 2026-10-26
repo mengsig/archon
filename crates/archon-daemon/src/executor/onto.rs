@@ -1,5 +1,8 @@
 //! An item's `onto` target: the existing pull request it delivers into,
-//! resolved and frozen at enqueue, and where its worktree starts.
+//! resolved and frozen at enqueue, and where its worktree starts. A `ship =
+//! local` repository has none: [`local`] works on the target item's branch.
+
+pub(crate) mod local;
 
 use std::path::Path;
 
@@ -25,7 +28,8 @@ pub(crate) async fn freeze(
 ) -> Result<OntoPullRequest, ArchonError> {
     if repo.ship != ShipMode::Pr {
         return Err(ArchonError::Invalid(format!(
-            "`onto` delivers into a pull request, but `{}` ships locally",
+            "`{}` ships locally, so there is no pull request to deliver into; queue the work \
+             on its own `onto` an item or branch, and it works on that item's branch",
             repo.name
         )));
     }

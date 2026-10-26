@@ -1,7 +1,10 @@
 //! Durable ancestry and merge progress for stacked item branches.
 
+use archon_core::autonomy::AutonomyPatch;
 use archon_core::error::ArchonError;
-use archon_core::id::QueueItemId;
+use archon_core::id::{QueueItemId, RepoId};
+use archon_core::pull_request::OntoTarget;
+use archon_core::queue::QueueItem;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
@@ -277,6 +280,78 @@ impl Store {
         assert_eq!(queued.id, fix.id, "a new item, no replay");
         Ok(queued)
     }
+}
+
+impl Store {
+    /// Queue `item`, asked `onto` the branch of `fix.owner` in a `ship = local`
+    /// repository, as a fix that works on that branch, together with the owner's
+    /// index entry. A replay of idempotency `key` returns its item, needing no `fix`.
+    pub fn enqueue_onto_branch(
+        &mut self,
+        item: &QueueItem,
+        (key, asked): (Option<&str>, &AutonomyPatch),
+        target: &OntoTarget,
+        fix: Option<&StackFix>,
+    ) -> Result<QueueItem, ArchonError> {
+        use super::{items, settings};
+        let tx = write_tx(&mut self.conn)?;
+        let stored = items::insert_onto_in(&tx, item, key, asked, target)?;
+        if stored.id != item.id {
+            assert!(key.is_some(), "only a key returns an older item");
+            return Ok(stored);
+        }
+        let Some(fix) = fix else {
+            return Err(ArchonError::InvalidTransition(format!(
+                "no item was stored for idempotency key {key:?}; enqueue again"
+            )));
+        };
+        assert_ne!(fix.owner, item.id, "a fix works on another item's branch");
+        assert!(fix.refresh.is_none(), "no base to merge");
+        settings::kv_set(&tx, &onto_key(&fix.owner, &item.id), item.id.as_str())?;
+        settings::kv_set(
+            &tx,
+            &format!("restack_target:{}", item.id),
+            &to_json(fix, "stack fix")?,
+        )?;
+        tx.commit().ctx("enqueue onto a branch")?;
+        Ok(stored)
+    }
+
+    /// `item`'s target when it was queued `onto` another item's branch.
+    pub fn onto_branch(&self, item: &QueueItemId) -> Result<Option<StackFix>, ArchonError> {
+        let Some(fix) = self.stack_fix(item)? else {
+            return Ok(None);
+        };
+        let indexed = self.kv_get(&onto_key(&fix.owner, item))?;
+        Ok(indexed.is_some().then_some(fix))
+    }
+
+    /// The items of `repo` with a run on `branch`, by id.
+    pub fn items_with_run_branch(
+        &self,
+        repo: &RepoId,
+        branch: &str,
+    ) -> Result<Vec<QueueItemId>, ArchonError> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT DISTINCT r.item FROM runs r JOIN items i ON i.id = r.item
+                 WHERE i.repo = ?1 AND json_extract(r.data, '$.branch') = ?2 ORDER BY r.item",
+            )
+            .ctx("list items by run branch")?;
+        let rows = stmt
+            .query_map(params![repo.as_str(), branch], |row| {
+                row.get::<_, String>(0)
+            })
+            .ctx("list items by run branch")?;
+        rows.map(|row| QueueItemId::parse(&row.ctx("read item by run branch")?))
+            .collect()
+    }
+}
+
+/// The owner's index entry of an item queued `onto` its branch.
+fn onto_key(owner: &QueueItemId, item: &QueueItemId) -> String {
+    format!("restack_fix:{owner}:onto:{item}")
 }
 
 /// What a refresh's agent is asked: merge the base in, resolve, check, and

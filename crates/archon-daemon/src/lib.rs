@@ -30,6 +30,7 @@ pub mod prune;
 pub mod pump;
 pub mod push;
 pub mod quota;
+mod read_commands;
 pub mod readers;
 pub mod reaper;
 pub mod recovery;

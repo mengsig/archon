@@ -153,3 +153,63 @@ async fn a_protocol_24_aetherd_gets_the_level_and_no_word_prefix() {
         "{sent}"
     );
 }
+
+#[tokio::test]
+async fn a_read_command_is_answered_in_a_note_without_an_orchestrator_turn() {
+    let harness = harness(&["notes"]).await;
+    let ask = Request::AskOperator {
+        text: "Ship to prod?".into(),
+        item: None,
+        options: vec![],
+        caller: None,
+    };
+    archon_daemon::handlers::handle(&harness.ctx, ClientKind::ArchonCli, ask)
+        .await
+        .expect("asked");
+
+    say(&harness, 1, "/status").await;
+    say(&harness, 2, "/questions").await;
+    let notes = note_texts(&harness);
+    assert_eq!(notes.len(), 2, "one note per read: {notes:?}");
+    assert!(notes[0].starts_with("/status: archond "), "{notes:?}");
+    assert!(notes[0].contains("1 open question(s)"), "{notes:?}");
+    assert!(notes[1].contains("Q1: Ship to prod?"), "{notes:?}");
+    let levels: Vec<Value> = harness
+        .fake
+        .received_named("append_note")
+        .iter()
+        .map(|n| n["level"].clone())
+        .collect();
+    assert_eq!(
+        levels,
+        [Value::Null, Value::Null],
+        "an answer is a plain note"
+    );
+    assert!(harness.fake.received_named("send_message").is_empty());
+    let held = archon_daemon::triggers::held(&harness.ctx).await.unwrap();
+    assert!(
+        held.is_empty(),
+        "nothing waits for the orchestrator: {held:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_bad_read_is_refused_in_its_note_and_without_notes_reaches_the_orchestrator() {
+    let with_notes = harness(&["notes"]).await;
+    say(&with_notes, 1, "/queue nonsense").await;
+    let notes = note_texts(&with_notes);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("unknown queue state"), "{notes:?}");
+    assert_eq!(
+        with_notes.fake.received_named("append_note")[0]["level"],
+        "refused"
+    );
+
+    let without_notes = harness(&[]).await;
+    say(&without_notes, 1, "/repos").await;
+    assert!(note_texts(&without_notes).is_empty());
+    let held = archon_daemon::triggers::held(&without_notes.ctx)
+        .await
+        .unwrap();
+    assert_eq!(held.len(), 1, "the orchestrator restates the answer");
+}

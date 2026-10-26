@@ -653,6 +653,9 @@ validation refuses `[aether] socket` or `address`.
   `tui-host-commands.json` in the data directory and passes
   `--host-commands <file>` (`"host": "archon"`), so they join the TUI's
   slash menu and are sent as ordinary messages for archond to apply.
+  archond answers the read commands (`/status`, `/queue`, `/item`,
+  `/questions`, `/repos`, `/lessons`) in a note in the TUI at once, with no
+  orchestrator turn; without notes the orchestrator is told the answer.
   The file also carries an optional `welcome` block (title `Archon`, up to
   eight lines: repositories, queue counts, an example request, the `/` hint)
   built from archond's status at launch; when archond does not answer within

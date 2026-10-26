@@ -11,14 +11,20 @@ const MAX_NOTE_CHARS: usize = 500;
 
 /// The one-line note for `label` (e.g. `/answer Q5`): coloured by `level` when
 /// the aetherd takes one, else led by the word the colour would have said.
-pub(crate) fn note_line(label: &str, applied: bool, text: &str, has_level: bool) -> String {
+/// A plain answer (`None`) has neither.
+pub(crate) fn note_line(
+    label: &str,
+    level: Option<NoteLevel>,
+    text: &str,
+    has_level: bool,
+) -> String {
     assert!(!label.trim().is_empty(), "a result names its command");
     assert!(!text.trim().is_empty(), "a result says something");
     let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let line = match (has_level, applied) {
-        (true, _) => format!("{label}: {text}"),
-        (false, true) => format!("Applied: {label}: {text}"),
-        (false, false) => format!("Refused: {label}: {text}"),
+    let line = match (has_level, level) {
+        (true, _) | (false, None) => format!("{label}: {text}"),
+        (false, Some(NoteLevel::Applied)) => format!("Applied: {label}: {text}"),
+        (false, Some(NoteLevel::Refused)) => format!("Refused: {label}: {text}"),
     };
     clip(&line, MAX_NOTE_CHARS)
 }
@@ -39,29 +45,44 @@ pub(crate) fn warn_if_unsupported(welcome: &Welcome) {
 /// be added is logged and never fails the command. Nothing is shown when
 /// aetherd lacks notes or no orchestrator exists yet.
 pub(crate) async fn show(ctx: &DaemonContext, label: &str, applied: bool, text: &str) {
-    let Ok(client) = ctx.aether.client() else {
-        return;
-    };
-    let welcome = client.welcome();
-    if !welcome.features.iter().any(|f| f == NOTES_FEATURE) {
-        return;
-    }
-    let orchestrator = match supervisor::current_orchestrator(ctx).await {
-        Ok(Some(id)) => id,
-        Ok(None) => return,
-        Err(error) => {
-            tracing::warn!(%error, "no orchestrator to show a command result to");
-            return;
-        }
-    };
-    let has_level = welcome.protocol_version >= NOTE_LEVEL_PROTOCOL_VERSION;
     let level = match applied {
         true => NoteLevel::Applied,
         false => NoteLevel::Refused,
     };
-    let line = note_line(label, applied, text, has_level);
-    if let Err(error) = client.append_note(&orchestrator, &line, Some(level)).await {
-        tracing::warn!(%error, command = label, "a command result was not shown in the TUI");
+    // Whether it was shown is logged already; the result reaches the orchestrator anyway.
+    let _shown = show_level(ctx, label, Some(level), text).await;
+}
+
+/// [`show`] at any level, `None` being a plain note. `true` when the note was added.
+pub(crate) async fn show_level(
+    ctx: &DaemonContext,
+    label: &str,
+    level: Option<NoteLevel>,
+    text: &str,
+) -> bool {
+    let Ok(client) = ctx.aether.client() else {
+        return false;
+    };
+    let welcome = client.welcome();
+    if !welcome.features.iter().any(|f| f == NOTES_FEATURE) {
+        return false;
+    }
+    let orchestrator = match supervisor::current_orchestrator(ctx).await {
+        Ok(Some(id)) => id,
+        Ok(None) => return false,
+        Err(error) => {
+            tracing::warn!(%error, "no orchestrator to show a command result to");
+            return false;
+        }
+    };
+    let has_level = welcome.protocol_version >= NOTE_LEVEL_PROTOCOL_VERSION;
+    let line = note_line(label, level, text, has_level);
+    match client.append_note(&orchestrator, &line, level).await {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::warn!(%error, command = label, "a command result was not shown in the TUI");
+            false
+        }
     }
 }
 
@@ -119,17 +140,25 @@ mod tests {
 
     #[test]
     fn a_plain_note_leads_with_the_word_a_level_would_colour() {
-        let refused = note_line("/answer Q5", false, "already answered", false);
+        let refused = note_line(
+            "/answer Q5",
+            Some(NoteLevel::Refused),
+            "already answered",
+            false,
+        );
         assert_eq!(refused, "Refused: /answer Q5: already answered");
-        let applied = note_line("/answer Q5", true, "answered", false);
+        let applied = note_line("/answer Q5", Some(NoteLevel::Applied), "answered", false);
         assert_eq!(applied, "Applied: /answer Q5: answered");
+        let plain = note_line("/status", None, "all\nquiet", false);
+        assert_eq!(plain, "/status: all quiet", "an answer has no word");
     }
 
     #[test]
     fn a_levelled_note_has_no_word_and_one_line() {
-        let line = note_line("/merge", false, "no such\nitem", true);
+        let refused = Some(NoteLevel::Refused);
+        let line = note_line("/merge", refused, "no such\nitem", true);
         assert_eq!(line, "/merge: no such item");
-        let long = note_line("/merge", false, &"x".repeat(5000), true);
+        let long = note_line("/merge", refused, &"x".repeat(5000), true);
         assert_eq!(long.chars().count(), MAX_NOTE_CHARS);
     }
 }

@@ -128,6 +128,10 @@ async fn execute(
     if retired_alias(text) {
         return retired_alias_hint(ctx).await;
     }
+    // The TUI's read commands are answered here, without an orchestrator turn.
+    if !github && let Some(read) = crate::read_commands::ReadCommand::parse(text) {
+        return crate::read_commands::answer(ctx, &read).await;
+    }
     // Existing upgrade/watch commands remain restricted to authenticated TUI users.
     if !github {
         crate::chat_ops::handle(ctx, text).await?;

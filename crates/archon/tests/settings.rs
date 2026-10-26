@@ -69,3 +69,35 @@ fn invalid_settings_report_the_key_and_expected_type_before_connecting() {
     assert!(error.contains("expected u32"), "{error}");
     assert!(!env.path("archond.sock").exists());
 }
+
+#[test]
+fn a_change_starts_a_stopped_archond_and_a_read_does_not() {
+    let env = Env::new();
+    let read = env.command(&["settings"]).output().unwrap();
+    assert!(!read.status.success(), "{read:?}");
+    assert!(!env.path("archond.sock").exists(), "a read started archond");
+
+    let set = env
+        .command(&[
+            "--json",
+            "settings",
+            "--set",
+            r#"{"max_parallel_agents":2}"#,
+        ])
+        .output()
+        .unwrap();
+    let after_set = env.command(&["daemon", "stop"]).output().unwrap();
+    let reset = env.command(&["settings", "--reset"]).output().unwrap();
+    // Stopped before any assertion, so a failed one leaves no daemon behind.
+    let after_reset = env.command(&["daemon", "stop"]).output().unwrap();
+    assert!(set.status.success(), "{set:?}");
+    assert!(after_set.status.success(), "{after_set:?}");
+    assert!(after_reset.status.success(), "{after_reset:?}");
+    let stderr = String::from_utf8(set.stderr).unwrap();
+    assert!(stderr.contains("starting it"), "{stderr}");
+    let view: Value = serde_json::from_slice(&set.stdout).unwrap();
+    assert_eq!(view["scoped"]["max_parallel_agents"], 2);
+    assert!(reset.status.success(), "{reset:?}");
+    let text = String::from_utf8(reset.stdout).unwrap();
+    assert!(text.contains("Cleared all saved overrides"), "{text}");
+}

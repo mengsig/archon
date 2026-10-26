@@ -59,8 +59,9 @@ repeatable `--depends-on <id-or-prefix>`, `--onto <item|number|branch>` (an
 existing pull request to deliver into, frozen at enqueue; in a `ship = local`
 repository, a finished item's branch to commit onto), repeatable `--tag`,
 `--idempotency-key`, and `--budget-usd`. A repeated enqueue with the same
-idempotency key and arguments returns the original item; conflicting
-arguments are refused.
+idempotency key and arguments returns the original item, even when archond
+would now fill the stages the arguments leave open with other models;
+conflicting arguments are refused.
 
 The autonomy flags are `--review strict|standard|none`,
 `--proposal lavish|off`, `--report before-pr|with-pr|off`,
@@ -88,7 +89,8 @@ Exit statuses:
 - **3:** every item is terminal and at least one failed or was cancelled.
 - **4:** the timeout expired, even if some items already failed.
 - **5:** an item waits on a dependency that failed, so it cannot finish by
-  itself; `blocked_dependencies` names it.
+  itself; `blocked_dependencies` names every such item, and `items` still
+  holds the last observation of each item.
 - **1:** a command or daemon error; **2:** a clap argument parsing error.
 
 Text output lists the last observed item ids and states and adds a timeout

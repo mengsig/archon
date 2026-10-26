@@ -93,7 +93,8 @@ fn completion_feed() -> ServerFrame {
 }
 
 /// A daemon answering one `queue wait`: `transition` makes the first snapshot
-/// queued and the feed wake it, `stall` holds every snapshot past the deadline.
+/// queued and the feed wake it, `stall` holds every snapshot past the deadline,
+/// and only the first item waits for `waiting_reason`.
 fn serve(
     listener: UnixListener,
     rows: Vec<QueueItem>,
@@ -120,10 +121,6 @@ fn serve(
             }
             Request::GetItem { item: id } => {
                 assert!(subscribed, "subscribe before the first snapshot");
-                assert!(
-                    waiting_reason.is_none() || gets == 0,
-                    "a failed dependency stops before requesting other items"
-                );
                 if stall {
                     std::thread::sleep(Duration::from_secs(4));
                 }
@@ -132,7 +129,8 @@ fn serve(
                     row.state = QueueState::Queued;
                 }
                 gets += 1;
-                snapshot(row, waiting_reason.clone())
+                let reason = waiting_reason.clone().filter(|_| row.id == rows[0].id);
+                snapshot(row, reason)
             }
             other => panic!("unexpected request {other:?}"),
         };
@@ -271,7 +269,7 @@ fn wait_does_not_autostart_daemons_in_dedicated_mode() {
 }
 
 #[test]
-fn failed_or_cancelled_dependency_returns_promptly_with_its_name() {
+fn failed_or_cancelled_dependency_returns_promptly_with_its_name_and_every_item() {
     for state in ["failed", "cancelled"] {
         let reason = archon_core::protocol::WaitingReason {
             code: archon_core::protocol::WaitingReasonCode::DependencyFailed,
@@ -292,6 +290,10 @@ fn failed_or_cancelled_dependency_returns_promptly_with_its_name() {
         assert_eq!(out.status.code(), Some(5), "{out:?}");
         let value: Value = serde_json::from_slice(&out.stdout).unwrap();
         assert_eq!(value["timed_out"], false);
+        let items = value["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2, "every item is observed: {value}");
+        assert_eq!(items[1]["state"]["state"], "queued");
+        assert_eq!(value["blocked_dependencies"].as_array().unwrap().len(), 1);
         assert!(
             value["blocked_dependencies"][0]
                 .as_str()

@@ -5,12 +5,13 @@ mod common;
 use archon_core::error::ArchonError;
 use archon_core::github::GithubThread;
 use archon_core::id::QueueItemId;
+use archon_core::model::{ModelChoice, ModelPlanDraft};
 use archon_core::protocol::ItemQuery;
 use archon_core::queue::{PauseState, Priority, QueueItem, QueueState};
 use archon_core::run::StageState;
 use archon_queue::Store;
 use archon_queue::dispatch::DependencyState;
-use archon_queue::store::SpendRow;
+use archon_queue::store::{Asked, SpendRow};
 use common::*;
 
 fn count(store: &Store) -> usize {
@@ -70,6 +71,74 @@ fn the_same_key_and_request_returns_the_first_item() {
     let again = store.insert_item(&retry, Some("enq-1")).unwrap();
     assert_eq!(again.id, first.id);
     assert_eq!(again.state, QueueState::Dispatching);
+    assert_eq!(count(&store), 1);
+}
+
+/// `first` retried under a new id, with routing now filling its implement
+/// stage with another model.
+fn rerouted(first: &QueueItem) -> QueueItem {
+    let mut retry = QueueItem {
+        id: QueueItemId::new(),
+        ..first.clone()
+    };
+    let other = ModelChoice {
+        model: "codex/gpt-6.1-sol".parse().unwrap(),
+        ..choice()
+    };
+    retry.model_plan.0.insert("implement".into(), vec![other]);
+    assert_ne!(retry.model_plan, first.model_plan);
+    retry
+}
+
+#[test]
+fn a_retry_that_routing_fills_otherwise_returns_the_first_item() {
+    let (mut store, repo, _items) = seeded(0);
+    let first = item(Some(&repo), "fix");
+    let unnamed = Asked::default();
+    store
+        .insert_enqueued(&first, Some("enq-1"), &unnamed)
+        .unwrap();
+    let retry = rerouted(&first);
+    let again = store.insert_enqueued(&retry, Some("enq-1"), &unnamed);
+    assert_eq!(again.unwrap(), first);
+    // Naming another plan is another request.
+    let named = Asked {
+        model_plan: ModelPlanDraft::from(retry.model_plan.clone()),
+        ..Asked::default()
+    };
+    let err = store.insert_enqueued(&retry, Some("enq-1"), &named);
+    assert!(matches!(err, Err(ArchonError::Invalid(_))), "{err:?}");
+    assert_eq!(count(&store), 1);
+}
+
+#[test]
+fn a_fingerprint_of_the_filled_plan_still_matches_a_retry_filled_alike() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let mut store = Store::open(&path).unwrap();
+    let repo = common::repo("alpha");
+    store.insert_repo(&repo).unwrap();
+    let first = item(Some(&repo), "fix");
+    store
+        .insert_enqueued(&first, Some("old"), &Asked::default())
+        .unwrap();
+    // The fingerprint as stores wrote it before `asked_plan`.
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let plan = serde_json::to_string(&first.model_plan).unwrap();
+    let changed = conn.execute(
+        "UPDATE items SET request = json_set(json_remove(request, '$.asked_plan'),
+                                             '$.model_plan', json(?1))",
+        [plan],
+    );
+    assert_eq!(changed.unwrap(), 1);
+    let retry = QueueItem {
+        id: QueueItemId::new(),
+        ..first.clone()
+    };
+    let again = store.insert_enqueued(&retry, Some("old"), &Asked::default());
+    assert_eq!(again.unwrap().id, first.id);
+    let err = store.insert_enqueued(&rerouted(&first), Some("old"), &Asked::default());
+    assert!(matches!(err, Err(ArchonError::Invalid(_))), "{err:?}");
     assert_eq!(count(&store), 1);
 }
 

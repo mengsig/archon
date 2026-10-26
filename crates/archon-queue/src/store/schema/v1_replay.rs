@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 
 use super::V1;
 use crate::Store;
+use crate::store::Asked;
 
 /// Long before any V2 migration of this test's store.
 fn v1_time() -> archon_core::Timestamp {
@@ -166,7 +167,7 @@ fn a_v1_enqueue_retried_after_the_migrations_returns_its_item() {
     let path = dir.path().join("archon.db");
     let originals = v1_store(&path);
     let mut store = Store::open(&path).unwrap();
-    let none = AutonomyPatch::default();
+    let none = Asked::default();
     for original in &originals {
         let key = original.pipeline.as_str();
         let again = store.insert_enqueued(&retry(original), Some(key), &none);
@@ -185,16 +186,19 @@ fn a_v1_key_still_refuses_a_different_request() {
     let originals = v1_store(&path);
     let mut store = Store::open(&path).unwrap();
     let ask = &originals[0];
-    let none = AutonomyPatch::default();
+    let none = Asked::default();
 
     let mut other = retry(ask);
     other.title = "something else".into();
     let message = refused(store.insert_enqueued(&other, Some("ask"), &none));
     assert!(message.contains("different request"), "{message}");
 
-    let asked = AutonomyPatch {
-        review: Some(ReviewLevel::None),
-        ..AutonomyPatch::default()
+    let asked = Asked {
+        autonomy: AutonomyPatch {
+            review: Some(ReviewLevel::None),
+            ..AutonomyPatch::default()
+        },
+        ..Asked::default()
     };
     let message = refused(store.insert_enqueued(&retry(ask), Some("ask"), &asked));
     assert!(message.contains("before autonomy knobs"), "{message}");

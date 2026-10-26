@@ -2,7 +2,6 @@
 //! into: the item works on the target item's branch in its worktree, as a fix
 //! of that item (a [`StackFix`] without a base to merge), and ships locally there.
 
-use archon_core::autonomy::AutonomyPatch;
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
 use archon_core::pull_request::OntoTarget;
@@ -10,6 +9,7 @@ use archon_core::queue::QueueItem;
 use archon_core::repo::{Repo, ShipMode};
 use archon_core::run::PipelineRun;
 use archon_queue::Store;
+use archon_queue::store::Asked;
 use archon_queue::store::stacks::StackFix;
 
 use super::super::dependencies::is_plain_branch;
@@ -22,7 +22,7 @@ pub(crate) async fn enqueue(
     repo: &Repo,
     item: &QueueItem,
     target: &OntoTarget,
-    (key, asked): (Option<&str>, &AutonomyPatch),
+    (key, asked): (Option<&str>, &Asked),
 ) -> Result<QueueItem, ArchonError> {
     assert_eq!(repo.ship, ShipMode::Local, "pr mode freezes a pull request");
     assert!(item.onto.is_none() && item.dependencies.is_empty());

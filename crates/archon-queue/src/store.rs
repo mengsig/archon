@@ -18,6 +18,7 @@ mod gates;
 mod handoffs;
 pub mod initiatives;
 mod items;
+pub use items::Asked;
 mod lessons;
 mod merges;
 mod model_evidence;
@@ -40,7 +41,7 @@ use std::path::Path;
 
 use archon_core::Timestamp;
 use archon_core::aether_ids::{AetherAgentId, AetherQuestionRef};
-use archon_core::autonomy::{AutonomyPatch, Directive};
+use archon_core::autonomy::Directive;
 use archon_core::cost::{CostGroup, CostReport, DayRange};
 use archon_core::error::ArchonError;
 use archon_core::id::{
@@ -317,16 +318,17 @@ impl Store {
         item: &QueueItem,
         idempotency_key: Option<&str>,
     ) -> Result<QueueItem, ArchonError> {
-        let asked = AutonomyPatch::from(item.autonomy);
+        let asked = Asked::everything(item);
         items::insert(&mut self.conn, item, idempotency_key, &asked)
     }
-    /// [`Self::insert_item`] for an enqueue that asked for the knobs `asked`.
-    /// A key used before autonomy existed matches a retry that asks for none.
+    /// [`Self::insert_item`] for an enqueue that asked for the knobs and plan
+    /// `asked`. A key used before autonomy existed matches a retry that asks
+    /// for no knob.
     pub fn insert_enqueued(
         &mut self,
         item: &QueueItem,
         idempotency_key: Option<&str>,
-        asked: &AutonomyPatch,
+        asked: &Asked,
     ) -> Result<QueueItem, ArchonError> {
         items::insert(&mut self.conn, item, idempotency_key, asked)
     }

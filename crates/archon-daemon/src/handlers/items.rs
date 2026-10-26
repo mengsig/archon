@@ -16,6 +16,7 @@ use archon_core::queue::{
 use archon_core::repo::{Repo, ShipMode};
 use archon_pipeline::PipelineSpec;
 use archon_pipeline::spec::MIN_ROLES;
+use archon_queue::store::Asked;
 
 use super::budget_cost::{Budgeted, check_budget_models};
 use super::revise::{self, Ceiling};
@@ -34,6 +35,10 @@ pub(super) async fn enqueue(
     let title = req.title.trim().to_owned();
     check_enqueue(&req.title, &req.brief, &req.tags, req.budget_usd)?;
     let (env, resolved) = enqueue_context(ctx, &req).await?;
+    let asked = Asked {
+        autonomy: req.autonomy.clone(),
+        model_plan: req.model_plan.clone(),
+    };
     let id = QueueItemId::new();
     crate::learned::prepare_routing(ctx, &id, &resolved, &req.tags).await?;
     let unrouted = ItemRoute {
@@ -67,8 +72,8 @@ pub(super) async fn enqueue(
         .idempotency_key
         .as_deref()
         .filter(|k| !k.trim().is_empty());
-    let asked = (req.onto.as_ref(), !req.depends_on.is_empty());
-    let onto = enqueue_onto(ctx, &env, &resolved.spec, asked, key).await?;
+    let target = (req.onto.as_ref(), !req.depends_on.is_empty());
+    let onto = enqueue_onto(ctx, &env, &resolved.spec, target, key).await?;
     let now = archon_core::now();
     let item = QueueItem {
         onto: onto.map(Box::new),
@@ -95,14 +100,7 @@ pub(super) async fn enqueue(
         created_at: now,
         updated_at: now,
     };
-    let stored = store_enqueued(
-        ctx,
-        (&env, &resolved.spec),
-        asked,
-        &item,
-        (key, &req.autonomy),
-    )
-    .await?;
+    let stored = store_enqueued(ctx, (&env, &resolved.spec), target, &item, (key, &asked)).await?;
     assert!(
         stored.id == item.id || key.is_some(),
         "only a key returns an older item"
@@ -173,7 +171,7 @@ async fn store_enqueued(
     (env, spec): (&RepoEnv, &PipelineSpec),
     (target, has_dependencies): (Option<&OntoTarget>, bool),
     item: &QueueItem,
-    (key, asked): (Option<&str>, &archon_core::autonomy::AutonomyPatch),
+    (key, asked): (Option<&str>, &Asked),
 ) -> Result<QueueItem, ArchonError> {
     let Some(target) = local_onto(env, target) else {
         return ctx.store.lock().await.insert_enqueued(item, key, asked);

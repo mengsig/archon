@@ -1,6 +1,6 @@
 //! Inspect or replace the operator overlay at one scope.
 use super::{emit, to_json};
-use crate::connect::{connect_running, unexpected};
+use crate::connect::{connect_or_start, connect_running, unexpected};
 use anyhow::Context;
 use archon_core::protocol::{Reply, RepoRef, Request};
 use archon_core::settings::{OperatorSettings, SettingsView};
@@ -22,7 +22,11 @@ pub async fn run(
         (None, false) => Request::Settings { repo },
         (Some(_), true) => unreachable!("clap excludes set with reset"),
     };
-    let client = connect_running().await?;
+    // Like every write, a change starts archond; reading the settings never does.
+    let client = match request {
+        Request::Settings { .. } => connect_running().await?,
+        _ => connect_or_start().await?,
+    };
     let view = match client.request(request).await? {
         Reply::Settings(view) => view,
         other => return Err(unexpected(&other, "settings")),

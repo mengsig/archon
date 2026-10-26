@@ -966,18 +966,18 @@ no daemon running it prints ``archond is not running (start it with
 `archon daemon start`)`` and exits 1 (`unavailable` under `--json`). These
 are `status`, `questions`, `log`, `cost`, `model-evidence`, `queue list`,
 `queue show`, `queue wait`, `queue caps` without a change, `repo list`,
-`initiatives` and `initiatives show`, `autonomy` without a change,
-`github-watcher` without a change, `orchestrator status` and `reports`.
+`initiatives` and `initiatives show`, `autonomy` and `settings` without a
+change, `github-watcher` without a change, `orchestrator status` and `reports`.
 `lessons`, `pipelines` and `doctor` read their files directly instead.
 
 A command that changes something (`say`, `answer`, `queue add`, `cancel`,
-`retry` and `steer`, `repo add`, `pause`, `lessons accept` and the other
-lesson changes, `reports reopen`, `orchestrator restart`, …), the TUI, the
-line chat and `archon daemon start` start archond when it is not running,
-and in dedicated mode Archon's `aetherd` first. They say so on stderr, with
-the data directory and socket the new archond owns. `archon mcp` starts
-archond for Aether's agents in the same way, for a tool call that changes
-something; a read-only tool call never starts it.
+`retry` and `steer`, `repo add`, `pause`, `settings --set` and `--reset`,
+`lessons accept` and the other lesson changes, `reports reopen`,
+`orchestrator restart`, …), the TUI, the line chat and `archon daemon start`
+start archond when it is not running, and in dedicated mode Archon's `aetherd`
+first. They say so on stderr, with the data directory and socket the new
+archond owns. `archon mcp` starts archond for Aether's agents in the same way,
+for a tool call that changes something; a read-only tool call never starts it.
 
 Archon keeps its files in three places: the config directory, the data
 directory and archond's socket. `ARCHON_CONFIG_DIR`, `ARCHON_DATA_DIR` and

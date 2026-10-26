@@ -1,6 +1,5 @@
 //! Durable ancestry and merge progress for stacked item branches.
 
-use archon_core::autonomy::AutonomyPatch;
 use archon_core::error::ArchonError;
 use archon_core::id::{QueueItemId, RepoId};
 use archon_core::pull_request::OntoTarget;
@@ -8,8 +7,8 @@ use archon_core::queue::QueueItem;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
-use super::Store;
 use super::codec::{SqlContext, from_json, to_json, ts, write_tx};
+use super::{Asked, Store};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StackParent {
@@ -289,7 +288,7 @@ impl Store {
     pub fn enqueue_onto_branch(
         &mut self,
         item: &QueueItem,
-        (key, asked): (Option<&str>, &AutonomyPatch),
+        (key, asked): (Option<&str>, &Asked),
         target: &OntoTarget,
         fix: Option<&StackFix>,
     ) -> Result<QueueItem, ArchonError> {

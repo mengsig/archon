@@ -6,6 +6,7 @@ use archon_core::Timestamp;
 use archon_core::autonomy::AutonomyPatch;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, QueueItemId, RepoId};
+use archon_core::model::ModelPlanDraft;
 use archon_core::protocol::ItemQuery;
 use archon_core::pull_request::OntoTarget;
 use archon_core::queue::{QueueItem, QueueState};
@@ -17,10 +18,29 @@ use super::repos;
 
 pub(super) const DEFAULT_LIST_LIMIT: usize = 50;
 
+/// What an enqueue asked for, before archond resolved and filled it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Asked {
+    /// The autonomy knobs it named.
+    pub autonomy: AutonomyPatch,
+    /// Its `model_plan` as sent: routing may fill the rest otherwise on a retry.
+    pub model_plan: ModelPlanDraft,
+}
+
+impl Asked {
+    /// An insert that asked for every knob and the whole plan of `item`.
+    pub fn everything(item: &QueueItem) -> Self {
+        Self {
+            autonomy: AutonomyPatch::from(item.autonomy),
+            model_plan: item.model_plan.clone().into(),
+        }
+    }
+}
+
 /// The fields an enqueue request decides. Two enqueues with the same
 /// idempotency key are "the same request" when these agree. `origin` only
 /// when set, so fingerprints stored before it existed still match.
-fn request_value(item: &QueueItem) -> serde_json::Value {
+fn request_value(item: &QueueItem, asked: &Asked) -> serde_json::Value {
     let mut value = serde_json::json!({
         "repo": item.repo,
         "pipeline": item.pipeline,
@@ -29,7 +49,7 @@ fn request_value(item: &QueueItem) -> serde_json::Value {
         "priority": item.priority,
         "dependencies": item.dependencies,
         "tags": item.tags,
-        "model_plan": item.model_plan,
+        "asked_plan": asked.model_plan,
         "budget_usd": item.budget_usd,
         "autonomy": item.autonomy,
     });
@@ -198,11 +218,12 @@ fn validate_new(item: &QueueItem, key: Option<&str>) -> Result<(), ArchonError> 
 
 /// Refuse `key` reused for a different request. A fingerprint without
 /// `autonomy` predates the knobs (store migration 3): it matches a retry
-/// that asks for no knob and agrees on every other field.
+/// that asks for no knob and agrees on every other field. One with a filled
+/// `model_plan` predates `asked_plan` and matches a retry that fills it alike.
 fn check_replay(
     key: &str,
-    first: &QueueItemId,
-    stored: &serde_json::Value,
+    (first, stored): (&QueueItemId, &serde_json::Value),
+    item: &QueueItem,
     mut request: serde_json::Value,
     asked: &AutonomyPatch,
 ) -> Result<(), ArchonError> {
@@ -214,6 +235,13 @@ fn check_replay(
     let fields = request
         .as_object_mut()
         .expect("request_value builds an object");
+    if stored_fields.contains_key("model_plan") {
+        assert!(
+            fields.remove("asked_plan").is_some(),
+            "request_value has asked_plan"
+        );
+        fields.insert("model_plan".into(), serde_json::json!(item.model_plan));
+    }
     let legacy = !stored_fields.contains_key("autonomy");
     if legacy {
         assert!(
@@ -236,12 +264,12 @@ fn check_replay(
     Ok(())
 }
 
-/// `asked` is the knobs the enqueue named, before resolution.
+/// `asked` is what the enqueue named, before resolution.
 pub(super) fn insert(
     conn: &mut Connection,
     item: &QueueItem,
     key: Option<&str>,
-    asked: &AutonomyPatch,
+    asked: &Asked,
 ) -> Result<QueueItem, ArchonError> {
     let tx = write_tx(conn)?;
     let stored = insert_in(&tx, item, key, asked)?;
@@ -253,9 +281,9 @@ pub(super) fn insert_in(
     tx: &Connection,
     item: &QueueItem,
     key: Option<&str>,
-    asked: &AutonomyPatch,
+    asked: &Asked,
 ) -> Result<QueueItem, ArchonError> {
-    insert_requested_in(tx, item, key, asked, request_value(item))
+    insert_requested_in(tx, item, key, asked, request_value(item, asked))
 }
 
 /// [`insert_in`] for an item asked `onto` the branch `target` names, which
@@ -264,11 +292,11 @@ pub(super) fn insert_onto_in(
     tx: &Connection,
     item: &QueueItem,
     key: Option<&str>,
-    asked: &AutonomyPatch,
+    asked: &Asked,
     target: &OntoTarget,
 ) -> Result<QueueItem, ArchonError> {
     assert!(item.onto.is_none(), "no pull request to deliver into");
-    let mut request = request_value(item);
+    let mut request = request_value(item, asked);
     request["onto"] = serde_json::json!(target);
     insert_requested_in(tx, item, key, asked, request)
 }
@@ -277,7 +305,7 @@ fn insert_requested_in(
     tx: &Connection,
     item: &QueueItem,
     key: Option<&str>,
-    asked: &AutonomyPatch,
+    asked: &Asked,
     request: serde_json::Value,
 ) -> Result<QueueItem, ArchonError> {
     validate_new(item, key)?;
@@ -290,7 +318,7 @@ fn insert_requested_in(
         && let Some((first, stored)) = find_by_key(tx, key)?
     {
         let stored: serde_json::Value = from_json(&stored, "enqueue request")?;
-        check_replay(key, &first, &stored, request, asked)?;
+        check_replay(key, (&first, &stored), item, request, &asked.autonomy)?;
         return load(tx, &first);
     }
     if exists(tx, &item.id)? {

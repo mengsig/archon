@@ -112,6 +112,7 @@ async fn refresh(
         let Reply::ItemDetail(detail) = reply else {
             return Err(unexpected(&reply, "item_detail"));
         };
+        assert_eq!(&detail.item.id, id, "the daemon answers for the item asked");
         if let Some(reason) = &detail.waiting_reason
             && reason.code == WaitingReasonCode::DependencyFailed
         {
@@ -126,9 +127,7 @@ async fn refresh(
         } else {
             rows.push(detail.item);
         }
-        if !blocked_dependencies.is_empty() {
-            return Ok(());
-        }
     }
+    assert_eq!(rows.len(), ids.len(), "one observation per item");
     Ok(())
 }

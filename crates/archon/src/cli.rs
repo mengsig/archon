@@ -677,7 +677,8 @@ pub enum QueueCommand {
     )]
     Add(Box<QueueAddArgs>),
     /// Wait on a running daemon until every item succeeds, fails or is cancelled.
-    /// Exit 0: all succeeded; 3: any failed/cancelled; 4: timeout; 1: error.
+    /// Exit 0: all succeeded; 3: any failed/cancelled; 4: timeout; 5: an item waits on a
+    /// failed dependency; 1: error.
     #[command(after_help = "Example: archon queue wait qi_… qi_… --timeout 30m --json")]
     Wait {
         /// Item ids or unambiguous prefixes; at least one is required.

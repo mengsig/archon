@@ -277,3 +277,53 @@ async fn onto_a_stacked_or_team_item_is_refused() {
     let teamed = refused(&h, OntoTarget::Item(team.id.clone())).await;
     assert!(teamed.contains("ran as a team"), "{teamed}");
 }
+
+/// The owner's merge lands the commit work queued onto it left on its
+/// branch; a grant covers it only when that work was reviewed too.
+#[tokio::test]
+async fn the_owner_s_merge_lands_the_onto_commit_and_a_grant_needs_its_review() {
+    use archon_core::merge::{MergeAuthority, MergeState};
+    let h = local().await;
+    let grant = Request::RepoUpdate {
+        repo: RepoRef(REPO_NAME.into()),
+        patch: RepoPatch {
+            grant_merge: Some(true),
+            ..RepoPatch::default()
+        },
+    };
+    h.cli(grant).await.unwrap();
+    let (owner, run) = shipped(&h, "the change").await;
+    let mut asked = request("unreviewed", Some(OntoTarget::Item(owner.id.clone())), &[]);
+    asked.autonomy.review = Some(ReviewLevel::None);
+    let item = enqueue(&h, asked).await.expect("queued");
+    h.dispatch().await;
+    let lead = h.running().await.remove(0);
+    let built = shipped_by(&h, &lead, "Built", json!({})).await;
+    h.settle_running(|_| built.clone()).await;
+    h.dispatch().await;
+    let state = h.state(&item.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+    let tip = git(&h.repo, &["rev-parse", &run.branch]);
+    let main = git(&h.repo, &["rev-parse", "main"]);
+
+    let request = Request::RequestMerge {
+        item: owner.id.clone(),
+        reason: Some("done".into()),
+    };
+    let Ok(Reply::Merge(waiting)) = h.cli(request).await else {
+        panic!("a merge request");
+    };
+    assert_eq!(waiting.state, MergeState::AwaitingOperator, "not granted");
+    assert_eq!(waiting.head, tip, "the onto commit, not the owner's");
+    assert_eq!(git(&h.repo, &["rev-parse", "main"]), main, "nothing yet");
+    let MergeAuthority::Confirmed { question, .. } = waiting.authority.clone() else {
+        panic!("confirmed by a question: {waiting:?}");
+    };
+    let answer = Request::Answer {
+        chat: false,
+        question,
+        text: "yes".into(),
+    };
+    h.cli(answer).await.expect("the operator confirms");
+    assert_eq!(git(&h.repo, &["rev-parse", "main"]), tip);
+}

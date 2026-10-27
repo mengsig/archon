@@ -410,6 +410,65 @@ fn enqueue_carries_a_tier_and_its_provider_to_the_daemon_request() {
     );
 }
 
+fn initiative_with_plan(plan: Value) -> Result<Request, ToolError> {
+    let members = json!([
+        {"repo": "api", "brief": "Rename it in the API."},
+        {"repo": "web", "brief": "Follow the API.", "model_plan": plan},
+    ]);
+    to_request(
+        "enqueue_initiative",
+        json!({"title": "t", "contract": "c", "members": members}),
+    )
+}
+
+#[test]
+fn enqueue_initiative_carries_a_member_tier_and_its_provider_to_the_daemon_request() {
+    let plan = json!({"implement": [
+        {"tier": "strong", "effort": "x_high"},
+        {"tier": "fast", "provider": "codex"},
+    ], "review": [{"model": "codex/m", "effort": "xhigh"}, {"model": "codex/m"}]});
+    let Ok(Request::EnqueueInitiative(request)) = initiative_with_plan(plan) else {
+        panic!("a member's tier choice maps to EnqueueInitiative");
+    };
+    assert_eq!(request.members[0].model_plan, None);
+    let plan = request.members[1].model_plan.as_ref().expect("member plan");
+    let implement = &plan.0["implement"];
+    assert_eq!(implement[0].tier, Some(Tier::Strong));
+    assert_eq!(implement[0].model, None);
+    assert_eq!(implement[0].effort, Some(Effort::XHigh));
+    assert_eq!(implement[1].tier, Some(Tier::Fast));
+    assert_eq!(implement[1].provider.as_deref(), Some("codex"));
+    assert_eq!(implement[1].effort, None, "the stage default stands in");
+    let review = &plan.0["review"];
+    assert_eq!(review[0].effort, Some(Effort::XHigh));
+    assert_eq!(review[1].model.as_ref().unwrap().to_string(), "codex/m");
+    assert_eq!(review[1].effort, None);
+}
+
+#[test]
+fn enqueue_initiative_refuses_an_unknown_field_in_a_member_plan() {
+    let unknown_choice = json!({"implement": [{"tier": "strong", "foo": 1}]});
+    let error = initiative_with_plan(unknown_choice)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("`members[1].model_plan`")
+            && error.contains("`foo`")
+            && error.contains("{model or tier, provider, effort}"),
+        "{error}"
+    );
+    let unknown_model = json!({"implement": [
+        {"model": {"provider": "p", "model": "m", "foo": 1}, "effort": "high"},
+    ]});
+    let error = initiative_with_plan(unknown_model).unwrap_err().to_string();
+    assert!(
+        error.contains("`members[1].model_plan`")
+            && error.contains("`foo`")
+            && error.contains("{provider, model}"),
+        "{error}"
+    );
+}
+
 /// A plan is the stages whose model the caller chooses: without one the
 /// request carries none, and archond fills every stage.
 #[test]

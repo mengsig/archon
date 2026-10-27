@@ -563,17 +563,41 @@ pub(crate) fn resolve_plan(
     reasons: Option<&ModelReasons>,
     tiers: TierScope<'_>,
 ) -> Result<ModelPlan, ArchonError> {
+    let plan = resolve_tiers(spec, draft, tiers)?;
+    check_plan_reasons(spec, &plan, reasons)?;
+    Ok(plan)
+}
+
+/// [`resolve_plan`] without its effort check, for a request that gives no
+/// `model_reasons`, such as an initiative member.
+pub(crate) fn resolve_tiers(
+    spec: &PipelineSpec,
+    draft: ModelPlanDraft,
+    tiers: TierScope<'_>,
+) -> Result<ModelPlan, ArchonError> {
+    let stages = draft.0.len();
     let plan = draft.resolve(
         |key| spec.default_effort(key),
         |key, tier, provider| tiers.resolve((tier, spec.tier_floor(key, tier)), provider),
     )?;
+    assert_eq!(plan.0.len(), stages, "every drafted key is resolved");
+    Ok(plan)
+}
+
+/// Each key of `plan` whose top effort is above its stage default has a
+/// `reasons` entry.
+pub(crate) fn check_plan_reasons(
+    spec: &PipelineSpec,
+    plan: &ModelPlan,
+    reasons: Option<&ModelReasons>,
+) -> Result<(), ArchonError> {
     for (key, choices) in &plan.0 {
         let top = choices.iter().map(|c| c.effort).max();
         if let (Some(top), Some(default)) = (top, spec.default_effort(key)) {
             check_effort_reason(key, top, default, reasons)?;
         }
     }
-    Ok(plan)
+    Ok(())
 }
 
 /// Effort `effort` for plan key `key`, whose default is `default`, is

@@ -930,13 +930,26 @@ pub(super) async fn resolve_draft(
     draft: ModelPlanDraft,
     reasons: Option<&ModelReasons>,
 ) -> Result<ModelPlan, ArchonError> {
+    let plan = resolve_tiers(ctx, (env, item), spec, draft).await?;
+    knobs::check_plan_reasons(spec, &plan, reasons)?;
+    Ok(plan)
+}
+
+/// [`resolve_draft`] without its effort check, for a request that gives no
+/// `model_reasons`.
+pub(super) async fn resolve_tiers(
+    ctx: &DaemonContext,
+    (env, item): (&RepoEnv, ItemRoute<'_>),
+    spec: &PipelineSpec,
+    draft: ModelPlanDraft,
+) -> Result<ModelPlan, ArchonError> {
     let catalog = learned::catalog(ctx).await?;
     let policy = env.policy(&ctx.config);
     let weights = env.provider_weights(&ctx.config);
     let quota = crate::quota::current(ctx, weights.as_ref()).await;
     let route = item.by(weights.as_ref(), quota.as_ref());
     let tiers = knobs::TierScope::new(&ctx.config, &policy, &catalog).routed(route);
-    knobs::resolve_plan(spec, draft, reasons, tiers)
+    knobs::resolve_tiers(spec, draft, tiers)
 }
 
 /// `plan` with what it leaves out filled for `env`'s repository and routed

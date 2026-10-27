@@ -198,6 +198,9 @@ fn arguments_the_handler_accepts_satisfy_the_schema() {
         json!({"implement": [{"model": {"provider": "codex", "model": "m"}, "effort": "xhigh"}]});
     let mut accepted = samples();
     accepted.push(("retry_item", json!({"item": qi(), "model_plan": alias})));
+    accepted.push(member_plan_with(
+        json!({"tier": "fast", "provider": "codex"}),
+    ));
     accepted.push(("queue_status", json!({})));
     accepted.push(("cost_report", json!({})));
     accepted.push(("model_evidence", json!({})));
@@ -231,6 +234,13 @@ fn enqueue_with(key: &str, value: Value) -> (&'static str, Value) {
 /// whose shape the schemas spell out.
 fn plan_with(choice: Value) -> (&'static str, Value) {
     enqueue_with("model_plan", json!({"implement": [choice]}))
+}
+
+/// One choice for the `implement` stage of an initiative member's plan.
+fn member_plan_with(choice: Value) -> (&'static str, Value) {
+    let member = json!({"repo": "api", "brief": "b", "model_plan": {"implement": [choice]}});
+    let arguments = json!({"title": "t", "contract": "c", "members": [member]});
+    ("enqueue_initiative", arguments)
 }
 
 /// One violation of each keyword the schemas use, at the top level and in
@@ -347,6 +357,8 @@ fn acting_tool_violations() -> Vec<(&'static str, Value)> {
         ),
         plan_with(json!({"model": "codex/m", "effort": "high", "temperature": 1})),
         plan_with(json!({"model": "codex/m", "effort": "extreme"})),
+        member_plan_with(json!({"tier": "strong", "foo": 1})),
+        member_plan_with(json!({"model": {"provider": "p", "model": "m", "foo": 1}})),
     ]
 }
 

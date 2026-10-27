@@ -6,6 +6,7 @@ use archon_core::id::{InitiativeId, QueueItemId};
 use archon_core::initiative::{
     ContractChange, EnqueueInitiative, Initiative, InitiativeMember, InitiativeState,
 };
+use archon_core::model::{ModelPlan, ModelPlanDraft};
 use archon_core::protocol::Reply;
 use archon_core::queue::{QueueItem, QueueState, check_enqueue};
 
@@ -77,9 +78,8 @@ async fn prepare_member(
         held: routed_provider.as_deref(),
         ..unrouted
     };
-    let given = member.model_plan.clone().unwrap_or_default();
-    let plan = items::filled_plan(ctx, route, &env, &resolved.base, &resolved.spec, given).await?;
-    items::check_plan(ctx, &env, &resolved.spec, &plan)?;
+    let draft = member.model_plan.clone().unwrap_or_default();
+    let plan = member_plan(ctx, (&env, route), &resolved, draft).await?;
     let title = member
         .title
         .clone()
@@ -125,6 +125,20 @@ async fn prepare_member(
         created_at: initiative.created_at,
         updated_at: initiative.created_at,
     })
+}
+
+/// `draft` resolved, filled and checked as an enqueue's plan is. A member gives
+/// no model_reasons, so only the policy's ceiling bounds its effort.
+async fn member_plan(
+    ctx: &DaemonContext,
+    (env, route): (&RepoEnv, ItemRoute<'_>),
+    resolved: &knobs::Resolved,
+    draft: ModelPlanDraft,
+) -> Result<ModelPlan, ArchonError> {
+    let given = items::resolve_tiers(ctx, (env, route), &resolved.spec, draft).await?;
+    let plan = items::filled_plan(ctx, route, env, &resolved.base, &resolved.spec, given).await?;
+    items::check_plan(ctx, env, &resolved.spec, &plan)?;
+    Ok(plan)
 }
 
 pub(super) async fn get(ctx: &DaemonContext, id: &InitiativeId) -> Result<Reply, ArchonError> {

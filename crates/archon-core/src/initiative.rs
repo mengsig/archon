@@ -7,7 +7,7 @@ use crate::Timestamp;
 use crate::autonomy::AutonomyPatch;
 use crate::error::ArchonError;
 use crate::id::{InitiativeId, QueueItemId};
-use crate::model::ModelPlan;
+use crate::model::ModelPlanDraft;
 use crate::protocol::RepoRef;
 use crate::pull_request::OntoTarget;
 use crate::queue::QueueItem;
@@ -174,7 +174,7 @@ pub struct InitiativeMember {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_plan: Option<ModelPlan>,
+    pub model_plan: Option<ModelPlanDraft>,
     /// Knobs for this member's item, as in an enqueue. An atomic
     /// initiative's members merge by hand, together.
     #[serde(default, skip_serializing_if = "AutonomyPatch::is_empty")]

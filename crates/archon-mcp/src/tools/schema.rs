@@ -264,6 +264,17 @@ fn model_reasons() -> Value {
 }
 
 fn model_plan(what: &str) -> Value {
+    described_model_plan(&format!(
+        "{what} Stage id (list_pipelines) to {{model or tier, effort}} lists within model_policy; \
+         fan-out cycles fewer choices. No effort = the stage default; above it needs a \
+         model_reasons entry. A tier, on `provider` if given, resolves at dispatch; tradeoffs: \
+         guide(topic=models). \
+         `<stage>.review`: reviewers a stage delegates."
+    ))
+}
+
+/// The shape of a model plan, with `description` as the whole of its text.
+fn described_model_plan(description: &str) -> Value {
     let choice = json!({
         "type": "object",
         "properties": {
@@ -277,13 +288,7 @@ fn model_plan(what: &str) -> Value {
     });
     json!({
         "type": "object",
-        "description": format!(
-            "{what} Stage id (list_pipelines) to {{model or tier, effort}} lists within model_policy; \
-             fan-out cycles fewer choices. No effort = the stage default; above it needs a \
-             model_reasons entry. A tier, on `provider` if given, resolves at dispatch; tradeoffs: \
-             guide(topic=models). \
-             `<stage>.review`: reviewers a stage delegates."
-        ),
+        "description": description,
         "minProperties": 1,
         "additionalProperties": {"type": "array", "minItems": 1, "items": choice},
     })

@@ -6,12 +6,15 @@ use archon_core::error::ArchonError;
 use archon_core::initiative::{
     ContractChange, EnqueueInitiative, InitiativeDetail, InitiativeMember, InitiativeState,
 };
+use archon_core::model::Effort;
+use archon_core::model_tier::{CatalogModel, ModelCatalog, Tier};
 use archon_core::protocol::{Reply, RepoAdd, RepoRef, Request};
 use archon_core::pull_request::{OntoPullRequest, OntoTarget, PullRequestRef};
 use archon_core::queue::QueueState;
 use archon_core::repo::ShipMode;
 use common::initiative::{finish_item, install_gh, prs};
-use common::{Harness, PIPELINE, REPO_NAME, plan};
+use common::{Harness, MODEL, PIPELINE, REPO_NAME, plan};
+use serde_json::json;
 
 fn request() -> EnqueueInitiative {
     EnqueueInitiative {
@@ -30,7 +33,7 @@ fn member(repo: &str) -> InitiativeMember {
         brief: format!("Change {repo} to account_id"),
         title: None,
         pipeline: Some(PIPELINE.into()),
-        model_plan: Some(plan()),
+        model_plan: Some(plan().into()),
         autonomy: Default::default(),
         after: Vec::new(),
     }
@@ -429,6 +432,92 @@ async fn a_member_needs_only_repo_and_brief_and_its_default_model_obeys_policy()
         h.state(&detail.members[0].id).await,
         QueueState::Running { .. }
     ));
+}
+
+/// Codex has a fast and a strong model; Claude only a strong one.
+fn tier_catalog() -> ModelCatalog {
+    let entry = |model: &str, tier| CatalogModel {
+        model: model.parse().unwrap(),
+        tier: Some(tier),
+        is_default: false,
+    };
+    ModelCatalog::new(vec![
+        entry("codex/mini", Tier::Fast),
+        entry("codex/sol", Tier::Strong),
+        entry(MODEL, Tier::Strong),
+    ])
+}
+
+/// A one-member request whose member gives `plan`, on a harness that knows
+/// [`tier_catalog`].
+async fn tiered(plan: serde_json::Value) -> (Harness, EnqueueInitiative) {
+    let h = setup().await;
+    h.ctx.store.lock().await.set_model_catalog(tier_catalog());
+    let mut req = request();
+    req.members.truncate(1);
+    req.members[0].model_plan = Some(serde_json::from_value(plan).unwrap());
+    (h, req)
+}
+
+/// A member's tier resolves as an enqueue's does, on the provider it names.
+/// A member gives no model_reasons, so an effort above the default stands.
+#[tokio::test]
+async fn a_member_tier_resolves_to_a_model_on_its_provider() {
+    let (h, req) = tiered(json!({
+        "implement": [{"tier": "strong", "provider": "codex", "effort": "high"}],
+        "review": [{"tier": "fast", "provider": "codex"}, {"model": MODEL}],
+    }))
+    .await;
+    let detail = enqueue(&h, req).await;
+    let plan = &detail.members[0].model_plan;
+    let implement = &plan.0["implement"][0];
+    assert_eq!(implement.model.to_string(), "codex/sol");
+    assert_eq!(implement.effort, Effort::High);
+    let tier = implement.tier.as_ref().expect("tier metadata");
+    assert_eq!(tier.requested, Tier::Strong);
+    assert_eq!(tier.resolved, Tier::Strong);
+    assert_eq!(tier.provider.as_deref(), Some("codex"));
+    let review = &plan.0["review"];
+    assert_eq!(review[0].model.to_string(), "codex/mini");
+    assert_eq!(review[0].effort, Effort::Medium, "the stage default");
+    assert_eq!(
+        (review[1].model.to_string(), review[1].tier.as_ref()),
+        (MODEL.into(), None)
+    );
+    assert!(plan.choices_for("ship").is_some(), "Archon fills the rest");
+}
+
+/// What a member's plan is refused for, with no initiative created.
+async fn policy_refusal(repo_config: &str, plan: serde_json::Value) -> String {
+    let (h, req) = tiered(plan).await;
+    h.repo_config(repo_config);
+    let refused = h.cli(Request::EnqueueInitiative(req)).await;
+    let Err(ArchonError::Policy(why)) = refused else {
+        panic!("{refused:?}")
+    };
+    assert!(h.ctx.store.lock().await.initiatives().unwrap().is_empty());
+    why
+}
+
+#[tokio::test]
+async fn a_member_plan_is_held_to_the_model_policy_like_an_enqueue() {
+    let pinned = json!({"implement": [{"model": MODEL}]});
+    let unlisted = policy_refusal("[models]\nallow = [\"codex/sol\"]\n", pinned.clone()).await;
+    assert!(
+        unlisted.contains(MODEL) && unlisted.contains("not allowed"),
+        "{unlisted}"
+    );
+    let denied = policy_refusal(&format!("[models]\ndeny = [\"{MODEL}\"]\n"), pinned).await;
+    assert!(
+        denied.contains(MODEL) && denied.contains("not allowed"),
+        "{denied}"
+    );
+    let high = json!({"implement": [{"tier": "strong", "provider": "codex", "effort": "high"}]});
+    let capped = policy_refusal("[models]\nmax_effort = \"medium\"\n", high).await;
+    assert!(
+        capped.contains("exceeds the configured maximum medium"),
+        "{capped}"
+    );
 }
 
 /// A member takes an enqueue's knobs, but an atomic initiative's members are

@@ -2,10 +2,12 @@
 
 use archon_core::initiative::{ContractChange, EnqueueInitiative, InitiativeLimits};
 use archon_core::protocol::Request;
+use serde_json::Value;
 
-use super::{Args, ToolError};
+use super::{Args, ToolError, undeclared_plan_field};
 
 pub(super) fn enqueue_initiative(args: &mut Args) -> Result<Request, ToolError> {
+    check_member_plans(args)?;
     let request = EnqueueInitiative {
         title: args.required_text("title")?,
         contract: args.required_text("contract")?,
@@ -18,6 +20,22 @@ pub(super) fn enqueue_initiative(args: &mut Args) -> Result<Request, ToolError> 
     request.check(&ceiling).map_err(|e| args.refusal(e))?;
     assert!(!request.members.is_empty(), "checked above");
     Ok(Request::EnqueueInitiative(request))
+}
+
+/// Each member's `model_plan` declares only the fields a choice has, which
+/// serde alone would ignore inside a `model` object.
+fn check_member_plans(args: &Args) -> Result<(), ToolError> {
+    let Some(members) = args.fields.get("members").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    let plans = members.iter().map(|m| m.get("model_plan"));
+    for (i, plan) in plans.enumerate() {
+        if let Some(field) = plan.and_then(undeclared_plan_field) {
+            let key = format!("members[{i}].model_plan");
+            return Err(args.error(&key, format_args!("has an unknown field {field}")));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn update_initiative(args: &mut Args) -> Result<Request, ToolError> {

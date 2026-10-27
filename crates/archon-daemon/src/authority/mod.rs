@@ -41,7 +41,7 @@ pub(crate) async fn request(
     }
     let message = evidence::cite(ctx, caller, seq, quote).await?;
     if let Request::Answer { question, text, .. } = &action {
-        evidence::check_answer_quote(quote, text)?;
+        evidence::check_answer_quote(&message.text, quote, text)?;
         return answer_gate(ctx, &message, question, text).await;
     }
     let _changes = ctx.authority_changes.lock().await;

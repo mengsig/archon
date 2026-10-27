@@ -183,6 +183,8 @@ async fn restart_after(
     if !args.yes && !can_ask(report.json) {
         return Ok(code);
     }
+    // The archond a partial environment reaches may be another setup's.
+    super::daemon::refuse_mixed_locations("update")?;
     let running = restart::Live.running_archond().await?;
     if !args.yes && !confirmed(&plan, running.as_ref(), progress).await? {
         return Ok(code);

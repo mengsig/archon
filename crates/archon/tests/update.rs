@@ -490,6 +490,46 @@ fn yes_prints_no_manual_steps_and_a_signal_ends_a_stuck_restart_naming_its_step(
 }
 
 #[test]
+fn yes_in_a_mixed_environment_installs_but_restarts_nothing() {
+    let installed = Installed::new();
+    publish(
+        &installed.releases(),
+        "v9.9.9",
+        &target(),
+        &archon_script("9.9.9"),
+        true,
+    );
+    let runtime = installed.runtime.path();
+    let asked = serve_stuck_archond(&{
+        std::fs::create_dir(runtime.join("archon")).unwrap();
+        runtime.join("archon/archond.sock")
+    });
+    let update = installed
+        .command(&installed.archon(), &["update", "--yes"])
+        .env_remove("ARCHON_SOCKET")
+        .env("XDG_RUNTIME_DIR", runtime)
+        .env("XDG_CONFIG_HOME", installed.path("xdg-config"))
+        .env("XDG_DATA_HOME", installed.path("xdg-data"))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("starting the installed archon");
+    let out = exit_within(update, Duration::from_secs(60));
+    let stderr = text(&out.stderr);
+    assert!(!out.status.success(), "{out:?}");
+    assert_eq!(installed.version(), "archon 9.9.9", "the install stays");
+    assert!(
+        stderr.contains("`archon update` stops and restarts nothing here")
+            && stderr.contains("ARCHON_SOCKET"),
+        "{stderr}"
+    );
+    assert!(
+        !asked.load(Ordering::SeqCst),
+        "archond was asked to restart"
+    );
+}
+
+#[test]
 fn a_failed_aether_update_is_a_warning_and_a_failing_exit() {
     let installed = Installed::new();
     publish(

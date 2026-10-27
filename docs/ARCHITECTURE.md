@@ -3087,8 +3087,8 @@ serve one setup's store under another's name, so nothing starts one
 implicitly: the CLI's and `archon mcp`'s autostart refuse with the variables
 named, `archon gc` does not collect offline, reads add a note, and
 `archon doctor` warns (`archon_core::paths::partial_override`). `archon
-daemon stop`, `daemon restart`, `daemon upgrade` and `archon aether stop`
-refuse there too and stop nothing, since the daemons they would reach may be
+daemon stop`, `daemon restart`, `daemon upgrade`, `archon aether stop` and
+the restart `archon update` runs refuse there too and stop nothing, since the daemons they would reach may be
 another setup's. Before Archon's own aetherd is stopped, the Aether instance
 id it names must be the one archond last linked to (`aether_instance_id` in
 the store); a mismatch is refused, and where either is unknown the stop goes

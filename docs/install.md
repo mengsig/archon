@@ -167,10 +167,11 @@ command that needs it starts the new version. When `archond` already runs
 the installed version, only an orchestrator another archon created is
 restarted (an earlier update cut short after archond's restart leaves one).
 A failed `aether update` is reported as a warning (exit 1) after the
-restart. Where `ARCHON_CONFIG_DIR`, `ARCHON_DATA_DIR` and `ARCHON_SOCKET`
-are not all set or all unset, the new archon is installed but nothing is
-restarted, and the command fails naming them: the archond it would reach
-may be another setup's.
+restart. Where some of Archon's config directory, data directory and
+socket are moved from their defaults (`ARCHON_CONFIG_DIR`,
+`ARCHON_DATA_DIR`, `ARCHON_SOCKET`) and others are not, the new archon is
+installed but nothing is restarted, and the command fails naming them: the
+archond it would reach may be another setup's.
 
 Each step is said on stderr as it starts (`archon: update: restarting
 archond (pid 4242, for at most 2100s)`), and each has a deadline: the

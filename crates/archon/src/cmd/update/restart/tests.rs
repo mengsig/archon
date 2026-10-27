@@ -196,12 +196,29 @@ async fn a_renewed_orchestrator_of_another_version_fails_on_a_current_archond() 
     );
 }
 
+/// How `apply` fails when `fake` hangs, watched past `deadline` so that a
+/// lost deadline fails the test instead of hanging it.
+async fn hung_apply_error(
+    fake: &Fake,
+    plan: &Plan,
+    progress: &Progress,
+    deadline: Duration,
+) -> String {
+    let watchdog = deadline + Duration::from_secs(60);
+    let ended = tokio::time::timeout(watchdog, apply(fake, plan, progress)).await;
+    let result = ended.unwrap_or_else(|_| panic!("{:?} hung past {watchdog:?}", fake.hangs));
+    format!(
+        "{:#}",
+        result.expect_err("a call that hangs fails the restart")
+    )
+}
+
 #[tokio::test(start_paused = true)]
 async fn an_orchestrator_check_that_never_answers_ends_at_its_deadline() {
     let (mut fake, current) = current_archond();
     fake.hangs = Some("creator");
     let (progress, started) = (Progress::new(), tokio::time::Instant::now());
-    let error = format!("{:#}", apply(&fake, &current, &progress).await.unwrap_err());
+    let error = hung_apply_error(&fake, &current, &progress, CHECK_DEADLINE).await;
     assert_eq!(started.elapsed(), CHECK_DEADLINE, "ended at the deadline");
     assert!(
         error.contains("which archon created the orchestrator"),
@@ -285,10 +302,7 @@ async fn an_orchestrator_restart_that_never_answers_ends_at_its_deadline() {
     let mut fake = Fake::new(vec![Seen::New]);
     fake.hangs = Some("orchestrator");
     let (progress, started) = (Progress::new(), tokio::time::Instant::now());
-    let error = format!(
-        "{:#}",
-        apply(&fake, &plan(true), &progress).await.unwrap_err()
-    );
+    let error = hung_apply_error(&fake, &plan(true), &progress, ORCHESTRATOR_DEADLINE).await;
     assert_eq!(
         started.elapsed(),
         ORCHESTRATOR_DEADLINE,
@@ -307,11 +321,8 @@ async fn an_archond_poll_that_never_answers_ends_at_the_restart_deadline() {
     let mut fake = Fake::new(vec![]);
     fake.hangs = Some("observe");
     let started = tokio::time::Instant::now();
-    let error = apply(&fake, &plan(true), &Progress::new())
-        .await
-        .unwrap_err()
-        .to_string();
     let limit = Duration::from_secs(plan(true).drain_secs) + RESTART_MARGIN;
+    let error = hung_apply_error(&fake, &plan(true), &Progress::new(), limit).await;
     assert_eq!(started.elapsed(), limit, "ended at the deadline");
     assert!(
         error.contains("no new one answered within 310s")
@@ -326,13 +337,8 @@ async fn a_restart_request_that_never_answers_ends_at_the_restart_deadline() {
     let mut fake = Fake::new(vec![]);
     fake.hangs = Some("request");
     let started = tokio::time::Instant::now();
-    let error = format!(
-        "{:#}",
-        apply(&fake, &plan(true), &Progress::new())
-            .await
-            .unwrap_err()
-    );
     let limit = Duration::from_secs(plan(true).drain_secs) + RESTART_MARGIN;
+    let error = hung_apply_error(&fake, &plan(true), &Progress::new(), limit).await;
     assert_eq!(started.elapsed(), limit, "ended at the deadline");
     assert!(
         error.contains("was not asked to restart within 310s")

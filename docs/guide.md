@@ -807,11 +807,10 @@ as any command that changes something does; a command that only reads never
 starts either ([which commands start archond](#which-commands-start-archond)).
 `archon aether <args…>` runs any `aether` command against Archon's instance,
 for example `archon aether agents`. `archon daemon stop` stops both
-daemons (`--keep-aether` stops only archond). Where `ARCHON_CONFIG_DIR`,
-`ARCHON_DATA_DIR` and `ARCHON_SOCKET` are not all set or all unset, `daemon
-stop`, `daemon restart`, `archon aether stop` and the restart of `archon
-update` refuse and stop nothing, as
-autostart does. Archon's own aetherd is not stopped when it names another
+daemons (`--keep-aether` stops only archond). Where some of Archon's config
+directory, data directory and socket are moved from their defaults and
+others are not, `daemon stop`, `daemon restart`, `archon aether stop` and
+the restart of `archon update` refuse and stop nothing, as autostart does. Archon's own aetherd is not stopped when it names another
 Aether instance than the one archond last linked to; when either is unknown
 the stop goes ahead with a warning. In the TUI's tree each work item is one subtree: a node named after
 the item, with its stage agents (`implement`, `review 1/2`, `ship`) underneath, beside the `archon` orchestrator.

@@ -12,7 +12,6 @@ mod tools;
 pub(super) mod version;
 
 use std::cmp::Ordering;
-use std::os::fd::{AsFd as _, BorrowedFd};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
@@ -33,7 +32,6 @@ const UPDATE_AVAILABLE: u8 = 10;
 const SMALL_FILE_TIMEOUT: Duration = Duration::from_secs(30);
 const ARCHIVE_TIMEOUT: Duration = Duration::from_secs(600);
 /// How often the question looks for the operator's answer.
-const ANSWER_POLL: Duration = Duration::from_millis(50);
 /// A VERSION or .sha256 asset is one short line.
 const SMALL_FILE_MAX_BYTES: u64 = 1024;
 
@@ -240,47 +238,32 @@ async fn confirmed(
     }
     std::io::Write::flush(&mut std::io::stdout()).context("writing the question")?;
     progress.mark(restart::Phase::Asking);
-    let answer = read_answer(std::io::stdin().as_fd()).await?;
+    let answer = read_answer(std::io::stdin()).await?;
     Ok(restart::is_yes(&answer))
 }
 
-/// One line from `input`, up to its line end or end of input, gathered from
-/// reads taken only when they return at once: a blocked read would hold up
-/// a signal's exit, and a terminal's Ctrl-D hands over half a line.
-async fn read_answer(input: BorrowedFd<'_>) -> anyhow::Result<String> {
-    let (mut answer, mut chunk) = (Vec::new(), [0_u8; 256]);
-    loop {
-        if !has_input(input)? {
-            tokio::time::sleep(ANSWER_POLL).await;
-            continue;
-        }
-        let read = match rustix::io::read(input, &mut chunk[..]) {
-            Ok(read) => read,
-            Err(rustix::io::Errno::INTR | rustix::io::Errno::AGAIN) => continue,
-            Err(error) => return Err(error).context("reading the answer"),
-        };
-        assert!(read <= chunk.len(), "a read fills at most its buffer");
-        answer.extend_from_slice(&chunk[..read]);
-        if read == 0 || chunk[..read].contains(&b'\n') {
-            return Ok(String::from_utf8_lossy(&answer).into_owned());
-        }
-    }
-}
-
-/// Whether a read of `input` returns at once.
-fn has_input(input: BorrowedFd<'_>) -> anyhow::Result<bool> {
-    use rustix::event::{PollFd, PollFlags, Timespec, poll};
-    let mut fds = [PollFd::new(&input, PollFlags::IN)];
-    let now = Timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    match poll(&mut fds, Some(&now)) {
-        Ok(ready) => Ok(ready > 0),
-        // The signal that interrupted it is the select's to handle.
-        Err(rustix::io::Errno::INTR) => Ok(false),
-        Err(error) => Err(error).context("waiting for the answer"),
-    }
+/// One line from `input`, read on a thread of its own: whatever the
+/// terminal's mode, a read the runtime waited on would hold up a signal.
+async fn read_answer(input: impl std::io::Read + Send + 'static) -> anyhow::Result<String> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("update-answer".into())
+        .spawn(move || {
+            use std::io::BufRead as _;
+            let mut answer = String::new();
+            let read = std::io::BufReader::new(input)
+                .read_line(&mut answer)
+                .map(|_| answer);
+            // No one waits once a signal ended the update; the process exits.
+            let _update_ended = sender.send(read);
+        })
+        .context("starting to read the answer")?;
+    let read = receiver
+        .await
+        .context("the answer's reader ended without an answer")?;
+    let answer = read.context("reading the answer")?;
+    assert!(answer.len() <= 1 << 20, "a terminal line is short");
+    Ok(answer)
 }
 
 /// How the part of an update that a signal may still stop has ended.
@@ -600,48 +583,43 @@ mod tests {
         text.parse().unwrap()
     }
 
-    /// A terminal's two ends; the reading end does not block, so a reader
-    /// that waits for a whole line fails here rather than hangs.
+    /// The operator's end of a terminal, and the end the update reads.
     fn terminal_pair() -> (
         std::os::unix::net::UnixStream,
         std::os::unix::net::UnixStream,
     ) {
-        let (operator, terminal) = std::os::unix::net::UnixStream::pair().unwrap();
-        terminal.set_nonblocking(true).unwrap();
-        (operator, terminal)
+        std::os::unix::net::UnixStream::pair().unwrap()
     }
 
     #[tokio::test]
-    async fn half_an_answer_leaves_the_wait_open_to_a_signal() {
+    async fn a_pending_answer_leaves_the_runtime_free_for_a_signal() {
         use std::io::Write as _;
         let (mut operator, terminal) = terminal_pair();
         operator.write_all(b"n").unwrap();
-        let wait = Duration::from_millis(300);
-        let waiting = tokio::time::timeout(wait, read_answer(terminal.as_fd())).await;
-        assert!(waiting.is_err(), "no line end yet: {waiting:?}");
+        // Answers in the end, so a read that blocked the runtime fails, not hangs.
+        let answering = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(2));
+            operator.write_all(b"o\n").unwrap();
+        });
+        let reading = read_answer(terminal);
+        tokio::pin!(reading);
+        let early = tokio::time::timeout(Duration::from_millis(300), &mut reading).await;
+        assert!(early.is_err(), "the runtime waited on the read: {early:?}");
+        let answer = tokio::time::timeout(Duration::from_secs(30), reading).await;
+        assert_eq!(answer.expect("answered").unwrap(), "no\n");
+        answering.join().unwrap();
+    }
 
+    #[tokio::test]
+    async fn half_an_answer_then_the_end_of_input_is_the_answer() {
+        use std::io::Write as _;
         let (mut operator, terminal) = terminal_pair();
         operator.write_all(b"n").unwrap();
         drop(operator);
-        let ended = tokio::time::timeout(wait, read_answer(terminal.as_fd())).await;
-        assert_eq!(ended.expect("input ended").unwrap(), "n");
-    }
-
-    #[tokio::test]
-    async fn an_answer_is_read_to_its_line_end() {
-        use std::io::Write as _;
-        let (mut operator, terminal) = terminal_pair();
-        let answering = async {
-            tokio::time::sleep(ANSWER_POLL * 2).await;
-            operator.write_all(b"no\n").unwrap();
-        };
-        let wait = Duration::from_secs(5);
-        let (answer, ()) = tokio::join!(
-            tokio::time::timeout(wait, read_answer(terminal.as_fd())),
-            answering
-        );
-        assert_eq!(answer.expect("a whole line").unwrap(), "no\n");
-        assert!(!restart::is_yes("no\n"));
+        let answer = tokio::time::timeout(Duration::from_secs(30), read_answer(terminal)).await;
+        let answer = answer.expect("input ended").unwrap();
+        assert_eq!(answer, "n");
+        assert!(!restart::is_yes(&answer));
     }
 
     #[test]

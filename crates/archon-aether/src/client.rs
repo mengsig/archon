@@ -415,9 +415,55 @@ impl AetherClient {
         id: &AetherAgentId,
         patch: AgentPatch,
     ) -> Result<Agent, ArchonError> {
+        self.patch_agent(id, patch, false, None).await
+    }
+
+    /// [`Self::update_agent`] with an idempotency key, so a repeat applies once.
+    pub async fn update_agent_keyed(
+        &self,
+        id: &AetherAgentId,
+        patch: AgentPatch,
+        idempotency_key: &str,
+    ) -> Result<Agent, ArchonError> {
+        assert!(!idempotency_key.is_empty(), "a keyed update has a key");
+        self.patch_agent(id, patch, false, Some(idempotency_key))
+            .await
+    }
+
+    /// [`Self::update_agent`] whose deadline or cost budget also raises every
+    /// live descendant's where lower. Refused here unless aetherd lists
+    /// `subtree_update`: an older one would raise `id` alone.
+    pub async fn update_subtree(
+        &self,
+        id: &AetherAgentId,
+        patch: AgentPatch,
+    ) -> Result<Agent, ArchonError> {
+        assert!(
+            patch.deadline.is_some() || patch.cost_budget.is_some(),
+            "a subtree update raises a deadline or a budget"
+        );
+        let welcome = self.welcome();
+        if !welcome.supports_subtree_update() {
+            return Err(ArchonError::Unavailable(format!(
+                "aetherd {} does not serve a subtree update",
+                welcome.daemon_version
+            )));
+        }
+        self.patch_agent(id, patch, true, None).await
+    }
+
+    async fn patch_agent(
+        &self,
+        id: &AetherAgentId,
+        patch: AgentPatch,
+        subtree: bool,
+        idempotency_key: Option<&str>,
+    ) -> Result<Agent, ArchonError> {
         let command = Command::UpdateAgent {
             id: id.clone(),
             patch,
+            subtree,
+            idempotency_key: idempotency_key.map(str::to_owned),
         };
         let agent: Agent = self.typed(command, "agent").await?;
         ensure_same(id.as_str(), agent.id.as_str(), "update_agent")?;

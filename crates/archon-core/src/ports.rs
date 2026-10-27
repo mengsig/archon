@@ -191,7 +191,7 @@ pub enum DescendantState {
 }
 
 /// An agent beneath another in Aether's tree, as Aether holds it now.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Descendant {
     pub agent: AetherAgentId,
     /// The agent asked about for a direct child, a descendant otherwise.
@@ -202,6 +202,10 @@ pub struct Descendant {
     pub state: DescendantState,
     /// The task it was given, kept after it ends; `None` before it has one.
     pub task: Option<AetherTaskId>,
+    /// When Aether stops it; `None` when it has no deadline.
+    pub deadline: Option<Timestamp>,
+    /// Aether's hard cap in dollars; `None` when it has none.
+    pub cost_budget_usd: Option<f64>,
 }
 
 /// What Aether reports of an agent tree's pulse, for the stage watchdog.
@@ -288,6 +292,32 @@ pub trait AgentBackend: Send + Sync {
         agent: &AetherAgentId,
         update: AgentUpdate,
     ) -> Result<(), ArchonError>;
+
+    /// [`Self::update_agent`] with Aether's idempotency `key`, so a repeat
+    /// applies once.
+    async fn update_agent_keyed(
+        &self,
+        agent: &AetherAgentId,
+        update: AgentUpdate,
+        key: &str,
+    ) -> Result<(), ArchonError>;
+
+    /// Whether [`Self::update_subtree`] is served (Aether's `subtree_update`).
+    async fn supports_subtree_update(&self) -> Result<bool, ArchonError> {
+        Ok(false)
+    }
+
+    /// [`Self::update_agent`], in one call that also raises the deadline and
+    /// budget of every live agent beneath `agent` whose own is lower.
+    async fn update_subtree(
+        &self,
+        agent: &AetherAgentId,
+        _update: AgentUpdate,
+    ) -> Result<(), ArchonError> {
+        Err(ArchonError::Unavailable(format!(
+            "this backend cannot update the agents beneath {agent} in one call"
+        )))
+    }
 
     /// Stop the turn `agent` is in; it then waits for its next message.
     /// `false` when it was in no turn.

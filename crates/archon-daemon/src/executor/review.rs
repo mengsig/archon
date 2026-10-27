@@ -680,6 +680,8 @@ mod tests {
             effort: None,
             state,
             task: Some(AetherTaskId::parse(&id.replace("agt_", "tsk_")).unwrap()),
+            deadline: None,
+            cost_budget_usd: None,
         }
     }
 

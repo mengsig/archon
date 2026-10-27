@@ -190,10 +190,14 @@ fn samples() -> Vec<Command> {
                 cost_budget: Some(3.0),
                 deadline: Some(json!({"set": "2026-09-26T12:00:00Z"})),
             },
+            subtree: false,
+            idempotency_key: None,
         },
         Command::UpdateAgent {
             id: agent(),
             patch: AgentPatch::default(),
+            subtree: false,
+            idempotency_key: None,
         },
     ];
     commands.extend(message_samples());
@@ -507,6 +511,13 @@ fn the_agent_fields_archon_reads_exist_in_the_schema() {
     for key in read {
         assert!(properties.contains(key), "Agent.{key} is not in the schema");
     }
+    let (config, _) = shape(&schema, &schema["$defs"]["AgentConfig"]);
+    for key in ["effort", "deadline", "cost_budget"] {
+        assert!(
+            config.contains(key),
+            "AgentConfig.{key} is not in the schema"
+        );
+    }
     let mut value = archon_aether::fake::agent("agt_01ARZ3NDEKTSV4RRFFQ69G5FAV", None);
     value["restarted_as"] = json!("agt_01ARZ3NDEKTSV4RRFFQ69G5FAW");
     let parsed: archon_aether::wire::Agent = serde_json::from_value(value).unwrap();
@@ -721,6 +732,43 @@ fn notification_commands_match_aethers_feature_schema() {
 
 /// Transcribed from Aether's published protocol schema (v24): images ride on
 /// `send_message.attachments`, and a text-only message leaves the key off.
+/// A subset of Aether 1.2.7's published schema: `update_agent` with its
+/// `subtree` flag and idempotency key, which protocol 17 does not list.
+#[test]
+fn a_subtree_or_keyed_update_matches_aethers_published_schema() {
+    let schema: Value =
+        serde_json::from_str(include_str!("fixtures/aether-subtree-update.schema.json")).unwrap();
+    let patch = AgentPatch {
+        cost_budget: Some(4.5),
+        deadline: Some(json!({"set": "2026-09-26T12:00:00Z"})),
+        ..AgentPatch::default()
+    };
+    let wide = Command::UpdateAgent {
+        id: agent(),
+        patch: patch.clone(),
+        subtree: true,
+        idempotency_key: None,
+    };
+    let keyed = Command::UpdateAgent {
+        id: agent(),
+        patch,
+        subtree: false,
+        idempotency_key: Some("ntf_1:agt_1".into()),
+    };
+    for command in [&wide, &keyed] {
+        assert_eq!(violations(&schema, command), Vec::<String>::new());
+    }
+    let wide = serde_json::to_value(&wide).unwrap();
+    assert_eq!(wide["subtree"], true);
+    assert!(wide.get("idempotency_key").is_none());
+    let keyed = serde_json::to_value(&keyed).unwrap();
+    assert!(
+        keyed.get("subtree").is_none(),
+        "false is left out, as Aether does"
+    );
+    assert_eq!(keyed["idempotency_key"], "ntf_1:agt_1");
+}
+
 #[test]
 fn a_message_with_images_matches_aethers_published_schema() {
     use archon_core::attachment::ImageAttachment;

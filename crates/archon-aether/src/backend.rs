@@ -150,6 +150,8 @@ pub fn subtree(root: &AetherAgentId, agents: &[Agent]) -> Vec<Descendant> {
                 effort: child.config.effort.as_deref().and_then(|e| e.parse().ok()),
                 state: descendant_state(child),
                 task: child.current_task.clone(),
+                deadline: child.config.deadline,
+                cost_budget_usd: child.config.cost_budget,
             });
         }
     }
@@ -476,6 +478,43 @@ impl AgentBackend for AetherBackend {
         }
         let patch = agent_patch(update);
         self.link.client()?.update_agent(agent, patch).await?;
+        Ok(())
+    }
+
+    async fn update_agent_keyed(
+        &self,
+        agent: &AetherAgentId,
+        update: AgentUpdate,
+        key: &str,
+    ) -> Result<(), ArchonError> {
+        assert!(!update.is_empty(), "an update changes something");
+        if let Some(choice) = &update.choice {
+            self.policy.check(choice)?;
+        }
+        let patch = agent_patch(update);
+        let client = self.link.client()?;
+        client.update_agent_keyed(agent, patch, key).await?;
+        Ok(())
+    }
+
+    async fn supports_subtree_update(&self) -> Result<bool, ArchonError> {
+        Ok(self.link.client()?.welcome().supports_subtree_update())
+    }
+
+    async fn update_subtree(
+        &self,
+        agent: &AetherAgentId,
+        update: AgentUpdate,
+    ) -> Result<(), ArchonError> {
+        assert!(
+            update.deadline.is_some() || update.cost_budget_usd.is_some(),
+            "a subtree update raises a deadline or a budget"
+        );
+        if let Some(choice) = &update.choice {
+            self.policy.check(choice)?;
+        }
+        let patch = agent_patch(update);
+        self.link.client()?.update_subtree(agent, patch).await?;
         Ok(())
     }
 

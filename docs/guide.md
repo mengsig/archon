@@ -1028,8 +1028,8 @@ Give at least one change; several in one command are applied together.
 | --- | --- |
 | `--note "…"` | Adds the text to the brief under a dated `## Amendment` heading and sends it to every agent working on the item now, helpers included. Later stages read it in the brief. |
 | `--model <provider/model>`, `--effort <effort>` | Changes the model or effort of `--stage` (the running stage when omitted), within the model policy. A running agent ends its turn and goes on with its work on the new model; later attempts and retries use it too. |
-| `--budget-usd <usd>` | Sets the item's budget. Running agents that carry their own cap get the difference. |
-| `--extend <minutes>` | Gives the stage running now more time, up to 1440 minutes a steer. |
+| `--budget-usd <usd>` | Sets the item's budget. Running agents that carry their own cap get the difference, and the agents they delegated to are raised to it where theirs is lower. |
+| `--extend <minutes>` | Gives the stage running now more time, up to 1440 minutes a steer, and the agents it delegated to the same deadline where theirs is earlier. |
 | `--stage-timeout <stage>=<minutes>` | Sets the timeout of a stage that has not started yet, within `[limits] max_stage_timeout_minutes`; repeat for several. `queue add` and `queue retry` take it too. |
 | `--abort` | Stops the agents of `--stage` now. The stage is then started again with a new agent, or passed over with `--then skip`, or the run continues at another stage with `--goto <stage>`. |
 | `--remove <stage>` | Takes out a stage that has not started, for this run. |

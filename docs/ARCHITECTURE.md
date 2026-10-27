@@ -1543,8 +1543,8 @@ refused (§11). `Steer::check` refuses one that changes nothing.
 | --- | --- | --- |
 | `note` | Amends the brief (`## Amendment (<UTC time>)`) and the run's `task.brief`, so every prompt rendered from then on has it. Every live stage agent is sent it, and so is every live agent beneath one. | Amends the brief. |
 | `model`, `effort` (+ `stage`) | Changes every choice of the stage in the item's plan, checked against the model policy (§7.4), and patches the stage's live agents. `stage` defaults to the running stage. | Changes the plan; `stage` is required. |
-| `budget_usd` | Sets the item's cap. A live agent that carries a cap of its own gets the difference, a team's roles each their share. | Sets the item's cap. |
-| `extend_minutes` | Moves the deadline of every stage run working now. | Refused. |
+| `budget_usd` | Sets the item's cap. A live agent that carries a cap of its own gets the difference, a team's roles each their share; a live agent beneath it whose cap is lower is raised to the same. | Sets the item's cap. |
+| `extend_minutes` | Moves the deadline of every stage run working now, and of every live agent beneath its stage agent whose deadline is earlier. | Refused. |
 | `abort` (`then`: `retry`, `skip`, `goto`) | Ends the running attempt of `stage` as cancelled without judging it; the run then retries the stage, goes past it, or goes to the named stage. On a stage that has not started, only `skip`: the run passes the stage over when it reaches it. | Refused. |
 | `insert_stage {stage, from?, after?}` | Puts a copy of stage `stage` of pipeline `from` (the item's own when left out) among the stages that have not started: after `after`, or before the first of them. | The same, for every later run. A failed item is queued again (below). |
 | `switch_pipeline` | Replaces the stages that have not started with what the named pipeline runs after the stages both share. | The same, for every later run. A failed item is queued again. |
@@ -1612,7 +1612,12 @@ Aether's checkpoint of the context. So a model or effort steer is three
 steps for the stage's own agent, in this order: `update_agent`, `interrupt`
 to end the running turn, then a message that starts the next turn on the
 new model and says so. A note, a budget and a deadline need no
-interrupt. Each step is stored in `kv.steer_owed:<stage run>` in the same lock as the steer, with a unique
+interrupt. A delegated agent starts with a copy of its parent's absolute
+deadline and cap, so a deadline or budget patch on the stage's agent also
+raises every live agent beneath it whose own is lower, and never lowers
+one: in one `update_agent` with `subtree` when Aether lists the
+`subtree_update` feature, otherwise with one `update_agent` per such agent,
+keyed `<step key>:<agent>`. Each step is stored in `kv.steer_owed:<stage run>` in the same lock as the steer, with a unique
 key that Aether dedupes the message by. A step Aether did not answer stays
 owed and the sweep repeats it; a step Aether refuses is dropped with a
 progress note on the item, and what the steer stored still applies to the

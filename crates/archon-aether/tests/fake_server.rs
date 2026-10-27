@@ -490,6 +490,43 @@ async fn update_agent_patches_only_what_the_update_names() {
     assert_eq!(sent[1]["patch"], json!({"deadline": {"set": deadline}}));
 }
 
+/// A subtree update is sent only to an aetherd that lists `subtree_update`;
+/// a keyed one carries its key and no `subtree`.
+#[tokio::test]
+async fn a_subtree_update_needs_the_feature_and_a_keyed_one_carries_its_key() {
+    let (_dir, fake) = fake_aether().await;
+    fake.set_default(
+        "update_agent",
+        Scripted::reply("agent", fake::agent(AGENT, None)),
+    );
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    let later = AgentUpdate {
+        deadline: Some(archon_core::now()),
+        cost_budget_usd: Some(9.0),
+        ..AgentUpdate::default()
+    };
+    let old = backend(&fake, any_model()).await;
+    assert!(!old.supports_subtree_update().await.unwrap());
+    let error = old.update_subtree(&agent, later.clone()).await.unwrap_err();
+    assert!(matches!(error, ArchonError::Unavailable(_)), "{error}");
+    assert!(fake.received_named("update_agent").is_empty());
+    old.update_agent_keyed(&agent, later.clone(), "ntf_1:agt_helper")
+        .await
+        .unwrap();
+
+    fake.set_features(vec![archon_aether::wire::SUBTREE_UPDATE_FEATURE.into()]);
+    let new = backend(&fake, any_model()).await;
+    assert!(new.supports_subtree_update().await.unwrap());
+    new.update_subtree(&agent, later).await.unwrap();
+    let sent = fake.received_named("update_agent");
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[0]["idempotency_key"], "ntf_1:agt_helper");
+    assert!(sent[0].get("subtree").is_none(), "{}", sent[0]);
+    assert_eq!(sent[1]["subtree"], true);
+    assert!(sent[1].get("idempotency_key").is_none(), "{}", sent[1]);
+    assert_eq!(sent[1]["patch"]["cost_budget"], 9.0);
+}
+
 #[tokio::test]
 async fn update_agent_refuses_a_disallowed_model_without_calling_aether() {
     let (_dir, fake) = fake_aether().await;
@@ -688,7 +725,8 @@ async fn descendants_lists_the_agents_run_once_and_keeps_only_its_subtree() {
         let mut agent = fake::agent(id, None);
         agent["parent"] = json!(parent);
         agent["status"] = json!({"state": state});
-        agent["config"] = json!({"effort": "x_high"});
+        agent["config"] = json!({"effort": "x_high", "deadline": "2026-10-27T10:00:00Z",
+                                 "cost_budget": 4.5});
         agent
     };
     let listed = json!([
@@ -712,6 +750,9 @@ async fn descendants_lists_the_agents_run_once_and_keeps_only_its_subtree() {
     assert_eq!(found[0].parent, lead);
     assert_eq!(found[0].state, DescendantState::Live);
     assert_eq!(found[0].effort, Some(Effort::XHigh));
+    let deadline = "2026-10-27T10:00:00Z".parse().unwrap();
+    assert_eq!(found[0].deadline, Some(deadline));
+    assert_eq!(found[0].cost_budget_usd, Some(4.5));
     let query = &fake.received_named("list_agents")[0]["query"];
     assert_eq!(query["run"], fake::FAKE_RUN);
     assert_eq!(query["include_archived"], true);

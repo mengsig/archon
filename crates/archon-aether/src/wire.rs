@@ -36,6 +36,9 @@ pub const REPOSITORY_ROOT_FEATURE: &str = "repository_root";
 pub const NOTES_FEATURE: &str = "notes";
 /// The daemon serves the notification center (`post_notification` and kin).
 pub const NOTIFICATIONS_FEATURE: &str = "notifications";
+/// The daemon applies `UpdateAgent.subtree`: a raised deadline or cost budget
+/// also reaches the live descendants.
+pub const SUBTREE_UPDATE_FEATURE: &str = "subtree_update";
 
 /// How a note row is coloured in the TUI (protocol 24).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -71,6 +74,12 @@ pub enum Command {
     UpdateAgent {
         id: AetherAgentId,
         patch: AgentPatch,
+        /// Also raise every live descendant's `deadline` and `cost_budget` to
+        /// the patched value where theirs is lower ([`SUBTREE_UPDATE_FEATURE`]).
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        subtree: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     SendMessage {
         to: AetherAgentId,
@@ -241,6 +250,12 @@ pub struct Welcome {
 }
 
 impl Welcome {
+    pub fn supports_subtree_update(&self) -> bool {
+        self.features
+            .iter()
+            .any(|feature| feature == SUBTREE_UPDATE_FEATURE)
+    }
+
     pub fn supports_repository_root(&self) -> bool {
         self.features
             .iter()
@@ -516,6 +531,12 @@ pub struct AgentSettings {
     /// As Aether wrote it; it may name an effort Archon does not know.
     #[serde(default)]
     pub effort: Option<String>,
+    /// Aether's hard cap in dollars; `None` when it has none.
+    #[serde(default)]
+    pub cost_budget: Option<f64>,
+    /// When Aether stops it; `None` when it has no deadline.
+    #[serde(default)]
+    pub deadline: Option<Timestamp>,
 }
 
 impl AgentSettings {

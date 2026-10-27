@@ -7,6 +7,7 @@
 
 use crate::common;
 mod repository_root;
+mod steer_helpers;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};

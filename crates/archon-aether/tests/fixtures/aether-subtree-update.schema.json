@@ -1,0 +1,93 @@
+{
+  "$defs": {
+    "ClientFrame": {
+      "oneOf": [
+        {
+          "properties": {
+            "cmd": {
+              "const": "update_agent",
+              "type": "string"
+            },
+            "id": {
+              "$ref": "#/$defs/AgentId"
+            },
+            "idempotency_key": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "patch": {
+              "$ref": "#/$defs/AgentPatch"
+            },
+            "subtree": {
+              "description": "Also raise every live descendant's `deadline` and `cost_budget` to\nthe patched value where theirs is lower; nothing else propagates.\nNeeds `features::SUBTREE_UPDATE`.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "cmd",
+            "id",
+            "patch"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AgentPatch": {
+      "description": "Partial update to a live agent. Only set fields change.",
+      "type": "object",
+      "properties": {
+        "cost_budget": {
+          "description": "Spend limit in US dollars over the agent and its subtree.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "deadline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DeadlineUpdate"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Wall-clock stop for the agent: `{\"set\": <rfc3339>}` moves it,\n`\"clear\"` removes it."
+        }
+      }
+    },
+    "DeadlineUpdate": {
+      "description": "A change to an agent's wall-clock stop (\u00a73.1). Every knob has to be\nchangeable on a live agent, and one that can only ever move further into\nthe future is not: removing the deadline needs a form of its own.",
+      "oneOf": [
+        {
+          "enum": [
+            "clear"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "set": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          "required": [
+            "set"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AgentId": {
+      "description": "A agt_ prefixed ULID.",
+      "pattern": "^agt_[0-9A-HJKMNP-TV-Z]{26}$",
+      "type": "string"
+    }
+  },
+  "protocol_version": 24
+}

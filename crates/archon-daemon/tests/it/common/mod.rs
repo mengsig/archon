@@ -1043,6 +1043,8 @@ impl FakeBackend {
             effort: Some(Effort::Medium),
             state: DescendantState::Live,
             task: Some(task),
+            deadline: None,
+            cost_budget_usd: None,
         });
         agent
     }
@@ -1271,6 +1273,16 @@ impl AgentBackend for FakeBackend {
         }
         state.updates.push((agent.clone(), update));
         Ok(())
+    }
+
+    async fn update_agent_keyed(
+        &self,
+        agent: &AetherAgentId,
+        update: AgentUpdate,
+        key: &str,
+    ) -> Result<(), ArchonError> {
+        assert!(!key.is_empty(), "a keyed update has a key");
+        self.update_agent(agent, update).await
     }
 
     /// Ends a held turn, as Aether's interrupt does.

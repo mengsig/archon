@@ -9,6 +9,8 @@
 //! refused with `internal`, so an unscripted call fails loudly. Like Aether,
 //! it answers `incompatible` instead of a GitHub watcher the connection's
 //! protocol cannot carry (an allowlist below 15, operator logins below 17).
+//! [`update_agent`] applies `update_agent` to a responder's agent list, with
+//! the raise-only `subtree` reach of the `subtree_update` feature.
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -23,6 +25,9 @@ use tokio::task::JoinHandle;
 
 use crate::client::Endpoint;
 use crate::wire::PROTOCOL_VERSION;
+
+mod update;
+pub use update::update_agent;
 
 /// What the fake answers one command with.
 #[derive(Debug, Clone, PartialEq)]

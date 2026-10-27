@@ -61,7 +61,9 @@ repository, a finished item's branch to commit onto), repeatable `--tag`,
 `--idempotency-key`, and `--budget-usd`. A repeated enqueue with the same
 idempotency key and arguments returns the original item, even when archond
 would now fill the stages the arguments leave open with other models;
-conflicting arguments are refused.
+conflicting arguments are refused. A key first recorded by Archon 1.4.6 or
+earlier holds the plan archond filled then, so its repeat is refused as a
+different request if archond now fills the plan otherwise.
 
 The autonomy flags are `--review strict|standard|none`,
 `--proposal lavish|off`, `--report before-pr|with-pr|off`,

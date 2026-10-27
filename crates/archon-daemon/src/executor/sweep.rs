@@ -277,10 +277,10 @@ async fn cancel_and_settle(
 
 /// Settle a stage whose agent is stopped or gone: with the result its task
 /// holds if the agent produced one, else with the synthetic `outcome`.
-/// A lookup Aether cannot answer leaves the stage `running` for the next
-/// sweep, which cancels again (harmless) and reads the task: settling now
-/// could discard a verdict the agent did produce. A task Aether no longer
-/// knows, or refuses to read, settles with `outcome` as before this read.
+/// A lookup that failed for a passing reason leaves the stage `running` for
+/// the next sweep, which cancels again (harmless) and reads the task:
+/// settling now could discard a verdict the agent did produce. A task Aether
+/// no longer knows, or refuses to read, settles with `outcome`.
 async fn settle_after_cancel(
     ctx: &DaemonContext,
     stage: &StageRunId,
@@ -294,8 +294,8 @@ async fn settle_after_cancel(
     );
     let settled = match ctx.backend.task_outcome(task).await {
         Ok(found) => found,
-        Err(ArchonError::Unavailable(why)) => {
-            tracing::info!(%agent, %why, "task lookup unanswered after cancel; the next sweep retries");
+        Err(error) if is_passing(&error) => {
+            tracing::warn!(%agent, %error, "task lookup failed after cancel; the next sweep retries");
             return Ok(FollowUp::default());
         }
         Err(ArchonError::NotFound(why)) => {
@@ -303,7 +303,7 @@ async fn settle_after_cancel(
             None
         }
         Err(error) => {
-            tracing::warn!(%task, %error, "could not read the task after its cancel; settling its stage");
+            tracing::warn!(%task, %error, "Aether refused to read the task after its cancel; settling its stage");
             None
         }
     };
@@ -323,6 +323,15 @@ async fn settle_after_cancel(
         "only the agent's own result can complete a stage here"
     );
     settle::settle(ctx, stage, chosen).await
+}
+
+/// A lookup failure a later sweep may not repeat: no answer, local I/O, a
+/// garbled reply or a failure inside Aether.
+fn is_passing(error: &ArchonError) -> bool {
+    matches!(
+        error,
+        ArchonError::Unavailable(_) | ArchonError::Io { .. } | ArchonError::Protocol(_)
+    ) || archon_aether::wire::is_internal(error)
 }
 
 /// An agent that no stage run owns any more; one already gone is done.

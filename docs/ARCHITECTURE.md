@@ -1404,8 +1404,9 @@ in a new worktree off the base branch (§13).
   task: if the agent had already completed or failed it, that result settles
   the stage instead, so a verdict whose earlier settle failed is not lost to
   the timeout. A task that reads cancelled is Archon's own cancel and keeps
-  `timed_out`; an unanswered read waits for the next sweep, and a refused
-  one settles `timed_out` as before. The watchdog's
+  `timed_out`. A read that fails for a passing reason (no answer, local I/O,
+  a garbled reply, Aether's `internal`) waits for the next sweep; a refused
+  one settles `timed_out`. The watchdog's
   `infra` stall failure follows the same rule.
 - `infra` failures (`agent.failed` before its task settles, or Aether restart
   recovery failures) get `limits.infra_retries` (default 1) automatic

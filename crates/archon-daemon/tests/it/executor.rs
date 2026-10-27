@@ -983,23 +983,58 @@ async fn a_finished_agent_aether_forgot_keeps_its_result_at_its_deadline() {
 
 #[tokio::test]
 async fn an_unreadable_task_after_a_cancel_is_read_again_by_the_next_sweep() {
+    let passing = [
+        ArchonError::Unavailable("aetherd busy".into()),
+        ArchonError::Aether("internal: database is locked".into()),
+        ArchonError::Protocol("garbled reply".into()),
+        ArchonError::io("get_task", std::io::Error::other("connection reset")),
+    ];
+    for error in passing {
+        let h = Harness::new().await;
+        let item = h.enqueue("lookup failed").await;
+        h.dispatch().await;
+        let implement = h.running().await.remove(0);
+        let task = implement.aether_task.clone().expect("task");
+        h.backend.settle_task(&task, completed("implemented"));
+        expire_deadline(&h, &implement).await;
+        let shown = error.to_string();
+        h.backend.fail_next_outcome(error);
+
+        h.dispatch().await;
+        let waiting = h.stages(&item.id).await.remove(0);
+        assert_eq!(
+            waiting.state,
+            StageState::Running,
+            "{shown}: nothing settled yet"
+        );
+
+        h.dispatch().await;
+        let settled = h.stages(&item.id).await.remove(0);
+        assert_eq!(
+            settled.state,
+            StageState::Completed,
+            "{shown}: the verdict survived"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_task_aether_refuses_to_read_after_a_cancel_times_out() {
     let h = Harness::new().await;
-    let item = h.enqueue("lookup unanswered").await;
+    let item = h.enqueue("lookup refused").await;
     h.dispatch().await;
     let implement = h.running().await.remove(0);
-    let task = implement.aether_task.clone().expect("task");
-    h.backend.settle_task(&task, completed("implemented"));
     expire_deadline(&h, &implement).await;
     h.backend
-        .fail_next_outcome(ArchonError::Unavailable("aetherd busy".into()));
+        .fail_next_outcome(ArchonError::Aether("forbidden: not this transport".into()));
 
     h.dispatch().await;
-    let waiting = h.stages(&item.id).await.remove(0);
-    assert_eq!(waiting.state, StageState::Running, "nothing settled yet");
-
-    h.dispatch().await;
-    let settled = h.stages(&item.id).await.remove(0);
-    assert_eq!(settled.state, StageState::Completed, "the verdict survived");
+    let swept = h.stages(&item.id).await.remove(0);
+    assert_eq!(
+        swept.state,
+        StageState::TimedOut,
+        "a refusal does not hold the stage"
+    );
 }
 
 #[tokio::test]

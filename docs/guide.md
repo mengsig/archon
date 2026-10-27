@@ -776,9 +776,9 @@ advice (`run archon update`) when a newer release exists.
 `/upgrade both latest` is also what to say when the orchestrator tells you a
 newer Archon or Aether exists: only your own message, typed here, starts it,
 never a GitHub request or an agent. (`archon update --yes` from a shell
-does the same, and also restarts the orchestrator: it exits 0 only once the
-orchestrator runs a generation the new version created, names the step that
-did not finish otherwise, and Ctrl-C ends it at any step with exit 130; see
+does the same, and also restarts the orchestrator: with archond running it
+exits 0 only once the orchestrator runs a generation the new version
+created, names the step that did not finish otherwise, and Ctrl-C ends it at any step with exit 130; see
 [Updating](install.md#updating).) A restart Archon asked for itself is
 reported in the feed as `Archon's own aetherd restarted, as planned`, not
 as an aetherd that had stopped.
@@ -810,8 +810,9 @@ for example `archon aether agents`. `archon daemon stop` stops both
 daemons (`--keep-aether` stops only archond). Where `ARCHON_CONFIG_DIR`,
 `ARCHON_DATA_DIR` and `ARCHON_SOCKET` are not all set or all unset, `daemon
 stop`, `daemon restart` and `archon aether stop` refuse and stop nothing, as
-autostart does, and Archon's own aetherd is stopped only when it names the
-Aether instance archond last linked to. In the TUI's tree each work item is one subtree: a node named after
+autostart does. Archon's own aetherd is not stopped when it names another
+Aether instance than the one archond last linked to; when either is unknown
+the stop goes ahead with a warning. In the TUI's tree each work item is one subtree: a node named after
 the item, with its stage agents (`implement`, `review 1/2`, `ship`) underneath, beside the `archon` orchestrator.
 
 ```sh

@@ -623,12 +623,18 @@ pub async fn stop_aether() -> anyhow::Result<(serde_json::Value, String)> {
 
 /// Refuse to stop the aetherd on `instance.socket` when it is another Aether
 /// instance than the one this data directory's archond last linked to. What
-/// cannot be told (no link yet, no answer) stops nothing from going ahead.
+/// cannot be told (no link yet, no answer) is warned of, and stops nothing.
 async fn refuse_another_instance(instance: &Instance) -> anyhow::Result<()> {
     if !lifecycle::is_listening(&instance.socket) {
         return Ok(());
     }
     let Some(recorded) = recorded_instance(&instance.archon_data_dir) else {
+        eprintln!(
+            "archon: warning: archond in {} recorded no Aether instance it linked to; the \
+             aetherd on {} is stopped unchecked",
+            instance.archon_data_dir.display(),
+            instance.socket.display()
+        );
         return Ok(());
     };
     let Some(answering) = answering_instance(&instance.socket).await else {
@@ -669,9 +675,8 @@ fn recorded_instance(data_dir: &Path) -> Option<String> {
         Ok(recorded) => recorded.filter(|id| !id.is_empty()),
         Err(error) => {
             eprintln!(
-                "archon: warning: which Aether instance {} belongs to is unknown ({error}); \
-                 its aetherd is stopped unchecked",
-                data_dir.display()
+                "archon: warning: {} could not be read ({error})",
+                path.display()
             );
             None
         }

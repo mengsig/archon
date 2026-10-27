@@ -13,6 +13,8 @@ struct Fake {
     hangs: Option<&'static str>,
     /// The version the restarted orchestrator reports as its creator.
     created_by: &'static str,
+    /// The creator of the orchestrator running before any restart.
+    creator: Option<&'static str>,
 }
 
 impl Fake {
@@ -31,6 +33,7 @@ impl Fake {
             orchestrator_fails: false,
             hangs: None,
             created_by: "1.4.2",
+            creator: Some("1.4.2"),
         }
     }
 
@@ -70,6 +73,10 @@ impl Steps for Fake {
         self.log("mcp").await;
         Ok(())
     }
+    async fn orchestrator_creator(&self) -> anyhow::Result<Option<String>> {
+        self.log("creator").await;
+        Ok(self.creator.map(str::to_owned))
+    }
     async fn restart_orchestrator(&self) -> anyhow::Result<String> {
         self.log("orchestrator").await;
         match self.orchestrator_fails {
@@ -78,6 +85,20 @@ impl Steps for Fake {
         }
     }
     async fn pause(&self) {}
+}
+
+/// A fake whose archond already runs the installed archon.
+fn current_archond() -> (Fake, Plan) {
+    let mut fake = Fake::new(vec![]);
+    fake.running = Some(Running {
+        pid: 7,
+        version: "1.4.2".into(),
+    });
+    let current = Plan {
+        archon_changed: false,
+        ..plan(true)
+    };
+    (fake, current)
 }
 
 fn plan(dedicated: bool) -> Plan {
@@ -132,17 +153,61 @@ async fn nothing_restarts_when_archond_is_not_running_or_already_current() {
     assert!(!outcome.restarted);
     assert_eq!(*fake.calls.borrow(), ["aether", "running"]);
 
-    let mut fake = Fake::new(vec![]);
-    fake.running = Some(Running {
-        pid: 7,
-        version: "1.4.2".into(),
-    });
-    let current = Plan {
-        archon_changed: false,
-        ..plan(true)
-    };
-    let outcome = apply(&fake, &current, &Progress::new()).await.unwrap();
-    assert!(!outcome.restarted && !fake.calls.borrow().contains(&"request"));
+    for creator in [Some("1.4.2"), None] {
+        let (mut fake, current) = current_archond();
+        fake.creator = creator;
+        let outcome = apply(&fake, &current, &Progress::new()).await.unwrap();
+        assert!(!outcome.restarted, "{creator:?}: {outcome:?}");
+        assert_eq!(*fake.calls.borrow(), ["aether", "running", "creator"]);
+    }
+}
+
+#[tokio::test]
+async fn an_orchestrator_left_on_the_old_archon_is_renewed_on_a_current_archond() {
+    for dedicated in [true, false] {
+        let (mut fake, current) = current_archond();
+        fake.creator = Some("1.4.1");
+        let plan = Plan {
+            dedicated,
+            ..current
+        };
+        let outcome = apply(&fake, &plan, &Progress::new()).await.unwrap();
+        assert!(outcome.restarted, "{outcome:?}");
+        let calls = fake.calls.borrow().clone();
+        assert!(!calls.contains(&"request"), "{calls:?}");
+        assert_eq!(calls.last(), Some(&"orchestrator"));
+        assert_eq!(calls.contains(&"mcp"), !dedicated, "{calls:?}");
+        let said = outcome.lines.join("\n");
+        assert!(said.contains("created by 1.4.1, not 1.4.2"), "{said}");
+    }
+}
+
+#[tokio::test]
+async fn a_renewed_orchestrator_of_another_version_fails_on_a_current_archond() {
+    let (mut fake, current) = current_archond();
+    (fake.creator, fake.created_by) = (Some(UNRECORDED), "1.4.1");
+    let error = apply(&fake, &current, &Progress::new())
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("created its new generation, not 1.4.2"),
+        "{error}"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_orchestrator_check_that_never_answers_ends_at_its_deadline() {
+    let (mut fake, current) = current_archond();
+    fake.hangs = Some("creator");
+    let (progress, started) = (Progress::new(), tokio::time::Instant::now());
+    let error = format!("{:#}", apply(&fake, &current, &progress).await.unwrap_err());
+    assert_eq!(started.elapsed(), CHECK_DEADLINE, "ended at the deadline");
+    assert!(
+        error.contains("which archon created the orchestrator"),
+        "{error}"
+    );
+    assert_eq!(progress.current(), Phase::CheckingOrchestrator);
 }
 
 #[tokio::test]
@@ -230,7 +295,7 @@ async fn an_orchestrator_restart_that_never_answers_ends_at_its_deadline() {
         "ended at the deadline"
     );
     assert!(
-        error.contains("the orchestrator did not (`archon orchestrator restart`)")
+        error.contains("the orchestrator did not restart (`archon orchestrator restart`)")
             && error.contains("did not finish it within 180s"),
         "{error}"
     );
@@ -254,6 +319,27 @@ async fn an_archond_poll_that_never_answers_ends_at_the_restart_deadline() {
         "{error}"
     );
     assert!(!fake.calls.borrow().contains(&"orchestrator"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_restart_request_that_never_answers_ends_at_the_restart_deadline() {
+    let mut fake = Fake::new(vec![]);
+    fake.hangs = Some("request");
+    let started = tokio::time::Instant::now();
+    let error = format!(
+        "{:#}",
+        apply(&fake, &plan(true), &Progress::new())
+            .await
+            .unwrap_err()
+    );
+    let limit = Duration::from_secs(plan(true).drain_secs) + RESTART_MARGIN;
+    assert_eq!(started.elapsed(), limit, "ended at the deadline");
+    assert!(
+        error.contains("was not asked to restart within 310s")
+            && error.contains("did not answer the request"),
+        "{error}"
+    );
+    assert_eq!(*fake.calls.borrow(), ["aether", "running", "request"]);
 }
 
 #[tokio::test]
@@ -289,6 +375,7 @@ async fn an_interrupt_ends_a_waiting_step_at_once_and_names_it() {
     let after = Duration::from_secs(5);
     for (hangs, phase) in [
         ("aether", Phase::UpdatingAether),
+        ("request", Phase::RestartingArchond),
         ("observe", Phase::RestartingArchond),
         ("orchestrator", Phase::RestartingOrchestrator),
     ] {
@@ -326,6 +413,7 @@ fn every_phase_names_itself_and_how_to_finish_by_hand() {
         UpdatingAether,
         FindingArchond,
         RestartingArchond,
+        CheckingOrchestrator,
         RefreshingTools,
         RestartingOrchestrator,
     ] {

@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use archon_core::ops::{UpgradeRequest, bare_version};
-use archon_core::protocol::{OrchestratorInfo, Reply, Request};
+use archon_core::protocol::{ErrorCode, OrchestratorInfo, Reply, Request};
 
 use super::interrupt::Interrupt;
 use super::tools;
@@ -32,6 +32,10 @@ const ORCHESTRATOR_TRIES: u32 = 60;
 /// The whole orchestrator restart, retries included: archond's link to
 /// Aether may still be coming up when it is first asked.
 pub(super) const ORCHESTRATOR_DEADLINE: Duration = Duration::from_secs(180);
+/// Asking archond which archon created the running orchestrator.
+const CHECK_DEADLINE: Duration = Duration::from_secs(60);
+/// The creator of a generation an archon made before it recorded one.
+const UNRECORDED: &str = "an archon that did not record its version";
 
 /// A step of the restart, named when a signal or a deadline ends it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +45,7 @@ pub(super) enum Phase {
     UpdatingAether,
     FindingArchond,
     RestartingArchond,
+    CheckingOrchestrator,
     RefreshingTools,
     RestartingOrchestrator,
 }
@@ -53,6 +58,7 @@ impl Phase {
             Self::UpdatingAether => "updating Aether (`aether update`)",
             Self::FindingArchond => "asking whether archond runs",
             Self::RestartingArchond => "restarting archond",
+            Self::CheckingOrchestrator => "asking which archon created the orchestrator",
             Self::RefreshingTools => "refreshing Archon's tools in your aetherd",
             Self::RestartingOrchestrator => "restarting the orchestrator",
         }
@@ -67,6 +73,10 @@ impl Phase {
             Self::RestartingArchond => {
                 "archond restarts on its own as it was asked; `archon status` shows when it \
                  runs the new version, then run `archon orchestrator restart`"
+            }
+            Self::CheckingOrchestrator => {
+                "`archon orchestrator status` names the archon that created it; if that is not \
+                 the installed one, run `archon orchestrator restart`"
             }
             Self::RefreshingTools => {
                 "run `archon aether mcp refresh archon`, then `archon orchestrator restart`"
@@ -172,6 +182,9 @@ pub(super) trait Steps {
     async fn request_restart(&self, plan: &Plan) -> anyhow::Result<()>;
     async fn observe(&self, old_pid: u32) -> Seen;
     async fn refresh_mcp(&self) -> anyhow::Result<()>;
+    /// The Archon version that created the orchestrator generation now
+    /// running, [`UNRECORDED`] if it was not kept; `None` when none runs.
+    async fn orchestrator_creator(&self) -> anyhow::Result<Option<String>>;
     /// The Archon version that created the generation now running.
     async fn restart_orchestrator(&self) -> anyhow::Result<String>;
     async fn pause(&self);
@@ -253,14 +266,58 @@ pub(super) async fn apply(
     if !plan.archon_changed && !aether_changed && current {
         let line = format!("archond already runs archon {}.", plan.installed);
         outcome.lines.push(line);
-        return Ok(outcome);
+        return catch_up(steps, plan, outcome, progress).await;
     }
     let limit = Duration::from_secs(plan.drain_secs) + RESTART_MARGIN;
     let detail = format!("pid {}, for at most {}s", old.pid, limit.as_secs());
     progress.enter(Phase::RestartingArchond, &detail);
     restart(steps, plan, &old, limit).await?;
-    follow_up(steps, plan, &mut outcome, progress).await?;
+    outcome.lines.push(match plan.dedicated {
+        true => "Restarted archond and Archon's own aetherd.".to_owned(),
+        false => "Restarted archond.".to_owned(),
+    });
+    renew_orchestrator(steps, plan, &mut outcome, progress).await?;
     outcome.restarted = true;
+    Ok(outcome)
+}
+
+/// archond already runs the installed archon, yet an update cut short after
+/// its restart may have left the orchestrator on the old one: renew it then.
+async fn catch_up(
+    steps: &impl Steps,
+    plan: &Plan,
+    mut outcome: Outcome,
+    progress: &Progress,
+) -> anyhow::Result<Outcome> {
+    assert!(!plan.archon_changed, "only a current archond is caught up");
+    progress.enter(Phase::CheckingOrchestrator, "");
+    let creator = tokio::time::timeout(CHECK_DEADLINE, steps.orchestrator_creator())
+        .await
+        .unwrap_or_else(|_| {
+            let waited = CHECK_DEADLINE.as_secs();
+            Err(anyhow::anyhow!("archond did not answer within {waited}s"))
+        })
+        .context("archond could not say which archon created the orchestrator")?;
+    let line = match creator {
+        None => "No orchestrator runs; archond creates it on the installed archon.".to_owned(),
+        Some(by) if bare_version(&by) == bare_version(&plan.installed) => {
+            format!(
+                "The orchestrator already runs on archon {}.",
+                plan.installed
+            )
+        }
+        Some(by) => {
+            let line = format!(
+                "The orchestrator was created by {by}, not {}.",
+                plan.installed
+            );
+            outcome.lines.push(line);
+            renew_orchestrator(steps, plan, &mut outcome, progress).await?;
+            outcome.restarted = true;
+            return Ok(outcome);
+        }
+    };
+    outcome.lines.push(line);
     Ok(outcome)
 }
 
@@ -274,7 +331,17 @@ async fn restart(
 ) -> anyhow::Result<()> {
     assert!(limit >= POLL, "the wait allows a poll");
     let deadline = tokio::time::Instant::now() + limit;
-    steps.request_restart(plan).await?;
+    tokio::time::timeout_at(deadline, steps.request_restart(plan))
+        .await
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("archond did not answer the request")))
+        .with_context(|| {
+            format!(
+                "archond (pid {}) was not asked to restart within {}s; `archon daemon status` \
+                 shows whether it restarts",
+                old.pid,
+                limit.as_secs()
+            )
+        })?;
     let polls = limit.as_secs() / POLL.as_secs();
     let (mut idle, mut last_down) = (0, None);
     for _ in 0..polls {
@@ -313,22 +380,20 @@ async fn restart(
     )
 }
 
-async fn follow_up(
+/// Give the orchestrator a generation the installed archon creates, with
+/// its tools refreshed first in a shared aetherd.
+async fn renew_orchestrator(
     steps: &impl Steps,
     plan: &Plan,
     outcome: &mut Outcome,
     progress: &Progress,
 ) -> anyhow::Result<()> {
-    outcome.lines.push(match plan.dedicated {
-        true => "Restarted archond and Archon's own aetherd.".to_owned(),
-        false => "Restarted archond.".to_owned(),
-    });
     if !plan.dedicated {
         progress.enter(Phase::RefreshingTools, "");
         steps
             .refresh_mcp()
             .await
-            .context("archond restarted, but your aetherd could not refresh Archon's tools")?;
+            .context("your aetherd could not refresh Archon's tools")?;
         outcome
             .lines
             .push("Refreshed Archon's tools in your aetherd.".to_owned());
@@ -343,9 +408,7 @@ async fn follow_up(
                 "archond did not finish it within {waited}s"
             ))
         })
-        .context(
-            "archond restarted, but the orchestrator did not (`archon orchestrator restart`)",
-        )?;
+        .context("the orchestrator did not restart (`archon orchestrator restart`)")?;
     anyhow::ensure!(
         bare_version(&created_by) == bare_version(&plan.installed),
         "the orchestrator restarted, but archon {created_by} created its new generation, not \
@@ -432,6 +495,19 @@ impl Steps for Live {
         let args = ["mcp", "refresh", "archon"].map(OsStr::new);
         tools::run(&aether, &args, AETHER_UPDATE_TIMEOUT).await?;
         Ok(())
+    }
+
+    async fn orchestrator_creator(&self) -> anyhow::Result<Option<String>> {
+        let client = connect_running().await?;
+        match client.call(Request::OrchestratorStatus).await? {
+            Ok(Reply::Orchestrator(info)) => Ok(Some(
+                info.freshness
+                    .map_or_else(|| UNRECORDED.to_owned(), |fresh| fresh.created_by),
+            )),
+            Ok(other) => Err(unexpected(&other, "orchestrator")),
+            Err(refusal) if refusal.code == ErrorCode::NotFound => Ok(None),
+            Err(refusal) => Err(archon_client::refusal_error(refusal).into()),
+        }
     }
 
     async fn restart_orchestrator(&self) -> anyhow::Result<String> {

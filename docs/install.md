@@ -162,16 +162,20 @@ restart`, with the same `--wait` and `--requeue`: running items resume as
 after any daemon restart); and `archon orchestrator restart`, which gives
 the orchestrator the new tools. In shared mode your own aetherd is never
 restarted; Archon's tools in it are refreshed with `aether mcp refresh
-archon`. Nothing is restarted when `archond` is not running or already runs
-the installed version, and a failed `aether update` is reported as a
-warning (exit 1) after the restart.
+archon`. Nothing is restarted when `archond` is not running: the next
+command that needs it starts the new version. When `archond` already runs
+the installed version, only an orchestrator another archon created is
+restarted (an earlier update cut short after archond's restart leaves one).
+A failed `aether update` is reported as a warning (exit 1) after the
+restart.
 
 Each step is said on stderr as it starts (`archon: update: restarting
 archond (pid 4242, for at most 2100s)`), and each has a deadline: the
 archond restart `--wait` plus five minutes, the orchestrator restart three
-minutes. With `--yes` the command ends with archond and the orchestrator on
-the new version, the orchestrator in a new generation created by it, and
-exits 0; otherwise it exits non-zero naming the step that did not finish.
+minutes. With `--yes` and a running `archond`, the command exits 0 only
+once archond runs the new version and the orchestrator, if one runs, is in
+a generation the new version created; otherwise it exits non-zero naming
+the step that did not finish.
 The install report then names no commands to run by hand. Ctrl-C (SIGINT),
 SIGTERM or SIGHUP ends it at any step, the question included: it names the
 step it stopped, says what finishes the restart by hand, and exits 128 plus

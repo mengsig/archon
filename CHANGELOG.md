@@ -2,6 +2,131 @@
 
 ## Unreleased
 
+## 1.4.7
+
+Released 2026-10-27.
+
+A patch release on 1.4.6 with the fixes from the end-to-end sweep (#270):
+an agent's shell no longer acts as the operator, reviewers diff against the
+fork point instead of a stale local base, a reviewed `ship = local` item can
+be refreshed and then merged, retries of keyed requests are idempotent, and
+lessons are no longer retracted on cancels, budget caps and timeouts.
+
+The store schema is unchanged (17), so Archon 1.4.6 still opens a 1.4.7
+store. The daemon protocol is 22 (was 21), as `update_item` gained `title`:
+`archon mcp` and archond must be upgraded together, and each refuses the
+other's older version at hello. The Aether protocol Archon asks for stays 24;
+the oldest it accepts is now 17 (was 14), Aether's own floor, so an aetherd
+serving only 15 or 16 is refused at connect.
+
+Archon 1.4.7 needs **Aether 1.2.5**, the release it is tested on and that the
+installer and `archon update` install. No change in this release needs a
+newer Aether. Archon checks no Aether version, so an older aetherd that
+serves protocol 17 or later is not refused, but only Aether 1.2.5 is
+supported with this release.
+
+**After upgrading**, run `archon update`. It installs Aether 1.2.5 and
+restarts both daemons, archond and Archon's own aetherd, through the drained
+restart.
+
+### Authority
+
+- The `archon` CLI run from an engine's shell acts for the agent Aether's
+  `AETHER_ENGINE_AGENT` and `AETHER_ENGINE_RUN` name, not as the operator:
+  archond refuses it operator-only requests and lets only the orchestrator
+  change Archon. Reads keep working, and an engine child that names no agent
+  sends only reads (#291, [#276](https://github.com/mengsig/archon/issues/276)).
+- A gate answer's quote that negates the answer word ("don't approve the
+  migration gate") no longer backs that answer (#291).
+- The orchestrator and stages no longer see Aether's native `notify`, which
+  bypassed Archon's feed, push and notification center; stages also lose
+  `refresh_provider_usage`. Archon's own `notify` stays (#291).
+
+### Prompts and pipelines
+
+- Every built-in prompt, the shared proposal and report, and the stage
+  contract's dependency rules diff and log against the new run variable
+  `base_commit`, the branch's fork point from the local and fetched base,
+  instead of the operator's local base branch, which could be far behind
+  and made reviewers read upstream commits as the item's change. Runs saved
+  before it fall back to the base's name
+  (#284, [#275](https://github.com/mengsig/archon/issues/275)).
+- code-audit: the scope lead writes a numbered `lenses.md` in which the
+  brief's own lenses win over the defaults. swarm: a task may consume a path
+  the fork commit already holds, and stage listings number each rerun of a
+  slot (#284).
+
+### Local shipping
+
+- `archon merge` of a reviewed `ship = local` item lands the commit its
+  newest succeeded refresh or restack fix recorded, instead of refusing a
+  refreshed branch as "moved since it was reviewed". A grant still requires
+  every delivery behind the landed commit to have had a review
+  (#285, [#274](https://github.com/mengsig/archon/issues/274)).
+- `archon queue add --onto` works in a `ship = local` repository: the new
+  item works on the target item's branch, in its worktree, and ships as a
+  local commit there (#285).
+- A retry of an item whose proposal was approved, on the same branch and
+  brief, starts past the proposal gate instead of asking again (#285).
+- `update_item` (and the MCP tool) takes `title` until the item's first run
+  is dispatched (#285).
+- A stage that reports no change is no longer failed by Archon's own report
+  pages in the worktree (#285).
+
+### Queue and lessons
+
+- A keyed `enqueue` retried with the same arguments is no longer refused as
+  a different request when routing filled another model plan: the
+  fingerprint holds the plan as asked. A key recorded by 1.4.6 keeps
+  matching a retry that fills the plan alike
+  (#287, [#279](https://github.com/mengsig/archon/issues/279)).
+- `queue wait` reads every item before it exits 5 and names each item
+  blocked on a failed dependency, instead of stopping at the first (#287).
+- `settings --set` and `--reset` start archond like other changes; a plain
+  `settings` read still does not (#287).
+- Lesson scoring ignores runs that judged nothing (a cancel, a budget cap, a
+  timeout or an infrastructure failure), so they neither count against a
+  lesson nor retract it; `lessons stats` takes its pass rate over scored
+  runs and shows how many. An activation or retraction by scoring posts a
+  feed line (#288, [#280](https://github.com/mengsig/archon/issues/280)).
+
+### Chat and TUI
+
+- `/image` in line chat sends the attachment even where the editor cannot
+  show the typed-ahead chip, a failed send keeps the images and the text,
+  and leaving the chat names images never sent
+  (#286, [#278](https://github.com/mengsig/archon/issues/278)).
+- The TUI's `/status`, `/queue`, `/item`, `/questions`, `/repos` and
+  `/lessons` are answered by archond in a note, without an orchestrator
+  turn (#286).
+
+### Notifications and CLI wording
+
+- Cancelling items that never started posts no notification each, so a
+  bulk cancel no longer floods the center; `/merge` of work already landed
+  is an outcome, not a blocker
+  (#289, [#282](https://github.com/mengsig/archon/issues/282)).
+- Status says whether held news is due or rides along with the next
+  trigger, and sums storage on one line (`--verbose` lists each directory).
+  The budget blocker names the item and shows spend, cap and overrun;
+  settings show budgets and caps as status does; cost names the
+  orchestrator's row; model-evidence names repositories; and several
+  messages read correctly ("1 minute", no stray `**` or "..") (#289).
+
+### Docs, link workers and CI
+
+- `docs/troubleshooting.md` has an entry for each blocker archond posts,
+  with the next command, and a test fails when a new blocker is not
+  documented. The guide and the orchestrator prompt say the orchestrator
+  can schedule recurring work
+  (#290, [#283](https://github.com/mengsig/archon/issues/283)).
+- The link tests run the same supervised link workers archond runs, and a
+  failed worker is restarted (#290).
+- CONTRIBUTING and `ci.yml` explain why pull requests into `next` run lint
+  only (#290).
+- Dependencies: the GitHub Actions group, tokio 1.54.1 and rustyline 19.0.0
+  (#269).
+
 ## 1.4.6
 
 Released 2026-10-25.

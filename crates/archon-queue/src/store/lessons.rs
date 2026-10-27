@@ -103,6 +103,8 @@ impl Store {
             .ctx("begin lesson decay")?;
         for mut lesson in scoped_all(&tx)? {
             let previous = lesson.clone();
+            // Counts cached by 1.4.6 still hold unscored uses as losses.
+            scoring::recount(&tx, &mut lesson)?;
             scoring::refresh(&mut lesson, at);
             if lesson != previous {
                 scoring::save_scored(&tx, previous.state, lesson, at)?;

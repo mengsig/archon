@@ -149,41 +149,43 @@ fn cancels_budget_caps_and_timeouts_neither_win_nor_lose_a_lesson() {
     assert_eq!(stats.pipelines[0].pass_rate, 1.0);
 }
 
+/// Runs one item that uses the only lesson, ends it, and captures its outcome.
+fn settle_use(store: &mut archon_queue::Store, n: usize, ending: Option<&str>) {
+    let item = store
+        .insert_item(&item(None, &format!("run {n}")), None)
+        .unwrap();
+    let run = start(store, &item.id);
+    assert_eq!(
+        store
+            .lessons_for_run(&run.id, None, "direct")
+            .unwrap()
+            .len(),
+        1
+    );
+    let ending = match ending {
+        None => QueueState::Succeeded {
+            run: run.id.clone(),
+            summary: "done".into(),
+        },
+        Some(error) => QueueState::Failed {
+            run: Some(run.id.clone()),
+            error: error.into(),
+        },
+    };
+    settle_run(store, &run, ending, t(30));
+    store
+        .capture_outcome(&store.run(&run.id).unwrap(), None, true)
+        .unwrap();
+}
+
 #[test]
 fn unscored_uses_a_1_4_6_store_scored_as_losses_no_longer_count() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("store.db");
     let mut store = archon_queue::Store::open(&path).unwrap();
     let lesson = advice(&store, false);
-    let settle = |store: &mut archon_queue::Store, n: usize, ending: Option<&str>| {
-        let item = store
-            .insert_item(&item(None, &format!("run {n}")), None)
-            .unwrap();
-        let run = start(store, &item.id);
-        assert_eq!(
-            store
-                .lessons_for_run(&run.id, None, "direct")
-                .unwrap()
-                .len(),
-            1
-        );
-        let ending = match ending {
-            None => QueueState::Succeeded {
-                run: run.id.clone(),
-                summary: "done".into(),
-            },
-            Some(error) => QueueState::Failed {
-                run: Some(run.id.clone()),
-                error: error.into(),
-            },
-        };
-        settle_run(store, &run, ending, t(30));
-        store
-            .capture_outcome(&store.run(&run.id).unwrap(), None, true)
-            .unwrap();
-    };
     for n in 0..4 {
-        settle(&mut store, n, Some("The stage timed out."));
+        settle_use(&mut store, n, Some("The stage timed out."));
     }
     // 1.4.6 stored each of those uses as a loss.
     let conn = rusqlite::Connection::open(&path).unwrap();
@@ -191,10 +193,49 @@ fn unscored_uses_a_1_4_6_store_scored_as_losses_no_longer_count() {
         .execute("UPDATE lesson_uses SET won=0 WHERE won IS NULL", [])
         .unwrap();
     assert_eq!(marked, 4);
-    settle(&mut store, 4, None);
+    settle_use(&mut store, 4, None);
     let scored = store.lesson(&lesson.id).unwrap();
     assert_eq!((scored.uses, scored.wins), (1, 1));
     assert_eq!(scored.state, LessonState::Active);
+    assert!(lesson_lines(&store, &lesson).is_empty());
+}
+
+#[test]
+fn unpinning_a_lesson_with_1_4_6_losses_from_unscored_uses_does_not_retract_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let mut store = archon_queue::Store::open(&path).unwrap();
+    let lesson = advice(&store, true);
+    for n in 0..5 {
+        settle_use(&mut store, n, Some("The stage timed out."));
+    }
+    // 1.4.6 stored each of those uses as a loss and cached the counts.
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let marked = conn
+        .execute("UPDATE lesson_uses SET won=0 WHERE won IS NULL", [])
+        .unwrap();
+    assert_eq!(marked, 5);
+    conn.execute(
+        "UPDATE lessons SET uses=5,wins=0,data=json_set(data,'$.uses',5,'$.wins',0) WHERE id=?1",
+        [lesson.id.as_str()],
+    )
+    .unwrap();
+    let unpinned = store
+        .update_lesson(
+            &lesson.id,
+            LessonPatch {
+                pinned: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!((unpinned.uses, unpinned.wins), (5, 0));
+    store
+        .refresh_lessons(archon_core::now() + chrono::Duration::days(1))
+        .unwrap();
+    let refreshed = store.lesson(&lesson.id).unwrap();
+    assert_eq!(refreshed.state, LessonState::Active);
+    assert_eq!((refreshed.uses, refreshed.wins), (0, 0));
     assert!(lesson_lines(&store, &lesson).is_empty());
 }
 
@@ -339,18 +380,19 @@ fn lesson_selection_is_bounded_repo_first_and_disabled_mode_has_no_effects() {
 
 #[test]
 fn old_winning_lesson_is_not_retracted_by_inactivity() {
-    let store = store();
-    let mut lesson = advice(&store, false);
-    lesson.uses = 20;
-    lesson.wins = 20;
-    lesson.confirmed_at = Some(lesson.created_at);
-    let other = archon_queue::Store::open_in_memory().unwrap();
-    let lesson = other.record_lesson(lesson).unwrap();
-    other
-        .refresh_lessons(lesson.created_at + chrono::Duration::days(120))
+    let mut store = store();
+    let lesson = advice(&store, false);
+    for n in 0..20 {
+        settle_use(&mut store, n, None);
+    }
+    assert_eq!(store.lesson(&lesson.id).unwrap().wins, 20);
+    store
+        .refresh_lessons(archon_core::now() + chrono::Duration::days(120))
         .unwrap();
-    assert_eq!(other.lesson(&lesson.id).unwrap().state, LessonState::Active);
-    assert!(other.lesson(&lesson.id).unwrap().confidence < 0.3);
+    let refreshed = store.lesson(&lesson.id).unwrap();
+    assert_eq!(refreshed.state, LessonState::Active);
+    assert_eq!((refreshed.uses, refreshed.wins), (20, 20));
+    assert!(refreshed.confidence < 0.3);
 }
 
 #[test]

@@ -36,31 +36,7 @@ pub(in crate::store) fn score_run(conn: &Connection, outcome: &Outcome) -> Resul
 fn score_lesson(conn: &Connection, outcome: &Outcome, id: &LessonId) -> Result<(), ArchonError> {
     let mut lesson = super::load(conn, id)?;
     let before = lesson.state;
-    let epoch = super::super::settings::kv_get(conn, &format!("learning/lesson-epoch/{id}"))?;
-    let [budget, timeout, infrastructure] = UNSCORED_FAILURES.map(FailureClass::as_str);
-    // Before 1.4.7 an unscored run's use was stored as a loss: the outcome
-    // join leaves those out too, so an upgraded store counts them as now.
-    let (uses, wins): (u32, u32) = conn
-        .query_row(
-            "SELECT COUNT(u.won),COALESCE(SUM(u.won),0) FROM lesson_uses u
-             LEFT JOIN outcomes o ON o.run=u.run
-             WHERE u.lesson=?1 AND (?2 IS NULL OR u.used_at>=?2)
-             AND (o.run IS NULL OR (o.result<>?3
-                  AND COALESCE(o.failure_class,'') NOT IN (?4,?5,?6)))",
-            params![
-                id.as_str(),
-                epoch,
-                OutcomeResult::Cancelled.as_str(),
-                budget,
-                timeout,
-                infrastructure
-            ],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .ctx("count lesson uses")?;
-    assert!(wins <= uses);
-    lesson.uses = uses;
-    lesson.wins = wins;
+    recount(conn, &mut lesson)?;
     if outcome.is_win()
         && lesson
             .confirmed_at
@@ -77,6 +53,40 @@ fn score_lesson(conn: &Connection, outcome: &Outcome, id: &LessonId) -> Result<(
     let at = archon_core::now();
     refresh(&mut lesson, at);
     save_scored(conn, before, lesson, at)
+}
+
+/// Sets a lesson's uses and wins from its scored uses since its epoch.
+pub(super) fn recount(conn: &Connection, lesson: &mut Lesson) -> Result<(), ArchonError> {
+    let id = lesson.id.as_str();
+    let epoch = super::super::settings::kv_get(conn, &format!("learning/lesson-epoch/{id}"))?;
+    let [budget, timeout, infrastructure] = UNSCORED_FAILURES.map(FailureClass::as_str);
+    // Before 1.4.7 an unscored run's use was stored as a loss: the outcome
+    // join leaves those out too, so an upgraded store counts them as now.
+    let (uses, wins): (u32, u32) = conn
+        .query_row(
+            "SELECT COUNT(u.won),COALESCE(SUM(u.won),0) FROM lesson_uses u
+             LEFT JOIN outcomes o ON o.run=u.run
+             WHERE u.lesson=?1 AND (?2 IS NULL OR u.used_at>=?2)
+             AND (o.run IS NULL OR (o.result<>?3
+                  AND COALESCE(o.failure_class,'') NOT IN (?4,?5,?6)))",
+            params![
+                id,
+                epoch,
+                OutcomeResult::Cancelled.as_str(),
+                budget,
+                timeout,
+                infrastructure
+            ],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .ctx("count lesson uses")?;
+    assert!(
+        wins <= uses,
+        "a lesson cannot win more runs than it was used in"
+    );
+    lesson.uses = uses;
+    lesson.wins = wins;
+    Ok(())
 }
 
 /// Writes a lesson scoring changed. A state change scoring made by itself is

@@ -769,6 +769,29 @@ fn a_subtree_or_keyed_update_matches_aethers_published_schema() {
     assert_eq!(keyed["idempotency_key"], "ntf_1:agt_1");
 }
 
+/// A subset of Aether 1.2.7's published schema: the `history_expired` code
+/// and the expired span's bounds on the refusal that carries it.
+#[test]
+fn an_expired_history_refusal_matches_aethers_published_schema() {
+    use archon_aether::wire::{ErrorReply, ExpiredSpan};
+    let schema: Value =
+        serde_json::from_str(include_str!("fixtures/aether-history-expired.schema.json")).unwrap();
+    let defs = &schema["$defs"];
+    assert!(allowed_strings(&defs["ErrorCode"]).contains(&json!("history_expired")));
+    assert!(allowed_strings(&defs["ErrorCode"]).contains(&json!("not_found")));
+    let sent = json!({"code": "history_expired", "first_seq": 1, "last_seq": 2,
+        "message": "event history expired within sequence range 1..=2; obtain a fresh state snapshot before resuming replay"});
+    let problems = check(&schema, &defs["ErrorReply"], &sent, "error");
+    assert_eq!(problems, Vec::<String>::new());
+    let reply: ErrorReply = serde_json::from_value(sent).unwrap();
+    assert_eq!(reply.expired_span(), ExpiredSpan::new(1, 2));
+    assert_eq!(
+        reply.expired_span_in_text(),
+        None,
+        "the text path is for not_found"
+    );
+}
+
 #[test]
 fn a_message_with_images_matches_aethers_published_schema() {
     use archon_core::attachment::ImageAttachment;

@@ -915,6 +915,93 @@ async fn a_stage_aether_forgot_settles_at_its_deadline() {
     assert!(matches!(h.state(&item.id).await, QueueState::Failed { .. }));
 }
 
+/// A stage at its deadline whose agent already ended its task with `outcome`
+/// (the settle for it never landed); returns the swept stage as stored.
+async fn swept_at_deadline_after_task_ended(h: &Harness, outcome: StageOutcome) -> StageRun {
+    let item = h.enqueue("finished but never settled").await;
+    h.dispatch().await;
+    let implement = h.running().await.remove(0);
+    let task = implement
+        .aether_task
+        .clone()
+        .expect("a running stage has a task");
+    h.backend.settle_task(&task, outcome);
+    expire_deadline(h, &implement).await;
+
+    h.dispatch().await;
+    let stages = h.stages(&item.id).await;
+    stages
+        .into_iter()
+        .find(|s| s.id == implement.id)
+        .expect("the swept stage")
+}
+
+#[tokio::test]
+async fn a_finished_agent_keeps_its_result_when_the_sweep_reaches_its_deadline() {
+    let h = Harness::new().await;
+    let swept = swept_at_deadline_after_task_ended(&h, completed("implemented")).await;
+    assert_eq!(swept.state, StageState::Completed, "not timed out");
+    assert_eq!(
+        h.backend.cancelled().len(),
+        1,
+        "the agent was still stopped"
+    );
+}
+
+#[tokio::test]
+async fn an_agent_that_failed_keeps_its_error_when_the_sweep_reaches_its_deadline() {
+    let h = Harness::new().await;
+    let failed = StageOutcome::Failed {
+        error: "tests do not build".into(),
+        infra: false,
+    };
+    let swept = swept_at_deadline_after_task_ended(&h, failed).await;
+    let StageState::Failed { error } = swept.state else {
+        panic!("the agent's failure stands: {:?}", swept.state);
+    };
+    assert_eq!(error, "tests do not build");
+}
+
+#[tokio::test]
+async fn a_task_that_reads_cancelled_after_our_cancel_still_times_out() {
+    let h = Harness::new().await;
+    let cancelled = StageOutcome::Cancelled {
+        reason: Some("stage deadline passed".into()),
+    };
+    let swept = swept_at_deadline_after_task_ended(&h, cancelled).await;
+    assert_eq!(swept.state, StageState::TimedOut);
+}
+
+#[tokio::test]
+async fn a_finished_agent_aether_forgot_keeps_its_result_at_its_deadline() {
+    let h = Harness::new().await;
+    h.backend
+        .fail_next_cancel(ArchonError::NotFound("aether: no such agent".into()));
+    let swept = swept_at_deadline_after_task_ended(&h, verdict(true)).await;
+    assert_eq!(swept.state, StageState::Completed);
+}
+
+#[tokio::test]
+async fn an_unreadable_task_after_a_cancel_is_read_again_by_the_next_sweep() {
+    let h = Harness::new().await;
+    let item = h.enqueue("lookup unanswered").await;
+    h.dispatch().await;
+    let implement = h.running().await.remove(0);
+    let task = implement.aether_task.clone().expect("task");
+    h.backend.settle_task(&task, completed("implemented"));
+    expire_deadline(&h, &implement).await;
+    h.backend
+        .fail_next_outcome(ArchonError::Unavailable("aetherd busy".into()));
+
+    h.dispatch().await;
+    let waiting = h.stages(&item.id).await.remove(0);
+    assert_eq!(waiting.state, StageState::Running, "nothing settled yet");
+
+    h.dispatch().await;
+    let settled = h.stages(&item.id).await.remove(0);
+    assert_eq!(settled.state, StageState::Completed, "the verdict survived");
+}
+
 #[tokio::test]
 async fn a_failing_stage_does_not_hold_back_dispatch() {
     let h = Harness::new().await;
@@ -2676,6 +2763,35 @@ async fn adaptive_leaves_the_build_live_while_aether_cannot_show_the_reviewer() 
         delivered(&h, &item).await,
         "the delivery follows the checked pass"
     );
+}
+
+/// A settle that fails for a passing local reason (a held `.git/index.lock`)
+/// leaves the build live; at its deadline the sweep reads the task and the
+/// lead's checked verdict is delivered rather than timed out.
+#[tokio::test]
+async fn a_build_whose_first_settle_failed_with_io_keeps_its_verdict_at_the_deadline() {
+    let h = Harness::new().await;
+    let item = adaptive_item(&h).await;
+    let lead = h.running().await.remove(0);
+    let built = reviewed(&h, "Verified").await;
+    let held = std::io::Error::other("Unable to create '.git/index.lock': File exists");
+    h.backend
+        .fail_next_descendants(ArchonError::io("review coverage", held));
+    let failed = executor::stage_settled(&h.ctx, &lead_agent(&lead), built.clone()).await;
+    assert!(matches!(failed, Err(ArchonError::Io { .. })), "{failed:?}");
+    assert_eq!(h.running().await.len(), 1, "the build is still live");
+
+    let task = lead
+        .aether_task
+        .clone()
+        .expect("a running stage has a task");
+    h.backend.settle_task(&task, built);
+    expire_deadline(&h, &lead).await;
+    h.dispatch().await;
+    let swept = h.stages(&item.id).await.remove(0);
+    assert_eq!(swept.state, StageState::Completed, "not timed out");
+    h.dispatch().await;
+    assert!(delivered(&h, &item).await, "the verdict ships");
 }
 
 /// A lead that says it reviewed, without the record, ends the item at

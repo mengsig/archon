@@ -621,6 +621,67 @@ async fn an_aether_restart_of_the_orchestrator_is_adopted_and_gets_the_held_news
     assert!(harness.fake.received_named("restart").is_empty());
 }
 
+/// The reply to a trigger is lost, the orchestrator is restarted, and the
+/// retry reaches the new agent: Aether refuses a key it saw aimed elsewhere,
+/// so the retry's key must differ and the news must not be dropped.
+#[tokio::test]
+async fn a_retry_after_the_orchestrator_was_replaced_is_a_fresh_key_and_delivered_once() {
+    let harness = Harness::new().await;
+    let (agents, pump) = running_pump(&harness).await;
+    let keyed: Arc<Mutex<HashMap<String, String>>> = Arc::default();
+    let taken = Arc::new(AtomicUsize::new(0));
+    let (seen, count) = (keyed.clone(), taken.clone());
+    harness.fake.set_responder(
+        "trigger",
+        Arc::new(move |cmd| {
+            let key = cmd["idempotency_key"].as_str().unwrap().to_owned();
+            let agent = cmd["agent"].as_str().unwrap().to_owned();
+            let mut seen = seen.lock().unwrap();
+            let first = seen.is_empty();
+            if seen.get(&key).is_some_and(|earlier| *earlier != agent) {
+                return Scripted::refuse("invalid_argument", "idempotency key reused");
+            }
+            seen.insert(key, agent.clone());
+            match (first, agent == ORCH_2) {
+                (true, _) => Scripted::Hangup { notice: None },
+                (false, true) => {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    Scripted::ok()
+                }
+                (false, false) => Scripted::refuse("internal", "busy"),
+            }
+        }),
+    );
+    let delivery = tokio::spawn(triggers::deliver_loop(harness.ctx.clone()));
+    triggers::push(&harness.ctx, item_finished("lost reply"))
+        .await
+        .unwrap();
+    harness.fake.wait_for("trigger", 1, WAIT).await;
+    agents.restart(ORCH, ORCH_2);
+    harness
+        .eventually("the new orchestrator has the news", || async {
+            taken.load(Ordering::SeqCst) == 1 && held_news(&harness).await == 0
+        })
+        .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    delivery.abort();
+    pump.abort();
+    assert_eq!(taken.load(Ordering::SeqCst), 1, "delivered exactly once");
+    let sent = harness.fake.received_named("trigger");
+    let (first, last) = (&sent[0], sent.last().unwrap());
+    assert_eq!(
+        (first["agent"].as_str(), last["agent"].as_str()),
+        (Some(ORCH), Some(ORCH_2))
+    );
+    assert_ne!(first["idempotency_key"], last["idempotency_key"]);
+    assert_eq!(first["payload"], last["payload"]);
+    let notes = harness.system_notes().await;
+    assert!(
+        !notes.iter().any(|n| n.contains("refused trigger")),
+        "{notes:?}"
+    );
+}
+
 /// Cancel the item that `stage` belongs to, as the operator would.
 async fn cancel_item_of(harness: &Harness, stage: &StageRun) {
     let item = harness.ctx.store.lock().await.run(&stage.run).unwrap().item;

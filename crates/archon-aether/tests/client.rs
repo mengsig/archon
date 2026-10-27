@@ -142,7 +142,7 @@ async fn replies_route_by_request_id_even_out_of_order() {
     let frames = peer.await.unwrap();
     assert_eq!(frames[0]["cmd"], "hello");
     assert_eq!(frames[0]["client_name"], "archon");
-    assert_eq!(frames[0]["features"], json!([]));
+    assert_eq!(frames[0]["features"], json!(["history_expired"]));
     let reqs: Vec<u64> = frames.iter().map(|f| f["req"].as_u64().unwrap()).collect();
     assert_eq!(reqs, [1, 2, 3], "request ids start at 1 and increase");
 }

@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Aether 1.2.7 history_expired subset",
+  "protocol_version": 24,
+  "$defs": {
+    "ErrorReply": {
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "first_seq": {
+          "description": "First expired sequence number; set only with `HistoryExpired`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "last_seq": {
+          "description": "Last expired sequence number; set only with `HistoryExpired`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "type": "object"
+    },
+    "ErrorCode": {
+      "oneOf": [
+        {
+          "enum": [
+            "not_found",
+            "invalid_transition",
+            "invalid_argument",
+            "internal"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "incompatible",
+          "description": "Protocol version or handshake mismatch.",
+          "type": "string"
+        },
+        {
+          "const": "unauthorized",
+          "description": "The connection presented no token, or the wrong one. Only the\ntransports that need one can answer this.",
+          "type": "string"
+        },
+        {
+          "const": "unavailable",
+          "description": "The provider or model is not configured.",
+          "type": "string"
+        },
+        {
+          "const": "forbidden",
+          "description": "The connection is authenticated, but its transport or role may not\nrun this command.",
+          "type": "string"
+        },
+        {
+          "const": "unimplemented",
+          "description": "The command is part of the protocol and this build does not serve it.",
+          "type": "string"
+        },
+        {
+          "const": "no_model",
+          "description": "Nothing named a model and the daemon has no default: no provider is\nsigned in. A model named but not usable is refused with another code.",
+          "type": "string"
+        },
+        {
+          "const": "history_expired",
+          "description": "The requested event history was pruned by retention. Sent only to a\nclient whose hello lists `features::HISTORY_EXPIRED`; others get `NotFound`.",
+          "type": "string"
+        }
+      ]
+    }
+  }
+}

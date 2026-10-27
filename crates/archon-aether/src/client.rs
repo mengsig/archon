@@ -22,11 +22,14 @@ use crate::events::AetherEvent;
 use crate::github::{WatcherConfig, WatcherStatus};
 use crate::wire::{
     Agent, AgentPatch, AgentQuery, CLIENT_NAME, Command, CreateAgent, DaemonDefaults, EventQuery,
-    Hello, IMAGES_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION, ModelInfo, NOTE_LEVEL_PROTOCOL_VERSION,
-    NOTES_FEATURE, NOTES_PROTOCOL_VERSION, NoteLevel, PROTOCOL_VERSION, ProviderInfo, RawReply,
-    Subscribed, Task, Welcome,
+    ExpiredSpan, HISTORY_EXPIRED_FEATURE, Hello, IMAGES_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION,
+    ModelInfo, NOTE_LEVEL_PROTOCOL_VERSION, NOTES_FEATURE, NOTES_PROTOCOL_VERSION, NoteLevel,
+    PROTOCOL_VERSION, ProviderInfo, RawReply, Subscribed, Task, Welcome,
 };
 
+/// Events Aether replays to a subscription per page, each page checked
+/// whole against expired history.
+const REPLAY_PAGE: usize = 500;
 /// Default per-request timeout; nothing waits forever on a silent daemon.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -559,6 +562,38 @@ impl AetherClient {
         Ok(events)
     }
 
+    /// The span of deleted history that a replay of `query` after `after`
+    /// would reach within its first page, read from Aether's refusal: by the
+    /// `history_expired` code when the daemon lists that feature, else by
+    /// the text of its `not_found`. Unlike a subscription's replay, a refused
+    /// `get_events` leaves the connection open.
+    pub async fn expired_history(
+        &self,
+        after: u64,
+        query: EventQuery,
+    ) -> Result<Option<ExpiredSpan>, ArchonError> {
+        let command = Command::GetEvents {
+            after,
+            limit: REPLAY_PAGE,
+            query,
+        };
+        let refusal = match self.shared.call(&command, None).await? {
+            Ok(raw) => return check_kind(&raw, "events").map(|()| None),
+            Err(refusal) => refusal,
+        };
+        let span = match self.welcome.supports_history_expired() {
+            true => refusal.expired_span(),
+            false => refusal.expired_span_in_text(),
+        };
+        match span {
+            Some(span) if span.last > after => Ok(Some(span)),
+            Some(span) => Err(ArchonError::Protocol(format!(
+                "aetherd reported expired history {span} that a read after {after} cannot reach"
+            ))),
+            None => Err(refusal.into()),
+        }
+    }
+
     pub async fn trigger(
         &self,
         agent: &AetherAgentId,
@@ -785,7 +820,7 @@ async fn handshake(
         protocol_version: version,
         client_name: CLIENT_NAME.to_owned(),
         client_version: env!("CARGO_PKG_VERSION").to_owned(),
-        features: Vec::new(),
+        features: vec![HISTORY_EXPIRED_FEATURE.to_owned()],
         token,
     });
     let raw = match shared.call(&hello, None).await? {

@@ -985,6 +985,34 @@ async fn restart_must_return_a_successor() {
     );
 }
 
+/// A read into history retention deleted names the span: by the
+/// `history_expired` code from an aetherd that lists the feature (which it
+/// uses only because Archon's hello asks for it), else in a `not_found` text.
+#[tokio::test]
+async fn expired_history_is_named_by_its_code_or_by_its_text() {
+    use archon_aether::wire::ExpiredSpan;
+    let (_dir, fake) = fake_aether().await;
+    for at in 1..=6 {
+        fake.push_event(completed(&format!("event {at}")));
+    }
+    fake.expire_history(2, 4);
+    let older = connect(&fake).await;
+    assert!(!older.welcome().supports_history_expired());
+    fake.set_features(vec![archon_aether::wire::HISTORY_EXPIRED_FEATURE.into()]);
+    let newer = connect(&fake).await;
+    assert!(newer.welcome().supports_history_expired());
+
+    for client in [&older, &newer] {
+        let gap = client.expired_history(1, EventQuery::default()).await;
+        assert_eq!(gap.unwrap(), ExpiredSpan::new(2, 4));
+        let past = client.expired_history(4, EventQuery::default()).await;
+        assert_eq!(past.unwrap(), None, "nothing expired after event 4");
+    }
+    fake.script("get_events", Scripted::refuse("not_found", "no such agent"));
+    let other = older.expired_history(1, EventQuery::default()).await;
+    assert!(matches!(other, Err(ArchonError::NotFound(_))), "{other:?}");
+}
+
 #[tokio::test]
 async fn a_dropped_connection_resumes_from_the_cursor_on_a_new_one() {
     let (_dir, fake) = fake_aether().await;

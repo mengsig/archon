@@ -897,7 +897,8 @@ fn batch_key(store: &mut Store, store_id: &StoreId, len: usize) -> Result<String
 
 /// Retry `batch` under its fixed key until the orchestrator has it, at once
 /// when the supervisor names a new or revived orchestrator. Only a store
-/// failure (fatal) or a refusal of the payload itself ends retries.
+/// failure (fatal) or a refusal of the payload itself ends retries. The key
+/// Aether sees is the batch key per orchestrator (see [`sent_key`]).
 async fn deliver(ctx: &DaemonContext, batch: &Batch) -> Result<(), ArchonError> {
     assert!(
         !batch.events.is_empty(),
@@ -953,6 +954,20 @@ async fn wait_to_retry(orchestrator: &mut watch::Receiver<Option<AetherAgentId>>
     }
 }
 
+/// The idempotency key `batch_key` goes out under for `orchestrator`. Aether
+/// answers a reused key aimed at another agent with an idempotency conflict,
+/// so a retry after the orchestrator was replaced needs a key of its own,
+/// while retries to the same agent still share one.
+fn sent_key(batch_key: &str, orchestrator: &AetherAgentId) -> String {
+    assert!(!batch_key.is_empty(), "a batch is keyed before it is sent");
+    let key = format!("{batch_key}_{orchestrator}");
+    assert!(
+        key.len() > batch_key.len(),
+        "the orchestrator names the key"
+    );
+    key
+}
+
 /// One delivery. Aether also refuses a trigger to an agent that stopped
 /// since `ensure_orchestrator`; that is retried, not a refused payload.
 async fn attempt(
@@ -962,7 +977,8 @@ async fn attempt(
 ) -> Result<(), ArchonError> {
     let orchestrator = supervisor::ensure_orchestrator(ctx).await?;
     let client = ctx.aether.client()?;
-    let refusal = match client.trigger(&orchestrator, payload.clone(), key).await {
+    let keyed = sent_key(key, &orchestrator);
+    let refusal = match client.trigger(&orchestrator, payload.clone(), &keyed).await {
         Err(ArchonError::Invalid(refusal)) => refusal,
         sent => return sent,
     };

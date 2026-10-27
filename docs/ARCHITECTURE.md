@@ -139,13 +139,15 @@ protocol 17 and later alone do not imply support.
     kind:{"type":"task.completed", ...}}`.
   - `{"frame":"delta",...}` is never requested by Archon (`deltas: false`).
 - Error codes: `incompatible`, `unauthorized`, `not_found`,
-  `invalid_transition`, `invalid_argument`, `unavailable`, `internal`.
+  `invalid_transition`, `invalid_argument`, `unavailable`, `internal`, and
+  `history_expired` (with `first_seq`/`last_seq`) for an aetherd whose
+  welcome lists that feature; an older one says `not_found` (§4.6).
 
 ### 4.2 Handshake
 
 ```json
 {"req":1,"cmd":"hello","protocol_version":24,"client_name":"archon",
- "client_version":"1.4.7","features":[]}
+ "client_version":"1.4.7","features":["history_expired"]}
 ```
 
 The reply is `Welcome {protocol_version, daemon_version, instance_id,
@@ -565,7 +567,23 @@ a new stage agent.
 
 On (re)connect Archon subscribes with `after = cursor`. If a cursor is missing
 (first start), it subscribes with `after = None` (live only) and reconciles
-from `get_task` (§16).
+from `get_task` (§16). A cursor that does not parse is treated the same way,
+with a warning, rather than replaying from event 0.
+
+Aether's history retention may delete events a cursor has not reached. Before
+subscribing, each stream reads one page (`get_events`, Aether's 500-event
+replay page) after its cursor. A refusal naming expired seqs `first..=last`
+(the `history_expired` code when the welcome lists the feature, else the
+`not_found` text "event history expired within sequence range a..=b") makes
+the stream save `last` as its cursor, reconcile (§16) and post one feed
+system note naming the span it skipped, then subscribe after it. A replay
+that still hits the gap (history expired after the check) is hung up on by
+Aether; the next connect finds it the same way.
+
+An event whose handling fails with a local I/O, protocol or Aether error is
+tried up to 3 times, 1 s and then 2 s apart, before it is reported in the
+feed and skipped. An unanswered Aether instead ends the stream's pass, and
+the event is handled again after the reconnect.
 
 ### 4.7 Archon's own Aether, and the `archon` MCP server
 
@@ -1029,7 +1047,10 @@ changed since. `CostReport` is served in standby too.
 
 `trigger {agent: orchestrator, source: "archon", payload}`. Triggers are
 coalesced for `orchestrator.trigger_coalesce_ms` (default 2000) into one
-payload. Idempotency key: `trg_<first feed seq>_<last feed seq>`. Each event
+payload. The batch is keyed `trg_<store>_<first>_<last>` over a persisted
+event count; it goes out as `<batch key>_<orchestrator agent id>`, so retries
+to one orchestrator dedupe and a retry to a replaced one is a fresh key (Aether
+refuses a reused key aimed at another agent). Each event
 is saved in kv `trigger_outbox` when it is pushed, before any coalescing, so
 news waiting in the window survives an `archond` stop or crash. The outbox
 also keeps the keyed batch, so a restart resumes it under the same key.
@@ -1379,6 +1400,13 @@ in a new worktree off the base branch (§13).
   `agent.failed` whose event time is at or past the deadline (Aether's own
   `deadline of …` stop) settles `timed_out` too, never an `infra` re-spawn;
   one stamped earlier stays `infra` however late Archon receives it.
+  After the cancel (and for an agent Aether forgot) the sweep reads the
+  task: if the agent had already completed or failed it, that result settles
+  the stage instead, so a verdict whose earlier settle failed is not lost to
+  the timeout. A task that reads cancelled is Archon's own cancel and keeps
+  `timed_out`; an unanswered read waits for the next sweep, and a refused
+  one settles `timed_out` as before. The watchdog's
+  `infra` stall failure follows the same rule.
 - `infra` failures (`agent.failed` before its task settles, or Aether restart
   recovery failures) get `limits.infra_retries` (default 1) automatic
   re-spawns. These retries do not count against a stage's `max_attempts`.

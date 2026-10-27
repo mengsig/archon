@@ -229,10 +229,14 @@ async fn stall(
     }
 }
 
-/// Settle with `outcome` once Aether confirms the cancel. A refused cancel
-/// usually means the task already settled; its own outcome is used then.
-/// An agent or task Aether no longer knows has nothing left to stop, so it
-/// settles with `outcome` too instead of holding its slot forever.
+/// Settle with `outcome` once Aether confirms the cancel, unless the agent
+/// had already produced its own result: a task that completed or failed
+/// before the cancel (its earlier settle failed, or its event was missed)
+/// keeps that result rather than becoming the synthetic `outcome`. A task
+/// that reads cancelled is our own cancel, so `outcome` stands.
+/// A refused cancel usually means the task already settled; its own outcome
+/// is used then. An agent or task Aether no longer knows has nothing left
+/// to stop, so it settles with `outcome` instead of holding its slot forever.
 async fn cancel_and_settle(
     ctx: &DaemonContext,
     stage: &StageRunId,
@@ -242,14 +246,14 @@ async fn cancel_and_settle(
     outcome: StageOutcome,
 ) -> Result<FollowUp, ArchonError> {
     let refusal = match ctx.backend.cancel(agent, reason).await {
-        Ok(()) => return settle::settle(ctx, stage, outcome).await,
+        Ok(()) => return settle_after_cancel(ctx, stage, agent, task, outcome).await,
         Err(ArchonError::Unavailable(why)) => {
             tracing::info!(%agent, %why, "cancel unanswered; the next sweep retries");
             return Ok(FollowUp::default());
         }
         Err(ArchonError::NotFound(why)) => {
             tracing::warn!(%agent, %why, "Aether no longer knows the agent; settling its stage");
-            return settle::settle(ctx, stage, outcome).await;
+            return settle_after_cancel(ctx, stage, agent, task, outcome).await;
         }
         Err(refusal) => refusal,
     };
@@ -269,6 +273,56 @@ async fn cancel_and_settle(
         }
         Err(error) => Err(error),
     }
+}
+
+/// Settle a stage whose agent is stopped or gone: with the result its task
+/// holds if the agent produced one, else with the synthetic `outcome`.
+/// A lookup Aether cannot answer leaves the stage `running` for the next
+/// sweep, which cancels again (harmless) and reads the task: settling now
+/// could discard a verdict the agent did produce. A task Aether no longer
+/// knows, or refuses to read, settles with `outcome` as before this read.
+async fn settle_after_cancel(
+    ctx: &DaemonContext,
+    stage: &StageRunId,
+    agent: &AetherAgentId,
+    task: &AetherTaskId,
+    outcome: StageOutcome,
+) -> Result<FollowUp, ArchonError> {
+    assert!(
+        !matches!(outcome, StageOutcome::Completed { .. }),
+        "a synthetic outcome is never the agent's own result"
+    );
+    let settled = match ctx.backend.task_outcome(task).await {
+        Ok(found) => found,
+        Err(ArchonError::Unavailable(why)) => {
+            tracing::info!(%agent, %why, "task lookup unanswered after cancel; the next sweep retries");
+            return Ok(FollowUp::default());
+        }
+        Err(ArchonError::NotFound(why)) => {
+            tracing::warn!(%task, %why, "Aether no longer knows the task; settling its stage");
+            None
+        }
+        Err(error) => {
+            tracing::warn!(%task, %error, "could not read the task after its cancel; settling its stage");
+            None
+        }
+    };
+    let own_result = matches!(
+        settled,
+        Some(StageOutcome::Completed { .. } | StageOutcome::Failed { .. })
+    );
+    let chosen = match settled {
+        Some(own) if own_result => {
+            tracing::info!(%stage, %agent, "agent finished before its cancel; keeping its result");
+            own
+        }
+        _ => outcome,
+    };
+    assert!(
+        own_result || !matches!(chosen, StageOutcome::Completed { .. }),
+        "only the agent's own result can complete a stage here"
+    );
+    settle::settle(ctx, stage, chosen).await
 }
 
 /// An agent that no stage run owns any more; one already gone is done.

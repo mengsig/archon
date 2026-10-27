@@ -46,6 +46,7 @@ mod link_github;
 mod link_images;
 mod link_mcp;
 mod link_pump;
+mod link_pump_recovery;
 mod link_reports;
 mod link_status;
 mod link_supervisor;

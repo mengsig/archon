@@ -165,7 +165,7 @@ async fn prepare(
     let approved =
         super::proposal::approved_before(&*ctx.store.lock().await, item, &workspace.branch);
     let in_git = env.repo.is_some() && header.workspace != WorkspaceMode::Scratch;
-    let fork = fork_commit(&workspace, in_git).await;
+    let fork = change_base(ctx, item, &workspace, in_git).await;
     let assembled = approved.and_then(|approved| {
         let fork = fork?;
         let workspace = (workspace, fork.as_str());
@@ -313,6 +313,27 @@ fn assemble(
         base_vars,
         added: workspace.added,
     })
+}
+
+/// Where the run's change starts. A refresh's starts at the base commit it
+/// merges, so once merged its diff holds the change and the resolutions, not
+/// the upstream commits between the old fork and that base.
+async fn change_base(
+    ctx: &DaemonContext,
+    item: &QueueItem,
+    workspace: &Workspace,
+    in_git: bool,
+) -> Result<String, ArchonError> {
+    let fix = ctx.store.lock().await.stack_fix(&item.id)?;
+    let Some(refresh) = fix.and_then(|fix| fix.refresh) else {
+        return fork_commit(workspace, in_git).await;
+    };
+    assert!(in_git, "a refresh works in its owner's git worktree");
+    assert!(
+        matches!(refresh.sha.len(), 40 | 64),
+        "a refresh records the full commit it merges"
+    );
+    Ok(refresh.sha)
 }
 
 /// Where the run's change starts: the newest commit of its base, local or

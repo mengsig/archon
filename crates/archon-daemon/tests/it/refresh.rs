@@ -261,6 +261,27 @@ async fn a_refresh_merges_the_new_base_into_the_same_branch_and_pull_request() {
     assert!(again.contains("nothing to refresh"), "{again}");
 }
 
+/// A refresh's prompts hand reviewers the base commit it merges, never the
+/// old fork, whose diff would hold every upstream commit the merge brings in.
+#[tokio::test]
+async fn a_refresh_reviews_from_the_base_it_merges_not_the_old_fork() {
+    let (h, _gh) = delivering().await;
+    let (owner, run) = shipped(&h, "the change").await;
+    let old_fork = git(&h.repo, &["merge-base", &run.branch, "origin/main"]);
+    let upstream = advance_origin(&h, "upstream.txt", "upstream\n");
+    let fix = refresh(&h, &owner).await.expect("queued");
+
+    h.dispatch().await;
+    let mut requests = h.backend.requests();
+    requests.retain(|request| request.labels["archon.item"] == fix.id.as_str());
+    let prompt = &requests[0].objective;
+    assert!(
+        prompt.contains(&format!("the base (`{upstream}`) and head commits")),
+        "{prompt}"
+    );
+    assert!(!prompt.contains(&old_fork), "{prompt}");
+}
+
 /// A refresh judges the whole change again: its level replaces the label
 /// the pull request had, lower or higher.
 #[tokio::test]

@@ -36,8 +36,9 @@ restart.
   archond refuses it operator-only requests and lets only the orchestrator
   change Archon. Reads keep working, and an engine child that names no agent
   sends only reads (#291, [#276](https://github.com/mengsig/archon/issues/276)).
-- A gate answer's quote that negates the answer word ("don't approve the
-  migration gate") no longer backs that answer (#291).
+- A gate answer is refused when the operator's message negates the answer
+  word ("don't approve the migration gate"), even if the cited quote leaves
+  the negation out (#291).
 - The orchestrator and stages no longer see Aether's native `notify`, which
   bypassed Archon's feed, push and notification center; stages also lose
   `refresh_provider_usage`. Archon's own `notify` stays (#291).
@@ -48,9 +49,9 @@ restart.
   contract's dependency rules diff and log against the new run variable
   `base_commit`, the branch's fork point from the local and fetched base,
   instead of the operator's local base branch, which could be far behind
-  and made reviewers read upstream commits as the item's change. Runs saved
-  before it fall back to the base's name
-  (#284, [#275](https://github.com/mengsig/archon/issues/275)).
+  and made reviewers read upstream commits as the item's change. A refresh
+  reviews from the base commit it merges. Runs saved before it fall back to
+  the base's name (#284, [#275](https://github.com/mengsig/archon/issues/275)).
 - code-audit: the scope lead writes a numbered `lenses.md` in which the
   brief's own lenses win over the defaults. swarm: a task may consume a path
   the fork commit already holds, and stage listings number each rerun of a
@@ -77,8 +78,8 @@ restart.
 
 - A keyed `enqueue` retried with the same arguments is no longer refused as
   a different request when routing filled another model plan: the
-  fingerprint holds the plan as asked. A key recorded by 1.4.6 keeps
-  matching a retry that fills the plan alike
+  fingerprint holds the plan as asked. A key recorded by 1.4.6 holds the
+  plan filled then, so it matches only a retry that fills the plan alike
   (#287, [#279](https://github.com/mengsig/archon/issues/279)).
 - `queue wait` reads every item before it exits 5 and names each item
   blocked on a failed dependency, instead of stopping at the first (#287).
@@ -86,7 +87,8 @@ restart.
   `settings` read still does not (#287).
 - Lesson scoring ignores runs that judged nothing (a cancel, a budget cap, a
   timeout or an infrastructure failure), so they neither count against a
-  lesson nor retract it; `lessons stats` takes its pass rate over scored
+  lesson nor retract it, including the uses of such runs that 1.4.6 already
+  stored as losses; `lessons stats` takes its pass rate over scored
   runs and shows how many. An activation or retraction by scoring posts a
   feed line (#288, [#280](https://github.com/mengsig/archon/issues/280)).
 

@@ -44,16 +44,23 @@ pub async fn run(command: DaemonCommand, json: bool) -> anyhow::Result<ExitCode>
             aether,
             keep_aether,
             force,
-        } => stop(json, aether, keep_aether, force).await,
+        } => {
+            refuse_mixed_locations("daemon stop")?;
+            stop(json, aether, keep_aether, force).await
+        }
         DaemonCommand::Status => status(json).await,
         DaemonCommand::Restart { drain, keep_aether } => {
+            refuse_mixed_locations("daemon restart")?;
             upgrade(upgrade_request(None, None, drain, keep_aether)?, json).await
         }
         DaemonCommand::Upgrade {
             archon,
             aether,
             drain,
-        } => upgrade(upgrade_request(archon, aether, drain, false)?, json).await,
+        } => {
+            refuse_mixed_locations("daemon upgrade")?;
+            upgrade(upgrade_request(archon, aether, drain, false)?, json).await
+        }
         DaemonCommand::Relaunch { keep_aether } => relaunch(keep_aether).await,
     }
 }
@@ -118,6 +125,19 @@ fn warn_if_mixed() {
             );
         }
     }
+}
+
+/// Where the locations mix moved and default ones, the archond and aetherd
+/// found there may be another setup's, so `command` stops and restarts nothing.
+pub(super) fn refuse_mixed_locations(command: &str) -> anyhow::Result<()> {
+    let socket = archon_client::default_socket();
+    let Some(mix) = archon_core::paths::partial_override(&socket) else {
+        return Ok(());
+    };
+    Err(ArchonError::Invalid(format!(
+        "`archon {command}` stops and restarts nothing here: {mix}"
+    ))
+    .into())
 }
 
 /// Start `archon daemon run` in its own process group, appending to the startup log

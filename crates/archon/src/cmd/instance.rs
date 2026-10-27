@@ -29,6 +29,8 @@ use crate::setup;
 /// How long a launch waits for archond's status before a plain welcome.
 const WELCOME_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+/// How long an aetherd about to be stopped may take to say which instance it is.
+const IDENTIFY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const HOST_COMMANDS: &str = "--host-commands";
 const TOO_OLD: &str =
     "the installed Aether is too old for Archon's terminal UI; update it with `aether update`";
@@ -521,9 +523,24 @@ fn tui_args(agent: &AetherAgentId, args: &TuiArgs, mode: AetherMode) -> Vec<OsSt
 
 /// Replace this process with `aether <args>`, against Archon's own Aether
 /// in dedicated mode, or plainly in shared mode. Returns only on failure.
-pub fn passthrough(args: &[OsString]) -> anyhow::Result<ExitCode> {
+/// `aether stop` is refused where it could reach another setup's aetherd.
+pub async fn passthrough(args: &[OsString]) -> anyhow::Result<ExitCode> {
     let config = Config::load_default()?;
+    if is_stop(args) {
+        super::daemon::refuse_mixed_locations("aether stop")?;
+        if config.aether.mode == AetherMode::Dedicated {
+            refuse_another_instance(&Instance::resolve()?).await?;
+        }
+    }
     exec_aether(aether_command(&config, args)?)
+}
+
+/// Whether `aether <args>` is `aether stop`: its first word that is no option.
+fn is_stop(args: &[OsString]) -> bool {
+    let command = args
+        .iter()
+        .find(|arg| !arg.as_encoded_bytes().starts_with(b"-"));
+    command.is_some_and(|command| command == "stop")
 }
 
 fn aether_command(config: &Config, args: &[OsString]) -> anyhow::Result<Command> {
@@ -583,9 +600,11 @@ pub fn aether_status(config: &Config) -> anyhow::Result<(serde_json::Value, Stri
     Ok((value, text))
 }
 
-/// Stop Archon's own aetherd with `aether stop`.
+/// Stop Archon's own aetherd with `aether stop`, once it is known to be this
+/// data directory's.
 pub async fn stop_aether() -> anyhow::Result<(serde_json::Value, String)> {
     let instance = Instance::resolve()?;
+    refuse_another_instance(&instance).await?;
     let socket = instance.socket.clone();
     let stopped =
         tokio::task::spawn_blocking(move || lifecycle::stop(&instance, Path::new(AETHER_PROGRAM)))
@@ -602,9 +621,131 @@ pub async fn stop_aether() -> anyhow::Result<(serde_json::Value, String)> {
     Ok((value, text))
 }
 
+/// Refuse to stop the aetherd on `instance.socket` when it is another Aether
+/// instance than the one this data directory's archond last linked to. What
+/// cannot be told (no link yet, no answer) stops nothing from going ahead.
+async fn refuse_another_instance(instance: &Instance) -> anyhow::Result<()> {
+    if !lifecycle::is_listening(&instance.socket) {
+        return Ok(());
+    }
+    let Some(recorded) = recorded_instance(&instance.archon_data_dir) else {
+        return Ok(());
+    };
+    let Some(answering) = answering_instance(&instance.socket).await else {
+        return Ok(());
+    };
+    same_instance(&recorded, &answering, instance)
+}
+
+fn same_instance(recorded: &str, answering: &str, instance: &Instance) -> anyhow::Result<()> {
+    assert!(
+        !recorded.is_empty() && !answering.is_empty(),
+        "Aether names every instance"
+    );
+    if recorded == answering {
+        return Ok(());
+    }
+    Err(ArchonError::Invalid(format!(
+        "the aetherd on {} is Aether instance {answering}, but archond in {} last linked to \
+         instance {recorded}, so it is another setup's and was not stopped; if it is yours to \
+         stop, run `AETHER_SOCKET={} aether stop`",
+        instance.socket.display(),
+        instance.archon_data_dir.display(),
+        instance.socket.display()
+    ))
+    .into())
+}
+
+/// The Aether instance archond in `data_dir` last linked to; `None` when it
+/// never linked, or its store cannot be read by this archon, which is said.
+fn recorded_instance(data_dir: &Path) -> Option<String> {
+    let path = data_dir.join(paths::STORE_FILE_NAME);
+    if !path.is_file() {
+        return None;
+    }
+    let read = archon_queue::Store::open_read_only(&path)
+        .and_then(|store| store.kv_get(archon_queue::store::keys::AETHER_INSTANCE));
+    match read {
+        Ok(recorded) => recorded.filter(|id| !id.is_empty()),
+        Err(error) => {
+            eprintln!(
+                "archon: warning: which Aether instance {} belongs to is unknown ({error}); \
+                 its aetherd is stopped unchecked",
+                data_dir.display()
+            );
+            None
+        }
+    }
+}
+
+/// The instance the aetherd on `socket` names in its welcome; `None`, said,
+/// when it gives none in time: `aether stop` then meets the same aetherd.
+async fn answering_instance(socket: &Path) -> Option<String> {
+    use archon_aether::client::{AetherClient, Endpoint};
+    let endpoint = Endpoint::Unix(socket.to_owned());
+    let why = match tokio::time::timeout(IDENTIFY_TIMEOUT, AetherClient::connect(&endpoint)).await {
+        Ok(Ok(client)) => return Some(client.welcome().instance_id.clone()),
+        Ok(Err(error)) => error.to_string(),
+        Err(_) => format!("no welcome within {IDENTIFY_TIMEOUT:?}"),
+    };
+    eprintln!(
+        "archon: warning: the aetherd on {} did not say which instance it is ({why}); \
+         stopping it unchecked",
+        socket.display()
+    );
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_aether_stop_is_taken_for_a_stop() {
+        let is = |args: &[&str]| is_stop(&args.iter().map(OsString::from).collect::<Vec<_>>());
+        assert!(is(&["stop"]) && is(&["--json", "stop"]) && is(&["stop", "--json"]));
+        assert!(!is(&[]) && !is(&["status"]) && !is(&["agents", "stop"]) && !is(&["--stop"]));
+    }
+
+    #[tokio::test]
+    async fn only_the_aetherd_this_data_directory_linked_to_is_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = |name: &str| dir.path().join(name);
+        let instance =
+            Instance::from_archon_dirs(path("config"), path("data"), path("archond.sock"));
+        refuse_another_instance(&instance)
+            .await
+            .expect("nothing listens");
+        let aetherd = archon_aether::fake::FakeAether::start(&instance.socket)
+            .await
+            .unwrap();
+        aetherd.set_instance_id("inst-theirs");
+        refuse_another_instance(&instance)
+            .await
+            .expect("never linked: nothing to tell");
+
+        std::fs::create_dir_all(path("data")).unwrap();
+        let store_path = path("data").join(paths::STORE_FILE_NAME);
+        let mut store = archon_queue::Store::open(&store_path).unwrap();
+        let key = archon_queue::store::keys::AETHER_INSTANCE;
+        store.kv_set(key, "inst-ours").unwrap();
+        drop(store);
+        let refused = refuse_another_instance(&instance)
+            .await
+            .unwrap_err()
+            .to_string();
+        for part in [
+            "Aether instance inst-theirs",
+            "instance inst-ours",
+            "was not stopped",
+        ] {
+            assert!(refused.contains(part), "{part}: {refused}");
+        }
+        aetherd.set_instance_id("inst-ours");
+        refuse_another_instance(&instance)
+            .await
+            .expect("its own aetherd");
+    }
 
     #[test]
     fn a_shared_mode_client_is_told_archon_manages_its_updates() {

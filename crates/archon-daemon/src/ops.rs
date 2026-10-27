@@ -469,6 +469,27 @@ impl Restarted {
     }
 }
 
+/// What the restart under way is for, while archond hands it off or the next
+/// archond has yet to report it, when it stops Archon's own aetherd too: an
+/// absence of that aetherd meanwhile is planned. `None` when none is under way.
+pub(crate) async fn planned_aether_restart(
+    ctx: &DaemonContext,
+) -> Result<Option<String>, ArchonError> {
+    let Some(record) = ctx.store.lock().await.kv_get(RESTART_KEY)? else {
+        return Ok(None);
+    };
+    match serde_json::from_str::<Restarted>(&record) {
+        Ok(restarted) => {
+            assert!(!restarted.what.is_empty(), "an upgrade describes itself");
+            Ok(restarted.restart_aether.then_some(restarted.what))
+        }
+        Err(error) => {
+            tracing::warn!(%error, "the upgrade record is unreadable; the restart is not known");
+            Ok(None)
+        }
+    }
+}
+
 /// Report the upgrade this archond was restarted for, once Aether's
 /// version is known or `LINK_WAIT` passes.
 async fn report_restart(ctx: &DaemonContext) -> Result<(), ArchonError> {

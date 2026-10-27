@@ -96,7 +96,7 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::Release(command) => release::run(command, json).await,
         Command::Doctor => doctor::run(json).await,
         Command::Tui(args) => instance::tui(args).await,
-        Command::Aether { args } => instance::passthrough(&args),
+        Command::Aether { args } => instance::passthrough(&args).await,
         Command::Gc {
             older_than,
             force,

@@ -11,8 +11,11 @@ use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
+use archon_core::protocol::{ClientFrame, PROTOCOL_VERSION, Reply, Request, ServerFrame, Welcome};
 use archon_core::testing::write_script;
 use release::{ARCHIVE_MEMBERS, Server, aether_script, archive_members, archon_script, publish};
 
@@ -178,6 +181,20 @@ fn end_with(update: Child, signal: &str) -> Output {
         .unwrap();
     assert!(sent.success(), "kill -{signal} failed: {sent}");
     update.wait_with_output().unwrap()
+}
+
+/// The output of `child`, which must exit within `limit`; killed otherwise.
+fn exit_within(mut child: Child, limit: Duration) -> Output {
+    let deadline = Instant::now() + limit;
+    while child.try_wait().unwrap().is_none() {
+        if Instant::now() >= deadline {
+            let _already_gone = child.kill();
+            let out = child.wait_with_output().unwrap();
+            panic!("still running after {limit:?}: {out:?}");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    child.wait_with_output().unwrap()
 }
 
 /// A stand-in `aether` that creates `asked` and then never answers.
@@ -377,6 +394,99 @@ fn yes_with_json_prints_one_object_holding_the_install_and_the_restart() {
             .contains("nothing to restart"),
         "{value}"
     );
+}
+
+/// An archond that welcomes every connection and answers nothing else, as
+/// one stuck in its restart would; `true` once it was asked to restart.
+fn serve_stuck_archond(socket: &Path) -> Arc<AtomicBool> {
+    use std::io::{BufRead as _, BufReader, Write as _};
+    let listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
+    let asked = Arc::new(AtomicBool::new(false));
+    let seen = asked.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let (mut writer, seen) = (stream.unwrap(), seen.clone());
+            std::thread::spawn(move || {
+                let reader = BufReader::new(writer.try_clone().unwrap());
+                for line in reader.lines().map_while(Result::ok) {
+                    let frame: ClientFrame = serde_json::from_str(&line).unwrap();
+                    if matches!(frame.request, Request::Upgrade(_)) {
+                        seen.store(true, Ordering::SeqCst);
+                    }
+                    let Request::Hello { .. } = frame.request else {
+                        continue;
+                    };
+                    let welcome = Reply::Welcome(Welcome {
+                        protocol_version: PROTOCOL_VERSION,
+                        daemon_version: "test".into(),
+                        pid: std::process::id(),
+                    });
+                    let reply = ServerFrame::Reply {
+                        id: frame.id,
+                        result: Ok(welcome),
+                    };
+                    writeln!(writer, "{}", serde_json::to_string(&reply).unwrap()).unwrap();
+                }
+            });
+        }
+    });
+    asked
+}
+
+#[test]
+fn yes_prints_no_manual_steps_and_a_signal_ends_a_stuck_restart_naming_its_step() {
+    let installed = Installed::new();
+    publish(
+        &installed.releases(),
+        "v9.9.9",
+        &target(),
+        &archon_script("9.9.9"),
+        true,
+    );
+    let updating = aether_script(16, 17).replace("*) exit 64", "update) echo done ;;\n*) exit 64");
+    write_script(&installed.path("tools/aether"), &updating);
+    let asked = serve_stuck_archond(&installed.socket());
+    let update = installed
+        .command(&installed.archon(), &["update", "--yes"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("starting the installed archon");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !asked.load(Ordering::SeqCst) {
+        assert!(
+            Instant::now() < deadline,
+            "archond was never asked to restart"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let sent = Instant::now();
+    let signalled = Command::new("kill")
+        .args(["-INT", &update.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(signalled.success(), "kill -INT failed: {signalled}");
+    // Within a second, with slack for a loaded machine.
+    let out = exit_within(update, Duration::from_secs(5));
+    assert!(
+        sent.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        sent.elapsed()
+    );
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert_eq!(out.status.code(), Some(130), "{stdout}\n{stderr}");
+    assert_eq!(installed.version(), "archon 9.9.9", "the install stays");
+    assert!(
+        stderr.contains("archon: update: restarting archond (pid")
+            && stderr.contains("update interrupted by SIGINT while restarting archond"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("`archon orchestrator restart`"), "{stderr}");
+    assert!(
+        stdout.contains("to switch it to 9.9.9, `--yes` restarts it now."),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("daemon stop --keep-aether"), "{stdout}");
 }
 
 #[test]

@@ -3086,8 +3086,14 @@ over the default data directory, say), an `archond` started there would
 serve one setup's store under another's name, so nothing starts one
 implicitly: the CLI's and `archon mcp`'s autostart refuse with the variables
 named, `archon gc` does not collect offline, reads add a note, and
-`archon doctor` warns (`archon_core::paths::partial_override`). An explicit
-`archon daemon run`, foreground or `--detach`, still starts and warns.
+`archon doctor` warns (`archon_core::paths::partial_override`). `archon
+daemon stop`, `daemon restart`, `daemon upgrade` and `archon aether stop`
+refuse there too and stop nothing, since the daemons they would reach may be
+another setup's. Before Archon's own aetherd is stopped, the Aether instance
+id it names must be the one archond last linked to (`aether_instance_id` in
+the store); a mismatch is refused, and where either is unknown the stop goes
+ahead with a warning. An explicit `archon daemon run`, foreground or
+`--detach`, still starts and warns.
 
 Commands that only read connect to a running `archond` and never start it or
 Archon's `aetherd`; without one they fail with ``archond is not running

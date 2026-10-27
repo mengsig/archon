@@ -111,7 +111,11 @@ impl OwnAetherd {
         self.retry = RETRY_MIN;
         self.failure = None;
         tracing::info!("started Archon's own aetherd again");
-        let mut text = "Archon's own aetherd had stopped; archond started it again".to_owned();
+        // A restart archond asked for stops aetherd on purpose: no crash to report.
+        let mut text = match crate::ops::planned_aether_restart(ctx).await? {
+            Some(what) => format!("Archon's own aetherd restarted, as planned ({what})"),
+            None => "Archon's own aetherd had stopped; archond started it again".to_owned(),
+        };
         text.push_str(match told {
             true => " after the failures it reported.",
             false => ".",

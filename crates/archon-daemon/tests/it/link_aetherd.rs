@@ -155,6 +155,69 @@ async fn a_killed_aetherd_is_started_again_and_the_running_item_completes() {
     );
 }
 
+/// The feed's notes once the pump has started an aetherd killed while
+/// `upgrade_restart` held `record`, as a restart archond hands off leaves it.
+async fn notes_after_a_restart_recorded_as(record: Value) -> Vec<String> {
+    let harness = Harness::new().await;
+    harness.set_kv("upgrade_restart", &record.to_string()).await;
+    let socket = harness.dir.path().join("own-aetherd.sock");
+    let starter = starter(&socket, false);
+    let (first, pump) = connected_pump(&harness, &socket, starter.clone()).await;
+    drop(first);
+    within("the pump starts aetherd again", || async {
+        starter.calls.load(Ordering::SeqCst) == 1 && !harness.system_notes().await.is_empty()
+    })
+    .await;
+    pump.abort();
+    harness.system_notes().await
+}
+
+fn restart_record(what: &str, restart_aether: bool) -> Value {
+    json!({"what": what, "before": {"archon": {}, "aether": {}}, "restart_aether": restart_aether})
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_upgrade_that_restarts_aetherd_is_reported_as_a_restart_not_a_stop() {
+    let notes =
+        notes_after_a_restart_recorded_as(restart_record("upgrade archon to 9.9.9", true)).await;
+    assert!(
+        notes
+            .iter()
+            .any(|n| n == "Archon's own aetherd restarted, as planned (upgrade archon to 9.9.9)."),
+        "{notes:?}"
+    );
+    assert!(
+        !notes.iter().any(|n| n.contains("had stopped")),
+        "{notes:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_drained_restart_of_aetherd_is_reported_as_a_restart_not_a_stop() {
+    let notes = notes_after_a_restart_recorded_as(restart_record("a drained restart", true)).await;
+    assert!(
+        notes
+            .iter()
+            .any(|n| n == "Archon's own aetherd restarted, as planned (a drained restart)."),
+        "{notes:?}"
+    );
+    assert!(
+        !notes.iter().any(|n| n.contains("had stopped")),
+        "{notes:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restart_that_keeps_aetherd_still_reports_its_absence_as_a_stop() {
+    let notes = notes_after_a_restart_recorded_as(restart_record("a drained restart", false)).await;
+    assert!(
+        notes
+            .iter()
+            .any(|n| n.contains("had stopped; archond started it again")),
+        "{notes:?}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_aetherd_that_cannot_be_started_is_a_blocker_with_a_working_remedy() {
     let harness = Harness::new().await;

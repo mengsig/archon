@@ -31,6 +31,8 @@ use archon_core::config::{AetherMode, Config};
 const UPDATE_AVAILABLE: u8 = 10;
 const SMALL_FILE_TIMEOUT: Duration = Duration::from_secs(30);
 const ARCHIVE_TIMEOUT: Duration = Duration::from_secs(600);
+/// How often the question looks for the operator's answer.
+const ANSWER_POLL: Duration = Duration::from_millis(50);
 /// A VERSION or .sha256 asset is one short line.
 const SMALL_FILE_MAX_BYTES: u64 = 1024;
 
@@ -127,7 +129,7 @@ pub async fn run(args: UpdateArgs, json: bool) -> anyhow::Result<ExitCode> {
         interrupt = interrupts.next() => return interrupted(interrupt, place),
         prepared = prepare(&args, place.as_ref(), &mut report) => prepared?,
     };
-    // No signal is waited for from here on: the swap and its report end whole.
+    // Nothing here waits: the swap and its report end whole.
     let (code, installed) = match (prepared, place) {
         (Prepared::Reported(code), _) => (code, None),
         (Prepared::Staged(staged), Some(place)) => {
@@ -138,7 +140,23 @@ pub async fn run(args: UpdateArgs, json: bool) -> anyhow::Result<ExitCode> {
     if args.check || args.no_restart {
         return Ok(code);
     }
-    restart_after(&args, &mut report, code, installed).await
+    let progress = restart::Progress::new();
+    let restart = restart_after(&args, &mut report, code, installed, &progress);
+    match restart::until_interrupted(restart, &progress, interrupts.next()).await {
+        restart::Ended::Done(result) => result.with_context(|| {
+            let during = progress.current();
+            format!("the update's restart stopped while {}", during.describe())
+        }),
+        restart::Ended::Interrupted { by, during } => {
+            eprintln!(
+                "archon: update interrupted by {} while {}. The new archon is installed; {}.",
+                by.name(),
+                during.describe(),
+                during.remedy()
+            );
+            Ok(ExitCode::from(by.exit_code()))
+        }
+    }
 }
 
 /// Update Aether and restart, after the operator confirms or `--yes`. A run
@@ -148,6 +166,7 @@ async fn restart_after(
     report: &mut Report,
     code: ExitCode,
     installed: Option<Version>,
+    progress: &restart::Progress,
 ) -> anyhow::Result<ExitCode> {
     use restart::Steps as _;
     let config = Config::load_default().context("loading the config to restart from")?;
@@ -165,10 +184,10 @@ async fn restart_after(
         return Ok(code);
     }
     let running = restart::Live.running_archond().await?;
-    if !args.yes && !confirmed(&plan, running.as_ref())? {
+    if !args.yes && !confirmed(&plan, running.as_ref(), progress).await? {
         return Ok(code);
     }
-    let outcome = restart::apply(&restart::Live, &plan).await?;
+    let outcome = restart::apply(&restart::Live, &plan, progress).await?;
     let value = serde_json::json!({
         "restarted": outcome.restarted, "steps": outcome.lines, "warnings": outcome.warnings,
     });
@@ -197,7 +216,12 @@ fn can_ask(json: bool) -> bool {
 
 /// Say what will update and restart, and ask. Archon already current still
 /// offers `aether update`, which restarts archond only if it changes Aether.
-fn confirmed(plan: &restart::Plan, running: Option<&restart::Running>) -> anyhow::Result<bool> {
+async fn confirmed(
+    plan: &restart::Plan,
+    running: Option<&restart::Running>,
+    progress: &restart::Progress,
+) -> anyhow::Result<bool> {
+    assert!(can_ask(false), "a question needs a terminal on both ends");
     let stale = running
         .is_some_and(|archond| archon_core::ops::bare_version(&archond.version) != plan.installed);
     if plan.archon_changed || stale {
@@ -212,11 +236,42 @@ fn confirmed(plan: &restart::Plan, running: Option<&restart::Running>) -> anyhow
         print!("Check Aether now? [Y/n] ");
     }
     std::io::Write::flush(&mut std::io::stdout()).context("writing the question")?;
+    progress.mark(restart::Phase::Asking);
+    let answer = read_answer().await?;
+    Ok(restart::is_yes(&answer))
+}
+
+/// One line from the terminal, read only once it has one: a read that
+/// blocked would hold up a signal's exit until the operator pressed Enter.
+async fn read_answer() -> anyhow::Result<String> {
+    use std::io::BufRead as _;
+    let stdin = std::io::stdin();
+    while !has_input(&stdin)? {
+        tokio::time::sleep(ANSWER_POLL).await;
+    }
     let mut answer = String::new();
-    std::io::stdin()
+    stdin
+        .lock()
         .read_line(&mut answer)
         .context("reading the answer")?;
-    Ok(restart::is_yes(&answer))
+    Ok(answer)
+}
+
+/// Whether a read of `stdin` returns at once: a whole line on a terminal,
+/// or its end.
+fn has_input(stdin: &std::io::Stdin) -> anyhow::Result<bool> {
+    use rustix::event::{PollFd, PollFlags, Timespec, poll};
+    let mut fds = [PollFd::new(stdin, PollFlags::IN)];
+    let now = Timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    match poll(&mut fds, Some(&now)) {
+        Ok(ready) => Ok(ready > 0),
+        // The signal that interrupted it is the select's to handle.
+        Err(rustix::io::Errno::INTR) => Ok(false),
+        Err(error) => Err(error).context("waiting for the answer"),
+    }
 }
 
 /// How the part of an update that a signal may still stop has ended.
@@ -275,7 +330,16 @@ async fn prepare(
     let step = Step::decide(&current, &wanted, args.version.is_some());
     let installs = matches!(step, Step::Upgrade | Step::Downgrade);
     if let Some(place) = place.filter(|_| installs) {
-        let staged = stage(&source, place, step, current, wanted, report.json).await?;
+        let restarts = args.yes && !args.no_restart;
+        let staged = stage(
+            &source,
+            place,
+            step,
+            (current, wanted),
+            report.json,
+            restarts,
+        )
+        .await?;
         return Ok(Prepared::Staged(staged));
     }
     let (status, text) = standing(step, &current, &wanted);
@@ -350,14 +414,15 @@ fn read_small(path: &Path) -> anyhow::Result<String> {
 }
 
 /// Download, verify and diagnose `wanted`, all before the swap: a signal that
-/// ends any of it leaves the installed archon as it was.
+/// ends any of it leaves the installed archon as it was. `restarts`: `--yes`
+/// restarts archond next, so its report names no command to run by hand.
 async fn stage(
     source: &Source,
     place: &Place,
     step: Step,
-    current: Version,
-    wanted: Version,
+    (current, wanted): (Version, Version),
     json: bool,
+    restarts: bool,
 ) -> anyhow::Result<Staged> {
     assert_ne!(current, wanted, "an equal version is never installed");
     assert!(
@@ -374,7 +439,7 @@ async fn stage(
         .with_context(|| format!("archon {current} is unchanged; installing {wanted} failed"))?;
     let needed = Requirement::of(&binaries.join(BINARIES[0])).await;
     let aether = aether_report(&wanted, needed).await;
-    let archond = archond_report(&wanted).await;
+    let archond = archond_report(&wanted, restarts).await;
     Ok(Staged {
         binaries,
         step,
@@ -487,15 +552,17 @@ async fn aether_report(
 
 /// Whether an archond is running, and what to do about it after an update.
 /// Never fails: what cannot be asked stops no update.
-async fn archond_report(new: &Version) -> (Option<bool>, String) {
-    const RESTART: &str = "run `archon daemon stop --keep-aether`, then `archon aether mcp refresh archon` \
+async fn archond_report(new: &Version, restarts: bool) -> (Option<bool>, String) {
+    const BY_HAND: &str = "run `archon daemon stop --keep-aether`, then `archon aether mcp refresh archon` \
                            and `archon orchestrator restart`";
+    const BELOW: &str = "`--yes` restarts it now";
+    let restart = if restarts { BELOW } else { BY_HAND };
     match connect_existing().await {
         Ok(Some(client)) => {
             let welcome = client.welcome();
             let line = format!(
                 "archond (pid {}) still runs {}, and the update itself interrupts no running \
-                 item; to switch it to {new}, {RESTART}.",
+                 item; to switch it to {new}, {restart}.",
                 welcome.pid, welcome.daemon_version
             );
             (Some(true), line)
@@ -509,7 +576,7 @@ async fn archond_report(new: &Version) -> (Option<bool>, String) {
         }
         Err(error) => {
             let line = format!(
-                "archond could not be asked whether it runs ({error:#}); if it does, {RESTART}."
+                "archond could not be asked whether it runs ({error:#}); if it does, {restart}."
             );
             (None, line)
         }

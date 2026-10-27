@@ -362,7 +362,8 @@ async fn an_orchestrator_of_another_version_fails_the_restart() {
     );
 }
 
-/// `apply` against `fake`, ended by a SIGINT after `after`.
+/// `apply` against `fake`, ended by a SIGINT after `after`, and watched past
+/// it so that a signal that is not selected fails the test, not hangs it.
 async fn interrupted_after(
     fake: &Fake,
     after: Duration,
@@ -372,7 +373,12 @@ async fn interrupted_after(
         tokio::time::sleep(after).await;
         Interrupt::Keyboard
     };
-    let ended = until_interrupted(apply(fake, &plan(true), &progress), &progress, signal).await;
+    let plan = plan(true);
+    let ended = until_interrupted(apply(fake, &plan, &progress), &progress, signal);
+    let watchdog = after + Duration::from_secs(60);
+    let ended = tokio::time::timeout(watchdog, ended)
+        .await
+        .unwrap_or_else(|_| panic!("{:?} hung past {watchdog:?}", fake.hangs));
     (ended, started.elapsed())
 }
 

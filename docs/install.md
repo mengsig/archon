@@ -175,8 +175,9 @@ archond it would reach may be another setup's.
 
 Each step is said on stderr as it starts (`archon: update: restarting
 archond (pid 4242, for at most 2100s)`), and each has a deadline: the
-archond restart `--wait` plus five minutes, the orchestrator restart three
-minutes. With `--yes` and a running `archond`, the command exits 0 only
+archond restart `--wait` plus five minutes, the question to a current
+archond about which archon created the orchestrator one minute, the
+orchestrator restart three minutes. With `--yes` and a running `archond`, the command exits 0 only
 once archond runs the new version and the orchestrator, if one runs, is in
 a generation the new version created; otherwise it exits non-zero naming
 the step that did not finish.

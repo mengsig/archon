@@ -89,6 +89,11 @@ impl Installed {
             .env("ARCHON_SOCKET", self.socket())
             .env("CARGO_HOME", self.path("cargo"))
             .env("HOME", self.home.path())
+            // Never a default location of the operator's, even if a test's
+            // ARCHON_* paths stopped being used.
+            .env("XDG_RUNTIME_DIR", self.runtime.path())
+            .env("XDG_CONFIG_HOME", self.path("xdg-config"))
+            .env("XDG_DATA_HOME", self.path("xdg-data"))
             .env_remove("http_proxy")
             .env_remove("HTTP_PROXY")
             .env_remove("AETHER_ENGINE_AGENT")
@@ -446,7 +451,7 @@ fn yes_prints_no_manual_steps_and_a_signal_ends_a_stuck_restart_naming_its_step(
     let updating = aether_script(16, 17).replace("*) exit 64", "update) echo done ;;\n*) exit 64");
     write_script(&installed.path("tools/aether"), &updating);
     let asked = serve_stuck_archond(&installed.socket());
-    let update = installed
+    let mut update = installed
         .command(&installed.archon(), &["update", "--yes"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -454,10 +459,11 @@ fn yes_prints_no_manual_steps_and_a_signal_ends_a_stuck_restart_naming_its_step(
         .expect("starting the installed archon");
     let deadline = Instant::now() + Duration::from_secs(60);
     while !asked.load(Ordering::SeqCst) {
-        assert!(
-            Instant::now() < deadline,
-            "archond was never asked to restart"
-        );
+        if Instant::now() >= deadline {
+            let _already_gone = update.kill();
+            let out = update.wait_with_output().unwrap();
+            panic!("archond was never asked to restart: {out:?}");
+        }
         std::thread::sleep(Duration::from_millis(20));
     }
     let signalled = Command::new("kill")
@@ -501,9 +507,6 @@ fn yes_in_a_mixed_environment_installs_but_restarts_nothing() {
     let update = installed
         .command(&installed.archon(), &["update", "--yes"])
         .env_remove("ARCHON_SOCKET")
-        .env("XDG_RUNTIME_DIR", runtime)
-        .env("XDG_CONFIG_HOME", installed.path("xdg-config"))
-        .env("XDG_DATA_HOME", installed.path("xdg-data"))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

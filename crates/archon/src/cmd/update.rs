@@ -12,6 +12,7 @@ mod tools;
 pub(super) mod version;
 
 use std::cmp::Ordering;
+use std::os::fd::{AsFd as _, BorrowedFd};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
@@ -239,31 +240,37 @@ async fn confirmed(
     }
     std::io::Write::flush(&mut std::io::stdout()).context("writing the question")?;
     progress.mark(restart::Phase::Asking);
-    let answer = read_answer().await?;
+    let answer = read_answer(std::io::stdin().as_fd()).await?;
     Ok(restart::is_yes(&answer))
 }
 
-/// One line from the terminal, read only once it has one: a read that
-/// blocked would hold up a signal's exit until the operator pressed Enter.
-async fn read_answer() -> anyhow::Result<String> {
-    use std::io::BufRead as _;
-    let stdin = std::io::stdin();
-    while !has_input(&stdin)? {
-        tokio::time::sleep(ANSWER_POLL).await;
+/// One line from `input`, up to its line end or end of input, gathered from
+/// reads taken only when they return at once: a blocked read would hold up
+/// a signal's exit, and a terminal's Ctrl-D hands over half a line.
+async fn read_answer(input: BorrowedFd<'_>) -> anyhow::Result<String> {
+    let (mut answer, mut chunk) = (Vec::new(), [0_u8; 256]);
+    loop {
+        if !has_input(input)? {
+            tokio::time::sleep(ANSWER_POLL).await;
+            continue;
+        }
+        let read = match rustix::io::read(input, &mut chunk[..]) {
+            Ok(read) => read,
+            Err(rustix::io::Errno::INTR | rustix::io::Errno::AGAIN) => continue,
+            Err(error) => return Err(error).context("reading the answer"),
+        };
+        assert!(read <= chunk.len(), "a read fills at most its buffer");
+        answer.extend_from_slice(&chunk[..read]);
+        if read == 0 || chunk[..read].contains(&b'\n') {
+            return Ok(String::from_utf8_lossy(&answer).into_owned());
+        }
     }
-    let mut answer = String::new();
-    stdin
-        .lock()
-        .read_line(&mut answer)
-        .context("reading the answer")?;
-    Ok(answer)
 }
 
-/// Whether a read of `stdin` returns at once: a whole line on a terminal,
-/// or its end.
-fn has_input(stdin: &std::io::Stdin) -> anyhow::Result<bool> {
+/// Whether a read of `input` returns at once.
+fn has_input(input: BorrowedFd<'_>) -> anyhow::Result<bool> {
     use rustix::event::{PollFd, PollFlags, Timespec, poll};
-    let mut fds = [PollFd::new(stdin, PollFlags::IN)];
+    let mut fds = [PollFd::new(&input, PollFlags::IN)];
     let now = Timespec {
         tv_sec: 0,
         tv_nsec: 0,
@@ -591,6 +598,50 @@ mod tests {
 
     fn version(text: &str) -> Version {
         text.parse().unwrap()
+    }
+
+    /// A terminal's two ends; the reading end does not block, so a reader
+    /// that waits for a whole line fails here rather than hangs.
+    fn terminal_pair() -> (
+        std::os::unix::net::UnixStream,
+        std::os::unix::net::UnixStream,
+    ) {
+        let (operator, terminal) = std::os::unix::net::UnixStream::pair().unwrap();
+        terminal.set_nonblocking(true).unwrap();
+        (operator, terminal)
+    }
+
+    #[tokio::test]
+    async fn half_an_answer_leaves_the_wait_open_to_a_signal() {
+        use std::io::Write as _;
+        let (mut operator, terminal) = terminal_pair();
+        operator.write_all(b"n").unwrap();
+        let wait = Duration::from_millis(300);
+        let waiting = tokio::time::timeout(wait, read_answer(terminal.as_fd())).await;
+        assert!(waiting.is_err(), "no line end yet: {waiting:?}");
+
+        let (mut operator, terminal) = terminal_pair();
+        operator.write_all(b"n").unwrap();
+        drop(operator);
+        let ended = tokio::time::timeout(wait, read_answer(terminal.as_fd())).await;
+        assert_eq!(ended.expect("input ended").unwrap(), "n");
+    }
+
+    #[tokio::test]
+    async fn an_answer_is_read_to_its_line_end() {
+        use std::io::Write as _;
+        let (mut operator, terminal) = terminal_pair();
+        let answering = async {
+            tokio::time::sleep(ANSWER_POLL * 2).await;
+            operator.write_all(b"no\n").unwrap();
+        };
+        let wait = Duration::from_secs(5);
+        let (answer, ()) = tokio::join!(
+            tokio::time::timeout(wait, read_answer(terminal.as_fd())),
+            answering
+        );
+        assert_eq!(answer.expect("a whole line").unwrap(), "no\n");
+        assert!(!restart::is_yes("no\n"));
     }
 
     #[test]

@@ -63,6 +63,12 @@ pub enum TriggerEvent {
         #[serde(flatten)]
         message: Box<archon_core::agent_message::AgentMessage>,
     },
+    /// A stage agent's first message past `[limits] max_agent_messages` was
+    /// refused; told once per agent.
+    MessageCapReached {
+        #[serde(flatten)]
+        cap: archon_core::agent_message::MessageCap,
+    },
     ItemFinished {
         item: QueueItemId,
         title: String,
@@ -246,6 +252,7 @@ impl TriggerEvent {
         match self {
             Self::OrchestratorBriefing { .. } => "orchestrator_briefing",
             Self::AgentMessage { .. } => "agent_message",
+            Self::MessageCapReached { .. } => "message_cap_reached",
             Self::ItemFinished { .. } => "item_finished",
             Self::InitiativeFinished { .. } => "initiative_finished",
             Self::ItemBlocked { .. } => "item_blocked",
@@ -280,6 +287,7 @@ impl TriggerEvent {
             | Self::GateOpened { .. }
             | Self::ItemBlocked { .. }
             | Self::LavishFeedback { .. }
+            | Self::MessageCapReached { .. }
             | Self::Budget { .. } => true,
             Self::AgentMessage { message } => message.kind == MessageKind::Escalation,
             Self::ItemFinished { .. }
@@ -587,6 +595,39 @@ pub(crate) fn record_message(
     let mut updates = updates.to_vec();
     updates.push((OUTBOX_KEY, &raw));
     store.append_feed_with_kv(entry, at, &updates)
+}
+
+/// Record a stage agent reaching its message cap as one feed entry and the
+/// orchestrator's news together, `key` holding the cap from then on.
+pub(crate) fn record_cap(
+    store: &mut Store,
+    run: &archon_core::id::PipelineRunId,
+    cap: archon_core::agent_message::MessageCap,
+    key: &str,
+) -> Result<archon_core::notify::FeedItem, ArchonError> {
+    use archon_core::notify::{FeedEntry, Notification, NotificationKind};
+    assert!(store.kv_get(key)?.is_none(), "a cap is told once per agent");
+    let at = cap.at;
+    let entry = FeedEntry::Notification(Notification {
+        id: archon_core::id::NotificationId::new(),
+        kind: NotificationKind::Blocker,
+        text: cap.describe(),
+        item: Some(cap.item.clone()),
+        run: Some(run.clone()),
+        at,
+    });
+    let raw_cap = serde_json::to_string(&cap)?;
+    let mut outbox = read_outbox(store)?;
+    outbox.pending.push(Held::new(
+        TriggerEvent::MessageCapReached { cap },
+        at,
+        false,
+    ));
+    if outbox.pending.len() > MAX_PENDING {
+        compact_pending(store, &mut outbox)?;
+    }
+    let raw = serde_json::to_string(&outbox)?;
+    store.append_feed_with_kv(entry, at, &[(key, &raw_cap), (OUTBOX_KEY, &raw)])
 }
 
 pub(crate) fn wake(ctx: &DaemonContext) {
@@ -1034,6 +1075,31 @@ mod tests {
     }
 
     #[test]
+    fn a_message_cap_notice_skips_the_window() {
+        let now = archon_core::now();
+        let cap = TriggerEvent::MessageCapReached {
+            cap: archon_core::agent_message::MessageCap {
+                item: QueueItemId::new(),
+                stage_run: archon_core::id::StageRunId::new(),
+                stage: "build".into(),
+                agent: AetherAgentId::parse("agt_1").unwrap(),
+                cap: 20,
+                at: now,
+            },
+        };
+        let mut outbox = Outbox {
+            pending: vec![Held::new(success(), now, false)],
+            ..Outbox::default()
+        };
+        assert!(!outbox.is_now(now), "routine news waits the window");
+        outbox.pending.push(Held::new(cap, now, false));
+        assert!(
+            outbox.is_now(now),
+            "a silenced stage wakes the orchestrator at once"
+        );
+    }
+
+    #[test]
     fn payload_matches_the_documented_shape() {
         let directive = archon_core::autonomy::Directive::new(
             "merge docs fixes yourself",
@@ -1126,6 +1192,16 @@ mod tests {
                 text: "no".into(),
             },
             TriggerEvent::ChatMergeRefused { text: "no".into() },
+            TriggerEvent::MessageCapReached {
+                cap: archon_core::agent_message::MessageCap {
+                    item: QueueItemId::new(),
+                    stage_run: archon_core::id::StageRunId::new(),
+                    stage: "build".into(),
+                    agent: AetherAgentId::parse("agt_1").unwrap(),
+                    cap: 20,
+                    at: archon_core::now(),
+                },
+            },
             TriggerEvent::MergeFinished {
                 item: QueueItemId::new(),
                 pr_url: "https://github.com/o/r/pull/1".into(),

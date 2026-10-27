@@ -75,6 +75,9 @@ fn label(event: &TriggerEvent) -> String {
             initiative, state, ..
         } => format!("initiative finished: {initiative} {state}"),
         TriggerEvent::ItemBlocked { item, .. } => format!("item blocked: {item}"),
+        TriggerEvent::MessageCapReached { cap } => {
+            format!("message cap reached: {} ({})", cap.agent, cap.item)
+        }
         TriggerEvent::AgentMessage { message } => {
             let kind = match message.kind {
                 MessageKind::Relay => "relay",

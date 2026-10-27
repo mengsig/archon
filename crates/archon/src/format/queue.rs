@@ -269,6 +269,13 @@ fn run_lines(out: &mut String, detail: &ItemDetail, run: &PipelineRun, full: boo
         for warning in detail.stage_warnings.iter().filter(|w| w.stage == stage.id) {
             let _ = writeln!(out, "    health: {}", sanitize_line(&warning.describe()));
         }
+        for cap in detail
+            .message_caps
+            .iter()
+            .filter(|c| c.stage_run == stage.id)
+        {
+            let _ = writeln!(out, "    messages: {}", sanitize_line(&cap.describe()));
+        }
         if let Some(review) = archon_pipeline::review::on_record(stage.structured.as_ref()) {
             let _ = writeln!(out, "    {}", sanitize_line(&review));
         }
@@ -672,6 +679,7 @@ mod tests {
             switched_to: None,
             merges: Vec::new(),
             stage_warnings: Vec::new(),
+            message_caps: Vec::new(),
         }
     }
 
@@ -988,6 +996,7 @@ mod tests {
             switched_to: None,
             merges: Vec::new(),
             stage_warnings: Vec::new(),
+            message_caps: Vec::new(),
         };
         let text = item_detail(&detail, &RepoNames::new(), true);
         assert_inert(&text);

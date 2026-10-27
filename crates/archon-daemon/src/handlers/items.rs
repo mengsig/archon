@@ -337,6 +337,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
     let waiting_reason = waiting.reason(&store, &item, waiting_on.as_ref())?;
     let steers = executor::steer::records(&store, id)?;
     let switched_to = executor::steer::switched_to(&store, &item)?;
+    let message_caps = crate::agent_messages::caps(&store, Some(id))?;
     Ok(Reply::ItemDetail(Box::new(ItemDetail {
         default_efforts,
         switched_to,
@@ -351,6 +352,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
         delegations,
         merges,
         stage_warnings,
+        message_caps,
     })))
 }
 

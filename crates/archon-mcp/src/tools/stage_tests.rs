@@ -261,6 +261,7 @@ fn item_detail(stage: StageRun) -> ItemDetail {
         switched_to: None,
         merges: Vec::new(),
         stage_warnings: Vec::new(),
+        message_caps: Vec::new(),
     }
 }
 

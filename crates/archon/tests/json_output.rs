@@ -195,6 +195,7 @@ fn linked_status() -> archon_core::protocol::DaemonStatus {
         recovery: None,
         integration: vec![],
         stage_warnings: vec![],
+        message_caps: Vec::new(),
     }
 }
 
@@ -301,6 +302,7 @@ impl Canned {
                 switched_to: None,
                 merges: Vec::new(),
                 stage_warnings: Vec::new(),
+                message_caps: Vec::new(),
             })),
             Request::CancelItem { .. } | Request::RetryItem { .. } | Request::SteerItem { .. } => {
                 Reply::Item(self.item.clone())

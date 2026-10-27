@@ -337,7 +337,20 @@ blocker, a relay or info with progress. It also delivers an `agent_message`
 news event to the orchestrator, which acts on it and does not repeat it to
 you. Delivery is durable and coalesced; each
 agent can send at most 20 messages (`[limits] max_agent_messages`), with
-a clear refusal after that.
+a clear refusal after that. The cap never silences a stage:
+
+- Its first refused message posts one `message_cap_reached` news event that
+  wakes the orchestrator, and `get_item` and `queue_status` show the agent
+  at its cap while its stage runs.
+- An agent keeps 3 `escalation` messages in reserve past the cap, which
+  `info` and `relay` messages cannot use.
+- Each Aether `send_message` from the orchestrator to a stage agent, and
+  each steer note, grants that agent one reply that is not counted. It
+  holds at most 3 such replies at once.
+- A message a stage agent sends for the agents it delegated to is charged
+  to it, and the refusal names the agent whose allowance is used up and
+  the cap.
+
 Delivered messages to passive run nodes are forwarded through the same
 path, including late events for retired nodes whose normal index was pruned. External
 messages have a separate cap of the same size per run node; refusals reach the

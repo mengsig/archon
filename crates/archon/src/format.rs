@@ -168,6 +168,9 @@ fn link_lines(out: &mut String, status: &DaemonStatus, verbose: bool) {
     for warning in &status.stage_warnings {
         let _ = writeln!(out, "stage health: {}", sanitize_line(&warning.describe()));
     }
+    for cap in &status.message_caps {
+        let _ = writeln!(out, "stage messages: {}", sanitize_line(&cap.describe()));
+    }
     if let Some(host) = &status.host_load {
         let _ = writeln!(out, "host: {}", host_load_line(host));
     }
@@ -982,6 +985,7 @@ pub(crate) mod tests {
             recovery: None,
             integration: Vec::new(),
             stage_warnings: Vec::new(),
+            message_caps: Vec::new(),
         }
     }
 

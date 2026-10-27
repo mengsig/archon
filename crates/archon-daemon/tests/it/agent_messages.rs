@@ -14,7 +14,7 @@ use archon_daemon::{handlers, prune, pump, triggers};
 use common::{Harness, completed, verdict};
 use serde_json::json;
 
-async fn running() -> (Harness, StageRun) {
+pub(crate) async fn running() -> (Harness, StageRun) {
     let h = Harness::new().await;
     h.enqueue("stage messaging").await;
     h.dispatch().await;
@@ -22,7 +22,7 @@ async fn running() -> (Harness, StageRun) {
     (h, stage)
 }
 
-async fn send(
+pub(crate) async fn send(
     h: &Harness,
     stage: &StageRun,
     kind: MessageKind,
@@ -40,7 +40,7 @@ async fn send(
     .await
 }
 
-async fn messages(h: &Harness) -> Vec<AgentMessage> {
+pub(crate) async fn messages(h: &Harness) -> Vec<AgentMessage> {
     triggers::held(&h.ctx)
         .await
         .unwrap()
@@ -67,7 +67,7 @@ async fn system_notes(h: &Harness) -> Vec<String> {
         .collect()
 }
 
-async fn inbox(
+pub(crate) async fn inbox(
     h: &Harness,
     target: &AetherAgentId,
     seq: u64,

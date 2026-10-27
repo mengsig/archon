@@ -318,6 +318,13 @@ fn item_detail(detail: &ItemDetail) -> String {
             for warning in detail.stage_warnings.iter().filter(|w| w.stage == stage.id) {
                 let _ = write!(text, "\n    health: {}", warning.describe());
             }
+            for cap in detail
+                .message_caps
+                .iter()
+                .filter(|c| c.stage_run == stage.id)
+            {
+                let _ = write!(text, "\n    messages: {}", cap.describe());
+            }
         }
     }
     if detail.runs.is_empty() {
@@ -754,6 +761,7 @@ fn daemon_status(status: &DaemonStatus) -> String {
     ) + &quota_text(status.quota.as_ref())
         + &integration_text(&status.integration)
         + &stage_warnings_text(&status.stage_warnings)
+        + &message_caps_text(&status.message_caps)
         + &stale_text(status.health.as_ref())
 }
 
@@ -761,6 +769,13 @@ fn daemon_status(status: &DaemonStatus) -> String {
 pub(super) fn stage_warnings_text(warnings: &[StageWarning]) -> String {
     (warnings.iter())
         .map(|warning| format!("\nStage health: {}.", warning.describe()))
+        .collect()
+}
+
+/// Agents of running stages at their message cap.
+pub(super) fn message_caps_text(caps: &[archon_core::agent_message::MessageCap]) -> String {
+    (caps.iter())
+        .map(|cap| format!("\nStage messages: {}.", cap.describe()))
         .collect()
 }
 

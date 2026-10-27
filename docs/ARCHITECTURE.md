@@ -1037,7 +1037,7 @@ After a quiet spell, delivery waits the window from the first event. News
 the operator waits on or must act on ends the window at once: an
 `operator_answer`, a `chat_answer`, a `chat_merge_refused`, a
 `merge_finished`, a `gate_opened`, an `item_blocked`, `lavish_feedback`, a
-`budget` and a stage's escalation
+`budget`, a `message_cap_reached` and a stage's escalation
 (`TriggerEvent::is_urgent`). So does the waking outcome of the last item
 queued, dispatching or running (`triggers::hold_at_once`): no other outcome
 is coming to share its turn. News pushed while a batch is delivered has
@@ -1073,7 +1073,7 @@ makes no `item_finished`: its initiative's `initiative_finished` wakes once
 it is done or failed (§8.9), carrying each finished member's state, summary
 and cost as `results`.
 
-Every other event wakes: `agent_message`, `item_blocked`, `gate_opened`,
+Every other event wakes: `agent_message`, `message_cap_reached`, `item_blocked`, `gate_opened`,
 `operator_answer`, `chat_answer`, `chat_merge_refused`, `lavish_feedback`, `budget`,
 `policy_violation`, `directives_restated`, `initiative_finished`, `pr_checks` (§8.7). A mirror's change of state
 (§13.3) is quiet; a write into a mirror that was undone (`reverted`) wakes. `merge_finished` (§18.6) wakes when the orchestrator asked
@@ -1110,7 +1110,7 @@ was created is news to it and is compacted only as usual. Adopting
 Aether's successor or waking the agent in place keeps its context, so
 neither forces compaction. Compaction:
 
-- always keeps every `operator_answer`, `agent_message`, `chat_answer`,
+- always keeps every `operator_answer`, `agent_message`, `message_cap_reached`, `chat_answer`,
   `chat_merge_refused` and `merge_finished`,
   every `lavish_feedback` whose report is still `open` in Lavish, every
   `gate_opened` whose question is still open, and every current
@@ -1253,7 +1253,17 @@ original sender. One SQLite transaction commits the feed entry, the
 sender's count and the `agent_message` news event in the durable outbox.
 A sender's count is capped at `[limits] max_agent_messages` (20 by
 default), and so is each run node's count of external messages; the
-refusal names the key. The receipt is the feed entry id. The tool does no Aether
+refusal names the key, the cap and the agent whose allowance is used up,
+which is the sender even when it relays for an agent it delegated to.
+Past the cap a sender keeps `ESCALATION_RESERVE` (3) escalations, counted
+apart from its allowance. Each orchestrator `send_message` to a live stage
+agent, seen in its inbox, and each steer note to its stage grants it one
+reply that is charged before its allowance, at most `MAX_REPLY_GRANTS` (3)
+held at once; a replayed inbox delivery grants nothing. A stage agent's
+first refusal commits, in one transaction, a `Blocker` feed entry, the
+`message_cap:<agent>` record and a `message_cap_reached` news event that
+skips the coalescing window, so the orchestrator hears of it once per agent.
+`get_item` and `status` list the records of stages still running. The receipt is the feed entry id. The tool does no Aether
 I/O and does not settle the stage. Stage instructions and the receipt say
 to continue working: ending a turn would complete the stage, and sending
 a message is never a reason to wait or end it.

@@ -1204,6 +1204,9 @@ pub struct DaemonStatus {
     /// Agents of running stages that leave inbox items unread, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stage_warnings: Vec<StageWarning>,
+    /// Agents of running stages at their `max_agent_messages` cap, first refused first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub message_caps: Vec<crate::agent_message::MessageCap>,
 }
 
 /// `DaemonStatus::recovery`: how far archond is in recovering its runs.
@@ -1644,6 +1647,9 @@ pub struct ItemDetail {
     /// Agents of its running stages that leave inbox items unread.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stage_warnings: Vec<StageWarning>,
+    /// Agents of its running stages at their `max_agent_messages` cap.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub message_caps: Vec<crate::agent_message::MessageCap>,
 }
 
 /// An agent a stage agent delegated to, itself or through another.

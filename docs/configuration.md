@@ -369,7 +369,9 @@ initiative_contract_bytes = 2048 # 1..=16384
   own `timeout_minutes` is not capped by it.
 - `max_agent_messages`: the `message_orchestrator` calls one stage agent
   may make in its lifetime, and the messages one run node's inbox may
-  relay. Each message is an orchestrator turn.
+  relay. Each message is an orchestrator turn. Past it an agent keeps 3
+  escalations in reserve and one reply to each orchestrator message or
+  steer note, and the orchestrator is told once that it reached the cap.
 - `initiative_members` and `initiative_contract_bytes`: an initiative's
   size. The contract is in every member's stage contract, and is sent
   whole to running members whenever it changes.

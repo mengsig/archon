@@ -74,6 +74,7 @@ fn snapshot(row: QueueItem, waiting_reason: Option<archon_core::protocol::Waitin
         switched_to: None,
         merges: Vec::new(),
         stage_warnings: Vec::new(),
+        message_caps: Vec::new(),
     }))
 }
 

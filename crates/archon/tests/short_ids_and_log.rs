@@ -156,6 +156,7 @@ impl Fake {
                 switched_to: None,
                 merges: Vec::new(),
                 stage_warnings: Vec::new(),
+                message_caps: Vec::new(),
             })),
             Request::RepoList => Reply::Repos(vec![]),
             Request::ListQuestions { .. } => Reply::Questions(vec![]),

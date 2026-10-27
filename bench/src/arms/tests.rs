@@ -306,6 +306,7 @@ fn succeeded(repo: &RepoId, branch: &str, minute: i64) -> ItemDetail {
         switched_to: None,
         merges: Vec::new(),
         stage_warnings: Vec::new(),
+        message_caps: Vec::new(),
     }
 }
 
@@ -481,6 +482,7 @@ fn result_branches_follow_completion_order_per_repo() {
         switched_to: None,
         merges: Vec::new(),
         stage_warnings: Vec::new(),
+        message_caps: Vec::new(),
     };
     let details = [
         succeeded(&api, "archon/late", 5),

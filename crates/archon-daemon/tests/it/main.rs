@@ -52,6 +52,7 @@ mod link_supervisor;
 mod link_triggers;
 mod link_workers;
 mod local_merge;
+mod message_caps;
 mod mirrors;
 mod model_evidence;
 mod model_reasons;

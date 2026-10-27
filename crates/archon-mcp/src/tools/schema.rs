@@ -105,7 +105,8 @@ fn message_orchestrator() -> ToolDefinition {
         "Send the orchestrator a message, recorded with your item and stage: `relay` for an \
          operator message meant for it, `escalation` for a blocker outside your stage, else \
          `info`. Returns at once: keep working; never wait for a reply or end your turn \
-         over it. At most 20 per agent.",
+         over it. At most 20 per agent, then 3 more escalations, plus one reply to each \
+         orchestrator message.",
         object(
             json!({
                 "text": {"type": "string", "minLength": 1, "maxLength": archon_core::agent_message::MAX_MESSAGE_CHARS},

@@ -13,6 +13,7 @@ use archon_core::id::{
 };
 use archon_core::mcp_tools::TOOLS;
 use archon_core::model::Effort;
+use archon_core::model_tier::Tier;
 use archon_core::protocol::{PauseTarget, Request};
 use archon_core::pull_request::OntoTarget;
 use archon_core::queue::{Priority, QueueItem, QueueState};
@@ -375,6 +376,38 @@ fn enqueue_maps_its_fields_and_both_model_spellings() {
     assert_eq!(request.onto, Some(OntoTarget::Pr(100)));
     let two = json!({"title": "t", "brief": "b", "onto": {"pr": 1, "branch": "b"}});
     assert!(to_request("enqueue", two).is_err(), "one way of naming it");
+}
+
+#[test]
+fn enqueue_carries_a_tier_and_its_provider_to_the_daemon_request() {
+    let plan = json!({"implement": [
+        {"tier": "strong", "effort": "medium"},
+        {"tier": "fast", "provider": "codex"},
+    ]});
+    let Ok(Request::Enqueue(request)) = to_request(
+        "enqueue",
+        json!({"title": "t", "brief": "b", "model_plan": plan}),
+    ) else {
+        panic!("a tier choice maps to Enqueue");
+    };
+    let choices = &request.model_plan.0["implement"];
+    assert_eq!(choices[0].tier, Some(Tier::Strong));
+    assert_eq!(choices[0].model, None);
+    assert_eq!(choices[0].effort, Some(Effort::Medium));
+    assert_eq!(choices[1].tier, Some(Tier::Fast));
+    assert_eq!(choices[1].provider.as_deref(), Some("codex"));
+
+    let foo = json!({"implement": [{"tier": "strong", "foo": 1}]});
+    let error = to_request(
+        "enqueue",
+        json!({"title": "t", "brief": "b", "model_plan": foo}),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.contains("`foo`") && error.contains("{model or tier, provider, effort}"),
+        "{error}"
+    );
 }
 
 /// A plan is the stages whose model the caller chooses: without one the

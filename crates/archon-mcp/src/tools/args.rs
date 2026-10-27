@@ -346,9 +346,11 @@ fn undeclared_plan_field(plan: &Value) -> Option<String> {
     for choice in stages.flatten().filter_map(Value::as_object) {
         if let Some(key) = choice
             .keys()
-            .find(|k| !matches!(k.as_str(), "model" | "effort"))
+            .find(|k| !matches!(k.as_str(), "model" | "tier" | "provider" | "effort"))
         {
-            return Some(format!("`{key}`; a choice is {{model, effort}}"));
+            return Some(format!(
+                "`{key}`; a choice is {{model or tier, provider, effort}}"
+            ));
         }
         let model = choice.get("model").and_then(Value::as_object);
         let mut keys = model.into_iter().flat_map(Map::keys);

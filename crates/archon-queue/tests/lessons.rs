@@ -150,6 +150,55 @@ fn cancels_budget_caps_and_timeouts_neither_win_nor_lose_a_lesson() {
 }
 
 #[test]
+fn unscored_uses_a_1_4_6_store_scored_as_losses_no_longer_count() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.db");
+    let mut store = archon_queue::Store::open(&path).unwrap();
+    let lesson = advice(&store, false);
+    let settle = |store: &mut archon_queue::Store, n: usize, ending: Option<&str>| {
+        let item = store
+            .insert_item(&item(None, &format!("run {n}")), None)
+            .unwrap();
+        let run = start(store, &item.id);
+        assert_eq!(
+            store
+                .lessons_for_run(&run.id, None, "direct")
+                .unwrap()
+                .len(),
+            1
+        );
+        let ending = match ending {
+            None => QueueState::Succeeded {
+                run: run.id.clone(),
+                summary: "done".into(),
+            },
+            Some(error) => QueueState::Failed {
+                run: Some(run.id.clone()),
+                error: error.into(),
+            },
+        };
+        settle_run(store, &run, ending, t(30));
+        store
+            .capture_outcome(&store.run(&run.id).unwrap(), None, true)
+            .unwrap();
+    };
+    for n in 0..4 {
+        settle(&mut store, n, Some("The stage timed out."));
+    }
+    // 1.4.6 stored each of those uses as a loss.
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let marked = conn
+        .execute("UPDATE lesson_uses SET won=0 WHERE won IS NULL", [])
+        .unwrap();
+    assert_eq!(marked, 4);
+    settle(&mut store, 4, None);
+    let scored = store.lesson(&lesson.id).unwrap();
+    assert_eq!((scored.uses, scored.wins), (1, 1));
+    assert_eq!(scored.state, LessonState::Active);
+    assert!(lesson_lines(&store, &lesson).is_empty());
+}
+
+#[test]
 fn late_correction_revokes_a_win_once_and_keeps_the_run_snapshot() {
     let mut store = store();
     let lesson = advice(&store, false);

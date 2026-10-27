@@ -3,7 +3,7 @@ use archon_core::error::ArchonError;
 use archon_core::id::LessonId;
 use archon_core::lesson::{Lesson, LessonState};
 use archon_core::notify::FeedEntry;
-use archon_core::outcome::Outcome;
+use archon_core::outcome::{FailureClass, Outcome, OutcomeResult, UNSCORED_FAILURES};
 use rusqlite::{Connection, params};
 
 pub(in crate::store) fn score_run(conn: &Connection, outcome: &Outcome) -> Result<(), ArchonError> {
@@ -37,10 +37,24 @@ fn score_lesson(conn: &Connection, outcome: &Outcome, id: &LessonId) -> Result<(
     let mut lesson = super::load(conn, id)?;
     let before = lesson.state;
     let epoch = super::super::settings::kv_get(conn, &format!("learning/lesson-epoch/{id}"))?;
+    let [budget, timeout, infrastructure] = UNSCORED_FAILURES.map(FailureClass::as_str);
+    // Before 1.4.7 an unscored run's use was stored as a loss: the outcome
+    // join leaves those out too, so an upgraded store counts them as now.
     let (uses, wins): (u32, u32) = conn
         .query_row(
-            "SELECT COUNT(won),COALESCE(SUM(won),0) FROM lesson_uses WHERE lesson=?1 AND (?2 IS NULL OR used_at>=?2)",
-            params![id.as_str(), epoch],
+            "SELECT COUNT(u.won),COALESCE(SUM(u.won),0) FROM lesson_uses u
+             LEFT JOIN outcomes o ON o.run=u.run
+             WHERE u.lesson=?1 AND (?2 IS NULL OR u.used_at>=?2)
+             AND (o.run IS NULL OR (o.result<>?3
+                  AND COALESCE(o.failure_class,'') NOT IN (?4,?5,?6)))",
+            params![
+                id.as_str(),
+                epoch,
+                OutcomeResult::Cancelled.as_str(),
+                budget,
+                timeout,
+                infrastructure
+            ],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .ctx("count lesson uses")?;

@@ -65,6 +65,13 @@ impl OutcomeResult {
     }
 }
 
+/// Failures that stopped a run before it judged the work; see [`Outcome::is_scored`].
+pub const UNSCORED_FAILURES: [FailureClass; 3] = [
+    FailureClass::Budget,
+    FailureClass::Timeout,
+    FailureClass::Infrastructure,
+];
+
 /// Why a failed run failed, as far as the daemon can tell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -258,10 +265,9 @@ impl Outcome {
     /// Whether the run judged the work at all: a cancel, a budget cap, a
     /// deadline or broken infrastructure stopped it, so it is neither win nor loss.
     pub fn is_scored(&self) -> bool {
-        let stopped = matches!(
-            self.failure,
-            Some(FailureClass::Budget | FailureClass::Timeout | FailureClass::Infrastructure)
-        );
+        let stopped = self
+            .failure
+            .is_some_and(|class| UNSCORED_FAILURES.contains(&class));
         self.result != OutcomeResult::Cancelled && !stopped
     }
 }

@@ -2823,7 +2823,9 @@ the parent head for a landing (`worktree/landed.rs`): a first-parent commit
 with the parent head's tree, else the newest commit with the patch id of the
 parent's whole change (a squash, matched against a commit no ref names with
 the head's tree over the merge base), else the newest commit matching one
-of the parent's own whose history matches every other (a rebase).
+of the parent's own whose history matches every other (a rebase). Patch ids
+only point at it: it is a landing only when merging the parent head into it
+over their merge base changes nothing, so it holds the parent's whole change.
 The child's branch, which must hold the parent head, is merged with that
 commit as if it forked at the parent head: over a commit of the same tree,
 re-checked, with its own tree (`merge -s ours`); otherwise `merge-tree

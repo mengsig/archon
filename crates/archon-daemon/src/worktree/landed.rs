@@ -52,20 +52,43 @@ pub(crate) fn find(
     if let Some(same) = same_tree(shadow, dep, base, &fork)? {
         return Ok(Some(Landing::SameTree(same)));
     }
-    // One commit of the base with the head's whole change: a squash.
+    // One commit of the base with the head's whole change is a squash.
     let squash = squash_of(shadow, dep, &fork)?;
-    if let Some(found) = newest_equivalent(shadow, base, &squash)? {
-        return Ok(Some(Landing::SamePatches(found)));
+    let found = match newest_equivalent(shadow, base, &squash)? {
+        Some(found) => Some(found),
+        None => rebased(shadow, base, dep)?,
+    };
+    // Patch ids only point at a landing; its content must hold the head's change.
+    match found {
+        Some(found) if holds_change(shadow, &fork, dep, &found)? => {
+            Ok(Some(Landing::SamePatches(found)))
+        }
+        _ => Ok(None),
     }
-    // A rebase: the newest commit of the base matching one of the head's own,
-    // which must hold matches of all the others, not only the base somewhere.
+}
+
+/// The newest commit of `base` matching one of `dep`'s own whose history
+/// matches all the others, as a rebase leaves.
+fn rebased(shadow: &Shadow, base: &str, dep: &str) -> Result<Option<String>, ArchonError> {
     let Some(newest) = newest_equivalent(shadow, base, dep)? else {
         return Ok(None);
     };
-    if !all_equivalent(shadow, &newest, dep)? {
-        return Ok(None);
+    Ok(all_equivalent(shadow, &newest, dep)?.then_some(newest))
+}
+
+/// Whether `landing` holds every change `dep` makes to `fork`: merging `dep`
+/// into it over `fork` changes nothing, so merging over `dep` drops nothing.
+fn holds_change(
+    shadow: &Shadow,
+    fork: &str,
+    dep: &str,
+    landing: &str,
+) -> Result<bool, ArchonError> {
+    assert!(is_commit_id(landing), "a commit of the base");
+    match stack::merge_tree(shadow, Some(fork), landing, dep)? {
+        Ok(tree) => Ok(tree == tree_of(shadow, landing)?),
+        Err(_conflicts) => Ok(false),
     }
-    Ok(Some(Landing::SamePatches(newest)))
 }
 
 /// Merge `landing` into `branch` of `repo`, which holds the dependency head

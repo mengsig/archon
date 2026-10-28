@@ -241,3 +241,46 @@ fn a_rebase_spread_over_merged_branches_is_no_landing() {
     assert_eq!(git(&f.repo, &["show", &format!("{base}:a.txt")]), "a");
     assert_eq!(find(&f.shadow, &f.repo, &b, &base).unwrap(), None);
 }
+
+/// A base that took the head's two commits and reverted one: patch ids match
+/// both, yet the base no longer holds the head's change.
+#[test]
+fn a_rebase_a_revert_undid_is_no_landing() {
+    let f = fixture();
+    git(&f.repo, &["checkout", "--quiet", "-b", "split", "main"]);
+    let a = commit(&f.repo, "a.txt", "a\n");
+    let b = commit(&f.repo, "b.txt", "b\n");
+    git(&f.repo, &["checkout", "--quiet", "main"]);
+    f.main_moves();
+    git(&f.repo, &["-c", "user.name=GitHub", "cherry-pick", &a]);
+    git(&f.repo, &["revert", "--no-edit", "HEAD"]);
+    git(&f.repo, &["-c", "user.name=GitHub", "cherry-pick", &b]);
+    let base = git(&f.repo, &["rev-parse", "HEAD"]);
+    let files = git(&f.repo, &["ls-tree", "--name-only", &base]);
+    assert!(!files.lines().any(|file| file == "a.txt"), "{files}");
+    assert_eq!(find(&f.shadow, &f.repo, &b, &base).unwrap(), None);
+}
+
+/// A head whose merge commit added a file of its own, and a base that took
+/// only its plain commits: the base lacks part of the head's change.
+#[test]
+fn a_rebase_without_the_heads_merge_resolution_is_no_landing() {
+    let f = fixture();
+    git(&f.repo, &["checkout", "--quiet", "-b", "side-a", "main"]);
+    let a = commit(&f.repo, "a.txt", "a\n");
+    git(&f.repo, &["checkout", "--quiet", "-b", "side-b", "main"]);
+    let b = commit(&f.repo, "b.txt", "b\n");
+    git(&f.repo, &["checkout", "--quiet", "side-a"]);
+    git(
+        &f.repo,
+        &["merge", "--quiet", "--no-ff", "--no-commit", "side-b"],
+    );
+    let dep = commit(&f.repo, "resolution.txt", "resolved\n");
+    git(&f.repo, &["checkout", "--quiet", "main"]);
+    f.main_moves();
+    for pick in [&a, &b] {
+        git(&f.repo, &["-c", "user.name=GitHub", "cherry-pick", pick]);
+    }
+    let base = git(&f.repo, &["rev-parse", "HEAD"]);
+    assert_eq!(find(&f.shadow, &f.repo, &dep, &base).unwrap(), None);
+}

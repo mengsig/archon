@@ -533,6 +533,8 @@ pub fn context(
     let operator_settings = archon_daemon::settings::SettingsBook::load(&store).expect("settings");
     let (feed, _) = broadcast::channel(1024);
     let dispatch = Arc::new(Notify::new());
+    let remote =
+        archon_remote::Remote::open(Default::default(), &paths.data_dir, "test").expect("remote");
     DaemonContext {
         storage: Default::default(),
         status_probes: Default::default(),
@@ -572,6 +574,7 @@ pub fn context(
         gc: Mutex::new(None),
         collecting: archon_daemon::gc::Collecting::new(dispatch),
         ops: ops.ops_state(),
+        remote,
     }
 }
 

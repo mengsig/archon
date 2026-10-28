@@ -51,6 +51,7 @@ curl -fsSL https://raw.githubusercontent.com/mengsig/archon/main/install.sh | AR
 | `ARCHON_NONINTERACTIVE=1` | Ask nothing: a missing Aether is installed without a question. |
 | `ARCHON_INSTALL_BASE_URL` | Download from this address instead of `https://github.com/mengsig/archon/releases`. It must serve `latest/download/<file>` and `download/<tag>/<file>`. `archon update` honours it too. |
 | `ARCHON_AETHER_INSTALL_URL` | Fetch Aether's installer from this address. |
+| `ARCHON_REMOTE=1` | Set up the mobile web app without asking (`archon remote setup --yes`, [remote-setup.md](remote-setup.md)); `ARCHON_REMOTE=0` skips the question. Off a terminal it is skipped unless set to 1. A failed setup leaves Archon installed and prints the retry command. |
 | `https_proxy`, `http_proxy` | Honoured by `curl` and `wget`. |
 
 The installer exits with 0 when everything is in place, 1 when it installed

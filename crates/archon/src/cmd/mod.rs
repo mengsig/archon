@@ -18,6 +18,7 @@ mod merge;
 mod pipelines;
 mod queue;
 mod release;
+pub(crate) mod remote;
 mod repo;
 mod reports;
 mod settings;
@@ -80,6 +81,7 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::Autonomy(args) => autonomy::run(args, json).await,
         Command::Settings { repo, set, reset } => settings::run(repo, set, reset, json).await,
         Command::GithubWatcher { command } => github_watcher::run(command, json).await,
+        Command::Remote { command } => remote::run(command, json).await,
         Command::Pause(args) => control::pause(args, true, json).await,
         Command::Resume(args) => control::pause(args, false, json).await,
         Command::Orchestrator { command } => {
@@ -164,6 +166,7 @@ fn json_refusal(command: Option<&Command>) -> Option<&'static str> {
         | Command::Settings { .. }
         | Command::Autonomy(_)
         | Command::GithubWatcher { .. }
+        | Command::Remote { .. }
         | Command::Pause(_)
         | Command::Resume(_)
         | Command::Setup { .. }

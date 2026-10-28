@@ -89,6 +89,8 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         | Reply::GithubWatcher(_)
         | Reply::UpgradeStarted { .. }
         | Reply::Versions(_)
+        | Reply::Remote(_)
+        | Reply::RemotePairing(_)
         | Reply::Gc(_) => serde_json::to_string(reply)
             .unwrap_or_else(|e| format!("(reply could not be encoded: {e})")),
     }

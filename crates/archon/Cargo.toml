@@ -24,6 +24,7 @@ archon-queue = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
 dirs = { workspace = true }
+qrcode = { workspace = true }
 rustix = { workspace = true }
 rustyline = { workspace = true }
 serde = { workspace = true }

@@ -16,6 +16,7 @@ archon-core = { workspace = true }
 archon-lavish = { workspace = true }
 archon-pipeline = { workspace = true }
 archon-queue = { workspace = true }
+archon-remote = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
 futures-util = { workspace = true }
@@ -31,6 +32,7 @@ rusqlite = { workspace = true }
 archon-queue = { workspace = true, features = ["testing"] }
 archon-aether = { workspace = true, features = ["fake"] }
 archon-core = { workspace = true, features = ["testing"] }
+archon-remote = { workspace = true }
 tempfile = { workspace = true }
 toml = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }

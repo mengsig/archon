@@ -47,6 +47,7 @@ pub mod push;
 pub mod quarantine;
 pub mod queue;
 pub mod quota;
+pub mod remote;
 pub mod repo;
 pub mod risk;
 pub mod run;

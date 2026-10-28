@@ -162,6 +162,7 @@ a backend and frontend team, an e2e gate and a review.
 | `archon merge <id>` | Merge a delivered pull request at its reviewed commit |
 | `archon log --item <id> --follow` | Follow one item's events |
 | `archon cost --since 7d --by repo` | Spending by repository |
+| `archon remote setup` | Use Archon from your phone: the [mobile web app](docs/remote-setup.md) over Tailscale |
 
 An item id's unique prefix works too. The [user guide](docs/guide.md) covers
 the rest, and [queue scripting](docs/queue-scripting.md) enqueues from files.
@@ -201,6 +202,7 @@ Contributors are listed by GitHub handle, and the list is maintained by hand.
 [Configuration](docs/configuration.md) · [Pipelines](docs/PIPELINES.md) ·
 [Queue scripting](docs/queue-scripting.md) ·
 [GitHub watcher](docs/github-watcher.md) ·
+[Mobile web app](docs/remote-setup.md) ·
 [Operator authority](docs/operator-authority.md) · [Architecture](docs/ARCHITECTURE.md)
 
 Project version: **1.4.7**. Licensed under [MIT](LICENSE). For development,

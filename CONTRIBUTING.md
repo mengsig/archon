@@ -35,6 +35,13 @@ spare (`make ci CARGO_BUILD_JOBS=16`). CI runs the tests through
 [cargo-nextest](https://nexte.st/) (`make test-nextest`) because it is faster;
 it is optional locally.
 
+`make e2e` runs the mobile web app in headless Chromium against a real
+archond (every screen's flows, pairing, revoke). It installs its npm packages
+and the browser on first use and needs `node` and `npm`. It is not part of
+`make ci`: CI runs it on the release pull request into `main`, and you should
+run it when you change `crates/archon-remote`. Without a browser it prints
+SKIP locally; with `CI` set it fails instead.
+
 ### CI on the release branch
 
 Maintainers gather fixes on `next` and release it to `main` in one pull

@@ -73,7 +73,9 @@ pub(super) async fn set_directive(
 ) -> Result<Reply, ArchonError> {
     let source = match client {
         ClientKind::ArchonMcp => DirectiveSource::Orchestrator,
-        ClientKind::ArchonCli | ClientKind::ArchonBench => DirectiveSource::Operator,
+        ClientKind::ArchonCli | ClientKind::ArchonBench | ClientKind::ArchonWeb => {
+            DirectiveSource::Operator
+        }
     };
     let directive = Directive::new(text, source, expires_in_hours, archon_core::now())?;
     ctx.store.lock().await.insert_directive(&directive)?;

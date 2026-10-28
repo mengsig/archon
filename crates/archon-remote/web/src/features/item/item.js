@@ -1,0 +1,156 @@
+// Item detail: state and actions, what it waits on, its stages, cost,
+// pull request, artifacts and reports.
+import { h } from '../../ui/dom.js';
+import { icon } from '../../ui/icons.js';
+import { screenHeader, section, card, row, chip, emptyState, errorNote, skeletonRows } from '../../ui/components.js';
+import { stateLook, usd, priorityLabel, dateTime, shortId, safeHttpUrl, isTerminal, waitsOnOperator } from '../../core/format.js';
+import { stagesTimeline } from './stages.js';
+import { artifactsSection } from './artifacts.js';
+import { itemActions } from './actions.js';
+
+const BRIEF_CLAMP_CHARS = 360;
+const REVIEW_LABEL = { strict: 'Strict', standard: 'Standard', none: 'None' };
+const GATE_SUBJECT = { proposal: 'Proposal', report: 'Report' };
+const GATE_LOOK = {
+  approve: { label: 'Approved', tone: 'green' }, reject: { label: 'Rejected', tone: 'red' },
+  revise: { label: 'Revise', tone: 'amber' }, waiting: { label: 'Waiting on you', tone: 'amber' },
+  withdrawn: { label: 'Withdrawn', tone: 'muted' },
+};
+
+export function mountItem(view, ctx) {
+  const id = ctx.route.param;
+  const back = { label: 'Back to queue', text: 'Queue', onClick: () => ctx.router.back('#/queue') };
+  if (!/^qi_[A-Za-z0-9]+$/.test(id ?? '')) {
+    view.append(screenHeader({ title: 'Item', back }), emptyState({ title: 'Not an item', text: 'That link does not name a queue item.' }));
+    return () => {};
+  }
+  const content = h('div', { class: 'item-detail' }, skeletonRows(5));
+  view.append(screenHeader({ title: 'Item', back }), content);
+  let alive = true;
+  let detail = null;
+  let artifacts = null;
+
+  const reload = async () => {
+    try {
+      const fresh = await ctx.cmds.item(id);
+      if (!alive) return;
+      detail = fresh;
+      render();
+    } catch (err) {
+      if (!alive) return;
+      content.replaceChildren(err.code === 'not_found'
+        ? emptyState({ title: 'Item not found', text: 'It may have been removed from the queue.', iconName: 'queue' })
+        : errorNote(err, reload));
+    }
+  };
+  const render = () => {
+    const state = ctx.store.get();
+    artifacts ??= artifactsSection(ctx, id);
+    view.querySelector('.screen-title').textContent = detail.item.title;
+    content.replaceChildren(...renderDetail(ctx, detail, state, { reload, artifacts }));
+  };
+  // A changed summary (from a feed event) means the detail moved on too.
+  const off = ctx.store.watch((s) => summaryOf(s, id)?.updated_at, (updated) => {
+    if (detail && updated && updated !== detail.item.updated_at) reload();
+  });
+  const offReports = ctx.store.watch((s) => [s.reports, s.status?.pause], () => detail && render());
+  reload();
+  return () => { alive = false; off(); offReports(); };
+}
+
+function summaryOf(state, id) {
+  return state.summaries?.find((s) => s.id === id) ?? null;
+}
+
+function renderDetail(ctx, detail, state, { reload, artifacts }) {
+  const item = detail.item;
+  const summary = summaryOf(state, item.id);
+  const repoName = state.repos?.find((r) => r.id === item.repo)?.name ?? null;
+  const look = stateLook({ ...item, waiting_on: detail.waiting_on, waiting_reason: detail.waiting_reason });
+  return [
+    h('div', { class: 'item-hero' },
+      chip(look, 'chip-large'),
+      h('p', { class: 'item-hero-meta', text: [repoName ?? 'no repository', summary?.switched_to ?? item.pipeline, shortId(item.id)].join(' · ') })),
+    outcomeCallout(detail),
+    itemActions(ctx, detail, { reload, repoName }),
+    section('Details', detailsCard(detail, summary)),
+    section('Brief', briefCard(item.brief)),
+    section('Stages', stagesTimeline(detail)),
+    gatesSection(detail),
+    section('Artifacts', artifacts),
+    reportsSection(state.reports, item.id),
+  ];
+}
+
+function outcomeCallout(detail) {
+  const { item, waiting_on: waitingOn, waiting_reason: reason } = detail;
+  const state = item.state;
+  if (state.state === 'failed') return callout('red', 'Failed', state.error);
+  if (state.state === 'succeeded') return callout('green', 'Done', state.summary);
+  if (state.state === 'cancelled') return callout('muted', 'Cancelled', state.reason ?? 'Cancelled by the operator.');
+  if (state.state === 'blocked') return callout('amber', 'Blocked', state.reason);
+  if (waitingOn) {
+    const inbox = waitingOn.question ? h('a', { class: 'link-button', href: '#/inbox' }, 'Answer in Inbox') : null;
+    return callout('amber', `Waiting on you · ${waitingOn.subject}`, waitingOn.prompt, inbox);
+  }
+  if (reason && !isTerminal(item)) return callout(waitsOnOperator({ ...item, waiting_reason: reason }) ? 'amber' : 'neutral', 'Waiting', reason.message);
+  return null;
+}
+
+function callout(tone, title, text, extra = null) {
+  return h('div', { class: ['callout', `callout-${tone}`], role: 'note' },
+    h('p', { class: 'callout-title', text: title }),
+    text ? h('p', { class: 'callout-text', text }) : null, extra);
+}
+
+function detailsCard(detail, summary) {
+  const item = detail.item;
+  const pr = safeHttpUrl(summary?.pr_url);
+  return card(
+    row('Priority', priorityLabel(item.priority)),
+    row('Review', REVIEW_LABEL[item.autonomy?.review] ?? 'Default'),
+    row('Total cost', usd(detail.spent_usd)),
+    item.budget_usd ? row('Budget', usd(item.budget_usd)) : null,
+    row('Created', dateTime(item.created_at)),
+    row('Updated', dateTime(item.updated_at)),
+    item.dependencies?.length ? row('Depends on', h('span', { class: 'row-value' },
+      item.dependencies.map((dep) => h('a', { class: 'dep-link', href: `#/item/${dep}`, text: shortId(dep) })))) : null,
+    pr ? row('Pull request', h('a', { class: 'row-value link', href: pr, target: '_blank', rel: 'noopener noreferrer' },
+      'Open', icon('external', { size: 16 }))) : null);
+}
+
+function briefCard(brief) {
+  const text = brief ?? '';
+  const long = text.length > BRIEF_CLAMP_CHARS;
+  const body = h('p', { class: 'brief', text: long ? `${text.slice(0, BRIEF_CLAMP_CHARS).trimEnd()}…` : text });
+  if (!long) return card(body);
+  const toggle = h('button', { class: 'link-button', type: 'button', 'aria-expanded': 'false' }, 'Show full brief');
+  toggle.addEventListener('click', () => {
+    const open = toggle.getAttribute('aria-expanded') === 'true';
+    body.textContent = open ? `${text.slice(0, BRIEF_CLAMP_CHARS).trimEnd()}…` : text;
+    toggle.setAttribute('aria-expanded', String(!open));
+    toggle.textContent = open ? 'Show full brief' : 'Show less';
+  });
+  return card(body, toggle);
+}
+
+function gatesSection(detail) {
+  if (!detail.gates?.length) return null;
+  return section('Gates', card(...detail.gates.map((gate) => {
+    const decision = gate.decision?.decision ?? (gate.withdrawn ? 'withdrawn' : 'waiting');
+    const look = GATE_LOOK[decision] ?? { label: decision, tone: 'muted' };
+    return row(`${GATE_SUBJECT[gate.subject] ?? gate.subject} · ${gate.stage_id}`, chip(look));
+  })));
+}
+
+function reportsSection(reports, itemId) {
+  const mine = (reports ?? []).filter((r) => r.item === itemId);
+  if (mine.length === 0) return null;
+  return section('Reports', card(...mine.map((report) => {
+    const url = safeHttpUrl(report.location);
+    const value = url
+      ? h('a', { class: 'row-value link', href: url, target: '_blank', rel: 'noopener noreferrer' }, 'Open', icon('external', { size: 16 }))
+      : h('span', { class: 'row-value', text: report.state });
+    return row(report.title, value);
+  })));
+}

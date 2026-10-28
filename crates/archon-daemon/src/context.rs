@@ -155,6 +155,8 @@ pub struct DaemonContext {
     pub push: crate::push::Pusher,
     /// The newest Aether event of each agent, for the stage watchdog.
     pub activity: crate::executor::Activity,
+    /// The mobile web app's listener, off until the operator enables it.
+    pub remote: archon_remote::Remote,
 }
 
 impl DaemonContext {

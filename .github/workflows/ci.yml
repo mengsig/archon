@@ -92,3 +92,25 @@ jobs:
       # The same tests as `make test`, run in parallel across test binaries.
       - name: make test-nextest
         run: make test-nextest
+
+  # The mobile web app in headless Chromium against a real archond
+  # (`make e2e`). Only release pull requests into `main` run it; GitHub sets
+  # CI, so a browser that cannot be installed fails the job instead of skipping.
+  e2e:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.base_ref == 'main')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: install pinned toolchain
+        run: |
+          rustup toolchain install
+          rustc --version
+          node --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: false
+      - name: make e2e
+        run: make e2e

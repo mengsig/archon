@@ -274,6 +274,45 @@ confirm() {
     esac
 }
 
+# confirm_no QUESTION: asks on the terminal; only "y" means yes.
+confirm_no() {
+    printf '%s [y/N] ' "$1" >/dev/tty
+    answer=""
+    read -r answer </dev/tty || true
+    case $answer in
+    [Yy]*) return 0 ;;
+    esac
+    return 1
+}
+
+run_remote_setup() {
+    if "$INSTALL_DIR/archon" remote setup "$@"; then
+        return 0
+    fi
+    warn "the mobile web app is not set up. Archon is installed; to retry, run:"
+    warn "  archon remote setup"
+}
+
+# The optional mobile web app (docs/remote-setup.md): ARCHON_REMOTE=1 sets it
+# up without asking, ARCHON_REMOTE=0 skips it, and a terminal is asked.
+remote_step() {
+    case ${ARCHON_REMOTE:-} in
+    0) return 0 ;;
+    1)
+        say "Setting up the mobile web app (ARCHON_REMOTE=1)."
+        run_remote_setup --yes </dev/null
+        return 0
+        ;;
+    esac
+    [ -z "$(no_question_reason)" ] || return 0
+    say "Archon can serve a mobile web app, published to your tailnet with 'tailscale serve'."
+    if confirm_no "Set it up now?"; then
+        run_remote_setup </dev/tty
+    else
+        say "Not now. 'archon remote setup' does it later."
+    fi
+}
+
 run_aether_installer() {
     fetch "$AETHER_INSTALL_URL" "$STAGING/aether-install.sh" || return 1
     AETHER_INSTALL_DIR="$INSTALL_DIR" sh "$STAGING/aether-install.sh" </dev/null || return 1
@@ -385,6 +424,7 @@ main() {
     aether_step
     report_prerequisites
     report_path
+    [ "$AETHER_STEP_FAILED" = 1 ] || remote_step
     say "Next: archon setup"
     [ "$AETHER_STEP_FAILED" = 0 ] || exit "$EXIT_AETHER_FAILED"
 }

@@ -503,6 +503,23 @@ or uncommitted copy runs nothing.
 When a merge queue or branch rule holds the merge, promote again once it
 landed: that call finishes the promotion, realigning and running the hook.
 
+## Remote access
+
+```toml
+[remote]
+address = "127.0.0.1:8378"
+allow_remote = false
+max_connections = 16
+```
+
+The mobile web app's listener ([remote.md](remote.md)). It is off until
+`archon remote setup` or `archon remote enable` switches it on; these keys
+only say where it binds once on. `address` is `host:port`; a non-loopback
+host is refused unless `allow_remote = true`, and the listener speaks plain
+HTTP either way, so publish it with `tailscale serve` or a TLS proxy.
+`max_connections` (1 to 1024) caps the HTTP connections and WebSocket
+sessions served at once. A change takes effect when archond restarts.
+
 ## Push notifications
 
 ```toml

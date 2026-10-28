@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+The daemon protocol is 23 (was 22), for the remote-access requests:
+`archon mcp` and archond must be upgraded together, and each refuses the
+other's older version at hello. The store schema is unchanged.
+
+### Mobile web app
+
+- archond can serve a mobile web app ([docs/remote.md](docs/remote.md)):
+  the queue with filters by state, repository, pipeline, priority and
+  blockers; each item's stages, verdicts, summaries, cost, pull request,
+  artifacts and reports; the operator chat, live; the questions and gates
+  waiting on you, answered in place; enqueue, cancel, retry, pause and
+  resume; and an overview of agents against caps, budgets, spend,
+  repositories and pipelines. Light and dark, and it honours reduced
+  motion (#312).
+- It is off until you switch it on, binds loopback only (`[remote]` in
+  `config.toml`), and is published over HTTPS by `tailscale serve` or your
+  own proxy. A device pairs once with a one-time code (or its QR code) and
+  gets its own credential, stored only as a hash and revoked at once with
+  `archon remote revoke`. Each request a device sends is checked against a
+  fixed list and handled as the operator CLI's; merges, promotions,
+  settings and ceilings stay on the CLI (#312).
+- `archon remote setup` switches it on, publishes it on your tailnet,
+  checks the address and pairs your phone, explaining each step; it is
+  safe to run again and takes `--yes`, `--json`, `--proxy-url`, `--local`,
+  `--https-port` and `--no-pair` for scripts. `archon remote` also has
+  `status`, `enable`, `disable`, `pair`, `devices`, `revoke` and `origin`.
+  The installer (`ARCHON_REMOTE=1`) and the first run of `archon` offer it
+  as an optional step ([docs/remote-setup.md](docs/remote-setup.md), #312).
+- `make e2e` runs the app against a real archond in a headless browser:
+  pairing, the queue and an item, the chat, answering a gate, enqueue,
+  cancel, pause and resume, and a revoke and a disable from the CLI. CI
+  runs it on the release pull request into `main` (#312).
+
 ## 1.4.7
 
 Released 2026-10-27.

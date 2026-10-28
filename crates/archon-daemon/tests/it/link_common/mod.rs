@@ -128,6 +128,8 @@ impl Harness {
             gc: Mutex::new(None),
             collecting: archon_daemon::gc::Collecting::new(dispatch),
             ops: Arc::new(fake_ops::FakeOps::default()).ops_state(),
+            remote: archon_remote::Remote::open(Default::default(), dir.path(), "test")
+                .expect("remote state"),
         };
         Self {
             dir,

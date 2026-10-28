@@ -72,6 +72,7 @@ pub struct Config {
     pub integration: IntegrationConfig,
     pub notify: crate::push::NotifyConfig,
     pub update: UpdateConfig,
+    pub remote: crate::remote::RemoteConfig,
 }
 
 /// How archond verifies each repository's integration branch off the items'
@@ -1127,6 +1128,7 @@ impl Config {
         self.storage.validate()?;
         self.integration.validate()?;
         self.notify.validate()?;
+        self.remote.validate()?;
         self.models.check_weights()?;
         let orchestrator = crate::model::ModelChoice {
             model: self.orchestrator.model.clone(),

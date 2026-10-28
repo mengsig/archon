@@ -1,0 +1,18 @@
+{
+  "name": "archon-web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Archon's mobile web app, its dev bridge and its browser tests.",
+  "scripts": {
+    "test": "node --test && playwright test",
+    "test:unit": "node --test",
+    "screens": "node scripts/screens.js",
+    "e2e": "node scripts/e2e.js",
+    "dev": "node dev/server.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "ws": "8.22.0"
+  }
+}

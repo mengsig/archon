@@ -560,6 +560,45 @@ fn a_skipped_aether_is_not_installed_and_the_command_is_printed() {
 }
 
 #[test]
+fn the_mobile_web_app_is_set_up_only_when_asked_for() {
+    let quiet = Machine::new().with_aether(16, 17);
+    let out = quiet.install();
+    assert!(out.status.success(), "{out:?}");
+    assert!(!stdout(&out).contains("remote setup"), "{}", stdout(&out));
+    let asked = Machine::new().with_aether(16, 17).env("ARCHON_REMOTE", "1");
+    let out = asked.install();
+    let text = stdout(&out);
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        text.contains("Setting up the mobile web app (ARCHON_REMOTE=1)."),
+        "{text}"
+    );
+    assert!(
+        text.contains("fake archon 9.9.9: remote setup --yes"),
+        "{text}"
+    );
+    let failing = Machine::new().with_aether(16, 17).env("ARCHON_REMOTE", "1");
+    let refusing = archon_script("9.9.9").replace(
+        "*) echo",
+        "'remote setup --yes') echo 'no tailscale' >&2; exit 1 ;;\n*) echo",
+    );
+    for target in TARGETS {
+        publish(&failing.path("releases"), "v9.9.9", target, &refusing, true);
+    }
+    let out = failing.install();
+    let errors = stderr(&out);
+    assert!(
+        out.status.success(),
+        "a failed remote step keeps the install: {out:?}"
+    );
+    assert!(
+        errors.contains("the mobile web app is not set up"),
+        "{errors}"
+    );
+    assert!(errors.contains("  archon remote setup"), "{errors}");
+}
+
+#[test]
 fn a_failed_aether_step_keeps_archon_and_prints_the_retry_command() {
     let failing = Machine::new();
     failing.aether_installer("echo 'no aether for this platform' >&2; exit 1");

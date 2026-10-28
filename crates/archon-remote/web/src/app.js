@@ -12,6 +12,7 @@ import { APP_VERSION } from './version.js';
 const REFRESH_DEBOUNCE_MS = 350;
 const SESSION_CHECK_MS = 10_000;
 const RECENT_LIMIT = 200;
+const FEED_RETRY_MS = [2_000, 5_000, 15_000, 30_000];
 
 export function createApp({ session, onUnpaired }) {
   if (!session?.device) throw new TypeError('the app starts with a paired session');
@@ -34,7 +35,8 @@ export function createApp({ session, onUnpaired }) {
     if (fresh.some((item) => item.entry?.entry === 'report')) refresh.one('reports');
   });
 
-  transport = openTransport({ session, feed, store, refresh });
+  const feedSync = feedSyncer({ feed, store, isOpen: () => transport.state === 'open' });
+  transport = openTransport({ session, feedSync, feed, store, refresh });
   store.watch((s) => s.connection.state, (state) => {
     if (state === 'revoked') {
       stop();
@@ -57,6 +59,7 @@ export function createApp({ session, onUnpaired }) {
 
   return {
     store, cmds, feed, refresh,
+    resyncFeed: () => feedSync.run(),
     start() {
       document.addEventListener('visibilitychange', onVisible);
       transport.start();
@@ -66,19 +69,51 @@ export function createApp({ session, onUnpaired }) {
   };
 }
 
-function openTransport({ session, feed, store, refresh }) {
+function openTransport({ session, feedSync, feed, store, refresh }) {
   const setError = (name, err) => store.set({ errors: { ...store.get().errors, [name]: err } });
   return createTransport({
     url: `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`,
     hello: { protocol_version: session.protocol_version, client: 'archon-web', client_version: APP_VERSION },
     onFeed: (item) => feed.push(item),
     onReady: () => {
-      feed.sync().then(() => store.get().errors.feed && setError('feed', null), (err) => setError('feed', err));
+      feedSync.start();
       refresh.many(['summaries', 'questions', 'status', 'repos', 'reports', 'cost']);
     },
     onState: (state, info) => store.set({ connection: { state, ...info } }),
     onProtocolError: (err) => setError('protocol', err),
   });
+}
+
+// Feed setup that keeps trying while the socket is open: a failed history or
+// subscription would otherwise leave the app connected but no longer live.
+function feedSyncer({ feed, store, isOpen }) {
+  if (typeof feed?.sync !== 'function' || typeof isOpen !== 'function') throw new TypeError('feedSyncer needs the feed and the socket state');
+  const setError = (err) => store.set({ errors: { ...store.get().errors, feed: err } });
+  let timer = null;
+  let running = false;
+  let failures = 0;
+  const run = () => {
+    if (running || !isOpen()) return;
+    clearTimeout(timer);
+    timer = null;
+    running = true;
+    feed.sync().then(() => {
+      failures = 0;
+      if (store.get().errors.feed) setError(null);
+    }, (err) => {
+      setError(err);
+      const delay = FEED_RETRY_MS[Math.min(failures, FEED_RETRY_MS.length - 1)];
+      failures += 1;
+      if (isOpen()) timer = setTimeout(run, delay);
+    }).finally(() => { running = false; });
+  };
+  return {
+    run,
+    start() {
+      failures = 0;
+      run();
+    },
+  };
 }
 
 function drivesRefresh(item) {

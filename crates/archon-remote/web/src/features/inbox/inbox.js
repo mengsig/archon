@@ -42,8 +42,8 @@ export function mountInbox(view, ctx) {
     const { feed, errors } = ctx.store.get();
     const entries = notificationsOf(feed);
     reconcile(notes, entries, { key: (f) => f.seq, signature: (f) => age(f.at), render: noteRow });
-    // A failed feed load is not an empty one; it reloads once connected again.
-    notesStatus.replaceChildren(...(errors.feed ? [errorNote(errors.feed)] : []));
+    // A failed feed load is not an empty one; it is retried while connected.
+    notesStatus.replaceChildren(...(errors.feed ? [errorNote(errors.feed, ctx.resyncFeed)] : []));
     if (entries.length === 0) notes.replaceChildren(...(errors.feed ? [] : [h('li', { class: 'muted plain-empty', text: 'No notifications yet.' })]));
   };
   const offs = [

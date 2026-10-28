@@ -22,7 +22,7 @@ export function mountChat(view, ctx) {
     const nearBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - NEAR_BOTTOM_PX;
     renderTranscript(ctx, transcript);
     const { errors } = ctx.store.get();
-    status.replaceChildren(...(errors.feed ? [errorNote(errors.feed)] : []),
+    status.replaceChildren(...(errors.feed ? [errorNote(errors.feed, ctx.resyncFeed)] : []),
       ...loadErrorNotes(errors, ['questions', 'status'], ctx.refresh.one));
     if (nearBottom) scrollToEnd();
   };
@@ -33,6 +33,13 @@ export function mountChat(view, ctx) {
   ];
   requestAnimationFrame(scrollToEnd);
   return () => offs.forEach((off) => off());
+}
+
+// What a question or answer row shows of the question it names.
+function questionShown(entry, numbers) {
+  if (entry?.entry === 'question') return numbers.get(entry.id)?.answer ?? null;
+  if (entry?.entry === 'answer') return numbers.get(entry.question)?.number ?? null;
+  return null;
 }
 
 function scrollToEnd() {
@@ -54,7 +61,7 @@ function renderTranscript(ctx, transcript) {
   for (const entry of outbox) rows.push({ kind: 'pending', key: `p-${entry.localId}`, entry });
   reconcile(transcript, rows, {
     key: (row) => row.key,
-    signature: (row) => JSON.stringify([row.note, row.entry, row.item?.entry?.entry === 'question' ? numbers.get(row.item.entry.id)?.answer ?? null : null]),
+    signature: (row) => JSON.stringify([row.note, row.entry, questionShown(row.item?.entry, numbers)]),
     render: (row) => {
       if (row.kind === 'pending') return pendingEntry(row.entry, { retry: () => resend(ctx, row.entry), discard: () => removePending(ctx.store, row.entry.localId) });
       if (row.kind === 'day') return h('li', { class: 'day-divider', text: new Date(row.at).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' }) });

@@ -68,7 +68,8 @@ export function mountItem(view, ctx) {
     content.replaceChildren(...renderDetail(ctx, detail, state, { reload, artifacts }));
   };
   const unfollow = followItem(ctx, id, () => detail, () => load(true));
-  const offReports = ctx.store.watch((s) => shownFromStore(s, id, detail), () => detail && render());
+  // A failed reload keeps its error and retry in view until a load succeeds.
+  const offReports = ctx.store.watch((s) => shownFromStore(s, id, detail), () => detail && !failed && render());
   reload();
   return () => { alive = false; unfollow(); offReports(); };
 }

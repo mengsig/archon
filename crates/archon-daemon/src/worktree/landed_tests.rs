@@ -360,3 +360,61 @@ fn a_landing_holding_another_parents_change_keeps_the_childs_rewrite() {
     restack_two_parents(Some("a\nchild\n"), [0, 1]);
     restack_two_parents(Some("a\nchild\n"), [1, 0]);
 }
+
+/// `x` and `y` fork from `main`; the child merges `x` then `y` over `dep`
+/// and deletes `victim`, while `main` merges `y` then `x`, then squashes
+/// `dep`: the child and the landing have both `x` and `y` as best common
+/// commits, and the child keeps its deletion over either.
+fn restack_criss_cross(victim: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().canonicalize().unwrap().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "--quiet", "-b", "main"]);
+    commit(&repo, "base.txt", "base\n");
+    for side in ["x", "y", "dep"] {
+        git(&repo, &["checkout", "--quiet", "-b", side, "main"]);
+        commit(&repo, &format!("{side}.txt"), "side\n");
+    }
+    let dep = git(&repo, &["rev-parse", "dep"]);
+    git(&repo, &["checkout", "--quiet", "-b", "child", "dep"]);
+    for side in ["x", "y"] {
+        git(&repo, &["merge", "--quiet", "--no-edit", side]);
+    }
+    git(&repo, &["rm", "--quiet", victim]);
+    git(&repo, &["commit", "--quiet", "-m", "drop"]);
+    git(&repo, &["checkout", "--quiet", "main"]);
+    for side in ["y", "x"] {
+        git(&repo, &["merge", "--quiet", "--no-ff", "--no-edit", side]);
+    }
+    git(&repo, &["merge", "--quiet", "--squash", "dep"]);
+    git(&repo, &["commit", "--quiet", "-m", "dep"]);
+    let main = git(&repo, &["rev-parse", "main"]);
+    let bases = git(&repo, &["merge-base", "--all", "child", "main"]);
+    assert_eq!(bases.lines().count(), 2, "a criss-cross");
+    let shadow = Shadow::of(&dir.path().join("data"), &repo).unwrap();
+    let landing = find(&shadow, &repo, &dep, &main)
+        .unwrap()
+        .expect("a landing");
+    assert!(matches!(landing, Landing::SamePatches(_)), "{landing:?}");
+    let identity = Identity {
+        name: "Archon".into(),
+        email: "archon@localhost".into(),
+    };
+    let at = (dep.as_str(), &[dep.clone()][..], &landing);
+    let Merge::Merged { to, .. } = merge(&shadow, &repo, "child", at, &identity).unwrap() else {
+        panic!("a merge commit");
+    };
+    let own_tree = git(&repo, &["rev-parse", "child^{tree}"]);
+    assert_eq!(
+        git(&repo, &["rev-parse", &format!("{to}^{{tree}}")]),
+        own_tree
+    );
+}
+
+/// Merging over one best common commit of a criss-cross brought back the
+/// file of the other that the child deleted.
+#[test]
+fn a_criss_cross_keeps_a_deletion_from_either_side() {
+    restack_criss_cross("x.txt");
+    restack_criss_cross("y.txt");
+}

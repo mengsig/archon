@@ -144,9 +144,9 @@ pub(crate) fn merge(
 }
 
 /// The merge base `ours` and the landing `theirs` would have without squash or
-/// rebase: `dep` merged with their newest common commit and with each other
-/// `merged` parent head `ours` holds whose whole change `theirs` holds, so
-/// nothing both hold counts as new on either side; or the files that conflict.
+/// rebase: `dep` merged with each of their best common commits and with each
+/// other `merged` parent head `ours` holds whose whole change `theirs` holds,
+/// so nothing both hold counts as new on either side; or the conflicting files.
 fn virtual_base(
     shadow: &Shadow,
     repo: &Path,
@@ -154,7 +154,7 @@ fn virtual_base(
     (ours, theirs): (&str, &str),
 ) -> Result<Result<String, String>, ArchonError> {
     assert!(is_commit_id(ours) && is_commit_id(theirs), "commit ids");
-    let mut parts: Vec<String> = fork_point(shadow, ours, theirs)?.into_iter().collect();
+    let mut parts = common_bases(shadow, ours, theirs)?;
     for head in merged.iter().filter(|head| head.as_str() != dep) {
         if contains(repo, head, ours)? && landed_in(shadow, repo, head, theirs)? {
             parts.push(head.clone());
@@ -188,6 +188,25 @@ fn landed_in(shadow: &Shadow, repo: &Path, head: &str, base: &str) -> Result<boo
     match fork_point(shadow, head, base)? {
         Some(fork) => holds_change(shadow, &fork, head, base),
         None => Ok(false),
+    }
+}
+
+/// Every best common commit of `ours` and `theirs`: several after criss-cross
+/// merges, none when they share no history.
+fn common_bases(shadow: &Shadow, ours: &str, theirs: &str) -> Result<Vec<String>, ArchonError> {
+    let ran = git(shadow)?
+        .args(["merge-base", "--all", ours, theirs])
+        .output()?;
+    // `merge-base` exits 1 exactly when the commits share no history.
+    match ran.status.code() {
+        Some(0) => {
+            let bases: Vec<String> = ran.stdout_text()?.lines().map(str::to_owned).collect();
+            assert!(!bases.is_empty(), "merge-base printed a commit");
+            assert!(bases.iter().all(|b| is_commit_id(b)), "merge-base ids");
+            Ok(bases)
+        }
+        Some(1) => Ok(Vec::new()),
+        _ => Err(ran.failure()),
     }
 }
 

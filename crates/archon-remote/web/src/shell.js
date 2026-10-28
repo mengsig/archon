@@ -53,7 +53,9 @@ export function mountShell(root, app, { onForget }) {
   ];
   router.start();
   return () => {
+    router.stop();
     current?.unmount?.();
+    current = null;
     for (const off of offs) off();
   };
 }

@@ -41,6 +41,10 @@ export function createRouter(onRoute) {
       window.addEventListener('popstate', apply);
       apply();
     },
+    stop() {
+      window.removeEventListener('hashchange', apply);
+      window.removeEventListener('popstate', apply);
+    },
     // In-app navigation marks its history entry, so `back` knows it may pop it.
     go(hash) {
       if (!hash.startsWith('#/')) throw new Error(`routes start with #/, got ${hash}`);

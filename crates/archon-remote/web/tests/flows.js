@@ -3,7 +3,7 @@
 // flows run against the dev bridge and against the real remote listener.
 import { expect } from '@playwright/test';
 import { formatPairingCode } from '../src/core/pairing-code.js';
-import { addRepo, askOperator, enqueue } from './support/seed.js';
+import { addRepo, askOperator, enqueue, notify } from './support/seed.js';
 
 function unique(label) {
   return `${label} ${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -149,6 +149,23 @@ export async function cancelItem(page, fixture) {
   expect(detail.data.item.state.state).toBe('cancelled');
 }
 
+// A stage settling posts a notification naming the item, not an item change.
+export async function followItemLive(page, fixture) {
+  await ensureRepo(fixture, 'archon');
+  const item = await enqueue(fixture.archond, { repo: 'archon', title: unique('Follow me'), brief: 'Reloads on its own news.' });
+  const loads = [];
+  page.on('websocket', (ws) => ws.on('framesent', ({ payload }) => {
+    const frame = typeof payload === 'string' ? JSON.parse(payload) : null;
+    if (frame?.cmd === 'get_item' && frame.item === item.id) loads.push(Date.now());
+  }));
+  await openApp(page, fixture, `#/item/${item.id}`);
+  await expect(page.getByRole('heading', { name: item.title, level: 1 })).toBeVisible();
+  const before = loads.length;
+  expect(before).toBeGreaterThan(0);
+  await notify(fixture.archond, 'progress', `Stage review settled for ${item.id}.`, item.id);
+  await expect.poll(() => loads.length, { timeout: 5_000 }).toBeGreaterThan(before);
+}
+
 export async function globalPauseResume(page, fixture) {
   await openApp(page, fixture, '#/overview');
   const toggle = page.getByRole('switch', { name: 'Pause new work' });
@@ -161,4 +178,4 @@ export async function globalPauseResume(page, fixture) {
   expect((await fixture.archond.request({ cmd: 'status' })).data.pause.global).toBe(false);
 }
 
-export const FLOWS = { pair, viewQueueAndItem, chat, answerQuestion, enqueueViaSheet, cancelItem, globalPauseResume };
+export const FLOWS = { pair, viewQueueAndItem, chat, answerQuestion, enqueueViaSheet, cancelItem, followItemLive, globalPauseResume };

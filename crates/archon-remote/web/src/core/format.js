@@ -149,3 +149,13 @@ export function prUrlOf(detail) {
   }
   return null;
 }
+
+const ITEM_ENTRIES = new Set(['notification', 'question', 'report']);
+
+// Whether a live feed entry is about this item: its stages, gates and reports post them.
+export function namesItem(feedItem, itemId) {
+  if (typeof itemId !== 'string' || !itemId) throw new TypeError('an item id names the item');
+  const entry = feedItem?.entry;
+  if (!entry || feedItem.replayed) return false;
+  return ITEM_ENTRIES.has(entry.entry) && entry.item === itemId;
+}

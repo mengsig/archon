@@ -3,12 +3,14 @@
 import { h } from '../../ui/dom.js';
 import { icon } from '../../ui/icons.js';
 import { screenHeader, section, card, row, chip, emptyState, errorNote, skeletonRows } from '../../ui/components.js';
-import { stateLook, usd, priorityLabel, dateTime, shortId, safeHttpUrl, isTerminal, waitsOnOperator, prUrlOf } from '../../core/format.js';
+import { stateLook, usd, priorityLabel, dateTime, shortId, safeHttpUrl, isTerminal, waitsOnOperator, prUrlOf, namesItem } from '../../core/format.js';
 import { stagesTimeline } from './stages.js';
 import { artifactsSection } from './artifacts.js';
 import { itemActions } from './actions.js';
 
 const BRIEF_CLAMP_CHARS = 360;
+const FOLLOW_DEBOUNCE_MS = 300;
+const POLL_RUNNING_MS = 15_000;
 const REVIEW_LABEL = { strict: 'Strict', standard: 'Standard', none: 'None' };
 const GATE_SUBJECT = { proposal: 'Proposal', report: 'Report' };
 const GATE_LOOK = {
@@ -31,19 +33,28 @@ export function mountItem(view, ctx) {
   let artifacts = null;
   let artifactsAt = null;
 
-  const reload = async () => {
+  let loads = 0;
+  let failed = false;
+  // Only the newest of overlapping loads is shown; a quiet one that finds
+  // nothing new keeps the page as the operator left it.
+  const load = async (quiet) => {
+    const ticket = ++loads;
     try {
       const fresh = await ctx.cmds.item(id);
-      if (!alive) return;
+      if (!alive || ticket !== loads) return;
+      const unchanged = quiet && !failed && detail && JSON.stringify(fresh) === JSON.stringify(detail);
       detail = fresh;
-      render();
+      failed = false;
+      if (!unchanged) render();
     } catch (err) {
-      if (!alive) return;
+      if (!alive || ticket !== loads) return;
+      failed = true;
       content.replaceChildren(err.code === 'not_found'
         ? emptyState({ title: 'Item not found', text: 'It may have been removed from the queue.', iconName: 'queue' })
         : errorNote(err, reload));
     }
   };
+  const reload = () => load(false);
   const render = () => {
     const state = ctx.store.get();
     // Listed again once a stage has finished since, as it may have published files.
@@ -55,13 +66,31 @@ export function mountItem(view, ctx) {
     view.querySelector('.screen-title').textContent = detail.item.title;
     content.replaceChildren(...renderDetail(ctx, detail, state, { reload, artifacts }));
   };
-  // A changed summary (from a feed event) means the detail moved on too.
-  const off = ctx.store.watch((s) => summaryOf(s, id)?.updated_at, (updated) => {
-    if (detail && updated && updated !== detail.item.updated_at) reload();
-  });
+  const unfollow = followItem(ctx, id, () => detail, () => load(true));
   const offReports = ctx.store.watch((s) => [s.reports, s.errors.reports, s.status?.pause], () => detail && render());
   reload();
-  return () => { alive = false; off(); offReports(); };
+  return () => { alive = false; unfollow(); offReports(); };
+}
+
+// Stages settle and gates open without touching the item itself, so the
+// detail reloads on feed entries about it and, while it runs, on a timer.
+function followItem(ctx, id, current, refresh) {
+  if (typeof refresh !== 'function' || typeof current !== 'function') throw new TypeError('followItem needs the detail and its refresh');
+  let timer = null;
+  const soon = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => current() && refresh(), FOLLOW_DEBOUNCE_MS);
+  };
+  const offFeed = ctx.feed.subscribe((fresh) => fresh.some((entry) => namesItem(entry, id)) && soon());
+  const offSummary = ctx.store.watch((s) => summaryOf(s, id)?.updated_at, (updated) => {
+    if (current() && updated && updated !== current().item.updated_at) soon();
+  });
+  const poll = setInterval(() => {
+    const detail = current();
+    const watching = document.visibilityState === 'visible' && ctx.store.get().connection.state === 'open';
+    if (detail && watching && !isTerminal(detail.item)) refresh();
+  }, POLL_RUNNING_MS);
+  return () => { clearTimeout(timer); clearInterval(poll); offFeed(); offSummary(); };
 }
 
 function summaryOf(state, id) {

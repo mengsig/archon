@@ -196,5 +196,21 @@ fn the_wizard_stops_with_the_fix_when_tailscale_is_not_ready_or_not_asked() {
     assert!(errors.contains("pass --yes"), "{errors}");
     let calls = std::fs::read_to_string(tools.join("calls")).unwrap();
     assert!(!calls.contains("serve --bg"), "{calls}");
+    // Published through a proxy that never answers: switched back off too.
+    archon_core::testing::write_script(&tools.join("curl"), "#!/bin/sh\nexit 7\n");
+    let unreachable = wizard(
+        &env,
+        &tools,
+        &[
+            "remote",
+            "setup",
+            "--proxy-url",
+            "https://proxy.example",
+            "--no-pair",
+        ],
+    );
+    assert!(!unreachable.status.success(), "{unreachable:?}");
+    let status = remote_json(&env, &["status"]);
+    assert_eq!(status["enabled"], false, "{status}");
     stop_daemon(&env, daemon);
 }

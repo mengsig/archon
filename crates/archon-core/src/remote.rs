@@ -154,12 +154,15 @@ pub fn normalize_origin(origin: &str) -> Result<String, ArchonError> {
     }
     let host = host.to_ascii_lowercase();
     let host = host.strip_suffix('.').unwrap_or(&host);
-    match port {
-        None | Some("443") => Ok(format!("https://{host}")),
-        Some(port) if port.parse::<u16>().is_ok_and(|p| p > 0) => {
-            Ok(format!("https://{host}:{port}"))
-        }
-        Some(_) => Err(bad()),
+    let Some(port) = port else {
+        return Ok(format!("https://{host}"));
+    };
+    // Written as browsers do: digits only, no leading zeros, 443 left out.
+    match port.parse::<u16>() {
+        _ if !port.bytes().all(|b| b.is_ascii_digit()) => Err(bad()),
+        Ok(443) => Ok(format!("https://{host}")),
+        Ok(port) if port > 0 => Ok(format!("https://{host}:{port}")),
+        _ => Err(bad()),
     }
 }
 
@@ -189,6 +192,8 @@ mod tests {
             ("https://box.ts.net:443", "https://box.ts.net"),
             ("https://box.ts.net:8443", "https://box.ts.net:8443"),
             ("https://box.ts.net.", "https://box.ts.net"),
+            ("https://box.ts.net:08443", "https://box.ts.net:8443"),
+            ("https://box.ts.net:0443", "https://box.ts.net"),
         ];
         for (given, expected) in cases {
             assert_eq!(normalize_origin(given).unwrap(), expected, "{given}");
@@ -205,6 +210,8 @@ mod tests {
             "https://user@box.ts.net",
             "https://box.ts.net:0",
             "https://box.ts.net:99999",
+            "https://box.ts.net:+8443",
+            "https://box.ts.net:",
             "box.ts.net",
             "https://bo x.ts.net",
             "https://[::1]:8443",

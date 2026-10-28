@@ -60,14 +60,11 @@ pub(crate) async fn setup(args: RemoteSetupArgs, json: bool) -> anyhow::Result<E
     let client = connect_or_start().await?;
     let was_enabled = remote_view(&client, Request::RemoteStatus).await?.enabled;
     let target = enable(&client, &mut steps).await?;
-    let origin = match publish(&client, &args, &target, json, &mut steps).await {
+    let origin = match publish_and_verify(&client, &args, &target, json, &mut steps).await {
         Ok(origin) => origin,
         Err(error) if was_enabled => return Err(error),
         Err(error) => return Err(switch_back_off(&client, error).await),
     };
-    if let Some(origin) = &origin {
-        verify(origin, &mut steps).await?;
-    }
     let remote = remote_view(&client, Request::RemoteStatus).await?;
     let pairing = match args.no_pair {
         true => None,
@@ -131,8 +128,23 @@ async fn enable(client: &ArchonClient, steps: &mut Steps) -> anyhow::Result<Stri
     Ok(archon_core::remote::local_origin(bound))
 }
 
-/// A publish that failed leaves the listener as this run found it: off, so
-/// nothing an earlier run published keeps answering.
+/// Publish the listener and check that it answers at the published address.
+async fn publish_and_verify(
+    client: &ArchonClient,
+    args: &RemoteSetupArgs,
+    target: &str,
+    json: bool,
+    steps: &mut Steps,
+) -> anyhow::Result<Option<String>> {
+    let origin = publish(client, args, target, json, steps).await?;
+    if let Some(origin) = &origin {
+        verify(origin, steps).await?;
+    }
+    Ok(origin)
+}
+
+/// A publish or check that failed leaves the listener as this run found it:
+/// off, so nothing an earlier run published keeps answering.
 async fn switch_back_off(client: &ArchonClient, error: anyhow::Error) -> anyhow::Error {
     let change = RemoteChange {
         enabled: Some(false),

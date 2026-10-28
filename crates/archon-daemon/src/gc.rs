@@ -29,6 +29,8 @@ mod preview;
 mod snapshot;
 mod sweep;
 mod team;
+
+pub(crate) use team::set_aside_of;
 #[cfg(test)]
 mod tests;
 

@@ -590,8 +590,8 @@ The store bounds itself too. Every 10 minutes `archond` deletes the history
 of items settled more than `[storage] retention_days` ago (14 by default,
 `0` keeps everything): their runs, stage runs, gates, spend and steering
 records, and feed entries the feed never shows. It waits at least 14 days
-and at least `[artifacts] keep_after`, and keeps an item while its worktree
-is still on disk, a report or open question names it, or a budget still
+and at least `[artifacts] keep_after`, and keeps an item while its worktree,
+or a copy a fresh retry set aside, is still on disk, a report or open question names it, or a budget still
 counts its spend. What Archon learned from finished runs (outcomes and
 lessons) is kept, and so is the total spend. The SQLite write-ahead log is
 cut back to 4 MiB. The data directory is readable by you alone (`0700`,

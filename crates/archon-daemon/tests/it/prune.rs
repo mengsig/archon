@@ -572,6 +572,15 @@ async fn settled_history_goes_past_the_retention_once_gc_removed_its_workspace()
     let pruned = prune_at(&h, later).await;
     assert_eq!(pruned.history.items, 0, "gc still needs it: {pruned:?}");
     std::fs::remove_dir_all(&run.workspace).unwrap();
+    let name = run.workspace.file_name().unwrap().to_string_lossy();
+    let aside = run.workspace.parent().unwrap().join(".set-aside");
+    std::fs::create_dir_all(aside.join(format!("{name}-1"))).unwrap();
+    let pruned = prune_at(&h, later).await;
+    assert_eq!(
+        pruned.history.items, 0,
+        "gc finds a set-aside copy through it"
+    );
+    std::fs::remove_dir_all(&aside).unwrap();
 
     let pruned = prune_at(&h, later).await;
     assert_eq!(

@@ -4594,8 +4594,8 @@ reshaped run's outcome keeps a `learning/reshaped/<run>` mark). An item
 stays while anything still names it: a live run, an open gate, an open
 question, an open merge request, an operator correction, a live initiative,
 a report record, a distillation whose lessons are not applied, a dependency
-or stack of a kept item, or a run workspace still on disk, which gc finds
-through the item. So does an item with spend
+or stack of a kept item, or a run workspace still on disk or a flat copy a
+fresh retry set aside beside it, which gc finds through the item. So does an item with spend
 on or after the cutoff's local day, so the daily and window budgets count
 the same; the total budget adds the pruned sum kept in `spend_pruned`. A
 pass deletes at most 25 batches of 200 items, each in one transaction

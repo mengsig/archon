@@ -87,8 +87,8 @@ DELETE FROM temp.prune_items WHERE id IN (
     WHERE s.item NOT IN (SELECT id FROM temp.prune_items))";
 
 /// Delete the history older than `before`, at most `limit` items with all
-/// they own, dependents first, in one transaction. `on_disk` says whether a run
-/// workspace still exists.
+/// they own, dependents first, in one transaction. `on_disk` says whether gc may
+/// still find something on disk through a run workspace path.
 pub(super) fn prune(
     store: &mut Store,
     before: &Timestamp,

@@ -3,6 +3,7 @@
 //! `storage.retention_days`, then hands freed pages back and cuts the WAL back.
 //! Outcomes and lessons stay for learning.
 
+use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,7 +15,8 @@ use archon_queue::Checkpointer;
 use archon_queue::store::HistoryPruned;
 
 use crate::context::DaemonContext;
-use crate::{executor, inbox_health, pump, reports, supervisor, tracked};
+use crate::worktree::team::SET_ASIDE_DIR;
+use crate::{executor, gc, inbox_health, pump, reports, supervisor, tracked};
 
 /// How often the pass runs; the first runs at startup.
 const INTERVAL: Duration = Duration::from_secs(10 * 60);
@@ -213,12 +215,29 @@ async fn prune_history(ctx: &DaemonContext, now: Timestamp) -> Result<HistoryPru
     Ok(pruned)
 }
 
-/// Whether `path` may still exist: only a path known to be missing is not.
+/// Whether gc may still find something through the run workspace `path`: it
+/// or a flat copy a fresh retry set aside beside it. Unknown counts as yes.
 fn on_disk(path: &Path) -> bool {
     match path.symlink_metadata() {
         Ok(_) => true,
-        Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+        Err(error) if error.kind() != ErrorKind::NotFound => true,
+        Err(_) => set_aside_beside(path),
     }
+}
+
+/// Whether `<parent>/.set-aside/<name>-<n>` may exist for the flat worktree
+/// `workspace`, as gc's set-aside sweep looks for it.
+fn set_aside_beside(workspace: &Path) -> bool {
+    let (Some(parent), Some(name)) = (workspace.parent(), workspace.file_name()) else {
+        return false;
+    };
+    let entries = match std::fs::read_dir(parent.join(SET_ASIDE_DIR)) {
+        Ok(entries) => entries,
+        Err(error) => return error.kind() != ErrorKind::NotFound,
+    };
+    entries
+        .into_iter()
+        .any(|entry| entry.map_or(true, |e| gc::set_aside_of(name, &e.file_name())))
 }
 
 /// Tracked requests are kept [`archon_core::tracked::RETENTION`], not [`retention`].

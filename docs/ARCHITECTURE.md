@@ -4013,7 +4013,7 @@ refresh therefore first compares the mirror with the commit it last
 checked out: a moved `HEAD` (with up to four of the commits made) or a
 changed tracked file, staged or not, is undone by the checkout and
 reported. So is a file created, deleted or replaced: the checkout cleans
-untracked files, keeping ignored build output. One `System` feed entry
+untracked files and repositories, keeping ignored build output. One `System` feed entry
 names the repository and the change, and a `mirror` event with
 `state: "reverted"` wakes the orchestrator to queue the change instead.
 The orchestrator's every turn end asks for a pass, so a write is undone

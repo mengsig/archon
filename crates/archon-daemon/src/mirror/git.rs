@@ -245,8 +245,9 @@ impl Mirror {
     }
 
     /// Remove untracked files git does not ignore, keeping ignored build output.
+    /// Forced twice, so a repository an agent made or cloned inside goes too.
     pub(crate) fn clean(&self, base: &Base) -> Result<(), ArchonError> {
-        let args = ["clean", "--quiet", "--force", "-d"];
+        let args = ["clean", "--quiet", "--force", "--force", "-d"];
         self.git(&base.format)?
             .args(args)
             .limit(CHECKOUT_TIMEOUT)

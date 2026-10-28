@@ -364,6 +364,25 @@ async fn a_file_created_deleted_or_replaced_is_undone() {
     assert!(notes[1].contains("README.md"), "{}", notes[1]);
 }
 
+#[tokio::test]
+async fn a_repository_made_inside_a_mirror_is_removed() {
+    let h = synced().await;
+    let mirror = mirror_of(&h);
+    let nested = mirror.join("nested");
+    let made = std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .arg(&nested)
+        .status()
+        .unwrap();
+    assert!(made.success());
+    std::fs::write(nested.join("new.txt"), "created\n").unwrap();
+    mirror::sync_all(&h.ctx).await.unwrap();
+    assert!(!nested.exists(), "the nested repository is removed");
+    let notes = system_notes(&h).await;
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("nested"), "{}", notes[0]);
+}
+
 /// Register a second repository, `name`, and return its id.
 async fn register(h: &Harness, name: &str) -> RepoId {
     let path = common::init_repo_with_origin(&h.dir.path().join(name));

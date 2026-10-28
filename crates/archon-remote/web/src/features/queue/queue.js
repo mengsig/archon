@@ -3,7 +3,7 @@
 import { h } from '../../ui/dom.js';
 import { icon } from '../../ui/icons.js';
 import { reconcile } from '../../ui/list.js';
-import { screenHeader, emptyState, errorNote, skeletonRows } from '../../ui/components.js';
+import { screenHeader, emptyState, errorNote, loadErrorNotes, skeletonRows } from '../../ui/components.js';
 import { FILTERS, PRIORITIES, priorityLabel } from '../../core/format.js';
 import { itemRow, rowSignature, repoNames } from './item-row.js';
 import { openNewItem } from '../new-item/new-item.js';
@@ -33,7 +33,7 @@ export function mountQueue(view, ctx) {
     chips, status, list, fab);
 
   const render = () => renderQueue({ state: store.get(), chips, selects, list, status, ctx });
-  const off = store.watch((s) => [s.summaries, s.repos, s.errors.summaries], render);
+  const off = store.watch((s) => [s.summaries, s.repos, s.errors.summaries, s.errors.repos], render);
   search.addEventListener('input', () => { viewState.query = search.value; render(); });
   for (const [key, select] of Object.entries(selects)) {
     select.addEventListener('change', () => { viewState[key] = select.value; render(); });
@@ -62,7 +62,7 @@ function renderQueue({ state, chips, selects, list, status, ctx }) {
     signature: (s) => rowSignature(s, names, now),
     render: (s) => itemRow(s, names, now),
   });
-  status.replaceChildren();
+  status.replaceChildren(...loadErrorNotes(state.errors, ['repos'], ctx.refresh.one));
   if (state.errors.summaries) status.append(errorNote(state.errors.summaries, () => ctx.refresh.one('summaries')));
   if (summaries === null && !state.errors.summaries) status.append(skeletonRows(4));
   else if (summaries && shown.length === 0) status.append(emptyFor(active.id, summaries.length));

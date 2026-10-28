@@ -44,18 +44,28 @@ test('load failures stay in view over what was loaded before', async ({ page, fi
     const server = ws.connectToServer();
     ws.onMessage((message) => {
       const frame = JSON.parse(message);
-      const refused = frame.cmd === 'feed_history' || (frame.cmd === 'status' && ++statusLoads > 1);
+      const refused = ['feed_history', 'repo_list'].includes(frame.cmd) || (frame.cmd === 'status' && ++statusLoads > 1);
       if (!refused) return server.send(message);
       ws.send(JSON.stringify({ frame: 'reply', id: frame.req, result: { Err: { code: 'internal', message: `${frame.cmd} refused by the test` } } }));
     });
   });
+  const alert = (text) => page.getByRole('alert').filter({ hasText: text });
+  const go = (name) => page.getByRole('navigation', { name: 'Sections' }).getByRole('link', { name }).click();
   await openApp(page, fixture, '#/inbox');
   const notifications = page.getByRole('region', { name: 'Notifications' });
   await expect(notifications.getByRole('alert')).toContainText('feed_history refused by the test');
   await expect(notifications.getByText('No notifications yet.')).toHaveCount(0);
-  await page.getByRole('navigation', { name: 'Sections' }).getByRole('link', { name: 'Overview' }).click();
-  await expect(page.getByRole('alert').filter({ hasText: 'status refused by the test' })).toBeVisible();
+  await go('Overview');
+  await expect(alert('status refused by the test')).toBeVisible();
   await expect(page.locator('.hero-card')).toBeVisible();
+  await go('Queue');
+  await expect(alert('Could not load repositories: repo_list refused by the test')).toBeVisible();
+  await page.locator('.item-row').first().click();
+  await expect(page.locator('.item-hero')).toBeVisible();
+  await expect(alert('Could not load the status: status refused by the test')).toBeVisible();
+  await expect(alert('Could not load repositories')).toBeVisible();
+  await go('Chat');
+  await expect(alert('Could not load the status')).toBeVisible();
 });
 
 test('a revoked device goes back to pairing', async ({ page, fixture }) => {

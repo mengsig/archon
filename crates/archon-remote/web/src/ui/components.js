@@ -44,10 +44,23 @@ export function emptyState({ title, text, iconName = null }) {
     text ? h('p', { class: 'empty-text', text }) : null);
 }
 
-export function errorNote(error, retry = null) {
+export function errorNote(error, retry = null, what = null) {
+  const text = what ? `${what}: ${describeError(error)}` : describeError(error);
   return h('div', { class: 'error-note', role: 'alert' },
-    h('span', { text: describeError(error) }),
+    h('span', { text }),
     retry ? h('button', { class: 'link-button', type: 'button', onclick: retry }, 'Try again') : null);
+}
+
+const LOAD_LABEL = { summaries: 'items', repos: 'repositories', status: 'the status', questions: 'questions' };
+
+// A note naming each shared load in `names` that failed, each with its own
+// retry, for screens that show those loads beside their own data.
+export function loadErrorNotes(errors, names, retry) {
+  if (!errors || typeof retry !== 'function') throw new TypeError('loadErrorNotes needs the errors and a retry');
+  const unknown = names.filter((name) => !(name in LOAD_LABEL));
+  if (unknown.length) throw new Error(`no label for the ${unknown.join(', ')} load`);
+  return names.filter((name) => errors[name])
+    .map((name) => errorNote(errors[name], () => retry(name), `Could not load ${LOAD_LABEL[name]}`));
 }
 
 export function describeError(error) {

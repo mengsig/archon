@@ -2,7 +2,7 @@
 // then recent notifications from the feed.
 import { h } from '../../ui/dom.js';
 import { reconcile } from '../../ui/list.js';
-import { screenHeader, section, chip, emptyState, errorNote, skeletonRows } from '../../ui/components.js';
+import { screenHeader, section, chip, emptyState, errorNote, loadErrorNotes, skeletonRows } from '../../ui/components.js';
 import { age } from '../../core/format.js';
 import { questionCard } from './question-card.js';
 
@@ -30,7 +30,7 @@ export function mountInbox(view, ctx) {
       key: (q) => q.id, signature: (q) => q.text + titles.get(q.item),
       render: (q) => questionCard(ctx, q, titles.get(q.item)),
     });
-    openStatus.replaceChildren();
+    openStatus.replaceChildren(...loadErrorNotes(state.errors, ['summaries'], ctx.refresh.one));
     if (state.errors.questions) openStatus.append(errorNote(state.errors.questions, () => ctx.refresh.one('questions')));
     else if (state.questions === null) openStatus.append(skeletonRows(2));
     else if (waiting.length === 0) openStatus.append(emptyState({ title: 'All clear', text: 'Nothing is waiting on you.', iconName: 'check' }));
@@ -47,7 +47,7 @@ export function mountInbox(view, ctx) {
     if (entries.length === 0) notes.replaceChildren(...(errors.feed ? [] : [h('li', { class: 'muted plain-empty', text: 'No notifications yet.' })]));
   };
   const offs = [
-    ctx.store.watch((s) => [s.questions, s.summaries, s.errors.questions], renderQuestions),
+    ctx.store.watch((s) => [s.questions, s.summaries, s.errors.questions, s.errors.summaries], renderQuestions),
     ctx.store.watch((s) => [s.feed, s.errors.feed], renderNotes),
   ];
   return () => offs.forEach((off) => off());

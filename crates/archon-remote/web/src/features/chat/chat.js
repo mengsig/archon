@@ -3,7 +3,7 @@
 import { h } from '../../ui/dom.js';
 import { icon } from '../../ui/icons.js';
 import { reconcile } from '../../ui/list.js';
-import { screenHeader, errorNote, describeError } from '../../ui/components.js';
+import { screenHeader, errorNote, loadErrorNotes, describeError } from '../../ui/components.js';
 import { isQuiet } from '../../core/feed.js';
 import { addPending, settlePending, removePending } from './outbox.js';
 import { transcriptEntry, pendingEntry, dayKey } from './entries.js';
@@ -21,11 +21,13 @@ export function mountChat(view, ctx) {
   const render = () => {
     const nearBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - NEAR_BOTTOM_PX;
     renderTranscript(ctx, transcript);
-    status.replaceChildren(...(ctx.store.get().errors.feed ? [errorNote(ctx.store.get().errors.feed)] : []));
+    const { errors } = ctx.store.get();
+    status.replaceChildren(...(errors.feed ? [errorNote(errors.feed)] : []),
+      ...loadErrorNotes(errors, ['questions', 'status'], ctx.refresh.one));
     if (nearBottom) scrollToEnd();
   };
   const offs = [
-    ctx.store.watch((s) => [s.feed, s.outbox, s.chatNotes, s.questions, s.errors.feed], render),
+    ctx.store.watch((s) => [s.feed, s.outbox, s.chatNotes, s.questions, s.errors.feed, s.errors.questions, s.errors.status], render),
     ctx.store.watch((s) => [s.status, s.connection.state], () => renderPresence(subtitle, ctx.store.get())),
     trackKeyboard(),
   ];

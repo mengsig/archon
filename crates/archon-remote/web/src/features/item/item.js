@@ -2,7 +2,7 @@
 // pull request, artifacts and reports.
 import { h } from '../../ui/dom.js';
 import { icon } from '../../ui/icons.js';
-import { screenHeader, section, card, row, chip, emptyState, errorNote, skeletonRows } from '../../ui/components.js';
+import { screenHeader, section, card, row, chip, emptyState, errorNote, loadErrorNotes, skeletonRows } from '../../ui/components.js';
 import { stateLook, usd, priorityLabel, dateTime, shortId, safeHttpUrl, isTerminal, waitsOnOperator, prUrlOf, namesItem } from '../../core/format.js';
 import { stagesTimeline } from './stages.js';
 import { artifactsSection } from './artifacts.js';
@@ -11,6 +11,7 @@ import { itemActions } from './actions.js';
 const BRIEF_CLAMP_CHARS = 360;
 const FOLLOW_DEBOUNCE_MS = 300;
 const POLL_RUNNING_MS = 15_000;
+const SHARED_LOADS = ['status', 'repos', 'summaries'];
 const REVIEW_LABEL = { strict: 'Strict', standard: 'Standard', none: 'None' };
 const GATE_SUBJECT = { proposal: 'Proposal', report: 'Report' };
 const GATE_LOOK = {
@@ -102,6 +103,7 @@ function shownFromStore(state, id, detail) {
   return [
     JSON.stringify(reports),
     state.errors.reports ?? null,
+    ...SHARED_LOADS.map((name) => state.errors[name] ?? null),
     Boolean(detail && pause?.repos.includes(detail.item.repo)),
     Boolean(detail && pause?.pipelines.includes(detail.item.pipeline)),
   ];
@@ -117,6 +119,7 @@ function renderDetail(ctx, detail, state, { reload, artifacts }) {
   const repoName = state.repos?.find((r) => r.id === item.repo)?.name ?? null;
   const look = stateLook({ ...item, waiting_on: detail.waiting_on, waiting_reason: detail.waiting_reason });
   return [
+    ...loadErrorNotes(state.errors, SHARED_LOADS, ctx.refresh.one),
     h('div', { class: 'item-hero' },
       chip(look, 'chip-large'),
       h('p', { class: 'item-hero-meta', text: [repoName ?? 'no repository', summary?.switched_to ?? item.pipeline, shortId(item.id)].join(' · ') })),

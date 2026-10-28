@@ -100,7 +100,11 @@ function shownFromStore(state, id, detail) {
   if (typeof id !== 'string') throw new TypeError('an item id names the item');
   const pause = state.status?.pause;
   const reports = (state.reports ?? []).filter((r) => r.item === id);
+  const summary = summaryOf(state, id);
   return [
+    detail ? state.repos?.find((r) => r.id === detail.item.repo)?.name ?? null : null,
+    summary?.switched_to ?? null,
+    summary?.pr_url ?? null,
     JSON.stringify(reports),
     state.errors.reports ?? null,
     ...SHARED_LOADS.map((name) => state.errors[name] ?? null),

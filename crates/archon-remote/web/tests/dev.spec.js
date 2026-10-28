@@ -1,6 +1,6 @@
 // Every flow against a real archond through the dev bridge.
 import { test as base, expect } from '@playwright/test';
-import { FLOWS, openApp } from './flows.js';
+import { FLOWS, openApp, ensureRepo } from './flows.js';
 import { enqueue } from './support/seed.js';
 import { startDevFixture } from './support/fixture.js';
 import { guardConsole } from './support/console-guard.js';
@@ -66,6 +66,30 @@ test('load failures stay in view over what was loaded before', async ({ page, fi
   await expect(alert('Could not load repositories')).toBeVisible();
   await go('Chat');
   await expect(alert('Could not load the status')).toBeVisible();
+});
+
+test('the new-item sheet shows a failed repository list and fills in once it loads', async ({ page, fixture }) => {
+  await ensureRepo(fixture, 'archon');
+  let refuseRepos = true;
+  await page.routeWebSocket(/\/ws$/, (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((message) => {
+      const frame = JSON.parse(message);
+      if (frame.cmd !== 'repo_list' || !refuseRepos) return server.send(message);
+      ws.send(JSON.stringify({ frame: 'reply', id: frame.req, result: { Err: { code: 'internal', message: 'repo_list refused by the test' } } }));
+    });
+  });
+  await openApp(page, fixture);
+  await page.getByRole('button', { name: 'New item' }).click();
+  const sheet = page.getByRole('dialog', { name: 'New item' });
+  const failed = sheet.getByRole('alert').filter({ hasText: 'Could not load repositories: repo_list refused by the test' });
+  await expect(failed).toBeVisible();
+  await sheet.getByLabel('Title').fill('Kept across the retry');
+  refuseRepos = false;
+  await failed.getByRole('button', { name: 'Try again' }).click();
+  await expect(failed).toHaveCount(0);
+  await expect(sheet.getByLabel('Repository')).toHaveValue('archon');
+  await expect(sheet.getByLabel('Title')).toHaveValue('Kept across the retry');
 });
 
 test('a revoked device goes back to pairing', async ({ page, fixture }) => {

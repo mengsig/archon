@@ -3,7 +3,7 @@
 import { h } from '../../ui/dom.js';
 import { openSheet } from '../../ui/sheet.js';
 import { toast } from '../../ui/toast.js';
-import { field, segmented, describeError } from '../../ui/components.js';
+import { field, segmented, describeError, loadErrorNotes } from '../../ui/components.js';
 
 const PRIORITIES = [
   { value: 'low', label: 'Low' }, { value: 'normal', label: 'Normal' },
@@ -15,13 +15,13 @@ const REVIEWS = [
 ];
 
 export function openNewItem(ctx) {
-  const repos = ctx.store.get().repos ?? [];
-  const draft = { repo: repos[0]?.name ?? '', pipeline: '', priority: 'normal', review: '', idempotencyKey: newKey() };
-  const controls = buildControls(repos, draft);
+  const draft = { repo: '', pipeline: '', priority: 'normal', review: '', idempotencyKey: newKey() };
+  const controls = buildControls();
+  const repoStatus = h('div', { class: 'list-status' });
   const error = h('p', { class: 'form-error', role: 'alert', id: 'new-item-error' });
   const submit = h('button', { class: 'button button-primary button-block', type: 'submit' }, 'Queue item');
   const form = h('form', { class: 'sheet-form', novalidate: true, 'aria-label': 'New item' },
-    field({ label: 'Repository', control: controls.repo }),
+    field({ label: 'Repository', control: controls.repo }), repoStatus,
     field({ label: 'Title', control: controls.title }),
     field({ label: 'Brief', control: controls.brief, hint: 'What should be done, and how you will know it is right.' }),
     field({ label: 'Pipeline', control: controls.pipeline, error: controls.pipelineHint }),
@@ -31,24 +31,44 @@ export function openNewItem(ctx) {
       segmented({ label: 'Review level', options: REVIEWS, value: draft.review, onChange: (v) => { draft.review = v; } })),
     error, submit);
 
-  const sheet = openSheet({ title: 'New item', content: form, size: 'tall' });
+  let offRepos = () => {};
+  const sheet = openSheet({ title: 'New item', content: form, size: 'tall', onClose: () => offRepos() });
   const loadPipelines = pipelineLoader(ctx, controls, error);
-  controls.repo.addEventListener('change', () => { draft.repo = controls.repo.value; loadPipelines(draft.repo); });
+  offRepos = followRepos(ctx, { controls, draft, repoStatus, loadPipelines });
   controls.pipeline.addEventListener('change', () => { draft.pipeline = controls.pipeline.value; controls.describe(); });
   form.addEventListener('submit', (event) => {
     event.preventDefault();
     submitItem({ ctx, draft, controls, error, submit, sheet });
   });
-  loadPipelines(draft.repo);
-  const failed = ctx.store.get().errors.repos;
-  if (failed) error.textContent = `The repositories did not load: ${describeError(failed)}`;
-  else if (repos.length === 0) error.textContent = 'No repository is registered yet. Register one on the host, or pick a pipeline that needs none.';
+  const { repos, errors } = ctx.store.get();
+  if (repos === null || errors.repos) ctx.refresh.one('repos');
 }
 
-function buildControls(repos, draft) {
-  const repo = h('select', { class: 'input', name: 'repo' },
-    repos.map((r) => h('option', { value: r.name, text: r.name, selected: r.name === draft.repo })),
-    h('option', { value: '', text: 'No repository', selected: repos.length === 0 }));
+// The repository list follows the store while the sheet is open: a load that
+// fails shows with a retry, and one that arrives late fills the choice in.
+function followRepos(ctx, { controls, draft, repoStatus, loadPipelines }) {
+  if (typeof loadPipelines !== 'function') throw new TypeError('followRepos needs the pipeline loader');
+  let picked = false;
+  let pipelinesFor;
+  controls.repo.addEventListener('change', () => { picked = true; show(); });
+  const show = () => {
+    const { repos, errors } = ctx.store.get();
+    const chosen = picked ? controls.repo.value : (repos?.[0]?.name ?? '');
+    controls.setRepos(repos ?? [], chosen);
+    draft.repo = controls.repo.value;
+    if (!picked && chosen && draft.repo !== chosen) throw new Error(`the repository ${chosen} was not offered`);
+    repoStatus.replaceChildren(...loadErrorNotes(errors, ['repos'], ctx.refresh.one));
+    if (!errors.repos && repos === null) repoStatus.append(h('p', { class: 'field-hint', text: 'Listing repositories…' }));
+    if (!errors.repos && repos?.length === 0) repoStatus.append(h('p', { class: 'field-hint', text: 'No repository is registered yet. Register one on the host, or pick a pipeline that needs none.' }));
+    if (draft.repo === pipelinesFor) return;
+    pipelinesFor = draft.repo;
+    loadPipelines(draft.repo);
+  };
+  return ctx.store.watch((s) => [s.repos, s.errors.repos], show);
+}
+
+function buildControls() {
+  const repo = h('select', { class: 'input', name: 'repo' });
   const title = h('input', { class: 'input', name: 'title', type: 'text', autocomplete: 'off', placeholder: 'One line: what to do', autofocus: true, enterkeyhint: 'next' });
   const brief = h('textarea', { class: 'input textarea', name: 'brief', rows: '5', placeholder: 'Context, constraints, acceptance criteria' });
   const pipeline = h('select', { class: 'input', name: 'pipeline' }, h('option', { value: '', text: 'Repository default' }));
@@ -56,6 +76,10 @@ function buildControls(repos, draft) {
   let catalog = [];
   return {
     repo, title, brief, pipeline, pipelineHint,
+    setRepos(repos, chosen) {
+      repo.replaceChildren(...repos.map((r) => h('option', { value: r.name, text: r.name, selected: r.name === chosen })),
+        h('option', { value: '', text: 'No repository', selected: chosen === '' }));
+    },
     setCatalog(pipelines) {
       catalog = pipelines;
       const chosen = pipeline.value;

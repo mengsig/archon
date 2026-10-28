@@ -139,3 +139,13 @@ export function safeHttpUrl(text) {
     return null;
   }
 }
+
+// As archond's own summaries find it: the newest completed stage that names one.
+export function prUrlOf(detail) {
+  if (!Array.isArray(detail?.stages)) throw new TypeError('an item detail lists its stages');
+  for (const stage of [...detail.stages].reverse()) {
+    const url = stage.structured?.pr_url;
+    if (stage.state?.state === 'completed' && typeof url === 'string') return url;
+  }
+  return null;
+}

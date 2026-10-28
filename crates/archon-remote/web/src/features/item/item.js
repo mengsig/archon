@@ -3,7 +3,7 @@
 import { h } from '../../ui/dom.js';
 import { icon } from '../../ui/icons.js';
 import { screenHeader, section, card, row, chip, emptyState, errorNote, skeletonRows } from '../../ui/components.js';
-import { stateLook, usd, priorityLabel, dateTime, shortId, safeHttpUrl, isTerminal, waitsOnOperator } from '../../core/format.js';
+import { stateLook, usd, priorityLabel, dateTime, shortId, safeHttpUrl, isTerminal, waitsOnOperator, prUrlOf } from '../../core/format.js';
 import { stagesTimeline } from './stages.js';
 import { artifactsSection } from './artifacts.js';
 import { itemActions } from './actions.js';
@@ -105,7 +105,7 @@ function callout(tone, title, text, extra = null) {
 
 function detailsCard(detail, summary) {
   const item = detail.item;
-  const pr = safeHttpUrl(summary?.pr_url);
+  const pr = safeHttpUrl(prUrlOf(detail) ?? summary?.pr_url);
   return card(
     row('Priority', priorityLabel(item.priority)),
     row('Review', REVIEW_LABEL[item.autonomy?.review] ?? 'Default'),

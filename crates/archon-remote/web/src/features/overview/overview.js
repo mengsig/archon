@@ -23,8 +23,11 @@ export function mountOverview(view, ctx) {
       pauseCard(ctx, state.status),
       section('Health', healthCard(state.status)),
       section('Agents', agentsCard(state.status)),
-      section('Spend', spendCard(state.status, state.cost, state.repos)),
-      section('Repositories', reposCard(ctx, state.repos, state.status.pause)),
+      section('Spend', spendCard(state.status, state.cost, state.repos),
+        state.errors.cost ? errorNote(state.errors.cost, () => ctx.refresh.one('cost')) : null),
+      section('Repositories', state.errors.repos
+        ? card(errorNote(state.errors.repos, () => ctx.refresh.one('repos')))
+        : reposCard(ctx, state.repos, state.status.pause)),
       section('Pipelines', pipelinesCard(pipelines, state.status.pause, () => loadPipelines())));
   };
   const loadPipelines = async () => {
@@ -36,7 +39,7 @@ export function mountOverview(view, ctx) {
     }
     render();
   };
-  const off = ctx.store.watch((s) => [s.status, s.cost, s.repos, s.errors.status], render);
+  const off = ctx.store.watch((s) => [s.status, s.cost, s.repos, s.errors.status, s.errors.cost, s.errors.repos], render);
   ctx.refresh.many(['status', 'cost', 'repos']);
   loadPipelines();
   return off;

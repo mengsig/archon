@@ -64,7 +64,10 @@ your yes; `ARCHON_NO_WIZARD=1` skips the offer, and without a terminal
 `archon` prints the one command still missing instead of asking. Shipping pull
 requests needs `gh auth login` and a git name and e-mail. The same steps by
 hand: `archon setup`, `archon repo add . --name example --ship pr`,
-`archon doctor`. If the orchestrator's model is missing from `archon aether
+`archon doctor`. Setup and the doctor check that the orchestrator's model is
+listed by Aether and its engine is logged in; when it is not, they name the
+login command (for example run `claude` once) or a logged-in engine to choose.
+If the orchestrator's model is missing from `archon aether
 models`, [choose another](docs/configuration.md#select-an-available-model).
 
 `archon` opens the terminal UI on the orchestrator. Ask, for example:

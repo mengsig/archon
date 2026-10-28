@@ -472,6 +472,9 @@ archon chat   # the quiet line chat, for SSH, scripts and pipes
 aether tui    # plain Aether, untouched
 ```
 
+`archon chat` exits with 1 when the orchestrator has failed as it ends, so a
+script learns it went unanswered.
+
 A bare `archon` opens the terminal UI with default options, as `archon tui`
 does. It opens the line chat instead, and says why in one line on standard
 error, in two cases: standard input or output is not a terminal, or
@@ -487,7 +490,10 @@ restarts made in Aether are followed. In dedicated mode Archon's commands
 (`/answer`, `/approve`, `/reject`, `/merge`, `/archon`, `/status` and the
 rest) appear in the TUI's `/` menu beside Aether's own, marked as Archon's;
 an Aether too old for that prints a warning and starts without them. Attachment sends no user message and
-respects revival backoff. An unavailable attachment stops with a visible error;
+respects revival backoff. When archond reports the orchestrator `failed`,
+`archon tui` stops retrying and opens the TUI on it, which shows its error;
+the line on standard error points to `archon doctor`. An attachment that stays
+unavailable for 5 seconds stops with archond's reason;
 it never deliberately opens a generic root. If the agent disappears after
 launch, Aether may select another root: exit and run `archon tui` again.
 

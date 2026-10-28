@@ -1,5 +1,7 @@
 //! Public release-check contract, with no network or GitHub mutations.
 mod common;
+#[path = "common/release.rs"]
+mod release;
 
 use archon_core::testing::write_script;
 use common::Env;
@@ -207,25 +209,43 @@ fn api_failure_and_malformed_json_fail_closed() {
     }
 }
 
+/// Doctor asks only the public `VERSION` file about releases: a logged-out
+/// `gh` and a broken old release upstream cannot fail it.
 #[test]
-fn doctor_checks_both_repositories() {
+fn doctor_reads_the_latest_version_without_gh_or_release_history() {
     let env = fixture("archon");
-    let output = env.command(&["doctor", "--json"]).output().unwrap();
+    let log = env.path("gh.log");
+    write_script(
+        &env.path("gh"),
+        &format!(
+            "#!/bin/sh\necho \"$*\" >> '{}'\necho 'not logged in' >&2\nexit 1\n",
+            log.display()
+        ),
+    );
+    let root = env.path("site");
+    std::fs::create_dir_all(root.join("latest/download")).unwrap();
+    std::fs::write(
+        root.join("latest/download/VERSION"),
+        format!("{}\n", env!("CARGO_PKG_VERSION")),
+    )
+    .unwrap();
+    let server = release::Server::serve(&root);
+    let output = env
+        .command(&["doctor", "--json"])
+        .env("ARCHON_INSTALL_BASE_URL", server.url())
+        .output()
+        .unwrap();
     let checks: Vec<Value> = serde_json::from_slice(&output.stdout).unwrap();
-    let releases: Vec<_> = checks.iter().filter(|c| c["check"] == "releases").collect();
-    assert_eq!(releases.len(), 2);
-    assert!(
-        releases[0]["detail"]
-            .as_str()
-            .unwrap()
-            .contains("mengsig/archon")
-    );
-    assert!(
-        releases[1]["detail"]
-            .as_str()
-            .unwrap()
-            .contains("mengsig/aether")
-    );
+    let releases: Vec<&Value> = checks
+        .iter()
+        .filter(|c| c["check"].as_str().unwrap().starts_with("release"))
+        .collect();
+    assert_eq!(releases.len(), 1, "{releases:?}");
+    assert_eq!(releases[0]["check"], "release");
+    assert_eq!(releases[0]["level"], "ok", "{releases:?}");
+    assert_eq!(server.requests(), ["/latest/download/VERSION"]);
+    let asked = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(!asked.contains("releases"), "gh was asked: {asked}");
 }
 
 #[test]

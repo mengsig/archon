@@ -64,6 +64,7 @@ fn variant_name(command: &Command) -> &'static str {
         Command::Unsubscribe { .. } => "unsubscribe",
         Command::GetEvents { .. } => "get_events",
         Command::ListModels => "list_models",
+        Command::AuthStatus => "auth_status",
         Command::Providers => "providers",
         Command::McpServers { .. } => "mcp_servers",
         Command::GetGithubWatcher => "get_github_watcher",
@@ -276,6 +277,7 @@ fn control_samples() -> Vec<Command> {
             query: full_event_query(),
         },
         Command::ListModels,
+        Command::AuthStatus,
         Command::Providers,
         Command::McpServers {
             refresh: true,
@@ -442,7 +444,7 @@ fn every_command_archon_emits_matches_the_schema() {
     );
     assert_eq!(
         seen.len(),
-        28,
+        29,
         "every Command variant has a sample: {seen:?}"
     );
 }

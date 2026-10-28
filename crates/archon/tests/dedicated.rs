@@ -68,6 +68,8 @@ impl Env {
             .env_remove("AETHER_ENGINE_AGENT")
             .env_remove("AETHER_ENGINE_RUN")
             .env("ARCHON_NO_UPDATE_CHECK", "1")
+            // Nothing listens on port 9: doctor's release lookup stays offline.
+            .env("ARCHON_INSTALL_BASE_URL", "http://127.0.0.1:9/releases")
             .env("NO_COLOR", "1");
         command
     }
@@ -412,4 +414,65 @@ fn status_observes_an_outage_without_invoking_aether() {
     assert_eq!(value["error"]["code"], "unavailable");
     assert!(env.calls().is_empty());
     assert!(!env.path("run/archond.sock").exists());
+}
+
+/// A machine with only `codex`: setup says the default claude-code
+/// orchestrator model cannot run, in text and in `--json`.
+#[test]
+fn setup_on_a_codex_only_machine_says_the_orchestrator_model_is_unavailable() {
+    let env = Env::new();
+    archon_core::testing::write_script(&env.path("bin/codex"), "#!/bin/sh\nexit 1\n");
+    let codex_only = format!("{}:/usr/bin:/bin", env.path("bin").display());
+    assert!(
+        !Path::new("/usr/bin/claude").exists() && !Path::new("/bin/claude").exists(),
+        "the host's claude would be found"
+    );
+
+    let out = env
+        .command(&["setup"])
+        .env("PATH", &codex_only)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        text.contains("The orchestrator model is unavailable"),
+        "{text}"
+    );
+    assert!(text.contains("`claude` is not on PATH"), "{text}");
+
+    let out = env
+        .command(&["--json", "setup"])
+        .env("PATH", &codex_only)
+        .output()
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["engine"]["level"], "fail", "{report:#}");
+    let detail = report["engine"]["detail"].as_str().unwrap();
+    assert!(detail.ends_with("(or choose a `codex` model)"), "{detail}");
+}
+
+/// aetherd writes its own `providers.toml` once it runs: an operator with
+/// none to share gets the same `aether links` verdict before and after.
+#[test]
+fn the_links_verdict_is_the_same_before_and_after_aetherd_writes_providers() {
+    let env = Env::new();
+    std::fs::remove_file(env.path("operator-aether/providers.toml")).unwrap();
+    env.run(&["setup"]);
+    let own = env.path("config/aether/providers.toml");
+    assert!(!own.exists(), "setup has nothing to link");
+    let links = |env: &Env| {
+        let out = env.command(&["--json", "doctor"]).output().unwrap();
+        let checks: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+        let found = checks.into_iter().find(|c| c["check"] == "aether links");
+        found.expect("doctor checks the links")
+    };
+    let before = links(&env);
+    std::fs::write(&own, "# written by aetherd\n").unwrap();
+    let after = links(&env);
+    assert_eq!(before["level"], "ok", "{before}");
+    assert_eq!(
+        before, after,
+        "the daemon's own providers.toml changes nothing"
+    );
 }

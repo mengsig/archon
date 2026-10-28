@@ -182,6 +182,7 @@ pub enum Command {
         query: EventQuery,
     },
     ListModels,
+    AuthStatus,
     Providers,
     McpServers {
         refresh: bool,

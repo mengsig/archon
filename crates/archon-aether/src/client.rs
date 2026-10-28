@@ -731,6 +731,11 @@ impl AetherClient {
         self.typed(Command::ListModels, "models").await
     }
 
+    /// Each enabled provider's login state, as `aether auth --json` prints it.
+    pub async fn auth_status(&self) -> Result<Vec<crate::auth::AuthInfo>, ArchonError> {
+        self.typed(Command::AuthStatus, "auth").await
+    }
+
     pub async fn providers(&self) -> Result<Vec<ProviderInfo>, ArchonError> {
         self.typed(Command::Providers, "providers").await
     }

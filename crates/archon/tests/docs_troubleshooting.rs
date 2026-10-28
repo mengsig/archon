@@ -156,7 +156,7 @@ const BLOCKERS: &[(&str, &str)] = &[
     ),
     (
         "crates/archon-daemon/src/supervisor/revival.rs",
-        "Archon revives it again at",
+        "Archon revives it again in",
     ),
     (
         "crates/archon-daemon/src/supervisor/revival.rs",
@@ -193,6 +193,11 @@ const BLOCKERS: &[(&str, &str)] = &[
     (
         "crates/archon/src/cmd/first_run.rs",
         "is on PATH, so agents cannot run yet",
+    ),
+    ("crates/archon-aether/src/auth.rs", "is not logged in: run"),
+    (
+        "crates/archon/src/cmd/doctor/mcp_tools.rs",
+        "aetherd runs a stale archon server",
     ),
     (
         "crates/archon/src/cmd/doctor.rs",

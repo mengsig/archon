@@ -798,7 +798,7 @@ async fn revive(
     let now = archon_core::now();
     if let Some(due) = backoff.deferred_until(now) {
         revival::schedule(ctx, due);
-        return Err(revival::deferred_error(&state, due));
+        return Err(revival::deferred_error(&state, due, now));
     }
     let _switch = switching(ctx).await;
     let (id, how) = match revive_now(ctx, client, &dead.id, &state).await {

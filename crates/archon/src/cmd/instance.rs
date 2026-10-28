@@ -29,6 +29,13 @@ use crate::setup;
 /// How long a launch waits for archond's status before a plain welcome.
 const WELCOME_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+/// How long a launch waits for an orchestrator archond cannot attach yet.
+const ATTACH_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+const ATTACH_RETRY: std::time::Duration = std::time::Duration::from_millis(250);
+/// The least time a request is given; any less could not be answered.
+const MIN_REQUEST_BUDGET: std::time::Duration = std::time::Duration::from_millis(100);
+/// How long a launch waits to learn whether the orchestrator has failed.
+const STATUS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 /// How long an aetherd about to be stopped may take to say which instance it is.
 const IDENTIFY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const HOST_COMMANDS: &str = "--host-commands";
@@ -88,6 +95,8 @@ async fn setup_dedicated(config: &Config, resync: bool, json: bool) -> anyhow::R
     let reloaded = running && reload_if_owed(&instance).await?;
     let aether = doctor::connect_aether(&effective_aether(&config.aether, &instance)).await;
     let health = doctor::check_mcp_health(aether.as_ref().ok()).await;
+    let model = &config.orchestrator.model;
+    let engine = doctor::engine::check_engine(aether.as_ref().ok(), model).await;
     if json {
         let links: serde_json::Map<_, _> = seeding
             .links
@@ -105,11 +114,13 @@ async fn setup_dedicated(config: &Config, resync: bool, json: bool) -> anyhow::R
             "running": running,
             "reloaded": reloaded,
             "mcp_health": doctor::check_json(&health),
+            "engine": doctor::check_json(&engine),
         }))
         .map(|()| ExitCode::SUCCESS);
     }
     print_seeding(&instance, &operator, &seeding);
     doctor::report(std::slice::from_ref(&health), false)?;
+    doctor::report_engine(&engine)?;
     let changed = seeding.config != ConfigOutcome::Unchanged;
     if reloaded {
         println!(
@@ -188,6 +199,7 @@ pub(super) fn link_text(state: &LinkState, source: &Path) -> String {
             format!("links to {}; run `archon setup`", target.display())
         }
         LinkState::OwnFile => "its own copy, not a link".to_owned(),
+        LinkState::OwnOnly => format!("its own ({} does not exist)", source.display()),
     }
 }
 
@@ -199,6 +211,7 @@ fn link_json(state: &LinkState) -> serde_json::Value {
         LinkState::Dangling => "dangling",
         LinkState::Elsewhere(_) => "elsewhere",
         LinkState::OwnFile => "own_file",
+        LinkState::OwnOnly => "own_only",
     };
     serde_json::Value::String(name.to_owned())
 }
@@ -478,22 +491,39 @@ fn missing_options<'a>(help: &str, args: impl Iterator<Item = &'a OsStr>) -> Vec
         .collect()
 }
 
+/// The orchestrator to open: the live one, or a failed one, whose error
+/// the terminal UI shows. A freshly started archond may serve before its
+/// Aether link is ready, so an unavailable one is asked again for a while.
 async fn attach(client: &archon_client::ArchonClient) -> anyhow::Result<AetherAgentId> {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + ATTACH_WAIT;
+    let mut budget = ATTACH_WAIT;
     loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        let timeout = remaining.max(std::time::Duration::from_millis(1));
-        match client
-            .request_within(Request::OrchestratorAttach, timeout)
+        assert!(
+            budget >= MIN_REQUEST_BUDGET,
+            "every attempt can be answered"
+        );
+        let reason = match client
+            .request_within(Request::OrchestratorAttach, budget)
             .await
         {
             Ok(Reply::Orchestrator(info)) => return Ok(info.agent),
             Ok(other) => return Err(crate::connect::unexpected(&other, "orchestrator")),
-            // A freshly started archond may serve before its Aether link is ready.
-            Err(ArchonError::Unavailable(_)) if tokio::time::Instant::now() < deadline => {
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-            }
+            Err(ArchonError::Unavailable(reason)) => reason,
             Err(error) => return Err(error.into()),
+        };
+        if let Some(info) = crate::connect::failed_orchestrator(client, STATUS_TIMEOUT).await? {
+            assert_eq!(info.status, crate::connect::FAILED);
+            eprintln!(
+                "archon: the orchestrator {} has failed ({reason}); the terminal UI shows its \
+                 error, and `archon doctor` names the fix.",
+                info.agent
+            );
+            return Ok(info.agent);
+        }
+        tokio::time::sleep(ATTACH_RETRY).await;
+        budget = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if budget < MIN_REQUEST_BUDGET {
+            return Err(ArchonError::Unavailable(reason).into());
         }
     }
 }

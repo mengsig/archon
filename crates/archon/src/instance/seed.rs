@@ -48,6 +48,9 @@ pub enum LinkState {
     Elsewhere(PathBuf),
     /// A real file (Aether replaced the link, or someone put it there).
     OwnFile,
+    /// A real file where the operator has none to share: Archon's own
+    /// Aether wrote it, as a fresh dedicated instance does.
+    OwnOnly,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -356,7 +359,10 @@ pub fn inspect_link(source_dir: &Path, dest_dir: &Path, name: &str) -> anyhow::R
         Err(e) => return Err(anyhow::Error::new(e).context(format!("checking {}", dest.display()))),
     };
     if !meta.file_type().is_symlink() {
-        return Ok(LinkState::OwnFile);
+        return Ok(match source_exists {
+            true => LinkState::OwnFile,
+            false => LinkState::OwnOnly,
+        });
     }
     let target =
         std::fs::read_link(&dest).with_context(|| format!("reading {}", dest.display()))?;

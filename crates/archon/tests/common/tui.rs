@@ -14,25 +14,50 @@ use archon_core::protocol::{
 };
 
 pub fn orchestrator() -> Reply {
+    orchestrator_in("agt_selected", "ready")
+}
+
+/// The orchestrator `agent` in Aether state `status`.
+pub fn orchestrator_in(agent: &str, status: &str) -> Reply {
     Reply::Orchestrator(OrchestratorInfo {
-        agent: AetherAgentId::parse("agt_selected").unwrap(),
+        agent: AetherAgentId::parse(agent).unwrap(),
         model: ModelRef::new("codex", "gpt-6.1-sol"),
         effort: Effort::High,
-        status: "ready".into(),
+        status: status.into(),
         restarts: 0,
         generation: 1,
         freshness: None,
     })
 }
 
+/// `orchestrator_attach` and `orchestrator_status` take the scripted
+/// `replies` in turn; all of them must be asked for.
 pub fn serve(
     socket: &Path,
     connections: usize,
     replies: Vec<Result<Reply, ErrorReply>>,
 ) -> JoinHandle<Vec<Request>> {
+    let mut replies = replies.into_iter();
+    serve_with(socket, connections, move |request| match request {
+        Some(request) => replies
+            .next()
+            .unwrap_or_else(|| panic!("no scripted reply for {request:?}")),
+        None => {
+            assert!(replies.next().is_none(), "all replies consumed");
+            Ok(Reply::Ok)
+        }
+    })
+}
+
+/// As [`serve`], with `answer` replying to the orchestrator requests; it is
+/// called once more with `None` when the last connection closed.
+pub fn serve_with(
+    socket: &Path,
+    connections: usize,
+    mut answer: impl FnMut(Option<&Request>) -> Result<Reply, ErrorReply> + Send + 'static,
+) -> JoinHandle<Vec<Request>> {
     let listener = UnixListener::bind(socket).unwrap();
     std::thread::spawn(move || {
-        let mut replies = replies.into_iter();
         let mut requests = Vec::new();
         for _ in 0..connections {
             let (mut writer, _) = listener.accept().unwrap();
@@ -52,7 +77,9 @@ pub fn serve(
                             pid: std::process::id(),
                         }))
                     }
-                    Request::OrchestratorAttach => replies.next().expect("a scripted attach reply"),
+                    Request::OrchestratorAttach | Request::OrchestratorStatus => {
+                        answer(Some(&frame.request))
+                    }
                     Request::Status(_) => Err(ErrorReply {
                         code: ErrorCode::Internal,
                         message: "no status in this canned archond".into(),
@@ -67,7 +94,7 @@ pub fn serve(
                 writeln!(writer, "{}", serde_json::to_string(&reply).unwrap()).unwrap();
             }
         }
-        assert!(replies.next().is_none(), "all replies consumed");
+        let _ = answer(None);
         requests
     })
 }

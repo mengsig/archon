@@ -88,7 +88,12 @@ aetherd that serves protocol 24, but only Aether 1.2.5 is supported with it.
 ## Other programs Archon uses
 
 The installer names each of these that is missing; it installs none of
-them. `archon doctor` checks the ones your configuration needs.
+them. `archon doctor` checks the ones your configuration needs. Its `engine`
+check fails, naming the login command, when the orchestrator's engine is not
+logged in, and `archon setup` says so too: a machine with only `codex` is told
+that the default orchestrator model (`claude-code`) is unavailable, and to
+choose a `codex` model. The doctor's `release` check reads the same public
+`VERSION` file as `archon update --check`, so it needs no `gh`.
 If you are already signed in to Claude Code or Codex, neither Archon nor Aether needs a separate login for that engine.
 
 | Program | Used for | Required? | Install |

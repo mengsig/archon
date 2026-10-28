@@ -31,6 +31,8 @@ use crate::style::{Palette, Style, terminal_width};
 /// sees them after the prompt, so the echo is not printed twice.
 const MAX_PENDING_ECHOES: usize = 16;
 const HISTORY_FILE: &str = "chat_history";
+/// How long leaving the chat waits to learn whether the orchestrator failed.
+const STATUS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Flow {
@@ -138,13 +140,31 @@ impl Chat {
                             if let Some(warning) = unsent {
                                 self.warn(&warning)?;
                             }
-                            return Ok(ExitCode::SUCCESS);
+                            return self.exit_code(link.client()).await;
                         }
                     },
                 },
                 event = link.next(self.last_seq) => self.on_link(event, &link).await?,
             }
         }
+    }
+
+    /// Failure while the orchestrator has failed, so a script learns that
+    /// it cannot answer; success otherwise.
+    async fn exit_code(&mut self, client: Option<&ArchonClient>) -> anyhow::Result<ExitCode> {
+        let Some(client) = client else {
+            return Ok(ExitCode::SUCCESS);
+        };
+        let Some(info) = crate::connect::failed_orchestrator(client, STATUS_TIMEOUT).await? else {
+            return Ok(ExitCode::SUCCESS);
+        };
+        assert_eq!(info.status, crate::connect::FAILED);
+        self.error(&format!(
+            "the orchestrator {} has failed and cannot answer: `archon doctor` names the \
+             fix, and `archon orchestrator restart` starts a fresh one",
+            info.agent
+        ))?;
+        Ok(ExitCode::FAILURE)
     }
 
     async fn on_input(&mut self, event: InputEvent, link: &Link) -> anyhow::Result<Flow> {
@@ -540,5 +560,38 @@ mod tests {
         );
         chat.resync(Some(&client)).await.unwrap();
         chat.resync(None).await.unwrap();
+    }
+
+    fn orchestrator_in(status: &str) -> Reply {
+        Reply::Orchestrator(archon_core::protocol::OrchestratorInfo {
+            agent: archon_core::aether_ids::AetherAgentId::parse("agt_failed").unwrap(),
+            model: archon_core::model::ModelRef::new("claude-code", "claude-opus-5-5"),
+            effort: archon_core::model::Effort::High,
+            status: status.into(),
+            restarts: 0,
+            generation: 1,
+            freshness: None,
+        })
+    }
+
+    #[tokio::test]
+    async fn chat_ends_with_a_failure_while_the_orchestrator_has_failed() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("failed.sock");
+        let failed = Some(Ok(orchestrator_in("failed")));
+        let (client, server) = client_of_a_daemon_answering_once(&socket, failed).await;
+        let code = quiet_chat().exit_code(Some(&client)).await.unwrap();
+        assert_eq!(code, ExitCode::FAILURE);
+        assert!(matches!(server.await.unwrap(), Request::OrchestratorStatus));
+
+        let socket = dir.path().join("ready.sock");
+        let ready = Some(Ok(orchestrator_in("ready")));
+        let (client, _server) = client_of_a_daemon_answering_once(&socket, ready).await;
+        let code = quiet_chat().exit_code(Some(&client)).await.unwrap();
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert_eq!(
+            quiet_chat().exit_code(None).await.unwrap(),
+            ExitCode::SUCCESS
+        );
     }
 }

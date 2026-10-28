@@ -317,7 +317,7 @@ async fn prepare(
     let source = Source::from_env()?;
     let wanted = match &args.version {
         Some(text) => text.parse()?,
-        None => latest(&source).await?,
+        None => latest(&source, SMALL_FILE_TIMEOUT).await?,
     };
     let step = Step::decide(&current, &wanted, args.version.is_some());
     let installs = matches!(step, Step::Upgrade | Step::Downgrade);
@@ -384,12 +384,17 @@ fn standing(step: Step, current: &Version, wanted: &Version) -> (&'static str, S
     }
 }
 
-/// The latest release's version, from its `VERSION` asset.
-async fn latest(source: &Source) -> anyhow::Result<Version> {
+/// The latest release's version, as `--check` looks it up: no GitHub login needed.
+pub(super) async fn latest_release(limit: Duration) -> anyhow::Result<Version> {
+    latest(&Source::from_env()?, limit).await
+}
+
+/// The latest release's version, from its `VERSION` asset, within `limit`.
+async fn latest(source: &Source, limit: Duration) -> anyhow::Result<Version> {
     let dir = tempfile::tempdir().context("creating a temporary directory")?;
     let path = dir.path().join("VERSION");
     let url = source.latest_version_url();
-    tools::download(&url, &path, SMALL_FILE_TIMEOUT).await?;
+    tools::download(&url, &path, limit).await?;
     let text = read_small(&path).with_context(|| format!("reading {url}"))?;
     text.trim()
         .parse()

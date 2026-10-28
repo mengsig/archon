@@ -74,8 +74,8 @@ The daemon did not answer the change within the MCP call's 15 s budget, but may 
 ## The orchestrator or Aether is down
 
 - **"Archon's own aetherd is not running, and archond could not start it"** archond retries every few minutes. `archon daemon start` tries at once and says what fails; `archon doctor` checks the setup.
-- **"Archon revives it again at"** The orchestrator is stopped or failing, and the next automatic revival is at the time shown. `archon orchestrator` shows its state; `archon orchestrator restart` starts a fresh one now.
-- **"Archon keeps reviving it, waiting longer each time"** The orchestrator stopped many times in a row. Its news is held until it recovers; item outcomes still appear. Read `archond.log`, then run `archon orchestrator restart`.
+- **"Archon revives it again in"** The orchestrator is stopped or failing, and the next automatic revival is that many seconds away; "Archon is reviving it now" means it is already due. `archon orchestrator` shows its state; `archon orchestrator restart` starts a fresh one now.
+- **"Archon keeps reviving it, waiting longer each time"** The orchestrator stopped many times in a row. Its news is held until it recovers; item outcomes still appear. When the notice says its engine `is not logged in`, run the command it names (for example `claude` once), or set `[orchestrator] model` to a provider that is logged in; the next revival picks it up. Otherwise read `archond.log`, then run `archon orchestrator restart`.
 - **"minutes without a message, tool result or usage update"** The orchestrator's turn looks hung. Run `archon orchestrator restart`; ignore the notice if you know it is waiting on a long command.
 - **"Archon will not start the orchestrator:"** `[orchestrator] model` is outside your model policy. Change `[orchestrator] model` or `[models]` in the config, then `archon orchestrator restart`.
 - **"Archon could not bring back the archon MCP server in Aether"** The orchestrator has none of Archon's tools. `archon doctor` shows the server's state; heal it by hand with `archon aether mcp refresh archon`, then `archon orchestrator restart`.
@@ -87,12 +87,16 @@ The daemon did not answer the change within the MCP call's 15 s budget, but may 
 ## An engine is not logged in
 
 - **"is on PATH, so agents cannot run yet"** Neither `claude` nor `codex` is installed. Install one, log in by running it once, then run `archon` again.
+- **"is not logged in: run"** (`archon doctor`'s `engine` check, `archon setup`, and the orchestrator's revival blocker) The orchestrator's engine has no login. Run the command it names, for example `claude` once, or set `[orchestrator] model` to the logged-in engine it suggests. Restarting the orchestrator does not help until then.
+- **"aetherd runs a stale archon server"** (an `archon doctor` warning) Aether still serves the tools of an older Archon. Run the one command it names: `archon aether mcp refresh archon` for Archon's own Aether, `aether mcp refresh archon` with `--shared`.
 - **"`archon aether login <provider>` if Archon needs it"** (an `archon doctor` warning) Archon's own Aether does not share your Aether credentials. Run `archon aether login <provider>` for the provider you use.
 - **"Waiting for provider quota: every provider stage"** (not a blocker) Every provider the stage may use is out of quota or not usable. It starts once one has quota again. Name another provider or model with `archon queue steer <id> --model <PROVIDER/MODEL>`.
 
 ## `archon tui` times out attaching
 
-**"try `archon tui` again after Aether reconnects"** comes with `archond did not answer` … `within 5s`: archond is up but its link to Aether or the orchestrator is not ready. Run `archon status` and `archon doctor`, wait for Aether to reconnect, then run `archon tui` again. If the orchestrator is failing, `archon orchestrator restart`.
+**"try `archon tui` again after Aether reconnects"** comes with archond's reason, such as `archond did not answer` … `within`: archond is up but its link to Aether or the orchestrator stayed unavailable for 5 seconds. Run `archon status` and `archon doctor`, wait for Aether to reconnect, then run `archon tui` again.
+
+A failed orchestrator is not a timeout: `archon tui` opens the TUI on it, so its error is on screen, and `archon chat` exits with 1. `archon doctor` names the fix; when it is not a login, `archon orchestrator restart` starts a fresh one.
 
 ## `archon update` seems to hang
 

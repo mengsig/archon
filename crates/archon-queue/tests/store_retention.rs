@@ -401,14 +401,16 @@ fn an_entry_a_sweep_still_owes_keeps_its_item() {
         QueueState::Cancelled { reason: None },
         t(40),
     );
-    let node = format!("run_node:{}", run.id);
-    let stop = format!("descendant_stop:{}", stage.id);
-    store.kv_set(&node, "{}").unwrap();
-    store.kv_set(&stop, "{}").unwrap();
-    let release = format!("build_release:{}", queued.id);
-    store.kv_set(&release, "repo").unwrap();
+    let owed = [
+        format!("run_node:{}", run.id),
+        format!("steer_owed:{}", stage.id),
+        format!("sibling_stop:{}", stage.id),
+        format!("descendant_stop:{}", stage.id),
+        format!("build_release:{}", queued.id),
+    ];
 
-    for key in [node, stop, release] {
+    for key in owed {
+        store.kv_set(&key, "{}").unwrap();
         let pruned = store.prune_history(cutoff(), 10, |_, _| false).unwrap();
         assert_eq!(
             pruned.items, 0,

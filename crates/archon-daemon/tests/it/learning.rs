@@ -252,7 +252,7 @@ async fn distillation_reads_a_window_whose_older_items_retention_deleted() {
         .store
         .lock()
         .await
-        .prune_history(later, 10, |_| false)
+        .prune_history(later, 10, |_, _| false)
         .unwrap();
     assert_eq!(pruned.items, 1, "{pruned:?}");
 

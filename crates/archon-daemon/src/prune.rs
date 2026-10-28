@@ -4,7 +4,7 @@
 //! Outcomes and lessons stay for learning.
 
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -183,10 +183,15 @@ pub fn history_cutoff(config: &Config, now: Timestamp) -> Result<Option<Timestam
 }
 
 /// Delete settled history a batch per store lock, then hand the freed pages
-/// back and cut the WAL back. A run workspace on disk keeps its item for gc.
+/// back and cut the WAL back. What gc still finds through an item keeps it.
 async fn prune_history(ctx: &DaemonContext, now: Timestamp) -> Result<HistoryPruned, ArchonError> {
     let Some(before) = history_cutoff(&ctx.config, now)? else {
         return Ok(HistoryPruned::default());
+    };
+    let artifacts = ctx.paths.artifacts();
+    let gc_finds = |item: &str, workspaces: &[PathBuf]| {
+        assert!(!item.contains('/'), "an item id is one path component");
+        on_disk(&artifacts.join(item)) || workspaces.iter().any(|w| workspace_on_disk(w))
     };
     let mut pruned = HistoryPruned::default();
     for _ in 0..HISTORY_BATCHES {
@@ -194,7 +199,7 @@ async fn prune_history(ctx: &DaemonContext, now: Timestamp) -> Result<HistoryPru
             .store
             .lock()
             .await
-            .prune_history(before, HISTORY_BATCH, on_disk)?;
+            .prune_history(before, HISTORY_BATCH, gc_finds)?;
         assert!(batch.items <= HISTORY_BATCH && batch.feed <= HISTORY_BATCH);
         pruned.absorb(batch);
         if batch.items < HISTORY_BATCH && batch.feed < HISTORY_BATCH {
@@ -216,12 +221,16 @@ async fn prune_history(ctx: &DaemonContext, now: Timestamp) -> Result<HistoryPru
 }
 
 /// Whether gc may still find something through the run workspace `path`: it
-/// or a flat copy a fresh retry set aside beside it. Unknown counts as yes.
+/// or a flat copy a fresh retry set aside beside it.
+fn workspace_on_disk(path: &Path) -> bool {
+    on_disk(path) || set_aside_beside(path)
+}
+
+/// Whether `path` may still exist: only a path known to be missing is not.
 fn on_disk(path: &Path) -> bool {
     match path.symlink_metadata() {
         Ok(_) => true,
-        Err(error) if error.kind() != ErrorKind::NotFound => true,
-        Err(_) => set_aside_beside(path),
+        Err(error) => error.kind() != ErrorKind::NotFound,
     }
 }
 

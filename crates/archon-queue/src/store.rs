@@ -857,12 +857,13 @@ impl Store {
     /// Deletes invisible feed rows and settled items, with what they own,
     /// older than `before`: at most `limit` of each, an item only with the
     /// items naming it. Outcomes, lesson uses, the items anything live or open
-    /// names, and those with a run workspace `on_disk` says gc still needs, stay.
+    /// names, and those `on_disk` says gc still finds something through, given the
+    /// item id and its runs' workspaces and team roots, stay.
     pub fn prune_history(
         &mut self,
         before: Timestamp,
         limit: usize,
-        on_disk: impl Fn(&std::path::Path) -> bool,
+        on_disk: impl Fn(&str, &[std::path::PathBuf]) -> bool,
     ) -> Result<HistoryPruned, ArchonError> {
         retention::prune(self, &before, limit, &on_disk)
     }

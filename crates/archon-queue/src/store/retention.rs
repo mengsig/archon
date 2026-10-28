@@ -5,12 +5,12 @@
 //! item through a dependency or stack, an open gate, an open question, an open
 //! merge request, an operator correction, a live initiative, a report record
 //! or a distillation whose lessons are not applied yet.
-//! An item stays while a workspace of its runs is on disk, as gc finds it
-//! through the item. A batch takes an item only with every item naming it. Spend of the days budgets still count stays, and what
+//! An item stays while gc may still find something of it on disk, such as a
+//! run workspace, through the item. A batch takes an item only with every item naming it. Spend of the days budgets still count stays, and what
 //! goes is carried in `spend_pruned`.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::path::PathBuf;
 
 use archon_core::Timestamp;
 use archon_core::error::ArchonError;
@@ -86,14 +86,18 @@ DELETE FROM temp.prune_items WHERE id IN (
     UNION SELECT r.item FROM stacks s JOIN runs r ON r.id = s.run
     WHERE s.item NOT IN (SELECT id FROM temp.prune_items))";
 
+/// Whether gc may still find something on disk through an item, given its id
+/// and its runs' workspaces and team roots.
+pub(super) type OnDisk<'a> = dyn Fn(&str, &[PathBuf]) -> bool + 'a;
+
 /// Delete the history older than `before`, at most `limit` items with all
 /// they own, dependents first, in one transaction. `on_disk` says whether gc may
-/// still find something on disk through a run workspace path.
+/// still find something on disk through an item.
 pub(super) fn prune(
     store: &mut Store,
     before: &Timestamp,
     limit: usize,
-    on_disk: &dyn Fn(&Path) -> bool,
+    on_disk: &OnDisk<'_>,
 ) -> Result<HistoryPruned, ArchonError> {
     assert!(limit > 0, "a call prunes something");
     let limit = i64::try_from(limit).expect("a batch fits an i64");
@@ -132,7 +136,7 @@ fn choose_items(
     cutoff: &str,
     cutoff_day: &str,
     limit: i64,
-    on_disk: &dyn Fn(&Path) -> bool,
+    on_disk: &OnDisk<'_>,
 ) -> Result<usize, ArchonError> {
     tx.execute_batch(
         "CREATE TEMP TABLE prune_items (id TEXT PRIMARY KEY);
@@ -159,40 +163,40 @@ fn choose_items(
     Ok(usize::try_from(chosen).expect("a count is not negative"))
 }
 
-/// Leave out every candidate a workspace of whose runs is still on disk.
-fn leave_out_on_disk(
-    tx: &Transaction<'_>,
-    on_disk: &dyn Fn(&Path) -> bool,
-) -> Result<(), ArchonError> {
+/// Leave out every candidate `on_disk` says gc still finds something through,
+/// given the item and its runs' workspaces and team roots.
+fn leave_out_on_disk(tx: &Transaction<'_>, on_disk: &OnDisk<'_>) -> Result<(), ArchonError> {
     let mut runs = tx
         .prepare(
-            "SELECT r.item, json_extract(r.data, '$.workspace'), json_extract(r.data, '$.team_root')
-             FROM runs r WHERE r.item IN (SELECT id FROM temp.prune_items)",
+            "SELECT p.id, json_extract(r.data, '$.workspace'), json_extract(r.data, '$.team_root')
+             FROM temp.prune_items p LEFT JOIN runs r ON r.item = p.id",
         )
         .ctx("prepare the workspaces of the items to prune")?;
     let mut rows = runs
         .query([])
         .ctx("read the workspaces of the items to prune")?;
-    let mut held = BTreeSet::new();
+    let mut workspaces: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
     while let Some(row) = rows.next().ctx("read a workspace to prune")? {
         let item: String = row.get(0).ctx("read the item to prune")?;
         let workspace: Option<String> = row.get(1).ctx("read a run workspace")?;
         let team_root: Option<String> = row.get(2).ctx("read a run's team root")?;
-        if [workspace, team_root]
-            .iter()
-            .flatten()
-            .any(|path| on_disk(Path::new(path)))
-        {
-            held.insert(item);
-        }
+        let paths = workspaces.entry(item).or_default();
+        paths.extend(
+            [workspace, team_root]
+                .into_iter()
+                .flatten()
+                .map(PathBuf::from),
+        );
     }
     drop(rows);
     let mut leave = tx
         .prepare("DELETE FROM temp.prune_items WHERE id = ?1")
         .ctx("prepare leaving out an item on disk")?;
-    for item in &held {
-        let left = leave.execute([item]).ctx("leave out an item on disk")?;
-        assert_eq!(left, 1, "a held item was a candidate");
+    for (item, paths) in &workspaces {
+        if on_disk(item, paths) {
+            let left = leave.execute([item]).ctx("leave out an item on disk")?;
+            assert_eq!(left, 1, "a held item was a candidate");
+        }
     }
     Ok(())
 }

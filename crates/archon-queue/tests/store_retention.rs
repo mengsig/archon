@@ -4,7 +4,7 @@
 mod common;
 
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use archon_core::error::ArchonError;
 use archon_core::id::{NotificationId, QuestionId};
@@ -102,7 +102,7 @@ fn old_settled_items_go_with_their_history_and_learning_and_budgets_stay() {
     let learned = store.outcome(&old_run.id).unwrap();
     assert!(learned.is_some(), "the old run's outcome is recorded");
 
-    let pruned = store.prune_history(cutoff(), 100, |_| false).unwrap();
+    let pruned = store.prune_history(cutoff(), 100, |_, _| false).unwrap();
     assert_eq!((pruned.items, pruned.runs, pruned.stage_runs), (1, 1, 1));
     assert_eq!((pruned.spend, pruned.feed, pruned.kv), (1, 1, 2));
     assert!(gone(store.item(&old.id)), "the old settled item goes");
@@ -145,7 +145,7 @@ fn old_settled_items_go_with_their_history_and_learning_and_budgets_stay() {
     );
     assert_eq!(
         store
-            .prune_history(cutoff(), 100, |_| false)
+            .prune_history(cutoff(), 100, |_, _| false)
             .unwrap()
             .total(),
         0
@@ -174,7 +174,10 @@ fn spend_of_a_day_budgets_still_count_keeps_its_item() {
     assert!(today > 0.0, "the late charge falls on the cutoff's day");
 
     assert_eq!(
-        store.prune_history(cutoff(), 100, |_| false).unwrap().items,
+        store
+            .prune_history(cutoff(), 100, |_, _| false)
+            .unwrap()
+            .items,
         0
     );
     store
@@ -193,7 +196,10 @@ fn a_pass_prunes_a_bounded_batch_newest_first() {
         .map(|n| settled_item(&mut store, n, 1.0, 30, 40 + i64::from(n)))
         .collect();
     assert_eq!(
-        store.prune_history(cutoff(), 2, |_| false).unwrap().items,
+        store
+            .prune_history(cutoff(), 2, |_, _| false)
+            .unwrap()
+            .items,
         2
     );
     assert!(gone(store.item(&items[1].id)) && gone(store.item(&items[2].id)));
@@ -201,7 +207,10 @@ fn a_pass_prunes_a_bounded_batch_newest_first() {
         .item(&items[0].id)
         .expect("the oldest waits for the next batch");
     assert_eq!(
-        store.prune_history(cutoff(), 2, |_| false).unwrap().items,
+        store
+            .prune_history(cutoff(), 2, |_, _| false)
+            .unwrap()
+            .items,
         1
     );
     assert!(gone(store.item(&items[0].id)));
@@ -222,7 +231,7 @@ fn a_dependency_chain_longer_than_a_batch_goes_over_passes() {
     }
 
     for (pass, expected) in [3, 3, 1].into_iter().enumerate() {
-        let pruned = store.prune_history(cutoff(), 3, |_| false).unwrap();
+        let pruned = store.prune_history(cutoff(), 3, |_, _| false).unwrap();
         assert_eq!(pruned.items, expected, "pass {pass} makes progress");
         let (left, went) = chain.split_at(7 - [3, 6, 7][pass]);
         assert!(left.iter().all(|i| store.item(&i.id).is_ok()));
@@ -264,10 +273,10 @@ fn a_cycle_through_a_stack_and_an_edited_dependency_goes_whole() {
         store.transition_item(id, cancelled, t(20)).unwrap();
     }
 
-    let pruned = store.prune_history(cutoff(), 1, |_| false).unwrap();
+    let pruned = store.prune_history(cutoff(), 1, |_, _| false).unwrap();
     assert_eq!(pruned.items, 0, "a cycle goes whole or waits for room");
     assert!(store.item(&a.id).is_ok() && store.item(&b.id).is_ok());
-    let pruned = store.prune_history(cutoff(), 2, |_| false).unwrap();
+    let pruned = store.prune_history(cutoff(), 2, |_, _| false).unwrap();
     assert_eq!(pruned.items, 2);
     assert!(gone(store.item(&a.id)) && gone(store.item(&b.id)));
 }
@@ -279,14 +288,17 @@ fn an_item_gc_still_needs_stays_until_gc_is_done_with_it() {
     let reported = settled_item(&mut store, 2, 1.0, 30, 50);
     let report = format!(r#"{{"html":"/r/a.html","item":"{}"}}"#, reported.id);
     store.kv_set("report:rpt_1", &report).unwrap();
-    let on_disk = |path: &Path| path == Path::new("/wt/alpha/x");
+    let on_disk = |_: &str, paths: &[PathBuf]| paths.iter().any(|p| p == Path::new("/wt/alpha/x"));
 
     assert_eq!(store.prune_history(cutoff(), 10, on_disk).unwrap().items, 0);
     store
         .item(&worktree.id)
         .expect("gc finds a worktree through its item");
     assert_eq!(
-        store.prune_history(cutoff(), 10, |_| false).unwrap().items,
+        store
+            .prune_history(cutoff(), 10, |_, _| false)
+            .unwrap()
+            .items,
         1
     );
     assert!(
@@ -301,7 +313,7 @@ fn an_item_gc_still_needs_stays_until_gc_is_done_with_it() {
     store
         .kv_set("report:rpt_2", r#"{"html":"/r/b.html","item":null}"#)
         .unwrap();
-    let pruned = store.prune_history(cutoff(), 10, |_| false).unwrap();
+    let pruned = store.prune_history(cutoff(), 10, |_, _| false).unwrap();
     assert_eq!(pruned.items, 1, "a report of no item keeps none");
     assert!(gone(store.item(&reported.id)));
 }
@@ -329,7 +341,10 @@ fn a_pruned_outcome_keeps_the_cost_settled_after_it_was_captured() {
     let stats = store.learning_stats(None).unwrap();
 
     assert_eq!(
-        store.prune_history(cutoff(), 10, |_| false).unwrap().runs,
+        store
+            .prune_history(cutoff(), 10, |_, _| false)
+            .unwrap()
+            .runs,
         1
     );
     let kept = store.outcome(&run.id).unwrap().unwrap();
@@ -348,13 +363,19 @@ fn a_distillation_stays_until_its_lessons_are_applied() {
     let run = store.runs_for_item(&distilled.id).unwrap().remove(0);
 
     assert_eq!(
-        store.prune_history(cutoff(), 10, |_| false).unwrap().items,
+        store
+            .prune_history(cutoff(), 10, |_, _| false)
+            .unwrap()
+            .items,
         0
     );
     let applied = format!("learning/applied/{}", run.id);
     store.kv_set(&applied, "1").unwrap();
     assert_eq!(
-        store.prune_history(cutoff(), 10, |_| false).unwrap().items,
+        store
+            .prune_history(cutoff(), 10, |_, _| false)
+            .unwrap()
+            .items,
         1
     );
     assert!(

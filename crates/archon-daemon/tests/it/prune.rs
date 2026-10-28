@@ -581,6 +581,11 @@ async fn settled_history_goes_past_the_retention_once_gc_removed_its_workspace()
         "gc finds a set-aside copy through it"
     );
     std::fs::remove_dir_all(&aside).unwrap();
+    let published = h.ctx.paths.artifacts().join(done.as_str());
+    std::fs::create_dir_all(&published).unwrap();
+    let pruned = prune_at(&h, later).await;
+    assert_eq!(pruned.history.items, 0, "gc expires artifacts through it");
+    std::fs::remove_dir_all(&published).unwrap();
 
     let pruned = prune_at(&h, later).await;
     assert_eq!(

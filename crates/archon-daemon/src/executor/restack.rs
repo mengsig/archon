@@ -517,8 +517,9 @@ async fn merge_parent(
     Ok(())
 }
 
-/// Keep worktree gc off `item`'s worktree while its branch is restacked,
-/// unless `run` is no longer its last or the item changed since it was read.
+/// Keep worktree gc and fix dispatch off `item`'s worktree while its branch
+/// is restacked, unless `run` is no longer its last, the item changed since it
+/// was read, or a restack fix or refresh, checked under the same locks, works there.
 pub(super) async fn mark_current(
     ctx: &DaemonContext,
     item: &QueueItem,
@@ -529,6 +530,7 @@ pub(super) async fn mark_current(
     let store = ctx.store.lock().await;
     if store.item(&item.id)?.state != item.state
         || store.runs_for_item(&item.id)?.last().map(|r| &r.id) != Some(&run.id)
+        || store.has_pending_stack_fix(&item.id)?
     {
         return Ok(None);
     }

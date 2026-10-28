@@ -3,6 +3,8 @@
 import { h } from './ui/dom.js';
 import { icon } from './ui/icons.js';
 import { createRouter } from './core/router.js';
+import { toast } from './ui/toast.js';
+import { describeError } from './ui/components.js';
 import { mountQueue } from './features/queue/queue.js';
 import { mountItem } from './features/item/item.js';
 import { mountInbox } from './features/inbox/inbox.js';
@@ -47,6 +49,7 @@ export function mountShell(root, app, { onForget }) {
   const offs = [
     app.store.watch((s) => s.connection, (connection) => renderBanner(banner, connection, app)),
     app.store.watch((s) => s.questions, (questions) => tabbar.badge(openCount(questions))),
+    app.store.watch((s) => s.errors.protocol, (err) => err && toast(describeError(err), { tone: 'red' })),
   ];
   router.start();
   return () => {

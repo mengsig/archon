@@ -142,7 +142,7 @@ where
         let step = tokio::select! {
             biased;
             _ = registration.closed.changed() => Err(closed(registration)),
-            Some(frame) = frames.recv() => send(socket, &frame).await,
+            Some(frame) = frames.recv() => unless_closed(registration, send(socket, &frame)).await,
             incoming = socket.next() => match incoming {
                 Some(Err(tokio_tungstenite::tungstenite::Error::Capacity(_))) => {
                     Err(Ended::Violation(CloseCode::Size, "message too large"))
@@ -155,13 +155,25 @@ where
             },
             _ = ping.tick() => match heard.elapsed() > SILENT_AFTER {
                 true => Err(Ended::Violation(CloseCode::Away, "silent too long")),
-                false => send_message(socket, Message::Ping(Default::default())).await,
+                false => unless_closed(registration, send_message(socket, Message::Ping(Default::default()))).await,
             },
             Some(_) = session.tasks.join_next() => Ok(()),
         };
         if let Err(ended) = step {
             return ended;
         }
+    }
+}
+
+/// A write to the device, abandoned as soon as archond closes the session.
+async fn unless_closed(
+    registration: &mut Registration,
+    sending: impl std::future::Future<Output = Result<(), Ended>>,
+) -> Result<(), Ended> {
+    tokio::select! {
+        biased;
+        _ = registration.closed.changed() => Err(closed(registration)),
+        sent = sending => sent,
     }
 }
 

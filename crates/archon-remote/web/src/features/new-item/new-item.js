@@ -40,7 +40,9 @@ export function openNewItem(ctx) {
     submitItem({ ctx, draft, controls, error, submit, sheet });
   });
   loadPipelines(draft.repo);
-  if (repos.length === 0) error.textContent = 'No repository is registered yet. Register one on the host, or pick a pipeline that needs none.';
+  const failed = ctx.store.get().errors.repos;
+  if (failed) error.textContent = `The repositories did not load: ${describeError(failed)}`;
+  else if (repos.length === 0) error.textContent = 'No repository is registered yet. Register one on the host, or pick a pipeline that needs none.';
 }
 
 function buildControls(repos, draft) {

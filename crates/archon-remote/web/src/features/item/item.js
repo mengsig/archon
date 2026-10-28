@@ -29,6 +29,7 @@ export function mountItem(view, ctx) {
   let alive = true;
   let detail = null;
   let artifacts = null;
+  let artifactsAt = null;
 
   const reload = async () => {
     try {
@@ -45,7 +46,12 @@ export function mountItem(view, ctx) {
   };
   const render = () => {
     const state = ctx.store.get();
-    artifacts ??= artifactsSection(ctx, id);
+    // Listed again once a stage has finished since, as it may have published files.
+    const finished = detail.stages.filter((s) => s.state?.state !== 'running' && s.state?.state !== 'spawning').length;
+    if (artifactsAt !== finished) {
+      artifacts = artifactsSection(ctx, id);
+      artifactsAt = finished;
+    }
     view.querySelector('.screen-title').textContent = detail.item.title;
     content.replaceChildren(...renderDetail(ctx, detail, state, { reload, artifacts }));
   };
@@ -53,7 +59,7 @@ export function mountItem(view, ctx) {
   const off = ctx.store.watch((s) => summaryOf(s, id)?.updated_at, (updated) => {
     if (detail && updated && updated !== detail.item.updated_at) reload();
   });
-  const offReports = ctx.store.watch((s) => [s.reports, s.status?.pause], () => detail && render());
+  const offReports = ctx.store.watch((s) => [s.reports, s.errors.reports, s.status?.pause], () => detail && render());
   reload();
   return () => { alive = false; off(); offReports(); };
 }
@@ -78,7 +84,7 @@ function renderDetail(ctx, detail, state, { reload, artifacts }) {
     section('Stages', stagesTimeline(detail)),
     gatesSection(detail),
     section('Artifacts', artifacts),
-    reportsSection(state.reports, item.id),
+    reportsSection(ctx, state, item.id),
   ];
 }
 
@@ -143,8 +149,11 @@ function gatesSection(detail) {
   })));
 }
 
-function reportsSection(reports, itemId) {
-  const mine = (reports ?? []).filter((r) => r.item === itemId);
+function reportsSection(ctx, state, itemId) {
+  if (state.errors.reports) {
+    return section('Reports', card(errorNote(state.errors.reports, () => ctx.refresh.one('reports'))));
+  }
+  const mine = (state.reports ?? []).filter((r) => r.item === itemId);
   if (mine.length === 0) return null;
   return section('Reports', card(...mine.map((report) => {
     const url = safeHttpUrl(report.location);

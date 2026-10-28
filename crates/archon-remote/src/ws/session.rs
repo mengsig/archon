@@ -137,6 +137,7 @@ where
     let mut ping = tokio::time::interval(PING_EVERY);
     let mut heard = tokio::time::Instant::now();
     loop {
+        reap(&mut session.tasks);
         // Biased: a revoke or a disable first, then draining replies before
         // reading more, so only a device that stops reading fills the outbox.
         let step = tokio::select! {
@@ -157,10 +158,23 @@ where
                 true => Err(Ended::Violation(CloseCode::Away, "silent too long")),
                 false => unless_closed(registration, send_message(socket, Message::Ping(Default::default()))).await,
             },
-            Some(_) = session.tasks.join_next() => Ok(()),
         };
         if let Err(ended) = step {
             return ended;
+        }
+    }
+}
+
+/// Drop finished request and feed tasks every turn, so a busy socket that
+/// always wins the select cannot pile them up.
+fn reap(tasks: &mut JoinSet<()>) {
+    while let Some(done) = tasks.try_join_next() {
+        if let Err(error) = done {
+            assert!(
+                !error.is_cancelled(),
+                "session tasks are only aborted once it ends"
+            );
+            tracing::error!(%error, "a remote request task panicked");
         }
     }
 }
@@ -318,5 +332,32 @@ where
     match tokio::time::timeout(SEND_TIMEOUT, socket.send(message)).await {
         Ok(sent) => sent.map_err(|_| Ended::Peer),
         Err(_) => Err(Ended::Violation(CloseCode::Away, "not reading")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn finished_tasks_are_reaped_without_waiting_on_running_ones() {
+        let mut tasks = JoinSet::new();
+        let (release, held) = tokio::sync::oneshot::channel::<()>();
+        tasks.spawn(async move {
+            let _released = held.await;
+        });
+        for _ in 0..8 {
+            tasks.spawn(async {});
+        }
+        tokio::task::yield_now().await;
+        while tasks.len() > 1 {
+            reap(&mut tasks);
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(tasks.len(), 1, "only the running task is left");
+        release.send(()).unwrap();
+        tasks.join_next().await.unwrap().unwrap();
+        reap(&mut tasks);
+        assert!(tasks.is_empty());
     }
 }

@@ -590,7 +590,8 @@ pub struct RemoteSetupArgs {
     /// `tailscale serve`.
     #[arg(long, value_name = "URL", conflicts_with = "local")]
     pub proxy_url: Option<String>,
-    /// Publish nothing: the app answers on this machine's loopback only.
+    /// Publish nothing, and withdraw origins earlier runs allowed: the app
+    /// answers on this machine's loopback only.
     #[arg(long)]
     pub local: bool,
     /// The HTTPS port `tailscale serve` publishes on (443, 8443 or 10000);

@@ -65,7 +65,7 @@ that step).
 | --- | --- |
 | `--yes` | Publish without asking. Needed off a terminal. |
 | `--proxy-url URL` | Use your own HTTPS proxy at this origin instead of Tailscale. |
-| `--local` | Publish nothing; the app answers on this computer only. |
+| `--local` | Publish nothing, and withdraw any public origin an earlier run allowed; the app answers on this computer only. |
 | `--https-port PORT` | The Tailscale HTTPS port: 443, 8443 or 10000. |
 | `--no-pair` | Do everything but open a pairing code. |
 | `--json` | Print one JSON document at the end (`remote`, `origin`, `pairing`) and no steps. |

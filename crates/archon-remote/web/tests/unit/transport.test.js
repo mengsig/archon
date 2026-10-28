@@ -130,6 +130,21 @@ test('feed pushes are forwarded and id 0 explains the close', () => {
   assert.equal(h.states.at(-1).reason, 'archond is stopping');
 });
 
+test('an internal id-0 error reconnects to resubscribe, backing off while it repeats', () => {
+  const errors = [];
+  const h = harness({ onProtocolError: (err) => errors.push(err) });
+  h.transport.start(); h.last().open(); h.last().welcome();
+  h.last().reply(0, { Err: { code: 'internal', message: 'feed subscription 1 ended: disk full' } });
+  assert.equal(h.sockets[0].closedWith, 4001);
+  assert.match(errors[0].message, /feed subscription 1 ended: disk full; reconnecting/);
+  assert.equal(h.states.at(-1).state, 'waiting');
+  h.fire(backoffDelay(0, () => 0.5));
+  h.last().open(); h.last().welcome();
+  h.last().reply(0, { Err: { code: 'internal', message: 'feed subscription 1 ended: disk full' } });
+  assert.equal(h.states.at(-1).retryInMs, backoffDelay(1, () => 0.5), 'the backoff was not reset');
+  assert.equal(errors.length, 2);
+});
+
 test('a hello without an answer closes the socket and retries', () => {
   const h = harness();
   h.transport.start(); h.last().open();

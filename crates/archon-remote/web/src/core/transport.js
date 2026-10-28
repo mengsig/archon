@@ -5,6 +5,7 @@ import { backoffDelay, DISABLED_RETRY_MS } from './backoff.js';
 export const CLOSE_REVOKED = 4401;
 export const CLOSE_DISABLED = 4403;
 const CLOSE_HELLO_FAILED = 4000;
+const CLOSE_RESUBSCRIBE = 4001;
 export const REQUEST_TIMEOUT_MS = 20_000;
 
 export class DaemonError extends Error {
@@ -39,6 +40,7 @@ class Transport {
     this.current = 'idle';
     this.stopped = false;
     this.closeReason = null;
+    this.restarting = false;
     this.pending = new Map();
     this.queued = [];
   }
@@ -113,7 +115,9 @@ class Transport {
   }
 
   opened(welcome) {
-    this.attempt = 0;
+    // A daemon that keeps ending the feed backs off as if it kept dropping.
+    if (!this.restarting) this.attempt = 0;
+    this.restarting = false;
     this.setState('open', { welcome });
     for (const entry of this.queued.splice(0)) this.dispatch(entry);
     this.on.ready(welcome);
@@ -136,10 +140,20 @@ class Transport {
       return;
     }
     if (frame.id === 0) {
-      this.closeReason = frame.result?.Err?.message ?? 'the daemon closed the connection';
+      this.unaddressed(frame.result?.Err);
       return;
     }
     this.settle(frame.id, frame.result);
+  }
+
+  // An id-0 error explains a close the daemon is about to make, except an
+  // internal one: a feed subscription ended, so reconnect and resubscribe.
+  unaddressed(err) {
+    this.closeReason = err?.message ?? 'the daemon closed the connection';
+    if (err?.code !== 'internal' || this.current !== 'open' || !this.ws) return;
+    this.on.protocolError(new DaemonError('internal', `${this.closeReason}; reconnecting`));
+    this.restarting = true;
+    this.ws.close(CLOSE_RESUBSCRIBE, 'resubscribe');
   }
 
   settle(id, result) {

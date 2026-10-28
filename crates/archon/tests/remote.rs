@@ -158,6 +158,13 @@ fn the_wizard_publishes_on_the_tailnet_once_and_reuses_it_on_a_rerun() {
         !calls.contains("serve --bg"),
         "nothing is published twice: {calls}"
     );
+    let local = remote_json(&env, &["setup", "--local", "--no-pair"]);
+    assert!(local["origin"].is_null(), "{local}");
+    assert_eq!(
+        local["remote"]["public_origins"],
+        serde_json::json!([]),
+        "--local withdraws the tailnet origin: {local}"
+    );
     stop_daemon(&env, daemon);
 }
 

@@ -73,7 +73,7 @@ function openTransport({ session, feed, store, refresh }) {
     hello: { protocol_version: session.protocol_version, client: 'archon-web', client_version: APP_VERSION },
     onFeed: (item) => feed.push(item),
     onReady: () => {
-      feed.sync().catch((err) => setError('feed', err));
+      feed.sync().then(() => store.get().errors.feed && setError('feed', null), (err) => setError('feed', err));
       refresh.many(['summaries', 'questions', 'status', 'repos', 'reports', 'cost']);
     },
     onState: (state, info) => store.set({ connection: { state, ...info } }),

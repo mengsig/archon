@@ -135,10 +135,7 @@ async fn publish(
     steps: &mut Steps,
 ) -> anyhow::Result<Option<String>> {
     if args.local {
-        steps.begin(
-            "Publish",
-            "Skipped (--local): the app answers only on this machine.",
-        );
+        withdraw_public_origins(client, steps).await?;
         return Ok(None);
     }
     let origin = match &args.proxy_url {
@@ -163,6 +160,34 @@ async fn publish(
     remote_view(client, Request::ConfigureRemote { change }).await?;
     steps.note(&format!("archond now answers browsers at {origin}."));
     Ok(Some(origin))
+}
+
+/// `--local`: drop the origins earlier runs allowed, so no proxy that still
+/// forwards to the listener is answered.
+async fn withdraw_public_origins(client: &ArchonClient, steps: &mut Steps) -> anyhow::Result<()> {
+    steps.begin(
+        "Keep it on this machine",
+        "Not published (--local); archond refuses every browser origin but this machine's.",
+    );
+    let before = remote_view(client, Request::RemoteStatus).await?;
+    if before.public_origins.is_empty() {
+        return Ok(());
+    }
+    let change = RemoteChange {
+        remove_origins: before.public_origins.clone(),
+        ..RemoteChange::default()
+    };
+    let after = remote_view(client, Request::ConfigureRemote { change }).await?;
+    anyhow::ensure!(
+        after.public_origins.is_empty(),
+        "archond still answers {}; remove them with `archon remote origin remove`",
+        after.public_origins.join(", ")
+    );
+    steps.note(&format!(
+        "No longer answers {}. Stop the proxy that published it too.",
+        before.public_origins.join(", ")
+    ));
+    Ok(())
 }
 
 /// Publish `target` with `tailscale serve`, reusing a port that already

@@ -264,6 +264,7 @@ fn a_cycle_through_a_stack_and_an_edited_dependency_goes_whole() {
             closed: false,
             conflict: None,
             needs_attention: None,
+            landed: None,
         })
         .unwrap();
     b.dependencies.clear();

@@ -84,7 +84,8 @@ impl Fixture {
             name: "Archon".into(),
             email: "archon@localhost".into(),
         };
-        let dep = (self.dep.as_str(), landing);
+        let merged = [self.dep.clone()];
+        let dep = (self.dep.as_str(), &merged[..], landing);
         merge(&self.shadow, &self.repo, "child", dep, &identity).unwrap()
     }
 
@@ -211,7 +212,7 @@ fn a_landing_merges_only_into_a_branch_holding_the_head_and_only_once() {
         name: "Archon".into(),
         email: "archon@localhost".into(),
     };
-    let dep = (f.dep.as_str(), &landing);
+    let dep = (f.dep.as_str(), &[][..], &landing);
     let refused = merge(&f.shadow, &f.repo, "stranger", dep, &identity).unwrap_err();
     assert!(refused.to_string().contains("does not hold"), "{refused}");
 }
@@ -283,4 +284,79 @@ fn a_rebase_without_the_heads_merge_resolution_is_no_landing() {
     }
     let base = git(&f.repo, &["rev-parse", "HEAD"]);
     assert_eq!(find(&f.shadow, &f.repo, &dep, &base).unwrap(), None);
+}
+
+/// A child of two independent parents `a` and `b`, holding both, which
+/// rewrites `b.txt` and deletes `a.txt` or, given `a_txt`, rewrites it.
+fn two_parents(a_txt: Option<&str>) -> (tempfile::TempDir, PathBuf, Shadow, [String; 2]) {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().canonicalize().unwrap().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "--quiet", "-b", "main"]);
+    commit(&repo, "base.txt", "base\n");
+    git(&repo, &["checkout", "--quiet", "-b", "a"]);
+    let a = commit(&repo, "a.txt", "a\n");
+    git(&repo, &["checkout", "--quiet", "-b", "b", "main"]);
+    let b = commit(&repo, "b.txt", "b\n");
+    git(&repo, &["checkout", "--quiet", "-b", "child", "a"]);
+    git(&repo, &["merge", "--quiet", "--no-edit", "b"]);
+    match a_txt {
+        Some(content) => commit(&repo, "a.txt", content),
+        None => {
+            git(&repo, &["rm", "--quiet", "a.txt"]);
+            git(&repo, &["commit", "--quiet", "-m", "no a"])
+        }
+    };
+    commit(&repo, "b.txt", "b\nchild\n");
+    git(&repo, &["checkout", "--quiet", "main"]);
+    let shadow = Shadow::of(&dir.path().join("data"), &repo).unwrap();
+    (dir, repo, shadow, [a, b])
+}
+
+/// `main` squashes `a` then `b`, and the child is merged over each parent's
+/// landing in `order`, as a restack does: it keeps its own tree throughout.
+fn restack_two_parents(a_txt: Option<&str>, order: [usize; 2]) {
+    let (_dir, repo, shadow, heads) = two_parents(a_txt);
+    for branch in ["a", "b"] {
+        git(&repo, &["merge", "--quiet", "--squash", branch]);
+        git(&repo, &["commit", "--quiet", "-m", branch]);
+    }
+    let main = git(&repo, &["rev-parse", "main"]);
+    let own_tree = git(&repo, &["rev-parse", "child^{tree}"]);
+    let identity = Identity {
+        name: "Archon".into(),
+        email: "archon@localhost".into(),
+    };
+    for dep in order.map(|i| &heads[i]) {
+        let landing = find(&shadow, &repo, dep, &main)
+            .unwrap()
+            .expect("a landing");
+        let at = (dep.as_str(), &heads[..], &landing);
+        match merge(&shadow, &repo, "child", at, &identity).unwrap() {
+            Merge::Merged { from, to } => {
+                git(&repo, &["update-ref", "refs/heads/child", &to, &from]);
+            }
+            Merge::Contained => {}
+            Merge::Conflict(files) => panic!("{order:?} conflicts on {files}"),
+        }
+    }
+    git(&repo, &["merge-base", "--is-ancestor", &main, "child"]);
+    let tree = git(&repo, &["rev-parse", "child^{tree}"]);
+    assert_eq!(tree, own_tree, "{order:?} kept the child's own content");
+}
+
+/// Where `b`'s landing also holds `a`'s, which the child deleted, merging over
+/// `b` alone brought `a.txt` back; the child's deletion stands.
+#[test]
+fn a_landing_holding_another_parents_change_keeps_the_childs_deletion() {
+    restack_two_parents(None, [0, 1]);
+    restack_two_parents(None, [1, 0]);
+}
+
+/// Where `b`'s landing also holds `a`'s, which the child rewrote, merging over
+/// `b` alone conflicted on `a.txt`; it merges with the child's rewrite.
+#[test]
+fn a_landing_holding_another_parents_change_keeps_the_childs_rewrite() {
+    restack_two_parents(Some("a\nchild\n"), [0, 1]);
+    restack_two_parents(Some("a\nchild\n"), [1, 0]);
 }

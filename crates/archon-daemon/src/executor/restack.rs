@@ -282,8 +282,13 @@ pub(super) enum Incoming {
     /// A commit, merged as `git merge` would.
     Commit(String),
     /// Where the base holds a merged parent's head `dep`, which the branch
-    /// holds, merged as [`landed::merge`] does.
-    Landed { dep: String, landing: Landing },
+    /// holds, merged as [`landed::merge`] does with the heads of every
+    /// `merged` parent of the branch.
+    Landed {
+        dep: String,
+        merged: Vec<String>,
+        landing: Landing,
+    },
 }
 
 impl Incoming {
@@ -308,9 +313,11 @@ fn merge_and_advance(
 ) -> Result<Merge, ArchonError> {
     let merge = match incoming {
         Incoming::Commit(sha) => stack::merge(shadow, repo, branch, sha, identity)?,
-        Incoming::Landed { dep, landing } => {
-            landed::merge(shadow, repo, branch, (dep, landing), identity)?
-        }
+        Incoming::Landed {
+            dep,
+            merged,
+            landing,
+        } => landed::merge(shadow, repo, branch, (dep, merged, landing), identity)?,
     };
     if let Merge::Merged { from, to } = &merge {
         stack::advance(shadow, repo, worktrees, branch, from, to)?;

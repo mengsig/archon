@@ -3,7 +3,7 @@
 //! on `main` and pushed, never rebased or force-pushed (ARCHITECTURE §8.8).
 
 use crate::common;
-use crate::restack::{restack_fixes, stack_pair};
+use crate::restack::{child, restack_fixes, stack_harness, stack_pair};
 
 use archon_core::notify::NotificationKind;
 use archon_core::protocol::{Reply, Request};
@@ -37,8 +37,8 @@ async fn finished_stack(child_parent_txt: Option<&str>) -> (Harness, QueueItem, 
     (h, parent, child)
 }
 
-/// GitHub merging `branch` into `origin`'s `main` as `how`; the new `main`.
-fn merge_on_github(h: &Harness, branch: &str, how: Merged) -> String {
+/// A clone of `origin`'s `main`, where GitHub merges pull requests.
+fn github_clone(h: &Harness) -> std::path::PathBuf {
     let remote = h.dir.path().join("remote.git");
     let github = h.dir.path().join("github");
     let (from, to) = (remote.to_str().unwrap(), github.to_str().unwrap());
@@ -46,6 +46,12 @@ fn merge_on_github(h: &Harness, branch: &str, how: Merged) -> String {
         h.dir.path(),
         &["clone", "--quiet", "--branch", "main", from, to],
     );
+    github
+}
+
+/// GitHub merging `branch` into `origin`'s `main` as `how`; the new `main`.
+fn merge_on_github(h: &Harness, branch: &str, how: Merged) -> String {
+    let github = github_clone(h);
     let repo = h.repo.to_str().unwrap();
     git(
         &github,
@@ -70,6 +76,21 @@ fn merge_on_github(h: &Harness, branch: &str, how: Merged) -> String {
     }
     git(&github, &["push", "--quiet", "origin", "main"]);
     set_pr(h, branch, "state", json!("MERGED"));
+    git(&github, &["rev-parse", "HEAD"])
+}
+
+/// GitHub squash-merging each of `branches` into `origin`'s `main`, in
+/// order; the new `main`.
+fn squash_all_on_github(h: &Harness, branches: &[&str]) -> String {
+    let github = github_clone(h);
+    let repo = h.repo.to_str().unwrap();
+    for branch in branches {
+        let fetched = format!("+{branch}:parent");
+        git(&github, &["fetch", "--quiet", repo, &fetched]);
+        squash(&github);
+        set_pr(h, branch, "state", json!("MERGED"));
+    }
+    git(&github, &["push", "--quiet", "origin", "main"]);
     git(&github, &["rev-parse", "HEAD"])
 }
 
@@ -185,6 +206,48 @@ async fn a_child_running_when_its_parent_squash_merges_is_restacked_once_finishe
     assert_eq!(tree(&done.after), tree(&done.before), "content-neutral");
     assert_eq!(landed(&h, &child).await, Some(main));
     assert!(h.notices(NotificationKind::Blocker).await.is_empty());
+}
+
+/// A child of two parents that deletes the first one's file and rewrites the
+/// second one's, both squashed into `main`: the second landing holds the
+/// first parent's file too, and the child is restacked keeping its own content.
+#[tokio::test]
+async fn a_child_of_two_squash_merged_parents_keeps_its_own_content() {
+    let h = stack_harness(Default::default()).await;
+    let (one, two) = (
+        h.enqueue("First parent").await,
+        h.enqueue("Second parent").await,
+    );
+    let child = child(&h, &[&one, &two]).await;
+    h.dispatch().await;
+    commit(&h.run(&one.id).await.workspace, "one.txt", "one\n");
+    finish_item(&h, &one.id).await;
+    h.dispatch().await;
+    commit(&h.run(&two.id).await.workspace, "two.txt", "two\n");
+    finish_item(&h, &two.id).await;
+    let workspace = h.run(&child.id).await.workspace;
+    git(&workspace, &["rm", "--quiet", "one.txt"]);
+    git(&workspace, &["commit", "--quiet", "-m", "Drop one.txt"]);
+    let before = commit(&workspace, "two.txt", "two\nchild\n");
+    finish_item(&h, &child.id).await;
+    let branches = [h.run(&one.id).await.branch, h.run(&two.id).await.branch];
+    let main = squash_all_on_github(&h, &[&branches[0], &branches[1]]);
+    h.dispatch().await;
+
+    let after = child_head(&h, &child).await;
+    let tree = |rev: &str| git(&h.repo, &["rev-parse", &format!("{rev}^{{tree}}")]);
+    assert_eq!(tree(&after), tree(&before), "the child's own content");
+    git(&h.repo, &["merge-base", "--is-ancestor", &before, &after]);
+    git(&h.repo, &["merge-base", "--is-ancestor", &main, &after]);
+    let remote = h.dir.path().join("remote.git");
+    let branch = h.run(&child.id).await.branch;
+    assert_eq!(rev(&remote, &branch), Some(after), "pushed");
+    assert!(h.notices(NotificationKind::Blocker).await.is_empty());
+    let parents = h.ctx.store.lock().await.stack_parents(&child.id).unwrap();
+    assert!(
+        parents.iter().all(|p| p.landed.as_deref() == Some(&main)),
+        "{parents:?}"
+    );
 }
 
 /// A squash that changed more than the parent proves no landing: `main` is

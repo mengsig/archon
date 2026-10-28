@@ -45,6 +45,7 @@ pub(super) async fn reconcile(
     if parents.iter().any(StackParent::is_open) {
         return Ok(());
     }
+    let merged = merged_heads(&parents);
     let pending = parents
         .into_iter()
         .filter(|p| p.merged && p.landed.is_none());
@@ -61,6 +62,7 @@ pub(super) async fn reconcile(
             Plan::Held => None,
             Plan::Landed(landing) => Some(Incoming::Landed {
                 dep: parent.parent_sha.clone(),
+                merged: merged.clone(),
                 landing,
             }),
             Plan::Unproven => Some(Incoming::Commit(head.clone())),
@@ -93,6 +95,7 @@ pub(super) async fn for_refresh(
     assert_eq!(run.item, item.id, "the item's own run");
     assert!(item.onto.is_none(), "an onto item has no stack parents");
     let parents = ctx.store.lock().await.stack_parents(&item.id)?;
+    let heads = merged_heads(&parents);
     let mut merged = false;
     for mut parent in parents.into_iter().filter(|p| p.merged) {
         let at = (base, run.branch.as_str(), child_head);
@@ -112,8 +115,11 @@ pub(super) async fn for_refresh(
                 item.id
             )));
         };
-        let dep = parent.parent_sha.clone();
-        let incoming = Incoming::Landed { dep, landing };
+        let incoming = Incoming::Landed {
+            dep: parent.parent_sha.clone(),
+            merged: heads.clone(),
+            landing,
+        };
         match restack::merge_into_branch(ctx, repo, run, (&incoming, child_head), mark).await? {
             Restacked::Done => merged = true,
             // The refresh's agent merges the base and resolves it.
@@ -126,6 +132,18 @@ pub(super) async fn for_refresh(
         ctx.store.lock().await.save_stack_parent(&parent)?;
     }
     Ok(merged)
+}
+
+/// The heads of the merged ones of `parents`, which a landing of one of them
+/// may hold beside its own.
+fn merged_heads(parents: &[StackParent]) -> Vec<String> {
+    let heads: Vec<String> = parents
+        .iter()
+        .filter(|p| p.merged)
+        .map(|p| p.parent_sha.clone())
+        .collect();
+    assert!(heads.iter().all(|h| stack::is_commit_id(h)), "parent heads");
+    heads
 }
 
 /// The repository base `item` is for now, unless a restack fix or refresh

@@ -25,7 +25,7 @@ fn advance_branch(h: &Harness, branch: &str, file: &str, content: &str) -> Strin
     sha
 }
 
-async fn child(h: &Harness, parents: &[&QueueItem]) -> QueueItem {
+pub(crate) async fn child(h: &Harness, parents: &[&QueueItem]) -> QueueItem {
     let req = EnqueueRequest {
         onto: None,
         stage_timeouts: Default::default(),
@@ -94,16 +94,21 @@ pub(crate) async fn stack_pair() -> (Harness, QueueItem, QueueItem) {
     stack_pair_with(Config::default()).await
 }
 
-async fn stack_pair_with(config: Config) -> (Harness, QueueItem, QueueItem) {
+/// A harness whose repository delivers pull requests to an `origin` from `main`.
+pub(crate) async fn stack_harness(config: Config) -> Harness {
     let h = Harness::with_config(config).await;
     install_gh(&h);
     add_remote(&h);
-    {
-        let mut store = h.ctx.store.lock().await;
-        let mut repo = store.repo(&RepoRef(REPO_NAME.into())).unwrap();
-        repo.base_branch = None;
-        store.update_repo(&repo).unwrap();
-    }
+    let mut store = h.ctx.store.lock().await;
+    let mut repo = store.repo(&RepoRef(REPO_NAME.into())).unwrap();
+    repo.base_branch = None;
+    store.update_repo(&repo).unwrap();
+    drop(store);
+    h
+}
+
+async fn stack_pair_with(config: Config) -> (Harness, QueueItem, QueueItem) {
+    let h = stack_harness(config).await;
     let parent = h.enqueue("Parent change").await;
     let child = child(&h, &[&parent]).await;
     h.dispatch().await;

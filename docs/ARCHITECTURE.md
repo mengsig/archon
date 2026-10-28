@@ -2829,17 +2829,21 @@ over their merge base changes nothing, so it holds the parent's whole change.
 The child's branch, which must hold the parent head, is merged with that
 commit as if it forked at the parent head: over a commit of the same tree,
 re-checked, with its own tree (`merge -s ours`); otherwise `merge-tree
---merge-base=<parent head>`. With no landing proven (the base changed more
-than the parent) the base head is merged as git would. Either merge is
-written, moved and pushed as above, never forced, and a landing the branch
-holds but its pull request's head lacks is pushed again; a conflict writes
-nothing and is one blocker naming `refresh_item`, not a fix item. The base
-head is then recorded as `landed`, so each parent is restacked once, and a
-row from before `landed` existed is restacked at the next pass. A child
-still running when its parent merges is not merged into while agents work
-in its worktree: the parent is recorded merged, and the child is restacked
-at the first pass after it is delivered. Merging a parent through Archon
-wakes the coordination worker.
+--merge-base=<virtual base>`, the parent head merged with the branch's and
+the landing's newest common commit and with each other merged parent head
+the branch holds whose whole change the landing holds, so another parent's
+change a later landing carries is not new to the child (a file it deleted
+stays deleted); a conflict building that base is the merge's conflict. With
+no landing proven (the base changed more than the parent) the base head is
+merged as git would. Either merge is written, moved and pushed as above,
+never forced, and a landing the branch holds but its pull request's head
+lacks is pushed again; a conflict writes nothing and is one blocker naming
+`refresh_item`, not a fix item. The base head is then recorded as `landed`,
+so each parent is restacked once, and a row from before `landed` existed is
+restacked at the next pass. A child still running when its parent merges is
+not merged into while agents work in its worktree: the parent is recorded
+merged, and the child is restacked at the first pass after it is delivered.
+Merging a parent through Archon wakes the coordination worker.
 
 Each stack and each initiative is maintained on its own: one whose pass
 fails is recorded in `kv` `coordination_blocker:<stack|initiative>:<id>`

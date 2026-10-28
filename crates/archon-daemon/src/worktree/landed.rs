@@ -93,13 +93,14 @@ fn holds_change(
 
 /// Merge `landing` into `branch` of `repo`, which holds the dependency head
 /// `dep`, as if the branch forked there: a [`Landing::SameTree`] keeps the
-/// branch's tree, a [`Landing::SamePatches`] merges over `dep` instead of
-/// the commits' merge base. Nothing is written on a conflict.
+/// branch's tree, a [`Landing::SamePatches`] merges over [`virtual_base`]
+/// with the branch's `merged` parent heads instead of the commits' merge
+/// base. Nothing is written on a conflict.
 pub(crate) fn merge(
     shadow: &Shadow,
     repo: &Path,
     branch: &str,
-    (dep, landing): (&str, &Landing),
+    (dep, merged, landing): (&str, &[String], &Landing),
     identity: &Identity,
 ) -> Result<Merge, ArchonError> {
     assert!(is_commit_id(dep), "a dependency head");
@@ -123,10 +124,16 @@ pub(crate) fn merge(
             let why = "has the tree of";
             (tree_of(shadow, &ours)?, why)
         }
-        Landing::SamePatches(_) => match stack::merge_tree(shadow, Some(dep), &ours, theirs)? {
-            Ok(tree) => (tree, "carries the changes of"),
-            Err(files) => return Ok(Merge::Conflict(files)),
-        },
+        Landing::SamePatches(_) => {
+            let base = match virtual_base(shadow, repo, (dep, merged), (&ours, theirs))? {
+                Ok(base) => base,
+                Err(files) => return Ok(Merge::Conflict(files)),
+            };
+            match stack::merge_tree(shadow, Some(&base), &ours, theirs)? {
+                Ok(tree) => (tree, "carries the changes of"),
+                Err(files) => return Ok(Merge::Conflict(files)),
+            }
+        }
     };
     let message = format!(
         "Merge commit '{theirs}' into {branch}\n\n{theirs} {why} {dep}, which this branch \
@@ -134,6 +141,54 @@ pub(crate) fn merge(
     );
     let to = stack::commit_merge(shadow, &tree, (&ours, theirs), &message, identity)?;
     Ok(Merge::Merged { from: ours, to })
+}
+
+/// The merge base `ours` and the landing `theirs` would have without squash or
+/// rebase: `dep` merged with their newest common commit and with each other
+/// `merged` parent head `ours` holds whose whole change `theirs` holds, so
+/// nothing both hold counts as new on either side; or the files that conflict.
+fn virtual_base(
+    shadow: &Shadow,
+    repo: &Path,
+    (dep, merged): (&str, &[String]),
+    (ours, theirs): (&str, &str),
+) -> Result<Result<String, String>, ArchonError> {
+    assert!(is_commit_id(ours) && is_commit_id(theirs), "commit ids");
+    let mut parts: Vec<String> = fork_point(shadow, ours, theirs)?.into_iter().collect();
+    for head in merged.iter().filter(|head| head.as_str() != dep) {
+        if contains(repo, head, ours)? && landed_in(shadow, repo, head, theirs)? {
+            parts.push(head.clone());
+        }
+    }
+    let mut base = dep.to_owned();
+    for part in parts {
+        if contains(repo, &part, &base)? {
+            continue;
+        }
+        base = match contains(repo, &base, &part)? {
+            true => part,
+            false => match stack::merge_tree(shadow, None, &base, &part)? {
+                Ok(tree) => scratch_commit(shadow, &tree, &[&base, &part], "merge base")?,
+                Err(files) => return Ok(Err(files)),
+            },
+        };
+    }
+    assert!(
+        contains(repo, dep, &base)?,
+        "the base holds the dependency head"
+    );
+    Ok(Ok(base))
+}
+
+/// Whether `base` holds the parent head `head` or its whole change.
+fn landed_in(shadow: &Shadow, repo: &Path, head: &str, base: &str) -> Result<bool, ArchonError> {
+    if contains(repo, head, base)? {
+        return Ok(true);
+    }
+    match fork_point(shadow, head, base)? {
+        Some(fork) => holds_change(shadow, &fork, head, base),
+        None => Ok(false),
+    }
 }
 
 /// The newest commit both `dep` and `base` hold.
@@ -180,19 +235,38 @@ fn same_tree(
 /// A commit no ref names with `dep`'s tree and the one parent `fork`: the
 /// change `dep` makes, as a squash merge would put it.
 fn squash_of(shadow: &Shadow, dep: &str, fork: &str) -> Result<String, ArchonError> {
-    let tree = tree_of(shadow, dep)?;
-    let squash = git(shadow)?
+    scratch_commit(shadow, &tree_of(shadow, dep)?, &[fork], "squash")
+}
+
+/// A commit of `tree` over `parents` that no ref names, the same on every
+/// call: a squash or merge base of Archon's own, never pushed.
+fn scratch_commit(
+    shadow: &Shadow,
+    tree: &str,
+    parents: &[&str],
+    message: &str,
+) -> Result<String, ArchonError> {
+    assert!(is_commit_id(tree), "a written tree");
+    assert!(
+        !parents.is_empty() && parents.iter().all(|p| is_commit_id(p)),
+        "parent commits"
+    );
+    let mut args = vec!["commit-tree", "--no-gpg-sign", tree];
+    for parent in parents {
+        args.extend(["-p", parent]);
+    }
+    args.extend(["-m", message]);
+    let commit = git(shadow)?
         .env("GIT_AUTHOR_NAME", "Archon")
         .env("GIT_AUTHOR_EMAIL", "archon@localhost")
         .env("GIT_AUTHOR_DATE", "@0 +0000")
         .env("GIT_COMMITTER_NAME", "Archon")
         .env("GIT_COMMITTER_EMAIL", "archon@localhost")
         .env("GIT_COMMITTER_DATE", "@0 +0000")
-        .args(["commit-tree", "--no-gpg-sign", &tree, "-p", fork])
-        .args(["-m", "squash"])
+        .args(args)
         .text()?;
-    assert!(is_commit_id(&squash), "commit-tree prints the commit");
-    Ok(squash)
+    assert!(is_commit_id(&commit), "commit-tree prints the commit");
+    Ok(commit)
 }
 
 /// The newest commit of `base`, not `side`'s, whose patch id one of `side`'s

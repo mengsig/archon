@@ -19,7 +19,9 @@ export function mountOverview(view, ctx) {
       body.replaceChildren(state.errors.status ? errorNote(state.errors.status, () => ctx.refresh.one('status')) : skeletonRows(4));
       return;
     }
-    body.replaceChildren(
+    // A failed refresh stays in view above the last status it replaced.
+    const stale = state.errors.status ? [errorNote(state.errors.status, () => ctx.refresh.one('status'))] : [];
+    body.replaceChildren(...stale,
       pauseCard(ctx, state.status),
       section('Health', healthCard(state.status)),
       section('Agents', agentsCard(state.status)),

@@ -38,6 +38,26 @@ test('reconnects and resubscribes after the socket drops', async ({ page, fixtur
   await expect(page.locator('.conn-banner')).not.toHaveClass(/is-shown/);
 });
 
+test('load failures stay in view over what was loaded before', async ({ page, fixture }) => {
+  let statusLoads = 0;
+  await page.routeWebSocket(/\/ws$/, (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((message) => {
+      const frame = JSON.parse(message);
+      const refused = frame.cmd === 'feed_history' || (frame.cmd === 'status' && ++statusLoads > 1);
+      if (!refused) return server.send(message);
+      ws.send(JSON.stringify({ frame: 'reply', id: frame.req, result: { Err: { code: 'internal', message: `${frame.cmd} refused by the test` } } }));
+    });
+  });
+  await openApp(page, fixture, '#/inbox');
+  const notifications = page.getByRole('region', { name: 'Notifications' });
+  await expect(notifications.getByRole('alert')).toContainText('feed_history refused by the test');
+  await expect(notifications.getByText('No notifications yet.')).toHaveCount(0);
+  await page.getByRole('navigation', { name: 'Sections' }).getByRole('link', { name: 'Overview' }).click();
+  await expect(page.getByRole('alert').filter({ hasText: 'status refused by the test' })).toBeVisible();
+  await expect(page.locator('.hero-card')).toBeVisible();
+});
+
 test('a revoked device goes back to pairing', async ({ page, fixture }) => {
   await openApp(page, fixture);
   fixture.dev.closeClients(4401, 'revoked');

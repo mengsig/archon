@@ -16,9 +16,10 @@ export function mountInbox(view, ctx) {
   const openStatus = h('div', { class: 'list-status' });
   const answered = h('ul', { class: 'plain-list', 'aria-label': 'Answered questions' });
   const notes = h('ul', { class: 'plain-list', 'aria-label': 'Notifications' });
+  const notesStatus = h('div', { class: 'list-status' });
   const answeredSection = section('Recent', answered);
   view.append(screenHeader({ title: 'Inbox' }),
-    section('Needs you', openStatus, open), answeredSection, section('Notifications', notes));
+    section('Needs you', openStatus, open), answeredSection, section('Notifications', notesStatus, notes));
 
   const renderQuestions = () => {
     const state = ctx.store.get();
@@ -38,13 +39,16 @@ export function mountInbox(view, ctx) {
     reconcile(answered, done, { key: (q) => q.id, signature: (q) => q.answer, render: answeredRow });
   };
   const renderNotes = () => {
-    const entries = notificationsOf(ctx.store.get().feed);
+    const { feed, errors } = ctx.store.get();
+    const entries = notificationsOf(feed);
     reconcile(notes, entries, { key: (f) => f.seq, signature: (f) => age(f.at), render: noteRow });
-    if (entries.length === 0) notes.replaceChildren(h('li', { class: 'muted plain-empty', text: 'No notifications yet.' }));
+    // A failed feed load is not an empty one; it reloads once connected again.
+    notesStatus.replaceChildren(...(errors.feed ? [errorNote(errors.feed)] : []));
+    if (entries.length === 0) notes.replaceChildren(...(errors.feed ? [] : [h('li', { class: 'muted plain-empty', text: 'No notifications yet.' })]));
   };
   const offs = [
     ctx.store.watch((s) => [s.questions, s.summaries, s.errors.questions], renderQuestions),
-    ctx.store.watch((s) => s.feed, renderNotes),
+    ctx.store.watch((s) => [s.feed, s.errors.feed], renderNotes),
   ];
   return () => offs.forEach((off) => off());
 }

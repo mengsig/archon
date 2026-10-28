@@ -2,10 +2,11 @@
 //! settled items, with their runs, stage runs, gates, spend and per-item `kv`,
 //! go once older than `storage.retention_days`. Outcomes and lesson uses stay
 //! for learning, and so does every item something live still names: a live
-//! stage run, a live item through a dependency, a stack or the restack index,
-//! an open gate, an open question, an open merge request, an operator
-//! correction, a live initiative, a report record or a distillation whose
-//! lessons are not applied yet. An item stays while gc may still find
+//! stage run, an unretired run node, a steer or stop owed to a stage, a live
+//! item through a dependency, a stack or the restack index, an open gate, an
+//! open question, an open merge request, an operator correction, a live
+//! initiative, a report record or a distillation whose lessons are not applied
+//! yet. An item stays while gc may still find
 //! something of it on disk, such as a run workspace, through the item. A batch
 //! takes an item only with every item naming it. Spend of the days budgets
 //! still count stays, and what goes is carried in `spend_pruned`.
@@ -59,6 +60,12 @@ WHERE i.state IN ('succeeded', 'failed', 'cancelled') AND i.updated_at < ?1
   AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.item = i.id AND r.terminal = 0)
   AND NOT EXISTS (SELECT 1 FROM runs r JOIN stage_runs sr ON sr.run = r.id
                   WHERE r.item = i.id AND sr.terminal = 0)
+  AND NOT EXISTS (SELECT 1 FROM runs r JOIN kv k ON k.key = 'run_node:' || r.id
+                  WHERE r.item = i.id)
+  AND NOT EXISTS (SELECT 1 FROM runs r JOIN stage_runs sr ON sr.run = r.id
+                  JOIN kv k ON k.key IN ('steer_owed:' || sr.id, 'sibling_stop:' || sr.id,
+                                         'descendant_stop:' || sr.id)
+                  WHERE r.item = i.id)
   AND NOT EXISTS (SELECT 1 FROM gates g WHERE g.item = i.id AND g.open = 1)
   AND NOT EXISTS (SELECT 1 FROM questions q
                   WHERE q.open = 1 AND json_extract(q.data, '$.item') = i.id)

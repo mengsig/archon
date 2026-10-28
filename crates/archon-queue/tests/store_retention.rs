@@ -387,6 +387,35 @@ fn a_cancelled_run_whose_agent_still_runs_keeps_its_item() {
 }
 
 #[test]
+fn a_run_node_or_a_stop_still_owed_keeps_its_item() {
+    let mut store = store();
+    let queued = store.insert_item(&item(None, "owed"), None).unwrap();
+    let run = start(&mut store, &queued.id);
+    let mut stage = running_stage(&run, 0, 7);
+    stage.state = StageState::Completed;
+    stage.finished_at = Some(t(35));
+    store.upsert_stage_run(&stage).unwrap();
+    settle_run(
+        &mut store,
+        &run,
+        QueueState::Cancelled { reason: None },
+        t(40),
+    );
+    let node = format!("run_node:{}", run.id);
+    let stop = format!("descendant_stop:{}", stage.id);
+    store.kv_set(&node, "{}").unwrap();
+    store.kv_set(&stop, "{}").unwrap();
+
+    for key in [node, stop] {
+        let pruned = store.prune_history(cutoff(), 10, |_, _| false).unwrap();
+        assert_eq!(pruned.items, 0, "the sweep owing {key} still reads its run");
+        store.kv_delete(&key).unwrap();
+    }
+    let pruned = store.prune_history(cutoff(), 10, |_, _| false).unwrap();
+    assert_eq!((pruned.items, pruned.stage_runs), (1, 1));
+}
+
+#[test]
 fn a_refresh_and_its_owner_go_together() {
     let (mut store, repo, _) = seeded(0);
     let owner = store

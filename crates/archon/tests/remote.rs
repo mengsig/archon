@@ -178,6 +178,16 @@ fn the_wizard_stops_with_the_fix_when_tailscale_is_not_ready_or_not_asked() {
     assert!(!stopped.status.success());
     let errors = String::from_utf8_lossy(&stopped.stderr).into_owned();
     assert!(errors.contains("tailscale up"), "{errors}");
+    assert!(
+        errors.contains("switched remote access back off"),
+        "{errors}"
+    );
+    let status = remote_json(&env, &["status"]);
+    assert_eq!(
+        status["enabled"], false,
+        "a failed publish opens nothing: {status}"
+    );
+    assert!(status["listening"].is_null(), "{status}");
     stand_ins(&tools, "Running");
     // No terminal and no --yes: nothing is published without consent.
     let unasked = wizard(&env, &tools, &["remote", "setup"]);

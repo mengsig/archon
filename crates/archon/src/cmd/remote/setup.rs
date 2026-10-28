@@ -58,8 +58,13 @@ pub(crate) async fn setup(args: RemoteSetupArgs, json: bool) -> anyhow::Result<E
         "The app talks to archond, so it must run; nothing else changes here.",
     );
     let client = connect_or_start().await?;
+    let was_enabled = remote_view(&client, Request::RemoteStatus).await?.enabled;
     let target = enable(&client, &mut steps).await?;
-    let origin = publish(&client, &args, &target, json, &mut steps).await?;
+    let origin = match publish(&client, &args, &target, json, &mut steps).await {
+        Ok(origin) => origin,
+        Err(error) if was_enabled => return Err(error),
+        Err(error) => return Err(switch_back_off(&client, error).await),
+    };
     if let Some(origin) = &origin {
         verify(origin, &mut steps).await?;
     }
@@ -124,6 +129,26 @@ async fn enable(client: &ArchonClient, steps: &mut Steps) -> anyhow::Result<Stri
     assert!(bound.port() > 0, "a bound listener has a port");
     steps.note(&format!("Listening on {listening}."));
     Ok(archon_core::remote::local_origin(bound))
+}
+
+/// A publish that failed leaves the listener as this run found it: off, so
+/// nothing an earlier run published keeps answering.
+async fn switch_back_off(client: &ArchonClient, error: anyhow::Error) -> anyhow::Error {
+    let change = RemoteChange {
+        enabled: Some(false),
+        ..RemoteChange::default()
+    };
+    match remote_view(client, Request::ConfigureRemote { change }).await {
+        Ok(view) if !view.enabled && view.listening.is_none() => {
+            error.context("setup stopped and switched remote access back off")
+        }
+        Ok(_) => error
+            .context("setup stopped, but remote access is still on; run `archon remote disable`"),
+        Err(off) => error.context(format!(
+            "setup stopped, and switching remote access back off failed ({off:#}); run \
+             `archon remote disable`"
+        )),
+    }
 }
 
 /// Publish the listener and allow its origin; `None` with `--local`.

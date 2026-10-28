@@ -200,10 +200,17 @@ impl Remote {
     }
 
     /// Apply `change`: the allowlist first, then open or close the listener.
+    /// Origins are checked at the upgrade, so withdrawing one closes every session.
     pub async fn configure(&self, change: RemoteChange) -> Result<RemoteView, ArchonError> {
         let _admin = self.admin.lock().await;
         let enable = change.enabled;
+        let before = self.shared.lock().stored.public_origins.clone();
         self.update_stored(|stored| apply_origins(stored, &change))?;
+        let after = self.shared.lock().stored.public_origins.clone();
+        if before.iter().any(|origin| !after.contains(origin)) {
+            tracing::info!("an allowed origin was withdrawn; closing remote sessions");
+            self.shared.sessions.close_all(Close::OriginWithdrawn);
+        }
         match enable {
             Some(true) => {
                 self.update_stored(|stored| {

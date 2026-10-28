@@ -184,6 +184,7 @@ silent for 75.
 | --- | --- |
 | 4401 | This device was revoked; pair again. |
 | 4403 | Remote access was switched off. |
+| 4002 | An allowed origin was withdrawn; the app reconnects and is checked again. |
 | 1001 | archond is stopping. |
 | 1008 | A protocol violation (no `hello` first, a wrong version). |
 | 1009 | A message over 1 MiB. |
@@ -211,6 +212,9 @@ archon CLI".
 - `archon remote disable` closes the listener, every session (4403) and any
   open pairing. Paired devices are kept, and work again after `archon
   remote enable`.
+- `archon remote origin remove` and `archon remote setup --local` close
+  every open session (4002) when they withdraw an origin, since origins are
+  checked when a session opens; sessions from origins still allowed reconnect.
 - A `tailscale serve` that still points at a closed listener answers `502`.
   Remove it with `tailscale serve --https=<port> off`.
 

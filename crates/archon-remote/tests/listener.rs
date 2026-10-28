@@ -457,6 +457,38 @@ async fn revoking_a_device_closes_its_session_at_once_and_disabling_closes_all()
 }
 
 #[tokio::test]
+async fn withdrawing_an_allowed_origin_closes_open_sessions() {
+    let listener = Listener::start().await;
+    let cookie = listener.pair().await;
+    let origins = |add: &[&str], remove: &[&str]| RemoteChange {
+        add_origins: add.iter().map(|o| (*o).to_owned()).collect(),
+        remove_origins: remove.iter().map(|o| (*o).to_owned()).collect(),
+        ..RemoteChange::default()
+    };
+    let change = origins(&["https://phone.example"], &["https://never.example"]);
+    listener.remote.configure(change).await.unwrap();
+    let mut socket = listener.socket(&cookie).await;
+    let change = origins(&[], &["https://never.example"]);
+    listener.remote.configure(change).await.unwrap();
+    let alive = exchange(
+        &mut socket,
+        serde_json::json!({"req": 2, "cmd": "repo_list"}),
+    )
+    .await;
+    assert!(
+        alive["result"]["Ok"].is_object(),
+        "nothing allowed was withdrawn: {alive}"
+    );
+    let view = listener
+        .remote
+        .configure(origins(&[], &["https://phone.example"]))
+        .await
+        .unwrap();
+    assert!(view.public_origins.is_empty());
+    assert_eq!(close_code(&mut socket).await, 4002);
+}
+
+#[tokio::test]
 async fn a_revoke_lands_while_the_device_floods_requests_it_does_not_read() {
     let listener = Listener::start().await;
     let cookie = listener.pair().await;

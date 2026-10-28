@@ -57,7 +57,8 @@ are in. Add the page to the home screen to open it like an app.
 Each step finds what an earlier run did: the listener already open, the
 address already published. Running it again only opens a new pairing code,
 so it is also how you pair a second device (`archon remote pair` does just
-that step).
+that step). A run that turned the listener on and then could not publish it
+switches it back off, so a failed setup leaves nothing open.
 
 ## Options
 

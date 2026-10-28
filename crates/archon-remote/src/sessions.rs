@@ -10,6 +10,8 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 pub enum Close {
     Revoked,
     Disabled,
+    /// An allowed origin was removed; sessions reconnect and are checked again.
+    OriginWithdrawn,
     ShuttingDown,
 }
 
@@ -18,6 +20,7 @@ impl Close {
         match self {
             Self::Revoked => 4401,
             Self::Disabled => 4403,
+            Self::OriginWithdrawn => 4002,
             Self::ShuttingDown => 1001,
         }
     }
@@ -26,6 +29,7 @@ impl Close {
         match self {
             Self::Revoked => "this device was unpaired",
             Self::Disabled => "remote access was turned off",
+            Self::OriginWithdrawn => "an allowed origin was withdrawn",
             Self::ShuttingDown => "archond is stopping",
         }
     }

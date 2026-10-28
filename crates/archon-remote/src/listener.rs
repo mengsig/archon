@@ -54,7 +54,7 @@ pub fn start(shared: Arc<Shared>) -> Result<Running, ArchonError> {
         "a non-loopback bind needs allow_remote"
     );
     let (stop, stopped) = watch::channel(false);
-    let task = tokio::spawn(accept_loop(shared, listener, address.port(), stopped));
+    let task = tokio::spawn(accept_loop(shared, listener, address, stopped));
     Ok(Running {
         address,
         stop,
@@ -65,7 +65,7 @@ pub fn start(shared: Arc<Shared>) -> Result<Running, ArchonError> {
 async fn accept_loop(
     shared: Arc<Shared>,
     listener: TcpListener,
-    port: u16,
+    bound: SocketAddr,
     mut stopped: watch::Receiver<bool>,
 ) {
     let slots = Arc::new(Semaphore::new(shared.config.max_connections as usize));
@@ -91,7 +91,7 @@ async fn accept_loop(
         };
         let (shared, stopped) = (shared.clone(), stopped.clone());
         connections.spawn(async move {
-            serve(shared, stream, port, stopped).await;
+            serve(shared, stream, bound, stopped).await;
             drop(slot);
         });
     }
@@ -112,13 +112,13 @@ async fn drain(connections: &mut tokio::task::JoinSet<()>) {
 async fn serve(
     shared: Arc<Shared>,
     stream: TcpStream,
-    port: u16,
+    bound: SocketAddr,
     mut stopped: watch::Receiver<bool>,
 ) {
     let service = service_fn(|request| {
         let shared = shared.clone();
         async move {
-            Ok::<_, std::convert::Infallible>(crate::http::respond(&shared, port, request).await)
+            Ok::<_, std::convert::Infallible>(crate::http::respond(&shared, bound, request).await)
         }
     });
     let serving = http1::Builder::new()

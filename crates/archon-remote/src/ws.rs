@@ -37,6 +37,14 @@ pub fn upgrade(
         ));
     };
     let registration = shared.sessions.register(&device.id, slot);
+    // A revoke or a disable that ran before the registration did not close it.
+    if !shared.admits(&device.id) {
+        return Err(HttpError::new(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            "this device was unpaired or remote access was turned off",
+        ));
+    }
     let on_upgrade = hyper::upgrade::on(&mut request);
     let shared = shared.clone();
     tokio::spawn(async move {

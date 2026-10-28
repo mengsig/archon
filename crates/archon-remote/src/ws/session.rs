@@ -26,6 +26,8 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 const PING_EVERY: Duration = Duration::from_secs(25);
 /// A session that sent nothing, not even a pong, for this long is closed.
 const SILENT_AFTER: Duration = Duration::from_secs(75);
+/// A peer that takes longer than this to accept one frame is not reading.
+const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 const OUTBOX_FRAMES: usize = 256;
 const MAX_IN_FLIGHT: usize = 16;
 const MAX_SUBSCRIPTIONS: u64 = 4;
@@ -135,7 +137,12 @@ where
     let mut ping = tokio::time::interval(PING_EVERY);
     let mut heard = tokio::time::Instant::now();
     loop {
+        // Biased: a revoke or a disable first, then draining replies before
+        // reading more, so only a device that stops reading fills the outbox.
         let step = tokio::select! {
+            biased;
+            _ = registration.closed.changed() => Err(closed(registration)),
+            Some(frame) = frames.recv() => send(socket, &frame).await,
             incoming = socket.next() => match incoming {
                 Some(Err(tokio_tungstenite::tungstenite::Error::Capacity(_))) => {
                     Err(Ended::Violation(CloseCode::Size, "message too large"))
@@ -143,15 +150,13 @@ where
                 None | Some(Err(_)) => Err(Ended::Peer),
                 Some(Ok(message)) => {
                     heard = tokio::time::Instant::now();
-                    receive(session, message).await
+                    receive(session, message)
                 }
             },
-            Some(frame) = frames.recv() => send(socket, &frame).await,
             _ = ping.tick() => match heard.elapsed() > SILENT_AFTER {
                 true => Err(Ended::Violation(CloseCode::Away, "silent too long")),
-                false => socket.send(Message::Ping(Default::default())).await.map_err(|_| Ended::Peer),
+                false => send_message(socket, Message::Ping(Default::default())).await,
             },
-            _ = registration.closed.changed() => Err(closed(registration)),
             Some(_) = session.tasks.join_next() => Ok(()),
         };
         if let Err(ended) = step {
@@ -169,7 +174,7 @@ fn closed(registration: &Registration) -> Ended {
 }
 
 /// One message from the device; requests run on their own tasks.
-async fn receive(session: &mut Session, message: Message) -> Result<(), Ended> {
+fn receive(session: &mut Session, message: Message) -> Result<(), Ended> {
     let text = match message {
         Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => return Ok(()),
         Message::Close(_) => return Err(Ended::Peer),
@@ -188,28 +193,26 @@ async fn receive(session: &mut Session, message: Message) -> Result<(), Ended> {
             return queue(
                 session,
                 error_frame(id, ErrorCode::InvalidArgument, message),
-            )
-            .await;
+            );
         }
     };
-    dispatch(session, id, request).await
+    dispatch(session, id, request)
 }
 
-async fn dispatch(session: &mut Session, id: u64, request: Request) -> Result<(), Ended> {
+fn dispatch(session: &mut Session, id: u64, request: Request) -> Result<(), Ended> {
     if !crate::allow::allowed(&request) || matches!(request, Request::Hello { .. }) {
         let name = crate::allow::command_name(&request);
         let message = format!("{name} is not available from the web app; use the archon CLI");
-        return queue(session, error_frame(id, ErrorCode::Forbidden, message)).await;
+        return queue(session, error_frame(id, ErrorCode::Forbidden, message));
     }
     if let Request::SubscribeFeed { after, verbose } = request {
-        return subscribe(session, id, after, verbose).await;
+        return subscribe(session, id, after, verbose);
     }
-    let permit = session
-        .in_flight
-        .clone()
-        .acquire_owned()
-        .await
-        .expect("never closed");
+    let Ok(permit) = session.in_flight.clone().try_acquire_owned() else {
+        let message =
+            format!("at most {MAX_IN_FLIGHT} requests may be in flight; wait for a reply");
+        return queue(session, error_frame(id, ErrorCode::Unavailable, message));
+    };
     let (backend, outbox) = (session.backend.clone(), session.outbox.clone());
     session.tasks.spawn(async move {
         let result = backend.handle(request).await;
@@ -223,7 +226,7 @@ async fn dispatch(session: &mut Session, id: u64, request: Request) -> Result<()
     Ok(())
 }
 
-async fn subscribe(
+fn subscribe(
     session: &mut Session,
     id: u64,
     after: Option<u64>,
@@ -234,8 +237,7 @@ async fn subscribe(
         return queue(
             session,
             error_frame(id, ErrorCode::InvalidArgument, message),
-        )
-        .await;
+        );
     }
     session.subscriptions += 1;
     let subscription = FeedSubscription {
@@ -251,8 +253,15 @@ async fn subscribe(
     Ok(())
 }
 
-async fn queue(session: &Session, frame: ServerFrame) -> Result<(), Ended> {
-    session.outbox.send(frame).await.map_err(|_| Ended::Peer)
+/// Never waits: the loop that drains the outbox is the caller, so a full
+/// outbox means the device sends faster than it reads.
+fn queue(session: &Session, frame: ServerFrame) -> Result<(), Ended> {
+    session.outbox.try_send(frame).map_err(|error| match error {
+        mpsc::error::TrySendError::Full(_) => {
+            Ended::Violation(CloseCode::Policy, "too many replies are waiting to be read")
+        }
+        mpsc::error::TrySendError::Closed(_) => Ended::Peer,
+    })
 }
 
 fn text_of(message: Message) -> Result<String, Ended> {
@@ -286,8 +295,16 @@ where
             serde_json::to_string(&refusal).expect("an error frame encodes")
         }
     };
-    socket
-        .send(Message::text(text))
-        .await
-        .map_err(|_| Ended::Peer)
+    send_message(socket, Message::text(text)).await
+}
+
+/// One message to the device, given up on after [`SEND_TIMEOUT`].
+async fn send_message<S>(socket: &mut WebSocketStream<S>, message: Message) -> Result<(), Ended>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    match tokio::time::timeout(SEND_TIMEOUT, socket.send(message)).await {
+        Ok(sent) => sent.map_err(|_| Ended::Peer),
+        Err(_) => Err(Ended::Violation(CloseCode::Away, "not reading")),
+    }
 }

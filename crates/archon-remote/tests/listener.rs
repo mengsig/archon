@@ -455,3 +455,22 @@ async fn revoking_a_device_closes_its_session_at_once_and_disabling_closes_all()
     assert!(refused.is_err(), "the port is closed once disabled");
     assert!(listener.remote.pair().is_err(), "no pairing while off");
 }
+
+#[tokio::test]
+async fn a_revoke_lands_while_the_device_floods_requests_it_does_not_read() {
+    let listener = Listener::start().await;
+    let cookie = listener.pair().await;
+    let mut socket = listener.socket(&cookie).await;
+    for req in 2..1_000 {
+        let frame = serde_json::json!({"req": req, "cmd": "repo_list"});
+        socket.send(Message::text(frame.to_string())).await.unwrap();
+    }
+    let id = cookie
+        .trim_start_matches("archon_device=")
+        .split_once('.')
+        .unwrap()
+        .0;
+    listener.remote.revoke(id).unwrap();
+    assert_eq!(close_code(&mut socket).await, 4401);
+    assert!(listener.remote.view().devices.is_empty());
+}

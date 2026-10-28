@@ -22,6 +22,7 @@ Everyday:
   repo            Register and configure repositories
   merge           Merge a succeeded item's pull request, or land its local branch
   diff            Review what a local-ship item changed before merging it
+  remote          Use Archon from your phone: `archon remote setup`
 
 Setup:
   setup, doctor   Set Archon up, and check that it works
@@ -569,9 +570,15 @@ pub enum RemoteCommand {
 #[derive(Debug, Subcommand)]
 pub enum RemoteOriginCommand {
     /// Allow `https://host[:port]`, an HTTPS proxy in front of the listener.
-    Add { url: String },
+    Add {
+        /// The origin, as `https://host` or `https://host:port`.
+        url: String,
+    },
     /// Stop answering on an origin.
-    Remove { url: String },
+    Remove {
+        /// The origin, as `archon remote status` lists it.
+        url: String,
+    },
 }
 
 #[derive(Debug, clap::Args)]

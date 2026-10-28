@@ -4,6 +4,7 @@
 pub mod api;
 pub mod checks;
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -80,10 +81,10 @@ pub fn clear_cookie() -> HeaderValue {
 /// Answer one request; every response carries the security headers.
 pub async fn respond(
     shared: &Arc<Shared>,
-    port: u16,
+    bound: SocketAddr,
     request: Request<Incoming>,
 ) -> Response<Body> {
-    let mut response = match route(shared, port, request).await {
+    let mut response = match route(shared, bound, request).await {
         Ok(response) => response,
         Err(error) => {
             tracing::debug!(status = %error.status, code = error.code, "remote request refused");
@@ -96,10 +97,10 @@ pub async fn respond(
 
 async fn route(
     shared: &Arc<Shared>,
-    port: u16,
+    bound: SocketAddr,
     request: Request<Incoming>,
 ) -> Result<Response<Body>, HttpError> {
-    let allowed = checks::Allowed::now(shared, port);
+    let allowed = checks::Allowed::now(shared, bound);
     allowed.check_host(request.headers(), request.uri())?;
     let path = request.uri().path().to_owned();
     checks::check_path(&path)?;

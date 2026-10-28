@@ -116,8 +116,8 @@ impl Tailscale {
     pub(super) async fn publish(&self, port: u16, target: &str) -> anyhow::Result<PublishOutcome> {
         assert!(SERVE_PORTS.contains(&port), "port {port} is not servable");
         assert!(
-            target.starts_with("http://127.0.0.1:"),
-            "target {target} is not archond's loopback listener"
+            target.starts_with("http://"),
+            "target {target} is not archond's plain-HTTP listener"
         );
         let https = format!("--https={port}");
         let args = ["serve", "--bg", https.as_str(), target];

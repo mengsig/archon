@@ -1,7 +1,7 @@
 //! Remote access from a phone or browser (docs/remote.md): the `[remote]`
 //! configuration, and what `archon remote` reads and changes on archond.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
@@ -113,6 +113,20 @@ pub struct PairingCode {
     pub urls: Vec<String>,
 }
 
+/// The `http://` origin this machine reaches a listener bound to `bound` at:
+/// the bound address itself, or loopback for an unspecified one.
+pub fn local_origin(bound: SocketAddr) -> String {
+    assert!(bound.port() > 0, "a bound listener has a port");
+    let ip = match bound.ip() {
+        IpAddr::V4(ip) if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
+        IpAddr::V6(ip) if ip.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
+        ip => ip,
+    };
+    let origin = format!("http://{}", SocketAddr::new(ip, bound.port()));
+    debug_assert!(!origin.ends_with('/'), "an origin has no path");
+    origin
+}
+
 /// `origin` as a browser writes it in the `Origin` header: `https://host`
 /// or `https://host:port`, lower case, no default port, nothing after.
 pub fn normalize_origin(origin: &str) -> Result<String, ArchonError> {
@@ -152,6 +166,20 @@ pub fn normalize_origin(origin: &str) -> Result<String, ArchonError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_local_origin_follows_the_bound_address() {
+        let cases = [
+            ("127.0.0.1:8378", "http://127.0.0.1:8378"),
+            ("127.0.0.2:8378", "http://127.0.0.2:8378"),
+            ("[::1]:8378", "http://[::1]:8378"),
+            ("0.0.0.0:8378", "http://127.0.0.1:8378"),
+            ("[::]:8378", "http://[::1]:8378"),
+        ];
+        for (bound, expected) in cases {
+            assert_eq!(local_origin(bound.parse().unwrap()), expected, "{bound}");
+        }
+    }
 
     #[test]
     fn origins_are_written_as_browsers_send_them() {

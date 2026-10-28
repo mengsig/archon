@@ -1,6 +1,7 @@
 //! The checks that precede any handler: Host against DNS rebinding, Origin
 //! and `Sec-Fetch-Site` against cross-site requests, and bounded JSON bodies.
 
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use http_body_util::{BodyExt as _, Limited};
@@ -15,18 +16,23 @@ pub const MAX_BODY: usize = 16 * 1024;
 const BODY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The origins this listener answers now: the public allowlist, and
-/// loopback on the bound port.
+/// loopback on the bound port, and the bound address itself.
 #[derive(Debug)]
 pub struct Allowed {
     origins: Vec<String>,
 }
 
 impl Allowed {
-    pub fn now(shared: &Shared, port: u16) -> Self {
+    pub fn now(shared: &Shared, bound: SocketAddr) -> Self {
+        let port = bound.port();
         assert!(port > 0, "the listener is bound");
         let mut origins = shared.lock().stored.public_origins.clone();
         for host in ["127.0.0.1", "localhost", "[::1]"] {
             origins.push(format!("http://{host}:{port}"));
+        }
+        let local = archon_core::remote::local_origin(bound);
+        if !origins.contains(&local) {
+            origins.push(local);
         }
         Self { origins }
     }

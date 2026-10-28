@@ -118,13 +118,12 @@ async fn enable(client: &ArchonClient, steps: &mut Steps) -> anyhow::Result<Stri
             view.error.as_deref().unwrap_or("no reason was given")
         );
     };
-    let port = listening
-        .rsplit_once(':')
-        .and_then(|(_, port)| port.parse::<u16>().ok())
-        .with_context(|| format!("archond listens on {listening}, which names no port"))?;
-    assert!(port > 0, "a bound listener has a port");
+    let bound: std::net::SocketAddr = listening
+        .parse()
+        .with_context(|| format!("archond listens on {listening}, which is not an address"))?;
+    assert!(bound.port() > 0, "a bound listener has a port");
     steps.note(&format!("Listening on {listening}."));
-    Ok(format!("http://127.0.0.1:{port}"))
+    Ok(archon_core::remote::local_origin(bound))
 }
 
 /// Publish the listener and allow its origin; `None` with `--local`.

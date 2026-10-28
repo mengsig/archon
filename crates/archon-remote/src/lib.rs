@@ -105,6 +105,13 @@ impl Shared {
         }
     }
 
+    /// Whether a session of device `id` may stay open: the listener is still
+    /// on and the device still paired. Revoke and disable change both first.
+    pub fn admits(&self, id: &str) -> bool {
+        let state = self.lock();
+        state.listener.is_some() && state.stored.devices.iter().any(|d| d.id == id)
+    }
+
     /// Forget device `id` and close its sessions at once.
     pub fn revoke(&self, id: &str) -> Result<(), ArchonError> {
         self.lock().update(&self.path, |stored| {
@@ -242,7 +249,10 @@ impl Remote {
             .iter()
             .map(|origin| format!("{origin}/pair"))
             .collect();
-        urls.push(format!("http://127.0.0.1:{}/pair", listening.port()));
+        urls.push(format!(
+            "{}/pair",
+            archon_core::remote::local_origin(listening)
+        ));
         let code = PairingCode {
             code: pairing.display_code(),
             expires_at: pairing.expires_at(),
@@ -286,6 +296,7 @@ impl Remote {
     }
 
     async fn close_listener(&self, why: Close) {
+        // Taken before the broadcast, so an upgrade racing it is refused.
         let running = self.shared.lock().listener.take();
         self.shared.sessions.close_all(why);
         if let Some(running) = running {

@@ -85,12 +85,12 @@ fn add_remote(h: &Harness) {
 }
 
 /// The restack fixes recorded for `item`: each parent commit and its fix.
-async fn restack_fixes(h: &Harness, item: &QueueItemId) -> Vec<(String, String)> {
+pub(crate) async fn restack_fixes(h: &Harness, item: &QueueItemId) -> Vec<(String, String)> {
     let prefix = format!("restack_fix:{item}:");
     h.ctx.store.lock().await.kv_prefix(&prefix).unwrap()
 }
 
-async fn stack_pair() -> (Harness, QueueItem, QueueItem) {
+pub(crate) async fn stack_pair() -> (Harness, QueueItem, QueueItem) {
     stack_pair_with(Config::default()).await
 }
 

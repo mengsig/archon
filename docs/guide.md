@@ -879,7 +879,7 @@ reference, `[image: shot.png, 14.2 KB]`, not the image. In the terminal UI
 | `archon queue show <id> [--full]` | an item's runs and each stage's attempt, slot, state, verdict, model, agent, cost and summary (first lines; `--full` for all), with the PR URL, recorded plan reasons and full waiting explanation when present. A stage that delegated shows how its cost splits (its own agent, then each delegated agent with model, effort and cost), and a stage holding a declared review shows the review on record. Steers made to the item are listed with who made them |
 | `archon queue cancel <id>` / `archon queue caps` | cancel an item, or show and change saved operator caps |
 | `archon queue retry <id> [--fresh] [--append "…"] [--stage-timeout <stage>=<minutes>]…` | queue a finished item again in its worktree and branch (a succeeded one delivers into its pull request again, and the retry counts against the run that passed); `--fresh` starts over from the base branch on a new branch and sets the old worktree aside, which worktree gc deletes, uncommitted work included, `worktrees.gc_after` (7 days) after the item's last run; `--append` adds guidance to the brief |
-| `archon queue refresh <id>` | merge a finished item's base branch, fetched from `origin`, into its branch: a new item resolves any conflicts, runs the checks, is reviewed from the new merge base and updates the same pull request (never a rebase or a second pull request); an item queued `onto` a pull request merges that pull request's current head instead |
+| `archon queue refresh <id>` | merge a finished item's base branch, fetched from `origin`, into its branch: a new item resolves any conflicts, runs the checks, is reviewed from the new merge base and updates the same pull request (never a rebase or a second pull request); an item queued `onto` a pull request merges that pull request's current head instead. Work no agent needs is done in place and queues nothing: a child whose parent was squash- or rebase-merged is merged over that landing and pushed, and an `onto` item whose branch already holds the pull request's moved head freezes that head for its next ship |
 | `archon queue steer <id> [--note "…"] [--stage <stage>] [--model <provider/model>] [--effort <effort>] [--budget-usd <usd>] [--extend <minutes>] [--stage-timeout <stage>=<minutes>]… [--abort [--then retry\|skip] [--goto <stage>]] [--remove <stage>] [--insert <stage> [--from <pipeline>] [--after <stage>]] [--switch <pipeline>]` | change an item without cancelling it; see [steering an item](#steering-an-item) |
 | `archon log` | the complete feed; `--item <id>` keeps one item's entries, `--kind <kind>` (repeatable) some kinds, and `--follow` keeps printing new ones |
 | `archon merge <id> [--ignore-checks]` | merge a succeeded item's pull request at its reviewed commit; see [Merging on request](#merging-on-request). For a `ship = local` repository it fast-forwards the base branch to the item's reviewed commit and keeps the branch; refused, changing nothing, when the base moved, shares no history, or is checked out with local changes. After `archon queue refresh <id>` succeeds, it lands the refresh's reviewed commit |
@@ -1101,6 +1101,18 @@ pull request against that branch. Other parents are merged
 in. A parent's merge retargets the child PR; later parent commits are merged
 forward. Conflicts create a fix item on the child branch, visible in the queue.
 
+A parent merged on GitHub as a squash or a rebase leaves the base holding its
+content under commits of its own, which a plain merge into the child would
+conflict with. Once the child's last parent settles, `archond` checks that a
+commit of the base has the parent head's very tree, or carries patches of the
+same patch ids as the parent's own commits, and then merges the base into the
+child as if it forked at the parent's head: a content-neutral `merge -s ours`
+when the tree is the parent's. The child's pull request gets it as a
+fast-forward, never a rebase or force-push, once per merged parent. A base
+that holds more than the parent is merged as git would; when that conflicts,
+nothing is written and the operator is told to run `archon queue refresh` on
+the child, which merges the base with an agent resolving it.
+
 ### Work onto an existing pull request
 
 `onto` names an open pull request an item's change is for, instead of a new
@@ -1126,7 +1138,10 @@ the owner's text in its body stay as its owner left them, apart from its
 merge by hand. When the head moved
 since enqueue (someone else pushed), delivery fails naming both commits
 instead of force-pushing; queue the work again `onto` it to start from the
-new head. The push goes only to the repository holding that head: an
+new head. A reviewed commit that already holds the new head, as when that
+head was merged into the item's branch, is pushed as a fast-forward from it,
+and `archon queue refresh` on such an item freezes the new head in place,
+queueing nothing. The push goes only to the repository holding that head: an
 `origin` naming another one, after your `insteadOf` rewrites, is refused,
 and `pushInsteadOf` does not apply to it. A delivered `onto` item has no
 branch of its own on `origin`, so it is not refreshed and an item depending

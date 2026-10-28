@@ -31,6 +31,10 @@ pub struct StackParent {
     /// retried until that head changes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub needs_attention: Option<String>,
+    /// For a merged parent: the base commit the child was restacked over once
+    /// it merged, whatever came of it, so a squash or rebase is handled once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landed: Option<String>,
 }
 
 impl StackParent {

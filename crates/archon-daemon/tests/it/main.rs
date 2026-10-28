@@ -74,6 +74,7 @@ mod recovery_serving;
 mod refresh;
 mod report_retention;
 mod restack;
+mod restack_landed;
 mod retry;
 mod risk_label;
 mod server;

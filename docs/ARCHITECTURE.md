@@ -4591,7 +4591,7 @@ requests, stacks, dependencies, spend and the per-item `kv` families
 run shares, `authority_confirmation:` of a closed question). Outcomes and lesson uses
 stay for learning (store schema 18 dropped their keys to runs and items; a
 reshaped run's outcome keeps a `learning/reshaped/<run>` mark). An item
-stays while anything still names it: a live run, an open gate, an open
+stays while anything still names it: a live run or stage run, an open gate, an open
 question, an open merge request, an operator correction, a live initiative,
 a report record, a distillation whose lessons are not applied, a dependency
 or stack of a kept item, or what gc finds through the item still on disk:

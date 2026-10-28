@@ -10,6 +10,7 @@ use archon_core::error::ArchonError;
 use archon_core::id::{NotificationId, QuestionId};
 use archon_core::notify::{FeedEntry, Notification, NotificationKind, Question};
 use archon_core::queue::{QueueItem, QueueState};
+use archon_core::run::StageState;
 use archon_queue::store::stacks::StackParent;
 use archon_queue::store::{SpendRow, WAL_SIZE_LIMIT};
 use archon_queue::{Checkpointer, DataLock, Store};
@@ -39,7 +40,8 @@ fn settle(
 ) -> QueueItem {
     let item = store.insert_item(new, None).unwrap();
     let run = start(store, &item.id);
-    store.upsert_stage_run(&running_stage(&run, 0, n)).unwrap();
+    let mut stage = running_stage(&run, 0, n);
+    store.upsert_stage_run(&stage).unwrap();
     let row = SpendRow {
         agent: agent(n),
         item: Some(item.id.clone()),
@@ -56,6 +58,9 @@ fn settle(
         run: run.id.clone(),
         summary: "done".into(),
     };
+    stage.state = StageState::Completed;
+    stage.finished_at = Some(t(settled));
+    store.upsert_stage_run(&stage).unwrap();
     let item = settle_run(store, &run, done, t(settled));
     let finished = store.run(&run.id).unwrap();
     store.capture_outcome(&finished, None, true).unwrap();
@@ -352,6 +357,33 @@ fn a_pruned_outcome_keeps_the_cost_settled_after_it_was_captured() {
     assert_eq!(kept.stages, learned.stages);
     assert_eq!(kept.cost_provisional, learned.cost_provisional);
     assert_eq!(store.learning_stats(None).unwrap(), stats);
+}
+
+#[test]
+fn a_cancelled_run_whose_agent_still_runs_keeps_its_item() {
+    let mut store = store();
+    let queued = store.insert_item(&item(None, "cancelled"), None).unwrap();
+    let run = start(&mut store, &queued.id);
+    let mut stage = running_stage(&run, 0, 7);
+    store.upsert_stage_run(&stage).unwrap();
+    settle_run(
+        &mut store,
+        &run,
+        QueueState::Cancelled { reason: None },
+        t(40),
+    );
+    assert_eq!(store.live_stage_runs().unwrap().len(), 1);
+
+    let pruned = store.prune_history(cutoff(), 10, |_, _| false).unwrap();
+    assert_eq!(pruned.items, 0, "recovery still tracks its live agent");
+    assert_eq!(store.live_stage_runs().unwrap().len(), 1);
+    stage.state = StageState::Failed {
+        error: "stopped".into(),
+    };
+    stage.finished_at = Some(t(45));
+    store.upsert_stage_run(&stage).unwrap();
+    let pruned = store.prune_history(cutoff(), 10, |_, _| false).unwrap();
+    assert_eq!((pruned.items, pruned.stage_runs), (1, 1));
 }
 
 #[test]

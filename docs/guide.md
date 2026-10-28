@@ -1108,10 +1108,12 @@ commit of the base has the parent head's very tree, or carries patches of the
 same patch ids as the parent's own commits, and then merges the base into the
 child as if it forked at the parent's head: a content-neutral `merge -s ours`
 when the tree is the parent's. The child's pull request gets it as a
-fast-forward, never a rebase or force-push, once per merged parent. A base
-that holds more than the parent is merged as git would; when that conflicts,
-nothing is written and the operator is told to run `archon queue refresh` on
-the child, which merges the base with an agent resolving it.
+fast-forward, never a rebase or force-push, once per merged parent; a child
+still running then is restacked once it is delivered, not while agents work
+in it. A base that holds more than the parent is merged as git would; when
+that conflicts, nothing is written and the operator is told to run `archon
+queue refresh` on the child, which merges the base with an agent resolving
+it.
 
 ### Work onto an existing pull request
 

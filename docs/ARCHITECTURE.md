@@ -2835,8 +2835,11 @@ written, moved and pushed as above, never forced, and a landing the branch
 holds but its pull request's head lacks is pushed again; a conflict writes
 nothing and is one blocker naming `refresh_item`, not a fix item. The base
 head is then recorded as `landed`, so each parent is restacked once, and a
-row from before `landed` existed is restacked at the next pass. Merging a
-parent through Archon wakes the coordination worker.
+row from before `landed` existed is restacked at the next pass. A child
+still running when its parent merges is not merged into while agents work
+in its worktree: the parent is recorded merged, and the child is restacked
+at the first pass after it is delivered. Merging a parent through Archon
+wakes the coordination worker.
 
 Each stack and each initiative is maintained on its own: one whose pass
 fails is recorded in `kv` `coordination_blocker:<stack|initiative>:<id>`

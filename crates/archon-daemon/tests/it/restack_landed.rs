@@ -161,6 +161,32 @@ async fn a_rebase_merged_parent_restacks_its_child_without_conflict() {
     assert!(h.notices(NotificationKind::Blocker).await.is_empty());
 }
 
+/// A child still running when its parent is squash-merged is left alone
+/// while agents work in it, then restacked over the landing once delivered.
+#[tokio::test]
+async fn a_child_running_when_its_parent_squash_merges_is_restacked_once_finished() {
+    let (h, parent, child) = stack_pair().await;
+    let workspace = h.run(&child.id).await.workspace;
+    commit(&workspace, "parent.txt", "parent\nchild\n");
+    let before = commit(&workspace, "child.txt", "child\n");
+    let main = merge_on_github(&h, &h.run(&parent.id).await.branch, Merged::Squash);
+    h.dispatch().await;
+    assert_eq!(
+        child_head(&h, &child).await,
+        before,
+        "untouched while running"
+    );
+    assert_eq!(landed(&h, &child).await, None, "not restacked yet");
+
+    finish_item(&h, &child.id).await;
+    h.dispatch().await;
+    let done = restacked(&h, &child, &before, &main).await;
+    let tree = |rev: &str| git(&h.repo, &["rev-parse", &format!("{rev}^{{tree}}")]);
+    assert_eq!(tree(&done.after), tree(&done.before), "content-neutral");
+    assert_eq!(landed(&h, &child).await, Some(main));
+    assert!(h.notices(NotificationKind::Blocker).await.is_empty());
+}
+
 /// A squash that changed more than the parent proves no landing: `main` is
 /// merged as git would, cleanly here, and a conflict is told, not forced.
 #[tokio::test]

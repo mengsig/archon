@@ -124,7 +124,7 @@ async fn enable(client: &ArchonClient, steps: &mut Steps) -> anyhow::Result<Stri
         .with_context(|| format!("archond listens on {listening}, which is not an address"))?;
     assert!(bound.port() > 0, "a bound listener has a port");
     steps.note(&format!("Listening on {listening}."));
-    Ok(archon_core::remote::local_origin(bound))
+    Ok(archon_core::remote::local_target(bound))
 }
 
 /// Open the listener, publish it and check that it answers at the published

@@ -24,16 +24,8 @@ pub struct Allowed {
 
 impl Allowed {
     pub fn now(shared: &Shared, bound: SocketAddr) -> Self {
-        let port = bound.port();
-        assert!(port > 0, "the listener is bound");
         let mut origins = shared.lock().stored.public_origins.clone();
-        for host in ["127.0.0.1", "localhost", "[::1]"] {
-            origins.push(format!("http://{host}:{port}"));
-        }
-        let local = archon_core::remote::local_origin(bound);
-        if !origins.contains(&local) {
-            origins.push(local);
-        }
+        origins.extend(local_origins(bound));
         Self { origins }
     }
 
@@ -75,6 +67,22 @@ impl Allowed {
             Some(_) => Err(forbidden()),
         }
     }
+}
+
+/// Loopback by number and by name on the bound port, and the bound address,
+/// each as browsers write it.
+fn local_origins(bound: SocketAddr) -> Vec<String> {
+    use archon_core::remote::{http_origin, local_origin};
+    assert!(bound.port() > 0, "the listener is bound");
+    let mut origins: Vec<String> = ["127.0.0.1", "localhost", "[::1]"]
+        .into_iter()
+        .map(|host| http_origin(host, bound.port()))
+        .collect();
+    let local = local_origin(bound);
+    if !origins.contains(&local) {
+        origins.push(local);
+    }
+    origins
 }
 
 fn authority(origin: &str) -> &str {
@@ -195,6 +203,34 @@ mod tests {
             map.append(*name, value.parse().unwrap());
         }
         map
+    }
+
+    #[test]
+    fn a_listener_on_port_80_answers_the_host_and_origin_browsers_send() {
+        let uri: Uri = "/".parse().unwrap();
+        for bound in ["127.0.0.1:80", "[::1]:80"] {
+            let ok = Allowed {
+                origins: local_origins(bound.parse().unwrap()),
+            };
+            for (host, origin) in [
+                ("127.0.0.1", "http://127.0.0.1"),
+                ("localhost", "http://localhost"),
+                ("[::1]", "http://[::1]"),
+            ] {
+                assert!(
+                    ok.check_host(&headers(&[("host", host)]), &uri).is_ok(),
+                    "{bound} {host}"
+                );
+                assert!(
+                    ok.check_origin(&headers(&[("origin", origin)])).is_ok(),
+                    "{bound} {origin}"
+                );
+            }
+            assert!(
+                ok.check_origin(&headers(&[("origin", "http://127.0.0.1:8378")]))
+                    .is_err()
+            );
+        }
     }
 
     #[test]

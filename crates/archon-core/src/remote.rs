@@ -113,18 +113,45 @@ pub struct PairingCode {
     pub urls: Vec<String>,
 }
 
-/// The `http://` origin this machine reaches a listener bound to `bound` at:
-/// the bound address itself, or loopback for an unspecified one.
+/// Where this machine reaches a listener bound to `bound`, port included: the
+/// bound address itself, or loopback for an unspecified one. Proxies forward here.
+pub fn local_target(bound: SocketAddr) -> String {
+    format!("http://{}", reachable(bound))
+}
+
+/// The `Origin` a browser on this machine sends to the listener at `bound`:
+/// [`local_target`] as browsers write it, without the default port 80.
 pub fn local_origin(bound: SocketAddr) -> String {
+    let at = reachable(bound);
+    let host = match at.ip() {
+        IpAddr::V4(ip) => ip.to_string(),
+        IpAddr::V6(ip) => format!("[{ip}]"),
+    };
+    http_origin(&host, at.port())
+}
+
+/// `http://host:port` as browsers write it in `Origin` and `Host`: port 80
+/// is the default and left out.
+pub fn http_origin(host: &str, port: u16) -> String {
+    assert!(port > 0, "a bound listener has a port");
+    assert!(
+        !host.is_empty() && !host.contains('/'),
+        "a bare host, got {host:?}"
+    );
+    match port {
+        80 => format!("http://{host}"),
+        port => format!("http://{host}:{port}"),
+    }
+}
+
+fn reachable(bound: SocketAddr) -> SocketAddr {
     assert!(bound.port() > 0, "a bound listener has a port");
     let ip = match bound.ip() {
         IpAddr::V4(ip) if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
         IpAddr::V6(ip) if ip.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
         ip => ip,
     };
-    let origin = format!("http://{}", SocketAddr::new(ip, bound.port()));
-    debug_assert!(!origin.ends_with('/'), "an origin has no path");
-    origin
+    SocketAddr::new(ip, bound.port())
 }
 
 /// `origin` as a browser writes it in the `Origin` header: `https://host`
@@ -180,8 +207,26 @@ mod tests {
             ("[::]:8378", "http://[::1]:8378"),
         ];
         for (bound, expected) in cases {
-            assert_eq!(local_origin(bound.parse().unwrap()), expected, "{bound}");
+            let bound = bound.parse().unwrap();
+            assert_eq!(local_origin(bound), expected, "{bound}");
+            assert_eq!(local_target(bound), expected, "{bound}");
         }
+    }
+
+    #[test]
+    fn port_80_is_left_out_of_origins_but_not_of_proxy_targets() {
+        let cases = [
+            ("127.0.0.1:80", "http://127.0.0.1"),
+            ("[::1]:80", "http://[::1]"),
+            ("0.0.0.0:80", "http://127.0.0.1"),
+        ];
+        for (bound, origin) in cases {
+            let bound: SocketAddr = bound.parse().unwrap();
+            assert_eq!(local_origin(bound), origin, "{bound}");
+            assert_eq!(local_target(bound), format!("{origin}:80"), "{bound}");
+        }
+        assert_eq!(http_origin("localhost", 80), "http://localhost");
+        assert_eq!(http_origin("localhost", 8080), "http://localhost:8080");
     }
 
     #[test]

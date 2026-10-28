@@ -4,6 +4,7 @@
 
 mod session;
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use base64::Engine as _;
@@ -23,6 +24,7 @@ pub const SUBPROTOCOL: &str = "archon";
 /// runs on its own task once hyper hands the connection over.
 pub fn upgrade(
     shared: &Arc<Shared>,
+    bound: SocketAddr,
     mut request: Request<Incoming>,
 ) -> Result<Response<Body>, HttpError> {
     let device = crate::http::api::authenticate(shared, request.headers())?;
@@ -37,14 +39,7 @@ pub fn upgrade(
         ));
     };
     let registration = shared.sessions.register(&device.id, slot);
-    // A revoke or a disable that ran before the registration did not close it.
-    if !shared.admits(&device.id) {
-        return Err(HttpError::new(
-            StatusCode::UNAUTHORIZED,
-            "unauthorized",
-            "this device was unpaired or remote access was turned off",
-        ));
-    }
+    admitted(shared, bound, &device.id, &request)?;
     let on_upgrade = hyper::upgrade::on(&mut request);
     let shared = shared.clone();
     tokio::spawn(async move {
@@ -68,6 +63,26 @@ pub fn upgrade(
     let accept = HeaderValue::from_str(&accept).expect("an accept key is base64");
     headers.insert(header::SEC_WEBSOCKET_ACCEPT, accept);
     Ok(response)
+}
+
+/// A revoke, a disable or an origin withdrawal that ran before the session
+/// registered did not close it, so each is checked again once it has.
+fn admitted<B>(
+    shared: &Shared,
+    bound: SocketAddr,
+    device: &str,
+    request: &Request<B>,
+) -> Result<(), HttpError> {
+    if !shared.admits(device) {
+        return Err(HttpError::new(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            "this device was unpaired or remote access was turned off",
+        ));
+    }
+    let allowed = crate::http::checks::Allowed::now(shared, bound);
+    allowed.check_host(request.headers(), request.uri())?;
+    allowed.check_origin(request.headers()).map(|_| ())
 }
 
 fn unavailable(message: &str) -> HttpError {
@@ -109,7 +124,10 @@ fn accept_key(headers: &HeaderMap) -> Result<String, &'static str> {
 
 #[cfg(test)]
 mod tests {
+    use archon_core::remote::{RemoteChange, RemoteConfig};
+
     use super::*;
+    use crate::Remote;
 
     fn headers(pairs: &[(&'static str, &str)]) -> HeaderMap {
         let mut map = HeaderMap::new();
@@ -137,5 +155,43 @@ mod tests {
         short.insert("sec-websocket-key", "c2hvcnQ=".parse().unwrap());
         assert!(accept_key(&short).is_err());
         assert!(accept_key(&headers(&[("upgrade", "websocket")])).is_err());
+    }
+
+    const PHONE: &str = "https://phone.example";
+
+    fn origins(add: &[&str], remove: &[&str]) -> RemoteChange {
+        RemoteChange {
+            enabled: Some(true),
+            add_origins: add.iter().map(|o| (*o).to_owned()).collect(),
+            remove_origins: remove.iter().map(|o| (*o).to_owned()).collect(),
+        }
+    }
+
+    /// Withdrawn after the route checked the origin, before the session registered.
+    #[tokio::test]
+    async fn an_upgrade_that_registers_after_its_origin_was_withdrawn_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = RemoteConfig {
+            address: "127.0.0.1:0".into(),
+            ..RemoteConfig::default()
+        };
+        let remote = Remote::open(config, dir.path(), "9.9.9").unwrap();
+        let view = remote.configure(origins(&[PHONE], &[])).await.unwrap();
+        let bound: SocketAddr = view.listening.unwrap().parse().unwrap();
+        let code = remote.pair().unwrap().code;
+        let body = serde_json::json!({"code": code, "device_name": "Phone"});
+        crate::http::api::claim(&remote.shared, PHONE, body).unwrap();
+        let device = remote.view().devices[0].id.clone();
+        let request = Request::get("/ws")
+            .header(header::HOST, "phone.example")
+            .header(header::ORIGIN, PHONE)
+            .body(())
+            .unwrap();
+        assert!(admitted(&remote.shared, bound, &device, &request).is_ok());
+        remote.configure(origins(&[], &[PHONE])).await.unwrap();
+        let slot = remote.shared.sessions.slot().unwrap();
+        let _registration = remote.shared.sessions.register(&device, slot);
+        let refused = admitted(&remote.shared, bound, &device, &request).unwrap_err();
+        assert_eq!(refused.status, StatusCode::FORBIDDEN);
     }
 }

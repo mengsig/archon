@@ -214,7 +214,9 @@ archon CLI".
   remote enable`.
 - `archon remote origin remove` and `archon remote setup --local` close
   every open session (4002) when they withdraw an origin, since origins are
-  checked when a session opens; sessions from origins still allowed reconnect.
+  checked when a session opens (and again once it is registered, so an
+  upgrade racing the withdrawal is refused); sessions from origins still
+  allowed reconnect.
 - A `tailscale serve` that still points at a closed listener answers `502`.
   Remove it with `tailscale serve --https=<port> off`.
 

@@ -131,7 +131,7 @@ async fn route(
         "/ws" => {
             checks::only(&method, &[Method::GET])?;
             allowed.check_origin(request.headers())?;
-            crate::ws::upgrade(shared, request)
+            crate::ws::upgrade(shared, bound, request)
         }
         api if api == "/api" || api.starts_with("/api/") => Err(HttpError::new(
             StatusCode::NOT_FOUND,

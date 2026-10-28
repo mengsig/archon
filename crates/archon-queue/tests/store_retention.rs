@@ -387,7 +387,7 @@ fn a_cancelled_run_whose_agent_still_runs_keeps_its_item() {
 }
 
 #[test]
-fn a_run_node_or_a_stop_still_owed_keeps_its_item() {
+fn an_entry_a_sweep_still_owes_keeps_its_item() {
     let mut store = store();
     let queued = store.insert_item(&item(None, "owed"), None).unwrap();
     let run = start(&mut store, &queued.id);
@@ -405,10 +405,15 @@ fn a_run_node_or_a_stop_still_owed_keeps_its_item() {
     let stop = format!("descendant_stop:{}", stage.id);
     store.kv_set(&node, "{}").unwrap();
     store.kv_set(&stop, "{}").unwrap();
+    let release = format!("build_release:{}", queued.id);
+    store.kv_set(&release, "repo").unwrap();
 
-    for key in [node, stop] {
+    for key in [node, stop, release] {
         let pruned = store.prune_history(cutoff(), 10, |_, _| false).unwrap();
-        assert_eq!(pruned.items, 0, "the sweep owing {key} still reads its run");
+        assert_eq!(
+            pruned.items, 0,
+            "the sweep owing {key} still reads its item or run"
+        );
         store.kv_delete(&key).unwrap();
     }
     let pruned = store.prune_history(cutoff(), 10, |_, _| false).unwrap();

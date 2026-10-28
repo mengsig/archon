@@ -145,6 +145,14 @@ const BLOCKERS: &[(&str, &str)] = &[
         "crates/archon-daemon/src/executor/restack.rs",
         "`origin` rejected the push as not a fast-forward",
     ),
+    (
+        "crates/archon-daemon/src/executor/landed.rs",
+        "Nothing was written, and Archon never rebases or",
+    ),
+    (
+        "crates/archon-daemon/src/executor/landed.rs",
+        "over its merged parent merged",
+    ),
     ("crates/archon-daemon/src/integration/fix.rs", "is red at"),
     (
         "crates/archon-core/src/integration.rs",

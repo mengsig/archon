@@ -158,6 +158,21 @@ fn the_wizard_publishes_on_the_tailnet_once_and_reuses_it_on_a_rerun() {
         !calls.contains("serve --bg"),
         "nothing is published twice: {calls}"
     );
+    let proxied = json(&wizard(
+        &env,
+        &tools,
+        &[
+            "--json",
+            "remote",
+            "setup",
+            "--proxy-url",
+            "https://proxy.example",
+        ],
+    ));
+    assert_eq!(
+        proxied["pairing"]["urls"][0], "https://proxy.example/pair",
+        "the QR code opens the address this run checked: {proxied}"
+    );
     let local = remote_json(&env, &["setup", "--local", "--no-pair"]);
     assert!(local["origin"].is_null(), "{local}");
     assert_eq!(
@@ -212,5 +227,36 @@ fn the_wizard_stops_with_the_fix_when_tailscale_is_not_ready_or_not_asked() {
     assert!(!unreachable.status.success(), "{unreachable:?}");
     let status = remote_json(&env, &["status"]);
     assert_eq!(status["enabled"], false, "{status}");
+    stop_daemon(&env, daemon);
+}
+
+#[test]
+fn a_listener_that_cannot_open_leaves_remote_access_off() {
+    let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = held.local_addr().unwrap().port();
+    let env = Env::with_config(&format!(
+        "[aether]\nmode = \"shared\"\n[remote]\naddress = \"127.0.0.1:{port}\"\n"
+    ));
+    let daemon = start_daemon(&env);
+    let failed = env
+        .command(&["remote", "setup", "--local", "--no-pair"])
+        .output()
+        .unwrap();
+    assert!(!failed.status.success(), "{failed:?}");
+    let errors = String::from_utf8_lossy(&failed.stderr).into_owned();
+    assert!(errors.contains("the listener did not open"), "{errors}");
+    assert!(
+        errors.contains("switched remote access back off"),
+        "{errors}"
+    );
+    drop(held);
+    stop_daemon(&env, daemon);
+    let daemon = start_daemon(&env);
+    let status = remote_json(&env, &["status"]);
+    assert_eq!(
+        status["enabled"], false,
+        "a restart opens nothing a failed setup left: {status}"
+    );
+    assert!(status["listening"].is_null(), "{status}");
     stop_daemon(&env, daemon);
 }

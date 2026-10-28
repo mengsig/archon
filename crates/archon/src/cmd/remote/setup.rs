@@ -59,8 +59,7 @@ pub(crate) async fn setup(args: RemoteSetupArgs, json: bool) -> anyhow::Result<E
     );
     let client = connect_or_start().await?;
     let was_enabled = remote_view(&client, Request::RemoteStatus).await?.enabled;
-    let target = enable(&client, &mut steps).await?;
-    let origin = match publish_and_verify(&client, &args, &target, json, &mut steps).await {
+    let origin = match bring_up(&client, &args, json, &mut steps).await {
         Ok(origin) => origin,
         Err(error) if was_enabled => return Err(error),
         Err(error) => return Err(switch_back_off(&client, error).await),
@@ -68,7 +67,7 @@ pub(crate) async fn setup(args: RemoteSetupArgs, json: bool) -> anyhow::Result<E
     let remote = remote_view(&client, Request::RemoteStatus).await?;
     let pairing = match args.no_pair {
         true => None,
-        false => Some(pair(&client, &mut steps).await?),
+        false => Some(pair(&client, origin.as_deref(), &mut steps).await?),
     };
     let outcome = Outcome {
         remote,
@@ -128,22 +127,23 @@ async fn enable(client: &ArchonClient, steps: &mut Steps) -> anyhow::Result<Stri
     Ok(archon_core::remote::local_origin(bound))
 }
 
-/// Publish the listener and check that it answers at the published address.
-async fn publish_and_verify(
+/// Open the listener, publish it and check that it answers at the published
+/// address; the caller undoes all of it when any step fails.
+async fn bring_up(
     client: &ArchonClient,
     args: &RemoteSetupArgs,
-    target: &str,
     json: bool,
     steps: &mut Steps,
 ) -> anyhow::Result<Option<String>> {
-    let origin = publish(client, args, target, json, steps).await?;
+    let target = enable(client, steps).await?;
+    let origin = publish(client, args, &target, json, steps).await?;
     if let Some(origin) = &origin {
         verify(origin, steps).await?;
     }
     Ok(origin)
 }
 
-/// A publish or check that failed leaves the listener as this run found it:
+/// An open, publish or check that failed leaves the listener as this run found it:
 /// off, so nothing an earlier run published keeps answering.
 async fn switch_back_off(client: &ArchonClient, error: anyhow::Error) -> anyhow::Error {
     let change = RemoteChange {
@@ -413,17 +413,40 @@ async fn verify(origin: &str, steps: &mut Steps) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn pair(client: &ArchonClient, steps: &mut Steps) -> anyhow::Result<PairingCode> {
+async fn pair(
+    client: &ArchonClient,
+    origin: Option<&str>,
+    steps: &mut Steps,
+) -> anyhow::Result<PairingCode> {
     steps.begin(
         "Pair your phone",
         "A one-time code: the device that types it first gets its own credential, which \
          `archon remote revoke` takes back.",
     );
-    let code = open_pairing(client).await?;
+    let mut code = open_pairing(client).await?;
+    if let Some(origin) = origin {
+        verified_first(&mut code, origin)?;
+    }
     if !steps.json {
         println!("\n{}", pairing_text(&code)?);
     }
     Ok(code)
+}
+
+/// Put the address this run just checked first, so the QR code opens it
+/// rather than an older origin that is still allowed.
+fn verified_first(code: &mut PairingCode, origin: &str) -> anyhow::Result<()> {
+    let url = format!("{origin}/pair");
+    let at = code
+        .urls
+        .iter()
+        .position(|offered| *offered == url)
+        .with_context(|| {
+            format!("archond offers no pairing at {origin}, which this run allowed")
+        })?;
+    code.urls[..=at].rotate_right(1);
+    assert_eq!(code.urls[0], url, "the checked address leads");
+    Ok(())
 }
 
 fn closing_words(outcome: &Outcome) -> String {
@@ -470,6 +493,26 @@ mod tests {
             "{refused}"
         );
         assert!(refused.contains("8443 may be in use"), "{refused}");
+    }
+
+    #[test]
+    fn the_checked_origin_leads_the_pairing_addresses() {
+        let mut code = PairingCode {
+            code: "ABCD-EFGH".into(),
+            expires_at: archon_core::now(),
+            urls: [
+                "https://old.example",
+                "https://new.example",
+                "http://127.0.0.1:8378",
+            ]
+            .map(|origin| format!("{origin}/pair"))
+            .to_vec(),
+        };
+        verified_first(&mut code, "https://new.example").unwrap();
+        assert_eq!(code.urls[0], "https://new.example/pair");
+        assert_eq!(code.urls[1], "https://old.example/pair");
+        assert_eq!(code.urls.len(), 3);
+        assert!(verified_first(&mut code, "https://gone.example").is_err());
     }
 
     #[test]

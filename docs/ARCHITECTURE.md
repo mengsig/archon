@@ -4587,14 +4587,15 @@ the merge watcher reads pull requests for, or than `artifacts.keep_after`,
 whichever is longest: feed rows the feed never shows, and settled items with
 their runs, stage runs, gates, run edits, pull request links, merge
 requests, stacks, dependencies, spend and the per-item `kv` families
-(`steers:`, `shape:`, `learning/applied/<run>`, a `pr_settled:` no kept
+(`steers:`, `shape:`, `restack_fix:`, `restack_target:`,
+`learning/applied/<run>`, a `pr_settled:` no kept
 run shares, `authority_confirmation:` of a closed question). Outcomes and lesson uses
 stay for learning (store schema 18 dropped their keys to runs and items; a
 reshaped run's outcome keeps a `learning/reshaped/<run>` mark). An item
 stays while anything still names it: a live run or stage run, an open gate, an open
 question, an open merge request, an operator correction, a live initiative,
-a report record, a distillation whose lessons are not applied, a dependency
-or stack of a kept item, or what gc finds through the item still on disk:
+a report record, a distillation whose lessons are not applied, a dependency,
+stack or restack fix of a kept item (a fix and its owner go together), or what gc finds through the item still on disk:
 a run workspace, a flat copy a fresh retry set aside beside it, or the
 item's published artifacts. So does an item with spend
 on or after the cutoff's local day, so the daily and window budgets count

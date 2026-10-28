@@ -2,12 +2,13 @@
 //! settled items, with their runs, stage runs, gates, spend and per-item `kv`,
 //! go once older than `storage.retention_days`. Outcomes and lesson uses stay
 //! for learning, and so does every item something live still names: a live
-//! stage run, a live item through a dependency or stack, an open gate, an open question, an open
-//! merge request, an operator correction, a live initiative, a report record
-//! or a distillation whose lessons are not applied yet.
-//! An item stays while gc may still find something of it on disk, such as a
-//! run workspace, through the item. A batch takes an item only with every item naming it. Spend of the days budgets still count stays, and what
-//! goes is carried in `spend_pruned`.
+//! stage run, a live item through a dependency, a stack or the restack index,
+//! an open gate, an open question, an open merge request, an operator
+//! correction, a live initiative, a report record or a distillation whose
+//! lessons are not applied yet. An item stays while gc may still find
+//! something of it on disk, such as a run workspace, through the item. A batch
+//! takes an item only with every item naming it. Spend of the days budgets
+//! still count stays, and what goes is carried in `spend_pruned`.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
@@ -78,15 +79,33 @@ WHERE i.state IN ('succeeded', 'failed', 'cancelled') AND i.updated_at < ?1
   AND NOT EXISTS (SELECT 1 FROM spend s JOIN spend_daily d ON d.agent = s.agent
                   WHERE s.item = i.id AND d.day >= ?2)";
 
-/// Candidates an item staying still names, through a dependency or a stack.
-const STILL_NAMED: &str = "
+/// Which item names which through the restack index: an owner's
+/// `restack_fix:<owner>:…` names its fix, a fix's `restack_target:<fix>` its owner.
+macro_rules! restack_naming {
+    () => {
+        "WITH restack (namer, named) AS (
+    SELECT substr(key, 13, instr(substr(key, 13), ':') - 1), value FROM kv
+    WHERE key >= 'restack_fix:' AND key < 'restack_fix;'
+    UNION ALL SELECT substr(key, 16), json_extract(value, '$.owner') FROM kv
+    WHERE key >= 'restack_target:' AND key < 'restack_target;' AND json_valid(value))"
+    };
+}
+
+/// Candidates an item staying still names, through a dependency, a stack or
+/// the restack index.
+const STILL_NAMED: &str = concat!(
+    restack_naming!(),
+    "
 DELETE FROM temp.prune_items WHERE id IN (
     SELECT d.depends_on FROM item_deps d
     WHERE d.item NOT IN (SELECT id FROM temp.prune_items)
     UNION SELECT s.parent_item FROM stacks s
     WHERE s.item NOT IN (SELECT id FROM temp.prune_items)
     UNION SELECT r.item FROM stacks s JOIN runs r ON r.id = s.run
-    WHERE s.item NOT IN (SELECT id FROM temp.prune_items))";
+    WHERE s.item NOT IN (SELECT id FROM temp.prune_items)
+    UNION SELECT x.named FROM restack x JOIN items i ON i.id = x.namer
+    WHERE x.namer NOT IN (SELECT id FROM temp.prune_items))"
+);
 
 /// Whether gc may still find something on disk through an item, given its id
 /// and its runs' workspaces and team roots.
@@ -203,15 +222,20 @@ fn leave_out_on_disk(tx: &Transaction<'_>, on_disk: &OnDisk<'_>) -> Result<(), A
     Ok(())
 }
 
-/// Which candidate names which, through a dependency or a stack: a named item
-/// may only go with every item naming it.
-const NAMING: &str = "
+/// Which candidate names which, through a dependency, a stack or the restack
+/// index: a named item may only go with every item naming it.
+const NAMING: &str = concat!(
+    restack_naming!(),
+    "
 SELECT d.item, d.depends_on FROM item_deps d
 WHERE d.depends_on IN (SELECT id FROM temp.prune_items) AND d.item IN (SELECT id FROM temp.prune_items)
 UNION SELECT s.item, s.parent_item FROM stacks s
 WHERE s.parent_item IN (SELECT id FROM temp.prune_items) AND s.item IN (SELECT id FROM temp.prune_items)
 UNION SELECT s.item, r.item FROM stacks s JOIN runs r ON r.id = s.run
-WHERE r.item IN (SELECT id FROM temp.prune_items) AND s.item IN (SELECT id FROM temp.prune_items)";
+WHERE r.item IN (SELECT id FROM temp.prune_items) AND s.item IN (SELECT id FROM temp.prune_items)
+UNION SELECT x.namer, x.named FROM restack x
+WHERE x.named IN (SELECT id FROM temp.prune_items) AND x.namer IN (SELECT id FROM temp.prune_items)"
+);
 
 /// Keep at most `limit` candidates, newest first, each with every candidate
 /// naming it: a chain longer than a batch goes over passes, a cycle at once.
@@ -401,8 +425,8 @@ fn delete_chosen(
     Ok(())
 }
 
-/// The per-item `kv` families: an item's steers and steered stages, a
-/// distillation run's applied mark, and how a pull request only
+/// The per-item `kv` families: an item's steers, steered stages and restack
+/// index entries, a distillation run's applied mark, and how a pull request only
 /// pruned runs delivered to ended. A reshaped run's outcome keeps saying so
 /// once its run edits are gone, as learning leaves reshaped runs out.
 fn prune_item_kv(tx: &Transaction<'_>) -> Result<usize, ArchonError> {
@@ -434,7 +458,20 @@ fn prune_item_kv(tx: &Transaction<'_>) -> Result<usize, ArchonError> {
             [],
         )
         .ctx("prune settled pull requests")?;
-    Ok(steers + settled)
+    let restack = tx
+        .execute(
+            "DELETE FROM kv WHERE key IN (SELECT 'restack_target:' || id FROM temp.prune_items)",
+            [],
+        )
+        .ctx("prune restack targets")?;
+    let fixes = tx
+        .execute(
+            "DELETE FROM kv WHERE key >= 'restack_fix:' AND key < 'restack_fix;'
+             AND substr(key, 13, instr(substr(key, 13), ':') - 1) IN (SELECT id FROM temp.prune_items)",
+            [],
+        )
+        .ctx("prune restack fix indexes")?;
+    Ok(steers + settled + restack + fixes)
 }
 
 /// Operator confirmations whose question closed and was asked before the

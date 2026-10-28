@@ -11,7 +11,7 @@ use archon_core::id::{NotificationId, QuestionId};
 use archon_core::notify::{FeedEntry, Notification, NotificationKind, Question};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::StageState;
-use archon_queue::store::stacks::StackParent;
+use archon_queue::store::stacks::{Refresh, StackParent};
 use archon_queue::store::{SpendRow, WAL_SIZE_LIMIT};
 use archon_queue::{Checkpointer, DataLock, Store};
 use common::*;
@@ -384,6 +384,44 @@ fn a_cancelled_run_whose_agent_still_runs_keeps_its_item() {
     store.upsert_stage_run(&stage).unwrap();
     let pruned = store.prune_history(cutoff(), 10, |_, _| false).unwrap();
     assert_eq!((pruned.items, pruned.stage_runs), (1, 1));
+}
+
+#[test]
+fn a_refresh_and_its_owner_go_together() {
+    let (mut store, repo, _) = seeded(0);
+    let owner = store
+        .insert_item(&item(Some(&repo), "owner"), None)
+        .unwrap();
+    let run = start(&mut store, &owner.id);
+    let done = QueueState::Succeeded {
+        run: run.id.clone(),
+        summary: "done".into(),
+    };
+    let owner = settle_run(&mut store, &run, done, t(40));
+    let run = store.run(&run.id).unwrap();
+    let refresh = Refresh {
+        base: "main".into(),
+        sha: "a".repeat(40),
+    };
+    let fix = store.enqueue_refresh(&owner, &run, &refresh).unwrap();
+    let cancelled = QueueState::Cancelled { reason: None };
+    store
+        .transition_item(&fix.id, cancelled.clone(), t(50))
+        .unwrap();
+    store
+        .transition_item(&owner.id, QueueState::Queued, t(60))
+        .unwrap();
+
+    // A refresh is stamped when it is queued.
+    let later = archon_core::now() + chrono::Duration::days(60);
+    let pruned = store.prune_history(later, 10, |_, _| false).unwrap();
+    assert_eq!(pruned.items, 0, "a live owner's index names its refresh");
+    assert!(!store.has_pending_stack_fix(&owner.id).unwrap());
+    store.transition_item(&owner.id, cancelled, t(70)).unwrap();
+    let pruned = store.prune_history(later, 10, |_, _| false).unwrap();
+    assert_eq!(pruned.items, 2, "the refresh and its owner go together");
+    assert!(store.stack_fixes_of(&owner.id).unwrap().is_empty());
+    assert!(store.stack_fix(&fix.id).unwrap().is_none());
 }
 
 #[test]

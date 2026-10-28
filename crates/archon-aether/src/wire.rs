@@ -34,6 +34,8 @@ pub const CLIENT_NAME: &str = "archon";
 pub const HOST_CONTEXT_FEATURE: &str = "host_context";
 pub const REPOSITORY_ROOT_FEATURE: &str = "repository_root";
 pub const NOTES_FEATURE: &str = "notes";
+/// The daemon serves `storage_gc` (host-only access).
+pub const STORAGE_FEATURE: &str = "storage";
 /// The daemon serves the notification center (`post_notification` and kin).
 pub const NOTIFICATIONS_FEATURE: &str = "notifications";
 /// The daemon applies `UpdateAgent.subtree`: a raised deadline or cost budget
@@ -70,6 +72,11 @@ pub enum Command {
     Hello(Hello),
     Status,
     Ping,
+    /// Delete the workspaces of Aether's finished agents ([`STORAGE_FEATURE`]).
+    /// `prune_build_output` is left to its default.
+    StorageGc {
+        dry_run: bool,
+    },
     CreateAgent(Box<CreateAgent>),
     GetAgent {
         id: AetherAgentId,
@@ -272,6 +279,12 @@ impl Welcome {
         self.features
             .iter()
             .any(|feature| feature == REPOSITORY_ROOT_FEATURE)
+    }
+
+    pub fn supports_storage(&self) -> bool {
+        self.features
+            .iter()
+            .any(|feature| feature == STORAGE_FEATURE)
     }
 
     pub fn effective_host_context(

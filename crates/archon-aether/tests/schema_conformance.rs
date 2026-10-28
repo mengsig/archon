@@ -44,6 +44,7 @@ fn variant_name(command: &Command) -> &'static str {
         Command::Hello(_) => "hello",
         Command::Status => "status",
         Command::Ping => "ping",
+        Command::StorageGc { .. } => "storage_gc",
         Command::CreateAgent(_) => "create_agent",
         Command::GetAgent { .. } => "get_agent",
         Command::ListAgents { .. } => "list_agents",

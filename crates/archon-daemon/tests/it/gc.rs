@@ -8,11 +8,13 @@ use crate::common;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use archon_aether::client::AetherClient;
+use archon_aether::fake::{FakeAether, Scripted};
 use archon_core::age::Age;
 use archon_core::config::Config;
 use archon_core::error::ArchonError;
 use archon_core::notify::FeedEntry;
-use archon_core::protocol::{GcReport, Reply, Request};
+use archon_core::protocol::{AetherGc, GcReport, Reply, Request};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::run::{StageOutcome, StageRun};
 use archon_daemon::gc;
@@ -917,4 +919,146 @@ async fn a_retry_recreates_a_missing_worktree_from_the_item_s_branch() {
     assert_eq!(git(&tree, &["rev-parse", "HEAD"]), head, "from the branch");
     assert_eq!(git(&tree, &["branch", "--show-current"]), branch);
     assert!(tree.join("work.md").exists());
+}
+
+/// A fake Aether serving `storage_gc` that the harness's link is connected to.
+async fn connected_aether(h: &Harness, features: &[&str]) -> FakeAether {
+    let fake = FakeAether::start(&h.dir.path().join("aetherd.sock"))
+        .await
+        .expect("fake aetherd binds");
+    fake.set_features(features.iter().map(|f| (*f).to_owned()).collect());
+    let client = AetherClient::connect(&fake.endpoint())
+        .await
+        .expect("connects to the fake");
+    h.ctx
+        .aether
+        .replace(Some(std::sync::Arc::new(client)))
+        .expect("installs the client");
+    fake
+}
+
+/// A worktree of the harness repository outside Archon's worktree root, the
+/// way Aether delegates a workspace to a child agent.
+fn delegated_workspace(h: &Harness) -> PathBuf {
+    let path = h.repo.parent().expect("repo parent").join("delegated");
+    let path_text = path.to_str().expect("utf-8");
+    git(&h.repo, &["worktree", "add", "--detach", path_text]);
+    path
+}
+
+fn lists_worktree(h: &Harness, path: &Path) -> bool {
+    let listed = git(&h.repo, &["worktree", "list", "--porcelain"]);
+    listed.contains(path.to_str().expect("utf-8"))
+}
+
+#[tokio::test]
+async fn a_pass_that_removed_a_worktree_has_aether_delete_its_workspaces_then_prunes_git() {
+    let h = harness(Config::default()).await;
+    let fake = connected_aether(&h, &["storage"]).await;
+    let (_, tree) = cancelled_run(&h, "removed by the pass").await;
+    let delegated = delegated_workspace(&h);
+    let aether_workspace = delegated.clone();
+    fake.set_responder(
+        "storage_gc",
+        std::sync::Arc::new(move |_| {
+            std::fs::remove_dir_all(&aether_workspace).expect("aether deletes its workspace");
+            Scripted::reply("storage_report", serde_json::json!({"reclaimed": 1}))
+        }),
+    );
+    assert!(lists_worktree(&h, &delegated));
+
+    let report = gc_request(&h, Some(0), false).await;
+    assert_eq!(report.removed, vec![tree.clone()], "{report:?}");
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert_eq!(report.aether_gc, Some(AetherGc::Ran));
+    let asked = fake.received_named("storage_gc");
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert_eq!(asked[0]["dry_run"], false);
+    assert!(asked[0].get("prune_build_output").is_none(), "{asked:?}");
+    assert!(!delegated.exists());
+    assert!(
+        !lists_worktree(&h, &delegated),
+        "git forgot the worktree Aether deleted"
+    );
+}
+
+#[tokio::test]
+async fn a_storage_gc_aether_refuses_is_reported_and_the_pass_still_succeeds() {
+    let h = harness(Config::default()).await;
+    let fake = connected_aether(&h, &["storage"]).await;
+    fake.set_default(
+        "storage_gc",
+        Scripted::refuse("sweep_busy", "a sweep is running"),
+    );
+    let (_, tree) = cancelled_run(&h, "removed despite Aether").await;
+
+    let report = gc_request(&h, Some(0), false).await;
+    assert_eq!(report.removed, vec![tree.clone()], "{report:?}");
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert!(!tree.exists());
+    match report.aether_gc {
+        Some(AetherGc::Failed(why)) => assert!(why.contains("sweep_busy"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(fake.received_named("storage_gc").len(), 1);
+}
+
+#[tokio::test]
+async fn an_unreachable_or_older_aether_is_reported_and_git_is_still_pruned() {
+    for features in [None, Some(&[][..])] {
+        let h = harness(Config::default()).await;
+        let fake = match features {
+            Some(features) => Some(connected_aether(&h, features).await),
+            None => None,
+        };
+        let (_, tree) = cancelled_run(&h, "removed without Aether").await;
+        let delegated = delegated_workspace(&h);
+        std::fs::remove_dir_all(&delegated).expect("a deleted workspace");
+        assert!(lists_worktree(&h, &delegated));
+
+        let report = gc_request(&h, Some(0), false).await;
+        assert_eq!(report.removed, vec![tree.clone()], "{report:?}");
+        assert!(report.failed.is_empty(), "{:?}", report.failed);
+        assert!(
+            matches!(&report.aether_gc, Some(AetherGc::Failed(_))),
+            "{:?}",
+            report.aether_gc
+        );
+        assert!(!lists_worktree(&h, &delegated), "pruned without Aether");
+        if let Some(fake) = fake {
+            assert!(
+                fake.received_named("storage_gc").is_empty(),
+                "no storage feature"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_pass_that_removed_nothing_does_not_ask_aether_to_clean_up() {
+    let h = harness(caches_due_at_once()).await;
+    let fake = connected_aether(&h, &["storage"]).await;
+    let (_, tree) = cancelled_run(&h, "only reclaimed").await;
+
+    let report = gc_request(&h, None, false).await;
+    assert_eq!(report.reclaimed.len(), 1, "{report:?}");
+    assert!(report.removed.is_empty(), "{report:?}");
+    assert!(tree.exists());
+    assert_eq!(report.aether_gc, None);
+    assert!(fake.received_named("storage_gc").is_empty());
+}
+
+#[tokio::test]
+async fn offline_gc_prunes_git_but_leaves_aether_alone() {
+    let h = harness(Config::default()).await;
+    let (_, tree) = cancelled_run(&h, "removed offline").await;
+    let delegated = delegated_workspace(&h);
+    std::fs::remove_dir_all(&delegated).expect("a deleted workspace");
+    let (config, paths) = (&h.ctx.config, &h.ctx.paths);
+
+    let report =
+        gc::collect_offline(config, paths, Some(Age::from_secs(0)), false).expect("offline gc");
+    assert_eq!(report.removed, vec![tree], "{report:?}");
+    assert_eq!(report.aether_gc, None);
+    assert!(!lists_worktree(&h, &delegated), "pruned offline");
 }

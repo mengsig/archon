@@ -972,6 +972,20 @@ pub struct GcReport {
     /// The pass ran with the shorter disk-pressure ages.
     #[serde(default)]
     pub pressure: bool,
+    /// What Aether's storage cleanup did after the pass removed run
+    /// worktrees; `None` when it was not asked.
+    #[serde(default)]
+    pub aether_gc: Option<AetherGc>,
+}
+
+/// The outcome of `storage_gc`, which Aether runs to delete the workspaces it
+/// delegated to agents whose worktrees gc removed. A failure never fails gc.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AetherGc {
+    Ran,
+    /// Not run, or Aether refused it, with why.
+    Failed(String),
 }
 
 /// The paths in `path`, a worktree, that a gc preview found it would delete.
@@ -1000,6 +1014,7 @@ impl GcReport {
         self.would_delete.extend(other.would_delete);
         self.skipped.extend(other.skipped);
         self.failed.extend(other.failed);
+        self.aether_gc = other.aether_gc.or_else(|| self.aether_gc.take());
         self.bytes_freed = self.bytes_freed.saturating_add(other.bytes_freed);
     }
 

@@ -9,7 +9,7 @@ use anyhow::Context as _;
 use archon_core::age::Age;
 use archon_core::config::Config;
 use archon_core::error::ArchonError;
-use archon_core::protocol::{GcReport, Reply, Request, gib};
+use archon_core::protocol::{AetherGc, GcReport, Reply, Request, gib};
 use archon_daemon::context::DaemonPaths;
 
 use super::{emit, to_json};
@@ -148,6 +148,11 @@ fn summary(report: &GcReport) -> String {
     if report.pressure {
         lines.push("Disk pressure: finished runs and idle caches were collected sooner.".into());
     }
+    if let Some(AetherGc::Failed(why)) = &report.aether_gc {
+        lines.push(format!(
+            "Aether's storage cleanup did not run, so workspaces it delegated may remain: {why}"
+        ));
+    }
     for (path, reason) in &report.skipped {
         lines.push(format!("skipped {}: {reason}", path.display()));
     }
@@ -185,6 +190,7 @@ mod tests {
             would_delete: vec![],
             bytes_freed: 3 << 30,
             pressure: false,
+            aether_gc: None,
         };
         let text = summary(&report);
         assert!(text.starts_with("Removed 1 worktree(s)"), "{text}");
@@ -213,6 +219,17 @@ mod tests {
             .failed
             .push((PathBuf::from("/w/qi_4"), "denied".into()));
         assert!(summary(&report).ends_with("failed /w/qi_4: denied"));
+        assert!(!summary(&report).contains("storage cleanup"));
+        report.aether_gc = Some(AetherGc::Ran);
+        assert!(!summary(&report).contains("storage cleanup"));
+        report.aether_gc = Some(AetherGc::Failed("sweep_busy".into()));
+        let text = summary(&report);
+        assert!(
+            text.contains(
+                "storage cleanup did not run, so workspaces it delegated may remain: sweep_busy"
+            ),
+            "{text}"
+        );
         assert_eq!(exit_code(&report), ExitCode::FAILURE);
     }
 

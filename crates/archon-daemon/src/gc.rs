@@ -20,6 +20,7 @@
 //! drop to `worktrees.pressure_after` if that is shorter.
 //! A pass that freed anything leaves a note in the feed and in `archon status`.
 
+mod aether;
 pub(crate) mod cache;
 mod extras;
 mod mark;
@@ -31,6 +32,7 @@ mod team;
 #[cfg(test)]
 mod tests;
 
+use std::collections::BTreeSet;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -356,6 +358,7 @@ pub async fn collect_planned(ctx: &DaemonContext, pass: Pass<'_>) -> Result<GcRe
         plans,
     } = pass;
     let mut report = GcReport::default();
+    let mut repos = BTreeSet::new();
     for mut item in plans {
         let marks = match mark_if_settled(ctx, &mut item).await? {
             Marking::Marked { marks, in_use } => {
@@ -373,14 +376,33 @@ pub async fn collect_planned(ctx: &DaemonContext, pass: Pass<'_>) -> Result<GcRe
             let _marks = marks;
             sweep::sweep(item.found, &r, &p)
         });
-        report.absorb(swept.await?);
+        let swept = swept.await?;
+        repos.extend(swept.repos);
+        report.absorb(swept.report);
     }
+    report.absorb(after_removals(ctx, &repos).await?);
     report.absorb(collect_extras(ctx, &roots, &extras).await?);
     report.absorb(collect_reports(ctx).await?);
     report.pressure = pressure;
     *last_pass = Some(Instant::now());
     ctx.storage.forget();
     announce(ctx, &report).await?;
+    Ok(report)
+}
+
+/// When the pass removed worktrees of `repos`: have Aether delete the
+/// workspaces it delegated, then prune git's entries for every gone directory.
+async fn after_removals(
+    ctx: &DaemonContext,
+    repos: &BTreeSet<PathBuf>,
+) -> Result<GcReport, ArchonError> {
+    if repos.is_empty() {
+        return Ok(GcReport::default());
+    }
+    let aether_gc = aether::storage_gc(ctx).await;
+    let repos = repos.clone();
+    let mut report = blocking(move || aether::prune(&repos)).await?;
+    report.aether_gc = Some(aether_gc);
     Ok(report)
 }
 
@@ -622,11 +644,16 @@ fn collect_locked(
     let mut plans = plan::plan_all(&settled, roots, policy);
     let in_use = leave_out_live_places(store, worktrees, &mut plans)?;
     report.skipped.extend(in_use);
+    let mut repos = BTreeSet::new();
     for item in plans {
         if plan::still_settled(store, &item)? {
-            report.absorb(sweep::sweep(item.found, roots, policy));
+            let swept = sweep::sweep(item.found, roots, policy);
+            repos.extend(swept.repos);
+            report.absorb(swept.report);
         }
     }
+    // No archond runs to ask Aether for its storage cleanup.
+    report.absorb(aether::prune(&repos));
     // No archond runs, so no spawn is in flight.
     let in_flight = std::collections::BTreeSet::new();
     let claimed = extras::claim(store, &in_flight, roots, extras, &mut report)?;

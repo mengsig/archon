@@ -560,6 +560,7 @@ fn builtin(cmd: &str) -> Scripted {
     match cmd {
         "ping" => Scripted::ok(),
         "status" => Scripted::reply("status", json!({"network_default": "allowed"})),
+        "storage_gc" => Scripted::reply("storage_report", json!({})),
         _ => Scripted::refuse(
             "internal",
             &format!("fake aetherd has no reply scripted for `{cmd}`"),

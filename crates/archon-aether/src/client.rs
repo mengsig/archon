@@ -707,6 +707,26 @@ impl AetherClient {
         self.typed(Command::Status, "status").await
     }
 
+    /// Have Aether delete the workspaces of its finished agents, the reply a
+    /// `storage_report`. Bounded by the request timeout. Refused locally when
+    /// the daemon does not list the `storage` feature.
+    pub async fn storage_gc(&self) -> Result<serde_json::Value, ArchonError> {
+        if !self.welcome.supports_storage() {
+            return Err(ArchonError::Unavailable(
+                "this aetherd does not serve storage_gc".into(),
+            ));
+        }
+        let report = self
+            .request(Command::StorageGc { dry_run: false }, "storage_report")
+            .await?;
+        match report.is_object() {
+            true => Ok(report),
+            false => Err(ArchonError::Protocol(
+                "`storage_report` reply was not an object".into(),
+            )),
+        }
+    }
+
     pub async fn list_models(&self) -> Result<Vec<ModelInfo>, ArchonError> {
         self.typed(Command::ListModels, "models").await
     }

@@ -2,6 +2,7 @@
 //! caches, decided on its real path, since git lists worktrees by it and a
 //! symlink inside a root could otherwise point anywhere.
 
+use std::collections::BTreeSet;
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 
@@ -63,16 +64,28 @@ fn record(report: &mut GcReport, path: &Path, verdict: Verdict) {
     debug_assert!(report.bytes_freed >= before, "freed space only grows");
 }
 
+/// What a sweep did, and the repositories whose git worktree entries it left
+/// to `git worktree prune`.
+#[derive(Debug, Default)]
+pub(super) struct Swept {
+    pub report: GcReport,
+    pub repos: BTreeSet<PathBuf>,
+}
+
 /// Collect what was found, then each team root it emptied. A place gc could
 /// not read is a failure against its path; the rest is still collected.
-pub(super) fn sweep(found: Found, roots: &Roots, policy: &Policy) -> GcReport {
+pub(super) fn sweep(found: Found, roots: &Roots, policy: &Policy) -> Swept {
     let unreadable = found.unreadable.len();
     let mut report = GcReport::default();
+    let mut repos = BTreeSet::new();
     for (path, why) in found.unreadable {
         record(&mut report, &path, Verdict::Failed(why));
     }
     for candidate in &found.candidates {
         let (path, verdict) = collect(candidate, roots, policy);
+        if let (Verdict::Removed { .. }, Some(repo)) = (&verdict, &candidate.repo) {
+            repos.insert(repo.clone());
+        }
         record(&mut report, &path, verdict);
     }
     for root in &found.team_roots {
@@ -85,7 +98,7 @@ pub(super) fn sweep(found: Found, roots: &Roots, policy: &Policy) -> GcReport {
         report.removed.len() + report.skipped.len() + report.failed.len()
             <= unreadable + found.candidates.len() + found.team_roots.len()
     );
-    report
+    Swept { report, repos }
 }
 
 /// Strictly below `root`, with no `..` that could climb out of it.

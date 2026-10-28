@@ -864,7 +864,7 @@ impl Store {
         limit: usize,
         on_disk: impl Fn(&std::path::Path) -> bool,
     ) -> Result<HistoryPruned, ArchonError> {
-        retention::prune(&mut self.conn, &before, limit, &on_disk)
+        retention::prune(self, &before, limit, &on_disk)
     }
     /// Frees the pages pruning emptied when the store allows it; whether it did.
     pub fn vacuum_freed(&mut self) -> Result<bool, ArchonError> {

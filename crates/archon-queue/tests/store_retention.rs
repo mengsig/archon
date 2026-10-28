@@ -232,11 +232,45 @@ fn an_item_gc_still_needs_stays_until_gc_is_done_with_it() {
         .expect("report expiry finds a snapshot through its item");
 
     store.kv_delete("report:rpt_1").unwrap();
+    store
+        .kv_set("report:rpt_2", r#"{"html":"/r/b.html","item":null}"#)
+        .unwrap();
+    let pruned = store.prune_history(cutoff(), 10, |_| false).unwrap();
+    assert_eq!(pruned.items, 1, "a report of no item keeps none");
+    assert!(gone(store.item(&reported.id)));
+}
+
+#[test]
+fn a_pruned_outcome_keeps_the_cost_settled_after_it_was_captured() {
+    let mut store = store();
+    let settled = settled_item(&mut store, 1, 2.0, 30, 50);
+    let run = store.runs_for_item(&settled.id).unwrap().remove(0);
+    let captured = store.outcome(&run.id).unwrap().unwrap().cost_usd;
+    let late = SpendRow {
+        agent: agent(1),
+        item: Some(settled.id.clone()),
+        cost_usd: 3.0,
+        cost_basis: archon_core::cost::CostBasis::ProviderReported,
+        cost_complete: Some(true),
+        estimated_cost_usd: 1.0,
+        input_tokens: 2,
+        output_tokens: 2,
+        at: t(60),
+    };
+    store.record_spend(&late).unwrap();
+    let learned = store.outcome(&run.id).unwrap().unwrap();
+    assert!(learned.cost_usd > captured, "the late settlement counts");
+    let stats = store.learning_stats(None).unwrap();
+
     assert_eq!(
-        store.prune_history(cutoff(), 10, |_| false).unwrap().items,
+        store.prune_history(cutoff(), 10, |_| false).unwrap().runs,
         1
     );
-    assert!(gone(store.item(&reported.id)));
+    let kept = store.outcome(&run.id).unwrap().unwrap();
+    assert_eq!(kept.cost_usd, learned.cost_usd);
+    assert_eq!(kept.stages, learned.stages);
+    assert_eq!(kept.cost_provisional, learned.cost_provisional);
+    assert_eq!(store.learning_stats(None).unwrap(), stats);
 }
 
 #[test]
@@ -322,10 +356,27 @@ fn the_wal_is_cut_back_after_many_writes_and_at_restart() {
     store.kv_set("more", "1").unwrap();
     assert!(checkpointer.truncate().unwrap());
     assert_eq!(file_size(&wal), 0, "a truncating checkpoint empties it");
+
+    // An idle connection left open keeps an oversized WAL across the restart.
+    let blob = "x".repeat(2 * WAL_SIZE_LIMIT as usize);
+    store.kv_set("blob", &blob).unwrap();
+    let idle = rusqlite::Connection::open(&path).unwrap();
+    let keys: i64 = idle
+        .query_row("SELECT COUNT(*) FROM kv", [], |r| r.get(0))
+        .unwrap();
+    assert!(keys > 0, "the idle connection has read the store");
     drop(checkpointer);
     drop(store);
+    assert!(
+        file_size(&wal) > WAL_SIZE_LIMIT as u64,
+        "the WAL outlives archond"
+    );
     let lock = DataLock::acquire(&data, socket).unwrap();
     let store = Store::open_owned(&path, lock).unwrap();
-    assert!(file_size(&wal) <= WAL_SIZE_LIMIT as u64);
-    assert_eq!(store.kv_get("more").unwrap().as_deref(), Some("1"));
+    assert_eq!(file_size(&wal), 0, "opening the store truncates it");
+    assert_eq!(
+        store.kv_get("blob").unwrap().map(|v| v.len()),
+        Some(blob.len())
+    );
+    drop(idle);
 }

@@ -13,9 +13,11 @@ use std::path::Path;
 
 use archon_core::Timestamp;
 use archon_core::error::ArchonError;
-use rusqlite::{Connection, Transaction, params};
+use archon_core::outcome::Outcome;
+use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 
-use super::codec::{SqlContext, ts, write_tx};
+use super::Store;
+use super::codec::{SqlContext, from_json, ts};
 use super::spend::local_day;
 
 /// What one call deleted, by kind.
@@ -63,8 +65,10 @@ WHERE i.state IN ('succeeded', 'failed', 'cancelled') AND i.updated_at < ?1
                   AND EXISTS (SELECT 1 FROM json_each(i.data, '$.tags')
                               WHERE value = 'archon:distillation')
                   AND NOT EXISTS (SELECT 1 FROM kv WHERE key = 'learning/applied/' || r.id))
-  AND i.id NOT IN (SELECT CASE WHEN json_valid(value) THEN json_extract(value, '$.item') END
-                   FROM kv WHERE key >= 'report:' AND key < 'report;' AND value IS NOT NULL)
+  AND i.id NOT IN (SELECT item FROM (SELECT CASE WHEN json_valid(value)
+                                    THEN json_extract(value, '$.item') END AS item
+                                    FROM kv WHERE key >= 'report:' AND key < 'report;')
+                   WHERE item IS NOT NULL)
   AND (i.initiative_id IS NULL OR EXISTS (SELECT 1 FROM initiatives n
        WHERE n.id = i.initiative_id AND n.state IN ('done', 'failed', 'cancelled')))
   AND NOT EXISTS (SELECT 1 FROM spend s WHERE s.item = i.id AND s.at >= ?1)
@@ -85,14 +89,18 @@ DELETE FROM temp.prune_items WHERE id IN (
 /// they own, oldest first, in one transaction. `on_disk` says whether a run
 /// workspace still exists.
 pub(super) fn prune(
-    conn: &mut Connection,
+    store: &mut Store,
     before: &Timestamp,
     limit: usize,
     on_disk: &dyn Fn(&Path) -> bool,
 ) -> Result<HistoryPruned, ArchonError> {
     assert!(limit > 0, "a call prunes something");
     let limit = i64::try_from(limit).expect("a batch fits an i64");
-    let tx = write_tx(conn)?;
+    // Unchecked so the outcomes can still be settled through the store; `&mut`
+    // keeps any other use of the connection out meanwhile.
+    let store = &*store;
+    let tx = Transaction::new_unchecked(&store.conn, TransactionBehavior::Immediate)
+        .ctx("begin the history retention pass")?;
     let cutoff = ts(before);
     let mut pruned = HistoryPruned {
         feed: tx
@@ -107,6 +115,7 @@ pub(super) fn prune(
     pruned.kv += prune_confirmations(&tx, &cutoff)?;
     let chosen = choose_items(&tx, &cutoff, &local_day(before), limit, on_disk)?;
     if chosen > 0 {
+        settle_outcomes(store, &tx)?;
         delete_chosen(&tx, chosen, &mut pruned)?;
     }
     tx.execute_batch("DROP TABLE temp.prune_items; DROP TABLE temp.prune_runs;")
@@ -212,6 +221,27 @@ fn keep_named(tx: &Transaction<'_>) -> Result<(), ArchonError> {
     while tx.execute(STILL_NAMED, []).ctx("keep named items")? > 0 {
         rounds += 1;
         assert!(rounds < 1_000_000, "every round drops a candidate");
+    }
+    Ok(())
+}
+
+/// Write each pruned run's outcome as learning reads it now: its cost is read
+/// again from the stage runs and spend about to go.
+fn settle_outcomes(store: &Store, tx: &Transaction<'_>) -> Result<(), ArchonError> {
+    let mut stmt = tx
+        .prepare("SELECT data FROM outcomes WHERE run IN (SELECT id FROM temp.prune_runs)")
+        .ctx("prepare the outcomes to settle")?;
+    let stored = stmt
+        .query_map([], |r| r.get::<_, String>(0))
+        .ctx("read the outcomes to settle")?
+        .map(|raw| from_json::<Outcome>(&raw.ctx("read an outcome to settle")?, "outcome"))
+        .collect::<Result<Vec<_>, _>>()?;
+    for outcome in stored {
+        let run = outcome.run.clone();
+        let settled = store.settled_outcome(outcome)?;
+        assert_eq!(settled.run, run, "settling keeps the run");
+        assert!(settled.check().is_ok(), "a settled outcome is valid");
+        super::outcomes::write(tx, &settled)?;
     }
     Ok(())
 }

@@ -225,7 +225,7 @@ pub(super) fn correct(
     Ok(())
 }
 
-fn write(conn: &Connection, o: &Outcome) -> Result<(), ArchonError> {
+pub(super) fn write(conn: &Connection, o: &Outcome) -> Result<(), ArchonError> {
     o.check()?;
     conn.execute("INSERT INTO outcomes (run,item,repo,pipeline,size,result,failure_class,corrected,
         merged,cost_usd,finished_at,updated_at,data) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)

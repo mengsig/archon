@@ -332,7 +332,8 @@ impl Plan {
             self.mirror.fetch(&self.repo.path, base)?;
         }
         // Also when the base stood still: a tracked file changed anyway is
-        // reset, and a file created anyway is removed.
+        // reset, and a file or repository created anyway is removed.
+        git::remove_nested_repositories(&self.mirror.work)?;
         self.mirror.checkout(base)?;
         self.mirror.clean(base)?;
         assert_eq!(

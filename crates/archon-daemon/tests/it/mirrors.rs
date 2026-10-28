@@ -383,6 +383,25 @@ async fn a_repository_made_inside_a_mirror_is_removed() {
     assert!(notes[0].contains("nested"), "{}", notes[0]);
 }
 
+#[tokio::test]
+async fn a_repository_made_in_a_tracked_directory_is_removed() {
+    let h = synced().await;
+    let tracked = mirror_of(&h).join(".archon");
+    let made = std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .arg(&tracked)
+        .status()
+        .unwrap();
+    assert!(made.success() && tracked.join(".git").is_dir());
+    mirror::sync_all(&h.ctx).await.unwrap();
+    assert!(!tracked.join(".git").exists(), "the nested repository goes");
+    assert!(tracked.join("pipelines").is_dir(), "what is tracked stays");
+    assert!(
+        mirror_of(&h).join(".git").is_file(),
+        "the mirror's own stays"
+    );
+}
+
 /// Register a second repository, `name`, and return its id.
 async fn register(h: &Harness, name: &str) -> RepoId {
     let path = common::init_repo_with_origin(&h.dir.path().join(name));

@@ -277,6 +277,33 @@ fn listed(names: &[String]) -> String {
     }
 }
 
+/// Remove every `.git` below the mirror's own at the top of `work`: git
+/// tracks none, and `clean` cannot see a repository made in a tracked directory.
+pub(super) fn remove_nested_repositories(work: &Path) -> Result<(), ArchonError> {
+    assert!(work.is_absolute(), "mirror paths are absolute");
+    let mut pending = vec![work.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let reading = |e| ArchonError::io(format!("reading {}", dir.display()), e);
+        for entry in std::fs::read_dir(&dir).map_err(reading)? {
+            let entry = entry.map_err(reading)?;
+            let path = entry.path();
+            if entry.file_name() == ".git" {
+                if dir != work {
+                    tracing::info!(entry = %path.display(), "removing a repository made inside a mirror");
+                    remove_entry(&path)?;
+                }
+            } else if entry.file_type().map_err(reading)?.is_dir() {
+                pending.push(path);
+            }
+        }
+    }
+    assert!(
+        work.join(".git").symlink_metadata().is_ok(),
+        "the mirror's own stays"
+    );
+    Ok(())
+}
+
 /// Remove every entry of the directory `root` not named in `keep`, opening
 /// a read-only mirror first.
 pub(super) fn remove_all_but(root: &Path, keep: &BTreeSet<String>) -> Result<(), ArchonError> {

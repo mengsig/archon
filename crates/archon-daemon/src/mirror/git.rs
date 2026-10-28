@@ -154,7 +154,7 @@ impl Mirror {
     }
 
     /// Check the mirror out detached at `commit`. Tracked files are reset to
-    /// it; untracked ones (a helper's notes, build output) are left.
+    /// it; untracked ones are removed by `clean`, ignored build output kept.
     pub(crate) fn checkout(&self, base: &Base) -> Result<(), ArchonError> {
         assert!(!base.commit.starts_with('-'), "a commit id is no option");
         let args = ["checkout", "--quiet", "--force", "--detach", &base.commit];
@@ -179,7 +179,7 @@ impl Mirror {
 
     /// What was changed in the mirror since the daemon checked out `commit`:
     /// commits made on top of it and tracked files changed, staged or not;
-    /// `None` when nothing was. Untracked files are not counted.
+    /// `None` when nothing was. Files created are counted, ignored ones not.
     pub(crate) fn changes_since(
         &self,
         base: &Base,
@@ -199,7 +199,7 @@ impl Mirror {
             "status",
             "--porcelain",
             "-z",
-            "--untracked-files=no",
+            "--untracked-files=normal",
             "--no-renames",
             "--ignore-submodules",
         ];

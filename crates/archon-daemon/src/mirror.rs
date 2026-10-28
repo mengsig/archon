@@ -4,9 +4,11 @@
 //! data directory. The orchestrator and its helpers read code there, so a
 //! code question needs no queue item, and nothing done in a mirror reaches
 //! the operator's checkout, its objects or its remotes. A mirror's work tree
-//! is read-only on disk (`lock`), and a change found anyway is undone and
-//! reported. One worker keeps the mirrors current; a refresh that fails is
-//! posted to the feed and told to the orchestrator, and blocks neither.
+//! has read-only files on disk and owner-writable directories, so the data
+//! directory can still be removed (`lock`); a file created, deleted or
+//! replaced anyway is undone and reported at the next refresh. One worker
+//! keeps the mirrors current; a refresh that fails is posted to the feed and
+//! told to the orchestrator, and blocks neither.
 
 pub(crate) mod git;
 mod lock;
@@ -329,8 +331,10 @@ impl Plan {
         if self.mirror.head(base)?.as_deref() != Some(base.commit.as_str()) {
             self.mirror.fetch(&self.repo.path, base)?;
         }
-        // Also when the base stood still: a tracked file changed anyway is reset.
+        // Also when the base stood still: a tracked file changed anyway is
+        // reset, and a file created anyway is removed.
         self.mirror.checkout(base)?;
+        self.mirror.clean(base)?;
         assert_eq!(
             self.mirror.head(base)?.as_deref(),
             Some(base.commit.as_str()),

@@ -233,13 +233,6 @@ async fn a_mirror_can_be_read_but_not_written() {
     let readme = mirror.join("README.md");
     assert_eq!(std::fs::read_to_string(&readme).unwrap(), "demo\n");
     assert_eq!(refused(std::fs::write(&readme, "an edit\n")), denied);
-    assert_eq!(refused(std::fs::write(mirror.join("new.txt"), "")), denied);
-    assert_eq!(
-        refused(std::fs::rename(&readme, mirror.join("moved"))),
-        denied
-    );
-    assert_eq!(refused(std::fs::remove_file(&readme)), denied);
-    assert_eq!(refused(std::fs::create_dir(mirror.join("sub"))), denied);
     assert_eq!(
         refused(std::fs::write(mirror.join(".git"), "gitdir: /x\n")),
         denied
@@ -306,8 +299,8 @@ async fn a_write_made_anyway_is_undone_and_reported() {
         "demo\n"
     );
     assert!(
-        mirror.join("notes.txt").exists(),
-        "untracked files are left"
+        !mirror.join("notes.txt").exists(),
+        "a file created anyway is removed"
     );
     let denied = refused(std::fs::write(mirror.join("README.md"), "again\n"));
     assert_eq!(denied, Some(std::io::ErrorKind::PermissionDenied));
@@ -340,6 +333,35 @@ async fn a_write_made_anyway_is_undone_and_reported() {
         std::fs::read_to_string(mirror.join("README.md")).unwrap(),
         "demo\n"
     );
+}
+
+/// Directories are owner-writable so the data directory can be removed, which
+/// lets an agent create, delete and replace files: each is undone and named.
+#[tokio::test]
+async fn a_file_created_deleted_or_replaced_is_undone() {
+    let h = synced().await;
+    let mirror = mirror_of(&h);
+    let readme = mirror.join("README.md");
+    std::fs::write(mirror.join("new.txt"), "created\n").unwrap();
+    std::fs::remove_file(&readme).unwrap();
+    mirror::sync_all(&h.ctx).await.unwrap();
+    assert!(!mirror.join("new.txt").exists(), "the new file is removed");
+    assert_eq!(std::fs::read_to_string(&readme).unwrap(), "demo\n");
+    let notes = system_notes(&h).await;
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("new.txt"), "{}", notes[0]);
+    assert!(notes[0].contains("README.md"), "{}", notes[0]);
+
+    let swap = mirror.join("README.swap");
+    std::fs::write(&swap, "replaced\n").unwrap();
+    std::fs::rename(&swap, &readme).unwrap();
+    mirror::sync_all(&h.ctx).await.unwrap();
+    assert_eq!(std::fs::read_to_string(&readme).unwrap(), "demo\n");
+    let denied = Some(std::io::ErrorKind::PermissionDenied);
+    assert_eq!(refused(std::fs::write(&readme, "again\n")), denied);
+    let notes = system_notes(&h).await;
+    assert_eq!(notes.len(), 2, "{notes:?}");
+    assert!(notes[1].contains("README.md"), "{}", notes[1]);
 }
 
 /// Register a second repository, `name`, and return its id.

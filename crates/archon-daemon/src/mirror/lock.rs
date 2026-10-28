@@ -1,8 +1,11 @@
-//! A mirror's work tree is read-only on disk: no write bit on any file or
-//! directory, so an engine's native edit, patch or shell write into it fails
-//! with a permission error, whatever Aether's scope or the engine's sandbox
-//! allow. The daemon opens a tree only for its own checkout and closes it
-//! again. The git directory stays writable: Aether snapshots a mirror there.
+//! A mirror's files are read-only on disk: no write bit on any file, so an
+//! engine's native in-place edit or patch of one fails with a permission
+//! error, whatever Aether's scope or the engine's sandbox allow. Directories
+//! stay writable by their owner, so removing the data directory (`rm -rf`)
+//! works; a file created, deleted or replaced there anyway is found and
+//! undone at the next refresh. The daemon opens a tree only for its own
+//! checkout and closes it again. The git directory stays writable: Aether
+//! snapshots a mirror there.
 
 use std::io::ErrorKind;
 use std::os::unix::fs::PermissionsExt;
@@ -11,13 +14,18 @@ use std::path::{Path, PathBuf};
 use archon_core::error::ArchonError;
 
 const WRITE_BITS: u32 = 0o222;
+const GROUP_OTHER_WRITE: u32 = 0o022;
 
-/// Close the tree at `root`: clear every write bit, keeping each directory
-/// readable and searchable by its owner. Nothing there is fine.
+/// Close the tree at `root`: clear every write bit of a file, and the group
+/// and other write bits of a directory, which its owner keeps full access
+/// to. Nothing there is fine.
 pub(crate) fn close(root: &Path) -> Result<(), ArchonError> {
     walk(root, |mode, is_dir| {
-        let readable = if is_dir { mode | 0o500 } else { mode };
-        readable & !WRITE_BITS
+        if is_dir {
+            (mode | 0o700) & !GROUP_OTHER_WRITE
+        } else {
+            mode & !WRITE_BITS
+        }
     })
 }
 
@@ -92,7 +100,7 @@ mod tests {
         std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
 
         close(&root).unwrap();
-        assert_eq!(mode(&root.join("src")), 0o555);
+        assert_eq!(mode(&root.join("src")), 0o755);
         assert_eq!(mode(&root.join("src/lib.py")), 0o444);
         assert_eq!(
             mode(&root.join("run.sh")),
@@ -102,10 +110,6 @@ mod tests {
         assert_eq!(mode(&outside), 0o644, "a link's target is not changed");
         let edit = std::fs::write(root.join("src/lib.py"), "x = 2\n");
         assert_eq!(edit.unwrap_err().kind(), ErrorKind::PermissionDenied);
-        let add = std::fs::write(root.join("src/new.py"), "");
-        assert_eq!(add.unwrap_err().kind(), ErrorKind::PermissionDenied);
-        let rename = std::fs::rename(root.join("src/lib.py"), root.join("src/moved.py"));
-        assert_eq!(rename.unwrap_err().kind(), ErrorKind::PermissionDenied);
         assert_eq!(
             std::fs::read_to_string(root.join("src/lib.py")).unwrap(),
             "x = 1\n"
@@ -125,10 +129,37 @@ mod tests {
         std::fs::write(root.join("hidden/file"), "").unwrap();
         std::fs::set_permissions(root.join("hidden"), PermissionsExt::from_mode(0o000)).unwrap();
         close(&root).unwrap();
-        assert_eq!(mode(&root.join("hidden")), 0o500);
+        assert_eq!(mode(&root.join("hidden")), 0o700);
         assert_eq!(mode(&root.join("hidden/file")), 0o444);
         open(&root).unwrap();
         assert_eq!(mode(&root.join("hidden")), 0o700);
         assert!(close(&dir.path().canonicalize().unwrap().join("absent")).is_ok());
+    }
+
+    #[test]
+    fn a_closed_tree_can_be_removed_by_its_owner() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().canonicalize().unwrap().join("data");
+        let root = data.join("repos/demo");
+        std::fs::create_dir_all(root.join("src/deep")).unwrap();
+        std::fs::write(root.join("src/deep/lib.py"), "x = 1\n").unwrap();
+        std::fs::write(root.join("README.md"), "demo\n").unwrap();
+        close(&root).unwrap();
+        assert_eq!(mode(&root.join("src/deep")), 0o755);
+        assert_eq!(mode(&root.join("README.md")), 0o444);
+
+        std::fs::remove_dir_all(&data).unwrap();
+        assert!(!data.exists(), "the data directory is gone");
+    }
+
+    #[test]
+    fn closing_clears_group_and_other_write_on_a_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap().join("mirror");
+        std::fs::create_dir_all(root.join("shared")).unwrap();
+        std::fs::set_permissions(root.join("shared"), PermissionsExt::from_mode(0o777)).unwrap();
+        close(&root).unwrap();
+        assert_eq!(mode(&root.join("shared")), 0o755);
+        assert_eq!(mode(&root), 0o755);
     }
 }

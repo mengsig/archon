@@ -650,9 +650,10 @@ fn refresh_item() -> ToolDefinition {
         "Refresh item onto its base",
         "Merge fresh base into a stale or conflicting item's branch and same pull request. \
          Review reads from the new merge base, conflict fixes included. \
-         An `onto` item merges its pull request's current head instead. The refresh runs on \
-         the stage defaults, not the item's own model_plan or stage_timeouts, unless you give \
-         them here.",
+         An `onto` item merges its pull request's current head instead. Work needing no \
+         agent (a squash- or rebase-merged parent; a held head) is done in place, nothing \
+         queued. The refresh runs on the stage defaults, not the item's own model_plan or \
+         stage_timeouts, unless you give them here.",
         object(
             json!({
                 "item": item_id(""),

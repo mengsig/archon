@@ -2603,10 +2603,13 @@ table and delivers it off every lock:
    on `origin`: the frozen head is pushed onto by fast-forward as in
    step 3, with `--force-with-lease=refs/heads/<head>:<frozen>` so that
    `origin` refuses the update when its tip moved after that read; the
-   checked commit itself means an earlier try pushed it, and any other
-   commit is a refusal naming both, never a force-push.
+   checked commit itself means an earlier try pushed it, a tip the checked
+   commit holds (merged into the branch after the freeze) is pushed onto
+   the same way with the lease on that tip, and any other commit is a
+   refusal naming both, never a force-push.
    `gh pr view` must then show the checked commit as the head of that open
-   pull request; GitHub still showing the frozen head is retried. Its
+   pull request; GitHub still showing a head the checked commit holds, as
+   the frozen head or that tip, lags behind the push and is retried. Its
    title, body and base are left alone (an initiative links to it from
    its other members but never edits it or its draft state), and nothing
    is merged or owed auto-merge. The run ends with
@@ -2810,6 +2813,38 @@ paths, under the child's validated pipeline and policy. The fix and its
 item never run at once: the fix waits while the item runs, the item is not
 started or retried while its fix is unfinished, and a dependency section
 asks an agent to merge only a parent commit its branch lacks.
+
+A parent squash- or rebase-merged leaves the base holding its content under
+commits of its own, which conflict with the child's copy of the parent's.
+Once no parent of a delivered, succeeded child is open, `executor/landed.rs`
+looks, for each merged parent whose `stacks` row has no `landed` commit, in
+the base head (`origin`'s, fetched, in `pr` mode) past its merge base with
+the parent head for a landing (`worktree/landed.rs`): a first-parent commit
+with the parent head's tree, else the newest commit with the patch id of the
+parent's whole change (a squash, matched against a commit no ref names with
+the head's tree over the merge base), else the newest commit matching one
+of the parent's own whose history matches every other (a rebase). Patch ids
+only point at it: it is a landing only when merging the parent head into it
+over their merge base changes nothing, so it holds the parent's whole change.
+The child's branch, which must hold the parent head, is merged with that
+commit as if it forked at the parent head: over a commit of the same tree,
+re-checked, with its own tree (`merge -s ours`); otherwise `merge-tree
+--merge-base=<virtual base>`, the parent head merged with the branch's and
+the landing's best common commits (all of them, after criss-cross merges)
+and with each other merged parent head the branch holds whose whole change
+the landing holds, so another parent's change a later landing carries is not
+new to the child (a file it deleted stays deleted); a conflict building that
+base is the merge's conflict. With no landing proven (the base changed more
+than the parent) the base head is merged as git would. Either merge is
+written, moved and pushed as above, never forced, and a landing the branch
+holds but its pull request's head lacks is pushed again; a conflict writes
+nothing and is one blocker naming `refresh_item`, not a fix item. The base
+head is then recorded as `landed`, so each parent is restacked once, and a
+row from before `landed` existed is restacked at the next pass. A child
+still running when its parent merges is not merged into while agents work in
+its worktree: the parent is recorded merged, and the child is restacked at
+the first pass after it is delivered. Merging a parent through Archon wakes
+the coordination worker.
 
 Each stack and each initiative is maintained on its own: one whose pass
 fails is recorded in `kv` `coordination_blocker:<stack|initiative>:<id>`
@@ -3538,13 +3573,20 @@ object per line under `--json`).
   finished, is itself a fix, is stacked on an unmerged parent, has a
   restack fix or refresh pending, whose branch already holds the base head,
   or (delivered in `pr` mode) whose pull request merged or closed. Asking
-  again for the same base commit returns the refresh already queued.
+  again for the same base commit returns the refresh already queued. A
+  merged parent the base holds as a squash or rebase is first merged into
+  the branch over its landing, in place and pushed (§8.8); when that leaves
+  the branch holding the base head, the owner item is returned and nothing
+  is queued. A conflicting landing is left to the queued refresh.
   An `onto` item that is not delivered yet (typically failed because another
   delivery moved its pull request's head) is refreshed from that head, not the
   repository base: archond fetches `origin`'s head branch of the pull request,
   the refresh merges it, and the refresh's frozen head is the merged commit, so
   delivery fast-forwards the pull request from it and review coverage starts
-  there. A delivered `onto` item is still refused.
+  there. One whose branch already holds the pull request's moved head (an
+  operator merged it in) instead has that head recorded as its frozen head,
+  in place, and the owner item is returned: its next ship is a
+  fast-forward from it. A delivered `onto` item is still refused.
 - A brief amendment (`brief_append` on `retry_item` or `update_item`, a
   `note` on `steer_item`, `archon queue retry --append`) is appended to the
   brief under a dated `## Amendment (<UTC time>)` heading, so every later

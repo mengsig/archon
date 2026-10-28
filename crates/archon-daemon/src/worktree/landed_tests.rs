@@ -1,0 +1,420 @@
+//! Real repositories: a dependency `dep` forks from `main`, a dependent
+//! `child` forks from `dep` and rewrites the dependency's file, and `main`
+//! then takes the dependency as a squash, a rebase or a real merge.
+
+use std::path::{Path, PathBuf};
+
+use super::*;
+
+struct Fixture {
+    _dir: tempfile::TempDir,
+    repo: PathBuf,
+    shadow: Shadow,
+    dep: String,
+    child: String,
+}
+
+fn git(dir: &Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "user.name=T", "-c", "user.email=t@archon.invalid"])
+        .args(args)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .expect("git runs");
+    assert!(out.status.success(), "git {args:?}: {out:?}");
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
+fn commit(repo: &Path, file: &str, content: &str) -> String {
+    std::fs::write(repo.join(file), content).unwrap();
+    git(repo, &["add", file]);
+    git(repo, &["commit", "--quiet", "-m", file]);
+    git(repo, &["rev-parse", "HEAD"])
+}
+
+fn fixture() -> Fixture {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().canonicalize().unwrap().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "--quiet", "-b", "main"]);
+    commit(&repo, "base.txt", "base\n");
+    git(&repo, &["checkout", "--quiet", "-b", "dep"]);
+    commit(&repo, "dep.txt", "one\n");
+    let dep = commit(&repo, "dep.txt", "one\ntwo\n");
+    git(&repo, &["checkout", "--quiet", "-b", "child"]);
+    let child = commit(&repo, "dep.txt", "one\ntwo\nchild\n");
+    git(&repo, &["checkout", "--quiet", "main"]);
+    let shadow = Shadow::of(&dir.path().join("data"), &repo).unwrap();
+    Fixture {
+        _dir: dir,
+        repo,
+        shadow,
+        dep,
+        child,
+    }
+}
+
+impl Fixture {
+    fn main_moves(&self) {
+        commit(&self.repo, "other.txt", "other\n");
+    }
+
+    fn squash(&self) -> String {
+        git(&self.repo, &["merge", "--quiet", "--squash", "dep"]);
+        git(&self.repo, &["commit", "--quiet", "-m", "Dep (#1)"]);
+        git(&self.repo, &["rev-parse", "HEAD"])
+    }
+
+    /// As GitHub rebases: new commits, by another committer.
+    fn rebase(&self) -> String {
+        let by = ["-c", "user.name=GitHub", "cherry-pick", "main..dep"];
+        git(&self.repo, &by);
+        git(&self.repo, &["rev-parse", "HEAD"])
+    }
+
+    fn find(&self, base: &str) -> Option<Landing> {
+        find(&self.shadow, &self.repo, &self.dep, base).unwrap()
+    }
+
+    fn merge(&self, landing: &Landing) -> Merge {
+        let identity = Identity {
+            name: "Archon".into(),
+            email: "archon@localhost".into(),
+        };
+        let merged = [self.dep.clone()];
+        let dep = (self.dep.as_str(), &merged[..], landing);
+        merge(&self.shadow, &self.repo, "child", dep, &identity).unwrap()
+    }
+
+    fn plain_merge_conflicts(&self, base: &str) -> bool {
+        let identity = Identity {
+            name: "Archon".into(),
+            email: "archon@localhost".into(),
+        };
+        let merge = stack::merge(&self.shadow, &self.repo, "child", base, &identity).unwrap();
+        matches!(merge, Merge::Conflict(files) if files == "dep.txt")
+    }
+
+    /// The file at `to`, and `to`'s parents.
+    fn merged(&self, to: &str, file: &str) -> (String, String) {
+        let content = git(&self.repo, &["show", &format!("{to}:{file}")]);
+        (content, git(&self.repo, &["rev-parse", &format!("{to}^@")]))
+    }
+}
+
+/// The dependency squashed into an unmoved base: the base's commit has the
+/// head's tree, and the child keeps its own tree where a plain merge conflicts.
+#[test]
+fn a_squash_onto_an_unmoved_base_merges_as_ours_where_a_plain_merge_conflicts() {
+    let f = fixture();
+    let squash = f.squash();
+    assert!(f.plain_merge_conflicts(&squash), "the bug this fixes");
+
+    let landing = f.find(&squash).expect("landed");
+    assert_eq!(landing, Landing::SameTree(squash.clone()));
+    let Merge::Merged { from, to } = f.merge(&landing) else {
+        panic!("a merge commit");
+    };
+    assert_eq!(from, f.child);
+    let tree = |rev: &str| git(&f.repo, &["rev-parse", &format!("{rev}^{{tree}}")]);
+    assert_eq!(tree(&to), tree(&f.child), "content-neutral");
+    let (_, parents) = f.merged(&to, "dep.txt");
+    assert_eq!(parents, format!("{}\n{squash}", f.child));
+}
+
+/// The dependency rebased onto a base that had moved: found by patch id,
+/// and merged over its head, so only the base's own change comes in.
+#[test]
+fn a_rebase_after_the_base_moved_merges_over_the_head_without_conflict() {
+    let f = fixture();
+    f.main_moves();
+    let rebased = f.rebase();
+    assert!(f.plain_merge_conflicts(&rebased), "the bug this fixes");
+
+    assert_eq!(
+        f.find(&rebased),
+        Some(Landing::SamePatches(rebased.clone()))
+    );
+    let Merge::Merged { to, .. } = f.merge(&Landing::SamePatches(rebased.clone())) else {
+        panic!("a merge commit");
+    };
+    let (content, parents) = f.merged(&to, "dep.txt");
+    assert_eq!(content, "one\ntwo\nchild", "the child's change is kept");
+    assert_eq!(f.merged(&to, "other.txt").0, "other", "the base's comes in");
+    assert_eq!(parents, format!("{}\n{rebased}", f.child));
+}
+
+/// A rebase onto an unmoved base ends in the head's tree.
+#[test]
+fn a_rebase_onto_an_unmoved_base_has_the_head_tree() {
+    let f = fixture();
+    let rebased = f.rebase();
+    assert_eq!(f.find(&rebased), Some(Landing::SameTree(rebased)));
+}
+
+/// A squash after the base moved has no commit of the head's tree, but one
+/// with the head's whole change; a later base commit is no part of it.
+#[test]
+fn a_squash_after_the_base_moved_is_found_by_its_patch_id() {
+    let f = fixture();
+    f.main_moves();
+    let squash = f.squash();
+    let later = commit(&f.repo, "later.txt", "later\n");
+    assert_eq!(f.find(&later), Some(Landing::SamePatches(squash.clone())));
+    let Merge::Merged { to, .. } = f.merge(&Landing::SamePatches(squash)) else {
+        panic!("a merge commit");
+    };
+    assert_eq!(f.merged(&to, "dep.txt").0, "one\ntwo\nchild");
+    assert_eq!(f.merged(&to, "other.txt").0, "other");
+    assert!(
+        git(&f.repo, &["ls-tree", "--name-only", &to])
+            .lines()
+            .all(|f| f != "later.txt")
+    );
+}
+
+/// A base that took the dependency changed, or that holds the head itself,
+/// is no landing: a plain merge of the base is what it needs.
+#[test]
+fn a_changed_squash_or_a_real_merge_is_no_landing() {
+    let f = fixture();
+    git(&f.repo, &["merge", "--quiet", "--squash", "dep"]);
+    let edited = commit(&f.repo, "dep.txt", "one\nTWO\n");
+    assert_eq!(f.find(&edited), None);
+
+    let g = fixture();
+    git(
+        &g.repo,
+        &["merge", "--quiet", "--no-ff", "-m", "Merge dep", "dep"],
+    );
+    let merged = git(&g.repo, &["rev-parse", "HEAD"]);
+    assert_eq!(g.find(&merged), None);
+}
+
+/// The landing is merged only into a branch that holds the head it stands
+/// for, and a branch holding the landing already is left alone.
+#[test]
+fn a_landing_merges_only_into_a_branch_holding_the_head_and_only_once() {
+    let f = fixture();
+    let squash = f.squash();
+    let landing = Landing::SameTree(squash);
+    let Merge::Merged { from, to } = f.merge(&landing) else {
+        panic!("a merge commit");
+    };
+    git(&f.repo, &["update-ref", "refs/heads/child", &to, &from]);
+    assert_eq!(f.merge(&landing), Merge::Contained);
+
+    git(&f.repo, &["branch", "stranger", "main~1"]);
+    let identity = Identity {
+        name: "Archon".into(),
+        email: "archon@localhost".into(),
+    };
+    let dep = (f.dep.as_str(), &[][..], &landing);
+    let refused = merge(&f.shadow, &f.repo, "stranger", dep, &identity).unwrap_err();
+    assert!(refused.to_string().contains("does not hold"), "{refused}");
+}
+
+/// A head whose two commits the base took on branches of their own, then
+/// merged: no one commit matching them holds both, so none is its landing.
+#[test]
+fn a_rebase_spread_over_merged_branches_is_no_landing() {
+    let f = fixture();
+    git(&f.repo, &["checkout", "--quiet", "-b", "split", "main"]);
+    let a = commit(&f.repo, "a.txt", "a\n");
+    let b = commit(&f.repo, "b.txt", "b\n");
+    git(&f.repo, &["checkout", "--quiet", "main"]);
+    f.main_moves();
+    for (branch, pick) in [("with-a", &a), ("with-b", &b)] {
+        git(&f.repo, &["checkout", "--quiet", "-b", branch, "main"]);
+        git(&f.repo, &["-c", "user.name=GitHub", "cherry-pick", pick]);
+    }
+    git(&f.repo, &["checkout", "--quiet", "main"]);
+    for branch in ["with-a", "with-b"] {
+        git(
+            &f.repo,
+            &["merge", "--quiet", "--no-ff", "-m", branch, branch],
+        );
+    }
+    let base = git(&f.repo, &["rev-parse", "HEAD"]);
+    assert_eq!(git(&f.repo, &["show", &format!("{base}:a.txt")]), "a");
+    assert_eq!(find(&f.shadow, &f.repo, &b, &base).unwrap(), None);
+}
+
+/// A base that took the head's two commits and reverted one: patch ids match
+/// both, yet the base no longer holds the head's change.
+#[test]
+fn a_rebase_a_revert_undid_is_no_landing() {
+    let f = fixture();
+    git(&f.repo, &["checkout", "--quiet", "-b", "split", "main"]);
+    let a = commit(&f.repo, "a.txt", "a\n");
+    let b = commit(&f.repo, "b.txt", "b\n");
+    git(&f.repo, &["checkout", "--quiet", "main"]);
+    f.main_moves();
+    git(&f.repo, &["-c", "user.name=GitHub", "cherry-pick", &a]);
+    git(&f.repo, &["revert", "--no-edit", "HEAD"]);
+    git(&f.repo, &["-c", "user.name=GitHub", "cherry-pick", &b]);
+    let base = git(&f.repo, &["rev-parse", "HEAD"]);
+    let files = git(&f.repo, &["ls-tree", "--name-only", &base]);
+    assert!(!files.lines().any(|file| file == "a.txt"), "{files}");
+    assert_eq!(find(&f.shadow, &f.repo, &b, &base).unwrap(), None);
+}
+
+/// A head whose merge commit added a file of its own, and a base that took
+/// only its plain commits: the base lacks part of the head's change.
+#[test]
+fn a_rebase_without_the_heads_merge_resolution_is_no_landing() {
+    let f = fixture();
+    git(&f.repo, &["checkout", "--quiet", "-b", "side-a", "main"]);
+    let a = commit(&f.repo, "a.txt", "a\n");
+    git(&f.repo, &["checkout", "--quiet", "-b", "side-b", "main"]);
+    let b = commit(&f.repo, "b.txt", "b\n");
+    git(&f.repo, &["checkout", "--quiet", "side-a"]);
+    git(
+        &f.repo,
+        &["merge", "--quiet", "--no-ff", "--no-commit", "side-b"],
+    );
+    let dep = commit(&f.repo, "resolution.txt", "resolved\n");
+    git(&f.repo, &["checkout", "--quiet", "main"]);
+    f.main_moves();
+    for pick in [&a, &b] {
+        git(&f.repo, &["-c", "user.name=GitHub", "cherry-pick", pick]);
+    }
+    let base = git(&f.repo, &["rev-parse", "HEAD"]);
+    assert_eq!(find(&f.shadow, &f.repo, &dep, &base).unwrap(), None);
+}
+
+/// A child of two independent parents `a` and `b`, holding both, which
+/// rewrites `b.txt` and deletes `a.txt` or, given `a_txt`, rewrites it.
+fn two_parents(a_txt: Option<&str>) -> (tempfile::TempDir, PathBuf, Shadow, [String; 2]) {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().canonicalize().unwrap().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "--quiet", "-b", "main"]);
+    commit(&repo, "base.txt", "base\n");
+    git(&repo, &["checkout", "--quiet", "-b", "a"]);
+    let a = commit(&repo, "a.txt", "a\n");
+    git(&repo, &["checkout", "--quiet", "-b", "b", "main"]);
+    let b = commit(&repo, "b.txt", "b\n");
+    git(&repo, &["checkout", "--quiet", "-b", "child", "a"]);
+    git(&repo, &["merge", "--quiet", "--no-edit", "b"]);
+    match a_txt {
+        Some(content) => commit(&repo, "a.txt", content),
+        None => {
+            git(&repo, &["rm", "--quiet", "a.txt"]);
+            git(&repo, &["commit", "--quiet", "-m", "no a"])
+        }
+    };
+    commit(&repo, "b.txt", "b\nchild\n");
+    git(&repo, &["checkout", "--quiet", "main"]);
+    let shadow = Shadow::of(&dir.path().join("data"), &repo).unwrap();
+    (dir, repo, shadow, [a, b])
+}
+
+/// `main` squashes `a` then `b`, and the child is merged over each parent's
+/// landing in `order`, as a restack does: it keeps its own tree throughout.
+fn restack_two_parents(a_txt: Option<&str>, order: [usize; 2]) {
+    let (_dir, repo, shadow, heads) = two_parents(a_txt);
+    for branch in ["a", "b"] {
+        git(&repo, &["merge", "--quiet", "--squash", branch]);
+        git(&repo, &["commit", "--quiet", "-m", branch]);
+    }
+    let main = git(&repo, &["rev-parse", "main"]);
+    let own_tree = git(&repo, &["rev-parse", "child^{tree}"]);
+    let identity = Identity {
+        name: "Archon".into(),
+        email: "archon@localhost".into(),
+    };
+    for dep in order.map(|i| &heads[i]) {
+        let landing = find(&shadow, &repo, dep, &main)
+            .unwrap()
+            .expect("a landing");
+        let at = (dep.as_str(), &heads[..], &landing);
+        match merge(&shadow, &repo, "child", at, &identity).unwrap() {
+            Merge::Merged { from, to } => {
+                git(&repo, &["update-ref", "refs/heads/child", &to, &from]);
+            }
+            Merge::Contained => {}
+            Merge::Conflict(files) => panic!("{order:?} conflicts on {files}"),
+        }
+    }
+    git(&repo, &["merge-base", "--is-ancestor", &main, "child"]);
+    let tree = git(&repo, &["rev-parse", "child^{tree}"]);
+    assert_eq!(tree, own_tree, "{order:?} kept the child's own content");
+}
+
+/// Where `b`'s landing also holds `a`'s, which the child deleted, merging over
+/// `b` alone brought `a.txt` back; the child's deletion stands.
+#[test]
+fn a_landing_holding_another_parents_change_keeps_the_childs_deletion() {
+    restack_two_parents(None, [0, 1]);
+    restack_two_parents(None, [1, 0]);
+}
+
+/// Where `b`'s landing also holds `a`'s, which the child rewrote, merging over
+/// `b` alone conflicted on `a.txt`; it merges with the child's rewrite.
+#[test]
+fn a_landing_holding_another_parents_change_keeps_the_childs_rewrite() {
+    restack_two_parents(Some("a\nchild\n"), [0, 1]);
+    restack_two_parents(Some("a\nchild\n"), [1, 0]);
+}
+
+/// `x` and `y` fork from `main`; the child merges `x` then `y` over `dep`
+/// and deletes `victim`, while `main` merges `y` then `x`, then squashes
+/// `dep`: the child and the landing have both `x` and `y` as best common
+/// commits, and the child keeps its deletion over either.
+fn restack_criss_cross(victim: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = dir.path().canonicalize().unwrap().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "--quiet", "-b", "main"]);
+    commit(&repo, "base.txt", "base\n");
+    for side in ["x", "y", "dep"] {
+        git(&repo, &["checkout", "--quiet", "-b", side, "main"]);
+        commit(&repo, &format!("{side}.txt"), "side\n");
+    }
+    let dep = git(&repo, &["rev-parse", "dep"]);
+    git(&repo, &["checkout", "--quiet", "-b", "child", "dep"]);
+    for side in ["x", "y"] {
+        git(&repo, &["merge", "--quiet", "--no-edit", side]);
+    }
+    git(&repo, &["rm", "--quiet", victim]);
+    git(&repo, &["commit", "--quiet", "-m", "drop"]);
+    git(&repo, &["checkout", "--quiet", "main"]);
+    for side in ["y", "x"] {
+        git(&repo, &["merge", "--quiet", "--no-ff", "--no-edit", side]);
+    }
+    git(&repo, &["merge", "--quiet", "--squash", "dep"]);
+    git(&repo, &["commit", "--quiet", "-m", "dep"]);
+    let main = git(&repo, &["rev-parse", "main"]);
+    let bases = git(&repo, &["merge-base", "--all", "child", "main"]);
+    assert_eq!(bases.lines().count(), 2, "a criss-cross");
+    let shadow = Shadow::of(&dir.path().join("data"), &repo).unwrap();
+    let landing = find(&shadow, &repo, &dep, &main)
+        .unwrap()
+        .expect("a landing");
+    assert!(matches!(landing, Landing::SamePatches(_)), "{landing:?}");
+    let identity = Identity {
+        name: "Archon".into(),
+        email: "archon@localhost".into(),
+    };
+    let at = (dep.as_str(), &[dep.clone()][..], &landing);
+    let Merge::Merged { to, .. } = merge(&shadow, &repo, "child", at, &identity).unwrap() else {
+        panic!("a merge commit");
+    };
+    let own_tree = git(&repo, &["rev-parse", "child^{tree}"]);
+    assert_eq!(
+        git(&repo, &["rev-parse", &format!("{to}^{{tree}}")]),
+        own_tree
+    );
+}
+
+/// Merging over one best common commit of a criss-cross brought back the
+/// file of the other that the child deleted.
+#[test]
+fn a_criss_cross_keeps_a_deletion_from_either_side() {
+    restack_criss_cross("x.txt");
+    restack_criss_cross("y.txt");
+}

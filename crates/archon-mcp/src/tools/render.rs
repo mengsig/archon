@@ -44,7 +44,7 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         Reply::Status(status) => daemon_status(status),
         Reply::Repo(repo) => format!("{}{}", verb(tool), repo_line(repo)),
         Reply::Repos(repos) => listing("repositories", repos.iter().map(repo_line)),
-        Reply::Item(item) => format!("{}{}", verb(tool), item_line(item, CLIP_CHARS)),
+        Reply::Item(item) => format!("{}{}", item_verb(tool, item), item_line(item, CLIP_CHARS)),
         Reply::ItemBudgetsOff(item) => format!(
             "{}{}\nNote: {}",
             verb(tool),
@@ -139,6 +139,14 @@ fn ok(tool: &str) -> &'static str {
         "retry_item" => "Re-queued.",
         "refresh_item" => "Refresh queued.",
         _ => "Done.",
+    }
+}
+
+/// A refresh that needed no agent answers with its finished owner item.
+fn item_verb(tool: &str, item: &QueueItem) -> &'static str {
+    match tool == "refresh_item" && item.state.is_terminal() {
+        true => "Refreshed in place; nothing queued: ",
+        false => verb(tool),
     }
 }
 

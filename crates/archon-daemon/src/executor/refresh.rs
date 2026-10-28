@@ -4,6 +4,10 @@
 //! runs the checks, its review reads the change from the new merge base, and it
 //! ships into the pull request the branch already has. The base of an `onto`
 //! item is the head of its pull request, which other deliveries move.
+//!
+//! What needs no agent is done in place: a parent squash- or rebase-merged
+//! into the base is merged over (`super::landed`), and an `onto` item whose
+//! branch already holds the moved head is frozen at it again.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -27,7 +31,8 @@ use crate::worktree::stack;
 
 /// Queue a refresh of the finished item `id` onto its base branch (an `onto`
 /// item: its pull request's head branch), or return the one still to finish
-/// for the same base commit.
+/// for the same base commit. The item itself is returned, refreshed in
+/// place, when that took no agent.
 pub(crate) async fn refresh_item(
     ctx: &DaemonContext,
     id: &QueueItemId,
@@ -37,14 +42,29 @@ pub(crate) async fn refresh_item(
     let env = RepoEnv::new(Some(repo.clone()))?;
     let base = match &owner.onto {
         Some(onto) => onto.head_ref.clone(),
-        None => base_of(ctx, &run, &env).await?,
+        None => base_for(ctx, &owner, &run, &env).await?,
     };
     let catalog = crate::learned::catalog(ctx).await?;
     let prepared = refresh_owner(ctx, &owner, &env, &catalog, asked)?;
-    if repo.ship == ShipMode::Pr && run.shipped {
-        check_pr_open(ctx, &repo, &run).await?;
-    }
-    let sha = base_head(ctx, &repo, &base, &run.branch).await?;
+    let child_head = match repo.ship == ShipMode::Pr && run.shipped {
+        true => check_pr_open(ctx, &repo, &run).await?,
+        false => None,
+    };
+    let restacked = match owner.onto {
+        Some(_) => false,
+        None => {
+            let landing = (&repo, &owner, &run);
+            super::landed::for_refresh(ctx, landing, &base, child_head.as_deref()).await?
+        }
+    };
+    let sha = match base_head(ctx, &repo, &base, &run.branch).await? {
+        Ok(sha) => sha,
+        Err(_) if restacked => return refreshed(ctx, &owner, &run, None).await,
+        Err(held) if held.ahead && owner.onto.is_some() => {
+            return refreshed(ctx, &owner, &run, Some(&held.sha)).await;
+        }
+        Err(held) => return Err(ArchonError::Invalid(held.refusal)),
+    };
     let refresh = Refresh { base, sha };
     let queued = {
         let _table = ctx.runs.lock().await;
@@ -62,6 +82,40 @@ pub(crate) async fn refresh_item(
     tracing::info!(item = %id, refresh = %queued.id, base = %refresh.base, sha = %refresh.sha, "refresh queued");
     ctx.dispatch.notify_one();
     Ok(queued)
+}
+
+/// `owner` as it stands once refreshed in place, with an `onto` item frozen
+/// again at `head`, its pull request's moved head, which its branch holds:
+/// its next delivery is a fast-forward from there.
+async fn refreshed(
+    ctx: &DaemonContext,
+    owner: &QueueItem,
+    run: &PipelineRun,
+    head: Option<&str>,
+) -> Result<QueueItem, ArchonError> {
+    assert_eq!(run.item, owner.id, "the owner's own run");
+    assert!(head.is_none_or(stack::is_commit_id), "a fetched head");
+    let _table = ctx.runs.lock().await;
+    let mut store = ctx.store.lock().await;
+    let mut now = store.item(&owner.id)?;
+    let last = store.runs_for_item(&owner.id)?.pop();
+    if now.state != owner.state || last.as_ref().map(|r| &r.id) != Some(&run.id) {
+        return Err(ArchonError::InvalidTransition(format!(
+            "{} changed while its refresh was prepared; ask again",
+            owner.id
+        )));
+    }
+    let (Some(head), Some(onto)) = (head, now.onto.as_mut()) else {
+        tracing::info!(item = %owner.id, branch = %run.branch, "restacked over merged parents");
+        return Ok(now);
+    };
+    if onto.head_sha != head {
+        tracing::info!(item = %owner.id, from = %onto.head_sha, to = %head, "onto head frozen again");
+        onto.head_sha = head.to_owned();
+        now.updated_at = archon_core::now();
+        store.update_item(&now)?;
+    }
+    Ok(now)
 }
 
 /// The item, its last run and its repository, when that run left a branch of
@@ -170,6 +224,25 @@ fn refresh_owner(
     Ok(item)
 }
 
+/// The branch a refresh brings `owner` up to: the repository's base for a
+/// stacked item, whose parents all merged or closed, else [`base_of`].
+async fn base_for(
+    ctx: &DaemonContext,
+    owner: &QueueItem,
+    run: &PipelineRun,
+    env: &RepoEnv,
+) -> Result<String, ArchonError> {
+    assert_eq!(run.item, owner.id, "the owner's own run");
+    let stacked = super::restack::target_base(&*ctx.store.lock().await, &owner.id)?;
+    match stacked {
+        Some(base) => {
+            assert!(is_plain_branch(&base), "a recorded base branch");
+            Ok(base)
+        }
+        None => base_of(ctx, run, env).await,
+    }
+}
+
 /// Retained fork metadata survives template expiry; old runs use the configured
 /// repository base when neither the metadata nor their templates remain.
 async fn base_of(
@@ -198,12 +271,12 @@ async fn base_of(
 }
 
 /// Refuse a refresh of a delivered branch whose pull request merged or closed:
-/// it would only open a new one.
+/// it would only open a new one. The open pull request's head, when GitHub gave one.
 async fn check_pr_open(
     ctx: &DaemonContext,
     repo: &Repo,
     run: &PipelineRun,
-) -> Result<(), ArchonError> {
+) -> Result<Option<String>, ArchonError> {
     let branch = &run.branch;
     let (own, settled) = {
         let store = ctx.store.lock().await;
@@ -217,23 +290,33 @@ async fn check_pr_open(
     };
     // A newer pull request of the branch is not the one the run delivered to.
     open.retain(|pr| own.as_ref().is_none_or(|own| pr.identity() == *own));
-    if open.is_empty() {
+    let Some(pr) = open.pop() else {
         return Err(ArchonError::Invalid(format!(
             "the pull request `{branch}` was delivered to is not open: it merged or closed, so \
              there is nothing to refresh; enqueue new work instead"
         )));
-    }
-    Ok(())
+    };
+    assert!(pr.is_open(), "listed open");
+    Ok(pr.head_ref_oid)
+}
+
+/// A base head the item's branch holds already, and why that leaves nothing to refresh.
+#[derive(Debug)]
+struct Held {
+    sha: String,
+    /// The branch has commits of its own beyond `sha`.
+    ahead: bool,
+    refusal: String,
 }
 
 /// The commit of `base` a refresh merges: `origin`'s head, fetched now, in
-/// `pr` mode, else the local branch's. Refused when `branch` holds it already.
+/// `pr` mode, else the local branch's; [`Held`] when `branch` holds it already.
 async fn base_head(
     ctx: &DaemonContext,
     repo: &Repo,
     base: &str,
     branch: &str,
-) -> Result<String, ArchonError> {
+) -> Result<Result<String, Held>, ArchonError> {
     let (data_dir, path) = (ctx.paths.data_dir.clone(), repo.path.clone());
     let (base, branch) = (base.to_owned(), branch.to_owned());
     let remote = repo.ship == ShipMode::Pr;
@@ -248,31 +331,28 @@ fn head_now(
     remote: bool,
     base: &str,
     branch: &str,
-) -> Result<String, ArchonError> {
+) -> Result<Result<String, Held>, ArchonError> {
     if !crate::worktree::branch_exists(repo, branch)? {
         return Err(ArchonError::Invalid(format!(
             "the item's branch `{branch}` is gone from the repository"
         )));
     }
-    let sha = match remote {
-        true => stack::fetch_head(&Shadow::of(data_dir, repo)?, repo, base)?.ok_or_else(|| {
-            ArchonError::Invalid("the repository has no `origin` to fetch the base from".into())
-        })?,
-        false => stack::sha(repo, base)?,
-    };
-    if stack::contains(repo, &sha, &format!("refs/heads/{branch}"))? {
-        let tip = stack::sha(repo, branch)?;
-        let shipped = !remote && stack::contains(repo, &tip, &format!("refs/heads/{base}"))?;
-        let why = match shipped {
-            true => {
-                format!("it already shipped to `{base}` locally, so there is nothing to refresh")
-            }
-            false => "there is nothing to refresh".to_owned(),
-        };
-        return Err(ArchonError::Invalid(format!(
-            "`{branch}` already holds `{base}` at {}; {why}",
-            &sha[..12]
-        )));
+    let shadow = Shadow::of(data_dir, repo)?;
+    let sha = super::landed::base_head(&shadow, repo, remote, base)?;
+    if !stack::contains(repo, &sha, &format!("refs/heads/{branch}"))? {
+        return Ok(Ok(sha));
     }
-    Ok(sha)
+    let tip = stack::sha(repo, branch)?;
+    let shipped = !remote && stack::contains(repo, &tip, &format!("refs/heads/{base}"))?;
+    let why = match shipped {
+        true => format!("it already shipped to `{base}` locally, so there is nothing to refresh"),
+        false => "there is nothing to refresh".to_owned(),
+    };
+    let refusal = format!("`{branch}` already holds `{base}` at {}; {why}", &sha[..12]);
+    let ahead = tip != sha;
+    Ok(Err(Held {
+        sha,
+        ahead,
+        refusal,
+    }))
 }

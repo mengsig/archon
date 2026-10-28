@@ -68,6 +68,8 @@ The daemon did not answer the change within the MCP call's 15 s budget, but may 
 - **"Not merged:"** A merge you or the orchestrator asked for was refused; the text after the colon says why. Fix that, then `archon merge <id>` again (`--ignore-checks` if the checks are the reason and you accept the risk).
 - **"This is not a failure of the change; fix the GitHub Actions account or runners"** The pull request's checks never started. Fix GitHub Actions for the repository, then re-run the checks on GitHub.
 - **"`origin` rejected the push as not a fast-forward"** Restacking a pull request found commits on GitHub that Archon does not have. Archon never force-pushes: merge `origin/<branch>` into the branch by hand, or push it yourself.
+- **"Nothing was written, and Archon never rebases or"** A stacked item's parent merged, and merging the base into the item's branch conflicts in the files named. Run `archon queue refresh <id>`: an agent merges the base, resolves the conflict and updates the same pull request.
+- **"over its merged parent merged"** Restacking an item over its merged parent found commits on its pull request that Archon does not have, so the push was refused. Archon never force-pushes: merge `origin/<branch>` into the branch by hand, then `archon queue refresh <id>`.
 - **"is red at"** An integration branch fails its full check; a fix item is queued (`Queued fix item <id>`). Follow it with `archon queue show <id>`.
 - **"merging it waits for the operator"** The integration branch is green and a pull request is open into the release branch. Run `archon promote <repo>`.
 

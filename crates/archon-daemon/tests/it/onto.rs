@@ -961,3 +961,127 @@ async fn an_onto_refresh_that_did_not_merge_the_moved_head_pushes_nothing() {
     assert!(matches!(h.state(&fix.id).await, QueueState::Failed { .. }));
     assert_eq!(pushed(&origin_of(&h), "feature"), Some(first_head));
 }
+
+async fn retry(h: &Harness, item: &QueueItem) {
+    let retry = Request::RetryItem {
+        item: item.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        fresh: false,
+        brief_append: None,
+        stage_timeouts: Default::default(),
+    };
+    h.cli(retry).await.expect("retry");
+    h.dispatch().await;
+}
+
+/// The second item's branch merged the head the first pushed, as its agent
+/// would: `(second, that head, the merge)`.
+async fn second_holds_the_moved_head(
+    h: &Harness,
+    gh: &Gh,
+    head: &str,
+) -> (QueueItem, String, String) {
+    let (second, first_head) = second_onto_item_failed(h, gh, head, change_elsewhere).await;
+    let run = h.run(&second.id).await;
+    merge_head(&run.workspace, &first_head, None);
+    let merged = git(&run.workspace, &["rev-parse", "HEAD"]);
+    (second, first_head, merged)
+}
+
+/// A refresh of an item whose branch holds its pull request's moved head
+/// queues nothing: the item is frozen at that head instead, and its next
+/// delivery fast-forwards the pull request from it.
+#[tokio::test]
+async fn a_refresh_of_a_branch_holding_the_moved_head_freezes_it_there_and_it_ships() {
+    let (h, gh, head) = setup().await;
+    let (second, first_head, merged) = second_holds_the_moved_head(&h, &gh, &head).await;
+
+    let refreshed = refresh(&h, &second).await.expect("refreshed in place");
+    assert_eq!(refreshed.id, second.id, "no refresh is queued");
+    let frozen = |item: &QueueItem| item.onto.as_ref().expect("onto").head_sha.clone();
+    assert_eq!(frozen(&refreshed), first_head);
+    let stored = h.ctx.store.lock().await.item(&second.id).unwrap();
+    assert_eq!(frozen(&stored), first_head, "recorded");
+    let prefix = format!("restack_fix:{}:", second.id);
+    assert!(
+        h.ctx
+            .store
+            .lock()
+            .await
+            .kv_prefix(&prefix)
+            .unwrap()
+            .is_empty()
+    );
+
+    retry(&h, &second).await;
+    settle_item(&h, &second, record).await;
+    let state = h.state(&second.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+    assert_eq!(pushed(&origin_of(&h), "feature"), Some(merged));
+}
+
+/// Delivery itself takes a branch that holds the moved head: pushing it is
+/// still a fast-forward of the pull request, leased on that head.
+#[tokio::test]
+async fn a_delivery_holding_the_moved_head_fast_forwards_from_it() {
+    let (h, gh, head) = setup().await;
+    let (second, first_head, merged) = second_holds_the_moved_head(&h, &gh, &head).await;
+
+    retry(&h, &second).await;
+    settle_item(&h, &second, record).await;
+    let state = h.state(&second.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+    let origin = origin_of(&h);
+    assert_eq!(pushed(&origin, "feature"), Some(merged.clone()));
+    git(
+        &origin,
+        &["merge-base", "--is-ancestor", &first_head, &merged],
+    );
+    let stored = h.ctx.store.lock().await.item(&second.id).unwrap();
+    assert_eq!(
+        stored.onto.expect("onto").head_sha,
+        head,
+        "frozen as queued"
+    );
+}
+
+/// Make the waiting delivery retry of `item`'s run due, as after its wait.
+async fn retry_due(h: &mut Harness, item: &QueueItem) {
+    let runs = h.ctx.store.lock().await.runs_for_item(&item.id).unwrap();
+    let key = format!("ship_retry:{}", runs.last().expect("a run").id);
+    let retry: Value = serde_json::from_str(&h.kv(&key).await.expect("a retry")).unwrap();
+    let due = json!({"failures": retry["failures"], "next_at": "2000-01-01T00:00:00Z"});
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&key, &due.to_string())
+        .unwrap();
+    h.restart();
+    archon_daemon::executor::recover(&h.ctx).await.unwrap();
+    h.dispatch().await;
+}
+
+/// GitHub showing the moved head a delivery pushed over is behind the push,
+/// on the try that pushed and on one that finds the push already made.
+#[tokio::test]
+async fn a_delivery_over_the_moved_head_waits_for_github_to_show_it() {
+    let (mut h, gh, head) = setup().await;
+    let (second, first_head, merged) = second_holds_the_moved_head(&h, &gh, &head).await;
+    std::fs::remove_file(gh.state.join("origin")).unwrap();
+    gh.show(100, &first_head, json!({}));
+
+    retry(&h, &second).await;
+    settle_item(&h, &second, record).await;
+    assert_eq!(pushed(&origin_of(&h), "feature"), Some(merged.clone()));
+    retry_due(&mut h, &second).await;
+    let state = h.state(&second.id).await;
+    assert!(matches!(state, QueueState::Running { .. }), "{state:?}");
+
+    gh.follow_origin(&origin_of(&h));
+    retry_due(&mut h, &second).await;
+    let state = h.state(&second.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+    assert_eq!(pushed(&origin_of(&h), "feature"), Some(merged));
+}

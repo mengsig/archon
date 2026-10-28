@@ -162,8 +162,12 @@ export async function followItemLive(page, fixture) {
   await expect(page.getByRole('heading', { name: item.title, level: 1 })).toBeVisible();
   const before = loads.length;
   expect(before).toBeGreaterThan(0);
+  // Marks the drawn page: a reload or status refresh that finds nothing new keeps it.
+  await page.locator('.item-hero').evaluate((el) => { el.dataset.probe = 'kept'; });
   await notify(fixture.archond, 'progress', `Stage review settled for ${item.id}.`, item.id);
   await expect.poll(() => loads.length, { timeout: 5_000 }).toBeGreaterThan(before);
+  await page.waitForTimeout(1_000);
+  await expect(page.locator('.item-hero[data-probe="kept"]')).toHaveCount(1);
 }
 
 export async function globalPauseResume(page, fixture) {

@@ -67,7 +67,7 @@ export function mountItem(view, ctx) {
     content.replaceChildren(...renderDetail(ctx, detail, state, { reload, artifacts }));
   };
   const unfollow = followItem(ctx, id, () => detail, () => load(true));
-  const offReports = ctx.store.watch((s) => [s.reports, s.errors.reports, s.status?.pause], () => detail && render());
+  const offReports = ctx.store.watch((s) => shownFromStore(s, id, detail), () => detail && render());
   reload();
   return () => { alive = false; unfollow(); offReports(); };
 }
@@ -91,6 +91,20 @@ function followItem(ctx, id, current, refresh) {
     if (detail && watching && !isTerminal(detail.item)) refresh();
   }, POLL_RUNNING_MS);
   return () => { clearTimeout(timer); clearInterval(poll); offFeed(); offSummary(); };
+}
+
+// What the detail shows from the store, as values: a refreshed but equal
+// status or report list must not redraw the page.
+function shownFromStore(state, id, detail) {
+  if (typeof id !== 'string') throw new TypeError('an item id names the item');
+  const pause = state.status?.pause;
+  const reports = (state.reports ?? []).filter((r) => r.item === id);
+  return [
+    JSON.stringify(reports),
+    state.errors.reports ?? null,
+    Boolean(detail && pause?.repos.includes(detail.item.repo)),
+    Boolean(detail && pause?.pipelines.includes(detail.item.pipeline)),
+  ];
 }
 
 function summaryOf(state, id) {

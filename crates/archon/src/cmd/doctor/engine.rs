@@ -23,15 +23,22 @@ pub(crate) async fn check_engine(aether: Option<&AetherClient>, model: &ModelRef
         Ok(models) => models,
         Err(e) => return check(NAME, Level::Warn, format!("{model}: not checked: {e}")),
     };
-    // An aetherd that serves no logins still says whether credentials resolve.
     let auth = match client.auth_status().await {
-        Ok(auth) => Some(auth),
-        Err(e) => {
-            tracing::debug!(error = %e, "auth_status is unavailable; using the model list alone");
-            None
-        }
+        Ok(auth) => auth,
+        Err(e) => return unchecked_login(engine_verdict(model, &models, None), &e.to_string()),
     };
-    engine_verdict(model, &models, auth.as_deref())
+    engine_verdict(model, &models, Some(&auth))
+}
+
+/// `verdict` from the model list alone, as Aether did not say whether the
+/// engine is logged in (`why`): a ready model is only a warning then.
+fn unchecked_login(verdict: Check, why: &str) -> Check {
+    assert_eq!(verdict.name, NAME, "only the engine verdict");
+    if verdict.level != Level::Ok {
+        return verdict;
+    }
+    let detail = format!("{}, but its login was not checked: {why}", verdict.detail);
+    check(NAME, Level::Warn, detail)
 }
 
 /// The verdict on `model` from Aether's catalogue and, when it served one, its logins.
@@ -154,6 +161,23 @@ mod tests {
             "{}",
             verdict.detail
         );
+    }
+
+    #[test]
+    fn a_login_aether_could_not_check_is_never_ready() {
+        let models = [model("claude-code", "claude-opus-5-5", true)];
+        let ready = engine_verdict(&opus(), &models, None);
+        let unchecked = unchecked_login(ready, "timed out");
+        assert_eq!(unchecked.level, Level::Warn);
+        assert!(
+            unchecked
+                .detail
+                .ends_with("is ready, but its login was not checked: timed out"),
+            "{}",
+            unchecked.detail
+        );
+        let missing = engine_verdict(&ModelRef::new("codex", "x"), &models, None);
+        assert_eq!(unchecked_login(missing, "timed out").level, Level::Fail);
     }
 
     #[test]

@@ -803,7 +803,10 @@ async fn revive(
     let _switch = switching(ctx).await;
     let (id, how) = match revive_now(ctx, client, &dead.id, &state).await {
         Ok(revived) => revived,
-        Err(error) => return Err(revival::failed(ctx, backoff, now, error).await?),
+        Err(error) => {
+            let provider = &dead.model.provider;
+            return Err(revival::failed(ctx, backoff, now, provider, error).await?);
+        }
     };
     if id != dead.id {
         // `revive_now` had Aether cancel what it left running.
@@ -817,7 +820,7 @@ async fn revive(
     record_revival(ctx, &id, how).await?;
     if backoff.revivals == REVIVALS_BEFORE_BLOCKER {
         let error = dead.status.get("error").and_then(serde_json::Value::as_str);
-        revival::keeps_failing(ctx, &backoff, error).await?;
+        revival::keeps_failing(ctx, &backoff, &dead.model.provider, error).await?;
     }
     tracing::info!(%id, revivals = backoff.revivals, "orchestrator {} again", how.verb());
     Ok(id)

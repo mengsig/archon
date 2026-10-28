@@ -159,22 +159,24 @@ fn reviving_now(state: &str) -> ArchonError {
     ))
 }
 
-/// The one `Blocker` of a streak that keeps failing. When the orchestrator's
-/// engine is not logged in, it names the login step instead of a restart.
+/// The one `Blocker` of a streak that keeps failing. When `provider`, the
+/// failed agent's, is not logged in, it names the login step, not a restart.
 pub(super) async fn keeps_failing(
     ctx: &DaemonContext,
     backoff: &Backoff,
+    provider: &str,
     error: Option<&str>,
 ) -> Result<(), ArchonError> {
     assert_eq!(
         backoff.revivals, REVIVALS_BEFORE_BLOCKER,
         "told once per streak"
     );
+    assert!(!provider.is_empty(), "an agent's model names its provider");
     let cause = error
         .map(|e| format!(" (last error: {e})"))
         .unwrap_or_default();
     let most = REVIVAL_BACKOFF[REVIVAL_BACKOFF.len() - 1].as_secs() / 60;
-    let fix = match login_problem(ctx).await {
+    let fix = match login_problem(ctx, provider).await {
         Some(problem) => format!("{problem}; the next revival after that brings it back."),
         None => "Run `archon orchestrator restart` to start a fresh one now.".to_owned(),
     };
@@ -186,10 +188,9 @@ pub(super) async fn keeps_failing(
     Ok(())
 }
 
-/// Why the orchestrator model's provider is not logged in, as Aether's
-/// `auth_status` says; `None` when it is, or when Aether cannot say.
-async fn login_problem(ctx: &DaemonContext) -> Option<String> {
-    let provider = ctx.config.orchestrator.model.provider.clone();
+/// Why `provider` is not logged in, as Aether's `auth_status` says; `None`
+/// when it is, or when Aether cannot say (logged, and the restart hint stays).
+async fn login_problem(ctx: &DaemonContext, provider: &str) -> Option<String> {
     let lookup = async { ctx.aether.client()?.auth_status().await };
     let auth = match tokio::time::timeout(AUTH_TIMEOUT, lookup).await {
         Ok(Ok(auth)) => auth,
@@ -202,7 +203,7 @@ async fn login_problem(ctx: &DaemonContext) -> Option<String> {
             return None;
         }
     };
-    archon_aether::auth::login_problem(&provider, &auth)
+    archon_aether::auth::login_problem(provider, &auth)
 }
 
 /// A revival Aether answered with an error, returned for the caller to report.
@@ -211,6 +212,7 @@ pub(super) async fn failed(
     ctx: &DaemonContext,
     backoff: Backoff,
     now: Timestamp,
+    provider: &str,
     error: ArchonError,
 ) -> Result<ArchonError, ArchonError> {
     if !matches!(error, ArchonError::Aether(_) | ArchonError::Protocol(_)) {
@@ -223,7 +225,7 @@ pub(super) async fn failed(
         .expect("a revival that just ran is followed by a pause");
     schedule(ctx, due);
     if backoff.revivals == REVIVALS_BEFORE_BLOCKER {
-        keeps_failing(ctx, &backoff, Some(&error.to_string())).await?;
+        keeps_failing(ctx, &backoff, provider, Some(&error.to_string())).await?;
     }
     Ok(error)
 }

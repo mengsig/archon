@@ -781,6 +781,14 @@ async fn a_watcher_with_repositories_or_unread_keeps_the_github_policy() {
 
 /// An orchestrator stuck `failed` by a transient engine error.
 fn failing_orchestrator(harness: &Harness) -> Arc<Mutex<HashMap<String, String>>> {
+    failing_orchestrator_on(harness, "claude-code")
+}
+
+/// As [`failing_orchestrator`], running a model of `provider`.
+fn failing_orchestrator_on(
+    harness: &Harness,
+    provider: &'static str,
+) -> Arc<Mutex<HashMap<String, String>>> {
     let states = agent_table(harness, &[]);
     let table = states.clone();
     harness.fake.set_responder(
@@ -791,6 +799,7 @@ fn failing_orchestrator(harness: &Harness) -> Arc<Mutex<HashMap<String, String>>
                 return Scripted::refuse("not_found", "no such agent");
             };
             let mut agent = agent_in(id, &state);
+            agent["model"]["provider"] = json!(provider);
             if state == "failed" {
                 agent["status"]["error"] = json!("Failed to refresh OAuth token");
             }
@@ -800,9 +809,11 @@ fn failing_orchestrator(harness: &Harness) -> Arc<Mutex<HashMap<String, String>>
     states.lock().unwrap().insert(ORCH.into(), "failed".into());
     harness.fake.set_responder(
         "wake",
-        Arc::new(|cmd| {
+        Arc::new(move |cmd| {
             let id = cmd["agent"].as_str().unwrap_or_default();
-            Scripted::reply("agent", agent_in(id, "ready"))
+            let mut agent = agent_in(id, "ready");
+            agent["model"]["provider"] = json!(provider);
+            Scripted::reply("agent", agent)
         }),
     );
     states
@@ -872,16 +883,21 @@ async fn a_failing_orchestrator_is_revived_with_growing_pauses_and_never_given_u
 }
 
 /// An orchestrator whose engine is logged out gets the login step, since a
-/// restart would fail the same way.
+/// restart would fail the same way. The failed agent's engine counts, not
+/// the configured model's (claude-code here, and logged in).
 #[tokio::test]
 async fn a_streak_caused_by_a_logged_out_engine_names_the_login_step() {
     let harness = Harness::new().await;
     harness.connect().await;
     harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
-    failing_orchestrator(&harness);
+    assert_eq!(
+        harness.ctx.config.orchestrator.model.provider,
+        "claude-code"
+    );
+    failing_orchestrator_on(&harness, "codex");
     let logins = json!([
-        {"provider": "claude-code", "configured": false, "program": "claude"},
-        {"provider": "codex", "configured": true, "program": "codex"},
+        {"provider": "codex", "configured": false, "program": "codex"},
+        {"provider": "claude-code", "configured": true, "program": "claude"},
     ]);
     harness
         .fake
@@ -895,9 +911,8 @@ async fn a_streak_caused_by_a_logged_out_engine_names_the_login_step() {
     let blockers = harness.notifications(NotificationKind::Blocker).await;
     assert_eq!(blockers.len(), 1, "told once per streak: {blockers:?}");
     assert!(
-        blockers[0].contains(
-            "claude-code is not logged in: run `claude` once (or choose a `codex` model)"
-        ),
+        blockers[0]
+            .contains("codex is not logged in: run `codex` once (or choose a `claude-code` model)"),
         "{blockers:?}"
     );
     assert!(

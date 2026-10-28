@@ -10,6 +10,7 @@ use archon_core::error::ArchonError;
 use archon_core::id::{NotificationId, QuestionId};
 use archon_core::notify::{FeedEntry, Notification, NotificationKind, Question};
 use archon_core::queue::{QueueItem, QueueState};
+use archon_queue::store::stacks::StackParent;
 use archon_queue::store::{SpendRow, WAL_SIZE_LIMIT};
 use archon_queue::{Checkpointer, DataLock, Store};
 use common::*;
@@ -228,6 +229,47 @@ fn a_dependency_chain_longer_than_a_batch_goes_over_passes() {
         assert!(went.iter().all(|i| gone(store.item(&i.id))), "newest first");
     }
     assert!(chain.iter().all(|i| gone(store.item(&i.id))));
+}
+
+#[test]
+fn a_cycle_through_a_stack_and_an_edited_dependency_goes_whole() {
+    let (mut store, repo, _) = seeded(0);
+    let a = store.insert_item(&item(Some(&repo), "A"), None).unwrap();
+    let mut new_b = item(Some(&repo), "B");
+    new_b.dependencies = vec![a.id.clone()];
+    let mut b = store.insert_item(&new_b, None).unwrap();
+    store
+        .save_stack_parent(&StackParent {
+            item: b.id.clone(),
+            parent_item: a.id.clone(),
+            parent_branch: "archon/a".into(),
+            parent_sha: "a".repeat(40),
+            position: 0,
+            repository_base: None,
+            merged: true,
+            closed: false,
+            conflict: None,
+            needs_attention: None,
+        })
+        .unwrap();
+    b.dependencies.clear();
+    store.update_item(&b).unwrap();
+    let mut a = store.item(&a.id).unwrap();
+    a.dependencies = vec![b.id.clone()];
+    store.update_item(&a).unwrap();
+    for id in [&a.id, &b.id] {
+        let cancelled = QueueState::Cancelled {
+            reason: Some("done".into()),
+        };
+        store.transition_item(id, cancelled, t(20)).unwrap();
+    }
+
+    let pruned = store.prune_history(cutoff(), 1, |_| false).unwrap();
+    assert_eq!(pruned.items, 0, "a cycle goes whole or waits for room");
+    assert!(store.item(&a.id).is_ok() && store.item(&b.id).is_ok());
+    let pruned = store.prune_history(cutoff(), 2, |_| false).unwrap();
+    assert_eq!(pruned.items, 2);
+    assert!(gone(store.item(&a.id)) && gone(store.item(&b.id)));
 }
 
 #[test]

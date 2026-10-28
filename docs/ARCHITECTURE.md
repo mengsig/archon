@@ -4599,9 +4599,9 @@ through the item. So does an item with spend
 on or after the cutoff's local day, so the daily and window budgets count
 the same; the total budget adds the pruned sum kept in `spend_pruned`. A
 pass deletes at most 25 batches of 200 items, each in one transaction
-under the store lock; a batch takes an item only after the items that name
-it, newest first, so a dependency chain longer than a batch still goes over
-later passes, as does any other backlog.
+under the store lock; a batch takes items newest first, each together with
+every item naming it, so a dependency chain longer than a batch goes over
+later passes and a cycle of items naming each other goes whole.
 
 **Store size and modes.** A pass that deleted anything runs
 `PRAGMA incremental_vacuum` when the store allows it: a store created by

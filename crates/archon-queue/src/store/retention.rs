@@ -6,10 +6,10 @@
 //! merge request, an operator correction, a live initiative, a report record
 //! or a distillation whose lessons are not applied yet.
 //! An item stays while a workspace of its runs is on disk, as gc finds it
-//! through the item. Spend of the days budgets still count stays, and what
+//! through the item. A batch takes an item only with every item naming it. Spend of the days budgets still count stays, and what
 //! goes is carried in `spend_pruned`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 use archon_core::Timestamp;
@@ -197,44 +197,118 @@ fn leave_out_on_disk(
     Ok(())
 }
 
-/// Candidates nothing still waiting names, through a dependency or a stack,
-/// newest first: choosing them never leaves out an item that names one chosen.
-const LEAVES: &str = "
-WITH waiting (id) AS (SELECT id FROM temp.prune_items EXCEPT SELECT id FROM temp.prune_chosen)
-INSERT INTO temp.prune_chosen (id)
-SELECT w.id FROM waiting w JOIN items i ON i.id = w.id
-WHERE NOT EXISTS (SELECT 1 FROM item_deps d JOIN waiting o ON o.id = d.item
-                  WHERE d.depends_on = w.id AND d.item <> w.id)
-  AND NOT EXISTS (SELECT 1 FROM stacks s JOIN waiting o ON o.id = s.item
-                  WHERE s.parent_item = w.id AND s.item <> w.id)
-  AND NOT EXISTS (SELECT 1 FROM stacks s JOIN waiting o ON o.id = s.item
-                  JOIN runs r ON r.id = s.run WHERE r.item = w.id AND s.item <> w.id)
-ORDER BY i.seq DESC LIMIT ?1";
+/// Which candidate names which, through a dependency or a stack: a named item
+/// may only go with every item naming it.
+const NAMING: &str = "
+SELECT d.item, d.depends_on FROM item_deps d
+WHERE d.depends_on IN (SELECT id FROM temp.prune_items) AND d.item IN (SELECT id FROM temp.prune_items)
+UNION SELECT s.item, s.parent_item FROM stacks s
+WHERE s.parent_item IN (SELECT id FROM temp.prune_items) AND s.item IN (SELECT id FROM temp.prune_items)
+UNION SELECT s.item, r.item FROM stacks s JOIN runs r ON r.id = s.run
+WHERE r.item IN (SELECT id FROM temp.prune_items) AND s.item IN (SELECT id FROM temp.prune_items)";
 
-/// Keep at most `limit` candidates, each chosen only once every candidate
-/// that names it is: a dependency chain longer than a batch still goes.
+/// Keep at most `limit` candidates, newest first, each with every candidate
+/// naming it: a chain longer than a batch goes over passes, a cycle at once.
 fn choose_dependents_first(tx: &Transaction<'_>, limit: i64) -> Result<(), ArchonError> {
-    tx.execute_batch("CREATE TEMP TABLE prune_chosen (id TEXT PRIMARY KEY)")
-        .ctx("create the chosen items table")?;
-    let mut chosen = 0i64;
-    let mut rounds = 0i64;
-    while chosen < limit {
-        let added = tx
-            .execute(LEAVES, [limit - chosen])
-            .ctx("choose items to prune")?;
-        if added == 0 {
+    let limit = usize::try_from(limit).expect("a batch is not negative");
+    let ids = candidates_newest_first(tx)?;
+    let namers = candidate_namers(tx, &ids)?;
+    let mut chosen = vec![false; ids.len()];
+    let mut count = 0;
+    for item in 0..ids.len() {
+        if count == limit {
             break;
         }
-        chosen += i64::try_from(added).expect("a batch fits an i64");
-        rounds += 1;
-        assert!(rounds <= limit, "every round chooses at least one item");
+        if chosen[item] {
+            continue;
+        }
+        let Some(group) = unchosen_namers(item, &namers, &chosen, limit - count) else {
+            continue;
+        };
+        for &member in &group {
+            chosen[member] = true;
+        }
+        count += group.len();
     }
-    assert!(chosen <= limit, "at most a batch is chosen");
-    tx.execute_batch(
-        "DELETE FROM temp.prune_items WHERE id NOT IN (SELECT id FROM temp.prune_chosen);
-         DROP TABLE temp.prune_chosen;",
-    )
-    .ctx("keep the chosen items")
+    assert!(count <= limit, "at most a batch is chosen");
+    assert_eq!(count, chosen.iter().filter(|c| **c).count());
+    let mut leave = tx
+        .prepare("DELETE FROM temp.prune_items WHERE id = ?1")
+        .ctx("prepare leaving out an item for a later batch")?;
+    for (id, _) in ids.iter().zip(&chosen).filter(|(_, chosen)| !**chosen) {
+        let left = leave
+            .execute([id])
+            .ctx("leave out an item for a later batch")?;
+        assert_eq!(left, 1, "a waiting item was a candidate");
+    }
+    Ok(())
+}
+
+fn candidates_newest_first(tx: &Transaction<'_>) -> Result<Vec<String>, ArchonError> {
+    let mut stmt = tx
+        .prepare(
+            "SELECT p.id FROM temp.prune_items p JOIN items i ON i.id = p.id ORDER BY i.seq DESC",
+        )
+        .ctx("prepare the candidates to prune")?;
+    let ids = stmt
+        .query_map([], |row| row.get(0))
+        .ctx("read the candidates to prune")?
+        .collect::<Result<Vec<String>, _>>()
+        .ctx("read a candidate to prune")?;
+    let unique: BTreeSet<&String> = ids.iter().collect();
+    assert_eq!(unique.len(), ids.len(), "a candidate is listed once");
+    Ok(ids)
+}
+
+/// For each candidate, by index into `ids`, the other candidates naming it.
+fn candidate_namers(tx: &Transaction<'_>, ids: &[String]) -> Result<Vec<Vec<usize>>, ArchonError> {
+    let index: HashMap<&str, usize> = ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id.as_str(), i))
+        .collect();
+    let mut namers = vec![Vec::new(); ids.len()];
+    let mut stmt = tx.prepare(NAMING).ctx("prepare the candidates' naming")?;
+    let mut rows = stmt.query([]).ctx("read the candidates' naming")?;
+    while let Some(row) = rows.next().ctx("read a naming between candidates")? {
+        let namer: String = row.get(0).ctx("read a naming item")?;
+        let named: String = row.get(1).ctx("read a named item")?;
+        if namer == named {
+            continue;
+        }
+        let (Some(&namer), Some(&named)) = (index.get(namer.as_str()), index.get(named.as_str()))
+        else {
+            unreachable!("the naming query reads candidates only");
+        };
+        namers[named].push(namer);
+    }
+    Ok(namers)
+}
+
+/// `item` with every unchosen candidate naming it, directly or not, or `None`
+/// when they are more than `room`. A visit stops past `room`, so it is cheap.
+fn unchosen_namers(
+    item: usize,
+    namers: &[Vec<usize>],
+    chosen: &[bool],
+    room: usize,
+) -> Option<Vec<usize>> {
+    assert!(!chosen[item] && room > 0, "a waiting item and room for it");
+    let mut group = vec![item];
+    let mut seen = HashSet::from([item]);
+    let mut next = 0;
+    while let Some(&member) = group.get(next) {
+        next += 1;
+        for &namer in &namers[member] {
+            if !chosen[namer] && seen.insert(namer) {
+                group.push(namer);
+                if group.len() > room {
+                    return None;
+                }
+            }
+        }
+    }
+    Some(group)
 }
 
 /// Drop candidates an item staying names until none is left: each round

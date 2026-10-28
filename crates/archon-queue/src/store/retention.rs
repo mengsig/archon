@@ -9,6 +9,7 @@
 //! through the item. Spend of the days budgets still count stays, and what
 //! goes is carried in `spend_pruned`.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use archon_core::Timestamp;
@@ -86,7 +87,7 @@ DELETE FROM temp.prune_items WHERE id IN (
     WHERE s.item NOT IN (SELECT id FROM temp.prune_items))";
 
 /// Delete the history older than `before`, at most `limit` items with all
-/// they own, oldest first, in one transaction. `on_disk` says whether a run
+/// they own, dependents first, in one transaction. `on_disk` says whether a run
 /// workspace still exists.
 pub(super) fn prune(
     store: &mut Store,
@@ -124,7 +125,7 @@ pub(super) fn prune(
     Ok(pruned)
 }
 
-/// Fill `temp.prune_items` with the oldest `limit` items that may go, and
+/// Fill `temp.prune_items` with at most `limit` items that may go, and
 /// `temp.prune_runs` with their runs. Returns how many items it chose.
 fn choose_items(
     tx: &Transaction<'_>,
@@ -140,10 +141,11 @@ fn choose_items(
     .ctx("create the pruning tables")?;
     tx.execute(CANDIDATES, params![cutoff, cutoff_day])
         .ctx("choose settled items to prune")?;
+    leave_out_on_disk(tx, on_disk)?;
     keep_named(tx)?;
-    keep_oldest_off_disk(tx, limit, on_disk)?;
-    // The cut may leave out an item that one still chosen names.
-    keep_named(tx)?;
+    choose_dependents_first(tx, limit)?;
+    let named = tx.execute(STILL_NAMED, []).ctx("check the chosen items")?;
+    assert_eq!(named, 0, "only a chosen item names a chosen item");
     tx.execute(
         "INSERT INTO temp.prune_runs (id)
          SELECT id FROM runs WHERE item IN (SELECT id FROM temp.prune_items)",
@@ -157,61 +159,82 @@ fn choose_items(
     Ok(usize::try_from(chosen).expect("a count is not negative"))
 }
 
-/// Keep the oldest `limit` candidates none of whose run workspaces is on disk.
-fn keep_oldest_off_disk(
+/// Leave out every candidate a workspace of whose runs is still on disk.
+fn leave_out_on_disk(
     tx: &Transaction<'_>,
-    limit: i64,
     on_disk: &dyn Fn(&Path) -> bool,
 ) -> Result<(), ArchonError> {
-    let limit = usize::try_from(limit).expect("a batch is positive");
     let mut runs = tx
         .prepare(
-            "SELECT p.id, json_extract(r.data, '$.workspace'), json_extract(r.data, '$.team_root')
-             FROM temp.prune_items p JOIN items i ON i.id = p.id
-             LEFT JOIN runs r ON r.item = p.id ORDER BY i.updated_at, i.id",
+            "SELECT r.item, json_extract(r.data, '$.workspace'), json_extract(r.data, '$.team_root')
+             FROM runs r WHERE r.item IN (SELECT id FROM temp.prune_items)",
         )
         .ctx("prepare the workspaces of the items to prune")?;
     let mut rows = runs
         .query([])
         .ctx("read the workspaces of the items to prune")?;
-    // Rows of one item are adjacent; an item is kept once all of its rows are seen.
-    let mut kept: Vec<String> = Vec::new();
-    let mut current: Option<(String, bool)> = None;
+    let mut held = BTreeSet::new();
     while let Some(row) = rows.next().ctx("read a workspace to prune")? {
         let item: String = row.get(0).ctx("read the item to prune")?;
         let workspace: Option<String> = row.get(1).ctx("read a run workspace")?;
         let team_root: Option<String> = row.get(2).ctx("read a run's team root")?;
-        let present = [workspace, team_root]
+        if [workspace, team_root]
             .iter()
             .flatten()
-            .any(|path| on_disk(Path::new(path)));
-        match &mut current {
-            Some((id, held)) if *id == item => *held |= present,
-            _ => {
-                if let Some((id, false)) = current.replace((item, present)) {
-                    kept.push(id);
-                }
-                if kept.len() == limit {
-                    current = None;
-                    break;
-                }
-            }
+            .any(|path| on_disk(Path::new(path)))
+        {
+            held.insert(item);
         }
     }
-    if let Some((id, false)) = current {
-        kept.push(id);
-    }
     drop(rows);
-    assert!(kept.len() <= limit, "at most a batch is kept");
-    tx.execute("DELETE FROM temp.prune_items", [])
-        .ctx("clear the items to prune")?;
-    let mut insert = tx
-        .prepare("INSERT INTO temp.prune_items (id) VALUES (?1)")
-        .ctx("prepare the items to prune")?;
-    for id in &kept {
-        insert.execute([id]).ctx("keep an item to prune")?;
+    let mut leave = tx
+        .prepare("DELETE FROM temp.prune_items WHERE id = ?1")
+        .ctx("prepare leaving out an item on disk")?;
+    for item in &held {
+        let left = leave.execute([item]).ctx("leave out an item on disk")?;
+        assert_eq!(left, 1, "a held item was a candidate");
     }
     Ok(())
+}
+
+/// Candidates nothing still waiting names, through a dependency or a stack,
+/// newest first: choosing them never leaves out an item that names one chosen.
+const LEAVES: &str = "
+WITH waiting (id) AS (SELECT id FROM temp.prune_items EXCEPT SELECT id FROM temp.prune_chosen)
+INSERT INTO temp.prune_chosen (id)
+SELECT w.id FROM waiting w JOIN items i ON i.id = w.id
+WHERE NOT EXISTS (SELECT 1 FROM item_deps d JOIN waiting o ON o.id = d.item
+                  WHERE d.depends_on = w.id AND d.item <> w.id)
+  AND NOT EXISTS (SELECT 1 FROM stacks s JOIN waiting o ON o.id = s.item
+                  WHERE s.parent_item = w.id AND s.item <> w.id)
+  AND NOT EXISTS (SELECT 1 FROM stacks s JOIN waiting o ON o.id = s.item
+                  JOIN runs r ON r.id = s.run WHERE r.item = w.id AND s.item <> w.id)
+ORDER BY i.seq DESC LIMIT ?1";
+
+/// Keep at most `limit` candidates, each chosen only once every candidate
+/// that names it is: a dependency chain longer than a batch still goes.
+fn choose_dependents_first(tx: &Transaction<'_>, limit: i64) -> Result<(), ArchonError> {
+    tx.execute_batch("CREATE TEMP TABLE prune_chosen (id TEXT PRIMARY KEY)")
+        .ctx("create the chosen items table")?;
+    let mut chosen = 0i64;
+    let mut rounds = 0i64;
+    while chosen < limit {
+        let added = tx
+            .execute(LEAVES, [limit - chosen])
+            .ctx("choose items to prune")?;
+        if added == 0 {
+            break;
+        }
+        chosen += i64::try_from(added).expect("a batch fits an i64");
+        rounds += 1;
+        assert!(rounds <= limit, "every round chooses at least one item");
+    }
+    assert!(chosen <= limit, "at most a batch is chosen");
+    tx.execute_batch(
+        "DELETE FROM temp.prune_items WHERE id NOT IN (SELECT id FROM temp.prune_chosen);
+         DROP TABLE temp.prune_chosen;",
+    )
+    .ctx("keep the chosen items")
 }
 
 /// Drop candidates an item staying names until none is left: each round

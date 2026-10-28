@@ -186,7 +186,7 @@ fn spend_of_a_day_budgets_still_count_keeps_its_item() {
 }
 
 #[test]
-fn a_pass_prunes_a_bounded_batch_oldest_first() {
+fn a_pass_prunes_a_bounded_batch_newest_first() {
     let mut store = store();
     let items: Vec<QueueItem> = (1..=3)
         .map(|n| settled_item(&mut store, n, 1.0, 30, 40 + i64::from(n)))
@@ -195,15 +195,39 @@ fn a_pass_prunes_a_bounded_batch_oldest_first() {
         store.prune_history(cutoff(), 2, |_| false).unwrap().items,
         2
     );
-    assert!(gone(store.item(&items[0].id)) && gone(store.item(&items[1].id)));
+    assert!(gone(store.item(&items[1].id)) && gone(store.item(&items[2].id)));
     store
-        .item(&items[2].id)
-        .expect("the newest waits for the next batch");
+        .item(&items[0].id)
+        .expect("the oldest waits for the next batch");
     assert_eq!(
         store.prune_history(cutoff(), 2, |_| false).unwrap().items,
         1
     );
-    assert!(gone(store.item(&items[2].id)));
+    assert!(gone(store.item(&items[0].id)));
+}
+
+#[test]
+fn a_dependency_chain_longer_than_a_batch_goes_over_passes() {
+    let mut store = store();
+    let mut chain: Vec<QueueItem> = Vec::new();
+    for n in 1..=7 {
+        let mut new = item(None, &format!("link {n}"));
+        new.dependencies = chain
+            .last()
+            .map(|prev| prev.id.clone())
+            .into_iter()
+            .collect();
+        chain.push(settle(&mut store, &new, n, 1.0, 30, 40 + i64::from(n)));
+    }
+
+    for (pass, expected) in [3, 3, 1].into_iter().enumerate() {
+        let pruned = store.prune_history(cutoff(), 3, |_| false).unwrap();
+        assert_eq!(pruned.items, expected, "pass {pass} makes progress");
+        let (left, went) = chain.split_at(7 - [3, 6, 7][pass]);
+        assert!(left.iter().all(|i| store.item(&i.id).is_ok()));
+        assert!(went.iter().all(|i| gone(store.item(&i.id))), "newest first");
+    }
+    assert!(chain.iter().all(|i| gone(store.item(&i.id))));
 }
 
 #[test]

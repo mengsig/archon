@@ -855,9 +855,9 @@ impl Store {
 
     // ----- history retention ----------------------------------------------
     /// Deletes invisible feed rows and settled items, with what they own,
-    /// older than `before`: at most `limit` of each, oldest first. Outcomes,
-    /// lesson uses, the items anything live or open names, and those with a
-    /// run workspace `on_disk` says still exists, stay.
+    /// older than `before`: at most `limit` of each, an item only after the
+    /// items naming it. Outcomes, lesson uses, the items anything live or open
+    /// names, and those with a run workspace `on_disk` says still exists, stay.
     pub fn prune_history(
         &mut self,
         before: Timestamp,

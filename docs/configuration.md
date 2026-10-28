@@ -224,7 +224,8 @@ and three archives by default. Rotation applies size, archive count and age
 limits independently; `0` disables each corresponding limit. Foreground daemon
 output remains on its configured stdout/stderr. Storage config validation
 allows `retention_days` 0..36500, `log_max_mb` 0..1048576 and `log_max_files`
-0..1000. SQLite rows, the spend ledger and 90-day evidence windows are unchanged.
+0..1000. `retention_days` also bounds SQLite history as described above, while
+outcomes, lesson uses and the spend budgets still count stay.
 
 `archon status` and MCP `queue_status` show allocated bytes by storage kind,
 including database WAL/SHM and the startup log beside the socket, plus the last

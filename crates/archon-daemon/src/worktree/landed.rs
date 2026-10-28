@@ -57,11 +57,15 @@ pub(crate) fn find(
     if let Some(found) = newest_equivalent(shadow, base, &squash)? {
         return Ok(Some(Landing::SamePatches(found)));
     }
-    // Every commit of the head's own on the base: a rebase.
-    if !all_equivalent(shadow, base, dep)? {
+    // A rebase: the newest commit of the base matching one of the head's own,
+    // which must hold matches of all the others, not only the base somewhere.
+    let Some(newest) = newest_equivalent(shadow, base, dep)? else {
+        return Ok(None);
+    };
+    if !all_equivalent(shadow, &newest, dep)? {
         return Ok(None);
     }
-    Ok(newest_equivalent(shadow, base, dep)?.map(Landing::SamePatches))
+    Ok(Some(Landing::SamePatches(newest)))
 }
 
 /// Merge `landing` into `branch` of `repo`, which holds the dependency head
@@ -183,7 +187,7 @@ fn newest_equivalent(
 }
 
 /// Whether every commit `dep` adds to its fork from `base`, merges aside,
-/// has a commit of `base` with its patch id.
+/// has a commit `base` holds with its patch id.
 fn all_equivalent(shadow: &Shadow, base: &str, dep: &str) -> Result<bool, ArchonError> {
     let marked = cherry_marked(shadow, "--right-only", base, dep)?;
     Ok(!marked.is_empty() && marked.iter().all(|(equivalent, _)| *equivalent))

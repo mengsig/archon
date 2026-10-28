@@ -1045,3 +1045,43 @@ async fn a_delivery_holding_the_moved_head_fast_forwards_from_it() {
         "frozen as queued"
     );
 }
+
+/// Make the waiting delivery retry of `item`'s run due, as after its wait.
+async fn retry_due(h: &mut Harness, item: &QueueItem) {
+    let runs = h.ctx.store.lock().await.runs_for_item(&item.id).unwrap();
+    let key = format!("ship_retry:{}", runs.last().expect("a run").id);
+    let retry: Value = serde_json::from_str(&h.kv(&key).await.expect("a retry")).unwrap();
+    let due = json!({"failures": retry["failures"], "next_at": "2000-01-01T00:00:00Z"});
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&key, &due.to_string())
+        .unwrap();
+    h.restart();
+    archon_daemon::executor::recover(&h.ctx).await.unwrap();
+    h.dispatch().await;
+}
+
+/// GitHub showing the moved head a delivery pushed over is behind the push,
+/// on the try that pushed and on one that finds the push already made.
+#[tokio::test]
+async fn a_delivery_over_the_moved_head_waits_for_github_to_show_it() {
+    let (mut h, gh, head) = setup().await;
+    let (second, first_head, merged) = second_holds_the_moved_head(&h, &gh, &head).await;
+    std::fs::remove_file(gh.state.join("origin")).unwrap();
+    gh.show(100, &first_head, json!({}));
+
+    retry(&h, &second).await;
+    settle_item(&h, &second, record).await;
+    assert_eq!(pushed(&origin_of(&h), "feature"), Some(merged.clone()));
+    retry_due(&mut h, &second).await;
+    let state = h.state(&second.id).await;
+    assert!(matches!(state, QueueState::Running { .. }), "{state:?}");
+
+    gh.follow_origin(&origin_of(&h));
+    retry_due(&mut h, &second).await;
+    let state = h.state(&second.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+    assert_eq!(pushed(&origin_of(&h), "feature"), Some(merged));
+}

@@ -215,3 +215,29 @@ fn a_landing_merges_only_into_a_branch_holding_the_head_and_only_once() {
     let refused = merge(&f.shadow, &f.repo, "stranger", dep, &identity).unwrap_err();
     assert!(refused.to_string().contains("does not hold"), "{refused}");
 }
+
+/// A head whose two commits the base took on branches of their own, then
+/// merged: no one commit matching them holds both, so none is its landing.
+#[test]
+fn a_rebase_spread_over_merged_branches_is_no_landing() {
+    let f = fixture();
+    git(&f.repo, &["checkout", "--quiet", "-b", "split", "main"]);
+    let a = commit(&f.repo, "a.txt", "a\n");
+    let b = commit(&f.repo, "b.txt", "b\n");
+    git(&f.repo, &["checkout", "--quiet", "main"]);
+    f.main_moves();
+    for (branch, pick) in [("with-a", &a), ("with-b", &b)] {
+        git(&f.repo, &["checkout", "--quiet", "-b", branch, "main"]);
+        git(&f.repo, &["-c", "user.name=GitHub", "cherry-pick", pick]);
+    }
+    git(&f.repo, &["checkout", "--quiet", "main"]);
+    for branch in ["with-a", "with-b"] {
+        git(
+            &f.repo,
+            &["merge", "--quiet", "--no-ff", "-m", branch, branch],
+        );
+    }
+    let base = git(&f.repo, &["rev-parse", "HEAD"]);
+    assert_eq!(git(&f.repo, &["show", &format!("{base}:a.txt")]), "a");
+    assert_eq!(find(&f.shadow, &f.repo, &b, &base).unwrap(), None);
+}

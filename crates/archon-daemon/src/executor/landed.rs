@@ -23,7 +23,7 @@ use crate::worktree::stack;
 #[derive(Debug)]
 enum Plan {
     /// The branch needs nothing for it: the base holds the parent's head
-    /// itself, or the branch holds the parent's landing already.
+    /// itself, or the branch holds the parent's landing already, as pushed.
     Held,
     /// The base holds the parent's content under other commits.
     Landed(Landing),
@@ -55,7 +55,8 @@ pub(super) async fn reconcile(
         let Some(mark) = restack::mark_current(ctx, item, run).await? else {
             return Ok(());
         };
-        let (head, plan) = plan(ctx, repo, (&base, &run.branch), &parent.parent_sha).await?;
+        let at = (base.as_str(), run.branch.as_str(), child_head);
+        let (head, plan) = plan(ctx, repo, at, &parent.parent_sha).await?;
         let incoming = match plan {
             Plan::Held => None,
             Plan::Landed(landing) => Some(Incoming::Landed {
@@ -94,7 +95,8 @@ pub(super) async fn for_refresh(
     let parents = ctx.store.lock().await.stack_parents(&item.id)?;
     let mut merged = false;
     for mut parent in parents.into_iter().filter(|p| p.merged) {
-        let (head, plan) = plan(ctx, repo, (base, &run.branch), &parent.parent_sha).await?;
+        let at = (base, run.branch.as_str(), child_head);
+        let (head, plan) = plan(ctx, repo, at, &parent.parent_sha).await?;
         let Plan::Landed(landing) = plan else {
             continue;
         };
@@ -137,16 +139,17 @@ async fn due_base(ctx: &DaemonContext, item: &QueueItem) -> Result<Option<String
 }
 
 /// The head of `base` now, and what the merged parent head `dep` asks of
-/// `branch` against it.
+/// `branch`, whose pull request's head is `child_head`, against it.
 async fn plan(
     ctx: &DaemonContext,
     repo: &Repo,
-    (base, branch): (&str, &str),
+    (base, branch, child_head): (&str, &str, Option<&str>),
     dep: &str,
 ) -> Result<(String, Plan), ArchonError> {
     assert!(stack::is_commit_id(dep), "a recorded parent head");
     let (data_dir, path) = (ctx.paths.data_dir.clone(), repo.path.clone());
     let (base, branch, dep) = (base.to_owned(), branch.to_owned(), dep.to_owned());
+    let child_head = child_head.map(str::to_owned);
     let remote = repo.ship == ShipMode::Pr;
     tokio::task::spawn_blocking(move || {
         let shadow = Shadow::of(&data_dir, &path)?;
@@ -157,8 +160,10 @@ async fn plan(
         let plan = match landed::find(&shadow, &path, &dep, &head)? {
             None => Plan::Unproven,
             Some(landing) => {
-                let tip = format!("refs/heads/{branch}");
-                match stack::contains(&path, landing.commit(), &tip)? {
+                // A merge the pull request lacks, its push failed, is pushed again.
+                let local = stack::sha(&path, &branch)?;
+                let pushed = child_head.is_none_or(|head| head == local);
+                match pushed && stack::contains(&path, landing.commit(), &local)? {
                     true => Plan::Held,
                     false => Plan::Landed(landing),
                 }

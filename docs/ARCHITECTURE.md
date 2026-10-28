@@ -2608,8 +2608,8 @@ table and delivers it off every lock:
    the same way with the lease on that tip, and any other commit is a
    refusal naming both, never a force-push.
    `gh pr view` must then show the checked commit as the head of that open
-   pull request; GitHub still showing the frozen head or that tip is
-   retried. Its
+   pull request; GitHub still showing a head the checked commit holds, as
+   the frozen head or that tip, lags behind the push and is retried. Its
    title, body and base are left alone (an initiative links to it from
    its other members but never edits it or its draft state), and nothing
    is merged or owed auto-merge. The run ends with
@@ -2822,14 +2822,15 @@ the base head (`origin`'s, fetched, in `pr` mode) past its merge base with
 the parent head for a landing (`worktree/landed.rs`): a first-parent commit
 with the parent head's tree, else the newest commit with the patch id of the
 parent's whole change (a squash, matched against a commit no ref names with
-the head's tree over the merge base), else, when every commit of the
-parent's own has an equal patch id there, the newest of those (a rebase).
+the head's tree over the merge base), else the newest commit matching one
+of the parent's own whose history matches every other (a rebase).
 The child's branch, which must hold the parent head, is merged with that
 commit as if it forked at the parent head: over a commit of the same tree,
 re-checked, with its own tree (`merge -s ours`); otherwise `merge-tree
 --merge-base=<parent head>`. With no landing proven (the base changed more
 than the parent) the base head is merged as git would. Either merge is
-written, moved and pushed as above, never forced; a conflict writes
+written, moved and pushed as above, never forced, and a landing the branch
+holds but its pull request's head lacks is pushed again; a conflict writes
 nothing and is one blocker naming `refresh_item`, not a fix item. The base
 head is then recorded as `landed`, so each parent is restacked once, and a
 row from before `landed` existed is restacked at the next pass. Merging a

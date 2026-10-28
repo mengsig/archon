@@ -230,3 +230,32 @@ async fn a_refresh_restacks_a_child_of_a_squash_merged_parent_in_place() {
     restacked(&h, &child, &before, &main).await;
     assert_eq!(landed(&h, &child).await, Some(main));
 }
+
+/// A restack whose push failed is pushed on the next pass: the child's
+/// branch holding the landing is not taken for its pull request holding it.
+#[tokio::test]
+async fn a_restack_whose_push_failed_is_pushed_on_the_next_pass() {
+    let (h, parent, child) = finished_stack(Some("parent\nchild\n")).await;
+    let before = child_head(&h, &child).await;
+    let branch = h.run(&child.id).await.branch;
+    git(&h.repo, &["push", "--quiet", "origin", &branch]);
+    set_pr(&h, &branch, "headRefOid", json!(before));
+    let main = merge_on_github(&h, &h.run(&parent.id).await.branch, Merged::Squash);
+    // `origin` cannot lock the branch, so the push fails as in an outage.
+    let lock = h
+        .dir
+        .path()
+        .join(format!("remote.git/refs/heads/{branch}.lock"));
+    std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    std::fs::write(&lock, "").unwrap();
+    h.dispatch().await;
+    assert_ne!(child_head(&h, &child).await, before, "merged here");
+    let remote = h.dir.path().join("remote.git");
+    assert_eq!(rev(&remote, &branch), Some(before.clone()), "not pushed");
+    assert_eq!(landed(&h, &child).await, None, "not recorded");
+
+    std::fs::remove_file(&lock).unwrap();
+    h.dispatch().await;
+    restacked(&h, &child, &before, &main).await;
+    assert_eq!(landed(&h, &child).await, Some(main));
+}

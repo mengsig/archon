@@ -4,8 +4,12 @@ use archon_core::{ArchonError, outcome::Outcome};
 impl Store {
     /// Spend may arrive after terminal state, and provider billing can lower an estimate.
     /// Learning reads the API-equivalent total, whatever budget policy captured the outcome.
+    /// The history retention pass keeps an outcome whose run it deleted, as last settled.
     pub(super) fn settled_outcome(&self, mut outcome: Outcome) -> Result<Outcome, ArchonError> {
-        let stages = self.stage_runs(&outcome.run)?;
+        let stages = match self.stage_runs(&outcome.run) {
+            Err(ArchonError::NotFound(_)) => return Ok(outcome),
+            stages => stages?,
+        };
         if stages.is_empty() {
             return Ok(outcome);
         }

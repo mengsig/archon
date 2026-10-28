@@ -539,14 +539,90 @@ SELECT latest || ':' || id, id FROM refreshes
 WHERE NOT EXISTS (SELECT 1 FROM kv WHERE kv.key = latest AND kv.value = refreshes.id);
 "#;
 
+/// Version 18: the history retention pass (ARCHITECTURE §16) deletes old
+/// items and runs, while outcomes and lesson uses, which learning reads, stay:
+/// they keep naming their run and item without a foreign key to either. What
+/// the pass deletes of `spend` is carried in `spend_pruned`, so the total
+/// budget still counts it.
+const V18: &str = r#"
+ALTER TABLE outcome_stages RENAME TO outcome_stages_v17;
+ALTER TABLE outcomes RENAME TO outcomes_v17;
+ALTER TABLE lesson_uses RENAME TO lesson_uses_v17;
+
+CREATE TABLE outcomes (
+    run           TEXT PRIMARY KEY,
+    item          TEXT NOT NULL,
+    repo          TEXT,
+    pipeline      TEXT NOT NULL,
+    size          TEXT,
+    result        TEXT NOT NULL,
+    failure_class TEXT,
+    corrected     INTEGER NOT NULL CHECK (corrected IN (0, 1)),
+    merged        INTEGER CHECK (merged IN (0, 1)),
+    cost_usd      REAL NOT NULL CHECK (cost_usd >= 0),
+    finished_at   TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    data          TEXT NOT NULL
+);
+INSERT INTO outcomes (run, item, repo, pipeline, size, result, failure_class, corrected,
+                      merged, cost_usd, finished_at, updated_at, data)
+SELECT run, item, repo, pipeline, size, result, failure_class, corrected,
+       merged, cost_usd, finished_at, updated_at, data FROM outcomes_v17;
+
+CREATE TABLE outcome_stages (
+    run       TEXT NOT NULL REFERENCES outcomes (run),
+    ordinal   INTEGER NOT NULL CHECK (ordinal >= 0),
+    stage_id  TEXT NOT NULL,
+    model     TEXT NOT NULL,
+    effort    TEXT NOT NULL,
+    cost_usd  REAL NOT NULL CHECK (cost_usd >= 0),
+    wall_secs INTEGER NOT NULL CHECK (wall_secs >= 0),
+    attempts  INTEGER NOT NULL CHECK (attempts >= 0),
+    passed    INTEGER CHECK (passed IN (0, 1)),
+    PRIMARY KEY (run, ordinal)
+) WITHOUT ROWID;
+INSERT INTO outcome_stages (run, ordinal, stage_id, model, effort, cost_usd, wall_secs,
+                            attempts, passed)
+SELECT run, ordinal, stage_id, model, effort, cost_usd, wall_secs, attempts, passed
+FROM outcome_stages_v17;
+
+CREATE TABLE lesson_uses (
+    lesson  TEXT NOT NULL REFERENCES lessons (id),
+    run     TEXT NOT NULL,
+    used_at TEXT NOT NULL,
+    won     INTEGER CHECK (won IN (0, 1)),
+    PRIMARY KEY (lesson, run)
+) WITHOUT ROWID;
+INSERT INTO lesson_uses (lesson, run, used_at, won)
+SELECT lesson, run, used_at, won FROM lesson_uses_v17;
+
+DROP TABLE outcome_stages_v17;
+DROP TABLE lesson_uses_v17;
+DROP TABLE outcomes_v17;
+CREATE INDEX outcomes_by_route ON outcomes (repo, pipeline, finished_at);
+CREATE INDEX outcomes_by_item ON outcomes (item);
+CREATE INDEX outcome_stages_by_choice ON outcome_stages (stage_id, model, effort);
+CREATE INDEX lesson_uses_by_run ON lesson_uses (run);
+
+CREATE TABLE spend_pruned (
+    id                 INTEGER PRIMARY KEY CHECK (id = 1),
+    cost_usd           REAL NOT NULL CHECK (cost_usd >= 0),
+    estimated_cost_usd REAL NOT NULL CHECK (estimated_cost_usd >= 0)
+);
+"#;
+
 pub(super) const MIGRATIONS: &[&str] = &[
-    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17,
+    V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, V16, V17, V18,
 ];
 
 /// Pragmas every connection needs. `on_disk` connections must end up in
 /// WAL mode; in-memory databases report `memory` and stay that way.
 pub(super) fn configure(conn: &Connection, on_disk: bool) -> Result<(), ArchonError> {
     conn.busy_timeout(BUSY_TIMEOUT).ctx("set busy_timeout")?;
+    // Takes effect only before the first table exists: a new store frees the
+    // pages pruning empties; an older one keeps its mode, as only VACUUM changes it.
+    conn.pragma_update(None, "auto_vacuum", "INCREMENTAL")
+        .ctx("set auto_vacuum")?;
     let mode = enable_wal(conn)?;
     if on_disk && !mode.eq_ignore_ascii_case("wal") {
         return Err(ArchonError::Store(format!(
@@ -559,6 +635,7 @@ pub(super) fn configure(conn: &Connection, on_disk: bool) -> Result<(), ArchonEr
         .ctx("set synchronous")?;
     conn.pragma_update(None, "foreign_keys", true)
         .ctx("enable foreign keys")?;
+    limit_wal(conn)?;
     let fk: bool = conn
         .pragma_query_value(None, "foreign_keys", |row| row.get(0))
         .ctx("read foreign_keys")?;
@@ -567,6 +644,19 @@ pub(super) fn configure(conn: &Connection, on_disk: bool) -> Result<(), ArchonEr
             "foreign keys could not be enabled".into(),
         ));
     }
+    Ok(())
+}
+
+/// The size, in bytes, the WAL is cut back to once a checkpoint has copied
+/// all of it into the database, so it does not keep its peak size.
+pub const WAL_SIZE_LIMIT: i64 = 4 * 1024 * 1024;
+
+/// Bound the WAL this connection resets to [`WAL_SIZE_LIMIT`].
+pub(super) fn limit_wal(conn: &Connection) -> Result<(), ArchonError> {
+    let limit: i64 = conn
+        .pragma_update_and_check(None, "journal_size_limit", WAL_SIZE_LIMIT, |row| row.get(0))
+        .ctx("set journal_size_limit")?;
+    assert_eq!(limit, WAL_SIZE_LIMIT, "the WAL limit is set");
     Ok(())
 }
 
@@ -713,6 +803,8 @@ pub(super) fn migrate(conn: &mut Connection) -> Result<usize, ArchonError> {
     Ok(MIGRATIONS.len())
 }
 
+#[cfg(test)]
+mod history_upgrade;
 #[cfg(test)]
 mod merge_upgrade;
 #[cfg(test)]
@@ -979,6 +1071,7 @@ mod tests {
         INSERT INTO lesson_uses (lesson, run, used_at) VALUES ('lsn_a', 'prun_new', 't');";
 
     /// Rows V10 must refuse, each for the reason named.
+    // V18 lets a lesson use outlive its run, so a use by an unrecorded run is no longer refused.
     const V10_REFUSED: [(&str, &str); 8] = [
         (
             "an item in no recorded initiative",
@@ -1011,8 +1104,8 @@ mod tests {
             "UPDATE lessons SET wins = 3 WHERE id = 'lsn_a'",
         ),
         (
-            "a use by an unrecorded run",
-            "INSERT INTO lesson_uses (lesson, run, used_at) VALUES ('lsn_a', 'prun_none', 't')",
+            "a use of an unrecorded lesson",
+            "INSERT INTO lesson_uses (lesson, run, used_at) VALUES ('lsn_none', 'prun_new', 't')",
         ),
     ];
 
@@ -1160,7 +1253,7 @@ mod tests {
         insert_feedback(&conn, "fb_old", V11_ROW).unwrap();
         conn.execute_batch(
             "DROP TABLE run_pull_requests; DROP TABLE merge_requests; DROP TABLE tracked_requests;
-             DELETE FROM schema_migrations WHERE version >= 12",
+             DROP TABLE spend_pruned; DELETE FROM schema_migrations WHERE version >= 12",
         )
         .unwrap();
         assert_eq!(migrate(&mut conn).unwrap(), MIGRATIONS.len());

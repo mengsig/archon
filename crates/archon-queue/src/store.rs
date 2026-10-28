@@ -22,10 +22,14 @@ pub use items::Asked;
 mod lessons;
 mod merges;
 mod model_evidence;
+mod modes;
 mod operator_feedback;
 mod outcomes;
 mod pull_requests;
 mod repos;
+mod retention;
+pub use retention::HistoryPruned;
+pub use schema::WAL_SIZE_LIMIT;
 mod run_edits;
 mod runs;
 pub use runs::UnreadableRun;
@@ -148,8 +152,7 @@ impl Store {
     /// data dir's lock shared. Refuses a store of a newer Archon, or one an archond owns.
     pub fn open(path: &Path) -> Result<Self, ArchonError> {
         let dir = store_dir(path);
-        std::fs::create_dir_all(dir)
-            .map_err(|e| ArchonError::io(format!("create {}", dir.display()), e))?;
+        modes::create_private_dir(dir)?;
         let lock = DataLock::share(dir)?;
         Self::open_locked(path, lock)
     }
@@ -166,13 +169,18 @@ impl Store {
         Self::open_locked(path, lock)
     }
 
+    /// The store's directory is made 0700 and its files 0600, a store made
+    /// before either was kept private included. archond's open cuts the WAL
+    /// back to nothing when no reader holds it.
     fn open_locked(path: &Path, lock: DataLock) -> Result<Self, ArchonError> {
         let exclusive = lock.is_exclusive();
+        modes::make_private(store_dir(path), path)?;
         let conn = rusqlite::Connection::open(path)
             .map_err(|e| codec::store_error(&format!("open {}", path.display()), &e))?;
         let mut store = Self::init(conn, true)?;
         if exclusive {
             schema::defer_checkpoints(&store.conn)?;
+            truncate_wal(&store.conn)?;
         }
         store.lock = Some(lock);
         Ok(store)
@@ -844,6 +852,24 @@ impl Store {
     pub fn prune_tracked(&mut self, before: Timestamp) -> Result<usize, ArchonError> {
         tracked::prune(&mut self.conn, before)
     }
+
+    // ----- history retention ----------------------------------------------
+    /// Deletes invisible feed rows and settled items, with what they own,
+    /// older than `before`: at most `limit` of each, oldest first. Outcomes,
+    /// lesson uses, the items anything live or open names, and those with a
+    /// run workspace `on_disk` says still exists, stay.
+    pub fn prune_history(
+        &mut self,
+        before: Timestamp,
+        limit: usize,
+        on_disk: impl Fn(&std::path::Path) -> bool,
+    ) -> Result<HistoryPruned, ArchonError> {
+        retention::prune(&mut self.conn, &before, limit, &on_disk)
+    }
+    /// Frees the pages pruning emptied when the store allows it; whether it did.
+    pub fn vacuum_freed(&mut self) -> Result<bool, ArchonError> {
+        retention::vacuum(&self.conn)
+    }
 }
 
 /// archond's WAL checkpoints, on a connection of their own: the writer then
@@ -864,7 +890,15 @@ impl Checkpointer {
         conn.busy_timeout(schema::BUSY_TIMEOUT)
             .map_err(|e| codec::store_error("set busy_timeout", &e))?;
         schema::check_wal(&conn)?;
+        schema::limit_wal(&conn)?;
         Ok(Self { conn })
+    }
+
+    /// Copies the whole WAL into the database and truncates it to nothing,
+    /// waiting out readers and the writer for up to the busy timeout. Returns
+    /// whether it got that far; a busy store keeps its WAL until a later try.
+    pub fn truncate(&self) -> Result<bool, ArchonError> {
+        truncate_wal(&self.conn)
     }
 
     /// Copies what it can of the WAL into the database. Returns the WAL's
@@ -884,6 +918,22 @@ impl Checkpointer {
         );
         Ok((log, done))
     }
+}
+
+/// `wal_checkpoint(TRUNCATE)` on `conn`: whether the WAL was emptied, which a
+/// reader still on an older commit prevents.
+fn truncate_wal(conn: &rusqlite::Connection) -> Result<bool, ArchonError> {
+    let (busy, log, done): (i64, i64, i64) = conn
+        .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .map_err(|e| codec::store_error("truncate the WAL", &e))?;
+    assert!(busy == 0 || busy == 1, "SQLite reports busy as 0 or 1");
+    assert!(
+        done <= log,
+        "no more frames are checkpointed than the WAL holds"
+    );
+    Ok(busy == 0)
 }
 
 /// The directory holding the store file, whose lock guards it.

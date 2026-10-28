@@ -3923,6 +3923,18 @@ as it goes all the same; a later pass leaves a marked item to it and reports
 its places as skipped. Offline, the daemon lock rules out any run. Branches,
 role branches and `refs/archon/saved/*` are kept.
 
+**Aether's delegated workspaces.** A stage agent that delegates leaves
+Aether workspaces registered as git worktrees of the source repository.
+When a pass removes at least one run worktree, `archond` asks Aether for a
+non-dry-run `storage_gc` (the `storage` feature), so Aether deletes the
+delegated workspaces it no longer needs; Archon never deletes them itself.
+It then runs `git worktree prune` in the source repository of each removed
+worktree. A `storage_gc` that Aether does not answer within the client's
+60 s, does not support, or refuses (`SweepBusy`) is logged and named in the
+gc report (`GcReport.aether_gc`), never fatal; the next pass that removes a
+worktree asks again. `archon gc --offline` does not ask Aether, and still
+prunes.
+
 Only a failed removal or cache deletion, or a place gc cannot read (a
 registered repository that is no longer a git repository, an unreadable
 set-aside directory), makes `archon gc` exit non-zero. Each is reported
@@ -3983,10 +3995,12 @@ Codex's `apply_patch` and committed it there, queueing nothing (release
 1.4.0 re-gate). No Aether setting stops that: a scope names writable paths
 and no read-only one, and an attended orchestrator with network runs Codex
 with `danger-full-access` and Claude Code unsandboxed. So the filesystem
-holds the line (`mirror::lock`): after each refresh every file and
-directory of a mirror's work tree, the `.git` file included, has no write
-bit, so a native edit, a patch, a shell redirect, a new file or a rename
-there fails with `EACCES` on either engine. The daemon gives its owner
+holds the line (`mirror::lock`): after each refresh every file of a
+mirror's work tree, the `.git` file included, has no write bit, so a native
+edit, a patch or a shell redirect into a file fails with `EACCES` on either
+engine. Directories keep only their owner's write bit, so the operator can
+remove the data directory with `rm -rf`; a file an agent creates, deletes or
+renames there is undone at the next refresh (below). The daemon gives its owner
 write access back only for its own checkout and removes it again, also
 when the checkout fails. The mirrors directory itself and the git
 directory stay writable: Aether's isolated workspace of a mirror writes
@@ -3998,12 +4012,12 @@ open, and a commit through git needs no write to the work tree. Each
 refresh therefore first compares the mirror with the commit it last
 checked out: a moved `HEAD` (with up to four of the commits made) or a
 changed tracked file, staged or not, is undone by the checkout and
-reported. One `System` feed entry names the repository and the change, and
-a `mirror` event with `state: "reverted"` wakes the orchestrator to queue
-the change instead. Untracked files are left, as before. The orchestrator's
-every turn end asks for a pass, so a write is undone within the turn that
-made it. A tree removed by hand needs `chmod -R u+w` first, as Go's module
-cache does.
+reported. So is a file created, deleted or replaced: the checkout cleans
+untracked files, keeping ignored build output. One `System` feed entry
+names the repository and the change, and a `mirror` event with
+`state: "reverted"` wakes the orchestrator to queue the change instead.
+The orchestrator's every turn end asks for a pass, so a write is undone
+within the turn that made it.
 
 **Refresh.** One worker (`mirror::run`) brings every mirror up to date at
 start and when the operator sends a message. It refreshes one repository's
@@ -4220,9 +4234,9 @@ SQLite store plus WAL/SHM, orchestrator mirrors, mirror git objects, frozen
 pipeline definitions, initiative bodies, chat history and dedicated Aether.
 A one-minute cache avoids full filesystem traversal for every status poll;
 GC invalidates it. Symlinks are not followed; unreadable kinds carry errors.
-The existing last-GC record includes report bytes freed. No SQLite history or
-ledger rows are newly deleted; the existing prune and 90-day evidence windows
-remain intact. Bench output roots and external Lavish service storage are
+The existing last-GC record includes report bytes freed. The same
+`retention_days` bounds the store's history (§16, store pruning), never
+sooner than the 14 days the merge watcher reads or `artifacts.keep_after`. Bench output roots and external Lavish service storage are
 operator-owned, outside daemon GC. Mirrors, recovery/configuration files and
 other lifecycle-owned data are audited separately; age alone does not authorize
 removing them.
@@ -4479,7 +4493,7 @@ rubric), and a review task (seeded bug must be reported).
 | Restart during a team merge | Startup: a passed team stage without `kv.team_merge:<run>:<stage>:<attempt>`. | The rebuilt driver emits `MergeTeam` again. The merge aborts a half-done `git merge` and skips branches already on the run branch, so nothing lands twice (§13.1). |
 | Restart while a run waits at an operator gate | Startup. | The gate row and any decision are persisted, and the rebuilt driver reads them. An open gate is not asked again; one whose answer was recorded without its decision is asked again (§18.3). |
 | SQLite busy | rusqlite error. | WAL mode, `busy_timeout = 5s`. Only `archond` writes, and CLI reads also go through `archond`. Read tools run on four read-only connections of their own, so they never wait on the writer or its synced commits; each holds one read transaction while it is borrowed, so the reads of one reply see one commit, as under the writer's lock. The dispatcher reads on the writer. Their waiting reasons wait at most 100 ms for the run table, which an admission pass holds across its writes, and past that leave out pending spawns. `get_item` of a settled item resolves its notifications only when the writer is free, and otherwise leaves that to a later view. The WAL is checkpointed (`PASSIVE`) every 2 s on its own connection, off the writer's lock; the writer's own autocheckpoint is a backstop at 20000 pages. |
-| Store growth | The pruning pass, at startup and every 10 minutes. | `kv` entries nothing reads any more are deleted (below). Only a store failure stops the pass; anything else is logged and retried next pass. |
+| Store growth | The pruning pass, at startup and every 10 minutes. | `kv` entries nothing reads any more, and settled history past `storage.retention_days`, are deleted (below). Only a store failure stops the pass; anything else is logged and retried next pass. |
 
 **The `archon` MCP server.** Aether runs `archon mcp` as the `archon`
 server, and it does not reconnect one whose process died: after an
@@ -4531,9 +4545,9 @@ tool call (autostarting `archond` if needed) and reopens it after a drop,
 so an `archond` restart costs at most the calls in flight.
 
 **Store pruning.** `archond` runs a pruning pass at startup and every 10
-minutes, so `kv` follows live work plus a 7-day retention rather than the
-store's history. Each kind is found by a primary-key range over its prefix,
-so a pass costs what is still stored.
+minutes (`archon_daemon::prune`). It deletes the `kv` entries below, then
+settled history (after the table). Each `kv` kind is found by a primary-key
+range over its prefix, so a pass costs what is still stored.
 
 | Entry | Deleted when |
 | --- | --- |
@@ -4566,6 +4580,36 @@ with work. An item's steer history and steered stage list
 with it: at most 100 records and one stage list per steered item.
 Questions are rows, not `kv`, so an answer not yet
 delivered is never pruned, nor is a report whose reopen question waits.
+
+**History retention.** With `storage.retention_days` above 0 (default 14),
+the pass then deletes what is older than the retention, or than the 14 days
+the merge watcher reads pull requests for, or than `artifacts.keep_after`,
+whichever is longest: feed rows the feed never shows, and settled items with
+their runs, stage runs, gates, run edits, pull request links, merge
+requests, stacks, dependencies, spend and the per-item `kv` families
+(`steers:`, `shape:`, `learning/applied/<run>`, a `pr_settled:` no kept
+run shares, `authority_confirmation:` of a closed question). Outcomes and lesson uses
+stay for learning (store schema 18 dropped their keys to runs and items; a
+reshaped run's outcome keeps a `learning/reshaped/<run>` mark). An item
+stays while anything still names it: a live run, an open gate, an open
+question, an open merge request, an operator correction, a live initiative,
+a report record, a distillation whose lessons are not applied, a dependency
+or stack of a kept item, or a run workspace still on disk, which gc finds
+through the item. So does an item with spend
+on or after the cutoff's local day, so the daily and window budgets count
+the same; the total budget adds the pruned sum kept in `spend_pruned`. A
+pass deletes at most 25 batches of 200 items, oldest first, each in one
+transaction under the store lock; a backlog goes over later passes.
+
+**Store size and modes.** A pass that deleted anything runs
+`PRAGMA incremental_vacuum` when the store allows it: a store created by
+this version is `auto_vacuum = INCREMENTAL`, while an older one keeps its
+free pages for reuse. `journal_size_limit` is 4 MiB on every connection,
+so a WAL a checkpoint reset is cut back to that at the next commit, and
+`archond` truncates the WAL (`wal_checkpoint(TRUNCATE)`) when it opens the
+store and after a pass that deleted something. The data directory is
+`0700` and `archon.db`, `-wal` and `-shm` are `0600`; opening a store
+removes any wider bits from an existing one.
 
 ## 17. Aether limitations and how Archon handles them
 

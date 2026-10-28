@@ -877,7 +877,7 @@ reference, `[image: shot.png, 14.2 KB]`, not the image. In the terminal UI
 | `archon reports` / `archon reports reopen <rpt_…>` | list published reports with their state and URL, or show a closed one again |
 | `archon github-watcher …` | route `@archon` on GitHub issues and PRs to the orchestrator. `operators <LOGIN>...` lets the GitHub accounts you list instruct it with your authority (off by default); see [`docs/github-watcher.md`](github-watcher.md) |
 | `archon pause` / `archon resume` | hold dispatch globally, per repo or per pipeline; `--hard` also pauses running agents |
-| `archon gc [--offline]` | delete finished runs' build caches and remove their old worktrees now; `--offline` works without archond, e.g. on a full disk. See [disk use](configuration.md#disk-use) |
+| `archon gc [--offline]` | delete finished runs' build caches and remove their old worktrees now, then have Aether clean up the workspaces it delegated and prune git's stale worktree entries; `--offline` works without archond, e.g. on a full disk, and only prunes git. See [disk use](configuration.md#disk-use) |
 | `archon aether …` | Aether's CLI on Archon's own Aether |
 | `archon daemon status` / `archon daemon stop [--keep-aether]` | both daemons' state; stop archond and, in dedicated mode, Archon's aetherd unless `--keep-aether` |
 

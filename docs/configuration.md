@@ -124,7 +124,7 @@ max_item_mb = 1024
 keep_after = "14d"             # after the item settled; "0s" disables expiry
 
 [storage]
-retention_days = 14            # settled item reports and daemon log age; 0 disables age expiry
+retention_days = 14            # settled items' history, reports and daemon log age; 0 disables age expiry
 log_max_mb = 10                # rotate detached daemon logs by size; 0 disables size rotation
 log_max_files = 3              # archives in addition to the active log; 0 disables count limit
 ```
@@ -578,6 +578,25 @@ It removes build caches, the worktrees and scratch directories of finished
 items, and what a fresh retry or a team run set aside. It never touches an
 item that is still queued or running, your own checkout of the repository,
 any branch or commit, or the published copies of reports.
+
+When a pass removed a worktree, it then has Aether delete the workspaces
+Aether made for the agents a stage delegated to, and runs `git worktree
+prune` in the repository. If Aether is not running or is too old, gc says
+so ("Aether's storage cleanup did not run") and still succeeds; the next
+pass that removes a worktree asks again. `--offline` only prunes git.
+
+The store bounds itself too. Every 10 minutes `archond` deletes the history
+of items settled more than `[storage] retention_days` ago (14 by default,
+`0` keeps everything): their runs, stage runs, gates, spend and steering
+records, and feed entries the feed never shows. It waits at least 14 days
+and at least `[artifacts] keep_after`, and keeps an item while its worktree
+is still on disk, a report or open question names it, or a budget still
+counts its spend. What Archon learned from finished runs (outcomes and
+lessons) is kept, and so is the total spend. The SQLite write-ahead log is
+cut back to 4 MiB. The data directory is readable by you alone (`0700`,
+the database files `0600`), including an existing one, which `archond`
+tightens when it opens it. A data directory with mirrors in it can be
+deleted with `rm -rf`.
 
 ### What is deleted with uncommitted work
 

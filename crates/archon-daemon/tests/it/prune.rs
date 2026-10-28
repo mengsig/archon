@@ -7,6 +7,7 @@ use crate::common;
 
 use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
+use archon_core::error::ArchonError;
 use archon_core::id::{QueueItemId, ReportId};
 use archon_core::protocol::{Reply, Request};
 use archon_core::queue::QueueState;
@@ -550,4 +551,58 @@ async fn a_report_awaiting_its_reopen_answer_is_kept_until_answered() {
 
     assert_eq!(prune_at(&h, after_retention()).await.reports, 1);
     assert_eq!(h.kv(&key).await, None);
+}
+
+#[tokio::test]
+async fn settled_history_goes_past_the_retention_once_gc_removed_its_workspace() {
+    let h = Harness::new().await;
+    let done = run_to_success(&h, "finished work").await;
+    let run = h.run(&done).await;
+    assert!(
+        run.workspace.starts_with(h.dir.path()),
+        "{:?}",
+        run.workspace
+    );
+    std::fs::create_dir_all(&run.workspace).unwrap();
+    let later = archon_core::now() + chrono::Duration::days(15);
+    let outcome = h.ctx.store.lock().await.outcome(&run.id).unwrap();
+    assert!(outcome.is_some(), "the run's outcome is recorded");
+
+    assert_eq!(prune_at(&h, archon_core::now()).await.history.items, 0);
+    let pruned = prune_at(&h, later).await;
+    assert_eq!(pruned.history.items, 0, "gc still needs it: {pruned:?}");
+    std::fs::remove_dir_all(&run.workspace).unwrap();
+
+    let pruned = prune_at(&h, later).await;
+    assert_eq!(
+        (pruned.history.items, pruned.history.runs),
+        (1, 1),
+        "{pruned:?}"
+    );
+    let store = h.ctx.store.lock().await;
+    assert!(matches!(store.item(&done), Err(ArchonError::NotFound(_))));
+    assert_eq!(store.outcome(&run.id).unwrap(), outcome, "learning stays");
+}
+
+#[tokio::test]
+async fn a_zero_retention_keeps_all_history() {
+    let mut config = archon_core::config::Config::default();
+    config.storage.retention_days = 0;
+    assert_eq!(
+        prune::history_cutoff(&config, archon_core::now()).unwrap(),
+        None
+    );
+    let h = Harness::with_config(config).await;
+    let done = run_to_success(&h, "finished work").await;
+    let run = h.run(&done).await;
+    let _ = std::fs::remove_dir_all(&run.workspace);
+
+    let later = archon_core::now() + chrono::Duration::days(365);
+    assert_eq!(prune_at(&h, later).await.history.total(), 0);
+    h.ctx
+        .store
+        .lock()
+        .await
+        .item(&done)
+        .expect("the item stays");
 }

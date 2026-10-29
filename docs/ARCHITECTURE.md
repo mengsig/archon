@@ -2101,8 +2101,10 @@ its tier.
 `<stage>.review` in `model_plan` and `model_reasons`, with at most as many
 `{model, effort}` entries as the strict level has reviewers (taken in turn).
 The stage contract tells the lead to delegate reviewers with role `reviewer` on
-those models, and the delegation watchdog (§7.4) cancels a child with such a
-role on another model or a higher effort. This check relies on the lead using
+those models, each effort a floor and the model policy's `max_effort` the
+only ceiling: the delegation watchdog (§7.4) cancels a child with such a role
+on another model or below its model's effort as it spawns, before it does
+any work, and the contract states the floor so the lead delegates at it. This check relies on the lead using
 the required reviewer role; children with other roles follow the general model
 policy. The role matches `reviewer` exactly (case-insensitively); a reviewer
 with missing or unrecognised effort is refused. If Aether no longer has the
@@ -2110,7 +2112,9 @@ child when the watchdog reads it, only its event model can be checked: its role
 and effort are unavailable. With no such key the contract names the models the
 item's effective policy allows, as it stands when the lead spawns, other than the
 lead's, or the lead's own when the policy allows no other, and the watchdog holds
-reviewers only to the model policy.
+reviewers only to the model policy. The `[review]` profile's contract asks such
+reviewers for at least medium effort, and at least high when the lead rates the
+change's risk medium or high, within the policy's `max_effort`.
 
 **Stage timeouts.** `enqueue`, `update_item` and `steer_item` take `stage_timeouts`, a
 `{"<stage-id>": minutes}` map for the item: each stage it names runs with that

@@ -2404,7 +2404,7 @@ async fn a_completed_builder_named_as_the_reviewer_is_no_review() {
     h.settle_running(|_| built.clone()).await;
     let error = refused_review(&h, &item).await;
     assert!(error.contains(&format!("reviewer {builder}")), "{error}");
-    assert!(error.contains("no `verdict`"), "{error}");
+    assert!(error.contains("no readable verdict"), "{error}");
 }
 
 /// Codex can finish with JSON text that Aether stores only as the summary.

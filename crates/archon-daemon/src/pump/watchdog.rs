@@ -275,8 +275,10 @@ async fn policy_violation(
     Ok(policy_refusal(policy, model, &held).map(|refusal| refusal.to_string()))
 }
 
-/// Why a reviewer child runs on neither a model nor an effort the plan names
-/// for reviewers. A child whose role is no reviewer's is not held to it.
+/// Why a reviewer child runs on no model the plan names for reviewers, or
+/// below the effort it names there: the plan's effort is a floor, and the
+/// model policy's `max_effort` the only ceiling. A child whose role is no
+/// reviewer's is not held to it.
 fn reviewer_refusal(named: &[ModelChoice], model: &ModelRef, held: &Value) -> Option<String> {
     let role = held.get("role").and_then(Value::as_str).unwrap_or_default();
     if !role.eq_ignore_ascii_case("reviewer") {
@@ -295,18 +297,22 @@ fn reviewer_refusal(named: &[ModelChoice], model: &ModelRef, held: &Value) -> Op
             ));
         }
     };
-    let allowed = named
-        .iter()
-        .any(|c| c.model == *model && effort <= c.effort);
-    if allowed {
+    let on_model: Vec<&ModelChoice> = named.iter().filter(|c| c.model == *model).collect();
+    if on_model.iter().any(|c| effort >= c.effort) {
         return None;
     }
     let listed: Vec<String> = named
         .iter()
-        .map(|c| format!("{} at effort up to {}", c.model, c.effort))
+        .map(|c| format!("{} at effort {} or higher", c.model, c.effort))
         .collect();
+    let why = match on_model.is_empty() {
+        true => format!("reviewer on {model} breaks the item's reviewer plan"),
+        false => {
+            format!("reviewer on {model} at effort {effort} is below the item's reviewer plan")
+        }
+    };
     Some(format!(
-        "reviewer on {model} breaks the item's reviewer plan; reviewers run on: {}",
+        "{why}; reviewers run on: {}; delegate it again at the planned effort or higher",
         listed.join(", ")
     ))
 }
@@ -664,7 +670,7 @@ mod reviewer_tests {
     use serde_json::json;
 
     #[test]
-    fn named_reviewers_are_held_to_their_model_and_effort() {
+    fn named_reviewers_are_held_to_their_model_and_at_least_their_effort() {
         let model: ModelRef = "claude-code/claude-haiku-5-5".parse().unwrap();
         let named = [ModelChoice {
             model: model.clone(),
@@ -673,8 +679,14 @@ mod reviewer_tests {
         }];
         let reviewer = |effort| json!({"role": "reviewer", "config": {"effort": effort}});
         assert!(reviewer_refusal(&named, &model, &reviewer("medium")).is_none());
-        assert!(reviewer_refusal(&named, &model, &reviewer("low")).is_none());
-        assert!(reviewer_refusal(&named, &model, &reviewer("high")).is_some());
+        assert!(reviewer_refusal(&named, &model, &reviewer("high")).is_none());
+        assert!(reviewer_refusal(&named, &model, &reviewer("max")).is_none());
+        let below = reviewer_refusal(&named, &model, &reviewer("low")).expect("below the floor");
+        assert!(
+            below.contains("at effort low is below the item's reviewer plan")
+                && below.contains("at effort medium or higher"),
+            "{below}"
+        );
         assert!(reviewer_refusal(&named, &model, &reviewer("invalid")).is_some());
         assert!(reviewer_refusal(&named, &model, &json!({"role":"reviewer"})).is_some());
         let other = "codex/gpt-6-luna".parse().unwrap();

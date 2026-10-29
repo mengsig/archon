@@ -317,8 +317,9 @@ into each reviewer's instructions: call Aether's `complete_task` with a concise
 `summary` and the verdict object in the tool's `structured` argument. Each
 reviewer gives its own verdict on the commits it read, where `base` is the
 commit its diff starts from
-(the merge base for the whole change, an earlier reviewer's head for a
-re-review of a fix):
+(the merge base for the whole change; the contract asks a re-review of a
+fix to read the whole change too, though Archon still counts a delta read
+from an earlier reviewer's head):
 
 ```json
 {"verdict": "pass", "head": "<commit>", "base": "<commit>", "findings": []}
@@ -1116,13 +1117,14 @@ verifies and fixes the change. Its prompt has it spend where spending pays:
   allowed model. It runs the full build, lint and test suite once while
   they read. A reviewer is handed the acceptance criteria, the exact base
   and head commits, the changed paths, the checks with their results and
-  the known risks, not the conversation. Its effort is the lead's choice:
-  medium for ordinary risk, high where security or an invariant is at
+  the known risks, not the conversation. Its effort is the lead's choice,
+  never below the effort its contract names: medium for ordinary risk,
+  high where the risk is medium or more, or security or an invariant is at
   stake.
 - **Fixes.** Blocking findings are fixed in new commits and the affected
   checks rerun; the full suite runs again only for a fix with broad impact
   or where the project's policy demands it. A second look, by a new child
-  that reads the delta and the callers it affects, is owed after a failed
+  that reads the whole change again at the new head, is owed after a failed
   verdict, and after a pass only when a later commit changes production
   behaviour, security or an invariant, or adds scope. Advisory findings
   are listed and left. Two fix and re-review rounds are allowed before the

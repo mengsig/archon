@@ -13,6 +13,19 @@
   fails its gate, and a reviewer whose `structured` gives no verdict is read
   from its summary. An unreadable verdict still counts as fail, and the
   refusal now quotes it.
+- A reviewer plan's effort is a floor, not a ceiling. The delegation
+  watchdog cancelled a reviewer delegated above the planned effort in the
+  middle of its review, and let one below it run, which is how
+  thirty-second low-effort reviews passed. A reviewer at or above the plan,
+  up to the model policy's `max_effort`, now runs; one below it is
+  cancelled as it spawns, before it does work, with a message naming the
+  floor, and the contract states the floor so the lead delegates at it.
+  Reviewers no plan names are asked for at least medium effort, and at
+  least high when the lead rates the change's risk medium or high, whatever
+  `[review] default_effort` says, within the policy's cap. A re-review after
+  a fix now reads the whole change from its base, in the contract and in
+  the `adaptive`, `swarm` and `direct` prompts; Archon still counts delta
+  reads.
 
 ### Documentation
 

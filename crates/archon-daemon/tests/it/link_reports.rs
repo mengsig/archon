@@ -1486,6 +1486,32 @@ async fn a_followed_report_is_ended_when_its_lifetime_runs_out() {
     assert_eq!(polls(&axi), 1, "an ended report is not polled again");
 }
 
+/// The lifetime bounds a page a gate waits on too; the gate stays open,
+/// for an answer in the chat.
+#[tokio::test]
+async fn a_gated_report_is_ended_when_its_lifetime_runs_out() {
+    let (axi, lavish) = FakeAxi::new();
+    axi.opens_at(URL);
+    axi.reply("end", "session:\n  status: ended\n");
+    let harness = Harness::with(Config::default(), Some(lavish)).await;
+    let published = reports::publish(&harness.ctx, "Plan", &axi.html, None)
+        .await
+        .unwrap();
+    let gate = gate_on(&harness, &published.report).await;
+    shown_ago(&harness, &published.report, reports::FOLLOW_LIFETIME).await;
+    let supervisor = tokio::spawn(reports::supervise(harness.ctx.clone()));
+    harness
+        .eventually("the expired gated report is ended", || async {
+            report_state(&harness).await.as_deref() == Some("ended")
+        })
+        .await;
+    supervisor.abort();
+    let store = harness.ctx.store.lock().await;
+    let open = store.open_gate_by_report(&published.report).unwrap();
+    let open = open.map(|g| (g.run, g.stage_id));
+    assert_eq!(open, Some((gate.run, gate.stage_id)), "the gate stays open");
+}
+
 /// A newer page of the same title and item replaces the older one: only the
 /// newer is followed.
 #[tokio::test]

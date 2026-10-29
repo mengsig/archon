@@ -28,9 +28,9 @@ pub(super) fn expires_at(record: &ReportRecord) -> Timestamp {
     record.updated_at + lifetime
 }
 
-/// Open reports that are settled and that no open gate waits on: their item
-/// settled after they were shown or was pruned, a newer page replaced them,
-/// or their lifetime ran out. A report shown about an item that had already
+/// Open reports whose lifetime ran out, and those settled that no open gate
+/// waits on: their item settled after they were shown or was pruned, or a
+/// newer page replaced them. A report shown about an item that had already
 /// settled was meant for review then, so only its lifetime ends it.
 pub(super) async fn finished(
     ctx: &DaemonContext,
@@ -56,9 +56,11 @@ fn is_finished(
     now: Timestamp,
 ) -> Result<bool, ArchonError> {
     assert_eq!(record.state, ReportState::Open, "only open reports end");
-    let settled = now >= expires_at(record)
-        || is_superseded(report, record, all)
-        || item_settled(store, record)?;
+    // A gate open longer is still answered in the chat, or on the reopened page.
+    if now >= expires_at(record) {
+        return Ok(true);
+    }
+    let settled = is_superseded(report, record, all) || item_settled(store, record)?;
     if !settled {
         return Ok(false);
     }

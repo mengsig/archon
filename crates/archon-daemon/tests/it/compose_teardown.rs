@@ -16,10 +16,12 @@ use tempfile::TempDir;
 const FAKE_DOCKER: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 echo "$*" >> "$dir/calls"
-case "$1" in
-  ps) cat "$dir/ps" 2>/dev/null ;;
-  volume) [ "$2" = ls ] && cat "$dir/volumes" 2>/dev/null ;;
-  compose)
+case "$1 $2" in
+  "ps --quiet") cat "$dir/users" 2>/dev/null ;;
+  "ps "*) cat "$dir/ps" 2>/dev/null ;;
+  "volume ls") cat "$dir/volumes" 2>/dev/null ;;
+  "volume inspect") cat "$dir/created" 2>/dev/null || echo 2999-01-01T00:00:00Z ;;
+  compose*)
     if [ -e "$dir/down.exit" ]; then
       echo "cannot stop the containers" >&2
       exit 1
@@ -107,6 +109,7 @@ async fn only_the_worktrees_own_projects_go_and_their_volumes_with_the_worktree(
             container("both", &operator),
         ],
     );
+    docker.lists("volumes", &["review-1_db".to_owned()]);
 
     compose::tear_down(
         &harness.ctx,
@@ -125,7 +128,6 @@ async fn only_the_worktrees_own_projects_go_and_their_volumes_with_the_worktree(
     );
     assert!(harness.system_notes().await.is_empty());
 
-    docker.lists("volumes", &["review-1_db".to_owned()]);
     compose::tear_down(
         &harness.ctx,
         &item,
@@ -170,6 +172,7 @@ async fn kept_volumes_stay_when_another_checkout_reuses_the_project_name() {
     let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
     let tree = item_tree(&harness, &item);
     docker.lists("ps", &[container("app", &tree)]);
+    docker.lists("volumes", &["app_db".to_owned()]);
     compose::tear_down(
         &harness.ctx,
         &item,
@@ -180,7 +183,6 @@ async fn kept_volumes_stay_when_another_checkout_reuses_the_project_name() {
     .await
     .unwrap();
     docker.lists("ps", &[container("app", Path::new("/home/op/app"))]);
-    docker.lists("volumes", &["app_db".to_owned()]);
     for _ in 0..2 {
         compose::tear_down(
             &harness.ctx,
@@ -193,7 +195,10 @@ async fn kept_volumes_stay_when_another_checkout_reuses_the_project_name() {
         .unwrap();
     }
     let calls = docker.calls();
-    assert!(!calls.iter().any(|c| c.starts_with("volume")), "{calls:?}");
+    assert!(
+        !calls.iter().any(|c| c.starts_with("volume rm")),
+        "{calls:?}"
+    );
     assert_eq!(docker.downs().len(), 1, "{calls:?}");
     assert!(harness.system_notes().await.is_empty());
 }
@@ -207,6 +212,7 @@ async fn kept_volumes_follow_a_worktree_set_aside() {
     let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
     let tree = item_tree(&harness, &item);
     docker.lists("ps", &[container("app", &tree.join("services"))]);
+    docker.lists("volumes", &["app_db".to_owned()]);
     compose::tear_down(
         &harness.ctx,
         &item,
@@ -226,7 +232,6 @@ async fn kept_volumes_follow_a_worktree_set_aside() {
     compose::moved(&harness.ctx, &item, &tree, &aside)
         .await
         .unwrap();
-    docker.lists("volumes", &["app_db".to_owned()]);
     let removed = |tree: PathBuf| {
         let ctx = harness.ctx.clone();
         let item = item.clone();
@@ -238,14 +243,17 @@ async fn kept_volumes_follow_a_worktree_set_aside() {
     };
     removed(tree.clone()).await;
     let calls = docker.calls();
-    assert!(!calls.iter().any(|c| c.starts_with("volume")), "{calls:?}");
+    assert!(
+        !calls.iter().any(|c| c.starts_with("volume rm")),
+        "{calls:?}"
+    );
     removed(aside).await;
     let calls = docker.calls();
     assert!(calls.contains(&"volume rm app_db".to_owned()), "{calls:?}");
 }
 
-/// A stack still running when its worktree goes is torn down with its
-/// volumes.
+/// A stack still running when its worktree goes is torn down with the
+/// volumes it made.
 #[tokio::test]
 async fn a_stack_running_when_its_worktree_goes_loses_its_volumes_too() {
     let docker = FakeDocker::new();
@@ -253,6 +261,7 @@ async fn a_stack_running_when_its_worktree_goes_loses_its_volumes_too() {
     let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
     let tree = item_tree(&harness, &item);
     docker.lists("ps", &[container("ccso-review-06yr", &tree)]);
+    docker.lists("volumes", &["ccso-review-06yr_pg".to_owned()]);
     compose::tear_down(
         &harness.ctx,
         &item,
@@ -264,10 +273,48 @@ async fn a_stack_running_when_its_worktree_goes_loses_its_volumes_too() {
     .unwrap();
     assert_eq!(
         docker.downs(),
-        ["compose --project-name ccso-review-06yr down --remove-orphans --volumes"]
+        ["compose --project-name ccso-review-06yr down --remove-orphans"]
     );
     let calls = docker.calls();
-    assert!(!calls.iter().any(|c| c.starts_with("volume")), "{calls:?}");
+    let rm = "volume rm ccso-review-06yr_pg".to_owned();
+    assert!(calls.contains(&rm), "{calls:?}");
+}
+
+/// Only a volume the item's stack made, still the same and unused, goes:
+/// one older than the item, made anew since, or mounted is left alone.
+#[tokio::test]
+async fn only_volumes_the_stack_made_and_nobody_uses_go() {
+    for (case, created_then, created_now, users) in [
+        ("older than the item", "2000-01-01T00:00:00Z", None, ""),
+        (
+            "made anew",
+            "2999-01-01T00:00:00Z",
+            Some("2999-02-01T00:00:00Z"),
+            "",
+        ),
+        ("mounted", "2999-01-01T00:00:00Z", None, "c0ffee"),
+    ] {
+        let docker = FakeDocker::new();
+        let harness = harness_with(&docker.binary()).await;
+        let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
+        let tree = item_tree(&harness, &item);
+        docker.lists("ps", &[container("app", &tree)]);
+        docker.lists("volumes", &["app_db".to_owned()]);
+        docker.lists("created", &[created_then.to_owned()]);
+        let teardown = |volumes| compose::tear_down(&harness.ctx, &item, &tree, volumes, "now");
+        teardown(Volumes::Keep).await.unwrap();
+        if let Some(now) = created_now {
+            docker.lists("created", &[now.to_owned()]);
+        }
+        docker.lists("users", &[users.to_owned()]);
+        teardown(Volumes::Remove).await.unwrap();
+        let calls = docker.calls();
+        assert!(
+            !calls.iter().any(|c| c.starts_with("volume rm")),
+            "{case}: {calls:?}"
+        );
+        assert!(harness.system_notes().await.is_empty(), "{case}");
+    }
 }
 
 /// A directory outside Archon's worktree root is never looked at.

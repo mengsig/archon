@@ -152,6 +152,7 @@ async fn a_runs_compose_stack_stops_at_its_end_and_its_volumes_go_with_the_workt
     h.dispatch().await;
     let tree = h.run(&item.id).await.workspace;
     docker.lists("ps", &[container("review-1", &tree)]);
+    docker.lists("volumes", &["review-1_db".to_owned()]);
     let cancel = Request::CancelItem {
         item: item.id.clone(),
         reason: None,
@@ -161,7 +162,6 @@ async fn a_runs_compose_stack_stops_at_its_end_and_its_volumes_go_with_the_workt
     let down = "compose --project-name review-1 down --remove-orphans";
     assert_eq!(docker.downs(), [down], "{:?}", docker.calls());
 
-    docker.lists("volumes", &["review-1_db".to_owned()]);
     age_finished_runs(&h, &item).await;
     let report = gc_request(&h, Some(0), false).await;
     assert_eq!(report.removed, vec![tree.clone()], "{report:?}");

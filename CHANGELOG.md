@@ -5,17 +5,20 @@
 ### Cleanup
 
 - archond runs at most one `lavish-axi poll` per report, and stops it once
-  the report settles: its feedback arrived, its item ended, a newer page of
-  the same title replaced it, or 24 hours passed since it was shown. Reports
+  the report settles: its session ended, its item ended, a newer page of
+  the same title replaced it, or 24 hours passed since it was shown, even
+  while a gate waits on it (answer that in the chat). Reports
   without an item, such as the orchestrator's merged pull request pages,
   were followed forever before, and every restart started their polls again
   (#323, #321).
 - archond tears down the Docker Compose stacks an item's worktree started
   (`docker compose --project-name <project> down --remove-orphans`) when its
-  run ends and before a fresh retry sets its worktree aside, and removes the
-  stacks' volumes too once the worktree itself is removed. Only projects whose every container runs from inside
-  that worktree are touched; without Docker it does nothing. `[worktrees]
-  docker` names the CLI (#321).
+  run ends, before a fresh retry sets its worktree aside and before gc
+  removes it; once the worktree is removed, the named volumes those stacks
+  made go too, unless a volume predates the item, was made anew since, or a
+  container still mounts it. Only projects whose every container runs from
+  inside that worktree, with symlinks resolved, are touched; without Docker
+  it does nothing. `[worktrees] docker` names the CLI (#321).
 - `archon doctor` lists the Compose stacks left in worktrees of items that
   ended, and the `lavish-axi poll` processes beyond the reports archond
   follows, each with the command that clears them (#321).

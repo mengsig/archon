@@ -2,12 +2,14 @@
 //! worktrees. A stack outlives the agent that started it, and a restart
 //! policy brings it back after every reboot, so archond stops what is left
 //! when a run ends (`down`, keeping volumes for a retry), when a fresh retry
-//! sets the worktree aside, and when the worktree is removed (`down
-//! --volumes`, with the volumes of stacks stopped earlier).
+//! sets the worktree aside, and when gc removes the worktree. Then the named
+//! volumes the item's stacks made go too: only those created after the item
+//! was, still the same volume, and used by no container.
 //!
 //! A project is Archon's when one of its containers' config files or
-//! working directory lies inside the worktree, which lies inside Archon's
-//! worktree root. One with any container from elsewhere is never touched.
+//! working directory lies inside the worktree, also once symlinks are
+//! resolved, which lies inside Archon's worktree root. One with any
+//! container from elsewhere is never touched.
 //! Without Docker, or with its daemon unreachable, nothing happens; a failed
 //! teardown is logged and told in the feed, and never fails the item.
 
@@ -16,14 +18,16 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
+use archon_core::Timestamp;
 use archon_core::error::ArchonError;
 use archon_core::id::QueueItemId;
+use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 use crate::context::DaemonContext;
 
-/// `kv`: per item, the projects stopped with their volumes kept, and the
-/// directory each ran from, so removing that directory removes them too.
+/// `kv`: per item, the projects stopped with their volumes kept, each with
+/// the directory it ran from, so removing that directory removes them too.
 const KV_PREFIX: &str = "compose:";
 const PROJECT_LABEL: &str = "com.docker.compose.project";
 /// Listing answers promptly; a teardown waits for its containers to stop.
@@ -39,6 +43,15 @@ pub enum Volumes {
     Remove,
 }
 
+/// A project stopped with its volumes kept.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Kept {
+    dir: PathBuf,
+    /// Each named volume it made, with the creation time Docker gave it: a
+    /// volume of that name created anew since is someone else's.
+    volumes: BTreeMap<String, String>,
+}
+
 /// The Compose projects with a container inside one of `trees`, and the
 /// directory each runs from; those that also run from elsewhere are left
 /// out and returned apart.
@@ -50,8 +63,8 @@ pub struct Selection {
 
 /// Pick Archon's projects from `docker ps` lines of `project`, comma-joined
 /// config files and working directory, tab-separated. A container counts as
-/// inside when every place it names lies inside one of `trees`; one naming
-/// no place may run from anywhere.
+/// inside when every place it names lies inside one of `trees`, as named and
+/// once resolved; one naming no place may run from anywhere.
 pub fn select(listing: &str, trees: &[PathBuf]) -> Selection {
     assert!(!trees.is_empty(), "a teardown names its worktree");
     assert!(
@@ -65,8 +78,7 @@ pub fn select(listing: &str, trees: &[PathBuf]) -> Selection {
             outside.insert(container.project.to_owned());
             continue;
         };
-        let within = |place: &PathBuf| trees.iter().any(|tree| is_within(place, tree));
-        if container.places().all(within) {
+        if container.places().all(|place| lies_within(place, trees)) {
             inside.entry(container.project.to_owned()).or_insert(dir);
         } else {
             outside.insert(container.project.to_owned());
@@ -130,6 +142,32 @@ fn listed_projects(listing: &str) -> BTreeSet<String> {
     containers.map(|c| c.project.to_owned()).collect()
 }
 
+/// `place` lies inside one of `trees` both as named and with its existing
+/// part resolved, so a symlink in a worktree cannot vouch for elsewhere.
+fn lies_within(place: &Path, trees: &[PathBuf]) -> bool {
+    let named = trees.iter().any(|tree| is_within(place, tree));
+    named && trees.iter().any(|tree| is_within(&resolved(place), tree))
+}
+
+/// `path` with its longest existing part replaced by its real path; the
+/// rest, which no symlink can redirect yet, is kept as named.
+fn resolved(path: &Path) -> PathBuf {
+    assert!(path.is_absolute(), "compose records absolute paths");
+    let mut existing = path;
+    let mut rest = Vec::new();
+    loop {
+        if let Ok(real) = existing.canonicalize() {
+            assert!(real.is_absolute(), "a real path is absolute");
+            return rest.iter().rev().fold(real, |path, name| path.join(name));
+        }
+        let (Some(parent), Some(name)) = (existing.parent(), existing.file_name()) else {
+            return path.to_path_buf();
+        };
+        rest.push(name);
+        existing = parent;
+    }
+}
+
 /// `path` is `root` or below it, with no `..` that could climb out.
 fn is_within(path: &Path, root: &Path) -> bool {
     let plain = path
@@ -138,10 +176,10 @@ fn is_within(path: &Path, root: &Path) -> bool {
     plain && path.starts_with(root)
 }
 
-/// Tear down the Compose projects of `item` running from `tree`; with
-/// [`Volumes::Remove`] also the volumes of those an earlier teardown kept.
-/// `when` completes the feed note of a failure. `Err` only for a store
-/// failure.
+/// Tear down the Compose projects of `item` running from `tree`, noting
+/// the volumes each made; with [`Volumes::Remove`] then remove the volumes
+/// noted for `tree`. `when` completes the feed note of a failure. `Err` only
+/// for a store failure.
 pub async fn tear_down(
     ctx: &DaemonContext,
     item: &QueueItemId,
@@ -161,20 +199,92 @@ pub async fn tear_down(
     for project in &selection.shared {
         tracing::warn!(%project, tree = %tree.display(), "a compose project also runs from outside the worktree; left running");
     }
-    let mut failures = Vec::new();
-    for (project, dir) in &selection.inside {
-        tracing::info!(%project, %item, dir = %dir.display(), "tearing down a compose stack an item left");
-        match docker.down(project, volumes).await {
-            Ok(()) if volumes == Volumes::Keep => remember(ctx, item, project, dir).await?,
-            Ok(()) => {}
-            Err(error) => failures.push(format!("{project}: {error}")),
-        }
-    }
+    let (stopped, mut failures) = stop_projects(ctx, &docker, item, &selection.inside).await?;
     if volumes == Volumes::Remove {
-        let listed = listed_projects(&listing);
+        let mut listed = listed_projects(&listing);
+        listed.retain(|project| !stopped.contains(project));
         failures.extend(remove_kept_volumes(ctx, &docker, item, tree, &listed).await?);
     }
     report_failures(ctx, item, tree, when, &failures).await
+}
+
+/// `down` each of `projects` and note the volumes it made; those stopped
+/// and the failures.
+async fn stop_projects(
+    ctx: &DaemonContext,
+    docker: &Docker<'_>,
+    item: &QueueItemId,
+    projects: &BTreeMap<String, PathBuf>,
+) -> Result<(BTreeSet<String>, Vec<String>), ArchonError> {
+    let mut stopped = BTreeSet::new();
+    let mut failures = Vec::new();
+    if projects.is_empty() {
+        return Ok((stopped, failures));
+    }
+    let since = item_created(ctx, item).await?;
+    for (project, dir) in projects {
+        tracing::info!(%project, %item, dir = %dir.display(), "tearing down a compose stack an item left");
+        if let Err(error) = docker.down(project).await {
+            failures.push(format!("{project}: {error}"));
+            continue;
+        }
+        stopped.insert(project.clone());
+        match made_volumes(docker, project, since).await {
+            Ok(volumes) => remember(ctx, item, project, dir, volumes).await?,
+            Err(error) => failures.push(format!("{project}'s volumes: {error}")),
+        }
+    }
+    assert!(
+        stopped.len() <= projects.len(),
+        "only selected projects stop"
+    );
+    assert!(failures.len() <= projects.len(), "one note per project");
+    Ok((stopped, failures))
+}
+
+/// When `item` was created; `None` once it is pruned, when no volume can
+/// be told to be its own.
+async fn item_created(
+    ctx: &DaemonContext,
+    item: &QueueItemId,
+) -> Result<Option<Timestamp>, ArchonError> {
+    match ctx.store.lock().await.item(item) {
+        Ok(found) => Ok(Some(found.created_at)),
+        Err(ArchonError::NotFound(_)) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// The volumes of `project` created at or after `since`, with their
+/// creation times: an older one predates the item and is someone else's.
+async fn made_volumes(
+    docker: &Docker<'_>,
+    project: &str,
+    since: Option<Timestamp>,
+) -> Result<BTreeMap<String, String>, ArchonError> {
+    let mut made = BTreeMap::new();
+    let Some(since) = since else {
+        return Ok(made);
+    };
+    for name in docker.project_volumes(project).await? {
+        let created = docker.volume_created(&name).await?;
+        match chrono::DateTime::parse_from_rfc3339(&created) {
+            Ok(at) if at >= since => {
+                made.insert(name, created);
+            }
+            Ok(_) => {
+                tracing::info!(volume = %name, %project, "a volume older than the item is left alone")
+            }
+            Err(error) => {
+                tracing::warn!(volume = %name, %created, %error, "a volume of unknown age is left alone")
+            }
+        }
+    }
+    assert!(
+        made.keys().all(|name| !name.is_empty()),
+        "volumes are named"
+    );
+    Ok(made)
 }
 
 /// The `docker ps` listing [`select`] reads, of every Compose container;
@@ -195,13 +305,12 @@ fn in_worktree_root(root: &Path, tree: &Path) -> bool {
     inside(root) || root.canonicalize().is_ok_and(|real| inside(&real))
 }
 
-/// `tree` as given and, while it exists, its real path: Compose records the
-/// directory an agent ran it in, which may be either.
+/// `tree` as given and as resolved: Compose records the directory an agent
+/// ran it in, which may be either.
 fn trees_of(tree: &Path) -> Vec<PathBuf> {
     let mut trees = vec![tree.to_path_buf()];
-    if let Ok(real) = tree.canonicalize()
-        && real != tree
-    {
+    let real = resolved(tree);
+    if real != tree {
         trees.push(real);
     }
     trees
@@ -234,7 +343,7 @@ fn key(item: &QueueItemId) -> String {
 async fn kept_projects(
     ctx: &DaemonContext,
     item: &QueueItemId,
-) -> Result<BTreeMap<String, PathBuf>, ArchonError> {
+) -> Result<BTreeMap<String, Kept>, ArchonError> {
     let raw = ctx.store.lock().await.kv_get(&key(item))?;
     let Some(raw) = raw else {
         return Ok(BTreeMap::new());
@@ -246,7 +355,7 @@ async fn kept_projects(
 async fn store_kept(
     ctx: &DaemonContext,
     item: &QueueItemId,
-    kept: &BTreeMap<String, PathBuf>,
+    kept: &BTreeMap<String, Kept>,
 ) -> Result<(), ArchonError> {
     let mut store = ctx.store.lock().await;
     if kept.is_empty() {
@@ -256,16 +365,20 @@ async fn store_kept(
     store.kv_set(&key(item), &raw)
 }
 
-/// Note that `project`, run from `dir`, was stopped with its volumes kept.
+/// Note that `project`, run from `dir`, was stopped with `volumes` kept.
 async fn remember(
     ctx: &DaemonContext,
     item: &QueueItemId,
     project: &str,
     dir: &Path,
+    volumes: BTreeMap<String, String>,
 ) -> Result<(), ArchonError> {
     assert!(!project.is_empty(), "compose projects are named");
+    assert!(dir.is_absolute(), "compose records absolute directories");
     let mut kept = kept_projects(ctx, item).await?;
-    kept.insert(project.to_owned(), dir.to_path_buf());
+    let entry = kept.entry(project.to_owned()).or_default();
+    entry.dir = dir.to_path_buf();
+    entry.volumes.extend(volumes);
     store_kept(ctx, item, &kept).await
 }
 
@@ -284,24 +397,21 @@ pub async fn moved(
     );
     assert_ne!(from, to, "a move changes the directory");
     // `from` is gone; Compose may have recorded it through its real parent.
-    let real_from = from.parent().and_then(|p| p.canonicalize().ok());
-    let real_from = real_from
-        .zip(from.file_name())
-        .map(|(p, name)| p.join(name));
+    let real_from = resolved(from);
     let mut kept = kept_projects(ctx, item).await?;
-    for dir in kept.values_mut() {
+    for project in kept.values_mut() {
+        let dir = &project.dir;
         let below = dir
             .strip_prefix(from)
-            .ok()
-            .or_else(|| dir.strip_prefix(real_from.as_ref()?).ok());
-        if let Some(below) = below {
-            *dir = to.join(below);
+            .or_else(|_| dir.strip_prefix(&real_from));
+        if let Ok(below) = below {
+            project.dir = to.join(below);
         }
     }
     store_kept(ctx, item, &kept).await
 }
 
-/// Remove the volumes of the projects of `item` stopped earlier from inside
+/// Remove the volumes noted for the projects of `item` stopped from inside
 /// `tree`; the failures. A project `listed` with a container again, even
 /// one from elsewhere that reuses its name, may own them now: it is forgotten.
 async fn remove_kept_volumes(
@@ -314,8 +424,8 @@ async fn remove_kept_volumes(
     let mut kept = kept_projects(ctx, item).await?;
     let gone: Vec<String> = kept
         .iter()
-        .filter(|(_, dir)| is_within(dir, tree))
-        .map(|(project, _)| project.clone())
+        .filter(|(_, project)| is_within(&project.dir, tree))
+        .map(|(name, _)| name.clone())
         .collect();
     let mut failures = Vec::new();
     for project in gone {
@@ -324,7 +434,8 @@ async fn remove_kept_volumes(
             kept.remove(&project);
             continue;
         }
-        match docker.remove_volumes(&project).await {
+        let volumes = &kept[&project].volumes;
+        match remove_made_volumes(docker, &project, volumes).await {
             Ok(()) => {
                 kept.remove(&project);
             }
@@ -333,6 +444,31 @@ async fn remove_kept_volumes(
     }
     store_kept(ctx, item, &kept).await?;
     Ok(failures)
+}
+
+/// Remove each of `volumes` of `project` that is still the volume noted,
+/// created when it was, and that no container uses.
+async fn remove_made_volumes(
+    docker: &Docker<'_>,
+    project: &str,
+    volumes: &BTreeMap<String, String>,
+) -> Result<(), ArchonError> {
+    let present = docker.project_volumes(project).await?;
+    for (name, created) in volumes {
+        if !present.contains(name) {
+            continue;
+        }
+        if docker.volume_created(name).await? != *created {
+            tracing::warn!(volume = %name, %project, "a volume was made anew under the same name; left alone");
+            continue;
+        }
+        if docker.volume_in_use(name).await? {
+            tracing::warn!(volume = %name, %project, "a container uses the volume; left alone");
+            continue;
+        }
+        docker.remove_volume(name).await?;
+    }
+    Ok(())
 }
 
 /// The `docker` CLI, each call bounded.
@@ -362,36 +498,51 @@ impl<'a> Docker<'a> {
         }
     }
 
-    async fn down(&self, project: &str, volumes: Volumes) -> Result<(), ArchonError> {
-        let mut args = vec![
+    async fn down(&self, project: &str) -> Result<(), ArchonError> {
+        let args = [
             "compose",
             "--project-name",
             project,
             "down",
             "--remove-orphans",
         ];
-        if volumes == Volumes::Remove {
-            args.push("--volumes");
-        }
         self.run(&args, DOWN_TIMEOUT).await.map(drop)
     }
 
-    /// Remove the named volumes Compose labelled with `project`.
-    async fn remove_volumes(&self, project: &str) -> Result<(), ArchonError> {
+    /// The named volumes Compose labelled with `project`.
+    async fn project_volumes(&self, project: &str) -> Result<BTreeSet<String>, ArchonError> {
         let filter = format!("label={PROJECT_LABEL}={project}");
-        let listed = self
-            .run(
-                &["volume", "ls", "--quiet", "--filter", &filter],
-                LIST_TIMEOUT,
-            )
-            .await?;
-        let names: Vec<&str> = listed.split_whitespace().collect();
-        if names.is_empty() {
-            return Ok(());
+        let args = ["volume", "ls", "--quiet", "--filter", &filter];
+        let listed = self.run(&args, LIST_TIMEOUT).await?;
+        Ok(listed.split_whitespace().map(str::to_owned).collect())
+    }
+
+    /// When Docker created volume `name`, as it prints it.
+    async fn volume_created(&self, name: &str) -> Result<String, ArchonError> {
+        let args = ["volume", "inspect", "--format", "{{.CreatedAt}}", name];
+        let created = self.run(&args, LIST_TIMEOUT).await?;
+        let created = created.trim();
+        if created.is_empty() {
+            return Err(ArchonError::Unavailable(format!(
+                "docker gave no creation time for volume {name}"
+            )));
         }
-        let mut args = vec!["volume", "rm"];
-        args.extend(names);
-        self.run(&args, DOWN_TIMEOUT).await.map(drop)
+        Ok(created.to_owned())
+    }
+
+    /// Whether any container, running or stopped, mounts volume `name`.
+    async fn volume_in_use(&self, name: &str) -> Result<bool, ArchonError> {
+        let filter = format!("volume={name}");
+        let args = ["ps", "--quiet", "--all", "--filter", &filter];
+        let users = self.run(&args, LIST_TIMEOUT).await?;
+        Ok(!users.trim().is_empty())
+    }
+
+    async fn remove_volume(&self, name: &str) -> Result<(), ArchonError> {
+        assert!(!name.is_empty(), "volumes are named");
+        self.run(&["volume", "rm", name], DOWN_TIMEOUT)
+            .await
+            .map(drop)
     }
 
     /// stdout of a successful call; a failure carries stderr.
@@ -473,5 +624,27 @@ mod tests {
             selection.inside,
             BTreeMap::from([("nested".to_owned(), dir)])
         );
+    }
+
+    #[test]
+    fn a_symlink_in_the_worktree_does_not_vouch_for_a_place_elsewhere() {
+        let dir = tempfile::tempdir().unwrap();
+        let tree = dir.path().join("worktrees/app/qi_1");
+        let checkout = dir.path().join("checkout");
+        std::fs::create_dir_all(&tree).unwrap();
+        std::fs::create_dir_all(&checkout).unwrap();
+        std::os::unix::fs::symlink(&checkout, tree.join("ext")).unwrap();
+        let line = |project: &str, dir: &Path| {
+            format!(
+                "{project}\t{}\t{}\n",
+                dir.join("compose.yml").display(),
+                dir.display()
+            )
+        };
+        let listing = line("theirs", &tree.join("ext")) + &line("ours", &tree.join("db"));
+        let selection = select(&listing, &trees_of(&tree));
+        let ours = BTreeMap::from([("ours".to_owned(), tree.join("db"))]);
+        assert_eq!(selection.inside, ours);
+        assert!(selection.shared.is_empty(), "{selection:?}");
     }
 }

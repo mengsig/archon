@@ -1486,6 +1486,54 @@ async fn a_followed_report_is_ended_when_its_lifetime_runs_out() {
     assert_eq!(polls(&axi), 1, "an ended report is not polled again");
 }
 
+/// Showing a followed page again restarts its lifetime: it ends when the
+/// new one runs out, not an hourly check later.
+#[tokio::test]
+async fn showing_a_followed_page_again_restarts_its_lifetime() {
+    let (axi, lavish) = FakeAxi::new();
+    axi.opens_at(URL);
+    axi.reply("end", "session:\n  status: ended\n");
+    let harness = Harness::with(Config::default(), Some(lavish)).await;
+    let published = reports::publish(&harness.ctx, "Merged PR #71", &axi.html, None)
+        .await
+        .unwrap();
+    let lifetime = reports::FOLLOW_LIFETIME;
+    shown_ago(
+        &harness,
+        &published.report,
+        lifetime - std::time::Duration::from_secs(1),
+    )
+    .await;
+    let supervisor = tokio::spawn(reports::supervise(harness.ctx.clone()));
+    harness
+        .eventually("the report is polled", || async { polls(&axi) == 1 })
+        .await;
+    shown_ago(
+        &harness,
+        &published.report,
+        lifetime - std::time::Duration::from_secs(3),
+    )
+    .await;
+    let other = axi.html.with_file_name("other.html");
+    std::fs::write(&other, "<h1>other</h1>").unwrap();
+    reports::publish(&harness.ctx, "Other", &other, None)
+        .await
+        .unwrap();
+    let state = || async {
+        let listed = reports::list(&harness.ctx).await.unwrap();
+        let ours = listed.into_iter().find(|r| r.report == published.report);
+        ours.map(|r| r.state)
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    assert_eq!(state().await, Some(ReportState::Open));
+    harness
+        .eventually("the page ends when its new lifetime runs out", || async {
+            state().await == Some(ReportState::Ended)
+        })
+        .await;
+    supervisor.abort();
+}
+
 /// The lifetime bounds a page a gate waits on too; the gate stays open,
 /// for an answer in the chat.
 #[tokio::test]

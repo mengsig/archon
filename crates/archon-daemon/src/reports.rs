@@ -292,7 +292,7 @@ impl Polls {
     /// Stop following `report`: its task, and with it its `lavish-axi poll`
     /// child, is dropped. `forget` then leaves out whatever it returned.
     /// Feedback a poll got just before is dropped too; `end_finished` stops
-    /// only polls of finished items that no gate waits on.
+    /// only polls of settled reports.
     fn stop(&mut self, report: &ReportId) {
         if let Some(task) = self.polling.remove(report) {
             assert_eq!(self.reports.get(&task.id()), Some(report));
@@ -313,8 +313,8 @@ impl Polls {
         wait.min(EXPIRY_CHECK_MAX)
     }
 
-    /// End the reports whose lifetime ran out. One an open gate still waits
-    /// on stays followed, without an expiry, until its item finishes.
+    /// End the reports whose lifetime ran out, even one an open gate still
+    /// waits on.
     async fn expire(
         &mut self,
         ctx: &Arc<DaemonContext>,
@@ -377,7 +377,8 @@ impl Polls {
         Ok(())
     }
 
-    /// Start a poll for every open report not followed yet.
+    /// Start a poll for every open report not followed yet, and note when
+    /// each open report's lifetime runs out.
     async fn start_open(
         &mut self,
         ctx: &Arc<DaemonContext>,
@@ -394,13 +395,14 @@ impl Polls {
             {
                 self.stop(&report);
             }
+            // Showing a followed page again restarts its lifetime.
+            self.expiries
+                .insert(report.clone(), retire::expires_at(&record));
             if self.polling.contains_key(&report) {
                 continue;
             }
             self.followed_html
                 .insert(report.clone(), record.html.clone());
-            self.expiries
-                .insert(report.clone(), retire::expires_at(&record));
             let poll = follow_report(ctx.clone(), lavish.clone(), report.clone(), record);
             self.spawn(report, poll);
         }

@@ -133,11 +133,11 @@ fn json_refusal(command: Option<&Command>) -> Option<&'static str> {
              after its command, e.g. `archon aether agents --json`",
         ),
         Command::Mcp => Some("`archon mcp` speaks JSON-RPC on stdout for Aether"),
-        Command::Daemon(DaemonCommand::Run { detach: false }) => Some(
+        Command::Daemon(DaemonCommand::Run { detach: false, .. }) => Some(
             "a foreground archond writes logs; `archon daemon run --detach --json` reports the start",
         ),
         Command::Daemon(
-            DaemonCommand::Run { detach: true }
+            DaemonCommand::Run { detach: true, .. }
             | DaemonCommand::Start
             | DaemonCommand::Stop { .. }
             | DaemonCommand::Status

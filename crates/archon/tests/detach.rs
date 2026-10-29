@@ -23,6 +23,7 @@ impl Detached {
             .env("ARCHON_CONFIG_DIR", "../config")
             .env("ARCHON_SOCKET", "../run/archond.sock")
             .env("AETHER_SOCKET", self.caller.join("no-aether.sock"))
+            .env_remove("ARCHON_DAEMON_DETACHED")
             .env_remove("AETHER_ENGINE_AGENT")
             .env_remove("AETHER_ENGINE_RUN")
             .env("NO_COLOR", "1")
@@ -77,6 +78,13 @@ fn the_detached_daemon_runs_in_the_data_dir_the_caller_named() {
     detached.pid = Some(pid);
     wait_until_listening(&detached);
 
+    let environ = std::fs::read(format!("/proc/{pid}/environ")).unwrap();
+    assert!(
+        !environ
+            .split(|byte| *byte == 0)
+            .any(|entry| entry.starts_with(b"ARCHON_DAEMON_DETACHED")),
+        "the daemon's children inherit its environment, so it carries no detached marker"
+    );
     let data = caller.join("data");
     assert_eq!(
         cwd_of(pid),

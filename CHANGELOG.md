@@ -18,6 +18,13 @@ release; run `archon update --yes` again, now from the new release, to
 refresh Archon's tools and renew the orchestrator. Later updates do this
 themselves (see Update below).
 
+### Fixed
+
+- A stage agent no longer inherits `ARCHON_DAEMON_DETACHED` from archond: the
+  detached start now tells its daemon with a hidden `--detached-child` flag,
+  so `archon daemon run` run by an agent's tests logs to the terminal as it
+  does in a plain shell.
+
 ### Mobile web app
 
 - archond can serve a mobile web app ([docs/remote.md](docs/remote.md)):

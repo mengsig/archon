@@ -32,6 +32,15 @@
   that gave them the task asked to leave it running; then they report what
   still runs and how to stop it (#321).
 
+### Stage time
+
+- Every stage agent's contract names its deadline: the time Archon stops it
+  and every agent it delegated to, and how many minutes after its start that
+  is, with an item's own `stage_timeouts` applied. A stage that commits is
+  told to commit each working step as it goes, so a retry builds on it. An
+  agent resumed for a fix is told its new deadline with the findings.
+  Before, an agent saw its deadline only if it asked Aether.
+
 ### Documentation
 
 - A "Get started in the chat" section in the README and a

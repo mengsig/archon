@@ -2431,6 +2431,14 @@ A team stage's contract names the agent's role and the other roles, keeps
 it to its own worktree and role, and asks it to commit on its branch
 without pushing: only commits are merged.
 
+Every stage agent's contract also gets a `## Deadline` section, written
+when the daemon builds the spawn request: the time its deadline falls
+(the stage's `timeout_minutes`, or the item's `stage_timeouts` entry, after
+its start), that Archon then stops it and everything it delegated, and,
+for a `work` or `team` stage in a worktree, to commit each working step so
+a retry builds on it. A kept agent resumed for a fix (§6.7) gets its new
+deadline after the findings.
+
 A stage agent that can delegate also gets a `## Delegation` section. The
 daemon writes it when it builds the spawn request, from what the agent can
 actually do (`allow_delegation` on its stage, or the item's `tools = yolo`),

@@ -82,6 +82,31 @@ pub fn instructions(
     out
 }
 
+/// The section naming when Archon stops a stage of `kind` in `mode`: `minutes`
+/// after its start, at `deadline`. Only a committing stage is told to commit.
+pub fn deadline_rule(
+    kind: StageKind,
+    mode: WorkspaceMode,
+    minutes: u32,
+    deadline: archon_core::Timestamp,
+) -> String {
+    assert!(minutes >= 1, "validated stages have a timeout");
+    let commits =
+        mode == WorkspaceMode::Worktree && matches!(kind, StageKind::Work | StageKind::Team);
+    let pace = match commits {
+        true => "Commit each working step as you go, so a retry builds on it, and finish",
+        false => "Finish",
+    };
+    let rule = format!(
+        "\n## Deadline\n\n\
+         - Archon stops you and every agent you delegated to at {at}, {minutes} minutes \
+         after your start, and the stage fails. {pace} with time to spare.\n",
+        at = deadline.format("%Y-%m-%d %H:%M UTC"),
+    );
+    debug_assert!(rule.ends_with('\n'), "sections end with a newline");
+    rule
+}
+
 /// Whether the record stage holds a review whose reviewers judge the risk.
 fn relays_reviewer(owed: Owed) -> bool {
     owed.review.is_some_and(|duty| duty.reviewers > 0)
@@ -784,6 +809,32 @@ mod tests {
             roles: Vec::new(),
             role_prompts: Default::default(),
             roles_from: None,
+        }
+    }
+
+    #[test]
+    fn the_deadline_names_its_time_and_asks_only_committing_stages_to_commit() {
+        let at: archon_core::Timestamp = "2026-10-30T14:05:00Z".parse().unwrap();
+        let work = deadline_rule(StageKind::Work, WorkspaceMode::Worktree, 180, at);
+        assert!(work.starts_with("\n## Deadline\n\n"), "{work}");
+        assert!(work.contains("at 2026-10-30 14:05 UTC, 180 minutes after your start"));
+        assert!(work.contains("every agent you delegated to"), "{work}");
+        assert!(
+            work.contains("Commit each working step as you go"),
+            "{work}"
+        );
+        let team = deadline_rule(StageKind::Team, WorkspaceMode::Worktree, 90, at);
+        assert!(team.contains("Commit each working step"), "{team}");
+        for (kind, mode) in [
+            (StageKind::Review, WorkspaceMode::Worktree),
+            (StageKind::Report, WorkspaceMode::Worktree),
+            (StageKind::Work, WorkspaceMode::RepoReadonly),
+            (StageKind::Work, WorkspaceMode::Scratch),
+        ] {
+            let text = deadline_rule(kind, mode, 45, at);
+            assert!(text.contains("45 minutes after your start"), "{text}");
+            assert!(text.contains("Finish with time to spare."), "{text}");
+            assert!(!text.contains("Commit"), "{kind:?} in {mode:?}: {text}");
         }
     }
 

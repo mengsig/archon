@@ -161,6 +161,43 @@ async fn only_the_worktrees_own_projects_go_and_their_volumes_with_the_worktree(
     assert_eq!(again.len(), calls.len() + 1, "only a listing: {again:?}");
 }
 
+/// A kept project whose name another checkout now runs under keeps its
+/// volumes: they may be that checkout's.
+#[tokio::test]
+async fn kept_volumes_stay_when_another_checkout_reuses_the_project_name() {
+    let docker = FakeDocker::new();
+    let harness = harness_with(&docker.binary()).await;
+    let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
+    let tree = item_tree(&harness, &item);
+    docker.lists("ps", &[container("app", &tree)]);
+    compose::tear_down(
+        &harness.ctx,
+        &item,
+        &tree,
+        Volumes::Keep,
+        "after its run ended",
+    )
+    .await
+    .unwrap();
+    docker.lists("ps", &[container("app", Path::new("/home/op/app"))]);
+    docker.lists("volumes", &["app_db".to_owned()]);
+    for _ in 0..2 {
+        compose::tear_down(
+            &harness.ctx,
+            &item,
+            &tree,
+            Volumes::Remove,
+            "when gc removed it",
+        )
+        .await
+        .unwrap();
+    }
+    let calls = docker.calls();
+    assert!(!calls.iter().any(|c| c.starts_with("volume")), "{calls:?}");
+    assert_eq!(docker.downs().len(), 1, "{calls:?}");
+    assert!(harness.system_notes().await.is_empty());
+}
+
 /// A stack still running when its worktree goes is torn down with its
 /// volumes.
 #[tokio::test]

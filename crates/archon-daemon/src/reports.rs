@@ -326,8 +326,8 @@ impl Polls {
         Ok(())
     }
 
-    /// Act on one feed entry: follow a report just shown, or end the
-    /// sessions of reports whose item just finished.
+    /// Act on one feed entry: follow a report just shown, ending those it
+    /// supersedes, or end the sessions of reports whose item just finished.
     async fn on_feed(
         &mut self,
         ctx: &Arc<DaemonContext>,
@@ -335,7 +335,7 @@ impl Polls {
         entry: &FeedEntry,
     ) -> Result<(), ArchonError> {
         match entry {
-            FeedEntry::Report { .. } => self.start_open(ctx, lavish).await,
+            FeedEntry::Report { .. } => self.rescan(ctx, lavish).await,
             FeedEntry::Notification(notice)
                 if matches!(
                     notice.kind,

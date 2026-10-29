@@ -11,7 +11,7 @@
 //! Without Docker, or with its daemon unreachable, nothing happens; a failed
 //! teardown is logged and told in the feed, and never fails the item.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -58,7 +58,7 @@ pub fn select(listing: &str, trees: &[PathBuf]) -> Selection {
         "worktrees are absolute"
     );
     let mut inside: BTreeMap<String, PathBuf> = BTreeMap::new();
-    let mut outside = std::collections::BTreeSet::new();
+    let mut outside = BTreeSet::new();
     for container in listing.lines().filter_map(Container::parse) {
         let Some(dir) = container.dir() else {
             continue;
@@ -122,6 +122,12 @@ impl<'a> Container<'a> {
     }
 }
 
+/// Every project the `docker ps` listing names, wherever it runs from.
+fn listed_projects(listing: &str) -> BTreeSet<String> {
+    let containers = listing.lines().filter_map(Container::parse);
+    containers.map(|c| c.project.to_owned()).collect()
+}
+
 /// `path` is `root` or below it, with no `..` that could climb out.
 fn is_within(path: &Path, root: &Path) -> bool {
     let plain = path
@@ -163,7 +169,8 @@ pub async fn tear_down(
         }
     }
     if volumes == Volumes::Remove {
-        failures.extend(remove_kept_volumes(ctx, &docker, item, tree).await?);
+        let listed = listed_projects(&listing);
+        failures.extend(remove_kept_volumes(ctx, &docker, item, tree, &listed).await?);
     }
     report_failures(ctx, item, tree, when, &failures).await
 }
@@ -261,12 +268,14 @@ async fn remember(
 }
 
 /// Remove the volumes of the projects of `item` stopped earlier from inside
-/// `tree`, unless a container of the project exists again; the failures.
+/// `tree`; the failures. A project `listed` with a container again, even
+/// one from elsewhere that reuses its name, may own them now: it is forgotten.
 async fn remove_kept_volumes(
     ctx: &DaemonContext,
     docker: &Docker<'_>,
     item: &QueueItemId,
     tree: &Path,
+    listed: &BTreeSet<String>,
 ) -> Result<Vec<String>, ArchonError> {
     let mut kept = kept_projects(ctx, item).await?;
     let gone: Vec<String> = kept
@@ -276,6 +285,11 @@ async fn remove_kept_volumes(
         .collect();
     let mut failures = Vec::new();
     for project in gone {
+        if listed.contains(&project) {
+            tracing::warn!(%project, %item, "a compose project of the same name runs again; its volumes are left alone");
+            kept.remove(&project);
+            continue;
+        }
         match docker.remove_volumes(&project).await {
             Ok(()) => {
                 kept.remove(&project);

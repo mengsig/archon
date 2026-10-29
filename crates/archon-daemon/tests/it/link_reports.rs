@@ -1547,6 +1547,45 @@ async fn a_newer_page_of_the_same_title_supersedes_the_older() {
     );
 }
 
+/// A newer page published while the older is polled ends the older at
+/// once, not when its lifetime runs out.
+#[tokio::test]
+async fn publishing_a_newer_page_ends_the_followed_older_one() {
+    let (axi, lavish) = FakeAxi::new();
+    axi.opens_at(URL);
+    axi.reply("end", "session:\n  status: ended\n");
+    let harness = Harness::with(Config::default(), Some(lavish)).await;
+    let supervisor = tokio::spawn(reports::supervise(harness.ctx.clone()));
+    let older = reports::publish(&harness.ctx, "Status", &axi.html, None)
+        .await
+        .unwrap();
+    harness
+        .eventually("the older page is polled", || async { polls(&axi) == 1 })
+        .await;
+    let newer_html = axi.html.with_file_name("status-2.html");
+    std::fs::write(&newer_html, "<h1>status, again</h1>").unwrap();
+    let newer = reports::publish(&harness.ctx, "Status", &newer_html, None)
+        .await
+        .unwrap();
+    harness
+        .eventually("the older report is ended", || async {
+            let listed = reports::list(&harness.ctx).await.unwrap();
+            listed
+                .iter()
+                .any(|r| r.report == older.report && r.state == ReportState::Ended)
+        })
+        .await;
+    harness
+        .eventually("the newer page is polled", || async { polls(&axi) == 2 })
+        .await;
+    supervisor.abort();
+    let listed = reports::list(&harness.ctx).await.unwrap();
+    let newer_state = listed.iter().find(|r| r.report == newer.report);
+    assert_eq!(newer_state.map(|r| r.state), Some(ReportState::Open));
+    let ends = axi.calls().iter().filter(|c| c.starts_with("end ")).count();
+    assert_eq!(ends, 1, "{:?}", axi.calls());
+}
+
 /// Stopping the supervisor, as a daemon shutdown does, kills and reaps
 /// every poll process it started.
 #[tokio::test]

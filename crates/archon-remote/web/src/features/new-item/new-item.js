@@ -3,7 +3,7 @@
 import { h } from '../../ui/dom.js';
 import { openSheet } from '../../ui/sheet.js';
 import { toast } from '../../ui/toast.js';
-import { field, segmented, describeError, loadErrorNotes } from '../../ui/components.js';
+import { field, segmented, describeError, errorNote, loadErrorNotes } from '../../ui/components.js';
 
 const PRIORITIES = [
   { value: 'low', label: 'Low' }, { value: 'normal', label: 'Normal' },
@@ -24,7 +24,7 @@ export function openNewItem(ctx) {
     field({ label: 'Repository', control: controls.repo }), repoStatus,
     field({ label: 'Title', control: controls.title }),
     field({ label: 'Brief', control: controls.brief, hint: 'What should be done, and how you will know it is right.' }),
-    field({ label: 'Pipeline', control: controls.pipeline, error: controls.pipelineHint }),
+    field({ label: 'Pipeline', control: controls.pipeline, error: controls.pipelineHint }), controls.pipelineStatus,
     h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Priority' }),
       segmented({ label: 'Priority', options: PRIORITIES, value: draft.priority, onChange: (v) => { draft.priority = v; } })),
     h('div', { class: 'field' }, h('span', { class: 'field-label', text: 'Review' }),
@@ -33,7 +33,7 @@ export function openNewItem(ctx) {
 
   let offRepos = () => {};
   const sheet = openSheet({ title: 'New item', content: form, size: 'tall', onClose: () => offRepos() });
-  const loadPipelines = pipelineLoader(ctx, controls, error);
+  const loadPipelines = pipelineLoader(ctx, controls);
   offRepos = followRepos(ctx, { controls, draft, repoStatus, loadPipelines });
   controls.pipeline.addEventListener('change', () => { draft.pipeline = controls.pipeline.value; controls.describe(); });
   form.addEventListener('submit', (event) => {
@@ -73,9 +73,10 @@ function buildControls() {
   const brief = h('textarea', { class: 'input textarea', name: 'brief', rows: '5', placeholder: 'Context, constraints, acceptance criteria' });
   const pipeline = h('select', { class: 'input', name: 'pipeline' }, h('option', { value: '', text: 'Repository default' }));
   const pipelineHint = h('p', { class: 'field-hint' });
+  const pipelineStatus = h('div', { class: 'list-status' });
   let catalog = [];
   return {
-    repo, title, brief, pipeline, pipelineHint,
+    repo, title, brief, pipeline, pipelineHint, pipelineStatus,
     setRepos(repos, chosen) {
       repo.replaceChildren(...repos.map((r) => h('option', { value: r.name, text: r.name, selected: r.name === chosen })),
         h('option', { value: '', text: 'No repository', selected: chosen === '' }));
@@ -93,20 +94,23 @@ function buildControls() {
   };
 }
 
-function pipelineLoader(ctx, controls, error) {
+// Only the latest repository's listing lands; a failed one shows with a retry.
+function pipelineLoader(ctx, controls) {
   let latest = 0;
-  return async (repo) => {
+  const load = async (repo) => {
     const ticket = ++latest;
     controls.pipeline.disabled = true;
+    controls.pipelineStatus.replaceChildren();
     try {
       const catalog = await ctx.cmds.pipelines(repo || null);
       if (ticket === latest) controls.setCatalog(catalog.pipelines ?? []);
     } catch (err) {
-      if (ticket === latest) error.textContent = `Pipelines could not be listed: ${describeError(err)}`;
+      if (ticket === latest) controls.pipelineStatus.replaceChildren(errorNote(err, () => load(repo), 'Could not list pipelines'));
     } finally {
       if (ticket === latest) controls.pipeline.disabled = false;
     }
   };
+  return load;
 }
 
 async function submitItem({ ctx, draft, controls, error, submit, sheet }) {

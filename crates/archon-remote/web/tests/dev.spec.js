@@ -89,6 +89,50 @@ test('the new-item sheet shows a failed repository list and fills in once it loa
   await expect(sheet.getByLabel('Title')).toHaveValue('Kept across the retry');
 });
 
+test('the new-item sheet retries a failed pipeline listing in place', async ({ page, fixture }) => {
+  await ensureRepo(fixture, 'archon');
+  let refusePipelines = true;
+  await refuseSome(page, (frame) => refusePipelines && frame.cmd === 'list_pipelines');
+  await openApp(page, fixture);
+  await page.getByRole('button', { name: 'New item' }).click();
+  const sheet = page.getByRole('dialog', { name: 'New item' });
+  const failed = sheet.getByRole('alert').filter({ hasText: 'Could not list pipelines: list_pipelines refused by the test' });
+  await expect(failed).toBeVisible();
+  refusePipelines = false;
+  await failed.getByRole('button', { name: 'Try again' }).click();
+  await expect(failed).toHaveCount(0);
+  await expect(sheet.getByRole('combobox', { name: 'Pipeline' }).locator('option[value="direct"]')).toHaveCount(1);
+});
+
+test('a failed artifact page read is retried inside its sheet', async ({ page, fixture }) => {
+  await ensureRepo(fixture, 'archon');
+  const item = await enqueue(fixture.archond, { repo: 'archon', title: `Artifacts ${Date.now().toString(36)}`, brief: 'Has one artifact.' });
+  let reads = 0;
+  // The listing and the page are acted out: publishing needs a running stage.
+  await page.routeWebSocket(/\/ws$/, (ws) => {
+    const server = ws.connectToServer();
+    const answer = (frame, result) => ws.send(JSON.stringify({ frame: 'reply', id: frame.req, result }));
+    ws.onMessage((message) => {
+      const frame = JSON.parse(message);
+      if (frame.cmd === 'list_artifacts') {
+        return answer(frame, { Ok: { reply: 'artifacts', data: { item: item.id, files: [{ name: 'notes.txt', bytes: 5 }], omitted: 0 } } });
+      }
+      if (frame.cmd !== 'read_artifact') return server.send(message);
+      reads += 1;
+      if (reads === 1) return answer(frame, { Err: { code: 'internal', message: 'read_artifact refused by the test' } });
+      return answer(frame, { Ok: { reply: 'artifact_page', data: { text: 'hello', next_offset: null, total_bytes: 5 } } });
+    });
+  });
+  await openApp(page, fixture, `#/item/${item.id}`);
+  await page.getByRole('button', { name: /notes\.txt/ }).click();
+  const sheet = page.getByRole('dialog', { name: 'notes.txt' });
+  const failed = sheet.getByRole('alert').filter({ hasText: 'read_artifact refused by the test' });
+  await expect(failed).toBeVisible();
+  await failed.getByRole('button', { name: 'Try again' }).click();
+  await expect(failed).toHaveCount(0);
+  await expect(sheet.getByLabel('Contents of notes.txt')).toHaveText('hello');
+});
+
 test('a failed feed setup is retried until the app is live again', async ({ page, fixture }) => {
   let refuseFeed = true;
   await refuseSome(page, (frame) => refuseFeed && frame.cmd === 'feed_history');

@@ -2,7 +2,7 @@
 import { h } from '../../ui/dom.js';
 import { icon } from '../../ui/icons.js';
 import { openSheet } from '../../ui/sheet.js';
-import { emptyState, errorNote, describeError, spinner } from '../../ui/components.js';
+import { emptyState, errorNote, spinner } from '../../ui/components.js';
 import { bytes } from '../../core/format.js';
 
 export function artifactsSection(ctx, itemId) {
@@ -43,7 +43,7 @@ function openArtifact(ctx, itemId, name) {
         : h('button', { class: 'button button-plain', type: 'button', onclick: () => loadPage(page.next_offset) },
           `Load more (${bytes(page.total_bytes - page.next_offset)} left)`));
     } catch (err) {
-      foot.replaceChildren(h('p', { class: 'form-error', role: 'alert', text: describeError(err) }));
+      foot.replaceChildren(errorNote(err, () => loadPage(offset)));
     }
   };
   loadPage(0);

@@ -151,6 +151,34 @@ fn builtins_load_without_problems() {
     assert_eq!(discovered.listing(), catalog.listing());
 }
 
+/// A stage that builds and tests the product gets room for a slow stack, and
+/// `direct`'s single agent as long as `adaptive`'s lead.
+#[test]
+fn built_in_stages_that_build_get_room_to_finish() {
+    let catalog = Catalog::builtin();
+    let minutes = |pipeline: &str, stage: &str| {
+        let spec = catalog.get(pipeline).expect("a built-in loads");
+        let stage = spec.stage(stage).unwrap_or_else(|| panic!("{pipeline}/{stage}"));
+        stage.timeout_minutes
+    };
+    assert_eq!(minutes("direct", "implement"), minutes("adaptive", "build"));
+    assert_eq!(minutes("direct", "implement"), 180);
+    assert_eq!(minutes("e2e-testing", "setup"), 120);
+    assert_eq!(minutes("swarm", "plan"), 120);
+    let builds = [
+        ("agent-testing", "plan"),
+        ("code-audit", "scope"),
+        ("refactor", "review"),
+        ("swarm", "build"),
+        ("performance", "review"),
+        ("refactor", "verify"),
+    ];
+    for (pipeline, stage) in builds {
+        let got = minutes(pipeline, stage);
+        assert!(got >= 90, "{pipeline}/{stage} has {got} minutes");
+    }
+}
+
 #[test]
 fn errand_is_a_scratch_repository_optional_report_pipeline() {
     let catalog = Catalog::builtin();

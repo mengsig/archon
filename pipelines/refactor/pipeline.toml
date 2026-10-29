@@ -45,6 +45,6 @@ id = "review"
 kind = "review"
 prompt = "review.md"
 gate = "all_pass"
-timeout_minutes = 60
+timeout_minutes = 90
 nudge = "Prefer a strong-tier reviewer that discovers independently of the refactorer."
 on_fail = { goto = "refactor", max_loops = 2 }

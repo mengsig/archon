@@ -34,6 +34,13 @@
 
 ### Stage time
 
+- Built-in stages that build and test get longer timeouts: `direct`'s
+  `implement` 180 minutes (was 60, now as long as `adaptive`'s `build`),
+  `e2e-testing`'s `setup` and `swarm`'s `plan` 120 (were 60), and
+  `agent-testing`'s `plan`, `code-audit`'s `scope` and `refactor`'s
+  `review` 90 (were 45, 45 and 60). An ordinary change with a full check
+  and a reviewer no longer runs into a hard stop at an hour. The deadline
+  still stops the stage when it passes.
 - Every stage agent's contract names its deadline: the time Archon stops it
   and every agent it delegated to, and how many minutes after its start that
   is, with an item's own `stage_timeouts` applied. A stage that commits is

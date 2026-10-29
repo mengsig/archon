@@ -72,7 +72,7 @@ fn linear_pipeline_runs_each_stage_once_and_succeeds() {
         plan.instructions.contains("/archon/worktrees/demo/w1"),
         "contract names the workspace"
     );
-    assert_eq!(plan.timeout_minutes, 60);
+    assert_eq!(plan.timeout_minutes, 180);
 
     let next = sim.settle(
         "implement",

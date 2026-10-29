@@ -660,7 +660,22 @@ async fn a_no_change_claim_beside_a_commit_or_a_dirty_tree_fails_the_stage() {
     let error = failed(&h, &item).await;
     assert!(error.contains("staged or untracked"), "{error}");
     assert!(error.contains("new_module.rs"), "{error}");
-    assert!(gh.calls().is_empty() && gh2.calls().is_empty() && gh3.calls().is_empty());
+
+    // Only a service's PID file is run state; anything else beside it is a change.
+    let (h, gh4) = delivering().await;
+    let (item, run) = started(&h, "direct").await;
+    let services = run.workspace.join(".archon/services");
+    std::fs::create_dir_all(services.join("web")).unwrap();
+    std::fs::write(services.join("web.pid"), "4242\n").unwrap();
+    std::fs::write(services.join("server.toml"), "port = 8080\n").unwrap();
+    std::fs::write(services.join("web/nested.pid"), "4243\n").unwrap();
+    settle_with(&h, json!({"no_change": {"reason": "nothing to do"}})).await;
+    let error = failed(&h, &item).await;
+    assert!(error.contains("server.toml"), "{error}");
+    assert!(error.contains("web/nested.pid"), "{error}");
+    assert!(!error.contains("web.pid"), "{error}");
+    let quiet = [&gh, &gh2, &gh3, &gh4];
+    assert!(quiet.iter().all(|gh| gh.calls().is_empty()));
 }
 
 /// A stage that leaves no usable record is told what is missing before

@@ -69,10 +69,12 @@
   recorded and nothing found by name, and setup and e2e confirm that none
   of those recorded processes or containers still runs, not that nothing
   runs at all. `agent-testing`'s plan records stop commands the same way.
-- A stage can keep a server up for a later stage of its run by writing its
-  PID to `.archon/services/<name>.pid` in the worktree. The stage-end reap
-  spares that process, its process group and its descendants while the run
-  goes on, and the run's end reaps them with everything else. Before, the
+- A stage can keep a server up for a later stage of its run by starting it
+  under `setsid` and writing its PID to `.archon/services/<name>.pid` in the
+  worktree it works in, a team role's own included. The stage-end reap
+  spares that process, the process group it leads and its descendants while
+  the run goes on (not a group it only joined, which `cmd &` shares with
+  the engine's every stray), and the run's end reaps them with everything else. Before, the
   reap stopped every process a stage left, so setup could not hand a running
   app to the next stage. A malformed PID file keeps nothing, and the PID
   files do not count as a change when the run ships.

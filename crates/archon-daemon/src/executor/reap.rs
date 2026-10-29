@@ -3,7 +3,7 @@
 //! The services a stage declared for a later one are kept until the run ends.
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
@@ -20,7 +20,7 @@ pub(super) async fn stage_end(
     ctx: &DaemonContext,
     stage: &StageRunId,
 ) -> Result<FollowUp, ArchonError> {
-    let (workspace, services) = {
+    let (workspace, keep) = {
         let store = ctx.store.lock().await;
         let stage = store.stage_run(stage)?;
         assert!(stage.state.is_terminal(), "only a settled stage is reaped");
@@ -30,18 +30,19 @@ pub(super) async fn stage_end(
             let live = s.id != stage.id && !s.state.is_terminal();
             siblings_live |= live && !super::spawn::never_sent(&store, &s.id)?;
         }
-        let services = match run.state.is_terminal() {
-            true => None,
-            false => Some(run.workspace.clone()),
+        let keep = match (run.state.is_terminal(), run.team_root.is_some()) {
+            (true, _) => Keep::Nothing,
+            (false, false) => Keep::Worktree,
+            (false, true) => Keep::TeamWorktrees,
         };
         let workspace = run.team_root.unwrap_or(run.workspace);
         // Only the trees Archon made are reaped, never a checkout elsewhere.
         if siblings_live || !workspace.starts_with(&ctx.paths.worktrees) {
             return Ok(FollowUp::default());
         }
-        (workspace, services)
+        (workspace, keep)
     };
-    let report = reap(ctx, &workspace, services).await?;
+    let report = reap(ctx, &workspace, keep).await?;
     if report.is_empty() {
         return Ok(FollowUp::default());
     }
@@ -73,7 +74,7 @@ pub(super) async fn run_end(ctx: &DaemonContext, tree: &Path) -> Result<FollowUp
         tree != ctx.paths.worktrees,
         "a run's tree lies below the root"
     );
-    let report = reap(ctx, tree, None).await?;
+    let report = reap(ctx, tree, Keep::Nothing).await?;
     if report.is_empty() {
         return Ok(FollowUp::default());
     }
@@ -83,23 +84,33 @@ pub(super) async fn run_end(ctx: &DaemonContext, tree: &Path) -> Result<FollowUp
     Ok(FollowUp::default())
 }
 
-/// Reap `tree` off the async runtime, keeping the services declared in the
-/// run worktree `services` names, if any.
+/// Which services a reap of a run's tree keeps.
+enum Keep {
+    /// None: the run ended.
+    Nothing,
+    /// Those declared in the tree, a run worktree.
+    Worktree,
+    /// Those declared in any worktree under the tree, a team run's root.
+    TeamWorktrees,
+}
+
+/// Reap `tree` off the async runtime, keeping the services `keep` names.
 async fn reap(
     ctx: &DaemonContext,
     tree: &Path,
-    services: Option<PathBuf>,
+    keep: Keep,
 ) -> Result<crate::reaper::Report, ArchonError> {
     assert!(tree.is_absolute(), "worktrees are absolute");
     assert!(
-        services.as_deref().is_none_or(|run| run.starts_with(tree)),
-        "a run's services lie in its tree"
+        tree.starts_with(&ctx.paths.worktrees),
+        "only Archon's trees are reaped"
     );
     let (root, tree) = (ctx.paths.worktrees.clone(), tree.to_path_buf());
     let reaped = tokio::task::spawn_blocking(move || {
-        let kept = match services {
-            Some(run) => crate::reaper::services::declared(&run)?,
-            None => BTreeSet::new(),
+        let kept = match keep {
+            Keep::Nothing => BTreeSet::new(),
+            Keep::Worktree => crate::reaper::services::declared(&tree)?,
+            Keep::TeamWorktrees => crate::reaper::services::declared_in_team(&tree)?,
         };
         crate::reaper::reap(&root, &tree, &kept)
     });

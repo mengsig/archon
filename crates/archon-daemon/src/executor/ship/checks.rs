@@ -153,11 +153,7 @@ pub(super) fn check_unchanged(target: &Target) -> Result<Result<(), String>, Arc
     let untracked = git(tree, &["ls-files", "--others", "--exclude-standard"])?;
     let present = staged
         .lines()
-        .chain(
-            untracked
-                .lines()
-                .filter(|path| !path.starts_with(SERVICES_DIR)),
-        )
+        .chain(untracked.lines().filter(|path| !is_service_pid_file(path)))
         .filter(|path| !is_unshippable(path))
         .collect::<Vec<_>>();
     if !present.is_empty() {
@@ -189,6 +185,14 @@ fn is_unshippable(path: &str) -> bool {
         || path.split('/').any(|part| part == "__pycache__")
         || path.ends_with(".pyc")
         || path.ends_with(".pyo")
+}
+
+/// Whether `path` is a `.archon/services/<name>.pid` file a stage declared a
+/// service in; any other file there is a change like any other.
+fn is_service_pid_file(path: &str) -> bool {
+    path.strip_prefix(SERVICES_DIR).is_some_and(|name| {
+        !name.contains('/') && name.len() > ".pid".len() && name.ends_with(".pid")
+    })
 }
 
 /// Refuse a change that adds a build cache, the swarm plan file or a report

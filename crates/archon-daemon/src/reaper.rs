@@ -439,7 +439,9 @@ impl Scan<'_> {
             .is_none_or(|chain| chain.iter().any(|&p| self.is_root(p)))
     }
 
-    /// Whether `pid` is a kept service, in one's process group or below one.
+    /// Whether `pid` is a kept service, below one or in the group one leads.
+    /// Not a group it only joined: `cmd &` leaves it in its shell's, often
+    /// the engine's, which holds every stray the stage left.
     fn serves(&self, pid: i32) -> bool {
         if self.kept.is_empty() {
             return false;
@@ -717,6 +719,12 @@ mod tests {
         assert_eq!(selected(&f), vec![500, 501, 502, 503], "nothing declared");
         let kept = BTreeSet::from([500]);
         assert_eq!(selected_keeping(&f, &fake, &kept), vec![503]);
+        // A group the service only joined, its shell's, is not kept.
+        let led = std::fs::read_to_string(&status).unwrap();
+        std::fs::write(&status, led.replace("NSpgid:\t500", "NSpgid:\t490")).unwrap();
+        let shell = std::fs::read_to_string(f.proc.join("500/status")).unwrap();
+        std::fs::write(f.proc.join("500/status"), shell + "NSpgid:\t490\n").unwrap();
+        assert_eq!(selected_keeping(&f, &fake, &kept), vec![502, 503]);
         let stale = BTreeSet::from([9999]);
         assert_eq!(
             selected_keeping(&f, &fake, &stale),

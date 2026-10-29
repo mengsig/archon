@@ -51,6 +51,27 @@ pub fn declared(workspace: &Path) -> Result<BTreeSet<i32>, ArchonError> {
     Ok(pids)
 }
 
+/// The PIDs declared in each worktree directly under a team run's `root`:
+/// its run worktree and every worker's, where each agent writes its own.
+pub fn declared_in_team(root: &Path) -> Result<BTreeSet<i32>, ArchonError> {
+    assert!(root.is_absolute(), "team roots are absolute");
+    let context = || format!("reading {}", root.display());
+    let mut pids = BTreeSet::new();
+    let mut trees = 0;
+    for entry in std::fs::read_dir(root).map_err(|e| ArchonError::io(context(), e))? {
+        let entry = entry.map_err(|e| ArchonError::io(context(), e))?;
+        let kind = entry
+            .file_type()
+            .map_err(|e| ArchonError::io(context(), e))?;
+        if kind.is_dir() {
+            pids.extend(declared(&entry.path())?);
+            trees += 1;
+        }
+    }
+    assert!(pids.len() <= trees * MAX_FILES, "at most the files read");
+    Ok(pids)
+}
+
 /// The PID `file` holds, or `None` with a warning when it holds none.
 fn pid_in(file: &Path) -> Option<i32> {
     let skip = |why: &str| {
@@ -117,6 +138,21 @@ mod tests {
             declared(&workspace).unwrap().is_empty(),
             "a link leads elsewhere"
         );
+    }
+
+    #[test]
+    fn a_team_run_declares_in_each_of_its_worktrees() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        for (tree, pid) in [("main", "100"), ("build-api", "200"), ("build-web", "300")] {
+            let dir = root.join(tree).join(SERVICES_DIR);
+            std::fs::create_dir_all(&dir).unwrap();
+            write(&dir, "server.pid", pid);
+        }
+        std::fs::create_dir(root.join("build-docs")).unwrap();
+        write(&root, "stray.pid", "400");
+        let pids = declared_in_team(&root).unwrap();
+        assert_eq!(pids, BTreeSet::from([100, 200, 300]));
     }
 
     #[test]

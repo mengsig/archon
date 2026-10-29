@@ -7,12 +7,16 @@ use std::time::{Duration, Instant};
 
 use archon_core::protocol::Request;
 
+use crate::common::team::{start_team, worker};
 use crate::common::{self, Harness};
 
-/// `sleep 300` orphaned in `cwd`, as an agent's `cmd &` leaves it.
+/// `sleep 300` orphaned in `cwd`, leading its own group as `setsid cmd &` leaves it.
 fn orphan(cwd: &Path) -> i32 {
     let out = Command::new("sh")
-        .args(["-c", "sleep 300 </dev/null >/dev/null 2>&1 & echo $!"])
+        .args([
+            "-c",
+            "setsid sleep 300 </dev/null >/dev/null 2>&1 & echo $!",
+        ])
         .env("AETHER_ENGINE_RUN", "archon-test")
         .current_dir(cwd)
         .output()
@@ -45,6 +49,13 @@ fn ends(pid: i32) -> bool {
     false
 }
 
+/// Declare `pid` as the `web` service of the worktree `tree`.
+fn declare(tree: &Path, pid: i32) {
+    let services = tree.join(".archon/services");
+    std::fs::create_dir_all(&services).unwrap();
+    std::fs::write(services.join("web.pid"), format!("{pid}\n")).unwrap();
+}
+
 /// Kills what a failed test leaves running.
 struct Started(Vec<i32>);
 
@@ -65,9 +76,7 @@ async fn a_declared_service_outlives_its_stage_and_ends_with_the_run() {
     let tree = h.run(&item.id).await.workspace;
     let (server, stray) = (orphan(&tree), orphan(&tree));
     let _started = Started(vec![server, stray]);
-    let services = tree.join(".archon/services");
-    std::fs::create_dir_all(&services).unwrap();
-    std::fs::write(services.join("web.pid"), format!("{server}\n")).unwrap();
+    declare(&tree, server);
 
     h.settle_running(|_| common::completed("the app serves on :8080"))
         .await;
@@ -75,6 +84,34 @@ async fn a_declared_service_outlives_its_stage_and_ends_with_the_run() {
     assert!(ends(stray), "the stage end reaps what nobody declared");
     assert!(runs(server), "the declared server serves the next stage");
     assert!(!h.running().await.is_empty(), "the run went on to review");
+
+    let cancel = Request::CancelItem {
+        item: item.id.clone(),
+        reason: None,
+    };
+    h.cli(cancel).await.expect("cancel");
+    assert!(ends(server), "the run's end stops the service");
+}
+
+/// A team role declares its service in its own worktree, where it works.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn a_team_role_s_service_outlives_the_team_stage() {
+    let h = Harness::new().await;
+    let (item, run) = start_team(&h, "serve the api for review").await;
+    let (api, ui) = (worker(&run, "api"), worker(&run, "ui"));
+    let (server, stray) = (orphan(&api), orphan(&ui));
+    let _started = Started(vec![server, stray]);
+    declare(&api, server);
+
+    h.settle_running(|_| common::completed("the api serves on :8080"))
+        .await;
+    h.dispatch().await;
+    assert!(ends(stray), "the stage end reaps what nobody declared");
+    assert!(runs(server), "the api role's server serves the review");
+    let running = h.running().await;
+    assert_eq!(running.len(), 1, "{running:?}");
+    assert_eq!(running[0].stage_id, "review");
 
     let cancel = Request::CancelItem {
         item: item.id.clone(),

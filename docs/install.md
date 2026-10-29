@@ -172,6 +172,10 @@ archon`. Nothing is restarted when `archond` is not running: the next
 command that needs it starts the new version. When `archond` already runs
 the installed version, only an orchestrator another archon created is
 restarted (an earlier update cut short after archond's restart leaves one).
+An archond restarted on a release with another daemon protocol refuses the
+running update at hello; that refusal is taken as the restart done, and the
+orchestrator is restarted by the installed `archon` (an updater from 1.4.7
+or earlier waits out its deadline instead: run `archon update --yes` again).
 A failed `aether update` is reported as a warning (exit 1) after the
 restart. Where some of Archon's config directory, data directory and
 socket are moved from their defaults (`ARCHON_CONFIG_DIR`,

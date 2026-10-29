@@ -128,6 +128,8 @@ pub async fn run(args: UpdateArgs, json: bool) -> anyhow::Result<ExitCode> {
         interrupt = interrupts.next() => return interrupted(interrupt, place),
         prepared = prepare(&args, place.as_ref(), &mut report) => prepared?,
     };
+    // Named before the swap: the restart may need the installed archon.
+    let program = place.as_ref().map(|place| place.dir.join(BINARIES[0]));
     // Nothing here waits: the swap and its report end whole.
     let (code, installed) = match (prepared, place) {
         (Prepared::Reported(code), _) => (code, None),
@@ -139,8 +141,11 @@ pub async fn run(args: UpdateArgs, json: bool) -> anyhow::Result<ExitCode> {
     if args.check || args.no_restart {
         return Ok(code);
     }
+    let live = restart::Live {
+        archon: program.context("only --check has no archon to install")?,
+    };
     let progress = restart::Progress::new();
-    let restart = restart_after(&args, &mut report, code, installed, &progress);
+    let restart = restart_after(&args, &mut report, code, installed, &live, &progress);
     match restart::until_interrupted(restart, &progress, interrupts.next()).await {
         restart::Ended::Done(result) => result.with_context(|| {
             let during = progress.current();
@@ -165,6 +170,7 @@ async fn restart_after(
     report: &mut Report,
     code: ExitCode,
     installed: Option<Version>,
+    live: &restart::Live,
     progress: &restart::Progress,
 ) -> anyhow::Result<ExitCode> {
     use restart::Steps as _;
@@ -184,11 +190,11 @@ async fn restart_after(
     }
     // The archond a partial environment reaches may be another setup's.
     super::daemon::refuse_mixed_locations("update")?;
-    let running = restart::Live.running_archond().await?;
+    let running = live.running_archond().await?;
     if !args.yes && !confirmed(&plan, running.as_ref(), progress).await? {
         return Ok(code);
     }
-    let outcome = restart::apply(&restart::Live, &plan, progress).await?;
+    let outcome = restart::apply(live, &plan, progress).await?;
     let value = serde_json::json!({
         "restarted": outcome.restarted, "steps": outcome.lines, "warnings": outcome.warnings,
     });

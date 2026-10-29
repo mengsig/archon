@@ -7,10 +7,11 @@
 use std::cell::Cell;
 use std::ffi::OsStr;
 use std::future::Future;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context as _;
+use archon_core::error::ArchonError;
 use archon_core::ops::{UpgradeRequest, bare_version};
 use archon_core::protocol::{ErrorCode, OrchestratorInfo, Reply, Request};
 
@@ -422,8 +423,11 @@ async fn renew_orchestrator(
     Ok(())
 }
 
-/// The steps on this machine.
-pub(super) struct Live;
+/// The steps on this machine. `archon` is the installed archon, which asks
+/// for what this one cannot once archond restarts on another protocol.
+pub(super) struct Live {
+    pub archon: PathBuf,
+}
 
 impl Steps for Live {
     async fn update_aether(&self) -> anyhow::Result<AetherUpdate> {
@@ -476,6 +480,8 @@ impl Steps for Live {
         let client = match connect_existing().await {
             Ok(Some(client)) => client,
             Ok(None) => return Seen::Down(None),
+            // The archond asked to restart spoke this protocol, so one that does not is new.
+            Err(error) if speaks_another_protocol(&error) => return Seen::New,
             Err(error) => return Seen::Down(Some(format!("{error:#}"))),
         };
         if client.welcome().pid != old_pid {
@@ -514,27 +520,75 @@ impl Steps for Live {
         // The new archond answers before it reaches Aether, which it is told to do within seconds.
         let mut last = None;
         for _ in 0..ORCHESTRATOR_TRIES {
-            let client = connect_running().await?;
-            let refusal = match client.call(Request::OrchestratorRestart).await? {
-                Ok(Reply::Orchestrator(info)) => return created_by(&info),
-                Ok(other) => return Err(unexpected(&other, "orchestrator")),
-                Err(refusal) => archon_client::refusal_error(refusal),
+            let refusal = match self.ask_orchestrator_restart().await? {
+                Ok(created_by) => return Ok(created_by),
+                Err(refusal) => refusal,
             };
             if last.is_none() {
                 eprintln!(
-                    "archon: update: archond refused the orchestrator restart ({refusal}); \
+                    "archon: update: archond refused the orchestrator restart ({refusal:#}); \
                      asking again every second."
                 );
             }
             last = Some(refusal);
             tokio::time::sleep(POLL).await;
         }
-        Err(last.context("the orchestrator was never asked")?.into())
+        Err(last.context("the orchestrator was never asked")?)
     }
 
     async fn pause(&self) {
         tokio::time::sleep(POLL).await;
     }
+}
+
+impl Live {
+    /// Ask once for an orchestrator restart. `Ok(Err)` is a refusal worth
+    /// asking again; an archond on another protocol is asked by `archon`.
+    async fn ask_orchestrator_restart(&self) -> anyhow::Result<anyhow::Result<String>> {
+        let client = match connect_running().await {
+            Ok(client) => client,
+            Err(error) if speaks_another_protocol(&error) => {
+                return self.installed_restarts_orchestrator().await;
+            }
+            Err(error) => return Err(error),
+        };
+        match client.call(Request::OrchestratorRestart).await? {
+            Ok(Reply::Orchestrator(info)) => created_by(&info).map(Ok),
+            Ok(other) => Err(unexpected(&other, "orchestrator")),
+            Err(refusal) => Ok(Err(archon_client::refusal_error(refusal).into())),
+        }
+    }
+
+    /// `archon orchestrator restart` run by the installed archon. Its
+    /// failure is a refusal to ask again; an answer without a creator is not.
+    async fn installed_restarts_orchestrator(&self) -> anyhow::Result<anyhow::Result<String>> {
+        assert!(
+            self.archon.is_absolute(),
+            "the installed archon is named whole"
+        );
+        let args = ["--json", "orchestrator", "restart"].map(OsStr::new);
+        let ran = match tools::run(&self.archon, &args, ORCHESTRATOR_DEADLINE).await {
+            Ok(ran) => ran,
+            Err(refused) => return Ok(Err(refused)),
+        };
+        let shown = self.archon.display();
+        let info: serde_json::Value = serde_json::from_slice(&ran.stdout)
+            .with_context(|| format!("`{shown} --json orchestrator restart` printed no JSON"))?;
+        let creator = info["freshness"]["created_by"]
+            .as_str()
+            .filter(|by| !by.is_empty())
+            .with_context(|| {
+                format!("`{shown}` restarted the orchestrator, but named no creator: {info}")
+            })?;
+        Ok(Ok(creator.to_owned()))
+    }
+}
+
+/// Whether connecting failed because archond speaks another protocol.
+fn speaks_another_protocol(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<ArchonError>()
+        .is_some_and(archon_client::is_incompatible)
 }
 
 /// The version that created the generation `info` describes.

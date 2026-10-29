@@ -489,6 +489,88 @@ fn yes_prints_no_manual_steps_and_a_signal_ends_a_stuck_restart_naming_its_step(
     assert!(!stdout.contains("daemon stop --keep-aether"), "{stdout}");
 }
 
+/// An archond that welcomes this protocol until it is asked to upgrade, then
+/// refuses every hello as one restarted on a newer protocol would.
+fn serve_archond_restarting_on_a_newer_protocol(socket: &Path) {
+    use archon_core::protocol::{ErrorCode, ErrorReply};
+    use std::io::{BufRead as _, BufReader, Write as _};
+    let listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
+    let restarted = Arc::new(AtomicBool::new(false));
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let (mut writer, restarted) = (stream.unwrap(), restarted.clone());
+            std::thread::spawn(move || {
+                let reader = BufReader::new(writer.try_clone().unwrap());
+                for line in reader.lines().map_while(Result::ok) {
+                    let frame: ClientFrame = serde_json::from_str(&line).unwrap();
+                    let result = match frame.request {
+                        Request::Hello { .. } if restarted.load(Ordering::SeqCst) => {
+                            Err(ErrorReply {
+                                code: ErrorCode::Incompatible,
+                                message: format!(
+                                    "archond speaks protocol {}",
+                                    PROTOCOL_VERSION + 1
+                                ),
+                            })
+                        }
+                        Request::Hello { .. } => Ok(Reply::Welcome(Welcome {
+                            protocol_version: PROTOCOL_VERSION,
+                            daemon_version: CURRENT.into(),
+                            pid: std::process::id(),
+                        })),
+                        Request::Upgrade(_) => {
+                            restarted.store(true, Ordering::SeqCst);
+                            Ok(Reply::UpgradeStarted {
+                                text: "restarting".into(),
+                            })
+                        }
+                        other => panic!("the update asked {other:?}"),
+                    };
+                    let reply = ServerFrame::Reply {
+                        id: frame.id,
+                        result,
+                    };
+                    writeln!(writer, "{}", serde_json::to_string(&reply).unwrap()).unwrap();
+                }
+            });
+        }
+    });
+}
+
+#[test]
+fn a_restart_onto_a_newer_protocol_renews_the_orchestrator_through_the_installed_archon() {
+    let installed = Installed::new();
+    let restarting = archon_script("9.9.9").replace(
+        "*) echo",
+        "'--json orchestrator restart') echo '{\"freshness\":{\"created_by\":\"9.9.9\"}}' ;;\n*) echo",
+    );
+    publish(
+        &installed.releases(),
+        "v9.9.9",
+        &target(),
+        &restarting,
+        true,
+    );
+    let updating = aether_script(16, 17).replace("*) exit 64", "update) echo done ;;\n*) exit 64");
+    write_script(&installed.path("tools/aether"), &updating);
+    serve_archond_restarting_on_a_newer_protocol(&installed.socket());
+    let update = installed
+        .command(&installed.archon(), &["update", "--yes", "--wait", "1"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("starting the installed archon");
+    // Before, the restart waited out its deadline, minutes, for a new archond it could not see.
+    let out = exit_within(update, Duration::from_secs(30));
+    let (stdout, stderr) = (text(&out.stdout), text(&out.stderr));
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    assert!(stdout.contains("Restarted archond"), "{stdout}");
+    assert!(
+        stdout.contains("Restarted the orchestrator on archon 9.9.9."),
+        "{stdout}"
+    );
+}
+
 #[test]
 fn yes_in_a_mixed_environment_installs_but_restarts_nothing() {
     let installed = Installed::new();

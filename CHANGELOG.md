@@ -12,13 +12,15 @@
   were followed forever before, and every restart started their polls again
   (#323, #321).
 - archond tears down the Docker Compose stacks an item's worktree started
-  (`docker compose --project-name <project> down --remove-orphans`) when its
-  run ends, before a fresh retry sets its worktree aside, and before the
-  worktree is removed. Only projects whose every container runs from inside
-  that worktree, with symlinks resolved, are touched, and their volumes are
-  always kept: Docker cannot tell whose a volume is when another checkout
-  reuses the project's name. Without Docker it does nothing. `[worktrees]
-  docker` names the CLI (#321).
+  when its run ends, before a fresh retry sets its worktree aside, and
+  before the worktree is removed; no run starts in that worktree, a retry's
+  included, until it is done. Only projects whose every container runs from
+  inside that worktree, with symlinks resolved, are touched: archond checks
+  that again just before it acts, stops and removes only the containers it
+  checked, and removes the project's networks once none of its containers
+  is left. Volumes are always kept: Docker cannot tell whose a volume is
+  when another checkout reuses the project's name. Without Docker it does
+  nothing. `[worktrees] docker` names the CLI (#321).
 - `archon doctor` lists the Compose stacks left in worktrees of items that
   ended, and the `lavish-axi poll` processes beyond the reports archond
   follows, each with the command that clears them (#321).

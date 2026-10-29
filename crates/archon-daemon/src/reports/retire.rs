@@ -106,33 +106,52 @@ fn is_superseded(
 /// End `report`'s Lavish session, then record the report ended; its poll
 /// task must already be stopped. Ending first means a daemon stopped in
 /// between still finds the report open, and ends it, at its next start.
-/// A session Lavish fails to end is told to the operator: the report is
-/// recorded ended all the same and can be reopened.
+/// Both hold `report_files`, as publishing and reopening do, so a page shown
+/// again since `seen` keeps its new session. A session Lavish fails to end
+/// is told to the operator: the report is recorded ended all the same and
+/// can be reopened.
 pub(super) async fn end(
     ctx: &DaemonContext,
     lavish: &Lavish,
     report: &ReportId,
-    record: &ReportRecord,
+    seen: &ReportRecord,
 ) -> Result<(), ArchonError> {
-    assert_eq!(record.state, ReportState::Open, "a report is ended once");
-    assert!(record.html.is_absolute(), "lavish-axi takes absolute paths");
-    tracing::info!(%report, html = %record.html.display(), "ending a settled report's Lavish session");
-    let ended = lavish.end(&record.html).await;
-    record_ended(ctx, report, record).await?;
+    assert_eq!(seen.state, ReportState::Open, "a report is ended once");
+    assert!(seen.html.is_absolute(), "lavish-axi takes absolute paths");
+    let _files = ctx.report_files.lock().await;
+    if !unchanged(ctx, report, seen).await? {
+        tracing::info!(%report, "the report changed since it settled; its session is kept");
+        return Ok(());
+    }
+    tracing::info!(%report, html = %seen.html.display(), "ending a settled report's Lavish session");
+    let ended = lavish.end(&seen.html).await;
+    record_ended(ctx, report, seen).await?;
     let Err(error) = ended else {
         return Ok(());
     };
     tracing::warn!(%report, %error, "lavish could not end a settled report's session");
     let text = format!(
         "Lavish could not end the session of \"{}\" ({error}); Archon no longer follows it. The report is at {}.",
-        record.title,
-        record.html.display()
+        seen.title,
+        seen.html.display()
     );
     feed::system(ctx, text).await.map(drop)
 }
 
-/// Record `report` ended unless its record changed since `seen`, as when
-/// `archon reports reopen` showed it again meanwhile; then it is left as is.
+/// Whether `report`'s record is still `seen`.
+async fn unchanged(
+    ctx: &DaemonContext,
+    report: &ReportId,
+    seen: &ReportRecord,
+) -> Result<bool, ArchonError> {
+    let mut store = ctx.store.lock().await;
+    let current = records::get(&mut store, report)?
+        .ok_or_else(|| ArchonError::Corrupt(format!("report {report} has no record")))?;
+    Ok(current == *seen)
+}
+
+/// Record `report` ended unless its record changed since `seen`, as a gate
+/// answer may have meanwhile; then it is left as is.
 async fn record_ended(
     ctx: &DaemonContext,
     report: &ReportId,

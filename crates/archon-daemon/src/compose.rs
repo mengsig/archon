@@ -2,14 +2,15 @@
 //! worktrees. A stack outlives the agent that started it, and a restart
 //! policy brings it back after every reboot, so archond stops what is left
 //! when a run ends, when a fresh retry sets the worktree aside, and before
-//! the worktree is removed: `down`, never with `--volumes`. Docker cannot
-//! tell whose a volume is, as any checkout may reuse a project's name, so
-//! volumes are always kept.
+//! the worktree is removed. Docker cannot tell whose a volume is, as any
+//! checkout may reuse a project's name, so volumes are always kept.
 //!
 //! A project is Archon's when one of its containers' config files or
 //! working directory lies inside the worktree, also once symlinks are
 //! resolved, which lies inside Archon's worktree root. One with any
-//! container from elsewhere is never touched.
+//! container from elsewhere is never touched. Ownership is checked again
+//! just before a teardown, which then stops and removes only the containers
+//! it checked, and the project's networks once none of its containers is left.
 //! Without Docker, or with its daemon unreachable, nothing happens; a failed
 //! teardown is logged and told in the feed, and never fails the item.
 
@@ -27,39 +28,50 @@ use crate::context::DaemonContext;
 const PROJECT_LABEL: &str = "com.docker.compose.project";
 /// Listing answers promptly; a teardown waits for its containers to stop.
 const LIST_TIMEOUT: Duration = Duration::from_secs(30);
-const DOWN_TIMEOUT: Duration = Duration::from_secs(180);
+const STOP_TIMEOUT: Duration = Duration::from_secs(180);
 
-/// The Compose projects with a container inside one of `trees`, and the
-/// directory each runs from; those that also run from elsewhere are left
-/// out and returned apart.
+/// A Compose project every container of which runs from inside the
+/// worktree: the directory it runs from and its containers' IDs.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Project {
+    pub dir: PathBuf,
+    pub containers: BTreeSet<String>,
+}
+
+/// The Compose projects with a container inside one of `trees`; those that
+/// also run from elsewhere are left out and returned apart.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Selection {
-    pub inside: BTreeMap<String, PathBuf>,
+    pub inside: BTreeMap<String, Project>,
     pub shared: Vec<String>,
 }
 
-/// Pick Archon's projects from `docker ps` lines of `project`, comma-joined
-/// config files and working directory, tab-separated. A container counts as
-/// inside when every place it names lies inside one of `trees`, as named and
-/// once resolved; one naming no place may run from anywhere.
+/// Pick Archon's projects from `docker ps` lines of container ID, project,
+/// comma-joined config files and working directory, tab-separated. A
+/// container counts as inside when every place it names lies inside one of
+/// `trees`, as named and once resolved; one naming no place may run from
+/// anywhere.
 pub fn select(listing: &str, trees: &[PathBuf]) -> Selection {
     assert!(!trees.is_empty(), "a teardown names its worktree");
     assert!(
         trees.iter().all(|t| t.is_absolute()),
         "worktrees are absolute"
     );
-    let mut inside: BTreeMap<String, PathBuf> = BTreeMap::new();
+    let mut inside: BTreeMap<String, Project> = BTreeMap::new();
     let mut outside = BTreeSet::new();
     for container in listing.lines().filter_map(Container::parse) {
-        let Some(dir) = container.dir() else {
+        let dir = container.dir();
+        let Some(dir) = dir.filter(|_| container.places().all(|p| lies_within(p, trees))) else {
             outside.insert(container.project.to_owned());
             continue;
         };
-        if container.places().all(|place| lies_within(place, trees)) {
-            inside.entry(container.project.to_owned()).or_insert(dir);
-        } else {
-            outside.insert(container.project.to_owned());
-        }
+        let project = inside
+            .entry(container.project.to_owned())
+            .or_insert_with(|| Project {
+                dir,
+                containers: BTreeSet::new(),
+            });
+        project.containers.insert(container.id.to_owned());
     }
     let shared: Vec<String> = outside
         .into_iter()
@@ -67,31 +79,36 @@ pub fn select(listing: &str, trees: &[PathBuf]) -> Selection {
         .collect();
     inside.retain(|project, _| !shared.contains(project));
     assert!(
-        shared.iter().all(|p| !inside.contains_key(p)),
-        "a shared project is never inside"
+        inside.values().all(|p| !p.containers.is_empty()),
+        "a selected project has a container"
     );
     Selection { inside, shared }
 }
 
 /// One line of the `docker ps` listing.
 struct Container<'a> {
+    id: &'a str,
     project: &'a str,
     configs: Vec<PathBuf>,
     working_dir: Option<PathBuf>,
 }
 
 impl<'a> Container<'a> {
-    /// `None` for a line no project labels.
+    /// `None` for a line no project labels, or whose ID is not the hex one
+    /// Docker prints: it goes to `docker stop` as an argument.
     fn parse(line: &'a str) -> Option<Self> {
         let mut fields = line.split('\t');
+        let id = fields.next()?.trim();
         let project = fields.next()?.trim();
-        if project.is_empty() {
+        let hex = !id.is_empty() && id.bytes().all(|b| b.is_ascii_hexdigit());
+        if !hex || project.is_empty() {
             return None;
         }
         let configs = fields.next().unwrap_or_default().split(',');
         let configs = configs.map(str::trim).filter(|c| !c.is_empty());
         let working_dir = fields.next().map(str::trim).filter(|w| !w.is_empty());
         Some(Self {
+            id,
             project,
             configs: configs.map(PathBuf::from).collect(),
             working_dir: working_dir.map(PathBuf::from),
@@ -184,42 +201,84 @@ pub async fn tear_down(
         return Ok(());
     }
     let docker = Docker::new(&ctx.config.worktrees.docker);
-    let Some(listing) = docker.list_projects().await else {
-        return Ok(());
+    let listing = match docker.list(None).await {
+        Ok(listing) => listing,
+        Err(error) => {
+            tracing::debug!(%error, "docker is not available; no compose stack is looked for");
+            return Ok(());
+        }
     };
-    let selection = select(&listing, &trees_of(tree));
-    for project in &selection.shared {
-        tracing::warn!(%project, tree = %tree.display(), "a compose project also runs from outside the worktree; left running");
-    }
-    let failures = stop_projects(&docker, item, &selection.inside).await;
-    report_failures(ctx, item, tree, when, &failures).await
-}
-
-/// `down` each of `projects`; the failures.
-async fn stop_projects(
-    docker: &Docker<'_>,
-    item: &QueueItemId,
-    projects: &BTreeMap<String, PathBuf>,
-) -> Vec<String> {
+    let trees = trees_of(tree);
+    let selection = select(&listing, &trees);
+    warn_shared(&selection.shared, tree);
     let mut failures = Vec::new();
-    for (project, dir) in projects {
-        assert!(dir.is_absolute(), "compose records absolute directories");
-        tracing::info!(%project, %item, dir = %dir.display(), "tearing down a compose stack an item left");
-        if let Err(error) = docker.down(project).await {
+    for project in selection.inside.keys() {
+        tracing::info!(%project, %item, tree = %tree.display(), "tearing down a compose stack an item left");
+        if let Err(error) = stop_project(&docker, project, &trees).await {
             failures.push(format!("{project}: {error}"));
         }
     }
-    assert!(failures.len() <= projects.len(), "one note per project");
-    failures
+    assert!(
+        failures.len() <= selection.inside.len(),
+        "one note per project"
+    );
+    report_failures(ctx, item, tree, when, &failures).await
+}
+
+fn warn_shared(shared: &[String], tree: &Path) {
+    for project in shared {
+        tracing::warn!(%project, tree = %tree.display(), "a compose project also runs from outside the worktree; left running");
+    }
+}
+
+/// List `project` again and, if each of its containers still runs from
+/// `trees`, stop and remove those containers, then its networks once none
+/// of its containers is left. One that changed since is left running.
+async fn stop_project(
+    docker: &Docker<'_>,
+    project: &str,
+    trees: &[PathBuf],
+) -> Result<(), ArchonError> {
+    let selection = select(&docker.list(Some(project)).await?, trees);
+    warn_shared(&selection.shared, &trees[0]);
+    let Some(verified) = selection.inside.get(project) else {
+        tracing::info!(%project, "the compose project is gone or changed since it was listed; left alone");
+        return Ok(());
+    };
+    assert!(
+        verified.dir.is_absolute(),
+        "compose records absolute directories"
+    );
+    let ids: Vec<&str> = verified.containers.iter().map(String::as_str).collect();
+    assert!(!ids.is_empty(), "a selected project has a container");
+    docker
+        .run(&[&["stop"], &ids[..]].concat(), STOP_TIMEOUT)
+        .await?;
+    docker
+        .run(&[&["rm"], &ids[..]].concat(), LIST_TIMEOUT)
+        .await?;
+    if !docker.list(Some(project)).await?.trim().is_empty() {
+        tracing::info!(%project, "other containers of the compose project remain; its networks are kept");
+        return Ok(());
+    }
+    let networks = docker.networks(project).await?;
+    if networks.is_empty() {
+        return Ok(());
+    }
+    let networks: Vec<&str> = networks.iter().map(String::as_str).collect();
+    docker
+        .run(&[&["network", "rm"], &networks[..]].concat(), LIST_TIMEOUT)
+        .await
+        .map(drop)
 }
 
 /// The `docker ps` listing [`select`] reads, of every Compose container;
 /// `None` when `docker` is missing or its daemon unreachable.
 pub async fn list(docker: &Path) -> Option<String> {
-    Docker::new(docker).list_projects().await
+    Docker::new(docker).list(None).await.ok()
 }
 
-/// The command that stops `project` as a teardown at a run's end does.
+/// The command an operator runs to stop `project`, whichever checkout runs it.
 pub fn down_command(project: &str) -> String {
     assert!(!project.is_empty(), "compose projects are named");
     format!("docker compose --project-name {project} down --remove-orphans")
@@ -279,32 +338,43 @@ impl<'a> Docker<'a> {
         Self { binary }
     }
 
-    /// Every Compose container's project, config files and working
-    /// directory; `None` when Docker is missing or its daemon unreachable.
-    async fn list_projects(&self) -> Option<String> {
+    /// Each Compose container's ID, project, config files and working
+    /// directory; only `project`'s when one is named.
+    async fn list(&self, project: Option<&str>) -> Result<String, ArchonError> {
         let format = format!(
-            "{{{{.Label \"{PROJECT_LABEL}\"}}}}\t{{{{.Label \"{PROJECT_LABEL}.config_files\"}}}}\t{{{{.Label \"{PROJECT_LABEL}.working_dir\"}}}}"
+            "{{{{.ID}}}}\t{{{{.Label \"{PROJECT_LABEL}\"}}}}\t{{{{.Label \"{PROJECT_LABEL}.config_files\"}}}}\t{{{{.Label \"{PROJECT_LABEL}.working_dir\"}}}}"
         );
-        let filter = format!("label={PROJECT_LABEL}");
-        let args = ["ps", "--all", "--filter", &filter, "--format", &format];
-        match self.run(&args, LIST_TIMEOUT).await {
-            Ok(listing) => Some(listing),
-            Err(error) => {
-                tracing::debug!(%error, "docker is not available; no compose stack is looked for");
-                None
-            }
-        }
+        let filter = match project {
+            Some(project) => format!("label={PROJECT_LABEL}={project}"),
+            None => format!("label={PROJECT_LABEL}"),
+        };
+        let args = [
+            "ps",
+            "--all",
+            "--no-trunc",
+            "--filter",
+            &filter,
+            "--format",
+            &format,
+        ];
+        self.run(&args, LIST_TIMEOUT).await
     }
 
-    async fn down(&self, project: &str) -> Result<(), ArchonError> {
-        let args = [
-            "compose",
-            "--project-name",
-            project,
-            "down",
-            "--remove-orphans",
-        ];
-        self.run(&args, DOWN_TIMEOUT).await.map(drop)
+    /// The IDs of `project`'s networks.
+    async fn networks(&self, project: &str) -> Result<Vec<String>, ArchonError> {
+        let filter = format!("label={PROJECT_LABEL}={project}");
+        let args = ["network", "ls", "--filter", &filter, "--format", "{{.ID}}"];
+        let listing = self.run(&args, LIST_TIMEOUT).await?;
+        let ids: Vec<String> = listing.split_whitespace().map(str::to_owned).collect();
+        if let Some(odd) = ids
+            .iter()
+            .find(|id| !id.bytes().all(|b| b.is_ascii_hexdigit()))
+        {
+            return Err(ArchonError::Unavailable(format!(
+                "docker network ls printed {odd:?}, not a network ID"
+            )));
+        }
+        Ok(ids)
     }
 
     /// stdout of a successful call; a failure carries stderr.
@@ -345,25 +415,33 @@ mod tests {
         vec![PathBuf::from("/data/worktrees/app/qi_1")]
     }
 
+    fn project(dir: &str, containers: &[&str]) -> Project {
+        Project {
+            dir: PathBuf::from(dir),
+            containers: containers.iter().map(|&c| c.to_owned()).collect(),
+        }
+    }
+
     #[test]
     fn a_project_whose_config_lies_in_the_worktree_is_selected() {
-        let listing = "review-1\t/data/worktrees/app/qi_1/compose.yml,/data/worktrees/app/qi_1/compose.dev.yml\t/data/worktrees/app/qi_1\n\
-                       review-1\t/data/worktrees/app/qi_1/compose.yml\t/data/worktrees/app/qi_1\n";
+        let listing = "a1\treview-1\t/data/worktrees/app/qi_1/compose.yml,/data/worktrees/app/qi_1/compose.dev.yml\t/data/worktrees/app/qi_1\n\
+                       b2\treview-1\t/data/worktrees/app/qi_1/compose.yml\t/data/worktrees/app/qi_1\n";
         let selection = select(listing, &trees());
-        let dir = PathBuf::from("/data/worktrees/app/qi_1");
+        let review = project("/data/worktrees/app/qi_1", &["a1", "b2"]);
         assert_eq!(
             selection.inside,
-            BTreeMap::from([("review-1".to_owned(), dir)])
+            BTreeMap::from([("review-1".to_owned(), review)])
         );
         assert!(selection.shared.is_empty());
     }
 
     #[test]
     fn projects_from_elsewhere_or_a_sibling_worktree_are_left_alone() {
-        let listing = "mine\t/home/op/app/compose.yml\t/home/op/app\n\
-                       sibling\t/data/worktrees/app/qi_10/compose.yml\t/data/worktrees/app/qi_10\n\
-                       climbing\t/data/worktrees/app/qi_1/../../../etc/compose.yml\t\n\
-                       \t\t\n";
+        let listing = "a1\tmine\t/home/op/app/compose.yml\t/home/op/app\n\
+                       a2\tsibling\t/data/worktrees/app/qi_10/compose.yml\t/data/worktrees/app/qi_10\n\
+                       a3\tclimbing\t/data/worktrees/app/qi_1/../../../etc/compose.yml\t\n\
+                       a4\t\t\t\n\
+                       --rm\tflagged\t/data/worktrees/app/qi_1/compose.yml\t/data/worktrees/app/qi_1\n";
         let selection = select(listing, &trees());
         assert!(selection.inside.is_empty(), "{selection:?}");
         assert!(selection.shared.is_empty(), "{selection:?}");
@@ -371,20 +449,20 @@ mod tests {
 
     #[test]
     fn a_project_that_also_runs_from_outside_is_never_touched() {
-        let listing = "app\t/data/worktrees/app/qi_1/compose.yml\t/data/worktrees/app/qi_1\n\
-                       app\t/home/op/app/compose.yml\t/home/op/app\n\
-                       unplaced\t/data/worktrees/app/qi_1/compose.yml\t/data/worktrees/app/qi_1\n\
-                       unplaced\t\t\n\
-                       nested\t\t/data/worktrees/app/qi_1/services/db\n";
+        let listing = "a1\tapp\t/data/worktrees/app/qi_1/compose.yml\t/data/worktrees/app/qi_1\n\
+                       a2\tapp\t/home/op/app/compose.yml\t/home/op/app\n\
+                       a3\tunplaced\t/data/worktrees/app/qi_1/compose.yml\t/data/worktrees/app/qi_1\n\
+                       a4\tunplaced\t\t\n\
+                       a5\tnested\t\t/data/worktrees/app/qi_1/services/db\n";
         let selection = select(listing, &trees());
         assert_eq!(
             selection.shared,
             vec!["app".to_owned(), "unplaced".to_owned()]
         );
-        let dir = PathBuf::from("/data/worktrees/app/qi_1/services/db");
+        let nested = project("/data/worktrees/app/qi_1/services/db", &["a5"]);
         assert_eq!(
             selection.inside,
-            BTreeMap::from([("nested".to_owned(), dir)])
+            BTreeMap::from([("nested".to_owned(), nested)])
         );
     }
 
@@ -397,7 +475,7 @@ mod tests {
         std::os::unix::fs::symlink(&gone, tree.join("ext")).unwrap();
         let place = tree.join("ext/compose.yml");
         let listing = format!(
-            "theirs\t{}\t{}\n",
+            "a1\ttheirs\t{}\t{}\n",
             place.display(),
             tree.join("ext").display()
         );
@@ -429,7 +507,7 @@ mod tests {
             assert_eq!(unreadable, None);
         }
         assert!(!lies_within(&place, &trees_of(&tree)));
-        let relative = "app\tcompose.yml\tsome/dir\n";
+        let relative = "a1\tapp\tcompose.yml\tsome/dir\n";
         assert!(select(relative, &trees_of(&tree)).inside.is_empty());
         assert_eq!(resolved(Path::new("some/dir")), None);
     }
@@ -460,14 +538,15 @@ mod tests {
         std::os::unix::fs::symlink(&checkout, tree.join("ext")).unwrap();
         let line = |project: &str, dir: &Path| {
             format!(
-                "{project}\t{}\t{}\n",
+                "c0\t{project}\t{}\t{}\n",
                 dir.join("compose.yml").display(),
                 dir.display()
             )
         };
         let listing = line("theirs", &tree.join("ext")) + &line("ours", &tree.join("db"));
         let selection = select(&listing, &trees_of(&tree));
-        let ours = BTreeMap::from([("ours".to_owned(), tree.join("db"))]);
+        let db = tree.join("db");
+        let ours = BTreeMap::from([("ours".to_owned(), project(db.to_str().unwrap(), &["c0"]))]);
         assert_eq!(selection.inside, ours);
         assert!(selection.shared.is_empty(), "{selection:?}");
     }

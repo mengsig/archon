@@ -151,22 +151,22 @@ async fn a_runs_compose_stack_stops_at_its_end_and_gc_keeps_its_volumes() {
     let item = h.enqueue("starts a stack").await;
     h.dispatch().await;
     let tree = h.run(&item.id).await.workspace;
-    docker.lists("ps", &[container("review-1", &tree)]);
+    docker.lists("ps", &[container("a1", "review-1", &tree)]);
     let cancel = Request::CancelItem {
         item: item.id.clone(),
         reason: None,
     };
     h.cli(cancel).await.expect("cancel");
     h.dispatch().await;
-    let down = "compose --project-name review-1 down --remove-orphans";
-    assert_eq!(docker.downs(), [down], "{:?}", docker.calls());
+    let torn = ["stop a1", "rm a1"];
+    assert_eq!(docker.removals(), torn, "{:?}", docker.calls());
 
     age_finished_runs(&h, &item).await;
     let report = gc_request(&h, Some(0), false).await;
     assert_eq!(report.removed, vec![tree.clone()], "{report:?}");
     let calls = docker.calls();
     assert!(!calls.iter().any(|c| c.contains("volume")), "{calls:?}");
-    assert_eq!(docker.downs(), [down], "nothing else was torn down");
+    assert_eq!(docker.removals(), torn, "nothing else was torn down");
 }
 
 async fn retry(h: &Harness, item: &QueueItem) {

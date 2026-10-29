@@ -1134,6 +1134,55 @@ async fn a_finished_items_report_session_is_ended_and_its_poll_stopped() {
     assert!(harness.system_notes().await.is_empty());
 }
 
+/// A page shown again while its settled session is being ended keeps the
+/// new session: ending waits for the publication, then sees it changed.
+#[tokio::test]
+async fn a_page_shown_again_while_it_is_retired_keeps_its_new_session() {
+    let (axi, lavish) = FakeAxi::new();
+    axi.opens_at(URL);
+    axi.reply("end", "session:\n  status: ended\n");
+    let harness = Harness::with(Config::default(), Some(lavish)).await;
+    let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
+    let supervisor = tokio::spawn(reports::supervise(harness.ctx.clone()));
+    reports::publish(&harness.ctx, "Findings", &axi.html, Some(&item))
+        .await
+        .unwrap();
+    harness
+        .eventually("the report is polled", || async { polls(&axi) == 1 })
+        .await;
+    // Shown again as its item ends: Lavish holds the second open meanwhile.
+    let hold = axi.dir.path().join("open.2.hold");
+    std::fs::write(&hold, "").unwrap();
+    let (ctx, html, shown) = (harness.ctx.clone(), axi.html.clone(), item.clone());
+    let again =
+        tokio::spawn(async move { reports::publish(&ctx, "Findings", &html, Some(&shown)).await });
+    harness
+        .eventually("the page is being shown again", || async {
+            axi.dir.path().join("open.2.pid").exists()
+        })
+        .await;
+    executor::cancel_item(&harness.ctx, &item, "done")
+        .await
+        .unwrap();
+    let pid = poll_pid(&axi, 1);
+    harness
+        .eventually("the settled report's poll is stopped", || async {
+            is_gone(pid)
+        })
+        .await;
+    std::fs::remove_file(&hold).unwrap();
+    again.await.unwrap().unwrap();
+    harness
+        .eventually("the page shown again is polled", || async {
+            polls(&axi) == 2
+        })
+        .await;
+    supervisor.abort();
+    let calls = axi.calls();
+    assert!(!calls.iter().any(|c| c.starts_with("end ")), "{calls:?}");
+    assert_eq!(report_state(&harness).await.as_deref(), Some("open"));
+}
+
 /// A session left open by an item that finished while no
 /// supervisor ran is ended when the supervisor starts, not polled.
 #[tokio::test]

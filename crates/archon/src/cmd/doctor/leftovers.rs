@@ -25,8 +25,8 @@ pub(super) async fn check_compose(config: &Config, worktrees: &Path, archond: &A
     };
     let selection = archon_daemon::compose::select(&listing, &[worktrees.to_path_buf()]);
     let mut stale = Vec::new();
-    for (project, dir) in &selection.inside {
-        let Some(item) = item_of(dir, worktrees) else {
+    for (project, found) in &selection.inside {
+        let Some(item) = item_of(&found.dir, worktrees) else {
             continue;
         };
         if let Some(why) = left_behind(archond, &item).await {

@@ -2,7 +2,6 @@
 //! entries, the orchestrator trigger, and worktree cleanup.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
 
 use archon_core::catalog::{StageKind, is_snapshot_of};
 use archon_core::error::ArchonError;
@@ -17,7 +16,7 @@ use archon_queue::Store;
 use chrono::TimeDelta;
 
 use super::repair::{self, Decision, Repair};
-use super::{Cleanup, FollowUp, ItemBuild, RunTable, clip, frozen};
+use super::{Cleanup, FollowUp, ItemBuild, RunTable, Teardown, clip, frozen};
 use crate::context::DaemonContext;
 use crate::resolve;
 use crate::triggers::{self, TriggerEvent};
@@ -92,7 +91,7 @@ pub(super) async fn finish_run(
     crate::reports::close_stale_questions(ctx).await?;
     if let Some(repaired) = repair {
         let mut follow = repaired_follow_up(ctx, &run, &repaired).await?;
-        follow.stacks.extend(stacks_of(ctx, &run));
+        follow.stacks.extend(stacks_of(ctx, &run).await?);
         return Ok(follow);
     }
     assert!(item.state.is_terminal(), "finish_run settles the item");
@@ -100,7 +99,7 @@ pub(super) async fn finish_run(
     announce(ctx, &item, Some(&run), blocker, pr_url).await?;
     let mut follow = FollowUp::poke();
     follow.stop.push(run.id.clone());
-    follow.stacks.extend(stacks_of(ctx, &run));
+    follow.stacks.extend(stacks_of(ctx, &run).await?);
     follow.cleanup.extend(cleanup_for(ctx, &item, &run).await?);
     follow.release_builds.extend(item_build(ctx, &item).await?);
     follow.discard.push(run.id.clone());
@@ -129,17 +128,37 @@ async fn repaired_follow_up(
     Ok(follow)
 }
 
-/// The worktree whose Compose stacks a finished run's stages may have left
-/// running: a team run's whole directory, or its one worktree when Archon
-/// made it.
-fn stacks_of(ctx: &DaemonContext, run: &PipelineRun) -> Option<(QueueItemId, PathBuf)> {
+/// The teardown of the Compose stacks a finished run's stages may have left
+/// in its worktree (a team run's whole directory) when Archon made it. Its
+/// mark keeps a requeued or retried run of the worktree from starting until
+/// the teardown is done; the caller holds the run table, as dispatch does.
+async fn stacks_of(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+) -> Result<Option<Teardown>, ArchonError> {
     assert!(run.state.is_terminal(), "only a finished run's stacks go");
     let tree = run
         .team_root
         .clone()
         .unwrap_or_else(|| run.workspace.clone());
-    let ours = tree.starts_with(&ctx.paths.worktrees) && tree != ctx.paths.worktrees;
-    ours.then(|| (run.item.clone(), tree))
+    if !tree.starts_with(&ctx.paths.worktrees) || tree == ctx.paths.worktrees {
+        return Ok(None);
+    }
+    let owner = crate::worktree::users::owner(&*ctx.store.lock().await, &run.item)?;
+    let Some(mark) = ctx.collecting.mark(owner.clone()) else {
+        // Its holder works in the worktree; `archon doctor` names what it leaves.
+        tracing::warn!(item = %run.item, %owner, tree = %tree.display(), "the worktree is busy; its compose stacks are left running");
+        return Ok(None);
+    };
+    assert!(
+        ctx.collecting.contains(&owner),
+        "the teardown holds the owner"
+    );
+    Ok(Some(Teardown {
+        item: run.item.clone(),
+        tree,
+        mark,
+    }))
 }
 
 /// A team run's role branches that reached its run branch go with the run,

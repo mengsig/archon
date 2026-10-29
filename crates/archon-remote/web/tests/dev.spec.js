@@ -1,7 +1,7 @@
 // Every flow against a real archond through the dev bridge.
 import { test as base, expect } from '@playwright/test';
 import { FLOWS, openApp, ensureRepo } from './flows.js';
-import { enqueue, notify } from './support/seed.js';
+import { enqueue, notify, askOperator } from './support/seed.js';
 import { startDevFixture } from './support/fixture.js';
 import { guardConsole } from './support/console-guard.js';
 
@@ -262,4 +262,51 @@ test('Markdown renders as elements in chat and stage summaries, never as markup'
   await page.getByRole('button', { name: 'Show less' }).click();
   await expect(summary).not.toContainText('Final block');
   await expect(page.locator('script:not([src])')).toHaveCount(0);
+});
+
+const WIDE = 'x'.repeat(160);
+const WIDE_MD = ['Wide content:', '', '```', WIDE, '```', '', '| a | b |', '|--|--|', `| ${WIDE} | cell |`].join('\n');
+
+// The page never scrolls sideways, and each wide box scrolls inside the viewport.
+async function expectContained(page, scope) {
+  const page_ = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }));
+  expect(page_.scroll, 'the page scrolls sideways').toBeLessThanOrEqual(page_.client);
+  const boxes = scope.locator('.md-pre, .md-scroll');
+  expect(await boxes.count()).toBeGreaterThan(0);
+  for (const box of await boxes.all()) {
+    const size = await box.evaluate((el) => ({ right: el.getBoundingClientRect().right, scroll: el.scrollWidth, client: el.clientWidth, width: innerWidth }));
+    expect(size.right).toBeLessThanOrEqual(size.width);
+    expect(size.scroll).toBeGreaterThan(size.client);
+  }
+}
+
+test('wide Markdown code and tables scroll inside their block, never the page', async ({ page, fixture }) => {
+  await ensureRepo(fixture, 'archon');
+  const item = await enqueue(fixture.archond, { repo: 'archon', title: `Wide ${Date.now().toString(36)}`, brief: WIDE_MD });
+  await notify(fixture.archond, 'outcome', WIDE_MD);
+  await askOperator(fixture.archond, WIDE_MD);
+  await laceReplies(page, (reply) => {
+    if (reply.reply === 'feed') reply.data.push({ seq: 1_000_001, at: new Date().toISOString(), entry: { entry: 'orchestrator', text: WIDE_MD } });
+    if (reply.reply === 'item_detail' && reply.data.item.id === item.id) {
+      reply.data.stages = [{
+        id: 'stage_wide', run: reply.data.runs?.[0]?.id ?? 'run_wide', stage_id: 'implement', attempt: 1, fan_index: 0, state: { state: 'failed', error: WIDE_MD },
+        started_at: new Date(Date.now() - 60_000).toISOString(), finished_at: new Date().toISOString(), cost_usd: 0, model_segments: [], summary: WIDE_MD,
+      }];
+    }
+  });
+
+  await openApp(page, fixture, '#/chat');
+  await expect(page.locator('.from-orchestrator .bubble').last().locator('table')).toBeVisible();
+  await expectContained(page, page.locator('.from-orchestrator .bubble').last());
+  await expectContained(page, page.locator('.feed-note-outcome').filter({ hasText: 'Wide content' }).last());
+
+  await page.goto(`${fixture.baseURL}/#/inbox`);
+  await expect(page.locator('.question-text table').first()).toBeVisible();
+  await expectContained(page, page.locator('.question-card').filter({ hasText: 'Wide content' }).first());
+
+  await page.goto(`${fixture.baseURL}/#/item/${item.id}`);
+  await page.getByRole('button', { name: 'Show full brief' }).click();
+  await page.getByRole('button', { name: 'Show all' }).click();
+  await expect(page.locator('.timeline-summary table')).toBeVisible();
+  await expectContained(page, page.locator('.item-detail'));
 });

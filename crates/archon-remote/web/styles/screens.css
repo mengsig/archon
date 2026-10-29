@@ -302,6 +302,8 @@
 }
 .bubble-row { display: grid; gap: 3px; justify-items: start; max-width: 84%; }
 .bubble-row.from-operator { justify-self: end; justify-items: end; }
+/* A bubble holding a scroll box takes the full row, which its zero-width box cannot ask for. */
+.bubble-row:has(.md-pre, .md-scroll) { width: 84%; justify-items: stretch; }
 .bubble {
   padding: 9px 14px;
   border-radius: 20px;
@@ -324,7 +326,7 @@
   padding: var(--space-1) var(--space-6);
   text-align: center;
 }
-.feed-line-text { display: grid; font-size: 14px; color: var(--text-2); overflow-wrap: anywhere; }
+.feed-line-text { display: grid; justify-self: stretch; font-size: 14px; color: var(--text-2); overflow-wrap: anywhere; }
 .feed-line-label { font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; color: var(--text-3); }
 .feed-line .link-button { min-height: 30px; font-size: 14px; }
 .feed-question .feed-line-label, .feed-note-blocker .feed-line-label { color: var(--amber); }

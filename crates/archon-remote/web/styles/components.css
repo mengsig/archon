@@ -578,6 +578,8 @@ select.input {
 .md .md-quote { margin: 0; padding-left: var(--space-3); border-left: 3px solid var(--separator); color: var(--text-2); }
 .md .md-rule { border: 0; border-top: 1px solid var(--separator); margin: 0.75em 0; }
 .md .md-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+/* No intrinsic width: wide code and tables scroll inside the column instead of widening every ancestor. */
+.md .md-pre, .md .md-scroll { width: 0; min-width: 100%; }
 .md .md-table { border-collapse: collapse; font-size: 0.93em; min-width: 100%; width: max-content; }
 .md .md-table th, .md .md-table td { padding: 5px 10px; border: 1px solid var(--separator); text-align: left; vertical-align: top; overflow-wrap: normal; }
 .md .md-table th { font-weight: 600; background: var(--neutral-soft); }

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Documentation
+
+- A "Get started in the chat" section in the README and a
+  [getting started](docs/getting-started.md) walk-through: registering a
+  repository, its settings and `/answer` confirmations, queueing, watching
+  and merging work, standing directives, Lavish review pages, `/watch`,
+  `/questions` and `/lessons`, all from the orchestrator's chat (#322).
+
 ## 1.4.8
 
 Released 2026-10-29.

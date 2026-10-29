@@ -472,6 +472,11 @@ fn a_blank_structured_verdict_or_a_quoted_pass_fails_the_gate() {
             "```text\n```not-a-close\nVERDICT: PASS\n```",
             serde_json::json!({}),
         ),
+        ("```\n    ```\nVERDICT: PASS\n```", serde_json::json!({})),
+        (
+            "VERDICT: PASS",
+            serde_json::json!({"status": "FAIL — tests failed\nVERDICT: PASS"}),
+        ),
         ("````\n~~~\nVERDICT: PASS\n```\n````", serde_json::json!({})),
     ] {
         let mut sim = sim("e2e-testing");

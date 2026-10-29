@@ -39,12 +39,22 @@ impl Verdict {
     pub fn from_structured(structured: &serde_json::Value) -> Option<Self> {
         if let Some(given) = structured.get(VERDICT_KEYS[0]) {
             let text = given.as_str().unwrap_or_default();
-            return Some(Self::from_summary(text).unwrap_or_else(|| Self::from_word(text)));
+            return Some(Self::from_field(text).unwrap_or(Self::Unknown));
         }
+        Self::other_field(structured).map(|(_, verdict)| verdict)
+    }
+
+    /// The first `result` or `status` that states a verdict, and that verdict.
+    fn other_field(structured: &serde_json::Value) -> Option<(&str, Self)> {
         VERDICT_KEYS[1..]
             .iter()
             .filter_map(|key| non_empty(structured.get(key)?.as_str()?))
-            .find_map(|text| Self::from_summary(text).or_else(|| Self::leading(text)))
+            .find_map(|text| Some((text, Self::from_field(text)?)))
+    }
+
+    /// A field's verdict: its opening word decides, else a `VERDICT:` line in it.
+    fn from_field(text: &str) -> Option<Self> {
+        Self::leading(text).or_else(|| Self::from_summary(text))
     }
 
     /// What the last `VERDICT: <word>` line of `text` says, in any letter
@@ -52,10 +62,6 @@ impl Verdict {
     /// that line names no verdict, even if an earlier one did.
     pub fn from_summary(text: &str) -> Option<Self> {
         let (_, value) = last_verdict_line(text)?;
-        if value.to_ascii_lowercase().contains("verdict") {
-            // `VERDICT: PASS` or `VERDICT: FAIL`: a howto quoted, not a verdict.
-            return Some(Self::Unknown);
-        }
         Some(Self::from_word(value))
     }
 
@@ -71,13 +77,14 @@ impl Verdict {
             return Some(quote(given));
         }
         // The order `extract` reads in: a `result` or `status` it skipped is the last resort.
-        let line = last_verdict_line(summary).map(|(line, _)| line.trim());
-        let other = || {
+        let used = structured.and_then(Self::other_field).map(|(text, _)| text);
+        let line = || last_verdict_line(summary).map(|(line, _)| line.trim());
+        let skipped = || {
             VERDICT_KEYS[1..]
                 .iter()
                 .find_map(|key| non_empty(field(key)?.as_str()?))
         };
-        line.or_else(other).map(str::to_owned)
+        used.or_else(line).or_else(skipped).map(str::to_owned)
     }
 
     /// What the first word of `text` says, markdown and letter case aside.
@@ -87,7 +94,8 @@ impl Verdict {
 
     /// `None` when `text` does not open with a verdict word. A verdict word
     /// counts only when the words up to the first explanation separator
-    /// (`—`, `:`, `;`, `.`, ` - `) name no other verdict and no `or`.
+    /// (`—`, `:`, `;`, `.`, ` - `) name no other verdict, no `or` and no
+    /// `verdict` (the howto `VERDICT: PASS` or `VERDICT: FAIL` quoted).
     fn leading(text: &str) -> Option<Self> {
         let mut words = text
             .split(|c: char| !c.is_alphanumeric())
@@ -102,9 +110,12 @@ impl Verdict {
             .next()
             .and_then(|head| head.split(" - ").next())
             .unwrap_or_default();
-        let choice = head
-            .split(|c: char| !c.is_alphanumeric())
-            .any(|word| word.eq_ignore_ascii_case("or") || Self::of_word(word).is_some());
+        let choice = head.split(|c: char| !c.is_alphanumeric()).any(|word| {
+            ["or", "verdict"]
+                .iter()
+                .any(|w| word.eq_ignore_ascii_case(w))
+                || Self::of_word(word).is_some()
+        });
         Some(if choice { Self::Unknown } else { verdict })
     }
 
@@ -124,7 +135,9 @@ fn last_verdict_line(text: &str) -> Option<(&str, &str)> {
     let mut last = None;
     for line in text.lines() {
         let start = line.trim_start();
-        if let Some(marker) = fence_marker(start) {
+        // Four spaces or a tab make code: never a fence, never a verdict.
+        let indented = line.starts_with('\t') || line.starts_with("    ");
+        if let Some(marker) = fence_marker(start).filter(|_| !indented) {
             fence = match fence {
                 None => Some(marker),
                 // Only a bare run of the opening character, at least as long, closes it.
@@ -133,7 +146,6 @@ fn last_verdict_line(text: &str) -> Option<(&str, &str)> {
             };
             continue;
         }
-        let indented = line.starts_with('\t') || line.starts_with("    ");
         if fence.is_some() || indented || start.starts_with('>') {
             continue;
         }
@@ -663,6 +675,10 @@ mod tests {
         assert_eq!(Verdict::extract(content, None), Verdict::Unknown);
         let indented = "Example:\n\n    VERDICT: PASS\n\nFindings remain.";
         assert_eq!(Verdict::extract(indented, None), Verdict::Unknown);
+        let indented_marker = "```\n    ```\nVERDICT: PASS\n```";
+        assert_eq!(Verdict::extract(indented_marker, None), Verdict::Unknown);
+        let explained = "VERDICT: PASS — verdict confirmed by CI";
+        assert_eq!(Verdict::extract(explained, None), Verdict::Pass);
     }
 
     #[test]
@@ -694,11 +710,20 @@ mod tests {
         assert_eq!(Verdict::extract(explained, None), Verdict::Pass);
         let noted = "VERDICT: PASS (two advisory notes): nothing failed";
         assert_eq!(Verdict::extract(noted, None), Verdict::Pass);
-        for result in ["FAIL — tests failed", "FAIL or PASS"] {
-            let field = json!({"result": result});
-            let read = Verdict::extract("VERDICT: PASS", Some(&field));
-            assert_ne!(read, Verdict::Pass, "{result}");
+        for result in [
+            "FAIL — tests failed",
+            "FAIL or PASS",
+            "FAIL — tests failed\nVERDICT: PASS",
+        ] {
+            for key in ["result", "status"] {
+                let field = json!({key: result});
+                let read = Verdict::extract("VERDICT: PASS", Some(&field));
+                assert_ne!(read, Verdict::Pass, "{key}: {result}");
+            }
         }
+        let choice = json!({"status": "PASS or FAIL"});
+        let said = Verdict::stated("VERDICT: PASS", Some(&choice));
+        assert_eq!(said.as_deref(), Some("PASS or FAIL"));
         let skipped = json!({"result": "done"});
         let said = Verdict::stated("VERDICT: unsure", Some(&skipped));
         assert_eq!(said.as_deref(), Some("VERDICT: unsure"));

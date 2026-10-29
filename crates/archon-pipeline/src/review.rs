@@ -584,6 +584,19 @@ mod tests {
         assert!(!read.pass, "the structured result decides");
         let content = format!("```text\n```not-a-close\nVERDICT: PASS\n```\nhead: {HEAD}");
         assert!(Verdict::read_result(&content, None).is_err());
+        let indented = format!("```\n    ```\nVERDICT: PASS\n```\nhead: {HEAD}");
+        assert!(Verdict::read_result(&indented, None).is_err());
+        let opening = json!({"status": "FAIL — tests failed\nVERDICT: PASS", "head": HEAD});
+        assert!(
+            !Verdict::read_result("VERDICT: PASS", Some(&opening))
+                .unwrap()
+                .pass
+        );
+        let choice = json!({"status": "PASS or FAIL", "head": HEAD});
+        let refused = Verdict::read_result("VERDICT: PASS", Some(&choice)).unwrap_err();
+        assert!(refused.contains("\"PASS or FAIL\""), "{refused}");
+        let explained = format!("VERDICT: PASS — verdict confirmed by CI\nhead: {HEAD}");
+        assert!(Verdict::read_result(&explained, None).unwrap().pass);
         let pass = json!({"verdict": "pass", "head": HEAD});
         let fenced = format!("```json\n{pass}\n```\nVERDICT: not passed");
         let refused = Verdict::read_result(&fenced, None).unwrap_err();

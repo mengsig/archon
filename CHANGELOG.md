@@ -23,7 +23,9 @@
   ended, and the `lavish-axi poll` processes beyond the reports archond
   follows, each with the command that clears them (#321).
 - Stage agents working in a worktree are told to stop every server and
-  Compose stack they started before they finish (#321).
+  Compose stack they started before they finish, unless the agent or brief
+  that gave them the task asked to leave it running; then they report what
+  still runs and how to stop it (#321).
 
 ### Documentation
 

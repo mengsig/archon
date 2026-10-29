@@ -116,27 +116,38 @@ impl<'a> Container<'a> {
 /// `place` lies inside one of `trees` both as named and with its existing
 /// part resolved, so a symlink in a worktree cannot vouch for elsewhere.
 fn lies_within(place: &Path, trees: &[PathBuf]) -> bool {
-    let named = trees.iter().any(|tree| is_within(place, tree));
+    if !trees.iter().any(|tree| is_within(place, tree)) {
+        return false;
+    }
     let Some(real) = resolved(place) else {
         return false;
     };
-    named && trees.iter().any(|tree| is_within(&real, tree))
+    trees.iter().any(|tree| is_within(&real, tree))
 }
 
 /// `path` with its longest existing part replaced by its real path; the
-/// rest, which no symlink can redirect yet, is kept as named. `None` when an
-/// entry exists but does not resolve, as a dangling symlink: it may lead anywhere.
+/// rest, which no symlink can redirect yet, is kept as named. `None` unless
+/// each part it skips is plainly absent: a dangling or unreadable one may
+/// lead anywhere, and so may a relative path.
 fn resolved(path: &Path) -> Option<PathBuf> {
-    assert!(path.is_absolute(), "compose records absolute paths");
+    if !path.is_absolute() {
+        return None;
+    }
+    let absent = |error: &std::io::Error| error.kind() == std::io::ErrorKind::NotFound;
     let mut existing = path;
     let mut rest = Vec::new();
     loop {
-        if let Ok(real) = existing.canonicalize() {
-            assert!(real.is_absolute(), "a real path is absolute");
-            return Some(rest.iter().rev().fold(real, |path, name| path.join(name)));
+        match existing.canonicalize() {
+            Ok(real) => {
+                assert!(real.is_absolute(), "a real path is absolute");
+                return Some(rest.iter().rev().fold(real, |path, name| path.join(name)));
+            }
+            Err(error) if !absent(&error) => return None,
+            Err(_) => {}
         }
-        if existing.symlink_metadata().is_ok() {
-            return None;
+        match existing.symlink_metadata() {
+            Err(error) if absent(&error) => {}
+            _ => return None,
         }
         let (Some(parent), Some(name)) = (existing.parent(), existing.file_name()) else {
             return None;
@@ -397,6 +408,30 @@ mod tests {
             resolved(&tree.join("db/x")),
             Some(tree.canonicalize().unwrap().join("db/x"))
         );
+    }
+
+    #[test]
+    fn an_unreadable_or_relative_place_is_never_inside() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let tree = dir.path().join("worktrees/app/qi_1");
+        let locked = tree.join("locked");
+        std::fs::create_dir_all(&locked).unwrap();
+        std::os::unix::fs::symlink(dir.path(), locked.join("out")).unwrap();
+        let mode = |bits| std::fs::Permissions::from_mode(bits);
+        std::fs::set_permissions(&locked, mode(0o000)).unwrap();
+        let place = locked.join("out/compose.yml");
+        let readable = std::fs::symlink_metadata(&place).is_ok();
+        let unreadable = resolved(&place);
+        std::fs::set_permissions(&locked, mode(0o755)).unwrap();
+        // Root reads through any permission; then the link itself resolves out.
+        if !readable {
+            assert_eq!(unreadable, None);
+        }
+        assert!(!lies_within(&place, &trees_of(&tree)));
+        let relative = "app\tcompose.yml\tsome/dir\n";
+        assert!(select(relative, &trees_of(&tree)).inside.is_empty());
+        assert_eq!(resolved(Path::new("some/dir")), None);
     }
 
     #[test]

@@ -132,6 +132,13 @@ function contentLine(text, col, open) {
   return !open.fence && indentOf(text, col) < 4 ? spacedIndent(text, col) : text;
 }
 
+// Does `line`, at column `col`, close a fence opened with `marks`? Its indent
+// counts in columns, though the fence's lines keep their tabs.
+function closesFence(line, marks, col) {
+  const close = CLOSE_FENCE.exec(spacedIndent(line, col));
+  return close !== null && close[1][0] === marks[0] && close[1].length >= marks.length;
+}
+
 function isFenceOpen(line) {
   const f = FENCE.exec(line);
   return f && !(f[2][0] === '`' && f[3].includes('`')) ? f : null;
@@ -175,8 +182,7 @@ function trackParagraph(open, line, col) {
   if (open.fence) {
     const inner = insidePath(line, open.fence.path);
     if (inner !== null) {
-      const close = CLOSE_FENCE.exec(inner);
-      if (close && close[1][0] === open.fence.marks[0] && close[1].length >= open.fence.marks.length) open.fence = null;
+      if (closesFence(inner, open.fence.marks, col)) open.fence = null;
       open.paragraph = false;
       return;
     }
@@ -280,8 +286,7 @@ function fencedCode(lines, start, [, lead, marks, info], col) {
   const body = [];
   let i = start + 1;
   while (i < lines.length) {
-    const close = CLOSE_FENCE.exec(lines[i]);
-    if (close && close[1][0] === marks[0] && close[1].length >= marks.length) { i += 1; break; }
+    if (closesFence(lines[i], marks, col)) { i += 1; break; }
     body.push(stripColumns(lines[i], Math.min(lead.length, indentOf(lines[i], col)), col));
     i += 1;
   }

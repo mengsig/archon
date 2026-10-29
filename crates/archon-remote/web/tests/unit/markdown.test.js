@@ -130,6 +130,15 @@ test('a marker inside quoted fenced code neither closes the fence nor lets text 
     '<blockquote class="md-quote"><ul class="md-list"><li><pre class="md-pre"><code>code</code></pre></li></ul><pre class="md-pre"><code>para</code></pre></blockquote><p>lazy</p>');
 });
 
+test('a closing fence indented by a short tab in a container closes it', () => {
+  assert.equal(md('- ```js\n  console.log(1);\n  \t```\n  Next paragraph'),
+    '<ul class="md-list"><li><pre class="md-pre"><code class="language-js">console.log(1);</code></pre>Next paragraph</li></ul>');
+  assert.equal(md('> ```js\n> console.log(1);\n> \t```\n> Next paragraph'),
+    '<blockquote class="md-quote"><pre class="md-pre"><code class="language-js">console.log(1);</code></pre><p>Next paragraph</p></blockquote>');
+  assert.equal(md('- ```\n  a\n  \t```\nlazy?'), '<ul class="md-list"><li><pre class="md-pre"><code>a</code></pre></li></ul><p>lazy?</p>');
+  assert.equal(md('```\na\n\t```\nb'), '<pre class="md-pre"><code>a\n\t```\nb</code></pre>');
+});
+
 test('thematic breaks', () => {
   for (const src of ['---', '***', '___', '- - -', ' * * *']) assert.equal(md(src), '<hr class="md-rule">', src);
   assert.equal(md('a\n\n---\n\nb'), '<p>a</p><hr class="md-rule"><p>b</p>');

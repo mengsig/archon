@@ -83,7 +83,8 @@ pub fn instructions(
 }
 
 /// The section naming when Archon stops a stage of `kind` in `mode`: `minutes`
-/// after its start, at `deadline`. Only a committing stage is told to commit.
+/// after its start, at `deadline`. Only a stage that may commit hears of
+/// committing, and only if its task has it commit: some work stages do not.
 pub fn deadline_rule(
     kind: StageKind,
     mode: WorkspaceMode,
@@ -94,7 +95,10 @@ pub fn deadline_rule(
     let commits =
         mode == WorkspaceMode::Worktree && matches!(kind, StageKind::Work | StageKind::Team);
     let pace = match commits {
-        true => "Commit each working step as you go, so a retry builds on it, and finish",
+        true => {
+            "If your task has you commit, commit each working step as you go, so a \
+             retry builds on it. Finish"
+        }
         false => "Finish",
     };
     let rule = format!(
@@ -834,11 +838,11 @@ mod tests {
         assert!(work.contains("at 2026-10-30 14:05 UTC, 180 minutes after your start"));
         assert!(work.contains("every agent you delegated to"), "{work}");
         assert!(
-            work.contains("Commit each working step as you go"),
+            work.contains("If your task has you commit, commit each working step as you go"),
             "{work}"
         );
         let team = deadline_rule(StageKind::Team, WorkspaceMode::Worktree, 90, at);
-        assert!(team.contains("Commit each working step"), "{team}");
+        assert!(team.contains("If your task has you commit"), "{team}");
         for (kind, mode) in [
             (StageKind::Review, WorkspaceMode::Worktree),
             (StageKind::Report, WorkspaceMode::Worktree),
@@ -848,7 +852,7 @@ mod tests {
             let text = deadline_rule(kind, mode, 45, at);
             assert!(text.contains("45 minutes after your start"), "{text}");
             assert!(text.contains("Finish with time to spare."), "{text}");
-            assert!(!text.contains("Commit"), "{kind:?} in {mode:?}: {text}");
+            assert!(!text.contains("commit"), "{kind:?} in {mode:?}: {text}");
         }
     }
 

@@ -169,6 +169,7 @@ async fn the_implementer_is_resumed_through_every_fix_and_reviewers_stay_fresh()
         assert!(told.contains(FINDINGS), "{told}");
         assert!(told.contains(&format!("attempt {attempt}")), "{told}");
         assert!(told.contains("Archon now stops you"), "{told}");
+        assert!(told.contains("If your task has you commit"), "{told}");
         answers(&h, &fix, "added tests/greet.rs; cargo test passes").await;
         let fixed = &h.stages(&item.id).await;
         let fixed = fixed.iter().find(|s| s.id == fix.id).expect("the fix");

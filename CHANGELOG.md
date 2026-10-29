@@ -43,8 +43,9 @@
   still stops the stage when it passes.
 - Every stage agent's contract names its deadline: the time Archon stops it
   and every agent it delegated to, and how many minutes after its start that
-  is, with an item's own `stage_timeouts` applied. A stage that commits is
-  told to commit each working step as it goes, so a retry builds on it. An
+  is, with an item's own `stage_timeouts` applied. A `work` or `team` stage
+  in a worktree is told that, if its task has it commit, it commits each
+  working step as it goes, so a retry builds on it. An
   agent resumed for a fix is told its new deadline with the findings.
   Before, an agent saw its deadline only if it asked Aether.
 

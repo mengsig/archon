@@ -166,8 +166,8 @@ pub(super) fn with_deadline(mut kept: KeptAgent, until: Option<Timestamp>) -> Ke
         return kept;
     };
     kept.message.push_str(&format!(
-        "\n\nArchon now stops you and every agent you delegated to at {}. Commit each \
-         working step as you go, and finish with time to spare.",
+        "\n\nArchon now stops you and every agent you delegated to at {}. If your task \
+         has you commit, commit each working step as you go. Finish with time to spare.",
         until.format("%Y-%m-%d %H:%M UTC")
     ));
     kept

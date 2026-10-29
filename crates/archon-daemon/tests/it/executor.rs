@@ -833,7 +833,7 @@ async fn an_item_timeout_set_before_a_retry_is_the_retried_agents_deadline() {
     let retried = h.backend.requests().pop().expect("the retried spawn");
     let wanted = stage.started_at + chrono::Duration::minutes(150);
     assert_eq!(retried.deadline, Some(wanted));
-    let told = "150 minutes after your start, and the stage fails. Commit each working step";
+    let told = "150 minutes after your start, and the stage fails. If your task has you commit";
     assert!(
         retried.instructions.contains(told),
         "{}",

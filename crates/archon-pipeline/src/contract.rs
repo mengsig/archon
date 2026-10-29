@@ -251,6 +251,7 @@ fn contract_header(
          - Work only in `{workspace}`. {mode_rule}\n\
          - Nobody is watching: never ask the operator anything or wait for a reply. Make \
          the conservative choice and state every assumption in your summary.\n\
+         {PROCESS_RULE}\
          - `mcp__archon__message_orchestrator` relays an operator message meant for the \
          orchestrator (`kind=relay`, their exact text), reports a blocker outside your \
          stage (`kind=escalation`) or sends low-priority `info`. It returns at once: keep \
@@ -395,6 +396,13 @@ self-contained page that loads nothing from the network.\n\
 `{\"reports\": [\"/abs/…/index.html\"]}`. The operator may approve the proposal, \
 so the `summary` must state the approach on its own.\n";
 
+/// Whose processes an agent may stop: an agent runs as the operator's user,
+/// so a pattern kill reaches the operator's daemons and every stage they run.
+const PROCESS_RULE: &str = "\
+- Stop only processes you started, by the PID you recorded (`$!`), its process group \
+or its Compose project. Never kill by name or pattern (`pkill`, `killall`, \
+`pgrep -f … | xargs kill`): the operator's archond and aetherd run as your user.\n";
+
 const DELEGATE_CHILD_RULES: &str = "\
 - A child inherits none of this contract or of the stage prompt: Aether gives it \
 only the `objective` and `instructions` you pass to `delegate`. In every child's \
@@ -406,6 +414,8 @@ branches or the operator's own checkout;\n  \
 `--author`, no `GIT_AUTHOR_*` or `GIT_COMMITTER_*`, no identity taken from injected \
 context;\n  \
 - do not ask the operator questions or wait for replies;\n  \
+- stop only processes it started, by recorded PID, process group or Compose \
+project, and never kill by name or pattern;\n  \
 - read only, with no edits, commits, stashes or branch switches: for a reviewer \
 always, and for every child when your own workspace is READ-ONLY.\n";
 
@@ -875,6 +885,13 @@ mod tests {
                 text.contains("call `fail_task`, never `complete_task`"),
                 "{kind:?}"
             );
+            for said in [
+                "- Stop only processes you started, by the PID you recorded (`$!`)",
+                "Never kill by name or pattern (`pkill`, `killall`, `pgrep -f … | xargs kill`)",
+                "the operator's archond and aetherd run as your user",
+            ] {
+                assert!(text.contains(said), "{kind:?}: missing {said:?}");
+            }
         }
     }
 
@@ -1351,6 +1368,8 @@ mod tests {
                 "\n  - never override the git identity:",
                 "`--author`, no `GIT_AUTHOR_*` or `GIT_COMMITTER_*`",
                 "\n  - do not ask the operator questions or wait for replies;",
+                "\n  - stop only processes it started, by recorded PID, process group or \
+                 Compose project, and never kill by name or pattern;",
                 "\n  - read only, with no edits, commits, stashes or branch switches: for a \
                  reviewer always, and for every child when your own workspace is READ-ONLY.",
             ] {

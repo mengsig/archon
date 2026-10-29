@@ -179,6 +179,30 @@ fn built_in_stages_that_build_get_room_to_finish() {
     }
 }
 
+/// "Confirm nothing is left running" invited a pattern kill that took the
+/// operator's daemons down: prompts confirm only what their scripts recorded.
+#[test]
+fn built_in_prompts_stop_only_what_their_scripts_recorded() {
+    let catalog = Catalog::builtin();
+    let spec = catalog.get("e2e-testing").expect("e2e-testing loads");
+    let setup = spec.prompts["setup.md"].replace("\n   ", " ");
+    for said in [
+        "by the PIDs, process groups or Compose project `start.sh` recorded",
+        "never stops anything by name or pattern (`pkill`, `killall`, `pgrep -f`)",
+        "confirm that none of the processes or containers `start.sh` recorded is left running",
+    ] {
+        assert!(setup.contains(said), "missing {said:?} in {setup}");
+    }
+    for name in catalog.names() {
+        let spec = catalog.get(name).expect("a listed built-in loads");
+        for (file, prompt) in &spec.prompts {
+            let prompt = prompt.replace("\n   ", " ");
+            assert!(!prompt.contains("nothing is left running"), "{name}/{file}");
+            assert!(!prompt.contains("nothing is running"), "{name}/{file}");
+        }
+    }
+}
+
 #[test]
 fn errand_is_a_scratch_repository_optional_report_pipeline() {
     let catalog = Catalog::builtin();

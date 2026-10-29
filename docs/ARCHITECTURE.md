@@ -2427,6 +2427,12 @@ its contract carries no delegation section.
 > Propose stages change nothing, write only
 > `.archon/reports/proposal/index.html`, and list it in `structured.reports`.
 
+Every contract also tells the agent to stop only processes it started, by
+the PID it recorded, its process group or its Compose project, and never
+by name or pattern (`pkill`, `killall`, `pgrep -f … | xargs kill`): stage
+agents run as the operator's user, so a pattern kill reaches the
+operator's archond and aetherd and every stage they run.
+
 A team stage's contract names the agent's role and the other roles, keeps
 it to its own worktree and role, and asks it to commit on its branch
 without pushing: only commits are merged.
@@ -2472,8 +2478,9 @@ states:
   a parent's instructions to a delegated child (§17), so the contract does
   not reach one: work only in the workspace it is given and never touch
   other worktrees, other branches or the operator's checkout; do not push;
-  never override the git identity; ask the operator nothing; and read only,
-  for a reviewer always and for every child of a read-only stage.
+  never override the git identity; ask the operator nothing; stop only
+  processes it started, never by name or pattern; and read only, for a
+  reviewer always and for every child of a read-only stage.
 
 The stage a pipeline's declared review names (§8.2) gets a
 `## Review on record` section in its contract: how many reviewers the

@@ -48,6 +48,19 @@
   agent resumed for a fix is told its new deadline with the findings.
   Before, an agent saw its deadline only if it asked Aether.
 
+### Stage processes
+
+- Every stage contract tells the agent to stop only processes it started,
+  by the PID it recorded, its process group or its Compose project, and
+  never by name or pattern (`pkill`, `killall`, `pgrep -f … | xargs kill`):
+  agents run as the operator's user, so such a kill reached the operator's
+  archond and aetherd and every stage they ran. A delegating agent passes
+  the rule on to its children.
+- `e2e-testing`'s setup writes a `stop.sh` that stops what `start.sh`
+  recorded and nothing found by name, and setup and e2e confirm that none
+  of those recorded processes or containers still runs, not that nothing
+  runs at all. `agent-testing`'s plan records stop commands the same way.
+
 ### Documentation
 
 - A "Get started in the chat" section in the README and a

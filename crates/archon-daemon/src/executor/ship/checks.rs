@@ -148,16 +148,16 @@ pub(super) fn check_unchanged(target: &Target) -> Result<Result<(), String>, Arc
             listed(dirty.lines())
         )));
     }
-    let staged = git(tree, &["diff", "--cached", "--name-only", "--no-renames"])?;
-    let untracked = git(tree, &["ls-files", "--others", "--exclude-standard"])?;
+    let staged = nul_paths(
+        tree,
+        &["diff", "--cached", "--name-only", "--no-renames", "-z"],
+    )?;
+    let untracked = nul_paths(tree, &["ls-files", "--others", "--exclude-standard", "-z"])?;
     let present = staged
-        .lines()
-        .chain(
-            untracked
-                .lines()
-                .filter(|path| !services::is_pid_file(path)),
-        )
-        .filter(|path| !is_unshippable(path))
+        .iter()
+        .chain(&untracked)
+        .map(String::as_str)
+        .filter(|path| !is_unshippable(path) && !services::is_pid_file(path))
         .collect::<Vec<_>>();
     if !present.is_empty() {
         return Ok(Err(format!(
@@ -247,6 +247,29 @@ fn diff_stat(tree: &Path, base: &str) -> Result<DiffStat, ArchonError> {
 /// the programs it names; its stdout.
 fn git(tree: &Path, args: &[&str]) -> Result<String, ArchonError> {
     DaemonGit::sealed_in(tree).args(args.iter().copied()).text()
+}
+
+/// The paths git lists NUL-separated (`-z`, so unquoted) in `tree`; a name
+/// that is not UTF-8 is shown with replacement characters.
+fn nul_paths(tree: &Path, args: &[&str]) -> Result<Vec<String>, ArchonError> {
+    assert!(args.contains(&"-z"), "only NUL-separated output is split");
+    let ran = DaemonGit::sealed_in(tree)
+        .args(args.iter().copied())
+        .output()?;
+    if !ran.status.success() {
+        return Err(ran.failure());
+    }
+    let paths: Vec<String> = ran
+        .stdout
+        .split(|&byte| byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| String::from_utf8_lossy(path).into_owned())
+        .collect();
+    assert!(
+        paths.iter().all(|path| !path.contains('\0')),
+        "split on NUL"
+    );
+    Ok(paths)
 }
 
 /// The run worktree's tracked files that differ from `commit`, compared through the

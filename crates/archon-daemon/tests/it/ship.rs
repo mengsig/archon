@@ -626,9 +626,13 @@ async fn a_no_change_result_beside_archon_s_own_report_pages_succeeds() {
     let page = run.workspace.join(".archon/reports/proposal/index.html");
     std::fs::create_dir_all(page.parent().unwrap()).unwrap();
     std::fs::write(&page, "<p>the proposal</p>\n").unwrap();
-    let pid = run.workspace.join(".archon/services/web.pid");
-    std::fs::create_dir_all(pid.parent().unwrap()).unwrap();
-    std::fs::write(&pid, "4242\n").unwrap();
+    let services = run.workspace.join(".archon/services");
+    std::fs::create_dir_all(&services).unwrap();
+    std::fs::write(services.join("web.pid"), "4242\n").unwrap();
+    // One staged by the stage, and one whose name git would quote.
+    std::fs::write(services.join("api.pid"), "4243\n").unwrap();
+    git(&run.workspace, &["add", ".archon/services/api.pid"]);
+    std::fs::write(services.join("sérver.pid"), "4244\n").unwrap();
     settle_with(&h, json!({"no_change": {"reason": "already done"}})).await;
     let summary = succeeded(&h, &item).await;
     assert!(summary.contains("No change was needed"), "{summary}");

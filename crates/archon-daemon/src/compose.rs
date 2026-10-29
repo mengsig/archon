@@ -117,22 +117,29 @@ impl<'a> Container<'a> {
 /// part resolved, so a symlink in a worktree cannot vouch for elsewhere.
 fn lies_within(place: &Path, trees: &[PathBuf]) -> bool {
     let named = trees.iter().any(|tree| is_within(place, tree));
-    named && trees.iter().any(|tree| is_within(&resolved(place), tree))
+    let Some(real) = resolved(place) else {
+        return false;
+    };
+    named && trees.iter().any(|tree| is_within(&real, tree))
 }
 
 /// `path` with its longest existing part replaced by its real path; the
-/// rest, which no symlink can redirect yet, is kept as named.
-fn resolved(path: &Path) -> PathBuf {
+/// rest, which no symlink can redirect yet, is kept as named. `None` when an
+/// entry exists but does not resolve, as a dangling symlink: it may lead anywhere.
+fn resolved(path: &Path) -> Option<PathBuf> {
     assert!(path.is_absolute(), "compose records absolute paths");
     let mut existing = path;
     let mut rest = Vec::new();
     loop {
         if let Ok(real) = existing.canonicalize() {
             assert!(real.is_absolute(), "a real path is absolute");
-            return rest.iter().rev().fold(real, |path, name| path.join(name));
+            return Some(rest.iter().rev().fold(real, |path, name| path.join(name)));
+        }
+        if existing.symlink_metadata().is_ok() {
+            return None;
         }
         let (Some(parent), Some(name)) = (existing.parent(), existing.file_name()) else {
-            return path.to_path_buf();
+            return None;
         };
         rest.push(name);
         existing = parent;
@@ -215,15 +222,17 @@ fn in_worktree_root(root: &Path, tree: &Path) -> bool {
         return false;
     };
     let named = inside(tree, root) || inside(tree, &real_root);
-    named && inside(&resolved(tree), &real_root)
+    named && resolved(tree).is_some_and(|real| inside(&real, &real_root))
 }
 
 /// `tree` as given and as resolved: Compose records the directory an agent
 /// ran it in, which may be either.
 fn trees_of(tree: &Path) -> Vec<PathBuf> {
     let mut trees = vec![tree.to_path_buf()];
-    let real = resolved(tree);
-    if real != tree {
+    // One that stopped resolving leaves no place below it resolving either.
+    if let Some(real) = resolved(tree)
+        && real != tree
+    {
         trees.push(real);
     }
     trees
@@ -365,6 +374,28 @@ mod tests {
         assert_eq!(
             selection.inside,
             BTreeMap::from([("nested".to_owned(), dir)])
+        );
+    }
+
+    #[test]
+    fn a_dangling_symlink_in_the_worktree_vouches_for_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let tree = dir.path().join("worktrees/app/qi_1");
+        std::fs::create_dir_all(&tree).unwrap();
+        let gone = dir.path().join("moved-away");
+        std::os::unix::fs::symlink(&gone, tree.join("ext")).unwrap();
+        let place = tree.join("ext/compose.yml");
+        let listing = format!(
+            "theirs\t{}\t{}\n",
+            place.display(),
+            tree.join("ext").display()
+        );
+        let selection = select(&listing, &trees_of(&tree));
+        assert!(selection.inside.is_empty(), "{selection:?}");
+        assert_eq!(resolved(&place), None);
+        assert_eq!(
+            resolved(&tree.join("db/x")),
+            Some(tree.canonicalize().unwrap().join("db/x"))
         );
     }
 

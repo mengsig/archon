@@ -8,6 +8,7 @@ use crate::common;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::compose_teardown::{FakeDocker, container};
 use archon_aether::client::AetherClient;
 use archon_aether::fake::{FakeAether, Scripted};
 use archon_core::age::Age;
@@ -137,6 +138,39 @@ async fn a_settled_worktree_loses_its_caches_then_goes_but_keeps_its_branch() {
     assert_eq!(report.removed, vec![tree.clone()]);
     assert!(!tree.exists());
     assert!(branch_exists(&h, &branch), "branches are kept");
+}
+
+/// A Compose stack a run left is stopped when the run ends, its volumes
+/// kept for a retry, and they go when gc removes the worktree.
+#[tokio::test]
+async fn a_runs_compose_stack_stops_at_its_end_and_its_volumes_go_with_the_worktree() {
+    let docker = FakeDocker::new();
+    let mut config = Config::default();
+    config.worktrees.docker = docker.binary();
+    let h = harness(config).await;
+    let item = h.enqueue("starts a stack").await;
+    h.dispatch().await;
+    let tree = h.run(&item.id).await.workspace;
+    docker.lists("ps", &[container("review-1", &tree)]);
+    let cancel = Request::CancelItem {
+        item: item.id.clone(),
+        reason: None,
+    };
+    h.cli(cancel).await.expect("cancel");
+    h.dispatch().await;
+    let down = "compose --project-name review-1 down --remove-orphans";
+    assert_eq!(docker.downs(), [down], "{:?}", docker.calls());
+
+    docker.lists("volumes", &["review-1_db".to_owned()]);
+    age_finished_runs(&h, &item).await;
+    let report = gc_request(&h, Some(0), false).await;
+    assert_eq!(report.removed, vec![tree.clone()], "{report:?}");
+    let calls = docker.calls();
+    assert!(
+        calls.contains(&"volume rm review-1_db".to_owned()),
+        "{calls:?}"
+    );
+    assert_eq!(docker.downs(), [down], "nothing else was torn down");
 }
 
 async fn retry(h: &Harness, item: &QueueItem) {

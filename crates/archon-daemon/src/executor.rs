@@ -60,6 +60,7 @@ use archon_core::run::{GateDecision, OperatorGate, StageOutcome};
 use archon_pipeline::team::MergePlan;
 use archon_pipeline::{RunDriver, ShipPlan, SpawnPlan};
 
+use crate::compose::Volumes;
 use crate::context::DaemonContext;
 use crate::worktree::users::LiveWorkspaces;
 
@@ -166,6 +167,8 @@ pub(crate) struct FollowUp {
     /// Runs whose team roster may be owed to their running roles.
     pub roster: Vec<PipelineRunId>,
     pub cleanup: Vec<Cleanup>,
+    /// Ended runs' worktrees, by item, whose Compose stacks to tear down.
+    pub stacks: Vec<(QueueItemId, PathBuf)>,
     /// Items that ended, whose own cargo target directory to delete once
     /// their agents are stopped.
     pub release_builds: Vec<ItemBuild>,
@@ -209,6 +212,7 @@ impl FollowUp {
         self.reap.extend(other.reap);
         self.roster.extend(other.roster);
         self.cleanup.extend(other.cleanup);
+        self.stacks.extend(other.stacks);
         self.release_builds.extend(other.release_builds);
         self.discard.extend(other.discard);
         self.gates.extend(other.gates);
@@ -233,6 +237,7 @@ impl FollowUp {
             && self.reap.is_empty()
             && self.roster.is_empty()
             && self.cleanup.is_empty()
+            && self.stacks.is_empty()
             && self.release_builds.is_empty()
             && self.discard.is_empty()
             && self.gates.is_empty()
@@ -603,6 +608,11 @@ async fn deliver_and_tidy(ctx: &DaemonContext, round: &mut Round, follow: Follow
     let ships = runs_by_repository(ctx, round, dedup(follow.ship)).await;
     for shipped in lanes::run(ships, |run| async move { ship::deliver(ctx, &run).await }).await {
         round.record(shipped);
+    }
+    for (item, tree) in dedup(follow.stacks) {
+        let torn =
+            crate::compose::tear_down(ctx, &item, &tree, Volumes::Keep, "after its run ended");
+        round.record(torn.await.map(|()| FollowUp::default()));
     }
     for build in dedup(follow.release_builds) {
         round.record(release_item_build(ctx, build).await);

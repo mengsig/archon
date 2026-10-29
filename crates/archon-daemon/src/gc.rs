@@ -49,6 +49,7 @@ use archon_core::protocol::{GcReport, GcStatus, Reclaimed, gib};
 use archon_queue::Store;
 use tokio::sync::MutexGuard;
 
+use crate::compose::Volumes;
 use crate::context::{DaemonContext, DaemonPaths};
 use crate::feed;
 use crate::worktree::users::{self, LiveWorkspaces};
@@ -374,11 +375,16 @@ pub async fn collect_planned(ctx: &DaemonContext, pass: Pass<'_>) -> Result<GcRe
             }
         };
         let (r, p) = (roots.clone(), policy.clone());
+        let id = item.item.clone();
         let swept = blocking(move || {
             let _marks = marks;
             sweep::sweep(item.found, &r, &p)
         });
         let swept = swept.await?;
+        for removed in &swept.report.removed {
+            let when = "when gc removed it";
+            crate::compose::tear_down(ctx, &id, removed, Volumes::Remove, when).await?;
+        }
         repos.extend(swept.repos);
         report.absorb(swept.report);
     }

@@ -94,6 +94,11 @@ The daemon did not answer the change within the MCP call's 15 s budget, but may 
 - **"`archon aether login <provider>` if Archon needs it"** (an `archon doctor` warning) Archon's own Aether does not share your Aether credentials. Run `archon aether login <provider>` for the provider you use.
 - **"Waiting for provider quota: every provider stage"** (not a blocker) Every provider the stage may use is out of quota or not usable. It starts once one has quota again. Name another provider or model with `archon queue steer <id> --model <PROVIDER/MODEL>`.
 
+## Processes left running after items finish
+
+- **"compose stacks left by finished items"** (an `archon doctor` warning) A Docker Compose project still has containers, running or stopped, in the worktree of an item that ended or was pruned. archond tears these down when a run ends and when gc removes the worktree, so this is a stack from before, or one whose teardown failed (the feed says why: **"Could not tear down the Docker Compose stack"**). Run the `docker compose --project-name <project> down --remove-orphans` it names; add `--volumes` once you no longer need the stack's data. archond leaves alone any project that also has a container outside the worktree, and does nothing when `[worktrees] docker` is not installed or its daemon does not answer.
+- **"beyond the … reports archond follows"** (an `archon doctor` warning) More `lavish-axi poll` processes run than archond has open reports: polls of a page archond no longer follows, or a second poll of one page. Run the `kill <pids>` it names. archond follows a report until its feedback arrives, its item ends, a newer page of the same title replaces it, or 24 hours after it was shown, and kills its polls when it stops.
+
 ## `archon tui` times out attaching
 
 **"try `archon tui` again after Aether reconnects"** comes with archond's reason, such as `archond did not answer` … `within`: archond is up but its link to Aether or the orchestrator stayed unavailable for 5 seconds. Run `archon status` and `archon doctor`, wait for Aether to reconnect, then run `archon tui` again.

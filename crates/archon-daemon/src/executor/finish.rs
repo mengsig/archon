@@ -2,6 +2,7 @@
 //! entries, the orchestrator trigger, and worktree cleanup.
 
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 
 use archon_core::catalog::{StageKind, is_snapshot_of};
 use archon_core::error::ArchonError;
@@ -17,6 +18,7 @@ use chrono::TimeDelta;
 
 use super::repair::{self, Decision, Repair};
 use super::{Cleanup, FollowUp, ItemBuild, RunTable, clip, frozen};
+use crate::compose::Volumes;
 use crate::context::DaemonContext;
 use crate::resolve;
 use crate::triggers::{self, TriggerEvent};
@@ -90,13 +92,16 @@ pub(super) async fn finish_run(
     crate::feed::publish(ctx, finished.answers);
     crate::reports::close_stale_questions(ctx).await?;
     if let Some(repaired) = repair {
-        return repaired_follow_up(ctx, &run, &repaired).await;
+        let mut follow = repaired_follow_up(ctx, &run, &repaired).await?;
+        follow.stacks.extend(stacks_of(ctx, &run));
+        return Ok(follow);
     }
     assert!(item.state.is_terminal(), "finish_run settles the item");
     let pr_url = pr_url(ctx, &run).await?;
     announce(ctx, &item, Some(&run), blocker, pr_url).await?;
     let mut follow = FollowUp::poke();
     follow.stop.push(run.id.clone());
+    follow.stacks.extend(stacks_of(ctx, &run));
     follow.cleanup.extend(cleanup_for(ctx, &item, &run).await?);
     follow.release_builds.extend(item_build(ctx, &item).await?);
     follow.discard.push(run.id.clone());
@@ -123,6 +128,19 @@ async fn repaired_follow_up(
     follow.stop.push(run.id.clone());
     follow.discard.push(run.id.clone());
     Ok(follow)
+}
+
+/// The worktree whose Compose stacks a finished run's stages may have left
+/// running: a team run's whole directory, or its one worktree when Archon
+/// made it.
+fn stacks_of(ctx: &DaemonContext, run: &PipelineRun) -> Option<(QueueItemId, PathBuf)> {
+    assert!(run.state.is_terminal(), "only a finished run's stacks go");
+    let tree = run
+        .team_root
+        .clone()
+        .unwrap_or_else(|| run.workspace.clone());
+    let ours = tree.starts_with(&ctx.paths.worktrees) && tree != ctx.paths.worktrees;
+    ours.then(|| (run.item.clone(), tree))
 }
 
 /// A team run's role branches that reached its run branch go with the run,
@@ -310,6 +328,7 @@ pub(super) async fn remove_worktree(
     .with_cache_dirs(cache_dirs.clone());
     let data_dir = ctx.paths.data_dir.clone();
     let target = cleanup.worktree.clone();
+    let item = cleanup.item.clone();
     let (reclaimed, removed) = tokio::task::spawn_blocking(move || {
         let _mark = mark;
         // A snapshot goes whole with `--force`, so its caches need no cleaning.
@@ -330,7 +349,7 @@ pub(super) async fn remove_worktree(
         if let Err(error) = reclaimed {
             tracing::debug!(worktree = %target.display(), %error, "caches not cleaned first");
         }
-        return Ok(());
+        return crate::compose::tear_down(ctx, &item, &target, Volumes::Remove, when).await;
     };
     tracing::warn!(worktree = %target.display(), %error, "worktree not removed");
     let caches = match reclaimed {

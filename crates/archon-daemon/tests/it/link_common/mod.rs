@@ -81,6 +81,7 @@ impl Harness {
 
     /// A fresh in-memory store and a fake aetherd, not yet connected.
     pub async fn with(config: Config, lavish: Option<Lavish>) -> Self {
+        let config = crate::common::without_host_docker(config);
         let dir = tempfile::tempdir().expect("temp dir");
         let fake = FakeAether::start(&dir.path().join("aetherd.sock"))
             .await

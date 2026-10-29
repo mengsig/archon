@@ -5,8 +5,9 @@
 //! records and announces a report; [`supervise`], run by the pump, owns one
 //! poll task per open report because `publish` has no `Arc` to spawn one
 //! with. A poll's failure stays with its report: only a store failure
-//! reaches the pump. Once a report's item finishes, its poll is stopped and
-//! its session ended (see `retire`).
+//! reaches the pump. Once a report settles (its item finished, a newer page
+//! replaced it, or it was shown longer ago than [`FOLLOW_LIFETIME`]), its
+//! poll is stopped and its session ended (see `retire`).
 
 mod expiry;
 mod files;
@@ -38,12 +39,16 @@ pub(crate) use self::expiry::expire_files;
 pub use self::questions::{already_closed, answer_reopen, asks_to_reopen, close_stale_questions};
 pub(crate) use self::records::is_open;
 pub use self::records::{KEY_PREFIX, LEGACY_KEY, prune};
+pub use self::retire::FOLLOW_LIFETIME;
 
 /// Failures in a row, of one poll or of one report's poll task, that are
 /// retried before the report is given up.
 const MAX_POLL_FAILURES: u32 = 5;
 const POLL_BACKOFF_MIN: Duration = Duration::from_secs(1);
 const POLL_BACKOFF_MAX: Duration = Duration::from_secs(30);
+/// Longest the supervisor sleeps before it looks for expired reports again,
+/// so a changed wall clock is noticed.
+const EXPIRY_CHECK_MAX: Duration = Duration::from_secs(3600);
 
 /// Validate the report, snapshot its directory when possible, and publish
 /// the copy or its original with a durability warning. Record and announce
@@ -225,10 +230,11 @@ async fn record_publication(
     })
 }
 
-/// Keep one poll task per open report until its item finishes or shutdown.
-/// New reports and item outcomes are seen through the feed; a lagged
-/// receiver rescans the records. `Err` only for a store failure: any other
-/// failure, a panic included, is its report's.
+/// Keep one poll task per open report until it settles or shutdown, when
+/// dropping the tasks kills their `lavish-axi poll` children. New reports
+/// and item outcomes are seen through the feed, expiries on a timer; a
+/// lagged receiver rescans the records. `Err` only for a store failure: any
+/// other failure, a panic included, is its report's.
 pub async fn supervise(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     let Some(lavish) = ctx.lavish.clone() else {
         // Nothing to poll without Lavish; stay idle rather than look like a failed task.
@@ -238,6 +244,7 @@ pub async fn supervise(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     let mut polls = Polls::default();
     polls.rescan(&ctx, &lavish).await?;
     loop {
+        let next_expiry = polls.until_next_expiry(archon_core::now());
         tokio::select! {
             received = feed.recv() => match received {
                 Ok(item) => polls.on_feed(&ctx, &lavish, &item.entry).await?,
@@ -249,6 +256,9 @@ pub async fn supervise(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
                     polls.ended(&ctx, &lavish, report, outcome).await?;
                 }
             }
+            () = tokio::time::sleep(next_expiry) => {
+                polls.expire(&ctx, &lavish).await?;
+            }
         }
     }
 }
@@ -256,9 +266,11 @@ pub async fn supervise(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
 /// The poll task of each report being followed, and how many times in a
 /// row each report's task ended abnormally. `reports` also holds a stopped
 /// task until it is joined; `polling` only the task followed now.
+/// `expiries` holds when each followed report's lifetime runs out.
 #[derive(Default)]
 struct Polls {
     followed_html: HashMap<ReportId, PathBuf>,
+    expiries: HashMap<ReportId, archon_core::Timestamp>,
     tasks: JoinSet<Result<(), ArchonError>>,
     reports: HashMap<tokio::task::Id, ReportId>,
     polling: HashMap<ReportId, AbortHandle>,
@@ -288,6 +300,30 @@ impl Polls {
         }
         self.failures.remove(report);
         self.followed_html.remove(report);
+        self.expiries.remove(report);
+    }
+
+    /// How long until the earliest followed report expires, at most
+    /// [`EXPIRY_CHECK_MAX`]; zero once one has.
+    fn until_next_expiry(&self, now: archon_core::Timestamp) -> Duration {
+        let Some(next) = self.expiries.values().min() else {
+            return EXPIRY_CHECK_MAX;
+        };
+        let wait = (*next - now).to_std().unwrap_or(Duration::ZERO);
+        wait.min(EXPIRY_CHECK_MAX)
+    }
+
+    /// End the reports whose lifetime ran out. One an open gate still waits
+    /// on stays followed, without an expiry, until its item finishes.
+    async fn expire(
+        &mut self,
+        ctx: &Arc<DaemonContext>,
+        lavish: &Lavish,
+    ) -> Result<(), ArchonError> {
+        self.end_finished(ctx, lavish).await?;
+        let now = archon_core::now();
+        self.expiries.retain(|_, at| *at > now);
+        Ok(())
     }
 
     /// Act on one feed entry: follow a report just shown, or end the
@@ -322,9 +358,9 @@ impl Polls {
         self.start_open(ctx, lavish).await
     }
 
-    /// Stop the poll of every open report whose item finished, then end
-    /// its Lavish session. Only this loop restarts polls, so none restarts
-    /// before the report is recorded ended.
+    /// Stop the poll of every open report that settled, then end its Lavish
+    /// session. Only this loop restarts polls, so none restarts before the
+    /// report is recorded ended.
     async fn end_finished(
         &mut self,
         ctx: &Arc<DaemonContext>,
@@ -363,6 +399,8 @@ impl Polls {
             }
             self.followed_html
                 .insert(report.clone(), record.html.clone());
+            self.expiries
+                .insert(report.clone(), retire::expires_at(&record));
             let poll = follow_report(ctx.clone(), lavish.clone(), report.clone(), record);
             self.spawn(report, poll);
         }

@@ -3,6 +3,7 @@
 
 pub(super) mod engine;
 mod gh_users;
+mod leftovers;
 mod mcp_tools;
 mod orchestrator;
 pub(super) mod registry;
@@ -110,6 +111,9 @@ pub async fn run(json: bool) -> anyhow::Result<ExitCode> {
     checks.push(registry::check_repos(&registry).await);
     checks.push(check_release().await);
     checks.push(check_lavish(&config));
+    let paths = DaemonPaths::resolve(&config, archon_bin()?);
+    checks.push(leftovers::check_compose(&config, &paths.worktrees, &archond).await);
+    checks.push(leftovers::check_lavish_polls(&paths.data_dir, &archond).await);
     checks.push(check_agent_cli("claude"));
     checks.push(check_agent_cli("codex"));
     report(&checks, json)?;

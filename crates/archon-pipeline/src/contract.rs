@@ -281,7 +281,10 @@ fn mode_rule(mode: WorkspaceMode) -> &'static str {
     match mode {
         WorkspaceMode::Worktree => {
             "It is this run's own git worktree, shared with its other stages. Never touch \
-             another worktree, another branch or the operator's own checkout."
+             another worktree, another branch or the operator's own checkout. Before you \
+             finish, stop every server and Compose stack you started, unless whoever gave you \
+             the task asked you to leave it running; then say in your result what still \
+             runs and how to stop it."
         }
         WorkspaceMode::RepoReadonly => {
             "With a repository, it is a detached snapshot of the commit the repository has \
@@ -849,6 +852,8 @@ mod tests {
             None,
         );
         assert!(!work.contains("VERDICT: PASS"));
+        assert!(work.contains("stop every server and Compose stack you started, unless"));
+        assert!(work.contains("say in your result what still runs"));
     }
 
     /// A review stage's contract and a delegator's rules, given `experiments`.

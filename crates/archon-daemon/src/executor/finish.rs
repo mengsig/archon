@@ -16,11 +16,12 @@ use archon_queue::Store;
 use chrono::TimeDelta;
 
 use super::repair::{self, Decision, Repair};
-use super::{Cleanup, FollowUp, ItemBuild, RunTable, clip, frozen};
+use super::{Cleanup, FollowUp, ItemBuild, RunTable, Teardown, clip, frozen};
 use crate::context::DaemonContext;
 use crate::resolve;
 use crate::triggers::{self, TriggerEvent};
 use crate::worktree::WorktreeManager;
+use crate::worktree::users::{self, LiveWorkspaces};
 
 /// Feed text is clipped to this; the item keeps the full text.
 const MAX_NOTICE_CHARS: usize = 2_000;
@@ -90,13 +91,16 @@ pub(super) async fn finish_run(
     crate::feed::publish(ctx, finished.answers);
     crate::reports::close_stale_questions(ctx).await?;
     if let Some(repaired) = repair {
-        return repaired_follow_up(ctx, &run, &repaired).await;
+        let mut follow = repaired_follow_up(ctx, &run, &repaired).await?;
+        follow.stacks.extend(stacks_of(ctx, &run).await?);
+        return Ok(follow);
     }
     assert!(item.state.is_terminal(), "finish_run settles the item");
     let pr_url = pr_url(ctx, &run).await?;
     announce(ctx, &item, Some(&run), blocker, pr_url).await?;
     let mut follow = FollowUp::poke();
     follow.stop.push(run.id.clone());
+    follow.stacks.extend(stacks_of(ctx, &run).await?);
     follow.cleanup.extend(cleanup_for(ctx, &item, &run).await?);
     follow.release_builds.extend(item_build(ctx, &item).await?);
     follow.discard.push(run.id.clone());
@@ -123,6 +127,50 @@ async fn repaired_follow_up(
     follow.stop.push(run.id.clone());
     follow.discard.push(run.id.clone());
     Ok(follow)
+}
+
+/// The teardown of the Compose stacks a finished run's stages may have left
+/// in its worktree (a team run's whole directory) when Archon made it and no
+/// other live item uses it. Its mark keeps a requeued or retried run of the
+/// worktree from starting until the teardown is done; the caller holds the
+/// run table, as dispatch does.
+async fn stacks_of(
+    ctx: &DaemonContext,
+    run: &PipelineRun,
+) -> Result<Option<Teardown>, ArchonError> {
+    assert!(run.state.is_terminal(), "only a finished run's stacks go");
+    let tree = run
+        .team_root
+        .clone()
+        .unwrap_or_else(|| run.workspace.clone());
+    if !tree.starts_with(&ctx.paths.worktrees) || tree == ctx.paths.worktrees {
+        return Ok(None);
+    }
+    let (owner, sharer) = {
+        let store = ctx.store.lock().await;
+        let live = LiveWorkspaces::read(&store, &ctx.paths.worktrees)?;
+        let sharer = live.user_besides(&tree, Some(&run.item)).cloned();
+        (users::owner(&store, &run.item)?, sharer)
+    };
+    // A restack fix or refresh may run there already; its stacks are its own.
+    if let Some(sharer) = sharer {
+        tracing::warn!(item = %run.item, %sharer, tree = %tree.display(), "another item works in the worktree; its compose stacks are left running");
+        return Ok(None);
+    }
+    let Some(mark) = ctx.collecting.mark(owner.clone()) else {
+        // Its holder works in the worktree; `archon doctor` names what it leaves.
+        tracing::warn!(item = %run.item, %owner, tree = %tree.display(), "the worktree is busy; its compose stacks are left running");
+        return Ok(None);
+    };
+    assert!(
+        ctx.collecting.contains(&owner),
+        "the teardown holds the owner"
+    );
+    Ok(Some(Teardown {
+        item: run.item.clone(),
+        tree,
+        mark,
+    }))
 }
 
 /// A team run's role branches that reached its run branch go with the run,
@@ -295,7 +343,8 @@ async fn cleanup_for(
 /// for a snapshot, ended), or its start was abandoned (`when` says which).
 /// The worktree's build caches go first, so a stray untracked file that
 /// keeps the worktree (a change is never discarded) keeps only its source.
-/// A snapshot is removed with `--force` instead.
+/// A snapshot is removed with `--force` instead. Its stacks are the caller's
+/// to tear down first, off the run table.
 pub(super) async fn remove_worktree(
     ctx: &DaemonContext,
     cleanup: Cleanup,

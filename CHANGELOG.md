@@ -10,7 +10,7 @@
   and links instead of raw `**` and `#`. The renderer has no dependencies
   and builds every node as text, so raw HTML shows as written, links allow
   only `http`, `https` and `mailto` (opened with `noopener noreferrer`),
-  and images become links that never load (#319, by @AmmarBattah in #325).
+  and images become links that never load (#319, by @AmmarBattah in #327).
 
 ### Documentation
 

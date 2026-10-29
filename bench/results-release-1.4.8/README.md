@@ -53,10 +53,10 @@ Luna head run 2 missed two tasks. Neither fails on code that changed since
 v1.4.7.
 
 - **`fix-off-by-one`.** The run delivered nothing.
-  - Its two reviewers, one after the automatic repair retry, each passed the
-    change.
-  - Neither recorded its verdict in `structured`. Each put the verdict JSON
-    in its summary, followed by prose, with no fenced block and no
+  - Its three reviewers each passed the change: the first, one after the
+    automatic repair retry and one after a later repair.
+  - None recorded its verdict in `structured`. Each put the verdict JSON in
+    its summary, followed by other text, with no fenced block and no
     `VERDICT:` line.
   - `Verdict::read_result` (`crates/archon-pipeline/src/review.rs`) cannot
     read that, so the stage failed with "its result carries no readable
@@ -70,8 +70,9 @@ v1.4.7.
   one of 14 hidden tests: `retry_delay(3, 0, base_ms=3, cap_ms=13)` returned
   13 where 12 is expected (exact saturation at the cap). This is the model's
   miss on one of the quality checks.
-- **Confirmation.** Luna head run 3 passed all four tasks, each through
-  `direct` with `standard` review.
+- **Confirmation.** Luna head run 3 passed all four tasks. The three that
+  queued work ran `direct` with `standard` review; `review-seeded-bug` was
+  answered with no item, as in every run.
 
 ## Method
 
@@ -124,8 +125,8 @@ and the head, one at a time. The two confirmations ran after the round.
   usage was revised down, "usage total went down; keeping what was already
   charged". No other warning or error appeared.
 - **Aether logs.** Both Aether releases log the same warnings:
-  - at start-up, yolo approvals, no systemd scope and the engine's network
-    limits;
+  - at start-up, yolo approvals, no systemd scope, the engine's network
+    limits and the agent temp directory's long path;
   - on every Haiku run, Claude closing receipts that omitted streamed usage;
   - on one Haiku run each (v1.4.7 run 2, head run 1), a runtime gone before
     its reaped processes were recorded.

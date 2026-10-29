@@ -12,8 +12,8 @@
   `failed` and `rejected` read as pass and fail. A test stage that passed
   with `{"findings": []}` and `**Verdict:** PASS` in its summary no longer
   fails its gate, and a reviewer whose `structured` gives no verdict is read
-  from its summary. An unreadable verdict still counts as fail, and the
-  refusal now quotes it.
+  from its summary. An unreadable verdict, a choice such as `PASS or FAIL`
+  included, still counts as fail, and the refusal now quotes it.
 - A reviewer plan's effort is a floor, not a ceiling. The delegation
   watchdog cancelled a reviewer delegated above the planned effort in the
   middle of its review, and let one below it run, which is how

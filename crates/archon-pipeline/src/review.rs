@@ -81,16 +81,20 @@ impl Verdict {
             .or_else(|| fenced_json(summary));
         if let Some(data) = json {
             let read = Self::read_json(&data, structured)?;
-            return match verdict_line(summary) {
-                Some(line) if line != read.pass => Err(format!(
+            return match Said::from_summary(summary) {
+                None => Ok(read),
+                Some(Said::Pass) if read.pass => Ok(read),
+                Some(Said::Fail) if !read.pass => Ok(read),
+                Some(Said::Unknown) => Err(no_verdict(summary, None)),
+                Some(_) => Err(format!(
                     "its summary's JSON verdict and its final `VERDICT:` line disagree: {VERDICT_HOWTO}"
                 )),
-                _ => Ok(read),
             };
         }
-        match verdict_line(summary) {
-            Some(pass) => Self::from_lines(summary, structured, pass),
-            None => Err(no_verdict(summary, structured)),
+        match Said::from_summary(summary) {
+            Some(Said::Pass) => Self::from_lines(summary, structured, true),
+            Some(Said::Fail) => Self::from_lines(summary, structured, false),
+            Some(Said::Unknown) | None => Err(no_verdict(summary, structured)),
         }
     }
 
@@ -201,15 +205,6 @@ fn fenced_json(text: &str) -> Option<Value> {
     }
     let body = block.strip_prefix("json").unwrap_or(block);
     serde_json::from_str(body.trim()).ok()
-}
-
-/// The verdict the last `VERDICT: PASS|FAIL` line gives, as stage gates read it.
-fn verdict_line(text: &str) -> Option<bool> {
-    match Said::from_summary(text)? {
-        Said::Pass => Some(true),
-        Said::Fail => Some(false),
-        Said::Unknown => None,
-    }
 }
 
 /// Why a result holds no verdict, quoting the one it gave if any.
@@ -579,6 +574,12 @@ mod tests {
         }
         let quoted = format!("Example:\n> VERDICT: PASS\n\nVERDICT: not passed\nhead: {HEAD}");
         let refused = Verdict::read_result(&quoted, Some(&json!({"head": HEAD}))).unwrap_err();
+        assert!(refused.contains("\"VERDICT: not passed\""), "{refused}");
+        let choice = format!("VERDICT: PASS or FAIL\nhead: {HEAD}");
+        assert!(Verdict::read_result(&choice, None).is_err());
+        let pass = json!({"verdict": "pass", "head": HEAD});
+        let fenced = format!("```json\n{pass}\n```\nVERDICT: not passed");
+        let refused = Verdict::read_result(&fenced, None).unwrap_err();
         assert!(refused.contains("\"VERDICT: not passed\""), "{refused}");
     }
 

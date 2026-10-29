@@ -76,20 +76,33 @@ impl Verdict {
         if let Some(given) = field(VERDICT_KEYS[0]) {
             return Some(quote(given));
         }
-        let other = VERDICT_KEYS[1..]
-            .iter()
-            .find_map(|key| non_empty(field(key)?.as_str()?));
-        let line = || last_verdict_line(summary).map(|(line, _)| line.trim());
-        other.or_else(line).map(str::to_owned)
+        // The order `extract` reads in: a `result` or `status` it skipped is the last resort.
+        let line = last_verdict_line(summary).map(|(line, _)| line.trim());
+        let other = || {
+            VERDICT_KEYS[1..]
+                .iter()
+                .find_map(|key| non_empty(field(key)?.as_str()?))
+        };
+        line.or_else(other).map(str::to_owned)
     }
 
-    /// The first word of `text`, markdown and letter case aside.
+    /// The first word of `text`, markdown and letter case aside; `Unknown`
+    /// when it opens a choice (`PASS or FAIL`, `pass/fail`, `PASS | FAIL`).
     fn from_word(text: &str) -> Self {
-        let word = text
-            .trim_start_matches(|c: char| !c.is_alphanumeric())
-            .split(|c: char| !c.is_alphanumeric())
-            .next()
-            .unwrap_or_default();
+        let text = text.trim_start_matches(|c: char| !c.is_alphanumeric());
+        let end = text
+            .find(|c: char| !c.is_alphanumeric())
+            .unwrap_or(text.len());
+        let (word, rest) = text.split_at(end);
+        let rest = rest.trim_start_matches([' ', '\t', '*', '_', '`']);
+        let choice = rest.starts_with(['/', '|'])
+            || rest
+                .split_whitespace()
+                .next()
+                .is_some_and(|next| next.eq_ignore_ascii_case("or"));
+        if choice {
+            return Self::Unknown;
+        }
         match word.to_ascii_lowercase().as_str() {
             "pass" | "passed" | "passes" | "ok" | "approve" | "approved" => Self::Pass,
             "fail" | "failed" | "fails" | "reject" | "rejected" => Self::Fail,
@@ -101,15 +114,20 @@ impl Verdict {
 /// The last line of `text` that reads `VERDICT: …`, and its value. Lines in
 /// fenced code or block quotes are examples, never a verdict.
 fn last_verdict_line(text: &str) -> Option<(&str, &str)> {
-    let mut fenced = false;
+    let mut fence: Option<(char, usize)> = None;
     let mut last = None;
     for line in text.lines() {
         let start = line.trim_start();
-        if start.starts_with("```") || start.starts_with("~~~") {
-            fenced = !fenced;
+        if let Some(marker) = fence_marker(start) {
+            fence = match fence {
+                None => Some(marker),
+                // Only a run of the opening character, at least as long, closes it.
+                Some(open) if marker.0 == open.0 && marker.1 >= open.1 => None,
+                open => open,
+            };
             continue;
         }
-        if fenced || start.starts_with('>') {
+        if fence.is_some() || start.starts_with('>') {
             continue;
         }
         if let Some(value) = strip_label(line, "verdict") {
@@ -118,6 +136,13 @@ fn last_verdict_line(text: &str) -> Option<(&str, &str)> {
     }
     debug_assert!(last.is_none_or(|(line, _)| text.contains(line)));
     last
+}
+
+/// The character and length of the code fence `line` opens or closes, if it is one.
+fn fence_marker(line: &str) -> Option<(char, usize)> {
+    let mark = line.chars().next().filter(|c| matches!(c, '`' | '~'))?;
+    let run = line.chars().take_while(|c| *c == mark).count();
+    (run >= 3).then_some((mark, run))
 }
 
 fn non_empty(text: &str) -> Option<&str> {
@@ -620,6 +645,35 @@ mod tests {
         assert_eq!(Verdict::extract(earlier, None), Verdict::Fail);
         let after_quote = "> VERDICT: FAIL\nVERDICT: PASS";
         assert_eq!(Verdict::extract(after_quote, None), Verdict::Pass);
+        let mixed = "````\n~~~\nVERDICT: PASS\n```\n````\nFindings remain.";
+        assert_eq!(Verdict::extract(mixed, None), Verdict::Unknown);
+        let closed = "~~~\nVERDICT: FAIL\n~~~~\nVERDICT: PASS";
+        assert_eq!(Verdict::extract(closed, None), Verdict::Pass);
+    }
+
+    #[test]
+    fn a_choice_of_verdicts_is_no_verdict() {
+        for said in [
+            "PASS or FAIL",
+            "pass/fail",
+            "**PASS** | FAIL",
+            "fail OR pass",
+        ] {
+            let line = format!("VERDICT: {said}");
+            assert_eq!(Verdict::extract(&line, None), Verdict::Unknown, "{said}");
+            let field = json!({"verdict": said});
+            assert_eq!(
+                Verdict::extract("", Some(&field)),
+                Verdict::Unknown,
+                "{said}"
+            );
+        }
+        let explained = "VERDICT: PASS — 214 passed, 0 failed, or so CI says";
+        assert_eq!(Verdict::extract(explained, None), Verdict::Pass);
+        let skipped = json!({"result": "done"});
+        let said = Verdict::stated("VERDICT: unsure", Some(&skipped));
+        assert_eq!(said.as_deref(), Some("VERDICT: unsure"));
+        assert_eq!(Verdict::stated("", Some(&skipped)).as_deref(), Some("done"));
     }
 
     #[test]

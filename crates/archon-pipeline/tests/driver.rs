@@ -248,6 +248,22 @@ fn an_unreadable_verdict_fails_the_gate_quoting_what_it_said() {
         error.contains(r#"verdict "lgtm mostly" unreadable as pass or fail (counts as fail)"#),
         "{error}"
     );
+    let mut sim = majority_sim();
+    sim.start();
+    sim.settle("build", 0, Agent::Done("built"));
+    sim.settle("review", 0, Agent::Pass);
+    sim.settle("review", 1, Agent::Fail("wrong"));
+    let skipped = serde_json::json!({"result": "done"});
+    let actions = sim.settle(
+        "review",
+        2,
+        Agent::DoneStructured("VERDICT: unsure", skipped),
+    );
+    let (_, error) = failed(&actions);
+    assert!(
+        error.contains(r#"verdict "VERDICT: unsure" unreadable"#),
+        "{error}"
+    );
 }
 
 #[test]
@@ -446,6 +462,8 @@ fn a_blank_structured_verdict_or_a_quoted_pass_fails_the_gate() {
             "Example:\n> VERDICT: PASS\n\nVERDICT: not passed",
             serde_json::json!({"findings": []}),
         ),
+        ("VERDICT: PASS or FAIL", serde_json::json!({})),
+        ("````\n~~~\nVERDICT: PASS\n```\n````", serde_json::json!({})),
     ] {
         let mut sim = sim("e2e-testing");
         sim.start();

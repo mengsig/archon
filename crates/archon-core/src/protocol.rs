@@ -66,6 +66,8 @@ use crate::steer::Steer;
 /// 21: `tracked` changes with an `idempotency_key`, and `request_status`; an
 /// older archond knows neither request.
 /// 22: `update_item` may carry `title`, which an older archond would drop.
+/// 23: the remote-access requests (`remote_status`, `configure_remote`,
+/// `remote_pair`, `remote_revoke`); an older archond knows none of them.
 pub const PROTOCOL_VERSION: u32 = 23;
 
 /// Said beside an item whose `budget_usd` was set while budgets are off.

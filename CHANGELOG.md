@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## 1.4.8
+
+Released 2026-10-29.
+
+A patch release on 1.4.7 that brings the mobile web app with `archon remote
+setup` (#312), and the companion fixes of the end-to-end sweep: bounded
+storage with history retention, restacks over squash- and rebase-landed
+dependencies, message caps that keep a stage audible, steer regrants that
+reach delegated helpers, event pump recovery from expired history, an
+engine login check in the doctor, and an `archon update --yes` that
+restarts the orchestrator.
+
+Archon 1.4.8 needs **Aether 1.2.7**: it is released with and tested on that
+release, which the installer and `archon update` install. The Aether
+protocol Archon asks for stays 24 and the oldest it accepts stays 17. With
+Aether 1.2.7 it also uses two opt-in features: `subtree_update`, which
+raises a steer's deadline or budget for a stage agent and its helpers in
+one request, and `history_expired`, which reports expired event history by
+its own code. An older aetherd serving protocol 24 still works, with one
+update per helper and expired history read from the refusal's text.
+
 The daemon protocol is 23 (was 22), for the remote-access requests:
 `archon mcp` and archond must be upgraded together, and each refuses the
 other's older version at hello. The store schema is 18 (was 17): the first
@@ -18,12 +39,11 @@ release; run `archon update --yes` again, now from the new release, to
 refresh Archon's tools and renew the orchestrator. Later updates do this
 themselves (see Update below).
 
-### Fixed
-
-- A stage agent no longer inherits `ARCHON_DAEMON_DETACHED` from archond: the
-  detached start now tells its daemon with a hidden `--detached-child` flag,
-  so `archon daemon run` run by an agent's tests logs to the terminal as it
-  does in a plain shell.
+**After upgrading**, run `archon update` and accept the restart (`--yes`
+for scripts): it updates Aether to 1.2.7 and restarts both daemons, archond
+and, in dedicated mode, Archon's own aetherd, then the orchestrator.
+Optionally, run `archon remote setup` to switch on the mobile web app and
+pair your phone ([docs/remote-setup.md](docs/remote-setup.md)).
 
 ### Mobile web app
 
@@ -61,7 +81,23 @@ themselves (see Update below).
   a dropped connection and kept retrying instead of showing it is no
   longer paired.
 - An open item no longer redraws once more when the repositories load
-  after its detail, which dropped a half-read brief or a focused button.
+  after its detail, which dropped a half-read brief or a focused button
+  (#316).
+
+### Agents and messages
+
+- A stage agent at `[limits] max_agent_messages` keeps three escalations
+  and one reply to each orchestrator message, and the orchestrator is told
+  once that it reached the cap (#306, #299).
+- `steer --extend` and budget regrants reach the helpers a stage lead
+  delegated to, not only the lead, in one request on an Aether 1.2.7 that
+  serves `subtree_update` (#302, #273).
+- `model_plan` choices by `tier` and `provider` are accepted by the MCP
+  tools and in initiative members (#296, #300, #297).
+- The event pump recovers when Aether's retention deleted events past its
+  cursor; a stage whose agent finished but whose settle failed keeps the
+  agent's result instead of timing out; and a retried trigger batch reaches
+  a replaced orchestrator (#305, #272).
 
 ### Storage
 
@@ -82,27 +118,6 @@ themselves (see Update below).
   merge, and `refresh_item` no longer refuses such a branch as up to date
   (#309, #304).
 
-### Agents and messages
-
-- A stage agent at `[limits] max_agent_messages` keeps three escalations
-  and one reply to each orchestrator message, and the orchestrator is told
-  once that it reached the cap (#306, #299).
-- `steer --extend` and budget regrants reach the helpers a stage lead
-  delegated to, not only the lead (#302).
-- `model_plan` choices by `tier` and `provider` are accepted by the MCP
-  tools and in initiative members (#296, #300, #297).
-- The event pump recovers when Aether's retention deleted events past its
-  cursor; a stage whose agent finished but whose settle failed keeps the
-  agent's result instead of timing out; and a retried trigger batch reaches
-  a replaced orchestrator (#305).
-
-### Doctor
-
-- `archon doctor` and setup check that the orchestrator's engine is logged
-  in and name the login step, the revival blocker names it too, and `archon
-  tui` stops retrying a failed orchestrator; the release check no longer
-  needs `gh` (#310).
-
 ### Update
 
 - `archon update --yes` restarts the orchestrator, ends at a signal at any
@@ -110,12 +125,26 @@ themselves (see Update below).
 - When archond restarts on a release with another daemon protocol, `archon
   update --yes` takes the new archond's answer at hello as the restart done,
   instead of waiting out its deadline, and renews the orchestrator through
-  the installed archon.
+  the installed archon (#314).
+
+### Doctor
+
+- `archon doctor` and setup check that the orchestrator's engine is logged
+  in and name the login step, the revival blocker names it too, and `archon
+  tui` stops retrying a failed orchestrator; the release check no longer
+  needs `gh` (#310, #277).
+
+### Fixed
+
+- A stage agent no longer inherits `ARCHON_DAEMON_DETACHED` from archond: the
+  detached start now tells its daemon with a hidden `--detached-child` flag,
+  so `archon daemon run` run by an agent's tests logs to the terminal as it
+  does in a plain shell (#315).
 
 ### Docs
 
 - Docs and CLI help now name `codex/gpt-6.1-terra` as the example Codex model,
-  following Aether making GPT-6.1 Terra the Codex default.
+  following Aether making GPT-6.1 Terra the Codex default (supersedes #303).
 
 ## 1.4.7
 

@@ -327,9 +327,8 @@ pub(super) async fn remove_worktree(
     .with_cache_dirs(cache_dirs.clone());
     let data_dir = ctx.paths.data_dir.clone();
     let target = cleanup.worktree.clone();
-    let item = cleanup.item.clone();
     // While the worktree exists, its symlinks show where its stacks run from.
-    crate::compose::tear_down(ctx, &item, &target, when).await?;
+    crate::compose::tear_down(ctx, &cleanup.item, &target, when).await?;
     let (reclaimed, removed) = tokio::task::spawn_blocking(move || {
         let _mark = mark;
         // A snapshot goes whole with `--force`, so its caches need no cleaning.
@@ -350,7 +349,7 @@ pub(super) async fn remove_worktree(
         if let Err(error) = reclaimed {
             tracing::debug!(worktree = %target.display(), %error, "caches not cleaned first");
         }
-        return crate::compose::remove_volumes(ctx, &item, &target, when).await;
+        return Ok(());
     };
     tracing::warn!(worktree = %target.display(), %error, "worktree not removed");
     let caches = match reclaimed {

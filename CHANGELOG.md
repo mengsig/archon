@@ -13,14 +13,12 @@
   (#323, #321).
 - archond tears down the Docker Compose stacks an item's worktree started
   (`docker compose --project-name <project> down --remove-orphans`) when its
-  run ends, before a fresh retry sets its worktree aside and before gc
-  removes it; once the worktree is removed, the named volumes those stacks
-  made go too when the project is named after the item (as Compose names one
-  run from the worktree's root), unless a volume predates the item, was made
-  anew since, or a container still mounts it. Only projects whose every
-  container runs from inside that worktree, with symlinks resolved, are
-  touched; without Docker it does nothing. `[worktrees] docker` names the
-  CLI (#321).
+  run ends, before a fresh retry sets its worktree aside, and before the
+  worktree is removed. Only projects whose every container runs from inside
+  that worktree, with symlinks resolved, are touched, and their volumes are
+  always kept: Docker cannot tell whose a volume is when another checkout
+  reuses the project's name. Without Docker it does nothing. `[worktrees]
+  docker` names the CLI (#321).
 - `archon doctor` lists the Compose stacks left in worktrees of items that
   ended, and the `lavish-axi poll` processes beyond the reports archond
   follows, each with the command that clears them (#321).

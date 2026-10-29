@@ -140,10 +140,10 @@ async fn a_settled_worktree_loses_its_caches_then_goes_but_keeps_its_branch() {
     assert!(branch_exists(&h, &branch), "branches are kept");
 }
 
-/// A Compose stack a run left is stopped when the run ends, its volumes
-/// kept for a retry, and they go when gc removes the worktree.
+/// A Compose stack a run left is stopped when the run ends, and gc then
+/// removes the worktree without touching the stack's volumes.
 #[tokio::test]
-async fn a_runs_compose_stack_stops_at_its_end_and_its_volumes_go_with_the_worktree() {
+async fn a_runs_compose_stack_stops_at_its_end_and_gc_keeps_its_volumes() {
     let docker = FakeDocker::new();
     let mut config = Config::default();
     config.worktrees.docker = docker.binary();
@@ -151,29 +151,21 @@ async fn a_runs_compose_stack_stops_at_its_end_and_its_volumes_go_with_the_workt
     let item = h.enqueue("starts a stack").await;
     h.dispatch().await;
     let tree = h.run(&item.id).await.workspace;
-    let project = format!("{}-review", item.id.as_str().to_lowercase());
-    docker.lists("ps", &[container(&project, &tree)]);
-    docker.lists("volumes", &[format!("{project}_db")]);
+    docker.lists("ps", &[container("review-1", &tree)]);
     let cancel = Request::CancelItem {
         item: item.id.clone(),
         reason: None,
     };
     h.cli(cancel).await.expect("cancel");
     h.dispatch().await;
-    let down = format!("compose --project-name {project} down --remove-orphans");
-    assert_eq!(
-        docker.downs(),
-        std::slice::from_ref(&down),
-        "{:?}",
-        docker.calls()
-    );
+    let down = "compose --project-name review-1 down --remove-orphans";
+    assert_eq!(docker.downs(), [down], "{:?}", docker.calls());
 
     age_finished_runs(&h, &item).await;
     let report = gc_request(&h, Some(0), false).await;
     assert_eq!(report.removed, vec![tree.clone()], "{report:?}");
     let calls = docker.calls();
-    let rm = format!("volume rm {project}_db");
-    assert!(calls.contains(&rm), "{calls:?}");
+    assert!(!calls.iter().any(|c| c.contains("volume")), "{calls:?}");
     assert_eq!(docker.downs(), [down], "nothing else was torn down");
 }
 

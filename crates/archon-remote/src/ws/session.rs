@@ -79,7 +79,22 @@ where
         code: close.0,
         reason: close.1.into(),
     };
-    let _gone = tokio::time::timeout(Duration::from_secs(2), socket.close(Some(frame))).await;
+    let _gone =
+        tokio::time::timeout(Duration::from_secs(2), close_gracefully(&mut socket, frame)).await;
+}
+
+/// Send the close, then read until the device answers it. Dropping a socket
+/// with unread input (a late pong) resets it, and the device loses the code.
+async fn close_gracefully<S>(
+    socket: &mut WebSocketStream<S>,
+    frame: CloseFrame,
+) -> Result<(), tokio_tungstenite::tungstenite::Error>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    socket.close(Some(frame)).await?;
+    while socket.next().await.transpose()?.is_some() {}
+    Ok(())
 }
 
 /// The first message must be `hello` at archond's protocol version.

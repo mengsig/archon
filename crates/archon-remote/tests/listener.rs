@@ -488,6 +488,30 @@ async fn withdrawing_an_allowed_origin_closes_open_sessions() {
     assert_eq!(close_code(&mut socket).await, 4002);
 }
 
+/// Input the server never read must not reset the socket: a reset drops a
+/// close frame still queued in the kernel, and the device never sees the code.
+#[tokio::test]
+async fn a_session_closed_with_unread_input_ends_without_a_reset() {
+    let listener = Listener::start().await;
+    let cookie = listener.pair().await;
+    let mut socket = listener.socket(&cookie).await;
+    socket
+        .send(Message::Ping(Default::default()))
+        .await
+        .unwrap();
+    let id = cookie
+        .trim_start_matches("archon_device=")
+        .split_once('.')
+        .unwrap()
+        .0;
+    listener.remote.revoke(id).unwrap();
+    assert_eq!(close_code(&mut socket).await, 4401);
+    let after = tokio::time::timeout(Duration::from_secs(10), socket.next())
+        .await
+        .expect("the server ends the connection");
+    assert!(after.is_none(), "the close handshake completes: {after:?}");
+}
+
 #[tokio::test]
 async fn a_revoke_lands_while_the_device_floods_requests_it_does_not_read() {
     let listener = Listener::start().await;

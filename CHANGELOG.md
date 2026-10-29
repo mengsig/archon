@@ -48,6 +48,11 @@ themselves (see Update below).
   runs it on the release pull request into `main` (#312).
 - A failed pipeline listing in the new-item sheet and a failed page read
   in an artifact's sheet show with "Try again", as the other loads do.
+- When archond closes a session (a revoke, a disable or a withdrawn
+  origin), it reads until the device answers the close. Before, a frame
+  it had not yet read could reset the connection, so a revoked phone saw
+  a dropped connection and kept retrying instead of showing it is no
+  longer paired.
 
 ### Storage
 

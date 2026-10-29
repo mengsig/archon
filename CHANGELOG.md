@@ -48,6 +48,14 @@
   agent resumed for a fix is told its new deadline with the findings.
   Before, an agent saw its deadline only if it asked Aether.
 
+### Review experiments
+
+- A reviewer's ad-hoc experiment (a mutant, probe or repro) that times out
+  is inconclusive, never a finding or a detection on its own, and one that
+  compiles gets `timeout 120s` instead of 30s. A timeout counted as
+  detected before, so a mutant or repro whose build ran past 30 seconds
+  was reported as a hang it never showed.
+
 ### Stage processes
 
 - Every stage contract tells the agent to stop only processes it started,

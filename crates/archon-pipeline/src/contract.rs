@@ -721,8 +721,10 @@ experiment (mutant, probe, repro) in a ";
 const REVIEW_BOUNDS_FALLBACK: &str = "`mktemp -d` copy of tracked files only \
 (no build outputs, no literal /tmp; delete it after)";
 
-const REVIEW_BOUNDS_TAIL: &str = " under one `timeout 30s` for all its repeats \
-(`timeout 30s sh -c '…'` for loops and pipes); a hang or timeout counts as detected. \
+/// A timed-out experiment shows nothing: one that compiles may just be slow.
+const REVIEW_BOUNDS_TAIL: &str = " under one `timeout 30s` for all its repeats, \
+`timeout 120s` when it compiles (`timeout 30s sh -c '…'` for loops and pipes); a \
+timeout is inconclusive, never a finding or a detection on its own. \
 Run the project's own build and tests normally, uncapped. \
 No long hang proofs or background waits. Report incomplete checks; never pass \
 without the evidence the review requires.\n";
@@ -953,9 +955,10 @@ mod tests {
                     "read the code and run the checks the review needs",
                     copy,
                     "delete it after) under one `timeout 30s` for all its repeats",
+                    "`timeout 120s` when it compiles",
                     "Run the project's own build and tests normally, uncapped.",
                     "`timeout 30s sh -c '…'` for loops and pipes",
-                    "a hang or timeout counts as detected",
+                    "a timeout is inconclusive, never a finding or a detection on its own",
                     "No long hang proofs or background waits",
                     "never pass without the evidence the review requires",
                 ] {
@@ -971,8 +974,9 @@ mod tests {
         let fallback = "- Reviewers: read the code and run the checks the review needs. Run each \
             ad-hoc experiment (mutant, probe, repro) in a `mktemp -d` copy of tracked files only \
             (no build outputs, no literal /tmp; delete it after) under one `timeout 30s` for all \
-            its repeats (`timeout 30s sh -c '…'` for loops and pipes); a hang or timeout counts \
-            as detected. Run the project's own build and tests normally, uncapped. No long hang \
+            its repeats, `timeout 120s` when it compiles (`timeout 30s sh -c '…'` for loops and \
+            pipes); a timeout is inconclusive, never a finding or a detection on its own. Run the \
+            project's own build and tests normally, uncapped. No long hang \
             proofs or background waits. Report incomplete checks; never pass without the \
             evidence the review requires.\n";
         assert_eq!(review_bounds(None), fallback);

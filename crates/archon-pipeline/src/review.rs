@@ -196,16 +196,17 @@ fn finding_titles(list: &[Value]) -> Vec<String> {
         .collect()
 }
 
-/// The one top-level fenced block of `text`, untagged or tagged `json`, as
-/// JSON; `None` for no block or several. Indented or quoted examples are no block.
+/// The one fenced block of `text`, top level and untagged or tagged `json`,
+/// as JSON; `None` for no block or several. A nested or quoted example is none.
 fn fenced_json(text: &str) -> Option<Value> {
-    let mut blocks: Vec<(&str, String)> = Vec::new();
+    let mut blocks: Vec<(Option<&str>, String)> = Vec::new();
     for (kind, line) in markdown_lines(text) {
         match kind {
             LineKind::FenceOpen => {
-                let info = line.trim_start().trim_start_matches(['`', '~']).trim();
-                blocks.push((info, String::new()));
+                let info = line.trim_start_matches(['`', '~']).trim();
+                blocks.push((Some(info), String::new()));
             }
+            LineKind::NestedFenceOpen => blocks.push((None, String::new())),
             LineKind::Fenced => {
                 let (_, body) = blocks
                     .last_mut()
@@ -216,7 +217,7 @@ fn fenced_json(text: &str) -> Option<Value> {
             _ => {}
         }
     }
-    let [(info, body)] = blocks.as_slice() else {
+    let [(Some(info), body)] = blocks.as_slice() else {
         return None;
     };
     if !info.is_empty() && !info.eq_ignore_ascii_case("json") {
@@ -635,6 +636,8 @@ mod tests {
             format!("Example:\n> ```json\n> {pass}\n> ```"),
             format!("```text\n```json\n{pass}\n```"),
             format!("Inline ```{pass}``` is no block."),
+            format!("Blocking issue found.\n- Example of a pass:\n  ```json\n  {pass}\n  ```"),
+            format!("Blocking issue found.\n1. Example:\n   ```json\n   {pass}\n   ```"),
         ] {
             assert!(
                 Verdict::read_result(&example, Some(&failing)).is_err(),

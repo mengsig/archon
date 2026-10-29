@@ -129,7 +129,7 @@ impl Verdict {
 }
 
 /// The last line of `text` that reads `VERDICT: …`, and its value. Lines in
-/// fenced or indented code and block quotes are examples, never a verdict.
+/// fences, block quotes or indented under a list item or as code are examples.
 fn last_verdict_line(text: &str) -> Option<(&str, &str)> {
     let last = markdown_lines(text)
         .filter(|(kind, _)| *kind == LineKind::Prose)
@@ -139,29 +139,33 @@ fn last_verdict_line(text: &str) -> Option<(&str, &str)> {
     last
 }
 
-/// What a markdown line is to a reader looking for a verdict in it.
+/// What a markdown line is to a reader looking for a verdict in it. Only
+/// what starts at column 0 is top level: list items nest by indentation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineKind {
     Prose,
     /// A `>` block quote line.
     Quote,
-    /// Indented code: four columns or more outside a fence.
-    Code,
-    /// A top-level ``` or ~~~ line that opens a fenced block.
+    /// Indented outside a fence: nested in a list item, or code.
+    Indented,
+    /// A column-0 ``` or ~~~ line that opens a fenced block.
     FenceOpen,
+    /// An indented fence opening, as in a list item: an example, never top level.
+    NestedFenceOpen,
     /// A line inside a fenced block; an unclosed block runs to the end.
     Fenced,
     FenceClose,
 }
 
-/// Each line of `text` with its kind. Only an unindented, unquoted marker
+/// Each line of `text` with its kind. A marker indented under four columns
 /// opens a fence, and only a bare run of its character, at least as long, closes it.
 pub fn markdown_lines(text: &str) -> impl Iterator<Item = (LineKind, &str)> {
+    use LineKind::{FenceOpen, Fenced, NestedFenceOpen};
     text.lines().scan(None, |fence, line| {
         let kind = line_kind(fence, line);
         debug_assert_eq!(
             fence.is_some(),
-            matches!(kind, LineKind::FenceOpen | LineKind::Fenced)
+            matches!(kind, FenceOpen | NestedFenceOpen | Fenced)
         );
         Some((kind, line))
     })
@@ -169,24 +173,23 @@ pub fn markdown_lines(text: &str) -> impl Iterator<Item = (LineKind, &str)> {
 
 fn line_kind(fence: &mut Option<(char, usize)>, line: &str) -> LineKind {
     let start = line.trim_start();
-    let indented = indent_columns(line) >= 4;
+    let columns = indent_columns(line);
     if let Some(open) = *fence {
-        if indented || !closes(start, open) {
+        if columns >= 4 || !closes(start, open) {
             return LineKind::Fenced;
         }
         *fence = None;
         return LineKind::FenceClose;
     }
-    if indented {
-        return LineKind::Code;
+    if columns < 4 {
+        *fence = fence_marker(start);
     }
-    if start.starts_with('>') {
-        return LineKind::Quote;
-    }
-    *fence = fence_marker(start);
-    match fence {
-        Some(_) => LineKind::FenceOpen,
-        None => LineKind::Prose,
+    match (fence.is_some(), columns) {
+        (true, 0) => LineKind::FenceOpen,
+        (true, _) => LineKind::NestedFenceOpen,
+        (false, 0) if start.starts_with('>') => LineKind::Quote,
+        (false, 0) => LineKind::Prose,
+        (false, _) => LineKind::Indented,
     }
 }
 
@@ -737,8 +740,10 @@ mod tests {
         }
         let mixed_marker = "```\n \t```\nVERDICT: PASS\n```";
         assert_eq!(Verdict::extract(mixed_marker, None), Verdict::Unknown);
-        let shallow = "   VERDICT: PASS";
-        assert_eq!(Verdict::extract(shallow, None), Verdict::Pass);
+        let nested = "Blocking issue.\n- Example of a pass:\n  VERDICT: PASS";
+        assert_eq!(Verdict::extract(nested, None), Verdict::Unknown);
+        let listed = "Checked.\n- **Verdict:** PASS";
+        assert_eq!(Verdict::extract(listed, None), Verdict::Pass);
         let explained = "VERDICT: PASS — verdict confirmed by CI";
         assert_eq!(Verdict::extract(explained, None), Verdict::Pass);
     }
@@ -746,10 +751,23 @@ mod tests {
     #[test]
     fn markdown_lines_tell_prose_from_quotes_code_and_fences() {
         use LineKind::*;
-        let text = "a\n> b\n \tc\n~~~json\n    d\n```\n~~~~\ne\n```\nf";
+        let text = "a\n> b\n \tc\n~~~json\n    d\n```\n~~~~\n- e\n  f\n  ```\n  g\n  ```\n```\nh";
         let kinds: Vec<_> = markdown_lines(text).map(|(kind, _)| kind).collect();
         let want = [
-            Prose, Quote, Code, FenceOpen, Fenced, Fenced, FenceClose, Prose, FenceOpen, Fenced,
+            Prose,
+            Quote,
+            Indented,
+            FenceOpen,
+            Fenced,
+            Fenced,
+            FenceClose,
+            Prose,
+            Indented,
+            NestedFenceOpen,
+            Fenced,
+            FenceClose,
+            FenceOpen,
+            Fenced,
         ];
         assert_eq!(kinds, want);
     }

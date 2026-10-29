@@ -810,8 +810,9 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   "title", "detail", "path"}]}`, and the summary ends with `VERDICT: PASS` or
   `VERDICT: FAIL`. Archon reads a structured `verdict` key first, whatever
   it holds, then a structured `result` or `status` that opens with a
-  verdict word, then the summary's last `VERDICT:` line outside block
-  quotes and fenced or indented code.
+  verdict word, then the summary's last `VERDICT:` line that starts at
+  column 0 outside block quotes and fences (an indented line belongs to a
+  list item or code).
   Letter case and markdown emphasis
   (`**Verdict:** PASS`) do not matter, and `passed`, `approved`, `failed` and
   `rejected` read as pass and fail. Anything else counts as fail, and so

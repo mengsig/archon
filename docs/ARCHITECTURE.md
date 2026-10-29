@@ -2482,8 +2482,8 @@ enforces is named where it is enforced.
 
 `Verdict::extract` reads a structured `verdict` key first (a blank, null or
 unreadable one is `Unknown`), then a structured `result` or `status` that
-opens with a verdict word, then the summary's last `VERDICT:` line outside
-block quotes and fenced or indented code, in any letter case and through
+opens with a verdict word, then the summary's last `VERDICT:` line that
+starts at column 0 outside block quotes and fences, in any letter case and through
 markdown emphasis. A verdict word followed, before the first `—`, `:`, `;`
 or `.`, by another verdict word or `or` is a choice and reads as `Unknown`. Reviewers' verdicts (§8.2) go through the same parser.
 

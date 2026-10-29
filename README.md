@@ -84,6 +84,29 @@ Aether instance when needed; read-only ones such as `queue`, `repo`,
 `questions` and `status` do not ([which commands start
 archond](docs/guide.md#which-commands-start-archond)).
 
+## Get started in the chat
+
+After the first run, set everything else up by asking the orchestrator.
+When it needs your yes, archond asks a numbered question and you reply
+`/answer <n> <answer>`:
+
+```text
+you:     Register ~/code/foo as foo, ship pull requests, base branch main.
+you:     For foo, use the adaptive pipeline by default.
+archon:  Q3: Approve operator authority change? … Reply yes or no, or /answer N yes.
+you:     /answer 3 yes
+you:     In foo, fix issue #12.
+you:     From now on, review anything that touches foo's auth/ strictly.
+```
+
+Watch the work with `/queue`, `/item <id>` and `/status`, merge with
+`/merge <id>`, see what waits with `/questions` and proposed lessons with
+`/lessons`, and watch a repository's GitHub issues with `/watch <name>`.
+Plans and reports open as [Lavish](https://github.com/kunchenguid/lavish-axi)
+review pages where you comment in place. [Get started](docs/getting-started.md)
+walks through each step: repositories and their settings, the queue,
+standing directives, Lavish, GitHub, questions and lessons.
+
 ## How it works
 
 - **Item:** one queued task with a brief, priority, dependencies, model
@@ -198,7 +221,8 @@ Contributors are listed by GitHub handle, and the list is maintained by hand.
 
 ## Documentation
 
-[User guide](docs/guide.md) · [Install](docs/install.md) ·
+[Get started](docs/getting-started.md) · [User guide](docs/guide.md) ·
+[Install](docs/install.md) ·
 [Configuration](docs/configuration.md) · [Pipelines](docs/PIPELINES.md) ·
 [Queue scripting](docs/queue-scripting.md) ·
 [GitHub watcher](docs/github-watcher.md) ·

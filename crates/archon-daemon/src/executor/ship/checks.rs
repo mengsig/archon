@@ -25,6 +25,8 @@ use crate::worktree::team::{check_worktree, common_dir};
 const MAX_LISTED: usize = 5;
 /// Where stages write the pages Archon shows the operator; never part of a change.
 const REPORTS_DIR: &str = ".archon/reports/";
+/// Where stages declare the services a later stage uses: run state, not a change.
+const SERVICES_DIR: &str = ".archon/services/";
 
 /// The worktree a run ships from and what it must hold.
 #[derive(Debug, Clone)]
@@ -151,7 +153,11 @@ pub(super) fn check_unchanged(target: &Target) -> Result<Result<(), String>, Arc
     let untracked = git(tree, &["ls-files", "--others", "--exclude-standard"])?;
     let present = staged
         .lines()
-        .chain(untracked.lines())
+        .chain(
+            untracked
+                .lines()
+                .filter(|path| !path.starts_with(SERVICES_DIR)),
+        )
         .filter(|path| !is_unshippable(path))
         .collect::<Vec<_>>();
     if !present.is_empty() {

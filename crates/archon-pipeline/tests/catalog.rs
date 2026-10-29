@@ -158,7 +158,9 @@ fn built_in_stages_that_build_get_room_to_finish() {
     let catalog = Catalog::builtin();
     let minutes = |pipeline: &str, stage: &str| {
         let spec = catalog.get(pipeline).expect("a built-in loads");
-        let stage = spec.stage(stage).unwrap_or_else(|| panic!("{pipeline}/{stage}"));
+        let stage = spec
+            .stage(stage)
+            .unwrap_or_else(|| panic!("{pipeline}/{stage}"));
         stage.timeout_minutes
     };
     assert_eq!(minutes("direct", "implement"), minutes("adaptive", "build"));

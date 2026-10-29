@@ -617,7 +617,8 @@ async fn a_no_change_result_on_a_clean_branch_succeeds_without_shipping() {
     assert!(gh.calls().is_empty(), "{:?}", gh.calls());
 }
 
-/// The proposal page a propose stage leaves untracked is Archon's, not a change.
+/// The proposal page a propose stage leaves untracked is Archon's, not a change,
+/// and so is a declared service's PID file.
 #[tokio::test]
 async fn a_no_change_result_beside_archon_s_own_report_pages_succeeds() {
     let (h, gh) = delivering().await;
@@ -625,6 +626,9 @@ async fn a_no_change_result_beside_archon_s_own_report_pages_succeeds() {
     let page = run.workspace.join(".archon/reports/proposal/index.html");
     std::fs::create_dir_all(page.parent().unwrap()).unwrap();
     std::fs::write(&page, "<p>the proposal</p>\n").unwrap();
+    let pid = run.workspace.join(".archon/services/web.pid");
+    std::fs::create_dir_all(pid.parent().unwrap()).unwrap();
+    std::fs::write(&pid, "4242\n").unwrap();
     settle_with(&h, json!({"no_change": {"reason": "already done"}})).await;
     let summary = succeeded(&h, &item).await;
     assert!(summary.contains("No change was needed"), "{summary}");

@@ -7,18 +7,21 @@
 //!
 //! Selection is conservative: same user, started for an agent (Aether's
 //! engine tag in its environment), never pid 1, never this process,
-//! Archon's or Aether's daemons, their ancestors or their descendants. A
+//! Archon's or Aether's daemons, their ancestors or their descendants, nor
+//! at a stage end the services the run declared ([`services`]). A
 //! live engine and its tools descend from Aether, which reaps them itself;
 //! what escaped was reparented away. An operator's shell or editor in a
 //! worktree carries no tag and is left alone. Off Linux nothing is scanned
 //! or killed.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use archon_core::error::ArchonError;
+
+pub mod services;
 
 /// How long SIGTERM'd processes get to exit before SIGKILL.
 const TERM_GRACE: Duration = Duration::from_secs(5);
@@ -121,30 +124,33 @@ struct Held<H> {
 struct Scan<'a> {
     proc_root: &'a Path,
     worktree: PathBuf,
+    /// Declared services: these PIDs, their process groups and descendants.
+    kept: &'a BTreeSet<i32>,
     uid: u32,
     me: i32,
 }
 
 /// End every process of the current user whose cwd or executable lies under
-/// `worktree`, a tree below the worktree `root`, as the module docs describe.
+/// `worktree`, a tree below the worktree `root`, as the module docs describe,
+/// but the services `kept`.
 #[cfg(target_os = "linux")]
-pub fn reap(root: &Path, worktree: &Path) -> Result<Report, ArchonError> {
+pub fn reap(root: &Path, worktree: &Path, kept: &BTreeSet<i32>) -> Result<Report, ArchonError> {
     let uid = rustix::process::getuid().as_raw();
     let proc_root = Path::new("/proc");
     let graces = (TERM_GRACE, KILL_GRACE);
-    reap_with(proc_root, root, worktree, uid, graces, &PidFds)
+    reap_with(proc_root, root, worktree, kept, uid, graces, &PidFds)
 }
 
 /// Nothing is scanned or killed off Linux.
 #[cfg(not(target_os = "linux"))]
-pub fn reap(_root: &Path, _worktree: &Path) -> Result<Report, ArchonError> {
+pub fn reap(_root: &Path, _worktree: &Path, _kept: &BTreeSet<i32>) -> Result<Report, ArchonError> {
     Ok(Report::default())
 }
 
 /// [`reap`] before `worktree` is removed: what was running is ended and
 /// logged, and a process that survives SIGKILL refuses the removal.
 pub fn clear_for_removal(root: &Path, worktree: &Path) -> Result<(), ArchonError> {
-    let report = reap(root, worktree)?;
+    let report = reap(root, worktree, &BTreeSet::new())?;
     if report.is_empty() {
         return Ok(());
     }
@@ -262,6 +268,7 @@ fn reap_with<S: Signaller>(
     proc_root: &Path,
     root: &Path,
     worktree: &Path,
+    kept: &BTreeSet<i32>,
     uid: u32,
     graces: (Duration, Duration),
     signaller: &S,
@@ -272,9 +279,11 @@ fn reap_with<S: Signaller>(
         "refusing to reap under {}",
         worktree.display()
     );
+    assert!(kept.iter().all(|&pid| pid > 1), "pid 1 is no service");
     let scan = Scan {
         proc_root,
         worktree: resolve_within(root, worktree)?,
+        kept,
         uid,
         me: std::process::id() as i32,
     };
@@ -371,7 +380,7 @@ impl Scan<'_> {
             let Some(name) = self.matches(pid) else {
                 continue;
             };
-            if self.descends_from_root(pid) || signaller.exited(&handle) {
+            if self.descends_from_root(pid) || self.serves(pid) || signaller.exited(&handle) {
                 continue;
             }
             found.push(Held {
@@ -428,6 +437,22 @@ impl Scan<'_> {
     fn descends_from_root(&self, pid: i32) -> bool {
         self.lineage(pid)
             .is_none_or(|chain| chain.iter().any(|&p| self.is_root(p)))
+    }
+
+    /// Whether `pid` is a kept service, in one's process group or below one.
+    fn serves(&self, pid: i32) -> bool {
+        if self.kept.is_empty() {
+            return false;
+        }
+        let dir = self.proc_root.join(pid.to_string());
+        let group = status_field(&dir, "NSpgid:")
+            .and_then(|ids| ids.split_whitespace().next()?.parse::<i32>().ok());
+        if group.is_some_and(|group| self.kept.contains(&group)) {
+            return true;
+        }
+        // An untraceable lineage is spared as protected already.
+        self.lineage(pid)
+            .is_some_and(|chain| chain.iter().any(|p| self.kept.contains(p)))
     }
 
     /// The ancestors of this process and of the daemons, roots included.
@@ -621,9 +646,14 @@ mod tests {
     }
 
     fn selected_with(f: &Fixture, fake: &Fake) -> Vec<i32> {
+        selected_keeping(f, fake, &BTreeSet::new())
+    }
+
+    fn selected_keeping(f: &Fixture, fake: &Fake, kept: &BTreeSet<i32>) -> Vec<i32> {
         let scan = Scan {
             proc_root: &f.proc,
             worktree: f.tree.clone(),
+            kept,
             uid: UID,
             me: std::process::id() as i32,
         };
@@ -670,6 +700,28 @@ mod tests {
         fake_proc(&f.proc, 400, UID, 1, &f.tree, &f.tree);
         fake_proc(&f.proc, 401, UID, 1, &f.tree, &f.tree.join("aether-cli"));
         assert_eq!(selected(&f), vec![400, 401]);
+    }
+
+    /// A server setup started for the next stage outlives setup's end.
+    #[test]
+    fn spares_declared_services_with_their_groups_and_descendants() {
+        let f = fixture();
+        fake_proc(&f.proc, 500, UID, 1, &f.tree, &f.tree);
+        fake_proc(&f.proc, 501, UID, 500, &f.tree, &f.tree);
+        fake_proc(&f.proc, 502, UID, 1, &f.tree, &f.tree);
+        let status = f.proc.join("502/status");
+        let grouped = std::fs::read_to_string(&status).unwrap() + "NSpgid:\t500\n";
+        std::fs::write(&status, grouped).unwrap();
+        fake_proc(&f.proc, 503, UID, 1, &f.tree, &f.tree);
+        let fake = Fake::new(&f.proc);
+        assert_eq!(selected(&f), vec![500, 501, 502, 503], "nothing declared");
+        let kept = BTreeSet::from([500]);
+        assert_eq!(selected_keeping(&f, &fake, &kept), vec![503]);
+        let stale = BTreeSet::from([9999]);
+        assert_eq!(
+            selected_keeping(&f, &fake, &stale),
+            vec![500, 501, 502, 503]
+        );
     }
 
     #[test]
@@ -757,7 +809,16 @@ mod tests {
             ..Fake::new(&f.proc)
         };
         let none = Duration::from_millis(1);
-        let report = reap_with(&f.proc, &f.root, &f.tree, UID, (none, none), &fake).unwrap();
+        let report = reap_with(
+            &f.proc,
+            &f.root,
+            &f.tree,
+            &BTreeSet::new(),
+            UID,
+            (none, none),
+            &fake,
+        )
+        .unwrap();
         let pids = |v: &[Found]| v.iter().map(|p| p.pid).collect::<Vec<_>>();
         assert_eq!(pids(&report.found), vec![600, 601, 602]);
         assert_eq!(pids(&report.killed), vec![601, 602]);
@@ -801,7 +862,15 @@ mod tests {
         fake_proc(&f.proc, 12, UID, 1, &f.tree, &f.tree);
         let fake = Fake::new(&f.proc);
         let none = Duration::ZERO;
-        let reaped = reap_with(&f.proc, &f.root, &f.tree, UID, (none, none), &fake);
+        let reaped = reap_with(
+            &f.proc,
+            &f.root,
+            &f.tree,
+            &BTreeSet::new(),
+            UID,
+            (none, none),
+            &fake,
+        );
         assert!(
             reaped
                 .unwrap_err()
@@ -818,10 +887,26 @@ mod tests {
         std::fs::write(f.proc.join("900/unopenable"), "").unwrap();
         let fake = Fake::new(&f.proc);
         let none = Duration::ZERO;
-        let held = reap_with(&f.proc, &f.root, &f.tree, UID, (none, none), &fake);
+        let held = reap_with(
+            &f.proc,
+            &f.root,
+            &f.tree,
+            &BTreeSet::new(),
+            UID,
+            (none, none),
+            &fake,
+        );
         assert!(held.unwrap_err().to_string().contains("no handle on 900"));
         let missing = f.proc.join("missing");
-        let listed = reap_with(&missing, &f.root, &f.tree, UID, (none, none), &fake);
+        let listed = reap_with(
+            &missing,
+            &f.root,
+            &f.tree,
+            &BTreeSet::new(),
+            UID,
+            (none, none),
+            &fake,
+        );
         assert!(listed.is_err(), "an unreadable /proc is no empty one");
         assert!(fake.sent.borrow().is_empty(), "no signal sent");
     }
@@ -832,7 +917,15 @@ mod tests {
         fake_proc(&f.proc, 700, UID, 1, &f.outside, &f.outside);
         let fake = Fake::new(&f.proc);
         let none = Duration::ZERO;
-        let report = reap_with(&f.proc, &f.root, &f.tree, UID, (none, none), &fake);
+        let report = reap_with(
+            &f.proc,
+            &f.root,
+            &f.tree,
+            &BTreeSet::new(),
+            UID,
+            (none, none),
+            &fake,
+        );
         assert!(report.unwrap().is_empty());
         assert!(fake.sent.borrow().is_empty(), "no signal sent");
     }
@@ -846,7 +939,17 @@ mod tests {
         symlink(&f.outside, &f.tree).unwrap();
         let fake = Fake::new(&f.proc);
         let none = Duration::ZERO;
-        let reap = |tree: &Path| reap_with(&f.proc, &f.root, tree, UID, (none, none), &fake);
+        let reap = |tree: &Path| {
+            reap_with(
+                &f.proc,
+                &f.root,
+                tree,
+                &BTreeSet::new(),
+                UID,
+                (none, none),
+                &fake,
+            )
+        };
         let redirected = reap(&f.tree).unwrap_err().to_string();
         assert!(redirected.contains("by a symbolic link"), "{redirected}");
         let outside = reap(&f.outside).unwrap_err().to_string();
@@ -874,7 +977,16 @@ mod tests {
             ..Fake::new(&f.proc)
         };
         let none = Duration::ZERO;
-        let report = reap_with(&f.proc, &f.root, &f.tree, UID, (none, none), &fake).unwrap();
+        let report = reap_with(
+            &f.proc,
+            &f.root,
+            &f.tree,
+            &BTreeSet::new(),
+            UID,
+            (none, none),
+            &fake,
+        )
+        .unwrap();
         let pids: Vec<i32> = report.found.iter().map(|p| p.pid).collect();
         assert_eq!(pids, vec![960, 961]);
         assert!(report.survivors.is_empty(), "the tree is clear");
@@ -896,7 +1008,16 @@ mod tests {
             ..Fake::new(&f.proc)
         };
         let none = Duration::ZERO;
-        let report = reap_with(&f.proc, &f.root, &f.tree, UID, (none, none), &fake).unwrap();
+        let report = reap_with(
+            &f.proc,
+            &f.root,
+            &f.tree,
+            &BTreeSet::new(),
+            UID,
+            (none, none),
+            &fake,
+        )
+        .unwrap();
         let last = 970 + ROUNDS as i32;
         let survivors: Vec<i32> = report.survivors.iter().map(|p| p.pid).collect();
         assert_eq!(survivors, vec![last]);
@@ -915,11 +1036,15 @@ mod tests {
         use std::process::Command;
 
         fn real_reap(tree: &Path, term_grace: Duration) -> Report {
+            real_reap_keeping(tree, term_grace, &BTreeSet::new())
+        }
+
+        fn real_reap_keeping(tree: &Path, term_grace: Duration, kept: &BTreeSet<i32>) -> Report {
             let uid = rustix::process::getuid().as_raw();
             let kill_grace = Duration::from_secs(5);
             let root = tree.parent().unwrap();
             let graces = (term_grace, kill_grace);
-            reap_with(Path::new("/proc"), root, tree, uid, graces, &PidFds).unwrap()
+            reap_with(Path::new("/proc"), root, tree, kept, uid, graces, &PidFds).unwrap()
         }
 
         fn dirs() -> (tempfile::TempDir, PathBuf, PathBuf) {
@@ -942,6 +1067,21 @@ mod tests {
             assert!(report.killed.is_empty(), "sleep ends on SIGTERM");
             assert!(inside.gone());
             assert!(bystander.alive(), "left alone");
+        }
+
+        #[test]
+        fn a_declared_service_survives_until_a_reap_that_keeps_nothing() {
+            let (_tmp, tree, _other) = dirs();
+            let server = Orphan::start("exec sleep 300", &tree);
+            let stray = Orphan::start("exec sleep 300", &tree);
+            let kept = BTreeSet::from([server.0]);
+            let report = real_reap_keeping(&tree, Duration::from_secs(5), &kept);
+            let pids: Vec<i32> = report.found.iter().map(|p| p.pid).collect();
+            assert_eq!(pids, vec![stray.0], "only the undeclared one");
+            assert!(server.alive() && stray.gone());
+            let report = real_reap(&tree, Duration::from_secs(5));
+            assert_eq!(report.found.len(), 1, "{report:?}");
+            assert!(server.gone(), "the run's end stops it");
         }
 
         #[test]

@@ -2432,6 +2432,10 @@ the PID it recorded, its process group or its Compose project, and never
 by name or pattern (`pkill`, `killall`, `pgrep -f … | xargs kill`): stage
 agents run as the operator's user, so a pattern kill reaches the
 operator's archond and aetherd and every stage they run.
+A stage in a worktree is also told how to keep a server up for a later
+stage: it writes the PID to `.archon/services/<name>.pid`. On Linux the
+stage-end reap spares that process, its process group and its descendants
+while the run goes on; the run's end reaps them with the rest.
 
 A team stage's contract names the agent's role and the other roles, keeps
 it to its own worktree and role, and asks it to commit on its branch

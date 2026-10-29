@@ -325,11 +325,14 @@ re-review of a fix):
 ```
 
 For providers that auto-complete a task from final text, Archon also accepts
-this object as the entire `summary` when `structured` is absent, or the
+this object as the entire `summary` when `structured` states no verdict, or the
 `complete_task` arguments `{"summary": "...", "structured": {...}}` written
-out as that summary. An explicit `structured` value takes precedence, even if
-invalid. Prose, fenced blocks, and a `VERDICT:` line alone do not count as a
-delegated review.
+out as that summary, or a `VERDICT: PASS|FAIL` line beside `head:` and
+`base:` lines (a `structured` without a verdict may give these instead). A
+`structured` that states a verdict takes precedence, even if invalid. The
+verdict word is read as stage gates read it (see "The stage contract"). Prose,
+and a `VERDICT:` line with no commit it read, do not count as a delegated
+review.
 
 The stage agent's `complete_task` names the agent id `delegate`
 returned for each reviewer the pass rests on, including a failed one whose
@@ -804,8 +807,12 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
 - **Review and test stages, and any gated stage.** The result carries
   `structured` data `{"verdict": "pass"|"fail", "findings": [{"severity",
   "title", "detail", "path"}]}`, and the summary ends with `VERDICT: PASS` or
-  `VERDICT: FAIL`. Archon reads the structured verdict first, then the last
-  `VERDICT:` line.
+  `VERDICT: FAIL`. Archon reads the structured `verdict` first, then a
+  structured `result` or `status` that reads as one, then the summary's last
+  readable `VERDICT:` line. Letter case and markdown emphasis
+  (`**Verdict:** PASS`) do not matter, and `passed`, `approved`, `failed` and
+  `rejected` read as pass and fail. Anything else counts as fail, and the
+  gate's refusal quotes what the agent wrote.
 - **The stage `[pipeline.ship]` names.** `## Ship record`: commit with the
   repository's git identity, leave a clean tree, do not push, and return
   `commit`, `tree`, `checks` and `pr` in `structured` (see "Shipping").

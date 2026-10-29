@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fixed
+
+- Stage gates and delegated reviews read verdicts with one tolerant
+  parser: the structured `verdict`, then a structured `result` or `status`,
+  then the summary's last readable `VERDICT:` line, in any letter case and
+  through markdown emphasis (`**Verdict:** PASS`), with `passed`, `approved`,
+  `failed` and `rejected` read as pass and fail. A test stage that passed
+  with `{"findings": []}` and `**Verdict:** PASS` in its summary no longer
+  fails its gate, and a reviewer whose `structured` gives no verdict is read
+  from its summary. An unreadable verdict still counts as fail, and the
+  refusal now quotes it.
+
 ### Documentation
 
 - A "Get started in the chat" section in the README and a

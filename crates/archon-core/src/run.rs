@@ -10,9 +10,8 @@ use crate::error::ArchonError;
 use crate::id::{PipelineRunId, QuestionId, QueueItemId, ReportId, StageRunId};
 use crate::model::ModelChoice;
 
-/// What a review/test stage concluded. Parsed from the stage agent's
-/// structured result (`{"verdict": "pass"}`) or a trailing `VERDICT: PASS`
-/// line in its summary; anything else is `Unknown` and fails a gate.
+/// What a review/test stage concluded, as [`Verdict::extract`] reads it from
+/// the stage agent's result; anything unreadable is `Unknown` and fails a gate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Verdict {
@@ -21,31 +20,106 @@ pub enum Verdict {
     Unknown,
 }
 
+/// `structured` keys a result may give its verdict under, in the order read.
+const VERDICT_KEYS: [&str; 3] = ["verdict", "result", "status"];
+
 impl Verdict {
-    /// Structured field first, then the summary's last `VERDICT:` line.
+    /// `structured.verdict`, else a readable `structured.result` or `status`,
+    /// else the summary's last readable `VERDICT:` line.
     pub fn extract(summary: &str, structured: Option<&serde_json::Value>) -> Self {
-        if let Some(v) = structured
-            .and_then(|s| s.get("verdict"))
-            .and_then(|v| v.as_str())
-        {
-            return Self::from_word(v);
-        }
-        summary
-            .lines()
-            .rev()
-            .map(str::trim)
-            .find_map(|line| line.strip_prefix("VERDICT:"))
-            .map(|word| Self::from_word(word.trim()))
+        structured
+            .and_then(Self::from_structured)
+            .or_else(|| Self::from_summary(summary))
             .unwrap_or(Self::Unknown)
     }
 
-    fn from_word(word: &str) -> Self {
-        match word.trim().to_ascii_lowercase().as_str() {
-            "pass" | "passed" | "ok" => Self::Pass,
-            "fail" | "failed" => Self::Fail,
+    /// The verdict `structured` states: its `verdict` field whenever it has
+    /// one, readable or not, else a `result` or `status` that reads as one.
+    pub fn from_structured(structured: &serde_json::Value) -> Option<Self> {
+        let field = |key| non_empty(structured.get(key)?.as_str()?);
+        if let Some(text) = field(VERDICT_KEYS[0]) {
+            let verdict = Self::from_summary(text).unwrap_or_else(|| Self::from_word(text));
+            return Some(verdict);
+        }
+        let read = |text: &str| match Self::from_summary(text) {
+            Some(verdict) => Some(verdict),
+            None if one_word(text) => Some(Self::from_word(text)),
+            None => None,
+        };
+        VERDICT_KEYS[1..]
+            .iter()
+            .filter_map(|key| field(key))
+            .filter_map(read)
+            .find(|verdict| *verdict != Self::Unknown)
+    }
+
+    /// The last line of `text` that reads `VERDICT: <word>` with a readable
+    /// word, in any letter case and with light markdown (`**Verdict:** PASS`).
+    pub fn from_summary(text: &str) -> Option<Self> {
+        text.lines()
+            .rev()
+            .filter_map(|line| strip_label(line, "verdict"))
+            .map(Self::from_word)
+            .find(|verdict| *verdict != Self::Unknown)
+    }
+
+    /// The text a result gives as its verdict, readable or not, to quote
+    /// when it is refused: a structured field, else a `VERDICT:` line.
+    pub fn stated<'a>(
+        summary: &'a str,
+        structured: Option<&'a serde_json::Value>,
+    ) -> Option<&'a str> {
+        let field = VERDICT_KEYS
+            .iter()
+            .find_map(|key| non_empty(structured?.get(key)?.as_str()?));
+        field.or_else(|| {
+            summary
+                .lines()
+                .rev()
+                .find(|line| strip_label(line, "verdict").is_some())
+                .map(str::trim)
+        })
+    }
+
+    /// The first word of `text`, markdown and letter case aside.
+    fn from_word(text: &str) -> Self {
+        let word = text
+            .trim_start_matches(|c: char| !c.is_alphanumeric())
+            .split(|c: char| !c.is_alphanumeric())
+            .next()
+            .unwrap_or_default();
+        match word.to_ascii_lowercase().as_str() {
+            "pass" | "passed" | "passes" | "ok" | "approve" | "approved" => Self::Pass,
+            "fail" | "failed" | "fails" | "reject" | "rejected" => Self::Fail,
             _ => Self::Unknown,
         }
     }
+}
+
+fn non_empty(text: &str) -> Option<&str> {
+    Some(text.trim()).filter(|text| !text.is_empty())
+}
+
+/// Whether `text` is one word once markdown and punctuation around it are dropped.
+fn one_word(text: &str) -> bool {
+    let word = text.trim_matches(|c: char| !c.is_alphanumeric());
+    !word.is_empty() && word.chars().all(char::is_alphanumeric)
+}
+
+/// `line` without a leading `label:`, in any letter case, with light
+/// markdown (`**Label:**`, `- label:`, `## Label:`) around the label allowed.
+pub fn strip_label<'a>(line: &'a str, label: &str) -> Option<&'a str> {
+    assert!(!label.is_empty(), "a label to strip");
+    let line = line
+        .trim()
+        .trim_start_matches(['*', '-', '_', '`', '#', '>', ' ']);
+    let (head, rest) = line.split_at_checked(label.len())?;
+    if !head.eq_ignore_ascii_case(label) {
+        return None;
+    }
+    let rest = rest.trim_start_matches(['*', '_']);
+    rest.strip_prefix(':')
+        .map(|value| value.trim_start_matches(['*', '_', ' ']))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -433,6 +507,65 @@ mod tests {
             Verdict::Pass
         );
         assert_eq!(Verdict::extract("no verdict here", None), Verdict::Unknown);
+    }
+
+    #[test]
+    fn verdict_reads_markdown_any_case_synonyms_and_other_structured_keys() {
+        let findings_only = serde_json::json!({"findings": []});
+        let passed = [
+            ("**Verdict:** PASS — all 214 tests pass", None),
+            ("tests ran\n\n**VERDICT: PASS**", None),
+            ("Verdict: passed\nhead: abc1234", None),
+            ("## verdict: Approved", None),
+            (
+                "**Verdict:** PASS — all 214 tests pass",
+                Some(&findings_only),
+            ),
+        ];
+        for (summary, structured) in passed {
+            assert_eq!(
+                Verdict::extract(summary, structured),
+                Verdict::Pass,
+                "{summary}"
+            );
+        }
+        let in_result = serde_json::json!({"result": "**Passed**"});
+        assert_eq!(Verdict::extract("", Some(&in_result)), Verdict::Pass);
+        let in_status = serde_json::json!({"result": "done", "status": "FAILED"});
+        assert_eq!(
+            Verdict::extract("VERDICT: PASS", Some(&in_status)),
+            Verdict::Fail
+        );
+        let rejected = serde_json::json!({"verdict": "Rejected: two findings"});
+        assert_eq!(
+            Verdict::extract("VERDICT: PASS", Some(&rejected)),
+            Verdict::Fail
+        );
+    }
+
+    #[test]
+    fn verdict_stays_unknown_without_a_readable_word_and_quotes_what_was_said() {
+        let unclear = serde_json::json!({"verdict": "lgtm"});
+        assert_eq!(
+            Verdict::extract("VERDICT: PASS", Some(&unclear)),
+            Verdict::Unknown
+        );
+        assert_eq!(Verdict::stated("", Some(&unclear)), Some("lgtm"));
+        let prose = serde_json::json!({"result": "passing most tests, two fail"});
+        assert_eq!(Verdict::extract("", Some(&prose)), Verdict::Unknown);
+        assert_eq!(
+            Verdict::extract("Not passed: VERDICT: PASS", None),
+            Verdict::Unknown
+        );
+        assert_eq!(
+            Verdict::extract("VERDICT: not a pass", None),
+            Verdict::Unknown
+        );
+        assert_eq!(
+            Verdict::stated("work done\nVERDICT: maybe\n", None),
+            Some("VERDICT: maybe")
+        );
+        assert_eq!(Verdict::stated("no verdict at all", None), None);
     }
 
     #[test]

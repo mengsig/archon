@@ -2286,8 +2286,9 @@ its verdict on the commits it read:
 Where Aether auto-completes a Codex reviewer from its final text, the verdict
 object arrives as the whole `summary` with no `structured`, alone or as the
 `structured` of a written-out `complete_task` call (`{summary, structured}`);
-Archon reads it only then, and an explicit `structured` always wins. Prose or
-a fenced block is no verdict.
+Archon reads it only then, and a `structured` that states a verdict always
+wins. A `VERDICT:` line beside `head:` and `base:` lines is read too. Prose
+is no verdict.
 
 A completion without the record, with any other verdict, or with a pass
 that names fewer reviewers than the level asks for fails the run at that
@@ -2475,8 +2476,10 @@ itself. The stage `[pipeline.ship]` names gets `## Ship record` (§8.7).
 Like the contract, all of this binds by instruction only; what Archon
 enforces is named where it is enforced.
 
-`Verdict::extract` reads the structured `verdict` field first, then the last
-`VERDICT:` line.
+`Verdict::extract` reads the structured `verdict` field first, then a
+structured `result` or `status` that reads as a verdict, then the summary's
+last readable `VERDICT:` line, in any letter case and through markdown
+emphasis. Reviewers' verdicts (§8.2) go through the same parser.
 
 Two error prefixes end a run at once, with no loop, no infra retry and the
 stage's live siblings cancelled (`StageOutcome::ends_run`):

@@ -1,5 +1,6 @@
 // How each feed entry reads in the chat transcript.
 import { h } from '../../ui/dom.js';
+import { renderMarkdown } from '../../ui/markdown.js';
 import { clockTime, safeHttpUrl } from '../../core/format.js';
 
 const NOTE_LABEL = { decision: 'Decision', blocker: 'Blocker', outcome: 'Outcome', question: 'Question', progress: 'Progress' };
@@ -21,15 +22,15 @@ export function transcriptEntry(item, note, questions) {
     }
     case 'notification': return line(`note-${entry.kind}`, NOTE_LABEL[entry.kind] ?? entry.kind, entry.text, item.at, itemLink(entry.item));
     case 'report': return reportLine(entry, item.at);
-    case 'authority': return line('system', 'Authority', `${entry.action}: ${entry.result}`, item.at);
+    case 'authority': return line('system', 'Authority', `${entry.action}: ${entry.result}`, item.at, null, { plain: true });
     case 'system': return line('system', 'System', entry.text, item.at);
-    default: return line('system', entry.entry ?? 'Entry', JSON.stringify(entry).slice(0, 200), item.at);
+    default: return line('system', entry.entry ?? 'Entry', JSON.stringify(entry).slice(0, 200), item.at, null, { plain: true });
   }
 }
 
 function bubble(who, text, at, extra = null) {
   return h('li', { class: ['bubble-row', `from-${who}`] },
-    h('div', { class: 'bubble' }, h('p', { class: 'bubble-text', text })),
+    h('div', { class: 'bubble' }, renderMarkdown(text, { className: 'bubble-text' })),
     h('div', { class: 'bubble-meta' }, h('span', { text: who === 'operator' ? `You · ${clockTime(at)}` : `Orchestrator · ${clockTime(at)}` }), extra));
 }
 
@@ -39,9 +40,10 @@ function operatorNote(note) {
   return h('span', { class: 'bubble-note tone-text-amber', text: 'Saved. The orchestrator is offline and gets it once it is back.' });
 }
 
-function line(kind, label, text, at, extra = null) {
+function line(kind, label, text, at, extra = null, { plain = false } = {}) {
   return h('li', { class: ['feed-line', `feed-${kind}`] },
-    h('p', { class: 'feed-line-text' }, h('span', { class: 'feed-line-label', text: `${label} · ${clockTime(at)}` }), h('span', { text })),
+    h('div', { class: 'feed-line-text' }, h('span', { class: 'feed-line-label', text: `${label} · ${clockTime(at)}` }),
+      plain ? h('span', { text }) : renderMarkdown(text, { className: 'feed-line-body' })),
     extra);
 }
 
@@ -54,7 +56,7 @@ function questionLine(entry, current) {
 function reportLine(entry, at) {
   const url = safeHttpUrl(entry.location);
   const link = url ? h('a', { class: 'link-button', href: url, target: '_blank', rel: 'noopener noreferrer' }, 'Open report') : null;
-  return line('report', 'Report', entry.title, at, link ?? itemLink(entry.item));
+  return line('report', 'Report', entry.title, at, link ?? itemLink(entry.item), { plain: true });
 }
 
 function itemLink(itemId) {
@@ -70,7 +72,7 @@ export function pendingEntry(entry, { retry, discard }) {
     failed: h('span', { class: 'bubble-note tone-text-red', role: 'alert', text: `Not sent: ${entry.error}` }),
   }[entry.status];
   return h('li', { class: ['bubble-row', 'from-operator', 'is-pending', failed && 'is-failed'] },
-    h('div', { class: 'bubble' }, h('p', { class: 'bubble-text', text: entry.text })),
+    h('div', { class: 'bubble' }, renderMarkdown(entry.text, { className: 'bubble-text' })),
     h('div', { class: 'bubble-meta' }, note,
       failed ? h('button', { class: 'link-button', type: 'button', onclick: retry }, 'Retry') : null,
       failed ? h('button', { class: 'link-button', type: 'button', onclick: discard }, 'Discard') : null));

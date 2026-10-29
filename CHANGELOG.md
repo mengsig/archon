@@ -32,6 +32,16 @@
   that gave them the task asked to leave it running; then they report what
   still runs and how to stop it (#321).
 
+### Mobile web app
+
+- Markdown renders in the mobile web app: chat bubbles and feed lines,
+  stage summaries and errors, question text, notifications and item
+  briefs show headings, emphasis, code, lists, task lists, quotes, tables
+  and links instead of raw `**` and `#`. The renderer has no dependencies
+  and builds every node as text, so raw HTML shows as written, links allow
+  only `http`, `https` and `mailto` (opened with `noopener noreferrer`),
+  and images become links that never load (#319, by @AmmarBattah in #327).
+
 ### Documentation
 
 - A "Get started in the chat" section in the README and a

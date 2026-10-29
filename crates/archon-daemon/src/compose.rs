@@ -2,9 +2,9 @@
 //! worktrees. A stack outlives the agent that started it, and a restart
 //! policy brings it back after every reboot, so archond stops what is left
 //! when a run ends (`down`, keeping volumes for a retry), when a fresh retry
-//! sets the worktree aside, and when gc removes the worktree. Then the named
-//! volumes the item's stacks made go too: only those created after the item
-//! was, still the same volume, and used by no container.
+//! sets the worktree aside, and before the worktree is removed. Once it is,
+//! the named volumes its stacks made go too: only of a project named after
+//! the item, created after the item was, still the same and mounted by none.
 //!
 //! A project is Archon's when one of its containers' config files or
 //! working directory lies inside the worktree, also once symlinks are
@@ -33,15 +33,6 @@ const PROJECT_LABEL: &str = "com.docker.compose.project";
 /// Listing answers promptly; a teardown waits for its containers to stop.
 const LIST_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWN_TIMEOUT: Duration = Duration::from_secs(180);
-
-/// What a teardown does with the project's named volumes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Volumes {
-    /// A retry may run in the same worktree and reuse its data.
-    Keep,
-    /// The worktree is gone, and nothing can reuse them.
-    Remove,
-}
 
 /// A project stopped with its volumes kept.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,19 +167,22 @@ fn is_within(path: &Path, root: &Path) -> bool {
     plain && path.starts_with(root)
 }
 
-/// Tear down the Compose projects of `item` running from `tree`, noting
-/// the volumes each made; with [`Volumes::Remove`] then remove the volumes
-/// noted for `tree`. `when` completes the feed note of a failure. `Err` only
-/// for a store failure.
+/// Tear down the Compose projects of `item` running from `tree`, keeping
+/// their volumes and noting those each made. `when` completes the feed note
+/// of a failure. `Err` only for a store failure.
 pub async fn tear_down(
     ctx: &DaemonContext,
     item: &QueueItemId,
     tree: &Path,
-    volumes: Volumes,
     when: &str,
 ) -> Result<(), ArchonError> {
     if !in_worktree_root(&ctx.paths.worktrees, tree) {
         tracing::debug!(tree = %tree.display(), "not an Archon worktree; its stacks are left alone");
+        return Ok(());
+    }
+    // A removed worktree no longer shows where its symlinks led.
+    if !tree.is_dir() {
+        tracing::debug!(tree = %tree.display(), "the worktree is gone; its stacks are left alone");
         return Ok(());
     }
     let docker = Docker::new(&ctx.config.worktrees.docker);
@@ -199,27 +193,44 @@ pub async fn tear_down(
     for project in &selection.shared {
         tracing::warn!(%project, tree = %tree.display(), "a compose project also runs from outside the worktree; left running");
     }
-    let (stopped, mut failures) = stop_projects(ctx, &docker, item, &selection.inside).await?;
-    if volumes == Volumes::Remove {
-        let mut listed = listed_projects(&listing);
-        listed.retain(|project| !stopped.contains(project));
-        failures.extend(remove_kept_volumes(ctx, &docker, item, tree, &listed).await?);
-    }
+    let failures = stop_projects(ctx, &docker, item, &selection.inside).await?;
     report_failures(ctx, item, tree, when, &failures).await
 }
 
-/// `down` each of `projects` and note the volumes it made; those stopped
-/// and the failures.
+/// Remove the volumes noted for the stacks of `item` stopped in `tree`,
+/// which is gone; nothing is stopped, as nothing shows where its symlinks
+/// led. `Err` only for a store failure.
+pub async fn remove_volumes(
+    ctx: &DaemonContext,
+    item: &QueueItemId,
+    tree: &Path,
+    when: &str,
+) -> Result<(), ArchonError> {
+    if !in_worktree_root(&ctx.paths.worktrees, tree) {
+        return Ok(());
+    }
+    if kept_projects(ctx, item).await?.is_empty() {
+        return Ok(());
+    }
+    let docker = Docker::new(&ctx.config.worktrees.docker);
+    let Some(listing) = docker.list_projects().await else {
+        return Ok(());
+    };
+    let listed = listed_projects(&listing);
+    let failures = remove_kept_volumes(ctx, &docker, item, tree, &listed).await?;
+    report_failures(ctx, item, tree, when, &failures).await
+}
+
+/// `down` each of `projects` and note the volumes it made; the failures.
 async fn stop_projects(
     ctx: &DaemonContext,
     docker: &Docker<'_>,
     item: &QueueItemId,
     projects: &BTreeMap<String, PathBuf>,
-) -> Result<(BTreeSet<String>, Vec<String>), ArchonError> {
-    let mut stopped = BTreeSet::new();
+) -> Result<Vec<String>, ArchonError> {
     let mut failures = Vec::new();
     if projects.is_empty() {
-        return Ok((stopped, failures));
+        return Ok(failures);
     }
     let since = item_created(ctx, item).await?;
     for (project, dir) in projects {
@@ -228,18 +239,20 @@ async fn stop_projects(
             failures.push(format!("{project}: {error}"));
             continue;
         }
-        stopped.insert(project.clone());
-        match made_volumes(docker, project, since).await {
+        match made_volumes(docker, item, project, since).await {
             Ok(volumes) => remember(ctx, item, project, dir, volumes).await?,
             Err(error) => failures.push(format!("{project}'s volumes: {error}")),
         }
     }
-    assert!(
-        stopped.len() <= projects.len(),
-        "only selected projects stop"
-    );
     assert!(failures.len() <= projects.len(), "one note per project");
-    Ok((stopped, failures))
+    Ok(failures)
+}
+
+/// Whether `project` is named after `item`, as Compose names one run from
+/// the worktree's root: no checkout elsewhere shares that name, or its volumes.
+fn named_after(project: &str, item: &QueueItemId) -> bool {
+    assert!(!item.as_str().is_empty(), "items are named");
+    project.contains(&item.as_str().to_lowercase())
 }
 
 /// When `item` was created; `None` once it is pruned, when no volume can
@@ -255,14 +268,19 @@ async fn item_created(
     }
 }
 
-/// The volumes of `project` created at or after `since`, with their
-/// creation times: an older one predates the item and is someone else's.
+/// The volumes of `project`, if named after `item`, created at or after
+/// `since`, with their creation times: an older one is someone else's.
 async fn made_volumes(
     docker: &Docker<'_>,
+    item: &QueueItemId,
     project: &str,
     since: Option<Timestamp>,
 ) -> Result<BTreeMap<String, String>, ArchonError> {
     let mut made = BTreeMap::new();
+    if !named_after(project, item) {
+        tracing::info!(%project, %item, "a project not named after its item keeps its volumes");
+        return Ok(made);
+    }
     let Some(since) = since else {
         return Ok(made);
     };
@@ -453,6 +471,9 @@ async fn remove_made_volumes(
     project: &str,
     volumes: &BTreeMap<String, String>,
 ) -> Result<(), ArchonError> {
+    if volumes.is_empty() {
+        return Ok(());
+    }
     let present = docker.project_volumes(project).await?;
     for (name, created) in volumes {
         if !present.contains(name) {

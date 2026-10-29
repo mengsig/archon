@@ -49,7 +49,6 @@ use archon_core::protocol::{GcReport, GcStatus, Reclaimed, gib};
 use archon_queue::Store;
 use tokio::sync::MutexGuard;
 
-use crate::compose::Volumes;
 use crate::context::{DaemonContext, DaemonPaths};
 use crate::feed;
 use crate::worktree::users::{self, LiveWorkspaces};
@@ -353,8 +352,8 @@ async fn stop_stacks(ctx: &DaemonContext, item: &plan::ItemPlan) -> Result<(), A
         .filter(|c| c.action == plan::Action::Remove);
     for candidate in removing {
         assert!(candidate.workspace.is_absolute(), "gc plans absolute paths");
-        let (tree, when) = (&candidate.workspace, "before gc removed it");
-        crate::compose::tear_down(ctx, &item.item, tree, Volumes::Keep, when).await?;
+        let (tree, when) = (&candidate.workspace, "before gc removes it");
+        crate::compose::tear_down(ctx, &item.item, tree, when).await?;
     }
     Ok(())
 }
@@ -399,7 +398,7 @@ pub async fn collect_planned(ctx: &DaemonContext, pass: Pass<'_>) -> Result<GcRe
         let swept = swept.await?;
         for removed in &swept.report.removed {
             let when = "when gc removed it";
-            crate::compose::tear_down(ctx, &id, removed, Volumes::Remove, when).await?;
+            crate::compose::remove_volumes(ctx, &id, removed, when).await?;
         }
         repos.extend(swept.repos);
         report.absorb(swept.report);

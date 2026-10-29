@@ -798,7 +798,7 @@ async fn start_fresh(
     // Before the move: a stack's labels name the directory it ran in.
     let tree = manager.path_for(&repo.name, &item.id);
     let when = "before its fresh retry";
-    crate::compose::tear_down(ctx, &item.id, &tree, crate::compose::Volumes::Keep, when).await?;
+    crate::compose::tear_down(ctx, &item.id, &tree, when).await?;
     let (path, name, id, new) = (
         repo.path.clone(),
         repo.name.clone(),

@@ -60,7 +60,6 @@ use archon_core::run::{GateDecision, OperatorGate, StageOutcome};
 use archon_pipeline::team::MergePlan;
 use archon_pipeline::{RunDriver, ShipPlan, SpawnPlan};
 
-use crate::compose::Volumes;
 use crate::context::DaemonContext;
 use crate::worktree::users::LiveWorkspaces;
 
@@ -610,8 +609,7 @@ async fn deliver_and_tidy(ctx: &DaemonContext, round: &mut Round, follow: Follow
         round.record(shipped);
     }
     for (item, tree) in dedup(follow.stacks) {
-        let torn =
-            crate::compose::tear_down(ctx, &item, &tree, Volumes::Keep, "after its run ended");
+        let torn = crate::compose::tear_down(ctx, &item, &tree, "after its run ended");
         round.record(torn.await.map(|()| FollowUp::default()));
     }
     for build in dedup(follow.release_builds) {

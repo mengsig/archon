@@ -151,25 +151,29 @@ async fn a_runs_compose_stack_stops_at_its_end_and_its_volumes_go_with_the_workt
     let item = h.enqueue("starts a stack").await;
     h.dispatch().await;
     let tree = h.run(&item.id).await.workspace;
-    docker.lists("ps", &[container("review-1", &tree)]);
-    docker.lists("volumes", &["review-1_db".to_owned()]);
+    let project = format!("{}-review", item.id.as_str().to_lowercase());
+    docker.lists("ps", &[container(&project, &tree)]);
+    docker.lists("volumes", &[format!("{project}_db")]);
     let cancel = Request::CancelItem {
         item: item.id.clone(),
         reason: None,
     };
     h.cli(cancel).await.expect("cancel");
     h.dispatch().await;
-    let down = "compose --project-name review-1 down --remove-orphans";
-    assert_eq!(docker.downs(), [down], "{:?}", docker.calls());
+    let down = format!("compose --project-name {project} down --remove-orphans");
+    assert_eq!(
+        docker.downs(),
+        std::slice::from_ref(&down),
+        "{:?}",
+        docker.calls()
+    );
 
     age_finished_runs(&h, &item).await;
     let report = gc_request(&h, Some(0), false).await;
     assert_eq!(report.removed, vec![tree.clone()], "{report:?}");
     let calls = docker.calls();
-    assert!(
-        calls.contains(&"volume rm review-1_db".to_owned()),
-        "{calls:?}"
-    );
+    let rm = format!("volume rm {project}_db");
+    assert!(calls.contains(&rm), "{calls:?}");
     assert_eq!(docker.downs(), [down], "nothing else was torn down");
 }
 

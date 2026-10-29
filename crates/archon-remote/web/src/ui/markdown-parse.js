@@ -36,12 +36,11 @@ function unescapeText(s) {
 
 // ---- Links ----------------------------------------------------------------
 
-// The only hrefs the app will emit: http(s), mailto, and its own #/ routes.
-// Anything else, however it is disguised, is refused (null).
+// The only hrefs the app will emit: http(s) and mailto. Anything else,
+// however it is disguised, is refused (null).
 export function safeHref(raw) {
   const s = trimEndWhile(String(raw ?? ''), (c) => c <= 32).replace(/^[\x00-\x20]+/, '');
   if (!s || /[\x00-\x20\x7f-\x9f\u2028\u2029\ufeff]/.test(s)) return null;
-  if (/^#\/[A-Za-z0-9\-._~!$&'()*+,;=:@/%?]*$/.test(s)) return { href: s, external: false };
   const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(s);
   if (!scheme) return null;
   const name = scheme[1].toLowerCase();
@@ -52,7 +51,7 @@ export function safeHref(raw) {
   } catch {
     return null;
   }
-  return { href: s, external: true };
+  return s;
 }
 
 // ---- Blocks ---------------------------------------------------------------
@@ -924,8 +923,7 @@ function materialize(head, depth, inLink = false) {
 }
 
 function linkNode(n, c) {
-  const safe = safeHref(n.href);
-  return { t: 'link', href: safe?.href ?? null, external: safe?.external ?? false, title: n.title ?? null, image: Boolean(n.image), c };
+  return { t: 'link', href: safeHref(n.href), title: n.title ?? null, image: Boolean(n.image), c };
 }
 
 export function plainText(nodes) {

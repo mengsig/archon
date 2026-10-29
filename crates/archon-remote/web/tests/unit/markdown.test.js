@@ -199,7 +199,7 @@ test('links, titles, references, autolinks and bare URLs', () => {
   assert.equal(md('[t](https://x.io "ti")'), `<p><a class="md-link" href="https://x.io" title="ti" ${EXT}>t</a></p>`);
   assert.equal(md('[t](<https://x.io/a b>)'), '<p>t</p>');
   assert.equal(md('[**b** `c`](mailto:a@b.co)'), `<p><a class="md-link" href="mailto:a@b.co" ${EXT}><strong>b</strong> <code class="md-code">c</code></a></p>`);
-  assert.equal(md('[go](#/item/abc)'), '<p><a class="md-link" href="#/item/abc">go</a></p>');
+  assert.equal(md('[go](#/item/abc)'), '<p>go</p>');
   assert.equal(md('[wiki](https://x.io/a_(b))'), `<p><a class="md-link" href="https://x.io/a_(b)" ${EXT}>wiki</a></p>`);
   assert.equal(md('[r]\n\n[r]: https://r.io "T"'), `<p><a class="md-link" href="https://r.io" title="T" ${EXT}>r</a></p>`);
   assert.equal(md('[text][Ref] [Ref][]\n\n[ref]: https://r.io'), `<p><a class="md-link" href="https://r.io" ${EXT}>text</a> <a class="md-link" href="https://r.io" ${EXT}>Ref</a></p>`);
@@ -236,12 +236,12 @@ test('raw HTML renders as literal text', () => {
   assert.equal(md('<!-- c --> <style>*{}</style> <svg onload=x>'), '<p>&lt;!-- c --&gt; &lt;style&gt;*{}&lt;/style&gt; &lt;svg onload=x&gt;</p>');
 });
 
-test('only http, https, mailto and in-app routes become hrefs', () => {
+test('only http, https and mailto become hrefs', () => {
   const refused = [
     'javascript:alert(1)', 'JaVaScRiPt:alert(1)', ' javascript:alert(1)', '\tjavascript:alert(1)', 'java\nscript:alert(1)',
     'java&#x73;cript:alert(1)', '&#106;avascript:alert(1)', 'jav&#x09;ascript:alert(1)', '&#x6A;avascript&colon;alert(1)',
     'javascript&#58;alert(1)', 'data:text/html,<script>alert(1)</script>', 'DATA:text/html;base64,PHNjcmlwdD4=', 'vbscript:msgbox(1)',
-    'file:///etc/passwd', 'ftp://x.io', '//evil.io/x', '/relative', 'relative/path', 'blob:https://x.io/1', 'about:blank', 'http:', 'https://',
+    'file:///etc/passwd', 'ftp://x.io', '//evil.io/x', '/relative', 'relative/path', 'blob:https://x.io/1', 'about:blank', 'http:', 'https://', '#/inbox', '#frag',
   ];
   for (const url of refused) {
     for (const src of [`[x](${url})`, `[x](<${url}>)`, `<${url}>`, `![x](${url})`]) {
@@ -250,9 +250,9 @@ test('only http, https, mailto and in-app routes become hrefs', () => {
     }
   }
   assert.doesNotMatch(md('[x][r]\n\n[r]: javascript:alert(1)'), /href=/);
-  assert.equal(safeHref('HTTPS://X.io/a')?.href, 'HTTPS://X.io/a');
+  assert.equal(safeHref('HTTPS://X.io/a'), 'HTTPS://X.io/a');
   assert.equal(safeHref('http://x.io/\u0000a'), null);
-  assert.equal(safeHref('#/inbox')?.external, false);
+  assert.equal(safeHref('#/inbox'), null);
   assert.equal(safeHref('#frag'), null);
   assert.equal(safeHref('#/x" onclick="1'), null);
 });

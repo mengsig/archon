@@ -13,9 +13,7 @@ function inline(nodes, depth = 0) {
     const kids = depth >= MAX_RENDER_DEPTH ? node.c.map((n) => (n.t === 'text' ? n.v : '')) : inline(node.c, depth + 1);
     if (node.t === 'link') {
       if (!node.href) return kids;
-      const props = { class: 'md-link', href: node.href, title: node.title };
-      if (node.external) Object.assign(props, { target: '_blank', rel: 'noopener noreferrer' });
-      return h('a', props, kids);
+      return h('a', { class: 'md-link', href: node.href, title: node.title, target: '_blank', rel: 'noopener noreferrer' }, kids);
     }
     return h({ em: 'em', strong: 'strong', del: 'del' }[node.t], {}, kids);
   });

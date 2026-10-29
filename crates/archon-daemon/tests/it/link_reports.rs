@@ -1579,6 +1579,15 @@ async fn publishing_a_newer_page_ends_the_followed_older_one() {
         .eventually("the newer page is polled", || async { polls(&axi) == 2 })
         .await;
     supervisor.abort();
+    // The older was recorded ended after the newer was shown; a restart
+    // must not take it for the newer page.
+    let supervisor = tokio::spawn(reports::supervise(harness.ctx.clone()));
+    harness
+        .eventually("the newer page is polled again", || async {
+            polls(&axi) == 3
+        })
+        .await;
+    supervisor.abort();
     let listed = reports::list(&harness.ctx).await.unwrap();
     let newer_state = listed.iter().find(|r| r.report == newer.report);
     assert_eq!(newer_state.map(|r| r.state), Some(ReportState::Open));

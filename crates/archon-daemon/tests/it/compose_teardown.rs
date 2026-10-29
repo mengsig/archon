@@ -198,6 +198,52 @@ async fn kept_volumes_stay_when_another_checkout_reuses_the_project_name() {
     assert!(harness.system_notes().await.is_empty());
 }
 
+/// Kept volumes follow a worktree a fresh retry moves aside: they go with
+/// it, not with the new worktree made where it was.
+#[tokio::test]
+async fn kept_volumes_follow_a_worktree_set_aside() {
+    let docker = FakeDocker::new();
+    let harness = harness_with(&docker.binary()).await;
+    let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
+    let tree = item_tree(&harness, &item);
+    docker.lists("ps", &[container("app", &tree.join("services"))]);
+    compose::tear_down(
+        &harness.ctx,
+        &item,
+        &tree,
+        Volumes::Keep,
+        "before its fresh retry",
+    )
+    .await
+    .unwrap();
+    let aside = harness
+        .ctx
+        .paths
+        .worktrees
+        .join("app/.set-aside")
+        .join(format!("{}-1", item.as_str()));
+    std::fs::create_dir_all(&aside).unwrap();
+    compose::moved(&harness.ctx, &item, &tree, &aside)
+        .await
+        .unwrap();
+    docker.lists("volumes", &["app_db".to_owned()]);
+    let removed = |tree: PathBuf| {
+        let ctx = harness.ctx.clone();
+        let item = item.clone();
+        async move {
+            compose::tear_down(&ctx, &item, &tree, Volumes::Remove, "when gc removed it")
+                .await
+                .unwrap();
+        }
+    };
+    removed(tree.clone()).await;
+    let calls = docker.calls();
+    assert!(!calls.iter().any(|c| c.starts_with("volume")), "{calls:?}");
+    removed(aside).await;
+    let calls = docker.calls();
+    assert!(calls.contains(&"volume rm app_db".to_owned()), "{calls:?}");
+}
+
 /// A stack still running when its worktree goes is torn down with its
 /// volumes.
 #[tokio::test]

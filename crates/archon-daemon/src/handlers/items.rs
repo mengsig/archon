@@ -808,6 +808,9 @@ async fn start_fresh(
     let aside = tokio::task::spawn_blocking(move || manager.start_fresh(&path, &name, &id, &new))
         .await
         .map_err(|e| ArchonError::io("fresh retry task", std::io::Error::other(e)))??;
+    if let Some(aside) = &aside {
+        crate::compose::moved(ctx, &item.id, &aside.worktree, &aside.kept_at).await?;
+    }
     item.fresh_retries = next;
     let kept = aside.map(|a| a.describe());
     let aside_note = match &kept {

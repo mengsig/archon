@@ -50,7 +50,8 @@ pub struct Selection {
 
 /// Pick Archon's projects from `docker ps` lines of `project`, comma-joined
 /// config files and working directory, tab-separated. A container counts as
-/// inside when every place it names lies inside one of `trees`.
+/// inside when every place it names lies inside one of `trees`; one naming
+/// no place may run from anywhere.
 pub fn select(listing: &str, trees: &[PathBuf]) -> Selection {
     assert!(!trees.is_empty(), "a teardown names its worktree");
     assert!(
@@ -61,6 +62,7 @@ pub fn select(listing: &str, trees: &[PathBuf]) -> Selection {
     let mut outside = BTreeSet::new();
     for container in listing.lines().filter_map(Container::parse) {
         let Some(dir) = container.dir() else {
+            outside.insert(container.project.to_owned());
             continue;
         };
         let within = |place: &PathBuf| trees.iter().any(|tree| is_within(place, tree));
@@ -267,6 +269,38 @@ async fn remember(
     store_kept(ctx, item, &kept).await
 }
 
+/// Note that the kept stacks of `item` that ran inside `from` now lie in
+/// `to`, where a fresh retry moved its worktree; their volumes then go
+/// with `to`, not with a new worktree made at `from`.
+pub async fn moved(
+    ctx: &DaemonContext,
+    item: &QueueItemId,
+    from: &Path,
+    to: &Path,
+) -> Result<(), ArchonError> {
+    assert!(
+        from.is_absolute() && to.is_absolute(),
+        "worktrees are absolute"
+    );
+    assert_ne!(from, to, "a move changes the directory");
+    // `from` is gone; Compose may have recorded it through its real parent.
+    let real_from = from.parent().and_then(|p| p.canonicalize().ok());
+    let real_from = real_from
+        .zip(from.file_name())
+        .map(|(p, name)| p.join(name));
+    let mut kept = kept_projects(ctx, item).await?;
+    for dir in kept.values_mut() {
+        let below = dir
+            .strip_prefix(from)
+            .ok()
+            .or_else(|| dir.strip_prefix(real_from.as_ref()?).ok());
+        if let Some(below) = below {
+            *dir = to.join(below);
+        }
+    }
+    store_kept(ctx, item, &kept).await
+}
+
 /// Remove the volumes of the projects of `item` stopped earlier from inside
 /// `tree`; the failures. A project `listed` with a container again, even
 /// one from elsewhere that reuses its name, may own them now: it is forgotten.
@@ -426,9 +460,14 @@ mod tests {
     fn a_project_that_also_runs_from_outside_is_never_touched() {
         let listing = "app\t/data/worktrees/app/qi_1/compose.yml\t/data/worktrees/app/qi_1\n\
                        app\t/home/op/app/compose.yml\t/home/op/app\n\
+                       unplaced\t/data/worktrees/app/qi_1/compose.yml\t/data/worktrees/app/qi_1\n\
+                       unplaced\t\t\n\
                        nested\t\t/data/worktrees/app/qi_1/services/db\n";
         let selection = select(listing, &trees());
-        assert_eq!(selection.shared, vec!["app".to_owned()]);
+        assert_eq!(
+            selection.shared,
+            vec!["app".to_owned(), "unplaced".to_owned()]
+        );
         let dir = PathBuf::from("/data/worktrees/app/qi_1/services/db");
         assert_eq!(
             selection.inside,

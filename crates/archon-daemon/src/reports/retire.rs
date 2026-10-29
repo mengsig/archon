@@ -83,8 +83,10 @@ fn item_settled(store: &Store, record: &ReportRecord) -> Result<bool, ArchonErro
     }
 }
 
-/// Whether a page of the same title and item was shown after `record`, as
-/// when an orchestrator or a retried stage publishes a page anew.
+/// Whether an open page of the same title and item was shown after
+/// `record`, as when an orchestrator or a retried stage publishes a page
+/// anew. Only an open record's `updated_at` is when it was last shown:
+/// ending one, for one, rewrites it.
 fn is_superseded(
     report: &ReportId,
     record: &ReportRecord,
@@ -92,6 +94,7 @@ fn is_superseded(
 ) -> bool {
     all.iter().any(|(other, newer)| {
         other != report
+            && newer.state == ReportState::Open
             && newer.title == record.title
             && newer.item == record.item
             && (newer.updated_at, other) > (record.updated_at, report)

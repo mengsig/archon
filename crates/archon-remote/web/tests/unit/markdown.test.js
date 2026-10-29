@@ -139,6 +139,17 @@ test('a closing fence indented by a short tab in a container closes it', () => {
   assert.equal(md('```\na\n\t```\nb'), '<pre class="md-pre"><code>a\n\t```\nb</code></pre>');
 });
 
+test('nested fences open and close at the real column of their container', () => {
+  assert.equal(md('> - ```\n>   code\n>   \t```\n>   next\nlazy'),
+    '<blockquote class="md-quote"><ul class="md-list"><li><pre class="md-pre"><code>code\n\t```\nnext</code></pre></li></ul></blockquote><p>lazy</p>');
+  assert.equal(md('- > ```\n  > code\n  > \t```\n  > next\nlazy'),
+    '<ul class="md-list"><li><blockquote class="md-quote"><pre class="md-pre"><code>code\n\t```\nnext</code></pre></blockquote></li></ul><p>lazy</p>');
+  assert.equal(md('- >\t```\n  >\tcode\n  >\t```\noutside'),
+    '<ul class="md-list"><li><blockquote class="md-quote"><pre class="md-pre"><code>code</code></pre></blockquote></li></ul><p>outside</p>');
+  assert.equal(md('> - ```\n>   code\n>  \t```\n>   next\nlazy'),
+    '<blockquote class="md-quote"><ul class="md-list"><li><pre class="md-pre"><code>code</code></pre>next\nlazy</li></ul></blockquote>');
+});
+
 test('thematic breaks', () => {
   for (const src of ['---', '***', '___', '- - -', ' * * *']) assert.equal(md(src), '<hr class="md-rule">', src);
   assert.equal(md('a\n\n---\n\nb'), '<p>a</p><hr class="md-rule"><p>b</p>');

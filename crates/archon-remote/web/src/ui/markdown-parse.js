@@ -144,35 +144,55 @@ function isFenceOpen(line) {
   return f && !(f[2][0] === '`' && f[3].includes('`')) ? f : null;
 }
 
-// A line without the quote and list markers that open it, and the path of
-// those markers: 'quote', or the width a list item's continuation is indented by.
-function containerContent(line) {
+// A list item's first line past its marker `m`, the item starting at column
+// `col`: its content and the width its continuation lines are indented by.
+function listItemStart(line, m, col) {
+  const rest = line.slice(m[0].length);
+  const markerEnd = m[1].length + m[2].length;
+  const spacing = columnsOf(m[3], col + markerEnd);
+  if (!rest.trim()) return { width: markerEnd + 1, text: '' };
+  if (spacing >= 5) return { width: markerEnd + 1, text: stripColumns(m[3], 1, col + markerEnd) + rest };
+  return { width: markerEnd + spacing, text: rest };
+}
+
+// A line at column `col` without the quote and list markers that open it, the
+// column its content starts at, and the path of those markers: 'quote', or a
+// list item's continuation indent.
+function containerContent(line, col) {
   let s = line;
+  let c = col;
   const path = [];
   for (let k = 0; k < MAX_BLOCK_DEPTH; k += 1) {
     const q = QUOTE.exec(s);
-    const m = q ?? LIST.exec(s);
-    if (!m) break;
-    path.push(q ? 'quote' : m[0].length);
-    s = s.slice(m[0].length);
+    const m = q ? null : LIST.exec(s);
+    if (q) {
+      const rest = quoteRest(s, q[0], c);
+      s = rest.text; c = rest.col; path.push('quote');
+    } else if (m) {
+      const item = listItemStart(s, m, c);
+      s = item.text; c += item.width; path.push(item.width);
+    } else break;
   }
-  return { content: s, path };
+  return { content: s, col: c, path };
 }
 
-// `line` inside the containers of `path`, or null when it has left one of them.
-function insidePath(line, path) {
+// `line`, at column `col`, inside the containers of `path` with the column
+// its content starts at, or null when it has left one of them.
+function insidePath(line, path, col) {
   let s = line;
+  let c = col;
   for (const step of path) {
     if (step === 'quote') {
       const q = QUOTE.exec(s);
       if (!q) return null;
-      s = s.slice(q[0].length);
+      const rest = quoteRest(s, q[0], c);
+      s = rest.text; c = rest.col;
     } else {
-      if (!isBlank(s) && indentOf(s) < step) return null;
-      s = stripColumns(s, step);
+      if (!isBlank(s) && indentOf(s, c) < step) return null;
+      s = stripColumns(s, step, c); c += step;
     }
   }
-  return s;
+  return { text: s, col: c };
 }
 
 // Follows a container's lines to know whether its content ends in an open
@@ -180,19 +200,23 @@ function insidePath(line, path) {
 // closes only on a line of the containers it opened in, or when one of them ends.
 function trackParagraph(open, line, col) {
   if (open.fence) {
-    const inner = insidePath(line, open.fence.path);
+    const inner = insidePath(line, open.fence.path, col);
     if (inner !== null) {
-      if (closesFence(inner, open.fence.marks, col)) open.fence = null;
+      if (closesFence(inner.text, open.fence.marks, inner.col)) open.fence = null;
       open.paragraph = false;
       return;
     }
     open.fence = null;
   }
-  const { content, path } = containerContent(line);
-  const fence = isFenceOpen(content);
-  if (fence) { open.fence = { marks: fence[2], path }; open.paragraph = false; return; }
-  if (isBlank(content) || ATX.test(content) || HR.test(content) || (open.paragraph && SETEXT.test(content))) { open.paragraph = false; return; }
-  if (indentOf(content, col) >= 4 && !open.paragraph) return;
+  const inner = containerContent(line, col);
+  if (indentOf(inner.content, inner.col) >= 4) {
+    if (!open.paragraph) return;
+  } else {
+    const content = spacedIndent(inner.content, inner.col);
+    const fence = isFenceOpen(content);
+    if (fence) { open.fence = { marks: fence[2], path: inner.path }; open.paragraph = false; return; }
+    if (isBlank(content) || ATX.test(content) || HR.test(content) || (open.paragraph && SETEXT.test(content))) { open.paragraph = false; return; }
+  }
   open.paragraph = true;
 }
 
@@ -400,14 +424,8 @@ function parseList(lines, start, depth, ctx, col) {
 // stripped; the item starts at column `col` and its content at `col + contentIndent`.
 function listItemBody(lines, start, m, depth, col) {
   const n = lines.length;
-  const rest = lines[start].slice(m[0].length);
   const markerEnd = m[1].length + m[2].length;
-  const spacing = columnsOf(m[3], col + markerEnd);
-  let contentIndent;
-  let firstLine;
-  if (!rest.trim()) { contentIndent = markerEnd + 1; firstLine = ''; }
-  else if (spacing >= 5) { contentIndent = markerEnd + 1; firstLine = stripColumns(m[3], 1, col + markerEnd) + rest; }
-  else { contentIndent = markerEnd + spacing; firstLine = rest; }
+  const { width: contentIndent, text: firstLine } = listItemStart(lines[start], m, col);
   if (contentIndent <= markerEnd) throw new Error(`a list item's content starts inside its marker at line ${start}`);
   const innerCol = col + contentIndent;
   const open = { paragraph: false, fence: null };

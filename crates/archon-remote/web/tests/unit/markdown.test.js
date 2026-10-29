@@ -107,6 +107,18 @@ test('tabs after list and quote markers', () => {
   assert.equal(md('-\t\tcode'), '<ul class="md-list"><li><pre class="md-pre"><code>  code</code></pre></li></ul>');
 });
 
+test('a tab in a container spans to the next stop of its real column', () => {
+  const code = (text) => `<pre class="md-pre"><code>${text}</code></pre>`;
+  assert.equal(md('-     \tfoo\n      \tbar'), `<ul class="md-list"><li>${code('\tfoo\n\tbar')}</li></ul>`);
+  assert.equal(md('-     \t@echo hello'), `<ul class="md-list"><li>${code('\t@echo hello')}</li></ul>`);
+  assert.equal(md('>\t\tfoo'), `<blockquote class="md-quote">${code('  foo')}</blockquote>`);
+  assert.equal(md('> \tfoo'), '<blockquote class="md-quote"><p>foo</p></blockquote>');
+  assert.equal(md('>- 1. - \t x'), `<blockquote class="md-quote"><ul class="md-list"><li><ol class="md-list"><li><ul class="md-list"><li>${code(' x')}</li></ul></li></ol></li></ul></blockquote>`);
+  assert.equal(md('- a\n\n  \t# h'), '<ul class="md-list"><li><p>a</p><h1 class="md-heading">h</h1></li></ul>');
+  assert.equal(md('- a\n\n  \tb'), '<ul class="md-list"><li><p>a</p><p>b</p></li></ul>');
+  assert.equal(md('- ```\n  \t@echo\n  ```'), `<ul class="md-list"><li>${code('\t@echo')}</li></ul>`);
+});
+
 test('thematic breaks', () => {
   for (const src of ['---', '***', '___', '- - -', ' * * *']) assert.equal(md(src), '<hr class="md-rule">', src);
   assert.equal(md('a\n\n---\n\nb'), '<p>a</p><hr class="md-rule"><p>b</p>');

@@ -57,7 +57,8 @@ export function safeHref(raw) {
 // ---- Blocks ---------------------------------------------------------------
 
 const isBlank = (l) => !/\S/.test(l);
-const indentOf = (l) => columnsOf(/^[ \t]*/.exec(l)[0], 0);
+// A line's indent in columns, its first character at column `col`.
+const indentOf = (l, col = 0) => columnsOf(/^[ \t]*/.exec(l)[0], col);
 // End-anchored regexes retry from every start on a long inner run, so trim
 // from the end by hand.
 function trimEndWhile(s, test) {
@@ -110,9 +111,25 @@ function stripColumns(line, n, start = 0) {
   return (over > 0 ? ' '.repeat(over) : '') + line.slice(i);
 }
 
-// A quoted line's content: after `>`, one column of space or tab belongs to the marker.
-function quoteRest(line, marker) {
-  return stripColumns(line.slice(marker.length), 1, marker.length);
+// A quoted line's content and its column: after `>`, one column of space or
+// tab belongs to the marker.
+function quoteRest(line, marker, col) {
+  const after = line.slice(marker.length);
+  const gap = after[0] === ' ' || after[0] === '\t' ? 1 : 0;
+  return { text: stripColumns(after, gap, col + marker.length), col: col + marker.length + gap };
+}
+
+// `line` with the leading whitespace it has at column `col` turned into spaces,
+// so it reads the same at any column.
+function spacedIndent(line, col) {
+  const lead = /^[ \t]*/.exec(line)[0];
+  return ' '.repeat(columnsOf(lead, col)) + line.slice(lead.length);
+}
+
+// A container's content line at column `col`. An indent under four columns is
+// structure, so outside a fence its tabs become spaces and the line regexes see them.
+function contentLine(text, col, open) {
+  return !open.fence && indentOf(text, col) < 4 ? spacedIndent(text, col) : text;
 }
 
 function isFenceOpen(line) {
@@ -133,7 +150,7 @@ function containerContent(line) {
 
 // Follows a container's lines to know whether its content ends in an open
 // paragraph, the only block an unmarked (lazy) line may continue.
-function trackParagraph(open, line) {
+function trackParagraph(open, line, col) {
   const content = containerContent(line);
   if (open.fence) {
     const close = CLOSE_FENCE.exec(content);
@@ -144,13 +161,13 @@ function trackParagraph(open, line) {
   const fence = isFenceOpen(content);
   if (fence) { open.fence = fence[2]; open.paragraph = false; return; }
   if (isBlank(content) || ATX.test(content) || HR.test(content) || (open.paragraph && SETEXT.test(content))) { open.paragraph = false; return; }
-  if (indentOf(content) >= 4 && !open.paragraph) return;
+  if (indentOf(content, col) >= 4 && !open.paragraph) return;
   open.paragraph = true;
 }
 
 // Can this line interrupt a paragraph (or end a lazy continuation)?
-function startsBlock(line, depth) {
-  if (indentOf(line) >= 4) return false;
+function startsBlock(line, depth, col) {
+  if (indentOf(line, col) >= 4) return false;
   if (isFenceOpen(line) || ATX.test(line) || HR.test(line)) return true;
   if (depth >= MAX_BLOCK_DEPTH) return false;
   if (QUOTE.test(line)) return true;
@@ -178,25 +195,26 @@ function splitRow(line) {
   return cells;
 }
 
-function tableAt(lines, i) {
+function tableAt(lines, i, col) {
   if (i + 1 >= lines.length) return null;
   const head = lines[i];
   const delim = lines[i + 1];
-  if (!DELIM_ROW.test(delim) || (!head.includes('|') && !delim.includes('|')) || indentOf(head) >= 4) return null;
+  if (!DELIM_ROW.test(delim) || (!head.includes('|') && !delim.includes('|')) || indentOf(head, col) >= 4) return null;
   const heads = splitRow(head);
   const aligns = splitRow(delim);
   if (heads.length !== aligns.length || heads.length > MAX_TABLE_COLUMNS) return null;
   return { heads, aligns: aligns.map((a) => (a.startsWith(':') ? (a.endsWith(':') ? 'center' : 'left') : (a.endsWith(':') ? 'right' : null))) };
 }
 
-function parseBlocks(lines, depth, ctx) {
+// `lines` hold a container's content, which starts at column `col` of the source.
+function parseBlocks(lines, depth, ctx, col) {
   if (depth > MAX_BLOCK_DEPTH) throw new RangeError(`block nesting ${depth} is past the cap`);
   const blocks = [];
   let i = 0;
   let gap = false;
   while (i < lines.length) {
     if (isBlank(lines[i])) { gap = true; i += 1; continue; }
-    const { block, next } = readBlock(lines, i, depth, ctx);
+    const { block, next } = readBlock(lines, i, depth, ctx, col);
     if (next <= i) throw new Error(`the block reader stalled at line ${i}`);
     if (block) {
       block.gap = gap && blocks.length > 0;
@@ -210,60 +228,66 @@ function parseBlocks(lines, depth, ctx) {
 }
 
 // The block starting at the non-blank line `i`, and the line after it.
-function readBlock(lines, i, depth, ctx) {
+function readBlock(lines, i, depth, ctx, col) {
   const line = lines[i];
-  if (indentOf(line) >= 4) return indentedCode(lines, i);
+  if (indentOf(line, col) >= 4) return indentedCode(lines, i, col);
   const fence = isFenceOpen(line);
-  if (fence) return fencedCode(lines, i, fence);
+  if (fence) return fencedCode(lines, i, fence, col);
   const atx = ATX.exec(line);
   if (atx) return { block: { t: 'h', level: atx[1].length, text: atxText(atx[2] ?? '') }, next: i + 1 };
   if (HR.test(line)) return { block: { t: 'hr' }, next: i + 1 };
-  if (depth < MAX_BLOCK_DEPTH && QUOTE.test(line)) return blockQuote(lines, i, depth, ctx);
-  if (depth < MAX_BLOCK_DEPTH && LIST.test(line)) return parseList(lines, i, depth, ctx);
-  const table = tableAt(lines, i);
-  if (table) return tableRows(lines, i, table, depth);
-  return paragraph(lines, i, depth, ctx);
+  if (depth < MAX_BLOCK_DEPTH && QUOTE.test(line)) return blockQuote(lines, i, depth, ctx, col);
+  if (depth < MAX_BLOCK_DEPTH && LIST.test(line)) return parseList(lines, i, depth, ctx, col);
+  const table = tableAt(lines, i, col);
+  if (table) return tableRows(lines, i, table, depth, col);
+  return paragraph(lines, i, depth, ctx, col);
 }
 
-function indentedCode(lines, start) {
+function indentedCode(lines, start, col) {
   const code = [];
   let j = start;
-  while (j < lines.length && (isBlank(lines[j]) || indentOf(lines[j]) >= 4)) { code.push(stripColumns(lines[j], 4)); j += 1; }
+  while (j < lines.length && (isBlank(lines[j]) || indentOf(lines[j], col) >= 4)) { code.push(stripColumns(lines[j], 4, col)); j += 1; }
   while (code.length && isBlank(code.at(-1))) code.pop();
   return { block: { t: 'code', info: '', text: code.join('\n') }, next: start + code.length };
 }
 
-function fencedCode(lines, start, [, lead, marks, info]) {
+function fencedCode(lines, start, [, lead, marks, info], col) {
   const body = [];
   let i = start + 1;
   while (i < lines.length) {
     const close = CLOSE_FENCE.exec(lines[i]);
     if (close && close[1][0] === marks[0] && close[1].length >= marks.length) { i += 1; break; }
-    body.push(stripColumns(lines[i], Math.min(lead.length, indentOf(lines[i]))));
+    body.push(stripColumns(lines[i], Math.min(lead.length, indentOf(lines[i], col)), col));
     i += 1;
   }
   return { block: { t: 'code', info: unescapeText(info.trim()), text: body.join('\n') }, next: i };
 }
 
-function blockQuote(lines, start, depth, ctx) {
+// The content starts at the first line's content column; a line whose content
+// sits elsewhere, or a lazy one, gets its indent as spaces to read the same there.
+function blockQuote(lines, start, depth, ctx, col) {
   const inner = [];
   const open = { paragraph: false, fence: null };
+  const innerCol = quoteRest(lines[start], QUOTE.exec(lines[start])[0], col).col;
   let i = start;
   while (i < lines.length) {
     const q = QUOTE.exec(lines[i]);
-    if (q) inner.push(quoteRest(lines[i], q[0]));
-    else if (open.paragraph && !isBlank(lines[i]) && !startsBlock(lines[i], depth)) inner.push(lines[i]);
+    if (q) {
+      const rest = quoteRest(lines[i], q[0], col);
+      inner.push((rest.col - innerCol) % 4 === 0 ? contentLine(rest.text, innerCol, open) : spacedIndent(rest.text, rest.col));
+    } else if (open.paragraph && !isBlank(lines[i]) && !startsBlock(lines[i], depth, col)) inner.push(spacedIndent(lines[i], col));
     else break;
-    trackParagraph(open, inner.at(-1));
+    trackParagraph(open, inner.at(-1), innerCol);
     i += 1;
   }
-  return { block: { t: 'quote', c: parseBlocks(inner, depth + 1, ctx) }, next: i };
+  if (inner.length === 0) throw new Error(`the quote at line ${start} has no lines`);
+  return { block: { t: 'quote', c: parseBlocks(inner, depth + 1, ctx, innerCol) }, next: i };
 }
 
-function tableRows(lines, start, table, depth) {
+function tableRows(lines, start, table, depth, col) {
   const rows = [];
   let i = start + 2;
-  while (i < lines.length && !isBlank(lines[i]) && !startsBlock(lines[i], depth) && (rows.length + 1) * table.heads.length <= MAX_TABLE_CELLS) {
+  while (i < lines.length && !isBlank(lines[i]) && !startsBlock(lines[i], depth, col) && (rows.length + 1) * table.heads.length <= MAX_TABLE_CELLS) {
     const cells = splitRow(lines[i]);
     rows.push(table.heads.map((_, k) => cells[k] ?? ''));
     i += 1;
@@ -273,7 +297,7 @@ function tableRows(lines, start, table, depth) {
 
 // A paragraph or setext heading; leading reference definitions go to ctx.refs,
 // and a paragraph made only of them yields no block.
-function paragraph(lines, start, depth, ctx) {
+function paragraph(lines, start, depth, ctx, col) {
   const para = [];
   let level = 0;
   let i = start;
@@ -281,8 +305,8 @@ function paragraph(lines, start, depth, ctx) {
     const l = lines[i];
     if (para.length) {
       const setext = SETEXT.exec(l);
-      if (setext && indentOf(l) < 4) { level = setext[1][0] === '=' ? 1 : 2; i += 1; break; }
-      if (startsBlock(l, depth) || (l.includes('|') && tableAt(lines, i))) break;
+      if (setext && indentOf(l, col) < 4) { level = setext[1][0] === '=' ? 1 : 2; i += 1; break; }
+      if (startsBlock(l, depth, col) || (l.includes('|') && tableAt(lines, i, col))) break;
     }
     para.push(l.replace(/^[ \t]+/, ''));
     i += 1;
@@ -310,7 +334,7 @@ function takeRefDefs(para, refs) {
   para.splice(0, taken);
 }
 
-function parseList(lines, start, depth, ctx) {
+function parseList(lines, start, depth, ctx, col) {
   const first = LIST.exec(lines[start]);
   if (!first) throw new Error(`line ${start} does not open a list`);
   const ordered = /^\d/.test(first[2]);
@@ -322,8 +346,8 @@ function parseList(lines, start, depth, ctx) {
   while (i < lines.length) {
     const m = LIST.exec(lines[i]);
     if (!m || HR.test(lines[i]) || !sameKind(m)) break;
-    const { body, next, contentIndent } = listItemBody(lines, i, m, depth);
-    const children = parseBlocks(body, depth + 1, ctx);
+    const { body, next, contentIndent } = listItemBody(lines, i, m, depth, col);
+    const children = parseBlocks(body, depth + 1, ctx, col + contentIndent);
     if (children.some((b, k) => k > 0 && b.gap)) loose = true;
     items.push(taskItem(children));
     i = next;
@@ -331,7 +355,7 @@ function parseList(lines, start, depth, ctx) {
     let j = i;
     while (j < lines.length && isBlank(lines[j])) j += 1;
     const sib = j < lines.length ? LIST.exec(lines[j]) : null;
-    if (!sib || HR.test(lines[j]) || indentOf(lines[j]) >= contentIndent || !sameKind(sib)) break;
+    if (!sib || HR.test(lines[j]) || indentOf(lines[j], col) >= contentIndent || !sameKind(sib)) break;
     if (j > i) loose = true;
     i = j;
   }
@@ -340,21 +364,23 @@ function parseList(lines, start, depth, ctx) {
   return { block, next: i };
 }
 
-// One item's lines, its marker `m` at line `start` removed and its indent stripped.
-function listItemBody(lines, start, m, depth) {
+// One item's lines, its marker `m` at line `start` removed and its indent
+// stripped; the item starts at column `col` and its content at `col + contentIndent`.
+function listItemBody(lines, start, m, depth, col) {
   const n = lines.length;
   const rest = lines[start].slice(m[0].length);
   const markerEnd = m[1].length + m[2].length;
-  const spacing = columnsOf(m[3], markerEnd);
+  const spacing = columnsOf(m[3], col + markerEnd);
   let contentIndent;
   let firstLine;
   if (!rest.trim()) { contentIndent = markerEnd + 1; firstLine = ''; }
-  else if (spacing >= 5) { contentIndent = markerEnd + 1; firstLine = ' '.repeat(spacing - 1) + rest; }
+  else if (spacing >= 5) { contentIndent = markerEnd + 1; firstLine = stripColumns(m[3], 1, col + markerEnd) + rest; }
   else { contentIndent = markerEnd + spacing; firstLine = rest; }
   if (contentIndent <= markerEnd) throw new Error(`a list item's content starts inside its marker at line ${start}`);
-  const body = [firstLine];
+  const innerCol = col + contentIndent;
   const open = { paragraph: false, fence: null };
-  trackParagraph(open, firstLine);
+  const body = [contentLine(firstLine, innerCol, open)];
+  trackParagraph(open, body[0], innerCol);
   let i = start + 1;
   while (i < n) {
     const l = lines[i];
@@ -362,15 +388,15 @@ function listItemBody(lines, start, m, depth) {
       let j = i;
       while (j < n && isBlank(lines[j])) j += 1;
       // An item may start with one blank line, no more.
-      if (j >= n || indentOf(lines[j]) < contentIndent || (body.length === 1 && body[0] === '' && j - i > 0)) break;
+      if (j >= n || indentOf(lines[j], col) < contentIndent || (body.length === 1 && body[0] === '' && j - i > 0)) break;
       for (; i < j; i += 1) body.push('');
       open.paragraph = false;
-    } else if (indentOf(l) >= contentIndent) {
-      body.push(stripColumns(l, contentIndent));
-      trackParagraph(open, body.at(-1));
+    } else if (indentOf(l, col) >= contentIndent) {
+      body.push(contentLine(stripColumns(l, contentIndent, col), innerCol, open));
+      trackParagraph(open, body.at(-1), innerCol);
       i += 1;
-    } else if (open.paragraph && !LIST.test(l) && !startsBlock(l, depth)) {
-      body.push(l);
+    } else if (open.paragraph && !LIST.test(l) && !startsBlock(l, depth, col)) {
+      body.push(spacedIndent(l, col));
       i += 1;
     } else break;
   }
@@ -860,5 +886,5 @@ export function parseMarkdown(source) {
   if (truncated) text = `${text.slice(0, MAX_SOURCE_CHARS)}\n\n…`;
   const lines = text.replace(/\r\n?/g, '\n').replace(/\u0000/g, '�').split('\n');
   const ctx = { refs: new Map() };
-  return inlineAll(parseBlocks(lines, 0, ctx), ctx.refs);
+  return inlineAll(parseBlocks(lines, 0, ctx, 0), ctx.refs);
 }

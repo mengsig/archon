@@ -155,17 +155,22 @@ async fn followed_reports(archond: &Archond) -> Option<BTreeSet<PathBuf>> {
     Some(open.map(|r| r.path).collect())
 }
 
-/// The pids of polls beyond the first of each page in `live`, oldest kept.
+/// The pids of polls beyond one of each page in `live`: archond's own
+/// first, as it restarts a poll killed under it, then the oldest.
 pub(super) fn strays(polls: &[Poll], live: &BTreeSet<PathBuf>) -> Vec<u32> {
-    let mut by_page: BTreeMap<&Path, Vec<u32>> = BTreeMap::new();
+    let mut by_page: BTreeMap<&Path, Vec<(bool, u32)>> = BTreeMap::new();
     for poll in polls {
-        by_page.entry(&poll.html).or_default().push(poll.pid);
+        let orphan = !poll.by_archond;
+        by_page
+            .entry(&poll.html)
+            .or_default()
+            .push((orphan, poll.pid));
     }
     let mut strays = Vec::new();
-    for (page, mut pids) in by_page {
-        pids.sort_unstable();
+    for (page, mut polls) in by_page {
+        polls.sort_unstable();
         let keep = usize::from(live.contains(page));
-        strays.extend(pids.into_iter().skip(keep));
+        strays.extend(polls.into_iter().skip(keep).map(|(_, pid)| pid));
     }
     strays.sort_unstable();
     assert!(strays.len() <= polls.len(), "only running polls are strays");
@@ -280,6 +285,16 @@ mod tests {
         ]);
         assert_eq!(strays(&polls, &live), vec![30, 40]);
         assert_eq!(strays(&polls, &BTreeSet::new()), vec![12, 30, 40, 50]);
+        let orphan = Poll {
+            by_archond: false,
+            ..poll(5, "/d/live.html")
+        };
+        let with_orphan = [orphan, poll(30, "/d/live.html")];
+        assert_eq!(
+            strays(&with_orphan, &live),
+            vec![5],
+            "archond's own is kept"
+        );
     }
 
     #[test]

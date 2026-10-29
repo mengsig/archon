@@ -17,7 +17,9 @@ mod retire;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use archon_core::error::ArchonError;
@@ -28,6 +30,7 @@ use archon_core::run::GateDecision;
 use archon_lavish::{Lavish, LavishFeedback};
 use tokio::sync::OwnedMutexGuard;
 use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::oneshot;
 use tokio::task::{AbortHandle, JoinError, JoinSet};
 
 use self::records::ReportRecord;
@@ -273,8 +276,30 @@ struct Polls {
     expiries: HashMap<ReportId, archon_core::Timestamp>,
     tasks: JoinSet<Result<(), ArchonError>>,
     reports: HashMap<tokio::task::Id, ReportId>,
-    polling: HashMap<ReportId, AbortHandle>,
+    polling: HashMap<ReportId, Followed>,
     failures: HashMap<ReportId, u32>,
+}
+
+/// A running poll task, and what tells once its future, with its
+/// `lavish-axi poll` child, is dropped.
+struct Followed {
+    task: AbortHandle,
+    gone: oneshot::Receiver<()>,
+}
+
+/// A poll task's future, then the sender dropped after it: fields drop in
+/// order, so the receiver hears of it only once the child is killed.
+struct Watched<F> {
+    poll: Pin<Box<F>>,
+    _gone: oneshot::Sender<()>,
+}
+
+impl<F: Future> Future for Watched<F> {
+    type Output = F::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<F::Output> {
+        self.get_mut().poll.as_mut().poll(cx)
+    }
 }
 
 impl Polls {
@@ -283,20 +308,28 @@ impl Polls {
         F: Future<Output = Result<(), ArchonError>> + Send + 'static,
     {
         assert!(!self.polling.contains_key(&report), "one poll per report");
+        let (sender, gone) = oneshot::channel();
+        let poll = Watched {
+            poll: Box::pin(poll),
+            _gone: sender,
+        };
         let task = self.tasks.spawn(poll);
         self.reports.insert(task.id(), report.clone());
-        self.polling.insert(report, task);
+        self.polling.insert(report, Followed { task, gone });
         assert!(self.reports.len() >= self.polling.len());
     }
 
     /// Stop following `report`: its task, and with it its `lavish-axi poll`
-    /// child, is dropped. `forget` then leaves out whatever it returned.
+    /// child, is dropped before this returns, so no replacement or ending of
+    /// its session overlaps it. `forget` then leaves out whatever it returned.
     /// Feedback a poll got just before is dropped too; `end_finished` stops
     /// only polls of settled reports.
-    fn stop(&mut self, report: &ReportId) {
-        if let Some(task) = self.polling.remove(report) {
-            assert_eq!(self.reports.get(&task.id()), Some(report));
-            task.abort();
+    async fn stop(&mut self, report: &ReportId) {
+        if let Some(followed) = self.polling.remove(report) {
+            assert_eq!(self.reports.get(&followed.task.id()), Some(report));
+            followed.task.abort();
+            let dropped = followed.gone.await;
+            assert!(dropped.is_err(), "a poll task never sends, it is dropped");
         }
         self.failures.remove(report);
         self.followed_html.remove(report);
@@ -367,7 +400,7 @@ impl Polls {
         lavish: &Lavish,
     ) -> Result<(), ArchonError> {
         for (report, record) in retire::finished(ctx).await? {
-            self.stop(&report);
+            self.stop(&report).await;
             assert!(
                 !self.polling.contains_key(&report),
                 "a stopped poll is not followed"
@@ -393,7 +426,7 @@ impl Polls {
                 .get(&report)
                 .is_some_and(|html| html != &record.html)
             {
-                self.stop(&report);
+                self.stop(&report).await;
             }
             // Showing a followed page again restarts its lifetime.
             self.expiries
@@ -424,7 +457,7 @@ impl Polls {
             .reports
             .remove(&task)
             .expect("every poll task is registered");
-        if self.polling.get(&report).map(AbortHandle::id) == Some(task) {
+        if self.polling.get(&report).map(|f| f.task.id()) == Some(task) {
             self.polling.remove(&report);
             self.followed_html.remove(&report);
             return Some((report, outcome));
@@ -965,5 +998,35 @@ mod tests {
             "{outcome:?}"
         );
         assert!(polls.polling.is_empty() && polls.reports.is_empty());
+    }
+
+    /// Sets its flag when dropped, as a poll's child is killed then.
+    struct Child(Arc<std::sync::atomic::AtomicBool>);
+
+    impl Drop for Child {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// `stop` returns only once the poll's future, and with it its child, is
+    /// dropped; on one thread, the aborted task has not run before then.
+    #[tokio::test]
+    async fn a_stopped_poll_is_gone_before_stop_returns() {
+        let mut polls = Polls::default();
+        let report = ReportId::new();
+        let killed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let child = Child(killed.clone());
+        polls.spawn(report.clone(), async move {
+            let _child = child;
+            std::future::pending::<Result<(), ArchonError>>().await
+        });
+        tokio::task::yield_now().await;
+        assert!(!killed.load(std::sync::atomic::Ordering::SeqCst));
+        polls.stop(&report).await;
+        assert!(killed.load(std::sync::atomic::Ordering::SeqCst), "dropped");
+        assert!(!polls.polling.contains_key(&report));
+        let done = polls.tasks.join_next_with_id().await.unwrap();
+        assert!(polls.forget(done).is_none(), "a stopped poll is forgotten");
     }
 }

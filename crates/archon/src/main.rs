@@ -62,7 +62,7 @@ fn main() -> ExitCode {
     // The daemon logs its work; everything else stays quiet unless RUST_LOG
     // asks. `archon mcp` speaks JSON-RPC on stdout, so logs go to stderr.
     let default_level = match &cli.command {
-        Some(Command::Daemon(DaemonCommand::Run { detach: false })) => LevelFilter::INFO,
+        Some(Command::Daemon(DaemonCommand::Run { detach: false, .. })) => LevelFilter::INFO,
         _ => LevelFilter::WARN,
     };
     let filter = EnvFilter::builder()
@@ -172,9 +172,11 @@ fn is_closed_stdout(panic_message: &str) -> bool {
 fn detached_logger(cli: &Cli) -> anyhow::Result<Option<daemon_log::Logger>> {
     if !matches!(
         cli.command,
-        Some(Command::Daemon(DaemonCommand::Run { detach: false }))
-    ) || std::env::var_os(daemon_log::DETACHED_ENV).as_deref() != Some(std::ffi::OsStr::new("1"))
-    {
+        Some(Command::Daemon(DaemonCommand::Run {
+            detached_child: true,
+            ..
+        }))
+    ) {
         return Ok(None);
     }
     let config = archon_core::config::Config::load_default()?;

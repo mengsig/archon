@@ -1057,6 +1057,11 @@ pub enum DaemonCommand {
         /// Start in the background, wait until it listens, then exit.
         #[arg(long)]
         detach: bool,
+        /// Set by `--detach` on the daemon it starts: log to the startup
+        /// log. A flag, not an environment variable, which the agents
+        /// archond spawns would inherit.
+        #[arg(long, hide = true, conflicts_with = "detach")]
+        detached_child: bool,
     },
     /// Start archond in the background unless it is running.
     Start,
@@ -1796,7 +1801,7 @@ mod tests {
         );
         assert!(matches!(
             parse(&["daemon", "run", "--detach"]),
-            Command::Daemon(DaemonCommand::Run { detach: true })
+            Command::Daemon(DaemonCommand::Run { detach: true, .. })
         ));
         let Command::Gc {
             older_than,

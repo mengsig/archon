@@ -758,6 +758,8 @@ async fn remove_ended_worktree(
         true => "after its run ended",
         false => "after its run succeeded",
     };
+    // While the worktree exists, its symlinks show where its stacks run from.
+    crate::compose::tear_down(ctx, &cleanup.item, &cleanup.worktree, when).await?;
     finish::remove_worktree(ctx, cleanup, when, Some(mark)).await?;
     Ok(FollowUp::default())
 }

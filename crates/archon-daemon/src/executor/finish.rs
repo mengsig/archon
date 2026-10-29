@@ -343,7 +343,8 @@ async fn cleanup_for(
 /// for a snapshot, ended), or its start was abandoned (`when` says which).
 /// The worktree's build caches go first, so a stray untracked file that
 /// keeps the worktree (a change is never discarded) keeps only its source.
-/// A snapshot is removed with `--force` instead.
+/// A snapshot is removed with `--force` instead. Its stacks are the caller's
+/// to tear down first, off the run table.
 pub(super) async fn remove_worktree(
     ctx: &DaemonContext,
     cleanup: Cleanup,
@@ -358,8 +359,6 @@ pub(super) async fn remove_worktree(
     .with_cache_dirs(cache_dirs.clone());
     let data_dir = ctx.paths.data_dir.clone();
     let target = cleanup.worktree.clone();
-    // While the worktree exists, its symlinks show where its stacks run from.
-    crate::compose::tear_down(ctx, &cleanup.item, &target, when).await?;
     let (reclaimed, removed) = tokio::task::spawn_blocking(move || {
         let _mark = mark;
         // A snapshot goes whole with `--force`, so its caches need no cleaning.

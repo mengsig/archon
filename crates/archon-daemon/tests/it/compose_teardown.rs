@@ -477,3 +477,28 @@ async fn a_fresh_retry_tears_down_without_holding_the_run_table() {
     assert_eq!(h.state(&item.id).await, QueueState::Queued);
     assert!(!h.ctx.collecting.contains(&item.id), "the mark went");
 }
+
+/// A start refused after it added its worktree removes it under the run
+/// table without asking Docker: no agent ran there to start a stack.
+#[tokio::test]
+async fn an_abandoned_start_asks_docker_nothing() {
+    let docker = FakeDocker::new();
+    let h = run_harness(&docker).await;
+    let item = h.enqueue("refused after its worktree").await;
+    let path = h.repo.join(".archon/pipelines").join(common::PIPELINE);
+    let toml = std::fs::read_to_string(path.join("pipeline.toml")).expect("pipeline");
+    let ship = "[[stage]]\nid = \"ship\"";
+    assert!(toml.contains(ship), "ship is the last stage");
+    let docs = "[[stage]]\nid = \"docs\"\nkind = \"work\"\nprompt = \"implement.md\"\ntimeout_minutes = 30\n\n";
+    h.add_pipeline(
+        common::PIPELINE,
+        &toml.replace(ship, &format!("{docs}{ship}")),
+    );
+    h.dispatch().await;
+    let state = h.state(&item.id).await;
+    assert!(
+        matches!(&state, QueueState::Failed { run: None, error } if error.contains("docs")),
+        "{state:?}"
+    );
+    assert!(docker.calls().is_empty(), "{:?}", docker.calls());
+}

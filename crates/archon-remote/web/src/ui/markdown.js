@@ -58,8 +58,9 @@ export function renderMarkdown(source, { className } = {}) {
 }
 
 // One line of prose (a title, a label that may carry `code`): inline marks only.
+// Line breaks become spaces; the page collapses prose spaces, and code keeps its own.
 export function renderInline(source) {
-  return h('span', { class: 'md-inline' }, inline(parseInline(String(source ?? '').replace(/\s+/g, ' ').trim())));
+  return h('span', { class: 'md-inline' }, inline(parseInline(String(source ?? '').replace(/[\r\n]+/g, ' ').trim())));
 }
 
 // Long Markdown folded by whole blocks: the first blocks that fit `limit`

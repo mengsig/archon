@@ -231,6 +231,8 @@ test('Markdown renders as elements in chat and stage summaries, never as markup'
   await expect(bubble.locator('li')).toHaveCount(3);
   await expect(bubble.locator('li ul li')).toHaveText('nested');
   await expect(bubble.locator('code', { hasText: 'inline code' })).toBeVisible();
+  // Code spans keep their spaces; the prose around them collapses.
+  expect(await bubble.locator('code', { hasText: 'inline code' }).evaluate((el) => getComputedStyle(el).whiteSpace)).toBe('pre-wrap');
   await expect(bubble.locator('pre code')).toHaveText('const **raw** = 1;');
   await expect(bubble.locator('table th')).toHaveText(['Name', 'Cost']);
   await expect(bubble.locator('table td').last()).toHaveText('$1');
@@ -266,6 +268,11 @@ test('Markdown renders as elements in chat and stage summaries, never as markup'
 
 const WIDE = 'x'.repeat(160);
 const WIDE_MD = ['Wide content:', '', '```', WIDE, '```', '', '| a | b |', '|--|--|', `| ${WIDE} | cell |`].join('\n');
+// Wide code at the deepest nesting the parser allows, in lists and in quotes.
+const DEEP_MD = [
+  ...Array.from({ length: 16 }, (_, i) => `${'  '.repeat(i)}- level ${i + 1}`), ...['```', WIDE, '```'].map((l) => '  '.repeat(16) + l), '',
+  ...['Deep quote', '```', WIDE, '```'].map((l) => '> '.repeat(15) + l),
+].join('\n');
 
 // The page never scrolls sideways, and each wide box scrolls inside the viewport.
 async function expectContained(page, scope) {
@@ -286,7 +293,10 @@ test('wide Markdown code and tables scroll inside their block, never the page', 
   await notify(fixture.archond, 'outcome', WIDE_MD);
   await askOperator(fixture.archond, WIDE_MD);
   await laceReplies(page, (reply) => {
-    if (reply.reply === 'feed') reply.data.push({ seq: 1_000_001, at: new Date().toISOString(), entry: { entry: 'orchestrator', text: WIDE_MD } });
+    if (reply.reply === 'feed') {
+      reply.data.push({ seq: 1_000_001, at: new Date().toISOString(), entry: { entry: 'orchestrator', text: WIDE_MD } });
+      reply.data.push({ seq: 1_000_002, at: new Date().toISOString(), entry: { entry: 'orchestrator', text: DEEP_MD } });
+    }
     if (reply.reply === 'item_detail' && reply.data.item.id === item.id) {
       reply.data.stages = [{
         id: 'stage_wide', run: reply.data.runs?.[0]?.id ?? 'run_wide', stage_id: 'implement', attempt: 1, fan_index: 0, state: { state: 'failed', error: WIDE_MD },
@@ -296,8 +306,16 @@ test('wide Markdown code and tables scroll inside their block, never the page', 
   });
 
   await openApp(page, fixture, '#/chat');
-  await expect(page.locator('.from-orchestrator .bubble').last().locator('table')).toBeVisible();
-  await expectContained(page, page.locator('.from-orchestrator .bubble').last());
+  const wide = page.locator('.from-orchestrator .bubble').filter({ hasText: 'Wide content' }).last();
+  await expect(wide.locator('table')).toBeVisible();
+  await expectContained(page, wide);
+  const deep = page.locator('.from-orchestrator .bubble').filter({ hasText: 'level 16' }).last();
+  await expect(deep.getByText('Deep quote')).toBeVisible();
+  await expectContained(page, deep);
+  for (const box of await deep.locator('.md-pre').all()) {
+    const inside = await box.evaluate((el) => el.getBoundingClientRect().right <= el.closest('.bubble').getBoundingClientRect().right);
+    expect(inside, 'deep code stays inside its bubble').toBe(true);
+  }
   await expectContained(page, page.locator('.feed-note-outcome').filter({ hasText: 'Wide content' }).last());
 
   await page.goto(`${fixture.baseURL}/#/inbox`);

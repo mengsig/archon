@@ -82,6 +82,15 @@ test('block quotes, nested and lazy', () => {
     '<blockquote class="md-quote"><pre class="md-pre"><code>code</code></pre></blockquote><p>outside</p><blockquote class="md-quote"><pre class="md-pre"><code></code></pre></blockquote>');
   assert.equal(md('- # heading\noutside'), '<ul class="md-list"><li><h1 class="md-heading">heading</h1></li></ul><p>outside</p>');
   assert.equal(md('- a\nlazy'), '<ul class="md-list"><li>a\nlazy</li></ul>');
+  assert.equal(md('> - # heading\noutside'), '<blockquote class="md-quote"><ul class="md-list"><li><h1 class="md-heading">heading</h1></li></ul></blockquote><p>outside</p>');
+  assert.equal(md('- > # heading\noutside'), '<ul class="md-list"><li><blockquote class="md-quote"><h1 class="md-heading">heading</h1></blockquote></li></ul><p>outside</p>');
+  assert.equal(md('-\nnot lazy'), '<ul class="md-list"><li></li></ul><p>not lazy</p>');
+});
+
+test('leading tabs expand from column 0 on every line', () => {
+  assert.equal(md('\tfirst\n\tsecond'), '<pre class="md-pre"><code>first\nsecond</code></pre>');
+  assert.equal(md('para\n\n\n\tcode'), '<p>para</p><pre class="md-pre"><code>code</code></pre>');
+  assert.equal(md('```py\n\tprint(1)\n\tprint(2)\n```'), '<pre class="md-pre"><code class="language-py">    print(1)\n    print(2)</code></pre>');
 });
 
 test('tabs after list and quote markers', () => {
@@ -211,7 +220,8 @@ test('no rendered element carries a style, handler, script or javascript href', 
 });
 
 test('renderInline keeps one line of prose inline', () => {
-  assert.equal(html(renderInline('Q `x`\n  **b**')), '<span class="md-inline">Q <code class="md-code">x</code> <strong>b</strong></span>');
+  assert.equal(html(renderInline('Q `x`\n**b**')), '<span class="md-inline">Q <code class="md-code">x</code> <strong>b</strong></span>');
+  assert.equal(html(renderInline('run `a  b`\r\n')), '<span class="md-inline">run <code class="md-code">a  b</code></span>');
 });
 
 test('clampedMarkdown folds by whole blocks and toggles', () => {
@@ -281,6 +291,7 @@ test('pathological input stays fast and bounded', () => {
     tallTable: '|a'.repeat(64) + '\n' + '|-'.repeat(64) + '\n' + '|\n'.repeat(99_000),
     deepSpans: nest(3000, '*a ', ' a*').replace(/x/, ''),
     refDefs: '[a]:x\n'.repeat(33_000),
+    longRefUses: `[r]: https://a.b/${'a'.repeat(100_000)}\n\n${'[r] '.repeat(24_900)}`,
   };
   const start = performance.now();
   for (const [name, src] of Object.entries(cases)) {

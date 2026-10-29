@@ -118,6 +118,17 @@ function isFenceOpen(line) {
   return f && !(f[2][0] === '`' && f[3].includes('`')) ? f : null;
 }
 
+// A line without the quote and list markers that open it.
+function containerContent(line) {
+  let s = line;
+  for (let k = 0; k < MAX_BLOCK_DEPTH; k += 1) {
+    const m = QUOTE.exec(s) ?? LIST.exec(s);
+    if (!m) break;
+    s = s.slice(m[0].length);
+  }
+  return s;
+}
+
 // Follows a container's lines to know whether its content ends in an open
 // paragraph, the only block an unmarked (lazy) line may continue.
 function trackParagraph(open, line) {
@@ -129,7 +140,8 @@ function trackParagraph(open, line) {
   }
   const fence = isFenceOpen(line);
   if (fence) { open.fence = fence[2]; open.paragraph = false; return; }
-  if (isBlank(line) || ATX.test(line) || HR.test(line) || (open.paragraph && SETEXT.test(line))) { open.paragraph = false; return; }
+  const content = containerContent(line);
+  if (isBlank(content) || ATX.test(content) || HR.test(line) || (open.paragraph && SETEXT.test(line))) { open.paragraph = false; return; }
   if (indentOf(line) >= 4 && !open.paragraph) return;
   open.paragraph = true;
 }
@@ -289,7 +301,9 @@ function takeRefDefs(para, refs) {
     const key = normalizeLabel(def[1]);
     if (key && !refs.has(key)) {
       const dest = def[2].startsWith('<') ? def[2].slice(1, -1) : def[2];
-      refs.set(key, { href: unescapeText(dest), title: def[3] ? unescapeText(def[3].slice(1, -1)) : null });
+      // Like an inline destination, an overlong one is no link; each use would revalidate it.
+      const href = dest.length <= MAX_URL_CHARS ? unescapeText(dest) : null;
+      refs.set(key, { href, title: def[3] ? unescapeText(def[3].slice(1, -1)) : null });
     }
   }
   para.splice(0, taken);
@@ -838,7 +852,7 @@ export function parseMarkdown(source) {
   let text = String(source ?? '');
   const truncated = text.length > MAX_SOURCE_CHARS;
   if (truncated) text = `${text.slice(0, MAX_SOURCE_CHARS)}\n\n…`;
-  const lines = text.replace(/\r\n?/g, '\n').replace(/\u0000/g, '�').split('\n').map(expandTabs);
+  const lines = text.replace(/\r\n?/g, '\n').replace(/\u0000/g, '�').split('\n').map((line) => expandTabs(line));
   const ctx = { refs: new Map() };
   return inlineAll(parseBlocks(lines, 0, ctx), ctx.refs);
 }

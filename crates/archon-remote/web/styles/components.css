@@ -571,8 +571,11 @@ select.input {
 .md ol { list-style: decimal; }
 .md li::marker { color: var(--text-3); }
 .md li.md-task { list-style: none; margin-left: -1.4em; }
+/* Past three levels lists stop indenting, so the deepest nesting still fits a phone. */
+.md :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) { padding-left: 0; list-style-position: inside; }
+.md :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) li.md-task { margin-left: 0; }
 .md .md-check { display: inline-block; vertical-align: -2px; margin: 0 0.5em 0 0; accent-color: var(--accent); }
-.md .md-code { font-family: var(--font-mono); font-size: 0.88em; padding: 0.1em 0.35em; border-radius: 6px; background: var(--neutral-soft); }
+.md .md-code { white-space: pre-wrap; font-family: var(--font-mono); font-size: 0.88em; padding: 0.1em 0.35em; border-radius: 6px; background: var(--neutral-soft); }
 .md .md-pre { margin: 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-s); background: var(--neutral-soft); overflow-x: auto; white-space: pre; overflow-wrap: normal; -webkit-overflow-scrolling: touch; }
 .md .md-pre code { padding: 0; background: none; font-size: 0.86em; line-height: 1.45; }
 .md .md-quote { margin: 0; padding-left: var(--space-3); border-left: 3px solid var(--separator); color: var(--text-2); }
@@ -585,6 +588,6 @@ select.input {
 .md .md-table th { font-weight: 600; background: var(--neutral-soft); }
 .md .md-table .align-center { text-align: center; }
 .md .md-table .align-right { text-align: right; }
-.md-inline code { font-family: var(--font-mono); font-size: 0.9em; }
+.md-inline code { white-space: pre-wrap; font-family: var(--font-mono); font-size: 0.9em; }
 .card .md-clamp > .link-button { padding: 0 var(--space-4); width: 100%; }
 .feed-line .md :is(ul, ol, pre, blockquote, .md-scroll) { text-align: left; }

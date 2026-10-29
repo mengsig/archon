@@ -4,6 +4,7 @@ import { h } from '../../ui/dom.js';
 import { reconcile } from '../../ui/list.js';
 import { screenHeader, section, chip, emptyState, errorNote, loadErrorNotes, skeletonRows } from '../../ui/components.js';
 import { age } from '../../core/format.js';
+import { renderMarkdown, renderInline } from '../../ui/markdown.js';
 import { questionCard } from './question-card.js';
 
 const RECENT_ANSWERS = 15;
@@ -64,8 +65,8 @@ function notificationsOf(feed) {
 
 function answeredRow(question) {
   return h('li', { class: 'plain-row' },
-    h('p', { class: 'plain-row-title', text: `Q${question.number} · ${question.text}` }),
-    h('p', { class: 'plain-row-text' }, h('span', { class: 'muted', text: 'Answered: ' }), question.answer),
+    h('p', { class: 'plain-row-title' }, `Q${question.number} · `, renderInline(question.text)),
+    h('div', { class: 'plain-row-text' }, h('span', { class: 'muted', text: 'Answered: ' }), renderMarkdown(question.answer, { className: 'plain-row-body' })),
     h('span', { class: 'plain-row-age', text: age(question.answered_at) }));
 }
 
@@ -76,6 +77,6 @@ function noteRow(item) {
   return h('li', { class: 'plain-row' },
     h('div', { class: 'plain-row-head' }, chip({ label: KIND_LABEL[kind] ?? kind, tone: KIND_TONE[kind] ?? 'neutral' }),
       h('span', { class: 'plain-row-age', text: age(item.at) })),
-    h('p', { class: 'plain-row-text', text }),
+    entry.entry === 'report' ? h('p', { class: 'plain-row-text', text }) : renderMarkdown(text, { className: 'plain-row-text' }),
     entry.item ? h('a', { class: 'link-button', href: `#/item/${entry.item}` }, 'Open item') : null);
 }

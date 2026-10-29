@@ -5,7 +5,8 @@
 //! worktree meanwhile, even one a retry queued again. A pass whose task
 //! was aborted leaves its sweep running with its mark, so a later pass can
 //! find an item still marked; it leaves that item to the sweep. A mark
-//! pokes dispatch when it goes, so a retry it held back starts then.
+//! pokes dispatch when it goes, so a retry it held back starts then. A
+//! Compose teardown, a restack and a fresh retry hold the same mark.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, MutexGuard};

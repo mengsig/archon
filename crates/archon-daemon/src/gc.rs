@@ -343,6 +343,21 @@ pub async fn plan(
     })
 }
 
+/// Stop the Compose stacks in the worktrees `item` is about to remove while
+/// they exist, so symlinks in them still resolve. Their volumes are kept.
+async fn stop_stacks(ctx: &DaemonContext, item: &plan::ItemPlan) -> Result<(), ArchonError> {
+    let candidates = &item.found.candidates;
+    let removing = candidates
+        .iter()
+        .filter(|c| c.action == plan::Action::Remove);
+    for candidate in removing {
+        assert!(candidate.workspace.is_absolute(), "gc plans absolute paths");
+        let (tree, when) = (&candidate.workspace, "before gc removes it");
+        crate::compose::tear_down(ctx, &item.item, tree, when).await?;
+    }
+    Ok(())
+}
+
 /// Collect each planned item that is still as settled as it was planned:
 /// one retried meanwhile may be using its worktree again, and so may a
 /// refresh or restack fix of the item that owns it. Each item, and that
@@ -373,6 +388,7 @@ pub async fn collect_planned(ctx: &DaemonContext, pass: Pass<'_>) -> Result<GcRe
                 continue;
             }
         };
+        stop_stacks(ctx, &item).await?;
         let (r, p) = (roots.clone(), policy.clone());
         let swept = blocking(move || {
             let _marks = marks;

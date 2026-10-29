@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+### Cleanup
+
+- archond runs at most one `lavish-axi poll` per report, and stops it once
+  the report settles: its session ended, its item ended, a newer page of
+  the same title replaced it, or 24 hours passed since it was shown, even
+  while a gate waits on it (answer that in the chat). Reports
+  without an item, such as the orchestrator's merged pull request pages,
+  were followed forever before, and every restart started their polls again
+  (#323, #321).
+- archond tears down the Docker Compose stacks an item's worktree started
+  when its run ends, before a fresh retry sets its worktree aside, and
+  before the worktree is removed; no run starts in that worktree, a retry's
+  included, until it is done, and a worktree another live item (a restack
+  fix or refresh) still works in is left alone. Only projects whose every container runs from
+  inside that worktree, with symlinks resolved, are touched: archond checks
+  that again just before it acts, stops and removes only the containers it
+  checked, and removes the project's networks once none of its containers
+  is left. Volumes are always kept: Docker cannot tell whose a volume is
+  when another checkout reuses the project's name. Without Docker it does
+  nothing. `[worktrees] docker` names the CLI (#321).
+- `archon doctor` lists the Compose stacks left in worktrees of items that
+  ended, and the `lavish-axi poll` processes beyond the reports archond
+  follows, each with the command that clears them; a project that runs from
+  more than one item's worktree gets no `down` command, which would stop
+  every one of them (#321).
+- Stage agents working in a worktree are told to stop every server and
+  Compose stack they started before they finish, unless the agent or brief
+  that gave them the task asked to leave it running; then they report what
+  still runs and how to stop it (#321).
+
+### Mobile web app
+
+- Markdown renders in the mobile web app: chat bubbles and feed lines,
+  stage summaries and errors, question text, notifications and item
+  briefs show headings, emphasis, code, lists, task lists, quotes, tables
+  and links instead of raw `**` and `#`. The renderer has no dependencies
+  and builds every node as text, so raw HTML shows as written, links allow
+  only `http`, `https` and `mailto` (opened with `noopener noreferrer`),
+  and images become links that never load (#319, by @AmmarBattah in #327).
+
 ### Fixed
 
 - Stage gates and delegated reviews read verdicts with one tolerant

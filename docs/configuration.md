@@ -121,6 +121,7 @@ lean_builds = true             # no incremental state, line-table debuginfo (dev
 shared_cache = false           # true: one cargo target dir per repository instead
 shared_cache_after = "14d"     # idle shared caches go; never while a run is live
 pressure_after = "1d"          # shorter ages while dispatch is held for disk space
+docker = "docker"              # tears down the Compose stacks agents leave in worktrees
 
 [artifacts]                    # files stages publish; read by item id later
 max_file_mb = 256

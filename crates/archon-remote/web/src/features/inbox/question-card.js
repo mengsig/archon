@@ -3,6 +3,7 @@
 import { h, append } from '../../ui/dom.js';
 import { icon } from '../../ui/icons.js';
 import { collapseOut } from '../../ui/motion.js';
+import { renderMarkdown } from '../../ui/markdown.js';
 import { describeError } from '../../ui/components.js';
 import { age } from '../../core/format.js';
 
@@ -22,7 +23,7 @@ export function questionCard(ctx, question, itemTitle) {
     h('div', { class: 'question-head' },
       h('span', { class: 'question-number', text: `Q${question.number}` }),
       h('span', { class: 'question-age', text: age(question.asked_at) })),
-    h('p', { class: 'question-text', text: question.text }),
+    renderMarkdown(question.text, { className: 'question-text' }),
     question.item ? h('a', { class: 'question-item', href: `#/item/${question.item}`, text: itemTitle ?? 'Open the item' }) : null,
     question.options.length ? h('div', { class: 'question-options', role: 'group', 'aria-label': 'Options' },
       question.options.map((option) => h('button', { class: 'option-button', type: 'button', onclick: () => answer(option) }, option))) : null,

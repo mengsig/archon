@@ -807,7 +807,8 @@ async fn launch(
 
 /// Remove the worktree a start added before it gave up, since no run row
 /// leads `archon gc` to it. A reused worktree belongs to an earlier run of
-/// the item and is left alone.
+/// the item and is left alone. No agent ran in an added one, so it starts no
+/// stack, and no Docker call is made under the run table the start holds.
 async fn abandon_worktree(ctx: &DaemonContext, added: Option<Cleanup>) -> Result<(), ArchonError> {
     let Some(tree) = added else {
         return Ok(());

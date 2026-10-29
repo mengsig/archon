@@ -1134,6 +1134,55 @@ async fn a_finished_items_report_session_is_ended_and_its_poll_stopped() {
     assert!(harness.system_notes().await.is_empty());
 }
 
+/// A page shown again while its settled session is being ended keeps the
+/// new session: ending waits for the publication, then sees it changed.
+#[tokio::test]
+async fn a_page_shown_again_while_it_is_retired_keeps_its_new_session() {
+    let (axi, lavish) = FakeAxi::new();
+    axi.opens_at(URL);
+    axi.reply("end", "session:\n  status: ended\n");
+    let harness = Harness::with(Config::default(), Some(lavish)).await;
+    let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
+    let supervisor = tokio::spawn(reports::supervise(harness.ctx.clone()));
+    reports::publish(&harness.ctx, "Findings", &axi.html, Some(&item))
+        .await
+        .unwrap();
+    harness
+        .eventually("the report is polled", || async { polls(&axi) == 1 })
+        .await;
+    // Shown again as its item ends: Lavish holds the second open meanwhile.
+    let hold = axi.dir.path().join("open.2.hold");
+    std::fs::write(&hold, "").unwrap();
+    let (ctx, html, shown) = (harness.ctx.clone(), axi.html.clone(), item.clone());
+    let again =
+        tokio::spawn(async move { reports::publish(&ctx, "Findings", &html, Some(&shown)).await });
+    harness
+        .eventually("the page is being shown again", || async {
+            axi.dir.path().join("open.2.pid").exists()
+        })
+        .await;
+    executor::cancel_item(&harness.ctx, &item, "done")
+        .await
+        .unwrap();
+    let pid = poll_pid(&axi, 1);
+    harness
+        .eventually("the settled report's poll is stopped", || async {
+            is_gone(pid)
+        })
+        .await;
+    std::fs::remove_file(&hold).unwrap();
+    again.await.unwrap().unwrap();
+    harness
+        .eventually("the page shown again is polled", || async {
+            polls(&axi) == 2
+        })
+        .await;
+    supervisor.abort();
+    let calls = axi.calls();
+    assert!(!calls.iter().any(|c| c.starts_with("end ")), "{calls:?}");
+    assert_eq!(report_state(&harness).await.as_deref(), Some("open"));
+}
+
 /// A session left open by an item that finished while no
 /// supervisor ran is ended when the supervisor starts, not polled.
 #[tokio::test]
@@ -1398,4 +1447,299 @@ async fn a_terminal_item_blocker_ends_its_report_session() {
         1
     );
     assert!(axi.html.is_file());
+}
+
+/// Rewrite `report`'s record as last shown `ago` before now.
+async fn shown_ago(harness: &Harness, report: &ReportId, ago: std::time::Duration) {
+    let key = format!("{}{report}", reports::KEY_PREFIX);
+    let mut store = harness.ctx.store.lock().await;
+    let raw = store.kv_get(&key).unwrap().expect("the report is recorded");
+    let mut record: Value = serde_json::from_str(&raw).unwrap();
+    let at = archon_core::now() - chrono::TimeDelta::from_std(ago).unwrap();
+    record["updated_at"] = serde_json::to_value(at).unwrap();
+    store.kv_set(&key, &record.to_string()).unwrap();
+}
+
+/// The pid the fake lavish-axi's `n`-th poll recorded.
+fn poll_pid(axi: &FakeAxi, n: u32) -> u32 {
+    let path = axi.dir.path().join(format!("poll.{n}.pid"));
+    std::fs::read_to_string(path)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
+}
+
+/// Neither running nor a zombie: killed and reaped.
+fn is_gone(pid: u32) -> bool {
+    !Path::new(&format!("/proc/{pid}")).exists()
+}
+
+/// A report shown longer ago than its lifetime, as the orchestrator's old
+/// pages are, has its session ended at start-up and is never polled.
+#[tokio::test]
+async fn an_expired_report_is_ended_at_start_and_not_polled() {
+    let (axi, lavish) = FakeAxi::new();
+    axi.opens_at(URL);
+    axi.reply("end", "session:\n  status: ended\n");
+    let harness = Harness::with(Config::default(), Some(lavish)).await;
+    let published = reports::publish(&harness.ctx, "Merged PR #69", &axi.html, None)
+        .await
+        .unwrap();
+    shown_ago(&harness, &published.report, reports::FOLLOW_LIFETIME * 2).await;
+    let supervisor = tokio::spawn(reports::supervise(harness.ctx.clone()));
+    harness
+        .eventually("the expired session is ended", || async {
+            report_state(&harness).await.as_deref() == Some("ended")
+        })
+        .await;
+    supervisor.abort();
+    assert_eq!(polls(&axi), 0, "{:?}", axi.calls());
+    let end = format!("end {}", report_html(&harness).await.display());
+    assert_eq!(axi.calls().iter().filter(|c| **c == end).count(), 1);
+    assert!(harness.system_notes().await.is_empty());
+}
+
+/// A followed report whose lifetime runs out has its poll process killed
+/// and reaped, and its session ended; it is not polled again.
+#[tokio::test]
+async fn a_followed_report_is_ended_when_its_lifetime_runs_out() {
+    let (axi, lavish) = FakeAxi::new();
+    axi.opens_at(URL);
+    axi.reply("end", "session:\n  status: ended\n");
+    let harness = Harness::with(Config::default(), Some(lavish)).await;
+    let published = reports::publish(&harness.ctx, "Merged PR #70", &axi.html, None)
+        .await
+        .unwrap();
+    let left = std::time::Duration::from_secs(1);
+    shown_ago(&harness, &published.report, reports::FOLLOW_LIFETIME - left).await;
+    let supervisor = tokio::spawn(reports::supervise(harness.ctx.clone()));
+    harness
+        .eventually("the report is polled", || async { polls(&axi) == 1 })
+        .await;
+    assert_eq!(report_state(&harness).await.as_deref(), Some("open"));
+    harness
+        .eventually("the session is ended once it expires", || async {
+            report_state(&harness).await.as_deref() == Some("ended")
+        })
+        .await;
+    let pid = poll_pid(&axi, 1);
+    harness
+        .eventually("the poll process is killed and reaped", || async {
+            is_gone(pid)
+        })
+        .await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(!supervisor.is_finished());
+    supervisor.abort();
+    assert_eq!(polls(&axi), 1, "an ended report is not polled again");
+}
+
+/// Showing a followed page again restarts its lifetime: it ends when the
+/// new one runs out, not an hourly check later.
+#[tokio::test]
+async fn showing_a_followed_page_again_restarts_its_lifetime() {
+    let (axi, lavish) = FakeAxi::new();
+    axi.opens_at(URL);
+    axi.reply("end", "session:\n  status: ended\n");
+    let harness = Harness::with(Config::default(), Some(lavish)).await;
+    let published = reports::publish(&harness.ctx, "Merged PR #71", &axi.html, None)
+        .await
+        .unwrap();
+    let lifetime = reports::FOLLOW_LIFETIME;
+    shown_ago(
+        &harness,
+        &published.report,
+        lifetime - std::time::Duration::from_secs(1),
+    )
+    .await;
+    let supervisor = tokio::spawn(reports::supervise(harness.ctx.clone()));
+    harness
+        .eventually("the report is polled", || async { polls(&axi) == 1 })
+        .await;
+    shown_ago(
+        &harness,
+        &published.report,
+        lifetime - std::time::Duration::from_secs(3),
+    )
+    .await;
+    let other = axi.html.with_file_name("other.html");
+    std::fs::write(&other, "<h1>other</h1>").unwrap();
+    reports::publish(&harness.ctx, "Other", &other, None)
+        .await
+        .unwrap();
+    let state = || async {
+        let listed = reports::list(&harness.ctx).await.unwrap();
+        let ours = listed.into_iter().find(|r| r.report == published.report);
+        ours.map(|r| r.state)
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    assert_eq!(state().await, Some(ReportState::Open));
+    harness
+        .eventually("the page ends when its new lifetime runs out", || async {
+            state().await == Some(ReportState::Ended)
+        })
+        .await;
+    supervisor.abort();
+}
+
+/// The lifetime bounds a page a gate waits on too; the gate stays open,
+/// for an answer in the chat.
+#[tokio::test]
+async fn a_gated_report_is_ended_when_its_lifetime_runs_out() {
+    let (axi, lavish) = FakeAxi::new();
+    axi.opens_at(URL);
+    axi.reply("end", "session:\n  status: ended\n");
+    let harness = Harness::with(Config::default(), Some(lavish)).await;
+    let published = reports::publish(&harness.ctx, "Plan", &axi.html, None)
+        .await
+        .unwrap();
+    let gate = gate_on(&harness, &published.report).await;
+    shown_ago(&harness, &published.report, reports::FOLLOW_LIFETIME).await;
+    let supervisor = tokio::spawn(reports::supervise(harness.ctx.clone()));
+    harness
+        .eventually("the expired gated report is ended", || async {
+            report_state(&harness).await.as_deref() == Some("ended")
+        })
+        .await;
+    supervisor.abort();
+    let store = harness.ctx.store.lock().await;
+    let open = store.open_gate_by_report(&published.report).unwrap();
+    let open = open.map(|g| (g.run, g.stage_id));
+    assert_eq!(open, Some((gate.run, gate.stage_id)), "the gate stays open");
+}
+
+/// A newer page of the same title and item replaces the older one: only the
+/// newer is followed.
+#[tokio::test]
+async fn a_newer_page_of_the_same_title_supersedes_the_older() {
+    let (axi, lavish) = FakeAxi::new();
+    axi.opens_at(URL);
+    axi.reply("end", "session:\n  status: ended\n");
+    let harness = Harness::with(Config::default(), Some(lavish)).await;
+    let older = reports::publish(&harness.ctx, "Status", &axi.html, None)
+        .await
+        .unwrap();
+    let newer_html = axi.html.with_file_name("status-2.html");
+    std::fs::write(&newer_html, "<h1>status, again</h1>").unwrap();
+    let newer = reports::publish(&harness.ctx, "Status", &newer_html, None)
+        .await
+        .unwrap();
+    assert_ne!(older.report, newer.report);
+    let path_of = |report: &ReportId, all: &[archon_core::protocol::ReportSummary]| {
+        let found = all.iter().find(|summary| summary.report == *report);
+        found
+            .expect("the report is listed")
+            .path
+            .display()
+            .to_string()
+    };
+    let listed = reports::list(&harness.ctx).await.unwrap();
+    let (older_path, newer_path) = (
+        path_of(&older.report, &listed),
+        path_of(&newer.report, &listed),
+    );
+    let supervisor = tokio::spawn(reports::supervise(harness.ctx.clone()));
+    harness
+        .eventually("the older session is ended", || async {
+            axi.calls().contains(&format!("end {older_path}"))
+        })
+        .await;
+    harness
+        .eventually("the newer page is polled", || async { polls(&axi) == 1 })
+        .await;
+    supervisor.abort();
+    let states: Vec<(ReportId, ReportState)> = reports::list(&harness.ctx)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|summary| (summary.report, summary.state))
+        .collect();
+    assert!(
+        states.contains(&(older.report, ReportState::Ended)),
+        "{states:?}"
+    );
+    assert!(
+        states.contains(&(newer.report, ReportState::Open)),
+        "{states:?}"
+    );
+    assert!(
+        axi.calls().contains(&format!("poll {newer_path}")),
+        "{:?}",
+        axi.calls()
+    );
+}
+
+/// A newer page published while the older is polled ends the older at
+/// once, not when its lifetime runs out.
+#[tokio::test]
+async fn publishing_a_newer_page_ends_the_followed_older_one() {
+    let (axi, lavish) = FakeAxi::new();
+    axi.opens_at(URL);
+    axi.reply("end", "session:\n  status: ended\n");
+    let harness = Harness::with(Config::default(), Some(lavish)).await;
+    let supervisor = tokio::spawn(reports::supervise(harness.ctx.clone()));
+    let older = reports::publish(&harness.ctx, "Status", &axi.html, None)
+        .await
+        .unwrap();
+    harness
+        .eventually("the older page is polled", || async { polls(&axi) == 1 })
+        .await;
+    let newer_html = axi.html.with_file_name("status-2.html");
+    std::fs::write(&newer_html, "<h1>status, again</h1>").unwrap();
+    let newer = reports::publish(&harness.ctx, "Status", &newer_html, None)
+        .await
+        .unwrap();
+    harness
+        .eventually("the older report is ended", || async {
+            let listed = reports::list(&harness.ctx).await.unwrap();
+            listed
+                .iter()
+                .any(|r| r.report == older.report && r.state == ReportState::Ended)
+        })
+        .await;
+    harness
+        .eventually("the newer page is polled", || async { polls(&axi) == 2 })
+        .await;
+    supervisor.abort();
+    // The older was recorded ended after the newer was shown; a restart
+    // must not take it for the newer page.
+    let supervisor = tokio::spawn(reports::supervise(harness.ctx.clone()));
+    harness
+        .eventually("the newer page is polled again", || async {
+            polls(&axi) == 3
+        })
+        .await;
+    supervisor.abort();
+    let listed = reports::list(&harness.ctx).await.unwrap();
+    let newer_state = listed.iter().find(|r| r.report == newer.report);
+    assert_eq!(newer_state.map(|r| r.state), Some(ReportState::Open));
+    let ends = axi.calls().iter().filter(|c| c.starts_with("end ")).count();
+    assert_eq!(ends, 1, "{:?}", axi.calls());
+}
+
+/// Stopping the supervisor, as a daemon shutdown does, kills and reaps
+/// every poll process it started.
+#[tokio::test]
+async fn stopping_the_supervisor_kills_and_reaps_its_polls() {
+    let (axi, lavish) = FakeAxi::new();
+    axi.opens_at(URL);
+    let harness = Harness::with(Config::default(), Some(lavish)).await;
+    reports::publish(&harness.ctx, "Findings", &axi.html, None)
+        .await
+        .unwrap();
+    let supervisor = tokio::spawn(reports::supervise(harness.ctx.clone()));
+    harness
+        .eventually("the report is polled", || async { polls(&axi) == 1 })
+        .await;
+    let pid = poll_pid(&axi, 1);
+    assert!(!is_gone(pid), "the poll runs");
+    supervisor.abort();
+    assert!(supervisor.await.unwrap_err().is_cancelled());
+    harness
+        .eventually("the poll process is killed and reaped", || async {
+            is_gone(pid)
+        })
+        .await;
+    assert_eq!(report_state(&harness).await.as_deref(), Some("open"));
 }

@@ -153,20 +153,32 @@ export async function cancelItem(page, fixture) {
 export async function followItemLive(page, fixture) {
   await ensureRepo(fixture, 'archon');
   const item = await enqueue(fixture.archond, { repo: 'archon', title: unique('Follow me'), brief: 'Reloads on its own news.' });
-  const loads = [];
-  page.on('websocket', (ws) => ws.on('framesent', ({ payload }) => {
-    const frame = typeof payload === 'string' ? JSON.parse(payload) : null;
-    if (frame?.cmd === 'get_item' && frame.item === item.id) loads.push(Date.now());
-  }));
+  const requested = new Set();
+  const answered = new Set();
+  page.on('websocket', (ws) => {
+    ws.on('framesent', ({ payload }) => {
+      const frame = typeof payload === 'string' ? JSON.parse(payload) : null;
+      if (frame?.cmd === 'get_item' && frame.item === item.id) requested.add(frame.req);
+    });
+    ws.on('framereceived', ({ payload }) => {
+      const frame = typeof payload === 'string' ? JSON.parse(payload) : null;
+      if (frame?.frame === 'reply') answered.add(frame.id);
+    });
+  });
+  const allAnswered = () => requested.size > 0 && [...requested].every((req) => answered.has(req));
   await openApp(page, fixture, `#/item/${item.id}`);
   await expect(page.getByRole('heading', { name: item.title, level: 1 })).toBeVisible();
-  const before = loads.length;
-  expect(before).toBeGreaterThan(0);
+  // The shared lists load after the first draw and redraw the hero with the repository name.
+  await expect(page.locator('.item-hero-meta')).toHaveText(/^archon · /);
+  await expect.poll(allAnswered, { timeout: 5_000 }).toBe(true);
+  const before = requested.size;
   // Marks the drawn page: a reload or status refresh that finds nothing new keeps it.
   await page.locator('.item-hero').evaluate((el) => { el.dataset.probe = 'kept'; });
   await notify(fixture.archond, 'progress', `Stage review settled for ${item.id}.`, item.id);
-  await expect.poll(() => loads.length, { timeout: 5_000 }).toBeGreaterThan(before);
-  await page.waitForTimeout(1_000);
+  await expect.poll(() => requested.size, { timeout: 5_000 }).toBeGreaterThan(before);
+  await expect.poll(allAnswered, { timeout: 5_000 }).toBe(true);
+  // A frame round trip in the page lets the reply's redraw, if any, run first.
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => done())));
   await expect(page.locator('.item-hero[data-probe="kept"]')).toHaveCount(1);
 }
 

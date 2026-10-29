@@ -53,6 +53,8 @@ themselves (see Update below).
   it had not yet read could reset the connection, so a revoked phone saw
   a dropped connection and kept retrying instead of showing it is no
   longer paired.
+- An open item no longer redraws once more when the repositories load
+  after its detail, which dropped a half-read brief or a focused button.
 
 ### Storage
 

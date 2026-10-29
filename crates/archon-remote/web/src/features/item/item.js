@@ -33,6 +33,7 @@ export function mountItem(view, ctx) {
   let detail = null;
   let artifacts = null;
   let artifactsAt = null;
+  let drawn = null;
 
   let loads = 0;
   let failed = false;
@@ -64,12 +65,14 @@ export function mountItem(view, ctx) {
       artifacts = artifactsSection(ctx, id);
       artifactsAt = finished;
     }
+    drawn = JSON.stringify(shownFromStore(state, id, detail));
     view.querySelector('.screen-title').textContent = detail.item.title;
     content.replaceChildren(...renderDetail(ctx, detail, state, { reload, artifacts }));
   };
   const unfollow = followItem(ctx, id, () => detail, () => load(true));
-  // A failed reload keeps its error and retry in view until a load succeeds.
-  const offReports = ctx.store.watch((s) => shownFromStore(s, id, detail), () => detail && !failed && render());
+  // A failed reload keeps its error and retry in view until a load succeeds;
+  // values the page already shows (the detail just arrived) do not redraw it.
+  const offReports = ctx.store.watch((s) => shownFromStore(s, id, detail), (shown) => detail && !failed && JSON.stringify(shown) !== drawn && render());
   reload();
   return () => { alive = false; unfollow(); offReports(); };
 }

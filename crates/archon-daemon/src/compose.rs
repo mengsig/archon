@@ -207,10 +207,15 @@ pub fn down_command(project: &str) -> String {
     format!("docker compose --project-name {project} down --remove-orphans")
 }
 
-/// `tree` lies strictly inside `root`, as given or as its real path.
+/// `tree` lies strictly inside `root` as given, and still once both are
+/// resolved: a symlinked worktree must not lead to a checkout elsewhere.
 fn in_worktree_root(root: &Path, tree: &Path) -> bool {
-    let inside = |root: &Path| tree != root && is_within(tree, root);
-    inside(root) || root.canonicalize().is_ok_and(|real| inside(&real))
+    let inside = |tree: &Path, root: &Path| tree != root && is_within(tree, root);
+    let Ok(real_root) = root.canonicalize() else {
+        return false;
+    };
+    let named = inside(tree, root) || inside(tree, &real_root);
+    named && inside(&resolved(tree), &real_root)
 }
 
 /// `tree` as given and as resolved: Compose records the directory an agent
@@ -361,6 +366,22 @@ mod tests {
             selection.inside,
             BTreeMap::from([("nested".to_owned(), dir)])
         );
+    }
+
+    #[test]
+    fn a_worktree_symlinked_out_of_the_root_is_not_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("worktrees");
+        let checkout = dir.path().join("checkout");
+        std::fs::create_dir_all(root.join("app/qi_1")).unwrap();
+        std::fs::create_dir_all(&checkout).unwrap();
+        std::os::unix::fs::symlink(&checkout, root.join("app/qi_2")).unwrap();
+        std::os::unix::fs::symlink(&checkout, root.join("linked")).unwrap();
+        assert!(in_worktree_root(&root, &root.join("app/qi_1")));
+        assert!(!in_worktree_root(&root, &root.join("app/qi_2")));
+        assert!(!in_worktree_root(&root, &root.join("linked/qi_3")));
+        assert!(!in_worktree_root(&root, &checkout));
+        assert!(!in_worktree_root(&root, &root));
     }
 
     #[test]

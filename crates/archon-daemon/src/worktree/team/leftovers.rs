@@ -150,7 +150,7 @@ pub(super) fn commit_leftovers(
     }
     let Some(nested) = nested_repositories(path)? else {
         tracing::warn!(worktree = %path.display(), "a nested repository's name is not UTF-8; committing nothing");
-        let kept = changed_paths(path)?;
+        let kept = kept_paths(path)?;
         return Ok(Leftovers { saved: None, kept });
     };
     let mut add = vec![
@@ -165,13 +165,13 @@ pub(super) fn commit_leftovers(
     add.push(":(exclude,glob).archon/services/*.pid");
     add.extend(nested.iter().map(String::as_str));
     git(path, &add)?;
-    unstage_caches(path)?;
+    unstage_left_out(path)?;
     let staged = nul_paths(path, &["diff", "--cached", "--name-only"])?;
     let saved = match staged.is_empty() {
         true => None,
         false => Some(commit_staged(path, on, message, staged)?),
     };
-    let kept = changed_paths(path)?;
+    let kept = kept_paths(path)?;
     debug_assert!(
         nul_paths(path, &["diff", "--cached", "--name-only"])?.is_empty(),
         "nothing staged is left behind"
@@ -220,14 +220,15 @@ fn commit_staged(
     })
 }
 
-/// Take caches the role staged itself out of the index; its files stay.
-fn unstage_caches(path: &Path) -> Result<(), ArchonError> {
+/// Take caches and service PID files the role staged itself out of the
+/// index; its files stay.
+fn unstage_left_out(path: &Path) -> Result<(), ArchonError> {
     let staged = nul_entries(path, &["diff", "--cached", "--name-only"])?;
     let mut caches = Vec::new();
     for name in staged {
         let name = match String::from_utf8(name) {
             Ok(name) => name,
-            Err(raw) if is_python_cache(&String::from_utf8_lossy(raw.as_bytes())) => {
+            Err(raw) if is_left_out(&String::from_utf8_lossy(raw.as_bytes())) => {
                 return Err(ArchonError::Invalid(format!(
                     "a cache staged in {} has a name that is not UTF-8, so it cannot be \
                      left out of the commit: {}",
@@ -237,7 +238,7 @@ fn unstage_caches(path: &Path) -> Result<(), ArchonError> {
             }
             Err(_) => continue,
         };
-        if is_python_cache(&name) {
+        if is_left_out(&name) {
             caches.push(format!(":(literal){name}"));
         }
     }
@@ -250,10 +251,16 @@ fn unstage_caches(path: &Path) -> Result<(), ArchonError> {
     debug_assert!(
         nul_paths(path, &["diff", "--cached", "--name-only"])?
             .iter()
-            .all(|name| !is_python_cache(name)),
-        "no cache stays staged"
+            .all(|name| !is_left_out(name)),
+        "no cache or PID file stays staged"
     );
     Ok(())
+}
+
+/// What is never committed on a role's behalf: caches, and the PID files
+/// that declare its services, which another role may declare under one name.
+fn is_left_out(path: &str) -> bool {
+    is_python_cache(path) || services::is_pid_file(path)
 }
 
 /// Bytecode a worker's test run leaves: never committed on its behalf, and
@@ -279,8 +286,20 @@ fn changed_paths(tree: &Path) -> Result<Vec<String>, ArchonError> {
     let changed: Vec<String> = entries
         .iter()
         .map(|entry| entry.get(3..).unwrap_or(entry).to_owned())
-        .filter(|path| !is_python_cache(path) && !services::is_pid_file(path))
+        .filter(|path| !is_python_cache(path))
         .collect();
     debug_assert!(changed.iter().all(|path| !path.is_empty()));
     Ok(changed)
+}
+
+/// What git cannot commit in `tree` once its leftovers are committed: the
+/// [`changed_paths`] but the service PID files, left out on purpose.
+fn kept_paths(tree: &Path) -> Result<Vec<String>, ArchonError> {
+    let mut kept = changed_paths(tree)?;
+    kept.retain(|path| !services::is_pid_file(path));
+    assert!(
+        kept.iter().all(|path| !is_left_out(path)),
+        "only work is kept"
+    );
+    Ok(kept)
 }

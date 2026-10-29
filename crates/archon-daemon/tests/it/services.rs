@@ -105,6 +105,10 @@ async fn a_team_role_s_service_outlives_the_team_stage() {
     let _started = Started(vec![server, other, stray]);
     declare(&api, server);
     declare(&ui, other);
+    // Work beside the PID files, one of them staged by its role.
+    std::fs::write(api.join("api.txt"), "api\n").unwrap();
+    std::fs::write(ui.join("ui.txt"), "ui\n").unwrap();
+    common::git(&ui, &["add", "--all"]);
 
     h.settle_running(|_| common::completed("the app serves on :8080"))
         .await;
@@ -118,6 +122,10 @@ async fn a_team_role_s_service_outlives_the_team_stage() {
     assert_eq!(running.len(), 1, "{running:?}");
     assert_eq!(running[0].stage_id, "review");
     let merged = common::git(&run.workspace, &["log", "--name-only", "--format="]);
+    assert!(
+        merged.contains("api.txt") && merged.contains("ui.txt"),
+        "{merged}"
+    );
     assert!(!merged.contains(".archon/services"), "{merged}");
 
     let cancel = Request::CancelItem {

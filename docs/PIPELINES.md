@@ -809,12 +809,14 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   `structured` data `{"verdict": "pass"|"fail", "findings": [{"severity",
   "title", "detail", "path"}]}`, and the summary ends with `VERDICT: PASS` or
   `VERDICT: FAIL`. Archon reads a structured `verdict` key first, whatever
-  it holds, then a structured `result` or `status` that reads as one, then
-  the summary's last `VERDICT:` line outside block quotes and fenced code.
+  it holds, then a structured `result` or `status` that opens with a
+  verdict word, then the summary's last `VERDICT:` line outside block
+  quotes and fenced or indented code.
   Letter case and markdown emphasis
   (`**Verdict:** PASS`) do not matter, and `passed`, `approved`, `failed` and
-  `rejected` read as pass and fail. Anything else, a choice such as
-  `PASS or FAIL` included, counts as fail, and the
+  `rejected` read as pass and fail. Anything else counts as fail, and so
+  does a choice or a hedge: another verdict word or an `or` before the
+  first `—`, `:`, `;` or `.` (`PASS or FAIL`, `PASS, but two failed`). The
   gate's refusal quotes what the agent wrote.
 - **The stage `[pipeline.ship]` names.** `## Ship record`: commit with the
   repository's git identity, leave a clean tree, do not push, and return

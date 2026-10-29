@@ -2482,8 +2482,10 @@ enforces is named where it is enforced.
 
 `Verdict::extract` reads a structured `verdict` key first (a blank, null or
 unreadable one is `Unknown`), then a structured `result` or `status` that
-reads as a verdict, then the summary's last `VERDICT:` line outside block
-quotes and fenced code, in any letter case and through markdown emphasis. Reviewers' verdicts (§8.2) go through the same parser.
+opens with a verdict word, then the summary's last `VERDICT:` line outside
+block quotes and fenced or indented code, in any letter case and through
+markdown emphasis. A verdict word followed, before the first `—`, `:`, `;`
+or `.`, by another verdict word or `or` is a choice and reads as `Unknown`. Reviewers' verdicts (§8.2) go through the same parser.
 
 Two error prefixes end a run at once, with no loop, no infra retry and the
 stage's live siblings cancelled (`StageOutcome::ends_run`):

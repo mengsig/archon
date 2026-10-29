@@ -6,14 +6,16 @@
 
 - Stage gates and delegated reviews read verdicts with one tolerant
   parser: a structured `verdict` key, whatever it holds, then a structured
-  `result` or `status`, then the summary's last `VERDICT:` line outside
-  block quotes and fenced code, in any letter case and
+  `result` or `status` that opens with a verdict word, then the summary's
+  last `VERDICT:` line outside block quotes and fenced or indented code, in
+  any letter case and
   through markdown emphasis (`**Verdict:** PASS`), with `passed`, `approved`,
   `failed` and `rejected` read as pass and fail. A test stage that passed
   with `{"findings": []}` and `**Verdict:** PASS` in its summary no longer
   fails its gate, and a reviewer whose `structured` gives no verdict is read
-  from its summary. An unreadable verdict, a choice such as `PASS or FAIL`
-  included, still counts as fail, and the refusal now quotes it.
+  from its summary. An unreadable verdict, a choice or hedge such as
+  `PASS or FAIL` or `PASS, but two failed` included, still counts as fail,
+  and the refusal now quotes it.
 - A reviewer plan's effort is a floor, not a ceiling. The delegation
   watchdog cancelled a reviewer delegated above the planned effort in the
   middle of its review, and let one below it run, which is how

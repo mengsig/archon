@@ -34,23 +34,17 @@ impl Verdict {
     }
 
     /// The verdict `structured` states: its `verdict` key whenever it has
-    /// one, `Unknown` unless it reads as a verdict, else a `result` or
-    /// `status` that reads as one.
+    /// one, `Unknown` unless it reads as a verdict, else the first `result`
+    /// or `status` that opens with a verdict word or holds a `VERDICT:` line.
     pub fn from_structured(structured: &serde_json::Value) -> Option<Self> {
         if let Some(given) = structured.get(VERDICT_KEYS[0]) {
             let text = given.as_str().unwrap_or_default();
             return Some(Self::from_summary(text).unwrap_or_else(|| Self::from_word(text)));
         }
-        let read = |text: &str| match Self::from_summary(text) {
-            Some(verdict) => Some(verdict),
-            None if one_word(text) => Some(Self::from_word(text)),
-            None => None,
-        };
         VERDICT_KEYS[1..]
             .iter()
             .filter_map(|key| non_empty(structured.get(key)?.as_str()?))
-            .filter_map(read)
-            .find(|verdict| *verdict != Self::Unknown)
+            .find_map(|text| Self::from_summary(text).or_else(|| Self::leading(text)))
     }
 
     /// What the last `VERDICT: <word>` line of `text` says, in any letter
@@ -86,33 +80,45 @@ impl Verdict {
         line.or_else(other).map(str::to_owned)
     }
 
-    /// The first word of `text`, markdown and letter case aside; `Unknown`
-    /// when it opens a choice (`PASS or FAIL`, `pass/fail`, `PASS | FAIL`).
+    /// What the first word of `text` says, markdown and letter case aside.
     fn from_word(text: &str) -> Self {
-        let text = text.trim_start_matches(|c: char| !c.is_alphanumeric());
-        let end = text
-            .find(|c: char| !c.is_alphanumeric())
-            .unwrap_or(text.len());
-        let (word, rest) = text.split_at(end);
-        let rest = rest.trim_start_matches([' ', '\t', '*', '_', '`']);
-        let choice = rest.starts_with(['/', '|'])
-            || rest
-                .split_whitespace()
-                .next()
-                .is_some_and(|next| next.eq_ignore_ascii_case("or"));
-        if choice {
-            return Self::Unknown;
-        }
+        Self::leading(text).unwrap_or(Self::Unknown)
+    }
+
+    /// `None` when `text` does not open with a verdict word. A verdict word
+    /// counts only when the words up to the first explanation separator
+    /// (`—`, `:`, `;`, `.`, ` - `) name no other verdict and no `or`.
+    fn leading(text: &str) -> Option<Self> {
+        let mut words = text
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|word| !word.is_empty());
+        let verdict = Self::of_word(words.next()?)?;
+        let first = text
+            .find(|c: char| c.is_alphanumeric())
+            .expect("a first word");
+        let after = text[first..].trim_start_matches(char::is_alphanumeric);
+        let head = after
+            .split(['—', '–', ':', ';', '.'])
+            .next()
+            .and_then(|head| head.split(" - ").next())
+            .unwrap_or_default();
+        let choice = head
+            .split(|c: char| !c.is_alphanumeric())
+            .any(|word| word.eq_ignore_ascii_case("or") || Self::of_word(word).is_some());
+        Some(if choice { Self::Unknown } else { verdict })
+    }
+
+    fn of_word(word: &str) -> Option<Self> {
         match word.to_ascii_lowercase().as_str() {
-            "pass" | "passed" | "passes" | "ok" | "approve" | "approved" => Self::Pass,
-            "fail" | "failed" | "fails" | "reject" | "rejected" => Self::Fail,
-            _ => Self::Unknown,
+            "pass" | "passed" | "passes" | "ok" | "approve" | "approved" => Some(Self::Pass),
+            "fail" | "failed" | "fails" | "reject" | "rejected" => Some(Self::Fail),
+            _ => None,
         }
     }
 }
 
 /// The last line of `text` that reads `VERDICT: …`, and its value. Lines in
-/// fenced code or block quotes are examples, never a verdict.
+/// fenced or indented code and block quotes are examples, never a verdict.
 fn last_verdict_line(text: &str) -> Option<(&str, &str)> {
     let mut fence: Option<(char, usize)> = None;
     let mut last = None;
@@ -121,13 +127,14 @@ fn last_verdict_line(text: &str) -> Option<(&str, &str)> {
         if let Some(marker) = fence_marker(start) {
             fence = match fence {
                 None => Some(marker),
-                // Only a run of the opening character, at least as long, closes it.
-                Some(open) if marker.0 == open.0 && marker.1 >= open.1 => None,
+                // Only a bare run of the opening character, at least as long, closes it.
+                Some(open) if closes(start, open) => None,
                 open => open,
             };
             continue;
         }
-        if fence.is_some() || start.starts_with('>') {
+        let indented = line.starts_with('\t') || line.starts_with("    ");
+        if fence.is_some() || indented || start.starts_with('>') {
             continue;
         }
         if let Some(value) = strip_label(line, "verdict") {
@@ -145,14 +152,17 @@ fn fence_marker(line: &str) -> Option<(char, usize)> {
     (run >= 3).then_some((mark, run))
 }
 
-fn non_empty(text: &str) -> Option<&str> {
-    Some(text.trim()).filter(|text| !text.is_empty())
+/// Whether `line` closes a fence opened by `open`: its marker run, at least
+/// as long, with nothing after it but whitespace.
+fn closes(line: &str, open: (char, usize)) -> bool {
+    let rest = line.trim_start_matches(open.0);
+    let run = line.len() - rest.len();
+    assert_eq!(run % open.0.len_utf8(), 0, "a run of one character");
+    run / open.0.len_utf8() >= open.1 && rest.trim().is_empty()
 }
 
-/// Whether `text` is one word once markdown and punctuation around it are dropped.
-fn one_word(text: &str) -> bool {
-    let word = text.trim_matches(|c: char| !c.is_alphanumeric());
-    !word.is_empty() && word.chars().all(char::is_alphanumeric)
+fn non_empty(text: &str) -> Option<&str> {
+    Some(text.trim()).filter(|text| !text.is_empty())
 }
 
 /// `line` without a leading `label:`, in any letter case, with light
@@ -649,6 +659,10 @@ mod tests {
         assert_eq!(Verdict::extract(mixed, None), Verdict::Unknown);
         let closed = "~~~\nVERDICT: FAIL\n~~~~\nVERDICT: PASS";
         assert_eq!(Verdict::extract(closed, None), Verdict::Pass);
+        let content = "```text\n```not-a-close\nVERDICT: PASS\n```";
+        assert_eq!(Verdict::extract(content, None), Verdict::Unknown);
+        let indented = "Example:\n\n    VERDICT: PASS\n\nFindings remain.";
+        assert_eq!(Verdict::extract(indented, None), Verdict::Unknown);
     }
 
     #[test]
@@ -668,8 +682,23 @@ mod tests {
                 "{said}"
             );
         }
+        for said in [
+            "PASS, or FAIL",
+            "PASS (or FAIL)",
+            "PASS, but two tests failed",
+        ] {
+            let line = format!("VERDICT: {said}");
+            assert_eq!(Verdict::extract(&line, None), Verdict::Unknown, "{said}");
+        }
         let explained = "VERDICT: PASS — 214 passed, 0 failed, or so CI says";
         assert_eq!(Verdict::extract(explained, None), Verdict::Pass);
+        let noted = "VERDICT: PASS (two advisory notes): nothing failed";
+        assert_eq!(Verdict::extract(noted, None), Verdict::Pass);
+        for result in ["FAIL — tests failed", "FAIL or PASS"] {
+            let field = json!({"result": result});
+            let read = Verdict::extract("VERDICT: PASS", Some(&field));
+            assert_ne!(read, Verdict::Pass, "{result}");
+        }
         let skipped = json!({"result": "done"});
         let said = Verdict::stated("VERDICT: unsure", Some(&skipped));
         assert_eq!(said.as_deref(), Some("VERDICT: unsure"));

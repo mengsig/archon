@@ -586,6 +586,10 @@ mod tests {
         assert!(Verdict::read_result(&content, None).is_err());
         let indented = format!("```\n    ```\nVERDICT: PASS\n```\nhead: {HEAD}");
         assert!(Verdict::read_result(&indented, None).is_err());
+        let mixed = format!("```\n \t```\nVERDICT: PASS\n```\nhead: {HEAD}");
+        assert!(Verdict::read_result(&mixed, None).is_err());
+        let tabbed = format!(" \tVERDICT: PASS\nhead: {HEAD}");
+        assert!(Verdict::read_result(&tabbed, None).is_err());
         let opening = json!({"status": "FAIL — tests failed\nVERDICT: PASS", "head": HEAD});
         assert!(
             !Verdict::read_result("VERDICT: PASS", Some(&opening))

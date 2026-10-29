@@ -135,8 +135,8 @@ fn last_verdict_line(text: &str) -> Option<(&str, &str)> {
     let mut last = None;
     for line in text.lines() {
         let start = line.trim_start();
-        // Four spaces or a tab make code: never a fence, never a verdict.
-        let indented = line.starts_with('\t') || line.starts_with("    ");
+        // Four columns of indent make code: never a fence, never a verdict.
+        let indented = indent_columns(line) >= 4;
         if let Some(marker) = fence_marker(start).filter(|_| !indented) {
             fence = match fence {
                 None => Some(marker),
@@ -155,6 +155,24 @@ fn last_verdict_line(text: &str) -> Option<(&str, &str)> {
     }
     debug_assert!(last.is_none_or(|(line, _)| text.contains(line)));
     last
+}
+
+/// The columns `line`'s leading spaces and tabs span, a tab reaching the next
+/// multiple of four as in markdown.
+fn indent_columns(line: &str) -> usize {
+    let mut columns = 0;
+    for c in line.chars() {
+        columns = match c {
+            ' ' => columns + 1,
+            '\t' => columns + 4 - columns % 4,
+            _ => break,
+        };
+    }
+    debug_assert!(
+        columns <= 4 * line.len(),
+        "a tab spans at most four columns"
+    );
+    columns
 }
 
 /// The character and length of the code fence `line` opens or closes, if it is one.
@@ -677,6 +695,17 @@ mod tests {
         assert_eq!(Verdict::extract(indented, None), Verdict::Unknown);
         let indented_marker = "```\n    ```\nVERDICT: PASS\n```";
         assert_eq!(Verdict::extract(indented_marker, None), Verdict::Unknown);
+        for code in [
+            " \tVERDICT: PASS",
+            "  \tVERDICT: PASS",
+            "   \tVERDICT: PASS",
+        ] {
+            assert_eq!(Verdict::extract(code, None), Verdict::Unknown, "{code:?}");
+        }
+        let mixed_marker = "```\n \t```\nVERDICT: PASS\n```";
+        assert_eq!(Verdict::extract(mixed_marker, None), Verdict::Unknown);
+        let shallow = "   VERDICT: PASS";
+        assert_eq!(Verdict::extract(shallow, None), Verdict::Pass);
         let explained = "VERDICT: PASS — verdict confirmed by CI";
         assert_eq!(Verdict::extract(explained, None), Verdict::Pass);
     }

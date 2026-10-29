@@ -2438,7 +2438,10 @@ stage: it starts it under `setsid` and writes the PID to
 Linux the stage-end reap spares that process, the process group it leads
 and its descendants while the run goes on, but not a group it only joined:
 `cmd &` leaves a server in its shell's group, often the engine's, with every
-stray of the stage. The run's end reaps them with the rest.
+stray of the stage. The run's end reaps them with the rest of what runs
+from the worktree; a service whose working directory and executable both
+lie outside it is not found, like any other process. A team role's PID
+files are left out of the commit of its uncommitted work.
 
 A team stage's contract names the agent's role and the other roles, keeps
 it to its own worktree and role, and asks it to commit on its branch

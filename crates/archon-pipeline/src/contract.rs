@@ -315,9 +315,9 @@ fn mode_rule(mode: WorkspaceMode) -> &'static str {
              finish, stop every server and Compose stack you started, unless whoever gave you \
              the task asked you to leave it running; then say in your result what still \
              runs and how to stop it. To keep a server up for a later stage, start it under \
-             `setsid` and write its PID, uncommitted, to `.archon/services/<name>.pid` in your \
-             worktree: Archon stops it and its group when the run ends, and any other process \
-             you leave when your stage ends."
+             `setsid`, run it from your worktree, and write its PID, uncommitted, to \
+             `.archon/services/<name>.pid` there: Archon stops it when the run ends, and any \
+             other process you leave there when your stage ends."
         }
         WorkspaceMode::RepoReadonly => {
             "With a repository, it is a detached snapshot of the commit the repository has \
@@ -877,7 +877,7 @@ mod tests {
             );
             assert!(text.contains("Work only in `/w`"), "{kind:?}");
             assert!(
-                text.contains("start it under `setsid` and write its PID, uncommitted, to `.archon/services/<name>.pid` in your worktree: Archon stops it and its group when the run ends"),
+                text.contains("start it under `setsid`, run it from your worktree, and write its PID, uncommitted, to `.archon/services/<name>.pid` there: Archon stops it when the run ends"),
                 "{kind:?}"
             );
             assert!(text.contains("`BLOCKED:`"), "{kind:?}");

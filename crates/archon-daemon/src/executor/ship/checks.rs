@@ -16,6 +16,7 @@ use archon_pipeline::risk::DiffStat;
 use archon_pipeline::swarm::PLAN_FILE;
 use archon_pipeline::{ShipRecord, attribution_lines};
 
+use crate::reaper::services;
 use crate::worktree::daemon_git::{Config, DaemonGit};
 use crate::worktree::head;
 use crate::worktree::shadow::Shadow;
@@ -25,8 +26,6 @@ use crate::worktree::team::{check_worktree, common_dir};
 const MAX_LISTED: usize = 5;
 /// Where stages write the pages Archon shows the operator; never part of a change.
 const REPORTS_DIR: &str = ".archon/reports/";
-/// Where stages declare the services a later stage uses: run state, not a change.
-const SERVICES_DIR: &str = ".archon/services/";
 
 /// The worktree a run ships from and what it must hold.
 #[derive(Debug, Clone)]
@@ -153,7 +152,11 @@ pub(super) fn check_unchanged(target: &Target) -> Result<Result<(), String>, Arc
     let untracked = git(tree, &["ls-files", "--others", "--exclude-standard"])?;
     let present = staged
         .lines()
-        .chain(untracked.lines().filter(|path| !is_service_pid_file(path)))
+        .chain(
+            untracked
+                .lines()
+                .filter(|path| !services::is_pid_file(path)),
+        )
         .filter(|path| !is_unshippable(path))
         .collect::<Vec<_>>();
     if !present.is_empty() {
@@ -185,14 +188,6 @@ fn is_unshippable(path: &str) -> bool {
         || path.split('/').any(|part| part == "__pycache__")
         || path.ends_with(".pyc")
         || path.ends_with(".pyo")
-}
-
-/// Whether `path` is a `.archon/services/<name>.pid` file a stage declared a
-/// service in; any other file there is a change like any other.
-fn is_service_pid_file(path: &str) -> bool {
-    path.strip_prefix(SERVICES_DIR).is_some_and(|name| {
-        !name.contains('/') && name.len() > ".pid".len() && name.ends_with(".pid")
-    })
 }
 
 /// Refuse a change that adds a build cache, the swarm plan file or a report

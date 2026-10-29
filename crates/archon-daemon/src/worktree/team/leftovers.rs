@@ -6,6 +6,8 @@ use std::path::Path;
 
 use archon_core::error::ArchonError;
 
+use crate::reaper::services;
+
 use super::{SavedWork, daemon_commit_options, git, merge_in_progress, nul_entries, nul_paths};
 
 /// What [`commit_leftovers`] did.
@@ -159,6 +161,8 @@ pub(super) fn commit_leftovers(
         ":(exclude,glob)**/__pycache__/**",
     ];
     add.extend([":(exclude,glob)**/*.pyc", ":(exclude,glob)**/*.pyo"]);
+    // A declared service's PID is run state; two roles may declare one name.
+    add.push(":(exclude,glob).archon/services/*.pid");
     add.extend(nested.iter().map(String::as_str));
     git(path, &add)?;
     unstage_caches(path)?;
@@ -275,7 +279,7 @@ fn changed_paths(tree: &Path) -> Result<Vec<String>, ArchonError> {
     let changed: Vec<String> = entries
         .iter()
         .map(|entry| entry.get(3..).unwrap_or(entry).to_owned())
-        .filter(|path| !is_python_cache(path))
+        .filter(|path| !is_python_cache(path) && !services::is_pid_file(path))
         .collect();
     debug_assert!(changed.iter().all(|path| !path.is_empty()));
     Ok(changed)

@@ -18,6 +18,14 @@ const MAX_FILES: usize = 64;
 /// A PID file is a number and a newline; anything longer is not one.
 const MAX_FILE_BYTES: u64 = 64;
 
+/// Whether the worktree-relative `path` declares a service, as
+/// `.archon/services/<name>.pid` does: run state, never part of a change.
+pub fn is_pid_file(path: &str) -> bool {
+    path.strip_prefix(SERVICES_DIR)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .is_some_and(|name| !name.contains('/') && name.ends_with(".pid"))
+}
+
 /// The PIDs declared under `workspace`. Malformed or oversized files, links
 /// and pid 1 are skipped with a warning, so what they name is reaped as before.
 pub fn declared(workspace: &Path) -> Result<BTreeSet<i32>, ArchonError> {
@@ -138,6 +146,15 @@ mod tests {
             declared(&workspace).unwrap().is_empty(),
             "a link leads elsewhere"
         );
+    }
+
+    #[test]
+    fn only_a_pid_file_directly_in_the_services_directory_declares() {
+        assert!(is_pid_file(".archon/services/web.pid"));
+        assert!(!is_pid_file(".archon/services/web/nested.pid"));
+        assert!(!is_pid_file(".archon/services/server.toml"));
+        assert!(!is_pid_file(".archon/servicesx/web.pid"));
+        assert!(!is_pid_file("app/.archon/services/web.pid"));
     }
 
     #[test]

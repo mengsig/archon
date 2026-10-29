@@ -74,10 +74,12 @@
   worktree it works in, a team role's own included. The stage-end reap
   spares that process, the process group it leads and its descendants while
   the run goes on (not a group it only joined, which `cmd &` shares with
-  the engine's every stray), and the run's end reaps them with everything else. Before, the
-  reap stopped every process a stage left, so setup could not hand a running
-  app to the next stage. A malformed PID file keeps nothing, and the PID
-  files do not count as a change when the run ships.
+  the engine's every stray), and the run's end reaps what still runs from
+  the worktree. Before, the reap stopped every process a stage left, so
+  setup could not hand a running app to the next stage. A malformed PID
+  file keeps nothing. The PID files do not count as a change when the run
+  ships, and a team role's are left out of the commit Archon makes of its
+  uncommitted work, so two roles can declare the same name.
 
 ### Documentation
 

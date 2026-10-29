@@ -93,30 +93,37 @@ async fn a_declared_service_outlives_its_stage_and_ends_with_the_run() {
     assert!(ends(server), "the run's end stops the service");
 }
 
-/// A team role declares its service in its own worktree, where it works.
+/// Each team role declares its service in its own worktree, where it works,
+/// under one name; neither PID file is committed or merged.
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn a_team_role_s_service_outlives_the_team_stage() {
     let h = Harness::new().await;
-    let (item, run) = start_team(&h, "serve the api for review").await;
+    let (item, run) = start_team(&h, "serve the app for review").await;
     let (api, ui) = (worker(&run, "api"), worker(&run, "ui"));
-    let (server, stray) = (orphan(&api), orphan(&ui));
-    let _started = Started(vec![server, stray]);
+    let (server, other, stray) = (orphan(&api), orphan(&ui), orphan(&ui));
+    let _started = Started(vec![server, other, stray]);
     declare(&api, server);
+    declare(&ui, other);
 
-    h.settle_running(|_| common::completed("the api serves on :8080"))
+    h.settle_running(|_| common::completed("the app serves on :8080"))
         .await;
     h.dispatch().await;
     assert!(ends(stray), "the stage end reaps what nobody declared");
-    assert!(runs(server), "the api role's server serves the review");
+    assert!(
+        runs(server) && runs(other),
+        "both roles' servers serve the review"
+    );
     let running = h.running().await;
     assert_eq!(running.len(), 1, "{running:?}");
     assert_eq!(running[0].stage_id, "review");
+    let merged = common::git(&run.workspace, &["log", "--name-only", "--format="]);
+    assert!(!merged.contains(".archon/services"), "{merged}");
 
     let cancel = Request::CancelItem {
         item: item.id.clone(),
         reason: None,
     };
     h.cli(cancel).await.expect("cancel");
-    assert!(ends(server), "the run's end stops the service");
+    assert!(ends(server) && ends(other), "the run's end stops both");
 }

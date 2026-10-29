@@ -356,6 +356,16 @@ test('pathological input stays fast and bounded', () => {
   assert.ok(performance.now() - start < 8000, 'the whole set stays quick');
 });
 
+test('one cell budget covers every table of a document', () => {
+  const sparse = `${'|h'.repeat(64)}\n${'|-'.repeat(64)}\n${'|\n'.repeat(312)}\n`;
+  const out = md(`${sparse.repeat(10)}|tail|\n|-|\n|kept as text|`);
+  const cells = out.split(/<t[hd][ >]/).length - 1;
+  assert.ok(cells <= 20_000, `${cells} cells`);
+  assert.ok(cells > 19_000, `${cells} cells`);
+  assert.match(out, /kept as text/);
+  assert.equal(md('| a |\n|---|\n| b |'), '<div class="md-scroll"><table class="md-table"><thead><tr><th>a</th></tr></thead><tbody><tr><td>b</td></tr></tbody></table></div>');
+});
+
 test('nesting is capped: deep quotes and lists end as text, not a crash', () => {
   const out = md(`${'> '.repeat(200)}deep`);
   assert.equal(out.split('<blockquote').length - 1, 16);

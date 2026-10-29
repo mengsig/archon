@@ -12,6 +12,7 @@ export const MAX_SOURCE_CHARS = 200_000;
 export const MAX_BLOCK_DEPTH = 16;
 const MAX_INLINE_DEPTH = 24;
 const MAX_TABLE_COLUMNS = 64;
+// Shared by every table of a document, so many small tables cannot add up.
 const MAX_TABLE_CELLS = 20_000;
 const MAX_URL_CHARS = 1000;
 const MAX_TITLE_CHARS = 1024;
@@ -300,7 +301,7 @@ function readBlock(lines, i, depth, ctx, col) {
   if (depth < MAX_BLOCK_DEPTH && QUOTE.test(line)) return blockQuote(lines, i, depth, ctx, col);
   if (depth < MAX_BLOCK_DEPTH && LIST.test(line)) return parseList(lines, i, depth, ctx, col);
   const table = tableAt(lines, i, col);
-  if (table) return tableRows(lines, i, table, depth, col);
+  if (table && table.heads.length <= ctx.cellsLeft) return tableRows(lines, i, table, depth, ctx, col);
   return paragraph(lines, i, depth, ctx, col);
 }
 
@@ -346,14 +347,21 @@ function blockQuote(lines, start, depth, ctx, col) {
   return { block: { t: 'quote', c: parseBlocks(inner, depth + 1, ctx, innerCol) }, next: i };
 }
 
-function tableRows(lines, start, table, depth, col) {
+// A table's rows while the document's cell budget lasts; past it, the
+// remaining lines read as text.
+function tableRows(lines, start, table, depth, ctx, col) {
+  const width = table.heads.length;
+  if (width < 1 || width > ctx.cellsLeft) throw new Error(`a table of ${width} columns at line ${start} is past the cell budget`);
+  ctx.cellsLeft -= width;
   const rows = [];
   let i = start + 2;
-  while (i < lines.length && !isBlank(lines[i]) && !startsBlock(lines[i], depth, col) && (rows.length + 1) * table.heads.length <= MAX_TABLE_CELLS) {
+  while (i < lines.length && !isBlank(lines[i]) && !startsBlock(lines[i], depth, col) && width <= ctx.cellsLeft) {
     const cells = splitRow(lines[i]);
     rows.push(table.heads.map((_, k) => cells[k] ?? ''));
+    ctx.cellsLeft -= width;
     i += 1;
   }
+  if (ctx.cellsLeft < 0) throw new Error(`the tables overran the cell budget by ${-ctx.cellsLeft}`);
   return { block: { t: 'table', aligns: table.aligns, head: table.heads, rows }, next: i };
 }
 
@@ -941,6 +949,6 @@ export function parseMarkdown(source) {
   const truncated = text.length > MAX_SOURCE_CHARS;
   if (truncated) text = `${text.slice(0, MAX_SOURCE_CHARS)}\n\n…`;
   const lines = text.replace(/\r\n?/g, '\n').replace(/\u0000/g, '�').split('\n');
-  const ctx = { refs: new Map() };
+  const ctx = { refs: new Map(), cellsLeft: MAX_TABLE_CELLS };
   return inlineAll(parseBlocks(lines, 0, ctx, 0), ctx.refs);
 }

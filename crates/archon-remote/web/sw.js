@@ -40,6 +40,7 @@ const SHELL = [
   '/src/shell.js',
   '/src/ui/components.js',
   '/src/ui/dom.js',
+  '/src/ui/entities.js',
   '/src/ui/icons.js',
   '/src/ui/list.js',
   '/src/ui/markdown-parse.js',

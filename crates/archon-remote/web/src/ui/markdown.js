@@ -63,20 +63,21 @@ export function renderInline(source) {
 }
 
 // Long Markdown folded by whole blocks: the first blocks that fit `limit`
-// source characters (always at least one), then a toggle for the rest.
+// source characters, then a toggle for the rest. When even the first block is
+// too long, the preview is the source cut at `limit`, rendered on its own.
 export function clampedMarkdown(source, { limit, more = 'Show all', less = 'Show less', className } = {}) {
   if (!Number.isInteger(limit) || limit <= 0) throw new RangeError(`a clamp limit is a positive number of characters, got ${limit}`);
   const all = parseMarkdown(source);
   let used = 0;
   let keep = 0;
-  while (keep < all.length && (keep === 0 || used + all[keep].size <= limit)) { used += all[keep].size; keep += 1; }
-  const folded = keep < all.length;
-  const body = h('div', { class: ['md', className] }, blocks(folded ? all.slice(0, keep) : all));
-  if (!folded) return body;
+  while (keep < all.length && used + all[keep].size <= limit) { used += all[keep].size; keep += 1; }
+  if (keep === all.length) return h('div', { class: ['md', className] }, blocks(all));
+  const preview = keep > 0 ? all.slice(0, keep) : parseMarkdown(`${String(source ?? '').trim().slice(0, limit).trimEnd()}…`);
+  const body = h('div', { class: ['md', className] }, blocks(preview));
   const toggle = h('button', { class: 'link-button', type: 'button', 'aria-expanded': 'false' }, more);
   toggle.addEventListener('click', () => {
     const open = toggle.getAttribute('aria-expanded') === 'true';
-    replace(body, blocks(open ? all.slice(0, keep) : all));
+    replace(body, blocks(open ? preview : all));
     toggle.setAttribute('aria-expanded', String(!open));
     toggle.textContent = open ? more : less;
   });

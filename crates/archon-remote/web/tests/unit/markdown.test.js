@@ -55,6 +55,8 @@ test('backslash escapes and entities', () => {
   assert.equal(md('\\*not em\\* \\# \\[x\\]'), '<p>*not em* # [x]</p>');
   assert.equal(md('&amp; &lt;b&gt; &copy; &#35; &#x41; &nosuch; &#0;'), '<p>&amp; &lt;b&gt; © # A &amp;nosuch; �</p>');
   assert.equal(md('`&amp;`'), '<p><code class="md-code">&amp;amp;</code></p>');
+  assert.equal(md('&ouml; &eacute; &NotEqualTilde; &CounterClockwiseContourIntegral;'), '<p>ö é \u2242\u0338 \u2233</p>');
+  assert.equal(md('[x](https://x.io/f&ouml;&ouml; "f&ouml;&ouml;")'), `<p><a class="md-link" href="https://x.io/föö" title="föö" ${EXT}>x</a></p>`);
 });
 
 test('fenced and indented code, Markdown inside stays literal', () => {
@@ -66,12 +68,27 @@ test('fenced and indented code, Markdown inside stays literal', () => {
   assert.equal(md('    indented\n\n      more'), '<pre class="md-pre"><code>indented\n\n  more</code></pre>');
   assert.equal(md('```<script>x</script>\n<b>\n```'), '<pre class="md-pre"><code>&lt;b&gt;</code></pre>');
   assert.equal(md('``` js"onmouseover=x\ny\n```'), '<pre class="md-pre"><code class="language-js">y</code></pre>');
+  assert.equal(md('```\na\n`~~\nb\n```'), '<pre class="md-pre"><code>a\n`~~\nb</code></pre>');
+  assert.equal(md('~~~\na\n~`\n~~~'), '<pre class="md-pre"><code>a\n~`</code></pre>');
 });
 
 test('block quotes, nested and lazy', () => {
   assert.equal(md('> a\n> b'), '<blockquote class="md-quote"><p>a\nb</p></blockquote>');
   assert.equal(md('> a\n>> b\nlazy'), '<blockquote class="md-quote"><p>a</p><blockquote class="md-quote"><p>b\nlazy</p></blockquote></blockquote>');
   assert.equal(md('> # h\n> - x'), '<blockquote class="md-quote"><h1 class="md-heading">h</h1><ul class="md-list"><li>x</li></ul></blockquote>');
+  // Only an open paragraph continues lazily: not a heading, a fence or a rule.
+  assert.equal(md('> # heading\noutside'), '<blockquote class="md-quote"><h1 class="md-heading">heading</h1></blockquote><p>outside</p>');
+  assert.equal(md('> ```\n> code\noutside\n> ```'),
+    '<blockquote class="md-quote"><pre class="md-pre"><code>code</code></pre></blockquote><p>outside</p><blockquote class="md-quote"><pre class="md-pre"><code></code></pre></blockquote>');
+  assert.equal(md('- # heading\noutside'), '<ul class="md-list"><li><h1 class="md-heading">heading</h1></li></ul><p>outside</p>');
+  assert.equal(md('- a\nlazy'), '<ul class="md-list"><li>a\nlazy</li></ul>');
+});
+
+test('tabs after list and quote markers', () => {
+  assert.equal(md('1.\tfirst\n2.\tsecond'), '<ol class="md-list"><li>first</li><li>second</li></ol>');
+  assert.equal(md('-\titem'), '<ul class="md-list"><li>item</li></ul>');
+  assert.equal(md('>\t- item'), '<blockquote class="md-quote"><ul class="md-list"><li>item</li></ul></blockquote>');
+  assert.equal(md('-\t\tcode'), '<ul class="md-list"><li><pre class="md-pre"><code>  code</code></pre></li></ul>');
 });
 
 test('thematic breaks', () => {
@@ -128,6 +145,16 @@ test('links, titles, references, autolinks and bare URLs', () => {
   assert.equal(md('**https://x.io**'), `<p><strong><a class="md-link" href="https://x.io" ${EXT}>https://x.io</a></strong></p>`);
   assert.equal(md('[a [b](https://x.io) c](https://y.io)'), `<p>[a <a class="md-link" href="https://x.io" ${EXT}>b</a> c](<a class="md-link" href="https://y.io" ${EXT}>https://y.io</a>)</p>`);
   assert.equal(md('xhttps://nope.io'), '<p>xhttps://nope.io</p>');
+});
+
+test('anchors never nest: inner links, autolinks and images inside a link flatten', () => {
+  assert.equal(md('[![alt](https://img.io/p.png)](https://outer.io)'), `<p><a class="md-link" href="https://outer.io" ${EXT}>alt</a></p>`);
+  assert.equal(md('[<https://inner.io>](https://outer.io)'), `<p>[<a class="md-link" href="https://inner.io" ${EXT}>https://inner.io</a>](<a class="md-link" href="https://outer.io" ${EXT}>https://outer.io</a>)</p>`);
+  assert.equal(md('![<https://inner.io>](https://img.io)'), `<p><a class="md-link" href="https://img.io" ${EXT}>https://inner.io</a></p>`);
+  for (const src of ['[a [b](https://b.io)](https://a.io)', '[![x](https://i.io)](https://o.io)', '[<https://i.io>](https://o.io)', '[x <me@x.org>](https://o.io)']) {
+    const links = renderMarkdown(src).query('a');
+    assert.ok(links.every((a) => a.query('a').length === 0), src);
+  }
 });
 
 test('images become links and are never loaded', () => {
@@ -204,11 +231,19 @@ test('clampedMarkdown folds by whole blocks and toggles', () => {
   assert.throws(() => clampedMarkdown(src, {}), RangeError);
 });
 
-test('a block bigger than the limit is shown whole, never cut mid-construct', () => {
+test('a first block bigger than the limit is cut to a preview that still folds', () => {
   const big = `**${'word '.repeat(200).trim()}**`;
   const out = clampedMarkdown(`${big}\n\nafter`, { limit: 50 });
-  assert.match(html(out.children[0]), /<strong>word .*word<\/strong>/);
-  assert.doesNotMatch(html(out.children[0]), /after/);
+  const [body, toggle] = out.children;
+  assert.ok(body.textContent.length <= 51 && body.textContent.endsWith('…'), body.textContent);
+  assert.equal(toggle.textContent, 'Show all');
+  toggle.listeners.click();
+  assert.match(html(body), /<strong>word .*word<\/strong><\/p><p>after/);
+  toggle.listeners.click();
+  assert.ok(body.textContent.length <= 51);
+  const single = clampedMarkdown('word '.repeat(1000), { limit: 280 });
+  assert.ok(single.children[0].textContent.length <= 281);
+  assert.equal(single.children[1].textContent, 'Show all');
 });
 
 test('pathological input stays fast and bounded', () => {
@@ -245,6 +280,7 @@ test('pathological input stays fast and bounded', () => {
     wideTable: '|a'.repeat(10_000) + '\n' + '|-'.repeat(10_000) + '\n' + '|\n'.repeat(4000),
     tallTable: '|a'.repeat(64) + '\n' + '|-'.repeat(64) + '\n' + '|\n'.repeat(99_000),
     deepSpans: nest(3000, '*a ', ' a*').replace(/x/, ''),
+    refDefs: '[a]:x\n'.repeat(33_000),
   };
   const start = performance.now();
   for (const [name, src] of Object.entries(cases)) {

@@ -6,6 +6,8 @@
 // Block:  { t: 'p'|'h'|'quote'|'ul'|'ol'|'code'|'hr'|'table', ... }
 // Inline: { t: 'text'|'code'|'br'|'em'|'strong'|'del'|'link', ... }
 
+import { ENTITIES } from './entities.js';
+
 export const MAX_SOURCE_CHARS = 200_000;
 export const MAX_BLOCK_DEPTH = 16;
 const MAX_INLINE_DEPTH = 24;
@@ -14,13 +16,6 @@ const MAX_TABLE_CELLS = 20_000;
 const MAX_URL_CHARS = 1000;
 const MAX_TITLE_CHARS = 1024;
 
-const ENTITIES = {
-  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', copy: '©', reg: '®', trade: '™',
-  hellip: '…', mdash: '—', ndash: '–', lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”', middot: '·',
-  bull: '•', times: '×', euro: '€', larr: '←', rarr: '→', uarr: '↑', darr: '↓', deg: '°', plusmn: '±',
-  colon: ':', lpar: '(', rpar: ')', sol: '/', num: '#', excl: '!', quest: '?', ast: '*', lowbar: '_',
-  grave: '`', Tab: '\t', NewLine: '\n',
-};
 const ENTITY_AT = /&(#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});/y;
 const ESCAPABLE = /[!-/:-@[-`{-~]/;
 
@@ -84,9 +79,10 @@ function atxText(raw) {
 const HR = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 const ATX = /^ {0,3}(#{1,6})(?:[ \t]+([^]*))?$/;
 const FENCE = /^( {0,3})(`{3,}|~{3,})[ \t]*([^]*)$/;
-const LIST = /^( {0,3})([-+*]|\d{1,9}[.)])( +|$)/;
+const CLOSE_FENCE = /^ {0,3}(`+|~+)[ \t]*$/;
+const LIST = /^( {0,3})([-+*]|\d{1,9}[.)])([ \t]+|$)/;
 const SETEXT = /^ {0,3}(=+|-+)[ \t]*$/;
-const QUOTE = /^ {0,3}> ?/;
+const QUOTE = /^ {0,3}>[ \t]?/;
 const DELIM_ROW = /^ {0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*(?:\|[ \t]*)?$/;
 const REF_DEF = /^ {0,3}\[((?:[^\]\\]|\\.){1,999})\]:[ \t]*(<[^<>]*>|\S+)(?:[ \t]+("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^)\\]|\\.)*\)))?[ \t]*$/;
 
@@ -94,17 +90,48 @@ function normalizeLabel(label) {
   return label.trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
-function expandTabs(line) {
+// The columns a run of spaces and tabs spans when it starts at column `start`.
+function columnsOf(run, start) {
+  let col = start;
+  for (const ch of run) col = ch === '\t' ? col + 4 - (col % 4) : col + 1;
+  return col - start;
+}
+
+// Leading tabs as spaces, for a line whose first character sits at column `start`.
+function expandTabs(line, start = 0) {
   if (!line.includes('\t')) return line;
   const lead = /^[ \t]*/.exec(line)[0];
-  let col = 0;
-  for (const ch of lead) col = ch === '\t' ? col + 4 - (col % 4) : col + 1;
-  return ' '.repeat(col) + line.slice(lead.length);
+  return ' '.repeat(columnsOf(lead, start)) + line.slice(lead.length);
+}
+
+// A quoted line's content after its `>` marker; a tab after `>` gives up one column to it.
+function quoteRest(line, marker) {
+  const rest = line.slice(marker.length);
+  if (!marker.endsWith('\t')) return expandTabs(rest, marker.length);
+  const tabAt = marker.length - 1;
+  const width = 4 - (tabAt % 4);
+  return ' '.repeat(width - 1) + expandTabs(rest, tabAt + width);
 }
 
 function isFenceOpen(line) {
   const f = FENCE.exec(line);
   return f && !(f[2][0] === '`' && f[3].includes('`')) ? f : null;
+}
+
+// Follows a container's lines to know whether its content ends in an open
+// paragraph, the only block an unmarked (lazy) line may continue.
+function trackParagraph(open, line) {
+  if (open.fence) {
+    const close = CLOSE_FENCE.exec(line);
+    if (close && close[1][0] === open.fence[0] && close[1].length >= open.fence.length) open.fence = null;
+    open.paragraph = false;
+    return;
+  }
+  const fence = isFenceOpen(line);
+  if (fence) { open.fence = fence[2]; open.paragraph = false; return; }
+  if (isBlank(line) || ATX.test(line) || HR.test(line) || (open.paragraph && SETEXT.test(line))) { open.paragraph = false; return; }
+  if (indentOf(line) >= 4 && !open.paragraph) return;
+  open.paragraph = true;
 }
 
 // Can this line interrupt a paragraph (or end a lazy continuation)?
@@ -197,7 +224,7 @@ function fencedCode(lines, start, [, lead, marks, info]) {
   const indent = new RegExp(`^ {0,${lead.length}}`);
   let i = start + 1;
   while (i < lines.length) {
-    const close = /^ {0,3}([`~]+)[ \t]*$/.exec(lines[i]);
+    const close = CLOSE_FENCE.exec(lines[i]);
     if (close && close[1][0] === marks[0] && close[1].length >= marks.length) { i += 1; break; }
     body.push(lines[i].replace(indent, ''));
     i += 1;
@@ -207,12 +234,14 @@ function fencedCode(lines, start, [, lead, marks, info]) {
 
 function blockQuote(lines, start, depth, ctx) {
   const inner = [];
+  const open = { paragraph: false, fence: null };
   let i = start;
   while (i < lines.length) {
     const q = QUOTE.exec(lines[i]);
-    if (q) inner.push(lines[i].slice(q[0].length));
-    else if (!isBlank(lines[i]) && inner.length && !isBlank(inner.at(-1)) && !startsBlock(lines[i], depth)) inner.push(lines[i]);
+    if (q) inner.push(quoteRest(lines[i], q[0]));
+    else if (open.paragraph && !isBlank(lines[i]) && !startsBlock(lines[i], depth)) inner.push(lines[i]);
     else break;
+    trackParagraph(open, inner.at(-1));
     i += 1;
   }
   return { block: { t: 'quote', c: parseBlocks(inner, depth + 1, ctx) }, next: i };
@@ -253,16 +282,17 @@ function paragraph(lines, start, depth, ctx) {
 
 // Moves the reference definitions that open `para` into `refs`; the first one wins.
 function takeRefDefs(para, refs) {
-  while (para.length) {
-    const def = REF_DEF.exec(para[0]);
-    if (!def) return;
+  let taken = 0;
+  for (; taken < para.length; taken += 1) {
+    const def = REF_DEF.exec(para[taken]);
+    if (!def) break;
     const key = normalizeLabel(def[1]);
     if (key && !refs.has(key)) {
       const dest = def[2].startsWith('<') ? def[2].slice(1, -1) : def[2];
       refs.set(key, { href: unescapeText(dest), title: def[3] ? unescapeText(def[3].slice(1, -1)) : null });
     }
-    para.shift();
   }
+  para.splice(0, taken);
 }
 
 function parseList(lines, start, depth, ctx) {
@@ -300,12 +330,16 @@ function listItemBody(lines, start, m, depth) {
   const n = lines.length;
   const rest = lines[start].slice(m[0].length);
   const markerEnd = m[1].length + m[2].length;
+  const spacing = columnsOf(m[3], markerEnd);
   let contentIndent;
   let firstLine;
   if (!rest.trim()) { contentIndent = markerEnd + 1; firstLine = ''; }
-  else if (m[3].length >= 5) { contentIndent = markerEnd + 1; firstLine = ' '.repeat(m[3].length - 1) + rest; }
-  else { contentIndent = markerEnd + m[3].length; firstLine = rest; }
+  else if (spacing >= 5) { contentIndent = markerEnd + 1; firstLine = ' '.repeat(spacing - 1) + rest; }
+  else { contentIndent = markerEnd + spacing; firstLine = rest; }
+  if (contentIndent <= markerEnd) throw new Error(`a list item's content starts inside its marker at line ${start}`);
   const body = [firstLine];
+  const open = { paragraph: false, fence: null };
+  trackParagraph(open, firstLine);
   let i = start + 1;
   while (i < n) {
     const l = lines[i];
@@ -315,10 +349,12 @@ function listItemBody(lines, start, m, depth) {
       // An item may start with one blank line, no more.
       if (j >= n || indentOf(lines[j]) < contentIndent || (body.length === 1 && body[0] === '' && j - i > 0)) break;
       for (; i < j; i += 1) body.push('');
+      open.paragraph = false;
     } else if (indentOf(l) >= contentIndent) {
       body.push(l.slice(contentIndent));
+      trackParagraph(open, body.at(-1));
       i += 1;
-    } else if (!isBlank(body.at(-1)) && !LIST.test(l) && !startsBlock(l, depth)) {
+    } else if (open.paragraph && !LIST.test(l) && !startsBlock(l, depth)) {
       body.push(l);
       i += 1;
     } else break;
@@ -436,6 +472,7 @@ class InlineParser {
   }
 
   append(node) {
+    if (this.last ? this.last.next !== null : this.first !== null) throw new Error('the inline chain lost its tail');
     node.prev = this.last;
     node.next = null;
     if (this.last) this.last.next = node; else this.first = node;
@@ -444,6 +481,9 @@ class InlineParser {
   }
 
   unlink(node) {
+    if ((node.prev ? node.prev.next : this.first) !== node || (node.next ? node.next.prev : this.last) !== node) {
+      throw new Error('unlinking a node that is not in the inline chain');
+    }
     if (node.prev) node.prev.next = node.next; else this.first = node.next;
     if (node.next) node.next.prev = node.prev; else this.last = node.prev;
   }
@@ -533,6 +573,8 @@ class InlineParser {
     if (!href || !safeHref(href)) { this.buf += '<'; this.pos += 1; return; }
     this.flush();
     this.append(autolink(href, em[1]));
+    // Like any link, an autolink stops the link openers around it from closing.
+    this.linkFloor = this.brackets.length;
     this.pos += em[0].length;
   }
 
@@ -614,7 +656,8 @@ class InlineParser {
   // Nesting depth of the chain from `head` up to `stop`; Infinity once the budget is spent.
   depthOf(head, stop = null) {
     let d = 0;
-    for (let n = head; n && n !== stop; n = n.next) {
+    for (let n = head; n !== stop; n = n.next) {
+      if (!n) throw new Error('the nesting scan left the chain before its stop');
       this.budget -= 1;
       if (this.budget < 0) return Infinity;
       d = Math.max(d, n.depth ?? 0);
@@ -743,26 +786,33 @@ class InlineParser {
 }
 
 
-// Linked chain to arrays, merging neighbouring text; images and unsafe links flatten.
-function materialize(head, depth) {
+// Linked chain to arrays, merging neighbouring text. Images become links to
+// their source; inside a link, links and images flatten to text, as anchors cannot nest.
+function materialize(head, depth, inLink = false) {
   if (depth > MAX_INLINE_DEPTH) throw new RangeError(`inline nesting ${depth} is past the cap`);
   const out = [];
+  const text = (v) => {
+    if (!v) return;
+    if (out.at(-1)?.t === 'text') out.at(-1).v += v; else out.push({ t: 'text', v });
+  };
   for (let n = head; n; n = n.next) {
-    if (n.t === 'text') {
-      if (!n.v) continue;
-      if (out.at(-1)?.t === 'text') out.at(-1).v += n.v; else out.push({ t: 'text', v: n.v });
-    } else if (n.t === 'code') out.push({ t: 'code', v: n.v });
+    if (n.t === 'text') text(n.v);
+    else if (n.t === 'code') out.push({ t: 'code', v: n.v });
     else if (n.t === 'br') out.push({ t: 'br' });
+    else if (n.t !== 'link') out.push({ t: n.t, c: materialize(n.inner, depth + 1, inLink) });
     else {
-      const c = materialize(n.inner, depth + 1);
-      if (n.t === 'link') {
-        const safe = safeHref(n.href);
-        out.push({ t: 'link', href: safe?.href ?? null, external: safe?.external ?? false, title: n.title ?? null, image: Boolean(n.image),
-          c: n.image ? [{ t: 'text', v: plainText(c) || 'image' }] : c });
-      } else out.push({ t: n.t, c });
+      const c = materialize(n.inner, depth + 1, true);
+      const label = n.image ? [{ t: 'text', v: plainText(c) || 'image' }] : c;
+      if (inLink) for (const node of label) { if (node.t === 'text') text(node.v); else out.push(node); }
+      else out.push(linkNode(n, label));
     }
   }
   return out;
+}
+
+function linkNode(n, c) {
+  const safe = safeHref(n.href);
+  return { t: 'link', href: safe?.href ?? null, external: safe?.external ?? false, title: n.title ?? null, image: Boolean(n.image), c };
 }
 
 export function plainText(nodes) {

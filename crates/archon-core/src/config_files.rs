@@ -26,7 +26,7 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 # Optional narrowing. Without [models] every model Aether reports ready may
 # be used. Tiers (fast, balanced, strong, frontier) come from Aether's catalog.
 # [models]
-# allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-sol"]
+# allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-terra"]
 # max_effort = "high"
 # max_default_tier = "strong"   # the most a default picks; a plan may ask higher
 # provider_weights = { "claude-code" = 7, codex = 3 }   # share of tier-only items

@@ -26,7 +26,7 @@ example, in TOML:
 
 ```toml
 [[build]]
-model = "codex/gpt-6.1-sol"
+model = "codex/gpt-6.1-terra"
 effort = "high"
 ```
 
@@ -88,7 +88,7 @@ prefer_other_provider = true
 auto_repair = true             # one automatic retry when the review or ship record is refused
 
 [models]                       # optional: leave it out to allow every ready model
-allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-sol"]
+allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-terra"]
 max_effort = "high"
 # max_default_tier = "strong"  # the highest tier a default picks (the default)
 # provider_weights = { "claude-code" = 7, codex = 3 }   # route tier-only choices by share
@@ -144,7 +144,7 @@ name = "Archon"                # the orchestrator's name in Aether
 trigger_coalesce_ms = 2000     # triggers within this window wake it once
 
 [models]
-# deny = ["codex/gpt-6.1-sol"] # never used, whatever `allow` says
+# deny = ["codex/gpt-6.1-terra"] # never used, whatever `allow` says
 
 [limits]
 max_active_runs = 0            # runs going at once; 0 = unlimited
@@ -658,7 +658,7 @@ If you are already signed in to Claude Code or Codex, neither Archon nor Aether 
 After setup, `archon aether models` lists the models your Aether installation
 actually exposes: for example `claude-code/claude-opus-5-5`,
 `claude-code/claude-sonnet-5-5`, `claude-code/claude-haiku-5-5`,
-`claude-code/claude-fable-5-1`, `codex/gpt-6-astra`, `codex/gpt-6.1-sol`
+`claude-code/claude-fable-5-1`, `codex/gpt-6-astra`, `codex/gpt-6.1-terra`
 and `codex/gpt-6-luna`. The orchestrator's own model is the one model you
 set, because it must be known before any agent runs. To use Codex alone,
 set `[orchestrator] model` to an available `codex/…` entry before starting
@@ -667,7 +667,7 @@ well as every model the stages may use.
 
 ```toml
 [orchestrator]
-model = "codex/gpt-6.1-sol"    # any entry from `archon aether models`
+model = "codex/gpt-6.1-terra"  # any entry from `archon aether models`
 effort = "high"
 ```
 

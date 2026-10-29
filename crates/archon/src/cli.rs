@@ -952,7 +952,7 @@ pub struct QueueAddArgs {
     /// leaves out, or all without it, get the daemon's defaults. Each choice
     /// names `model` as `provider/model` (not a bare model name) or a `tier`
     /// (fast, balanced, strong or frontier), plus an optional `effort`, e.g.
-    /// {"build": [{"model": "codex/gpt-6.1-sol", "effort": "high"}]}.
+    /// {"build": [{"model": "codex/gpt-6.1-terra", "effort": "high"}]}.
     /// `archon aether models` lists the models you can name.
     #[arg(long)]
     pub model_plan_file: Option<PathBuf>,
@@ -1264,7 +1264,7 @@ mod tests {
             .expect("archon queue add");
         let help = add.render_long_help().to_string();
         assert!(help.contains("provider/model"), "{help}");
-        assert!(help.contains("codex/gpt-6.1-sol"), "{help}");
+        assert!(help.contains("codex/gpt-6.1-terra"), "{help}");
     }
 
     #[test]

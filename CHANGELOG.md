@@ -112,6 +112,11 @@ themselves (see Update below).
   instead of waiting out its deadline, and renews the orchestrator through
   the installed archon.
 
+### Docs
+
+- Docs and CLI help now name `codex/gpt-6.1-terra` as the example Codex model,
+  following Aether making GPT-6.1 Terra the Codex default.
+
 ## 1.4.7
 
 Released 2026-10-27.

@@ -1,7 +1,7 @@
 //! The review a pipeline declares one of its stages holds (ARCHITECTURE §8.2): what its
 //! agent must put on record, what Archon checked of it, and the line later stages get.
 
-use archon_core::run::{Verdict as Said, strip_label};
+use archon_core::run::{LineKind, Verdict as Said, markdown_lines, strip_label};
 use serde_json::Value;
 
 use crate::spec::ReviewDuty;
@@ -196,14 +196,32 @@ fn finding_titles(list: &[Value]) -> Vec<String> {
         .collect()
 }
 
-/// The one fenced block of `text` that holds a JSON value; `None` for no block or several.
+/// The one top-level fenced block of `text`, untagged or tagged `json`, as
+/// JSON; `None` for no block or several. Indented or quoted examples are no block.
 fn fenced_json(text: &str) -> Option<Value> {
-    let mut blocks = text.split("```").skip(1).step_by(2);
-    let block = blocks.next()?;
-    if blocks.next().is_some() {
+    let mut blocks: Vec<(&str, String)> = Vec::new();
+    for (kind, line) in markdown_lines(text) {
+        match kind {
+            LineKind::FenceOpen => {
+                let info = line.trim_start().trim_start_matches(['`', '~']).trim();
+                blocks.push((info, String::new()));
+            }
+            LineKind::Fenced => {
+                let (_, body) = blocks
+                    .last_mut()
+                    .expect("a fenced line follows its opening");
+                body.push_str(line);
+                body.push('\n');
+            }
+            _ => {}
+        }
+    }
+    let [(info, body)] = blocks.as_slice() else {
+        return None;
+    };
+    if !info.is_empty() && !info.eq_ignore_ascii_case("json") {
         return None;
     }
-    let body = block.strip_prefix("json").unwrap_or(block);
     serde_json::from_str(body.trim()).ok()
 }
 
@@ -605,6 +623,32 @@ mod tests {
         let fenced = format!("```json\n{pass}\n```\nVERDICT: not passed");
         let refused = Verdict::read_result(&fenced, None).unwrap_err();
         assert!(refused.contains("\"VERDICT: not passed\""), "{refused}");
+    }
+
+    #[test]
+    fn only_a_top_level_fenced_block_is_a_json_verdict() {
+        let failing = json!({"head": HEAD, "findings": [{"title": "blocking issue"}]});
+        let pass = r#"{"verdict": "pass"}"#;
+        for example in [
+            format!("Blocking issue found. Example result:\n    ```json\n    {pass}\n    ```"),
+            format!("Example:\n \t```json\n {pass}\n \t```"),
+            format!("Example:\n> ```json\n> {pass}\n> ```"),
+            format!("```text\n```json\n{pass}\n```"),
+            format!("Inline ```{pass}``` is no block."),
+        ] {
+            assert!(
+                Verdict::read_result(&example, Some(&failing)).is_err(),
+                "{example:?}"
+            );
+        }
+        let top = format!("Done.\n~~~JSON\n{pass}\n~~~");
+        assert!(Verdict::read_result(&top, Some(&failing)).unwrap().pass);
+        let unclosed = format!("Done.\n```json\n{pass}");
+        assert!(
+            Verdict::read_result(&unclosed, Some(&failing))
+                .unwrap()
+                .pass
+        );
     }
 
     #[test]

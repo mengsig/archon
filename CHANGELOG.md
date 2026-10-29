@@ -13,7 +13,8 @@
   `failed` and `rejected` read as pass and fail. A test stage that passed
   with `{"findings": []}` and `**Verdict:** PASS` in its summary no longer
   fails its gate, and a reviewer whose `structured` gives no verdict is read
-  from its summary. An unreadable verdict, a choice or hedge such as
+  from its summary. A summary's JSON verdict counts only in a top-level
+  fenced block, never an indented or quoted example. An unreadable verdict, a choice or hedge such as
   `PASS or FAIL` or `PASS, but two failed` included, still counts as fail,
   and the refusal now quotes it.
 - A reviewer plan's effort is a floor, not a ceiling. The delegation

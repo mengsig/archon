@@ -117,6 +117,17 @@ test('a tab in a container spans to the next stop of its real column', () => {
   assert.equal(md('- a\n\n  \t# h'), '<ul class="md-list"><li><p>a</p><h1 class="md-heading">h</h1></li></ul>');
   assert.equal(md('- a\n\n  \tb'), '<ul class="md-list"><li><p>a</p><p>b</p></li></ul>');
   assert.equal(md('- ```\n  \t@echo\n  ```'), `<ul class="md-list"><li>${code('\t@echo')}</li></ul>`);
+  assert.equal(md('>```make\n> all:\n> \t@echo hello\n>```'),
+    '<blockquote class="md-quote"><pre class="md-pre"><code class="language-make">all:\n\t@echo hello</code></pre></blockquote>');
+});
+
+test('a marker inside quoted fenced code neither closes the fence nor lets text in', () => {
+  assert.equal(md('> ```markdown\n> - ```\n> example\nOutside paragraph'),
+    '<blockquote class="md-quote"><pre class="md-pre"><code class="language-markdown">- ```\nexample</code></pre></blockquote><p>Outside paragraph</p>');
+  assert.equal(md('> - ```\n>   - ```\n>   example\nOutside'),
+    '<blockquote class="md-quote"><ul class="md-list"><li><pre class="md-pre"><code>- ```\nexample</code></pre></li></ul></blockquote><p>Outside</p>');
+  assert.equal(md('> - ```\n>   code\n> ```\n> para\nlazy'),
+    '<blockquote class="md-quote"><ul class="md-list"><li><pre class="md-pre"><code>code</code></pre></li></ul><pre class="md-pre"><code>para</code></pre></blockquote><p>lazy</p>');
 });
 
 test('thematic breaks', () => {

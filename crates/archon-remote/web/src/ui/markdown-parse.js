@@ -137,29 +137,54 @@ function isFenceOpen(line) {
   return f && !(f[2][0] === '`' && f[3].includes('`')) ? f : null;
 }
 
-// A line without the quote and list markers that open it.
+// A line without the quote and list markers that open it, and the path of
+// those markers: 'quote', or the width a list item's continuation is indented by.
 function containerContent(line) {
   let s = line;
+  const path = [];
   for (let k = 0; k < MAX_BLOCK_DEPTH; k += 1) {
-    const m = QUOTE.exec(s) ?? LIST.exec(s);
+    const q = QUOTE.exec(s);
+    const m = q ?? LIST.exec(s);
     if (!m) break;
+    path.push(q ? 'quote' : m[0].length);
     s = s.slice(m[0].length);
+  }
+  return { content: s, path };
+}
+
+// `line` inside the containers of `path`, or null when it has left one of them.
+function insidePath(line, path) {
+  let s = line;
+  for (const step of path) {
+    if (step === 'quote') {
+      const q = QUOTE.exec(s);
+      if (!q) return null;
+      s = s.slice(q[0].length);
+    } else {
+      if (!isBlank(s) && indentOf(s) < step) return null;
+      s = stripColumns(s, step);
+    }
   }
   return s;
 }
 
 // Follows a container's lines to know whether its content ends in an open
-// paragraph, the only block an unmarked (lazy) line may continue.
+// paragraph, the only block an unmarked (lazy) line may continue. A fence
+// closes only on a line of the containers it opened in, or when one of them ends.
 function trackParagraph(open, line, col) {
-  const content = containerContent(line);
   if (open.fence) {
-    const close = CLOSE_FENCE.exec(content);
-    if (close && close[1][0] === open.fence[0] && close[1].length >= open.fence.length) open.fence = null;
-    open.paragraph = false;
-    return;
+    const inner = insidePath(line, open.fence.path);
+    if (inner !== null) {
+      const close = CLOSE_FENCE.exec(inner);
+      if (close && close[1][0] === open.fence.marks[0] && close[1].length >= open.fence.marks.length) open.fence = null;
+      open.paragraph = false;
+      return;
+    }
+    open.fence = null;
   }
+  const { content, path } = containerContent(line);
   const fence = isFenceOpen(content);
-  if (fence) { open.fence = fence[2]; open.paragraph = false; return; }
+  if (fence) { open.fence = { marks: fence[2], path }; open.paragraph = false; return; }
   if (isBlank(content) || ATX.test(content) || HR.test(content) || (open.paragraph && SETEXT.test(content))) { open.paragraph = false; return; }
   if (indentOf(content, col) >= 4 && !open.paragraph) return;
   open.paragraph = true;
@@ -264,7 +289,8 @@ function fencedCode(lines, start, [, lead, marks, info], col) {
 }
 
 // The content starts at the first line's content column; a line whose content
-// sits elsewhere, or a lazy one, gets its indent as spaces to read the same there.
+// sits elsewhere, or a lazy one, gets its indent as spaces to read the same
+// there, unless it is literal fenced code.
 function blockQuote(lines, start, depth, ctx, col) {
   const inner = [];
   const open = { paragraph: false, fence: null };
@@ -274,7 +300,8 @@ function blockQuote(lines, start, depth, ctx, col) {
     const q = QUOTE.exec(lines[i]);
     if (q) {
       const rest = quoteRest(lines[i], q[0], col);
-      inner.push((rest.col - innerCol) % 4 === 0 ? contentLine(rest.text, innerCol, open) : spacedIndent(rest.text, rest.col));
+      const aligned = open.fence || (rest.col - innerCol) % 4 === 0;
+      inner.push(contentLine(aligned ? rest.text : spacedIndent(rest.text, rest.col), innerCol, open));
     } else if (open.paragraph && !isBlank(lines[i]) && !startsBlock(lines[i], depth, col)) inner.push(spacedIndent(lines[i], col));
     else break;
     trackParagraph(open, inner.at(-1), innerCol);

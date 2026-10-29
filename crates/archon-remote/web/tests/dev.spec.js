@@ -186,3 +186,80 @@ test('the theme override sticks and reduced motion stills the page', async ({ pa
   const duration = await page.locator('.view').first().evaluate((el) => getComputedStyle(el).animationDuration);
   expect(Number.parseFloat(duration)).toBeLessThan(0.01);
 });
+
+// Markdown the daemon would carry, laid into real replies: the orchestrator
+// and stage summaries cannot be written by a test while Aether stays down.
+const ORCHESTRATOR_MD = [
+  '## Plan', '', 'This is **ABCD** with `inline code` and a [link](https://example.com/docs).', '',
+  '- first', '- second', '  - nested', '', '| Name | Cost |', '|:--|--:|', '| render | $1 |', '',
+  '```js', 'const **raw** = 1;', '```', '', '<script>window.pwned = 1</script>', '', '[evil](javascript:window.pwned=2)',
+].join('\n');
+const SUMMARY_MD = [
+  '# Result', '', 'Everything is **done**.', '', '1. one', '2. two', '', '> a quoted `note`', '', '| a | b |', '|---|---|', '| 1 | 2 |', '',
+  `A long tail paragraph. ${'More words follow here. '.repeat(30)}`, '', 'Final block with _emphasis_.',
+].join('\n');
+
+async function laceReplies(page, edit) {
+  await page.routeWebSocket(/\/ws$/, (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((message) => server.send(message));
+    server.onMessage((message) => {
+      const frame = JSON.parse(message);
+      if (frame.frame === 'reply' && frame.result?.Ok) edit(frame.result.Ok);
+      ws.send(JSON.stringify(frame));
+    });
+  });
+}
+
+test('Markdown renders as elements in chat and stage summaries, never as markup', async ({ page, fixture }) => {
+  await ensureRepo(fixture, 'archon');
+  const item = await enqueue(fixture.archond, { repo: 'archon', title: `Markdown ${Date.now().toString(36)}`, brief: '# Brief\n\nSome **bold** brief text.' });
+  await laceReplies(page, (reply) => {
+    if (reply.reply === 'feed') reply.data.push({ seq: 1_000_000, at: new Date().toISOString(), entry: { entry: 'orchestrator', text: ORCHESTRATOR_MD } });
+    if (reply.reply === 'item_detail' && reply.data.item.id === item.id) {
+      reply.data.stages = [{
+        id: 'stage_md', run: reply.data.runs?.[0]?.id ?? 'run_md', stage_id: 'implement', attempt: 1, fan_index: 0, state: { state: 'succeeded' },
+        started_at: new Date(Date.now() - 60_000).toISOString(), finished_at: new Date().toISOString(), cost_usd: 0, model_segments: [], summary: SUMMARY_MD,
+      }];
+    }
+  });
+
+  await openApp(page, fixture, '#/chat');
+  const bubble = page.locator('.from-orchestrator .bubble').last();
+  await expect(bubble.locator('strong')).toHaveText('ABCD');
+  await expect(bubble.getByRole('heading', { name: 'Plan', level: 2 })).toBeVisible();
+  await expect(bubble.locator('li')).toHaveCount(3);
+  await expect(bubble.locator('li ul li')).toHaveText('nested');
+  await expect(bubble.locator('code', { hasText: 'inline code' })).toBeVisible();
+  await expect(bubble.locator('pre code')).toHaveText('const **raw** = 1;');
+  await expect(bubble.locator('table th')).toHaveText(['Name', 'Cost']);
+  await expect(bubble.locator('table td').last()).toHaveText('$1');
+  await expect(bubble.getByRole('link', { name: 'link' })).toHaveAttribute('href', 'https://example.com/docs');
+  await expect(bubble.getByRole('link', { name: 'link' })).toHaveAttribute('rel', 'noopener noreferrer');
+  await expect(bubble).toContainText('<script>window.pwned = 1</script>');
+  await expect(bubble).not.toContainText('**ABCD**');
+  await expect(bubble).not.toContainText('## Plan');
+  await expect(page.locator('script:not([src])')).toHaveCount(0);
+  await expect(page.locator('a[href^="javascript:" i]')).toHaveCount(0);
+  expect(await page.evaluate(() => window.pwned)).toBeUndefined();
+  // Wide tables and code scroll inside their block instead of widening the page.
+  expect(await bubble.locator('.md-scroll').evaluate((el) => getComputedStyle(el).overflowX)).toBe('auto');
+  expect(await bubble.locator('pre').evaluate((el) => getComputedStyle(el).overflowX)).toBe('auto');
+
+  await page.goto(`${fixture.baseURL}/#/item/${item.id}`);
+  await expect(page.getByRole('heading', { name: 'Brief', level: 1 })).toBeVisible();
+  const summary = page.locator('.timeline-summary');
+  await expect(summary.getByRole('heading', { name: 'Result', level: 1 })).toBeVisible();
+  await expect(summary.locator('strong')).toHaveText('done');
+  await expect(summary.locator('li')).toHaveCount(2);
+  await expect(summary.locator('blockquote code')).toHaveText('note');
+  await expect(summary.locator('table')).toBeVisible();
+  await expect(summary).not.toContainText('Final block');
+  await page.getByRole('button', { name: 'Show all' }).click();
+  await expect(summary).toContainText('Final block with');
+  await expect(summary.locator('em')).toHaveText('emphasis');
+  await expect(page.getByRole('button', { name: 'Show less' })).toBeVisible();
+  await page.getByRole('button', { name: 'Show less' }).click();
+  await expect(summary).not.toContainText('Final block');
+  await expect(page.locator('script:not([src])')).toHaveCount(0);
+});

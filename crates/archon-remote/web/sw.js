@@ -42,6 +42,8 @@ const SHELL = [
   '/src/ui/dom.js',
   '/src/ui/icons.js',
   '/src/ui/list.js',
+  '/src/ui/markdown-parse.js',
+  '/src/ui/markdown.js',
   '/src/ui/motion.js',
   '/src/ui/sheet.js',
   '/src/ui/toast.js',

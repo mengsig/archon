@@ -12,7 +12,8 @@ index.html, manifest.webmanifest, sw.js, icons/   the installable shell
 styles/      tokens.css (themes), base.css, components.css, screens.css
 src/core/    transport (WebSocket, reconnect, req-id correlation), api (HTTP),
              daemon (request shapes), feed, store, router, format, theme
-src/ui/      DOM helper, components, sheets, toasts, list reconcile, motion
+src/ui/      DOM helper, components, sheets, toasts, list reconcile, motion,
+             Markdown (markdown-parse.js: tree; markdown.js: DOM via h())
 src/features/<screen>/   pairing, queue, item, inbox, chat, overview,
              new-item, settings
 dev/         dev server and WebSocket bridge to a real archond (not shipped)
@@ -48,7 +49,7 @@ and need the `archon` binary: set `ARCHON_BIN`, or `CARGO_TARGET_DIR` for
 
 ```sh
 npm ci
-node --test                    # unit tests: transport, pairing code, bridge, shipped files
+node --test                    # unit tests: transport, pairing code, bridge, shipped files, Markdown
 npx playwright test            # every flow against archond's own listener, and the dev bridge
 npm run e2e                    # both, installing Chromium first
 npm run screens                # regenerate docs/assets/remote/*.png

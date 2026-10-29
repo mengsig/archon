@@ -85,12 +85,19 @@ test('block quotes, nested and lazy', () => {
   assert.equal(md('> - # heading\noutside'), '<blockquote class="md-quote"><ul class="md-list"><li><h1 class="md-heading">heading</h1></li></ul></blockquote><p>outside</p>');
   assert.equal(md('- > # heading\noutside'), '<ul class="md-list"><li><blockquote class="md-quote"><h1 class="md-heading">heading</h1></blockquote></li></ul><p>outside</p>');
   assert.equal(md('-\nnot lazy'), '<ul class="md-list"><li></li></ul><p>not lazy</p>');
+  assert.equal(md('> - ```\n>   code\noutside\n>   ```'),
+    '<blockquote class="md-quote"><ul class="md-list"><li><pre class="md-pre"><code>code</code></pre></li></ul></blockquote><p>outside</p><blockquote class="md-quote"><pre class="md-pre"><code></code></pre></blockquote>');
+  assert.equal(md('- > ---\noutside'), '<ul class="md-list"><li><blockquote class="md-quote"><hr class="md-rule"></blockquote></li></ul><p>outside</p>');
 });
 
-test('leading tabs expand from column 0 on every line', () => {
+test('tabs count as indentation on every line and stay literal in code', () => {
   assert.equal(md('\tfirst\n\tsecond'), '<pre class="md-pre"><code>first\nsecond</code></pre>');
   assert.equal(md('para\n\n\n\tcode'), '<p>para</p><pre class="md-pre"><code>code</code></pre>');
-  assert.equal(md('```py\n\tprint(1)\n\tprint(2)\n```'), '<pre class="md-pre"><code class="language-py">    print(1)\n    print(2)</code></pre>');
+  assert.equal(md('```py\n\tprint(1)\n\tprint(2)\n```'), '<pre class="md-pre"><code class="language-py">\tprint(1)\n\tprint(2)</code></pre>');
+  assert.equal(md('```make\nbuild:\n\techo hello\n```'), '<pre class="md-pre"><code class="language-make">build:\n\techo hello</code></pre>');
+  assert.equal(md('  \tfoo\tbaz\t\tbim'), '<pre class="md-pre"><code>foo\tbaz\t\tbim</code></pre>');
+  assert.equal(md('\t\tdeeper'), '<pre class="md-pre"><code>\tdeeper</code></pre>');
+  assert.equal(md('  - foo\n\n\tbar'), '<ul class="md-list"><li><p>foo</p><p>bar</p></li></ul>');
 });
 
 test('tabs after list and quote markers', () => {
@@ -308,6 +315,13 @@ test('nesting is capped: deep quotes and lists end as text, not a crash', () => 
   assert.match(out, /deep/);
   const lists = md(Array.from({ length: 100 }, (_, i) => `${' '.repeat(i * 2)}- x${i}`).join('\n'));
   assert.ok(lists.split('<ul').length - 1 <= 17);
+});
+
+test('tangled emphasis across links pairs inside each link and never breaks', () => {
+  const src = '**[__![*__*[[]__]**]()]()**';
+  assert.equal(renderMarkdown(src).textContent, renderInline(src).textContent);
+  assert.equal(md('*a [b* c](https://x.io) d*'), `<p><em>a <a class="md-link" href="https://x.io" ${EXT}>b* c</a> d</em></p>`);
+  assert.equal(md('**a [*b*](https://x.io)**'), `<p><strong>a <a class="md-link" href="https://x.io" ${EXT}><em>b</em></a></strong></p>`);
 });
 
 test('many emphasis runs in one paragraph all render', () => {

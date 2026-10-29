@@ -57,7 +57,7 @@ export function safeHref(raw) {
 // ---- Blocks ---------------------------------------------------------------
 
 const isBlank = (l) => !/\S/.test(l);
-const indentOf = (l) => /^ */.exec(l)[0].length;
+const indentOf = (l) => columnsOf(/^[ \t]*/.exec(l)[0], 0);
 // End-anchored regexes retry from every start on a long inner run, so trim
 // from the end by hand.
 function trimEndWhile(s, test) {
@@ -82,7 +82,7 @@ const FENCE = /^( {0,3})(`{3,}|~{3,})[ \t]*([^]*)$/;
 const CLOSE_FENCE = /^ {0,3}(`+|~+)[ \t]*$/;
 const LIST = /^( {0,3})([-+*]|\d{1,9}[.)])([ \t]+|$)/;
 const SETEXT = /^ {0,3}(=+|-+)[ \t]*$/;
-const QUOTE = /^ {0,3}>[ \t]?/;
+const QUOTE = /^ {0,3}>/;
 const DELIM_ROW = /^ {0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*(?:\|[ \t]*)?$/;
 const REF_DEF = /^ {0,3}\[((?:[^\]\\]|\\.){1,999})\]:[ \t]*(<[^<>]*>|\S+)(?:[ \t]+("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^)\\]|\\.)*\)))?[ \t]*$/;
 
@@ -97,20 +97,22 @@ function columnsOf(run, start) {
   return col - start;
 }
 
-// Leading tabs as spaces, for a line whose first character sits at column `start`.
-function expandTabs(line, start = 0) {
-  if (!line.includes('\t')) return line;
-  const lead = /^[ \t]*/.exec(line)[0];
-  return ' '.repeat(columnsOf(lead, start)) + line.slice(lead.length);
+// `line` without its first `n` columns of leading whitespace, its first
+// character at column `start`; a tab the cut splits leaves its other columns as spaces.
+function stripColumns(line, n, start = 0) {
+  let col = start;
+  let i = 0;
+  while (i < line.length && col - start < n && (line[i] === ' ' || line[i] === '\t')) {
+    col = line[i] === '\t' ? col + 4 - (col % 4) : col + 1;
+    i += 1;
+  }
+  const over = col - start - n;
+  return (over > 0 ? ' '.repeat(over) : '') + line.slice(i);
 }
 
-// A quoted line's content after its `>` marker; a tab after `>` gives up one column to it.
+// A quoted line's content: after `>`, one column of space or tab belongs to the marker.
 function quoteRest(line, marker) {
-  const rest = line.slice(marker.length);
-  if (!marker.endsWith('\t')) return expandTabs(rest, marker.length);
-  const tabAt = marker.length - 1;
-  const width = 4 - (tabAt % 4);
-  return ' '.repeat(width - 1) + expandTabs(rest, tabAt + width);
+  return stripColumns(line.slice(marker.length), 1, marker.length);
 }
 
 function isFenceOpen(line) {
@@ -132,17 +134,17 @@ function containerContent(line) {
 // Follows a container's lines to know whether its content ends in an open
 // paragraph, the only block an unmarked (lazy) line may continue.
 function trackParagraph(open, line) {
+  const content = containerContent(line);
   if (open.fence) {
-    const close = CLOSE_FENCE.exec(line);
+    const close = CLOSE_FENCE.exec(content);
     if (close && close[1][0] === open.fence[0] && close[1].length >= open.fence.length) open.fence = null;
     open.paragraph = false;
     return;
   }
-  const fence = isFenceOpen(line);
+  const fence = isFenceOpen(content);
   if (fence) { open.fence = fence[2]; open.paragraph = false; return; }
-  const content = containerContent(line);
-  if (isBlank(content) || ATX.test(content) || HR.test(line) || (open.paragraph && SETEXT.test(line))) { open.paragraph = false; return; }
-  if (indentOf(line) >= 4 && !open.paragraph) return;
+  if (isBlank(content) || ATX.test(content) || HR.test(content) || (open.paragraph && SETEXT.test(content))) { open.paragraph = false; return; }
+  if (indentOf(content) >= 4 && !open.paragraph) return;
   open.paragraph = true;
 }
 
@@ -226,19 +228,18 @@ function readBlock(lines, i, depth, ctx) {
 function indentedCode(lines, start) {
   const code = [];
   let j = start;
-  while (j < lines.length && (isBlank(lines[j]) || indentOf(lines[j]) >= 4)) { code.push(lines[j].slice(4)); j += 1; }
+  while (j < lines.length && (isBlank(lines[j]) || indentOf(lines[j]) >= 4)) { code.push(stripColumns(lines[j], 4)); j += 1; }
   while (code.length && isBlank(code.at(-1))) code.pop();
   return { block: { t: 'code', info: '', text: code.join('\n') }, next: start + code.length };
 }
 
 function fencedCode(lines, start, [, lead, marks, info]) {
   const body = [];
-  const indent = new RegExp(`^ {0,${lead.length}}`);
   let i = start + 1;
   while (i < lines.length) {
     const close = CLOSE_FENCE.exec(lines[i]);
     if (close && close[1][0] === marks[0] && close[1].length >= marks.length) { i += 1; break; }
-    body.push(lines[i].replace(indent, ''));
+    body.push(stripColumns(lines[i], Math.min(lead.length, indentOf(lines[i]))));
     i += 1;
   }
   return { block: { t: 'code', info: unescapeText(info.trim()), text: body.join('\n') }, next: i };
@@ -283,7 +284,7 @@ function paragraph(lines, start, depth, ctx) {
       if (setext && indentOf(l) < 4) { level = setext[1][0] === '=' ? 1 : 2; i += 1; break; }
       if (startsBlock(l, depth) || (l.includes('|') && tableAt(lines, i))) break;
     }
-    para.push(l.replace(/^ +/, ''));
+    para.push(l.replace(/^[ \t]+/, ''));
     i += 1;
   }
   if (!level) takeRefDefs(para, ctx.refs);
@@ -365,7 +366,7 @@ function listItemBody(lines, start, m, depth) {
       for (; i < j; i += 1) body.push('');
       open.paragraph = false;
     } else if (indentOf(l) >= contentIndent) {
-      body.push(l.slice(contentIndent));
+      body.push(stripColumns(l, contentIndent));
       trackParagraph(open, body.at(-1));
       i += 1;
     } else if (open.paragraph && !LIST.test(l) && !startsBlock(l, depth)) {
@@ -432,6 +433,10 @@ function flanking(src, ch, start, end) {
   if (ch === '_') return { canOpen: left && (!right || bP), canClose: right && (!left || aP) };
   return { canOpen: left, canClose: right };
 }
+
+// Whitespace or a control character, which end a bare link destination; a
+// char-code test, as the scan runs once per character of every candidate.
+const endsDestination = (c) => c <= 32 || c === 127 || (c > 127 && SPACE.test(String.fromCharCode(c)));
 
 // The CommonMark inline algorithm: nodes form a doubly linked chain, emphasis
 // delimiters a linked stack (`delims` is its top), link openers an array.
@@ -657,7 +662,7 @@ class InlineParser {
       return { raw: src.slice(start, p), end: p + 1 };
     }
     let depth = 0;
-    while (p < src.length && p - from <= MAX_URL_CHARS && !/[\s\u0000-\u001f\u007f]/.test(src[p])) {
+    while (p < src.length && p - from <= MAX_URL_CHARS && !endsDestination(src.charCodeAt(p))) {
       if (src[p] === '\\' && p + 1 < src.length) { p += 2; continue; }
       if (src[p] === '(') depth += 1;
       else if (src[p] === ')') { if (depth === 0) break; depth -= 1; }
@@ -700,9 +705,10 @@ class InlineParser {
     if (d.next) d.next.prev = d.prev; else this.delims = d.prev;
   }
 
-  // The nearest opener below `closer` (down to `limit`) that it can pair with, or null.
-  openerFor(closer, limit) {
-    for (let opener = closer.prev; opener && opener !== limit; opener = opener.prev) {
+  // The nearest opener below `closer`, above both `limit` and `bottom`, that it can pair with, or null.
+  // `limit` may be a delimiter a later pair removed, so `bottom` must stop the walk too.
+  openerFor(closer, limit, bottom) {
+    for (let opener = closer.prev; opener && opener !== limit && opener !== bottom; opener = opener.prev) {
       const odd = (closer.canOpen || opener.canClose) && closer.orig % 3 !== 0 && (opener.orig + closer.orig) % 3 === 0;
       if (opener.ch === closer.ch && opener.canOpen && !odd && (closer.ch !== '~' || opener.count === closer.count)) return opener;
     }
@@ -736,7 +742,7 @@ class InlineParser {
     while (closer) {
       if (!closer.canClose) { closer = closer.next; continue; }
       const key = `${closer.ch}${closer.orig % 3}${closer.canOpen ? 1 : 0}`;
-      const opener = this.openerFor(closer, bottoms.has(key) ? bottoms.get(key) : bottom);
+      const opener = this.openerFor(closer, bottoms.get(key) ?? bottom, bottom);
       if (opener) { closer = this.pair(opener, closer); continue; }
       const old = closer;
       closer = closer.next;
@@ -852,7 +858,7 @@ export function parseMarkdown(source) {
   let text = String(source ?? '');
   const truncated = text.length > MAX_SOURCE_CHARS;
   if (truncated) text = `${text.slice(0, MAX_SOURCE_CHARS)}\n\n…`;
-  const lines = text.replace(/\r\n?/g, '\n').replace(/\u0000/g, '�').split('\n').map((line) => expandTabs(line));
+  const lines = text.replace(/\r\n?/g, '\n').replace(/\u0000/g, '�').split('\n');
   const ctx = { refs: new Map() };
   return inlineAll(parseBlocks(lines, 0, ctx), ctx.refs);
 }

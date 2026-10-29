@@ -52,15 +52,32 @@ function blocks(list, tight = false) {
   return list.map((b) => block(b, tight));
 }
 
+// A parser bug must not blank a screen: the text then shows as written, and
+// the error stays in the console.
+function parsedOrPlain(parse, text, plain) {
+  try {
+    return parse(text);
+  } catch (err) {
+    console.error('Markdown could not be rendered; showing it as plain text.', err);
+    return plain;
+  }
+}
+
+function parseBlocksSafely(source) {
+  const text = String(source ?? '');
+  return parsedOrPlain(parseMarkdown, text, [{ t: 'p', c: [{ t: 'text', v: text }], size: text.length }]);
+}
+
 // The whole document as a <div class="md">.
 export function renderMarkdown(source, { className } = {}) {
-  return h('div', { class: ['md', className] }, blocks(parseMarkdown(source)));
+  return h('div', { class: ['md', className] }, blocks(parseBlocksSafely(source)));
 }
 
 // One line of prose (a title, a label that may carry `code`): inline marks only.
 // Line breaks become spaces; the page collapses prose spaces, and code keeps its own.
 export function renderInline(source) {
-  return h('span', { class: 'md-inline' }, inline(parseInline(String(source ?? '').replace(/[\r\n]+/g, ' ').trim())));
+  const text = String(source ?? '').replace(/[\r\n]+/g, ' ').trim();
+  return h('span', { class: 'md-inline' }, inline(parsedOrPlain(parseInline, text, [{ t: 'text', v: text }])));
 }
 
 // Long Markdown folded by whole blocks: the first blocks that fit `limit`
@@ -68,12 +85,12 @@ export function renderInline(source) {
 // too long, the preview is the source cut at `limit`, rendered on its own.
 export function clampedMarkdown(source, { limit, more = 'Show all', less = 'Show less', className } = {}) {
   if (!Number.isInteger(limit) || limit <= 0) throw new RangeError(`a clamp limit is a positive number of characters, got ${limit}`);
-  const all = parseMarkdown(source);
+  const all = parseBlocksSafely(source);
   let used = 0;
   let keep = 0;
   while (keep < all.length && used + all[keep].size <= limit) { used += all[keep].size; keep += 1; }
   if (keep === all.length) return h('div', { class: ['md', className] }, blocks(all));
-  const preview = keep > 0 ? all.slice(0, keep) : parseMarkdown(`${String(source ?? '').trim().slice(0, limit).trimEnd()}…`);
+  const preview = keep > 0 ? all.slice(0, keep) : parseBlocksSafely(`${String(source ?? '').trim().slice(0, limit).trimEnd()}…`);
   const body = h('div', { class: ['md', className] }, blocks(preview));
   const toggle = h('button', { class: 'link-button', type: 'button', 'aria-expanded': 'false' }, more);
   toggle.addEventListener('click', () => {

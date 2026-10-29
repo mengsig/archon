@@ -127,9 +127,15 @@ function spacedIndent(line, col) {
 }
 
 // A container's content line at column `col`. An indent under four columns is
-// structure, so outside a fence its tabs become spaces and the line regexes see them.
+// structure, so outside literal fenced code its tabs become spaces and the line regexes see them.
 function contentLine(text, col, open) {
-  return !open.fence && indentOf(text, col) < 4 ? spacedIndent(text, col) : text;
+  return !inLiteralFence(open) && indentOf(text, col) < 4 ? spacedIndent(text, col) : text;
+}
+
+// Does a container's next line start inside literal fenced code? A fence in a
+// nested quote leaves the indent before that quote's `>` structural.
+function inLiteralFence(open) {
+  return open.fence !== null && !open.fence.path.includes('quote');
 }
 
 // Does `line`, at column `col`, close a fence opened with `marks`? Its indent
@@ -329,7 +335,7 @@ function blockQuote(lines, start, depth, ctx, col) {
     const q = QUOTE.exec(lines[i]);
     if (q) {
       const rest = quoteRest(lines[i], q[0], col);
-      const aligned = open.fence || (rest.col - innerCol) % 4 === 0;
+      const aligned = inLiteralFence(open) || (rest.col - innerCol) % 4 === 0;
       inner.push(contentLine(aligned ? rest.text : spacedIndent(rest.text, rest.col), innerCol, open));
     } else if (open.paragraph && !isBlank(lines[i]) && !startsBlock(lines[i], depth, col)) inner.push(spacedIndent(lines[i], col));
     else break;

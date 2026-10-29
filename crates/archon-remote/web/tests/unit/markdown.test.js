@@ -148,6 +148,10 @@ test('nested fences open and close at the real column of their container', () =>
     '<ul class="md-list"><li><blockquote class="md-quote"><pre class="md-pre"><code>code</code></pre></blockquote></li></ul><p>outside</p>');
   assert.equal(md('> - ```\n>   code\n>  \t```\n>   next\nlazy'),
     '<blockquote class="md-quote"><ul class="md-list"><li><pre class="md-pre"><code>code</code></pre>next\nlazy</li></ul></blockquote>');
+  assert.equal(md('> \t> ```js\n> \t> const x = 1;\n> \t> ```\noutside'),
+    '<blockquote class="md-quote"><blockquote class="md-quote"><pre class="md-pre"><code class="language-js">const x = 1;</code></pre></blockquote></blockquote><p>outside</p>');
+  assert.equal(md('- \t> ```js\n  \t> \tx\n  \t> ```\noutside'),
+    '<ul class="md-list"><li><blockquote class="md-quote"><pre class="md-pre"><code class="language-js">\tx</code></pre></blockquote></li></ul><p>outside</p>');
 });
 
 test('thematic breaks', () => {

@@ -2480,10 +2480,10 @@ itself. The stage `[pipeline.ship]` names gets `## Ship record` (§8.7).
 Like the contract, all of this binds by instruction only; what Archon
 enforces is named where it is enforced.
 
-`Verdict::extract` reads the structured `verdict` field first, then a
-structured `result` or `status` that reads as a verdict, then the summary's
-last readable `VERDICT:` line, in any letter case and through markdown
-emphasis. Reviewers' verdicts (§8.2) go through the same parser.
+`Verdict::extract` reads a structured `verdict` key first (a blank, null or
+unreadable one is `Unknown`), then a structured `result` or `status` that
+reads as a verdict, then the summary's last `VERDICT:` line outside block
+quotes and fenced code, in any letter case and through markdown emphasis. Reviewers' verdicts (§8.2) go through the same parser.
 
 Two error prefixes end a run at once, with no loop, no infra retry and the
 stage's live siblings cancelled (`StageOutcome::ends_run`):

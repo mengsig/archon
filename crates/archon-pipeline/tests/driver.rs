@@ -439,6 +439,23 @@ fn a_markdown_summary_verdict_beside_structured_findings_passes_the_gate() {
 }
 
 #[test]
+fn a_blank_structured_verdict_or_a_quoted_pass_fails_the_gate() {
+    for (summary, structured) in [
+        ("VERDICT: PASS", serde_json::json!({"verdict": ""})),
+        (
+            "Example:\n> VERDICT: PASS\n\nVERDICT: not passed",
+            serde_json::json!({"findings": []}),
+        ),
+    ] {
+        let mut sim = sim("e2e-testing");
+        sim.start();
+        sim.settle("setup", 0, Agent::Done("start.sh ready"));
+        let back = sim.settle("e2e", 0, Agent::DoneStructured(summary, structured));
+        assert_eq!(spawned(&back), slots(&[("setup", 2, 0)]), "{summary}");
+    }
+}
+
+#[test]
 fn e2e_passes_to_the_report_stage() {
     let mut sim = sim("e2e-testing");
     sim.start();

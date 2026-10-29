@@ -808,9 +808,10 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
 - **Review and test stages, and any gated stage.** The result carries
   `structured` data `{"verdict": "pass"|"fail", "findings": [{"severity",
   "title", "detail", "path"}]}`, and the summary ends with `VERDICT: PASS` or
-  `VERDICT: FAIL`. Archon reads the structured `verdict` first, then a
-  structured `result` or `status` that reads as one, then the summary's last
-  readable `VERDICT:` line. Letter case and markdown emphasis
+  `VERDICT: FAIL`. Archon reads a structured `verdict` key first, whatever
+  it holds, then a structured `result` or `status` that reads as one, then
+  the summary's last `VERDICT:` line outside block quotes and fenced code.
+  Letter case and markdown emphasis
   (`**Verdict:** PASS`) do not matter, and `passed`, `approved`, `failed` and
   `rejected` read as pass and fail. Anything else counts as fail, and the
   gate's refusal quotes what the agent wrote.

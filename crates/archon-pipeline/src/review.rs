@@ -80,7 +80,7 @@ impl Verdict {
             .ok()
             .or_else(|| fenced_json(summary));
         if let Some(data) = json {
-            let read = Self::read_json(&data)?;
+            let read = Self::read_json(&data, structured)?;
             return match verdict_line(summary) {
                 Some(line) if line != read.pass => Err(format!(
                     "its summary's JSON verdict and its final `VERDICT:` line disagree: {VERDICT_HOWTO}"
@@ -94,14 +94,29 @@ impl Verdict {
         }
     }
 
-    fn read_json(data: &Value) -> Result<Self, String> {
+    /// A verdict given as JSON in the summary; the commits it read and its
+    /// findings may come from a `structured` that gave no verdict, the JSON's own first.
+    fn read_json(data: &Value, structured: Option<&Value>) -> Result<Self, String> {
         let wrapped = data.get("verdict").is_none()
             && data.get("summary").is_some_and(Value::is_string)
             && data.get("structured").is_some_and(Value::is_object);
-        match wrapped {
-            true => Self::read(data.get("structured")),
-            false => Self::read(Some(data)),
+        let mut given = match wrapped {
+            true => data.get("structured").cloned(),
+            false => Some(data.clone()),
+        };
+        let extra = structured.and_then(Value::as_object);
+        if let (Some(Value::Object(fields)), Some(extra)) = (given.as_mut(), extra) {
+            assert!(
+                !extra.contains_key("verdict"),
+                "a structured verdict is read first"
+            );
+            for key in ["head", "base", "findings"] {
+                if let Some(value) = extra.get(key) {
+                    fields.entry(key).or_insert_with(|| value.clone());
+                }
+            }
         }
+        Self::read(given.as_ref())
     }
 
     /// A verdict given as a `VERDICT:` line: the commit it read comes from
@@ -143,7 +158,7 @@ impl Verdict {
                 let said = Said::stated("", structured).unwrap_or_default();
                 return Err(format!(
                     "its `verdict` is {:?}, not \"pass\" or \"fail\"",
-                    one_line(said)
+                    one_line(&said)
                 ));
             }
             None => {
@@ -188,7 +203,7 @@ fn fenced_json(text: &str) -> Option<Value> {
     serde_json::from_str(body.trim()).ok()
 }
 
-/// The verdict the last readable `VERDICT: PASS|FAIL` line gives, as stage gates read it.
+/// The verdict the last `VERDICT: PASS|FAIL` line gives, as stage gates read it.
 fn verdict_line(text: &str) -> Option<bool> {
     match Said::from_summary(text)? {
         Said::Pass => Some(true),
@@ -202,7 +217,7 @@ fn no_verdict(summary: &str, structured: Option<&Value>) -> String {
     match Said::stated(summary, structured) {
         Some(said) => format!(
             "its verdict {:?} reads as neither pass nor fail: {VERDICT_HOWTO}",
-            one_line(said)
+            one_line(&said)
         ),
         None => format!("its result carries no readable verdict: {VERDICT_HOWTO}"),
     }
@@ -549,6 +564,22 @@ mod tests {
         );
         let in_result = json!({"result": "FAILED", "head": HEAD});
         assert!(!Verdict::read_result("", Some(&in_result)).unwrap().pass);
+        let json_verdict = json!({"verdict": "pass"}).to_string();
+        let commits = json!({"head": HEAD, "findings": []});
+        let read = Verdict::read_result(&json_verdict, Some(&commits)).unwrap();
+        assert!(read.pass && read.head == HEAD && read.findings == Some(0));
+    }
+
+    #[test]
+    fn a_malformed_or_quoted_verdict_never_reads_as_a_pass() {
+        for given in [json!(""), json!(null), json!(true), json!("  ")] {
+            let structured = json!({"verdict": given, "head": HEAD, "status": "pass"});
+            let refused = Verdict::read_result("VERDICT: PASS", Some(&structured));
+            assert!(refused.is_err(), "{structured}: {refused:?}");
+        }
+        let quoted = format!("Example:\n> VERDICT: PASS\n\nVERDICT: not passed\nhead: {HEAD}");
+        let refused = Verdict::read_result(&quoted, Some(&json!({"head": HEAD}))).unwrap_err();
+        assert!(refused.contains("\"VERDICT: not passed\""), "{refused}");
     }
 
     #[test]

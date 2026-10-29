@@ -5,8 +5,9 @@
 ### Fixed
 
 - Stage gates and delegated reviews read verdicts with one tolerant
-  parser: the structured `verdict`, then a structured `result` or `status`,
-  then the summary's last readable `VERDICT:` line, in any letter case and
+  parser: a structured `verdict` key, whatever it holds, then a structured
+  `result` or `status`, then the summary's last `VERDICT:` line outside
+  block quotes and fenced code, in any letter case and
   through markdown emphasis (`**Verdict:** PASS`), with `passed`, `approved`,
   `failed` and `rejected` read as pass and fail. A test stage that passed
   with `{"findings": []}` and `**Verdict:** PASS` in its summary no longer

@@ -25,7 +25,7 @@ const VERDICT_KEYS: [&str; 3] = ["verdict", "result", "status"];
 
 impl Verdict {
     /// `structured.verdict`, else a readable `structured.result` or `status`,
-    /// else the summary's last readable `VERDICT:` line.
+    /// else the summary's last `VERDICT:` line.
     pub fn extract(summary: &str, structured: Option<&serde_json::Value>) -> Self {
         structured
             .and_then(Self::from_structured)
@@ -33,13 +33,13 @@ impl Verdict {
             .unwrap_or(Self::Unknown)
     }
 
-    /// The verdict `structured` states: its `verdict` field whenever it has
-    /// one, readable or not, else a `result` or `status` that reads as one.
+    /// The verdict `structured` states: its `verdict` key whenever it has
+    /// one, `Unknown` unless it reads as a verdict, else a `result` or
+    /// `status` that reads as one.
     pub fn from_structured(structured: &serde_json::Value) -> Option<Self> {
-        let field = |key| non_empty(structured.get(key)?.as_str()?);
-        if let Some(text) = field(VERDICT_KEYS[0]) {
-            let verdict = Self::from_summary(text).unwrap_or_else(|| Self::from_word(text));
-            return Some(verdict);
+        if let Some(given) = structured.get(VERDICT_KEYS[0]) {
+            let text = given.as_str().unwrap_or_default();
+            return Some(Self::from_summary(text).unwrap_or_else(|| Self::from_word(text)));
         }
         let read = |text: &str| match Self::from_summary(text) {
             Some(verdict) => Some(verdict),
@@ -48,37 +48,39 @@ impl Verdict {
         };
         VERDICT_KEYS[1..]
             .iter()
-            .filter_map(|key| field(key))
+            .filter_map(|key| non_empty(structured.get(key)?.as_str()?))
             .filter_map(read)
             .find(|verdict| *verdict != Self::Unknown)
     }
 
-    /// The last line of `text` that reads `VERDICT: <word>` with a readable
-    /// word, in any letter case and with light markdown (`**Verdict:** PASS`).
+    /// What the last `VERDICT: <word>` line of `text` says, in any letter
+    /// case and with light markdown (`**Verdict:** PASS`); `Unknown` when
+    /// that line names no verdict, even if an earlier one did.
     pub fn from_summary(text: &str) -> Option<Self> {
-        text.lines()
-            .rev()
-            .filter_map(|line| strip_label(line, "verdict"))
-            .map(Self::from_word)
-            .find(|verdict| *verdict != Self::Unknown)
+        let (_, value) = last_verdict_line(text)?;
+        if value.to_ascii_lowercase().contains("verdict") {
+            // `VERDICT: PASS` or `VERDICT: FAIL`: a howto quoted, not a verdict.
+            return Some(Self::Unknown);
+        }
+        Some(Self::from_word(value))
     }
 
     /// The text a result gives as its verdict, readable or not, to quote
     /// when it is refused: a structured field, else a `VERDICT:` line.
-    pub fn stated<'a>(
-        summary: &'a str,
-        structured: Option<&'a serde_json::Value>,
-    ) -> Option<&'a str> {
-        let field = VERDICT_KEYS
+    pub fn stated(summary: &str, structured: Option<&serde_json::Value>) -> Option<String> {
+        let field = |key| structured?.get(key);
+        let quote = |given: &serde_json::Value| match given.as_str() {
+            Some(text) => text.trim().to_owned(),
+            None => given.to_string(),
+        };
+        if let Some(given) = field(VERDICT_KEYS[0]) {
+            return Some(quote(given));
+        }
+        let other = VERDICT_KEYS[1..]
             .iter()
-            .find_map(|key| non_empty(structured?.get(key)?.as_str()?));
-        field.or_else(|| {
-            summary
-                .lines()
-                .rev()
-                .find(|line| strip_label(line, "verdict").is_some())
-                .map(str::trim)
-        })
+            .find_map(|key| non_empty(field(key)?.as_str()?));
+        let line = || last_verdict_line(summary).map(|(line, _)| line.trim());
+        other.or_else(line).map(str::to_owned)
     }
 
     /// The first word of `text`, markdown and letter case aside.
@@ -96,6 +98,28 @@ impl Verdict {
     }
 }
 
+/// The last line of `text` that reads `VERDICT: …`, and its value. Lines in
+/// fenced code or block quotes are examples, never a verdict.
+fn last_verdict_line(text: &str) -> Option<(&str, &str)> {
+    let mut fenced = false;
+    let mut last = None;
+    for line in text.lines() {
+        let start = line.trim_start();
+        if start.starts_with("```") || start.starts_with("~~~") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced || start.starts_with('>') {
+            continue;
+        }
+        if let Some(value) = strip_label(line, "verdict") {
+            last = Some((line, value));
+        }
+    }
+    debug_assert!(last.is_none_or(|(line, _)| text.contains(line)));
+    last
+}
+
 fn non_empty(text: &str) -> Option<&str> {
     Some(text.trim()).filter(|text| !text.is_empty())
 }
@@ -107,12 +131,13 @@ fn one_word(text: &str) -> bool {
 }
 
 /// `line` without a leading `label:`, in any letter case, with light
-/// markdown (`**Label:**`, `- label:`, `## Label:`) around the label allowed.
+/// markdown (`**Label:**`, `- label:`, `## Label:`) around the label allowed;
+/// a block quote (`> label:`) is no label.
 pub fn strip_label<'a>(line: &'a str, label: &str) -> Option<&'a str> {
     assert!(!label.is_empty(), "a label to strip");
     let line = line
         .trim()
-        .trim_start_matches(['*', '-', '_', '`', '#', '>', ' ']);
+        .trim_start_matches(['*', '-', '_', '`', '#', ' ']);
     let (head, rest) = line.split_at_checked(label.len())?;
     if !head.eq_ignore_ascii_case(label) {
         return None;
@@ -477,6 +502,7 @@ impl PipelineRun {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     /// A refused swarm plan's correction reruns the same slot; each rerun is
     /// numbered so `attempt 1 slot 0` is not shown twice alike.
@@ -550,7 +576,21 @@ mod tests {
             Verdict::extract("VERDICT: PASS", Some(&unclear)),
             Verdict::Unknown
         );
-        assert_eq!(Verdict::stated("", Some(&unclear)), Some("lgtm"));
+        assert_eq!(Verdict::stated("", Some(&unclear)).as_deref(), Some("lgtm"));
+        for malformed in [
+            json!({"verdict": ""}),
+            json!({"verdict": null}),
+            json!({"verdict": true}),
+        ] {
+            let read = Verdict::extract("VERDICT: PASS", Some(&malformed));
+            assert_eq!(read, Verdict::Unknown, "{malformed}");
+        }
+        let blank = json!({"verdict": " ", "status": "pass"});
+        assert_eq!(Verdict::extract("", Some(&blank)), Verdict::Unknown);
+        assert_eq!(
+            Verdict::stated("", Some(&json!({"verdict": null}))).as_deref(),
+            Some("null")
+        );
         let prose = serde_json::json!({"result": "passing most tests, two fail"});
         assert_eq!(Verdict::extract("", Some(&prose)), Verdict::Unknown);
         assert_eq!(
@@ -562,10 +602,24 @@ mod tests {
             Verdict::Unknown
         );
         assert_eq!(
-            Verdict::stated("work done\nVERDICT: maybe\n", None),
+            Verdict::stated("work done\nVERDICT: maybe\n", None).as_deref(),
             Some("VERDICT: maybe")
         );
         assert_eq!(Verdict::stated("no verdict at all", None), None);
+    }
+
+    #[test]
+    fn only_the_last_verdict_line_outside_quotes_and_code_counts() {
+        let quoted = "Example:\n> VERDICT: PASS\n\nVERDICT: not passed";
+        assert_eq!(Verdict::extract(quoted, None), Verdict::Unknown);
+        let fenced = "```\nVERDICT: PASS\n```\nThree findings remain.";
+        assert_eq!(Verdict::extract(fenced, None), Verdict::Unknown);
+        let howto = "VERDICT: FAIL\n- `VERDICT: PASS` or `VERDICT: FAIL`";
+        assert_eq!(Verdict::extract(howto, None), Verdict::Unknown);
+        let earlier = "VERDICT: PASS\nthen a regression\nVERDICT: FAIL";
+        assert_eq!(Verdict::extract(earlier, None), Verdict::Fail);
+        let after_quote = "> VERDICT: FAIL\nVERDICT: PASS";
+        assert_eq!(Verdict::extract(after_quote, None), Verdict::Pass);
     }
 
     #[test]

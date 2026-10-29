@@ -611,12 +611,15 @@ class InlineParser {
   }
 
   lineEnd() {
-    // Count the spaces in the source, not the buffer: reading a long
-    // buffer back would flatten it on every line.
+    // Count the spaces in the source, not the buffer, and flush right after
+    // trimming: slicing a buffer kept across lines would flatten it on every line.
     let spaces = 0;
     while (this.src.charCodeAt(this.pos - 1 - spaces) === 32 && spaces < this.buf.length) spaces += 1;
-    if (spaces > 0) this.buf = this.buf.slice(0, this.buf.length - spaces);
-    if (spaces >= 2) { this.flush(); this.append({ t: 'br' }); }
+    if (spaces > 0) {
+      this.buf = this.buf.slice(0, this.buf.length - spaces);
+      this.flush();
+    }
+    if (spaces >= 2) this.append({ t: 'br' });
     else this.buf += '\n';
     this.pos += 1;
   }

@@ -27,6 +27,7 @@ test('paragraphs, soft and hard breaks', () => {
   assert.equal(md('one\n\ntwo'), '<p>one</p><p>two</p>');
   assert.equal(md('a\nb'), '<p>a\nb</p>');
   assert.equal(md('a  \nb'), '<p>a<br>b</p>');
+  assert.equal(md('a \nb'), '<p>a\nb</p>');
   assert.equal(md('a\\\nb'), '<p>a<br>b</p>');
   assert.equal(md('trailing\\'), '<p>trailing\\</p>');
 });
@@ -338,6 +339,7 @@ test('pathological input stays fast and bounded', () => {
     openersThenLinks: '['.repeat(119_000) + '[]()'.repeat(19_900),
     imageOpenersThenLinks: '!['.repeat(60_000) + '[a](b)'.repeat(15_000),
     softBreaks: 'a\n'.repeat(95_000),
+    spacedSoftBreaks: 'a \n'.repeat(65_000),
     lazyPipes: 'a|b\n'.repeat(40_000),
     closers: '['.repeat(95_000) + ']'.repeat(95_000),
     nestedImages: '!['.repeat(10_000) + 'a' + '](x)'.repeat(10_000),

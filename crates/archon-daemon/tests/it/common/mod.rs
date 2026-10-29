@@ -505,6 +505,15 @@ pub fn fake_disk(free: &Arc<AtomicU64>) -> DiskWatch {
     DiskWatch::new(probe, std::time::Duration::ZERO)
 }
 
+/// A test never reaches the host's Docker; one that tests teardowns names
+/// its fake `docker`.
+pub fn without_host_docker(mut config: Config) -> Config {
+    if config.worktrees.docker == Path::new("docker") {
+        config.worktrees.docker = "/nonexistent/archon-test/docker".into();
+    }
+    config
+}
+
 /// Build a context like `archon_daemon::run` does, rooted at `root`.
 pub fn context(
     root: &Path,
@@ -515,6 +524,7 @@ pub fn context(
     disk: DiskWatch,
     ops: &Arc<fake_ops::FakeOps>,
 ) -> DaemonContext {
+    let config = without_host_docker(config);
     let data_dir = root.join("data");
     let paths = DaemonPaths {
         socket: root.join("archond.sock"),

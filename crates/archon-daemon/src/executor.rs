@@ -131,6 +131,16 @@ pub(crate) struct Cleanup {
     pub snapshot: bool,
 }
 
+/// The Compose stacks an ended run may have left in its worktree, `tree`.
+/// `mark` holds dispatch off the worktree's owner, so no retry starts a
+/// stack there that this teardown would stop, until it is dropped.
+#[derive(Debug)]
+pub(crate) struct Teardown {
+    pub item: QueueItemId,
+    pub tree: PathBuf,
+    pub mark: crate::gc::Mark,
+}
+
 /// An item's cargo target directory, owed deletion when the item ends.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct ItemBuild {
@@ -166,6 +176,8 @@ pub(crate) struct FollowUp {
     /// Runs whose team roster may be owed to their running roles.
     pub roster: Vec<PipelineRunId>,
     pub cleanup: Vec<Cleanup>,
+    /// Ended runs' worktrees whose Compose stacks to tear down.
+    pub stacks: Vec<Teardown>,
     /// Items that ended, whose own cargo target directory to delete once
     /// their agents are stopped.
     pub release_builds: Vec<ItemBuild>,
@@ -209,6 +221,7 @@ impl FollowUp {
         self.reap.extend(other.reap);
         self.roster.extend(other.roster);
         self.cleanup.extend(other.cleanup);
+        self.stacks.extend(other.stacks);
         self.release_builds.extend(other.release_builds);
         self.discard.extend(other.discard);
         self.gates.extend(other.gates);
@@ -233,6 +246,7 @@ impl FollowUp {
             && self.reap.is_empty()
             && self.roster.is_empty()
             && self.cleanup.is_empty()
+            && self.stacks.is_empty()
             && self.release_builds.is_empty()
             && self.discard.is_empty()
             && self.gates.is_empty()
@@ -604,6 +618,12 @@ async fn deliver_and_tidy(ctx: &DaemonContext, round: &mut Round, follow: Follow
     for shipped in lanes::run(ships, |run| async move { ship::deliver(ctx, &run).await }).await {
         round.record(shipped);
     }
+    // One per owner, as each holds its owner's mark; before the cleanups, which mark it too.
+    for Teardown { item, tree, mark } in follow.stacks {
+        let torn = crate::compose::tear_down(ctx, &item, &tree, "after its run ended").await;
+        drop(mark);
+        round.record(torn.map(|()| FollowUp::default()));
+    }
     for build in dedup(follow.release_builds) {
         round.record(release_item_build(ctx, build).await);
     }
@@ -738,6 +758,8 @@ async fn remove_ended_worktree(
         true => "after its run ended",
         false => "after its run succeeded",
     };
+    // While the worktree exists, its symlinks show where its stacks run from.
+    crate::compose::tear_down(ctx, &cleanup.item, &cleanup.worktree, when).await?;
     finish::remove_worktree(ctx, cleanup, when, Some(mark)).await?;
     Ok(FollowUp::default())
 }

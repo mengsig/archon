@@ -79,9 +79,19 @@ impl LiveWorkspaces {
     /// A live item that uses `path`: it works there, inside it, or in a
     /// place that holds it.
     pub(crate) fn user_of(&self, path: &Path) -> Option<&QueueItemId> {
+        self.user_besides(path, None)
+    }
+
+    /// A live item but `except` that uses `path`, as [`Self::user_of`].
+    pub(crate) fn user_besides(
+        &self,
+        path: &Path,
+        except: Option<&QueueItemId>,
+    ) -> Option<&QueueItemId> {
         assert!(path.is_absolute(), "workspaces are absolute");
         self.places
             .iter()
+            .filter(|(_, item)| Some(item) != except)
             .find(|(place, _)| place.starts_with(path) || path.starts_with(place))
             .map(|(_, item)| item)
     }

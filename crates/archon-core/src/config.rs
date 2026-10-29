@@ -796,6 +796,9 @@ pub struct WorktreeConfig {
     /// While dispatch is held for disk space, finished runs' worktrees and
     /// idle shared caches go after this instead, if it is shorter.
     pub pressure_after: Age,
+    /// The `docker` CLI that tears down the Compose stacks agents leave in
+    /// worktrees; without it, or its daemon, stacks are left alone.
+    pub docker: PathBuf,
 }
 
 impl Default for WorktreeConfig {
@@ -813,6 +816,7 @@ impl Default for WorktreeConfig {
             lean_builds: true,
             shared_cache_after: Age::from_secs(14 * 86_400),
             pressure_after: Age::from_secs(86_400),
+            docker: "docker".into(),
         }
     }
 }

@@ -254,10 +254,24 @@ async fn stop_project(
     docker
         .run(&[&["stop"], &ids[..]].concat(), STOP_TIMEOUT)
         .await?;
-    docker
-        .run(&[&["rm"], &ids[..]].concat(), LIST_TIMEOUT)
-        .await?;
-    if !docker.list(Some(project)).await?.trim().is_empty() {
+    remove_stopped(docker, project, &verified.containers).await
+}
+
+/// Remove those of `stopped` still there (a `run --rm` one removes itself
+/// once stopped), then `project`'s networks if none of its containers is left.
+async fn remove_stopped(
+    docker: &Docker<'_>,
+    project: &str,
+    stopped: &BTreeSet<String>,
+) -> Result<(), ArchonError> {
+    let present = container_ids(&docker.list(Some(project)).await?);
+    let ids: Vec<&str> = stopped.intersection(&present).map(String::as_str).collect();
+    if !ids.is_empty() {
+        docker
+            .run(&[&["rm"], &ids[..]].concat(), LIST_TIMEOUT)
+            .await?;
+    }
+    if !container_ids(&docker.list(Some(project)).await?).is_empty() {
         tracing::info!(%project, "other containers of the compose project remain; its networks are kept");
         return Ok(());
     }
@@ -270,6 +284,12 @@ async fn stop_project(
         .run(&[&["network", "rm"], &networks[..]].concat(), LIST_TIMEOUT)
         .await
         .map(drop)
+}
+
+/// The IDs of the containers in a `docker ps` listing.
+fn container_ids(listing: &str) -> BTreeSet<String> {
+    let containers = listing.lines().filter_map(Container::parse);
+    containers.map(|c| c.id.to_owned()).collect()
 }
 
 /// The `docker ps` listing [`select`] reads, of every Compose container;

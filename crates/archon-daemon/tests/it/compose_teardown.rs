@@ -234,6 +234,33 @@ async fn a_container_that_joins_during_the_teardown_is_not_stopped() {
     assert!(harness.system_notes().await.is_empty());
 }
 
+/// A container that removed itself once stopped, as `compose run --rm`
+/// ones do, is not removed again, and the teardown succeeds.
+#[tokio::test]
+async fn a_container_gone_once_stopped_is_not_removed_again() {
+    let docker = FakeDocker::new();
+    let harness = harness_with(&docker.binary()).await;
+    let item = link_common::queued_item(&harness.ctx, harness.dir.path()).await;
+    let tree = item_tree(&harness, &item);
+    let listed = [
+        container("a1", "review-1", &tree),
+        container("a2", "review-1", &tree),
+    ];
+    docker.lists("ps", &listed);
+    docker.lists("ps.after.2", &[container("a1", "review-1", &tree)]);
+    docker.lists("networks", &["e1".to_owned()]);
+    compose::tear_down(&harness.ctx, &item, &tree, "after its run ended")
+        .await
+        .unwrap();
+    assert_eq!(
+        docker.removals(),
+        ["stop a1 a2", "rm a1", "network rm e1"],
+        "{:?}",
+        docker.calls()
+    );
+    assert!(harness.system_notes().await.is_empty());
+}
+
 /// Once the worktree is gone nothing is stopped: a project whose labels
 /// name it may have run from elsewhere through a symlink that went with it.
 #[tokio::test]

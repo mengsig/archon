@@ -201,6 +201,7 @@ test('clampedMarkdown folds by whole blocks and toggles', () => {
   toggle.listeners.click();
   assert.equal(toggle.textContent, 'Show all');
   assert.equal(body.query('li').length, 0);
+  assert.throws(() => clampedMarkdown(src, {}), RangeError);
 });
 
 test('a block bigger than the limit is shown whole, never cut mid-construct', () => {

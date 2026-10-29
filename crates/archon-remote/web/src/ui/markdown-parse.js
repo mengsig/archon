@@ -149,179 +149,194 @@ function tableAt(lines, i) {
 }
 
 function parseBlocks(lines, depth, ctx) {
+  if (depth > MAX_BLOCK_DEPTH) throw new RangeError(`block nesting ${depth} is past the cap`);
   const blocks = [];
-  const n = lines.length;
   let i = 0;
   let gap = false;
-  const push = (block, from) => {
-    block.gap = gap && blocks.length > 0;
-    if (depth === 0) block.size = lines.slice(from, i).reduce((sum, l) => sum + l.length + 1, 0);
-    gap = false;
-    blocks.push(block);
-  };
-  while (i < n) {
-    const line = lines[i];
-    if (isBlank(line)) { gap = true; i += 1; continue; }
-    const from = i;
-    const ind = indentOf(line);
-
-    if (ind >= 4) {
-      const code = [];
-      let j = i;
-      while (j < n && (isBlank(lines[j]) || indentOf(lines[j]) >= 4)) { code.push(lines[j].slice(4)); j += 1; }
-      while (code.length && isBlank(code.at(-1))) code.pop();
-      i += code.length;
-      push({ t: 'code', info: '', text: code.join('\n') }, from);
-      continue;
+  while (i < lines.length) {
+    if (isBlank(lines[i])) { gap = true; i += 1; continue; }
+    const { block, next } = readBlock(lines, i, depth, ctx);
+    if (next <= i) throw new Error(`the block reader stalled at line ${i}`);
+    if (block) {
+      block.gap = gap && blocks.length > 0;
+      if (depth === 0) block.size = lines.slice(i, next).reduce((sum, l) => sum + l.length + 1, 0);
+      gap = false;
+      blocks.push(block);
     }
-
-    const fence = isFenceOpen(line);
-    if (fence) {
-      const [, lead, marks, info] = fence;
-      const body = [];
-      i += 1;
-      while (i < n) {
-        const close = /^ {0,3}([`~]+)[ \t]*$/.exec(lines[i]);
-        if (close && close[1][0] === marks[0] && close[1].length >= marks.length) { i += 1; break; }
-        body.push(lines[i].replace(new RegExp(`^ {0,${lead.length}}`), ''));
-        i += 1;
-      }
-      push({ t: 'code', info: unescapeText(info.trim()), text: body.join('\n') }, from);
-      continue;
-    }
-
-    const atx = ATX.exec(line);
-    if (atx) {
-      const text = atxText(atx[2] ?? '');
-      i += 1;
-      push({ t: 'h', level: atx[1].length, text }, from);
-      continue;
-    }
-
-    if (HR.test(line)) { i += 1; push({ t: 'hr' }, from); continue; }
-
-    if (depth < MAX_BLOCK_DEPTH && QUOTE.test(line)) {
-      const inner = [];
-      while (i < n) {
-        const q = QUOTE.exec(lines[i]);
-        if (q) inner.push(lines[i].slice(q[0].length));
-        else if (!isBlank(lines[i]) && inner.length && !isBlank(inner.at(-1)) && !startsBlock(lines[i], depth)) inner.push(lines[i]);
-        else break;
-        i += 1;
-      }
-      push({ t: 'quote', c: parseBlocks(inner, depth + 1, ctx) }, from);
-      continue;
-    }
-
-    const lm = depth < MAX_BLOCK_DEPTH ? LIST.exec(line) : null;
-    if (lm) {
-      const list = parseList(lines, i, depth, ctx);
-      i = list.next;
-      push(list.block, from);
-      continue;
-    }
-
-    const table = tableAt(lines, i);
-    if (table) {
-      i += 2;
-      const rows = [];
-      while (i < n && !isBlank(lines[i]) && !startsBlock(lines[i], depth) && (rows.length + 1) * table.heads.length <= MAX_TABLE_CELLS) {
-        const cells = splitRow(lines[i]);
-        rows.push(table.heads.map((_, k) => cells[k] ?? ''));
-        i += 1;
-      }
-      push({ t: 'table', aligns: table.aligns, head: table.heads, rows }, from);
-      continue;
-    }
-
-    const para = [];
-    let level = 0;
-    while (i < n && !isBlank(lines[i])) {
-      const l = lines[i];
-      if (para.length) {
-        const setext = SETEXT.exec(l);
-        if (setext && indentOf(l) < 4) { level = setext[1][0] === '=' ? 1 : 2; i += 1; break; }
-        if (startsBlock(l, depth) || (l.includes('|') && tableAt(lines, i))) break;
-      }
-      para.push(l.replace(/^ +/, ''));
-      i += 1;
-    }
-    while (!level && para.length) {
-      const def = REF_DEF.exec(para[0]);
-      if (!def) break;
-      const key = normalizeLabel(def[1]);
-      if (key && !ctx.refs.has(key)) {
-        const dest = def[2].startsWith('<') ? def[2].slice(1, -1) : def[2];
-        ctx.refs.set(key, { href: unescapeText(dest), title: def[3] ? unescapeText(def[3].slice(1, -1)) : null });
-      }
-      para.shift();
-    }
-    if (!para.length) continue;
-    const text = trimEndWhile(para.join('\n'), isSpTab);
-    push(level ? { t: 'h', level, text } : { t: 'p', text }, from);
+    i = next;
   }
   return blocks;
 }
 
+// The block starting at the non-blank line `i`, and the line after it.
+function readBlock(lines, i, depth, ctx) {
+  const line = lines[i];
+  if (indentOf(line) >= 4) return indentedCode(lines, i);
+  const fence = isFenceOpen(line);
+  if (fence) return fencedCode(lines, i, fence);
+  const atx = ATX.exec(line);
+  if (atx) return { block: { t: 'h', level: atx[1].length, text: atxText(atx[2] ?? '') }, next: i + 1 };
+  if (HR.test(line)) return { block: { t: 'hr' }, next: i + 1 };
+  if (depth < MAX_BLOCK_DEPTH && QUOTE.test(line)) return blockQuote(lines, i, depth, ctx);
+  if (depth < MAX_BLOCK_DEPTH && LIST.test(line)) return parseList(lines, i, depth, ctx);
+  const table = tableAt(lines, i);
+  if (table) return tableRows(lines, i, table, depth);
+  return paragraph(lines, i, depth, ctx);
+}
+
+function indentedCode(lines, start) {
+  const code = [];
+  let j = start;
+  while (j < lines.length && (isBlank(lines[j]) || indentOf(lines[j]) >= 4)) { code.push(lines[j].slice(4)); j += 1; }
+  while (code.length && isBlank(code.at(-1))) code.pop();
+  return { block: { t: 'code', info: '', text: code.join('\n') }, next: start + code.length };
+}
+
+function fencedCode(lines, start, [, lead, marks, info]) {
+  const body = [];
+  const indent = new RegExp(`^ {0,${lead.length}}`);
+  let i = start + 1;
+  while (i < lines.length) {
+    const close = /^ {0,3}([`~]+)[ \t]*$/.exec(lines[i]);
+    if (close && close[1][0] === marks[0] && close[1].length >= marks.length) { i += 1; break; }
+    body.push(lines[i].replace(indent, ''));
+    i += 1;
+  }
+  return { block: { t: 'code', info: unescapeText(info.trim()), text: body.join('\n') }, next: i };
+}
+
+function blockQuote(lines, start, depth, ctx) {
+  const inner = [];
+  let i = start;
+  while (i < lines.length) {
+    const q = QUOTE.exec(lines[i]);
+    if (q) inner.push(lines[i].slice(q[0].length));
+    else if (!isBlank(lines[i]) && inner.length && !isBlank(inner.at(-1)) && !startsBlock(lines[i], depth)) inner.push(lines[i]);
+    else break;
+    i += 1;
+  }
+  return { block: { t: 'quote', c: parseBlocks(inner, depth + 1, ctx) }, next: i };
+}
+
+function tableRows(lines, start, table, depth) {
+  const rows = [];
+  let i = start + 2;
+  while (i < lines.length && !isBlank(lines[i]) && !startsBlock(lines[i], depth) && (rows.length + 1) * table.heads.length <= MAX_TABLE_CELLS) {
+    const cells = splitRow(lines[i]);
+    rows.push(table.heads.map((_, k) => cells[k] ?? ''));
+    i += 1;
+  }
+  return { block: { t: 'table', aligns: table.aligns, head: table.heads, rows }, next: i };
+}
+
+// A paragraph or setext heading; leading reference definitions go to ctx.refs,
+// and a paragraph made only of them yields no block.
+function paragraph(lines, start, depth, ctx) {
+  const para = [];
+  let level = 0;
+  let i = start;
+  while (i < lines.length && !isBlank(lines[i])) {
+    const l = lines[i];
+    if (para.length) {
+      const setext = SETEXT.exec(l);
+      if (setext && indentOf(l) < 4) { level = setext[1][0] === '=' ? 1 : 2; i += 1; break; }
+      if (startsBlock(l, depth) || (l.includes('|') && tableAt(lines, i))) break;
+    }
+    para.push(l.replace(/^ +/, ''));
+    i += 1;
+  }
+  if (!level) takeRefDefs(para, ctx.refs);
+  if (!para.length) return { block: null, next: i };
+  const text = trimEndWhile(para.join('\n'), isSpTab);
+  return { block: level ? { t: 'h', level, text } : { t: 'p', text }, next: i };
+}
+
+// Moves the reference definitions that open `para` into `refs`; the first one wins.
+function takeRefDefs(para, refs) {
+  while (para.length) {
+    const def = REF_DEF.exec(para[0]);
+    if (!def) return;
+    const key = normalizeLabel(def[1]);
+    if (key && !refs.has(key)) {
+      const dest = def[2].startsWith('<') ? def[2].slice(1, -1) : def[2];
+      refs.set(key, { href: unescapeText(dest), title: def[3] ? unescapeText(def[3].slice(1, -1)) : null });
+    }
+    para.shift();
+  }
+}
+
 function parseList(lines, start, depth, ctx) {
-  const n = lines.length;
   const first = LIST.exec(lines[start]);
+  if (!first) throw new Error(`line ${start} does not open a list`);
   const ordered = /^\d/.test(first[2]);
   const kind = ordered ? first[2].slice(-1) : first[2];
+  const sameKind = (m) => /^\d/.test(m[2]) === ordered && (ordered ? m[2].slice(-1) : m[2]) === kind;
   const items = [];
   let loose = false;
   let i = start;
-  const sameKind = (m) => /^\d/.test(m[2]) === ordered && (ordered ? m[2].slice(-1) : m[2]) === kind;
-  while (i < n) {
+  while (i < lines.length) {
     const m = LIST.exec(lines[i]);
     if (!m || HR.test(lines[i]) || !sameKind(m)) break;
-    const rest = lines[i].slice(m[0].length);
-    const markerEnd = m[1].length + m[2].length;
-    let contentIndent;
-    let firstLine;
-    if (!rest.trim()) { contentIndent = markerEnd + 1; firstLine = ''; }
-    else if (m[3].length >= 5) { contentIndent = markerEnd + 1; firstLine = ' '.repeat(m[3].length - 1) + rest; }
-    else { contentIndent = markerEnd + m[3].length; firstLine = rest; }
-    const body = [firstLine];
-    i += 1;
-    while (i < n) {
-      const l = lines[i];
-      if (isBlank(l)) {
-        let j = i;
-        while (j < n && isBlank(lines[j])) j += 1;
-        // An item may start with one blank line, no more.
-        if (j >= n || indentOf(lines[j]) < contentIndent || (body.length === 1 && body[0] === '' && j - i > 0)) break;
-        for (; i < j; i += 1) body.push('');
-      } else if (indentOf(l) >= contentIndent) {
-        body.push(l.slice(contentIndent));
-        i += 1;
-      } else if (!isBlank(body.at(-1)) && !LIST.test(l) && !startsBlock(l, depth)) {
-        body.push(l);
-        i += 1;
-      } else break;
-    }
+    const { body, next, contentIndent } = listItemBody(lines, i, m, depth);
     const children = parseBlocks(body, depth + 1, ctx);
     if (children.some((b, k) => k > 0 && b.gap)) loose = true;
-    const item = { c: children, task: null };
-    const lead = children[0];
-    if (lead?.t === 'p') {
-      const task = /^\[([ xX])\](?:[ \t]+|$)/.exec(lead.text);
-      if (task && lead.text.length > task[0].length) {
-        item.task = task[1] !== ' ';
-        lead.text = lead.text.slice(task[0].length);
-      }
-    }
-    items.push(item);
+    items.push(taskItem(children));
+    i = next;
     // The next sibling, with any blank lines before it.
     let j = i;
-    while (j < n && isBlank(lines[j])) j += 1;
-    const sib = j < n ? LIST.exec(lines[j]) : null;
+    while (j < lines.length && isBlank(lines[j])) j += 1;
+    const sib = j < lines.length ? LIST.exec(lines[j]) : null;
     if (!sib || HR.test(lines[j]) || indentOf(lines[j]) >= contentIndent || !sameKind(sib)) break;
     if (j > i) loose = true;
     i = j;
   }
+  if (items.length === 0) throw new Error(`the list at line ${start} has no items`);
   const block = { t: ordered ? 'ol' : 'ul', start: ordered ? parseInt(first[2], 10) : 1, loose, items };
   return { block, next: i };
+}
+
+// One item's lines, its marker `m` at line `start` removed and its indent stripped.
+function listItemBody(lines, start, m, depth) {
+  const n = lines.length;
+  const rest = lines[start].slice(m[0].length);
+  const markerEnd = m[1].length + m[2].length;
+  let contentIndent;
+  let firstLine;
+  if (!rest.trim()) { contentIndent = markerEnd + 1; firstLine = ''; }
+  else if (m[3].length >= 5) { contentIndent = markerEnd + 1; firstLine = ' '.repeat(m[3].length - 1) + rest; }
+  else { contentIndent = markerEnd + m[3].length; firstLine = rest; }
+  const body = [firstLine];
+  let i = start + 1;
+  while (i < n) {
+    const l = lines[i];
+    if (isBlank(l)) {
+      let j = i;
+      while (j < n && isBlank(lines[j])) j += 1;
+      // An item may start with one blank line, no more.
+      if (j >= n || indentOf(lines[j]) < contentIndent || (body.length === 1 && body[0] === '' && j - i > 0)) break;
+      for (; i < j; i += 1) body.push('');
+    } else if (indentOf(l) >= contentIndent) {
+      body.push(l.slice(contentIndent));
+      i += 1;
+    } else if (!isBlank(body.at(-1)) && !LIST.test(l) && !startsBlock(l, depth)) {
+      body.push(l);
+      i += 1;
+    } else break;
+  }
+  return { body, next: i, contentIndent };
+}
+
+// A list item; a leading `[ ]` or `[x]` before text makes it a task.
+function taskItem(children) {
+  const item = { c: children, task: null };
+  const lead = children[0];
+  if (lead?.t !== 'p') return item;
+  const task = /^\[([ xX])\](?:[ \t]+|$)/.exec(lead.text);
+  if (task && lead.text.length > task[0].length) {
+    item.task = task[1] !== ' ';
+    lead.text = lead.text.slice(task[0].length);
+  }
+  return item;
 }
 
 // ---- Inlines --------------------------------------------------------------
@@ -349,70 +364,214 @@ function trimUrlTail(url) {
 
 // Inline source to nodes. `refs` resolves [text][label] references.
 export function parseInline(src, refs = new Map()) {
-  let first = null;
-  let last = null;
-  const append = (node) => {
-    node.prev = last;
-    node.next = null;
-    if (last) last.next = node; else first = node;
-    last = node;
-    return node;
-  };
-  const unlink = (node) => {
-    if (node.prev) node.prev.next = node.next; else first = node.next;
-    if (node.next) node.next.prev = node.prev; else last = node.prev;
-  };
-  let delims = null; // delimiter stack, a doubly linked list; `delims` is its top
-  const brackets = [];
-  // Link openers below this stack index are off: a link cannot hold a link.
-  let linkFloor = 0;
-  let buf = '';
-  let pos = 0;
-  const autolink = (href, text) => ({ t: 'link', href, title: null, image: false, depth: 1, inner: { t: 'text', v: text, prev: null, next: null } });
-  const flush = () => { if (buf) { append({ t: 'text', v: buf }); buf = ''; } };
+  return new InlineParser(String(src), refs).run();
+}
 
-  const tickRuns = new Map();
-  let ticksReady = false;
-  const closingTicks = (len, from) => {
-    if (!ticksReady) {
-      ticksReady = true;
-      for (const m of src.matchAll(/`+/g)) {
-        if (!tickRuns.has(m[0].length)) tickRuns.set(m[0].length, { at: [], k: 0 });
-        tickRuns.get(m[0].length).at.push(m.index);
+const autolink = (href, text) => ({ t: 'link', href, title: null, image: false, depth: 1, inner: { t: 'text', v: text, prev: null, next: null } });
+
+// Whether the delimiter run src[start, end) of `ch` can open or close emphasis.
+function flanking(src, ch, start, end) {
+  const before = start > 0 ? src[start - 1] : '\n';
+  const after = end < src.length ? src[end] : '\n';
+  const bWS = SPACE.test(before);
+  const aWS = SPACE.test(after);
+  const bP = PUNCT.test(before);
+  const aP = PUNCT.test(after);
+  const left = !aWS && (!aP || bWS || bP);
+  const right = !bWS && (!bP || aWS || aP);
+  if (ch === '_') return { canOpen: left && (!right || bP), canClose: right && (!left || aP) };
+  return { canOpen: left, canClose: right };
+}
+
+// The CommonMark inline algorithm: nodes form a doubly linked chain, emphasis
+// delimiters a linked stack (`delims` is its top), link openers an array.
+class InlineParser {
+  constructor(src, refs) {
+    this.src = src;
+    this.refs = refs;
+    this.first = null;
+    this.last = null;
+    this.delims = null;
+    this.brackets = [];
+    // Link openers below this stack index are off: a link cannot hold a link.
+    this.linkFloor = 0;
+    this.buf = '';
+    this.pos = 0;
+    this.tickRuns = null;
+    // Nesting scans share one budget, so flat input cannot make repeated
+    // wrapping quadratic; once spent, nothing new nests.
+    this.budget = 8 * src.length + 1000;
+  }
+
+  run() {
+    const { src } = this;
+    while (this.pos < src.length) {
+      SPECIAL.lastIndex = this.pos;
+      const hit = SPECIAL.exec(src);
+      if (!hit) { this.buf += src.slice(this.pos); break; }
+      this.buf += src.slice(this.pos, hit.index);
+      this.pos = hit.index;
+      const at = this.pos;
+      this.step(src[at]);
+      if (this.pos <= at) throw new Error(`the inline parser stalled at ${at}`);
+    }
+    this.flush();
+    this.processEmphasis(null);
+    return materialize(this.first, 0);
+  }
+
+  // Consumes the construct that starts with the special character `ch` at `pos`.
+  step(ch) {
+    const { src } = this;
+    if (ch === '\\') this.backslash();
+    else if (ch === '\n') this.lineEnd();
+    else if (ch === '`') this.codeSpan();
+    else if (ch === '*' || ch === '_' || ch === '~') this.delimiterRun(ch);
+    else if (ch === '[' || (ch === '!' && src[this.pos + 1] === '[')) this.openBracket(ch === '!');
+    else if (ch === '!') { this.buf += '!'; this.pos += 1; }
+    else if (ch === ']') this.closeBracket();
+    else if (ch === '<') this.angleAutolink();
+    else if (ch === '&') this.entity();
+    else this.bareUrl(ch);
+  }
+
+  append(node) {
+    node.prev = this.last;
+    node.next = null;
+    if (this.last) this.last.next = node; else this.first = node;
+    this.last = node;
+    return node;
+  }
+
+  unlink(node) {
+    if (node.prev) node.prev.next = node.next; else this.first = node.next;
+    if (node.next) node.next.prev = node.prev; else this.last = node.prev;
+  }
+
+  flush() {
+    if (!this.buf) return;
+    this.append({ t: 'text', v: this.buf });
+    this.buf = '';
+  }
+
+  backslash() {
+    const next = this.src[this.pos + 1];
+    if (next === '\n') { this.flush(); this.append({ t: 'br' }); this.pos += 2; }
+    else if (next !== undefined && ESCAPABLE.test(next)) { this.buf += next; this.pos += 2; }
+    else { this.buf += '\\'; this.pos += 1; }
+  }
+
+  lineEnd() {
+    // Count the spaces in the source, not the buffer: reading a long
+    // buffer back would flatten it on every line.
+    let spaces = 0;
+    while (this.src.charCodeAt(this.pos - 1 - spaces) === 32 && spaces < this.buf.length) spaces += 1;
+    if (spaces > 0) this.buf = this.buf.slice(0, this.buf.length - spaces);
+    if (spaces >= 2) { this.flush(); this.append({ t: 'br' }); }
+    else this.buf += '\n';
+    this.pos += 1;
+  }
+
+  // Where the next run of exactly `len` backticks at or after `from` starts, or -1.
+  closingTicks(len, from) {
+    if (!this.tickRuns) {
+      this.tickRuns = new Map();
+      for (const m of this.src.matchAll(/`+/g)) {
+        if (!this.tickRuns.has(m[0].length)) this.tickRuns.set(m[0].length, { at: [], k: 0 });
+        this.tickRuns.get(m[0].length).at.push(m.index);
       }
     }
-    const runs = tickRuns.get(len);
+    const runs = this.tickRuns.get(len);
     if (!runs) return -1;
     while (runs.k < runs.at.length && runs.at[runs.k] < from) runs.k += 1;
     return runs.k < runs.at.length ? runs.at[runs.k] : -1;
-  };
+  }
 
-  const parseTail = (at) => {
-    // [text](dest "title"), from the "(" at `at`; returns { href, title, end } or null.
+  codeSpan() {
+    const { src } = this;
+    let end = this.pos;
+    while (src[end] === '`') end += 1;
+    const len = end - this.pos;
+    const close = this.closingTicks(len, end);
+    if (close < 0) { this.buf += src.slice(this.pos, end); this.pos = end; return; }
+    let code = src.slice(end, close).replace(/\n/g, ' ');
+    if (code.length > 2 && code.startsWith(' ') && code.endsWith(' ') && /[^ ]/.test(code)) code = code.slice(1, -1);
+    this.flush();
+    this.append({ t: 'code', v: code });
+    this.pos = close + len;
+  }
+
+  delimiterRun(ch) {
+    const { src } = this;
+    let end = this.pos;
+    while (src[end] === ch) end += 1;
+    const len = end - this.pos;
+    const { canOpen, canClose } = flanking(src, ch, this.pos, end);
+    if ((ch === '~' && len !== 2) || (!canOpen && !canClose)) { this.buf += src.slice(this.pos, end); this.pos = end; return; }
+    this.flush();
+    const node = this.append({ t: 'text', v: src.slice(this.pos, end) });
+    const d = { ch, count: len, orig: len, node, canOpen, canClose, prev: this.delims, next: null };
+    if (this.delims) this.delims.next = d;
+    this.delims = d;
+    this.pos = end;
+  }
+
+  openBracket(image) {
+    this.flush();
+    const node = this.append({ t: 'text', v: image ? '![' : '[' });
+    this.pos += image ? 2 : 1;
+    this.brackets.push({ node, at: this.pos, image, delim: this.delims });
+  }
+
+  angleAutolink() {
+    const { src, pos } = this;
+    AUTOLINK.lastIndex = pos;
+    const am = AUTOLINK.exec(src);
+    EMAIL.lastIndex = pos;
+    const em = am ?? EMAIL.exec(src);
+    const href = em && (am ? em[1] : `mailto:${em[1]}`);
+    if (!href || !safeHref(href)) { this.buf += '<'; this.pos += 1; return; }
+    this.flush();
+    this.append(autolink(href, em[1]));
+    this.pos += em[0].length;
+  }
+
+  entity() {
+    ENTITY_AT.lastIndex = this.pos;
+    const em = ENTITY_AT.exec(this.src);
+    const text = em ? entityText(em[1]) : null;
+    if (text === null) { this.buf += '&'; this.pos += 1; } else { this.buf += text; this.pos += em[0].length; }
+  }
+
+  // `h` or `w`: maybe a bare URL, at a word start and outside link text.
+  bareUrl(ch) {
+    const { src, pos } = this;
+    const prev = src[pos - 1];
+    let url = '';
+    if (this.brackets.length === 0 && (prev === undefined || SPACE.test(prev) || '*_~('.includes(prev))) {
+      URL_AT.lastIndex = pos;
+      const um = URL_AT.exec(src);
+      const text = um ? trimUrlTail(um[0]) : '';
+      const www = /^www\./i.test(text);
+      const host = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*/.exec(www ? text.slice(4) : text.replace(/^https?:\/\//i, ''))?.[0] ?? '';
+      if (host && (!www || host.includes('.')) && safeHref(www ? `http://${text}` : text)) url = text;
+    }
+    if (!url) { this.buf += ch; this.pos += 1; return; }
+    this.flush();
+    this.append(autolink(/^www\./i.test(url) ? `http://${url}` : url, url));
+    this.pos += url.length;
+  }
+
+  // [text](dest "title"), from the "(" at `at`; returns { href, title, end } or null.
+  parseTail(at) {
+    const { src } = this;
     let p = at + 1;
     const ws = () => { while (p < src.length && /[ \t\n]/.test(src[p])) p += 1; };
     ws();
-    let dest;
-    if (src[p] === '<') {
-      const from = p + 1;
-      p = from;
-      while (p < src.length && p - from <= MAX_URL_CHARS && src[p] !== '>' && src[p] !== '<' && src[p] !== '\n') p += src[p] === '\\' ? 2 : 1;
-      if (src[p] !== '>') return null;
-      dest = src.slice(from, p);
-      p += 1;
-    } else {
-      const from = p;
-      let depth = 0;
-      while (p < src.length && p - from <= MAX_URL_CHARS && !/[\s\u0000-\u001f\u007f]/.test(src[p])) {
-        if (src[p] === '\\' && p + 1 < src.length) { p += 2; continue; }
-        if (src[p] === '(') depth += 1;
-        else if (src[p] === ')') { if (depth === 0) break; depth -= 1; }
-        p += 1;
-      }
-      if (depth !== 0 || p - from > MAX_URL_CHARS) return null;
-      dest = src.slice(from, p);
-    }
-    const afterDest = p;
+    const dest = this.destination(p);
+    if (!dest) return null;
+    const afterDest = dest.end;
+    p = afterDest;
     ws();
     let title = null;
     const open = src[p];
@@ -427,240 +586,166 @@ export function parseInline(src, refs = new Map()) {
       ws();
     }
     if (src[p] !== ')') return null;
-    return { href: unescapeText(dest), title, end: p + 1 };
-  };
+    return { href: unescapeText(dest.raw), title, end: p + 1 };
+  }
 
-  // Nesting depth of a chain. The scans share one budget, so flat input
-  // cannot make repeated wrapping quadratic; once spent, nothing new nests.
-  let budget = 8 * src.length + 1000;
-  const depthOf = (head, stop = null) => {
+  // A link destination at `from`, <bracketed> or bare with balanced parens; { raw, end } or null.
+  destination(from) {
+    const { src } = this;
+    let p = from;
+    if (src[p] === '<') {
+      const start = from + 1;
+      p = start;
+      while (p < src.length && p - start <= MAX_URL_CHARS && src[p] !== '>' && src[p] !== '<' && src[p] !== '\n') p += src[p] === '\\' ? 2 : 1;
+      if (src[p] !== '>') return null;
+      return { raw: src.slice(start, p), end: p + 1 };
+    }
+    let depth = 0;
+    while (p < src.length && p - from <= MAX_URL_CHARS && !/[\s\u0000-\u001f\u007f]/.test(src[p])) {
+      if (src[p] === '\\' && p + 1 < src.length) { p += 2; continue; }
+      if (src[p] === '(') depth += 1;
+      else if (src[p] === ')') { if (depth === 0) break; depth -= 1; }
+      p += 1;
+    }
+    if (depth !== 0 || p - from > MAX_URL_CHARS) return null;
+    return { raw: src.slice(from, p), end: p };
+  }
+
+  // Nesting depth of the chain from `head` up to `stop`; Infinity once the budget is spent.
+  depthOf(head, stop = null) {
     let d = 0;
     for (let n = head; n && n !== stop; n = n.next) {
-      budget -= 1;
-      if (budget < 0) return Infinity;
+      this.budget -= 1;
+      if (this.budget < 0) return Infinity;
       d = Math.max(d, n.depth ?? 0);
     }
     return d;
-  };
+  }
+
   // Wrap the nodes strictly between `from` and `to` in a new node; null when empty or too deep.
-  const wrapBetween = (from, to, type, extra) => {
+  wrapBetween(from, to, type) {
+    if (from === to || !from.next) throw new Error('wrapBetween needs two distinct nodes in one chain');
     const head = from.next;
     if (head === to) return null;
     const tail = to.prev;
-    const depth = depthOf(head, to) + 1;
+    const depth = this.depthOf(head, to) + 1;
     if (depth > MAX_INLINE_DEPTH) return null;
-    const node = { t: type, depth, ...extra, inner: head, prev: from, next: to };
+    const node = { t: type, depth, inner: head, prev: from, next: to };
     head.prev = null;
     tail.next = null;
     from.next = node;
     to.prev = node;
     return node;
-  };
+  }
 
-  const removeDelim = (d) => {
+  removeDelim(d) {
     if (d.prev) d.prev.next = d.next;
-    if (d.next) d.next.prev = d.prev; else delims = d.prev;
-  };
+    if (d.next) d.next.prev = d.prev; else this.delims = d.prev;
+  }
 
-  const processEmphasis = (bottom) => {
+  // The nearest opener below `closer` (down to `limit`) that it can pair with, or null.
+  openerFor(closer, limit) {
+    for (let opener = closer.prev; opener && opener !== limit; opener = opener.prev) {
+      const odd = (closer.canOpen || opener.canClose) && closer.orig % 3 !== 0 && (opener.orig + closer.orig) % 3 === 0;
+      if (opener.ch === closer.ch && opener.canOpen && !odd && (closer.ch !== '~' || opener.count === closer.count)) return opener;
+    }
+    return null;
+  }
+
+  // Wraps the text between `opener` and `closer` in em, strong or del; returns the closer to try next.
+  pair(opener, closer) {
+    const use = closer.ch === '~' ? 2 : (closer.count >= 2 && opener.count >= 2 ? 2 : 1);
+    opener.count -= use;
+    closer.count -= use;
+    if (opener.count < 0 || closer.count < 0) throw new Error('an emphasis pair used more delimiters than it had');
+    opener.node.v = opener.node.v.slice(0, opener.node.v.length - use);
+    closer.node.v = closer.node.v.slice(use);
+    this.wrapBetween(opener.node, closer.node, closer.ch === '~' ? 'del' : (use === 2 ? 'strong' : 'em'));
+    // Drop the delimiters between the pair.
+    opener.next = closer;
+    closer.prev = opener;
+    if (opener.count === 0) { this.unlink(opener.node); this.removeDelim(opener); }
+    if (closer.count > 0) return closer;
+    const next = closer.next;
+    this.unlink(closer.node);
+    this.removeDelim(closer);
+    return next;
+  }
+
+  processEmphasis(bottom) {
     const bottoms = new Map();
-    let closer = bottom ? bottom.next : (() => { let d = delims; while (d?.prev) d = d.prev; return d; })();
+    let closer = bottom ? bottom.next : this.delims;
+    while (!bottom && closer?.prev) closer = closer.prev;
     while (closer) {
       if (!closer.canClose) { closer = closer.next; continue; }
       const key = `${closer.ch}${closer.orig % 3}${closer.canOpen ? 1 : 0}`;
-      const limit = bottoms.has(key) ? bottoms.get(key) : bottom;
-      let opener = closer.prev;
-      let found = false;
-      while (opener && opener !== limit) {
-        const odd = (closer.canOpen || opener.canClose) && closer.orig % 3 !== 0 && (opener.orig + closer.orig) % 3 === 0;
-        if (opener.ch === closer.ch && opener.canOpen && !odd && (closer.ch !== '~' || opener.count === closer.count)) { found = true; break; }
-        opener = opener.prev;
-      }
+      const opener = this.openerFor(closer, bottoms.has(key) ? bottoms.get(key) : bottom);
+      if (opener) { closer = this.pair(opener, closer); continue; }
       const old = closer;
-      if (found) {
-        const use = closer.ch === '~' ? 2 : (closer.count >= 2 && opener.count >= 2 ? 2 : 1);
-        opener.count -= use;
-        closer.count -= use;
-        opener.node.v = opener.node.v.slice(0, opener.node.v.length - use);
-        closer.node.v = closer.node.v.slice(use);
-        wrapBetween(opener.node, closer.node, closer.ch === '~' ? 'del' : (use === 2 ? 'strong' : 'em'), {});
-        // Drop the delimiters between the pair.
-        opener.next = closer;
-        closer.prev = opener;
-        if (opener.count === 0) { unlink(opener.node); removeDelim(opener); }
-        if (closer.count === 0) {
-          const next = closer.next;
-          unlink(closer.node);
-          removeDelim(closer);
-          closer = next;
-        }
-      } else {
-        closer = closer.next;
-        bottoms.set(key, old.prev);
-        if (!old.canOpen) removeDelim(old);
-      }
+      closer = closer.next;
+      bottoms.set(key, old.prev);
+      if (!old.canOpen) this.removeDelim(old);
     }
     // Everything above the bottom is spent.
-    if (bottom) { bottom.next = null; delims = bottom; } else delims = null;
-  };
+    if (bottom) { bottom.next = null; this.delims = bottom; } else this.delims = null;
+  }
 
-  const flanking = (ch, start, end) => {
-    const before = start > 0 ? src[start - 1] : '\n';
-    const after = end < src.length ? src[end] : '\n';
-    const bWS = SPACE.test(before);
-    const aWS = SPACE.test(after);
-    const bP = PUNCT.test(before);
-    const aP = PUNCT.test(after);
-    const left = !aWS && (!aP || bWS || bP);
-    const right = !bWS && (!bP || aWS || aP);
-    if (ch === '_') return { canOpen: left && (!right || bP), canClose: right && (!left || aP) };
-    return { canOpen: left, canClose: right };
-  };
+  closeBracket() {
+    const opener = this.brackets.pop();
+    this.pos += 1;
+    const off = opener && !opener.image && this.brackets.length < this.linkFloor;
+    if (this.linkFloor > this.brackets.length) this.linkFloor = this.brackets.length;
+    const found = opener && !off ? this.linkTarget(opener) : null;
+    if (!found) { this.buf += ']'; return; }
+    this.flush();
+    this.processEmphasis(opener.delim);
+    this.append(this.takeLabel(opener, found.target));
+    // Links do not nest: earlier link openers can no longer close.
+    if (!opener.image) this.linkFloor = this.brackets.length;
+    this.pos = found.end;
+  }
 
-  const closeBracket = () => {
-    const opener = brackets.pop();
-    pos += 1;
-    const off = opener && !opener.image && brackets.length < linkFloor;
-    if (linkFloor > brackets.length) linkFloor = brackets.length;
-    if (!opener || off) { buf += ']'; return; }
-    let target = null;
+  // The link the "]" just before `pos` closes: an inline (dest) or a reference.
+  linkTarget(opener) {
+    const { src, pos } = this;
+    if (src[pos] === '(') {
+      const tail = this.parseTail(pos);
+      if (tail) return { target: tail, end: tail.end };
+    }
+    if (this.refs.size === 0 || pos - 1 - opener.at > 999) return null;
+    let label = src.slice(opener.at, pos - 1);
     let end = pos;
-    if (src[end] === '(') {
-      const tail = parseTail(end);
-      if (tail) { target = tail; end = tail.end; }
-    }
-    if (!target && refs.size > 0 && pos - 1 - opener.at <= 999) {
-      const labelSrc = src.slice(opener.at, pos - 1);
-      let label = labelSrc;
-      let stop = pos;
-      if (src[stop] === '[') {
-        const close = src.indexOf(']', stop + 1);
-        if (close > 0 && close - stop <= 1000 && !src.slice(stop + 1, close).includes('[')) {
-          label = close === stop + 1 ? labelSrc : src.slice(stop + 1, close);
-          stop = close + 1;
-        }
+    if (src[end] === '[') {
+      const close = src.indexOf(']', end + 1);
+      if (close > 0 && close - end <= 1000 && !src.slice(end + 1, close).includes('[')) {
+        if (close > end + 1) label = src.slice(end + 1, close);
+        end = close + 1;
       }
-      const ref = label.trim() ? refs.get(normalizeLabel(label)) : null;
-      if (ref) { target = ref; end = stop; }
     }
-    if (!target) { buf += ']'; return; }
-    flush();
-    processEmphasis(opener.delim);
+    const ref = label.trim() ? this.refs.get(normalizeLabel(label)) : null;
+    return ref ? { target: ref, end } : null;
+  }
+
+  // Detaches everything after the opener's "[" as the label of a new link node.
+  takeLabel(opener, target) {
     const label = opener.node;
     const inner = label.next;
-    last = label.prev;
-    if (last) last.next = null; else first = null;
+    this.last = label.prev;
+    if (this.last) this.last.next = null; else this.first = null;
     const link = { t: 'link', href: target.href, title: target.title, image: opener.image, inner, depth: 1 };
-    if (inner) {
-      inner.prev = null;
-      link.depth = depthOf(inner) + 1;
-      // Pathologically nested labels keep the link but drop the label.
-      if (link.depth > MAX_INLINE_DEPTH) { link.inner = null; link.depth = 1; }
-    }
-    append(link);
-    // Links do not nest: earlier link openers can no longer close.
-    if (!opener.image) linkFloor = brackets.length;
-    pos = end;
-  };
-
-  while (pos < src.length) {
-    SPECIAL.lastIndex = pos;
-    const hit = SPECIAL.exec(src);
-    if (!hit) { buf += src.slice(pos); break; }
-    buf += src.slice(pos, hit.index);
-    pos = hit.index;
-    const ch = src[pos];
-
-    if (ch === '\\') {
-      if (src[pos + 1] === '\n') { flush(); append({ t: 'br' }); pos += 2; }
-      else if (pos + 1 < src.length && ESCAPABLE.test(src[pos + 1])) { buf += src[pos + 1]; pos += 2; }
-      else { buf += '\\'; pos += 1; }
-    } else if (ch === '\n') {
-      // Count the spaces in the source, not the buffer: reading a long
-      // buffer back would flatten it on every line.
-      let spaces = 0;
-      while (src.charCodeAt(pos - 1 - spaces) === 32 && spaces < buf.length) spaces += 1;
-      const hard = spaces >= 2;
-      if (spaces > 0) buf = buf.slice(0, buf.length - spaces);
-      if (hard) { flush(); append({ t: 'br' }); }
-      else buf += '\n';
-      pos += 1;
-    } else if (ch === '`') {
-      let end = pos;
-      while (src[end] === '`') end += 1;
-      const len = end - pos;
-      const close = closingTicks(len, end);
-      if (close < 0) { buf += src.slice(pos, end); pos = end; continue; }
-      let code = src.slice(end, close).replace(/\n/g, ' ');
-      if (code.length > 2 && code.startsWith(' ') && code.endsWith(' ') && /[^ ]/.test(code)) code = code.slice(1, -1);
-      flush();
-      append({ t: 'code', v: code });
-      pos = close + len;
-    } else if (ch === '*' || ch === '_' || ch === '~') {
-      let end = pos;
-      while (src[end] === ch) end += 1;
-      const len = end - pos;
-      if (ch === '~' && len !== 2) { buf += src.slice(pos, end); pos = end; continue; }
-      const { canOpen, canClose } = flanking(ch, pos, end);
-      if (!canOpen && !canClose) { buf += src.slice(pos, end); pos = end; continue; }
-      flush();
-      const node = append({ t: 'text', v: src.slice(pos, end) });
-      const d = { ch, count: len, orig: len, node, canOpen, canClose, prev: delims, next: null };
-      if (delims) delims.next = d;
-      delims = d;
-      pos = end;
-    } else if (ch === '[' || (ch === '!' && src[pos + 1] === '[')) {
-      const image = ch === '!';
-      flush();
-      const node = append({ t: 'text', v: image ? '![' : '[' });
-      brackets.push({ node, at: pos + (image ? 2 : 1), image, delim: delims });
-      pos += image ? 2 : 1;
-    } else if (ch === '!') {
-      buf += '!';
-      pos += 1;
-    } else if (ch === ']') {
-      closeBracket();
-    } else if (ch === '<') {
-      AUTOLINK.lastIndex = pos;
-      const am = AUTOLINK.exec(src);
-      EMAIL.lastIndex = pos;
-      const em = am ?? EMAIL.exec(src);
-      if (em && safeHref(am ? em[1] : `mailto:${em[1]}`)) {
-        flush();
-        append(autolink(am ? em[1] : `mailto:${em[1]}`, em[1]));
-        pos += em[0].length;
-      } else { buf += '<'; pos += 1; }
-    } else if (ch === '&') {
-      ENTITY_AT.lastIndex = pos;
-      const em = ENTITY_AT.exec(src);
-      const text = em ? entityText(em[1]) : null;
-      if (text === null) { buf += '&'; pos += 1; } else { buf += text; pos += em[0].length; }
-    } else {
-      // h / w: maybe a bare URL, at a word start and outside link text.
-      const prev = src[pos - 1];
-      let url = '';
-      if (brackets.length === 0 && (prev === undefined || SPACE.test(prev) || '*_~('.includes(prev))) {
-        URL_AT.lastIndex = pos;
-        const um = URL_AT.exec(src);
-        const text = um ? trimUrlTail(um[0]) : '';
-        const www = /^www\./i.test(text);
-        const host = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*/.exec(www ? text.slice(4) : text.replace(/^https?:\/\//i, ''))?.[0] ?? '';
-        if (host && (!www || host.includes('.')) && safeHref(www ? `http://${text}` : text)) url = text;
-      }
-      if (url) {
-        flush();
-        append(autolink(/^www\./i.test(url) ? `http://${url}` : url, url));
-        pos += url.length;
-      } else { buf += ch; pos += 1; }
-    }
+    if (!inner) return link;
+    inner.prev = null;
+    link.depth = this.depthOf(inner) + 1;
+    // Pathologically nested labels keep the link but drop the label.
+    if (link.depth > MAX_INLINE_DEPTH) { link.inner = null; link.depth = 1; }
+    return link;
   }
-  flush();
-  processEmphasis(null);
-  return materialize(first, 0);
 }
+
 
 // Linked chain to arrays, merging neighbouring text; images and unsafe links flatten.
 function materialize(head, depth) {
+  if (depth > MAX_INLINE_DEPTH) throw new RangeError(`inline nesting ${depth} is past the cap`);
   const out = [];
   for (let n = head; n; n = n.next) {
     if (n.t === 'text') {

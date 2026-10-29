@@ -1,6 +1,6 @@
 // Markdown as DOM: the parsed tree is built with h(), so every character stays
 // text and no HTML string is ever parsed. Links are filtered by safeHref().
-import { h } from './dom.js';
+import { h, replace } from './dom.js';
 import { parseMarkdown, parseInline } from './markdown-parse.js';
 
 const MAX_RENDER_DEPTH = 24;
@@ -65,6 +65,7 @@ export function renderInline(source) {
 // Long Markdown folded by whole blocks: the first blocks that fit `limit`
 // source characters (always at least one), then a toggle for the rest.
 export function clampedMarkdown(source, { limit, more = 'Show all', less = 'Show less', className } = {}) {
+  if (!Number.isInteger(limit) || limit <= 0) throw new RangeError(`a clamp limit is a positive number of characters, got ${limit}`);
   const all = parseMarkdown(source);
   let used = 0;
   let keep = 0;
@@ -75,7 +76,7 @@ export function clampedMarkdown(source, { limit, more = 'Show all', less = 'Show
   const toggle = h('button', { class: 'link-button', type: 'button', 'aria-expanded': 'false' }, more);
   toggle.addEventListener('click', () => {
     const open = toggle.getAttribute('aria-expanded') === 'true';
-    body.replaceChildren(...blocks(open ? all.slice(0, keep) : all).flat(Infinity).filter(Boolean).map((n) => (n instanceof Node ? n : document.createTextNode(String(n)))));
+    replace(body, blocks(open ? all.slice(0, keep) : all));
     toggle.setAttribute('aria-expanded', String(!open));
     toggle.textContent = open ? more : less;
   });

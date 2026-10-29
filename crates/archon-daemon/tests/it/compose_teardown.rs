@@ -329,26 +329,25 @@ async fn a_failed_teardown_is_told_in_the_feed() {
     assert_eq!(docker.removals(), ["stop a1"], "{:?}", docker.calls());
 }
 
+/// A running stage's item, its run moved into its own worktree.
+async fn running_in(harness: &Harness) -> (QueueItemId, PathBuf) {
+    let stage =
+        link_common::running_stage(&harness.ctx, harness.dir.path(), "agt_0401", "tsk_0401").await;
+    let mut store = harness.ctx.store.lock().await;
+    let mut run = store.run(&stage.run).unwrap();
+    let worktrees = &harness.ctx.paths.worktrees;
+    run.workspace = worktrees.join("app").join(run.item.as_str());
+    store.update_run(&run).unwrap();
+    std::fs::create_dir_all(&run.workspace).unwrap();
+    (run.item, run.workspace)
+}
+
 /// Ending a run tears down the stacks its worktree left, keeping volumes.
 #[tokio::test]
 async fn ending_a_run_tears_down_its_worktrees_stacks() {
     let docker = FakeDocker::new();
     let harness = harness_with(&docker.binary()).await;
-    let stage =
-        link_common::running_stage(&harness.ctx, harness.dir.path(), "agt_0401", "tsk_0401").await;
-    let (item, tree) = {
-        let mut store = harness.ctx.store.lock().await;
-        let mut run = store.run(&stage.run).unwrap();
-        run.workspace = harness
-            .ctx
-            .paths
-            .worktrees
-            .join("app")
-            .join(run.item.as_str());
-        store.update_run(&run).unwrap();
-        (run.item, run.workspace)
-    };
-    std::fs::create_dir_all(&tree).unwrap();
+    let (item, tree) = running_in(&harness).await;
     docker.lists("ps", &[container("a1", "review-1", &tree)]);
     executor::cancel_item(&harness.ctx, &item, "done")
         .await
@@ -358,6 +357,29 @@ async fn ending_a_run_tears_down_its_worktrees_stacks() {
         !harness.ctx.collecting.contains(&item),
         "the teardown let go of the worktree"
     );
+}
+
+/// A run that ends while another item, such as a restack fix or refresh,
+/// still works in the same worktree leaves the stacks there running.
+#[tokio::test]
+async fn a_run_ending_beside_a_live_sharer_leaves_the_stacks_alone() {
+    let docker = FakeDocker::new();
+    let harness = harness_with(&docker.binary()).await;
+    let (owner, tree) = running_in(&harness).await;
+    let mut beside = link_common::another_running_run(&harness.ctx).await;
+    beside.workspace = tree.clone();
+    harness.ctx.store.lock().await.update_run(&beside).unwrap();
+    let sharer = beside.item;
+    docker.lists("ps", &[container("a1", "review-1", &tree)]);
+    executor::cancel_item(&harness.ctx, &owner, "done")
+        .await
+        .unwrap();
+    assert!(docker.calls().is_empty(), "{:?}", docker.calls());
+    assert!(!harness.ctx.collecting.contains(&owner));
+    executor::cancel_item(&harness.ctx, &sharer, "done")
+        .await
+        .unwrap();
+    assert_eq!(docker.removals(), ["stop a1", "rm a1"]);
 }
 
 async fn run_harness(docker: &FakeDocker) -> common::Harness {

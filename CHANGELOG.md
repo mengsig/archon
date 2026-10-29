@@ -14,7 +14,8 @@
 - archond tears down the Docker Compose stacks an item's worktree started
   when its run ends, before a fresh retry sets its worktree aside, and
   before the worktree is removed; no run starts in that worktree, a retry's
-  included, until it is done. Only projects whose every container runs from
+  included, until it is done, and a worktree another live item (a restack
+  fix or refresh) still works in is left alone. Only projects whose every container runs from
   inside that worktree, with symlinks resolved, are touched: archond checks
   that again just before it acts, stops and removes only the containers it
   checked, and removes the project's networks once none of its containers
@@ -23,7 +24,9 @@
   nothing. `[worktrees] docker` names the CLI (#321).
 - `archon doctor` lists the Compose stacks left in worktrees of items that
   ended, and the `lavish-axi poll` processes beyond the reports archond
-  follows, each with the command that clears them (#321).
+  follows, each with the command that clears them; a project that runs from
+  more than one item's worktree gets no `down` command, which would stop
+  every one of them (#321).
 - Stage agents working in a worktree are told to stop every server and
   Compose stack they started before they finish, unless the agent or brief
   that gave them the task asked to leave it running; then they report what

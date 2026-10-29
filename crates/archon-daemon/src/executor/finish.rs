@@ -21,6 +21,7 @@ use crate::context::DaemonContext;
 use crate::resolve;
 use crate::triggers::{self, TriggerEvent};
 use crate::worktree::WorktreeManager;
+use crate::worktree::users::{self, LiveWorkspaces};
 
 /// Feed text is clipped to this; the item keeps the full text.
 const MAX_NOTICE_CHARS: usize = 2_000;
@@ -129,9 +130,10 @@ async fn repaired_follow_up(
 }
 
 /// The teardown of the Compose stacks a finished run's stages may have left
-/// in its worktree (a team run's whole directory) when Archon made it. Its
-/// mark keeps a requeued or retried run of the worktree from starting until
-/// the teardown is done; the caller holds the run table, as dispatch does.
+/// in its worktree (a team run's whole directory) when Archon made it and no
+/// other live item uses it. Its mark keeps a requeued or retried run of the
+/// worktree from starting until the teardown is done; the caller holds the
+/// run table, as dispatch does.
 async fn stacks_of(
     ctx: &DaemonContext,
     run: &PipelineRun,
@@ -144,7 +146,17 @@ async fn stacks_of(
     if !tree.starts_with(&ctx.paths.worktrees) || tree == ctx.paths.worktrees {
         return Ok(None);
     }
-    let owner = crate::worktree::users::owner(&*ctx.store.lock().await, &run.item)?;
+    let (owner, sharer) = {
+        let store = ctx.store.lock().await;
+        let live = LiveWorkspaces::read(&store, &ctx.paths.worktrees)?;
+        let sharer = live.user_besides(&tree, Some(&run.item)).cloned();
+        (users::owner(&store, &run.item)?, sharer)
+    };
+    // A restack fix or refresh may run there already; its stacks are its own.
+    if let Some(sharer) = sharer {
+        tracing::warn!(item = %run.item, %sharer, tree = %tree.display(), "another item works in the worktree; its compose stacks are left running");
+        return Ok(None);
+    }
     let Some(mark) = ctx.collecting.mark(owner.clone()) else {
         // Its holder works in the worktree; `archon doctor` names what it leaves.
         tracing::warn!(item = %run.item, %owner, tree = %tree.display(), "the worktree is busy; its compose stacks are left running");

@@ -10,6 +10,7 @@ use archon_client::ArchonClient;
 use archon_core::config::Config;
 use archon_core::id::QueueItemId;
 use archon_core::protocol::{ErrorCode, Reply, ReportState, Request};
+use archon_daemon::compose;
 
 use super::registry::COMMAND_TIMEOUT;
 use super::{Check, Level, check};
@@ -20,20 +21,14 @@ type Archond = anyhow::Result<Option<ArchonClient>>;
 /// worktree whose item ended, was pruned, or whose state archond cannot tell.
 pub(super) async fn check_compose(config: &Config, worktrees: &Path, archond: &Archond) -> Check {
     assert!(worktrees.is_absolute(), "the worktree root is absolute");
-    let Some(listing) = archon_daemon::compose::list(&config.worktrees.docker).await else {
+    let Some(listing) = compose::list(&config.worktrees.docker).await else {
         return check("compose stacks", Level::Ok, "docker is not available");
     };
-    let selection = archon_daemon::compose::select(&listing, &[worktrees.to_path_buf()]);
+    let selection = compose::select(&listing, &compose::trees_of(worktrees));
     let mut stale = Vec::new();
     for (project, found) in &selection.inside {
-        let Some(item) = item_of(&found.dir, worktrees) else {
-            continue;
-        };
-        if let Some(why) = left_behind(archond, &item).await {
-            stale.push(format!(
-                "{project} ({item} {why}): {}",
-                archon_daemon::compose::down_command(project)
-            ));
+        if let Some(note) = stale_project(&listing, (project, found), worktrees, archond).await {
+            stale.push(note);
         }
     }
     if stale.is_empty() {
@@ -44,14 +39,51 @@ pub(super) async fn check_compose(config: &Config, worktrees: &Path, archond: &A
     check("compose stacks", Level::Warn, detail)
 }
 
-/// The item whose worktree `dir` lies in: the first `qi_` directory below
-/// `worktrees`.
-fn item_of(dir: &Path, worktrees: &Path) -> Option<QueueItemId> {
+/// What to say of `project`, found under `worktrees`, unless it is live: the
+/// command that stops it only when it runs from one item's worktree alone,
+/// as it would stop a live item's containers too.
+async fn stale_project(
+    listing: &str,
+    (project, found): (&str, &compose::Project),
+    worktrees: &Path,
+    archond: &Archond,
+) -> Option<String> {
+    let (item, tree) = item_of(&found.dir, worktrees)?;
+    assert!(
+        tree.starts_with(worktrees),
+        "an item's worktree is in the root"
+    );
+    let own = compose::select(listing, &compose::trees_of(&tree));
+    let alone = own
+        .inside
+        .get(project)
+        .is_some_and(|p| p.containers.len() == found.containers.len());
+    if !alone {
+        return Some(format!(
+            "{project} (runs from more than one item's worktree; `docker ps --all --filter \
+             label=com.docker.compose.project={project}` shows where)"
+        ));
+    }
+    let why = left_behind(archond, &item).await?;
+    Some(format!(
+        "{project} ({item} {why}): {}",
+        compose::down_command(project)
+    ))
+}
+
+/// The item whose worktree `dir` lies in, the first `qi_` directory below
+/// `worktrees`, and that worktree.
+fn item_of(dir: &Path, worktrees: &Path) -> Option<(QueueItemId, PathBuf)> {
     let below = dir.strip_prefix(worktrees).ok()?;
-    below
-        .components()
-        .filter_map(|c| c.as_os_str().to_str())
-        .find_map(|name| QueueItemId::parse(name).ok())
+    let mut tree = worktrees.to_path_buf();
+    for component in below.components() {
+        tree.push(component);
+        let id = component.as_os_str().to_str().map(QueueItemId::parse);
+        if let Some(Ok(item)) = id {
+            return Some((item, tree));
+        }
+    }
+    None
 }
 
 /// Why `item`'s stacks should no longer run; `None` while it is live.
@@ -254,9 +286,39 @@ mod tests {
     fn a_stack_belongs_to_the_item_whose_directory_holds_it() {
         let item = QueueItemId::new();
         let root = Path::new("/d/worktrees");
-        let dir = root.join("app").join(item.as_str()).join("services");
-        assert_eq!(item_of(&dir, root), Some(item));
+        let tree = root.join("app").join(item.as_str());
+        assert_eq!(item_of(&tree.join("services"), root), Some((item, tree)));
         assert_eq!(item_of(Path::new("/d/worktrees/app/scratch"), root), None);
         assert_eq!(item_of(Path::new("/home/op/app"), root), None);
+    }
+
+    /// The down command is named only for a project in one item's worktree:
+    /// for one that also runs from a live item's, it would stop that too.
+    #[tokio::test]
+    async fn a_project_across_item_worktrees_gets_no_down_command() {
+        let root = Path::new("/d/worktrees");
+        let (done, live) = (QueueItemId::new(), QueueItemId::new());
+        let line = |id: &str, project: &str, item: &QueueItemId| {
+            let dir = root.join("app").join(item.as_str());
+            format!(
+                "{id}\t{project}\t{}/compose.yml\t{}\n",
+                dir.display(),
+                dir.display()
+            )
+        };
+        let listing =
+            line("a1", "shared", &done) + &line("a2", "shared", &live) + &line("b1", "own", &done);
+        let selection = compose::select(&listing, &compose::trees_of(root));
+        let archond: Archond = Ok(None);
+        let note = |project: &'static str| {
+            let found = &selection.inside[project];
+            stale_project(&listing, (project, found), root, &archond)
+        };
+        let shared = note("shared").await.expect("told");
+        assert!(!shared.contains(" down"), "{shared}");
+        assert!(shared.contains("more than one item"), "{shared}");
+        let own = note("own").await.expect("told");
+        assert!(own.ends_with(&compose::down_command("own")), "{own}");
+        assert!(own.contains(done.as_str()), "{own}");
     }
 }

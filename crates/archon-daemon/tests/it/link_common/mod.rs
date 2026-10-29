@@ -377,7 +377,19 @@ fn repo_at(path: &Path) -> Repo {
 fn running_run(store: &mut Store, path: &Path) -> PipelineRun {
     let repo = repo_at(path);
     store.insert_repo(&repo).unwrap();
-    let item = store.insert_item(&queue_item(&repo), None).unwrap();
+    run_in_repo(store, &repo)
+}
+
+/// Another running item of the one registered repository, and its run.
+pub async fn another_running_run(ctx: &DaemonContext) -> PipelineRun {
+    let mut store = ctx.store.lock().await;
+    let repos = store.repos().unwrap();
+    assert_eq!(repos.len(), 1, "one repository is registered");
+    run_in_repo(&mut store, &repos[0])
+}
+
+fn run_in_repo(store: &mut Store, repo: &Repo) -> PipelineRun {
+    let item = store.insert_item(&queue_item(repo), None).unwrap();
     let now = archon_core::now();
     store
         .transition_item(&item.id, QueueState::Dispatching, now)

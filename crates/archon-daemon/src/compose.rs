@@ -31,11 +31,12 @@ const LIST_TIMEOUT: Duration = Duration::from_secs(30);
 const STOP_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// A Compose project every container of which runs from inside the
-/// worktree: the directory it runs from and its containers' IDs.
+/// worktree: the directory it runs from, and each container's ID with the
+/// places it names.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Project {
     pub dir: PathBuf,
-    pub containers: BTreeSet<String>,
+    pub containers: BTreeMap<String, Vec<PathBuf>>,
 }
 
 /// The Compose projects with a container inside one of `trees`; those that
@@ -69,9 +70,10 @@ pub fn select(listing: &str, trees: &[PathBuf]) -> Selection {
             .entry(container.project.to_owned())
             .or_insert_with(|| Project {
                 dir,
-                containers: BTreeSet::new(),
+                containers: BTreeMap::new(),
             });
-        project.containers.insert(container.id.to_owned());
+        let places = container.places().cloned().collect();
+        project.containers.insert(container.id.to_owned(), places);
     }
     let shared: Vec<String> = outside
         .into_iter()
@@ -249,12 +251,13 @@ async fn stop_project(
         verified.dir.is_absolute(),
         "compose records absolute directories"
     );
-    let ids: Vec<&str> = verified.containers.iter().map(String::as_str).collect();
+    let ids: BTreeSet<String> = verified.containers.keys().cloned().collect();
     assert!(!ids.is_empty(), "a selected project has a container");
+    let args: Vec<&str> = ids.iter().map(String::as_str).collect();
     docker
-        .run(&[&["stop"], &ids[..]].concat(), STOP_TIMEOUT)
+        .run(&[&["stop"], &args[..]].concat(), STOP_TIMEOUT)
         .await?;
-    remove_stopped(docker, project, &verified.containers).await
+    remove_stopped(docker, project, &ids).await
 }
 
 /// Remove those of `stopped` still there (a `run --rm` one removes itself
@@ -315,9 +318,9 @@ fn in_worktree_root(root: &Path, tree: &Path) -> bool {
     named && resolved(tree).is_some_and(|real| inside(&real, &real_root))
 }
 
-/// `tree` as given and as resolved: Compose records the directory an agent
-/// ran it in, which may be either.
-fn trees_of(tree: &Path) -> Vec<PathBuf> {
+/// `tree` as given and as resolved, the `trees` [`select`] takes: Compose
+/// records the directory an agent ran it in, which may be either.
+pub fn trees_of(tree: &Path) -> Vec<PathBuf> {
     let mut trees = vec![tree.to_path_buf()];
     // One that stopped resolving leaves no place below it resolving either.
     if let Some(real) = resolved(tree)
@@ -435,11 +438,8 @@ mod tests {
         vec![PathBuf::from("/data/worktrees/app/qi_1")]
     }
 
-    fn project(dir: &str, containers: &[&str]) -> Project {
-        Project {
-            dir: PathBuf::from(dir),
-            containers: containers.iter().map(|&c| c.to_owned()).collect(),
-        }
+    fn ids(project: &Project) -> Vec<&str> {
+        project.containers.keys().map(String::as_str).collect()
     }
 
     #[test]
@@ -447,11 +447,11 @@ mod tests {
         let listing = "a1\treview-1\t/data/worktrees/app/qi_1/compose.yml,/data/worktrees/app/qi_1/compose.dev.yml\t/data/worktrees/app/qi_1\n\
                        b2\treview-1\t/data/worktrees/app/qi_1/compose.yml\t/data/worktrees/app/qi_1\n";
         let selection = select(listing, &trees());
-        let review = project("/data/worktrees/app/qi_1", &["a1", "b2"]);
-        assert_eq!(
-            selection.inside,
-            BTreeMap::from([("review-1".to_owned(), review)])
-        );
+        let review = &selection.inside["review-1"];
+        assert_eq!(review.dir, Path::new("/data/worktrees/app/qi_1"));
+        assert_eq!(ids(review), ["a1", "b2"]);
+        assert_eq!(review.containers["b2"].len(), 2, "config and working dir");
+        assert_eq!(selection.inside.len(), 1);
         assert!(selection.shared.is_empty());
     }
 
@@ -479,11 +479,13 @@ mod tests {
             selection.shared,
             vec!["app".to_owned(), "unplaced".to_owned()]
         );
-        let nested = project("/data/worktrees/app/qi_1/services/db", &["a5"]);
+        let nested = &selection.inside["nested"];
         assert_eq!(
-            selection.inside,
-            BTreeMap::from([("nested".to_owned(), nested)])
+            nested.dir,
+            Path::new("/data/worktrees/app/qi_1/services/db")
         );
+        assert_eq!(ids(nested), ["a5"]);
+        assert_eq!(selection.inside.len(), 1);
     }
 
     #[test]
@@ -565,9 +567,9 @@ mod tests {
         };
         let listing = line("theirs", &tree.join("ext")) + &line("ours", &tree.join("db"));
         let selection = select(&listing, &trees_of(&tree));
-        let db = tree.join("db");
-        let ours = BTreeMap::from([("ours".to_owned(), project(db.to_str().unwrap(), &["c0"]))]);
-        assert_eq!(selection.inside, ours);
+        let ours: Vec<&String> = selection.inside.keys().collect();
+        assert_eq!(ours, ["ours"]);
+        assert_eq!(selection.inside["ours"].dir, tree.join("db"));
         assert!(selection.shared.is_empty(), "{selection:?}");
     }
 }

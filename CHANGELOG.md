@@ -4,7 +4,19 @@
 
 The daemon protocol is 23 (was 22), for the remote-access requests:
 `archon mcp` and archond must be upgraded together, and each refuses the
-other's older version at hello. The store schema is unchanged.
+other's older version at hello. The store schema is 18 (was 17): the first
+start upgrades a 1.4.7 store in place, so learning outlives the history
+retention deletes, and adds the total of pruned spend. Archon 1.4.7 refuses a
+schema 18 store, so going back needs a copy of the data directory from
+before the upgrade.
+
+**Upgrading from 1.4.7** with `archon update --yes`: the 1.4.7 updater
+cannot speak protocol 23, so after the drained restart it waits out its
+deadline (`--wait` plus five minutes), reports that no new archond answered
+and leaves the orchestrator on 1.4.7. archond has restarted on the new
+release; run `archon update --yes` again, now from the new release, to
+refresh Archon's tools and renew the orchestrator. Later updates do this
+themselves (see Update below).
 
 ### Mobile web app
 
@@ -34,6 +46,57 @@ other's older version at hello. The store schema is unchanged.
   pairing, the queue and an item, the chat, answering a gate, enqueue,
   cancel, pause and resume, and a revoke and a disable from the CLI. CI
   runs it on the release pull request into `main` (#312).
+- A failed pipeline listing in the new-item sheet and a failed page read
+  in an artifact's sheet show with "Try again", as the other loads do.
+
+### Storage
+
+- `archon gc` also has Aether delete the workspaces it made for the agents
+  a stage delegated to, then runs `git worktree prune`; a data directory
+  with mirrors in it can be removed with `rm -rf` (#308, #281).
+- archond deletes the history of items settled more than `[storage]
+  retention_days` ago (14 by default, `0` keeps everything), keeping
+  learning, the total spend and any item still on disk or still counted.
+  The SQLite WAL is cut back to 4 MiB, and the data directory is made
+  readable by you alone (`0700`, database files `0600`), an existing one
+  included (#308).
+
+### Stacks
+
+- The dependents of a dependency merged on GitHub as a squash or a rebase
+  are restacked onto the landed commits instead of meeting a conflicting
+  merge, and `refresh_item` no longer refuses such a branch as up to date
+  (#309, #304).
+
+### Agents and messages
+
+- A stage agent at `[limits] max_agent_messages` keeps three escalations
+  and one reply to each orchestrator message, and the orchestrator is told
+  once that it reached the cap (#306, #299).
+- `steer --extend` and budget regrants reach the helpers a stage lead
+  delegated to, not only the lead (#302).
+- `model_plan` choices by `tier` and `provider` are accepted by the MCP
+  tools and in initiative members (#296, #300, #297).
+- The event pump recovers when Aether's retention deleted events past its
+  cursor; a stage whose agent finished but whose settle failed keeps the
+  agent's result instead of timing out; and a retried trigger batch reaches
+  a replaced orchestrator (#305).
+
+### Doctor
+
+- `archon doctor` and setup check that the orchestrator's engine is logged
+  in and name the login step, the revival blocker names it too, and `archon
+  tui` stops retrying a failed orchestrator; the release check no longer
+  needs `gh` (#310).
+
+### Update
+
+- `archon update --yes` restarts the orchestrator, ends at a signal at any
+  step and refuses a partial environment (#307, #271).
+- When archond restarts on a release with another daemon protocol, `archon
+  update --yes` takes the new archond's answer at hello as the restart done,
+  instead of waiting out its deadline, and renews the orchestrator through
+  the installed archon.
 
 ## 1.4.7
 

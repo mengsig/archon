@@ -65,14 +65,14 @@ export function mountItem(view, ctx) {
       artifacts = artifactsSection(ctx, id);
       artifactsAt = finished;
     }
-    drawn = JSON.stringify(shownFromStore(state, id, detail));
+    drawn = shownFromStore(state, id, detail);
     view.querySelector('.screen-title').textContent = detail.item.title;
     content.replaceChildren(...renderDetail(ctx, detail, state, { reload, artifacts }));
   };
   const unfollow = followItem(ctx, id, () => detail, () => load(true));
   // A failed reload keeps its error and retry in view until a load succeeds;
   // values the page already shows (the detail just arrived) do not redraw it.
-  const offReports = ctx.store.watch((s) => shownFromStore(s, id, detail), (shown) => detail && !failed && JSON.stringify(shown) !== drawn && render());
+  const offReports = ctx.store.watch((s) => shownFromStore(s, id, detail), (shown) => detail && !failed && !sameValues(shown, drawn) && render());
   reload();
   return () => { alive = false; unfollow(); offReports(); };
 }
@@ -115,6 +115,10 @@ function shownFromStore(state, id, detail) {
     Boolean(detail && pause?.repos.includes(detail.item.repo)),
     Boolean(detail && pause?.pipelines.includes(detail.item.pipeline)),
   ];
+}
+
+function sameValues(a, b) {
+  return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => v === b[i]);
 }
 
 function summaryOf(state, id) {

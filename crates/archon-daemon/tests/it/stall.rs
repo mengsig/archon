@@ -245,6 +245,26 @@ async fn a_refused_inspection_resume_fails_the_stage_as_infrastructure() {
     assert!(failed.infrastructure_failure);
 }
 
+/// Someone resumed the agent between Archon's read and its resume: the
+/// refusal that follows is no stall, and the stage keeps its agent.
+#[tokio::test]
+async fn a_refusal_for_an_agent_resumed_meanwhile_keeps_the_stage() {
+    let h = Harness::new().await;
+    let item = h.enqueue("the operator resumed it first").await;
+    h.dispatch().await;
+    let stage = the_only_running(&h).await;
+    h.backend.set_pulse(&lead(&stage), INSPECTED);
+    h.backend
+        .resume_elsewhere_before_next_inspection(ArchonError::Aether(
+            "invalid argument: agent is not under inspection".into(),
+        ));
+    went_silent(&h, &lead(&stage), 21);
+    sweep(&h).await;
+
+    assert_eq!(the_only_running(&h).await.id, stage.id, "still at work");
+    assert_eq!(h.stages(&item.id).await.len(), 1, "no retry was needed");
+}
+
 #[tokio::test]
 async fn an_unanswered_inspection_resume_is_tried_again() {
     let h = Harness::new().await;

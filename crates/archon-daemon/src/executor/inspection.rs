@@ -45,10 +45,7 @@ pub(super) async fn clear(
             return Ok(None);
         }
         Err(error) if error.is_store() => return Err(error),
-        Err(refusal) => {
-            tracing::warn!(stage = %stage.id, %refusal, "Aether refused to resume an inspection");
-            return Ok(Some(stall::inspection_refused(&refusal.to_string())));
-        }
+        Err(refusal) => return refused(ctx, stage, lead, refusal).await,
     };
     if resumed.is_empty() {
         return Ok(None);
@@ -71,6 +68,31 @@ pub(super) async fn clear(
     )
     .await?;
     Ok(None)
+}
+
+/// The failure for `stage` after Aether refused to resume its inspection;
+/// `None` when a fresh read finds no agent blocked for inspection any more,
+/// as when someone else resumed it first, or when Aether does not answer.
+async fn refused(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    lead: &AetherAgentId,
+    refusal: ArchonError,
+) -> Result<Option<String>, ArchonError> {
+    assert!(!refusal.is_store(), "a store failure is not a refusal");
+    assert_eq!(stage.aether_agent.as_ref(), Some(lead), "the stage's lead");
+    match ctx.backend.pulse(lead).await {
+        Ok(Some(pulse)) if !pulse.inspection => {
+            tracing::info!(stage = %stage.id, %refusal, "inspection resume refused, but none is blocked now");
+            Ok(None)
+        }
+        Ok(_) => {
+            tracing::warn!(stage = %stage.id, %refusal, "Aether refused to resume an inspection");
+            Ok(Some(stall::inspection_refused(&refusal.to_string())))
+        }
+        Err(error) if resume::unanswered(&error) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// Tell the orchestrator, once per stage run, that `stage`'s tree has been

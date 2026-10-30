@@ -191,12 +191,16 @@ pub fn judge(policy: &Policy, reading: &Reading) -> Verdict {
     if reading.waiting {
         return Verdict::Healthy;
     }
-    if reading.inspection {
-        return Verdict::Inspection;
-    }
     let silent = (reading.now - reading.last_event)
         .to_std()
         .unwrap_or(Duration::ZERO);
+    // A helper still at work may yet need the blocked agent as it stands.
+    if reading.inspection {
+        return match silent >= policy.silence {
+            true => Verdict::Inspection,
+            false => Verdict::Healthy,
+        };
+    }
     if reading.held {
         return match !reading.held_for_cause && silent >= policy.fallback {
             true => Verdict::HeldLong { silent },
@@ -515,9 +519,14 @@ mod tests {
         let blocked = Reading {
             inspection: true,
             running: false,
-            ..reading(1, None)
+            ..reading(20, None)
         };
         assert_eq!(judge(&policy(), &blocked), Verdict::Inspection);
+        let helper_at_work = Reading {
+            now: at(19),
+            ..blocked
+        };
+        assert_eq!(judge(&policy(), &helper_at_work), Verdict::Healthy);
         let held_too = Reading {
             held: true,
             held_for_cause: true,

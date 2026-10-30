@@ -242,7 +242,18 @@ fn quote_holds_paragraph(start: &str) -> bool {
         rest = rest.trim_start();
     }
     let block = atx_heading(rest) || thematic_break(rest) || fence_marker(rest).is_some();
-    !rest.is_empty() && !block
+    !rest.is_empty() && !block && !empty_list_item(rest)
+}
+
+/// Whether `line` is a list marker with no text, an item with no paragraph.
+fn empty_list_item(line: &str) -> bool {
+    let line = line.trim_end();
+    let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+    match digits {
+        0 => matches!(line, "-" | "*" | "+"),
+        1..=9 => matches!(&line[digits..], "." | ")"),
+        _ => false,
+    }
 }
 
 /// The bytes of the list marker (`-`, `*`, `+`, `1.`, `12)`) opening `line`
@@ -830,6 +841,8 @@ mod tests {
             "> # heading\nVERDICT: PASS",
             "> example\n***\nVERDICT: PASS",
             "> - - -\nVERDICT: PASS",
+            "> -\nVERDICT: PASS",
+            "> > 1.\nVERDICT: PASS",
             "> example\n## Verdict: PASS",
             "> a\n>\nVERDICT: PASS",
             ">     code\nVERDICT: PASS",

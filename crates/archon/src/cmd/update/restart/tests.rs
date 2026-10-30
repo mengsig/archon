@@ -539,11 +539,11 @@ fn only_an_answer_starting_with_n_declines() {
 
 #[tokio::test]
 async fn an_archond_that_waits_for_its_agents_is_asked_to_restart_anyway_soon() {
-    for (version, asked, warned) in [
-        ("archon 1.4.8", (10, true), true),
-        ("not a version", (10, true), true),
-        ("1.4.9", (1800, false), false),
-        ("archon 1.5.0", (1800, false), false),
+    for (version, asked) in [
+        ("archon 1.4.8", (10, true)),
+        ("not a version", (10, true)),
+        ("1.4.9", (1800, false)),
+        ("archon 1.5.0", (1800, false)),
     ] {
         let mut fake = Fake::new(vec![Seen::New]);
         fake.running = Some(Running {
@@ -557,11 +557,5 @@ async fn an_archond_that_waits_for_its_agents_is_asked_to_restart_anyway_soon() 
         let outcome = apply(&fake, &plan, &Progress::new()).await.unwrap();
         assert!(outcome.restarted, "{version}: {outcome:?}");
         assert_eq!(*fake.asked.borrow(), [asked], "{version}");
-        let said = outcome.lines.join("\n");
-        assert_eq!(
-            said.contains("restarts anyway"),
-            warned,
-            "{version}: {said}"
-        );
     }
 }

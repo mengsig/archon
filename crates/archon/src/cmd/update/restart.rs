@@ -328,12 +328,19 @@ async fn switch_archond(
     progress: &Progress,
 ) -> anyhow::Result<bool> {
     assert!(old.pid > 0, "a running archond has a pid");
-    let detail = format!(
+    let mut detail = format!(
         "pid {}, for at most {}s; running stage agents keep running",
         old.pid,
         SWITCH_LIMIT.as_secs()
     );
-    let plan = &for_archond(plan, old, outcome);
+    let older = for_older_archond(plan, old);
+    if let Some(older) = &older {
+        detail.push_str(&format!(
+            "; archond {} waits up to {}s for them first, then restarts anyway",
+            old.version, older.drain_secs
+        ));
+    }
+    let plan = older.as_ref().unwrap_or(plan);
     progress.enter(Phase::AskingArchond, &detail);
     if restart(steps, plan, old, SWITCH_LIMIT, progress).await? == Switched::Later {
         outcome.lines.push(restarts_later(plan, old));
@@ -347,32 +354,27 @@ async fn switch_archond(
     Ok(true)
 }
 
-/// The request for `old`. An archond before [`AGENTS_OUT_OF_DRAIN_SINCE`]
+/// The request for `old` when it predates [`AGENTS_OUT_OF_DRAIN_SINCE`]: it
 /// waits for stage agents even when it keeps Aether, so it waits briefly and
-/// restarts anyway: keeping Aether, that stops no agent.
-fn for_archond(plan: &Plan, old: &Running, outcome: &mut Outcome) -> Plan {
+/// restarts anyway. Keeping Aether, that stops no agent.
+fn for_older_archond(plan: &Plan, old: &Running) -> Option<Plan> {
     let first: Version = AGENTS_OUT_OF_DRAIN_SINCE
         .parse()
         .expect("a release version");
     let version = bare_version(&old.version).parse::<Version>();
     if version.is_ok_and(|version| version >= first) {
-        return plan.clone();
+        return None;
     }
     let wait = OLDER_ARCHOND_DRAIN.as_secs();
     assert!(
         wait < SWITCH_LIMIT.as_secs(),
         "the update outwaits the drain"
     );
-    outcome.lines.push(format!(
-        "archond {} waits for its stage agents before a restart, so it is given {wait}s and \
-         then restarts anyway; they keep running in Aether.",
-        old.version
-    ));
-    Plan {
+    Some(Plan {
         drain_secs: wait.min(plan.drain_secs),
         requeue: true,
         ..plan.clone()
-    }
+    })
 }
 
 /// What happens to an archond still draining its own work when the update returns.

@@ -18,7 +18,7 @@ use archon_core::error::ArchonError;
 use archon_core::model::Effort;
 use archon_core::notify::NotificationKind;
 use archon_core::ports::{DescendantState, NetworkPolicy};
-use archon_core::protocol::{PauseTarget, Request};
+use archon_core::protocol::{PauseTarget, Reply, Request};
 use archon_core::queue::QueueState;
 use archon_core::run::{PipelineRun, RunState, StageOutcome, StageRun, StageState};
 use archon_daemon::{dispatcher, executor, pump};
@@ -779,6 +779,59 @@ async fn an_infra_failure_wakes_the_failed_agent_before_a_fresh_one() {
         !h.backend.cancelled().contains(&agent),
         "kept for the stage's next attempt"
     );
+}
+
+/// Charge `agent` a running total of `usd`, as Aether's usage event does.
+async fn charge(h: &Harness, agent: &AetherAgentId, usd: f64) {
+    let mut wire = archon_aether::fake::event(
+        Some(agent.as_str()),
+        None,
+        serde_json::json!({
+            "type": "agent.usage_updated", "total": {"cost_usd": usd, "cost_basis": "provider_reported"}
+        }),
+    );
+    wire["seq"] = serde_json::json!(1);
+    wire["at"] = serde_json::json!(archon_core::now());
+    let event = archon_aether::events::parse_event(wire).unwrap();
+    pump::handle_fleet_event(&h.ctx, &event).await.unwrap();
+}
+
+/// A woken agent kept for a later attempt still splits its cost at each
+/// hand-off: the failed attempt keeps what it spent before the wake.
+#[tokio::test]
+async fn a_woken_agent_kept_for_a_later_attempt_splits_its_cost() {
+    let h = Harness::new().await;
+    let item = h.enqueue("flaky engine, then a fix").await;
+    h.dispatch().await;
+    let agent = h.running().await.remove(0).aether_agent.unwrap();
+    charge(&h, &agent, 0.25).await;
+    h.backend.fail_agent(&agent);
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "engine died".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    charge(&h, &agent, 0.75).await;
+    h.backend.answer(&agent, completed("implemented"));
+    executor::turn_ended(&h.ctx, &agent).await.unwrap();
+    h.dispatch().await;
+    one_reviewer_fails(&h).await;
+    h.dispatch().await;
+    let fix = h.running().await.remove(0);
+    assert_eq!((fix.attempt, fix.aether_agent.as_ref()), (2, Some(&agent)));
+    charge(&h, &agent, 1.0).await;
+
+    let Ok(Reply::ItemDetail(detail)) = h.cli(Request::GetItem { item: item.id }).await else {
+        panic!("item detail");
+    };
+    let costs: Vec<(u32, f64)> = detail
+        .stages
+        .iter()
+        .filter(|s| s.stage_id == "implement")
+        .map(|s| (s.attempt, s.cost_usd))
+        .collect();
+    assert_eq!(costs, [(1, 0.25), (1, 0.5), (2, 0.25)], "each span once");
 }
 
 /// The woken agent failing again gets the slot's cold retry, a fresh agent,

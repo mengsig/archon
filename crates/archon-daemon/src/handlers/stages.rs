@@ -131,6 +131,24 @@ fn pick(
     Ok(picked)
 }
 
+/// Whether a later stage run of `stage`'s slot and attempt woke its agent in
+/// place, wherever that agent went after.
+fn woke_its_agent(store: &Store, stage: &StageRun) -> Result<bool, ArchonError> {
+    assert!(stage.aether_agent.is_some(), "only an agent is woken");
+    let runs = store.stage_runs(&stage.run)?;
+    assert!(
+        runs.iter().any(|s| s.id == stage.id),
+        "a stage run belongs to its run"
+    );
+    Ok(runs.iter().any(|s| {
+        s.id != stage.id
+            && (&s.stage_id, s.fan_index, s.attempt)
+                == (&stage.stage_id, stage.fan_index, stage.attempt)
+            && s.aether_agent == stage.aether_agent
+            && s.started_at > stage.started_at
+    }))
+}
+
 /// Set `stage`'s cost to what the ledger charged its agent and every agent beneath it
 /// during this attempt, from hand-off to hand-off of a kept or woken agent; the split, when it
 /// delegated.
@@ -143,9 +161,8 @@ pub(super) fn charge(
         return Ok(None);
     };
     let handoffs = store.agent_handoffs(agent, estimates)?;
-    let holder = store.stage_run_by_agent(agent)?;
     // The failed attempt its agent was woken from ends where its replacement starts.
-    let woken_from = holder.is_some_and(|h| h.id != stage.id && h.attempt == stage.attempt);
+    let woken_from = stage.infrastructure_failure && woke_its_agent(store, stage)?;
     let (from, until) = match woken_from {
         true => (
             handoffs.iter().rfind(|h| h.attempt < stage.attempt),

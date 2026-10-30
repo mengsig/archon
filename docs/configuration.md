@@ -26,7 +26,7 @@ example, in TOML:
 
 ```toml
 [[build]]
-model = "codex/gpt-6.1-sol"
+model = "codex/gpt-6.1-terra"
 effort = "high"
 ```
 
@@ -67,28 +67,41 @@ preference, not a floor: Archon picks the best model the effective model policy
 from the lead when `prefer_other_provider` is set and a permitted model of
 another provider exists. If no permitted model reaches the tier, the contract
 names the best permitted one, or the lead's own model, and says so; the agent is
-never sent to look for a model the policy would refuse. The model policy's effort
-cap still applies. An explicit `<stage>.review` plan is unchanged.
+never sent to look for a model the policy would refuse. `default_effort` is a
+floor raised to at least medium: the contract asks for that effort or higher,
+and for at least high when the lead rates the change's risk medium or high. The
+model policy's effort cap still applies. In an explicit `<stage>.review` plan
+each effort is a floor too: a reviewer below it is cancelled as it spawns, and
+one above it runs, up to the policy's cap.
 
 `auto_repair` (default `true`) covers a run that fails only because the gate
 refused the review or the ship record it owes (a delta read not anchored, a
 mistyped reviewer id, no review object, an unreadable verdict, an invalid ship
-record). archond then queues one retry of the item in the same worktree and
-branch, with a repair note in the brief that quotes the refusal and tells the
-agent to repair the record only; the feed says so and the item's history keeps
-the failed run. A second refusal fails the item with both reasons. Coverage and
-verdict rules are unchanged, and a cancelled or steered run is never repaired.
+record), or because archond refused to deliver something the record stage can
+fix in its own worktree (uncommitted changes, a tree that is not the record's,
+files that must not ship, a commit under a foreign identity or with an
+attribution trailer). archond then
+queues one retry of the item in the same worktree and branch, with a repair
+note in the brief that quotes the refusal and asks only for what was refused:
+a new ship record read after the last commit when only the record was refused,
+leaving the committed work as it is; a new review when the review was refused;
+a fix of what the delivery named, committed under the repository's own
+identity. It asks for a reviewer again only when the stage owes one. The feed
+says so and the item's history keeps the failed run. A second refusal fails the
+item with both reasons. Coverage, verdict and identity rules are unchanged: a
+commit under a foreign identity is still refused at the next delivery, and a
+cancelled or steered run is never repaired.
 Set it to `false` to retry such items by hand with `retry_item`.
 
 ```toml
 [review]                       # reviewers with no explicit <stage>.review plan
 default_tier = "balanced"
-default_effort = "low"
+default_effort = "low"         # raised to medium, or high for a riskier change
 prefer_other_provider = true
-auto_repair = true             # one automatic retry when the review or ship record is refused
+auto_repair = true             # one automatic retry when the review, ship record or a fixable delivery is refused
 
 [models]                       # optional: leave it out to allow every ready model
-allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-sol"]
+allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-terra"]
 max_effort = "high"
 # max_default_tier = "strong"  # the highest tier a default picks (the default)
 # provider_weights = { "claude-code" = 7, codex = 3 }   # route tier-only choices by share
@@ -117,6 +130,7 @@ lean_builds = true             # no incremental state, line-table debuginfo (dev
 shared_cache = false           # true: one cargo target dir per repository instead
 shared_cache_after = "14d"     # idle shared caches go; never while a run is live
 pressure_after = "1d"          # shorter ages while dispatch is held for disk space
+docker = "docker"              # tears down the Compose stacks agents leave in worktrees
 
 [artifacts]                    # files stages publish; read by item id later
 max_file_mb = 256
@@ -124,7 +138,7 @@ max_item_mb = 1024
 keep_after = "14d"             # after the item settled; "0s" disables expiry
 
 [storage]
-retention_days = 14            # settled item reports and daemon log age; 0 disables age expiry
+retention_days = 14            # settled items' history, reports and daemon log age; 0 disables age expiry
 log_max_mb = 10                # rotate detached daemon logs by size; 0 disables size rotation
 log_max_files = 3              # archives in addition to the active log; 0 disables count limit
 ```
@@ -144,14 +158,14 @@ name = "Archon"                # the orchestrator's name in Aether
 trigger_coalesce_ms = 2000     # triggers within this window wake it once
 
 [models]
-# deny = ["codex/gpt-6.1-sol"] # never used, whatever `allow` says
+# deny = ["codex/gpt-6.1-terra"] # never used, whatever `allow` says
 
 [limits]
 max_active_runs = 0            # runs going at once; 0 = unlimited
 budget_usd_per_item = 0.0      # one item may spend this much; 0 = no cap
 budget_usd_total = 0.0         # all spend ever; 0 = no cap
 count_estimated_cost = true    # API-equivalent estimates (such as Codex usage) count toward budgets
-infra_retries = 1              # re-spawns after an infrastructure failure, per stage run
+infra_retries = 1              # retries after an infrastructure failure, per stage run; the first wakes the failed agent in place
 stall_minutes = 20             # stage watchdog: minutes a `running` agent tree may go without an event or live engine; 0 = off
 stall_fallback_minutes = 45    # the same silence when Aether does not report `engine_alive` (older Aether)
 # [limits.per_pipeline] sets the most runs of one pipeline at once (see above)
@@ -224,7 +238,8 @@ and three archives by default. Rotation applies size, archive count and age
 limits independently; `0` disables each corresponding limit. Foreground daemon
 output remains on its configured stdout/stderr. Storage config validation
 allows `retention_days` 0..36500, `log_max_mb` 0..1048576 and `log_max_files`
-0..1000. SQLite rows, the spend ledger and 90-day evidence windows are unchanged.
+0..1000. `retention_days` also bounds SQLite history as described above, while
+outcomes, lesson uses and the spend budgets still count stay.
 
 `archon status` and MCP `queue_status` show allocated bytes by storage kind,
 including database WAL/SHM and the startup log beside the socket, plus the last
@@ -369,7 +384,9 @@ initiative_contract_bytes = 2048 # 1..=16384
   own `timeout_minutes` is not capped by it.
 - `max_agent_messages`: the `message_orchestrator` calls one stage agent
   may make in its lifetime, and the messages one run node's inbox may
-  relay. Each message is an orchestrator turn.
+  relay. Each message is an orchestrator turn. Past it an agent keeps 3
+  escalations in reserve and one reply to each orchestrator message or
+  steer note, and the orchestrator is told once that it reached the cap.
 - `initiative_members` and `initiative_contract_bytes`: an initiative's
   size. The contract is in every member's stage contract, and is sent
   whole to running members whenever it changes.
@@ -500,6 +517,23 @@ or uncommitted copy runs nothing.
 When a merge queue or branch rule holds the merge, promote again once it
 landed: that call finishes the promotion, realigning and running the hook.
 
+## Remote access
+
+```toml
+[remote]
+address = "127.0.0.1:8378"
+allow_remote = false
+max_connections = 16
+```
+
+The mobile web app's listener ([remote.md](remote.md)). It is off until
+`archon remote setup` or `archon remote enable` switches it on; these keys
+only say where it binds once on. `address` is `host:port`; a non-loopback
+host is refused unless `allow_remote = true`, and the listener speaks plain
+HTTP either way, so publish it with `tailscale serve` or a TLS proxy.
+`max_connections` (1 to 1024) caps the HTTP connections and WebSocket
+sessions served at once. A change takes effect when archond restarts.
+
 ## Push notifications
 
 ```toml
@@ -577,6 +611,25 @@ items, and what a fresh retry or a team run set aside. It never touches an
 item that is still queued or running, your own checkout of the repository,
 any branch or commit, or the published copies of reports.
 
+When a pass removed a worktree, it then has Aether delete the workspaces
+Aether made for the agents a stage delegated to, and runs `git worktree
+prune` in the repository. If Aether is not running or is too old, gc says
+so ("Aether's storage cleanup did not run") and still succeeds; the next
+pass that removes a worktree asks again. `--offline` only prunes git.
+
+The store bounds itself too. Every 10 minutes `archond` deletes the history
+of items settled more than `[storage] retention_days` ago (14 by default,
+`0` keeps everything): their runs, stage runs, gates, spend and steering
+records, and feed entries the feed never shows. It waits at least 14 days
+and at least `[artifacts] keep_after`, and keeps an item while its worktree,
+a copy a fresh retry set aside or its published artifacts are still on disk, a report or open question names it, or a budget still
+counts its spend. What Archon learned from finished runs (outcomes and
+lessons) is kept, and so is the total spend. The SQLite write-ahead log is
+cut back to 4 MiB. The data directory is readable by you alone (`0700`,
+the database files `0600`), including an existing one, which `archond`
+tightens when it opens it. A data directory with mirrors in it can be
+deleted with `rm -rf`.
+
 ### What is deleted with uncommitted work
 
 Keeping uncommitted changes protects the worktree an item's agents work
@@ -619,7 +672,7 @@ If you are already signed in to Claude Code or Codex, neither Archon nor Aether 
 After setup, `archon aether models` lists the models your Aether installation
 actually exposes: for example `claude-code/claude-opus-5-5`,
 `claude-code/claude-sonnet-5-5`, `claude-code/claude-haiku-5-5`,
-`claude-code/claude-fable-5-1`, `codex/gpt-6-astra`, `codex/gpt-6.1-sol`
+`claude-code/claude-fable-5-1`, `codex/gpt-6-astra`, `codex/gpt-6.1-terra`
 and `codex/gpt-6-luna`. The orchestrator's own model is the one model you
 set, because it must be known before any agent runs. To use Codex alone,
 set `[orchestrator] model` to an available `codex/…` entry before starting
@@ -628,7 +681,7 @@ well as every model the stages may use.
 
 ```toml
 [orchestrator]
-model = "codex/gpt-6.1-sol"    # any entry from `archon aether models`
+model = "codex/gpt-6.1-terra"  # any entry from `archon aether models`
 effort = "high"
 ```
 

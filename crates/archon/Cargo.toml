@@ -24,6 +24,7 @@ archon-queue = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
 dirs = { workspace = true }
+qrcode = { workspace = true }
 rustix = { workspace = true }
 rustyline = { workspace = true }
 serde = { workspace = true }
@@ -36,9 +37,11 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
+archon-aether = { workspace = true, features = ["fake"] }
 archon-core = { workspace = true, features = ["testing"] }
 # A pseudo-terminal for the tests of what a bare `archon` opens.
 rustix = { workspace = true, features = ["pty"] }
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

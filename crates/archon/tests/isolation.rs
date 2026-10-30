@@ -180,6 +180,66 @@ fn a_mixed_environment_warns_and_starts_nothing() {
     );
 }
 
+/// Only `ARCHON_CONFIG_DIR` set: the data dir and the socket are the sandbox's
+/// defaults, where the operator's own archond and aetherd would listen.
+fn mixed_at_default_socket(env: &Env, args: &[&str]) -> Command {
+    let mut command = mixed(env, args);
+    command.env_remove("ARCHON_SOCKET");
+    command
+}
+
+/// A socket at `path` that no command may connect to.
+fn untouched_listener(path: &Path) -> std::os::unix::net::UnixListener {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let listener = std::os::unix::net::UnixListener::bind(path).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    listener
+}
+
+#[test]
+fn a_mixed_environment_stops_and_restarts_nothing() {
+    let env = Env::new();
+    let archond = untouched_listener(&env.path("run/archon/archond.sock"));
+    let aetherd = untouched_listener(&env.path("run/archon/aetherd.sock"));
+    let tools = env.path("tools");
+    std::fs::create_dir_all(&tools).unwrap();
+    let ran = env.path("aether-ran");
+    let script = format!("#!/bin/sh\n: > '{}'\n", ran.display());
+    archon_core::testing::write_script(&tools.join("aether"), &script);
+    let path = format!("{}:{}", tools.display(), std::env::var("PATH").unwrap());
+    for args in [
+        &["daemon", "stop"][..],
+        &["daemon", "stop", "--force"],
+        &["daemon", "restart"],
+        &["aether", "stop"],
+    ] {
+        let child = mixed_at_default_socket(&env, args)
+            .env("PATH", &path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let out = exit_within(child, Duration::from_secs(10));
+        let stderr = text(&out.stderr);
+        assert!(!out.status.success(), "archon {args:?} succeeded: {out:?}");
+        assert!(
+            stderr.contains("stops and restarts nothing here")
+                && stderr.contains("ARCHON_DATA_DIR (")
+                && stderr.contains("are still the default"),
+            "archon {args:?}: {stderr}"
+        );
+    }
+    for (name, listener) in [("archond", &archond), ("aetherd", &aetherd)] {
+        let accepted = listener.accept().map(drop).unwrap_err();
+        assert_eq!(
+            accepted.kind(),
+            std::io::ErrorKind::WouldBlock,
+            "{name} was reached"
+        );
+    }
+    assert!(!ran.exists(), "`aether` was run");
+}
+
 /// `archon mcp`, run as `command`, after one `list_repos` call and the end of its input.
 fn mcp_list_repos(mut command: Command) -> Output {
     let mut proxy = command

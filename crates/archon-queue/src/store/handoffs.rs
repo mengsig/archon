@@ -12,29 +12,42 @@ use serde::{Deserialize, Serialize};
 use super::AgentHandoff;
 use super::codec::{SqlContext, from_json, to_json};
 
-/// `kv` keys: `<PREFIX><agent>/<attempt, zero-padded>`, so key order is attempt order.
+/// `kv` keys: `<PREFIX><agent>/<attempt, zero-padded>`, then `/<wake, zero-padded>` for a
+/// wake within the attempt, so key order is (attempt, wake) order.
 const PREFIX: &str = "agent-handoff/";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Recorded {
     attempt: u32,
+    /// How many runs of the attempt held the agent before: 0 unless woken.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    wake: u32,
     /// Each charged agent of the subtree: `(cost, estimate)`.
     spent: BTreeMap<String, (f64, f64)>,
 }
 
-fn key(agent: &AetherAgentId, attempt: u32) -> String {
-    format!("{PREFIX}{}/{attempt:010}", agent.as_str())
+fn is_zero(wake: &u32) -> bool {
+    *wake == 0
+}
+
+fn key(agent: &AetherAgentId, attempt: u32, wake: u32) -> String {
+    match wake {
+        0 => format!("{PREFIX}{}/{attempt:010}", agent.as_str()),
+        _ => format!("{PREFIX}{}/{attempt:010}/{wake:010}", agent.as_str()),
+    }
 }
 
 /// Record what `agent` and every agent beneath it had been charged as it
-/// passes to `next`, a later attempt; the first record of an attempt stands.
+/// passes to `next`, a later attempt, or the `wake`-th replacement of its own
+/// attempt that woke it; the first record of each stands.
 pub(super) fn record(
     conn: &Connection,
     agent: &AetherAgentId,
     next: &StageRun,
+    wake: u32,
 ) -> Result<(), ArchonError> {
     assert_eq!(next.aether_agent.as_ref(), Some(agent), "it passes to next");
-    assert!(next.attempt > 1, "a kept agent passes to a later attempt");
+    assert!(next.attempt >= 1, "attempts are 1-based");
     let mut statement = conn
         .prepare_cached(
             "WITH RECURSIVE subtree(agent) AS (
@@ -61,12 +74,13 @@ pub(super) fn record(
     );
     let recorded = Recorded {
         attempt: next.attempt,
+        wake,
         spent,
     };
     conn.execute(
         "INSERT INTO kv (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO NOTHING",
         params![
-            key(agent, next.attempt),
+            key(agent, next.attempt, wake),
             to_json(&recorded, "agent hand-off")?
         ],
     )
@@ -74,7 +88,7 @@ pub(super) fn record(
     Ok(())
 }
 
-/// Every hand-off of `agent`, by attempt; a charge counts its estimate when `estimates`.
+/// Every hand-off of `agent`, by attempt and wake; a charge counts its estimate when `estimates`.
 pub(super) fn of_agent(
     conn: &Connection,
     agent: &AetherAgentId,
@@ -95,8 +109,8 @@ pub(super) fn of_agent(
         handoffs.push(decode(recorded, estimates)?);
     }
     assert!(
-        handoffs.windows(2).all(|w| w[0].attempt < w[1].attempt),
-        "hand-offs come in attempt order, one per attempt"
+        handoffs.windows(2).all(|w| w[0].at() < w[1].at()),
+        "hand-offs come in (attempt, wake) order, one each"
     );
     Ok(handoffs)
 }
@@ -116,6 +130,7 @@ fn decode(recorded: Recorded, estimates: bool) -> Result<AgentHandoff, ArchonErr
     }
     Ok(AgentHandoff {
         attempt: recorded.attempt,
+        wake: recorded.wake,
         spent,
     })
 }

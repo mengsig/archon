@@ -168,7 +168,9 @@ struct Network {
 
 impl Releases for Network {
     async fn archon(&self) -> anyhow::Result<String> {
-        super::latest(&self.source).await.map(|v| v.to_string())
+        super::latest(&self.source, super::SMALL_FILE_TIMEOUT)
+            .await
+            .map(|v| v.to_string())
     }
 
     async fn aether(&self) -> anyhow::Result<String> {

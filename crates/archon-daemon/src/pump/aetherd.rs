@@ -34,6 +34,9 @@ pub(super) struct OwnAetherd {
     retry: Duration,
     /// Why the last start failed; the operator was told once per outage.
     failure: Option<String>,
+    /// The restart archond planned that stopped aetherd, read as the outage
+    /// begins: the next archond's report removes its record within a minute.
+    planned: Option<String>,
 }
 
 impl OwnAetherd {
@@ -44,6 +47,7 @@ impl OwnAetherd {
             next_start: None,
             retry: RETRY_MIN,
             failure: None,
+            planned: None,
         }
     }
 
@@ -74,6 +78,9 @@ impl OwnAetherd {
             return Ok(());
         };
         let now = Instant::now();
+        if self.absent_since.is_none() {
+            self.planned = crate::ops::planned_aether_restart(ctx).await?;
+        }
         let since = *self.absent_since.get_or_insert(now);
         ctx.aether.mark_down(self.down_text())?;
         if now - since < START_GRACE || self.next_start.is_some_and(|at| now < at) {
@@ -106,12 +113,17 @@ impl OwnAetherd {
     async fn started(&mut self, ctx: &DaemonContext) -> Result<(), ArchonError> {
         assert!(self.starter.is_some(), "only a supervisor that starts it");
         let told = self.failure.is_some();
+        let planned = self.planned.take();
         self.absent_since = None;
         self.next_start = None;
         self.retry = RETRY_MIN;
         self.failure = None;
         tracing::info!("started Archon's own aetherd again");
-        let mut text = "Archon's own aetherd had stopped; archond started it again".to_owned();
+        // A restart archond asked for stops aetherd on purpose: no crash to report.
+        let mut text = match planned {
+            Some(what) => format!("Archon's own aetherd restarted, as planned ({what})"),
+            None => "Archon's own aetherd had stopped; archond started it again".to_owned(),
+        };
         text.push_str(match told {
             true => " after the failures it reported.",
             false => ".",

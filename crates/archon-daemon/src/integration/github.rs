@@ -364,7 +364,6 @@ mod tests {
     /// A fake `gh` serving `dir`'s files: two pages of check runs, the
     /// second holding the failure, and the failing job's log.
     fn fake_gh(dir: &Path) -> std::path::PathBuf {
-        use std::os::unix::fs::PermissionsExt;
         let passed = r#"{"id":1,"name":"lint","status":"completed","conclusion":"success"}"#;
         let first = vec![passed; 100].join(",");
         std::fs::write(
@@ -387,8 +386,7 @@ mod tests {
             dir.display()
         );
         let gh = dir.join("gh");
-        std::fs::write(&gh, script).unwrap();
-        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        archon_core::testing::write_script(&gh, &script);
         gh
     }
 

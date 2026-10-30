@@ -16,6 +16,7 @@ use archon_pipeline::risk::DiffStat;
 use archon_pipeline::swarm::PLAN_FILE;
 use archon_pipeline::{ShipRecord, attribution_lines};
 
+use crate::reaper::services;
 use crate::worktree::daemon_git::{Config, DaemonGit};
 use crate::worktree::head;
 use crate::worktree::shadow::Shadow;
@@ -25,6 +26,28 @@ use crate::worktree::team::{check_worktree, common_dir};
 const MAX_LISTED: usize = 5;
 /// Where stages write the pages Archon shows the operator; never part of a change.
 const REPORTS_DIR: &str = ".archon/reports/";
+
+/// How the refusals open that the record stage can fix in its own worktree,
+/// so its one automatic repair may: what it left uncommitted or committed
+/// after its record, a commit not under the repository's identity (after
+/// the count), an attribution line, a file that must not ship.
+const UNCOMMITTED: &str = "the run worktree has uncommitted changes, which would not ship";
+const TREE_CHANGED: &str = "the run branch holds tree ";
+const FOREIGN: &str =
+    " commit(s) on the run branch were not made under this repository's git identity";
+const ATTRIBUTED: &str = "this repository's attribution policy is `none`";
+const UNSHIPPABLE: &str = "the change carries files that must not ship";
+
+/// Whether delivery refusal `error` names something the record stage can fix
+/// in its worktree and on its branch; never a reason to accept it unfixed.
+pub(in crate::executor) fn repairable(error: &str) -> bool {
+    let after_count = error.trim_start_matches(|c: char| c.is_ascii_digit());
+    let counted = after_count.len() < error.len() && after_count.starts_with(FOREIGN);
+    counted
+        || [UNCOMMITTED, TREE_CHANGED, ATTRIBUTED, UNSHIPPABLE]
+            .iter()
+            .any(|opening| error.starts_with(opening))
+}
 
 /// The worktree a run ships from and what it must hold.
 #[derive(Debug, Clone)]
@@ -81,15 +104,12 @@ pub(super) fn check(
     let commit = git(tree, &["rev-parse", "--verify", "HEAD^{commit}"])?;
     let dirty = changed_files(target, &commit)?;
     if !dirty.is_empty() {
-        return Ok(Err(format!(
-            "the run worktree has uncommitted changes, which would not ship: {}",
-            listed(dirty.lines())
-        )));
+        return Ok(Err(format!("{UNCOMMITTED}: {}", listed(dirty.lines()))));
     }
     let found = git(tree, &["rev-parse", "--verify", "HEAD^{tree}"])?;
     if found != record.tree {
         return Ok(Err(format!(
-            "the run branch holds tree {found} at commit {commit}, not the tree {} that was \
+            "{TREE_CHANGED}{found} at commit {commit}, not the tree {} that was \
              verified at commit {}: it changed after the ship record was written",
             record.tree, record.commit
         )));
@@ -156,12 +176,16 @@ pub(super) fn check_unchanged(target: &Target) -> Result<Result<(), String>, Arc
             listed(dirty.lines())
         )));
     }
-    let staged = git(tree, &["diff", "--cached", "--name-only", "--no-renames"])?;
-    let untracked = git(tree, &["ls-files", "--others", "--exclude-standard"])?;
+    let staged = nul_paths(
+        tree,
+        &["diff", "--cached", "--name-only", "--no-renames", "-z"],
+    )?;
+    let untracked = nul_paths(tree, &["ls-files", "--others", "--exclude-standard", "-z"])?;
     let present = staged
-        .lines()
-        .chain(untracked.lines())
-        .filter(|path| !is_unshippable(path))
+        .iter()
+        .chain(&untracked)
+        .map(String::as_str)
+        .filter(|path| !is_unshippable(path) && !services::is_pid_file(path))
         .collect::<Vec<_>>();
     if !present.is_empty() {
         return Ok(Err(format!(
@@ -226,7 +250,7 @@ fn unshippable_files(tree: &Path, base: &str) -> Result<Result<(), String>, Arch
         return Ok(Ok(()));
     }
     Ok(Err(format!(
-        "the change carries files that must not ship: {}. Remove them in a commit \
+        "{UNSHIPPABLE}: {}. Remove them in a commit \
          (`git rm --cached`; a build cache belongs in `.gitignore`)",
         listed(found.iter().copied())
     )))
@@ -251,6 +275,29 @@ fn diff_stat(tree: &Path, base: &str) -> Result<DiffStat, ArchonError> {
 /// the programs it names; its stdout.
 fn git(tree: &Path, args: &[&str]) -> Result<String, ArchonError> {
     DaemonGit::sealed_in(tree).args(args.iter().copied()).text()
+}
+
+/// The paths git lists NUL-separated (`-z`, so unquoted) in `tree`; a name
+/// that is not UTF-8 is shown with replacement characters.
+fn nul_paths(tree: &Path, args: &[&str]) -> Result<Vec<String>, ArchonError> {
+    assert!(args.contains(&"-z"), "only NUL-separated output is split");
+    let ran = DaemonGit::sealed_in(tree)
+        .args(args.iter().copied())
+        .output()?;
+    if !ran.status.success() {
+        return Err(ran.failure());
+    }
+    let paths: Vec<String> = ran
+        .stdout
+        .split(|&byte| byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| String::from_utf8_lossy(path).into_owned())
+        .collect();
+    assert!(
+        paths.iter().all(|path| !path.contains('\0')),
+        "split on NUL"
+    );
+    Ok(paths)
 }
 
 /// The run worktree's tracked files that differ from `commit`, compared through the
@@ -456,11 +503,13 @@ fn foreign_commits(
         return Ok(Ok(()));
     }
     Ok(Err(format!(
-        "{} commit(s) on the run branch were not made under this repository's git identity \
-         (<{}>): {}. Commits must inherit the local git configuration; Archon records it at \
-         `archon repo add`, and again at `archon repo set` after a deliberate change. \
-         A plain `archon queue retry` keeps these commits and is refused again: run `archon repo \
-         set` if their identity is the one to accept, else `archon queue retry --fresh`",
+        "{}{FOREIGN} (<{}>): {}. Commits must inherit the local git configuration; Archon \
+         records it at `archon repo add`, and again at `archon repo set` after a deliberate \
+         change. The stage can make them again under that configuration, never by setting an \
+         identity itself (`git rebase --exec 'git commit --amend --no-edit --reset-author' \
+         <base>`). A plain `archon queue retry` keeps these commits and is refused again: run \
+         `archon repo set` if their identity is the one to accept, else `archon queue retry \
+         --fresh`",
         foreign.len(),
         allowed[0],
         listed(foreign.iter().map(String::as_str))
@@ -509,8 +558,8 @@ fn unattributed(
     }
     // Every line is quoted, not `listed`: each is one the stage must remove.
     Ok(Err(format!(
-        "this repository's attribution policy is `none`, so nothing that ships may credit a \
-         model or a tool, and {} line(s) do: {}. Retry the item so its stage writes `pr.body` \
+        "{ATTRIBUTED}, so nothing that ships may credit a model or a tool, and {} line(s) \
+         do: {}. Retry the item so its stage writes `pr.body` \
          without them and rewords those commits (no `Co-Authored-By:` trailer, no \
          `Generated with` line), then records the new `commit` and `tree`",
         found.len(),
@@ -537,6 +586,28 @@ fn listed<'a>(items: impl Iterator<Item = &'a str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_refusals_the_stage_can_fix_are_repairable() {
+        for error in [
+            format!("{UNCOMMITTED}: README.md"),
+            format!("{TREE_CHANGED}abc at commit def, not the tree"),
+            format!("12{FOREIGN} (<a@b>): 0123 (author <x@y>, committer <x@y>)"),
+            format!("{ATTRIBUTED}, so nothing that ships may credit a model"),
+            format!("{UNSHIPPABLE}: x.pyc. Remove them in a commit"),
+        ] {
+            assert!(repairable(&error), "{error}");
+        }
+        for error in [
+            "nothing to ship: `b` has no commit beyond `main`",
+            "the run worktree /w is gone",
+            "the run worktree is on a detached HEAD, not on the run branch `b`",
+            &FOREIGN[1..],
+            "delivery failed 3 times, last with: the run worktree has uncommitted changes",
+        ] {
+            assert!(!repairable(error), "{error}");
+        }
+    }
 
     #[test]
     fn caches_and_the_swarm_plan_are_unshippable() {

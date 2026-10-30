@@ -64,7 +64,10 @@ your yes; `ARCHON_NO_WIZARD=1` skips the offer, and without a terminal
 `archon` prints the one command still missing instead of asking. Shipping pull
 requests needs `gh auth login` and a git name and e-mail. The same steps by
 hand: `archon setup`, `archon repo add . --name example --ship pr`,
-`archon doctor`. If the orchestrator's model is missing from `archon aether
+`archon doctor`. Setup and the doctor check that the orchestrator's model is
+listed by Aether and its engine is logged in; when it is not, they name the
+login command (for example run `claude` once) or a logged-in engine to choose.
+If the orchestrator's model is missing from `archon aether
 models`, [choose another](docs/configuration.md#select-an-available-model).
 
 `archon` opens the terminal UI on the orchestrator. Ask, for example:
@@ -80,6 +83,29 @@ Chat and the commands that change state start `archond` and Archon's own
 Aether instance when needed; read-only ones such as `queue`, `repo`,
 `questions` and `status` do not ([which commands start
 archond](docs/guide.md#which-commands-start-archond)).
+
+## Get started in the chat
+
+After the first run, set everything else up by asking the orchestrator.
+When it needs your yes, archond asks a numbered question and you reply
+`/answer <n> <answer>`:
+
+```text
+you:     Register ~/code/foo as foo, ship pull requests, base branch main.
+you:     For foo, use the adaptive pipeline by default.
+archon:  Q3: Approve operator authority change? … Reply yes or no, or /answer N yes.
+you:     /answer 3 yes
+you:     In foo, fix issue #12.
+you:     From now on, review anything that touches foo's auth/ strictly.
+```
+
+Watch the work with `/queue`, `/item <id>` and `/status`, merge with
+`/merge <id>`, see what waits with `/questions` and proposed lessons with
+`/lessons`, and watch a repository's GitHub issues with `/watch <name>`.
+Plans and reports open as [Lavish](https://github.com/kunchenguid/lavish-axi)
+review pages where you comment in place. [Get started](docs/getting-started.md)
+walks through each step: repositories and their settings, the queue,
+standing directives, Lavish, GitHub, questions and lessons.
 
 ## How it works
 
@@ -161,6 +187,7 @@ a backend and frontend team, an e2e gate and a review.
 | `archon merge <id>` | Merge a delivered pull request at its reviewed commit |
 | `archon log --item <id> --follow` | Follow one item's events |
 | `archon cost --since 7d --by repo` | Spending by repository |
+| `archon remote setup` | Use Archon from your phone: the [mobile web app](docs/remote-setup.md) over Tailscale |
 
 An item id's unique prefix works too. The [user guide](docs/guide.md) covers
 the rest, and [queue scripting](docs/queue-scripting.md) enqueues from files.
@@ -196,11 +223,13 @@ Contributors are listed by GitHub handle, and the list is maintained by hand.
 
 ## Documentation
 
-[User guide](docs/guide.md) · [Install](docs/install.md) ·
+[Get started](docs/getting-started.md) · [User guide](docs/guide.md) ·
+[Install](docs/install.md) ·
 [Configuration](docs/configuration.md) · [Pipelines](docs/PIPELINES.md) ·
 [Queue scripting](docs/queue-scripting.md) ·
 [GitHub watcher](docs/github-watcher.md) ·
+[Mobile web app](docs/remote-setup.md) ·
 [Operator authority](docs/operator-authority.md) · [Architecture](docs/ARCHITECTURE.md)
 
-Project version: **1.4.7**. Licensed under [MIT](LICENSE). For development,
+Project version: **1.4.8**. Licensed under [MIT](LICENSE). For development,
 see [CONTRIBUTING.md](CONTRIBUTING.md).

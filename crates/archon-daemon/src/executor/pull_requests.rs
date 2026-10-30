@@ -15,7 +15,7 @@ use super::gh::{self, Pass, PullRequest};
 use crate::context::DaemonContext;
 
 /// How long after its run finished a pull request is still asked about.
-const WATCHED_DAYS: i64 = 14;
+pub(crate) const WATCHED_DAYS: i64 = 14;
 
 /// What one pass learned from GitHub.
 #[derive(Debug, Default, PartialEq, Eq)]

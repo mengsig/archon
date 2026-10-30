@@ -29,6 +29,15 @@ use crate::setup;
 /// How long a launch waits for archond's status before a plain welcome.
 const WELCOME_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+/// How long a launch waits for an orchestrator archond cannot attach yet.
+const ATTACH_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+const ATTACH_RETRY: std::time::Duration = std::time::Duration::from_millis(250);
+/// The least time a request is given; any less could not be answered.
+const MIN_REQUEST_BUDGET: std::time::Duration = std::time::Duration::from_millis(100);
+/// How long a launch waits to learn whether the orchestrator has failed.
+const STATUS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+/// How long an aetherd about to be stopped may take to say which instance it is.
+const IDENTIFY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const HOST_COMMANDS: &str = "--host-commands";
 const TOO_OLD: &str =
     "the installed Aether is too old for Archon's terminal UI; update it with `aether update`";
@@ -86,6 +95,8 @@ async fn setup_dedicated(config: &Config, resync: bool, json: bool) -> anyhow::R
     let reloaded = running && reload_if_owed(&instance).await?;
     let aether = doctor::connect_aether(&effective_aether(&config.aether, &instance)).await;
     let health = doctor::check_mcp_health(aether.as_ref().ok()).await;
+    let model = &config.orchestrator.model;
+    let engine = doctor::engine::check_engine(aether.as_ref().ok(), model).await;
     if json {
         let links: serde_json::Map<_, _> = seeding
             .links
@@ -103,11 +114,13 @@ async fn setup_dedicated(config: &Config, resync: bool, json: bool) -> anyhow::R
             "running": running,
             "reloaded": reloaded,
             "mcp_health": doctor::check_json(&health),
+            "engine": doctor::check_json(&engine),
         }))
         .map(|()| ExitCode::SUCCESS);
     }
     print_seeding(&instance, &operator, &seeding);
     doctor::report(std::slice::from_ref(&health), false)?;
+    doctor::report_engine(&engine)?;
     let changed = seeding.config != ConfigOutcome::Unchanged;
     if reloaded {
         println!(
@@ -186,6 +199,7 @@ pub(super) fn link_text(state: &LinkState, source: &Path) -> String {
             format!("links to {}; run `archon setup`", target.display())
         }
         LinkState::OwnFile => "its own copy, not a link".to_owned(),
+        LinkState::OwnOnly => format!("its own ({} does not exist)", source.display()),
     }
 }
 
@@ -197,6 +211,7 @@ fn link_json(state: &LinkState) -> serde_json::Value {
         LinkState::Dangling => "dangling",
         LinkState::Elsewhere(_) => "elsewhere",
         LinkState::OwnFile => "own_file",
+        LinkState::OwnOnly => "own_only",
     };
     serde_json::Value::String(name.to_owned())
 }
@@ -476,22 +491,39 @@ fn missing_options<'a>(help: &str, args: impl Iterator<Item = &'a OsStr>) -> Vec
         .collect()
 }
 
+/// The orchestrator to open: the live one, or a failed one, whose error
+/// the terminal UI shows. A freshly started archond may serve before its
+/// Aether link is ready, so an unavailable one is asked again for a while.
 async fn attach(client: &archon_client::ArchonClient) -> anyhow::Result<AetherAgentId> {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + ATTACH_WAIT;
+    let mut budget = ATTACH_WAIT;
     loop {
-        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-        let timeout = remaining.max(std::time::Duration::from_millis(1));
-        match client
-            .request_within(Request::OrchestratorAttach, timeout)
+        assert!(
+            budget >= MIN_REQUEST_BUDGET,
+            "every attempt can be answered"
+        );
+        let reason = match client
+            .request_within(Request::OrchestratorAttach, budget)
             .await
         {
             Ok(Reply::Orchestrator(info)) => return Ok(info.agent),
             Ok(other) => return Err(crate::connect::unexpected(&other, "orchestrator")),
-            // A freshly started archond may serve before its Aether link is ready.
-            Err(ArchonError::Unavailable(_)) if tokio::time::Instant::now() < deadline => {
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-            }
+            Err(ArchonError::Unavailable(reason)) => reason,
             Err(error) => return Err(error.into()),
+        };
+        if let Some(info) = crate::connect::failed_orchestrator(client, STATUS_TIMEOUT).await? {
+            assert_eq!(info.status, crate::connect::FAILED);
+            eprintln!(
+                "archon: the orchestrator {} has failed ({reason}); the terminal UI shows its \
+                 error, and `archon doctor` names the fix.",
+                info.agent
+            );
+            return Ok(info.agent);
+        }
+        tokio::time::sleep(ATTACH_RETRY).await;
+        budget = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if budget < MIN_REQUEST_BUDGET {
+            return Err(ArchonError::Unavailable(reason).into());
         }
     }
 }
@@ -521,9 +553,24 @@ fn tui_args(agent: &AetherAgentId, args: &TuiArgs, mode: AetherMode) -> Vec<OsSt
 
 /// Replace this process with `aether <args>`, against Archon's own Aether
 /// in dedicated mode, or plainly in shared mode. Returns only on failure.
-pub fn passthrough(args: &[OsString]) -> anyhow::Result<ExitCode> {
+/// `aether stop` is refused where it could reach another setup's aetherd.
+pub async fn passthrough(args: &[OsString]) -> anyhow::Result<ExitCode> {
     let config = Config::load_default()?;
+    if is_stop(args) {
+        super::daemon::refuse_mixed_locations("aether stop")?;
+        if config.aether.mode == AetherMode::Dedicated {
+            refuse_another_instance(&Instance::resolve()?).await?;
+        }
+    }
     exec_aether(aether_command(&config, args)?)
+}
+
+/// Whether `aether <args>` is `aether stop`: its first word that is no option.
+fn is_stop(args: &[OsString]) -> bool {
+    let command = args
+        .iter()
+        .find(|arg| !arg.as_encoded_bytes().starts_with(b"-"));
+    command.is_some_and(|command| command == "stop")
 }
 
 fn aether_command(config: &Config, args: &[OsString]) -> anyhow::Result<Command> {
@@ -583,9 +630,11 @@ pub fn aether_status(config: &Config) -> anyhow::Result<(serde_json::Value, Stri
     Ok((value, text))
 }
 
-/// Stop Archon's own aetherd with `aether stop`.
+/// Stop Archon's own aetherd with `aether stop`, once it is known to be this
+/// data directory's.
 pub async fn stop_aether() -> anyhow::Result<(serde_json::Value, String)> {
     let instance = Instance::resolve()?;
+    refuse_another_instance(&instance).await?;
     let socket = instance.socket.clone();
     let stopped =
         tokio::task::spawn_blocking(move || lifecycle::stop(&instance, Path::new(AETHER_PROGRAM)))
@@ -602,9 +651,136 @@ pub async fn stop_aether() -> anyhow::Result<(serde_json::Value, String)> {
     Ok((value, text))
 }
 
+/// Refuse to stop the aetherd on `instance.socket` when it is another Aether
+/// instance than the one this data directory's archond last linked to. What
+/// cannot be told (no link yet, no answer) is warned of, and stops nothing.
+async fn refuse_another_instance(instance: &Instance) -> anyhow::Result<()> {
+    if !lifecycle::is_listening(&instance.socket) {
+        return Ok(());
+    }
+    let Some(recorded) = recorded_instance(&instance.archon_data_dir) else {
+        eprintln!(
+            "archon: warning: archond in {} recorded no Aether instance it linked to; the \
+             aetherd on {} is stopped unchecked",
+            instance.archon_data_dir.display(),
+            instance.socket.display()
+        );
+        return Ok(());
+    };
+    let Some(answering) = answering_instance(&instance.socket).await else {
+        return Ok(());
+    };
+    same_instance(&recorded, &answering, instance)
+}
+
+fn same_instance(recorded: &str, answering: &str, instance: &Instance) -> anyhow::Result<()> {
+    assert!(
+        !recorded.is_empty() && !answering.is_empty(),
+        "Aether names every instance"
+    );
+    if recorded == answering {
+        return Ok(());
+    }
+    Err(ArchonError::Invalid(format!(
+        "the aetherd on {} is Aether instance {answering}, but archond in {} last linked to \
+         instance {recorded}, so it is another setup's and was not stopped; if it is yours to \
+         stop, run `AETHER_SOCKET={} aether stop`",
+        instance.socket.display(),
+        instance.archon_data_dir.display(),
+        instance.socket.display()
+    ))
+    .into())
+}
+
+/// The Aether instance archond in `data_dir` last linked to; `None` when it
+/// never linked, or its store cannot be read by this archon, which is said.
+fn recorded_instance(data_dir: &Path) -> Option<String> {
+    let path = data_dir.join(paths::STORE_FILE_NAME);
+    if !path.is_file() {
+        return None;
+    }
+    let read = archon_queue::Store::open_read_only(&path)
+        .and_then(|store| store.kv_get(archon_queue::store::keys::AETHER_INSTANCE));
+    match read {
+        Ok(recorded) => recorded.filter(|id| !id.is_empty()),
+        Err(error) => {
+            eprintln!(
+                "archon: warning: {} could not be read ({error})",
+                path.display()
+            );
+            None
+        }
+    }
+}
+
+/// The instance the aetherd on `socket` names in its welcome; `None`, said,
+/// when it gives none in time: `aether stop` then meets the same aetherd.
+async fn answering_instance(socket: &Path) -> Option<String> {
+    use archon_aether::client::{AetherClient, Endpoint};
+    let endpoint = Endpoint::Unix(socket.to_owned());
+    let why = match tokio::time::timeout(IDENTIFY_TIMEOUT, AetherClient::connect(&endpoint)).await {
+        Ok(Ok(client)) => return Some(client.welcome().instance_id.clone()),
+        Ok(Err(error)) => error.to_string(),
+        Err(_) => format!("no welcome within {IDENTIFY_TIMEOUT:?}"),
+    };
+    eprintln!(
+        "archon: warning: the aetherd on {} did not say which instance it is ({why}); \
+         stopping it unchecked",
+        socket.display()
+    );
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_aether_stop_is_taken_for_a_stop() {
+        let is = |args: &[&str]| is_stop(&args.iter().map(OsString::from).collect::<Vec<_>>());
+        assert!(is(&["stop"]) && is(&["--json", "stop"]) && is(&["stop", "--json"]));
+        assert!(!is(&[]) && !is(&["status"]) && !is(&["agents", "stop"]) && !is(&["--stop"]));
+    }
+
+    #[tokio::test]
+    async fn only_the_aetherd_this_data_directory_linked_to_is_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = |name: &str| dir.path().join(name);
+        let instance =
+            Instance::from_archon_dirs(path("config"), path("data"), path("archond.sock"));
+        refuse_another_instance(&instance)
+            .await
+            .expect("nothing listens");
+        let aetherd = archon_aether::fake::FakeAether::start(&instance.socket)
+            .await
+            .unwrap();
+        aetherd.set_instance_id("inst-theirs");
+        refuse_another_instance(&instance)
+            .await
+            .expect("never linked: nothing to tell");
+
+        std::fs::create_dir_all(path("data")).unwrap();
+        let store_path = path("data").join(paths::STORE_FILE_NAME);
+        let mut store = archon_queue::Store::open(&store_path).unwrap();
+        let key = archon_queue::store::keys::AETHER_INSTANCE;
+        store.kv_set(key, "inst-ours").unwrap();
+        drop(store);
+        let refused = refuse_another_instance(&instance)
+            .await
+            .unwrap_err()
+            .to_string();
+        for part in [
+            "Aether instance inst-theirs",
+            "instance inst-ours",
+            "was not stopped",
+        ] {
+            assert!(refused.contains(part), "{part}: {refused}");
+        }
+        aetherd.set_instance_id("inst-ours");
+        refuse_another_instance(&instance)
+            .await
+            .expect("its own aetherd");
+    }
 
     #[test]
     fn a_shared_mode_client_is_told_archon_manages_its_updates() {

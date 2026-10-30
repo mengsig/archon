@@ -1,5 +1,7 @@
 //! Stage messages and passive run-node inboxes share durable news delivery.
 
+mod allowance;
+
 use archon_aether::events::InboxMessage;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::agent_message::{AgentMessage, MessageKind, MessageSender, check_text};
@@ -10,6 +12,8 @@ use archon_core::run::StageRun;
 use archon_queue::Store;
 use serde::{Deserialize, Serialize};
 
+use self::allowance::{Charge, Refusal};
+pub(crate) use self::allowance::{caps, grant_reply};
 use crate::context::DaemonContext;
 use crate::pump::FleetRole;
 use crate::{executor, feed, triggers};
@@ -24,13 +28,8 @@ fn operator_key(agent: &AetherAgentId) -> String {
     format!("message_operator:{agent}")
 }
 
-fn counter_key(sender: &MessageSender, target: &AetherAgentId) -> String {
-    match sender {
-        MessageSender::Agent { id } => format!("message_count:{id}"),
-        MessageSender::Operator | MessageSender::System => {
-            format!("message_count:{target}:external")
-        }
-    }
+fn external_key(target: &AetherAgentId) -> String {
+    format!("message_count:{target}:external")
 }
 
 fn read<T: serde::de::DeserializeOwned>(
@@ -45,13 +44,14 @@ fn read<T: serde::de::DeserializeOwned>(
         .transpose()
 }
 
-/// The count `key` reaches with one more message, within `most`.
-fn next_count(store: &Store, key: &str, most: u32) -> Result<u32, ArchonError> {
+/// The count of run node `target`'s external inbox with one more message,
+/// within `most`.
+fn next_external(store: &Store, target: &AetherAgentId, most: u32) -> Result<u32, ArchonError> {
     assert!(most >= 1, "validated with the config");
-    let count: u32 = read(store, key)?.unwrap_or(0);
+    let count: u32 = read(store, &external_key(target))?.unwrap_or(0);
     if count >= most {
         return Err(ArchonError::Invalid(format!(
-            "message_orchestrator limit reached ({most} messages per agent or run-node external inbox, `[limits] max_agent_messages`); this message was refused"
+            "message_orchestrator limit reached ({most} messages per run-node external inbox, `[limits] max_agent_messages`): the external inbox of run node {target} is used up; this message was refused"
         )));
     }
     Ok(count + 1)
@@ -86,37 +86,56 @@ pub(crate) async fn send(
                 "this stage has already settled".into(),
             ));
         }
-        let run = store.run(&stage.run)?;
-        let sender = MessageSender::Agent { id: agent.clone() };
-        let key = counter_key(&sender, agent);
         let most = ctx.config.limits.max_agent_messages;
-        let count = next_count(&store, &key, most)?.to_string();
-        let operator: Option<OperatorMessage> = read(&store, &operator_key(agent))?;
-        let original_sender =
-            if kind == MessageKind::Relay && operator.is_some_and(|m| m.text == text) {
-                MessageSender::Operator
-            } else {
-                sender
-            };
-        let mut message = AgentMessage {
-            item: run.item,
-            run: run.id,
-            stage: None,
-            stage_run: None,
-            attempt: None,
-            agent: Some(agent.clone()),
-            kind,
-            text,
-            original_sender,
-            addressed_to_run_node: None,
+        let (key, paid) = match allowance::charge(&store, agent, kind, most)? {
+            Charge::Paid { key, value } => (key, value),
+            Charge::Refused { reserve_left } => {
+                let refusal =
+                    allowance::refuse(&mut store, agent, Some(&stage), most, reserve_left)?;
+                drop(store);
+                return Err(refused(ctx, refusal));
+            }
         };
-        stage_fields(&mut message, &stage);
-        triggers::record_message(&mut store, message, &[(&key, &count)])?
+        let message = stage_message(&store, agent, &stage, kind, text)?;
+        triggers::record_message(&mut store, message, &[(&key, &paid)])?
     };
     publish(ctx, &receipt);
     Ok(Reply::MessageReceipt {
         receipt: receipt.id,
     })
+}
+
+/// `agent`'s message from `stage`, a relay credited to the operator only
+/// when it quotes the operator's last message to `agent`.
+fn stage_message(
+    store: &Store,
+    agent: &AetherAgentId,
+    stage: &StageRun,
+    kind: MessageKind,
+    text: String,
+) -> Result<AgentMessage, ArchonError> {
+    let run = store.run(&stage.run)?;
+    let operator: Option<OperatorMessage> = read(store, &operator_key(agent))?;
+    let original_sender = if kind == MessageKind::Relay && operator.is_some_and(|m| m.text == text)
+    {
+        MessageSender::Operator
+    } else {
+        MessageSender::Agent { id: agent.clone() }
+    };
+    let mut message = AgentMessage {
+        item: run.item,
+        run: run.id,
+        stage: None,
+        stage_run: None,
+        attempt: None,
+        agent: Some(agent.clone()),
+        kind,
+        text,
+        original_sender,
+        addressed_to_run_node: None,
+    };
+    stage_fields(&mut message, stage);
+    Ok(message)
 }
 
 /// Why `agent` may not message the orchestrator, said so that only an agent
@@ -147,6 +166,15 @@ async fn not_a_stage_agent(
 fn publish(ctx: &DaemonContext, receipt: &FeedItem) {
     feed::publish(ctx, vec![receipt.clone()]);
     triggers::wake(ctx);
+}
+
+/// Publish the orchestrator's notice of a refusal, if any; the refusal is
+/// left for the sender.
+fn refused(ctx: &DaemonContext, refusal: Refusal) -> ArchonError {
+    if let Some(notice) = &refusal.notice {
+        publish(ctx, notice);
+    }
+    refusal.error
 }
 
 pub(crate) async fn inbox(
@@ -181,17 +209,37 @@ pub(crate) async fn inbox(
         }
         let Some(run) = executor::node_run(&store, target)? else {
             remember_operator(&mut store, target, seq, incoming)?;
-            return Ok(());
+            return grant_orchestrator_reply(&mut store, target, seq, incoming);
         };
         let most = ctx.config.limits.max_agent_messages;
         admit(&mut store, target, run, seq, incoming, most)
     };
     match result {
         Ok(receipt) => publish(ctx, &receipt),
-        Err(error) if error.is_store() => return Err(error),
-        Err(refusal) => refuse_past(ctx, target, seq, incoming, &refusal).await?,
+        Err(refusal) if refusal.error.is_store() => return Err(refusal.error),
+        Err(refusal) => {
+            let error = refused(ctx, refusal);
+            refuse_past(ctx, target, seq, incoming, &error).await?;
+        }
     }
     Ok(())
+}
+
+/// The orchestrator's message to a live stage agent grants it one reply.
+fn grant_orchestrator_reply(
+    store: &mut Store,
+    target: &AetherAgentId,
+    seq: u64,
+    incoming: &InboxMessage,
+) -> Result<(), ArchonError> {
+    let MessageSender::Agent { id } = &incoming.sender else {
+        return Ok(());
+    };
+    let orchestrator = store.kv_get(archon_queue::store::keys::ORCHESTRATOR_AGENT)?;
+    if orchestrator.as_deref() != Some(id.as_str()) || !allowance::runs_live_stage(store, target)? {
+        return Ok(());
+    }
+    grant_reply(store, target, Some(seq))
 }
 
 fn cursor_key(target: &AetherAgentId) -> String {
@@ -215,18 +263,40 @@ fn admit(
     seq: u64,
     incoming: &InboxMessage,
     most: u32,
-) -> Result<FeedItem, ArchonError> {
+) -> Result<FeedItem, Refusal> {
     check_text(&incoming.text)?;
-    let key = counter_key(&incoming.sender, target);
-    let count = next_count(store, &key, most)?;
-    assert!(
-        (1..=most).contains(&count),
-        "a counted message is within the limit"
-    );
+    let (key, paid) = match &incoming.sender {
+        MessageSender::Agent { id } => match allowance::charge(store, id, MessageKind::Info, most)?
+        {
+            Charge::Paid { key, value } => (key, value),
+            Charge::Refused { reserve_left } => {
+                let stage = store.stage_run_by_agent(id)?;
+                return Err(allowance::refuse(
+                    store,
+                    id,
+                    stage.as_ref(),
+                    most,
+                    reserve_left,
+                )?);
+            }
+        },
+        MessageSender::Operator | MessageSender::System => {
+            let count = next_external(store, target, most)?;
+            assert!(
+                (1..=most).contains(&count),
+                "a counted message is within the limit"
+            );
+            (external_key(target), count.to_string())
+        }
+    };
     let message = node_message(store, target, run, incoming)?;
     assert_eq!(message.addressed_to_run_node.as_ref(), Some(target));
-    let (cursor, count, seq) = (cursor_key(target), count.to_string(), seq.to_string());
-    triggers::record_message(store, message, &[(&key, &count), (&cursor, &seq)])
+    let (cursor, seq) = (cursor_key(target), seq.to_string());
+    Ok(triggers::record_message(
+        store,
+        message,
+        &[(&key, &paid), (&cursor, &seq)],
+    )?)
 }
 
 /// Refuse `incoming` to its sender and move the inbox cursor past `seq`.

@@ -68,6 +68,17 @@ pub(crate) struct StoredSpawn {
     /// `request` is sent, then cleared (§6.7).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replaces: Option<AetherAgentId>,
+    /// This infrastructure replacement wakes its slot's failed agent in place
+    /// (`resume` holds it until a refusal clears it); a slot wakes one once.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub woken: bool,
+    /// Aether was asked to wake it; one asked again refuses, as it is awake.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub wake_asked: bool,
+    /// Not issued before this: an infrastructure retry waits out a cause
+    /// that clears with time, such as an engine or login that is down.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_before: Option<Timestamp>,
 }
 
 /// The agent kept from the slot's previous attempt, and what it is told to
@@ -129,6 +140,46 @@ pub(super) fn save_spawn(
 ) -> Result<(), ArchonError> {
     assert_eq!(spawn.request.idempotency_key, id.as_str());
     store.kv_set(&request_key(id), &serde_json::to_string(spawn)?)
+}
+
+/// Which retry of its slot a replacement is, the time before which it is
+/// not issued (a passing cause it waits out), and the failed agent it wakes.
+/// All are stored with its request, before the stage run exists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Retry {
+    pub nth: usize,
+    pub not_before: Option<Timestamp>,
+    pub wake: Option<KeptAgent>,
+}
+
+/// Move the deadline in stage run `id`'s stored request to `until`, as
+/// Aether now has it for an agent it holds, unless it is already later;
+/// returns the deadline it keeps.
+pub(super) fn move_deadline(
+    store: &mut Store,
+    id: &StageRunId,
+    until: Timestamp,
+) -> Result<Timestamp, ArchonError> {
+    assert!(until > archon_core::now(), "a held deadline lies ahead");
+    let mut spawn = load_spawn(store, id)?;
+    let kept = spawn
+        .request
+        .deadline
+        .map_or(until, |stored| stored.max(until));
+    assert!(kept >= until, "a held deadline only moves later");
+    spawn.request.deadline = Some(kept);
+    save_spawn(store, id, &spawn)?;
+    Ok(kept)
+}
+
+/// Whether stage run `id` may be issued at `now`; one without a stored
+/// request is, so that issuing settles it.
+pub(super) fn due(store: &Store, id: &StageRunId, now: Timestamp) -> Result<bool, ArchonError> {
+    match load_spawn(store, id) {
+        Ok(spawn) => Ok(spawn.not_before.is_none_or(|until| until <= now)),
+        Err(ArchonError::NotFound(_)) => Ok(true),
+        Err(error) => Err(error),
+    }
 }
 
 fn record_host_context(
@@ -571,14 +622,19 @@ impl Target<'_> {
         own.copied().unwrap_or(plan.timeout_minutes)
     }
 
-    /// The stage contract, with its reviewers' models, the run's own sections
-    /// and, when the agent can delegate, the rules and model policy for that.
-    fn instructions(&self, plan: &SpawnPlan) -> String {
+    /// The stage contract, with its reviewers' models, its deadline `until`, the run's
+    /// own sections and, when the agent can delegate, the rules and model policy for that.
+    fn instructions(&self, plan: &SpawnPlan, until: Timestamp) -> String {
         assert!(!plan.instructions.is_empty(), "every stage has a contract");
         // An unreadable policy refuses this spawn when it is issued (`claim`).
         let policy = RepoEnv::new(self.repo.cloned()).map(|env| env.policy(self.config));
         let reviewers = reviewer_rules(plan, &policy, self);
-        let contract = format!("{}{reviewers}{}", plan.instructions, self.sections);
+        let minutes = self.timeout_minutes(plan);
+        let deadline = contract::deadline_rule(plan.kind, plan.workspace, minutes, until);
+        let contract = format!(
+            "{}{reviewers}{deadline}{}",
+            plan.instructions, self.sections
+        );
         if !self.delegates(plan) {
             return contract;
         }
@@ -635,15 +691,31 @@ fn reserve_one(
     plan: &SpawnPlan,
     budget: Option<f64>,
     now: Timestamp,
-    retry: Option<usize>,
+    retry: Option<Retry>,
 ) -> Result<StageRunId, ArchonError> {
     let id = StageRunId::new();
-    let request = build_request(target, plan, &id, budget, now, retry);
+    let nth = retry.as_ref().map(|r| r.nth);
+    let mut request = build_request(target, plan, &id, budget, now, nth);
+    let not_before = retry.as_ref().and_then(|r| r.not_before);
+    if let Some(until) = not_before {
+        // Held as it is reserved, so no sweep issues it early; it loses no working time.
+        assert!(until > now, "a retry waits until later");
+        request.deadline = request.deadline.map(|deadline| deadline + (until - now));
+    }
     // An infrastructure replacement is a fresh agent: the kept one was lost.
-    let (resume, replaces) = match resume::takeover(store, &target.run.id, plan, retry.is_some())? {
+    let (resume, replaces) = match resume::takeover(store, &target.run.id, plan, nth.is_some())? {
         Takeover::Fresh => (None, None),
-        Takeover::Resume(kept) => (Some(kept), None),
+        Takeover::Resume(kept) => (Some(resume::with_deadline(kept, request.deadline)), None),
         Takeover::Replace(agent) => (None, Some(agent)),
+    };
+    let wake = retry.and_then(|r| r.wake);
+    let woken = wake.is_some();
+    let (resume, replaces) = match wake {
+        Some(kept) => {
+            let woken = resume::wake_in(resume, replaces, kept);
+            (Some(resume::with_deadline(woken, request.deadline)), None)
+        }
+        None => (resume, replaces),
     };
     let spawn = StoredSpawn {
         request,
@@ -655,6 +727,9 @@ fn reserve_one(
         }),
         resume,
         replaces,
+        woken,
+        wake_asked: false,
+        not_before,
     };
     save_spawn(store, &id, &spawn)?;
     let stage = StageRun {
@@ -718,6 +793,7 @@ fn build_request(
             .is_none_or(|root| workspace.starts_with(root)),
         "a team run's agents work under its team directory"
     );
+    let until = deadline(now, target.timeout_minutes(plan));
     SpawnRequest {
         host_context: Default::default(),
         idempotency_key: id.as_str().to_owned(),
@@ -725,7 +801,7 @@ fn build_request(
         // Every reserved spawn is bound to the run's node before it is sent.
         name: naming::stage_agent_name(naming::Placement::UnderRunNode, plan, retry),
         objective: plan.prompt.clone(),
-        instructions: target.instructions(plan),
+        instructions: target.instructions(plan, until),
         choice: plan.choice.clone(),
         workspace,
         repository: target.repo.map(|repo| repo.name.clone()),
@@ -735,7 +811,8 @@ fn build_request(
         leaf: !target.delegates(plan),
         cost_budget_usd: budget,
         aether_cost_budget: None,
-        deadline: Some(deadline(now, target.timeout_minutes(plan))),
+        cost_billing: None,
+        deadline: Some(until),
         attach_run: run.aether_run.clone(),
         parent: None,
         network: None,
@@ -802,13 +879,13 @@ pub(super) fn reserve_replacement(
     store: &mut Store,
     failed: &StageRun,
     plan: &SpawnPlan,
-    retry: usize,
+    retry: Retry,
 ) -> Result<Option<StageRunId>, ArchonError> {
     assert!(
         same_slot(failed, plan),
         "a replacement fills the failed slot"
     );
-    assert!(retry >= 1, "retries are counted from one");
+    assert!(retry.nth >= 1, "retries are counted from one");
     let run = store.run(&failed.run)?;
     assert!(!run.state.is_terminal(), "replacements join live runs only");
     let item = store.item(&run.item)?;
@@ -873,7 +950,7 @@ fn replacement_budget(
     };
     assert!(granted.is_finite(), "budgets are finite amounts");
     let spent = match &failed.aether_agent {
-        Some(agent) => store.spend_for_agent(agent, estimates)?,
+        Some(agent) => spent_on_run(store, failed, agent, estimates)?,
         None => 0.0,
     };
     let unspent = granted - spent.max(failed.cost_usd);
@@ -883,6 +960,30 @@ fn replacement_budget(
     let share = left.map_or(unspent, |left| left.min(unspent));
     debug_assert!(share > 0.0 && share <= granted);
     Ok(Some(Some(share)))
+}
+
+/// What `agent` spent on stage run `run` itself: since it was handed `run`,
+/// resumed or woken for it, as its grant counts only from there.
+fn spent_on_run(
+    store: &Store,
+    run: &StageRun,
+    agent: &AetherAgentId,
+    estimates: bool,
+) -> Result<f64, ArchonError> {
+    assert_eq!(
+        run.aether_agent.as_ref(),
+        Some(agent),
+        "the run's own agent"
+    );
+    let at = (run.attempt, store.wakes_before(run)?);
+    let handoffs = store.agent_handoffs(agent, estimates)?;
+    let before = handoffs
+        .iter()
+        .find(|h| h.at() == at)
+        .map_or(0.0, |h| h.spent_by(agent));
+    let spent = store.spend_for_agent(agent, estimates)? - before;
+    // A provider's settled total may land below an interim charge.
+    Ok(spent.max(0.0))
 }
 
 /// A stage run claimed for one `create_agent`.

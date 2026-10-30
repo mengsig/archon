@@ -1,18 +1,30 @@
-//! The periodic pass that deletes `kv` entries nothing reads any more
-//! (ARCHITECTURE §16), so the store follows live work plus a retention
-//! window rather than every run, child and report since installation.
+//! The periodic pass that bounds the store (ARCHITECTURE §16): it deletes
+//! `kv` entries nothing reads any more, and settled history older than
+//! `storage.retention_days`, then hands freed pages back and cuts the WAL back.
+//! Outcomes and lessons stay for learning.
 
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use archon_core::Timestamp;
+use archon_core::config::Config;
 use archon_core::error::ArchonError;
+use archon_queue::Checkpointer;
+use archon_queue::store::HistoryPruned;
 
 use crate::context::DaemonContext;
-use crate::{executor, inbox_health, pump, reports, supervisor, tracked};
+use crate::worktree::team::SET_ASIDE_DIR;
+use crate::{executor, gc, inbox_health, pump, reports, supervisor, tracked};
 
 /// How often the pass runs; the first runs at startup.
 const INTERVAL: Duration = Duration::from_secs(10 * 60);
+
+/// Settled items deleted per store lock, and batches per pass: a large
+/// backlog goes over several passes without holding the store long.
+const HISTORY_BATCH: usize = 200;
+const HISTORY_BATCHES: usize = 25;
 
 /// How long entries that late Aether events or the operator may still
 /// need are kept after their owner finished.
@@ -36,6 +48,7 @@ pub struct Pruned {
     pub retired_keys: usize,
     pub retired_orchestrators: usize,
     pub tracked_requests: usize,
+    pub history: HistoryPruned,
 }
 
 impl Pruned {
@@ -53,6 +66,7 @@ impl Pruned {
             + self.retired_keys
             + self.retired_orchestrators
             + self.tracked_requests
+            + self.history.total()
     }
 }
 
@@ -74,8 +88,9 @@ pub async fn run(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
 /// items, and keys no version reads any more, go at once; node agents, watched
 /// children, stage agents, replaced orchestrators and settled reports go
 /// once older than [`retention`], finished tracked requests after a day,
-/// once outcomes the store refused before are recorded. The store is locked
-/// per kind, not for the whole pass.
+/// once outcomes the store refused before are recorded. Settled history goes
+/// last, after the reports and tracked requests that name it. The store is
+/// locked per kind, not for the whole pass.
 pub async fn prune_once(ctx: &DaemonContext, now: Timestamp) -> Result<Pruned, ArchonError> {
     let cutoff = now - retention();
     assert!(cutoff < now, "the retention is positive");
@@ -128,6 +143,7 @@ pub async fn prune_once(ctx: &DaemonContext, now: Timestamp) -> Result<Pruned, A
         "tracked_requests",
         ctx.store.lock().await.prune_tracked(tracked_cutoff(now)),
     )?;
+    let history = prune_history(ctx, now).await?;
     Ok(Pruned {
         spawn_requests,
         run_vars,
@@ -142,7 +158,95 @@ pub async fn prune_once(ctx: &DaemonContext, now: Timestamp) -> Result<Pruned, A
         retired_keys,
         retired_orchestrators,
         tracked_requests,
+        history,
     })
+}
+
+/// When settled history goes: `storage.retention_days` ago, never sooner than
+/// the merge watcher or artifact expiry still read it; `None` when disabled.
+pub fn history_cutoff(config: &Config, now: Timestamp) -> Result<Option<Timestamp>, ArchonError> {
+    let days = config.storage.retention_days;
+    if days == 0 {
+        return Ok(None);
+    }
+    let watched = i64::from(days).max(executor::pull_requests::WATCHED_DAYS);
+    let mut cutoff = now - chrono::Duration::days(watched);
+    let artifacts = config.artifacts.keep_after;
+    if artifacts.secs() != 0 {
+        let Some(expired) = now.checked_sub_signed(artifacts.chrono()?) else {
+            return Ok(None);
+        };
+        cutoff = cutoff.min(expired);
+    }
+    assert!(cutoff < now, "the retention is positive");
+    Ok(Some(cutoff))
+}
+
+/// Delete settled history a batch per store lock, then hand the freed pages
+/// back and cut the WAL back. What gc still finds through an item keeps it.
+async fn prune_history(ctx: &DaemonContext, now: Timestamp) -> Result<HistoryPruned, ArchonError> {
+    let Some(before) = history_cutoff(&ctx.config, now)? else {
+        return Ok(HistoryPruned::default());
+    };
+    let artifacts = ctx.paths.artifacts();
+    let gc_finds = |item: &str, workspaces: &[PathBuf]| {
+        assert!(!item.contains('/'), "an item id is one path component");
+        on_disk(&artifacts.join(item)) || workspaces.iter().any(|w| workspace_on_disk(w))
+    };
+    let mut pruned = HistoryPruned::default();
+    for _ in 0..HISTORY_BATCHES {
+        let batch = ctx
+            .store
+            .lock()
+            .await
+            .prune_history(before, HISTORY_BATCH, gc_finds)?;
+        assert!(batch.items <= HISTORY_BATCH && batch.feed <= HISTORY_BATCH);
+        pruned.absorb(batch);
+        if batch.items < HISTORY_BATCH && batch.feed < HISTORY_BATCH {
+            break;
+        }
+    }
+    if pruned.total() == 0 {
+        return Ok(pruned);
+    }
+    ctx.store.lock().await.vacuum_freed()?;
+    let path = ctx.paths.store.clone();
+    let truncated = tokio::task::spawn_blocking(move || Checkpointer::open(&path)?.truncate())
+        .await
+        .map_err(|e| ArchonError::io("the WAL truncate task", std::io::Error::other(e)))??;
+    if !truncated {
+        tracing::debug!("a reader holds the WAL; the next pass truncates it");
+    }
+    Ok(pruned)
+}
+
+/// Whether gc may still find something through the run workspace `path`: it
+/// or a flat copy a fresh retry set aside beside it.
+fn workspace_on_disk(path: &Path) -> bool {
+    on_disk(path) || set_aside_beside(path)
+}
+
+/// Whether `path` may still exist: only a path known to be missing is not.
+fn on_disk(path: &Path) -> bool {
+    match path.symlink_metadata() {
+        Ok(_) => true,
+        Err(error) => error.kind() != ErrorKind::NotFound,
+    }
+}
+
+/// Whether `<parent>/.set-aside/<name>-<n>` may exist for the flat worktree
+/// `workspace`, as gc's set-aside sweep looks for it.
+fn set_aside_beside(workspace: &Path) -> bool {
+    let (Some(parent), Some(name)) = (workspace.parent(), workspace.file_name()) else {
+        return false;
+    };
+    let entries = match std::fs::read_dir(parent.join(SET_ASIDE_DIR)) {
+        Ok(entries) => entries,
+        Err(error) => return error.kind() != ErrorKind::NotFound,
+    };
+    entries
+        .into_iter()
+        .any(|entry| entry.map_or(true, |e| gc::set_aside_of(name, &e.file_name())))
 }
 
 /// Tracked requests are kept [`archon_core::tracked::RETENTION`], not [`retention`].

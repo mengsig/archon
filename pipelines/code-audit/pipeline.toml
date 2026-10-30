@@ -14,7 +14,7 @@ notes = "Read-and-report only; findings become follow-up items. Pick this for a 
 id = "scope"
 kind = "work"
 prompt = "scope.md"
-timeout_minutes = 45
+timeout_minutes = 90
 
 [[stage]]
 id = "audit"

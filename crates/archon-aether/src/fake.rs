@@ -9,6 +9,12 @@
 //! refused with `internal`, so an unscripted call fails loudly. Like Aether,
 //! it answers `incompatible` instead of a GitHub watcher the connection's
 //! protocol cannot carry (an allowlist below 15, operator logins below 17).
+//! [`update_agent`] applies `update_agent` to a responder's agent list, with
+//! the raise-only `subtree` reach of the `subtree_update` feature.
+//! Unscripted, `get_events` pages the log. [`FakeAether::expire_history`]
+//! makes a read into the span fail as Aether's does: `get_events` is refused,
+//! a subscription's replay hangs up with a notice; the refusal carries the
+//! `history_expired` code only when the hello and the welcome list it.
 
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -23,6 +29,9 @@ use tokio::task::JoinHandle;
 
 use crate::client::Endpoint;
 use crate::wire::PROTOCOL_VERSION;
+
+mod update;
+pub use update::update_agent;
 
 /// What the fake answers one command with.
 #[derive(Debug, Clone, PartialEq)]
@@ -84,6 +93,8 @@ struct State {
     received: Vec<Value>,
     /// The event log; an event's seq is its index + 1.
     events: Vec<Value>,
+    /// Seqs retention deleted, `(first, last)`; a replay into them fails.
+    expired: Option<(u64, u64)>,
     connections: Vec<Connection>,
     next_connection: u64,
     accepted: u64,
@@ -119,6 +130,7 @@ impl FakeAether {
             responders: HashMap::new(),
             received: Vec::new(),
             events: Vec::new(),
+            expired: None,
             connections: Vec::new(),
             next_connection: 1,
             accepted: 0,
@@ -261,6 +273,18 @@ impl FakeAether {
         seq
     }
 
+    /// From now on a subscription replaying into `first..=last` gets
+    /// Aether's expired-history notice and the connection is closed.
+    pub fn expire_history(&self, first: u64, last: u64) {
+        assert!(0 < first && first <= last, "an expired span runs forwards");
+        let mut state = self.state();
+        assert!(
+            last <= state.events.len() as u64,
+            "only logged events expire"
+        );
+        state.expired = Some((first, last));
+    }
+
     /// Hang up every live connection, optionally after an id-0 notice.
     pub fn hangup(&self, notice: Option<(&str, &str)>) {
         let mut state = self.state();
@@ -311,6 +335,7 @@ async fn accept_loop(listener: UnixListener, state: Arc<Mutex<State>>, changed: 
             changed: changed.clone(),
             out: out_tx,
             version: None,
+            history_expired: false,
         };
         tokio::spawn(session.run(stream, out_rx));
     }
@@ -324,6 +349,8 @@ struct Session {
     out: mpsc::UnboundedSender<Out>,
     /// The protocol the hello settled on; `None` until welcomed.
     version: Option<u32>,
+    /// Both sides listed `history_expired`, so its refusal carries the code.
+    history_expired: bool,
 }
 
 impl Session {
@@ -373,6 +400,7 @@ impl Session {
         match (cmd.as_str(), self.scripted(&cmd, &frame)) {
             ("subscribe", None) => self.subscribe(req, &frame),
             ("unsubscribe", None) => self.unsubscribe(req, &frame),
+            ("get_events", None) => self.get_events(req, &frame),
             (_, Some(reply)) => self.answer(req, reply),
             (_, None) => self.answer(req, builtin(&cmd)),
         }
@@ -434,6 +462,16 @@ impl Session {
             return;
         }
         self.version = u32::try_from(asked).ok();
+        let lists = |features: &Value| {
+            features
+                .as_array()
+                .is_some_and(|list| list.iter().any(|f| f == "history_expired"))
+        };
+        self.history_expired = lists(&frame["features"])
+            && lock(&self.state)
+                .features
+                .iter()
+                .any(|f| f == "history_expired");
         assert!(
             self.version.is_some(),
             "a welcomed version is in the window"
@@ -453,11 +491,13 @@ impl Session {
         let last = state.events.len() as u64;
         let start = frame["after"].as_u64().unwrap_or(last);
         let query = frame["query"].clone();
+        let replayed = frame["after"].as_u64().is_some();
+        let expired = state.expired.filter(|(_, last)| replayed && start < *last);
         let replay: Vec<Value> = state
             .events
             .iter()
             .skip(usize::try_from(start).unwrap_or(usize::MAX))
-            .filter(|event| matches(&query, event))
+            .filter(|event| matches(&query, event) && expired.is_none())
             .cloned()
             .collect();
         let Some(connection) = state.connections.iter_mut().find(|c| c.id == self.id) else {
@@ -471,6 +511,38 @@ impl Session {
         }
         let reply = Scripted::reply("subscribed", json!({"id": sub, "last_seq": start}));
         self.send(reply_line(req, &reply));
+        // Like Aether: subscribed, then the replay fails before any event.
+        if let Some((first, last)) = expired {
+            self.send(expired_notice(first, last, self.history_expired));
+            let _gone = self.out.send(Out::Close);
+        }
+    }
+
+    /// A page of the log after `after`, or the expired-history refusal.
+    fn get_events(&self, req: u64, frame: &Value) {
+        let state = lock(&self.state);
+        let after = frame["after"].as_u64().unwrap_or(0);
+        let limit = frame["limit"].as_u64().unwrap_or(0);
+        assert!(limit > 0, "a page holds at least one event");
+        if let Some((first, last)) = state.expired.filter(|(_, last)| after < *last) {
+            drop(state);
+            let refusal = expired_refusal(first, last, self.history_expired);
+            self.send(format!(
+                "{}\n",
+                json!({"frame": "reply", "id": req, "result": {"Err": refusal}})
+            ));
+            return;
+        }
+        let page: Vec<Value> = state
+            .events
+            .iter()
+            .skip(usize::try_from(after).unwrap_or(usize::MAX))
+            .filter(|event| matches(&frame["query"], event))
+            .take(usize::try_from(limit).unwrap_or(usize::MAX))
+            .cloned()
+            .collect();
+        drop(state);
+        self.send(reply_line(req, &Scripted::reply("events", json!(page))));
     }
 
     fn unsubscribe(&self, req: u64, frame: &Value) {
@@ -488,6 +560,7 @@ fn builtin(cmd: &str) -> Scripted {
     match cmd {
         "ping" => Scripted::ok(),
         "status" => Scripted::reply("status", json!({"network_default": "allowed"})),
+        "storage_gc" => Scripted::reply("storage_report", json!({})),
         _ => Scripted::refuse(
             "internal",
             &format!("fake aetherd has no reply scripted for `{cmd}`"),
@@ -513,6 +586,28 @@ fn reply_line(req: u64, reply: &Scripted) -> String {
 
 fn notice_line(code: &str, message: &str) -> String {
     reply_line(0, &Scripted::refuse(code, message))
+}
+
+/// Aether's refusal of a read into expired history: `not_found` with only
+/// the text, unless the hello and the welcome both list the feature.
+fn expired_refusal(first: u64, last: u64, coded: bool) -> Value {
+    let message = format!(
+        "event history expired within sequence range {first}..={last}; obtain a fresh state snapshot before resuming replay"
+    );
+    match coded {
+        true => json!({"code": "history_expired", "message": message,
+                       "first_seq": first, "last_seq": last}),
+        false => json!({"code": "not_found", "message": message}),
+    }
+}
+
+/// The refusal as the id-0 notice a failed replay hangs up with.
+fn expired_notice(first: u64, last: u64, coded: bool) -> String {
+    let refusal = expired_refusal(first, last, coded);
+    format!(
+        "{}\n",
+        json!({"frame": "reply", "id": 0, "result": {"Err": refusal}})
+    )
 }
 
 fn event_line(sub: u64, event: &Value) -> String {

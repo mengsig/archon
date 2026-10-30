@@ -116,7 +116,8 @@ pub struct DaemonContext {
     pub memory_curation: Mutex<()>,
     /// New or revoked corrections and Aether reconnects wake durable delivery.
     pub memory_feedback_ready: Notify,
-    /// Serializes report snapshot refreshes with pruning.
+    /// Serializes report snapshot refreshes with pruning, and showing a
+    /// report with ending its session.
     pub report_files: Arc<Mutex<()>>,
     /// Serializes orchestrator create/revive and announces its id.
     pub supervisor: Supervisor,
@@ -145,7 +146,8 @@ pub struct DaemonContext {
     /// Held through each worktree gc pass, so passes never overlap; when
     /// the last one ended.
     pub gc: Mutex<Option<std::time::Instant>>,
-    /// Items a gc pass is collecting right now; none of them is started.
+    /// Items a gc pass, a Compose teardown, a restack or a fresh retry works
+    /// on right now; none of them is started.
     pub collecting: crate::gc::Collecting,
     /// The operator's upgrade or restart, and the versions `status` shows.
     pub ops: crate::ops::OpsState,
@@ -155,6 +157,8 @@ pub struct DaemonContext {
     pub push: crate::push::Pusher,
     /// The newest Aether event of each agent, for the stage watchdog.
     pub activity: crate::executor::Activity,
+    /// The mobile web app's listener, off until the operator enables it.
+    pub remote: archon_remote::Remote,
 }
 
 impl DaemonContext {

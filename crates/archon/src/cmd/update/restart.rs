@@ -2,15 +2,20 @@
 //! Aether, restart archond and Archon's own aetherd through the drained
 //! restart archond already has, then give the orchestrator its new tools.
 //! The sequence runs against [`Steps`], so tests drive it with a fake.
+//! Every step is said on stderr and bounded, and a signal ends any of them.
 
+use std::cell::Cell;
 use std::ffi::OsStr;
-use std::path::Path;
+use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context as _;
+use archon_core::error::ArchonError;
 use archon_core::ops::{UpgradeRequest, bare_version};
-use archon_core::protocol::{Reply, Request};
+use archon_core::protocol::{ErrorCode, OrchestratorInfo, Reply, Request};
 
+use super::interrupt::Interrupt;
 use super::tools;
 use crate::cmd::doctor::find_program;
 use crate::connect::{connect_existing, connect_running, unexpected};
@@ -25,6 +30,113 @@ const AETHER_UPDATE_TIMEOUT: Duration = Duration::from_secs(600);
 /// taken as given up.
 const GIVE_UP_AFTER: u32 = 3;
 const ORCHESTRATOR_TRIES: u32 = 60;
+/// The whole orchestrator restart, retries included: archond's link to
+/// Aether may still be coming up when it is first asked.
+pub(super) const ORCHESTRATOR_DEADLINE: Duration = Duration::from_secs(180);
+/// Asking archond which archon created the running orchestrator.
+const CHECK_DEADLINE: Duration = Duration::from_secs(60);
+/// The creator of a generation an archon made before it recorded one.
+const UNRECORDED: &str = "an archon that did not record its version";
+
+/// A step of the restart, named when a signal or a deadline ends it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Phase {
+    Preparing,
+    Asking,
+    UpdatingAether,
+    FindingArchond,
+    RestartingArchond,
+    CheckingOrchestrator,
+    RefreshingTools,
+    RestartingOrchestrator,
+}
+
+impl Phase {
+    pub(super) fn describe(self) -> &'static str {
+        match self {
+            Self::Preparing => "preparing the restart",
+            Self::Asking => "waiting for the answer",
+            Self::UpdatingAether => "updating Aether (`aether update`)",
+            Self::FindingArchond => "asking whether archond runs",
+            Self::RestartingArchond => "restarting archond",
+            Self::CheckingOrchestrator => "asking which archon created the orchestrator",
+            Self::RefreshingTools => "refreshing Archon's tools in your aetherd",
+            Self::RestartingOrchestrator => "restarting the orchestrator",
+        }
+    }
+
+    /// What finishes the restart by hand once this step was cut short.
+    pub(super) fn remedy(self) -> &'static str {
+        match self {
+            Self::Preparing | Self::Asking | Self::UpdatingAether | Self::FindingArchond => {
+                "nothing was restarted; `archon update --yes` runs the restart"
+            }
+            Self::RestartingArchond => {
+                "archond restarts on its own as it was asked; `archon status` shows when it \
+                 runs the new version, then run `archon orchestrator restart`"
+            }
+            Self::CheckingOrchestrator => {
+                "`archon orchestrator status` names the archon that created it; if that is not \
+                 the installed one, run `archon orchestrator restart`"
+            }
+            Self::RefreshingTools => {
+                "run `archon aether mcp refresh archon`, then `archon orchestrator restart`"
+            }
+            Self::RestartingOrchestrator => "run `archon orchestrator restart`",
+        }
+    }
+}
+
+/// The step under way, kept apart from the sequence so that whoever ends
+/// it can still name where it stopped.
+#[derive(Debug)]
+pub(super) struct Progress(Cell<Phase>);
+
+impl Progress {
+    pub(super) fn new() -> Self {
+        Self(Cell::new(Phase::Preparing))
+    }
+
+    pub(super) fn current(&self) -> Phase {
+        self.0.get()
+    }
+
+    /// Record `phase` without a word: the operator sees what it waits for.
+    pub(super) fn mark(&self, phase: Phase) {
+        self.0.set(phase);
+    }
+
+    /// Record `phase` and say it on stderr, so a stall shows where it is.
+    fn enter(&self, phase: Phase, detail: &str) {
+        assert_ne!(phase, Phase::Asking, "the question speaks for itself");
+        self.mark(phase);
+        match detail.is_empty() {
+            true => eprintln!("archon: update: {}.", phase.describe()),
+            false => eprintln!("archon: update: {} ({detail}).", phase.describe()),
+        }
+    }
+}
+
+/// How work that a signal may end has ended.
+#[derive(Debug)]
+pub(super) enum Ended<T> {
+    Done(T),
+    Interrupted { by: Interrupt, during: Phase },
+}
+
+/// Run `work` until it ends or `interrupt` arrives; a signal drops it where
+/// it waits, which kills a child it runs, and names the step it was at.
+pub(super) async fn until_interrupted<T>(
+    work: impl Future<Output = T>,
+    progress: &Progress,
+    interrupt: impl Future<Output = Interrupt>,
+) -> Ended<T> {
+    tokio::select! {
+        biased;
+        by = interrupt => Ended::Interrupted { by, during: progress.current() },
+        done = work => Ended::Done(done),
+    }
+}
 
 /// What `archon update` decided before the restart.
 #[derive(Debug, Clone)]
@@ -71,7 +183,11 @@ pub(super) trait Steps {
     async fn request_restart(&self, plan: &Plan) -> anyhow::Result<()>;
     async fn observe(&self, old_pid: u32) -> Seen;
     async fn refresh_mcp(&self) -> anyhow::Result<()>;
-    async fn restart_orchestrator(&self) -> anyhow::Result<()>;
+    /// The Archon version that created the orchestrator generation now
+    /// running, [`UNRECORDED`] if it was not kept; `None` when none runs.
+    async fn orchestrator_creator(&self) -> anyhow::Result<Option<String>>;
+    /// The Archon version that created the generation now running.
+    async fn restart_orchestrator(&self) -> anyhow::Result<String>;
     async fn pause(&self);
 }
 
@@ -122,10 +238,15 @@ pub(super) fn announce(plan: &Plan, running: Option<&Running>) -> String {
 
 /// Run the sequence. A failure of the restart itself is an error; a failed
 /// `aether update` is a warning, since archond restarts on what is installed.
-pub(super) async fn apply(steps: &impl Steps, plan: &Plan) -> anyhow::Result<Outcome> {
+pub(super) async fn apply(
+    steps: &impl Steps,
+    plan: &Plan,
+    progress: &Progress,
+) -> anyhow::Result<Outcome> {
     assert!(plan.drain_secs > 0, "a restart waits at least a second");
     let mut outcome = Outcome::default();
     let mut aether_changed = false;
+    progress.enter(Phase::UpdatingAether, "");
     match steps.update_aether().await {
         Ok(update) => {
             aether_changed = update.changed;
@@ -135,6 +256,7 @@ pub(super) async fn apply(steps: &impl Steps, plan: &Plan) -> anyhow::Result<Out
             .warnings
             .push(format!("aether was not updated: {error:#}")),
     }
+    progress.enter(Phase::FindingArchond, "");
     let Some(old) = steps.running_archond().await? else {
         outcome
             .lines
@@ -145,21 +267,91 @@ pub(super) async fn apply(steps: &impl Steps, plan: &Plan) -> anyhow::Result<Out
     if !plan.archon_changed && !aether_changed && current {
         let line = format!("archond already runs archon {}.", plan.installed);
         outcome.lines.push(line);
-        return Ok(outcome);
+        return catch_up(steps, plan, outcome, progress).await;
     }
-    restart(steps, plan, &old).await?;
-    follow_up(steps, plan, &mut outcome).await?;
+    let limit = Duration::from_secs(plan.drain_secs) + RESTART_MARGIN;
+    let detail = format!("pid {}, for at most {}s", old.pid, limit.as_secs());
+    progress.enter(Phase::RestartingArchond, &detail);
+    restart(steps, plan, &old, limit).await?;
+    outcome.lines.push(match plan.dedicated {
+        true => "Restarted archond and Archon's own aetherd.".to_owned(),
+        false => "Restarted archond.".to_owned(),
+    });
+    renew_orchestrator(steps, plan, &mut outcome, progress).await?;
     outcome.restarted = true;
     Ok(outcome)
 }
 
-async fn restart(steps: &impl Steps, plan: &Plan, old: &Running) -> anyhow::Result<()> {
-    steps.request_restart(plan).await?;
-    let polls = (plan.drain_secs + RESTART_MARGIN.as_secs()) / POLL.as_secs();
+/// archond already runs the installed archon, yet an update cut short after
+/// its restart may have left the orchestrator on the old one: renew it then.
+async fn catch_up(
+    steps: &impl Steps,
+    plan: &Plan,
+    mut outcome: Outcome,
+    progress: &Progress,
+) -> anyhow::Result<Outcome> {
+    assert!(!plan.archon_changed, "only a current archond is caught up");
+    progress.enter(Phase::CheckingOrchestrator, "");
+    let creator = tokio::time::timeout(CHECK_DEADLINE, steps.orchestrator_creator())
+        .await
+        .unwrap_or_else(|_| {
+            let waited = CHECK_DEADLINE.as_secs();
+            Err(anyhow::anyhow!("archond did not answer within {waited}s"))
+        })
+        .context("archond could not say which archon created the orchestrator")?;
+    let line = match creator {
+        None => "No orchestrator runs; archond creates it on the installed archon.".to_owned(),
+        Some(by) if bare_version(&by) == bare_version(&plan.installed) => {
+            format!(
+                "The orchestrator already runs on archon {}.",
+                plan.installed
+            )
+        }
+        Some(by) => {
+            let line = format!(
+                "The orchestrator was created by {by}, not {}.",
+                plan.installed
+            );
+            outcome.lines.push(line);
+            renew_orchestrator(steps, plan, &mut outcome, progress).await?;
+            outcome.restarted = true;
+            return Ok(outcome);
+        }
+    };
+    outcome.lines.push(line);
+    Ok(outcome)
+}
+
+/// Ask archond to restart and poll until a new one answers, for `limit` at
+/// most: a poll that does not answer is cut off by the same deadline.
+async fn restart(
+    steps: &impl Steps,
+    plan: &Plan,
+    old: &Running,
+    limit: Duration,
+) -> anyhow::Result<()> {
+    assert!(limit >= POLL, "the wait allows a poll");
+    let deadline = tokio::time::Instant::now() + limit;
+    tokio::time::timeout_at(deadline, steps.request_restart(plan))
+        .await
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("archond did not answer the request")))
+        .with_context(|| {
+            format!(
+                "archond (pid {}) was not asked to restart within {}s; `archon daemon status` \
+                 shows whether it restarts",
+                old.pid,
+                limit.as_secs()
+            )
+        })?;
+    let polls = limit.as_secs() / POLL.as_secs();
     let (mut idle, mut last_down) = (0, None);
     for _ in 0..polls {
         steps.pause().await;
-        match steps.observe(old.pid).await {
+        let Ok(seen) = tokio::time::timeout_at(deadline, steps.observe(old.pid)).await else {
+            last_down = Some("the last poll got no answer".to_owned());
+            break;
+        };
+        match seen {
             Seen::New => return Ok(()),
             Seen::Down(why) => {
                 idle = 0;
@@ -176,38 +368,66 @@ async fn restart(steps: &impl Steps, plan: &Plan, old: &Running) -> anyhow::Resu
             old.pid,
             plan.drain_secs
         );
+        if tokio::time::Instant::now() >= deadline {
+            break;
+        }
     }
     let why = last_down.map_or(String::new(), |why| format!(" ({why})"));
     anyhow::bail!(
-        "archond (pid {}) was asked to restart, and no new one answered within {polls}s{why}; \
+        "archond (pid {}) was asked to restart, and no new one answered within {}s{why}; \
          see its startup log with `archon daemon status`",
-        old.pid
+        old.pid,
+        limit.as_secs()
     )
 }
 
-async fn follow_up(steps: &impl Steps, plan: &Plan, outcome: &mut Outcome) -> anyhow::Result<()> {
-    outcome.lines.push(match plan.dedicated {
-        true => "Restarted archond and Archon's own aetherd.".to_owned(),
-        false => "Restarted archond.".to_owned(),
-    });
+/// Give the orchestrator a generation the installed archon creates, with
+/// its tools refreshed first in a shared aetherd.
+async fn renew_orchestrator(
+    steps: &impl Steps,
+    plan: &Plan,
+    outcome: &mut Outcome,
+    progress: &Progress,
+) -> anyhow::Result<()> {
     if !plan.dedicated {
+        progress.enter(Phase::RefreshingTools, "");
         steps
             .refresh_mcp()
             .await
-            .context("archond restarted, but your aetherd could not refresh Archon's tools")?;
+            .context("your aetherd could not refresh Archon's tools")?;
         outcome
             .lines
             .push("Refreshed Archon's tools in your aetherd.".to_owned());
     }
-    steps.restart_orchestrator().await.context(
-        "archond restarted, but the orchestrator did not (`archon orchestrator restart`)",
-    )?;
-    outcome.lines.push("Restarted the orchestrator.".to_owned());
+    let detail = format!("for at most {}s", ORCHESTRATOR_DEADLINE.as_secs());
+    progress.enter(Phase::RestartingOrchestrator, &detail);
+    let created_by = tokio::time::timeout(ORCHESTRATOR_DEADLINE, steps.restart_orchestrator())
+        .await
+        .unwrap_or_else(|_| {
+            let waited = ORCHESTRATOR_DEADLINE.as_secs();
+            Err(anyhow::anyhow!(
+                "archond did not finish it within {waited}s"
+            ))
+        })
+        .context("the orchestrator did not restart (`archon orchestrator restart`)")?;
+    anyhow::ensure!(
+        bare_version(&created_by) == bare_version(&plan.installed),
+        "the orchestrator restarted, but archon {created_by} created its new generation, not \
+         {}: archond does not run the installed archon (`archon status`)",
+        plan.installed
+    );
+    outcome.lines.push(format!(
+        "Restarted the orchestrator on archon {}.",
+        plan.installed
+    ));
     Ok(())
 }
 
-/// The steps on this machine.
-pub(super) struct Live;
+/// The steps on this machine. `archon` is the installed archon, which asks
+/// for what this one cannot once archond restarts on another protocol.
+pub(super) struct Live {
+    pub archon: PathBuf,
+}
 
 impl Steps for Live {
     async fn update_aether(&self) -> anyhow::Result<AetherUpdate> {
@@ -260,6 +480,8 @@ impl Steps for Live {
         let client = match connect_existing().await {
             Ok(Some(client)) => client,
             Ok(None) => return Seen::Down(None),
+            // The archond asked to restart spoke this protocol, so one that does not is new.
+            Err(error) if speaks_another_protocol(&error) => return Seen::New,
             Err(error) => return Seen::Down(Some(format!("{error:#}"))),
         };
         if client.welcome().pid != old_pid {
@@ -281,23 +503,107 @@ impl Steps for Live {
         Ok(())
     }
 
-    async fn restart_orchestrator(&self) -> anyhow::Result<()> {
+    async fn orchestrator_creator(&self) -> anyhow::Result<Option<String>> {
+        let client = connect_running().await?;
+        match client.call(Request::OrchestratorStatus).await? {
+            Ok(Reply::Orchestrator(info)) => Ok(Some(
+                info.freshness
+                    .map_or_else(|| UNRECORDED.to_owned(), |fresh| fresh.created_by),
+            )),
+            Ok(other) => Err(unexpected(&other, "orchestrator")),
+            Err(refusal) if refusal.code == ErrorCode::NotFound => Ok(None),
+            Err(refusal) => Err(archon_client::refusal_error(refusal).into()),
+        }
+    }
+
+    async fn restart_orchestrator(&self) -> anyhow::Result<String> {
         // The new archond answers before it reaches Aether, which it is told to do within seconds.
         let mut last = None;
         for _ in 0..ORCHESTRATOR_TRIES {
-            let client = connect_running().await?;
-            match client.call(Request::OrchestratorRestart).await? {
-                Ok(_) => return Ok(()),
-                Err(refusal) => last = Some(archon_client::refusal_error(refusal)),
+            let refusal = match self.ask_orchestrator_restart().await? {
+                Ok(created_by) => return Ok(created_by),
+                Err(refusal) => refusal,
+            };
+            if last.is_none() {
+                eprintln!(
+                    "archon: update: archond refused the orchestrator restart ({refusal:#}); \
+                     asking again every second."
+                );
             }
+            last = Some(refusal);
             tokio::time::sleep(POLL).await;
         }
-        Err(last.context("the orchestrator was never asked")?.into())
+        Err(last.context("the orchestrator was never asked")?)
     }
 
     async fn pause(&self) {
         tokio::time::sleep(POLL).await;
     }
+}
+
+impl Live {
+    /// Ask once for an orchestrator restart. `Ok(Err)` is a refusal worth
+    /// asking again; an archond on another protocol is asked by `archon`.
+    async fn ask_orchestrator_restart(&self) -> anyhow::Result<anyhow::Result<String>> {
+        let client = match connect_running().await {
+            Ok(client) => client,
+            Err(error) if speaks_another_protocol(&error) => {
+                return self.installed_restarts_orchestrator().await;
+            }
+            Err(error) => return Err(error),
+        };
+        match client.call(Request::OrchestratorRestart).await? {
+            Ok(Reply::Orchestrator(info)) => created_by(&info).map(Ok),
+            Ok(other) => Err(unexpected(&other, "orchestrator")),
+            Err(refusal) => Ok(Err(archon_client::refusal_error(refusal).into())),
+        }
+    }
+
+    /// `archon orchestrator restart` run by the installed archon. Its
+    /// failure is a refusal to ask again; an answer without a creator is not.
+    async fn installed_restarts_orchestrator(&self) -> anyhow::Result<anyhow::Result<String>> {
+        assert!(
+            self.archon.is_absolute(),
+            "the installed archon is named whole"
+        );
+        let args = ["--json", "orchestrator", "restart"].map(OsStr::new);
+        let ran = match tools::run(&self.archon, &args, ORCHESTRATOR_DEADLINE).await {
+            Ok(ran) => ran,
+            Err(refused) => return Ok(Err(refused)),
+        };
+        let shown = self.archon.display();
+        let info: serde_json::Value = serde_json::from_slice(&ran.stdout)
+            .with_context(|| format!("`{shown} --json orchestrator restart` printed no JSON"))?;
+        let creator = info["freshness"]["created_by"]
+            .as_str()
+            .filter(|by| !by.is_empty())
+            .with_context(|| {
+                format!("`{shown}` restarted the orchestrator, but named no creator: {info}")
+            })?;
+        Ok(Ok(creator.to_owned()))
+    }
+}
+
+/// Whether connecting failed because archond speaks another protocol.
+fn speaks_another_protocol(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<ArchonError>()
+        .is_some_and(archon_client::is_incompatible)
+}
+
+/// The version that created the generation `info` describes.
+fn created_by(info: &OrchestratorInfo) -> anyhow::Result<String> {
+    let fresh = info.freshness.as_ref().with_context(|| {
+        format!(
+            "archond restarted the orchestrator, but recorded no creator for generation {}",
+            info.generation
+        )
+    })?;
+    assert!(
+        !fresh.created_by.is_empty(),
+        "a recorded creator has a version"
+    );
+    Ok(fresh.created_by.clone())
 }
 
 async fn aether_version(aether: &Path) -> anyhow::Result<String> {
@@ -318,226 +624,4 @@ pub(super) fn is_yes(answer: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::cell::RefCell;
-    use std::collections::VecDeque;
-
-    use super::*;
-
-    struct Fake {
-        calls: RefCell<Vec<&'static str>>,
-        aether: anyhow::Result<AetherUpdate>,
-        running: Option<Running>,
-        seen: RefCell<VecDeque<Seen>>,
-        orchestrator_fails: bool,
-    }
-
-    impl Fake {
-        fn new(seen: Vec<Seen>) -> Self {
-            Self {
-                calls: RefCell::default(),
-                aether: Ok(AetherUpdate {
-                    changed: false,
-                    line: "aether same".into(),
-                }),
-                running: Some(Running {
-                    pid: 7,
-                    version: "archon 1.4.1".into(),
-                }),
-                seen: RefCell::new(seen.into()),
-                orchestrator_fails: false,
-            }
-        }
-
-        fn log(&self, call: &'static str) {
-            self.calls.borrow_mut().push(call);
-        }
-    }
-
-    impl Steps for Fake {
-        async fn update_aether(&self) -> anyhow::Result<AetherUpdate> {
-            self.log("aether");
-            match &self.aether {
-                Ok(update) => Ok(update.clone()),
-                Err(error) => Err(anyhow::anyhow!("{error:#}")),
-            }
-        }
-        async fn running_archond(&self) -> anyhow::Result<Option<Running>> {
-            self.log("running");
-            Ok(self.running.clone())
-        }
-        async fn request_restart(&self, _: &Plan) -> anyhow::Result<()> {
-            self.log("request");
-            Ok(())
-        }
-        async fn observe(&self, _: u32) -> Seen {
-            self.log("observe");
-            self.seen
-                .borrow_mut()
-                .pop_front()
-                .unwrap_or(Seen::Down(None))
-        }
-        async fn refresh_mcp(&self) -> anyhow::Result<()> {
-            self.log("mcp");
-            Ok(())
-        }
-        async fn restart_orchestrator(&self) -> anyhow::Result<()> {
-            self.log("orchestrator");
-            match self.orchestrator_fails {
-                true => anyhow::bail!("no link"),
-                false => Ok(()),
-            }
-        }
-        async fn pause(&self) {}
-    }
-
-    fn plan(dedicated: bool) -> Plan {
-        Plan {
-            installed: "1.4.2".into(),
-            archon_changed: true,
-            dedicated,
-            drain_secs: 10,
-            requeue: false,
-        }
-    }
-
-    #[tokio::test]
-    async fn the_restart_runs_in_order_and_ends_with_the_orchestrator() {
-        let fake = Fake::new(vec![
-            Seen::Old { upgrading: true },
-            Seen::Down(None),
-            Seen::New,
-        ]);
-        let outcome = apply(&fake, &plan(true)).await.unwrap();
-        assert!(outcome.restarted && outcome.warnings.is_empty());
-        let calls = fake.calls.borrow().clone();
-        assert_eq!(
-            calls,
-            [
-                "aether",
-                "running",
-                "request",
-                "observe",
-                "observe",
-                "observe",
-                "orchestrator"
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn a_shared_aetherd_is_refreshed_never_restarted() {
-        let fake = Fake::new(vec![Seen::New]);
-        let outcome = apply(&fake, &plan(false)).await.unwrap();
-        let calls = fake.calls.borrow().clone();
-        assert_eq!(calls.last(), Some(&"orchestrator"));
-        assert!(calls.contains(&"mcp"), "{calls:?}");
-        assert!(outcome.lines.contains(&"Restarted archond.".to_owned()));
-    }
-
-    #[tokio::test]
-    async fn nothing_restarts_when_archond_is_not_running_or_already_current() {
-        let mut fake = Fake::new(vec![]);
-        fake.running = None;
-        let outcome = apply(&fake, &plan(true)).await.unwrap();
-        assert!(!outcome.restarted);
-        assert_eq!(*fake.calls.borrow(), ["aether", "running"]);
-
-        let mut fake = Fake::new(vec![]);
-        fake.running = Some(Running {
-            pid: 7,
-            version: "1.4.2".into(),
-        });
-        let current = Plan {
-            archon_changed: false,
-            ..plan(true)
-        };
-        let outcome = apply(&fake, &current).await.unwrap();
-        assert!(!outcome.restarted && !fake.calls.borrow().contains(&"request"));
-    }
-
-    #[tokio::test]
-    async fn a_newer_aether_restarts_an_archond_that_is_current() {
-        let mut fake = Fake::new(vec![Seen::New]);
-        fake.aether = Ok(AetherUpdate {
-            changed: true,
-            line: "aether newer".into(),
-        });
-        fake.running = Some(Running {
-            pid: 7,
-            version: "1.4.2".into(),
-        });
-        let current = Plan {
-            archon_changed: false,
-            ..plan(true)
-        };
-        assert!(apply(&fake, &current).await.unwrap().restarted);
-    }
-
-    #[tokio::test]
-    async fn a_failed_aether_update_is_a_warning_and_the_restart_goes_on() {
-        let mut fake = Fake::new(vec![Seen::New]);
-        fake.aether = Err(anyhow::anyhow!("offline"));
-        let outcome = apply(&fake, &plan(true)).await.unwrap();
-        assert!(outcome.restarted);
-        assert_eq!(outcome.warnings.len(), 1);
-        assert!(outcome.warnings[0].contains("offline"), "{outcome:?}");
-    }
-
-    #[tokio::test]
-    async fn a_restart_archond_gave_up_is_an_error_that_restarts_nothing_else() {
-        let fake = Fake::new(vec![Seen::Old { upgrading: false }; 3]);
-        let error = apply(&fake, &plan(true)).await.unwrap_err().to_string();
-        assert!(error.contains("gave up the restart"), "{error}");
-        assert!(!fake.calls.borrow().contains(&"orchestrator"));
-    }
-
-    #[tokio::test]
-    async fn an_archond_that_never_comes_back_fails_with_the_last_reason() {
-        let fake = Fake::new(vec![Seen::Down(Some("refused".into()))]);
-        let error = apply(&fake, &plan(true)).await.unwrap_err().to_string();
-        assert!(
-            error.contains("no new one answered") && error.contains("refused"),
-            "{error}"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_failed_orchestrator_restart_is_reported_with_its_command() {
-        let mut fake = Fake::new(vec![Seen::New]);
-        fake.orchestrator_fails = true;
-        let error = format!("{:#}", apply(&fake, &plan(true)).await.unwrap_err());
-        assert!(error.contains("archon orchestrator restart") && error.contains("no link"));
-    }
-
-    #[test]
-    fn the_announcement_names_each_restart_and_spares_the_operators_aetherd() {
-        let archond = Running {
-            pid: 7,
-            version: "archon 1.4.1".into(),
-        };
-        let text = announce(&plan(true), Some(&archond));
-        for part in [
-            "archond (pid 7)",
-            "Archon's own aetherd",
-            "orchestrator",
-            "Your own aetherd is not touched",
-        ] {
-            assert!(text.contains(part), "{part}: {text}");
-        }
-        let shared = announce(&plan(false), Some(&archond));
-        assert!(!shared.contains("Archon's own aetherd"), "{shared}");
-        assert!(shared.contains("shared"), "{shared}");
-        assert!(announce(&plan(true), None).contains("archond is not running"));
-    }
-
-    #[test]
-    fn only_an_answer_starting_with_n_declines() {
-        for yes in ["", "y", "Yes", "  \n", "sure"] {
-            assert!(is_yes(yes), "{yes:?}");
-        }
-        for no in ["n", "No", " no "] {
-            assert!(!is_yes(no), "{no:?}");
-        }
-    }
-}
+mod tests;

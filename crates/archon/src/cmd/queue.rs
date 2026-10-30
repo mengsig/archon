@@ -127,10 +127,13 @@ async fn refresh(item: &str, json: bool) -> anyhow::Result<()> {
     let Reply::Item(refresh) = &reply else {
         return Err(unexpected(&reply, "item"));
     };
-    let done = format!(
-        "Queued {} to merge the base branch into {item}.",
-        refresh.id
-    );
+    let done = match refresh.id == item {
+        true => format!("Refreshed {item} in place; nothing was queued."),
+        false => format!(
+            "Queued {} to merge the base branch into {item}.",
+            refresh.id
+        ),
+    };
     emit(json, || reply_data(&reply), &done)
 }
 

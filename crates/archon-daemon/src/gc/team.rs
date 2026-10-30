@@ -3,6 +3,7 @@
 //! directories under `<common>/archon-set-aside` (ARCHITECTURE §13.1); and
 //! what a fresh retry set aside of a flat item's run worktree (§13).
 
+use std::ffi::OsStr;
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 
@@ -155,6 +156,16 @@ fn kept(dir: PathBuf, kind: Kind, action: Action) -> Candidate {
     }
 }
 
+/// Whether `entry` is `<name>-<n>`, a fresh retry's set-aside copy of the
+/// flat run worktree named `name`.
+pub(crate) fn set_aside_of(name: &OsStr, entry: &OsStr) -> bool {
+    let (name, entry) = (name.to_string_lossy(), entry.to_string_lossy());
+    entry
+        .strip_prefix(name.as_ref())
+        .and_then(|rest| rest.strip_prefix('-'))
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// What fresh retries set aside of the flat run worktree `worktree` of
 /// `repo`: each `<worktrees>/<repo>/.set-aside/<item>-<n>`, and each git
 /// directory under `<common>/archon-set-aside` whose `gitdir` names it.
@@ -164,14 +175,9 @@ pub(super) fn flat_set_asides(worktree: &Path, repo: &Path, action: Action, foun
         return;
     };
     let before = found.candidates.len();
-    let prefix = format!("{}-", name.to_string_lossy());
     let is_ours = |dir: &Path| {
-        let name = dir
-            .file_name()
-            .map(|n| n.to_string_lossy())
-            .unwrap_or_default();
-        name.strip_prefix(&prefix)
-            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        dir.file_name()
+            .is_some_and(|entry| set_aside_of(name, entry))
     };
     let aside = parent.join(SET_ASIDE_DIR);
     for dir in found.or_note(&aside, real_dirs(&aside)).unwrap_or_default() {

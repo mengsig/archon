@@ -30,11 +30,6 @@ impl Registry {
         self.repos.as_deref().map_err(String::as_str)
     }
 
-    /// True when `gh` is certainly unused: every repository ships locally and the watcher is off.
-    pub(super) fn gh_unused(&self) -> bool {
-        gh_need(self) == GhNeed::NotNeeded
-    }
-
     pub(super) async fn read(
         archond: &anyhow::Result<Option<ArchonClient>>,
         mode: AetherMode,
@@ -311,7 +306,6 @@ pub(super) mod tests {
             "no warning when all repos ship local"
         );
         assert!(warn.detail.contains("ship"), "{}", warn.detail);
-        assert!(unneeded.gh_unused() && !needed.gh_unused());
         for c in [&fail, &warn] {
             assert!(!c.detail.contains("gho_"), "{}", c.detail);
         }

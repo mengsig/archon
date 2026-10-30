@@ -259,6 +259,9 @@ fn owe_live(
             owed::owe(store, id, lead)?;
         }
         if let Some(note) = &change.note {
+            if let Some(agent) = store.stage_run(id)?.aether_agent {
+                crate::agent_messages::grant_reply(store, &agent, None)?;
+            }
             let helpers = Delivery {
                 key: NotificationId::new().as_str().to_owned(),
                 helpers: Some(note_message(note)),

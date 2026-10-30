@@ -10,7 +10,7 @@ use archon_client::{ArchonClient, Principal};
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::config::{AetherMode, Config};
 use archon_core::error::ArchonError;
-use archon_core::protocol::{AetherLinkStatus, ClientKind, Reply, Request};
+use archon_core::protocol::{AetherLinkStatus, ClientKind, OrchestratorInfo, Reply, Request};
 
 use crate::instance::lifecycle;
 use crate::instance::{AETHER_PROGRAM, Instance};
@@ -197,6 +197,28 @@ pub fn unexpected(reply: &Reply, wanted: &str) -> anyhow::Error {
          Try `archon daemon stop --keep-aether`",
         reply_kind(reply)
     )
+}
+
+/// Aether's word for an agent that stopped on an error.
+pub const FAILED: &str = "failed";
+
+/// The orchestrator when archond reports it failed; `None` when it is live,
+/// not created yet, or its state is unknown because Aether is unreachable.
+pub async fn failed_orchestrator(
+    client: &ArchonClient,
+    timeout: Duration,
+) -> anyhow::Result<Option<OrchestratorInfo>> {
+    assert!(!timeout.is_zero(), "a request needs time to be answered");
+    match client
+        .request_within(Request::OrchestratorStatus, timeout)
+        .await
+    {
+        Ok(Reply::Orchestrator(info)) if info.status == FAILED => Ok(Some(info)),
+        Ok(Reply::Orchestrator(_)) => Ok(None),
+        Ok(other) => Err(unexpected(&other, "orchestrator")),
+        Err(ArchonError::NotFound(_) | ArchonError::Unavailable(_)) => Ok(None),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// A reply's data as JSON, for `--json` output (`{"ok":true}` for `ok`).

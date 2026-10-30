@@ -4,6 +4,7 @@
 
 pub(crate) mod clean;
 pub(crate) mod daemon_git;
+pub(crate) mod landed;
 pub(crate) mod shadow;
 pub mod snapshot;
 pub(crate) mod stack;

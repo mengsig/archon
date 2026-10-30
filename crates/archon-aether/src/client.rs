@@ -22,11 +22,14 @@ use crate::events::AetherEvent;
 use crate::github::{WatcherConfig, WatcherStatus};
 use crate::wire::{
     Agent, AgentPatch, AgentQuery, CLIENT_NAME, Command, CreateAgent, DaemonDefaults, EventQuery,
-    Hello, IMAGES_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION, ModelInfo, NOTE_LEVEL_PROTOCOL_VERSION,
-    NOTES_FEATURE, NOTES_PROTOCOL_VERSION, NoteLevel, PROTOCOL_VERSION, ProviderInfo, RawReply,
-    Subscribed, Task, Welcome,
+    ExpiredSpan, HISTORY_EXPIRED_FEATURE, Hello, IMAGES_PROTOCOL_VERSION, MIN_PROTOCOL_VERSION,
+    ModelInfo, NOTE_LEVEL_PROTOCOL_VERSION, NOTES_FEATURE, NOTES_PROTOCOL_VERSION, NoteLevel,
+    PROTOCOL_VERSION, ProviderInfo, RawReply, Subscribed, Task, Welcome,
 };
 
+/// Events Aether replays to a subscription per page, each page checked
+/// whole against expired history.
+const REPLAY_PAGE: usize = 500;
 /// Default per-request timeout; nothing waits forever on a silent daemon.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -415,9 +418,55 @@ impl AetherClient {
         id: &AetherAgentId,
         patch: AgentPatch,
     ) -> Result<Agent, ArchonError> {
+        self.patch_agent(id, patch, false, None).await
+    }
+
+    /// [`Self::update_agent`] with an idempotency key, so a repeat applies once.
+    pub async fn update_agent_keyed(
+        &self,
+        id: &AetherAgentId,
+        patch: AgentPatch,
+        idempotency_key: &str,
+    ) -> Result<Agent, ArchonError> {
+        assert!(!idempotency_key.is_empty(), "a keyed update has a key");
+        self.patch_agent(id, patch, false, Some(idempotency_key))
+            .await
+    }
+
+    /// [`Self::update_agent`] whose deadline or cost budget also raises every
+    /// live descendant's where lower. Refused here unless aetherd lists
+    /// `subtree_update`: an older one would raise `id` alone.
+    pub async fn update_subtree(
+        &self,
+        id: &AetherAgentId,
+        patch: AgentPatch,
+    ) -> Result<Agent, ArchonError> {
+        assert!(
+            patch.deadline.is_some() || patch.cost_budget.is_some(),
+            "a subtree update raises a deadline or a budget"
+        );
+        let welcome = self.welcome();
+        if !welcome.supports_subtree_update() {
+            return Err(ArchonError::Unavailable(format!(
+                "aetherd {} does not serve a subtree update",
+                welcome.daemon_version
+            )));
+        }
+        self.patch_agent(id, patch, true, None).await
+    }
+
+    async fn patch_agent(
+        &self,
+        id: &AetherAgentId,
+        patch: AgentPatch,
+        subtree: bool,
+        idempotency_key: Option<&str>,
+    ) -> Result<Agent, ArchonError> {
         let command = Command::UpdateAgent {
             id: id.clone(),
             patch,
+            subtree,
+            idempotency_key: idempotency_key.map(str::to_owned),
         };
         let agent: Agent = self.typed(command, "agent").await?;
         ensure_same(id.as_str(), agent.id.as_str(), "update_agent")?;
@@ -511,6 +560,38 @@ impl AetherClient {
             )));
         }
         Ok(events)
+    }
+
+    /// The span of deleted history that a replay of `query` after `after`
+    /// would reach within its first page, read from Aether's refusal: by the
+    /// `history_expired` code when the daemon lists that feature, else by
+    /// the text of its `not_found`. Unlike a subscription's replay, a refused
+    /// `get_events` leaves the connection open.
+    pub async fn expired_history(
+        &self,
+        after: u64,
+        query: EventQuery,
+    ) -> Result<Option<ExpiredSpan>, ArchonError> {
+        let command = Command::GetEvents {
+            after,
+            limit: REPLAY_PAGE,
+            query,
+        };
+        let refusal = match self.shared.call(&command, None).await? {
+            Ok(raw) => return check_kind(&raw, "events").map(|()| None),
+            Err(refusal) => refusal,
+        };
+        let span = match self.welcome.supports_history_expired() {
+            true => refusal.expired_span(),
+            false => refusal.expired_span_in_text(),
+        };
+        match span {
+            Some(span) if span.last > after => Ok(Some(span)),
+            Some(span) => Err(ArchonError::Protocol(format!(
+                "aetherd reported expired history {span} that a read after {after} cannot reach"
+            ))),
+            None => Err(refusal.into()),
+        }
     }
 
     pub async fn trigger(
@@ -621,13 +702,48 @@ impl AetherClient {
         self.request(command, expected).await.map(drop)
     }
 
+    /// Resume `agent` alone: lift its pause, its wait or the inspection it
+    /// is blocked for. `Err` when Aether refuses, as for a running agent.
+    pub async fn resume(&self, agent: &AetherAgentId) -> Result<(), ArchonError> {
+        let command = Command::Resume {
+            agent: agent.clone(),
+            subtree: false,
+        };
+        self.request(command, "agents").await.map(drop)
+    }
+
     /// Aether's defaults for new roots, read from `status`.
     pub async fn daemon_defaults(&self) -> Result<DaemonDefaults, ArchonError> {
         self.typed(Command::Status, "status").await
     }
 
+    /// Have Aether delete the workspaces of its finished agents, the reply a
+    /// `storage_report`. Bounded by the request timeout. Refused locally when
+    /// the daemon does not list the `storage` feature.
+    pub async fn storage_gc(&self) -> Result<serde_json::Value, ArchonError> {
+        if !self.welcome.supports_storage() {
+            return Err(ArchonError::Unavailable(
+                "this aetherd does not serve storage_gc".into(),
+            ));
+        }
+        let report = self
+            .request(Command::StorageGc { dry_run: false }, "storage_report")
+            .await?;
+        match report.is_object() {
+            true => Ok(report),
+            false => Err(ArchonError::Protocol(
+                "`storage_report` reply was not an object".into(),
+            )),
+        }
+    }
+
     pub async fn list_models(&self) -> Result<Vec<ModelInfo>, ArchonError> {
         self.typed(Command::ListModels, "models").await
+    }
+
+    /// Each enabled provider's login state, as `aether auth --json` prints it.
+    pub async fn auth_status(&self) -> Result<Vec<crate::auth::AuthInfo>, ArchonError> {
+        self.typed(Command::AuthStatus, "auth").await
     }
 
     pub async fn providers(&self) -> Result<Vec<ProviderInfo>, ArchonError> {
@@ -739,7 +855,7 @@ async fn handshake(
         protocol_version: version,
         client_name: CLIENT_NAME.to_owned(),
         client_version: env!("CARGO_PKG_VERSION").to_owned(),
-        features: Vec::new(),
+        features: vec![HISTORY_EXPIRED_FEATURE.to_owned()],
         token,
     });
     let raw = match shared.call(&hello, None).await? {

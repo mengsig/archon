@@ -83,28 +83,60 @@ pub(crate) fn merge(
     if contains(repo, sha, &ours)? {
         return Ok(Merge::Contained);
     }
-    let args = [
-        "merge-tree",
-        "--write-tree",
-        "--name-only",
-        "--no-messages",
-        "-z",
+    let tree = match merge_tree(shadow, None, &ours, sha)? {
+        Ok(tree) => tree,
+        Err(files) => return Ok(Merge::Conflict(files)),
+    };
+    let message = format!("Merge commit '{sha}' into {branch}");
+    let to = commit_merge(shadow, &tree, (&ours, sha), &message, identity)?;
+    Ok(Merge::Merged { from: ours, to })
+}
+
+/// The tree of merging `theirs` into `ours`, over `base` when given instead
+/// of their merge base, or the conflicting files, one per line.
+pub(crate) fn merge_tree(
+    shadow: &Shadow,
+    base: Option<&str>,
+    ours: &str,
+    theirs: &str,
+) -> Result<Result<String, String>, ArchonError> {
+    assert!(is_commit_id(ours) && is_commit_id(theirs), "commit ids");
+    assert!(base.is_none_or(is_commit_id), "a merge base is a commit id");
+    let mut args = vec![
+        "merge-tree".to_owned(),
+        "--write-tree".to_owned(),
+        "--name-only".to_owned(),
+        "--no-messages".to_owned(),
+        "-z".to_owned(),
     ];
+    args.extend(base.map(|base| format!("--merge-base={base}")));
+    args.extend([ours.to_owned(), theirs.to_owned()]);
     let ran = shadow
         .git(None, Config::Sealed)?
-        .args(args)
-        .args([ours.as_str(), sha])
+        .args(args.iter().map(String::as_str))
         .output()?;
     let printed = String::from_utf8_lossy(&ran.stdout).into_owned();
     let mut fields = printed.split('\0').filter(|field| !field.is_empty());
     let tree = fields.next().unwrap_or_default().to_owned();
     // `merge-tree --write-tree` exits 1 exactly when the merge conflicts.
     match ran.status.code() {
-        Some(0) if is_commit_id(&tree) => {}
-        Some(1) => return Ok(Merge::Conflict(fields.collect::<Vec<_>>().join("\n"))),
-        _ => return Err(ran.failure()),
+        Some(0) if is_commit_id(&tree) => Ok(Ok(tree)),
+        Some(1) => Ok(Err(fields.collect::<Vec<_>>().join("\n"))),
+        _ => Err(ran.failure()),
     }
-    let message = format!("Merge commit '{sha}' into {branch}");
+}
+
+/// A merge commit of `tree` with the parents `ours` and `theirs`, made by
+/// `identity`, which no ref names yet.
+pub(crate) fn commit_merge(
+    shadow: &Shadow,
+    tree: &str,
+    (ours, theirs): (&str, &str),
+    message: &str,
+    identity: &Identity,
+) -> Result<String, ArchonError> {
+    assert!(is_commit_id(tree), "a written tree");
+    assert!(!identity.email.is_empty(), "a merge has an author");
     let to = shadow
         .git(None, Config::Sealed)?
         .env("GIT_AUTHOR_NAME", &identity.name)
@@ -114,17 +146,17 @@ pub(crate) fn merge(
         .args([
             "commit-tree",
             "--no-gpg-sign",
-            &tree,
+            tree,
             "-p",
-            &ours,
+            ours,
             "-p",
-            sha,
+            theirs,
             "-m",
-            &message,
+            message,
         ])
         .text()?;
     assert!(is_commit_id(&to), "commit-tree prints the commit");
-    Ok(Merge::Merged { from: ours, to })
+    Ok(to)
 }
 
 /// Move `branch` of `repo` from `from` to `to`, and the worktree it is

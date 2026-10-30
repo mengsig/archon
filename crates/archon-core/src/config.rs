@@ -72,6 +72,7 @@ pub struct Config {
     pub integration: IntegrationConfig,
     pub notify: crate::push::NotifyConfig,
     pub update: UpdateConfig,
+    pub remote: crate::remote::RemoteConfig,
 }
 
 /// How archond verifies each repository's integration branch off the items'
@@ -795,6 +796,9 @@ pub struct WorktreeConfig {
     /// While dispatch is held for disk space, finished runs' worktrees and
     /// idle shared caches go after this instead, if it is shorter.
     pub pressure_after: Age,
+    /// The `docker` CLI that tears down the Compose stacks agents leave in
+    /// worktrees; without it, or its daemon, stacks are left alone.
+    pub docker: PathBuf,
 }
 
 impl Default for WorktreeConfig {
@@ -812,6 +816,7 @@ impl Default for WorktreeConfig {
             lean_builds: true,
             shared_cache_after: Age::from_secs(14 * 86_400),
             pressure_after: Age::from_secs(86_400),
+            docker: "docker".into(),
         }
     }
 }
@@ -1127,6 +1132,7 @@ impl Config {
         self.storage.validate()?;
         self.integration.validate()?;
         self.notify.validate()?;
+        self.remote.validate()?;
         self.models.check_weights()?;
         let orchestrator = crate::model::ModelChoice {
             model: self.orchestrator.model.clone(),

@@ -10,6 +10,7 @@ use super::gh::{self, Pass, PullRequest};
 use super::repo_identity::{self, RepoIdentity};
 use crate::context::DaemonContext;
 use crate::gh_account::{self, Token};
+use crate::worktree::landed::{self, Landing};
 use crate::worktree::shadow::Shadow;
 use crate::worktree::stack::{self, Identity, Merge};
 use archon_core::error::ArchonError;
@@ -88,12 +89,7 @@ pub(super) async fn parents(
             continue;
         };
         if let (Some(onto), ShipMode::Pr) = (&parent.onto, repo.ship) {
-            return Err(ArchonError::Invalid(format!(
-                "{id} went into the pull request {}, not a branch of its own, so {} cannot \
-                 stack on it: queue the work `onto` {id} instead",
-                onto.pr.url(),
-                item.id
-            )));
+            return Err(onto_parent(id, &onto.pr.url(), &item.id));
         }
         let head = match repo.ship {
             ShipMode::Local => None,
@@ -116,6 +112,7 @@ pub(super) async fn parents(
             closed: false,
             conflict: None,
             needs_attention: None,
+            landed: None,
         });
     }
     assert!(parents.len() <= item.dependencies.len());
@@ -125,6 +122,14 @@ pub(super) async fn parents(
     );
     save_parents(ctx, repo, item, base, &mut parents).await?;
     Ok(parents)
+}
+
+/// Why `item` cannot stack on `parent`, delivered into the pull request `pr`.
+fn onto_parent(parent: &QueueItemId, pr: &str, item: &QueueItemId) -> ArchonError {
+    ArchonError::Invalid(format!(
+        "{parent} went into the pull request {pr}, not a branch of its own, so {item} cannot \
+         stack on it: queue the work `onto` {parent} instead"
+    ))
 }
 
 /// The pull request of `parent`'s branch, by the one its newest run on that
@@ -264,22 +269,56 @@ fn merge_branch(
 ) -> Result<Option<String>, ArchonError> {
     assert!(is_plain_branch(branch), "a run branch");
     assert!(stack::is_commit_id(sha), "a parent commit");
-    match merge_and_advance(shadow, repo, worktrees, branch, sha, identity)? {
+    let incoming = Incoming::Commit(sha.to_owned());
+    match merge_and_advance(shadow, repo, worktrees, branch, &incoming, identity)? {
         Merge::Conflict(files) => Ok(Some(files)),
         Merge::Contained | Merge::Merged { .. } => Ok(None),
     }
 }
 
-/// [`stack::merge`], with the branch and its worktree moved onto a merge commit.
+/// What a restack merges into a run branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Incoming {
+    /// A commit, merged as `git merge` would.
+    Commit(String),
+    /// Where the base holds a merged parent's head `dep`, which the branch
+    /// holds, merged as [`landed::merge`] does with the heads of every
+    /// `merged` parent of the branch.
+    Landed {
+        dep: String,
+        merged: Vec<String>,
+        landing: Landing,
+    },
+}
+
+impl Incoming {
+    /// The commit the branch holds once merged.
+    pub(super) fn commit(&self) -> &str {
+        match self {
+            Self::Commit(sha) => sha,
+            Self::Landed { landing, .. } => landing.commit(),
+        }
+    }
+}
+
+/// `incoming` merged into `branch`, with the branch and its worktree moved
+/// onto the merge commit.
 fn merge_and_advance(
     shadow: &Shadow,
     repo: &Path,
     worktrees: &Path,
     branch: &str,
-    sha: &str,
+    incoming: &Incoming,
     identity: &Identity,
 ) -> Result<Merge, ArchonError> {
-    let merge = stack::merge(shadow, repo, branch, sha, identity)?;
+    let merge = match incoming {
+        Incoming::Commit(sha) => stack::merge(shadow, repo, branch, sha, identity)?,
+        Incoming::Landed {
+            dep,
+            merged,
+            landing,
+        } => landed::merge(shadow, repo, branch, (dep, merged, landing), identity)?,
+    };
     if let Merge::Merged { from, to } = &merge {
         stack::advance(shadow, repo, worktrees, branch, from, to)?;
     }
@@ -444,6 +483,9 @@ async fn update_parents(
             .await?;
         }
     }
+    if can_merge {
+        super::landed::reconcile(ctx, (repo, item, run), child_head.as_deref()).await?;
+    }
     Ok(())
 }
 
@@ -457,20 +499,11 @@ async fn merge_parent(
     if fix_pending(ctx, item, parent, sha).await? {
         return Ok(());
     }
-    let mark = {
-        let _table = ctx.runs.lock().await;
-        let store = ctx.store.lock().await;
-        if store.item(&item.id)?.state != item.state
-            || store.runs_for_item(&item.id)?.last().map(|r| &r.id) != Some(&run.id)
-        {
-            return Ok(());
-        }
-        let Some(mark) = ctx.collecting.mark(item.id.clone()) else {
-            return Ok(());
-        };
-        mark
+    let Some(mark) = mark_current(ctx, item, run).await? else {
+        return Ok(());
     };
-    let restacked = merge_into_branch(ctx, repo, run, (sha, child_head), mark).await?;
+    let incoming = Incoming::Commit(sha.to_owned());
+    let restacked = merge_into_branch(ctx, repo, run, (&incoming, child_head), mark).await?;
     assert_eq!(parent.item, item.id);
     assert_ne!(parent.parent_item, item.id);
     parent.conflict = None;
@@ -489,6 +522,26 @@ async fn merge_parent(
     }
     ctx.store.lock().await.save_stack_parent(parent)?;
     Ok(())
+}
+
+/// Keep worktree gc and fix dispatch off `item`'s worktree while its branch
+/// is restacked, unless `run` is no longer its last, the item changed since it
+/// was read, or a restack fix or refresh, checked under the same locks, works there.
+pub(super) async fn mark_current(
+    ctx: &DaemonContext,
+    item: &QueueItem,
+    run: &PipelineRun,
+) -> Result<Option<crate::gc::Mark>, ArchonError> {
+    assert_eq!(run.item, item.id, "the item's own run");
+    let _table = ctx.runs.lock().await;
+    let store = ctx.store.lock().await;
+    if store.item(&item.id)?.state != item.state
+        || store.runs_for_item(&item.id)?.last().map(|r| &r.id) != Some(&run.id)
+        || store.has_pending_stack_fix(&item.id)?
+    {
+        return Ok(None);
+    }
+    Ok(ctx.collecting.mark(item.id.clone()))
 }
 
 /// Tell the operator `origin` refused the restacked branch; this is said once
@@ -511,7 +564,8 @@ async fn tell_rejected(
 }
 
 /// How restacking a branch onto a moved parent ended.
-enum Restacked {
+#[derive(Debug)]
+pub(super) enum Restacked {
     /// The branch holds the parent, pushed where it needed to be.
     Done,
     Conflict(String),
@@ -520,21 +574,23 @@ enum Restacked {
 }
 
 /// Fast-forward the run branch to the pull request's head `child_head`, merge
-/// `sha` into it, and in `pr` mode push it unless GitHub already has `sha`.
-async fn merge_into_branch(
+/// `incoming` into it, and push a delivered `pr` branch unless GitHub
+/// already has that commit.
+pub(super) async fn merge_into_branch(
     ctx: &DaemonContext,
     repo: &Repo,
     run: &PipelineRun,
-    (sha, child_head): (&str, Option<&str>),
+    (incoming, child_head): (&Incoming, Option<&str>),
     mark: crate::gc::Mark,
 ) -> Result<Restacked, ArchonError> {
     assert!(run.workspace.starts_with(&ctx.paths.worktrees));
     assert!(is_plain_branch(&run.branch), "a run branch");
     let identity = RepoIdentity::merger(repo_identity::of(ctx, repo).await?.as_ref());
     let (data_dir, worktrees) = (ctx.paths.data_dir.clone(), ctx.paths.worktrees.clone());
-    let (path, branch, sha) = (repo.path.clone(), run.branch.clone(), sha.to_owned());
+    let (path, branch) = (repo.path.clone(), run.branch.clone());
+    let (incoming, sha) = (incoming.clone(), incoming.commit().to_owned());
     let child_head = child_head.map(str::to_owned);
-    let push = repo.ship == ShipMode::Pr;
+    let push = repo.ship == ShipMode::Pr && run.shipped;
     let token = match push {
         true => gh::token(&ctx.config.github.binary, repo).await?,
         false => None,
@@ -545,7 +601,7 @@ async fn merge_into_branch(
         if let Some(head) = &child_head {
             fast_forward_to_head(&shadow, &path, &worktrees, &branch, head)?;
         }
-        let merge = merge_and_advance(&shadow, &path, &worktrees, &branch, &sha, &identity)?;
+        let merge = merge_and_advance(&shadow, &path, &worktrees, &branch, &incoming, &identity)?;
         let remote_has_parent = match &child_head {
             Some(head) => stack::contains(&path, &sha, head)?,
             None => merge == Merge::Contained,

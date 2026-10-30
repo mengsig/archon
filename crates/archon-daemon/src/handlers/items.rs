@@ -342,6 +342,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
     let waiting_reason = waiting.reason(&store, &item, waiting_on.as_ref())?;
     let steers = executor::steer::records(&store, id)?;
     let switched_to = executor::steer::switched_to(&store, &item)?;
+    let message_caps = crate::agent_messages::caps(&store, Some(id))?;
     Ok(Reply::ItemDetail(Box::new(ItemDetail {
         default_efforts,
         switched_to,
@@ -356,6 +357,7 @@ pub(super) async fn get(ctx: &DaemonContext, id: &QueueItemId) -> Result<Reply, 
         delegations,
         merges,
         stage_warnings,
+        message_caps,
     })))
 }
 
@@ -675,8 +677,8 @@ pub(super) async fn retry(
     check_reasons(&spec, retry.model_reasons.as_ref())?;
     check_stage_timeouts(ctx, &spec, &retry.stage_timeouts)?;
     check_runs_here(ctx, &env, &spec).await?;
-    let fresh_in = match retry.fresh {
-        true => Some(fresh_repo(&env, &spec)?),
+    let reserved = match retry.fresh {
+        true => Some(reserve_fresh(ctx, fresh_repo(&env, &spec)?, id).await?),
         false => None,
     };
     let (item, fresh_note) = {
@@ -696,8 +698,8 @@ pub(super) async fn retry(
         }
         // Git runs under the run table on purpose, so run starts and gc passes wait for this one
         // move; without it a gc pass could remove the worktree mid-move, or a second retry move it.
-        let fresh = match &fresh_in {
-            Some(repo) => Some(start_fresh(ctx, repo, &mut item).await?),
+        let fresh = match &reserved {
+            Some(reserved) => Some(start_fresh(ctx, &reserved.repo, &mut item).await?),
             None => None,
         };
         let kept = fresh.as_ref().and_then(|f| f.kept.as_deref());
@@ -708,6 +710,8 @@ pub(super) async fn retry(
         })?;
         (queued, fresh.map(|f| f.note))
     };
+    // Queued under the table: dispatch starts it once the mark goes.
+    drop(reserved);
     if let Some(note) = &fresh_note {
         post_note(ctx, id, note).await;
     }
@@ -764,6 +768,46 @@ fn fresh_repo(env: &RepoEnv, spec: &PipelineSpec) -> Result<Repo, ArchonError> {
     }
 }
 
+/// A fresh retry's repository, and the item's mark that holds dispatch and
+/// gc off its worktree from the stack teardown until the item is queued.
+struct Reserved {
+    repo: Repo,
+    _mark: crate::gc::Mark,
+}
+
+/// Mark the item, still finished, then tear down the Compose stacks in its
+/// worktree outside the run table, as Docker may take minutes; before the
+/// move, as a stack's labels name the directory it ran in.
+async fn reserve_fresh(
+    ctx: &DaemonContext,
+    repo: Repo,
+    id: &QueueItemId,
+) -> Result<Reserved, ArchonError> {
+    let mark = {
+        let _table = ctx.runs.lock().await;
+        let store = ctx.store.lock().await;
+        check_retryable(&store, &store.item(id)?)?;
+        ctx.collecting.mark(id.clone()).ok_or_else(|| {
+            ArchonError::Unavailable(format!(
+                "worktree gc or a stack teardown is working in the worktree of {id} right now; \
+                 retry it fresh once it is done"
+            ))
+        })?
+    };
+    assert!(
+        ctx.collecting.contains(id),
+        "the fresh retry holds its item"
+    );
+    let tree = WorktreeManager::new(
+        ctx.paths.worktrees.clone(),
+        ctx.config.worktrees.branch_prefix.clone(),
+    )
+    .path_for(&repo.name, id);
+    assert!(tree.starts_with(&ctx.paths.worktrees), "an item worktree");
+    crate::compose::tear_down(ctx, id, &tree, "before its fresh retry").await?;
+    Ok(Reserved { repo, _mark: mark })
+}
+
 /// What a fresh retry did before its item is queued again.
 struct FreshStart {
     /// The progress note, posted once the item is queued.
@@ -774,20 +818,15 @@ struct FreshStart {
 
 /// Move the item's run worktree aside and the item onto its next fresh
 /// branch, which its next run forks from the base branch. The caller holds
-/// the run table, so no run of the item starts nor gc pass marks it anew.
+/// the run table and the item's mark, so no run of the item starts nor gc
+/// pass collects it.
 async fn start_fresh(
     ctx: &DaemonContext,
     repo: &Repo,
     item: &mut QueueItem,
 ) -> Result<FreshStart, ArchonError> {
     assert!(!item.state.is_active(), "only a stopped item starts fresh");
-    if ctx.collecting.contains(&item.id) {
-        return Err(ArchonError::Unavailable(format!(
-            "worktree gc is collecting the worktree of {} right now; retry it fresh once the \
-             pass ends",
-            item.id
-        )));
-    }
+    assert!(ctx.collecting.contains(&item.id), "reserve_fresh marked it");
     let manager = WorktreeManager::new(
         ctx.paths.worktrees.clone(),
         ctx.config.worktrees.branch_prefix.clone(),

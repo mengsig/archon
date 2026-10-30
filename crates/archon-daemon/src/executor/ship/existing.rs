@@ -45,8 +45,9 @@ impl Locks {
 }
 
 /// Push `commit` onto the head branch of `onto`'s pull request, which must
-/// still be at its frozen head, as the repository's GitHub login when it has
-/// one, and return that pull request's URL once GitHub shows `commit` as its head.
+/// still be at its frozen head or one `commit` holds, as the repository's
+/// GitHub login when it has one, and return that pull request's URL once
+/// GitHub shows `commit` as its head.
 pub(super) async fn deliver(
     ctx: &DaemonContext,
     repo: &Repo,
@@ -82,7 +83,7 @@ pub(super) async fn deliver(
 
 /// Push `commit` to `onto.head_ref` unless `origin` holds it there already,
 /// as `token`'s login when given; refused when that branch moved off the
-/// frozen head. Never forced.
+/// frozen head to one `commit` lacks. Never forced.
 async fn fast_forward(
     data_dir: &Path,
     repo: &Path,
@@ -98,8 +99,8 @@ async fn fast_forward(
         .map_err(|e| ArchonError::io("the push task", std::io::Error::other(e)))?
 }
 
-/// [`fast_forward`], blocking. The push carries a lease on the frozen head,
-/// so `origin` refuses it when its tip moved after it was read here.
+/// [`fast_forward`], blocking. The push carries a lease on the head read
+/// here, so `origin` refuses it when its tip moved after that.
 fn fast_forward_now(
     data_dir: &Path,
     repo: &Path,
@@ -130,20 +131,22 @@ fn fast_forward_now(
     let branch = onto.head_ref.as_str();
     // Read where and as whom the push goes.
     let head = || stack::remote_head_as(&shadow, &push_to, branch, token);
-    match head()? {
+    let lease = match head()? {
         // An earlier try pushed it and failed after.
         Some(head) if head == commit => return Ok(Ok(())),
-        Some(head) if head == *frozen => {}
+        Some(head) if head == *frozen => head,
+        // The branch merged the moved head already, so this is still a fast-forward.
+        Some(head) if holds(repo, &head, commit)? => head,
         Some(head) => return Ok(Err(moved(onto, &head))),
         None => return Ok(Err(gone(onto))),
-    }
-    let pushed = stack::push_from(&shadow, &push_to, (branch, commit), frozen, token)?;
+    };
+    let pushed = stack::push_from(&shadow, &push_to, (branch, commit), &lease, token)?;
     if pushed.status.success() {
         return Ok(Ok(()));
     }
     match head()? {
         Some(head) if head == commit => Ok(Ok(())),
-        Some(head) if head != *frozen => Ok(Err(moved(onto, &head))),
+        Some(head) if head != lease && head != *frozen => Ok(Err(moved(onto, &head))),
         None => Ok(Err(gone(onto))),
         Some(_) => Ok(Err(push_refused(branch, &pushed, token)?)),
     }
@@ -219,6 +222,16 @@ fn descends(repo: &Path, ancestor: &str, commit: &str) -> Result<bool, ArchonErr
     }
 }
 
+/// Whether `commit` holds `head`, a commit `repo` may not have at all.
+fn holds(repo: &Path, head: &str, commit: &str) -> Result<bool, ArchonError> {
+    assert!(stack::is_commit_id(head), "checked by its caller");
+    let spec = format!("{head}^{{commit}}");
+    let known = DaemonGit::sealed_in(repo)
+        .args(["cat-file", "-e", &spec])
+        .output()?;
+    Ok(known.status.success() && descends(repo, head, commit)?)
+}
+
 /// `origin`'s URL, or a refusal when the repository has none archond may use.
 fn origin(repo: &Path) -> Result<Result<String, String>, ArchonError> {
     match stack::origin_url(repo) {
@@ -235,7 +248,8 @@ fn origin(repo: &Path) -> Result<Result<String, String>, ArchonError> {
 }
 
 /// `onto`'s URL once GitHub shows `commit` as the head of that open pull
-/// request; a pull request still showing the frozen head is retried.
+/// request; one still showing a head `commit` holds, as the frozen head or
+/// a moved head it was pushed over, lags behind the push and is retried.
 async fn confirm(
     binary: &Path,
     repo: &Repo,
@@ -256,19 +270,36 @@ async fn confirm(
             onto.head_ref, viewed.pr.state, viewed.pr.head_ref_name
         )));
     }
-    match viewed.pr.head_ref_oid.as_deref() {
-        Some(head) if head == commit => Ok(Ok(url)),
-        Some(head) if head == onto.head_sha => Err(ArchonError::Unavailable(format!(
-            "GitHub still shows {head} as the head of {url} after the push of {commit}"
-        ))),
-        Some(head) => Ok(Err(format!(
-            "pushed {commit} to `{}`, but {url} shows head {head}: someone pushed after it",
-            onto.head_ref
-        ))),
-        None => Err(ArchonError::Unavailable(format!(
+    let Some(head) = viewed.pr.head_ref_oid else {
+        return Err(ArchonError::Unavailable(format!(
             "GitHub gave no head commit for {url}"
-        ))),
+        )));
+    };
+    if head == commit {
+        return Ok(Ok(url));
     }
+    if head == onto.head_sha || held_by(&repo.path, &head, commit).await? {
+        return Err(ArchonError::Unavailable(format!(
+            "GitHub still shows {head} as the head of {url} after the push of {commit}"
+        )));
+    }
+    Ok(Err(format!(
+        "pushed {commit} to `{}`, but {url} shows head {head}: someone pushed after it",
+        onto.head_ref
+    )))
+}
+
+/// [`holds`], off the async runtime: whether `commit` holds GitHub's `head`.
+async fn held_by(repo: &Path, head: &str, commit: &str) -> Result<bool, ArchonError> {
+    if !stack::is_commit_id(head) {
+        return Err(ArchonError::Protocol(format!(
+            "GitHub gave {head:?} as a head commit"
+        )));
+    }
+    let (repo, head, commit) = (repo.to_owned(), head.to_owned(), commit.to_owned());
+    tokio::task::spawn_blocking(move || holds(&repo, &head, &commit))
+        .await
+        .map_err(|e| ArchonError::io("the ancestry task", std::io::Error::other(e)))?
 }
 
 /// Why `onto`'s pull request is not updated: `origin` is not provably the

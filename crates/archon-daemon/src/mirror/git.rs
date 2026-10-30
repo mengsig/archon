@@ -154,7 +154,7 @@ impl Mirror {
     }
 
     /// Check the mirror out detached at `commit`. Tracked files are reset to
-    /// it; untracked ones (a helper's notes, build output) are left.
+    /// it; untracked ones are removed by `clean`, ignored build output kept.
     pub(crate) fn checkout(&self, base: &Base) -> Result<(), ArchonError> {
         assert!(!base.commit.starts_with('-'), "a commit id is no option");
         let args = ["checkout", "--quiet", "--force", "--detach", &base.commit];
@@ -179,7 +179,7 @@ impl Mirror {
 
     /// What was changed in the mirror since the daemon checked out `commit`:
     /// commits made on top of it and tracked files changed, staged or not;
-    /// `None` when nothing was. Untracked files are not counted.
+    /// `None` when nothing was. Files created are counted, ignored ones not.
     pub(crate) fn changes_since(
         &self,
         base: &Base,
@@ -199,7 +199,7 @@ impl Mirror {
             "status",
             "--porcelain",
             "-z",
-            "--untracked-files=no",
+            "--untracked-files=normal",
             "--no-renames",
             "--ignore-submodules",
         ];
@@ -245,8 +245,9 @@ impl Mirror {
     }
 
     /// Remove untracked files git does not ignore, keeping ignored build output.
+    /// Forced twice, so a repository an agent made or cloned inside goes too.
     pub(crate) fn clean(&self, base: &Base) -> Result<(), ArchonError> {
-        let args = ["clean", "--quiet", "--force", "-d"];
+        let args = ["clean", "--quiet", "--force", "--force", "-d"];
         self.git(&base.format)?
             .args(args)
             .limit(CHECKOUT_TIMEOUT)
@@ -274,6 +275,33 @@ fn listed(names: &[String]) -> String {
         Some(more) if more > 0 => format!("{shown} and {more} more"),
         _ => shown,
     }
+}
+
+/// Remove every `.git` below the mirror's own at the top of `work`: git
+/// tracks none, and `clean` cannot see a repository made in a tracked directory.
+pub(super) fn remove_nested_repositories(work: &Path) -> Result<(), ArchonError> {
+    assert!(work.is_absolute(), "mirror paths are absolute");
+    let mut pending = vec![work.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let reading = |e| ArchonError::io(format!("reading {}", dir.display()), e);
+        for entry in std::fs::read_dir(&dir).map_err(reading)? {
+            let entry = entry.map_err(reading)?;
+            let path = entry.path();
+            if entry.file_name() == ".git" {
+                if dir != work {
+                    tracing::info!(entry = %path.display(), "removing a repository made inside a mirror");
+                    remove_entry(&path)?;
+                }
+            } else if entry.file_type().map_err(reading)?.is_dir() {
+                pending.push(path);
+            }
+        }
+    }
+    assert!(
+        work.join(".git").symlink_metadata().is_ok(),
+        "the mirror's own stays"
+    );
+    Ok(())
 }
 
 /// Remove every entry of the directory `root` not named in `keep`, opening

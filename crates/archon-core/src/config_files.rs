@@ -26,7 +26,7 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 # Optional narrowing. Without [models] every model Aether reports ready may
 # be used. Tiers (fast, balanced, strong, frontier) come from Aether's catalog.
 # [models]
-# allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-sol"]
+# allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-terra"]
 # max_effort = "high"
 # max_default_tier = "strong"   # the most a default picks; a plan may ask higher
 # provider_weights = { "claude-code" = 7, codex = 3 }   # share of tier-only items
@@ -60,7 +60,7 @@ pub const STARTER_CONFIG: &str = r#"# Archon's configuration. Every key is optio
 # gc_after = "7d"           # "0s" disables expiry
 
 # [storage]
-# retention_days = 14       # settled reports and log age; 0 disables age expiry
+# retention_days = 14       # settled history, reports and log age; 0 disables age expiry
 # log_max_mb = 10           # 0 disables size rotation
 # log_max_files = 3         # archives beyond the active log; 0 disables count limit
 

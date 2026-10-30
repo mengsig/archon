@@ -77,7 +77,11 @@ async fn restart_briefs_every_running_item_before_delivering_an_existing_batch()
     let pump = tokio::spawn(triggers::deliver_loop(harness.ctx.clone()));
     let sent = harness.fake.wait_for("trigger", 2, WAIT).await;
     pump.abort();
-    assert_eq!(sent[1]["idempotency_key"], "old-key");
+    assert_eq!(sent[1]["agent"], "agt_new");
+    assert_eq!(
+        sent[1]["idempotency_key"], "old-key_agt_new",
+        "the stored batch, keyed to the orchestrator it now goes to"
+    );
     assert_eq!(sent[1]["payload"]["events"][0]["type"], "budget");
 }
 

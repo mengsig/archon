@@ -820,10 +820,9 @@ mod tests {
 
     /// A `gh` that prints `stdout` and succeeds.
     fn gh_printing(dir: &Path, stdout: &str) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
         let script = dir.join("gh");
-        std::fs::write(&script, format!("#!/bin/sh\ncat <<'EOF'\n{stdout}\nEOF\n")).unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let body = format!("#!/bin/sh\ncat <<'EOF'\n{stdout}\nEOF\n");
+        archon_core::testing::write_script(&script, &body);
         script
     }
 
@@ -905,12 +904,10 @@ echo "GH_TOKEN=${GH_TOKEN-unset} GH_HOST=${GH_HOST-unset} GITHUB_TOKEN=${GITHUB_
 
     impl Fake {
         fn new(origin: &str, gh_user: Option<&str>) -> Self {
-            use std::os::unix::fs::PermissionsExt;
             let dir = tempfile::tempdir().unwrap();
             let root = dir.path().canonicalize().unwrap();
             let gh = root.join("gh");
-            std::fs::write(&gh, FAKE_GH.replace("@SECRET@", SECRET)).unwrap();
-            std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+            archon_core::testing::write_script(&gh, &FAKE_GH.replace("@SECRET@", SECRET));
             let path = root.join("repo");
             std::fs::create_dir(&path).unwrap();
             let git = |args: &[&str]| {

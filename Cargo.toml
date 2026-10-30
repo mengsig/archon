@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "bench"]
 
 [workspace.package]
-version = "1.4.7"
+version = "1.4.8"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/mengsig/archon"
@@ -20,14 +20,21 @@ archon-pipeline = { path = "crates/archon-pipeline" }
 archon-mcp = { path = "crates/archon-mcp" }
 archon-lavish = { path = "crates/archon-lavish" }
 archon-daemon = { path = "crates/archon-daemon" }
+archon-remote = { path = "crates/archon-remote" }
 
 anyhow = "1.0.104"
 async-trait = "0.1.92"
 base64 = "0.23.1"
+bytes = "1.12.1"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "serde", "std"] }
 clap = { version = "4.6.6", features = ["derive", "env"] }
 dirs = "7.0.0"
-futures-util = { version = "0.3.34", default-features = false, features = ["alloc", "std"] }
+futures-util = { version = "0.3.34", default-features = false, features = ["alloc", "std", "sink"] }
+getrandom = "0.4.3"
+http-body-util = "0.1.5"
+hyper = { version = "1.11.1", features = ["server", "http1"] }
+hyper-util = { version = "0.1.20", features = ["tokio"] }
+qrcode = { version = "0.14.1", default-features = false }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 rustix = { version = "1.1.5", default-features = false, features = ["fs", "process", "std"] }
 rustyline = { version = "19.0.0", default-features = false, features = ["custom-bindings", "with-file-history"] }
@@ -38,6 +45,7 @@ tempfile = "3.27.0"
 terminal_size = "0.4.4"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["full"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 toml = "1.1.5"
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

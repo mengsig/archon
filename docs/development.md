@@ -93,6 +93,23 @@ make ci      # fmt check, clippy -D warnings, rustdoc -D warnings, tests
 run it under `dash` when there is one, else under `sh`; `ARCHON_TEST_SH`
 names another shell.
 
+## The mobile web app
+
+The app lives in `crates/archon-remote/web` as plain ES modules and CSS, with
+no build step; `build.rs` embeds the shipped files into archond. Its tests:
+
+```sh
+make e2e     # unit tests, then every flow in headless Chromium against archond
+```
+
+`make e2e` builds `archon`, installs the npm packages and Chromium on first
+use, starts archond in a temp home under `/tmp`, sets remote access up with
+`archon remote setup --local` and pairs with `archon remote pair`. It skips
+with a message when Chromium cannot be installed, unless `CI` is set. The
+release pull request into `main` runs it in CI. `node scripts/screens.js`
+in that directory regenerates the screenshots in `docs/assets/remote/`;
+`crates/archon-remote/web/README.md` has the rest.
+
 ## Releasing
 
 Pushing a tag `v<version>` that equals the workspace version in `Cargo.toml`

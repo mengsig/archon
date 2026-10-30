@@ -44,6 +44,7 @@ fn variant_name(command: &Command) -> &'static str {
         Command::Hello(_) => "hello",
         Command::Status => "status",
         Command::Ping => "ping",
+        Command::StorageGc { .. } => "storage_gc",
         Command::CreateAgent(_) => "create_agent",
         Command::GetAgent { .. } => "get_agent",
         Command::ListAgents { .. } => "list_agents",
@@ -63,6 +64,7 @@ fn variant_name(command: &Command) -> &'static str {
         Command::Unsubscribe { .. } => "unsubscribe",
         Command::GetEvents { .. } => "get_events",
         Command::ListModels => "list_models",
+        Command::AuthStatus => "auth_status",
         Command::Providers => "providers",
         Command::McpServers { .. } => "mcp_servers",
         Command::GetGithubWatcher => "get_github_watcher",
@@ -190,10 +192,14 @@ fn samples() -> Vec<Command> {
                 cost_budget: Some(3.0),
                 deadline: Some(json!({"set": "2026-09-26T12:00:00Z"})),
             },
+            subtree: false,
+            idempotency_key: None,
         },
         Command::UpdateAgent {
             id: agent(),
             patch: AgentPatch::default(),
+            subtree: false,
+            idempotency_key: None,
         },
     ];
     commands.extend(message_samples());
@@ -271,6 +277,7 @@ fn control_samples() -> Vec<Command> {
             query: full_event_query(),
         },
         Command::ListModels,
+        Command::AuthStatus,
         Command::Providers,
         Command::McpServers {
             refresh: true,
@@ -437,7 +444,7 @@ fn every_command_archon_emits_matches_the_schema() {
     );
     assert_eq!(
         seen.len(),
-        28,
+        29,
         "every Command variant has a sample: {seen:?}"
     );
 }
@@ -506,6 +513,13 @@ fn the_agent_fields_archon_reads_exist_in_the_schema() {
     ];
     for key in read {
         assert!(properties.contains(key), "Agent.{key} is not in the schema");
+    }
+    let (config, _) = shape(&schema, &schema["$defs"]["AgentConfig"]);
+    for key in ["effort", "deadline", "cost_budget"] {
+        assert!(
+            config.contains(key),
+            "AgentConfig.{key} is not in the schema"
+        );
     }
     let mut value = archon_aether::fake::agent("agt_01ARZ3NDEKTSV4RRFFQ69G5FAV", None);
     value["restarted_as"] = json!("agt_01ARZ3NDEKTSV4RRFFQ69G5FAW");
@@ -721,6 +735,66 @@ fn notification_commands_match_aethers_feature_schema() {
 
 /// Transcribed from Aether's published protocol schema (v24): images ride on
 /// `send_message.attachments`, and a text-only message leaves the key off.
+/// A subset of Aether 1.2.7's published schema: `update_agent` with its
+/// `subtree` flag and idempotency key, which protocol 17 does not list.
+#[test]
+fn a_subtree_or_keyed_update_matches_aethers_published_schema() {
+    let schema: Value =
+        serde_json::from_str(include_str!("fixtures/aether-subtree-update.schema.json")).unwrap();
+    let patch = AgentPatch {
+        cost_budget: Some(4.5),
+        deadline: Some(json!({"set": "2026-09-26T12:00:00Z"})),
+        ..AgentPatch::default()
+    };
+    let wide = Command::UpdateAgent {
+        id: agent(),
+        patch: patch.clone(),
+        subtree: true,
+        idempotency_key: None,
+    };
+    let keyed = Command::UpdateAgent {
+        id: agent(),
+        patch,
+        subtree: false,
+        idempotency_key: Some("ntf_1:agt_1".into()),
+    };
+    for command in [&wide, &keyed] {
+        assert_eq!(violations(&schema, command), Vec::<String>::new());
+    }
+    let wide = serde_json::to_value(&wide).unwrap();
+    assert_eq!(wide["subtree"], true);
+    assert!(wide.get("idempotency_key").is_none());
+    let keyed = serde_json::to_value(&keyed).unwrap();
+    assert!(
+        keyed.get("subtree").is_none(),
+        "false is left out, as Aether does"
+    );
+    assert_eq!(keyed["idempotency_key"], "ntf_1:agt_1");
+}
+
+/// A subset of Aether 1.2.7's published schema: the `history_expired` code
+/// and the expired span's bounds on the refusal that carries it.
+#[test]
+fn an_expired_history_refusal_matches_aethers_published_schema() {
+    use archon_aether::wire::{ErrorReply, ExpiredSpan};
+    let schema: Value =
+        serde_json::from_str(include_str!("fixtures/aether-history-expired.schema.json")).unwrap();
+    let defs = &schema["$defs"];
+    assert!(allowed_strings(&defs["ErrorCode"]).contains(&json!("history_expired")));
+    assert!(allowed_strings(&defs["ErrorCode"]).contains(&json!("not_found")));
+    let sent = json!({"code": "history_expired", "first_seq": 1, "last_seq": 2,
+        "message": "event history expired within sequence range 1..=2; obtain a fresh state snapshot before resuming replay"});
+    let problems = check(&schema, &defs["ErrorReply"], &sent, "error");
+    assert_eq!(problems, Vec::<String>::new());
+    let reply: ErrorReply = serde_json::from_value(sent).unwrap();
+    assert_eq!(reply.expired_span(), ExpiredSpan::new(1, 2));
+    assert_eq!(
+        reply.expired_span_in_text(),
+        None,
+        "the text path is for not_found"
+    );
+}
+
 #[test]
 fn a_message_with_images_matches_aethers_published_schema() {
     use archon_core::attachment::ImageAttachment;

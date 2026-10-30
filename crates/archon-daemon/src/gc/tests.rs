@@ -90,7 +90,7 @@ fn sweep_of(
         candidates,
         ..Found::default()
     };
-    sweep::sweep(found, roots, policy)
+    sweep::sweep(found, roots, policy).report
 }
 
 /// Build output under `tree`: an ignored `target/` and log, `bytes` big.
@@ -429,7 +429,7 @@ fn a_team_run_is_collected_whole_but_for_dirty_worktrees() {
     );
     assert_eq!(paths.len(), 5, "{paths:?}");
     let roots = roots_in(&base);
-    let report = sweep::sweep(found, &roots, &policy(false));
+    let report = sweep::sweep(found, &roots, &policy(false)).report;
     assert!(report.failed.is_empty(), "{:?}", report.failed);
     for gone in [root.join("main"), root.join("build-api"), kept, ours] {
         assert!(!gone.exists(), "{} is left", gone.display());
@@ -443,7 +443,7 @@ fn a_team_run_is_collected_whole_but_for_dirty_worktrees() {
     assert_eq!(branches.lines().count(), 3, "branches are kept: {branches}");
 
     let forced = team_run(&root, Some(&repo), Action::Remove);
-    let forced = sweep::sweep(forced, &roots, &policy(true));
+    let forced = sweep::sweep(forced, &roots, &policy(true)).report;
     assert_eq!(forced.removed, vec![root.join("build-ui"), root.clone()]);
     assert!(!root.exists(), "the emptied item directory goes too");
 }
@@ -475,7 +475,7 @@ fn a_shipped_team_run_leaves_no_item_directory_behind() {
     let found = team_run(&root, Some(&repo), Action::Remove);
     assert_eq!(found.candidates.len(), 1, "{:?}", found.candidates);
     assert_eq!(found.team_roots, vec![root.clone()]);
-    let report = sweep::sweep(found, &roots_in(&base), &policy(false));
+    let report = sweep::sweep(found, &roots_in(&base), &policy(false)).report;
     assert_eq!(report.removed, vec![root.join("build-api"), root.clone()]);
     assert!(
         report.skipped.is_empty() && report.failed.is_empty(),
@@ -505,7 +505,7 @@ fn a_symlinked_team_root_is_not_followed() {
     assert!(found.unreadable.is_empty(), "{:?}", found.unreadable);
     assert!(team::worktrees(&root).is_empty());
     let roots = roots_in(&base);
-    let report = sweep::sweep(found, &roots, &policy(true));
+    let report = sweep::sweep(found, &roots, &policy(true)).report;
     assert!(report.removed.is_empty(), "{:?}", report.removed);
     assert_eq!(report.skipped.len(), 1, "{:?}", report.skipped);
     assert_eq!(report.skipped[0].0, root);
@@ -543,7 +543,7 @@ fn a_removed_team_root_is_reported_by_its_real_path() {
         data_dir: base.join("data"),
     };
     let found = team_run(&root, Some(&repo), Action::Remove);
-    let report = sweep::sweep(found, &roots, &policy(false));
+    let report = sweep::sweep(found, &roots, &policy(false)).report;
     let real = base.join("real/trees/repo/qi_1");
     assert_eq!(report.removed, vec![real.join("build-api"), real.clone()]);
     assert!(report.skipped.is_empty() && report.failed.is_empty());
@@ -614,7 +614,7 @@ fn what_cannot_be_read_is_noted_and_the_rest_still_collected() {
     assert_eq!(found.unreadable[0].0, broken);
     assert_eq!(found.candidates.len(), 3, "{:?}", found.candidates);
 
-    let report = sweep::sweep(found, &roots_in(&base), &policy(false));
+    let report = sweep::sweep(found, &roots_in(&base), &policy(false)).report;
     assert_eq!(report.removed, vec![root.join(".set-aside/build-api-1")]);
     let failed: Vec<&Path> = report.failed.iter().map(|(p, _)| p.as_path()).collect();
     assert_eq!(failed, vec![broken.as_path()]);
@@ -922,7 +922,7 @@ fn only_the_owed_run_worktree_of_a_team_run_goes_early() {
     ];
     assert_eq!(actions(&plans), expected, "main was already removed");
     let found = plans.into_iter().next().unwrap().found;
-    let report = sweep::sweep(found, &roots, &policy);
+    let report = sweep::sweep(found, &roots, &policy).report;
     assert!(report.removed.is_empty(), "{report:?}");
     assert!(aside.join("precious.rs").exists() && root.join("build-api").exists());
 
@@ -932,7 +932,7 @@ fn only_the_owed_run_worktree_of_a_team_run_goes_early() {
     owed.push((root.join("main"), Action::Remove));
     assert_eq!(actions(&plans), owed, "a lost cleanup");
     let found = plans.into_iter().next().unwrap().found;
-    let report = sweep::sweep(found, &roots, &policy);
+    let report = sweep::sweep(found, &roots, &policy).report;
     assert_eq!(report.removed, vec![root.join("main")], "{report:?}");
     assert!(aside.join("precious.rs").exists() && root.join("build-api").exists());
 }
@@ -957,7 +957,7 @@ fn an_unregistered_repository_is_found_through_the_worktree() {
     assert!(found.unreadable.is_empty(), "{:?}", found.unreadable);
     assert_eq!(found.candidates[0].repo, Some(repo.join(".git")));
     let plan = plans.into_iter().next().unwrap();
-    let report = sweep::sweep(plan.found, &roots, &policy(false));
+    let report = sweep::sweep(plan.found, &roots, &policy(false)).report;
     assert_eq!(report.removed, vec![tree.clone()]);
     assert!(!tree.exists());
     assert!(

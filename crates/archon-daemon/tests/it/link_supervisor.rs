@@ -781,6 +781,14 @@ async fn a_watcher_with_repositories_or_unread_keeps_the_github_policy() {
 
 /// An orchestrator stuck `failed` by a transient engine error.
 fn failing_orchestrator(harness: &Harness) -> Arc<Mutex<HashMap<String, String>>> {
+    failing_orchestrator_on(harness, "claude-code")
+}
+
+/// As [`failing_orchestrator`], running a model of `provider`.
+fn failing_orchestrator_on(
+    harness: &Harness,
+    provider: &'static str,
+) -> Arc<Mutex<HashMap<String, String>>> {
     let states = agent_table(harness, &[]);
     let table = states.clone();
     harness.fake.set_responder(
@@ -791,6 +799,7 @@ fn failing_orchestrator(harness: &Harness) -> Arc<Mutex<HashMap<String, String>>
                 return Scripted::refuse("not_found", "no such agent");
             };
             let mut agent = agent_in(id, &state);
+            agent["model"]["provider"] = json!(provider);
             if state == "failed" {
                 agent["status"]["error"] = json!("Failed to refresh OAuth token");
             }
@@ -800,9 +809,11 @@ fn failing_orchestrator(harness: &Harness) -> Arc<Mutex<HashMap<String, String>>
     states.lock().unwrap().insert(ORCH.into(), "failed".into());
     harness.fake.set_responder(
         "wake",
-        Arc::new(|cmd| {
+        Arc::new(move |cmd| {
             let id = cmd["agent"].as_str().unwrap_or_default();
-            Scripted::reply("agent", agent_in(id, "ready"))
+            let mut agent = agent_in(id, "ready");
+            agent["model"]["provider"] = json!(provider);
+            Scripted::reply("agent", agent)
         }),
     );
     states
@@ -831,6 +842,7 @@ async fn a_failing_orchestrator_is_revived_with_growing_pauses_and_never_given_u
     for (revival, pause) in supervisor::REVIVAL_BACKOFF.iter().take(4).enumerate() {
         let reason = deferred(&harness).await;
         assert!(reason.contains("archon orchestrator restart"), "{reason}");
+        assert!(reason.contains("Archon revives it again in "), "{reason}");
         assert_eq!(wakes(), revival + 1, "nothing is woken before it is due");
         let ahead = next_revival_in(&harness);
         assert!(
@@ -844,6 +856,10 @@ async fn a_failing_orchestrator_is_revived_with_growing_pauses_and_never_given_u
     let blockers = harness.notifications(NotificationKind::Blocker).await;
     assert_eq!(blockers.len(), 1, "told once per streak: {blockers:?}");
     assert!(blockers[0].contains("OAuth token"), "{blockers:?}");
+    assert!(
+        blockers[0].contains("Run `archon orchestrator restart`"),
+        "Aether could not say the engine is logged out: {blockers:?}"
+    );
     let woken = harness.system_notes().await;
     assert_eq!(woken.len(), 2, "quiet once the Blocker is up: {woken:?}");
 
@@ -864,6 +880,46 @@ async fn a_failing_orchestrator_is_revived_with_growing_pauses_and_never_given_u
     states.lock().unwrap().insert(ORCH.into(), "failed".into());
     supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
     assert_eq!(wakes(), 6, "a new streak starts without a pause");
+}
+
+/// An orchestrator whose engine is logged out gets the login step, since a
+/// restart would fail the same way. The failed agent's engine counts, not
+/// the configured model's (claude-code here, and logged in).
+#[tokio::test]
+async fn a_streak_caused_by_a_logged_out_engine_names_the_login_step() {
+    let harness = Harness::new().await;
+    harness.connect().await;
+    harness.set_kv(keys::ORCHESTRATOR_AGENT, ORCH).await;
+    assert_eq!(
+        harness.ctx.config.orchestrator.model.provider,
+        "claude-code"
+    );
+    failing_orchestrator_on(&harness, "codex");
+    let logins = json!([
+        {"provider": "codex", "configured": false, "program": "codex"},
+        {"provider": "claude-code", "configured": true, "program": "claude"},
+    ]);
+    harness
+        .fake
+        .set_default("auth_status", Scripted::reply("auth", logins));
+
+    supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    for pause in supervisor::REVIVAL_BACKOFF.iter().take(2) {
+        harness.rewind_backoff(pause.as_secs_f64()).await;
+        supervisor::ensure_orchestrator(&harness.ctx).await.unwrap();
+    }
+    let blockers = harness.notifications(NotificationKind::Blocker).await;
+    assert_eq!(blockers.len(), 1, "told once per streak: {blockers:?}");
+    assert!(
+        blockers[0]
+            .contains("codex is not logged in: run `codex` once (or choose a `claude-code` model)"),
+        "{blockers:?}"
+    );
+    assert!(
+        !blockers[0].contains("orchestrator restart"),
+        "{blockers:?}"
+    );
+    assert_eq!(harness.fake.received_named("auth_status").len(), 1);
 }
 
 #[tokio::test]

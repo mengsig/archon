@@ -31,6 +31,8 @@ const BACKOFF_KEY: &str = "orchestrator_backoff";
 const RETIRED_KEYS: [&str; 2] = ["orchestrator_gave_up", "orchestrator_failures"];
 /// Turn endings (`agent.turn_completed.next`) that prove the agent works.
 const HEALTHY_TURN_ENDS: &[&str] = &["ready", "waiting"];
+/// How long the blocker waits for Aether to say whether the engine is logged in.
+const AUTH_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The orchestrator's current failure streak.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,34 +133,77 @@ pub(super) fn schedule(ctx: &DaemonContext, due: Timestamp) {
     ctx.supervisor.revive_at.send_replace(Some(due));
 }
 
-/// Why a stopped orchestrator is not revived yet.
-pub(super) fn deferred_error(state: &str, due: Timestamp) -> ArchonError {
-    let at = due.with_timezone(&chrono::Local).format("%H:%M:%S");
+/// Why a stopped orchestrator is not revived yet. The wait is relative, so
+/// it reads right in any timezone; a revival already due is running now.
+pub(super) fn deferred_error(state: &str, due: Timestamp, now: Timestamp) -> ArchonError {
+    assert!(!state.is_empty(), "a stopped orchestrator has a state");
+    let Ok(wait) = (due - now).to_std() else {
+        return reviving_now(state);
+    };
+    if wait.is_zero() {
+        return reviving_now(state);
+    }
+    let secs = wait.as_millis().div_ceil(1000);
+    assert!(
+        wait <= REVIVAL_BACKOFF[REVIVAL_BACKOFF.len() - 1],
+        "a revival is never owed later than the longest pause"
+    );
     ArchonError::Unavailable(format!(
-        "the orchestrator is {state}; Archon revives it again at {at}, or run `archon orchestrator restart` now"
+        "the orchestrator is {state}; Archon revives it again in {secs}s, or run `archon orchestrator restart` now"
     ))
 }
 
-/// The one `Blocker` of a streak that keeps failing.
+fn reviving_now(state: &str) -> ArchonError {
+    ArchonError::Unavailable(format!(
+        "the orchestrator is {state}; Archon is reviving it now, and `archon orchestrator` shows how it goes"
+    ))
+}
+
+/// The one `Blocker` of a streak that keeps failing. When `provider`, the
+/// failed agent's, is not logged in, it names the login step, not a restart.
 pub(super) async fn keeps_failing(
     ctx: &DaemonContext,
     backoff: &Backoff,
+    provider: &str,
     error: Option<&str>,
 ) -> Result<(), ArchonError> {
     assert_eq!(
         backoff.revivals, REVIVALS_BEFORE_BLOCKER,
         "told once per streak"
     );
+    assert!(!provider.is_empty(), "an agent's model names its provider");
     let cause = error
         .map(|e| format!(" (last error: {e})"))
         .unwrap_or_default();
     let most = REVIVAL_BACKOFF[REVIVAL_BACKOFF.len() - 1].as_secs() / 60;
+    let fix = match login_problem(ctx, provider).await {
+        Some(problem) => format!("{problem}; the next revival after that brings it back."),
+        None => "Run `archon orchestrator restart` to start a fresh one now.".to_owned(),
+    };
     let text = format!(
-        "The orchestrator stopped {} times in a row{cause}. Archon keeps reviving it, waiting longer each time and then every {most} minutes. Its news is held until it recovers; item outcomes still show here. Run `archon orchestrator restart` to start a fresh one now.",
+        "The orchestrator stopped {} times in a row{cause}. Archon keeps reviving it, waiting longer each time and then every {most} minutes. Its news is held until it recovers; item outcomes still show here. {fix}",
         backoff.revivals
     );
     feed::notify(ctx, NotificationKind::Blocker, text, None, None).await?;
     Ok(())
+}
+
+/// Why `provider` is not logged in, as Aether's `auth_status` says; `None`
+/// when it is, or when Aether cannot say (logged, and the restart hint stays).
+async fn login_problem(ctx: &DaemonContext, provider: &str) -> Option<String> {
+    let lookup = async { ctx.aether.client()?.auth_status().await };
+    let auth = match tokio::time::timeout(AUTH_TIMEOUT, lookup).await {
+        Ok(Ok(auth)) => auth,
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "auth_status failed; the blocker suggests a restart");
+            return None;
+        }
+        Err(_) => {
+            tracing::warn!("auth_status timed out; the blocker suggests a restart");
+            return None;
+        }
+    };
+    archon_aether::auth::login_problem(provider, &auth)
 }
 
 /// A revival Aether answered with an error, returned for the caller to report.
@@ -167,6 +212,7 @@ pub(super) async fn failed(
     ctx: &DaemonContext,
     backoff: Backoff,
     now: Timestamp,
+    provider: &str,
     error: ArchonError,
 ) -> Result<ArchonError, ArchonError> {
     if !matches!(error, ArchonError::Aether(_) | ArchonError::Protocol(_)) {
@@ -179,7 +225,7 @@ pub(super) async fn failed(
         .expect("a revival that just ran is followed by a pause");
     schedule(ctx, due);
     if backoff.revivals == REVIVALS_BEFORE_BLOCKER {
-        keeps_failing(ctx, &backoff, Some(&error.to_string())).await?;
+        keeps_failing(ctx, &backoff, provider, Some(&error.to_string())).await?;
     }
     Ok(error)
 }
@@ -253,6 +299,22 @@ mod tests {
         let twice = once.revived(at(10));
         assert_eq!(twice.revivals, 2);
         assert_eq!(twice.deferred_until(at(11)), Some(at(40)));
+    }
+
+    #[test]
+    fn a_deferral_counts_down_and_a_due_one_is_reviving_now() {
+        let waiting = deferred_error("failed", at(10), at(0)).to_string();
+        assert!(
+            waiting.contains("Archon revives it again in 10s"),
+            "{waiting}"
+        );
+        let rounded = deferred_error("failed", at(10), at(9) - chrono::TimeDelta::milliseconds(1));
+        assert!(rounded.to_string().contains("again in 2s"), "{rounded}");
+        for now in [at(10), at(70)] {
+            let due = deferred_error("failed", at(10), now).to_string();
+            assert!(due.contains("Archon is reviving it now"), "{due}");
+            assert!(!due.contains("again in"), "{due}");
+        }
     }
 
     #[test]

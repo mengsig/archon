@@ -333,10 +333,13 @@ pub(super) fn totals(
             |r| r.get(0),
         )
         .ctx("sum daily spend")?;
+    // The history retention pass carries what it deletes in `spend_pruned`.
     let total: f64 = conn
         .query_row(
-            "SELECT COALESCE(SUM(cost_usd + CASE WHEN ?1 THEN estimated_cost_usd ELSE 0 END), 0)
-             FROM spend",
+            "SELECT (SELECT COALESCE(SUM(cost_usd + CASE WHEN ?1 THEN estimated_cost_usd ELSE 0 END), 0)
+                     FROM spend)
+                  + (SELECT COALESCE(SUM(cost_usd + CASE WHEN ?1 THEN estimated_cost_usd ELSE 0 END), 0)
+                     FROM spend_pruned)",
             [estimates],
             |r| r.get(0),
         )

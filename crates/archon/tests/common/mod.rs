@@ -50,11 +50,18 @@ impl Env {
                 &bin.join("gh"),
                 "#!/bin/sh\necho offline >&2\nexit 1\n",
             );
+            // Both engine CLIs are found whatever the host has installed.
+            for engine in ["claude", "codex"] {
+                archon_core::testing::write_script(&bin.join(engine), "#!/bin/sh\nexit 1\n");
+            }
             let path = std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(
                 &std::env::var_os("PATH").unwrap_or_default(),
             )))
             .unwrap();
-            command.env("PATH", path);
+            // Nothing listens on port 9, so the release lookup fails at once.
+            command
+                .env("PATH", path)
+                .env("ARCHON_INSTALL_BASE_URL", "http://127.0.0.1:9/releases");
         }
         command
     }

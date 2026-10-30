@@ -754,11 +754,11 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
         "full test suite once, and follow your contract's `wait_for` early-fix rule",
         "With no reviewer asked for, that run is the whole of this step",
         "the exact base and head commits (`{{base_commit}}` and `git rev-parse HEAD`",
-        "medium for ordinary risk, high where security or an invariant is at stake",
+        "never below one your contract names: medium for ordinary risk, high where the change's risk is medium or more",
         "never because a tree that passed was committed",
         "for any commit after a pass: Archon delivers only commits a passing reviewer read",
-        "It reads that delta (`base` the reviewed commit) and the callers it affects",
-        "Delegate the missing passes as your contract defines, each a NEW agent",
+        "a NEW agent reading the whole change (`base` the change's start) at the new head",
+        "Delegate the missing pass as your contract defines",
         "Pass on your contract's bounds for reviewers",
         "Use leaf workers unless a bounded subproblem benefits from another level allowed by the contract",
         "Continue while fixes make progress within the item's time and spending limits; \
@@ -771,6 +771,7 @@ fn adaptive_prices_what_it_delegates_and_records_what_ships() {
         assert!(build.contains(said), "build.md lacks {said:?}");
     }
     assert!(!build.contains("Open findings"), "only blocking ones fail");
+    assert!(!build.contains("delta"), "re-reviews read the whole change");
     assert!(!build.contains("edit nothing until all are back"));
     assert!(
         !build.contains("Each worker is a leaf"),
@@ -798,6 +799,12 @@ fn direct_escalates_on_risk_not_size() {
     assert!(
         prompt.contains("the verdict your contract shows"),
         "{prompt}"
+    );
+    assert!(prompt.contains("whole-change re-review"), "{prompt}");
+    let integrate = &catalog.get("swarm").unwrap().prompts["integrate.md"];
+    assert!(
+        !integrate.contains("delta"),
+        "re-reviews read the whole change"
     );
 }
 

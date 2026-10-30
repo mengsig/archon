@@ -128,8 +128,13 @@ fn distillation_input(
     let corrections = store.corrections_since(repo, &since)?;
     let mut compact = Vec::new();
     for outcome in outcomes {
-        let item = store.item(&outcome.item)?;
-        compact.push(serde_json::json!({"item":item.id,"brief":item.brief.chars().take(500).collect::<String>(),
+        // History retention may have deleted an old outcome's item, and its brief with it.
+        let brief = match store.item(&outcome.item) {
+            Ok(item) => Some(item.brief.chars().take(500).collect::<String>()),
+            Err(ArchonError::NotFound(_)) => None,
+            Err(error) => return Err(error),
+        };
+        compact.push(serde_json::json!({"item":outcome.item,"brief":brief,
             "pipeline":outcome.pipeline,"result":outcome.result,"corrections":outcome.corrections,
             "cost":outcome.cost_usd,"wall":outcome.wall_secs}));
     }

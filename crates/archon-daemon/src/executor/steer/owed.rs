@@ -1,5 +1,6 @@
 //! What a steer still owes the agents of a live stage (ARCHITECTURE §6.6):
-//! a patch on its lead, and a message to the lead or to its helpers. Each is
+//! a patch on its lead, whose later deadline or larger budget also reaches
+//! its helpers, and a message to the lead or to its helpers. Each is
 //! stored with the steer, so a crash or an unreachable Aether only delays
 //! it: the sweep repeats it until Aether answers or the stage run settled.
 
@@ -24,8 +25,9 @@ use crate::executor::{FollowUp, notify, resume};
 /// `kv`: `steer_owed:<stage run>` → the JSON list of [`Delivery`], oldest first.
 const KEY_PREFIX: &str = "steer_owed:";
 
-/// One step a steer owes a stage run: for its lead (patch, turn end, then
-/// message) or for the agents beneath it, never both, so a repeat is safe.
+/// One step a steer owes a stage run: for its lead (patch, which raises its
+/// helpers' deadline and budget too, turn end, then message) or a message for
+/// the agents beneath it, never both, so a repeat is safe.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(super) struct Delivery {
     /// Unique per step: keys its messages, so a repeat is delivered once.
@@ -60,14 +62,15 @@ impl Delivery {
 }
 
 /// One lock per stage run being delivered to, kept while anyone holds or
-/// awaits it, so a handler's delivery and the sweep's never make one step twice.
+/// awaits it, so a handler's delivery and the sweep's never make one step twice,
+/// and a held stage's deadline never moves while a steer's is sent.
 #[derive(Debug, Default)]
 pub(in crate::executor) struct Locks {
     by_stage: std::sync::Mutex<BTreeMap<StageRunId, Arc<Mutex<()>>>>,
 }
 
 impl Locks {
-    async fn hold(&self, stage: &StageRunId) -> OwnedMutexGuard<()> {
+    pub(in crate::executor) async fn hold(&self, stage: &StageRunId) -> OwnedMutexGuard<()> {
         let lock = {
             let mut by_stage = self.by_stage.lock().unwrap_or_else(PoisonError::into_inner);
             // An entry only this map refers to is neither held nor awaited.
@@ -102,7 +105,7 @@ pub(super) fn owe(
     assert!(!delivery.key.is_empty(), "a delivery is keyed");
     assert!(
         delivery.helpers.is_none() || (delivery.lead.is_none() && delivery.patch().is_empty()),
-        "a step is for the lead or for its helpers"
+        "a helpers step is a message alone"
     );
     let mut all = load(store, stage)?;
     all.push(delivery);
@@ -225,9 +228,10 @@ async fn update_choice(
 ) -> Result<(), ArchonError> {
     assert_eq!(stage.aether_agent.as_ref(), Some(agent));
     assert!(!stage.state.is_terminal());
+    let delivery = &no_earlier(&*ctx.store.lock().await, &stage.id, delivery)?;
     let patch = delivery.patch();
     if !patch.is_empty() {
-        ctx.backend.update_agent(agent, patch).await?;
+        patch_lead(ctx, agent, delivery).await?;
         if let Some(choice) = &delivery.choice {
             ctx.store.lock().await.record_model_segment(
                 &stage.id,
@@ -239,6 +243,93 @@ async fn update_choice(
         }
     }
     Ok(())
+}
+
+/// `delivery` with a deadline no earlier than the one stored for `stage`,
+/// which a held stage's sweep may have moved past it since the steer (§6.3).
+fn no_earlier(
+    store: &Store,
+    stage: &StageRunId,
+    delivery: &Delivery,
+) -> Result<Delivery, ArchonError> {
+    let Some(deadline) = delivery.deadline else {
+        return Ok(delivery.clone());
+    };
+    let stored = match crate::executor::load_spawn(store, stage) {
+        Ok(spawn) => spawn.request.deadline,
+        Err(ArchonError::NotFound(_)) => None,
+        Err(error) => return Err(error),
+    };
+    let later = stored.map_or(deadline, |stored| stored.max(deadline));
+    assert!(later >= deadline, "a steer's deadline is only ever raised");
+    Ok(Delivery {
+        deadline: Some(later),
+        ..delivery.clone()
+    })
+}
+
+/// Patch the lead. A deadline or budget it sets also raises every live agent
+/// beneath it whose own is lower: a helper copied the lead's at its spawn.
+async fn patch_lead(
+    ctx: &DaemonContext,
+    lead: &AetherAgentId,
+    delivery: &Delivery,
+) -> Result<(), ArchonError> {
+    let patch = delivery.patch();
+    assert!(!patch.is_empty(), "a patch changes something");
+    assert!(delivery.helpers.is_none(), "a step for the lead");
+    if patch.deadline.is_none() && patch.cost_budget_usd.is_none() {
+        return ctx.backend.update_agent(lead, patch).await;
+    }
+    if ctx.backend.supports_subtree_update().await? {
+        return ctx.backend.update_subtree(lead, patch).await;
+    }
+    ctx.backend.update_agent(lead, patch).await?;
+    raise_helpers(ctx, lead, delivery).await
+}
+
+/// One keyed update per live agent beneath `lead` whose deadline or budget
+/// is lower than the step's, for an Aether that cannot update a subtree.
+async fn raise_helpers(
+    ctx: &DaemonContext,
+    lead: &AetherAgentId,
+    delivery: &Delivery,
+) -> Result<(), ArchonError> {
+    assert!(
+        delivery.deadline.is_some() || delivery.cost_budget_usd.is_some(),
+        "only a deadline or a budget reaches the helpers"
+    );
+    let helpers = ctx.backend.descendants(lead).await?;
+    for helper in helpers.iter().filter(|h| h.state == DescendantState::Live) {
+        assert_ne!(&helper.agent, lead, "an agent is not beneath itself");
+        let raise = AgentUpdate {
+            choice: None,
+            cost_budget_usd: raised(helper.cost_budget_usd, delivery.cost_budget_usd),
+            deadline: raised(helper.deadline, delivery.deadline),
+        };
+        if raise.is_empty() {
+            continue;
+        }
+        let key = format!("{}:{}", delivery.key, helper.agent);
+        match ctx
+            .backend
+            .update_agent_keyed(&helper.agent, raise, &key)
+            .await
+        {
+            Ok(()) => {}
+            Err(error) if resume::unanswered(&error) || error.is_store() => return Err(error),
+            Err(refusal) => {
+                tracing::warn!(agent = %helper.agent, %refusal, "helper's deadline or budget not raised; it has most likely ended");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `target` where it lifts `current`; a helper with no limit keeps none.
+fn raised<T: PartialOrd + Copy>(current: Option<T>, target: Option<T>) -> Option<T> {
+    let (current, target) = (current?, target?);
+    (target > current).then_some(target)
 }
 
 /// Say on the item that Aether refused a steer for a running agent; what the

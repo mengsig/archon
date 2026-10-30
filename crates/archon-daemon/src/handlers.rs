@@ -494,6 +494,15 @@ async fn handle_queue(ctx: &DaemonContext, request: Request) -> Result<Reply, Ar
             text: ops::start(ctx, request).await?,
         }),
         Request::CheckUpdates => Ok(Reply::Versions(Box::new(ops::check_updates(ctx).await?))),
+        Request::RemoteStatus => Ok(Reply::Remote(Box::new(ctx.remote.view()))),
+        Request::ConfigureRemote { change } => {
+            let view = ctx.remote.configure(change).await?;
+            Ok(Reply::Remote(Box::new(view)))
+        }
+        Request::RemotePair => Ok(Reply::RemotePairing(ctx.remote.pair()?)),
+        Request::RemoteRevoke { device } => {
+            Ok(Reply::Remote(Box::new(ctx.remote.revoke(&device)?)))
+        }
         Request::Gc {
             older_than_secs,
             force,

@@ -44,7 +44,7 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         Reply::Status(status) => daemon_status(status),
         Reply::Repo(repo) => format!("{}{}", verb(tool), repo_line(repo)),
         Reply::Repos(repos) => listing("repositories", repos.iter().map(repo_line)),
-        Reply::Item(item) => format!("{}{}", verb(tool), item_line(item, CLIP_CHARS)),
+        Reply::Item(item) => format!("{}{}", item_verb(tool, item), item_line(item, CLIP_CHARS)),
         Reply::ItemBudgetsOff(item) => format!(
             "{}{}\nNote: {}",
             verb(tool),
@@ -89,6 +89,8 @@ pub(super) fn reply(tool: &str, reply: &Reply) -> String {
         | Reply::GithubWatcher(_)
         | Reply::UpgradeStarted { .. }
         | Reply::Versions(_)
+        | Reply::Remote(_)
+        | Reply::RemotePairing(_)
         | Reply::Gc(_) => serde_json::to_string(reply)
             .unwrap_or_else(|e| format!("(reply could not be encoded: {e})")),
     }
@@ -139,6 +141,14 @@ fn ok(tool: &str) -> &'static str {
         "retry_item" => "Re-queued.",
         "refresh_item" => "Refresh queued.",
         _ => "Done.",
+    }
+}
+
+/// A refresh that needed no agent answers with its finished owner item.
+fn item_verb(tool: &str, item: &QueueItem) -> &'static str {
+    match tool == "refresh_item" && item.state.is_terminal() {
+        true => "Refreshed in place; nothing queued: ",
+        false => verb(tool),
     }
 }
 
@@ -317,6 +327,13 @@ fn item_detail(detail: &ItemDetail) -> String {
             }
             for warning in detail.stage_warnings.iter().filter(|w| w.stage == stage.id) {
                 let _ = write!(text, "\n    health: {}", warning.describe());
+            }
+            for cap in detail
+                .message_caps
+                .iter()
+                .filter(|c| c.stage_run == stage.id)
+            {
+                let _ = write!(text, "\n    messages: {}", cap.describe());
             }
         }
     }
@@ -754,6 +771,7 @@ fn daemon_status(status: &DaemonStatus) -> String {
     ) + &quota_text(status.quota.as_ref())
         + &integration_text(&status.integration)
         + &stage_warnings_text(&status.stage_warnings)
+        + &message_caps_text(&status.message_caps)
         + &stale_text(status.health.as_ref())
 }
 
@@ -761,6 +779,13 @@ fn daemon_status(status: &DaemonStatus) -> String {
 pub(super) fn stage_warnings_text(warnings: &[StageWarning]) -> String {
     (warnings.iter())
         .map(|warning| format!("\nStage health: {}.", warning.describe()))
+        .collect()
+}
+
+/// Agents of running stages at their message cap.
+pub(super) fn message_caps_text(caps: &[archon_core::agent_message::MessageCap]) -> String {
+    (caps.iter())
+        .map(|cap| format!("\nStage messages: {}.", cap.describe()))
         .collect()
 }
 

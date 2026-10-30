@@ -8,6 +8,7 @@ mod chat_answer;
 mod chat_merge;
 mod chat_ops;
 mod command_notice;
+pub mod compose;
 pub mod context;
 pub mod disk;
 pub mod dispatcher;
@@ -34,6 +35,7 @@ mod read_commands;
 pub mod readers;
 pub mod reaper;
 pub mod recovery;
+mod remote;
 pub mod reports;
 pub mod server;
 mod standby;
@@ -118,6 +120,7 @@ async fn run_until_stopped(options: DaemonOptions) -> Result<(), ArchonError> {
     let result = match recover(&ctx).await {
         Ok(()) => {
             ctx.recovery.finish();
+            remote::start(&ctx).await;
             supervise(ctx.clone(), server, endpoint, starter, &mut signals).await
         }
         Err(error @ ArchonError::DiskFull(_)) => {
@@ -132,6 +135,7 @@ async fn run_until_stopped(options: DaemonOptions) -> Result<(), ArchonError> {
             Err(error)
         }
     };
+    ctx.remote.shutdown().await;
     remove_socket(&ctx.paths.socket);
     drop(lock);
     match &result {
@@ -521,6 +525,11 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
         set_aside_settings(&paths.data_dir, key, error);
     }
     let lavish = Lavish::detect(&config.lavish)?;
+    let remote = archon_remote::Remote::open(
+        config.remote.clone(),
+        &paths.data_dir,
+        env!("CARGO_PKG_VERSION"),
+    )?;
     let aether = Arc::new(AetherLink::new());
     let backend = Arc::new(AetherBackend::new(aether.clone(), config.models.policy()));
     let (feed, _) = broadcast::channel(FEED_BROADCAST_CAPACITY);
@@ -564,6 +573,7 @@ fn build_context(options: DaemonOptions) -> Result<DaemonContext, ArchonError> {
         gc: Mutex::new(None),
         collecting: gc::Collecting::new(dispatch),
         ops: ops::OpsState::new(ops_port, ops::DRAIN_POLL),
+        remote,
     };
     Ok(ctx)
 }

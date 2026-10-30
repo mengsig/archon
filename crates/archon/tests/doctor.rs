@@ -106,3 +106,51 @@ fn doctor_shows_the_configured_host_context_while_aether_is_offline() {
             .contains("configured lean")
     );
 }
+
+/// Doctor against a fake shared Aether that lists the default orchestrator
+/// model and reports claude-code's login as `logged_in`.
+async fn doctor_with_login(logged_in: bool) -> (Output, Vec<serde_json::Value>) {
+    use archon_aether::fake::{FakeAether, Scripted};
+    let env = Env::new();
+    let socket = env.path("aether.sock");
+    let aether = FakeAether::start(&socket).await.unwrap();
+    let models = serde_json::json!([
+        {"model": {"provider": "claude-code", "model": "claude-opus-5-5"},
+         "configured": logged_in, "aliases": ["opus"]},
+        {"model": {"provider": "codex", "model": "gpt-6.1-sol"}, "configured": true},
+    ]);
+    aether.set_default("list_models", Scripted::reply("models", models));
+    let logins = serde_json::json!([
+        {"provider": "claude-code", "configured": logged_in, "program": "claude",
+         "detail": "claude: not logged in"},
+        {"provider": "codex", "configured": true, "program": "codex"},
+    ]);
+    aether.set_default("auth_status", Scripted::reply("auth", logins));
+    let mut command = env.command(&["--json", "doctor"]);
+    command.env("AETHER_SOCKET", &socket);
+    let out = tokio::task::spawn_blocking(move || command.output().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(aether.received_named("auth_status").len(), 1, "asked once");
+    let checks: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|e| panic!("doctor --json printed no JSON list ({e}): {out:?}"));
+    (out, checks)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_engine_that_is_not_logged_in_fails_with_its_login_command() {
+    let (out, checks) = doctor_with_login(false).await;
+    assert_eq!(out.status.code(), Some(1), "{checks:#?}");
+    assert_eq!(level_of(&checks, "engine"), "fail");
+    let engine = checks.iter().find(|c| c["check"] == "engine").unwrap();
+    let detail = engine["detail"].as_str().unwrap();
+    assert!(
+        detail.contains(
+            "claude-code is not logged in: run `claude` once (or choose a `codex` model)"
+        ),
+        "{detail}"
+    );
+
+    let (_, checks) = doctor_with_login(true).await;
+    assert_eq!(level_of(&checks, "engine"), "ok", "{checks:#?}");
+}

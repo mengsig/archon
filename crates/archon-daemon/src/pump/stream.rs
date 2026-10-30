@@ -3,7 +3,8 @@
 
 use std::time::Duration;
 
-use archon_aether::wire::EventQuery;
+use archon_aether::client::Subscription;
+use archon_aether::wire::{EventQuery, ExpiredSpan};
 use archon_aether::{AetherClient, AetherEvent};
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
@@ -17,6 +18,20 @@ use crate::feed;
 const STALLS_BEFORE_NOTE: u32 = 3;
 /// How often a pump without an orchestrator checks its connection.
 const IDLE_TICK: Duration = Duration::from_secs(1);
+/// Attempts at an event whose handling failed for a passing reason (a held
+/// git lock, a garbled reply), before it is reported and skipped.
+const TRANSIENT_ATTEMPTS: u32 = 3;
+const TRANSIENT_RETRY: Duration = Duration::from_secs(1);
+
+/// The stored cursor of a stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cursor {
+    Unset,
+    At(u64),
+    /// Not a seq: replaying from 0 would reach expired history, so the
+    /// stream starts live.
+    Unreadable,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 enum Stream {
@@ -58,10 +73,11 @@ impl Stream {
 
     /// Without a cursor the fleet starts live; the orchestrator stream is
     /// filtered to one agent, so its whole history is cheap and complete.
-    fn start(&self, cursor: Option<u64>) -> Option<u64> {
-        match self {
-            Self::Fleet => cursor,
-            Self::Orchestrator(_) => Some(cursor.unwrap_or(0)),
+    fn start(&self, cursor: Cursor) -> Option<u64> {
+        match (self, cursor) {
+            (_, Cursor::At(seq)) => Some(seq),
+            (_, Cursor::Unreadable) | (Self::Fleet, Cursor::Unset) => None,
+            (Self::Orchestrator(_), Cursor::Unset) => Some(0),
         }
     }
 
@@ -127,25 +143,10 @@ async fn pass(
     until: impl Future<Output = ()>,
 ) -> Result<PassEnd, ArchonError> {
     let key = stream.cursor_key();
-    let cursor = read_cursor(ctx, key).await?;
-    let mut subscription = match client.subscribe(stream.start(cursor), stream.query()).await {
+    let mut subscription = match open(ctx, client, stream).await? {
         Ok(subscription) => subscription,
-        Err(error) if error.is_store() => return Err(error),
-        Err(error) => return Ok(PassEnd::stalled(false, error.to_string())),
+        Err(trouble) => return Ok(PassEnd::stalled(false, trouble)),
     };
-    // An Aether whose history was reset reports a sequence before ours:
-    // follow it from its own end rather than from a cursor it never had.
-    let reset = cursor.is_some_and(|c| subscription.last_seq < c);
-    if reset {
-        tracing::warn!(
-            key,
-            last_seq = subscription.last_seq,
-            "Aether's event history is behind the stored cursor; following from its end"
-        );
-    }
-    if cursor.is_none() || reset {
-        save_cursor(ctx, key, subscription.last_seq).await?;
-    }
     tokio::pin!(until);
     let mut handled = false;
     loop {
@@ -165,6 +166,83 @@ async fn pass(
     }
 }
 
+/// Subscribe after the stored cursor, first stepping past history Aether
+/// deleted. `Ok(Err(reason))` is a subscribe Aether did not grant.
+async fn open(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    stream: &Stream,
+) -> Result<Result<Subscription, String>, ArchonError> {
+    let key = stream.cursor_key();
+    let cursor = read_cursor(ctx, key).await?;
+    let mut after = stream.start(cursor);
+    if let Some(from) = after {
+        after = Some(skip_expired(ctx, client, stream, from).await?);
+    }
+    let subscription = match client.subscribe(after, stream.query()).await {
+        Ok(subscription) => subscription,
+        Err(error) if error.is_store() => return Err(error),
+        Err(error) => return Ok(Err(error.to_string())),
+    };
+    // An Aether whose history was reset reports a sequence before ours:
+    // follow it from its own end rather than from a cursor it never had.
+    let reset = after.is_some_and(|seq| subscription.last_seq < seq);
+    if reset {
+        tracing::warn!(
+            key,
+            last_seq = subscription.last_seq,
+            "Aether's event history is behind the stored cursor; following from its end"
+        );
+    }
+    if reset || !matches!(cursor, Cursor::At(_)) {
+        save_cursor(ctx, key, subscription.last_seq).await?;
+    }
+    Ok(Ok(subscription))
+}
+
+/// Where a replay after `after` can start: past the span Aether's history
+/// retention deleted when it reaches one. The skip is saved, reconciled from
+/// Aether's current state and told to the operator once.
+async fn skip_expired(
+    ctx: &DaemonContext,
+    client: &AetherClient,
+    stream: &Stream,
+    after: u64,
+) -> Result<u64, ArchonError> {
+    let span = match client.expired_history(after, stream.query()).await {
+        Ok(None) => return Ok(after),
+        Ok(Some(span)) => span,
+        Err(error) if error.is_store() => return Err(error),
+        Err(error) => {
+            // The subscription reports its own trouble; this check only helps.
+            tracing::warn!(stream = stream.name(), %error, "could not check for expired event history");
+            return Ok(after);
+        }
+    };
+    assert!(span.last > after, "the client checks the span is ahead");
+    save_cursor(ctx, stream.cursor_key(), span.last).await?;
+    tracing::warn!(stream = stream.name(), after, %span, "Aether's event history expired; skipping it");
+    match super::reconcile(ctx).await {
+        Err(error) if error.is_store() => return Err(error),
+        Err(error) => tracing::warn!(%error, "reconcile after expired history failed"),
+        Ok(()) => {}
+    }
+    feed::system(ctx, expired_note(stream, after, span)).await?;
+    Ok(span.last)
+}
+
+fn expired_note(stream: &Stream, after: u64, span: ExpiredSpan) -> String {
+    format!(
+        "Aether deleted old event history (events {span}) before Archon read it. The {} stream \
+         skipped events {}..={} and follows on from event {}; Archon reconciled its stages \
+         with Aether's current state.",
+        stream.name(),
+        after + 1,
+        span.last,
+        span.last + 1
+    )
+}
+
 impl PassEnd {
     fn stalled(handled: bool, reason: String) -> Self {
         Self {
@@ -175,7 +253,8 @@ impl PassEnd {
 }
 
 /// Handle one event. `Some(reason)` means Aether was unreachable and the
-/// event must be retried; other failures are reported and skipped.
+/// event must be retried; a passing failure is retried a few times here,
+/// then reported and skipped like any other.
 async fn handle_one(
     ctx: &DaemonContext,
     stream: &Stream,
@@ -183,32 +262,49 @@ async fn handle_one(
 ) -> Result<Option<String>, ArchonError> {
     assert!(event.seq > 0, "event seqs start at 1");
     let subject = format!("Aether event {} ({})", event.seq, stream.name());
-    let handled = crate::executor::coordination::guarded(&subject, stream.handle(ctx, event));
-    match handled.await {
-        Ok(()) => Ok(None),
-        Err(error) if error.is_store() => Err(error),
-        Err(ArchonError::Unavailable(reason)) => Ok(Some(reason)),
-        Err(error) => {
-            tracing::warn!(seq = event.seq, stream = stream.name(), %error, "event not handled");
-            let text = format!(
-                "Archon could not act on Aether event {} ({:?}): {error}",
-                event.seq, event.kind
-            );
-            feed::system(ctx, text).await?;
-            Ok(None)
+    let mut attempt = 1;
+    let error = loop {
+        let handled = crate::executor::coordination::guarded(&subject, stream.handle(ctx, event));
+        match handled.await {
+            Ok(()) => return Ok(None),
+            Err(error) if error.is_store() => return Err(error),
+            Err(ArchonError::Unavailable(reason)) => return Ok(Some(reason)),
+            Err(error) if is_transient(&error) && attempt < TRANSIENT_ATTEMPTS => {
+                tracing::info!(seq = event.seq, attempt, %error, "event handling failed; retrying");
+                tokio::time::sleep(TRANSIENT_RETRY * attempt).await;
+                attempt += 1;
+            }
+            Err(error) => break error,
         }
-    }
+    };
+    assert!(attempt <= TRANSIENT_ATTEMPTS, "retries are capped");
+    tracing::warn!(seq = event.seq, stream = stream.name(), %error, "event not handled");
+    let text = format!(
+        "Archon could not act on Aether event {} ({:?}): {error}",
+        event.seq, event.kind
+    );
+    feed::system(ctx, text).await?;
+    Ok(None)
 }
 
-async fn read_cursor(ctx: &DaemonContext, key: &str) -> Result<Option<u64>, ArchonError> {
+/// A failure that may pass on its own: local I/O (a held `.git/index.lock`),
+/// a garbled reply, or an Aether error, which a later try may not repeat.
+fn is_transient(error: &ArchonError) -> bool {
+    matches!(
+        error,
+        ArchonError::Io { .. } | ArchonError::Protocol(_) | ArchonError::Aether(_)
+    )
+}
+
+async fn read_cursor(ctx: &DaemonContext, key: &str) -> Result<Cursor, ArchonError> {
     let raw = ctx.store.lock().await.kv_get(key)?;
     match raw.filter(|v| !v.is_empty()) {
-        None => Ok(None),
+        None => Ok(Cursor::Unset),
         Some(raw) => match raw.parse() {
-            Ok(seq) => Ok(Some(seq)),
+            Ok(seq) => Ok(Cursor::At(seq)),
             Err(error) => {
-                tracing::warn!(key, %raw, %error, "unreadable event cursor; replaying from the start");
-                Ok(Some(0))
+                tracing::warn!(key, %raw, %error, "unreadable event cursor; following the stream live");
+                Ok(Cursor::Unreadable)
             }
         },
     }

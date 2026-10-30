@@ -5,8 +5,9 @@
 //! records and announces a report; [`supervise`], run by the pump, owns one
 //! poll task per open report because `publish` has no `Arc` to spawn one
 //! with. A poll's failure stays with its report: only a store failure
-//! reaches the pump. Once a report's item finishes, its poll is stopped and
-//! its session ended (see `retire`).
+//! reaches the pump. Once a report settles (its item finished, a newer page
+//! replaced it, or it was shown longer ago than [`FOLLOW_LIFETIME`]), its
+//! poll is stopped and its session ended (see `retire`).
 
 mod expiry;
 mod files;
@@ -16,7 +17,9 @@ mod retire;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use archon_core::error::ArchonError;
@@ -27,6 +30,7 @@ use archon_core::run::GateDecision;
 use archon_lavish::{Lavish, LavishFeedback};
 use tokio::sync::OwnedMutexGuard;
 use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::oneshot;
 use tokio::task::{AbortHandle, JoinError, JoinSet};
 
 use self::records::ReportRecord;
@@ -38,12 +42,16 @@ pub(crate) use self::expiry::expire_files;
 pub use self::questions::{already_closed, answer_reopen, asks_to_reopen, close_stale_questions};
 pub(crate) use self::records::is_open;
 pub use self::records::{KEY_PREFIX, LEGACY_KEY, prune};
+pub use self::retire::FOLLOW_LIFETIME;
 
 /// Failures in a row, of one poll or of one report's poll task, that are
 /// retried before the report is given up.
 const MAX_POLL_FAILURES: u32 = 5;
 const POLL_BACKOFF_MIN: Duration = Duration::from_secs(1);
 const POLL_BACKOFF_MAX: Duration = Duration::from_secs(30);
+/// Longest the supervisor sleeps before it looks for expired reports again,
+/// so a changed wall clock is noticed.
+const EXPIRY_CHECK_MAX: Duration = Duration::from_secs(3600);
 
 /// Validate the report, snapshot its directory when possible, and publish
 /// the copy or its original with a durability warning. Record and announce
@@ -225,10 +233,11 @@ async fn record_publication(
     })
 }
 
-/// Keep one poll task per open report until its item finishes or shutdown.
-/// New reports and item outcomes are seen through the feed; a lagged
-/// receiver rescans the records. `Err` only for a store failure: any other
-/// failure, a panic included, is its report's.
+/// Keep one poll task per open report until it settles or shutdown, when
+/// dropping the tasks kills their `lavish-axi poll` children. New reports
+/// and item outcomes are seen through the feed, expiries on a timer; a
+/// lagged receiver rescans the records. `Err` only for a store failure: any
+/// other failure, a panic included, is its report's.
 pub async fn supervise(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     let Some(lavish) = ctx.lavish.clone() else {
         // Nothing to poll without Lavish; stay idle rather than look like a failed task.
@@ -238,6 +247,7 @@ pub async fn supervise(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
     let mut polls = Polls::default();
     polls.rescan(&ctx, &lavish).await?;
     loop {
+        let next_expiry = polls.until_next_expiry(archon_core::now());
         tokio::select! {
             received = feed.recv() => match received {
                 Ok(item) => polls.on_feed(&ctx, &lavish, &item.entry).await?,
@@ -249,6 +259,9 @@ pub async fn supervise(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
                     polls.ended(&ctx, &lavish, report, outcome).await?;
                 }
             }
+            () = tokio::time::sleep(next_expiry) => {
+                polls.expire(&ctx, &lavish).await?;
+            }
         }
     }
 }
@@ -256,13 +269,37 @@ pub async fn supervise(ctx: Arc<DaemonContext>) -> Result<(), ArchonError> {
 /// The poll task of each report being followed, and how many times in a
 /// row each report's task ended abnormally. `reports` also holds a stopped
 /// task until it is joined; `polling` only the task followed now.
+/// `expiries` holds when each followed report's lifetime runs out.
 #[derive(Default)]
 struct Polls {
     followed_html: HashMap<ReportId, PathBuf>,
+    expiries: HashMap<ReportId, archon_core::Timestamp>,
     tasks: JoinSet<Result<(), ArchonError>>,
     reports: HashMap<tokio::task::Id, ReportId>,
-    polling: HashMap<ReportId, AbortHandle>,
+    polling: HashMap<ReportId, Followed>,
     failures: HashMap<ReportId, u32>,
+}
+
+/// A running poll task, and what tells once its future, with its
+/// `lavish-axi poll` child, is dropped.
+struct Followed {
+    task: AbortHandle,
+    gone: oneshot::Receiver<()>,
+}
+
+/// A poll task's future, then the sender dropped after it: fields drop in
+/// order, so the receiver hears of it only once the child is killed.
+struct Watched<F> {
+    poll: Pin<Box<F>>,
+    _gone: oneshot::Sender<()>,
+}
+
+impl<F: Future> Future for Watched<F> {
+    type Output = F::Output;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<F::Output> {
+        self.get_mut().poll.as_mut().poll(cx)
+    }
 }
 
 impl Polls {
@@ -271,27 +308,59 @@ impl Polls {
         F: Future<Output = Result<(), ArchonError>> + Send + 'static,
     {
         assert!(!self.polling.contains_key(&report), "one poll per report");
+        let (sender, gone) = oneshot::channel();
+        let poll = Watched {
+            poll: Box::pin(poll),
+            _gone: sender,
+        };
         let task = self.tasks.spawn(poll);
         self.reports.insert(task.id(), report.clone());
-        self.polling.insert(report, task);
+        self.polling.insert(report, Followed { task, gone });
         assert!(self.reports.len() >= self.polling.len());
     }
 
     /// Stop following `report`: its task, and with it its `lavish-axi poll`
-    /// child, is dropped. `forget` then leaves out whatever it returned.
+    /// child, is dropped before this returns, so no replacement or ending of
+    /// its session overlaps it. `forget` then leaves out whatever it returned.
     /// Feedback a poll got just before is dropped too; `end_finished` stops
-    /// only polls of finished items that no gate waits on.
-    fn stop(&mut self, report: &ReportId) {
-        if let Some(task) = self.polling.remove(report) {
-            assert_eq!(self.reports.get(&task.id()), Some(report));
-            task.abort();
+    /// only polls of settled reports.
+    async fn stop(&mut self, report: &ReportId) {
+        if let Some(followed) = self.polling.remove(report) {
+            assert_eq!(self.reports.get(&followed.task.id()), Some(report));
+            followed.task.abort();
+            let dropped = followed.gone.await;
+            assert!(dropped.is_err(), "a poll task never sends, it is dropped");
         }
         self.failures.remove(report);
         self.followed_html.remove(report);
+        self.expiries.remove(report);
     }
 
-    /// Act on one feed entry: follow a report just shown, or end the
-    /// sessions of reports whose item just finished.
+    /// How long until the earliest followed report expires, at most
+    /// [`EXPIRY_CHECK_MAX`]; zero once one has.
+    fn until_next_expiry(&self, now: archon_core::Timestamp) -> Duration {
+        let Some(next) = self.expiries.values().min() else {
+            return EXPIRY_CHECK_MAX;
+        };
+        let wait = (*next - now).to_std().unwrap_or(Duration::ZERO);
+        wait.min(EXPIRY_CHECK_MAX)
+    }
+
+    /// End the reports whose lifetime ran out, even one an open gate still
+    /// waits on.
+    async fn expire(
+        &mut self,
+        ctx: &Arc<DaemonContext>,
+        lavish: &Lavish,
+    ) -> Result<(), ArchonError> {
+        self.end_finished(ctx, lavish).await?;
+        let now = archon_core::now();
+        self.expiries.retain(|_, at| *at > now);
+        Ok(())
+    }
+
+    /// Act on one feed entry: follow a report just shown, ending those it
+    /// supersedes, or end the sessions of reports whose item just finished.
     async fn on_feed(
         &mut self,
         ctx: &Arc<DaemonContext>,
@@ -299,7 +368,7 @@ impl Polls {
         entry: &FeedEntry,
     ) -> Result<(), ArchonError> {
         match entry {
-            FeedEntry::Report { .. } => self.start_open(ctx, lavish).await,
+            FeedEntry::Report { .. } => self.rescan(ctx, lavish).await,
             FeedEntry::Notification(notice)
                 if matches!(
                     notice.kind,
@@ -322,16 +391,16 @@ impl Polls {
         self.start_open(ctx, lavish).await
     }
 
-    /// Stop the poll of every open report whose item finished, then end
-    /// its Lavish session. Only this loop restarts polls, so none restarts
-    /// before the report is recorded ended.
+    /// Stop the poll of every open report that settled, then end its Lavish
+    /// session. Only this loop restarts polls, so none restarts before the
+    /// report is recorded ended.
     async fn end_finished(
         &mut self,
         ctx: &Arc<DaemonContext>,
         lavish: &Lavish,
     ) -> Result<(), ArchonError> {
         for (report, record) in retire::finished(ctx).await? {
-            self.stop(&report);
+            self.stop(&report).await;
             assert!(
                 !self.polling.contains_key(&report),
                 "a stopped poll is not followed"
@@ -341,7 +410,8 @@ impl Polls {
         Ok(())
     }
 
-    /// Start a poll for every open report not followed yet.
+    /// Start a poll for every open report not followed yet, and note when
+    /// each open report's lifetime runs out.
     async fn start_open(
         &mut self,
         ctx: &Arc<DaemonContext>,
@@ -356,8 +426,11 @@ impl Polls {
                 .get(&report)
                 .is_some_and(|html| html != &record.html)
             {
-                self.stop(&report);
+                self.stop(&report).await;
             }
+            // Showing a followed page again restarts its lifetime.
+            self.expiries
+                .insert(report.clone(), retire::expires_at(&record));
             if self.polling.contains_key(&report) {
                 continue;
             }
@@ -384,7 +457,7 @@ impl Polls {
             .reports
             .remove(&task)
             .expect("every poll task is registered");
-        if self.polling.get(&report).map(AbortHandle::id) == Some(task) {
+        if self.polling.get(&report).map(|f| f.task.id()) == Some(task) {
             self.polling.remove(&report);
             self.followed_html.remove(&report);
             return Some((report, outcome));
@@ -925,5 +998,35 @@ mod tests {
             "{outcome:?}"
         );
         assert!(polls.polling.is_empty() && polls.reports.is_empty());
+    }
+
+    /// Sets its flag when dropped, as a poll's child is killed then.
+    struct Child(Arc<std::sync::atomic::AtomicBool>);
+
+    impl Drop for Child {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// `stop` returns only once the poll's future, and with it its child, is
+    /// dropped; on one thread, the aborted task has not run before then.
+    #[tokio::test]
+    async fn a_stopped_poll_is_gone_before_stop_returns() {
+        let mut polls = Polls::default();
+        let report = ReportId::new();
+        let killed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let child = Child(killed.clone());
+        polls.spawn(report.clone(), async move {
+            let _child = child;
+            std::future::pending::<Result<(), ArchonError>>().await
+        });
+        tokio::task::yield_now().await;
+        assert!(!killed.load(std::sync::atomic::Ordering::SeqCst));
+        polls.stop(&report).await;
+        assert!(killed.load(std::sync::atomic::Ordering::SeqCst), "dropped");
+        assert!(!polls.polling.contains_key(&report));
+        let done = polls.tasks.join_next_with_id().await.unwrap();
+        assert!(polls.forget(done).is_none(), "a stopped poll is forgotten");
     }
 }

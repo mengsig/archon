@@ -22,7 +22,7 @@ pub const SKIP_ENV: &str = "ARCHON_NO_WIZARD";
 const NOT_SET_UP_HINT: &str = "Archon is not set up yet. Run `archon setup`, then `archon` again (or run `archon` on a terminal to be guided).";
 
 /// Whether Archon's own Aether has no config yet (dedicated mode only).
-fn needs_setup(config: &Config) -> anyhow::Result<bool> {
+pub(super) fn needs_setup(config: &Config) -> anyhow::Result<bool> {
     if config.aether.mode != AetherMode::Dedicated {
         return Ok(false);
     }
@@ -35,7 +35,7 @@ pub fn non_interactive_hint(config: &Config) -> anyhow::Result<Option<&'static s
 }
 
 /// Ask `question`; an empty answer takes `default_yes`, end of input is "no".
-fn ask(
+pub(super) fn ask(
     input: &mut impl BufRead,
     out: &mut impl Write,
     question: &str,
@@ -118,6 +118,7 @@ pub async fn offer(config: &Config) -> anyhow::Result<bool> {
             return Ok(false);
         }
         instance::setup(false, false, false).await?;
+        offer_remote(&mut input, &mut out).await?;
         changed = true;
     }
     if doctor::find_program(Path::new("claude")).is_none()
@@ -134,6 +135,29 @@ pub async fn offer(config: &Config) -> anyhow::Result<bool> {
         doctor::run(false).await?;
     }
     Ok(true)
+}
+
+/// Offered once, right after the first setup; a failure there leaves the
+/// rest of the first run going and names the command that retries it.
+async fn offer_remote(input: &mut impl BufRead, out: &mut impl Write) -> anyhow::Result<()> {
+    let question = "Reach Archon from your phone too? This publishes the mobile web app to \
+                    your tailnet with `tailscale serve` (`archon remote setup --yes`)";
+    if !ask(input, out, question, false)? {
+        println!("Skipped. `archon remote setup` does it later.");
+        return Ok(());
+    }
+    // The answer above is the consent; stdin stays locked here, so nothing more is asked.
+    let args = crate::cli::RemoteSetupArgs {
+        yes: true,
+        proxy_url: None,
+        local: false,
+        https_port: None,
+        no_pair: false,
+    };
+    if let Err(error) = super::remote::setup(args, false).await {
+        println!("Remote access is not set up: {error:#}\n`archon remote setup` tries again.");
+    }
+    Ok(())
 }
 
 /// Checkouts whose registration the user declined, one path per line, in

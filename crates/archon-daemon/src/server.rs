@@ -224,6 +224,32 @@ pub(crate) async fn send(outbox: &Outbox, frame: ServerFrame) -> bool {
     outbox.send(out).await.is_ok()
 }
 
+/// A feed subscription for the remote listener: its frames go to `frames`
+/// until that closes, exactly as a socket connection would get them.
+pub(crate) async fn feed_frames(
+    ctx: Arc<DaemonContext>,
+    subscription: archon_remote::FeedSubscription,
+    frames: mpsc::Sender<ServerFrame>,
+) {
+    let sub = subscription::Subscription {
+        id: subscription.id,
+        request: subscription.request,
+        after: subscription.after,
+        verbose: subscription.verbose,
+    };
+    let (outbox, mut queued) = mpsc::channel::<Outgoing>(OUTBOX_FRAMES);
+    let forward = async move {
+        while let Some(out) = queued.recv().await {
+            if frames.send(out.frame).await.is_err() {
+                return;
+            }
+        }
+    };
+    // Either side ending ends the other: the run drops the outbox, and a
+    // forwarder whose device left drops `queued`, which closes the outbox.
+    tokio::join!(subscription::run(ctx, sub, outbox), forward);
+}
+
 fn reply(id: u64, result: Result<Reply, ArchonError>) -> ServerFrame {
     ServerFrame::Reply {
         id,

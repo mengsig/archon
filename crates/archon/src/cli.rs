@@ -22,6 +22,7 @@ Everyday:
   repo            Register and configure repositories
   merge           Merge a succeeded item's pull request, or land its local branch
   diff            Review what a local-ship item changed before merging it
+  remote          Use Archon from your phone: `archon remote setup`
 
 Setup:
   setup, doctor   Set Archon up, and check that it works
@@ -260,6 +261,13 @@ pub enum Command {
     GithubWatcher {
         #[command(subcommand)]
         command: Option<GithubWatcherCommand>,
+    },
+    /// Reach Archon from your phone: the mobile web app archond serves
+    /// over Tailscale or your own HTTPS proxy (docs/remote.md). Shows the
+    /// status by default.
+    Remote {
+        #[command(subcommand)]
+        command: Option<RemoteCommand>,
     },
     /// Hold dispatch globally, or for one repo or pipeline.
     Pause(PauseArgs),
@@ -531,6 +539,71 @@ pub enum AutonomyCommand {
         #[arg(long)]
         all: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RemoteCommand {
+    /// Switch remote access on, publish it on your tailnet and pair a
+    /// phone, explaining each step. Safe to run again.
+    #[command(after_help = "Examples:\n  archon remote setup\n  \
+                            archon remote setup --yes --json\n  \
+                            archon remote setup --proxy-url https://archon.example.com")]
+    Setup(RemoteSetupArgs),
+    /// Whether the listener is on, where it is published, and the paired
+    /// devices (the default).
+    Status,
+    /// Open the listener on loopback, as it was set up.
+    Enable,
+    /// Close the listener and every device's session; pairings are kept.
+    Disable,
+    /// Open a one-time pairing code (5 minutes) and show it as a QR code.
+    Pair,
+    /// The paired devices.
+    Devices,
+    /// Forget a paired device and close its sessions at once.
+    Revoke {
+        /// The device's id (`dev_…`) or its name.
+        device: String,
+    },
+    /// Allow or remove an HTTPS origin the app is reached on.
+    #[command(subcommand)]
+    Origin(RemoteOriginCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RemoteOriginCommand {
+    /// Allow `https://host[:port]`, an HTTPS proxy in front of the listener.
+    Add {
+        /// The origin, as `https://host` or `https://host:port`.
+        url: String,
+    },
+    /// Stop answering on an origin.
+    Remove {
+        /// The origin, as `archon remote status` lists it.
+        url: String,
+    },
+}
+
+#[derive(Debug, clap::Args)]
+pub struct RemoteSetupArgs {
+    /// Answer yes to every question: publish without asking.
+    #[arg(long)]
+    pub yes: bool,
+    /// Serve through your own HTTPS reverse proxy at this origin instead of
+    /// `tailscale serve`.
+    #[arg(long, value_name = "URL", conflicts_with = "local")]
+    pub proxy_url: Option<String>,
+    /// Publish nothing, and withdraw origins earlier runs allowed: the app
+    /// answers on this machine's loopback only.
+    #[arg(long)]
+    pub local: bool,
+    /// The HTTPS port `tailscale serve` publishes on (443, 8443 or 10000);
+    /// default: the first one free.
+    #[arg(long, conflicts_with_all = ["proxy_url", "local"])]
+    pub https_port: Option<u16>,
+    /// Set everything up but open no pairing code.
+    #[arg(long)]
+    pub no_pair: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -882,7 +955,7 @@ pub struct QueueAddArgs {
     /// leaves out, or all without it, get the daemon's defaults. Each choice
     /// names `model` as `provider/model` (not a bare model name) or a `tier`
     /// (fast, balanced, strong or frontier), plus an optional `effort`, e.g.
-    /// {"build": [{"model": "codex/gpt-6.1-sol", "effort": "high"}]}.
+    /// {"build": [{"model": "codex/gpt-6.1-terra", "effort": "high"}]}.
     /// `archon aether models` lists the models you can name.
     #[arg(long)]
     pub model_plan_file: Option<PathBuf>,
@@ -988,6 +1061,11 @@ pub enum DaemonCommand {
         /// Start in the background, wait until it listens, then exit.
         #[arg(long)]
         detach: bool,
+        /// Set by `--detach` on the daemon it starts: log to the startup
+        /// log. A flag, not an environment variable, which the agents
+        /// archond spawns would inherit.
+        #[arg(long, hide = true, conflicts_with = "detach")]
+        detached_child: bool,
     },
     /// Start archond in the background unless it is running.
     Start,
@@ -1190,7 +1268,7 @@ mod tests {
             .expect("archon queue add");
         let help = add.render_long_help().to_string();
         assert!(help.contains("provider/model"), "{help}");
-        assert!(help.contains("codex/gpt-6.1-sol"), "{help}");
+        assert!(help.contains("codex/gpt-6.1-terra"), "{help}");
     }
 
     #[test]
@@ -1727,7 +1805,7 @@ mod tests {
         );
         assert!(matches!(
             parse(&["daemon", "run", "--detach"]),
-            Command::Daemon(DaemonCommand::Run { detach: true })
+            Command::Daemon(DaemonCommand::Run { detach: true, .. })
         ));
         let Command::Gc {
             older_than,

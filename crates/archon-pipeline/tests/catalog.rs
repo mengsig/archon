@@ -152,6 +152,60 @@ fn builtins_load_without_problems() {
     assert_eq!(discovered.listing(), catalog.listing());
 }
 
+/// A stage that builds and tests the product gets room for a slow stack, and
+/// `direct`'s single agent as long as `adaptive`'s lead.
+#[test]
+fn built_in_stages_that_build_get_room_to_finish() {
+    let catalog = Catalog::builtin();
+    let minutes = |pipeline: &str, stage: &str| {
+        let spec = catalog.get(pipeline).expect("a built-in loads");
+        let stage = spec
+            .stage(stage)
+            .unwrap_or_else(|| panic!("{pipeline}/{stage}"));
+        stage.timeout_minutes
+    };
+    assert_eq!(minutes("direct", "implement"), minutes("adaptive", "build"));
+    assert_eq!(minutes("direct", "implement"), 180);
+    assert_eq!(minutes("e2e-testing", "setup"), 120);
+    assert_eq!(minutes("swarm", "plan"), 120);
+    let builds = [
+        ("agent-testing", "plan"),
+        ("code-audit", "scope"),
+        ("refactor", "review"),
+        ("swarm", "build"),
+        ("performance", "review"),
+        ("refactor", "verify"),
+    ];
+    for (pipeline, stage) in builds {
+        let got = minutes(pipeline, stage);
+        assert!(got >= 90, "{pipeline}/{stage} has {got} minutes");
+    }
+}
+
+/// "Confirm nothing is left running" invited a pattern kill that took the
+/// operator's daemons down: prompts confirm only what their scripts recorded.
+#[test]
+fn built_in_prompts_stop_only_what_their_scripts_recorded() {
+    let catalog = Catalog::builtin();
+    let spec = catalog.get("e2e-testing").expect("e2e-testing loads");
+    let setup = spec.prompts["setup.md"].replace("\n   ", " ");
+    for said in [
+        "by the PIDs, process groups or Compose project `start.sh` recorded",
+        "never stops anything by name or pattern (`pkill`, `killall`, `pgrep -f`)",
+        "confirm that none of the processes or containers `start.sh` recorded is left running",
+    ] {
+        assert!(setup.contains(said), "missing {said:?} in {setup}");
+    }
+    for name in catalog.names() {
+        let spec = catalog.get(name).expect("a listed built-in loads");
+        for (file, prompt) in &spec.prompts {
+            let prompt = prompt.replace("\n   ", " ");
+            assert!(!prompt.contains("nothing is left running"), "{name}/{file}");
+            assert!(!prompt.contains("nothing is running"), "{name}/{file}");
+        }
+    }
+}
+
 #[test]
 fn errand_is_a_scratch_repository_optional_report_pipeline() {
     let catalog = Catalog::builtin();

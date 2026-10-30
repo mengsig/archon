@@ -34,8 +34,19 @@ pub const CLIENT_NAME: &str = "archon";
 pub const HOST_CONTEXT_FEATURE: &str = "host_context";
 pub const REPOSITORY_ROOT_FEATURE: &str = "repository_root";
 pub const NOTES_FEATURE: &str = "notes";
+/// The daemon serves `storage_gc` (host-only access).
+pub const STORAGE_FEATURE: &str = "storage";
 /// The daemon serves the notification center (`post_notification` and kin).
 pub const NOTIFICATIONS_FEATURE: &str = "notifications";
+/// The daemon applies `UpdateAgent.subtree`: a raised deadline or cost budget
+/// also reaches the live descendants.
+pub const SUBTREE_UPDATE_FEATURE: &str = "subtree_update";
+/// Both sides handle the `history_expired` code; Archon lists it in its hello,
+/// and an aetherd that lists it back reports expired history by that code.
+pub const HISTORY_EXPIRED_FEATURE: &str = "history_expired";
+/// What every aetherd's refusal says about expired history, with or without
+/// the `history_expired` code: `...within sequence range 1..=2; ...`.
+const HISTORY_EXPIRED_TEXT: &str = "event history expired within sequence range ";
 
 /// How a note row is coloured in the TUI (protocol 24).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -61,6 +72,11 @@ pub enum Command {
     Hello(Hello),
     Status,
     Ping,
+    /// Delete the workspaces of Aether's finished agents ([`STORAGE_FEATURE`]).
+    /// `prune_build_output` is left to its default.
+    StorageGc {
+        dry_run: bool,
+    },
     CreateAgent(Box<CreateAgent>),
     GetAgent {
         id: AetherAgentId,
@@ -71,6 +87,12 @@ pub enum Command {
     UpdateAgent {
         id: AetherAgentId,
         patch: AgentPatch,
+        /// Also raise every live descendant's `deadline` and `cost_budget` to
+        /// the patched value where theirs is lower ([`SUBTREE_UPDATE_FEATURE`]).
+        #[serde(skip_serializing_if = "std::ops::Not::not")]
+        subtree: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     SendMessage {
         to: AetherAgentId,
@@ -160,6 +182,7 @@ pub enum Command {
         query: EventQuery,
     },
     ListModels,
+    AuthStatus,
     Providers,
     McpServers {
         refresh: bool,
@@ -241,10 +264,28 @@ pub struct Welcome {
 }
 
 impl Welcome {
+    pub fn supports_subtree_update(&self) -> bool {
+        self.features
+            .iter()
+            .any(|feature| feature == SUBTREE_UPDATE_FEATURE)
+    }
+
+    pub fn supports_history_expired(&self) -> bool {
+        self.features
+            .iter()
+            .any(|feature| feature == HISTORY_EXPIRED_FEATURE)
+    }
+
     pub fn supports_repository_root(&self) -> bool {
         self.features
             .iter()
             .any(|feature| feature == REPOSITORY_ROOT_FEATURE)
+    }
+
+    pub fn supports_storage(&self) -> bool {
+        self.features
+            .iter()
+            .any(|feature| feature == STORAGE_FEATURE)
     }
 
     pub fn effective_host_context(
@@ -458,9 +499,73 @@ pub struct RawReply {
 #[error("aether {code}: {message}")]
 pub struct ErrorReply {
     /// `incompatible`, `unauthorized`, `not_found`, `invalid_transition`,
-    /// `invalid_argument`, `unavailable`, `internal`.
+    /// `invalid_argument`, `unavailable`, `internal`, `history_expired`.
     pub code: String,
     pub message: String,
+    /// The expired span's bounds; set only with `history_expired`.
+    #[serde(default)]
+    pub first_seq: Option<u64>,
+    #[serde(default)]
+    pub last_seq: Option<u64>,
+}
+
+/// Event seqs `first..=last` that Aether's history retention deleted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExpiredSpan {
+    pub first: u64,
+    pub last: u64,
+}
+
+impl ExpiredSpan {
+    /// `None` for bounds no store reports: seqs start at 1 and run forwards.
+    pub fn new(first: u64, last: u64) -> Option<Self> {
+        (first > 0 && first <= last).then_some(Self { first, last })
+    }
+}
+
+impl std::fmt::Display for ExpiredSpan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}..={}", self.first, self.last)
+    }
+}
+
+impl ErrorReply {
+    pub fn new(code: &str, message: &str) -> Self {
+        Self {
+            code: code.to_owned(),
+            message: message.to_owned(),
+            first_seq: None,
+            last_seq: None,
+        }
+    }
+
+    /// The span of a `history_expired` refusal, from its bounds or, should an
+    /// aetherd leave them off, from its text.
+    pub fn expired_span(&self) -> Option<ExpiredSpan> {
+        if self.code != "history_expired" {
+            return None;
+        }
+        match (self.first_seq, self.last_seq) {
+            (Some(first), Some(last)) => ExpiredSpan::new(first, last),
+            _ => span_in_text(&self.message),
+        }
+    }
+
+    /// The span an aetherd without the `history_expired` feature names only
+    /// in the text of a `not_found` refusal.
+    pub fn expired_span_in_text(&self) -> Option<ExpiredSpan> {
+        if self.code != "not_found" {
+            return None;
+        }
+        span_in_text(&self.message)
+    }
+}
+
+fn span_in_text(message: &str) -> Option<ExpiredSpan> {
+    let (_, rest) = message.split_once(HISTORY_EXPIRED_TEXT)?;
+    let range = rest.split([';', ' ']).next()?;
+    let (first, last) = range.split_once("..=")?;
+    ExpiredSpan::new(first.parse().ok()?, last.parse().ok()?)
 }
 
 /// The fields of Aether's `Agent` Archon reads; the rest are ignored.
@@ -516,6 +621,12 @@ pub struct AgentSettings {
     /// As Aether wrote it; it may name an effort Archon does not know.
     #[serde(default)]
     pub effort: Option<String>,
+    /// Aether's hard cap in dollars; `None` when it has none.
+    #[serde(default)]
+    pub cost_budget: Option<f64>,
+    /// When Aether stops it; `None` when it has no deadline.
+    #[serde(default)]
+    pub deadline: Option<Timestamp>,
 }
 
 impl AgentSettings {
@@ -641,10 +752,11 @@ impl From<ErrorReply> for ArchonError {
     /// `unavailable` (a provider or model not configured) is a refusal, so it
     /// maps to `Aether`: `ArchonError::Unavailable` always means no answer
     /// arrived, the one case where a keyed retry is right (ARCHITECTURE §6.3).
+    /// `history_expired` stays `NotFound`, what an aetherd without it sends.
     fn from(reply: ErrorReply) -> Self {
-        let ErrorReply { code, message } = reply;
+        let ErrorReply { code, message, .. } = reply;
         match code.as_str() {
-            "not_found" => Self::NotFound(format!("aether: {message}")),
+            "not_found" | "history_expired" => Self::NotFound(format!("aether: {message}")),
             "invalid_transition" => Self::InvalidTransition(format!("aether: {message}")),
             "invalid_argument" => Self::Invalid(format!("aether: {message}")),
             _ => Self::Aether(format!("{code}: {message}")),
@@ -661,6 +773,39 @@ pub fn is_internal(error: &ArchonError) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_expired_span_reads_from_its_bounds_or_its_text() {
+        let text =
+            "event history expired within sequence range 3..=9; obtain a fresh state snapshot";
+        let coded = ErrorReply {
+            first_seq: Some(2),
+            last_seq: Some(5),
+            ..ErrorReply::new("history_expired", text)
+        };
+        assert_eq!(coded.expired_span(), ExpiredSpan::new(2, 5), "bounds win");
+        let unbounded = ErrorReply::new("history_expired", text);
+        assert_eq!(unbounded.expired_span(), ExpiredSpan::new(3, 9));
+        let older = ErrorReply::new("not_found", text);
+        assert_eq!(older.expired_span(), None);
+        assert_eq!(older.expired_span_in_text(), ExpiredSpan::new(3, 9));
+        let ended = "event history expired within sequence range 7..=7";
+        assert_eq!(
+            ErrorReply::new("not_found", ended).expired_span_in_text(),
+            ExpiredSpan::new(7, 7)
+        );
+        for garbled in [
+            "no such agent",
+            "event history expired within sequence range 9..=3; later first",
+            "event history expired within sequence range 0..=3; seq 0",
+            "event history expired within sequence range 3..9; no =",
+            "event history expired within sequence range x..=9",
+        ] {
+            let reply = ErrorReply::new("not_found", garbled);
+            assert_eq!(reply.expired_span_in_text(), None, "{garbled}");
+        }
+        assert!(matches!(ArchonError::from(coded), ArchonError::NotFound(_)));
+    }
 
     #[test]
     fn agent_scope_reads_labels_without_requiring_unrelated_fields() {
@@ -707,10 +852,7 @@ mod tests {
 
     #[test]
     fn an_internal_error_keeps_its_code_and_others_do_not_pass_for_it() {
-        let reply = |code: &str| ErrorReply {
-            code: code.into(),
-            message: "sqlite: database or disk is full".into(),
-        };
+        let reply = |code: &str| ErrorReply::new(code, "sqlite: database or disk is full");
         let internal = ArchonError::from(reply("internal"));
         assert!(is_internal(&internal), "{internal}");
         assert!(!is_internal(&ArchonError::from(reply("unavailable"))));

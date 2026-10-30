@@ -106,7 +106,7 @@ fn message_orchestrator() -> ToolDefinition {
         "Send the orchestrator a message, recorded with your item and stage: `relay` for an \
          operator message meant for it, `escalation` for a blocker outside your stage, else \
          `info`. Returns at once: keep working; never wait for a reply or end your turn \
-         over it. At most 20 per agent.",
+         over it. At most 20 per agent, then 3 more escalations.",
         object(
             json!({
                 "text": {"type": "string", "minLength": 1, "maxLength": archon_core::agent_message::MAX_MESSAGE_CHARS},
@@ -651,9 +651,10 @@ fn refresh_item() -> ToolDefinition {
         "Refresh item onto its base",
         "Merge fresh base into a stale or conflicting item's branch and same pull request. \
          Review reads from the new merge base, conflict fixes included. \
-         An `onto` item merges its pull request's current head instead. The refresh runs on \
-         the stage defaults, not the item's own model_plan or stage_timeouts, unless you give \
-         them here.",
+         An `onto` item merges its pull request's current head instead. Work needing no \
+         agent (a squash- or rebase-merged parent; a held head) is done in place, nothing \
+         queued. The refresh runs on the stage defaults, not the item's own model_plan or \
+         stage_timeouts, unless you give them here.",
         object(
             json!({
                 "item": item_id(""),

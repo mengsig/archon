@@ -1240,6 +1240,10 @@ async fn finish_merge(
     merge.updated_at = archon_core::now();
     ctx.store.lock().await.update_merge(&merge)?;
     report(ctx, &merge).await?;
+    if matches!(merge.state, MergeState::Merged { .. }) {
+        // Stacked dependents restack over the merge now, not at the next timed pass.
+        ctx.coordination.changed.notify_one();
+    }
     Ok(merge)
 }
 

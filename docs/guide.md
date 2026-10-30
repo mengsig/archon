@@ -337,7 +337,20 @@ blocker, a relay or info with progress. It also delivers an `agent_message`
 news event to the orchestrator, which acts on it and does not repeat it to
 you. Delivery is durable and coalesced; each
 agent can send at most 20 messages (`[limits] max_agent_messages`), with
-a clear refusal after that.
+a clear refusal after that. The cap never silences a stage:
+
+- Its first refused message posts one `message_cap_reached` news event that
+  wakes the orchestrator, and `get_item` and `queue_status` show the agent
+  at its cap while its stage runs.
+- An agent keeps 3 `escalation` messages in reserve past the cap, which
+  `info` and `relay` messages cannot use.
+- Each Aether `send_message` from the orchestrator to a stage agent, and
+  each steer note, grants that agent one reply that is not counted. It
+  holds at most 3 such replies at once.
+- A message a stage agent sends for the agents it delegated to is charged
+  to it, and the refusal names the agent whose allowance is used up and
+  the cap.
+
 Delivered messages to passive run nodes are forwarded through the same
 path, including late events for retired nodes whose normal index was pruned. External
 messages have a separate cap of the same size per run node; refusals reach the
@@ -460,6 +473,9 @@ archon chat   # the quiet line chat, for SSH, scripts and pipes
 aether tui    # plain Aether, untouched
 ```
 
+`archon chat` exits with 1 when the orchestrator has failed as it ends, so a
+script learns it went unanswered.
+
 A bare `archon` opens the terminal UI with default options, as `archon tui`
 does. It opens the line chat instead, and says why in one line on standard
 error, in two cases: standard input or output is not a terminal, or
@@ -475,7 +491,10 @@ restarts made in Aether are followed. In dedicated mode Archon's commands
 (`/answer`, `/approve`, `/reject`, `/merge`, `/archon`, `/status` and the
 rest) appear in the TUI's `/` menu beside Aether's own, marked as Archon's;
 an Aether too old for that prints a warning and starts without them. Attachment sends no user message and
-respects revival backoff. An unavailable attachment stops with a visible error;
+respects revival backoff. When archond reports the orchestrator `failed`,
+`archon tui` stops retrying and opens the TUI on it, which shows its error;
+the line on standard error points to `archon doctor`. An attachment that stays
+unavailable for 5 seconds stops with archond's reason;
 it never deliberately opens a generic root. If the agent disappears after
 launch, Aether may select another root: exit and run `archon tui` again.
 
@@ -764,7 +783,12 @@ advice (`run archon update`) when a newer release exists.
 `/upgrade both latest` is also what to say when the orchestrator tells you a
 newer Archon or Aether exists: only your own message, typed here, starts it,
 never a GitHub request or an agent. (`archon update --yes` from a shell
-does the same, and also restarts the orchestrator.)
+does the same, and also restarts the orchestrator: with archond running it
+exits 0 only once the orchestrator, if one runs, is in a generation the new
+version created, names the step that did not finish otherwise, and Ctrl-C ends it at any step with exit 130; see
+[Updating](install.md#updating).) A restart Archon asked for itself is
+reported in the feed as `Archon's own aetherd restarted, as planned`, not
+as an aetherd that had stopped.
 
 `/upgrade` is `archon daemon upgrade` (or `archon daemon restart`): archond
 holds dispatch while running stage agents finish (at most 30 minutes),
@@ -790,7 +814,12 @@ as any command that changes something does; a command that only reads never
 starts either ([which commands start archond](#which-commands-start-archond)).
 `archon aether <args…>` runs any `aether` command against Archon's instance,
 for example `archon aether agents`. `archon daemon stop` stops both
-daemons (`--keep-aether` stops only archond). In the TUI's tree each work item is one subtree: a node named after
+daemons (`--keep-aether` stops only archond). Where some of Archon's config
+directory, data directory and socket are moved from their defaults and
+others are not, `daemon stop`, `daemon restart`, `archon aether stop` and
+the restart of `archon update` refuse and stop nothing, as autostart does. Archon's own aetherd is not stopped when it names another
+Aether instance than the one archond last linked to; when either is unknown
+the stop goes ahead with a warning. In the TUI's tree each work item is one subtree: a node named after
 the item, with its stage agents (`implement`, `review 1/2`, `ship`) underneath, beside the `archon` orchestrator.
 
 ```sh
@@ -857,7 +886,7 @@ reference, `[image: shot.png, 14.2 KB]`, not the image. In the terminal UI
 | `archon queue show <id> [--full]` | an item's runs and each stage's attempt, slot, state, verdict, model, agent, cost and summary (first lines; `--full` for all), with the PR URL, recorded plan reasons and full waiting explanation when present. A stage that delegated shows how its cost splits (its own agent, then each delegated agent with model, effort and cost), and a stage holding a declared review shows the review on record. Steers made to the item are listed with who made them |
 | `archon queue cancel <id>` / `archon queue caps` | cancel an item, or show and change saved operator caps |
 | `archon queue retry <id> [--fresh] [--append "…"] [--stage-timeout <stage>=<minutes>]…` | queue a finished item again in its worktree and branch (a succeeded one delivers into its pull request again, and the retry counts against the run that passed); `--fresh` starts over from the base branch on a new branch and sets the old worktree aside, which worktree gc deletes, uncommitted work included, `worktrees.gc_after` (7 days) after the item's last run; `--append` adds guidance to the brief |
-| `archon queue refresh <id>` | merge a finished item's base branch, fetched from `origin`, into its branch: a new item resolves any conflicts, runs the checks, is reviewed from the new merge base and updates the same pull request (never a rebase or a second pull request); an item queued `onto` a pull request merges that pull request's current head instead |
+| `archon queue refresh <id>` | merge a finished item's base branch, fetched from `origin`, into its branch: a new item resolves any conflicts, runs the checks, is reviewed from the new merge base and updates the same pull request (never a rebase or a second pull request); an item queued `onto` a pull request merges that pull request's current head instead. Work no agent needs is done in place and queues nothing: a child whose parent was squash- or rebase-merged is merged over that landing and pushed, and an `onto` item whose branch already holds the pull request's moved head freezes that head for its next ship |
 | `archon queue steer <id> [--note "…"] [--stage <stage>] [--model <provider/model>] [--effort <effort>] [--budget-usd <usd>] [--extend <minutes>] [--stage-timeout <stage>=<minutes>]… [--abort [--then retry\|skip] [--goto <stage>]] [--remove <stage>] [--insert <stage> [--from <pipeline>] [--after <stage>]] [--switch <pipeline>]` | change an item without cancelling it; see [steering an item](#steering-an-item) |
 | `archon log` | the complete feed; `--item <id>` keeps one item's entries, `--kind <kind>` (repeatable) some kinds, and `--follow` keeps printing new ones |
 | `archon merge <id> [--ignore-checks]` | merge a succeeded item's pull request at its reviewed commit; see [Merging on request](#merging-on-request). For a `ship = local` repository it fast-forwards the base branch to the item's reviewed commit and keeps the branch; refused, changing nothing, when the base moved, shares no history, or is checked out with local changes. After `archon queue refresh <id>` succeeds, it lands the refresh's reviewed commit |
@@ -865,7 +894,7 @@ reference, `[image: shot.png, 14.2 KB]`, not the image. In the terminal UI
 | `archon reports` / `archon reports reopen <rpt_…>` | list published reports with their state and URL, or show a closed one again |
 | `archon github-watcher …` | route `@archon` on GitHub issues and PRs to the orchestrator. `operators <LOGIN>...` lets the GitHub accounts you list instruct it with your authority (off by default); see [`docs/github-watcher.md`](github-watcher.md) |
 | `archon pause` / `archon resume` | hold dispatch globally, per repo or per pipeline; `--hard` also pauses running agents |
-| `archon gc [--offline]` | delete finished runs' build caches and remove their old worktrees now; `--offline` works without archond, e.g. on a full disk. See [disk use](configuration.md#disk-use) |
+| `archon gc [--offline]` | delete finished runs' build caches and remove their old worktrees now, then have Aether clean up the workspaces it delegated and prune git's stale worktree entries; `--offline` works without archond, e.g. on a full disk, and only prunes git. See [disk use](configuration.md#disk-use) |
 | `archon aether …` | Aether's CLI on Archon's own Aether |
 | `archon daemon status` / `archon daemon stop [--keep-aether]` | both daemons' state; stop archond and, in dedicated mode, Archon's aetherd unless `--keep-aether` |
 
@@ -1029,8 +1058,8 @@ Give at least one change; several in one command are applied together.
 | --- | --- |
 | `--note "…"` | Adds the text to the brief under a dated `## Amendment` heading and sends it to every agent working on the item now, helpers included. Later stages read it in the brief. |
 | `--model <provider/model>`, `--effort <effort>` | Changes the model or effort of `--stage` (the running stage when omitted), within the model policy. A running agent ends its turn and goes on with its work on the new model; later attempts and retries use it too. |
-| `--budget-usd <usd>` | Sets the item's budget. Running agents that carry their own cap get the difference. |
-| `--extend <minutes>` | Gives the stage running now more time, up to 1440 minutes a steer. |
+| `--budget-usd <usd>` | Sets the item's budget. Running agents that carry their own cap get the difference, and the agents they delegated to are raised to it where theirs is lower. |
+| `--extend <minutes>` | Gives the stage running now more time, up to 1440 minutes a steer, and the agents it delegated to the same deadline where theirs is earlier. |
 | `--stage-timeout <stage>=<minutes>` | Sets the timeout of a stage that has not started yet, within `[limits] max_stage_timeout_minutes`; repeat for several. `queue add` and `queue retry` take it too. |
 | `--abort` | Stops the agents of `--stage` now. The stage is then started again with a new agent, or passed over with `--then skip`, or the run continues at another stage with `--goto <stage>`. |
 | `--remove <stage>` | Takes out a stage that has not started, for this run. |
@@ -1081,6 +1110,20 @@ starts from the head it passed instead (see
 Other parents are merged in. A parent's merge retargets the child PR; later parent commits are merged
 forward. Conflicts create a fix item on the child branch, visible in the queue.
 
+A parent merged on GitHub as a squash or a rebase leaves the base holding its
+content under commits of its own, which a plain merge into the child would
+conflict with. Once the child's last parent settles, `archond` checks that a
+commit of the base has the parent head's very tree, or carries patches of the
+same patch ids as the parent's own commits, and then merges the base into the
+child as if it forked at the parent's head: a content-neutral `merge -s ours`
+when the tree is the parent's. The child's pull request gets it as a
+fast-forward, never a rebase or force-push, once per merged parent; a child
+still running then is restacked once it is delivered, not while agents work
+in it. A base that holds more than the parent is merged as git would; when
+that conflicts, nothing is written and the operator is told to run `archon
+queue refresh` on the child, which merges the base with an agent resolving
+it.
+
 ### Work onto an existing pull request
 
 `onto` names an open pull request an item's change is for, instead of a new
@@ -1108,7 +1151,10 @@ the owner's text in its body stay as its owner left them, apart from its
 merge by hand, or a `review` item to queue onto it. When the head moved
 since enqueue (someone else pushed), delivery fails naming both commits
 instead of force-pushing; queue the work again `onto` it to start from the
-new head. The push goes only to the repository holding that head: an
+new head. A reviewed commit that already holds the new head, as when that
+head was merged into the item's branch, is pushed as a fast-forward from it,
+and `archon queue refresh` on such an item freezes the new head in place,
+queueing nothing. The push goes only to the repository holding that head: an
 `origin` naming another one, after your `insteadOf` rewrites, is refused,
 and `pushInsteadOf` does not apply to it. A delivered `onto` item has no
 branch of its own on `origin`, so it is not refreshed and an item depending

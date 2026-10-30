@@ -12,7 +12,6 @@ use archon_core::config::StorageConfig;
 use tokio::sync::Notify;
 use tracing_subscriber::fmt::MakeWriter;
 
-pub const DETACHED_ENV: &str = "ARCHON_DAEMON_DETACHED";
 const DAY: u64 = 24 * 60 * 60;
 const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(60);
 

@@ -1,7 +1,9 @@
 //! `archon doctor` checks the pieces Archon depends on; in shared mode
 //! `archon setup` registers the MCP server and then runs the MCP checks.
 
+pub(super) mod engine;
 mod gh_users;
+mod leftovers;
 mod mcp_tools;
 mod orchestrator;
 pub(super) mod registry;
@@ -21,6 +23,7 @@ use archon_core::protocol::{McpHealth, gib};
 use archon_daemon::context::DaemonPaths;
 use archon_daemon::disk::{self, DiskReading};
 
+use super::update::version::Version;
 use crate::connect::{archon_bin, connect_existing, print_json};
 use crate::instance::seed::voice::{self, VoiceFile};
 use crate::instance::seed::{self, LinkState, calm};
@@ -30,6 +33,10 @@ use crate::style::{Palette, Style};
 use registry::{COMMAND_TIMEOUT, Registry, run_bounded};
 
 const AETHER_TIMEOUT: Duration = Duration::from_secs(5);
+/// Aether's login check runs each engine's CLI, which it bounds at 15 s.
+const AETHER_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+/// `archon update --check`'s lookup of the latest release, bounded tighter.
+const RELEASE_TIMEOUT: Duration = Duration::from_secs(10);
 /// The oldest git `archond` runs: restacking merges with `merge-tree --write-tree`.
 const MIN_GIT: (u32, u32) = (2, 38);
 /// The check-name column; the longest name is `mcp registered`.
@@ -65,17 +72,9 @@ pub async fn run(json: bool) -> anyhow::Result<ExitCode> {
     checks.extend(check_legacy_config(&archon_core::paths::config_dir()));
     checks.push(check_mode(&config, &instance));
     let aether = connect_aether(&effective_aether(&config.aether, &instance)).await;
-    checks.push(match &aether {
-        Ok(client) => aether_ok(client.welcome()),
-        Err(_) if dedicated && !crate::instance::lifecycle::is_listening(&instance.socket) => {
-            let detail = format!(
-                "Archon's aetherd is not running ({}); `archon daemon start` starts it",
-                instance.socket.display()
-            );
-            check("aether", Level::Warn, detail)
-        }
-        Err(error) => check("aether", Level::Fail, error.clone()),
-    });
+    checks.push(aether_verdict(&aether, dedicated, &instance));
+    let model = &config.orchestrator.model;
+    checks.push(engine::check_engine(aether.as_ref().ok(), model).await);
     checks.push(check_host_context(
         config.aether.host_context,
         aether.as_ref().ok().map(|client| client.welcome()),
@@ -110,8 +109,11 @@ pub async fn run(json: bool) -> anyhow::Result<ExitCode> {
     checks.push(registry::check_gh(&config.github.binary, &registry).await);
     checks.push(gh_users::check_gh_users(&config.github.binary, &registry).await);
     checks.push(registry::check_repos(&registry).await);
-    checks.extend(release_checks(&config.github.binary, registry.gh_unused()).await);
+    checks.push(check_release().await);
     checks.push(check_lavish(&config));
+    let paths = DaemonPaths::resolve(&config, archon_bin()?);
+    checks.push(leftovers::check_compose(&config, &paths.worktrees, &archond).await);
+    checks.push(leftovers::check_lavish_polls(&paths.data_dir, &archond).await);
     checks.push(check_agent_cli("claude"));
     checks.push(check_agent_cli("codex"));
     report(&checks, json)?;
@@ -136,6 +138,7 @@ pub(super) async fn setup_shared(config: &Config, json: bool) -> anyhow::Result<
     let registration = setup::register(&path, &bin)?;
     let aether = connect_aether(&config.aether).await;
     let health = check_mcp_health(aether.as_ref().ok()).await;
+    let engine = engine::check_engine(aether.as_ref().ok(), &config.orchestrator.model).await;
     if json {
         let (state, command) = match &registration {
             Registration::Added => ("added", Some(bin.display().to_string())),
@@ -147,6 +150,7 @@ pub(super) async fn setup_shared(config: &Config, json: bool) -> anyhow::Result<
             "registration": state,
             "command": command,
             "mcp_health": check_json(&health),
+            "engine": check_json(&engine),
         }))
         .map(|()| ExitCode::SUCCESS);
     }
@@ -163,7 +167,21 @@ pub(super) async fn setup_shared(config: &Config, json: bool) -> anyhow::Result<
     if health.level != Level::Ok {
         println!("Restart aetherd so it loads the server, then run `archon doctor` to verify.");
     }
+    report_engine(&engine)?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// Setup's word on the orchestrator's engine, with what a failure means.
+pub(super) fn report_engine(engine: &Check) -> anyhow::Result<()> {
+    assert_eq!(engine.name, engine::NAME, "only the engine verdict");
+    report(std::slice::from_ref(engine), false)?;
+    if engine.level == Level::Fail {
+        println!(
+            "The orchestrator model is unavailable, so the orchestrator cannot start until \
+             that is fixed; `archon doctor` checks it again."
+        );
+    }
+    Ok(())
 }
 
 fn check_mode(config: &Config, instance: &Instance) -> Check {
@@ -192,13 +210,13 @@ fn check_links(operator: &Path, instance: &Instance) -> Check {
             Err(e) => return check(NAME, Level::Fail, format!("{e:#}")),
         };
         let this = match &state {
-            LinkState::Linked | LinkState::NoSource => Level::Ok,
+            LinkState::Linked | LinkState::NoSource | LinkState::OwnOnly => Level::Ok,
             LinkState::OwnFile if name != "providers.toml" => Level::Ok,
             LinkState::Dangling => Level::Fail,
             _ => Level::Warn,
         };
         level = worst(level, this);
-        if state != LinkState::NoSource {
+        if !matches!(state, LinkState::NoSource | LinkState::OwnOnly) {
             let text = super::instance::link_text(&state, &operator.join(name));
             notes.push(format!("{name} {text}"));
         }
@@ -350,7 +368,7 @@ pub(super) async fn connect_aether(
 ) -> Result<AetherClient, String> {
     let endpoint = Endpoint::from_config(config).map_err(|e| e.to_string())?;
     let options = ClientOptions {
-        request_timeout: AETHER_TIMEOUT,
+        request_timeout: AETHER_REQUEST_TIMEOUT,
         ..ClientOptions::default()
     };
     let where_ = match &endpoint {
@@ -366,6 +384,26 @@ pub(super) async fn connect_aether(
         Ok(Ok(client)) => Ok(client),
         Ok(Err(e)) => Err(format!("{where_}: {e}")),
         Err(_) => Err(format!("{where_}: no welcome within {AETHER_TIMEOUT:?}")),
+    }
+}
+
+/// The `aether` check: the connection's outcome, where Archon's own aetherd
+/// not running yet is only a warning.
+fn aether_verdict(
+    aether: &Result<AetherClient, String>,
+    dedicated: bool,
+    instance: &Instance,
+) -> Check {
+    match aether {
+        Ok(client) => aether_ok(client.welcome()),
+        Err(_) if dedicated && !crate::instance::lifecycle::is_listening(&instance.socket) => {
+            let detail = format!(
+                "Archon's aetherd is not running ({}); `archon daemon start` starts it",
+                instance.socket.display()
+            );
+            check("aether", Level::Warn, detail)
+        }
+        Err(error) => check("aether", Level::Fail, error.clone()),
     }
 }
 
@@ -752,21 +790,37 @@ pub(super) fn find_program(program: &Path) -> Option<PathBuf> {
         .find(|candidate| executable(candidate))
 }
 
-/// `gh_unused`: nothing ships through GitHub, so a release lookup that fails is not worth a warning.
-async fn release_checks(binary: &Path, gh_unused: bool) -> Vec<Check> {
-    let mut checks = Vec::new();
-    for repo in ["mengsig/archon", "mengsig/aether"] {
-        let (level, detail) = match super::release::inspect(binary, repo, None).await {
-            Ok(problems) if problems.is_empty() => (Level::Ok, format!("{repo}: healthy")),
-            Ok(problems) => (Level::Fail, format!("{repo}: {}", problems.join("; "))),
-            Err(_) if gh_unused => continue,
-            Err(error) => (Level::Warn, format!("{repo}: could not check: {error:#}")),
-        };
-        checks.push(check("releases", level, detail));
-    }
-    assert!(checks.len() <= 2);
-    assert!(checks.iter().all(|check| !check.detail.is_empty()));
-    checks
+/// Whether this archon is the latest release, by the unauthenticated lookup
+/// of `archon update --check`. Release history is `archon release check`'s.
+async fn check_release() -> Check {
+    let latest = super::update::latest_release(RELEASE_TIMEOUT).await;
+    release_verdict(&Version::current(), latest)
+}
+
+fn release_verdict(current: &Version, latest: anyhow::Result<Version>) -> Check {
+    const NAME: &str = "release";
+    let latest = match latest {
+        Ok(latest) => latest,
+        Err(error) => {
+            let why = format!("{error:#}");
+            let why = why.split_whitespace().collect::<Vec<_>>().join(" ");
+            let detail = format!("archon {current}; the latest release is unknown: {why}");
+            return check(NAME, Level::Warn, detail);
+        }
+    };
+    let detail = match latest.cmp(current) {
+        std::cmp::Ordering::Equal => format!("archon {current} is the latest release"),
+        std::cmp::Ordering::Less => {
+            format!("archon {current}, newer than the latest release {latest}")
+        }
+        std::cmp::Ordering::Greater => {
+            let detail =
+                format!("archon {latest} is available; this is {current}: `archon update`");
+            return check(NAME, Level::Warn, detail);
+        }
+    };
+    assert!(!detail.contains('\n'), "a verdict is one line");
+    check(NAME, Level::Ok, detail)
 }
 
 #[cfg(test)]

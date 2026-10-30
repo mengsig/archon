@@ -228,7 +228,10 @@ async fn a_failed_delivery_is_retried_with_the_same_key_and_payload() {
     let sent = harness.fake.wait_for("trigger", 2, WAIT).await;
     delivery.abort();
     let store = supervisor::store_id(&harness.ctx).await.unwrap();
-    assert_eq!(sent[0]["idempotency_key"], format!("trg_{store}_1_2"));
+    assert_eq!(
+        sent[0]["idempotency_key"],
+        format!("trg_{store}_1_2_{ORCH}")
+    );
     assert_eq!(sent[0]["idempotency_key"], sent[1]["idempotency_key"]);
     assert_eq!(sent[0]["payload"], sent[1]["payload"]);
     assert_eq!(sent[0]["agent"], ORCH);
@@ -396,7 +399,10 @@ async fn news_inside_the_coalesce_window_survives_a_stop() {
         ["finished", "cancelled", "while stopped"]
     );
     let store = supervisor::store_id(&harness.ctx).await.unwrap();
-    assert_eq!(sent[0]["idempotency_key"], format!("trg_{store}_1_3"));
+    assert_eq!(
+        sent[0]["idempotency_key"],
+        format!("trg_{store}_1_3_{ORCH}")
+    );
 }
 
 /// News piling up behind a batch in flight is compacted when it
@@ -452,7 +458,7 @@ async fn a_long_backlog_is_compacted_behind_an_untouched_batch_in_flight() {
         "the newest are kept"
     );
     let store = supervisor::store_id(&harness.ctx).await.unwrap();
-    assert_eq!(next["idempotency_key"], format!("trg_{store}_2_12"));
+    assert_eq!(next["idempotency_key"], format!("trg_{store}_2_12_{ORCH}"));
 }
 
 /// A fresh orchestrator generation gets even a short backlog

@@ -240,6 +240,35 @@ async fn distillation_queues_once_per_window_and_never_learns_from_itself() {
 }
 
 #[tokio::test]
+async fn distillation_reads_a_window_whose_older_items_retention_deleted() {
+    let mut config = archon_core::config::Config::default();
+    config.learning.distill_every = 2;
+    let h = Harness::with_config(config).await;
+    samples(&h, "codex/cheap", 0.2, 1).await;
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    let later = archon_core::now() + chrono::Duration::days(1);
+    let pruned = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .prune_history(later, 10, |_, _| false)
+        .unwrap();
+    assert_eq!(pruned.items, 1, "{pruned:?}");
+
+    samples(&h, "codex/cheap", 0.2, 1).await;
+    archon_daemon::learned::maintenance(&h.ctx).await.unwrap();
+    let store = h.ctx.store.lock().await;
+    assert_eq!(store.outcomes(None).unwrap().len(), 2, "learning stays");
+    let items = store.items(&Default::default()).unwrap();
+    let errands = items.iter().filter(|i| i.pipeline == "errand").count();
+    assert_eq!(
+        errands, 1,
+        "the window is distilled without the deleted item"
+    );
+}
+
+#[tokio::test]
 async fn orchestrator_advice_is_frozen_per_generation_and_includes_repository_lessons() {
     let h = Harness::new().await;
     let Reply::Lesson(lesson) = h

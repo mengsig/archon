@@ -81,6 +81,7 @@ impl Harness {
 
     /// A fresh in-memory store and a fake aetherd, not yet connected.
     pub async fn with(config: Config, lavish: Option<Lavish>) -> Self {
+        let config = crate::common::without_host_docker(config);
         let dir = tempfile::tempdir().expect("temp dir");
         let fake = FakeAether::start(&dir.path().join("aetherd.sock"))
             .await
@@ -128,6 +129,8 @@ impl Harness {
             gc: Mutex::new(None),
             collecting: archon_daemon::gc::Collecting::new(dispatch),
             ops: Arc::new(fake_ops::FakeOps::default()).ops_state(),
+            remote: archon_remote::Remote::open(Default::default(), dir.path(), "test")
+                .expect("remote state"),
         };
         Self {
             dir,
@@ -312,6 +315,7 @@ pub async fn spawning_stage(
         leaf: true,
         cost_budget_usd: None,
         aether_cost_budget: None,
+        cost_billing: None,
         deadline: None,
         attach_run: None,
         parent: node.map(agent_id),
@@ -374,7 +378,19 @@ fn repo_at(path: &Path) -> Repo {
 fn running_run(store: &mut Store, path: &Path) -> PipelineRun {
     let repo = repo_at(path);
     store.insert_repo(&repo).unwrap();
-    let item = store.insert_item(&queue_item(&repo), None).unwrap();
+    run_in_repo(store, &repo)
+}
+
+/// Another running item of the one registered repository, and its run.
+pub async fn another_running_run(ctx: &DaemonContext) -> PipelineRun {
+    let mut store = ctx.store.lock().await;
+    let repos = store.repos().unwrap();
+    assert_eq!(repos.len(), 1, "one repository is registered");
+    run_in_repo(&mut store, &repos[0])
+}
+
+fn run_in_repo(store: &mut Store, repo: &Repo) -> PipelineRun {
+    let item = store.insert_item(&queue_item(repo), None).unwrap();
     let now = archon_core::now();
     store
         .transition_item(&item.id, QueueState::Dispatching, now)

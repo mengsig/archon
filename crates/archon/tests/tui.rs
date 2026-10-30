@@ -184,6 +184,10 @@ fn startup_link_unavailability_is_retried_without_a_user_message() {
                 code: ErrorCode::Unavailable,
                 message: "not connected to aetherd".into(),
             }),
+            Ok(fake::orchestrator_in(
+                "agt_selected",
+                "unknown (aether disconnected)",
+            )),
             Ok(fake::orchestrator()),
         ],
     );
@@ -203,9 +207,98 @@ fn startup_link_unavailability_is_retried_without_a_user_message() {
         [
             Request::Hello { .. },
             Request::OrchestratorAttach,
+            Request::OrchestratorStatus,
             Request::OrchestratorAttach
         ]
     ));
+}
+
+#[test]
+fn a_failed_orchestrator_opens_in_the_terminal_ui_with_its_failure() {
+    let env = environment();
+    let reason = "the orchestrator is failed; Archon revives it again in 9s";
+    let server = fake::serve(
+        &env.path("archond.sock"),
+        1,
+        vec![
+            Err(ErrorReply {
+                code: ErrorCode::Unavailable,
+                message: reason.into(),
+            }),
+            Ok(fake::orchestrator_in("agt_failed", "failed")),
+        ],
+    );
+    let output = env
+        .command(&["tui"])
+        .env("PATH", env.path("bin"))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.starts_with("tui\n--agent\nagt_failed\n"), "{stdout}");
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("agt_failed has failed") && stderr.contains(reason),
+        "{stderr}"
+    );
+    assert!(stderr.contains("`archon doctor`"), "{stderr}");
+    assert!(matches!(
+        server.join().unwrap().as_slice(),
+        [
+            Request::Hello { .. },
+            Request::OrchestratorAttach,
+            Request::OrchestratorStatus
+        ]
+    ));
+}
+
+/// The final attempt keeps a budget archond can answer in: never the
+/// leftover millisecond that once ended in "within 0.001s".
+#[test]
+fn an_orchestrator_that_stays_unavailable_fails_with_the_daemons_reason() {
+    let env = environment();
+    let server = fake::serve_with(&env.path("archond.sock"), 1, |request| match request {
+        Some(Request::OrchestratorAttach) => {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            Err(ErrorReply {
+                code: ErrorCode::Unavailable,
+                message: "not connected to aetherd".into(),
+            })
+        }
+        _ => Err(ErrorReply {
+            code: ErrorCode::NotFound,
+            message: "the orchestrator has not been created yet".into(),
+        }),
+    });
+    let started = std::time::Instant::now();
+    let output = env
+        .command(&["tui"])
+        .env("PATH", env.path("bin"))
+        .output()
+        .unwrap();
+    assert!(started.elapsed() < std::time::Duration::from_secs(15));
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(
+        output.stdout.is_empty(),
+        "Aether must not launch: {output:?}"
+    );
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("attaching to Archon's orchestrator"),
+        "{stderr}"
+    );
+    if let Some((_, after)) = stderr.split_once(" within ") {
+        let seconds: f64 = after.split('s').next().unwrap().parse().unwrap();
+        assert!(seconds >= 0.1, "{stderr}");
+    } else {
+        assert!(stderr.contains("not connected to aetherd"), "{stderr}");
+    }
+    let attaches = server.join().unwrap();
+    let attaches = attaches
+        .iter()
+        .filter(|r| matches!(r, Request::OrchestratorAttach))
+        .count();
+    assert!(attaches >= 2, "an unavailable orchestrator is asked again");
 }
 
 #[test]

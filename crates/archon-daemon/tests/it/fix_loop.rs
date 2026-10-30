@@ -168,6 +168,8 @@ async fn the_implementer_is_resumed_through_every_fix_and_reviewers_stay_fresh()
         let told = h.backend.resumed_with(&fix);
         assert!(told.contains(FINDINGS), "{told}");
         assert!(told.contains(&format!("attempt {attempt}")), "{told}");
+        assert!(told.contains("Archon now stops you"), "{told}");
+        assert!(told.contains("If your task has you commit"), "{told}");
         answers(&h, &fix, "added tests/greet.rs; cargo test passes").await;
         let fixed = &h.stages(&item.id).await;
         let fixed = fixed.iter().find(|s| s.id == fix.id).expect("the fix");
@@ -271,12 +273,18 @@ async fn a_resumed_agent_gets_its_spend_so_far_plus_a_new_grant() {
     let raw = spawn.to_string();
     h.ctx.store.lock().await.kv_set(&key(&first), &raw).unwrap();
     settle_recorded(&h, "added the greeting").await;
-    {
-        let mut store = h.ctx.store.lock().await;
-        let mut spent = store.stage_run(&first.id).unwrap();
-        spent.cost_usd = 7.5;
-        store.upsert_stage_run(&spent).unwrap();
-    }
+    let row = archon_queue::store::SpendRow {
+        agent: agent(&first),
+        item: Some(item.id.clone()),
+        cost_usd: 7.5,
+        cost_basis: archon_core::cost::CostBasis::ProviderReported,
+        cost_complete: None,
+        estimated_cost_usd: 0.25,
+        input_tokens: 10,
+        output_tokens: 5,
+        at: archon_core::now(),
+    };
+    h.ctx.store.lock().await.record_spend(&row).unwrap();
     h.dispatch().await;
 
     let fix = sent_back(&h).await;
@@ -748,4 +756,54 @@ async fn resumed_attempts_retain_the_created_agents_host_context() {
         h.backend.host_context(HostContext::Lean).await.unwrap(),
         HostContext::Full
     );
+}
+
+/// Aether stopped a budgeted stage at its hard cap. When Archon could not
+/// tell whether the engine bills those dollars (Claude Code without a
+/// subscription window), the failure says the cost may be notional.
+#[tokio::test]
+async fn a_cost_stop_of_unknown_billing_is_labelled_notional_cost() {
+    for (billing, notional) in [("unknown", true), ("billed", false)] {
+        let h = harness().await;
+        let item = h
+            .enqueue_in(REVIEWED, "capped", plan())
+            .await
+            .expect("enqueue");
+        let patch = archon_core::protocol::ItemPatch {
+            budget_usd: Some(10.0),
+            ..Default::default()
+        };
+        h.cli(Request::UpdateItem {
+            item: item.id.clone(),
+            patch,
+        })
+        .await
+        .expect("a budget");
+        h.dispatch().await;
+        let first = running(&h, "implement").await;
+        let key = format!("spawn_request:{}", first.id);
+        let mut spawn: serde_json::Value =
+            serde_json::from_str(&h.kv(&key).await.expect("stored")).unwrap();
+        spawn["request"]["aether_cost_budget"] = true.into();
+        spawn["request"]["cost_billing"] = billing.into();
+        let raw = spawn.to_string();
+        h.ctx.store.lock().await.kv_set(&key, &raw).unwrap();
+        let stop = "cost budget of $10.00: $10.02 spent";
+        h.settle_running(|_| StageOutcome::Failed {
+            error: stop.into(),
+            infra: false,
+        })
+        .await;
+
+        let settled = h.ctx.store.lock().await.stage_run(&first.id).unwrap();
+        let StageState::Failed { error } = &settled.state else {
+            panic!("the stop fails the stage: {:?}", settled.state);
+        };
+        assert!(error.starts_with(stop), "{error}");
+        assert_eq!(
+            error.contains("notional cost"),
+            notional,
+            "{billing}: {error}"
+        );
+    }
 }

@@ -40,17 +40,18 @@ profile, and it never touches Archon's configuration or data.
 Set these in the environment of `sh`, after the pipe:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mengsig/archon/main/install.sh | ARCHON_VERSION=v1.4.7 sh
+curl -fsSL https://raw.githubusercontent.com/mengsig/archon/main/install.sh | ARCHON_VERSION=v1.4.8 sh
 ```
 
 | Variable | Effect |
 | --- | --- |
-| `ARCHON_VERSION` | Install this release, such as `v1.4.7`, instead of the latest. |
+| `ARCHON_VERSION` | Install this release, such as `v1.4.8`, instead of the latest. |
 | `ARCHON_INSTALL_DIR` | Install here instead of `~/.local/bin`. The directory must be yours to write. |
 | `ARCHON_SKIP_AETHER=1` | Do not install Aether; print the command that does. |
 | `ARCHON_NONINTERACTIVE=1` | Ask nothing: a missing Aether is installed without a question. |
 | `ARCHON_INSTALL_BASE_URL` | Download from this address instead of `https://github.com/mengsig/archon/releases`. It must serve `latest/download/<file>` and `download/<tag>/<file>`. `archon update` honours it too. |
 | `ARCHON_AETHER_INSTALL_URL` | Fetch Aether's installer from this address. |
+| `ARCHON_REMOTE=1` | Set up the mobile web app without asking (`archon remote setup --yes`, [remote-setup.md](remote-setup.md)); `ARCHON_REMOTE=0` skips the question. Off a terminal it is skipped unless set to 1. A failed setup leaves Archon installed and prints the retry command. |
 | `https_proxy`, `http_proxy` | Honoured by `curl` and `wget`. |
 
 The installer exits with 0 when everything is in place, 1 when it installed
@@ -80,15 +81,25 @@ aether schema | grep -E '^  "(min_)?protocol_version"'
 
 Update an Aether that is too old with `aether update`.
 
-Archon 1.4.7 needs **Aether 1.2.5**: it is released with and tested on that
+Archon 1.4.8 needs **Aether 1.2.7**: it is released with and tested on that
 release, which the installer and `archon update` install. Archon checks
 Aether's protocol (24), not its version, so it does not refuse an older
-aetherd that serves protocol 24, but only Aether 1.2.5 is supported with it.
+aetherd that serves protocol 24, but only Aether 1.2.7 is supported with it.
+Aether 1.2.7 adds two features Archon uses when they are offered:
+`subtree_update`, which raises a steer's deadline or budget for a stage
+agent and its helpers in one request (an older aetherd gets one request per
+helper), and `history_expired`, which reports expired event history by its
+own code (an older one is read from the refusal's text).
 
 ## Other programs Archon uses
 
 The installer names each of these that is missing; it installs none of
-them. `archon doctor` checks the ones your configuration needs.
+them. `archon doctor` checks the ones your configuration needs. Its `engine`
+check fails, naming the login command, when the orchestrator's engine is not
+logged in, and `archon setup` says so too: a machine with only `codex` is told
+that the default orchestrator model (`claude-code`) is unavailable, and to
+choose a `codex` model. The doctor's `release` check reads the same public
+`VERSION` file as `archon update --check`, so it needs no `gh`.
 If you are already signed in to Claude Code or Codex, neither Archon nor Aether needs a separate login for that engine.
 
 | Program | Used for | Required? | Install |
@@ -109,7 +120,7 @@ Every release carries, for each archive, a `.sha256` file, and one
 `SHA256SUMS` file that lists all of them.
 
 ```sh
-tag=v1.4.7
+tag=v1.4.8
 target=x86_64-unknown-linux-musl
 base=https://github.com/mengsig/archon/releases/download/$tag
 curl -fsSLO "$base/archon-$target.tar.gz"
@@ -130,7 +141,7 @@ archive holds `LICENSE` and `THIRD-PARTY-NOTICES`; the installer and
 ```sh
 archon update            # install the latest release when it is newer
 archon update --check    # only report: exit 0 when up to date, 10 when a newer release exists
-archon update --version v1.4.7    # install exactly this release
+archon update --version v1.4.8    # install exactly this release
 ```
 
 `archon update` downloads the same archive as the installer, makes the same
@@ -162,10 +173,34 @@ restart`, with the same `--wait` and `--requeue`: running items resume as
 after any daemon restart); and `archon orchestrator restart`, which gives
 the orchestrator the new tools. In shared mode your own aetherd is never
 restarted; Archon's tools in it are refreshed with `aether mcp refresh
-archon`. Nothing is restarted when `archond` is not running or already runs
-the installed version, and a failed `aether update` is reported as a
-warning (exit 1) after the restart. Without `--yes`, off a terminal, the
-command prints what to run by hand:
+archon`. Nothing is restarted when `archond` is not running: the next
+command that needs it starts the new version. When `archond` already runs
+the installed version, only an orchestrator another archon created is
+restarted (an earlier update cut short after archond's restart leaves one).
+An archond restarted on a release with another daemon protocol refuses the
+running update at hello; that refusal is taken as the restart done, and the
+orchestrator is restarted by the installed `archon` (an updater from 1.4.7
+or earlier waits out its deadline instead: run `archon update --yes` again).
+A failed `aether update` is reported as a warning (exit 1) after the
+restart. Where some of Archon's config directory, data directory and
+socket are moved from their defaults (`ARCHON_CONFIG_DIR`,
+`ARCHON_DATA_DIR`, `ARCHON_SOCKET`) and others are not, the new archon is
+installed but nothing is restarted, and the command fails naming them: the
+archond it would reach may be another setup's.
+
+Each step is said on stderr as it starts (`archon: update: restarting
+archond (pid 4242, for at most 2100s)`), and each has a deadline: the
+archond restart `--wait` plus five minutes, the question to a current
+archond about which archon created the orchestrator one minute, the
+orchestrator restart three minutes. With `--yes` and a running `archond`, the command exits 0 only
+once archond runs the new version and the orchestrator, if one runs, is in
+a generation the new version created; otherwise it exits non-zero naming
+the step that did not finish.
+The install report then names no commands to run by hand. Ctrl-C (SIGINT),
+SIGTERM or SIGHUP ends it at any step, the question included: it names the
+step it stopped, says what finishes the restart by hand, and exits 128 plus
+the signal (130 for Ctrl-C). Without `--yes`, off a terminal, the command
+prints what to run by hand:
 
 ```sh
 archon daemon stop --keep-aether
@@ -182,7 +217,7 @@ Each `archon`, `archon tui` and `archon chat` on a terminal looks for a
 newer release of Archon and of Aether before it opens, and offers:
 
 ```text
-Archon 1.4.8 is available (this is 1.4.7).
+Archon 1.4.9 is available (this is 1.4.8).
 Update and restart now? [Y/n/s] (s: skip these versions)
 ```
 

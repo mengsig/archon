@@ -66,7 +66,9 @@ use crate::steer::Steer;
 /// 21: `tracked` changes with an `idempotency_key`, and `request_status`; an
 /// older archond knows neither request.
 /// 22: `update_item` may carry `title`, which an older archond would drop.
-pub const PROTOCOL_VERSION: u32 = 22;
+/// 23: the remote-access requests (`remote_status`, `configure_remote`,
+/// `remote_pair`, `remote_revoke`); an older archond knows none of them.
+pub const PROTOCOL_VERSION: u32 = 23;
 
 /// Said beside an item whose `budget_usd` was set while budgets are off.
 pub const BUDGETS_OFF_NOTE: &str = "Dollar budgets are globally off ([limits] budgets_enabled = \
@@ -87,6 +89,9 @@ pub enum ClientKind {
     ArchonCli,
     ArchonMcp,
     ArchonBench,
+    /// The web app over archond's remote listener (docs/remote.md). Only its
+    /// hello names it; the listener sends its allowed requests as the CLI.
+    ArchonWeb,
 }
 
 /// A repository by registry name or `repo_…` id.
@@ -517,6 +522,19 @@ pub enum Request {
         #[serde(default)]
         reason: Option<String>,
     },
+
+    /// Remote access (docs/remote.md): the listener, paired devices and any
+    /// open pairing. Operator only, and never served to the web app itself.
+    RemoteStatus,
+    ConfigureRemote {
+        change: crate::remote::RemoteChange,
+    },
+    /// Open a pairing with a new one-time code, replacing any open one.
+    RemotePair,
+    /// Unpair a device by id or name, closing its sessions at once.
+    RemoteRevoke {
+        device: String,
+    },
 }
 
 /// Who may make a request and whether it changes Archon.
@@ -570,7 +588,7 @@ impl Request {
             | Self::ListArtifacts { .. }
             | Self::ItemDiff { .. }
             | Self::ReadArtifact { .. } => Read,
-            Self::CheckUpdates => OperatorRead,
+            Self::CheckUpdates | Self::RemoteStatus => OperatorRead,
             Self::OperatorCommand { .. }
             | Self::UndoAuthority { .. }
             | Self::Shutdown
@@ -591,6 +609,9 @@ impl Request {
             | Self::LearningRestoreMemory { .. }
             | Self::LearningRetryMemory { .. }
             | Self::MergeItem { .. }
+            | Self::ConfigureRemote { .. }
+            | Self::RemotePair
+            | Self::RemoteRevoke { .. }
             | Self::Answer { .. } => OperatorChange,
             Self::RepoAdd(add) if add.auto_merge || add.github_watch => OperatorChange,
             Self::Pause(PauseTarget::Global { hard: true })
@@ -937,6 +958,8 @@ pub enum Reply {
     Promotion(Box<crate::integration::Promotion>),
     Settings(Box<crate::settings::SettingsView>),
     RequestStatus(Box<crate::tracked::RequestStatus>),
+    Remote(Box<crate::remote::RemoteView>),
+    RemotePairing(crate::remote::PairingCode),
 }
 
 /// What one gc pass did (ARCHITECTURE §13.2). Paths are real paths.
@@ -972,6 +995,20 @@ pub struct GcReport {
     /// The pass ran with the shorter disk-pressure ages.
     #[serde(default)]
     pub pressure: bool,
+    /// What Aether's storage cleanup did after the pass removed run
+    /// worktrees; `None` when it was not asked.
+    #[serde(default)]
+    pub aether_gc: Option<AetherGc>,
+}
+
+/// The outcome of `storage_gc`, which Aether runs to delete the workspaces it
+/// delegated to agents whose worktrees gc removed. A failure never fails gc.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AetherGc {
+    Ran,
+    /// Not run, or Aether refused it, with why.
+    Failed(String),
 }
 
 /// The paths in `path`, a worktree, that a gc preview found it would delete.
@@ -1000,6 +1037,7 @@ impl GcReport {
         self.would_delete.extend(other.would_delete);
         self.skipped.extend(other.skipped);
         self.failed.extend(other.failed);
+        self.aether_gc = other.aether_gc.or_else(|| self.aether_gc.take());
         self.bytes_freed = self.bytes_freed.saturating_add(other.bytes_freed);
     }
 
@@ -1204,6 +1242,9 @@ pub struct DaemonStatus {
     /// Agents of running stages that leave inbox items unread, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stage_warnings: Vec<StageWarning>,
+    /// Agents of running stages at their `max_agent_messages` cap, first refused first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub message_caps: Vec<crate::agent_message::MessageCap>,
 }
 
 /// `DaemonStatus::recovery`: how far archond is in recovering its runs.
@@ -1644,6 +1685,9 @@ pub struct ItemDetail {
     /// Agents of its running stages that leave inbox items unread.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stage_warnings: Vec<StageWarning>,
+    /// Agents of its running stages at their `max_agent_messages` cap.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub message_caps: Vec<crate::agent_message::MessageCap>,
 }
 
 /// An agent a stage agent delegated to, itself or through another.

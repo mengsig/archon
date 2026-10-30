@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use archon_core::catalog::{Gate, StageKind, WorkspaceMode};
-use archon_core::model::{ModelChoice, ModelRef};
+use archon_core::model::{Effort, ModelChoice, ModelRef};
 use archon_core::policy::ModelPolicy;
 use archon_core::run::StageOutcome;
 use serde::Serialize;
@@ -80,6 +80,35 @@ pub fn instructions(
         out.push_str(SHIP_RISK_SHAPE);
     }
     out
+}
+
+/// The section naming when Archon stops a stage of `kind` in `mode`: `minutes`
+/// after its start, at `deadline`. Only a stage that may commit hears of
+/// committing, and only if its task has it commit: some work stages do not.
+pub fn deadline_rule(
+    kind: StageKind,
+    mode: WorkspaceMode,
+    minutes: u32,
+    deadline: archon_core::Timestamp,
+) -> String {
+    assert!(minutes >= 1, "validated stages have a timeout");
+    let commits =
+        mode == WorkspaceMode::Worktree && matches!(kind, StageKind::Work | StageKind::Team);
+    let pace = match commits {
+        true => {
+            "If your task has you commit, commit each working step as you go, so a \
+             retry builds on it. Finish"
+        }
+        false => "Finish",
+    };
+    let rule = format!(
+        "\n## Deadline\n\n\
+         - Archon stops you and every agent you delegated to at {at}, {minutes} minutes \
+         after your start, and the stage fails. {pace} with time to spare.\n",
+        at = deadline.format("%Y-%m-%d %H:%M UTC"),
+    );
+    debug_assert!(rule.ends_with('\n'), "sections end with a newline");
+    rule
 }
 
 /// Whether the record stage holds a review whose reviewers judge the risk.
@@ -226,6 +255,7 @@ fn contract_header(
          - Work only in `{workspace}`. {mode_rule}\n\
          - Nobody is watching: never ask the operator anything or wait for a reply. Make \
          the conservative choice and state every assumption in your summary.\n\
+         {PROCESS_RULE}\
          - `mcp__archon__message_orchestrator` relays an operator message meant for the \
          orchestrator (`kind=relay`, their exact text), reports a blocker outside your \
          stage (`kind=escalation`) or sends low-priority `info`. It returns at once: keep \
@@ -281,7 +311,13 @@ fn mode_rule(mode: WorkspaceMode) -> &'static str {
     match mode {
         WorkspaceMode::Worktree => {
             "It is this run's own git worktree, shared with its other stages. Never touch \
-             another worktree, another branch or the operator's own checkout."
+             another worktree, another branch or the operator's own checkout. Before you \
+             finish, stop every server and Compose stack you started, unless whoever gave you \
+             the task asked you to leave it running; then say in your result what still \
+             runs and how to stop it. To keep a server up for a later stage, start it under \
+             `setsid`, run it from your worktree, and write its PID, uncommitted, to \
+             `.archon/services/<name>.pid` there: Archon stops it when the run ends, and any \
+             other process you leave there when your stage ends."
         }
         WorkspaceMode::RepoReadonly => {
             "With a repository, it is a detached snapshot of the commit the repository has \
@@ -367,6 +403,13 @@ self-contained page that loads nothing from the network.\n\
 `{\"reports\": [\"/abs/…/index.html\"]}`. The operator may approve the proposal, \
 so the `summary` must state the approach on its own.\n";
 
+/// Whose processes an agent may stop: an agent runs as the operator's user,
+/// so a pattern kill reaches the operator's daemons and every stage they run.
+const PROCESS_RULE: &str = "\
+- Stop only processes you started, by the PID you recorded (`$!`), its process group \
+or its Compose project. Never kill by name or pattern (`pkill`, `killall`, \
+`pgrep -f … | xargs kill`): the operator's archond and aetherd run as your user.\n";
+
 const DELEGATE_CHILD_RULES: &str = "\
 - A child inherits none of this contract or of the stage prompt: Aether gives it \
 only the `objective` and `instructions` you pass to `delegate`. In every child's \
@@ -378,6 +421,8 @@ branches or the operator's own checkout;\n  \
 `--author`, no `GIT_AUTHOR_*` or `GIT_COMMITTER_*`, no identity taken from injected \
 context;\n  \
 - do not ask the operator questions or wait for replies;\n  \
+- stop only processes it started, by recorded PID, process group or Compose \
+project, and never kill by name or pattern;\n  \
 - read only, with no edits, commits, stashes or branch switches: for a reviewer \
 always, and for every child when your own workspace is READ-ONLY.\n";
 
@@ -429,20 +474,52 @@ pub fn reviewer_model_rules(
     policy: &ModelPolicy,
 ) -> String {
     match named {
-        Some(choices) if !choices.is_empty() => named_reviewer_rules(choices),
+        Some(choices) if !choices.is_empty() => named_reviewer_rules(choices, policy.max_effort),
         _ => fallback_reviewer_rules(own, policy),
     }
 }
 
-fn named_reviewer_rules(choices: &[ModelChoice]) -> String {
+/// The plan's reviewers: each effort is a floor, and `cap` (the policy's
+/// `max_effort`) the only ceiling.
+fn named_reviewer_rules(choices: &[ModelChoice], cap: Option<Effort>) -> String {
+    assert!(!choices.is_empty(), "a plan names reviewers");
     let models: Vec<String> = choices
         .iter()
-        .map(|c| format!("{} at effort {}", c.model, c.effort))
+        .map(|c| format!("{} at effort {}", c.model, effort_range(c.effort, cap)))
         .collect();
     format!(
         "- Delegate every reviewer with role `reviewer`, each on one of these models, \
-         taken in turn: {}. Archon cancels a child labelled `reviewer` on any other.\n",
+         taken in turn: {}. Each effort is a floor, never a ceiling: Archon cancels a \
+         child labelled `reviewer` on any other model, or below its model's effort, as it \
+         spawns.\n",
         models.join("; ")
+    )
+}
+
+/// `floor` and the higher efforts `cap` leaves: `high`, `high or higher`, `high up to max`.
+fn effort_range(floor: Effort, cap: Option<Effort>) -> String {
+    match cap {
+        Some(cap) if cap <= floor => floor.to_string(),
+        Some(cap) => format!("{floor} up to {cap}"),
+        None => format!("{floor} or higher"),
+    }
+}
+
+/// The effort of a reviewer no plan names, from `floor`, which `cap` already
+/// bounds: at least that, and at least high for a change of medium risk or more.
+pub(crate) fn unnamed_reviewer_effort(floor: Effort, cap: Option<Effort>) -> String {
+    assert!(
+        cap.is_none_or(|cap| floor <= cap),
+        "the floor respects the policy"
+    );
+    let risky = cap.map_or(Effort::High, |cap| cap.min(Effort::High));
+    let at = effort_range(floor, cap);
+    if risky <= floor {
+        return at;
+    }
+    format!(
+        "{at}, and {} when you rate the change's risk medium or high",
+        effort_range(risky, cap)
     )
 }
 
@@ -519,9 +596,9 @@ const REVIEW_CHECK_RULES: &str = "\
 - Delegate with `wait: false`, then use `wait_for` with `any: true`. On a blocking \
 fail, `cancel_agent` the reviewers still reading before you edit: they share your \
 workspace, and cancelled reviews do not count. Then fix and commit. Replace each \
-cancelled reviewer with a new whole-change read at the new head. Completed reads, \
-even fails, need only delta passes from the head they read (one can cover several), \
-and the fix at least one; an amend or rebase needs whole-change re-review.\n\
+cancelled reviewer with a new whole-change read at the new head. Every re-review \
+after a fix, a completed fail's too, is a whole-change read at the new head with \
+`base` at the change's start; one such pass covers all earlier reads.\n\
 - Archon checks a pass against Aether and the branch. Each agent named must be a \
 different one you delegated to yourself that completed with that verdict, and as many \
 as the review asks must have passed the branch head, or an earlier head whose later \
@@ -683,8 +760,10 @@ experiment (mutant, probe, repro) in a ";
 const REVIEW_BOUNDS_FALLBACK: &str = "`mktemp -d` copy of tracked files only \
 (no build outputs, no literal /tmp; delete it after)";
 
-const REVIEW_BOUNDS_TAIL: &str = " under one `timeout 30s` for all its repeats \
-(`timeout 30s sh -c '…'` for loops and pipes); a hang or timeout counts as detected. \
+/// A timed-out experiment shows nothing: one that compiles may just be slow.
+const REVIEW_BOUNDS_TAIL: &str = " under one `timeout 30s` for all its repeats, \
+`timeout 120s` when it compiles (`timeout 30s sh -c '…'` for loops and pipes); a \
+timeout is inconclusive, never a finding or a detection on its own. \
 Run the project's own build and tests normally, uncapped. \
 No long hang proofs or background waits. Report incomplete checks; never pass \
 without the evidence the review requires.\n";
@@ -785,6 +864,32 @@ mod tests {
     }
 
     #[test]
+    fn the_deadline_names_its_time_and_asks_only_committing_stages_to_commit() {
+        let at: archon_core::Timestamp = "2026-10-30T14:05:00Z".parse().unwrap();
+        let work = deadline_rule(StageKind::Work, WorkspaceMode::Worktree, 180, at);
+        assert!(work.starts_with("\n## Deadline\n\n"), "{work}");
+        assert!(work.contains("at 2026-10-30 14:05 UTC, 180 minutes after your start"));
+        assert!(work.contains("every agent you delegated to"), "{work}");
+        assert!(
+            work.contains("If your task has you commit, commit each working step as you go"),
+            "{work}"
+        );
+        let team = deadline_rule(StageKind::Team, WorkspaceMode::Worktree, 90, at);
+        assert!(team.contains("If your task has you commit"), "{team}");
+        for (kind, mode) in [
+            (StageKind::Review, WorkspaceMode::Worktree),
+            (StageKind::Report, WorkspaceMode::Worktree),
+            (StageKind::Work, WorkspaceMode::RepoReadonly),
+            (StageKind::Work, WorkspaceMode::Scratch),
+        ] {
+            let text = deadline_rule(kind, mode, 45, at);
+            assert!(text.contains("45 minutes after your start"), "{text}");
+            assert!(text.contains("Finish with time to spare."), "{text}");
+            assert!(!text.contains("commit"), "{kind:?} in {mode:?}: {text}");
+        }
+    }
+
+    #[test]
     fn every_contract_names_the_workspace_and_blocked_prefix() {
         for kind in [
             StageKind::Propose,
@@ -803,6 +908,10 @@ mod tests {
                 None,
             );
             assert!(text.contains("Work only in `/w`"), "{kind:?}");
+            assert!(
+                text.contains("start it under `setsid`, run it from your worktree, and write its PID, uncommitted, to `.archon/services/<name>.pid` there: Archon stops it when the run ends"),
+                "{kind:?}"
+            );
             assert!(text.contains("`BLOCKED:`"), "{kind:?}");
             assert!(text.contains("complete_task"), "{kind:?}");
             assert!(
@@ -821,6 +930,13 @@ mod tests {
                 text.contains("call `fail_task`, never `complete_task`"),
                 "{kind:?}"
             );
+            for said in [
+                "- Stop only processes you started, by the PID you recorded (`$!`)",
+                "Never kill by name or pattern (`pkill`, `killall`, `pgrep -f … | xargs kill`)",
+                "the operator's archond and aetherd run as your user",
+            ] {
+                assert!(text.contains(said), "{kind:?}: missing {said:?}");
+            }
         }
     }
 
@@ -849,6 +965,8 @@ mod tests {
             None,
         );
         assert!(!work.contains("VERDICT: PASS"));
+        assert!(work.contains("stop every server and Compose stack you started, unless"));
+        assert!(work.contains("say in your result what still runs"));
     }
 
     /// A review stage's contract and a delegator's rules, given `experiments`.
@@ -880,9 +998,10 @@ mod tests {
                     "read the code and run the checks the review needs",
                     copy,
                     "delete it after) under one `timeout 30s` for all its repeats",
+                    "`timeout 120s` when it compiles",
                     "Run the project's own build and tests normally, uncapped.",
                     "`timeout 30s sh -c '…'` for loops and pipes",
-                    "a hang or timeout counts as detected",
+                    "a timeout is inconclusive, never a finding or a detection on its own",
                     "No long hang proofs or background waits",
                     "never pass without the evidence the review requires",
                 ] {
@@ -898,8 +1017,9 @@ mod tests {
         let fallback = "- Reviewers: read the code and run the checks the review needs. Run each \
             ad-hoc experiment (mutant, probe, repro) in a `mktemp -d` copy of tracked files only \
             (no build outputs, no literal /tmp; delete it after) under one `timeout 30s` for all \
-            its repeats (`timeout 30s sh -c '…'` for loops and pipes); a hang or timeout counts \
-            as detected. Run the project's own build and tests normally, uncapped. No long hang \
+            its repeats, `timeout 120s` when it compiles (`timeout 30s sh -c '…'` for loops and \
+            pipes); a timeout is inconclusive, never a finding or a detection on its own. Run the \
+            project's own build and tests normally, uncapped. No long hang \
             proofs or background waits. Report incomplete checks; never pass without the \
             evidence the review requires.\n";
         assert_eq!(review_bounds(None), fallback);
@@ -930,7 +1050,7 @@ mod tests {
     }
 
     #[test]
-    fn review_holders_fix_early_and_request_only_missing_delta_passes() {
+    fn review_holders_fix_early_and_re_review_the_whole_change() {
         for reviewers in [1, 3] {
             let text = work_contract(owing(reviewers, false));
             for said in [
@@ -939,9 +1059,8 @@ mod tests {
                 "On a blocking fail, `cancel_agent` the reviewers still reading before you edit",
                 "cancelled reviews do not count. Then fix and commit",
                 "Replace each cancelled reviewer with a new whole-change read at the new head",
-                "Completed reads, even fails, need only delta passes from the head they read (one can cover several)",
-                "and the fix at least one",
-                "an amend or rebase needs whole-change re-review",
+                "Every re-review after a fix, a completed fail's too, is a whole-change read at the new head",
+                "with `base` at the change's start; one such pass covers all earlier reads",
                 "a passing reviewer read with `base` at or before it",
                 "A fail stands until such a pass",
             ] {
@@ -1295,6 +1414,8 @@ mod tests {
                 "\n  - never override the git identity:",
                 "`--author`, no `GIT_AUTHOR_*` or `GIT_COMMITTER_*`",
                 "\n  - do not ask the operator questions or wait for replies;",
+                "\n  - stop only processes it started, by recorded PID, process group or \
+                 Compose project, and never kill by name or pattern;",
                 "\n  - read only, with no edits, commits, stashes or branch switches: for a \
                  reviewer always, and for every child when your own workspace is READ-ONLY.",
             ] {
@@ -1346,10 +1467,33 @@ mod tests {
         let own = model("claude-code/opus");
         let rules = reviewer_model_rules(Some(&named), &own, &ModelPolicy::default());
         assert!(rules.contains("role `reviewer`"), "{rules}");
+        assert!(rules.contains(
+            "claude-code/opus at effort medium or higher; claude-code/haiku at effort low or higher"
+        ));
+        assert!(rules.contains("Each effort is a floor, never a ceiling"));
+        assert!(rules.contains("on any other model, or below its model's effort, as it spawns"));
+        let capped = ModelPolicy::from_lists(&[], &[], Some(archon_core::model::Effort::Medium));
+        let rules = reviewer_model_rules(Some(&named), &own, &capped);
         assert!(
-            rules.contains("claude-code/opus at effort medium; claude-code/haiku at effort low")
+            rules.contains("opus at effort medium; claude-code/haiku at effort low up to medium")
         );
-        assert!(rules.contains("Archon cancels a child labelled `reviewer` on any other"));
+    }
+
+    #[test]
+    fn an_unnamed_reviewer_runs_at_medium_or_more_and_high_for_a_riskier_change() {
+        use archon_core::model::Effort::{High, Low, Medium, XHigh};
+        let open = unnamed_reviewer_effort(Medium, None);
+        assert_eq!(
+            open,
+            "medium or higher, and high or higher when you rate the change's risk medium or high"
+        );
+        assert_eq!(
+            unnamed_reviewer_effort(Medium, Some(XHigh)),
+            "medium up to x_high, and high up to x_high when you rate the change's risk medium or high"
+        );
+        assert_eq!(unnamed_reviewer_effort(Medium, Some(Medium)), "medium");
+        assert_eq!(unnamed_reviewer_effort(Low, Some(Low)), "low");
+        assert_eq!(unnamed_reviewer_effort(High, None), "high or higher");
     }
 
     /// The bench's smoke preset allows one model: a reviewer must run on it,

@@ -17,7 +17,7 @@ To choose the models yourself, for a repository-free question, save a brief
 in `brief.md` and a model plan in `plan.json`:
 
 ```json
-{"answer": [{"model": "codex/gpt-6.1-sol", "effort": "high"}]}
+{"answer": [{"model": "codex/gpt-6.1-terra", "effort": "high"}]}
 ```
 
 ```sh
@@ -37,12 +37,12 @@ model, at the effort the pipeline's tier suggests. The equivalent TOML plan is:
 
 ```toml
 [[answer]]
-model = "codex/gpt-6.1-sol"
+model = "codex/gpt-6.1-terra"
 effort = "high"
 ```
 
 Each choice's `model` is written `provider/model`, such as
-`codex/gpt-6.1-sol`; a bare model name is refused. Instead of `model` a choice
+`codex/gpt-6.1-terra`; a bare model name is refused. Instead of `model` a choice
 may give a `tier` (`fast`, `balanced`, `strong` or `frontier`), and `effort` is
 optional. `archon aether models` lists the models you can name.
 

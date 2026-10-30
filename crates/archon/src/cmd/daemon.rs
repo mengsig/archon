@@ -33,8 +33,8 @@ const NOT_RUNNING: u8 = 3;
 
 pub async fn run(command: DaemonCommand, json: bool) -> anyhow::Result<ExitCode> {
     match command {
-        DaemonCommand::Run { detach: false } => foreground().await,
-        DaemonCommand::Run { detach: true } => detach(json).await,
+        DaemonCommand::Run { detach: true, .. } => detach(json).await,
+        DaemonCommand::Run { detached_child, .. } => foreground(detached_child).await,
         DaemonCommand::Start => {
             let client = connect_or_start().await?;
             report_running(&client, json)?;
@@ -44,16 +44,23 @@ pub async fn run(command: DaemonCommand, json: bool) -> anyhow::Result<ExitCode>
             aether,
             keep_aether,
             force,
-        } => stop(json, aether, keep_aether, force).await,
+        } => {
+            refuse_mixed_locations("daemon stop")?;
+            stop(json, aether, keep_aether, force).await
+        }
         DaemonCommand::Status => status(json).await,
         DaemonCommand::Restart { drain, keep_aether } => {
+            refuse_mixed_locations("daemon restart")?;
             upgrade(upgrade_request(None, None, drain, keep_aether)?, json).await
         }
         DaemonCommand::Upgrade {
             archon,
             aether,
             drain,
-        } => upgrade(upgrade_request(archon, aether, drain, false)?, json).await,
+        } => {
+            refuse_mixed_locations("daemon upgrade")?;
+            upgrade(upgrade_request(archon, aether, drain, false)?, json).await
+        }
         DaemonCommand::Relaunch { keep_aether } => relaunch(keep_aether).await,
     }
 }
@@ -84,8 +91,8 @@ async fn status(json: bool) -> anyhow::Result<ExitCode> {
     })
 }
 
-async fn foreground() -> anyhow::Result<ExitCode> {
-    warn_if_mixed();
+async fn foreground(detached: bool) -> anyhow::Result<ExitCode> {
+    warn_if_mixed(detached);
     let mut config = Config::load_default()?;
     let instance = Instance::resolve()?;
     // Dedicated mode: archond talks only to Archon's own aetherd, and starts it when it is gone.
@@ -108,9 +115,9 @@ async fn foreground() -> anyhow::Result<ExitCode> {
 
 /// A daemon run directly is the operator's choice even where the locations
 /// mix moved and default ones, which autostart refuses; it is still said.
-fn warn_if_mixed() {
+fn warn_if_mixed(detached: bool) {
     if let Some(mix) = archon_core::paths::partial_override(&archon_client::default_socket()) {
-        if std::env::var_os(crate::daemon_log::DETACHED_ENV).is_some() {
+        if detached {
             tracing::warn!("{mix}. Starting archond anyway, as it was asked for directly.");
         } else {
             eprintln!(
@@ -120,10 +127,23 @@ fn warn_if_mixed() {
     }
 }
 
+/// Where the locations mix moved and default ones, the archond and aetherd
+/// found there may be another setup's, so `command` stops and restarts nothing.
+pub(super) fn refuse_mixed_locations(command: &str) -> anyhow::Result<()> {
+    let socket = archon_client::default_socket();
+    let Some(mix) = archon_core::paths::partial_override(&socket) else {
+        return Ok(());
+    };
+    Err(ArchonError::Invalid(format!(
+        "`archon {command}` stops and restarts nothing here: {mix}"
+    ))
+    .into())
+}
+
 /// Start `archon daemon run` in its own process group, appending to the startup log
 /// beside the socket, and wait until it listens; fail as soon as it exits first.
 async fn detach(json: bool) -> anyhow::Result<ExitCode> {
-    warn_if_mixed();
+    warn_if_mixed(false);
     let socket = archon_client::default_socket();
     let socket =
         std::path::absolute(&socket).with_context(|| format!("resolving {}", socket.display()))?;
@@ -140,11 +160,12 @@ async fn detach(json: bool) -> anyhow::Result<ExitCode> {
     // Validate before detaching: a child with invalid config has no terminal
     // on which to explain why it could not initialize its log.
     Config::load_default()?;
-    let mut child = daemon_command(&socket)?
+    let mut command = daemon_command(&socket)?;
+    let mut child = command
+        .arg("--detached-child")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .env(crate::daemon_log::DETACHED_ENV, "1")
         // Its own process group: a Ctrl-C in the operator's terminal must
         // not reach the daemon.
         .process_group(0)

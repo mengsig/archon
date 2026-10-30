@@ -10,10 +10,11 @@ use archon_core::aether_ids::{AetherAgentId, AetherTaskId};
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
 use archon_core::run::{StageOutcome, StageRun, StageState};
+use archon_queue::Store;
 
 use super::{
-    FollowUp, descendants, load_spawn, resume, run_follow_up, run_node, settle, ship, siblings,
-    stall, team,
+    FollowUp, descendants, held, load_spawn, resume, run_follow_up, run_node, settle, ship,
+    siblings, stall, team,
 };
 use crate::context::DaemonContext;
 
@@ -34,10 +35,11 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
         ship,
         ..FollowUp::default()
     };
-    let running = {
+    let (running, expired, nearing) = {
         let store = ctx.store.lock().await;
         let mut finished: BTreeMap<PipelineRunId, bool> = BTreeMap::new();
         let mut running: Vec<StageRun> = Vec::new();
+        let (mut expired, mut nearing) = (Vec::new(), Vec::new());
         for stage in store.live_stage_runs()? {
             if in_flight.contains(&stage.id) {
                 continue;
@@ -61,17 +63,15 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
             if stage.aether_agent.is_some() && stage.aether_task.is_none() {
                 follow.resumed.push(stage.id.clone());
             }
-            let deadline = match load_spawn(&store, &stage.id) {
-                Ok(spawn) => spawn.request.deadline,
-                Err(ArchonError::NotFound(what)) => {
-                    tracing::warn!(stage = %stage.id, "no {what}; no deadline timer");
-                    None
-                }
-                Err(e) => return Err(e),
-            };
+            let deadline = stored_deadline(&store, &stage)?;
             if deadline.is_some_and(|d| d + grace < now) {
-                follow.time_out.push(stage.id);
-            } else if stage.state == StageState::Running {
+                expired.push(stage);
+                continue;
+            }
+            if stage.state == StageState::Running {
+                if deadline.is_some_and(|d| held::near(d, now)) {
+                    nearing.push(stage.clone());
+                }
                 running.push(stage);
             }
         }
@@ -83,11 +83,24 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
             .into_iter()
             .map(|(item, repo_name)| super::ItemBuild { item, repo_name })
             .collect();
-        running
+        (running, expired, nearing)
     };
+    follow.time_out = held::sweep(ctx, expired, &nearing, now).await?;
     let stalled = settle_stalled(ctx, &running, now, &mut follow).await;
     run_follow_up(ctx, follow).await?;
     stalled
+}
+
+/// The deadline in `stage`'s stored request; `None` without one.
+fn stored_deadline(store: &Store, stage: &StageRun) -> Result<Option<Timestamp>, ArchonError> {
+    match load_spawn(store, &stage.id) {
+        Ok(spawn) => Ok(spawn.request.deadline),
+        Err(ArchonError::NotFound(what)) => {
+            tracing::warn!(stage = %stage.id, "no {what}; no deadline timer");
+            Ok(None)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Settle the stages of `running` the watchdog finds stalled, adding what
@@ -229,10 +242,14 @@ async fn stall(
     }
 }
 
-/// Settle with `outcome` once Aether confirms the cancel. A refused cancel
-/// usually means the task already settled; its own outcome is used then.
-/// An agent or task Aether no longer knows has nothing left to stop, so it
-/// settles with `outcome` too instead of holding its slot forever.
+/// Settle with `outcome` once Aether confirms the cancel, unless the agent
+/// had already produced its own result: a task that completed or failed
+/// before the cancel (its earlier settle failed, or its event was missed)
+/// keeps that result rather than becoming the synthetic `outcome`. A task
+/// that reads cancelled is our own cancel, so `outcome` stands.
+/// A refused cancel usually means the task already settled; its own outcome
+/// is used then. An agent or task Aether no longer knows has nothing left
+/// to stop, so it settles with `outcome` instead of holding its slot forever.
 async fn cancel_and_settle(
     ctx: &DaemonContext,
     stage: &StageRunId,
@@ -242,14 +259,14 @@ async fn cancel_and_settle(
     outcome: StageOutcome,
 ) -> Result<FollowUp, ArchonError> {
     let refusal = match ctx.backend.cancel(agent, reason).await {
-        Ok(()) => return settle::settle(ctx, stage, outcome).await,
+        Ok(()) => return settle_after_cancel(ctx, stage, agent, task, outcome).await,
         Err(ArchonError::Unavailable(why)) => {
             tracing::info!(%agent, %why, "cancel unanswered; the next sweep retries");
             return Ok(FollowUp::default());
         }
         Err(ArchonError::NotFound(why)) => {
             tracing::warn!(%agent, %why, "Aether no longer knows the agent; settling its stage");
-            return settle::settle(ctx, stage, outcome).await;
+            return settle_after_cancel(ctx, stage, agent, task, outcome).await;
         }
         Err(refusal) => refusal,
     };
@@ -269,6 +286,65 @@ async fn cancel_and_settle(
         }
         Err(error) => Err(error),
     }
+}
+
+/// Settle a stage whose agent is stopped or gone: with the result its task
+/// holds if the agent produced one, else with the synthetic `outcome`.
+/// A lookup that failed for a passing reason leaves the stage `running` for
+/// the next sweep, which cancels again (harmless) and reads the task:
+/// settling now could discard a verdict the agent did produce. A task Aether
+/// no longer knows, or refuses to read, settles with `outcome`.
+async fn settle_after_cancel(
+    ctx: &DaemonContext,
+    stage: &StageRunId,
+    agent: &AetherAgentId,
+    task: &AetherTaskId,
+    outcome: StageOutcome,
+) -> Result<FollowUp, ArchonError> {
+    assert!(
+        !matches!(outcome, StageOutcome::Completed { .. }),
+        "a synthetic outcome is never the agent's own result"
+    );
+    let settled = match ctx.backend.task_outcome(task).await {
+        Ok(found) => found,
+        Err(error) if is_passing(&error) => {
+            tracing::warn!(%agent, %error, "task lookup failed after cancel; the next sweep retries");
+            return Ok(FollowUp::default());
+        }
+        Err(ArchonError::NotFound(why)) => {
+            tracing::warn!(%task, %why, "Aether no longer knows the task; settling its stage");
+            None
+        }
+        Err(error) => {
+            tracing::warn!(%task, %error, "Aether refused to read the task after its cancel; settling its stage");
+            None
+        }
+    };
+    let own_result = matches!(
+        settled,
+        Some(StageOutcome::Completed { .. } | StageOutcome::Failed { .. })
+    );
+    let chosen = match settled {
+        Some(own) if own_result => {
+            tracing::info!(%stage, %agent, "agent finished before its cancel; keeping its result");
+            own
+        }
+        _ => outcome,
+    };
+    assert!(
+        own_result || !matches!(chosen, StageOutcome::Completed { .. }),
+        "only the agent's own result can complete a stage here"
+    );
+    settle::settle(ctx, stage, chosen).await
+}
+
+/// A lookup failure a later sweep may not repeat: no answer, local I/O, a
+/// garbled reply or a failure inside Aether.
+fn is_passing(error: &ArchonError) -> bool {
+    matches!(
+        error,
+        ArchonError::Unavailable(_) | ArchonError::Io { .. } | ArchonError::Protocol(_)
+    ) || archon_aether::wire::is_internal(error)
 }
 
 /// An agent that no stage run owns any more; one already gone is done.

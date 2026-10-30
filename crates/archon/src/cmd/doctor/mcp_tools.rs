@@ -90,7 +90,7 @@ fn stale_detail(missing: &[&str], extra: &[&str], mode: AetherMode) -> String {
     }
     assert!(!differences.is_empty(), "a stale registration differs");
     format!(
-        "aetherd runs a stale archon server: it {}; run `{refresh}`, or `archon setup`",
+        "aetherd runs a stale archon server: it {}; run `{refresh}`, which reloads it",
         differences.join(" and ")
     )
 }
@@ -133,10 +133,17 @@ mod tests {
         assert!(stale.detail.contains("`archon aether mcp refresh archon`"));
         let shared = tools_verdict(&old, &served, AetherMode::Shared).unwrap();
         assert!(
-            shared
-                .detail
-                .contains("run `aether mcp refresh archon`, or `archon setup`")
+            shared.detail.contains("run `aether mcp refresh archon`"),
+            "{}",
+            shared.detail
         );
+        for verdict in [&stale, &shared] {
+            assert!(
+                !verdict.detail.contains("archon setup"),
+                "{}",
+                verdict.detail
+            );
+        }
     }
 
     #[test]

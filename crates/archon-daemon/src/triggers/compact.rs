@@ -289,6 +289,7 @@ fn relevance_of(
         TriggerEvent::OrchestratorBriefing { .. }
         | TriggerEvent::OperatorAnswer { .. }
         | TriggerEvent::AgentMessage { .. }
+        | TriggerEvent::MessageCapReached { .. }
         | TriggerEvent::ChatAnswer { .. }
         | TriggerEvent::ChatCommand { .. }
         | TriggerEvent::ChatMergeRefused { .. }

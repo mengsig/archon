@@ -7,6 +7,7 @@
 
 use crate::common;
 mod repository_root;
+mod steer_helpers;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -939,6 +940,60 @@ async fn budgets_off_enforces_no_item_budget_but_records_spend() {
     assert!(aether.received_named("cancel").is_empty());
     let spent = h.ctx.store.lock().await.spend_for_item(&item.id, true);
     assert_eq!(spent.unwrap(), 5.0);
+}
+
+/// A subscription Claude Code login (Aether shows its usage windows) gets
+/// no hard cap on notional dollars, and its interim usage is not refused.
+#[tokio::test]
+async fn a_subscription_stage_runs_uncapped_and_its_interim_usage_is_not_refused() {
+    use archon_core::protocol::{ItemPatch, Request};
+    let dir = tempfile::tempdir().unwrap();
+    let aether = start_aether(dir.path()).await;
+    script_fleet(&aether);
+    script_budget_models(&aether);
+    aether.set_default(
+        "providers",
+        Scripted::reply(
+            "providers",
+            json!([{"provider": "claude-code", "protocol": "claude-code", "engine": true,
+                "headroom": {"windows": [
+                    {"name": "five_hour", "window_minutes": 300, "remaining_percent": 58},
+                ], "stale": false}}]),
+        ),
+    );
+    let h = harness_with_config(&aether, ClientOptions::default(), Config::default()).await;
+    let item = h
+        .enqueue_with("subscription", common::plan())
+        .await
+        .unwrap();
+    h.cli(Request::UpdateItem {
+        item: item.id.clone(),
+        patch: ItemPatch {
+            budget_usd: Some(2.0),
+            ..Default::default()
+        },
+    })
+    .await
+    .unwrap();
+    h.dispatch().await;
+    let stage = h.running().await.remove(0);
+    assert!(aether.received_named("create_agent")[1]["config"]["cost_budget"].is_null());
+    let key = format!("spawn_request:{}", stage.id);
+    let stored = h.ctx.store.lock().await.kv_get(&key).unwrap().unwrap();
+    let stored: Value = serde_json::from_str(&stored).unwrap();
+    assert_eq!(stored["request"]["cost_billing"], "subscription");
+    assert_eq!(stored["request"]["aether_cost_budget"], false);
+    usage_event(
+        &h,
+        &stage,
+        json!({"input_tokens": 100, "output_tokens": 20, "cost_complete": false}),
+    )
+    .await;
+    assert!(
+        matches!(h.state(&item.id).await, QueueState::Running { .. }),
+        "Claude Code finishes its accounting at turn end"
+    );
+    assert!(aether.received_named("cancel").is_empty());
 }
 
 #[tokio::test]

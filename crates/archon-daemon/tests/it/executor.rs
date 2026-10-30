@@ -781,6 +781,41 @@ async fn an_infra_failure_wakes_the_failed_agent_before_a_fresh_one() {
     );
 }
 
+/// The failure a woken agent was woken from, replayed after the wake (its
+/// cursor not yet saved), ended the earlier run: the woken one goes on.
+#[tokio::test]
+async fn a_replayed_failure_from_before_the_wake_leaves_the_woken_run() {
+    let h = Harness::new().await;
+    h.enqueue("flaky engine, replayed").await;
+    h.dispatch().await;
+    let first = h.running().await.remove(0);
+    let agent = first.aether_agent.clone().unwrap();
+    h.backend.fail_agent(&agent);
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "engine died".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    let woken = h.running().await.remove(0);
+    assert_eq!(woken.aether_agent.as_ref(), Some(&agent));
+
+    let mut wire = archon_aether::fake::event(
+        Some(agent.as_str()),
+        None,
+        serde_json::json!({"type": "agent.failed", "error": "engine died"}),
+    );
+    wire["seq"] = serde_json::json!(1);
+    wire["at"] = serde_json::json!(woken.started_at - chrono::Duration::seconds(1));
+    let event = archon_aether::events::parse_event(wire).unwrap();
+    pump::handle_fleet_event(&h.ctx, &event).await.unwrap();
+    h.dispatch().await;
+
+    let now = h.ctx.store.lock().await.stage_run(&woken.id).unwrap();
+    assert_eq!(now.state, StageState::Running, "the woken run goes on");
+    assert_eq!(h.backend.requests().len(), 1, "no cold retry");
+}
+
 /// Charge `agent` a running total of `usd`, as Aether's usage event does.
 async fn charge(h: &Harness, agent: &AetherAgentId, usd: f64) {
     let mut wire = archon_aether::fake::event(

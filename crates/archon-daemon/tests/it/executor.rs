@@ -817,7 +817,7 @@ async fn a_woken_agent_that_fails_again_gets_the_cold_retry() {
 /// the wait does not come out of the agent's working time.
 #[tokio::test]
 async fn an_infra_failure_from_a_refused_login_waits_before_its_retry() {
-    let h = Harness::new().await;
+    let mut h = Harness::new().await;
     h.enqueue("engine logged out").await;
     h.dispatch().await;
     let agent = h.running().await.remove(0).aether_agent.unwrap();
@@ -854,6 +854,11 @@ async fn an_infra_failure_from_a_refused_login_waits_before_its_retry() {
         "its working time stands: {left}"
     );
 
+    assert_eq!(spawn["woken"], true, "the wake is stored with the hold");
+
+    // What the reservation stored is all a restart has to go on.
+    h.restart();
+    executor::recover(&h.ctx).await.unwrap();
     spawn["not_before"] = serde_json::to_value(archon_core::now()).unwrap();
     let raw = serde_json::to_string(&spawn).unwrap();
     h.ctx.store.lock().await.kv_set(&key, &raw).unwrap();
@@ -861,8 +866,9 @@ async fn an_infra_failure_from_a_refused_login_waits_before_its_retry() {
     assert_eq!(
         h.backend.woken(),
         std::slice::from_ref(&agent),
-        "retried once due"
+        "retried once due, in the same agent"
     );
+    assert_eq!(h.backend.requests().len(), 1, "no fresh agent");
 }
 
 #[tokio::test]

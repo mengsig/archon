@@ -417,19 +417,16 @@ async fn infra_retry(
     if retry > limit {
         return Ok(None);
     }
-    let how = match (&wake, kind) {
-        (Some(kept), _) => Replacement::Woken(kept.clone()),
-        (None, RetryKind::Refused) => Replacement::Corrected(error, retry),
-        (None, _) => Replacement::Fresh,
-    };
+    let refusal = (kind == RetryKind::Refused).then_some((error.as_str(), retry));
     let waits = passing_cause(kind, error);
     let not_before =
         waits.map(|_| archon_core::now() + chrono::Duration::minutes(TRANSIENT_WAIT_MINUTES));
     let reserved = spawn::Retry {
         nth: slot.len(),
         not_before,
+        wake: wake.clone(),
     };
-    let Some(replacement) = replace(ctx, table, run, all, &failed, reserved, how).await? else {
+    let Some(replacement) = replace(ctx, table, run, all, &failed, reserved, refusal).await? else {
         return Ok(None);
     };
     let text = retry_text(
@@ -544,16 +541,7 @@ async fn disk_nearly_full(ctx: &DaemonContext) -> bool {
     }
 }
 
-/// How a failed stage run's replacement gets its agent.
-enum Replacement<'a> {
-    Fresh,
-    /// A planner sent back with Archon's refusal of its plan, the nth time.
-    Corrected(&'a str, usize),
-    /// The failed agent, woken in place and told this.
-    Woken(spawn::KeptAgent),
-}
-
-/// Reserve the replacement of `failed`, the `nth` run of its slot, and then
+/// Reserve the replacement of `failed`, the `retry` of its slot, and then
 /// persist the failure; `None` when the driver or the budget allows none.
 async fn replace(
     ctx: &DaemonContext,
@@ -562,7 +550,7 @@ async fn replace(
     all: &[StageRun],
     failed: &StageRun,
     retry: spawn::Retry,
-    how: Replacement<'_>,
+    refusal: Option<(&str, usize)>,
 ) -> Result<Option<StageRunId>, ArchonError> {
     assert!(
         failed.state.is_terminal(),
@@ -576,26 +564,15 @@ async fn replace(
         return Ok(None);
     };
     if driver.spec().assigned_by(&plan.stage_id).is_some() {
-        let refusal = match how {
-            Replacement::Corrected(error, nth) => Some((error, nth)),
-            _ => None,
-        };
         let cap = planner_cap(ctx, run).await?;
         swarm::brief(&mut plan, driver.spec(), cap, refusal);
     }
-    let wake = match how {
-        Replacement::Woken(kept) => Some(kept),
-        _ => None,
-    };
     let mut store = ctx.store.lock().await;
     // Owed before the replacement exists, so it never starts beside them.
-    descendants::owe(&mut store, failed, wake.is_some())?;
+    descendants::owe(&mut store, failed, retry.wake.is_some())?;
     let Some(id) = spawn::reserve_replacement(ctx, &mut store, failed, &plan, retry)? else {
         return Ok(None);
     };
-    if let Some(kept) = wake {
-        resume::wake_into(&mut store, &id, kept)?;
-    }
     // Replacement first: a crash in between leaves a superseded live
     // stage run, never a failure that looks final on resume.
     store.upsert_stage_run(failed)?;

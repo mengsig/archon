@@ -142,32 +142,34 @@ pub(super) fn save_spawn(
     store.kv_set(&request_key(id), &serde_json::to_string(spawn)?)
 }
 
-/// Which retry of its slot a replacement is, and the time before which it
-/// is not issued: an infrastructure retry that waits out a passing cause.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Which retry of its slot a replacement is, the time before which it is
+/// not issued (a passing cause it waits out), and the failed agent it wakes.
+/// All are stored with its request, before the stage run exists.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Retry {
     pub nth: usize,
     pub not_before: Option<Timestamp>,
+    pub wake: Option<KeptAgent>,
 }
 
 /// Move the deadline in stage run `id`'s stored request to `until`, as
-/// Aether now has it for an agent it holds.
+/// Aether now has it for an agent it holds, unless it is already later;
+/// returns the deadline it keeps.
 pub(super) fn move_deadline(
     store: &mut Store,
     id: &StageRunId,
     until: Timestamp,
-) -> Result<(), ArchonError> {
-    let mut spawn = load_spawn(store, id)?;
+) -> Result<Timestamp, ArchonError> {
     assert!(until > archon_core::now(), "a held deadline lies ahead");
-    assert!(
-        spawn
-            .request
-            .deadline
-            .is_none_or(|deadline| deadline < until),
-        "a held deadline only moves later"
-    );
-    spawn.request.deadline = Some(until);
-    save_spawn(store, id, &spawn)
+    let mut spawn = load_spawn(store, id)?;
+    let kept = spawn
+        .request
+        .deadline
+        .map_or(until, |stored| stored.max(until));
+    assert!(kept >= until, "a held deadline only moves later");
+    spawn.request.deadline = Some(kept);
+    save_spawn(store, id, &spawn)?;
+    Ok(kept)
 }
 
 /// Whether stage run `id` may be issued at `now`; one without a stored
@@ -683,18 +685,25 @@ fn reserve_one(
     retry: Option<Retry>,
 ) -> Result<StageRunId, ArchonError> {
     let id = StageRunId::new();
-    let mut request = build_request(target, plan, &id, budget, now, retry.map(|r| r.nth));
-    let not_before = retry.and_then(|r| r.not_before);
+    let nth = retry.as_ref().map(|r| r.nth);
+    let mut request = build_request(target, plan, &id, budget, now, nth);
+    let not_before = retry.as_ref().and_then(|r| r.not_before);
     if let Some(until) = not_before {
         // Held as it is reserved, so no sweep issues it early; it loses no working time.
         assert!(until > now, "a retry waits until later");
         request.deadline = request.deadline.map(|deadline| deadline + (until - now));
     }
     // An infrastructure replacement is a fresh agent: the kept one was lost.
-    let (resume, replaces) = match resume::takeover(store, &target.run.id, plan, retry.is_some())? {
+    let (resume, replaces) = match resume::takeover(store, &target.run.id, plan, nth.is_some())? {
         Takeover::Fresh => (None, None),
         Takeover::Resume(kept) => (Some(kept), None),
         Takeover::Replace(agent) => (None, Some(agent)),
+    };
+    let wake = retry.and_then(|r| r.wake);
+    let woken = wake.is_some();
+    let (resume, replaces) = match wake {
+        Some(kept) => (Some(resume::wake_in(resume, replaces, kept)), None),
+        None => (resume, replaces),
     };
     let spawn = StoredSpawn {
         request,
@@ -706,7 +715,7 @@ fn reserve_one(
         }),
         resume,
         replaces,
-        woken: false,
+        woken,
         wake_asked: false,
         not_before,
     };

@@ -540,34 +540,23 @@ pub(super) fn wake_for(
     }))
 }
 
-/// Make reserved replacement `id` wake `kept`, its slot's failed agent.
-pub(super) fn wake_into(
-    store: &mut Store,
-    id: &StageRunId,
+/// The agent a replacement resumes when it wakes `kept`, its slot's failed
+/// agent, given the takeover its reservation found (`resume`, `replaces`).
+pub(super) fn wake_in(
+    resume: Option<KeptAgent>,
+    replaces: Option<AetherAgentId>,
     kept: KeptAgent,
-) -> Result<(), ArchonError> {
-    let mut spawn = load_spawn(store, id)?;
+) -> KeptAgent {
     assert!(
-        spawn.resume.is_none(),
+        resume.is_none(),
         "an infrastructure replacement resumes nothing"
     );
     // A kept agent lost is stopped for a fresh one ([`Takeover::Replace`]); woken, it goes on.
     assert!(
-        spawn
-            .replaces
-            .as_ref()
-            .is_none_or(|lost| *lost == kept.agent),
+        replaces.is_none_or(|lost| lost == kept.agent),
         "the replacement stops no other agent than the one it wakes"
     );
-    spawn.replaces = None;
-    assert_eq!(
-        store.stage_run(id)?.state,
-        StageState::Spawning,
-        "a reserved attempt"
-    );
-    spawn.resume = Some(kept);
-    spawn.woken = true;
-    spawn::save_spawn(store, id, &spawn)
+    kept
 }
 
 /// The kept agents among the settled `stages`: live in Aether with no turn

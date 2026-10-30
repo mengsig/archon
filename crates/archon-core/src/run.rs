@@ -35,7 +35,7 @@ impl Verdict {
 
     /// The verdict `structured` states: its `verdict` key whenever it has
     /// one, `Unknown` unless it reads as a verdict, else the first `result`
-    /// or `status` that opens with a verdict word or holds a `VERDICT:` line.
+    /// or `status` that opens with a verdict word or a `VERDICT:` label.
     pub fn from_structured(structured: &serde_json::Value) -> Option<Self> {
         if let Some(given) = structured.get(VERDICT_KEYS[0]) {
             let text = given.as_str().unwrap_or_default();
@@ -52,9 +52,10 @@ impl Verdict {
             .find_map(|text| Some((text, Self::from_field(text)?)))
     }
 
-    /// A field's verdict: its opening word decides, else a `VERDICT:` line in it.
+    /// A field's verdict: its opening word, after a `VERDICT:` label if it
+    /// opens with one. A verdict further in is an example or a quote.
     fn from_field(text: &str) -> Option<Self> {
-        Self::leading(text).or_else(|| Self::from_summary(text))
+        Self::leading(strip_label(text, "verdict").unwrap_or(text))
     }
 
     /// What the last `VERDICT: <word>` line of `text` says, in any letter
@@ -94,8 +95,10 @@ impl Verdict {
 
     /// `None` when `text` does not open with a verdict word. A verdict word
     /// counts only when the words up to the first explanation separator
-    /// (`—`, `:`, `;`, `.`, ` - `) name no other verdict, no `or` and no
-    /// `verdict` (the howto `VERDICT: PASS` or `VERDICT: FAIL` quoted).
+    /// (`—`, `:`, `;`, `.`, ` - `, a line break) name no other verdict, no
+    /// `or` and no `verdict` (the howto `VERDICT: PASS` or `VERDICT: FAIL`
+    /// quoted), and only a parenthetical aside holds words there: any other
+    /// word is a condition (`PASS, pending fixes`).
     fn leading(text: &str) -> Option<Self> {
         let mut words = text
             .split(|c: char| !c.is_alphanumeric())
@@ -106,7 +109,7 @@ impl Verdict {
             .expect("a first word");
         let after = text[first..].trim_start_matches(char::is_alphanumeric);
         let head = after
-            .split(['—', '–', ':', ';', '.'])
+            .split(['—', '–', ':', ';', '.', '\n'])
             .next()
             .and_then(|head| head.split(" - ").next())
             .unwrap_or_default();
@@ -116,7 +119,12 @@ impl Verdict {
                 .any(|w| word.eq_ignore_ascii_case(w))
                 || Self::of_word(word).is_some()
         });
-        Some(if choice { Self::Unknown } else { verdict })
+        let conditioned = outside_parentheses(head).any(char::is_alphanumeric);
+        Some(if choice || conditioned {
+            Self::Unknown
+        } else {
+            verdict
+        })
     }
 
     fn of_word(word: &str) -> Option<Self> {
@@ -144,7 +152,7 @@ fn last_verdict_line(text: &str) -> Option<(&str, &str)> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineKind {
     Prose,
-    /// A `>` block quote line.
+    /// A `>` block quote line, or a line that lazily continues its paragraph.
     Quote,
     /// Indented outside a fence: nested in a list item, or code.
     Indented,
@@ -157,40 +165,63 @@ pub enum LineKind {
     FenceClose,
 }
 
+/// Where [`markdown_lines`] is: in an open fence, or after a quote line.
+#[derive(Default)]
+struct Scan {
+    fence: Option<(char, usize)>,
+    quoted: bool,
+}
+
 /// Each line of `text` with its kind. A marker indented under four columns
 /// opens a fence, and only a bare run of its character, at least as long, closes it.
 pub fn markdown_lines(text: &str) -> impl Iterator<Item = (LineKind, &str)> {
-    use LineKind::{FenceOpen, Fenced, NestedFenceOpen};
-    text.lines().scan(None, |fence, line| {
-        let kind = line_kind(fence, line);
+    use LineKind::{FenceOpen, Fenced, NestedFenceOpen, Quote};
+    text.lines().scan(Scan::default(), |scan, line| {
+        let kind = line_kind(scan, line);
         debug_assert_eq!(
-            fence.is_some(),
+            scan.fence.is_some(),
             matches!(kind, FenceOpen | NestedFenceOpen | Fenced)
         );
+        debug_assert!(!scan.quoted || kind == Quote || kind == LineKind::Indented);
         Some((kind, line))
     })
 }
 
-fn line_kind(fence: &mut Option<(char, usize)>, line: &str) -> LineKind {
+fn line_kind(scan: &mut Scan, line: &str) -> LineKind {
     let start = line.trim_start();
     let columns = indent_columns(line);
-    if let Some(open) = *fence {
+    if let Some(open) = scan.fence {
         if columns >= 4 || !closes(start, open) {
             return LineKind::Fenced;
         }
-        *fence = None;
+        scan.fence = None;
         return LineKind::FenceClose;
     }
     if columns < 4 {
-        *fence = fence_marker(start);
+        scan.fence = fence_marker(start);
     }
-    match (fence.is_some(), columns) {
+    // A blank line, a fence, a heading or a list item ends a quote; other text continues it.
+    scan.quoted &= !start.is_empty() && scan.fence.is_none() && !opens_block(start);
+    match (scan.fence.is_some(), columns) {
         (true, 0) => LineKind::FenceOpen,
         (true, _) => LineKind::NestedFenceOpen,
-        (false, 0) if start.starts_with('>') => LineKind::Quote,
+        (false, 0) if start.starts_with('>') => {
+            scan.quoted = true;
+            LineKind::Quote
+        }
+        (false, 0) if scan.quoted => LineKind::Quote,
         (false, 0) => LineKind::Prose,
         (false, _) => LineKind::Indented,
     }
+}
+
+/// Whether `line` opens a heading or a bullet list item, either of which
+/// interrupts a paragraph.
+fn opens_block(line: &str) -> bool {
+    line.starts_with('#')
+        || ["- ", "* ", "+ "]
+            .iter()
+            .any(|bullet| line.starts_with(bullet))
 }
 
 /// The columns `line`'s leading spaces and tabs span, a tab reaching the next
@@ -225,6 +256,20 @@ fn closes(line: &str, open: (char, usize)) -> bool {
     let run = line.len() - rest.len();
     assert_eq!(run % open.0.len_utf8(), 0, "a run of one character");
     run / open.0.len_utf8() >= open.1 && rest.trim().is_empty()
+}
+
+/// The characters of `text` outside parentheses; an unclosed one runs to the end.
+fn outside_parentheses(text: &str) -> impl Iterator<Item = char> + '_ {
+    text.chars()
+        .scan(0usize, |depth, c| {
+            *depth = match c {
+                '(' => *depth + 1,
+                ')' => depth.saturating_sub(1),
+                _ => *depth,
+            };
+            Some((*depth == 0).then_some(c))
+        })
+        .flatten()
 }
 
 fn non_empty(text: &str) -> Option<&str> {
@@ -719,8 +764,12 @@ mod tests {
         assert_eq!(Verdict::extract(howto, None), Verdict::Unknown);
         let earlier = "VERDICT: PASS\nthen a regression\nVERDICT: FAIL";
         assert_eq!(Verdict::extract(earlier, None), Verdict::Fail);
-        let after_quote = "> VERDICT: FAIL\nVERDICT: PASS";
+        let after_quote = "> VERDICT: FAIL\n\nVERDICT: PASS";
         assert_eq!(Verdict::extract(after_quote, None), Verdict::Pass);
+        let lazy = "Blocking issue.\n> Example of a passing result:\nVERDICT: PASS";
+        assert_eq!(Verdict::extract(lazy, None), Verdict::Unknown);
+        let listed_after_quote = "> a note\n- **Verdict:** PASS";
+        assert_eq!(Verdict::extract(listed_after_quote, None), Verdict::Pass);
         let mixed = "````\n~~~\nVERDICT: PASS\n```\n````\nFindings remain.";
         assert_eq!(Verdict::extract(mixed, None), Verdict::Unknown);
         let closed = "~~~\nVERDICT: FAIL\n~~~~\nVERDICT: PASS";
@@ -770,6 +819,12 @@ mod tests {
             Fenced,
         ];
         assert_eq!(kinds, want);
+        let lazy = "> a\nb\n  c\nd\n\ne\n> f\n# g\n> h\n```\ni";
+        let kinds: Vec<_> = markdown_lines(lazy).map(|(kind, _)| kind).collect();
+        let want = [
+            Quote, Quote, Indented, Quote, Prose, Prose, Quote, Prose, Quote, FenceOpen, Fenced,
+        ];
+        assert_eq!(kinds, want);
     }
 
     #[test]
@@ -801,6 +856,19 @@ mod tests {
         assert_eq!(Verdict::extract(explained, None), Verdict::Pass);
         let noted = "VERDICT: PASS (two advisory notes): nothing failed";
         assert_eq!(Verdict::extract(noted, None), Verdict::Pass);
+        for said in [
+            "PASS, pending fixes",
+            "passed with two open nits",
+            "PASS if CI agrees",
+        ] {
+            let line = format!("VERDICT: {said}");
+            assert_eq!(Verdict::extract(&line, None), Verdict::Unknown, "{said}");
+            let field = json!({"verdict": said});
+            let read = Verdict::extract("VERDICT: PASS", Some(&field));
+            assert_eq!(read, Verdict::Unknown, "{said}");
+        }
+        let multiline = json!({"verdict": "PASS\nall 214 tests pass"});
+        assert_eq!(Verdict::extract("", Some(&multiline)), Verdict::Pass);
         for result in [
             "FAIL — tests failed",
             "FAIL or PASS",
@@ -811,6 +879,14 @@ mod tests {
                 let read = Verdict::extract("VERDICT: PASS", Some(&field));
                 assert_ne!(read, Verdict::Pass, "{key}: {result}");
             }
+        }
+        for key in ["result", "status"] {
+            let example = json!({key: "Example:\nVERDICT: PASS"});
+            let read = Verdict::extract("VERDICT: FAIL", Some(&example));
+            assert_eq!(read, Verdict::Fail, "{key}");
+            let labelled = json!({key: "**VERDICT:** FAIL — two findings"});
+            let read = Verdict::extract("VERDICT: PASS", Some(&labelled));
+            assert_eq!(read, Verdict::Fail, "{key}");
         }
         let choice = json!({"status": "PASS or FAIL"});
         let said = Verdict::stated("VERDICT: PASS", Some(&choice));

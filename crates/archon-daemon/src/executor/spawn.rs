@@ -142,27 +142,12 @@ pub(super) fn save_spawn(
     store.kv_set(&request_key(id), &serde_json::to_string(spawn)?)
 }
 
-/// Hold reserved stage run `id` until `until`, moving its deadline as far,
-/// so the wait costs its agent no working time.
-pub(super) fn hold_until(
-    store: &mut Store,
-    id: &StageRunId,
-    until: Timestamp,
-) -> Result<(), ArchonError> {
-    let mut spawn = load_spawn(store, id)?;
-    assert_eq!(
-        spawn.parent,
-        ParentBinding::Pending,
-        "only an unsent request waits"
-    );
-    let now = archon_core::now();
-    assert!(until > now, "a hold ends later");
-    spawn.request.deadline = spawn
-        .request
-        .deadline
-        .map(|deadline| deadline + (until - now));
-    spawn.not_before = Some(until);
-    save_spawn(store, id, &spawn)
+/// Which retry of its slot a replacement is, and the time before which it
+/// is not issued: an infrastructure retry that waits out a passing cause.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Retry {
+    pub nth: usize,
+    pub not_before: Option<Timestamp>,
 }
 
 /// Move the deadline in stage run `id`'s stored request to `until`, as
@@ -695,10 +680,16 @@ fn reserve_one(
     plan: &SpawnPlan,
     budget: Option<f64>,
     now: Timestamp,
-    retry: Option<usize>,
+    retry: Option<Retry>,
 ) -> Result<StageRunId, ArchonError> {
     let id = StageRunId::new();
-    let request = build_request(target, plan, &id, budget, now, retry);
+    let mut request = build_request(target, plan, &id, budget, now, retry.map(|r| r.nth));
+    let not_before = retry.and_then(|r| r.not_before);
+    if let Some(until) = not_before {
+        // Held as it is reserved, so no sweep issues it early; it loses no working time.
+        assert!(until > now, "a retry waits until later");
+        request.deadline = request.deadline.map(|deadline| deadline + (until - now));
+    }
     // An infrastructure replacement is a fresh agent: the kept one was lost.
     let (resume, replaces) = match resume::takeover(store, &target.run.id, plan, retry.is_some())? {
         Takeover::Fresh => (None, None),
@@ -717,7 +708,7 @@ fn reserve_one(
         replaces,
         woken: false,
         wake_asked: false,
-        not_before: None,
+        not_before,
     };
     save_spawn(store, &id, &spawn)?;
     let stage = StageRun {
@@ -865,13 +856,13 @@ pub(super) fn reserve_replacement(
     store: &mut Store,
     failed: &StageRun,
     plan: &SpawnPlan,
-    retry: usize,
+    retry: Retry,
 ) -> Result<Option<StageRunId>, ArchonError> {
     assert!(
         same_slot(failed, plan),
         "a replacement fills the failed slot"
     );
-    assert!(retry >= 1, "retries are counted from one");
+    assert!(retry.nth >= 1, "retries are counted from one");
     let run = store.run(&failed.run)?;
     assert!(!run.state.is_terminal(), "replacements join live runs only");
     let item = store.item(&run.item)?;

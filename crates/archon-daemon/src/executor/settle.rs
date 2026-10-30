@@ -422,10 +422,16 @@ async fn infra_retry(
         (None, RetryKind::Refused) => Replacement::Corrected(error, retry),
         (None, _) => Replacement::Fresh,
     };
-    let Some(replacement) = replace(ctx, table, run, all, &failed, slot.len(), how).await? else {
+    let waits = passing_cause(kind, error);
+    let not_before =
+        waits.map(|_| archon_core::now() + chrono::Duration::minutes(TRANSIENT_WAIT_MINUTES));
+    let reserved = spawn::Retry {
+        nth: slot.len(),
+        not_before,
+    };
+    let Some(replacement) = replace(ctx, table, run, all, &failed, reserved, how).await? else {
         return Ok(None);
     };
-    let waits = wait_out(ctx, kind, error, &replacement).await?;
     let text = retry_text(
         stage,
         run,
@@ -447,23 +453,13 @@ async fn infra_retry(
     }))
 }
 
-/// Hold an infrastructure retry `replacement` for a while when `error`
-/// names a cause that clears with time; returns that cause.
-async fn wait_out(
-    ctx: &DaemonContext,
-    kind: RetryKind,
-    error: &str,
-    replacement: &StageRunId,
-) -> Result<Option<&'static str>, ArchonError> {
-    let cause = match kind {
+/// The cause that clears with time an infrastructure failure's `error`
+/// names, which its retry waits out.
+fn passing_cause(kind: RetryKind, error: &str) -> Option<&'static str> {
+    match kind {
         RetryKind::Infra => transient_cause(error),
         RetryKind::DiskFull | RetryKind::Refused => None,
-    };
-    if cause.is_some() {
-        let until = archon_core::now() + chrono::Duration::minutes(TRANSIENT_WAIT_MINUTES);
-        spawn::hold_until(&mut *ctx.store.lock().await, replacement, until)?;
     }
-    Ok(cause)
 }
 
 /// The feed line of a retry: what `stage` hit, how and when it is retried,
@@ -565,14 +561,14 @@ async fn replace(
     run: &PipelineRun,
     all: &[StageRun],
     failed: &StageRun,
-    nth: usize,
+    retry: spawn::Retry,
     how: Replacement<'_>,
 ) -> Result<Option<StageRunId>, ArchonError> {
     assert!(
         failed.state.is_terminal(),
         "only a failed stage run is replaced"
     );
-    assert!(nth >= 1, "the slot holds the failed stage run");
+    assert!(retry.nth >= 1, "the slot holds the failed stage run");
     let now_all = replaced(all, failed);
     let driver = table.drivers.get(&run.id);
     let plan = driver.and_then(|driver| driver.respawn(failed, &now_all).zip(Some(driver)));
@@ -594,7 +590,7 @@ async fn replace(
     let mut store = ctx.store.lock().await;
     // Owed before the replacement exists, so it never starts beside them.
     descendants::owe(&mut store, failed, wake.is_some())?;
-    let Some(id) = spawn::reserve_replacement(ctx, &mut store, failed, &plan, nth)? else {
+    let Some(id) = spawn::reserve_replacement(ctx, &mut store, failed, &plan, retry)? else {
         return Ok(None);
     };
     if let Some(kept) = wake {

@@ -41,12 +41,17 @@ pub(super) fn resolve(workspace: &Path, data: &mut Value) -> Result<(), ArchonEr
 }
 
 /// Whether `workspace` stores SHA-256 object ids, where 40 digits abbreviate.
+/// A worktree git cannot read (gone, broken) is refused by the delivery checks.
 fn is_sha256(workspace: &Path) -> Result<bool, ArchonError> {
     let ran = DaemonGit::sealed_in(workspace)
         .args(["rev-parse", "--show-object-format"])
         .output()?;
+    if !ran.status.success() {
+        tracing::info!(workspace = %workspace.display(), error = %ran.stderr_text(), "object format unread; the delivery checks refuse the worktree");
+        return Ok(false);
+    }
     let format = ran.stdout_text()?;
-    if !ran.status.success() || !matches!(format.as_str(), "sha1" | "sha256") {
+    if !matches!(format.as_str(), "sha1" | "sha256") {
         return Err(ArchonError::Protocol(format!(
             "git rev-parse --show-object-format in {} printed {format:?}",
             workspace.display()

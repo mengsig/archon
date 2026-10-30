@@ -790,6 +790,9 @@ struct FakeState {
     stalls: Vec<(String, Arc<tokio::sync::Semaphore>)>,
     /// What `pulse` reports of an agent's tree; an empty pulse otherwise.
     pulses: BTreeMap<AetherAgentId, TreePulse>,
+    /// Every `clear_inspection` that resumed a tree: its lead and the note.
+    inspections_cleared: Vec<(AetherAgentId, String)>,
+    inspection_failures: VecDeque<ArchonError>,
     /// Runs once, after the next `update_agent` is recorded: what else
     /// happened while that update was in flight.
     update_hook: Option<Box<dyn FnOnce() + Send>>,
@@ -1148,6 +1151,16 @@ impl FakeBackend {
         self.state().pulse_failures.push_back(error);
     }
 
+    /// The next `clear_inspection` calls fail with these errors, in order.
+    pub fn fail_next_inspection(&self, error: ArchonError) {
+        self.state().inspection_failures.push_back(error);
+    }
+
+    /// The leads whose trees `clear_inspection` resumed, with the note each got.
+    pub fn inspections_cleared(&self) -> Vec<(AetherAgentId, String)> {
+        self.state().inspections_cleared.clone()
+    }
+
     /// Hold every spawn whose objective contains `text` until the returned
     /// gate gets a permit.
     pub fn stall_spawns(&self, text: &str) -> Arc<tokio::sync::Semaphore> {
@@ -1399,6 +1412,28 @@ impl AgentBackend for FakeBackend {
             return Ok(None);
         }
         Ok(Some(state.pulses.get(agent).copied().unwrap_or_default()))
+    }
+
+    /// The lead is the blocked agent; its pulse no longer reports one.
+    async fn clear_inspection(
+        &self,
+        lead: &AetherAgentId,
+        note: &str,
+        _idempotency_key: &str,
+    ) -> Result<Vec<AetherAgentId>, ArchonError> {
+        let mut state = self.state();
+        if let Some(error) = state.inspection_failures.pop_front() {
+            return Err(error);
+        }
+        let blocked = state.pulses.get_mut(lead).filter(|pulse| pulse.inspection);
+        let Some(pulse) = blocked else {
+            return Ok(Vec::new());
+        };
+        pulse.inspection = false;
+        state
+            .inspections_cleared
+            .push((lead.clone(), note.to_owned()));
+        Ok(vec![lead.clone()])
     }
 
     async fn task_outcome(&self, task: &AetherTaskId) -> Result<Option<StageOutcome>, ArchonError> {

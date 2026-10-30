@@ -3,7 +3,8 @@
 //! (issue #251: agents left `running` with no engine after a database
 //! lock). The sweep judges each one; a stalled stage settles as an
 //! infrastructure failure, so `limits.infra_retries` re-spawns it once on the
-//! same worktree and a second stall is final.
+//! same worktree and a second stall is final. The same read finds trees that
+//! wait on something Archon never asks a person for (see `inspection`).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -17,6 +18,7 @@ use archon_core::ports::TreePulse;
 use archon_core::run::{StageOutcome, StageRun, StageState};
 use archon_queue::Store;
 
+use super::inspection;
 use crate::context::DaemonContext;
 
 /// The key of a stage the watchdog is stopping, holding the reason.
@@ -138,9 +140,16 @@ pub struct Reading {
     /// Aether holds an agent of the tree `running`: it owes events. A tree
     /// with none waits on something that wakes it, or is done.
     pub running: bool,
-    /// A gate or a question of the stage's run waits for the operator, or
-    /// an agent of the tree waits for an approval or is `blocked`.
+    /// A gate or a question of the stage's run waits for the operator.
     pub waiting: bool,
+    /// An agent of the tree waits for an approval or is `blocked` for
+    /// anything but inspection.
+    pub held: bool,
+    /// Some hold has a cause Aether names: an approval, a usage or quota
+    /// limit, credentials.
+    pub held_for_cause: bool,
+    /// An agent of the tree is `blocked` for inspection.
+    pub inspection: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,12 +159,22 @@ pub enum Verdict {
         silent: Duration,
         engine_known: bool,
     },
+    /// An agent is blocked for inspection and no gate or question waits for
+    /// the operator: Archon resumes it.
+    Inspection,
+    /// Held past the fallback with no cause Aether names: the orchestrator
+    /// is told, and the stage keeps running.
+    HeldLong {
+        silent: Duration,
+    },
 }
 
 /// Whether the tree is stalled: an agent is `running` yet nothing has been
 /// heard of it for the policy's silence. A live engine (a turn in flight),
 /// a waiting gate, question or approval, and a tree with no `running` agent
-/// all clear it. Unreported engines are judged by the longer fallback.
+/// all clear it. Unreported engines are judged by the longer fallback. An
+/// agent blocked for inspection is resumed; a hold with no named cause that
+/// outlasts the fallback is reported.
 pub fn judge(policy: &Policy, reading: &Reading) -> Verdict {
     assert!(
         reading.last_event <= reading.now + chrono::Duration::seconds(5),
@@ -165,12 +184,28 @@ pub fn judge(policy: &Policy, reading: &Reading) -> Verdict {
         policy.silence <= policy.fallback,
         "the fallback never fires sooner on less evidence"
     );
-    if reading.waiting || !reading.running || reading.engine_alive == Some(true) {
+    assert!(
+        reading.held || !reading.held_for_cause,
+        "a hold with a cause is a hold"
+    );
+    if reading.waiting {
         return Verdict::Healthy;
+    }
+    if reading.inspection {
+        return Verdict::Inspection;
     }
     let silent = (reading.now - reading.last_event)
         .to_std()
         .unwrap_or(Duration::ZERO);
+    if reading.held {
+        return match !reading.held_for_cause && silent >= policy.fallback {
+            true => Verdict::HeldLong { silent },
+            false => Verdict::Healthy,
+        };
+    }
+    if !reading.running || reading.engine_alive == Some(true) {
+        return Verdict::Healthy;
+    }
     let engine_known = reading.engine_alive.is_some();
     let limit = match engine_known {
         true => policy.silence,
@@ -197,6 +232,16 @@ pub fn reason(silent: Duration, engine_known: bool) -> String {
     }
 }
 
+/// The failure of a stage whose agent Aether blocked for inspection and then
+/// refused to resume, saying `why`.
+pub(super) fn inspection_refused(why: &str) -> String {
+    assert!(!why.trim().is_empty(), "a refusal says why");
+    format!(
+        "{STALLED}: Aether blocked it for inspection (a command's outcome was lost, most \
+         likely to an Aether restart) and refused to resume it: {why}"
+    )
+}
+
 /// Whether `error` is a stall the watchdog stopped the agent for.
 pub(super) fn is_stall(error: &str) -> bool {
     error.starts_with(STALLED)
@@ -209,7 +254,11 @@ pub(super) async fn scan(
     stages: &[StageRun],
     now: Timestamp,
 ) -> Result<Vec<(StageRunId, String)>, ArchonError> {
-    forget_settled_intents(&mut *ctx.store.lock().await)?;
+    {
+        let mut store = ctx.store.lock().await;
+        forget_settled(&mut store, INTENT_KEY_PREFIX)?;
+        forget_settled(&mut store, inspection::ESCALATED_KEY_PREFIX)?;
+    }
     let Some(policy) = Policy::of(&ctx.config.limits) else {
         // Off: the fleet still records events, so nothing may be kept.
         ctx.activity.prune(now);
@@ -230,6 +279,14 @@ pub(super) async fn scan(
                 silent,
                 engine_known,
             } => stalled.push((stage.id.clone(), reason(silent, engine_known))),
+            Verdict::Inspection => {
+                if let Some(refused) = inspection::clear(ctx, stage, lead, now).await? {
+                    stalled.push((stage.id.clone(), refused));
+                }
+            }
+            Verdict::HeldLong { silent } => {
+                inspection::escalate_held(ctx, stage, lead, silent).await?;
+            }
             Verdict::Healthy => {}
         }
     }
@@ -282,7 +339,10 @@ fn read_tree(now: Timestamp, seen: Timestamp, waiting: bool, pulse: TreePulse) -
         last_event: last_event.min(now),
         engine_alive: pulse.engine_alive,
         running: pulse.running,
-        waiting: waiting || pulse.held,
+        waiting,
+        held: pulse.held,
+        held_for_cause: pulse.held_for_cause,
+        inspection: pulse.inspection,
     }
 }
 
@@ -321,14 +381,13 @@ pub(super) fn intended(
     })
 }
 
-/// Delete the marks of stages that settled or no longer exist.
-fn forget_settled_intents(store: &mut Store) -> Result<(), ArchonError> {
-    for (key, _) in store.kv_prefix(INTENT_KEY_PREFIX)? {
-        let raw = key
-            .strip_prefix(INTENT_KEY_PREFIX)
-            .expect("ranged by prefix");
+/// Delete the `prefix` marks of stages that settled or no longer exist.
+fn forget_settled(store: &mut Store, prefix: &str) -> Result<(), ArchonError> {
+    assert!(prefix.ends_with(':'), "a stage mark's prefix ends its name");
+    for (key, _) in store.kv_prefix(prefix)? {
+        let raw = key.strip_prefix(prefix).expect("ranged by prefix");
         let id = StageRunId::parse(raw)
-            .map_err(|e| ArchonError::Corrupt(format!("stall intent key {key}: {e}")))?;
+            .map_err(|e| ArchonError::Corrupt(format!("stage mark key {key}: {e}")))?;
         let settled = match store.stage_run(&id) {
             Ok(stage) => stage.state.is_terminal(),
             Err(ArchonError::NotFound(_)) => true,
@@ -398,6 +457,9 @@ mod tests {
             engine_alive,
             running: true,
             waiting: false,
+            held: false,
+            held_for_cause: false,
+            inspection: false,
         }
     }
 
@@ -449,6 +511,54 @@ mod tests {
     }
 
     #[test]
+    fn an_inspection_is_resumed_unless_the_operator_is_asked_something() {
+        let blocked = Reading {
+            inspection: true,
+            running: false,
+            ..reading(1, None)
+        };
+        assert_eq!(judge(&policy(), &blocked), Verdict::Inspection);
+        let held_too = Reading {
+            held: true,
+            held_for_cause: true,
+            ..blocked
+        };
+        assert_eq!(judge(&policy(), &held_too), Verdict::Inspection);
+        let asked = Reading {
+            waiting: true,
+            ..blocked
+        };
+        assert_eq!(judge(&policy(), &asked), Verdict::Healthy);
+    }
+
+    #[test]
+    fn a_hold_with_no_named_cause_is_reported_after_the_fallback_and_never_stalls() {
+        let p = policy();
+        let held = |silent_min, held_for_cause| Reading {
+            held: true,
+            held_for_cause,
+            ..reading(silent_min, Some(false))
+        };
+        assert_eq!(judge(&p, &held(44, false)), Verdict::Healthy);
+        assert_eq!(
+            judge(&p, &held(45, false)),
+            Verdict::HeldLong {
+                silent: Duration::from_secs(45 * 60)
+            }
+        );
+        assert_eq!(
+            judge(&p, &held(600, true)),
+            Verdict::Healthy,
+            "a usage limit or an approval lasts as long as it lasts"
+        );
+        let asked = Reading {
+            waiting: true,
+            ..held(600, false)
+        };
+        assert_eq!(judge(&p, &asked), Verdict::Healthy);
+    }
+
+    #[test]
     fn a_tree_with_no_running_agent_waits_on_its_wake() {
         let idle = Reading {
             running: false,
@@ -490,8 +600,8 @@ mod tests {
         let pulse = TreePulse {
             engine_alive: Some(false),
             last_event_at: Some(at(15)),
-            held: false,
             running: true,
+            ..TreePulse::default()
         };
         let r = read_tree(at(30), at(0), false, pulse);
         assert_eq!(r.last_event, at(15));
@@ -505,7 +615,11 @@ mod tests {
                 ..pulse
             },
         );
-        assert!(held.waiting);
+        assert!(
+            held.held && !held.waiting,
+            "Aether's hold is no operator wait"
+        );
+        assert_eq!(judge(&policy(), &held), Verdict::Healthy);
         let future = read_tree(
             at(30),
             at(0),

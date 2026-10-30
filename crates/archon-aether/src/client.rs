@@ -702,6 +702,16 @@ impl AetherClient {
         self.request(command, expected).await.map(drop)
     }
 
+    /// Resume `agent` alone: lift its pause, its wait or the inspection it
+    /// is blocked for. `Err` when Aether refuses, as for a running agent.
+    pub async fn resume(&self, agent: &AetherAgentId) -> Result<(), ArchonError> {
+        let command = Command::Resume {
+            agent: agent.clone(),
+            subtree: false,
+        };
+        self.request(command, "agents").await.map(drop)
+    }
+
     /// Aether's defaults for new roots, read from `status`.
     pub async fn daemon_defaults(&self) -> Result<DaemonDefaults, ArchonError> {
         self.typed(Command::Status, "status").await

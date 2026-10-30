@@ -1196,3 +1196,88 @@ async fn an_unbudgeted_spawn_does_not_query_capabilities() {
     assert!(fake.received_named("list_models").is_empty());
     assert!(fake.received_named("providers").is_empty());
 }
+
+#[tokio::test]
+async fn clear_inspection_tells_then_resumes_only_the_agents_blocked_for_inspection() {
+    const LEAD: &str = "agt_01BX5ZZKBKACTAV9WEVGEMMVS1";
+    const BLOCKED: &str = "agt_01BX5ZZKBKACTAV9WEVGEMMVS2";
+    const QUOTA: &str = "agt_01BX5ZZKBKACTAV9WEVGEMMVS3";
+    let (_dir, fake) = fake_aether().await;
+    let mut lead = fake::agent(LEAD, Some(TASK));
+    lead["status"] = json!({"state": "waiting", "condition": {"on": "task", "id": TASK}});
+    let mut blocked = fake::agent(BLOCKED, None);
+    blocked["parent"] = json!(LEAD);
+    blocked["status"] = json!({"state": "blocked", "reason":
+        {"block": "inspection", "detail": "a tool call started before the restart"}});
+    let mut quota = fake::agent(QUOTA, None);
+    quota["parent"] = json!(LEAD);
+    quota["status"] = json!({"state": "blocked", "reason": {"block": "exhausted", "detail": "x"}});
+    fake.set_default("get_agent", Scripted::reply("agent", lead.clone()));
+    fake.set_default(
+        "list_agents",
+        Scripted::reply("agents", json!([lead, blocked.clone(), quota])),
+    );
+    fake.set_default(
+        "send_message",
+        Scripted::reply("message_sent", json!({"message_id": "msg_1"})),
+    );
+    fake.set_default("resume", Scripted::reply("agents", json!([blocked])));
+    let backend = backend(&fake, any_model()).await;
+    let lead_id = AetherAgentId::parse(LEAD).unwrap();
+
+    let pulse = backend.pulse(&lead_id).await.unwrap().expect("a tree");
+    assert!(
+        pulse.inspection && pulse.held && pulse.held_for_cause,
+        "{pulse:?}"
+    );
+    let resumed = backend
+        .clear_inspection(&lead_id, "check the state first", "inspect:1")
+        .await
+        .unwrap();
+
+    assert_eq!(resumed, [AetherAgentId::parse(BLOCKED).unwrap()]);
+    let told = fake.received_named("send_message");
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert_eq!(told[0]["to"], BLOCKED);
+    let order: Vec<String> = fake
+        .received()
+        .iter()
+        .filter_map(|frame| frame["cmd"].as_str().map(str::to_owned))
+        .filter(|cmd| cmd == "send_message" || cmd == "resume")
+        .collect();
+    assert_eq!(order, ["send_message", "resume"], "told before it runs");
+    let resume = &fake.received_named("resume")[0];
+    assert_eq!(resume["agent"], BLOCKED);
+    assert_eq!(
+        resume["subtree"], false,
+        "a subtree resume skips inspections"
+    );
+}
+
+#[tokio::test]
+async fn a_refused_resume_is_an_error_not_a_resumed_agent() {
+    let (_dir, fake) = fake_aether().await;
+    let mut blocked = fake::agent(AGENT, Some(TASK));
+    blocked["status"] =
+        json!({"state": "blocked", "reason": {"block": "inspection", "detail": "x"}});
+    fake.set_default("get_agent", Scripted::reply("agent", blocked.clone()));
+    fake.set_default("list_agents", Scripted::reply("agents", json!([blocked])));
+    fake.set_default(
+        "send_message",
+        Scripted::reply("message_sent", json!({"message_id": "msg_1"})),
+    );
+    fake.script(
+        "resume",
+        Scripted::refuse("invalid_argument", "agent is not under inspection"),
+    );
+    let backend = backend(&fake, any_model()).await;
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    let error = backend
+        .clear_inspection(&agent, "check the state first", "inspect:1")
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("not under inspection"),
+        "{error}"
+    );
+}

@@ -19,6 +19,7 @@ mod gates;
 pub(crate) mod gh;
 mod held;
 pub(crate) mod initiative_ship;
+mod inspection;
 mod landed;
 mod lanes;
 mod local_merge;

@@ -216,9 +216,15 @@ pub struct TreePulse {
     pub engine_alive: Option<bool>,
     /// The latest `last_event_at` over the tree; `None` when none reports one.
     pub last_event_at: Option<Timestamp>,
-    /// An agent of the tree waits for an approval or is `blocked` on a
-    /// person or a quota: silence is expected then.
+    /// An agent of the tree waits for an approval or is `blocked` for any
+    /// reason but inspection: silence is expected then.
     pub held: bool,
+    /// Some hold is one Aether names a lasting cause for: an approval, a
+    /// usage or quota limit, or credentials.
+    pub held_for_cause: bool,
+    /// An agent of the tree is `blocked` for inspection: a tool call it
+    /// started has no known outcome, as after an Aether restart. Not `held`.
+    pub inspection: bool,
     /// Aether holds an agent of the tree `running`, so it owes events.
     pub running: bool,
 }
@@ -339,6 +345,20 @@ pub trait AgentBackend: Send + Sync {
     /// longer knows `agent`. A backend that cannot tell reports an empty pulse.
     async fn pulse(&self, _agent: &AetherAgentId) -> Result<Option<TreePulse>, ArchonError> {
         Ok(Some(TreePulse::default()))
+    }
+
+    /// Resume every agent of `lead`'s tree that Aether blocked for
+    /// inspection, each told `note` first; the agents resumed. `Err` when
+    /// Aether refuses or does not answer.
+    async fn clear_inspection(
+        &self,
+        _lead: &AetherAgentId,
+        _note: &str,
+        _idempotency_key: &str,
+    ) -> Result<Vec<AetherAgentId>, ArchonError> {
+        Err(ArchonError::Invalid(
+            "this backend cannot resume an agent blocked for inspection".into(),
+        ))
     }
 
     /// `None` while the task is still open; the settled outcome otherwise.

@@ -93,26 +93,60 @@ pub fn agent_is_live(agent: &Agent) -> bool {
 }
 
 /// The pulse of `root` and the agents `beneath` it: whether any engine is
-/// alive, the newest event, and whether one is held or `running`.
+/// alive, the newest event, and whether one is held, blocked for
+/// inspection or `running`.
 fn tree_pulse(root: &Agent, beneath: &[Agent]) -> TreePulse {
     let tree = || std::iter::once(root).chain(beneath);
     let engine_alive = match tree().any(|a| a.engine_alive == Some(true)) {
         true => Some(true),
         false => tree().find_map(|a| a.engine_alive),
     };
-    TreePulse {
+    let pulse = TreePulse {
         engine_alive,
         last_event_at: tree().filter_map(|a| a.last_event_at).max(),
         held: tree().any(is_held),
+        held_for_cause: tree().any(is_held_for_cause),
+        inspection: tree().any(is_blocked_for_inspection),
         running: tree().any(|a| agent_state(a) == "running"),
+    };
+    assert!(
+        pulse.held || !pulse.held_for_cause,
+        "a hold with a cause is a hold"
+    );
+    pulse
+}
+
+/// The `block` Aether names for a `blocked` agent; `None` for any other
+/// state, or a reason given as text by an older Aether.
+fn block_reason(agent: &Agent) -> Option<&str> {
+    if agent_state(agent) != "blocked" {
+        return None;
+    }
+    let reason = agent.status.get("reason")?;
+    reason.get("block").and_then(serde_json::Value::as_str)
+}
+
+/// Whether Aether blocked `agent` for inspection: a tool call it started has
+/// no known outcome. Waiting changes nothing, so it is no hold.
+fn is_blocked_for_inspection(agent: &Agent) -> bool {
+    block_reason(agent) == Some("inspection")
+}
+
+/// Whether `agent` waits on a person, a quota or a dependency: `blocked`
+/// for anything but inspection, or `waiting` on an approval.
+fn is_held(agent: &Agent) -> bool {
+    match agent_state(agent).as_str() {
+        "blocked" => !is_blocked_for_inspection(agent),
+        "waiting" => agent.status.get("condition").is_some_and(names_approval),
+        _ => false,
     }
 }
 
-/// Whether `agent` waits on a person or a quota: `blocked`, or `waiting`
-/// on a condition that names an approval.
-fn is_held(agent: &Agent) -> bool {
+/// Whether `agent`'s hold has a cause that lasts by design and that Aether
+/// tells the operator of: an approval, a usage or quota limit, credentials.
+fn is_held_for_cause(agent: &Agent) -> bool {
     match agent_state(agent).as_str() {
-        "blocked" => true,
+        "blocked" => matches!(block_reason(agent), Some("exhausted" | "credentials")),
         "waiting" => agent.status.get("condition").is_some_and(names_approval),
         _ => false,
     }
@@ -179,6 +213,36 @@ pub fn subtree(root: &AetherAgentId, agents: &[Agent]) -> Vec<Descendant> {
         "the root is no descendant"
     );
     found
+}
+
+/// `agent` and the live view of the agents beneath it; `None` when Aether
+/// has no such agent.
+async fn live_tree(
+    client: &AetherClient,
+    agent: &AetherAgentId,
+) -> Result<Option<(Agent, Vec<Agent>)>, ArchonError> {
+    let root = match client.get_agent(agent).await {
+        Ok(root) => root,
+        Err(ArchonError::NotFound(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let Some(run) = root.run.clone() else {
+        return Ok(Some((root, Vec::new())));
+    };
+    let query = AgentQuery {
+        run: Some(run),
+        ..AgentQuery::default()
+    };
+    let agents = client.list_agents(query).await?;
+    let beneath: BTreeSet<AetherAgentId> = subtree(agent, &agents)
+        .into_iter()
+        .map(|d| d.agent)
+        .collect();
+    let tree: Vec<Agent> = agents
+        .into_iter()
+        .filter(|a| beneath.contains(&a.id))
+        .collect();
+    Ok(Some((root, tree)))
 }
 
 /// The exact `create_agent` for a stage agent. `network` is the request's
@@ -574,28 +638,35 @@ impl AgentBackend for AetherBackend {
 
     async fn pulse(&self, agent: &AetherAgentId) -> Result<Option<TreePulse>, ArchonError> {
         let client = self.link.client()?;
-        let root = match client.get_agent(agent).await {
-            Ok(root) => root,
-            Err(ArchonError::NotFound(_)) => return Ok(None),
-            Err(error) => return Err(error),
+        let tree = live_tree(&client, agent).await?;
+        Ok(tree.map(|(root, beneath)| tree_pulse(&root, &beneath)))
+    }
+
+    /// Each agent is told before it is resumed, so the note is in its inbox
+    /// when its next turn starts.
+    async fn clear_inspection(
+        &self,
+        lead: &AetherAgentId,
+        note: &str,
+        idempotency_key: &str,
+    ) -> Result<Vec<AetherAgentId>, ArchonError> {
+        assert!(!note.trim().is_empty(), "a resumed agent is told why");
+        assert!(!idempotency_key.is_empty(), "the note is sent once");
+        let client = self.link.client()?;
+        let Some((root, beneath)) = live_tree(&client, lead).await? else {
+            return Ok(Vec::new());
         };
-        let Some(run) = root.run.clone() else {
-            return Ok(Some(tree_pulse(&root, &[])));
-        };
-        let query = AgentQuery {
-            run: Some(run),
-            ..AgentQuery::default()
-        };
-        let agents = client.list_agents(query).await?;
-        let beneath: BTreeSet<AetherAgentId> = subtree(agent, &agents)
-            .into_iter()
-            .map(|d| d.agent)
+        let blocked: Vec<AetherAgentId> = std::iter::once(&root)
+            .chain(&beneath)
+            .filter(|agent| is_blocked_for_inspection(agent))
+            .map(|agent| agent.id.clone())
             .collect();
-        let tree: Vec<Agent> = agents
-            .into_iter()
-            .filter(|a| beneath.contains(&a.id))
-            .collect();
-        Ok(Some(tree_pulse(&root, &tree)))
+        for agent in &blocked {
+            let key = format!("{idempotency_key}:{agent}");
+            client.send_message(agent, note, &[], &key).await?;
+            client.resume(agent).await?;
+        }
+        Ok(blocked)
     }
 
     async fn task_outcome(&self, task: &AetherTaskId) -> Result<Option<StageOutcome>, ArchonError> {
@@ -860,7 +931,35 @@ mod tests {
         child.status = serde_json::json!({"state": "waiting", "condition": {"on": "inbox"}});
         assert!(!tree_pulse(&lead, std::slice::from_ref(&child)).held);
         child.status = serde_json::json!({"state": "blocked", "reason": {"block": "inspection", "detail": "x"}});
-        assert!(tree_pulse(&lead, &[child]).held);
+        let inspected = tree_pulse(&lead, std::slice::from_ref(&child));
+        assert!(
+            !inspected.held && inspected.inspection,
+            "an agent blocked for inspection waits for nothing: {inspected:?}"
+        );
+    }
+
+    #[test]
+    fn a_hold_has_a_cause_only_for_an_approval_a_quota_or_credentials() {
+        let lead = held("agt_lead", Some("agt_node"), "running");
+        let mut child = held("agt_child", Some("agt_lead"), "blocked");
+        let read = |child: &Agent| tree_pulse(&lead, std::slice::from_ref(child));
+        child.status = serde_json::json!({"state": "blocked", "reason":
+            {"block": "exhausted", "class": "usage_limit", "detail": "x"}});
+        assert!(read(&child).held && read(&child).held_for_cause);
+        child.status =
+            serde_json::json!({"state": "waiting", "condition": {"on": "approval", "id": "apr_1"}});
+        assert!(read(&child).held && read(&child).held_for_cause);
+        for reason in [
+            serde_json::json!({"block": "resource", "holder": "agt_x", "key": "k"}),
+            serde_json::json!("blocked by an older Aether"),
+        ] {
+            child.status = serde_json::json!({"state": "blocked", "reason": reason});
+            let pulse = read(&child);
+            assert!(
+                pulse.held && !pulse.held_for_cause && !pulse.inspection,
+                "{pulse:?}"
+            );
+        }
     }
 
     #[test]

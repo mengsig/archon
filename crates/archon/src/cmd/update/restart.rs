@@ -51,6 +51,7 @@ pub(super) enum Phase {
     Asking,
     UpdatingAether,
     FindingArchond,
+    AskingArchond,
     RestartingArchond,
     CheckingOrchestrator,
     RefreshingTools,
@@ -65,6 +66,7 @@ impl Phase {
             Self::Asking => "waiting for the answer",
             Self::UpdatingAether => "updating Aether (`aether update`)",
             Self::FindingArchond => "asking whether archond runs",
+            Self::AskingArchond => "asking archond to restart",
             Self::RestartingArchond => "restarting archond",
             Self::CheckingOrchestrator => "asking which archon created the orchestrator",
             Self::RefreshingTools => "refreshing Archon's tools in your aetherd",
@@ -80,6 +82,11 @@ impl Phase {
         match self {
             Self::Preparing | Self::Asking | Self::UpdatingAether | Self::FindingArchond => {
                 "nothing was restarted; `archon update --yes` runs the restart"
+            }
+            Self::AskingArchond => {
+                "archond may not have been asked to restart; `archon daemon restart \
+                 --keep-aether` restarts it on the installed archon, and its running stage agents \
+                 keep running"
             }
             Self::RestartingArchond => {
                 "archond restarts on its own as it was asked, and its running stage agents keep \
@@ -320,8 +327,8 @@ async fn switch_archond(
         old.pid,
         SWITCH_LIMIT.as_secs()
     );
-    progress.enter(Phase::RestartingArchond, &detail);
-    if restart(steps, plan, old, SWITCH_LIMIT).await? == Switched::Later {
+    progress.enter(Phase::AskingArchond, &detail);
+    if restart(steps, plan, old, SWITCH_LIMIT, progress).await? == Switched::Later {
         outcome.lines.push(format!(
             "archond (pid {}) still drains its own work after {}s; it restarts on archon {} by \
              itself, and its stage agents keep running (`archon status` shows when).",
@@ -434,16 +441,15 @@ enum Switched {
     Later,
 }
 
-/// Ask archond to restart and poll until a new one answers, for `limit` at
-/// most: a poll that does not answer is cut off by the same deadline.
-async fn restart(
+/// Ask archond to restart by `deadline`; an error unless it accepted.
+async fn ask_restart(
     steps: &impl Steps,
     plan: &Plan,
     old: &Running,
-    limit: Duration,
-) -> anyhow::Result<Switched> {
-    assert!(limit >= POLL, "the wait allows a poll");
-    let deadline = tokio::time::Instant::now() + limit;
+    deadline: tokio::time::Instant,
+) -> anyhow::Result<()> {
+    assert!(old.pid > 0, "a running archond has a pid");
+    let limit = deadline.saturating_duration_since(tokio::time::Instant::now());
     tokio::time::timeout_at(deadline, steps.request_restart(plan))
         .await
         .unwrap_or_else(|_| Err(anyhow::anyhow!("archond did not answer the request")))
@@ -454,7 +460,23 @@ async fn restart(
                 old.pid,
                 limit.as_secs()
             )
-        })?;
+        })
+}
+
+/// Ask archond to restart and poll until a new one answers, for `limit` at
+/// most: a poll that does not answer is cut off by the same deadline.
+async fn restart(
+    steps: &impl Steps,
+    plan: &Plan,
+    old: &Running,
+    limit: Duration,
+    progress: &Progress,
+) -> anyhow::Result<Switched> {
+    assert!(limit >= POLL, "the wait allows a poll");
+    let deadline = tokio::time::Instant::now() + limit;
+    ask_restart(steps, plan, old, deadline).await?;
+    // Accepted: from here archond restarts whether or not this one waits for it.
+    progress.mark(Phase::RestartingArchond);
     let polls = limit.as_secs() / POLL.as_secs();
     let (mut idle, mut last_down, mut draining) = (0, None, false);
     for _ in 0..polls {

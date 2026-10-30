@@ -495,8 +495,9 @@ fn yes_prints_no_manual_steps_and_a_signal_ends_a_stuck_restart_naming_its_step(
     assert_eq!(out.status.code(), Some(130), "{stdout}\n{stderr}");
     assert_eq!(installed.version(), "archon 9.9.9", "the install stays");
     assert!(
-        stderr.contains("archon: update: restarting archond (pid")
-            && stderr.contains("update interrupted by SIGINT while restarting archond"),
+        stderr.contains("archon: update: asking archond to restart (pid")
+            && stderr.contains("update interrupted by SIGINT while asking archond to restart")
+            && stderr.contains("`archon daemon restart --keep-aether` restarts it"),
         "{stderr}"
     );
     assert!(stderr.contains("stage agents keep running"), "{stderr}");

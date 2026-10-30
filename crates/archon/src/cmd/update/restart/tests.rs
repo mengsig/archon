@@ -438,7 +438,7 @@ async fn an_interrupt_ends_a_waiting_step_at_once_and_names_it() {
     let after = Duration::from_secs(5);
     for (hangs, phase) in [
         ("aether", Phase::UpdatingAether),
-        ("request", Phase::RestartingArchond),
+        ("request", Phase::AskingArchond),
         ("observe", Phase::RestartingArchond),
         ("orchestrator", Phase::RestartingOrchestrator),
     ] {
@@ -475,6 +475,7 @@ fn every_phase_names_itself_and_how_to_finish_by_hand() {
         Asking,
         UpdatingAether,
         FindingArchond,
+        AskingArchond,
         RestartingArchond,
         CheckingOrchestrator,
         RefreshingTools,
@@ -489,6 +490,8 @@ fn every_phase_names_itself_and_how_to_finish_by_hand() {
             .remedy()
             .contains("archon orchestrator restart")
     );
+    assert!(AskingArchond.remedy().contains("may not have been asked"));
+    assert!(RestartingArchond.remedy().contains("as it was asked"));
 }
 
 #[test]

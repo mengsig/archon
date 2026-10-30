@@ -30,8 +30,9 @@ moves off that head.
      secrets, network or file access, build scripts, CI workflows, new
      dependencies, and anything that runs at install or build time.
 
-   Choose each reviewer's effort: medium for ordinary risk, high where
-   security, CI or release machinery is touched. Require the verdict your
+   Choose each reviewer's effort, never below one your contract names:
+   medium for ordinary risk, high where security, CI or release machinery
+   is touched. Require the verdict your
    contract shows, on the head it read, with actionable findings (path,
    issue, impact, remedy). Correctness, security and missing essential
    coverage block; style advice does not.

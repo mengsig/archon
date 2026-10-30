@@ -274,6 +274,31 @@ async fn a_head_that_moved_after_the_review_is_never_merged() {
     assert!(!gh.calls().iter().any(|c| c.starts_with("pr merge")));
 }
 
+/// A refresh would refreeze or merge the moved head under the old review:
+/// it is refused, the frozen head stays, and the merge stays refused.
+#[tokio::test]
+async fn a_review_item_is_never_refreshed_onto_a_moved_head() {
+    let (h, gh, head, item) = reviewed_fork().await;
+    let moved = contributor_commit(&h, "later.txt", "pushed after the review\n");
+    gh.show(&moved, "MERGEABLE", green());
+
+    let refresh = Request::RefreshItem {
+        item: item.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        stage_timeouts: Default::default(),
+    };
+    let refused = h.orchestrator(refresh).await.unwrap_err().to_string();
+    assert!(refused.contains("queue a new `review` item"), "{refused}");
+    assert!(refused.contains(&head), "{refused}");
+
+    let now = h.item(&item.id).await;
+    assert_eq!(now.onto.as_deref().unwrap().head_sha, head, "still frozen");
+    assert!(h.orchestrator(request_merge(&item)).await.is_err());
+    assert!(!gh.calls().iter().any(|c| c.starts_with("pr merge")));
+    nothing_pushed_to_the_fork(&h, &gh, &moved);
+}
+
 #[tokio::test]
 async fn another_s_pull_request_merges_only_with_its_checks_green() {
     let (h, gh, head, item) = reviewed_fork().await;

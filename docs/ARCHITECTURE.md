@@ -2127,8 +2127,10 @@ its tier.
 `<stage>.review` in `model_plan` and `model_reasons`, with at most as many
 `{model, effort}` entries as the strict level has reviewers (taken in turn).
 The stage contract tells the lead to delegate reviewers with role `reviewer` on
-those models, and the delegation watchdog (§7.4) cancels a child with such a
-role on another model or a higher effort. This check relies on the lead using
+those models, each effort a floor and the model policy's `max_effort` the
+only ceiling: the delegation watchdog (§7.4) cancels a child with such a role
+on another model or below its model's effort as it spawns, before it does
+any work, and the contract states the floor so the lead delegates at it. This check relies on the lead using
 the required reviewer role; children with other roles follow the general model
 policy. The role matches `reviewer` exactly (case-insensitively); a reviewer
 with missing or unrecognised effort is refused. If Aether no longer has the
@@ -2136,7 +2138,9 @@ child when the watchdog reads it, only its event model can be checked: its role
 and effort are unavailable. With no such key the contract names the models the
 item's effective policy allows, as it stands when the lead spawns, other than the
 lead's, or the lead's own when the policy allows no other, and the watchdog holds
-reviewers only to the model policy.
+reviewers only to the model policy. The `[review]` profile's contract asks such
+reviewers for at least medium effort, and at least high when the lead rates the
+change's risk medium or high, within the policy's `max_effort`.
 
 **Stage timeouts.** `enqueue`, `update_item` and `steer_item` take `stage_timeouts`, a
 `{"<stage-id>": minutes}` map for the item: each stage it names runs with that
@@ -2312,8 +2316,13 @@ its verdict on the commits it read:
 Where Aether auto-completes a Codex reviewer from its final text, the verdict
 object arrives as the whole `summary` with no `structured`, alone or as the
 `structured` of a written-out `complete_task` call (`{summary, structured}`);
-Archon reads it only then, and an explicit `structured` always wins. Prose or
-a fenced block is no verdict.
+Archon reads it only then, and a `structured` that states a verdict always
+wins, though a structured pass whose summary's `VERDICT:` line or JSON
+verdict does not pass is refused. A `VERDICT:` line beside `head:` and `base:` lines is read too, each
+at the top level as the verdict line is. Any verdict, a structured one
+included, whose `structured` `head`/`base`, summary JSON and top-level
+`head:`/`base:` lines name different commits is refused. Summary JSON with
+no `verdict` key is evidence, not a verdict. Prose is no verdict.
 
 A completion without the record, with any other verdict, or with a pass
 that names fewer reviewers than the level asks for fails the run at that
@@ -2501,8 +2510,22 @@ itself. The stage `[pipeline.ship]` names gets `## Ship record` (§8.7).
 Like the contract, all of this binds by instruction only; what Archon
 enforces is named where it is enforced.
 
-`Verdict::extract` reads the structured `verdict` field first, then the last
-`VERDICT:` line.
+`Verdict::extract` reads a structured `verdict` key first (a blank, null or
+unreadable one is `Unknown`), then a structured `result` or `status` that
+opens with a verdict word or a `VERDICT:` label (`Unknown` when its value is
+unreadable), then the summary's last
+`VERDICT:` line that starts at column 0 outside block quotes (a line lazily
+continuing one included) and fences, in any letter case and through
+markdown emphasis. A verdict word followed by any word, in parentheses
+too, before the first `—`, `:`, `;`, `.`, ` - ` or line break is a choice or
+a condition and reads as `Unknown`, as does a pass explained in any word but
+a few plain success words and numbers, or a summary's pass line followed by
+any line but `head:` and `base:`. A structured pass beside a summary
+`VERDICT:` line or JSON `verdict`, `result` or `status` that does not pass
+is `Unknown`, as is any pass beside a `blocking`, `blocker`, `critical` or
+`high` finding in `structured` or the summary's JSON
+(`Verdict::pass_disputed`), the inner summary of a `{summary, structured}`
+wrapper included. Reviewers' verdicts (§8.2) go through the same parser.
 
 Two error prefixes end a run at once, with no loop, no infra retry and the
 stage's live siblings cancelled (`StageOutcome::ends_run`):

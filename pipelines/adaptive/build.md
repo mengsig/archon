@@ -61,8 +61,9 @@ read again.
    - the repository guidance it must apply and only the parts of a spec that
      bear on the change: no conversation, no project history.
 
-   Choose its effort yourself: medium for ordinary risk, high where security
-   or an invariant is at stake or the brief asks for depth. Require the
+   Choose its effort yourself, never below one your contract names: medium
+   for ordinary risk, high where the change's risk is medium or more,
+   security or an invariant is at stake, or the brief asks for depth. Require the
    verdict your contract shows, on the head it read, with actionable
    findings (path, issue, impact, remedy).
    Pass on your contract's bounds for reviewers.
@@ -77,14 +78,12 @@ read again.
    committed. Leave advisory and style findings open and list them.
    A second look is owed after a failed verdict and for any commit after a
    pass: Archon delivers only commits a passing reviewer read, so batch
-   fixes. Delegate the missing passes as your contract defines, each a NEW
-   agent. A delta reviewer gets the previous verdict, the reviewed commit and
-   the new one, each finding beside its fix, and the regression evidence. It
-   reads that delta
-   (`base` the reviewed commit) and the callers it affects, and widens only
-   by naming the assumption the delta broke. If the operator adds scope
-   while a review runs, let it finish, keep its verdict for the commit it
-   read, and have the addition reviewed as a delta. Continue while fixes
+   fixes. Delegate the missing pass as your contract defines, a NEW agent
+   reading the whole change (`base` the change's start) at the new head. It
+   gets the previous verdicts, each finding beside its fix, and the
+   regression evidence. If the operator adds scope while a review runs, let
+   it finish, keep its verdict for the commit it read, and have the whole
+   change read again with the addition. Continue while fixes
    make progress within the item's time and spending limits; escalate
    repeated findings or a stalled approach with evidence.
 7. **Finish or fail.** An unresolved blocking finding, a failed check, a

@@ -167,13 +167,19 @@ archon update --yes                  # install, update Aether, restart everythin
 archon update --yes --wait 600 --requeue
 ```
 
-An accepted restart does, in order: `aether update`; the drained restart
-of `archond` and, in dedicated mode, Archon's own aetherd (`archon daemon
-restart`, with the same `--wait` and `--requeue`: running items resume as
-after any daemon restart); and `archon orchestrator restart`, which gives
-the orchestrator the new tools. In shared mode your own aetherd is never
-restarted; Archon's tools in it are refreshed with `aether mcp refresh
-archon`. Nothing is restarted when `archond` is not running: the next
+An accepted restart does, in order: `aether update`; the restart of
+`archond` alone, at once (`archon daemon restart --keep-aether`): Aether and
+the stage agents running in it keep running, and the new archond takes up
+their stages as after any daemon restart; and `archon orchestrator
+restart`, which gives the orchestrator the new tools. It never waits for
+stage agents to finish. archond waits only for its own spawns, merges and
+deliveries under way (at most `--wait`); one still busy after 30 seconds
+restarts by itself once they end, and the update says so and returns. When
+`aether update` installed a new Aether, archond is then asked to restart
+Archon's own aetherd in the background, once its stage agents finish (at
+most `--wait`, `--requeue` to restart anyway). In shared mode your own
+aetherd is never restarted; Archon's tools in it are refreshed with `aether
+mcp refresh archon`. Nothing is restarted when `archond` is not running: the next
 command that needs it starts the new version. When `archond` already runs
 the installed version, only an orchestrator another archon created is
 restarted (an earlier update cut short after archond's restart leaves one).
@@ -189,23 +195,22 @@ installed but nothing is restarted, and the command fails naming them: the
 archond it would reach may be another setup's.
 
 Each step is said on stderr as it starts (`archon: update: restarting
-archond (pid 4242, for at most 2100s)`), and each has a deadline: the
-archond restart `--wait` plus five minutes, the question to a current
-archond about which archon created the orchestrator one minute, the
-orchestrator restart three minutes. With `--yes` and a running `archond`, the command exits 0 only
-once archond runs the new version and the orchestrator, if one runs, is in
-a generation the new version created; otherwise it exits non-zero naming
-the step that did not finish.
+archond (pid 4242, for at most 30s; running stage agents keep running)`),
+and each has a deadline: `aether update` ten minutes, the archond restart
+30 seconds, the question to a current archond about which archon created
+the orchestrator one minute, the orchestrator restart three minutes. With
+`--yes` and a running `archond`, the command exits 0 once archond runs the
+new version and the orchestrator, if one runs, is in a generation the new
+version created, or once archond said it restarts by itself; otherwise it
+exits non-zero naming the step that did not finish.
 The install report then names no commands to run by hand. Ctrl-C (SIGINT),
 SIGTERM or SIGHUP ends it at any step, the question included: it names the
 step it stopped, says what finishes the restart by hand, and exits 128 plus
-the signal (130 for Ctrl-C). Without `--yes`, off a terminal, the command
-prints what to run by hand:
+the signal (130 for Ctrl-C); at launch it then exits instead of opening.
+Without `--yes`, off a terminal, the command prints what to run by hand:
 
 ```sh
-archon daemon stop --keep-aether
-archon aether mcp refresh archon
-archon orchestrator restart
+archon daemon restart --keep-aether
 ```
 
 It also reports whether your Aether serves what the new version needs, and
@@ -221,7 +226,8 @@ Archon 1.4.9 is available (this is 1.4.8).
 Update and restart now? [Y/n/s] (s: skip these versions)
 ```
 
-`Y` (or Enter) runs `archon update --yes` and then starts the new `archon`;
+`Y` (or Enter) runs `archon update --yes` and then starts the new `archon`
+against the restarted archond;
 `n` goes on and asks again at the next launch; `s` skips these versions
 until a newer one is released. The check waits at most 1.5 seconds for
 GitHub, reuses an answer for `[update] cache_for` (an hour), is silent
@@ -244,7 +250,8 @@ archon daemon restart                              # the same drained restart, i
 ```
 
 archond holds dispatch until running stage agents finish or `--wait`
-seconds pass, then installs (`<program> update` for an installer's binary,
+seconds pass (with `--keep-aether`, only its own spawns, merges and
+deliveries: stage agents keep running in Aether), then installs (`<program> update` for an installer's binary,
 `cargo install --locked --git` for one in cargo's bin directory) and
 restarts itself and Archon's own aetherd through a detached helper and
 reports the old and new versions in `archon log`. When the wait runs out it

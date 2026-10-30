@@ -336,8 +336,8 @@ fn a_running_archond_and_an_old_aether_are_named_with_what_to_run() {
     assert!(
         stdout.contains(&format!(
             "archond (pid {pid}) still runs test, and the update itself interrupts no running \
-             item; to switch it to 9.9.9, run `archon daemon stop --keep-aether`, then `archon \
-             aether mcp refresh archon` and `archon orchestrator restart`."
+             item; to switch it to 9.9.9, run `archon daemon restart --keep-aether`, which keeps \
+             running stage agents and gives the orchestrator the new tools."
         )),
         "{stdout}"
     );
@@ -481,24 +481,34 @@ fn yes_prints_no_manual_steps_and_a_signal_ends_a_stuck_restart_naming_its_step(
             && stderr.contains("update interrupted by SIGINT while restarting archond"),
         "{stderr}"
     );
-    assert!(stderr.contains("`archon orchestrator restart`"), "{stderr}");
+    assert!(stderr.contains("stage agents keep running"), "{stderr}");
     assert!(
-        stdout.contains("to switch it to 9.9.9, `--yes` restarts it now."),
+        stdout.contains(&format!(
+            "archond (pid {}) runs test; it restarts next, and its running stage agents keep \
+             running in Aether.",
+            std::process::id()
+        )),
         "{stdout}"
     );
     assert!(!stdout.contains("daemon stop --keep-aether"), "{stdout}");
 }
 
 /// An archond that welcomes this protocol until it is asked to upgrade, then
-/// refuses every hello as one restarted on a newer protocol would.
-fn serve_archond_restarting_on_a_newer_protocol(socket: &Path) {
+/// refuses every hello as one restarted on a newer protocol would. It keeps
+/// the upgrades it was asked for.
+fn serve_archond_restarting_on_a_newer_protocol(
+    socket: &Path,
+) -> Arc<std::sync::Mutex<Vec<archon_core::ops::UpgradeRequest>>> {
     use archon_core::protocol::{ErrorCode, ErrorReply};
     use std::io::{BufRead as _, BufReader, Write as _};
     let listener = std::os::unix::net::UnixListener::bind(socket).unwrap();
     let restarted = Arc::new(AtomicBool::new(false));
+    let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let upgrades = asked.clone();
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let (mut writer, restarted) = (stream.unwrap(), restarted.clone());
+            let upgrades = upgrades.clone();
             std::thread::spawn(move || {
                 let reader = BufReader::new(writer.try_clone().unwrap());
                 for line in reader.lines().map_while(Result::ok) {
@@ -518,7 +528,8 @@ fn serve_archond_restarting_on_a_newer_protocol(socket: &Path) {
                             daemon_version: CURRENT.into(),
                             pid: std::process::id(),
                         })),
-                        Request::Upgrade(_) => {
+                        Request::Upgrade(request) => {
+                            upgrades.lock().unwrap().push(request);
                             restarted.store(true, Ordering::SeqCst);
                             Ok(Reply::UpgradeStarted {
                                 text: "restarting".into(),
@@ -535,6 +546,7 @@ fn serve_archond_restarting_on_a_newer_protocol(socket: &Path) {
             });
         }
     });
+    asked
 }
 
 #[test]
@@ -553,7 +565,7 @@ fn a_restart_onto_a_newer_protocol_renews_the_orchestrator_through_the_installed
     );
     let updating = aether_script(16, 17).replace("*) exit 64", "update) echo done ;;\n*) exit 64");
     write_script(&installed.path("tools/aether"), &updating);
-    serve_archond_restarting_on_a_newer_protocol(&installed.socket());
+    let asked = serve_archond_restarting_on_a_newer_protocol(&installed.socket());
     let update = installed
         .command(&installed.archon(), &["update", "--yes", "--wait", "1"])
         .stdout(Stdio::piped())
@@ -568,6 +580,12 @@ fn a_restart_onto_a_newer_protocol_renews_the_orchestrator_through_the_installed
     assert!(
         stdout.contains("Restarted the orchestrator on archon 9.9.9."),
         "{stdout}"
+    );
+    let asked = asked.lock().unwrap().clone();
+    assert_eq!(asked.len(), 1, "one restart: {asked:?}");
+    assert!(
+        asked[0].keep_aether && asked[0].archon.is_none(),
+        "Aether and its stage agents keep running: {asked:?}"
     );
 }
 

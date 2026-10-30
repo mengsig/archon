@@ -1,8 +1,10 @@
 //! What follows an install, so that the update takes effect now: update
-//! Aether, restart archond and Archon's own aetherd through the drained
-//! restart archond already has, then give the orchestrator its new tools.
-//! The sequence runs against [`Steps`], so tests drive it with a fake.
-//! Every step is said on stderr and bounded, and a signal ends any of them.
+//! Aether, restart archond at once while Aether and its stage agents keep
+//! running, then give the orchestrator its new tools. A new Aether in
+//! Archon's own aetherd waits for its stage agents, so archond does that
+//! restart in the background. The sequence runs against [`Steps`], so tests
+//! drive it with a fake. Every step is said on stderr and bounded, and a
+//! signal ends any of them.
 
 use std::cell::Cell;
 use std::ffi::OsStr;
@@ -23,9 +25,13 @@ use crate::instance::AETHER_PROGRAM;
 use crate::views::fetch_status;
 
 const POLL: Duration = Duration::from_secs(1);
-/// After the drain: the helper waits for archond to exit, then both restart.
-const RESTART_MARGIN: Duration = Duration::from_secs(300);
+/// How long the update waits for archond to come back on the installed
+/// archon. One still finishing its own work restarts by itself after it.
+pub(super) const SWITCH_LIMIT: Duration = Duration::from_secs(30);
 const AETHER_UPDATE_TIMEOUT: Duration = Duration::from_secs(600);
+const MCP_REFRESH_TIMEOUT: Duration = Duration::from_secs(60);
+/// Asking archond to restart Archon's own aetherd later; it answers at once.
+const AETHER_RESTART_DEADLINE: Duration = Duration::from_secs(30);
 /// Polls in a row that find archond not upgrading before the restart is
 /// taken as given up.
 const GIVE_UP_AFTER: u32 = 3;
@@ -49,6 +55,7 @@ pub(super) enum Phase {
     CheckingOrchestrator,
     RefreshingTools,
     RestartingOrchestrator,
+    RestartingAether,
 }
 
 impl Phase {
@@ -62,6 +69,9 @@ impl Phase {
             Self::CheckingOrchestrator => "asking which archon created the orchestrator",
             Self::RefreshingTools => "refreshing Archon's tools in your aetherd",
             Self::RestartingOrchestrator => "restarting the orchestrator",
+            Self::RestartingAether => {
+                "asking archond to restart Archon's own aetherd once its stage agents finish"
+            }
         }
     }
 
@@ -72,8 +82,8 @@ impl Phase {
                 "nothing was restarted; `archon update --yes` runs the restart"
             }
             Self::RestartingArchond => {
-                "archond restarts on its own as it was asked; `archon status` shows when it \
-                 runs the new version, then run `archon orchestrator restart`"
+                "archond restarts on its own as it was asked, and its running stage agents keep \
+                 running; `archon status` shows when it runs the new version"
             }
             Self::CheckingOrchestrator => {
                 "`archon orchestrator status` names the archon that created it; if that is not \
@@ -83,6 +93,10 @@ impl Phase {
                 "run `archon aether mcp refresh archon`, then `archon orchestrator restart`"
             }
             Self::RestartingOrchestrator => "run `archon orchestrator restart`",
+            Self::RestartingAether => {
+                "archond runs the installed archon; `archon daemon restart` gives Archon's own \
+                 aetherd the new Aether once its stage agents finish"
+            }
         }
     }
 }
@@ -188,6 +202,9 @@ pub(super) trait Steps {
     async fn orchestrator_creator(&self) -> anyhow::Result<Option<String>>;
     /// The Archon version that created the generation now running.
     async fn restart_orchestrator(&self) -> anyhow::Result<String>;
+    /// Ask archond to restart Archon's own aetherd once its stage agents
+    /// finish; what archond answered.
+    async fn restart_aether_later(&self, plan: &Plan) -> anyhow::Result<String>;
     async fn pause(&self);
 }
 
@@ -212,17 +229,9 @@ pub(super) fn announce(plan: &Plan, running: Option<&Running>) -> String {
         ),
         Some(archond) => {
             lines.push(format!(
-                "  - archond (pid {}), after the running stage agents finish (at most {}s{})",
-                archond.pid,
-                plan.drain_secs,
-                match plan.requeue {
-                    true => ", then regardless: stopped stages are retried",
-                    false => "; the restart is given up if they do not",
-                }
+                "  - archond (pid {}), at once: running stage agents keep running in Aether",
+                archond.pid
             ));
-            if plan.dedicated {
-                lines.push("  - Archon's own aetherd; running items resume".to_owned());
-            }
             lines.push(
                 "  - the orchestrator agent, which is recreated with the new tools".to_owned(),
             );
@@ -230,7 +239,12 @@ pub(super) fn announce(plan: &Plan, running: Option<&Running>) -> String {
     }
     lines.push("Aether is updated first (`aether update`).".to_owned());
     lines.push(match plan.dedicated {
-        true => "Your own aetherd is not touched.".to_owned(),
+        true => format!(
+            "A new Aether runs once Archon's own aetherd restarts, which archond does in the \
+             background after its stage agents finish (at most {}s). Your own aetherd is not \
+             touched.",
+            plan.drain_secs
+        ),
         false => "Your aetherd is not restarted: [aether] mode is \"shared\".".to_owned(),
     });
     lines.join("\n")
@@ -244,18 +258,12 @@ pub(super) async fn apply(
     progress: &Progress,
 ) -> anyhow::Result<Outcome> {
     assert!(plan.drain_secs > 0, "a restart waits at least a second");
+    assert!(
+        !plan.installed.is_empty(),
+        "the installed archon has a version"
+    );
     let mut outcome = Outcome::default();
-    let mut aether_changed = false;
-    progress.enter(Phase::UpdatingAether, "");
-    match steps.update_aether().await {
-        Ok(update) => {
-            aether_changed = update.changed;
-            outcome.lines.push(update.line);
-        }
-        Err(error) => outcome
-            .warnings
-            .push(format!("aether was not updated: {error:#}")),
-    }
+    let aether_changed = update_aether(steps, &mut outcome, progress).await;
     progress.enter(Phase::FindingArchond, "");
     let Some(old) = steps.running_archond().await? else {
         outcome
@@ -264,22 +272,117 @@ pub(super) async fn apply(
         return Ok(outcome);
     };
     let current = bare_version(&old.version) == bare_version(&plan.installed);
-    if !plan.archon_changed && !aether_changed && current {
-        let line = format!("archond already runs archon {}.", plan.installed);
-        outcome.lines.push(line);
-        return catch_up(steps, plan, outcome, progress).await;
+    let switched = match plan.archon_changed || !current {
+        true => switch_archond(steps, plan, &old, &mut outcome, progress).await?,
+        false => {
+            let line = format!("archond already runs archon {}.", plan.installed);
+            outcome.lines.push(line);
+            outcome = catch_up(steps, plan, outcome, progress).await?;
+            true
+        }
+    };
+    if aether_changed {
+        aether_later(steps, plan, switched, &mut outcome, progress).await;
     }
-    let limit = Duration::from_secs(plan.drain_secs) + RESTART_MARGIN;
-    let detail = format!("pid {}, for at most {}s", old.pid, limit.as_secs());
-    progress.enter(Phase::RestartingArchond, &detail);
-    restart(steps, plan, &old, limit).await?;
-    outcome.lines.push(match plan.dedicated {
-        true => "Restarted archond and Archon's own aetherd.".to_owned(),
-        false => "Restarted archond.".to_owned(),
-    });
-    renew_orchestrator(steps, plan, &mut outcome, progress).await?;
-    outcome.restarted = true;
     Ok(outcome)
+}
+
+/// `aether update`; whether it installed another Aether. A failure is a warning.
+async fn update_aether(steps: &impl Steps, outcome: &mut Outcome, progress: &Progress) -> bool {
+    let detail = format!("for at most {}s", AETHER_UPDATE_TIMEOUT.as_secs());
+    progress.enter(Phase::UpdatingAether, &detail);
+    match steps.update_aether().await {
+        Ok(update) => {
+            outcome.lines.push(update.line);
+            update.changed
+        }
+        Err(error) => {
+            let warning = format!("aether was not updated: {error:#}");
+            outcome.warnings.push(warning);
+            false
+        }
+    }
+}
+
+/// Restart archond on the installed archon, keeping Aether and the stage
+/// agents in it, then renew the orchestrator. `false` when archond still
+/// drains after [`SWITCH_LIMIT`] and restarts by itself later.
+async fn switch_archond(
+    steps: &impl Steps,
+    plan: &Plan,
+    old: &Running,
+    outcome: &mut Outcome,
+    progress: &Progress,
+) -> anyhow::Result<bool> {
+    assert!(old.pid > 0, "a running archond has a pid");
+    let detail = format!(
+        "pid {}, for at most {}s; running stage agents keep running",
+        old.pid,
+        SWITCH_LIMIT.as_secs()
+    );
+    progress.enter(Phase::RestartingArchond, &detail);
+    if restart(steps, plan, old, SWITCH_LIMIT).await? == Switched::Later {
+        outcome.lines.push(format!(
+            "archond (pid {}) still drains its own work after {}s; it restarts on archon {} by \
+             itself, and its stage agents keep running (`archon status` shows when).",
+            old.pid,
+            SWITCH_LIMIT.as_secs(),
+            plan.installed
+        ));
+        return Ok(false);
+    }
+    outcome
+        .lines
+        .push("Restarted archond; its running stage agents kept running in Aether.".to_owned());
+    renew_orchestrator(steps, plan, outcome, progress).await?;
+    outcome.restarted = true;
+    Ok(true)
+}
+
+/// A new Aether runs once its aetherd restarts. archond restarts its own in
+/// the background, after the stage agents in it finish; the operator's is
+/// theirs. A failure is a warning: archond already runs the installed archon.
+async fn aether_later(
+    steps: &impl Steps,
+    plan: &Plan,
+    switched: bool,
+    outcome: &mut Outcome,
+    progress: &Progress,
+) {
+    let line = match (plan.dedicated, switched) {
+        (false, _) => "Your aetherd runs the new Aether once you restart it: [aether] mode is \
+                       \"shared\", so the update leaves it running."
+            .to_owned(),
+        (true, false) => "Archon's own aetherd keeps the old Aether: once archond is back, \
+                          `archon daemon restart` restarts it after its stage agents finish."
+            .to_owned(),
+        (true, true) => {
+            progress.enter(Phase::RestartingAether, "");
+            let asked =
+                tokio::time::timeout(AETHER_RESTART_DEADLINE, steps.restart_aether_later(plan))
+                    .await
+                    .unwrap_or_else(|_| {
+                        let waited = AETHER_RESTART_DEADLINE.as_secs();
+                        Err(anyhow::anyhow!("archond did not answer within {waited}s"))
+                    });
+            match asked {
+                Ok(said) => format!(
+                    "Archon's own aetherd restarts on the new Aether in the background, once its \
+                     stage agents finish (at most {}s): {said}",
+                    plan.drain_secs
+                ),
+                Err(error) => {
+                    let warning = format!(
+                        "archond was not asked to restart Archon's own aetherd, which keeps the \
+                         old Aether until `archon daemon restart`: {error:#}"
+                    );
+                    outcome.warnings.push(warning);
+                    return;
+                }
+            }
+        }
+    };
+    outcome.lines.push(line);
 }
 
 /// archond already runs the installed archon, yet an update cut short after
@@ -322,6 +425,15 @@ async fn catch_up(
     Ok(outcome)
 }
 
+/// How archond's restart went within the update's wait.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Switched {
+    /// A new archond answers.
+    Now,
+    /// The old one still drains, and restarts by itself once it has.
+    Later,
+}
+
 /// Ask archond to restart and poll until a new one answers, for `limit` at
 /// most: a poll that does not answer is cut off by the same deadline.
 async fn restart(
@@ -329,7 +441,7 @@ async fn restart(
     plan: &Plan,
     old: &Running,
     limit: Duration,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Switched> {
     assert!(limit >= POLL, "the wait allows a poll");
     let deadline = tokio::time::Instant::now() + limit;
     tokio::time::timeout_at(deadline, steps.request_restart(plan))
@@ -344,15 +456,16 @@ async fn restart(
             )
         })?;
     let polls = limit.as_secs() / POLL.as_secs();
-    let (mut idle, mut last_down) = (0, None);
+    let (mut idle, mut last_down, mut draining) = (0, None, false);
     for _ in 0..polls {
         steps.pause().await;
         let Ok(seen) = tokio::time::timeout_at(deadline, steps.observe(old.pid)).await else {
             last_down = Some("the last poll got no answer".to_owned());
             break;
         };
+        draining = seen == Seen::Old { upgrading: true };
         match seen {
-            Seen::New => return Ok(()),
+            Seen::New => return Ok(Switched::Now),
             Seen::Down(why) => {
                 idle = 0;
                 last_down = why.or(last_down);
@@ -362,15 +475,18 @@ async fn restart(
         }
         anyhow::ensure!(
             idle < GIVE_UP_AFTER,
-            "archond (pid {}) gave up the restart: stage agents still ran after {}s. Nothing was \
-             restarted; `archon log` has the reason. Ask again with `archon update --wait SECS`, \
-             or `--requeue` to restart anyway.",
+            "archond (pid {}) gave up the restart: its own spawns, merges or deliveries still ran \
+             after {}s. Nothing was restarted; `archon log` has the reason. Ask again with \
+             `archon update --wait SECS`, or `--requeue` to restart anyway.",
             old.pid,
             plan.drain_secs
         );
         if tokio::time::Instant::now() >= deadline {
             break;
         }
+    }
+    if draining {
+        return Ok(Switched::Later);
     }
     let why = last_down.map_or(String::new(), |why| format!(" ({why})"));
     anyhow::bail!(
@@ -460,12 +576,13 @@ impl Steps for Live {
     }
 
     async fn request_restart(&self, plan: &Plan) -> anyhow::Result<()> {
+        // Aether and the stage agents in it keep running for the next archond.
         let request = UpgradeRequest {
             archon: None,
             aether: None,
             drain_secs: plan.drain_secs,
             requeue: plan.requeue,
-            keep_aether: false,
+            keep_aether: true,
         };
         request.check()?;
         let client = connect_running().await?;
@@ -499,7 +616,7 @@ impl Steps for Live {
         let aether = find_program(Path::new(AETHER_PROGRAM))
             .context("no `aether` was found on PATH to refresh Archon's tools")?;
         let args = ["mcp", "refresh", "archon"].map(OsStr::new);
-        tools::run(&aether, &args, AETHER_UPDATE_TIMEOUT).await?;
+        tools::run(&aether, &args, MCP_REFRESH_TIMEOUT).await?;
         Ok(())
     }
 
@@ -534,6 +651,33 @@ impl Steps for Live {
             tokio::time::sleep(POLL).await;
         }
         Err(last.context("the orchestrator was never asked")?)
+    }
+
+    async fn restart_aether_later(&self, plan: &Plan) -> anyhow::Result<String> {
+        assert!(
+            self.archon.is_absolute(),
+            "the installed archon is named whole"
+        );
+        let wait = plan.drain_secs.to_string();
+        let mut args = ["--json", "daemon", "restart", "--wait", &wait]
+            .map(OsStr::new)
+            .to_vec();
+        if plan.requeue {
+            args.push(OsStr::new("--requeue"));
+        }
+        // The installed archon speaks the restarted archond's protocol.
+        let ran = tools::run(&self.archon, &args, AETHER_RESTART_DEADLINE).await?;
+        let said: serde_json::Value = serde_json::from_slice(&ran.stdout).with_context(|| {
+            format!(
+                "`{} --json daemon restart` printed no JSON",
+                self.archon.display()
+            )
+        })?;
+        let started = said["started"]
+            .as_str()
+            .filter(|text| !text.is_empty())
+            .with_context(|| format!("archond did not say it started the restart: {said}"))?;
+        Ok(started.to_owned())
     }
 
     async fn pause(&self) {

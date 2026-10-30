@@ -38,8 +38,10 @@ pub async fn dispatch(cli: Cli) -> anyhow::Result<ExitCode> {
         ))
         .into());
     }
-    if launches_ui(cli.command.as_ref()) {
-        update::before_launch().await?;
+    if launches_ui(cli.command.as_ref())
+        && let Some(interrupted) = update::before_launch().await?
+    {
+        return Ok(interrupted);
     }
     let Some(command) = cli.command else {
         return bare::run().await;

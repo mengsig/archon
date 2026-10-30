@@ -64,7 +64,8 @@
   (`PASS — all 214 tests pass` counts; `PASS — merge only with green CI`
   does not), or followed in the summary by any line but `head:` and `base:`,
   still counts as fail,
-  and the refusal now quotes it.
+  and the refusal now quotes it. A structured pass beside a summary
+  whose final `VERDICT:` line does not pass counts as fail too.
 - A reviewer plan's effort is a floor, not a ceiling. The delegation
   watchdog cancelled a reviewer delegated above the planned effort in the
   middle of its review, and let one below it run, which is how

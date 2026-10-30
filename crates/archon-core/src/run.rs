@@ -25,12 +25,15 @@ const VERDICT_KEYS: [&str; 3] = ["verdict", "result", "status"];
 
 impl Verdict {
     /// `structured.verdict`, else a readable `structured.result` or `status`,
-    /// else the summary's last `VERDICT:` line.
+    /// else the summary's last `VERDICT:` line. A structured pass counts only
+    /// when that line, if the summary has one, passes too.
     pub fn extract(summary: &str, structured: Option<&serde_json::Value>) -> Self {
-        structured
-            .and_then(Self::from_structured)
-            .or_else(|| Self::from_summary(summary))
-            .unwrap_or(Self::Unknown)
+        let line = Self::from_summary(summary);
+        match structured.and_then(Self::from_structured) {
+            Some(Self::Pass) if line.is_some_and(|said| said != Self::Pass) => Self::Unknown,
+            Some(given) => given,
+            None => line.unwrap_or(Self::Unknown),
+        }
     }
 
     /// The verdict `structured` states: its `verdict` key whenever it has
@@ -82,6 +85,13 @@ impl Verdict {
     /// The text a result gives as its verdict, readable or not, to quote
     /// when it is refused: a structured field, else a `VERDICT:` line.
     pub fn stated(summary: &str, structured: Option<&serde_json::Value>) -> Option<String> {
+        let line = || last_verdict_line(summary).map(|(line, _)| line.trim());
+        let given = structured.and_then(Self::from_structured);
+        // A summary line that takes a structured pass back is what refused it.
+        if given == Some(Self::Pass) && Self::from_summary(summary).is_some_and(|s| s != Self::Pass)
+        {
+            return line().map(str::to_owned);
+        }
         let field = |key| structured?.get(key);
         let quote = |given: &serde_json::Value| match given.as_str() {
             Some(text) => text.trim().to_owned(),
@@ -92,7 +102,6 @@ impl Verdict {
         }
         // The order `extract` reads in: a `result` or `status` it skipped is the last resort.
         let used = structured.and_then(Self::other_field).map(|(text, _)| text);
-        let line = || last_verdict_line(summary).map(|(line, _)| line.trim());
         let skipped = || {
             VERDICT_KEYS[1..]
                 .iter()
@@ -1025,6 +1034,25 @@ mod tests {
                 assert_eq!(read, Verdict::Unknown, "{key}: {said}");
             }
         }
+        let pass = json!({"verdict": "pass"});
+        for (summary, want) in [
+            ("Done.", Verdict::Pass),
+            ("VERDICT: PASS", Verdict::Pass),
+            (
+                "VERDICT: PASS — CI must pass before merge",
+                Verdict::Unknown,
+            ),
+            ("VERDICT: FAIL", Verdict::Unknown),
+        ] {
+            assert_eq!(Verdict::extract(summary, Some(&pass)), want, "{summary}");
+        }
+        let fail = json!({"verdict": "fail"});
+        assert_eq!(
+            Verdict::extract("VERDICT: PASS", Some(&fail)),
+            Verdict::Fail
+        );
+        let said = Verdict::stated("VERDICT: FAIL", Some(&pass));
+        assert_eq!(said.as_deref(), Some("VERDICT: FAIL"));
         let later = json!({"verdict": "PASS\nDo not merge until CI is green"});
         assert_eq!(Verdict::extract("", Some(&later)), Verdict::Unknown);
         let continued = "Reviewed.\n\nVERDICT: PASS\nDo not merge until CI is green";

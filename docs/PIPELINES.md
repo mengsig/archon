@@ -335,7 +335,9 @@ line in a fence, a quote or nested in a list is an example). A verdict,
 JSON or any of its top-level `head:`/`base:` lines name different commits.
 JSON that states no `verdict`, such as a test report, leaves the
 `VERDICT:` line to decide. A
-`structured` that states a verdict takes precedence, even if invalid. The
+`structured` that states a verdict takes precedence, even if invalid, but
+a structured pass is refused when the summary's final `VERDICT:` line does
+not pass too. The
 verdict word is read as stage gates read it (see "The stage contract"). Prose,
 and a `VERDICT:` line with no commit it read, do not count as a delegated
 review.
@@ -837,7 +839,8 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   This errs on the safe side: a plain explanation such as
   `PASS — 0 failed` or `PASS — no blocking findings` is refused too, so
   put details above the verdict line and end the summary with it.
-  The gate's refusal quotes what the agent wrote.
+  A structured pass counts only when the summary's last `VERDICT:` line,
+  if it has one, passes too. The gate's refusal quotes what the agent wrote.
   Known limitation: of CommonMark, the parser models only block quotes,
   list indentation and fences, and reads other constructs as plain lines;
   a verdict it cannot settle counts as fail, never as pass, so write a

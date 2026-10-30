@@ -76,6 +76,11 @@ impl Verdict {
         if structured.is_some_and(|data| Said::from_structured(data).is_some()) {
             let read = Self::read(structured)?;
             read.claims_agree(summary, structured)?;
+            if read.pass && Said::from_summary(summary).is_some_and(|said| said != Said::Pass) {
+                return Err(format!(
+                    "its structured verdict passes but its summary's final `VERDICT:` line does not: {VERDICT_HOWTO}"
+                ));
+            }
             return Ok(read);
         }
         // JSON that states no verdict (a test report) is evidence; the lines decide.
@@ -693,6 +698,19 @@ mod tests {
         assert!(refused.contains("\"PASS or FAIL\""), "{refused}");
         let explained = format!("VERDICT: PASS — all tests pass\nhead: {HEAD}");
         assert!(Verdict::read_result(&explained, None).unwrap().pass);
+        let pass = json!({"verdict": "pass", "head": HEAD});
+        for summary in ["VERDICT: FAIL", "VERDICT: PASS — CI must pass before merge"] {
+            let refused = Verdict::read_result(summary, Some(&pass)).unwrap_err();
+            assert!(
+                refused.contains("summary's final `VERDICT:` line"),
+                "{refused}"
+            );
+        }
+        assert!(
+            Verdict::read_result("VERDICT: PASS", Some(&pass))
+                .unwrap()
+                .pass
+        );
         let held = format!("VERDICT: PASS — merge only with green CI\nhead: {HEAD}");
         assert!(Verdict::read_result(&held, None).is_err());
         let trailing = format!("VERDICT: PASS\nhead: {HEAD}\nDo not merge yet.");

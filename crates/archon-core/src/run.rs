@@ -193,13 +193,13 @@ fn line_kind(scan: &mut Scan, line: &str) -> LineKind {
     if columns < 4 {
         scan.fence = fence_marker(start);
     }
-    // A blank line, a fence, a heading or a list item ends a quote; other text continues it.
-    scan.quoted &= !start.is_empty() && scan.fence.is_none() && !opens_block(start);
+    // A quote's open paragraph runs on through any line but a blank one or one that interrupts it.
+    scan.quoted &= !start.is_empty() && scan.fence.is_none() && !interrupts_paragraph(line);
     match (scan.fence.is_some(), columns) {
         (true, 0) => LineKind::FenceOpen,
         (true, _) => LineKind::NestedFenceOpen,
         (false, 0..4) if start.starts_with('>') => {
-            scan.quoted = true;
+            scan.quoted = quote_holds_paragraph(start);
             LineKind::Quote
         }
         (false, 0) if scan.quoted => LineKind::Quote,
@@ -208,13 +208,71 @@ fn line_kind(scan: &mut Scan, line: &str) -> LineKind {
     }
 }
 
-/// Whether `line` opens a heading or a bullet list item, either of which
-/// interrupts a paragraph.
-fn opens_block(line: &str) -> bool {
-    line.starts_with('#')
-        || ["- ", "* ", "+ "]
-            .iter()
-            .any(|bullet| line.starts_with(bullet))
+/// Whether `line` starts a block that interrupts a paragraph, as in
+/// CommonMark: a heading, a thematic break, a bullet item or one numbered 1.
+fn interrupts_paragraph(line: &str) -> bool {
+    if indent_columns(line) >= 4 {
+        return false;
+    }
+    let start = line.trim_start();
+    let first_item = start.starts_with('1') && list_marker_len(start) == Some(2);
+    let bullet = start.starts_with(['-', '*', '+']) && list_marker_len(start).is_some();
+    atx_heading(start) || thematic_break(start) || bullet || first_item
+}
+
+/// Whether a `>` line `start` leaves a paragraph open, which the next line
+/// may lazily continue: not after a heading, a fence, a break or code.
+fn quote_holds_paragraph(start: &str) -> bool {
+    assert!(start.starts_with('>'), "a quote line");
+    let mut rest = start;
+    loop {
+        if thematic_break(rest) {
+            return false;
+        }
+        if let Some(inner) = rest.strip_prefix('>') {
+            rest = inner.strip_prefix([' ', '\t']).unwrap_or(inner);
+        } else if let Some(marker) = list_marker_len(rest) {
+            rest = &rest[marker..];
+        } else {
+            break;
+        }
+        if indent_columns(rest) >= 4 {
+            return false;
+        }
+        rest = rest.trim_start();
+    }
+    let block = atx_heading(rest) || thematic_break(rest) || fence_marker(rest).is_some();
+    !rest.is_empty() && !block
+}
+
+/// The bytes of the list marker (`-`, `*`, `+`, `1.`, `12)`) opening `line`
+/// before text, its following whitespace not included.
+fn list_marker_len(line: &str) -> Option<usize> {
+    let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+    let marker = match digits {
+        0 if line.starts_with(['-', '*', '+']) => 1,
+        1..=9 if line[digits..].starts_with(['.', ')']) => digits + 1,
+        _ => return None,
+    };
+    let text = line[marker..].strip_prefix([' ', '\t'])?;
+    (!text.trim().is_empty()).then_some(marker)
+}
+
+/// An ATX heading: one to six `#`, then whitespace or the end of the line.
+fn atx_heading(line: &str) -> bool {
+    let hashes = line.bytes().take_while(|b| *b == b'#').count();
+    let rest = &line[hashes..];
+    (1..=6).contains(&hashes) && (rest.is_empty() || rest.starts_with([' ', '\t']))
+}
+
+/// A thematic break: three or more of one of `-`, `*`, `_`, spaces between.
+fn thematic_break(line: &str) -> bool {
+    let mut marks = line.chars().filter(|c| !matches!(c, ' ' | '\t'));
+    let Some(mark) = marks.next().filter(|c| matches!(c, '-' | '*' | '_')) else {
+        return false;
+    };
+    let rest: Vec<char> = marks.collect();
+    rest.len() >= 2 && rest.iter().all(|c| *c == mark)
 }
 
 /// The columns `line`'s leading spaces and tabs span, a tab reaching the next
@@ -753,6 +811,32 @@ mod tests {
         }
         let listed_after_quote = "> a note\n- **Verdict:** PASS";
         assert_eq!(Verdict::extract(listed_after_quote, None), Verdict::Pass);
+        for quoted in [
+            "> example\n    - test\nVERDICT: PASS",
+            "> example\n    # not a heading here\nVERDICT: PASS",
+            "> example\n#not-a-heading\nVERDICT: PASS",
+            "> example\n2. not a first item\nVERDICT: PASS",
+            "> - a quoted item\nVERDICT: PASS",
+            "> > nested\nVERDICT: PASS",
+        ] {
+            assert_eq!(
+                Verdict::extract(quoted, None),
+                Verdict::Unknown,
+                "{quoted:?}"
+            );
+        }
+        for top in [
+            "> example\n1. tests pass\nVERDICT: PASS",
+            "> # heading\nVERDICT: PASS",
+            "> example\n***\nVERDICT: PASS",
+            "> - - -\nVERDICT: PASS",
+            "> example\n## Verdict: PASS",
+            "> a\n>\nVERDICT: PASS",
+            ">     code\nVERDICT: PASS",
+            "> ```\n> code\n> ```\nVERDICT: PASS",
+        ] {
+            assert_eq!(Verdict::extract(top, None), Verdict::Pass, "{top:?}");
+        }
         let mixed = "````\n~~~\nVERDICT: PASS\n```\n````\nFindings remain.";
         assert_eq!(Verdict::extract(mixed, None), Verdict::Unknown);
         let closed = "~~~\nVERDICT: FAIL\n~~~~\nVERDICT: PASS";

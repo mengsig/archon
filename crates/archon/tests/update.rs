@@ -6,6 +6,8 @@
 mod archond;
 #[path = "common/release.rs"]
 mod release;
+#[path = "common/terminal.rs"]
+mod terminal;
 
 use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::process::ExitStatusExt as _;
@@ -18,6 +20,7 @@ use std::time::{Duration, Instant, SystemTime};
 use archon_core::protocol::{ClientFrame, PROTOCOL_VERSION, Reply, Request, ServerFrame, Welcome};
 use archon_core::testing::write_script;
 use release::{ARCHIVE_MEMBERS, Server, aether_script, archive_members, archon_script, publish};
+use terminal::{Session, Terminal};
 
 const BUILT: &str = env!("CARGO_BIN_EXE_archon");
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
@@ -176,6 +179,21 @@ fn update_interrupted_by(installed: &Installed, signal: &str) -> Output {
         "{partial:?}"
     );
     end_with(update, signal)
+}
+
+/// A bare `archon` on `terminal` with the launch-time check on, at its
+/// update question for the published 9.9.9.
+fn launch_offering_an_update(installed: &Installed, terminal: &Terminal) -> Session {
+    let mut launch = installed.command(&installed.archon(), &[]);
+    launch.env_remove("ARCHON_NO_UPDATE_CHECK");
+    let mut session = terminal.start(&mut launch);
+    session.wait_for(&format!("Archon 9.9.9 is available (this is {CURRENT})."));
+    session.wait_for("Update and restart now? [Y/n/s]");
+    assert!(
+        installed.unchanged(),
+        "nothing is installed before the answer"
+    );
+    session
 }
 
 /// Send `signal` to a running update and return how it ended.
@@ -958,4 +976,70 @@ fn requirements_print_the_aether_protocols_this_build_speaks() {
         format!("aether_protocol_min {min}\naether_protocol_max {max}\n")
     );
     assert!(installed.server.requests().is_empty());
+}
+
+#[test]
+fn yes_at_launch_updates_and_opens_the_new_archon_at_once() {
+    let installed = Installed::new();
+    publish(
+        &installed.releases(),
+        "v9.9.9",
+        &target(),
+        &archon_script("9.9.9"),
+        true,
+    );
+    let terminal = Terminal::open();
+    let mut session = launch_offering_an_update(&installed, &terminal);
+    let answered = Instant::now();
+    session.type_line("y");
+    session.wait_for("fake archon 9.9.9: ");
+    let took = answered.elapsed();
+    let out = session.finish();
+    assert!(out.status.success(), "{out:?}");
+    assert!(took < Duration::from_secs(10), "the update took {took:?}");
+    assert_eq!(installed.version(), "archon 9.9.9");
+    assert_eq!(installed.installed_files(), ["archon"]);
+}
+
+#[test]
+fn ctrl_c_in_a_launch_time_update_exits_at_once_and_opens_nothing() {
+    let installed = Installed::new();
+    publish(
+        &installed.releases(),
+        "v9.9.9",
+        &target(),
+        &archon_script("9.9.9"),
+        true,
+    );
+    installed.server.stall(".tar.gz");
+    let terminal = Terminal::open();
+    let mut session = launch_offering_an_update(&installed, &terminal);
+    session.type_line("y");
+    wait_for_partial_archive(&installed);
+    let sent = Command::new("kill")
+        .args(["-INT", &session.pid().to_string()])
+        .status()
+        .unwrap();
+    assert!(sent.success(), "kill -INT failed: {sent}");
+    let interrupted = Instant::now();
+    let shown_before_exit = session.shown().to_owned();
+    let out = session.finish();
+    assert!(
+        interrupted.elapsed() < Duration::from_secs(5),
+        "exited after {:?}",
+        interrupted.elapsed()
+    );
+    assert_eq!(out.status.code(), Some(130), "{out:?}\n{shown_before_exit}");
+    assert!(installed.unchanged(), "the installed archon is untouched");
+    assert_eq!(
+        installed.installed_files(),
+        ["archon"],
+        "staging is removed"
+    );
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.contains("archon: update interrupted by SIGINT; nothing staged"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("opening anyway"), "{stderr}");
 }

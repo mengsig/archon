@@ -34,6 +34,9 @@ pub struct Activity {
     agents: std::sync::Mutex<BTreeMap<AetherAgentId, Timestamp>>,
     /// When each lead's tree was last read from Aether.
     looked: std::sync::Mutex<BTreeMap<AetherAgentId, Timestamp>>,
+    /// When each lead's tree was last read for a deadline it nears, apart
+    /// from `looked` so that read never takes the watchdog's.
+    deadline_looked: std::sync::Mutex<BTreeMap<AetherAgentId, Timestamp>>,
 }
 
 impl Activity {
@@ -55,6 +58,9 @@ impl Activity {
         drop(agents);
         let mut looked = self.looked.lock().expect("activity lock");
         looked.retain(|_, at| *at >= cutoff);
+        drop(looked);
+        let mut deadline_looked = self.deadline_looked.lock().expect("activity lock");
+        deadline_looked.retain(|_, at| *at >= cutoff);
     }
 
     /// The newest event of `lead` and the agents `beneath` it. The first
@@ -72,14 +78,29 @@ impl Activity {
 
     /// Whether `lead`'s tree may be read from Aether at `now`, recording the
     /// read when it may.
-    pub(super) fn may_read(&self, lead: &AetherAgentId, now: Timestamp) -> bool {
-        let mut looked = self.looked.lock().expect("activity lock");
-        if looked.get(lead).is_some_and(|at| now < *at + PULSE_EVERY) {
-            return false;
-        }
-        looked.insert(lead.clone(), now);
-        true
+    fn may_read(&self, lead: &AetherAgentId, now: Timestamp) -> bool {
+        may_look(&self.looked, lead, now)
     }
+
+    /// [`Self::may_read`] for the read of a deadline `lead`'s stage nears.
+    pub(super) fn may_read_deadline(&self, lead: &AetherAgentId, now: Timestamp) -> bool {
+        may_look(&self.deadline_looked, lead, now)
+    }
+}
+
+/// Whether `lead` was last looked at in `book` at least `PULSE_EVERY` before
+/// `now`; recorded as looked at `now` when it was.
+fn may_look(
+    book: &std::sync::Mutex<BTreeMap<AetherAgentId, Timestamp>>,
+    lead: &AetherAgentId,
+    now: Timestamp,
+) -> bool {
+    let mut looked = book.lock().expect("activity lock");
+    if looked.get(lead).is_some_and(|at| now < *at + PULSE_EVERY) {
+        return false;
+    }
+    looked.insert(lead.clone(), now);
+    true
 }
 
 /// How long a stage may be silent, from `limits`.

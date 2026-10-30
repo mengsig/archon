@@ -300,3 +300,26 @@ async fn a_held_stage_past_its_deadline_is_not_timed_out() {
         QueueState::Running { .. }
     ));
 }
+
+/// The deadline check of a stage near its deadline reads the tree too; it
+/// must not take the watchdog's read, or a stall would wait for the timeout.
+#[tokio::test]
+async fn a_stalled_stage_near_its_deadline_still_stalls() {
+    let h = Harness::new().await;
+    let item = h.enqueue("stuck just before its deadline").await;
+    h.dispatch().await;
+    let first = the_only_running(&h).await;
+    let soon = archon_core::now() + chrono::Duration::minutes(5);
+    common::set_deadline(&h, &first, soon).await;
+    h.backend.set_pulse(&lead(&first), DEAD);
+    went_silent(&h, &lead(&first), 21);
+    sweep(&h).await;
+
+    let failed = h.stages(&item.id).await.remove(0);
+    assert_eq!(failed.id, first.id);
+    let StageState::Failed { error } = &failed.state else {
+        panic!("the stalled stage fails: {:?}", failed.state);
+    };
+    assert!(error.starts_with("agent stalled"), "{error}");
+    assert_ne!(the_only_running(&h).await.id, first.id, "re-spawned");
+}

@@ -84,8 +84,8 @@ async fn raise(
     }
 }
 
-/// Hold the deadlines of the `nearing` stages Aether holds, each read as
-/// often as the watchdog may, and return the `expired` ones it does not hold.
+/// Hold the deadlines of the `nearing` stages Aether holds, each read at
+/// most once a minute, and return the `expired` ones it does not hold.
 pub(super) async fn sweep(
     ctx: &DaemonContext,
     expired: Vec<StageRun>,
@@ -101,7 +101,7 @@ pub(super) async fn sweep(
         let readable = stage
             .aether_agent
             .as_ref()
-            .is_some_and(|lead| ctx.activity.may_read(lead, now));
+            .is_some_and(|lead| ctx.activity.may_read_deadline(lead, now));
         if readable {
             hold_deadline(ctx, stage, now).await?;
         }

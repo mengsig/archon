@@ -119,9 +119,9 @@
   as when an older aetherd restarted mid-command. Once the stage has been
   silent for `limits.stall_minutes`, with no gate or question open, the
   agent gets a note to check the state before it repeats the command, and
-  is resumed. If Aether refuses the resume, the stage fails as
-  infrastructure at once, so its infrastructure retry wakes or replaces the
-  agent. While the watchdog is on, an inspection holds the deadline like
+  is resumed. If Aether refuses the resume and the agent is still blocked,
+  the stage fails as infrastructure at once, so its infrastructure retry
+  wakes or replaces the agent. While the watchdog is on, an inspection holds the deadline like
   any other hold.
 - Some holds have no cause Aether names: not an approval, a usage limit or
   credentials. When such a hold has been silent for
@@ -129,8 +129,8 @@
   orchestrator is told once. The stage is never stopped for it.
 - A Claude Code stage under a subscription login no longer gets Aether's
   hard dollar cap. Archon detects the login from the 5-hour and weekly
-  usage windows Aether reports for it, and the dollars it would be stopped
-  on are list-price, not billed. Its interim usage is not refused as
+  usage windows Aether reports for it, when they are fresh and have headroom
+  left. The dollars it would be stopped on are list-price, not billed. Its interim usage is not refused as
   unaccounted either. Its cost is still recorded and shown, and Archon's
   ledger budgets still count it. When Archon cannot tell whether a Claude
   Code login bills, the cap stays, and a stop on it is labelled "notional

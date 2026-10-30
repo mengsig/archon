@@ -971,9 +971,13 @@ an unknown engine conservatively omits the hard cap and requires estimates.
 How Archon decides whether those dollars are billed (the stored request's
 `cost_billing`):
 - An HTTP provider (`engine: false`) with model pricing is `billed`.
-- A Claude Code provider for which Aether's `providers` reply shows a
-  `five_hour` or `seven_day` usage window is `subscription`. Claude Code
-  reports those windows only for a subscription login, never for an API key.
+- A Claude Code provider is `subscription` when Aether's `providers` reply
+  shows a `five_hour` or `seven_day` usage window that is fresh (not
+  `stale`), and every such window has headroom left. Claude Code reports
+  those windows only for a subscription login, never for an API key. Aether
+  caches them by provider, so after a switch to an API key they go stale
+  (`usage_stale_after`, 15 min by default). An exhausted subscription, the
+  likeliest one to be switched, counts as `unknown`.
   Such a stage gets no Aether hard cap, since its list-price dollars are
   notional. Its interim usage is not refused as unaccounted, because Claude
   Code completes its cost at turn end. Its dollars are still recorded, shown
@@ -983,6 +987,11 @@ How Archon decides whether those dollars are billed (the stored request's
   because the dollars may not have been billed.
 - Codex and other engines have no billing mode: Aether reports no dollars
   for them to cap.
+Known limitation: Aether names no plan for the current login, so a login
+switched from a subscription with headroom to an API key is still read as a
+subscription until its windows go stale. A stage started in that time has
+no hard cap. The ledger still counts its dollars and stops the run once the
+item budget is used up, but only when Claude Code reports cost, at turn end.
 The decision is persisted before creation so a keyed retry keeps its frame;
 Archon's original grant remains stored for accounting and team replacements.
 
@@ -1487,8 +1496,10 @@ in a new worktree off the base branch (§13).
   (Aether's `resume`, not a subtree resume). The note says the command's
   outcome is unknown, so the agent should check the state it would have
   changed before repeating it. The feed tells of each resume. If Aether
-  refuses the resume, the stage fails at once as `infra` ("agent stalled:
-  Aether blocked it for inspection … and refused to resume it: …"), so
+  refuses the resume, archond reads the tree again. If no agent is blocked
+  for inspection any more, someone else resumed it, and the stage goes on.
+  Otherwise the stage fails at once as `infra` ("agent stalled: Aether
+  blocked it for inspection … and refused to resume it: …"), so
   `limits.infra_retries` wakes or replaces it. If Aether does not answer,
   the next sweep tries again.
   Some holds have no cause Aether names: not an approval, a usage or quota

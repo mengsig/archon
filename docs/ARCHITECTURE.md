@@ -5276,7 +5276,8 @@ and foreign commit checks (§8.7): those commits must be ancestors of the
 item's head, unchanged, and every other foreign commit is still refused. Past that
 floor only commits in `origin`'s head of the base, read with `ls-remote`
 and fetched at delivery, are exempt: no local or tracking ref counts. A
-refresh of such an item, or a fix of its stack, keeps that floor. Nothing
+refresh of such an item, or a fix of its stack, keeps that floor, and so
+does an item stacked on it, at any depth, through `depends_on`. Nothing
 is ever pushed to the reviewed pull request's branch.
 
 **The merge.** A `merge_requests` row (store V13) is written before any

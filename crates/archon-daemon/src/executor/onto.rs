@@ -114,6 +114,42 @@ pub(crate) fn reviewed_dependency(
     Ok(None)
 }
 
+/// The reviewed pull request whose commits `item`'s branch carries beneath
+/// its own: its [`reviewed_dependency`], else one an item it stacks on
+/// carries, at any depth. Its delivery is held to that review as a direct
+/// stack's is. `None` for an `onto` item or with none in its stack.
+pub(crate) fn reviewed_ancestry(
+    store: &Store,
+    item: &QueueItem,
+) -> Result<Option<OntoPullRequest>, ArchonError> {
+    if item.onto.is_some() {
+        return Ok(None);
+    }
+    let mut pending = vec![item.clone()];
+    let mut seen = std::collections::HashSet::new();
+    while let Some(next) = pending.pop() {
+        assert!(next.onto.is_none(), "only items without `onto` are walked");
+        if !seen.insert(next.id.clone()) {
+            continue;
+        }
+        if let Some(reviewed) = reviewed_dependency(store, &next)? {
+            assert!(reviewed.review_only, "a passed review item's pull request");
+            return Ok(Some(reviewed));
+        }
+        let owner = match store.stack_fix(&next.id)? {
+            Some(fix) => store.item(&fix.owner)?,
+            None => next,
+        };
+        for id in &owner.dependencies {
+            let dependency = store.item(id)?;
+            if dependency.onto.is_none() && dependency.repo == owner.repo {
+                pending.push(dependency);
+            }
+        }
+    }
+    Ok(None)
+}
+
 /// What the agents of an item stacked on a reviewed pull request are told:
 /// their change starts at its reviewed head, whose commits stay as they are.
 pub(super) fn stacked_section(reviewed: Option<&OntoPullRequest>) -> String {

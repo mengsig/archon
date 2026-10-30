@@ -661,6 +661,82 @@ async fn a_stack_carrying_a_foreign_commit_a_remote_branch_holds_is_refused() {
     nothing_pushed_to_the_fork(&h, &gh, &head);
 }
 
+/// An item queued on a shipped stack on #200, started from that stack's head.
+async fn second_level(h: &Harness, gh: &FakeGh, head: &str, review: &QueueItem) -> QueueItem {
+    let first = stacked_on(h, review, head).await;
+    settle_stacked(h, &first, own_commit).await;
+    assert!(matches!(
+        h.state(&first.id).await,
+        QueueState::Succeeded { .. }
+    ));
+    let mut asked = enqueue_request("build on the stack", "direct", ReviewLevel::None);
+    asked.depends_on = vec![first.id.clone()];
+    let second = enqueue(h, asked).await.expect("stacked again");
+    h.dispatch().await;
+    let workspace = h.run(&second.id).await.workspace;
+    let shipped = pushed(&origin_of(h), &h.run(&first.id).await.branch).expect("shipped");
+    assert_eq!(git(&workspace, &["rev-parse", "HEAD"]), shipped);
+    assert_eq!(
+        gh.calls()
+            .iter()
+            .filter(|c| c.starts_with("pr create"))
+            .count(),
+        1
+    );
+    second
+}
+
+#[tokio::test]
+async fn a_stack_on_a_stack_on_a_reviewed_pull_request_ships() {
+    let (h, gh, head, review) = reviewed_fork().await;
+    let second = second_level(&h, &gh, &head, &review).await;
+
+    settle_stacked(&h, &second, |workspace| {
+        own_commit_named(workspace, "next.txt")
+    })
+    .await;
+
+    let state = h.state(&second.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
+    let shipped = pushed(&origin_of(&h), &h.run(&second.id).await.branch).expect("its branch");
+    git(
+        &origin_of(&h),
+        &["merge-base", "--is-ancestor", &head, &shipped],
+    );
+    nothing_pushed_to_the_fork(&h, &gh, &head);
+}
+
+/// A stack on a stack keeps the reviewed floor: a tracking ref exempts no
+/// foreign commit there either.
+#[tokio::test]
+async fn a_stack_on_a_stack_carrying_a_foreign_commit_a_remote_ref_holds_is_refused() {
+    let (h, gh, head, review) = reviewed_fork().await;
+    let second = second_level(&h, &gh, &head, &review).await;
+
+    settle_stacked(&h, &second, |workspace| {
+        other_commit(workspace);
+        git(
+            workspace,
+            &["update-ref", "refs/remotes/origin/unrelated", "HEAD"],
+        );
+        own_commit_named(workspace, "next.txt");
+    })
+    .await;
+
+    let QueueState::Failed { error, .. } = h.state(&second.id).await else {
+        panic!("refused: {:?}", h.state(&second.id).await);
+    };
+    assert!(error.contains("other@example.com"), "{error}");
+    assert_eq!(
+        gh.calls()
+            .iter()
+            .filter(|c| c.starts_with("pr create"))
+            .count(),
+        1
+    );
+    nothing_pushed_to_the_fork(&h, &gh, &head);
+}
+
 /// Local base refs are the worktree's to move: only `origin`'s base head,
 /// read at delivery, exempts a commit from the identity check.
 #[tokio::test]

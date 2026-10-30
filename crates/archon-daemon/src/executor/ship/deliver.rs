@@ -82,8 +82,8 @@ struct Claimed {
     repo: Option<Repo>,
     /// The existing pull request the item delivers into, if any.
     onto: Option<Box<OntoPullRequest>>,
-    /// The reviewed pull request the item is stacked on, if any: its own
-    /// commits start after that pull request's reviewed head.
+    /// The reviewed pull request the item is stacked on, if any, directly or
+    /// through the items it stacks on: its branch holds that reviewed head.
     stacked_on: Option<OntoPullRequest>,
     vars: BTreeMap<String, String>,
     /// The outcome persisted already, if any.
@@ -183,7 +183,7 @@ async fn claim(
     let claimed = Claimed {
         plan,
         repo: repo_of(&store, &run)?,
-        stacked_on: super::super::onto::reviewed_dependency(&store, &item)?,
+        stacked_on: super::super::onto::reviewed_ancestry(&store, &item)?,
         onto: item.onto,
         vars: recover::load_run_vars(&store, run_id)?,
         recorded,
@@ -533,7 +533,7 @@ pub(in crate::executor) async fn prove_unchanged(
         let vars = recover::load_run_vars(&store, &run.id)?;
         let base = base_of(&store, run, &vars)?;
         let item = store.item(&run.item)?;
-        let stacked = super::super::onto::reviewed_dependency(&store, &item)?;
+        let stacked = super::super::onto::reviewed_ancestry(&store, &item)?;
         let since = item.onto.map(|onto| onto.head_sha);
         (
             repo_of(&store, run)?,

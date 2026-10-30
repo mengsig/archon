@@ -1188,3 +1188,44 @@ async fn inserting_a_stage_preserves_the_delegated_reviewer_plan() {
             .any(|r| r.instructions.contains(reviewer))
     );
 }
+
+/// A steer still owed when a held stage's deadline moved past its own sends
+/// the later one: Aether never ends up with the earlier deadline.
+#[tokio::test]
+async fn an_owed_extension_never_lowers_a_held_stages_moved_deadline() {
+    let h = harness().await;
+    let (item, working) = implementing(&h, "blocked on a usage limit").await;
+    let soon = archon_core::now() + chrono::Duration::minutes(2);
+    common::set_deadline(&h, &working, soon).await;
+    h.backend
+        .fail_next_update(ArchonError::Unavailable("aether busy".into()));
+    let asked = Steer {
+        extend_minutes: Some(3),
+        ..Steer::default()
+    };
+    steer(&h, &item.id, asked).await.expect("steered");
+    assert!(h.backend.updates().is_empty(), "the extension is owed");
+
+    let held = archon_core::ports::TreePulse {
+        held: true,
+        ..archon_core::ports::TreePulse::default()
+    };
+    h.backend.set_pulse(&agent(&working), held);
+    h.dispatch().await;
+
+    let moved = common::stored_deadline(&h, &working)
+        .await
+        .expect("a deadline");
+    assert!(moved > soon + chrono::Duration::minutes(20), "{moved}");
+    let updates = h.backend.updates();
+    assert_eq!(
+        updates.len(),
+        2,
+        "the move, then the owed steer: {updates:?}"
+    );
+    assert_eq!(
+        updates[1].1.deadline,
+        Some(moved),
+        "the steer sends the later one"
+    );
+}

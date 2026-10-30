@@ -51,6 +51,8 @@ pub(super) async fn hold_deadline(
         return Ok(false);
     }
     let until = now + chrono::Duration::minutes(EXTENSION_MINUTES);
+    // A steer's owed deadline is sent under the same lock, so neither lowers the other.
+    let _steering = ctx.coordination.steering.hold(&stage.id).await;
     let Some(stored) = running_deadline(ctx, &stage.id).await? else {
         return Ok(false);
     };

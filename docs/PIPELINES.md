@@ -829,6 +829,10 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   (`PASS or FAIL`, `PASS, but two failed`, `PASS (pending fixes)`); put an
   explanation after one (`PASS — two advisory notes`). The
   gate's refusal quotes what the agent wrote.
+  Known limitation: of CommonMark, the parser models only block quotes,
+  list indentation and fences, and reads other constructs as plain lines;
+  a verdict it cannot settle counts as fail, never as pass, so write a
+  plain `VERDICT:` line at column 0.
 - **The stage `[pipeline.ship]` names.** `## Ship record`: commit with the
   repository's git identity, leave a clean tree, do not push, and return
   `commit`, `tree`, `checks` and `pr` in `structured` (see "Shipping").

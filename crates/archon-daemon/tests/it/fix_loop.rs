@@ -757,3 +757,53 @@ async fn resumed_attempts_retain_the_created_agents_host_context() {
         HostContext::Full
     );
 }
+
+/// Aether stopped a budgeted stage at its hard cap. When Archon could not
+/// tell whether the engine bills those dollars (Claude Code without a
+/// subscription window), the failure says the cost may be notional.
+#[tokio::test]
+async fn a_cost_stop_of_unknown_billing_is_labelled_notional_cost() {
+    for (billing, notional) in [("unknown", true), ("billed", false)] {
+        let h = harness().await;
+        let item = h
+            .enqueue_in(REVIEWED, "capped", plan())
+            .await
+            .expect("enqueue");
+        let patch = archon_core::protocol::ItemPatch {
+            budget_usd: Some(10.0),
+            ..Default::default()
+        };
+        h.cli(Request::UpdateItem {
+            item: item.id.clone(),
+            patch,
+        })
+        .await
+        .expect("a budget");
+        h.dispatch().await;
+        let first = running(&h, "implement").await;
+        let key = format!("spawn_request:{}", first.id);
+        let mut spawn: serde_json::Value =
+            serde_json::from_str(&h.kv(&key).await.expect("stored")).unwrap();
+        spawn["request"]["aether_cost_budget"] = true.into();
+        spawn["request"]["cost_billing"] = billing.into();
+        let raw = spawn.to_string();
+        h.ctx.store.lock().await.kv_set(&key, &raw).unwrap();
+        let stop = "cost budget of $10.00: $10.02 spent";
+        h.settle_running(|_| StageOutcome::Failed {
+            error: stop.into(),
+            infra: false,
+        })
+        .await;
+
+        let settled = h.ctx.store.lock().await.stage_run(&first.id).unwrap();
+        let StageState::Failed { error } = &settled.state else {
+            panic!("the stop fails the stage: {:?}", settled.state);
+        };
+        assert!(error.starts_with(stop), "{error}");
+        assert_eq!(
+            error.contains("notional cost"),
+            notional,
+            "{billing}: {error}"
+        );
+    }
+}

@@ -15,7 +15,8 @@ use archon_core::error::ArchonError;
 use archon_core::model::{Effort, ModelChoice};
 use archon_core::policy::ModelPolicy;
 use archon_core::ports::{
-    AgentBackend, AgentUpdate, DescendantState, NetworkPolicy, RunNodeRequest, SpawnRequest,
+    AgentBackend, AgentUpdate, CostBilling, DescendantState, NetworkPolicy, RunNodeRequest,
+    SpawnRequest,
 };
 use archon_core::run::StageOutcome;
 use common::{AGENT, RUN, TASK, WAIT, completed, connect};
@@ -45,6 +46,7 @@ fn spawn_request() -> SpawnRequest {
         leaf: true,
         cost_budget_usd: Some(5.0),
         aether_cost_budget: None,
+        cost_billing: None,
         deadline: None,
         attach_run: None,
         parent: Some(AetherAgentId::parse(NODE).unwrap()),
@@ -1280,4 +1282,62 @@ async fn a_refused_resume_is_an_error_not_a_resumed_agent() {
         error.to_string().contains("not under inspection"),
         "{error}"
     );
+}
+
+/// Claude Code reports list-price dollars whether or not its login bills
+/// them. Aether's 5-hour and weekly usage windows show a subscription, whose
+/// agent gets no hard cap; without them the cap stays and the billing is
+/// recorded as unknown, so a stop on it is labelled notional cost.
+#[tokio::test]
+async fn a_subscription_claude_code_stage_gets_no_hard_cap_on_notional_dollars() {
+    let (_dir, fake) = fake_aether().await;
+    fake.set_default(
+        "providers",
+        Scripted::reply(
+            "providers",
+            json!([{
+                "provider": "claude-code", "protocol": "claude-code", "engine": true,
+                "headroom": {"windows": [
+                    {"name": "five_hour", "window_minutes": 300, "remaining_percent": 58},
+                    {"name": "seven_day", "window_minutes": 10080, "remaining_percent": 27},
+                ], "stale": false},
+            }]),
+        ),
+    );
+    fake.set_default(
+        "get_task",
+        Scripted::reply(
+            "task",
+            fake::task(TASK, Some(AGENT), RUN, json!({"state": "assigned"})),
+        ),
+    );
+    fake.set_default(
+        "create_agent",
+        Scripted::reply("agent", fake::agent(AGENT, Some(TASK))),
+    );
+    let backend = backend(&fake, any_model()).await;
+    let mut req = spawn_request();
+    backend.prepare_spawn(&mut req, false).await.unwrap();
+    assert_eq!(req.aether_cost_budget, Some(false), "no hard cap");
+    assert_eq!(req.cost_billing, Some(CostBilling::Subscription));
+    assert_eq!(req.cost_budget_usd, Some(5.0), "Archon's grant is kept");
+    backend
+        .prepare_spawn(&mut req, false)
+        .await
+        .expect("a stored subscription is still accounted, estimates or not");
+    backend.spawn(req).await.unwrap();
+    let create = fake.received_named("create_agent").pop().unwrap();
+    assert_eq!(create["config"]["cost_budget"], Value::Null);
+
+    fake.set_default(
+        "providers",
+        Scripted::reply(
+            "providers",
+            json!([{"provider": "claude-code", "protocol": "claude-code", "engine": true}]),
+        ),
+    );
+    let mut unknown = spawn_request();
+    backend.prepare_spawn(&mut unknown, false).await.unwrap();
+    assert_eq!(unknown.aether_cost_budget, Some(true), "enforced");
+    assert_eq!(unknown.cost_billing, Some(CostBilling::Unknown));
 }

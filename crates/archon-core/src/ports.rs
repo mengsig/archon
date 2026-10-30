@@ -37,6 +37,20 @@ impl NetworkPolicy {
 }
 
 /// Everything needed to start one stage agent (ARCHITECTURE §4.5).
+/// Whether the dollars an engine reports are what the provider bills.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CostBilling {
+    /// Billed per use: an HTTP provider at its configured price.
+    Billed,
+    /// Notional: a subscription with no marginal cost, which Aether shows by
+    /// reporting the login's usage windows (Claude Code's 5-hour and weekly).
+    Subscription,
+    /// Reported, but the login may be a subscription or an API key: enforced,
+    /// and a stop on it is labelled notional cost.
+    Unknown,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SpawnRequest {
     /// The stage run id: Aether dedupes a retried create under it.
@@ -69,6 +83,10 @@ pub struct SpawnRequest {
     /// before create_agent so capability changes cannot alter a keyed retry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aether_cost_budget: Option<bool>,
+    /// Whether the engine bills the dollars it reports, resolved with
+    /// `aether_cost_budget`; `None` when it reports none or was not asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_billing: Option<CostBilling>,
     pub deadline: Option<Timestamp>,
     /// Attach to this Aether run (all stages of one pipeline run share one).
     pub attach_run: Option<AetherRunId>,

@@ -24,6 +24,7 @@ mod landed;
 mod lanes;
 mod local_merge;
 mod naming;
+mod notional;
 pub(crate) mod onto;
 pub(crate) mod operator_merge;
 mod pages;
@@ -406,14 +407,18 @@ pub(crate) async fn check_item_budget(
                 .into_iter()
                 .find(|run| !run.state.is_terminal());
             // A hard cap can account at the end of a turn. Do not reject its
-            // interim, incomplete usage while Aether still enforces that cap.
+            // interim, incomplete usage while Aether still enforces that cap,
+            // nor a subscription's, whose engine reports cost the same way.
             let unaccounted_usage = if unaccounted_usage && budget.is_some() && run.is_some() {
                 match stage {
                     Some(stage) => {
                         match spawn::load_spawn(&store, stage) {
                             Ok(spawn) => {
-                                spawn.request.cost_budget_usd.is_none()
-                                    || spawn.request.aether_cost_budget == Some(false)
+                                let request = &spawn.request;
+                                let subscription = request.cost_billing
+                                    == Some(archon_core::ports::CostBilling::Subscription);
+                                request.cost_budget_usd.is_none()
+                                    || (request.aether_cost_budget == Some(false) && !subscription)
                             }
                             // Settled requests may already have been pruned.
                             Err(ArchonError::NotFound(_)) => true,

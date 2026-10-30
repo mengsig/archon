@@ -12,8 +12,8 @@ use archon_core::steer::RunEdit;
 use archon_pipeline::{EngineAction, SpawnPlan};
 
 use super::{
-    FollowUp, RunTable, descendants, finish, gates, pages, recover, resume, ship, siblings, spawn,
-    stall, swarm, team,
+    FollowUp, RunTable, descendants, finish, gates, notional, pages, recover, resume, ship,
+    siblings, spawn, stall, swarm, team,
 };
 use crate::context::DaemonContext;
 use crate::disk::{self, FullDisk};
@@ -26,7 +26,11 @@ pub(super) async fn settle(
 ) -> Result<FollowUp, ArchonError> {
     if !matches!(outcome, StageOutcome::Completed { .. }) {
         let mut table = ctx.runs.lock().await;
-        let outcome = stall::intended(&*ctx.store.lock().await, id, outcome)?;
+        let outcome = {
+            let store = ctx.store.lock().await;
+            let outcome = stall::intended(&store, id, outcome)?;
+            notional::label(&store, id, outcome)?
+        };
         return settle_locked(ctx, &mut table, id, outcome).await;
     }
     let (stage, run, review, daemon_ships, planner, record_stage) = {

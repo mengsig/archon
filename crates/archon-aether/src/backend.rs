@@ -6,10 +6,11 @@ use std::sync::Arc;
 use archon_core::aether_ids::{AetherAgentId, AetherTaskId};
 use archon_core::error::ArchonError;
 use archon_core::model::Effort;
+use archon_core::model::ModelRef;
 use archon_core::policy::ModelPolicy;
 use archon_core::ports::{
-    AgentBackend, AgentUpdate, CreatedNode, Descendant, DescendantState, RunNodeRequest,
-    SpawnRequest, SpawnedAgent, TreePulse,
+    AgentBackend, AgentUpdate, CostBilling, CreatedNode, Descendant, DescendantState,
+    RunNodeRequest, SpawnRequest, SpawnedAgent, TreePulse,
 };
 use archon_core::run::StageOutcome;
 use async_trait::async_trait;
@@ -18,8 +19,8 @@ use crate::client::AetherClient;
 use crate::link::AetherLink;
 use crate::resumed;
 use crate::wire::{
-    Agent, AgentConfig, AgentPatch, AgentQuery, ApprovalPolicy, CreateAgent, NetworkPolicy, Scope,
-    Task, TaskStatus, ToolExposure,
+    Agent, AgentConfig, AgentPatch, AgentQuery, ApprovalPolicy, CreateAgent, ModelInfo,
+    NetworkPolicy, ProviderInfo, Scope, Task, TaskStatus, ToolExposure,
 };
 
 /// Aether agent states in which an agent can still act or take children.
@@ -354,6 +355,57 @@ pub fn run_node_create_agent(request: &RunNodeRequest) -> CreateAgent {
     }
 }
 
+/// Whether Aether can hard-cap `model`'s dollars, and whether the provider
+/// bills them. v14 to v17 expose no reports_cost flag, so this mirrors
+/// Aether's protocol rule: engines differ even when they carry a price; HTTP
+/// needs a price. Missing metadata never proves a hard cap is enforceable:
+/// Archon then requires estimates and refuses unaccounted usage in the pump.
+/// A subscription gets no hard cap, which would stop it on notional dollars.
+pub fn cost_enforcement(
+    model: &ModelRef,
+    models: &[ModelInfo],
+    providers: &[ProviderInfo],
+) -> (bool, Option<CostBilling>) {
+    assert!(!model.provider.is_empty(), "a model names its provider");
+    let provider = providers
+        .iter()
+        .find(|info| info.provider == model.provider);
+    let priced = models.iter().any(|info| {
+        info.model.provider == model.provider
+            && (info.model.model == model.model || info.aliases.contains(&model.model))
+            && info.capabilities.cost.is_some()
+    });
+    let decided = match provider.map(|info| info.protocol.as_str()) {
+        Some("claude-code") => match provider.is_some_and(shows_subscription) {
+            true => (false, Some(CostBilling::Subscription)),
+            false => (true, Some(CostBilling::Unknown)),
+        },
+        Some("codex") | None => (false, None),
+        Some(_) => {
+            let billed = provider.is_some_and(|info| info.engine == Some(false)) && priced;
+            (billed, billed.then_some(CostBilling::Billed))
+        }
+    };
+    assert!(
+        !decided.0 || decided.1.is_some(),
+        "a hard cap is set only on dollars Aether reports"
+    );
+    decided
+}
+
+/// Whether Aether reports a subscription's usage windows for `provider`:
+/// Claude Code reports its 5-hour and weekly windows only for a subscription
+/// login, never for an API key.
+fn shows_subscription(provider: &ProviderInfo) -> bool {
+    let Some(headroom) = &provider.headroom else {
+        return false;
+    };
+    headroom
+        .windows
+        .iter()
+        .any(|window| matches!(window.name.as_str(), "five_hour" | "seven_day"))
+}
+
 /// `None` while the task is open.
 pub fn task_outcome(task: &Task) -> Option<StageOutcome> {
     match &task.status {
@@ -469,35 +521,18 @@ impl AgentBackend for AetherBackend {
             return Ok(());
         }
         self.policy.check(&request.choice)?;
-        let reports_cost = match request.aether_cost_budget {
-            Some(stored) => stored,
+        let (hard_cap, billing) = match request.aether_cost_budget {
+            Some(stored) => (stored, request.cost_billing),
             None => {
                 let client = self.link.client()?;
                 let models = client.list_models().await?;
                 let providers = client.providers().await?;
-                let model = models.iter().find(|info| {
-                    info.model.provider == request.choice.model.provider
-                        && (info.model.model == request.choice.model.model
-                            || info.aliases.contains(&request.choice.model.model))
-                });
-                let provider = providers
-                    .iter()
-                    .find(|info| info.provider == request.choice.model.provider);
-                // v14 to v17 expose no reports_cost flag. Mirror Aether's protocol rule:
-                // engines differ even when they carry a price; HTTP needs a price.
-                // Missing metadata never proves a hard cap is enforceable. Archon
-                // then requires estimates and refuses unaccounted usage in the pump.
-                match provider.map(|info| info.protocol.as_str()) {
-                    Some("claude-code") => true,
-                    Some("codex") | None => false,
-                    Some(_) => {
-                        provider.is_some_and(|info| info.engine == Some(false))
-                            && model.is_some_and(|info| info.capabilities.cost.is_some())
-                    }
-                }
+                cost_enforcement(&request.choice.model, &models, &providers)
             }
         };
-        if !reports_cost && !count_estimated_cost {
+        // A subscription's notional dollars are still reported, and counted.
+        let accounted = hard_cap || billing == Some(CostBilling::Subscription);
+        if !accounted && !count_estimated_cost {
             return Err(ArchonError::Policy(format!(
                 "cannot enforce the dollar budget for {}: Aether cost reporting is \
                  unavailable or unconfirmed and limits.count_estimated_cost is disabled; \
@@ -505,7 +540,8 @@ impl AgentBackend for AetherBackend {
                 request.choice.model
             )));
         }
-        request.aether_cost_budget = Some(reports_cost);
+        request.aether_cost_budget = Some(hard_cap);
+        request.cost_billing = billing;
         Ok(())
     }
 
@@ -738,6 +774,7 @@ mod tests {
             leaf: true,
             cost_budget_usd: Some(5.0),
             aether_cost_budget: None,
+            cost_billing: None,
             deadline: None,
             attach_run: None,
             parent: Some(node_id()),

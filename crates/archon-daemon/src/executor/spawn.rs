@@ -807,6 +807,7 @@ fn build_request(
         leaf: !target.delegates(plan),
         cost_budget_usd: budget,
         aether_cost_budget: None,
+        cost_billing: None,
         deadline: Some(until),
         attach_run: run.aether_run.clone(),
         parent: None,

@@ -317,6 +317,24 @@ async fn another_s_pull_request_merges_only_with_its_checks_green() {
     assert!(!gh.calls().iter().any(|c| c.starts_with("pr merge")));
 }
 
+/// A check that fails while the merge method is read stops the merge: the
+/// checks are read last, just before `gh pr merge`.
+#[tokio::test]
+async fn a_check_that_fails_just_before_the_merge_stops_it() {
+    let (h, gh, _head, item) = reviewed_fork().await;
+    let red = json!([{"__typename": "CheckRun", "name": "ci", "status": "COMPLETED", "conclusion": "FAILURE"}]);
+    gh.checks_after_repo_view(&red);
+
+    let merge = merge_of(h.cli(merge_item(&item, false)).await);
+
+    let MergeState::Refused { reason } = &merge.state else {
+        panic!("refused: {merge:?}");
+    };
+    assert!(reason.contains("1 failed (ci)"), "{reason}");
+    assert!(gh.calls().iter().any(|c| c.starts_with("repo view")));
+    assert!(!gh.calls().iter().any(|c| c.starts_with("pr merge")));
+}
+
 /// Under `grant_merge`, a request made while checks run waits for them, as
 /// for Archon's own pull requests, and merges once they are green.
 #[tokio::test]
@@ -540,6 +558,30 @@ async fn a_stack_carrying_a_foreign_commit_a_remote_branch_holds_is_refused() {
             workspace,
             &["update-ref", "refs/remotes/origin/unrelated", "HEAD"],
         );
+        own_commit(workspace);
+    })
+    .await;
+
+    let QueueState::Failed { error, .. } = h.state(&item.id).await else {
+        panic!("refused: {:?}", h.state(&item.id).await);
+    };
+    assert!(error.contains("other@example.com"), "{error}");
+    assert!(!gh.calls().iter().any(|c| c.starts_with("pr create")));
+    nothing_pushed_to_the_fork(&h, &gh, &head);
+}
+
+/// Local base refs are the worktree's to move: only `origin`'s base head,
+/// read at delivery, exempts a commit from the identity check.
+#[tokio::test]
+async fn a_stack_whose_base_refs_were_moved_over_a_foreign_commit_is_refused() {
+    let (h, gh, head, review) = reviewed_fork().await;
+    let item = stacked_on(&h, &review, &head).await;
+
+    settle_stacked(&h, &item, |workspace| {
+        other_commit(workspace);
+        for base in ["refs/heads/main", "refs/remotes/origin/main"] {
+            git(workspace, &["update-ref", base, "HEAD"]);
+        }
         own_commit(workspace);
     })
     .await;

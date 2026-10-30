@@ -5256,7 +5256,9 @@ that item then needs, besides the above:
 - a recorded `reviewed_head` equal to the frozen head, and GitHub's head
   still at it: a head that moved since is refused naming both commits;
 - every check green: `--ignore-checks`, `yes ignore-checks` and
-  `merge_waive_checks` do not apply, and `merge = auto` never does.
+  `merge_waive_checks` do not apply, and `merge = auto` never does. The
+  checks are read again after the merge method, as the last read before
+  `gh pr merge`; GitHub enforces only required checks past that point.
 
 The method is chosen as for any merge, and no author is passed, so GitHub
 credits the pull request's author. An item that `depends_on` such a review
@@ -5264,7 +5266,9 @@ item starts from its reviewed head and opens its own pull request into
 that pull request's base; at ship, `gh` must show the reviewed pull request
 open at that head, which becomes the floor of the attribution and foreign
 commit checks (§8.7): those commits must be ancestors of the item's head,
-unchanged, and every other foreign commit is still refused. Nothing is
+unchanged, and every other foreign commit is still refused. Past that
+floor only commits in `origin`'s head of the base, read with `ls-remote`
+and fetched at delivery, are exempt: no local or tracking ref counts. Nothing is
 ever pushed to the reviewed pull request's branch.
 
 **The merge.** A `merge_requests` row (store V13) is written before any

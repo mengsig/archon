@@ -1179,8 +1179,9 @@ pull request, under the usual confirmation or `grant_merge`, only:
 
 - at the head the review passed: a head that moved since (the contributor
   pushed again) is refused with both commits; queue a new `review` item;
-- with every check green: `--ignore-checks`, a confirmation's
-  `yes ignore-checks` and `merge_waive_checks` do not apply to it;
+- with every check green, read again just before the merge:
+  `--ignore-checks`, a confirmation's `yes ignore-checks` and
+  `merge_waive_checks` do not apply to it;
 - by the first method the repository allows, pinned to that head, so GitHub
   credits the contributor as the author; `merge = auto` never applies.
 
@@ -1195,7 +1196,7 @@ request into the reviewed pull request's base branch. Archon pushes nothing
 to the contributor's branch. At ship it checks that the reviewed pull
 request is still open at that head and that those commits sit unchanged
 beneath the item's own. Only commits after that head need the repository's
-git identity. A rebased, amended or squashed contributor commit, or any
+git identity, unless the base branch on GitHub already holds them. A rebased, amended or squashed contributor commit, or any
 other foreign commit, is refused as before. If the contributor's pull
 request is later squash-merged, the stacked pull request still carries the
 original commits; `archon queue refresh` merges the new base into it.

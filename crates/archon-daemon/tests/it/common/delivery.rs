@@ -133,6 +133,7 @@ case "$1 $2" in
     done
     ;;
 "repo view")
+    [ -f "$state/checks-after-repo-view" ] && mv "$state/checks-after-repo-view" "$state/view-checks"
     printf '{"squashMergeAllowed":true,"mergeCommitAllowed":true,"rebaseMergeAllowed":false}'
     ;;
 "pr view")
@@ -279,6 +280,13 @@ impl FakeGh {
             )
             .unwrap();
         }
+    }
+
+    /// `pr view` shows `checks` as its `statusCheckRollup` once the next
+    /// `repo view` (the merge method's read) has run.
+    pub fn checks_after_repo_view(&self, checks: &Value) {
+        let file = self.state.join("checks-after-repo-view");
+        std::fs::write(file, checks.to_string()).expect("checks");
     }
 
     /// What `gh pr checks --json` prints from now on.

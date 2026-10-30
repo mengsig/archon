@@ -28,6 +28,8 @@ use super::super::{
 use super::{auto_merge, checks, existing, gate, pr_checks, remote, risk};
 use crate::context::DaemonContext;
 use crate::resolve;
+use crate::worktree::shadow::Shadow;
+use crate::worktree::stack;
 
 /// `kv`: `ship:<run>` → the JSON [`ShipOutcome`].
 const SHIP_KEY_PREFIX: &str = "ship:";
@@ -410,7 +412,13 @@ async fn prove(
         Err(refusal) => return Ok(Err(refusal)),
     };
     let onto = claimed.onto.as_ref().map(|onto| onto.head_sha.clone());
-    let reviewed = stacked.is_some();
+    let reviewed_base = match stacked {
+        Some(_) => match origin_base(ctx, repo, base).await? {
+            Ok(head) => Some(head),
+            Err(refusal) => return Ok(Err(refusal)),
+        },
+        None => None,
+    };
     assert!(
         onto.is_none() || stacked.is_none(),
         "an onto item stacks on nothing"
@@ -422,7 +430,7 @@ async fn prove(
         branch: run.branch.clone(),
         base: base.to_owned(),
         since: onto.or(stacked),
-        reviewed,
+        reviewed_base,
         allowed: repo_identity::RepoIdentity::allowed(identity.as_ref()),
         attribution: repo.attribution,
     };
@@ -480,6 +488,38 @@ async fn stacked_since(
     )))
 }
 
+/// `origin`'s head of `base`, fetched into the repository: the base commits
+/// a reviewed stack may carry under another identity, as GitHub holds them.
+async fn origin_base(
+    ctx: &DaemonContext,
+    repo: &Repo,
+    base: &str,
+) -> Result<Result<String, String>, ArchonError> {
+    assert!(!base.is_empty(), "a delivery has a base branch");
+    let (data_dir, repo_path, branch) = (
+        ctx.paths.data_dir.clone(),
+        repo.path.clone(),
+        base.to_owned(),
+    );
+    let fetched = tokio::task::spawn_blocking(move || {
+        let shadow = Shadow::of(&data_dir, &repo_path)?;
+        stack::fetch_head(&shadow, &repo_path, &branch)
+    })
+    .await
+    .map_err(|e| ArchonError::io("base fetch task", std::io::Error::other(e)))??;
+    let Some(head) = fetched else {
+        return Ok(Err(format!(
+            "the repository has no `origin` to read `{base}` from: a stack on a reviewed pull \
+             request ships only over the base GitHub holds"
+        )));
+    };
+    assert!(
+        stack::is_commit_id(&head),
+        "ls-remote names a full commit id"
+    );
+    Ok(Ok(head))
+}
+
 /// Whether the run worktree holds no change, as a record stage claims when
 /// it reports "no change needed"; `Err` says why the claim is false.
 pub(in crate::executor) async fn prove_unchanged(
@@ -487,18 +527,16 @@ pub(in crate::executor) async fn prove_unchanged(
     run: &PipelineRun,
 ) -> Result<Result<(), String>, ArchonError> {
     assert!(run.workspace.is_absolute(), "a run has a worktree");
-    let (repo, since, reviewed, base) = {
+    let (repo, since, base) = {
         let store = ctx.store.lock().await;
         let vars = recover::load_run_vars(&store, &run.id)?;
         let base = base_of(&store, run, &vars)?;
         let item = store.item(&run.item)?;
         let stacked = super::super::onto::reviewed_dependency(&store, &item)?;
         let since = item.onto.map(|onto| onto.head_sha);
-        let reviewed = stacked.is_some();
         (
             repo_of(&store, run)?,
             since.or(stacked.map(|s| s.head_sha)),
-            reviewed,
             base,
         )
     };
@@ -514,7 +552,8 @@ pub(in crate::executor) async fn prove_unchanged(
         branch: run.branch.clone(),
         base,
         since,
-        reviewed,
+        // Only a delivery checks identities; no commit is a claim of none.
+        reviewed_base: None,
         allowed: Vec::new(),
         attribution: repo.attribution,
     };

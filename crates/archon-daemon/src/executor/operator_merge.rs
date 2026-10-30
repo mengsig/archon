@@ -941,19 +941,10 @@ async fn execute(
     if merge.local_branch().is_some() {
         return execute_local(ctx, merge).await;
     }
-    let ready = match ready(ctx, &merge).await? {
+    let ready = match read_ready(ctx, &mut merge).await? {
         Readiness::Ready(ready) => ready,
-        Readiness::Undecided => return park_for_github(ctx, merge).await,
-        Readiness::Refused(why) => {
-            merge.state = MergeState::Refused { reason: why };
-            return finish_merge(ctx, merge).await;
-        }
+        unready => return settle_unready(ctx, merge, unready).await,
     };
-    merge.checks = Some(ready.seen.describe());
-    if let Some(why) = checks_not_green(&ready) {
-        merge.state = MergeState::Refused { reason: why };
-        return finish_merge(ctx, merge).await;
-    }
     let binary = &ctx.config.github.binary;
     let method = match merge_method(binary, &ready.repo).await {
         Ok(method) => method,
@@ -962,6 +953,13 @@ async fn execute(
             return finish_merge(ctx, merge).await;
         }
     };
+    // Another's pull request: its checks are read again as the last read before the merge.
+    if ready.review_of {
+        let again = read_ready(ctx, &mut merge).await?;
+        if !matches!(again, Readiness::Ready(_)) {
+            return settle_unready(ctx, merge, again).await;
+        }
+    }
     let args = [
         "pr",
         "merge",
@@ -978,6 +976,45 @@ async fn execute(
         }
         // Left `merging`: the coordination pass settles it from GitHub.
         None => Ok(merge),
+    }
+}
+
+/// [`ready`], with the checks it saw recorded on `merge`; another's pull
+/// request is refused unless every check is green.
+async fn read_ready(
+    ctx: &DaemonContext,
+    merge: &mut MergeRequest,
+) -> Result<Readiness, ArchonError> {
+    assert_eq!(merge.state, MergeState::Merging, "read just before a merge");
+    assert!(
+        is_commit_id(&merge.head),
+        "a merge is pinned to a full commit id"
+    );
+    let readiness = ready(ctx, merge).await?;
+    let Readiness::Ready(ready) = readiness else {
+        return Ok(readiness);
+    };
+    merge.checks = Some(ready.seen.describe());
+    Ok(match checks_not_green(&ready) {
+        Some(why) => Readiness::Refused(why),
+        None => Readiness::Ready(ready),
+    })
+}
+
+/// Record a merge `unready` stopped: parked for GitHub's mergeability check,
+/// else refused with its reason.
+async fn settle_unready(
+    ctx: &DaemonContext,
+    mut merge: MergeRequest,
+    unready: Readiness,
+) -> Result<MergeRequest, ArchonError> {
+    match unready {
+        Readiness::Undecided => park_for_github(ctx, merge).await,
+        Readiness::Refused(why) => {
+            merge.state = MergeState::Refused { reason: why };
+            finish_merge(ctx, merge).await
+        }
+        Readiness::Ready(_) => unreachable!("only a merge that is not ready is settled here"),
     }
 }
 

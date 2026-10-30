@@ -105,7 +105,7 @@
   foreign commit identity or an attribution trailer) is now repaired too; a foreign identity is still
   refused until the commits carry the repository's own.
 - An infrastructure failure wakes the failed agent in place, with a note
-  that names the failure, when Aether still has it; it keeps its worktree
+  that names the failure and its new deadline, when Aether still has it; it keeps its worktree
   and history. A fresh agent starts only when Aether refuses the wake, and
   a wake that took does not use up the stage's infrastructure retry. A
   failure that names a passing cause (an unavailable engine, a rate or

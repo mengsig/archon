@@ -1,7 +1,7 @@
 //! The review a pipeline declares one of its stages holds (ARCHITECTURE §8.2): what its
 //! agent must put on record, what Archon checked of it, and the line later stages get.
 
-use archon_core::run::{LineKind, Verdict as Said, markdown_lines, strip_label};
+use archon_core::run::{LineKind, Verdict as Said, markdown_lines, strip_label, summary_json};
 use serde_json::Value;
 
 use crate::spec::ReviewDuty;
@@ -76,9 +76,9 @@ impl Verdict {
         if structured.is_some_and(|data| Said::from_structured(data).is_some()) {
             let read = Self::read(structured)?;
             read.claims_agree(summary, structured)?;
-            if read.pass && Said::from_summary(summary).is_some_and(|said| said != Said::Pass) {
+            if read.pass && Said::summary_disputes_pass(summary) {
                 return Err(format!(
-                    "its structured verdict passes but its summary's final `VERDICT:` line does not: {VERDICT_HOWTO}"
+                    "its structured verdict passes but its summary's final `VERDICT:` line or JSON verdict does not: {VERDICT_HOWTO}"
                 ));
             }
             return Ok(read);
@@ -221,51 +221,6 @@ fn finding_titles(list: &[Value]) -> Vec<String> {
         .map(one_line)
         .filter(|title| !title.is_empty())
         .collect()
-}
-
-/// The verdict JSON of `summary`: the whole summary or its one fenced block,
-/// unwrapped from the `complete_task` arguments `{summary, structured}`.
-fn summary_json(summary: &str) -> Option<Value> {
-    let data = serde_json::from_str::<Value>(summary)
-        .ok()
-        .or_else(|| fenced_json(summary))?;
-    let wrapped = data.get("verdict").is_none()
-        && data.get("summary").is_some_and(Value::is_string)
-        && data.get("structured").is_some_and(Value::is_object);
-    Some(match wrapped {
-        true => data["structured"].clone(),
-        false => data,
-    })
-}
-
-/// The one fenced block of `text`, top level and untagged or tagged `json`,
-/// as JSON; `None` for no block or several. A nested or quoted example is none.
-fn fenced_json(text: &str) -> Option<Value> {
-    let mut blocks: Vec<(Option<&str>, String)> = Vec::new();
-    for (kind, line) in markdown_lines(text) {
-        match kind {
-            LineKind::FenceOpen => {
-                let info = line.trim_start_matches(['`', '~']).trim();
-                blocks.push((Some(info), String::new()));
-            }
-            LineKind::NestedFenceOpen => blocks.push((None, String::new())),
-            LineKind::Fenced => {
-                let (_, body) = blocks
-                    .last_mut()
-                    .expect("a fenced line follows its opening");
-                body.push_str(line);
-                body.push('\n');
-            }
-            _ => {}
-        }
-    }
-    let [(Some(info), body)] = blocks.as_slice() else {
-        return None;
-    };
-    if !info.is_empty() && !info.eq_ignore_ascii_case("json") {
-        return None;
-    }
-    serde_json::from_str(body.trim()).ok()
 }
 
 /// Why a result holds no verdict, quoting the one it gave if any.
@@ -705,6 +660,11 @@ mod tests {
                 refused.contains("summary's final `VERDICT:` line"),
                 "{refused}"
             );
+        }
+        let failed = json!({"verdict": "fail", "head": HEAD, "findings": [{"title": "defect"}]});
+        for summary in [failed.to_string(), format!("```json\n{failed}\n```")] {
+            let refused = Verdict::read_result(&summary, Some(&pass)).unwrap_err();
+            assert!(refused.contains("JSON verdict does not"), "{refused}");
         }
         assert!(
             Verdict::read_result("VERDICT: PASS", Some(&pass))

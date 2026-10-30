@@ -26,14 +26,26 @@ const VERDICT_KEYS: [&str; 3] = ["verdict", "result", "status"];
 impl Verdict {
     /// `structured.verdict`, else a readable `structured.result` or `status`,
     /// else the summary's last `VERDICT:` line. A structured pass counts only
-    /// when that line, if the summary has one, passes too.
+    /// when the summary's line or JSON verdict, if it has one, passes too.
     pub fn extract(summary: &str, structured: Option<&serde_json::Value>) -> Self {
-        let line = Self::from_summary(summary);
         match structured.and_then(Self::from_structured) {
-            Some(Self::Pass) if line.is_some_and(|said| said != Self::Pass) => Self::Unknown,
+            Some(Self::Pass) if Self::summary_disputes_pass(summary) => Self::Unknown,
             Some(given) => given,
-            None => line.unwrap_or(Self::Unknown),
+            None => Self::from_summary(summary).unwrap_or(Self::Unknown),
         }
+    }
+
+    /// Whether `summary` takes a structured pass back: its last `VERDICT:`
+    /// line, or the verdict of its [`summary_json`], reads other than pass.
+    pub fn summary_disputes_pass(summary: &str) -> bool {
+        let json = summary_json(summary)
+            .filter(|data| data.get(VERDICT_KEYS[0]).is_some())
+            .and_then(|data| Self::from_structured(&data));
+        let line = Self::from_summary(summary);
+        [line, json]
+            .into_iter()
+            .flatten()
+            .any(|said| said != Self::Pass)
     }
 
     /// The verdict `structured` states: its `verdict` key whenever it has
@@ -86,17 +98,17 @@ impl Verdict {
     /// when it is refused: a structured field, else a `VERDICT:` line.
     pub fn stated(summary: &str, structured: Option<&serde_json::Value>) -> Option<String> {
         let line = || last_verdict_line(summary).map(|(line, _)| line.trim());
-        let given = structured.and_then(Self::from_structured);
-        // A summary line that takes a structured pass back is what refused it.
-        if given == Some(Self::Pass) && Self::from_summary(summary).is_some_and(|s| s != Self::Pass)
-        {
-            return line().map(str::to_owned);
-        }
         let field = |key| structured?.get(key);
         let quote = |given: &serde_json::Value| match given.as_str() {
             Some(text) => text.trim().to_owned(),
             None => given.to_string(),
         };
+        let given = structured.and_then(Self::from_structured);
+        // The summary that takes a structured pass back is what refused it.
+        if given == Some(Self::Pass) && Self::summary_disputes_pass(summary) {
+            let json = || Some(quote(summary_json(summary)?.get(VERDICT_KEYS[0])?));
+            return line().map(str::to_owned).or_else(json);
+        }
         if let Some(given) = field(VERDICT_KEYS[0]) {
             return Some(quote(given));
         }
@@ -190,6 +202,55 @@ fn trails_on(rest: &str) -> bool {
         let commit = strip_label(line, "head").or_else(|| strip_label(line, "base"));
         !line.trim().is_empty() && !commit.is_some_and(is_commit)
     })
+}
+
+/// The verdict JSON of `summary`: the whole summary or its one fenced block,
+/// unwrapped from the `complete_task` arguments `{summary, structured}`.
+pub fn summary_json(summary: &str) -> Option<serde_json::Value> {
+    let data = serde_json::from_str::<serde_json::Value>(summary)
+        .ok()
+        .or_else(|| fenced_json(summary))?;
+    let wrapped = data.get("verdict").is_none()
+        && data
+            .get("summary")
+            .is_some_and(serde_json::Value::is_string)
+        && data
+            .get("structured")
+            .is_some_and(serde_json::Value::is_object);
+    Some(match wrapped {
+        true => data["structured"].clone(),
+        false => data,
+    })
+}
+
+/// The one fenced block of `text`, top level and untagged or tagged `json`,
+/// as JSON; `None` for no block or several. A nested or quoted example is none.
+fn fenced_json(text: &str) -> Option<serde_json::Value> {
+    let mut blocks: Vec<(Option<&str>, String)> = Vec::new();
+    for (kind, line) in markdown_lines(text) {
+        match kind {
+            LineKind::FenceOpen => {
+                let info = line.trim_start_matches(['`', '~']).trim();
+                blocks.push((Some(info), String::new()));
+            }
+            LineKind::NestedFenceOpen => blocks.push((None, String::new())),
+            LineKind::Fenced => {
+                let (_, body) = blocks
+                    .last_mut()
+                    .expect("a fenced line follows its opening");
+                body.push_str(line);
+                body.push('\n');
+            }
+            _ => {}
+        }
+    }
+    let [(Some(info), body)] = blocks.as_slice() else {
+        return None;
+    };
+    if !info.is_empty() && !info.eq_ignore_ascii_case("json") {
+        return None;
+    }
+    serde_json::from_str(body.trim()).ok()
 }
 
 /// The last line of `text` that reads `VERDICT: …`, and its value. Lines in
@@ -1053,6 +1114,14 @@ mod tests {
         );
         let said = Verdict::stated("VERDICT: FAIL", Some(&pass));
         assert_eq!(said.as_deref(), Some("VERDICT: FAIL"));
+        let failed = json!({"verdict": "fail", "findings": [{"title": "defect"}]});
+        for summary in [failed.to_string(), format!("```json\n{failed}\n```")] {
+            assert_eq!(Verdict::extract(&summary, Some(&pass)), Verdict::Unknown);
+            let said = Verdict::stated(&summary, Some(&pass));
+            assert_eq!(said.as_deref(), Some("fail"), "{summary}");
+        }
+        let report = json!({"tests": 214}).to_string();
+        assert_eq!(Verdict::extract(&report, Some(&pass)), Verdict::Pass);
         let later = json!({"verdict": "PASS\nDo not merge until CI is green"});
         assert_eq!(Verdict::extract("", Some(&later)), Verdict::Unknown);
         let continued = "Reviewed.\n\nVERDICT: PASS\nDo not merge until CI is green";

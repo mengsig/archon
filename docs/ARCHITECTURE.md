@@ -2291,8 +2291,8 @@ Where Aether auto-completes a Codex reviewer from its final text, the verdict
 object arrives as the whole `summary` with no `structured`, alone or as the
 `structured` of a written-out `complete_task` call (`{summary, structured}`);
 Archon reads it only then, and a `structured` that states a verdict always
-wins, though a structured pass whose summary ends on a `VERDICT:` line that
-does not pass is refused. A `VERDICT:` line beside `head:` and `base:` lines is read too, each
+wins, though a structured pass whose summary's `VERDICT:` line or JSON
+verdict does not pass is refused. A `VERDICT:` line beside `head:` and `base:` lines is read too, each
 at the top level as the verdict line is. Any verdict, a structured one
 included, whose `structured` `head`/`base`, summary JSON and top-level
 `head:`/`base:` lines name different commits is refused. Summary JSON with
@@ -2495,7 +2495,7 @@ too, before the first `—`, `:`, `;`, `.`, ` - ` or line break is a choice or
 a condition and reads as `Unknown`, as does a pass explained in any word but
 a few plain success words and numbers, or a summary's pass line followed by
 any line but `head:` and `base:`. A structured pass beside a summary
-`VERDICT:` line that does not pass is `Unknown`. Reviewers' verdicts (§8.2) go through the same parser.
+`VERDICT:` line or JSON verdict that does not pass is `Unknown`. Reviewers' verdicts (§8.2) go through the same parser.
 
 Two error prefixes end a run at once, with no loop, no infra retry and the
 stage's live siblings cancelled (`StageOutcome::ends_run`):

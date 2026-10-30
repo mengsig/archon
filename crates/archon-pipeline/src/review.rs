@@ -690,6 +690,9 @@ mod tests {
             let failed = json!({key: "fail", "head": HEAD}).to_string();
             assert!(Verdict::read_result(&failed, Some(&pass)).is_err(), "{key}");
         }
+        let wrapped = json!({"summary": "VERDICT: FAIL", "structured": pass}).to_string();
+        assert!(Verdict::read_result(&wrapped, None).is_err());
+        assert!(Verdict::read_result(&wrapped, Some(&pass)).is_err());
         let blocked =
             json!({"verdict": "pass", "head": HEAD, "findings": [{"severity": "blocking"}]});
         let refused = Verdict::read_result("", Some(&blocked)).unwrap_err();

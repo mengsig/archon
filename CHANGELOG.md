@@ -68,7 +68,8 @@
   whose final `VERDICT:` line or JSON verdict (`verdict`, `result` or
   `status`) does not pass counts as fail too, and so does any pass beside
   a finding of `blocking`, `blocker`, `critical` or `high` severity in
-  `structured` or the summary's JSON.
+  `structured` or the summary's JSON; a summary written as the
+  `{summary, structured}` arguments has its inner summary read too.
 - A reviewer plan's effort is a floor, not a ceiling. The delegation
   watchdog cancelled a reviewer delegated above the planned effort in the
   middle of its review, and let one below it run, which is how

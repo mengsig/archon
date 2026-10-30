@@ -46,11 +46,17 @@ impl Verdict {
     /// or a blocking finding in `structured` or that JSON.
     pub fn pass_disputed(summary: &str, structured: Option<&serde_json::Value>) -> bool {
         let json = summary_json(summary);
-        let blocking = [structured, json.as_ref()]
+        // A summary written as `{summary, structured}` holds a summary of its own, read one level deep.
+        let inner = wrapped_summary(summary);
+        let inner_json = inner.as_deref().and_then(summary_json);
+        let blocking = [structured, json.as_ref(), inner_json.as_ref()]
             .into_iter()
             .flatten()
             .any(Self::lists_blocking);
-        blocking || Self::summary_disagrees(summary, json.as_ref())
+        let inner_disagrees = inner
+            .as_deref()
+            .is_some_and(|inner| Self::summary_disagrees(inner, inner_json.as_ref()));
+        blocking || inner_disagrees || Self::summary_disagrees(summary, json.as_ref())
     }
 
     /// Whether the summary's last `VERDICT:` line or its JSON's verdict,
@@ -244,20 +250,40 @@ fn trails_on(rest: &str) -> bool {
 /// The verdict JSON of `summary`: the whole summary or its one fenced block,
 /// unwrapped from the `complete_task` arguments `{summary, structured}`.
 pub fn summary_json(summary: &str) -> Option<serde_json::Value> {
-    let data = serde_json::from_str::<serde_json::Value>(summary)
+    let data = raw_summary_json(summary)?;
+    Some(match is_wrapper(&data) {
+        true => data["structured"].clone(),
+        false => data,
+    })
+}
+
+/// The inner `summary` of a summary written as `{summary, structured}`.
+fn wrapped_summary(summary: &str) -> Option<String> {
+    let data = raw_summary_json(summary).filter(is_wrapper)?;
+    Some(
+        data["summary"]
+            .as_str()
+            .expect("a wrapper's string summary")
+            .to_owned(),
+    )
+}
+
+/// The whole summary, or its one fenced block, as JSON.
+fn raw_summary_json(summary: &str) -> Option<serde_json::Value> {
+    serde_json::from_str::<serde_json::Value>(summary)
         .ok()
-        .or_else(|| fenced_json(summary))?;
-    let wrapped = data.get("verdict").is_none()
+        .or_else(|| fenced_json(summary))
+}
+
+/// Whether `data` is the `complete_task` arguments `{summary, structured}`.
+fn is_wrapper(data: &serde_json::Value) -> bool {
+    data.get("verdict").is_none()
         && data
             .get("summary")
             .is_some_and(serde_json::Value::is_string)
         && data
             .get("structured")
-            .is_some_and(serde_json::Value::is_object);
-    Some(match wrapped {
-        true => data["structured"].clone(),
-        false => data,
-    })
+            .is_some_and(serde_json::Value::is_object)
 }
 
 /// The one fenced block of `text`, top level and untagged or tagged `json`,
@@ -1186,6 +1212,16 @@ mod tests {
             let said = Verdict::stated(&failed, Some(&pass));
             assert_eq!(said.as_deref(), Some("fail"), "{key}");
         }
+        let structured = json!({"verdict": "pass", "head": "abcdef1"});
+        let wrapped = json!({"summary": "VERDICT: FAIL", "structured": structured}).to_string();
+        for summary in [wrapped.clone(), format!("```json\n{wrapped}\n```")] {
+            assert_eq!(Verdict::extract(&summary, Some(&pass)), Verdict::Unknown);
+        }
+        let agreed = json!({"summary": "Done.\nVERDICT: PASS", "structured": structured});
+        assert_eq!(
+            Verdict::extract(&agreed.to_string(), Some(&pass)),
+            Verdict::Pass
+        );
         let report = json!({"tests": 214}).to_string();
         assert_eq!(Verdict::extract(&report, Some(&pass)), Verdict::Pass);
         let later = json!({"verdict": "PASS\nDo not merge until CI is green"});

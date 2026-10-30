@@ -843,7 +843,9 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   and its JSON (the whole summary or its one fenced block) `verdict`,
   `result` or `status`, where it has them, pass too. No pass, wherever it
   is stated, counts beside a finding of `blocking`, `blocker`, `critical`
-  or `high` severity in `structured` or the summary's JSON. The gate's refusal quotes what the agent wrote.
+  or `high` severity in `structured` or the summary's JSON. A summary
+  written as `{summary, structured}` has its inner summary read the same
+  way. The gate's refusal quotes what the agent wrote.
   Known limitation: of CommonMark, the parser models only block quotes,
   list indentation and fences, and reads other constructs as plain lines;
   a verdict it cannot settle counts as fail, never as pass, so write a

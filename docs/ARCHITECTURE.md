@@ -2498,7 +2498,8 @@ any line but `head:` and `base:`. A structured pass beside a summary
 `VERDICT:` line or JSON `verdict`, `result` or `status` that does not pass
 is `Unknown`, as is any pass beside a `blocking`, `blocker`, `critical` or
 `high` finding in `structured` or the summary's JSON
-(`Verdict::pass_disputed`). Reviewers' verdicts (§8.2) go through the same parser.
+(`Verdict::pass_disputed`), the inner summary of a `{summary, structured}`
+wrapper included. Reviewers' verdicts (§8.2) go through the same parser.
 
 Two error prefixes end a run at once, with no loop, no infra retry and the
 stage's live siblings cancelled (`StageOutcome::ends_run`):

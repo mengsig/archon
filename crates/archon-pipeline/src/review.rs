@@ -632,8 +632,13 @@ mod tests {
 
     #[test]
     fn a_verdict_line_is_read_wherever_it_stands_beside_structured_without_one() {
+        let late = format!("Prose first.\n\n**Verdict:** PASS\nhead: {HEAD}");
+        assert!(Verdict::read_result(&late, None).unwrap().pass);
         let mid = format!("**Verdict:** PASS\nhead: {HEAD}\nThen more prose.");
-        assert!(Verdict::read_result(&mid, None).unwrap().pass);
+        assert!(
+            Verdict::read_result(&mid, None).is_err(),
+            "prose may take a pass back"
+        );
         let findings = json!({"head": HEAD, "base": "1234567", "findings": [{"title": "nit"}]});
         let read = Verdict::read_result("Two nits.\nVERDICT: Passed", Some(&findings)).unwrap();
         assert!(read.pass && read.head == HEAD);
@@ -686,8 +691,12 @@ mod tests {
         let choice = json!({"status": "PASS or FAIL", "head": HEAD});
         let refused = Verdict::read_result("VERDICT: PASS", Some(&choice)).unwrap_err();
         assert!(refused.contains("\"PASS or FAIL\""), "{refused}");
-        let explained = format!("VERDICT: PASS — verdict confirmed by CI\nhead: {HEAD}");
+        let explained = format!("VERDICT: PASS — all tests pass\nhead: {HEAD}");
         assert!(Verdict::read_result(&explained, None).unwrap().pass);
+        let held = format!("VERDICT: PASS — merge only with green CI\nhead: {HEAD}");
+        assert!(Verdict::read_result(&held, None).is_err());
+        let trailing = format!("VERDICT: PASS\nhead: {HEAD}\nDo not merge yet.");
+        assert!(Verdict::read_result(&trailing, None).is_err());
         let pass = json!({"verdict": "pass", "head": HEAD});
         let fenced = format!("```json\n{pass}\n```\nVERDICT: not passed");
         let refused = Verdict::read_result(&fenced, None).unwrap_err();

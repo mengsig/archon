@@ -2491,9 +2491,9 @@ unreadable), then the summary's last
 continuing one included) and fences, in any letter case and through
 markdown emphasis. A verdict word followed by any word, in parentheses
 too, before the first `—`, `:`, `;`, `.`, ` - ` or line break is a choice or
-a condition and reads as `Unknown`, as does a pass whose explanation, or any
-text after it, names a condition, remaining work, a negation or an undenied
-blocker or failure. Reviewers' verdicts (§8.2) go through the same parser.
+a condition and reads as `Unknown`, as does a pass explained in any word but
+a few plain success words and numbers, or a summary's pass line followed by
+any line but `head:` and `base:`. Reviewers' verdicts (§8.2) go through the same parser.
 
 Two error prefixes end a run at once, with no loop, no infra retry and the
 stage's live siblings cancelled (`StageOutcome::ends_run`):

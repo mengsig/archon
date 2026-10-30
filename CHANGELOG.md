@@ -59,10 +59,10 @@
   different commits is refused, a structured verdict included. A summary's JSON verdict counts only in a column-0
   fenced block, never an example nested in a list, indented or quoted. An unreadable verdict, a choice or hedge such as
   `PASS or FAIL`, `PASS, but two failed` or `PASS (pending fixes)` included
-  (any word between the verdict and a `—`, `:` or `.`), or a pass whose
-  explanation or any later text names a condition, remaining work, a
-  negation, or a blocker or failure it does not deny
-  (`PASS — CI must pass before merge`, `PASS — fix the failing tests first`),
+  (any word between the verdict and a `—`, `:` or `.`), or a pass
+  explained in anything but plain success words and numbers
+  (`PASS — all 214 tests pass` counts; `PASS — merge only with green CI`
+  does not), or followed in the summary by any line but `head:` and `base:`,
   still counts as fail,
   and the refusal now quotes it.
 - A reviewer plan's effort is a floor, not a ceiling. The delegation

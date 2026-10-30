@@ -64,8 +64,8 @@ impl Verdict {
 
     /// What the last `VERDICT: <word>` line of `text` says, in any letter
     /// case and with light markdown (`**Verdict:** PASS`); `Unknown` when
-    /// that line names no verdict, even if an earlier one did, or its
-    /// line or anything after it takes a pass back ([`holds_back`]).
+    /// that line names no verdict, even if an earlier one did, or a pass is
+    /// explained beyond [`PLAIN_SUCCESS`] words or followed by other lines.
     pub fn from_summary(text: &str) -> Option<Self> {
         let (line, value) = last_verdict_line(text)?;
         let verdict = Self::from_word(value);
@@ -74,8 +74,8 @@ impl Verdict {
             text.get(..end).is_some_and(|head| head.ends_with(line)),
             "a summary line"
         );
-        // Whatever follows the verdict line explains it as well.
-        let held = verdict == Self::Pass && holds_back(&text[end..]);
+        // A pass the summary goes on to explain might be taken back there.
+        let held = verdict == Self::Pass && trails_on(&text[end..]);
         Some(if held { Self::Unknown } else { verdict })
     }
 
@@ -110,7 +110,7 @@ impl Verdict {
     /// counts only when no word follows it before the first explanation
     /// separator (`—`, `:`, `;`, `.`, ` - `, a line break): any is a choice
     /// (`PASS or FAIL`) or a condition (`PASS, pending fixes`, `PASS (if CI agrees)`),
-    /// and a pass its explanation takes back ([`holds_back`]) is `Unknown` too.
+    /// and a pass explained beyond plain success words ([`holds_back`]) is `Unknown` too.
     fn leading(text: &str) -> Option<Self> {
         let mut words = text
             .split(|c: char| !c.is_alphanumeric())
@@ -143,93 +143,31 @@ impl Verdict {
     }
 }
 
-/// Words in a pass's explanation that make it conditional, say work remains
-/// or refuse delivery (`PASS — CI must pass before merge`, `PASS — do not merge`).
-const HOLDS: [&str; 44] = [
-    "pending",
-    "until",
-    "unless",
-    "if",
-    "once",
-    "when",
-    "before",
-    "after",
-    "provided",
-    "providing",
-    "assuming",
-    "subject",
-    "conditional",
-    "conditionally",
-    "contingent",
-    "must",
-    "should",
-    "need",
-    "needs",
-    "needed",
-    "require",
-    "requires",
-    "required",
-    "requirement",
-    "requirements",
-    "requested",
-    "await",
-    "awaiting",
-    "outstanding",
-    "todo",
-    "not",
-    "t",
-    "never",
-    "cannot",
-    "nor",
-    "dont",
-    "cant",
-    "wont",
-    "shouldnt",
-    "fix",
-    "fixes",
-    "fixing",
-    "first",
-    "yet",
+/// The only words a pass's explanation may hold besides numbers (`PASS — all
+/// 214 tests pass`): any other could make it conditional, so it reads `Unknown`.
+const PLAIN_SUCCESS: [&str; 18] = [
+    "all", "tests", "test", "checks", "check", "pass", "passes", "passed", "passing", "green",
+    "clean", "no", "findings", "issues", "lgtm", "ok", "ci", "and",
 ];
-/// Words naming a blocker or a failure, which take a pass back unless denied.
-const TROUBLES: [&str; 17] = [
-    "blocked",
-    "blocker",
-    "blockers",
-    "blocking",
-    "fail",
-    "fails",
-    "failed",
-    "failing",
-    "failure",
-    "failures",
-    "broken",
-    "error",
-    "errors",
-    "regression",
-    "regressions",
-    "breaks",
-    "broke",
-];
-/// Words that, among the two before a [`TROUBLES`] word, deny it (`0 failed`, `no open blockers`).
-const DENIALS: [&str; 7] = ["no", "non", "zero", "0", "without", "nothing", "none"];
 
-/// Whether a pass's explanation takes it back: a [`HOLDS`] word or a
-/// [`TROUBLES`] word it does not deny. Such a pass reads as `Unknown`, failing safe.
+/// Whether a pass's explanation could take it back: any word in it that is
+/// neither a number nor a [`PLAIN_SUCCESS`] word. A plain pass has none.
 fn holds_back(explanation: &str) -> bool {
-    let words: Vec<String> = explanation
+    explanation
         .split(|c: char| !c.is_alphanumeric())
         .filter(|word| !word.is_empty())
-        .map(str::to_ascii_lowercase)
-        .collect();
-    words.iter().enumerate().any(|(at, word)| {
-        let word = word.as_str();
-        let denied = || {
-            words[at.saturating_sub(2)..at]
-                .iter()
-                .any(|w| DENIALS.contains(&w.as_str()))
-        };
-        HOLDS.contains(&word) || (TROUBLES.contains(&word) && !denied())
+        .any(|word| {
+            let plain = PLAIN_SUCCESS.iter().any(|ok| ok.eq_ignore_ascii_case(word));
+            !plain && !word.chars().all(|c| c.is_ascii_digit())
+        })
+}
+
+/// Whether a summary goes on after its verdict line with anything but blank
+/// lines and the `head:`/`base:` lines a review names its commits in.
+fn trails_on(rest: &str) -> bool {
+    rest.lines().any(|line| {
+        let commit = strip_label(line, "head").or_else(|| strip_label(line, "base"));
+        !line.trim().is_empty() && commit.is_none()
     })
 }
 
@@ -978,7 +916,7 @@ mod tests {
         assert_eq!(Verdict::extract(nested, None), Verdict::Unknown);
         let listed = "Checked.\n- **Verdict:** PASS";
         assert_eq!(Verdict::extract(listed, None), Verdict::Pass);
-        let explained = "VERDICT: PASS — verdict confirmed by CI";
+        let explained = "VERDICT: PASS — all 214 tests pass";
         assert_eq!(Verdict::extract(explained, None), Verdict::Pass);
     }
 
@@ -1037,10 +975,8 @@ mod tests {
             let line = format!("VERDICT: {said}");
             assert_eq!(Verdict::extract(&line, None), Verdict::Unknown, "{said}");
         }
-        let explained = "VERDICT: PASS — 214 passed, 0 failed, or so CI says";
+        let explained = "**Verdict:** PASS — 214 tests passed, 0 issues, CI green";
         assert_eq!(Verdict::extract(explained, None), Verdict::Pass);
-        let noted = "VERDICT: PASS — two advisory notes (nothing failed)";
-        assert_eq!(Verdict::extract(noted, None), Verdict::Pass);
         for said in [
             "PASS, pending fixes",
             "passed with two open nits",
@@ -1065,6 +1001,8 @@ mod tests {
             "PASS — merge after CI is green",
             "PASS — fix the failing tests first",
             "PASS — two tests failed",
+            "PASS — merge only with green CI",
+            "PASS — verdict confirmed by CI",
         ];
         for said in held {
             let line = format!("VERDICT: {said}");
@@ -1083,16 +1021,18 @@ mod tests {
         assert_eq!(Verdict::extract(separate, None), Verdict::Unknown);
         let anchored = "VERDICT: PASS\nhead: abc123\nbase: def456";
         assert_eq!(Verdict::extract(anchored, None), Verdict::Pass);
-        for said in [
-            "PASS — no blocking findings",
-            "PASS — non-blocking nits only",
-            "PASS — all 214 tests pass, nothing blocking",
-            "PASS — 214 passed, 0 failed",
-            "PASS — no tests failed and no regressions",
-            "FAIL — do not merge until the blocker is fixed",
+        for (said, want) in [
+            ("PASS — no findings", Verdict::Pass),
+            ("PASS — all checks green", Verdict::Pass),
+            ("PASS — 214 passed, 0 failed", Verdict::Unknown),
+            ("PASS — no blocking findings", Verdict::Unknown),
+            (
+                "FAIL — do not merge until the blocker is fixed",
+                Verdict::Fail,
+            ),
         ] {
             let line = format!("VERDICT: {said}");
-            assert_ne!(Verdict::extract(&line, None), Verdict::Unknown, "{said}");
+            assert_eq!(Verdict::extract(&line, None), want, "{said}");
         }
         let multiline = json!({"verdict": "PASS\nall 214 tests pass"});
         assert_eq!(Verdict::extract("", Some(&multiline)), Verdict::Pass);

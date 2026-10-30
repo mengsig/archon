@@ -826,14 +826,16 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   `rejected` read as pass and fail. Anything else counts as fail, and so
   does a choice or a hedge: any word after the verdict word, in
   parentheses too, before the first `—`, `:`, `;`, `.`, ` - ` or line break
-  (`PASS or FAIL`, `PASS, but two failed`, `PASS (pending fixes)`); put an
-  explanation after one (`PASS — two advisory notes`). A pass reads as
-  fail too when its explanation, or any text after the verdict, takes it
-  back: a condition or remaining work (`pending`, `until`, `if`, `before`,
-  `after`, `must`, `required`, `fix`, `first`, …), a negation (`not`,
-  `don't`, `never`) or a blocker or failure it does not deny (`blocking`,
-  `failing`, `errors`, but not `no blocking`, `non-blocking` or `0 failed`). This errs on the safe side: keep the explanation plain
-  and end the summary with the verdict line.
+  (`PASS or FAIL`, `PASS, but two failed`, `PASS (pending fixes)`). A
+  fail may be explained after one (`FAIL — two findings`). A pass may be
+  explained only in plain success words and numbers (`all`, `tests`,
+  `checks`, `pass`, `passed`, `green`, `clean`, `no`, `findings`, `issues`,
+  `CI`, `ok`, `lgtm`, `and`: `PASS — all 214 tests pass`), and in a summary
+  only `head:` and `base:` lines may follow it; any other word could make
+  it conditional (`PASS — merge only with green CI`), so it counts as fail.
+  This errs on the safe side: a plain explanation such as
+  `PASS — 0 failed` or `PASS — no blocking findings` is refused too, so
+  put details above the verdict line and end the summary with it.
   The gate's refusal quotes what the agent wrote.
   Known limitation: of CommonMark, the parser models only block quotes,
   list indentation and fences, and reads other constructs as plain lines;

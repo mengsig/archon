@@ -830,9 +830,9 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   explanation after one (`PASS — two advisory notes`). A pass reads as
   fail too when its explanation, or any text after the verdict, takes it
   back: a condition or remaining work (`pending`, `until`, `if`, `before`,
-  `after`, `must`, `required`, …), a negation (`not`, `don't`, `never`) or
-  a blocker it does not deny (`blocking`, but not `no blocking` or
-  `non-blocking`). This errs on the safe side: keep the explanation plain
+  `after`, `must`, `required`, `fix`, `first`, …), a negation (`not`,
+  `don't`, `never`) or a blocker or failure it does not deny (`blocking`,
+  `failing`, `errors`, but not `no blocking`, `non-blocking` or `0 failed`). This errs on the safe side: keep the explanation plain
   and end the summary with the verdict line.
   The gate's refusal quotes what the agent wrote.
   Known limitation: of CommonMark, the parser models only block quotes,

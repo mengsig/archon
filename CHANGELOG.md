@@ -61,7 +61,8 @@
   `PASS or FAIL`, `PASS, but two failed` or `PASS (pending fixes)` included
   (any word between the verdict and a `—`, `:` or `.`), or a pass whose
   explanation or any later text names a condition, remaining work, a
-  negation or a blocker (`PASS — CI must pass before merge`),
+  negation, or a blocker or failure it does not deny
+  (`PASS — CI must pass before merge`, `PASS — fix the failing tests first`),
   still counts as fail,
   and the refusal now quotes it.
 - A reviewer plan's effort is a floor, not a ceiling. The delegation

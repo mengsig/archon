@@ -145,7 +145,7 @@ impl Verdict {
 
 /// Words in a pass's explanation that make it conditional, say work remains
 /// or refuse delivery (`PASS — CI must pass before merge`, `PASS — do not merge`).
-const HOLDS: [&str; 39] = [
+const HOLDS: [&str; 44] = [
     "pending",
     "until",
     "unless",
@@ -185,13 +185,37 @@ const HOLDS: [&str; 39] = [
     "cant",
     "wont",
     "shouldnt",
+    "fix",
+    "fixes",
+    "fixing",
+    "first",
+    "yet",
 ];
-const BLOCKERS: [&str; 4] = ["blocked", "blocker", "blockers", "blocking"];
-/// Words that, among the two before a blocker word, deny it (`no open blockers`).
-const DENIALS: [&str; 6] = ["no", "non", "zero", "0", "without", "nothing"];
+/// Words naming a blocker or a failure, which take a pass back unless denied.
+const TROUBLES: [&str; 17] = [
+    "blocked",
+    "blocker",
+    "blockers",
+    "blocking",
+    "fail",
+    "fails",
+    "failed",
+    "failing",
+    "failure",
+    "failures",
+    "broken",
+    "error",
+    "errors",
+    "regression",
+    "regressions",
+    "breaks",
+    "broke",
+];
+/// Words that, among the two before a [`TROUBLES`] word, deny it (`0 failed`, `no open blockers`).
+const DENIALS: [&str; 7] = ["no", "non", "zero", "0", "without", "nothing", "none"];
 
-/// Whether a pass's explanation takes it back: a [`HOLDS`] word or a blocker
-/// it does not deny. Such a pass reads as `Unknown`, failing safe.
+/// Whether a pass's explanation takes it back: a [`HOLDS`] word or a
+/// [`TROUBLES`] word it does not deny. Such a pass reads as `Unknown`, failing safe.
 fn holds_back(explanation: &str) -> bool {
     let words: Vec<String> = explanation
         .split(|c: char| !c.is_alphanumeric())
@@ -205,7 +229,7 @@ fn holds_back(explanation: &str) -> bool {
                 .iter()
                 .any(|w| DENIALS.contains(&w.as_str()))
         };
-        HOLDS.contains(&word) || (BLOCKERS.contains(&word) && !denied())
+        HOLDS.contains(&word) || (TROUBLES.contains(&word) && !denied())
     })
 }
 
@@ -1039,6 +1063,8 @@ mod tests {
             "PASS — CI must pass before merge",
             "PASS — changes required before merge",
             "PASS — merge after CI is green",
+            "PASS — fix the failing tests first",
+            "PASS — two tests failed",
         ];
         for said in held {
             let line = format!("VERDICT: {said}");
@@ -1061,6 +1087,8 @@ mod tests {
             "PASS — no blocking findings",
             "PASS — non-blocking nits only",
             "PASS — all 214 tests pass, nothing blocking",
+            "PASS — 214 passed, 0 failed",
+            "PASS — no tests failed and no regressions",
             "FAIL — do not merge until the blocker is fixed",
         ] {
             let line = format!("VERDICT: {said}");

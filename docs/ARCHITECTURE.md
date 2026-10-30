@@ -2493,7 +2493,7 @@ markdown emphasis. A verdict word followed by any word, in parentheses
 too, before the first `—`, `:`, `;`, `.`, ` - ` or line break is a choice or
 a condition and reads as `Unknown`, as does a pass whose explanation, or any
 text after it, names a condition, remaining work, a negation or an undenied
-blocker. Reviewers' verdicts (§8.2) go through the same parser.
+blocker or failure. Reviewers' verdicts (§8.2) go through the same parser.
 
 Two error prefixes end a run at once, with no loop, no infra retry and the
 stage's live siblings cancelled (`StageOutcome::ends_run`):

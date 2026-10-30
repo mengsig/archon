@@ -8,13 +8,16 @@
 #   under 10s, with archond restarted on NEW and the stage agent kept running.
 # Scenario B: `archon update --yes` gets Ctrl+C while it restarts archond; it
 #   must exit within 3s, leaving a working archon and archond, agent kept.
+# Scenario F (with --base): the first update from a release before the fix,
+#   its documented path: the base's `update --no-restart`, then NEW's
+#   `update --yes`, which must restart the base archond in under 30s.
 # shellcheck source-path=SCRIPTDIR
 set -u
 
 usage() {
     cat <<'EOF'
 Usage: scripts/simulate-update.sh [--source DIR | --old BIN --new BIN] [--work DIR]
-                                  [--out DIR] [--a-timeout SECS] [--keep]
+                                  [--out DIR] [--a-timeout SECS] [--base BIN] [--keep]
 
   --source DIR          the archon checkout OLD and NEW are built from (default:
                         the one this script is in); only its tracked files are
@@ -27,6 +30,8 @@ Usage: scripts/simulate-update.sh [--source DIR | --old BIN --new BIN] [--work D
                         set, is the cargo target directory, else DIR/target
   --out DIR             copy transcripts, results and logs here before cleanup
   --a-timeout SECS      how long scenario A waits for the TUI after "y" (60)
+  --base BIN            an archon of OLD's version from before the fix: also
+                        run scenario F, the first update from such a release
   --keep                leave the sandbox in place (processes are still stopped)
 
 Builds OLD from the source as it is and NEW with its workspace version bumped
@@ -36,7 +41,7 @@ EOF
 }
 
 parse_args() {
-    OLD_BIN='' NEW_BIN='' OUT='' SOURCE='' KEEP=0 A_TIMEOUT=60
+    OLD_BIN='' NEW_BIN='' BASE_BIN='' OUT='' SOURCE='' KEEP=0 A_TIMEOUT=60
     WORK=${TMPDIR:-/tmp}/simulate-update-build
     while [ "$#" -gt 0 ]; do
         case $1 in
@@ -46,6 +51,7 @@ parse_args() {
             --work) WORK=${2:?--work needs a directory}; shift 2 ;;
             --out) OUT=${2:?--out needs a directory}; shift 2 ;;
             --a-timeout) A_TIMEOUT=${2:?--a-timeout needs seconds}; shift 2 ;;
+            --base) BASE_BIN=${2:?--base needs a binary}; shift 2 ;;
             --keep) KEEP=1; shift ;;
             -h | --help) usage; exit 0 ;;
             *) usage >&2; exit 2 ;;
@@ -81,6 +87,11 @@ binaries() {
     NEW_BIN=$(absolute_binary "$NEW_BIN")
     OLD_VERSION=$(version_of "$OLD_BIN") || die "$OLD_BIN --version failed"
     NEW_VERSION=$(version_of "$NEW_BIN") || die "$NEW_BIN --version failed"
+    if [ -n "$BASE_BIN" ]; then
+        BASE_BIN=$(absolute_binary "$BASE_BIN")
+        base=$(version_of "$BASE_BIN") || die "$BASE_BIN --version failed"
+        [ "$base" = "$OLD_VERSION" ] || die "--base reports $base; scenario F wants $OLD_VERSION"
+    fi
     [ "$OLD_VERSION" != "$NEW_VERSION" ] || die "OLD and NEW both report $OLD_VERSION"
     say "OLD archon $OLD_VERSION ($OLD_BIN), NEW archon $NEW_VERSION ($NEW_BIN)"
 }
@@ -120,6 +131,7 @@ main() {
     start_aetherd
     scenario_a
     scenario_b
+    scenario_f
     summary
     [ "$FAILED" = 0 ]
 }

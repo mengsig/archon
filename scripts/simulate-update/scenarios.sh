@@ -1,5 +1,6 @@
-# The two scenarios of simulate-update.sh: the launch question answered
-# "y" (A), and `archon update --yes` cut by Ctrl+C mid-restart (B).
+# The scenarios of simulate-update.sh: the launch question answered
+# "y" (A), `archon update --yes` cut by Ctrl+C mid-restart (B), and the
+# first update from a release before the fix (F, with --base).
 # Sourced after lib.sh and setup.sh.
 
 STAGE_START_LIMIT=180
@@ -144,10 +145,10 @@ stop_archond() {
         || bounded 60 sb archon daemon stop --force >>"$ROOT/out/reset.log" 2>&1
 }
 
-# Back to OLD: installed, and no archond running. A restart an earlier update
+# Back to BIN: installed, and no archond running. A restart an earlier update
 # asked for may start archond again once it stops, so stop until it stays down.
-reset_to_old() {
-    install_archon "$OLD_BIN"
+reset_to() {
+    install_archon "$1"
     for round in 1 2 3; do
         stop_archond || die "archond would not stop for scenario B; see $ROOT/out/reset.log"
         sleep 5
@@ -170,7 +171,7 @@ check_interrupt() {
 
 scenario_b() {
     say "scenario B: archon update --yes, Ctrl+C while it restarts archond"
-    reset_to_old
+    reset_to "$OLD_BIN"
     start_stage B || return
     expect "B: archond on OLD" "runs $(daemon_field daemon_version)" daemon_on "$OLD_VERSION"
     transcript=$ROOT/out/scenario-b.transcript
@@ -208,4 +209,36 @@ check_interrupt_told() {
                 daemon_on "$NEW_VERSION" ;;
         *) check "B: interrupt tells the truth" FAIL "no interrupt message in $1" ;;
     esac
+}
+
+# Prefix each line of stdin with the seconds since it started.
+stamp() {
+    python3 -u -c 'import sys, time
+start = time.monotonic()
+for line in sys.stdin:
+    print(f"{time.monotonic() - start:8.3f} | {line}", end="", flush=True)'
+}
+
+scenario_f() {
+    [ -n "$BASE_BIN" ] || return 0
+    say "scenario F: the first update from a release before the fix"
+    reset_to "$BASE_BIN"
+    start_stage F || return
+    expect "F: archond on the base release" "runs $(daemon_field daemon_version)" daemon_on "$OLD_VERSION"
+    transcript=$ROOT/out/scenario-f.transcript
+    started=$(now)
+    { bounded 120 sb archon update --no-restart 2>&1; echo "exit $?"; } | stamp >"$transcript"
+    installed=$(version_of "$ROOT/bin/archon")
+    expect "F: base swaps in NEW" "reports $installed, want $NEW_VERSION" [ "$installed" = "$NEW_VERSION" ]
+    { bounded 120 sb archon update --yes 2>&1; echo "exit $?"; } | stamp >>"$transcript"
+    took=$(since "$started")
+    expect "F: both updates" "took ${took}s (limit 30s), $(tail -n 1 "$transcript")" \
+        python3 -c 'import sys; sys.exit(not float(sys.argv[1]) < 30)' "$took"
+    wait_until 30 "archond on $NEW_VERSION" daemon_on "$NEW_VERSION"
+    pid=$(daemon_field pid)
+    [ -n "$pid" ] && own_pid "$pid"
+    expect "F: archond restarted" "runs $(daemon_field daemon_version) pid $pid, was pid $DAEMON_PID" \
+        new_pid_on "$(daemon_field daemon_version)" "$NEW_VERSION" "$pid" "$DAEMON_PID"
+    check_agent_alive F
+    finish_stage F
 }

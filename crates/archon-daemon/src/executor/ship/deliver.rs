@@ -412,8 +412,10 @@ async fn prove(
         Err(refusal) => return Ok(Err(refusal)),
     };
     let onto = claimed.onto.as_ref().map(|onto| onto.head_sha.clone());
-    let reviewed_base = match stacked {
-        Some(_) => match origin_base(ctx, repo, base).await? {
+    let reviewed = claimed.stacked_on.as_ref().filter(|_| stacked.is_some());
+    let reviewed_base = match reviewed {
+        // The reviewed pull request's base on GitHub, never a stack parent's branch.
+        Some(reviewed) => match origin_base(ctx, repo, &reviewed.base_ref).await? {
             Ok(head) => Some(head),
             Err(refusal) => return Ok(Err(refusal)),
         },

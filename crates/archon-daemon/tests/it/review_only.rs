@@ -34,6 +34,7 @@ async fn fork_pull_request() -> (Harness, FakeGh, String) {
     add_origin(&h);
     let gh = FakeGh::install(&h);
     let head = contributor_commit(&h, "patch.txt", "the contributor's patch\n");
+    let base = git(&origin_of(&h), &["rev-parse", "main"]);
     gh.headed(
         200,
         &json!({
@@ -44,6 +45,7 @@ async fn fork_pull_request() -> (Harness, FakeGh, String) {
             "headRefName": "patch",
             "headRefOid": head,
             "baseRefName": "main",
+            "baseRefOid": base,
             "isCrossRepository": true,
             "headRepository": {"name": "r"},
             "headRepositoryOwner": {"login": "contributor"},
@@ -476,6 +478,50 @@ async fn a_review_of_the_tail_after_the_base_refs_moved_passes_nothing() {
     nothing_pushed_to_the_fork(&h, &gh, &second);
 }
 
+/// The fork comes from the base GitHub shows for the pull request, so
+/// `origin`'s push URL naming a mirror whose base holds the first commit
+/// does not let a reviewer of the tail alone pass the whole.
+#[tokio::test]
+async fn a_review_of_the_tail_against_a_mirror_s_base_passes_nothing() {
+    let (h, gh, first) = fork_pull_request().await;
+    let second = contributor_commit(&h, "second.txt", "the contributor's second commit\n");
+    gh.show(&second, "MERGEABLE", green());
+    grant_merge(&h).await;
+    let item = review_item(&h, &second, ReviewLevel::Standard).await;
+    let mirror = h.dir.path().join("mirror.git");
+    let (origin, mirrored) = (origin_of(&h), mirror.to_str().unwrap().to_owned());
+    git(
+        h.dir.path(),
+        &[
+            "clone",
+            "--quiet",
+            "--mirror",
+            origin.to_str().unwrap(),
+            &mirrored,
+        ],
+    );
+    git(&mirror, &["update-ref", "refs/heads/main", &first]);
+    git(&h.repo, &["config", "remote.origin.pushurl", &mirrored]);
+
+    let lead = h.running().await.remove(0);
+    let reviewer = h
+        .backend
+        .delegate(lead.aether_agent.as_ref().unwrap(), REVIEW_MODEL);
+    let tail = json!({"verdict": "pass", "head": second, "base": first, "findings": []});
+    h.backend.complete_delegated(&reviewer, tail);
+    let passed = StageOutcome::Completed {
+        summary: format!("Reviewed {FORK_PR} at {second}; checks green"),
+        structured: Some(json!({"review": {"verdict": "pass", "reviewers": [reviewer.as_str()]}})),
+    };
+    h.settle_running(|_| passed.clone()).await;
+    h.dispatch().await;
+
+    let state = h.state(&item.id).await;
+    assert!(matches!(state, QueueState::Failed { .. }), "{state:?}");
+    assert!(h.orchestrator(request_merge(&item)).await.is_err());
+    assert!(!gh.calls().iter().any(|c| c.starts_with("pr merge")));
+}
+
 /// An item that `depends_on` the passed review, dispatched: its branch
 /// starts at the reviewed head, beneath which it is told to change nothing.
 async fn stacked_on(h: &Harness, review: &QueueItem, head: &str) -> QueueItem {
@@ -734,6 +780,29 @@ async fn a_stack_on_a_stack_carrying_a_foreign_commit_a_remote_ref_holds_is_refu
             .count(),
         1
     );
+    nothing_pushed_to_the_fork(&h, &gh, &head);
+}
+
+/// A stack parent's branch on `origin` is no base: a foreign commit pushed
+/// there is no more exempt than one in the worktree.
+#[tokio::test]
+async fn a_stack_on_a_stack_carrying_a_foreign_commit_its_parent_branch_holds_is_refused() {
+    let (h, gh, head, review) = reviewed_fork().await;
+    let second = second_level(&h, &gh, &head, &review).await;
+    let parent_branch = h.run(&second.dependencies[0]).await.branch;
+
+    settle_stacked(&h, &second, |workspace| {
+        other_commit(workspace);
+        let to = format!("HEAD:refs/heads/{parent_branch}");
+        git(workspace, &["push", "--quiet", "origin", &to]);
+        own_commit_named(workspace, "next.txt");
+    })
+    .await;
+
+    let QueueState::Failed { error, .. } = h.state(&second.id).await else {
+        panic!("refused: {:?}", h.state(&second.id).await);
+    };
+    assert!(error.contains("other@example.com"), "{error}");
     nothing_pushed_to_the_fork(&h, &gh, &head);
 }
 

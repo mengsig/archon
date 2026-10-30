@@ -7,12 +7,11 @@
 mod coverage;
 mod rounds;
 
-use std::path::PathBuf;
-
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::ports::{Descendant, DescendantState};
 use archon_core::pull_request::OntoPullRequest;
+use archon_core::repo::Repo;
 use archon_core::run::{PipelineRun, StageOutcome, StageRun};
 use archon_pipeline::ShipRecord;
 use archon_pipeline::review::{self, MAX_NAMED_REVIEWERS, Reviewer, Verdict};
@@ -600,9 +599,9 @@ async fn holding(
         branch: base_branch,
         onto_head,
         reviewed_pr,
-        repo_path,
+        repo,
     } = base_of(ctx, run).await?;
-    let (base_branch, onto_head) = match (&reviewed_pr, repo_path) {
+    let (base_branch, onto_head) = match (&reviewed_pr, repo) {
         (Some(reviewed), Some(repo)) => match trusted_fork(ctx, run, repo, reviewed).await? {
             // No local ref names the start: only the fork GitHub's base gives.
             Ok(fork) => (String::new(), Some(fork)),
@@ -658,7 +657,7 @@ struct ReviewBase {
     /// The pull request a review-only item reviews whole, at its frozen head.
     reviewed_pr: Option<OntoPullRequest>,
     /// The repository a review-only item's pull request is in.
-    repo_path: Option<PathBuf>,
+    repo: Option<Repo>,
 }
 
 /// Where `run`'s change starts: its base branch and, for an item queued
@@ -685,25 +684,26 @@ async fn base_of(ctx: &DaemonContext, run: &PipelineRun) -> Result<ReviewBase, A
         onto_head.is_none() || reviewed_pr.is_none(),
         "an item delivers into a pull request or only reviews it"
     );
-    let repo_path = match (&reviewed_pr, &item.repo) {
-        (Some(_), Some(repo)) => Some(store.repo(&crate::resolve::repo_ref(repo))?.path),
+    let repo = match (&reviewed_pr, &item.repo) {
+        (Some(_), Some(repo)) => Some(store.repo(&crate::resolve::repo_ref(repo))?),
         _ => None,
     };
     Ok(ReviewBase {
         branch,
         onto_head,
         reviewed_pr,
-        repo_path,
+        repo,
     })
 }
 
 /// Where `reviewed`'s change starts, as GitHub holds its base: the merge base
-/// of its frozen head and `origin`'s head of its base branch, fetched now.
-/// `Err` refuses the review when that cannot be read.
+/// of its frozen head and the base commit GitHub shows for that pull request,
+/// fetched by id, so no ref or remote URL here moves it. `Err` refuses the
+/// review when that cannot be read.
 async fn trusted_fork(
     ctx: &DaemonContext,
     run: &PipelineRun,
-    repo: PathBuf,
+    repo: Repo,
     reviewed: &OntoPullRequest,
 ) -> Result<Result<String, String>, ArchonError> {
     assert!(
@@ -711,28 +711,31 @@ async fn trusted_fork(
         "only a review item reviews a pull request whole"
     );
     assert!(is_commit_id(&reviewed.head_sha), "frozen at enqueue");
+    let url = reviewed.pr.url();
+    let base = super::gh::base_commit(&ctx.config.github.binary, &repo, &url).await?;
+    let Some(base) = base else {
+        return Ok(Err(format!(
+            "GitHub shows no base commit for {url}: its change has no start to review from"
+        )));
+    };
     let data_dir = ctx.paths.data_dir.clone();
-    let (workspace, base, head) = (
+    let (workspace, branch, head) = (
         run.workspace.clone(),
         reviewed.base_ref.clone(),
         reviewed.head_sha.clone(),
     );
     let fork = tokio::task::spawn_blocking(move || {
-        let shadow = Shadow::of(&data_dir, &repo)?;
-        let Some(origin) = stack::fetch_head(&shadow, &repo, &base)? else {
-            return Ok(None);
-        };
-        crate::worktree::merge_base(&workspace, &head, &[origin])
+        let shadow = Shadow::of(&data_dir, &repo.path)?;
+        stack::fetch(&shadow, &repo.path, &branch, &base)?;
+        crate::worktree::merge_base(&workspace, &head, &[base])
     })
     .await
     .map_err(|e| ArchonError::io("review fork task", std::io::Error::other(e)))??;
     let Some(fork) = fork else {
         return Ok(Err(format!(
-            "{}'s head {} shares no history with `origin`'s `{}`: its change has no start \
-             to review from",
-            reviewed.pr.url(),
-            reviewed.head_sha,
-            reviewed.base_ref
+            "{url}'s head {} shares no history with its base `{}` on GitHub: its change has \
+             no start to review from",
+            reviewed.head_sha, reviewed.base_ref
         )));
     };
     assert!(is_commit_id(&fork), "merge-base prints a full commit id");

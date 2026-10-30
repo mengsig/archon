@@ -58,6 +58,12 @@ if [ "$1 $2 $4 $5" = "pr view --json labels,body" ]; then
     python3 -c 'import json,sys; print(json.dumps({"labels": [{"name": l} for l in open(sys.argv[1]).read().splitlines()], "body": open(sys.argv[2]).read()}))' "$state/labels-$n" "$state/body-$n"
     exit 0
 fi
+if [ "$1 $2 $4 $5" = "pr view --json url,baseRefOid" ]; then
+    shown="$state/headed-${3##*/}.json"
+    [ -f "$shown" ] || { echo "GraphQL: Could not resolve to a PullRequest" >&2; exit 1; }
+    python3 -c 'import json,sys; pr=json.load(open(sys.argv[1])); print(json.dumps({"url": pr["url"], "baseRefOid": pr.get("baseRefOid")}))' "$shown"
+    exit 0
+fi
 if [ "$1 $2 $4 $5" = "pr view --json id,number,url,state,headRefName,headRefOid,baseRefName,body,isDraft,reviewDecision,isCrossRepository,headRepository,headRepositoryOwner" ]; then
     shown="$state/headed-${3##*/}.json"
     [ -f "$shown" ] || { echo "GraphQL: Could not resolve to a PullRequest" >&2; exit 1; }

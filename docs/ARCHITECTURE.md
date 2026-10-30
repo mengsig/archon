@@ -5250,8 +5250,9 @@ queued `onto` it. At enqueue such an item freezes the pull request with
 `review_only` set, which alone admits a fork or a repository `gh` cannot
 push to; its branch starts at the frozen head (a fork's fetched from
 `refs/pull/<n>/head`) and its review covers the whole pull request from its
-merge base, the fork point with `origin`'s head of the base, fetched for
-the review, never a local or tracking ref. When the review is counted
+merge base, the fork point with the base commit GitHub shows for that
+pull request (`baseRefOid`), fetched by id: no local ref, tracking ref or
+remote URL moves it. When the review is counted
 (§8.2), archond records the branch head it passed as `reviewed_head` in
 the stage's structured result, a key no agent can write; a branch moved
 off the frozen head is refused. A merge of that item then needs, besides
@@ -5274,8 +5275,9 @@ that pull request's base; at ship, `gh` must show the reviewed pull request
 open, or merged, at that head, which becomes the floor of the attribution
 and foreign commit checks (§8.7): those commits must be ancestors of the
 item's head, unchanged, and every other foreign commit is still refused. Past that
-floor only commits in `origin`'s head of the base, read with `ls-remote`
-and fetched at delivery, are exempt: no local or tracking ref counts. A
+floor only commits in `origin`'s head of the reviewed pull request's base
+branch, read with `ls-remote` and fetched at delivery, are exempt: no local
+or tracking ref counts, nor a stack parent's branch. A
 refresh of such an item, or a fix of its stack, keeps that floor, and so
 does an item stacked on it, at any depth, through `depends_on`. Nothing
 is ever pushed to the reviewed pull request's branch.

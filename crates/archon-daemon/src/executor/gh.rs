@@ -621,6 +621,35 @@ pub(crate) async fn can_push(
     ))
 }
 
+/// The head of `url`'s base branch as GitHub holds it for that pull request;
+/// `None` when it shows none. Read alone, as only a whole-PR review needs it.
+pub(crate) async fn base_commit(
+    binary: &Path,
+    repo: &Repo,
+    url: &str,
+) -> Result<Option<String>, ArchonError> {
+    let asked = PullRequestRef::from_url(url);
+    assert!(asked.is_some(), "a pull request URL");
+    let args = ["pr", "view", url, "--json", "url,baseRefOid"];
+    let raw = text(binary, repo, &args).await?;
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Viewed {
+        url: String,
+        base_ref_oid: Option<String>,
+    }
+    let viewed: Viewed = serde_json::from_str(&raw)
+        .map_err(|e| ArchonError::Protocol(format!("invalid `gh pr view` response: {e}")))?;
+    if PullRequestRef::from_url(&viewed.url) != asked {
+        return Err(ArchonError::Protocol(format!(
+            "GitHub showed {} when asked for {url}",
+            viewed.url
+        )));
+    }
+    let base = viewed.base_ref_oid.filter(|oid| is_commit_id(oid));
+    Ok(base)
+}
+
 /// One pass's reading of GitHub: one listing of each repository's open pull
 /// requests, then one lookup for each pull request asked about that it lacks.
 #[derive(Debug, Default)]

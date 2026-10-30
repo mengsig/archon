@@ -74,13 +74,12 @@ impl Verdict {
     /// Prose with none of these is never read as a verdict.
     pub fn read_result(summary: &str, structured: Option<&Value>) -> Result<Self, String> {
         if structured.is_some_and(|data| Said::from_structured(data).is_some()) {
-            return Self::read(structured);
+            let read = Self::read(structured)?;
+            read.claims_agree(summary, structured)?;
+            return Ok(read);
         }
-        let json = serde_json::from_str::<Value>(summary)
-            .ok()
-            .or_else(|| fenced_json(summary));
-        if let Some(data) = json {
-            let read = Self::read_json(&data, structured)?;
+        if let Some(data) = summary_json(summary) {
+            let read = Self::read_json(data, structured)?;
             read.claims_agree(summary, structured)?;
             return match Said::from_summary(summary) {
                 None => Ok(read),
@@ -101,16 +100,9 @@ impl Verdict {
 
     /// A verdict given as JSON in the summary; the commits it read and its
     /// findings may come from a `structured` that gave no verdict, the JSON's own first.
-    fn read_json(data: &Value, structured: Option<&Value>) -> Result<Self, String> {
-        let wrapped = data.get("verdict").is_none()
-            && data.get("summary").is_some_and(Value::is_string)
-            && data.get("structured").is_some_and(Value::is_object);
-        let mut given = match wrapped {
-            true => data.get("structured").cloned(),
-            false => Some(data.clone()),
-        };
+    fn read_json(mut given: Value, structured: Option<&Value>) -> Result<Self, String> {
         let extra = structured.and_then(Value::as_object);
-        if let (Some(Value::Object(fields)), Some(extra)) = (given.as_mut(), extra) {
+        if let (Value::Object(fields), Some(extra)) = (&mut given, extra) {
             assert!(
                 !extra.contains_key("verdict"),
                 "a structured verdict is read first"
@@ -121,7 +113,7 @@ impl Verdict {
                 }
             }
         }
-        Self::read(given.as_ref())
+        Self::read(Some(&given))
     }
 
     /// A verdict given as a `VERDICT:` line: the commit it read comes from
@@ -151,14 +143,23 @@ impl Verdict {
         Ok(read)
     }
 
-    /// `Err` when the summary's top-level `head:`/`base:` lines or a
-    /// `structured` without a verdict name other commits than this verdict read.
+    /// `Err` when any top-level `head:`/`base:` line of the summary, its JSON
+    /// or `structured` names another commit than this verdict read.
     fn claims_agree(&self, summary: &str, structured: Option<&Value>) -> Result<(), String> {
+        let json = summary_json(summary);
         for (label, read) in [("head", Some(&self.head)), ("base", self.base.as_ref())] {
-            let line = labelled(summary, label).and_then(|v| commit_of(Some(&Value::from(v))));
+            for line in labelled_lines(summary, label) {
+                same_commit(
+                    label,
+                    read,
+                    commit_of(Some(&Value::from(line))),
+                    "summary line",
+                )?;
+            }
             let field = commit_of(structured.and_then(|data| data.get(label)));
-            same_commit(label, read, line, "summary line")?;
             same_commit(label, read, field, "structured field")?;
+            let given = commit_of(json.as_ref().and_then(|data| data.get(label)));
+            same_commit(label, read, given, "summary JSON")?;
         }
         Ok(())
     }
@@ -212,6 +213,21 @@ fn finding_titles(list: &[Value]) -> Vec<String> {
         .collect()
 }
 
+/// The verdict JSON of `summary`: the whole summary or its one fenced block,
+/// unwrapped from the `complete_task` arguments `{summary, structured}`.
+fn summary_json(summary: &str) -> Option<Value> {
+    let data = serde_json::from_str::<Value>(summary)
+        .ok()
+        .or_else(|| fenced_json(summary))?;
+    let wrapped = data.get("verdict").is_none()
+        && data.get("summary").is_some_and(Value::is_string)
+        && data.get("structured").is_some_and(Value::is_object);
+    Some(match wrapped {
+        true => data["structured"].clone(),
+        false => data,
+    })
+}
+
 /// The one fenced block of `text`, top level and untagged or tagged `json`,
 /// as JSON; `None` for no block or several. A nested or quoted example is none.
 fn fenced_json(text: &str) -> Option<Value> {
@@ -256,11 +272,15 @@ fn no_verdict(summary: &str, structured: Option<&Value>) -> String {
 /// The value of the last top-level line of `text` that reads `label: value`;
 /// one in a fence, a quote or indented under a list item is an example.
 fn labelled(text: &str, label: &str) -> Option<String> {
-    let value = markdown_lines(text)
+    labelled_lines(text, label).last()
+}
+
+/// The value of every top-level line of `text` that reads `label: value`.
+fn labelled_lines<'a>(text: &'a str, label: &'a str) -> impl Iterator<Item = String> + 'a {
+    markdown_lines(text)
         .filter(|(kind, _)| *kind == LineKind::Prose)
-        .filter_map(|(_, line)| strip_label(line, label))
-        .last()?;
-    Some(value.trim().trim_matches('`').to_owned())
+        .filter_map(move |(_, line)| strip_label(line, label))
+        .map(|value| value.trim().trim_matches('`').to_owned())
 }
 
 /// `Err` when `other`, from `source`, names another commit as `label` than
@@ -697,6 +717,22 @@ mod tests {
             let refused = Verdict::read_result(&own.to_string(), Some(&read_commits)).unwrap_err();
             assert!(refused.contains("names two commits"), "{refused}");
         }
+        let given = json!({"verdict": "pass", "head": HEAD, "base": "1234567"});
+        for summary in [
+            format!("head: {newer}"),
+            format!("base: {newer}"),
+            format!("```json\n{{\"verdict\": \"pass\", \"head\": \"{newer}\"}}\n```"),
+            format!("head: {newer}\nhead: {HEAD}\nVERDICT: PASS"),
+        ] {
+            let refused = Verdict::read_result(&summary, Some(&given)).unwrap_err();
+            assert!(
+                refused.contains("names two commits"),
+                "{summary:?}: {refused}"
+            );
+        }
+        let twice = format!("head: {newer}\nhead: {HEAD}\nVERDICT: PASS");
+        let refused = Verdict::read_result(&twice, None).unwrap_err();
+        assert!(refused.contains("names two commits"), "{refused}");
         let agreeing = format!("```json\n{pass}\n```\nhead: {}", &HEAD[..7]);
         let read = Verdict::read_result(&agreeing, Some(&read_commits)).unwrap();
         assert_eq!(read.head, HEAD);
@@ -1053,10 +1089,13 @@ mod tests {
     #[test]
     fn summary_json_never_overrides_a_structured_verdict_or_error() {
         let pass = json!({"verdict": "pass", "head": "abcdef1"}).to_string();
-        let fail = json!({"verdict": "fail", "head": "1234567"});
+        let fail = json!({"verdict": "fail", "head": "abcdef1"});
         let verdict = Verdict::read_result(&pass, Some(&fail)).unwrap();
         assert!(!verdict.pass);
-        assert_eq!(verdict.head, "1234567");
+        assert_eq!(verdict.head, "abcdef1");
+        let elsewhere = json!({"verdict": "fail", "head": "1234567"});
+        let refused = Verdict::read_result(&pass, Some(&elsewhere)).unwrap_err();
+        assert!(refused.contains("names two commits"), "{refused}");
         let headless = json!({"verdict": "pass"});
         assert!(Verdict::read_result(&pass, Some(&headless)).is_err());
         for verdictless in [

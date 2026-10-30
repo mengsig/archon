@@ -54,7 +54,8 @@
   with `{"findings": []}` and `**Verdict:** PASS` in its summary no longer
   fails its gate, and a reviewer whose `structured` gives no verdict is read
   from its summary, its `head:` and `base:` lines only at the top level;
-  one whose JSON, lines and `structured` name different commits is refused. A summary's JSON verdict counts only in a column-0
+  a review whose `structured`, summary JSON or `head:`/`base:` lines name
+  different commits is refused, a structured verdict included. A summary's JSON verdict counts only in a column-0
   fenced block, never an example nested in a list, indented or quoted. An unreadable verdict, a choice or hedge such as
   `PASS or FAIL`, `PASS, but two failed` or `PASS (pending fixes)` included
   (any word between the verdict and a `—`, `:` or `.`),

@@ -330,8 +330,9 @@ this object as the entire `summary` when `structured` states no verdict, or the
 `complete_task` arguments `{"summary": "...", "structured": {...}}` written
 out as that summary, or a `VERDICT: PASS|FAIL` line beside `head:` and
 `base:` lines (a `structured` without a verdict may give these instead; a
-line in a fence, a quote or nested in a list is an example, and a verdict
-whose JSON, lines and fields name different commits is refused). A
+line in a fence, a quote or nested in a list is an example). A verdict,
+`structured` or not, is refused when its `structured` fields, the summary's
+JSON or any of its top-level `head:`/`base:` lines name different commits. A
 `structured` that states a verdict takes precedence, even if invalid. The
 verdict word is read as stage gates read it (see "The stage contract"). Prose,
 and a `VERDICT:` line with no commit it read, do not count as a delegated

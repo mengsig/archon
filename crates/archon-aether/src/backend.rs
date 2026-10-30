@@ -701,12 +701,24 @@ impl AgentBackend for AetherBackend {
             .filter(|agent| is_blocked_for_inspection(agent))
             .map(|agent| agent.id.clone())
             .collect();
-        for agent in &blocked {
+        let mut resumed = Vec::with_capacity(blocked.len());
+        for agent in blocked {
             let key = format!("{idempotency_key}:{agent}");
-            client.send_message(agent, note, &[], &key).await?;
-            client.resume(agent).await?;
+            client.send_message(&agent, note, &[], &key).await?;
+            match client.resume(&agent).await {
+                Ok(()) => resumed.push(agent),
+                // Someone else may have resumed it since the tree was read.
+                Err(refusal) => match client.get_agent(&agent).await {
+                    Ok(now) if !is_blocked_for_inspection(&now) => {}
+                    _ => return Err(refusal),
+                },
+            }
         }
-        Ok(blocked)
+        assert!(
+            resumed.len() <= beneath.len() + 1,
+            "only agents of the tree"
+        );
+        Ok(resumed)
     }
 
     async fn task_outcome(&self, task: &AetherTaskId) -> Result<Option<StageOutcome>, ArchonError> {

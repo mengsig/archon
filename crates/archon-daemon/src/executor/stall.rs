@@ -134,6 +134,9 @@ impl Policy {
 pub struct Reading {
     pub now: Timestamp,
     pub last_event: Timestamp,
+    /// The newest event of the tree on archond's own stream. Unlike Aether's
+    /// `last_event_at`, a deadline archond moved does not count.
+    pub heard: Timestamp,
     /// Whether any engine of the tree is alive; `None` when Aether does not
     /// report it.
     pub engine_alive: Option<bool>,
@@ -195,8 +198,12 @@ pub fn judge(policy: &Policy, reading: &Reading) -> Verdict {
         .to_std()
         .unwrap_or(Duration::ZERO);
     // A helper still at work may yet need the blocked agent as it stands.
+    // Aether's own clock would restart whenever a held deadline is moved.
     if reading.inspection {
-        return match silent >= policy.silence {
+        let quiet = (reading.now - reading.heard)
+            .to_std()
+            .unwrap_or(Duration::ZERO);
+        return match quiet >= policy.silence {
             true => Verdict::Inspection,
             false => Verdict::Healthy,
         };
@@ -341,6 +348,7 @@ fn read_tree(now: Timestamp, seen: Timestamp, waiting: bool, pulse: TreePulse) -
     Reading {
         now,
         last_event: last_event.min(now),
+        heard: seen.min(now),
         engine_alive: pulse.engine_alive,
         running: pulse.running,
         waiting,
@@ -458,6 +466,7 @@ mod tests {
         Reading {
             now: at(silent_min),
             last_event: at(0),
+            heard: at(0),
             engine_alive,
             running: true,
             waiting: false,
@@ -527,6 +536,15 @@ mod tests {
             ..blocked
         };
         assert_eq!(judge(&policy(), &helper_at_work), Verdict::Healthy);
+        let deadline_moved = Reading {
+            last_event: at(19),
+            ..blocked
+        };
+        assert_eq!(
+            judge(&policy(), &deadline_moved),
+            Verdict::Inspection,
+            "Aether's clock restarts when archond moves a held deadline"
+        );
         let held_too = Reading {
             held: true,
             held_for_cause: true,

@@ -1284,6 +1284,45 @@ async fn a_refused_resume_is_an_error_not_a_resumed_agent() {
     );
 }
 
+/// Two agents are blocked for inspection and someone resumes the first after
+/// the tree is read: its refusal is no failure, and the second is resumed.
+#[tokio::test]
+async fn a_refusal_for_an_agent_resumed_meanwhile_is_skipped() {
+    const HELPER: &str = "agt_01BX5ZZKBKACTAV9WEVGEMMVS2";
+    let (_dir, fake) = fake_aether().await;
+    let inspection = json!({"state": "blocked", "reason": {"block": "inspection", "detail": "x"}});
+    let mut lead = fake::agent(AGENT, Some(TASK));
+    lead["status"] = inspection.clone();
+    let mut helper = fake::agent(HELPER, None);
+    helper["parent"] = json!(AGENT);
+    helper["status"] = inspection;
+    let mut running = lead.clone();
+    running["status"] = json!({"state": "running"});
+    fake.script("get_agent", Scripted::reply("agent", lead.clone()));
+    fake.script("get_agent", Scripted::reply("agent", running));
+    fake.set_default(
+        "list_agents",
+        Scripted::reply("agents", json!([lead, helper])),
+    );
+    fake.set_default(
+        "send_message",
+        Scripted::reply("message_sent", json!({"message_id": "msg_1"})),
+    );
+    fake.script(
+        "resume",
+        Scripted::refuse("invalid_argument", "agent is not under inspection"),
+    );
+    fake.script("resume", Scripted::reply("agents", json!([helper])));
+    let backend = backend(&fake, any_model()).await;
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    let resumed = backend
+        .clear_inspection(&agent, "check the state first", "inspect:1")
+        .await
+        .unwrap();
+    assert_eq!(resumed, [AetherAgentId::parse(HELPER).unwrap()]);
+    assert_eq!(fake.received_named("resume").len(), 2);
+}
+
 /// Claude Code reports list-price dollars whether or not its login bills
 /// them. Aether's 5-hour and weekly usage windows show a subscription, whose
 /// agent gets no hard cap; without them the cap stays and the billing is

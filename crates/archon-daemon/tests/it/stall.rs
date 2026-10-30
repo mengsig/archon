@@ -221,6 +221,25 @@ async fn a_stage_blocked_for_inspection_is_resumed_with_a_note() {
     ));
 }
 
+/// Moving a held deadline is an event in Aether's log, so its clock is fresh;
+/// only archond's own stream, which never sees the move, measures the silence.
+#[tokio::test]
+async fn a_moved_deadline_does_not_put_off_an_inspection_resume() {
+    let h = Harness::new().await;
+    h.enqueue("blocked near its deadline").await;
+    h.dispatch().await;
+    let stage = the_only_running(&h).await;
+    let moved_just_now = TreePulse {
+        last_event_at: Some(archon_core::now()),
+        ..INSPECTED
+    };
+    h.backend.set_pulse(&lead(&stage), moved_just_now);
+    went_silent(&h, &lead(&stage), 21);
+    sweep(&h).await;
+    assert_eq!(h.backend.inspections_cleared().len(), 1);
+    assert_eq!(the_only_running(&h).await.id, stage.id);
+}
+
 #[tokio::test]
 async fn a_refused_inspection_resume_fails_the_stage_as_infrastructure() {
     let h = Harness::new().await;

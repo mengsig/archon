@@ -827,11 +827,13 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   does a choice or a hedge: any word after the verdict word, in
   parentheses too, before the first `—`, `:`, `;`, `.`, ` - ` or line break
   (`PASS or FAIL`, `PASS, but two failed`, `PASS (pending fixes)`); put an
-  explanation after one (`PASS — two advisory notes`). A pass whose
-  explanation, up to a blank line, takes it back reads as fail too: a
-  condition (`pending`, `until`, `unless`, `if`, `once`, `provided`, …), a
-  blocker it does not deny (`blocking`, but not `no blocking` or
-  `non-blocking`) or a refusal to deliver (`do not merge`, `don't ship`).
+  explanation after one (`PASS — two advisory notes`). A pass reads as
+  fail too when its explanation, or any text after the verdict, takes it
+  back: a condition or remaining work (`pending`, `until`, `if`, `before`,
+  `after`, `must`, `required`, …), a negation (`not`, `don't`, `never`) or
+  a blocker it does not deny (`blocking`, but not `no blocking` or
+  `non-blocking`). This errs on the safe side: keep the explanation plain
+  and end the summary with the verdict line.
   The gate's refusal quotes what the agent wrote.
   Known limitation: of CommonMark, the parser models only block quotes,
   list indentation and fences, and reads other constructs as plain lines;

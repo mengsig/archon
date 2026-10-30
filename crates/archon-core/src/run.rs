@@ -64,10 +64,19 @@ impl Verdict {
 
     /// What the last `VERDICT: <word>` line of `text` says, in any letter
     /// case and with light markdown (`**Verdict:** PASS`); `Unknown` when
-    /// that line names no verdict, even if an earlier one did.
+    /// that line names no verdict, even if an earlier one did, or its
+    /// line or anything after it takes a pass back ([`holds_back`]).
     pub fn from_summary(text: &str) -> Option<Self> {
-        let (_, value) = last_verdict_line(text)?;
-        Some(Self::from_word(value))
+        let (line, value) = last_verdict_line(text)?;
+        let verdict = Self::from_word(value);
+        let end = line.as_ptr() as usize - text.as_ptr() as usize + line.len();
+        assert!(
+            text.get(..end).is_some_and(|head| head.ends_with(line)),
+            "a summary line"
+        );
+        // Whatever follows the verdict line explains it as well.
+        let held = verdict == Self::Pass && holds_back(&text[end..]);
+        Some(if held { Self::Unknown } else { verdict })
     }
 
     /// The text a result gives as its verdict, readable or not, to quote
@@ -117,7 +126,7 @@ impl Verdict {
             .and_then(|head| head.split(" - ").next())
             .unwrap_or_default();
         let qualified = head.chars().any(char::is_alphanumeric);
-        let held = verdict == Self::Pass && holds_back(first_paragraph(after));
+        let held = verdict == Self::Pass && holds_back(after);
         Some(if qualified || held {
             Self::Unknown
         } else {
@@ -134,49 +143,70 @@ impl Verdict {
     }
 }
 
-/// Words in a pass's explanation that make it conditional (`PASS — pending fixes`).
-const CONDITIONS: [&str; 11] = [
+/// Words in a pass's explanation that make it conditional, say work remains
+/// or refuse delivery (`PASS — CI must pass before merge`, `PASS — do not merge`).
+const HOLDS: [&str; 39] = [
     "pending",
     "until",
     "unless",
     "if",
     "once",
+    "when",
+    "before",
+    "after",
     "provided",
     "providing",
     "assuming",
+    "subject",
     "conditional",
     "conditionally",
     "contingent",
+    "must",
+    "should",
+    "need",
+    "needs",
+    "needed",
+    "require",
+    "requires",
+    "required",
+    "requirement",
+    "requirements",
+    "requested",
+    "await",
+    "awaiting",
+    "outstanding",
+    "todo",
+    "not",
+    "t",
+    "never",
+    "cannot",
+    "nor",
+    "dont",
+    "cant",
+    "wont",
+    "shouldnt",
 ];
 const BLOCKERS: [&str; 4] = ["blocked", "blocker", "blockers", "blocking"];
 /// Words that, among the two before a blocker word, deny it (`no open blockers`).
 const DENIALS: [&str; 6] = ["no", "non", "zero", "0", "without", "nothing"];
-const DELIVERIES: [&str; 6] = ["merge", "merged", "merging", "ship", "land", "deliver"];
-/// Words that, right before a delivery word, withhold it (`do not merge`, `don't ship`).
-const REFUSALS: [&str; 4] = ["not", "t", "never", "cannot"];
 
-/// Whether a pass's explanation takes it back: a condition, a blocker it
-/// does not deny, or a refusal to merge. Such a pass reads as `Unknown`.
+/// Whether a pass's explanation takes it back: a [`HOLDS`] word or a blocker
+/// it does not deny. Such a pass reads as `Unknown`, failing safe.
 fn holds_back(explanation: &str) -> bool {
     let words: Vec<String> = explanation
         .split(|c: char| !c.is_alphanumeric())
         .filter(|word| !word.is_empty())
         .map(str::to_ascii_lowercase)
         .collect();
-    let before = |at: usize, count: usize| &words[at.saturating_sub(count)..at];
     words.iter().enumerate().any(|(at, word)| {
         let word = word.as_str();
-        let denied = || before(at, 2).iter().any(|w| DENIALS.contains(&w.as_str()));
-        let refused = || before(at, 1).iter().any(|w| REFUSALS.contains(&w.as_str()));
-        CONDITIONS.contains(&word)
-            || (BLOCKERS.contains(&word) && !denied())
-            || (DELIVERIES.contains(&word) && refused())
+        let denied = || {
+            words[at.saturating_sub(2)..at]
+                .iter()
+                .any(|w| DENIALS.contains(&w.as_str()))
+        };
+        HOLDS.contains(&word) || (BLOCKERS.contains(&word) && !denied())
     })
-}
-
-/// `text` up to its first blank line: the paragraph a verdict word opens.
-fn first_paragraph(text: &str) -> &str {
-    text.split("\n\n").next().unwrap_or_default()
 }
 
 /// The last line of `text` that reads `VERDICT: …`, and its value. Lines in
@@ -1006,6 +1036,9 @@ mod tests {
             "PASS — do not merge until the blocking issue is fixed",
             "PASS — don't ship yet",
             "PASS. One blocker remains",
+            "PASS — CI must pass before merge",
+            "PASS — changes required before merge",
+            "PASS — merge after CI is green",
         ];
         for said in held {
             let line = format!("VERDICT: {said}");
@@ -1018,6 +1051,12 @@ mod tests {
         }
         let later = json!({"verdict": "PASS\nDo not merge until CI is green"});
         assert_eq!(Verdict::extract("", Some(&later)), Verdict::Unknown);
+        let continued = "Reviewed.\n\nVERDICT: PASS\nDo not merge until CI is green";
+        assert_eq!(Verdict::extract(continued, None), Verdict::Unknown);
+        let separate = "VERDICT: PASS\n\nDo not merge until CI is green";
+        assert_eq!(Verdict::extract(separate, None), Verdict::Unknown);
+        let anchored = "VERDICT: PASS\nhead: abc123\nbase: def456";
+        assert_eq!(Verdict::extract(anchored, None), Verdict::Pass);
         for said in [
             "PASS — no blocking findings",
             "PASS — non-blocking nits only",

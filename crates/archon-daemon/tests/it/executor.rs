@@ -755,6 +755,7 @@ async fn an_infra_failure_wakes_the_failed_agent_before_a_fresh_one() {
         told.contains("failed for an infrastructure reason: engine died"),
         "{told}"
     );
+    assert!(told.contains("Archon now stops you"), "{told}");
     let notices = h.notices(NotificationKind::Progress).await;
     assert!(
         notices

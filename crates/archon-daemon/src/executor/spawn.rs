@@ -707,7 +707,10 @@ fn reserve_one(
     let wake = retry.and_then(|r| r.wake);
     let woken = wake.is_some();
     let (resume, replaces) = match wake {
-        Some(kept) => (Some(resume::wake_in(resume, replaces, kept)), None),
+        Some(kept) => {
+            let woken = resume::wake_in(resume, replaces, kept);
+            (Some(resume::with_deadline(woken, request.deadline)), None)
+        }
         None => (resume, replaces),
     };
     let spawn = StoredSpawn {

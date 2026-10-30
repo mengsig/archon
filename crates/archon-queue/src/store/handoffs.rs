@@ -27,14 +27,15 @@ fn key(agent: &AetherAgentId, attempt: u32) -> String {
 }
 
 /// Record what `agent` and every agent beneath it had been charged as it
-/// passes to `next`, a later attempt; the first record of an attempt stands.
+/// passes to `next`, a later attempt or the replacement of its own that woke
+/// it; the first record of an attempt stands.
 pub(super) fn record(
     conn: &Connection,
     agent: &AetherAgentId,
     next: &StageRun,
 ) -> Result<(), ArchonError> {
     assert_eq!(next.aether_agent.as_ref(), Some(agent), "it passes to next");
-    assert!(next.attempt > 1, "a kept agent passes to a later attempt");
+    assert!(next.attempt >= 1, "attempts are 1-based");
     let mut statement = conn
         .prepare_cached(
             "WITH RECURSIVE subtree(agent) AS (

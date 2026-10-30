@@ -207,7 +207,7 @@ async fn persist(
     let (owes_stop, kept) = {
         let mut store = ctx.store.lock().await;
         let kept = resume::after_settle(&store, &settled)?;
-        let owes_stop = descendants::owe(&mut store, &settled)?;
+        let owes_stop = descendants::owe(&mut store, &settled, false)?;
         store.upsert_stage_run(&settled)?;
         (owes_stop, kept)
     };
@@ -297,6 +297,32 @@ pub(super) fn settled_stage(
 /// and do not use up `limits.infra_retries` (ARCHITECTURE §6.3).
 const MAX_DISK_FULL_RETRIES: usize = 5;
 
+/// How long an infrastructure retry waits out a cause that clears with time.
+const TRANSIENT_WAIT_MINUTES: i64 = 5;
+
+/// What an infrastructure failure's `error` names that clears with time: an
+/// engine, provider or login that is down or refusing for now.
+fn transient_cause(error: &str) -> Option<&'static str> {
+    // Aether words a model error `<Class>: <message>`, as in `Auth: token expired`.
+    const CAUSES: [(&str, &str); 10] = [
+        ("unavailable", "the engine to come back"),
+        ("overloaded", "the provider to recover"),
+        ("ratelimit:", "the rate limit to lift"),
+        ("rate limit", "the rate limit to lift"),
+        ("usagelimit:", "the usage limit to reset"),
+        ("auth:", "the login to be renewed"),
+        ("authenticat", "the login to be renewed"),
+        ("unauthorized", "the login to be renewed"),
+        ("not logged in", "the login to be renewed"),
+        ("credential", "the credentials to be renewed"),
+    ];
+    let error = error.to_ascii_lowercase();
+    CAUSES
+        .iter()
+        .find(|(word, _)| error.contains(word))
+        .map(|(_, wait)| *wait)
+}
+
 /// Why a failed stage is re-spawned; each kind has its own count per slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RetryKind {
@@ -349,7 +375,8 @@ impl RetryKind {
 /// failures, and for a failure on a full disk, which holds dispatch until
 /// space is free. A planner whose plan Archon `refused` is sent back the
 /// same way, `MAX_CORRECTIONS` times. The failure never reaches the driver, so the slot keeps
-/// its capacity.
+/// its capacity. The first infrastructure replacement of a slot wakes the failed
+/// agent in place, and only a refused wake spawns a fresh agent, the cold retry.
 async fn infra_retry(
     ctx: &DaemonContext,
     table: &RunTable,
@@ -380,36 +407,33 @@ async fn infra_retry(
         .iter()
         .filter(|s| spawn::same_slot_as(s, stage))
         .collect();
-    assert!(
-        slot.iter().any(|s| s.id == stage.id),
-        "the failed stage run belongs to its run"
-    );
     let planner = table
         .drivers
         .get(&run.id)
         .is_some_and(|d| d.spec().assigned_by(&stage.stage_id).is_some());
-    let earlier = slot.iter().filter(|s| s.id != stage.id);
-    let retry = 1 + earlier
-        .filter(|s| RetryKind::of_replaced(s, planner) == kind)
-        .count();
+    let failed = settled_stage(stage.clone(), outcome.clone(), archon_core::now());
+    let (retry, wake) = slot_retry(ctx, &failed, &slot, kind, planner, error).await?;
     let limit = kind.limit(ctx);
     if retry > limit {
         return Ok(None);
     }
-    let failed = settled_stage(stage.clone(), outcome.clone(), archon_core::now());
-    let refusal = (kind == RetryKind::Refused).then_some((error.as_str(), retry));
-    let Some(replacement) = replace(ctx, table, run, all, &failed, slot.len(), refusal).await?
-    else {
+    let how = match (&wake, kind) {
+        (Some(kept), _) => Replacement::Woken(kept.clone()),
+        (None, RetryKind::Refused) => Replacement::Corrected(error, retry),
+        (None, _) => Replacement::Fresh,
+    };
+    let Some(replacement) = replace(ctx, table, run, all, &failed, slot.len(), how).await? else {
         return Ok(None);
     };
-    let (what, when) = match kind {
-        RetryKind::Infra => ("an infrastructure failure", ""),
-        RetryKind::DiskFull => ("a full disk", " once disk space is free"),
-        RetryKind::Refused => ("a refused swarm plan", ""),
-    };
-    let text = format!(
-        "Stage `{}` of run {} hit {what} ({error}); retrying{when} ({retry} of {limit}).",
-        stage.stage_id, run.id,
+    let waits = wait_out(ctx, kind, error, &replacement).await?;
+    let text = retry_text(
+        stage,
+        run,
+        error,
+        kind,
+        wake.is_some(),
+        waits,
+        (retry, limit),
     );
     progress(ctx, run, text).await?;
     // Issued at once, or by the sweep once a disk hold ends; in either
@@ -421,6 +445,94 @@ async fn infra_retry(
         poke: kind == RetryKind::DiskFull,
         ..FollowUp::default()
     }))
+}
+
+/// Hold an infrastructure retry `replacement` for a while when `error`
+/// names a cause that clears with time; returns that cause.
+async fn wait_out(
+    ctx: &DaemonContext,
+    kind: RetryKind,
+    error: &str,
+    replacement: &StageRunId,
+) -> Result<Option<&'static str>, ArchonError> {
+    let cause = match kind {
+        RetryKind::Infra => transient_cause(error),
+        RetryKind::DiskFull | RetryKind::Refused => None,
+    };
+    if cause.is_some() {
+        let until = archon_core::now() + chrono::Duration::minutes(TRANSIENT_WAIT_MINUTES);
+        spawn::hold_until(&mut *ctx.store.lock().await, replacement, until)?;
+    }
+    Ok(cause)
+}
+
+/// The feed line of a retry: what `stage` hit, how and when it is retried,
+/// and which of the `count` retries this is.
+fn retry_text(
+    stage: &StageRun,
+    run: &PipelineRun,
+    error: &str,
+    kind: RetryKind,
+    woken: bool,
+    waits: Option<&str>,
+    (retry, limit): (usize, usize),
+) -> String {
+    assert!(retry >= 1 && retry <= limit, "a retry within its limit");
+    let (what, how) = match (kind, woken) {
+        (RetryKind::Infra, true) => ("an infrastructure failure", " in the same agent"),
+        (RetryKind::Infra, false) => ("an infrastructure failure", ""),
+        (RetryKind::DiskFull, _) => ("a full disk", " once disk space is free"),
+        (RetryKind::Refused, _) => ("a refused swarm plan", ""),
+    };
+    let when = waits.map_or(String::new(), |cause| {
+        format!(" in {TRANSIENT_WAIT_MINUTES} min, waiting for {cause},")
+    });
+    let count = match woken {
+        true => "a fresh agent if Aether cannot wake it".to_owned(),
+        false => format!("{retry} of {limit}"),
+    };
+    let text = format!(
+        "Stage `{}` of run {} hit {what} ({error}); retrying{how}{when} ({count}).",
+        stage.stage_id, run.id,
+    );
+    assert!(text.contains(error), "the feed names the failure");
+    text
+}
+
+/// The number of the retry `failed`'s replacement would be among the `slot`'s
+/// retries of `kind`, and the agent it wakes. A replacement that woke its agent
+/// spent no retry; one is tried per slot, while a cold retry would be allowed.
+async fn slot_retry(
+    ctx: &DaemonContext,
+    failed: &StageRun,
+    slot: &[&StageRun],
+    kind: RetryKind,
+    planner: bool,
+    error: &str,
+) -> Result<(usize, Option<spawn::KeptAgent>), ArchonError> {
+    assert!(
+        slot.iter().any(|s| s.id == failed.id),
+        "the slot holds the failure"
+    );
+    let earlier = slot.iter().filter(|s| s.id != failed.id);
+    let replaced = earlier
+        .filter(|s| RetryKind::of_replaced(s, planner) == kind)
+        .count();
+    if kind != RetryKind::Infra {
+        return Ok((1 + replaced, None));
+    }
+    let store = ctx.store.lock().await;
+    let (tried, took) = resume::wakes(&store, slot)?;
+    assert!(
+        took <= replaced + 1,
+        "each woken agent took over one failure"
+    );
+    let retry = 1 + replaced - took.min(replaced);
+    let wake = match tried || retry > kind.limit(ctx) {
+        true => None,
+        false => resume::wake_for(&store, failed, error)?,
+    };
+    Ok((retry, wake))
 }
 
 /// Whether a watched path has less free than a disk-full hold waits for,
@@ -436,6 +548,15 @@ async fn disk_nearly_full(ctx: &DaemonContext) -> bool {
     }
 }
 
+/// How a failed stage run's replacement gets its agent.
+enum Replacement<'a> {
+    Fresh,
+    /// A planner sent back with Archon's refusal of its plan, the nth time.
+    Corrected(&'a str, usize),
+    /// The failed agent, woken in place and told this.
+    Woken(spawn::KeptAgent),
+}
+
 /// Reserve the replacement of `failed`, the `nth` run of its slot, and then
 /// persist the failure; `None` when the driver or the budget allows none.
 async fn replace(
@@ -445,7 +566,7 @@ async fn replace(
     all: &[StageRun],
     failed: &StageRun,
     nth: usize,
-    refusal: Option<(&str, usize)>,
+    how: Replacement<'_>,
 ) -> Result<Option<StageRunId>, ArchonError> {
     assert!(
         failed.state.is_terminal(),
@@ -459,15 +580,26 @@ async fn replace(
         return Ok(None);
     };
     if driver.spec().assigned_by(&plan.stage_id).is_some() {
+        let refusal = match how {
+            Replacement::Corrected(error, nth) => Some((error, nth)),
+            _ => None,
+        };
         let cap = planner_cap(ctx, run).await?;
         swarm::brief(&mut plan, driver.spec(), cap, refusal);
     }
+    let wake = match how {
+        Replacement::Woken(kept) => Some(kept),
+        _ => None,
+    };
     let mut store = ctx.store.lock().await;
     // Owed before the replacement exists, so it never starts beside them.
-    descendants::owe(&mut store, failed)?;
+    descendants::owe(&mut store, failed, wake.is_some())?;
     let Some(id) = spawn::reserve_replacement(ctx, &mut store, failed, &plan, nth)? else {
         return Ok(None);
     };
+    if let Some(kept) = wake {
+        resume::wake_into(&mut store, &id, kept)?;
+    }
     // Replacement first: a crash in between leaves a superseded live
     // stage run, never a failure that looks final on resume.
     store.upsert_stage_run(failed)?;
@@ -733,4 +865,23 @@ async fn queue_spawns(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_cause_that_clears_with_time_is_waited_out() {
+        let login = "model error from claude-code/opus: Auth: token expired";
+        assert_eq!(transient_cause(login), Some("the login to be renewed"));
+        let limit = "model error: RateLimit: slow down";
+        assert_eq!(transient_cause(limit), Some("the rate limit to lift"));
+        assert_eq!(
+            transient_cause("engine unavailable"),
+            Some("the engine to come back")
+        );
+        assert_eq!(transient_cause("engine died"), None);
+        assert_eq!(transient_cause("the commit author is unknown"), None);
+    }
 }

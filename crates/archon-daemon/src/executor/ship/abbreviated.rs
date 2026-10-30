@@ -40,7 +40,10 @@ pub(super) fn resolve(workspace: &Path, data: &mut Value) -> Result<(), ArchonEr
 /// type (a commit's prefix given for its tree resolves to an id it does not
 /// start).
 fn full_id(workspace: &Path, prefix: &str, kind: &str) -> Result<Option<String>, ArchonError> {
-    assert!(is_abbreviated_id(prefix), "only an abbreviation is resolved");
+    assert!(
+        is_abbreviated_id(prefix),
+        "only an abbreviation is resolved"
+    );
     assert!(matches!(kind, "commit" | "tree"), "a record names these");
     let spec = format!("{prefix}^{{{kind}}}");
     let ran = DaemonGit::sealed_in(workspace)

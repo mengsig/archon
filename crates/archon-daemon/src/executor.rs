@@ -764,7 +764,8 @@ async fn remove_ended_worktree(
     Ok(FollowUp::default())
 }
 
-/// The spawns to issue now. While dispatch is held for disk space only those
+/// The spawns to issue now: not one an infrastructure retry holds back for
+/// a while. While dispatch is held for disk space only those
 /// of finished runs are, so a run cancelled meanwhile retires at once. On a
 /// full disk only their never-sent ones are, which settle without Aether: a
 /// spawn that may have reached Aether would hit the full disk again, so it
@@ -773,7 +774,7 @@ async fn issuable(
     ctx: &DaemonContext,
     issue: Vec<StageRunId>,
 ) -> Result<BTreeSet<StageRunId>, ArchonError> {
-    let issue = dedup(issue);
+    let issue = due(ctx, dedup(issue)).await?;
     if issue.is_empty() || !ctx.disk.holding() {
         return Ok(issue);
     }
@@ -798,6 +799,24 @@ async fn issuable(
     );
     debug_assert!(finished.is_subset(&issue));
     Ok(finished)
+}
+
+/// The spawns of `issue` no retry holds back; the sweep issues the rest
+/// once their wait is over. A finished run's are due, so they settle.
+async fn due(
+    ctx: &DaemonContext,
+    issue: BTreeSet<StageRunId>,
+) -> Result<BTreeSet<StageRunId>, ArchonError> {
+    let now = archon_core::now();
+    let store = ctx.store.lock().await;
+    let mut due = BTreeSet::new();
+    for id in issue {
+        let run = store.stage_run(&id)?.run;
+        if spawn::due(&store, &id, now)? || store.run(&run)?.state.is_terminal() {
+            due.insert(id);
+        }
+    }
+    Ok(due)
 }
 
 fn dedup<T: Ord>(items: Vec<T>) -> BTreeSet<T> {

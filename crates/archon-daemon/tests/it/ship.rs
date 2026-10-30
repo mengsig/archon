@@ -14,6 +14,7 @@ use archon_core::error::ArchonError;
 use archon_core::model::ModelPlan;
 use archon_core::notify::NotificationKind;
 use archon_core::outcome::{Correction, FailureClass};
+use archon_core::ports::resumed_reply_outcome;
 use archon_core::protocol::{EnqueueRequest, Reply, RepoPatch, RepoRef, Request};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::{Attribution, ShipMode};
@@ -686,7 +687,10 @@ async fn a_short_commit_and_tree_ship_as_their_full_ids() {
     let mut short = change(&run.workspace);
     let full = short["commit"].as_str().unwrap().to_owned();
     short["commit"] = json!(full[..7].to_uppercase());
-    short["tree"] = json!(git(&run.workspace, &["rev-parse", "--short", "HEAD^{tree}"]));
+    short["tree"] = json!(git(
+        &run.workspace,
+        &["rev-parse", "--short", "HEAD^{tree}"]
+    ));
     settle_with(&h, short).await;
 
     let summary = succeeded(&h, &item).await;
@@ -1642,7 +1646,10 @@ async fn a_delivery_refused_for_uncommitted_changes_is_repaired() {
     let line = line.unwrap_or_else(|| panic!("{notices:?}"));
     assert!(line.contains("retrying once to repair it"), "{line}");
 
-    git(&run.workspace, &["commit", "--quiet", "-am", "Commit the README"]);
+    git(
+        &run.workspace,
+        &["commit", "--quiet", "-am", "Commit the README"],
+    );
     settle_with(&h, record(&run.workspace)).await;
     succeeded(&h, &item).await;
     assert_eq!(gh.count("pr create"), 1, "{:?}", gh.calls());
@@ -1669,7 +1676,10 @@ async fn a_foreign_identity_is_repaired_once_and_still_refused() {
 
     assert_eq!(h.state(&item.id).await.kind(), "running", "repaired");
     let brief = brief_of(&h, &item).await;
-    assert!(brief.contains("never by setting an identity itself"), "{brief}");
+    assert!(
+        brief.contains("never by setting an identity itself"),
+        "{brief}"
+    );
 
     settle_with(&h, record(&run.workspace)).await;
     let error = failed(&h, &item).await;
@@ -1696,4 +1706,37 @@ async fn a_delivery_refusal_the_stage_cannot_fix_is_not_repaired() {
     let error = failed(&h, &item).await;
     assert!(error.contains("Archon never force-pushes"), "{error}");
     assert!(!brief_of(&h, &item).await.contains(REPAIR_OPENING));
+}
+
+/// A `direct` agent that failed for infrastructure is woken in place, hands
+/// in its ship record in its answer, and ends with its attempt.
+#[tokio::test]
+async fn a_woken_agent_ships_from_its_answer_and_ends() {
+    let (h, gh) = delivering().await;
+    let (item, run) = started(&h, "direct").await;
+    let agent = h.running().await.remove(0).aether_agent.unwrap();
+    h.backend.fail_agent(&agent);
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "the engine went away".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    assert_eq!(h.backend.woken(), std::slice::from_ref(&agent));
+    assert_eq!(h.backend.requests().len(), 1, "no fresh agent");
+
+    let record = change(&run.workspace);
+    let reply = format!("Finished it.\n\n```json\n{record}\n```\n");
+    h.backend.answer(&agent, resumed_reply_outcome(&reply));
+    executor::turn_ended(&h.ctx, &agent)
+        .await
+        .expect("turn end");
+    h.dispatch().await;
+
+    succeeded(&h, &item).await;
+    assert_eq!(gh.count("pr create"), 1, "{:?}", gh.calls());
+    assert!(
+        h.backend.cancelled().contains(&agent),
+        "it ends with its attempt"
+    );
 }

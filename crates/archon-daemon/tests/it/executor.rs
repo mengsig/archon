@@ -724,6 +724,147 @@ async fn infra_failure_respawns_the_slot_once() {
     );
 }
 
+/// An agent Aether holds as failed is woken in place for its stage's
+/// infrastructure retry: no fresh agent, told why, and its answer settles it.
+/// A kept agent woken this way stays kept.
+#[tokio::test]
+async fn an_infra_failure_wakes_the_failed_agent_before_a_fresh_one() {
+    let h = Harness::new().await;
+    h.enqueue("flaky engine").await;
+    h.dispatch().await;
+    let first = h.running().await.remove(0);
+    let agent = first.aether_agent.clone().expect("an agent");
+    h.backend.fail_agent(&agent);
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "engine died".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+
+    assert_eq!(h.backend.woken(), std::slice::from_ref(&agent));
+    assert_eq!(h.backend.requests().len(), 1, "no fresh agent");
+    let woken = h.running().await.remove(0);
+    assert_ne!(woken.id, first.id);
+    assert_eq!(
+        (woken.attempt, woken.aether_agent.as_ref()),
+        (1, Some(&agent))
+    );
+    let told = h.backend.resumed_with(&woken);
+    assert!(
+        told.contains("failed for an infrastructure reason: engine died"),
+        "{told}"
+    );
+    let notices = h.notices(NotificationKind::Progress).await;
+    assert!(
+        notices
+            .iter()
+            .any(|n| n.contains("retrying in the same agent")),
+        "{notices:?}"
+    );
+
+    let done = StageOutcome::Completed {
+        summary: "picked up and finished".into(),
+        structured: None,
+    };
+    h.backend.answer(&agent, done);
+    executor::turn_ended(&h.ctx, &agent)
+        .await
+        .expect("turn end");
+    h.dispatch().await;
+    let stages = h.ctx.store.lock().await.stage_runs(&woken.run).unwrap();
+    let settled = stages.iter().find(|s| s.id == woken.id).unwrap();
+    assert_eq!(settled.state, StageState::Completed);
+    assert!(
+        !h.backend.cancelled().contains(&agent),
+        "kept for the stage's next attempt"
+    );
+}
+
+/// The woken agent failing again gets the slot's cold retry, a fresh agent,
+/// and that one's failure is final: a wake spends no `infra_retries`.
+#[tokio::test]
+async fn a_woken_agent_that_fails_again_gets_the_cold_retry() {
+    let h = Harness::new().await;
+    let item = h.enqueue("flaky engine").await;
+    h.dispatch().await;
+    let agent = h.running().await.remove(0).aether_agent.unwrap();
+    h.backend.fail_agent(&agent);
+    let infra = || StageOutcome::Failed {
+        error: "engine died".into(),
+        infra: true,
+    };
+    h.settle_running(|_| infra()).await;
+    h.dispatch().await;
+    assert_eq!(h.backend.requests().len(), 1, "woken, not spawned");
+
+    h.backend.fail_agent(&agent);
+    h.settle_running(|_| infra()).await;
+    h.dispatch().await;
+    assert_eq!(h.backend.woken().len(), 1, "a slot wakes its agent once");
+    assert_eq!(h.backend.requests().len(), 2, "the cold retry");
+    let cold = h.running().await.remove(0);
+    assert_ne!(cold.aether_agent.as_ref(), Some(&agent));
+
+    h.settle_running(|_| infra()).await;
+    h.dispatch().await;
+    assert!(matches!(h.state(&item.id).await, QueueState::Failed { .. }));
+    assert_eq!(h.backend.requests().len(), 2);
+}
+
+/// An infrastructure failure that names a cause which clears with time, a
+/// login Aether's engine refused, is retried only once a wait is over, and
+/// the wait does not come out of the agent's working time.
+#[tokio::test]
+async fn an_infra_failure_from_a_refused_login_waits_before_its_retry() {
+    let h = Harness::new().await;
+    h.enqueue("engine logged out").await;
+    h.dispatch().await;
+    let agent = h.running().await.remove(0).aether_agent.unwrap();
+    h.backend.fail_agent(&agent);
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "model error from claude-code/opus: Auth: not logged in".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    h.dispatch().await;
+
+    assert!(h.backend.woken().is_empty(), "not retried yet");
+    assert_eq!(h.backend.requests().len(), 1);
+    let notices = h.notices(NotificationKind::Progress).await;
+    assert!(
+        notices
+            .iter()
+            .any(|n| n.contains("in 5 min, waiting for the login to be renewed")),
+        "{notices:?}"
+    );
+    let held = h.live_stages().await.remove(0);
+    assert_eq!(held.state, StageState::Spawning);
+    let key = format!("spawn_request:{}", held.id);
+    let mut spawn: serde_json::Value = {
+        let store = h.ctx.store.lock().await;
+        serde_json::from_str(&store.kv_get(&key).unwrap().unwrap()).unwrap()
+    };
+    let until: Timestamp = serde_json::from_value(spawn["not_before"].clone()).unwrap();
+    let deadline: Timestamp = serde_json::from_value(spawn["request"]["deadline"].clone()).unwrap();
+    let left = deadline - until;
+    assert!(
+        left > chrono::Duration::minutes(29),
+        "its working time stands: {left}"
+    );
+
+    spawn["not_before"] = serde_json::to_value(archon_core::now()).unwrap();
+    let raw = serde_json::to_string(&spawn).unwrap();
+    h.ctx.store.lock().await.kv_set(&key, &raw).unwrap();
+    h.dispatch().await;
+    assert_eq!(
+        h.backend.woken(),
+        std::slice::from_ref(&agent),
+        "retried once due"
+    );
+}
+
 #[tokio::test]
 async fn spawn_unavailable_retries_under_the_same_key() {
     let h = Harness::new().await;
@@ -2965,6 +3106,7 @@ async fn a_failed_leads_helpers_are_stopped_before_its_replacement_starts() {
     let h = Harness::new().await;
     let item = adaptive_item(&h).await;
     let dead = h.running().await.remove(0).aether_agent.unwrap();
+    let helper = h.backend.delegate(&dead, MODEL);
     h.backend.fail_next_cancel(unreachable_aether());
     h.backend.fail_next_cancel(unreachable_aether());
     h.settle_running(|_| StageOutcome::Failed {
@@ -2976,8 +3118,11 @@ async fn a_failed_leads_helpers_are_stopped_before_its_replacement_starts() {
     assert_eq!(h.backend.created(), 1, "the replacement waits");
     assert!(h.backend.cancelled().is_empty());
 
+    // Stopped from its children down, so the dead lead can still be woken.
     h.dispatch().await;
-    assert_eq!(h.backend.cancelled(), std::slice::from_ref(&dead));
+    assert_eq!(h.backend.cancelled(), std::slice::from_ref(&helper));
+    h.backend.end_delegated(&helper, DescendantState::Stopped);
+    h.dispatch().await;
     assert_eq!(stage_labels(&h), ["build", "build"]);
     let replacement = h.running().await.remove(0);
     assert_ne!(replacement.aether_agent.as_ref(), Some(&dead));
@@ -3107,12 +3252,12 @@ async fn a_replacement_lead_waits_for_the_dead_leads_helpers_across_a_restart() 
     assert_eq!(h.backend.created(), 1, "no answer confirms nothing");
     h.dispatch().await;
     assert_eq!(h.backend.created(), 1, "the helper still runs");
-    assert_eq!(h.backend.cancelled(), std::slice::from_ref(&dead));
+    assert_eq!(h.backend.cancelled(), std::slice::from_ref(&helper));
 
     h.backend.end_delegated(&helper, DescendantState::Stopped);
     h.dispatch().await;
     assert_eq!(stage_labels(&h), ["build", "build"]);
-    assert_eq!(h.backend.cancelled(), [dead], "the stored cancel is kept");
+    assert_eq!(h.backend.cancelled(), [helper], "the stored cancel is kept");
 }
 
 /// A stop Aether takes long over holds the item visibly: the operator is told

@@ -164,13 +164,21 @@ pub fn judge(policy: &Policy, reading: &Reading) -> Verdict {
     }
 }
 
+/// Opens every failure a stalled stage settles with.
+const STALLED: &str = "agent stalled";
+
 /// The failure a stalled stage settles with.
 pub fn reason(silent: Duration, engine_known: bool) -> String {
     let minutes = silent.as_secs() / 60;
     match engine_known {
-        true => format!("agent stalled: no engine and no events for {minutes} min"),
-        false => format!("agent stalled: no events for {minutes} min (engine state not reported)"),
+        true => format!("{STALLED}: no engine and no events for {minutes} min"),
+        false => format!("{STALLED}: no events for {minutes} min (engine state not reported)"),
     }
+}
+
+/// Whether `error` is a stall the watchdog stopped the agent for.
+pub(super) fn is_stall(error: &str) -> bool {
+    error.starts_with(STALLED)
 }
 
 /// The running stages of `stages` that are stalled at `now`, with the
@@ -268,10 +276,7 @@ pub(super) fn mark_intent(
     stage: &StageRunId,
     reason: &str,
 ) -> Result<(), ArchonError> {
-    assert!(
-        reason.starts_with("agent stalled"),
-        "only the watchdog marks: {reason}"
-    );
+    assert!(is_stall(reason), "only the watchdog marks: {reason}");
     store.kv_set(&intent_key(stage), reason)
 }
 

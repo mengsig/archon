@@ -3,6 +3,8 @@
 //! its task, and the next attempt of its slot hands it the findings instead
 //! of starting a cold agent. An attempt resumed this way has the agent and
 //! no task of its own; it settles on what the agent says when its turn ends.
+//! An agent that failed for infrastructure is woken in place the same way
+//! (§6.3): its replacement attempt resumes it before any fresh agent.
 
 use std::collections::BTreeSet;
 
@@ -16,7 +18,7 @@ use archon_pipeline::{ShipRecord, SpawnPlan};
 use archon_queue::Store;
 
 use super::spawn::{self, KeptAgent};
-use super::{FollowUp, load_spawn, run_node, settle, ship, steer, sweep};
+use super::{FollowUp, load_spawn, run_node, settle, ship, stall, steer, sweep};
 use crate::context::DaemonContext;
 
 /// How long a kept agent may wait for findings before Aether ends it. Its
@@ -118,6 +120,50 @@ pub(super) fn told(store: &mut Store, stage: &StageRunId, text: &str) -> Result<
     spawn::save_spawn(store, stage, &stored)
 }
 
+/// What the woken agent of an infrastructure replacement is told, with the
+/// `error` its last turn failed on.
+pub(super) fn woken_note(error: &str) -> String {
+    assert!(!error.trim().is_empty(), "a failure says what failed");
+    format!(
+        "Your previous turn failed for an infrastructure reason: {error}\n\nArchon woke you to \
+         continue. Your worktree and history stand: pick up where you left off. That failure \
+         ended your task, so do not call `complete_task`; end your turn with the final message \
+         your instructions ask for, its fenced `json` block included."
+    )
+}
+
+/// Whether the slot's agent can take the attempt: a kept one still live, or a
+/// failed one Aether wakes. One an earlier, unanswered wake reached is live.
+async fn takes_over(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    agent: &AetherAgentId,
+) -> Result<bool, ArchonError> {
+    assert_eq!(stage.state, StageState::Spawning, "a reserved attempt");
+    let asked_before = {
+        let mut store = ctx.store.lock().await;
+        let mut spawn = load_spawn(&store, &stage.id)?;
+        if !spawn.woken {
+            drop(store);
+            return ctx.backend.is_live(agent).await;
+        }
+        let asked = std::mem::replace(&mut spawn.wake_asked, true);
+        spawn::save_spawn(&mut store, &stage.id, &spawn)?;
+        asked
+    };
+    match ctx.backend.wake(agent).await {
+        Ok(()) => Ok(true),
+        Err(error) if unanswered(&error) => Err(error),
+        Err(refusal) => {
+            let live = asked_before && ctx.backend.is_live(agent).await?;
+            if !live {
+                tracing::info!(stage = %stage.id, %agent, %refusal, "failed agent not woken");
+            }
+            Ok(live)
+        }
+    }
+}
+
 /// Give the kept agent its deadline, new grant and findings, keyed by the stage run;
 /// `false` when it cannot go on and a fresh agent takes the attempt (`request` is never spawned).
 pub(super) async fn hand_over(
@@ -129,8 +175,8 @@ pub(super) async fn hand_over(
     assert_eq!(stage.state, StageState::Spawning, "a reserved attempt");
     assert!(!kept.message.trim().is_empty(), "resumed with findings");
     let agent = &kept.agent;
-    if !ctx.backend.is_live(agent).await? {
-        tracing::info!(stage = %stage.id, %agent, "kept agent is gone; spawning a fresh one");
+    if !takes_over(ctx, stage, agent).await? {
+        tracing::info!(stage = %stage.id, %agent, "slot agent cannot go on; spawning a fresh one");
         return Ok(false);
     }
     let cost_budget_usd = {
@@ -423,14 +469,105 @@ fn is_kept(store: &Store, stage: &StageRunId) -> Result<bool, ArchonError> {
     }
 }
 
-/// Whether the request of settled `stage` is still read: its agent is kept,
-/// and the retirement of its run's node asks which agents are.
+/// Whether the request of settled `stage` is still read while its run's node
+/// lives: its agent is kept, which the node's retirement asks, or it woke its
+/// slot's failed agent, which the slot's next infrastructure retry asks.
 pub(super) fn request_in_use(store: &Store, stage: &StageRun) -> Result<bool, ArchonError> {
     assert!(
         stage.state.is_terminal(),
         "a live stage run always has its request"
     );
-    Ok(is_kept(store, &stage.id)? && run_node::has_node(store, &stage.run)?)
+    let read = match load_spawn(store, &stage.id) {
+        Ok(spawn) => spawn.request.keep || spawn.woken,
+        Err(ArchonError::NotFound(_)) => false,
+        Err(error) => return Err(error),
+    };
+    Ok(read && run_node::has_node(store, &stage.run)?)
+}
+
+/// How the `slot`'s attempts woke failed agents: whether one tried, and how
+/// many took their attempt. One refused spawned a fresh agent, a cold retry.
+pub(super) fn wakes(store: &Store, slot: &[&StageRun]) -> Result<(bool, usize), ArchonError> {
+    let (mut tried, mut took) = (false, 0);
+    for stage in slot {
+        let spawn = match load_spawn(store, &stage.id) {
+            Ok(spawn) => spawn,
+            Err(ArchonError::NotFound(_)) => continue,
+            Err(error) => return Err(error),
+        };
+        tried |= spawn.woken;
+        took += usize::from(spawn.woken && spawn.resume.is_some());
+    }
+    assert!(took <= slot.len(), "an attempt wakes one agent at most");
+    assert!(
+        tried || took == 0,
+        "an agent took its attempt only once woken"
+    );
+    Ok((tried, took))
+}
+
+/// The agent of `failed` to wake in place for its replacement, told `error`;
+/// `None` without one, for a stall, whose agent the watchdog stopped, or when
+/// `failed` itself resumed its agent, whose attempt started at a hand-off.
+pub(super) fn wake_for(
+    store: &Store,
+    failed: &StageRun,
+    error: &str,
+) -> Result<Option<KeptAgent>, ArchonError> {
+    assert!(
+        failed.infrastructure_failure,
+        "only infrastructure is woken from"
+    );
+    let Some(agent) = failed
+        .aether_agent
+        .clone()
+        .filter(|_| !stall::is_stall(error))
+    else {
+        return Ok(None);
+    };
+    let spawn = match load_spawn(store, &failed.id) {
+        Ok(spawn) => spawn,
+        Err(ArchonError::NotFound(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if spawn.resume.is_some() {
+        return Ok(None);
+    }
+    Ok(Some(KeptAgent {
+        agent,
+        message: woken_note(error),
+        asked_record: None,
+    }))
+}
+
+/// Make reserved replacement `id` wake `kept`, its slot's failed agent.
+pub(super) fn wake_into(
+    store: &mut Store,
+    id: &StageRunId,
+    kept: KeptAgent,
+) -> Result<(), ArchonError> {
+    let mut spawn = load_spawn(store, id)?;
+    assert!(
+        spawn.resume.is_none(),
+        "an infrastructure replacement resumes nothing"
+    );
+    // A kept agent lost is stopped for a fresh one ([`Takeover::Replace`]); woken, it goes on.
+    assert!(
+        spawn
+            .replaces
+            .as_ref()
+            .is_none_or(|lost| *lost == kept.agent),
+        "the replacement stops no other agent than the one it wakes"
+    );
+    spawn.replaces = None;
+    assert_eq!(
+        store.stage_run(id)?.state,
+        StageState::Spawning,
+        "a reserved attempt"
+    );
+    spawn.resume = Some(kept);
+    spawn.woken = true;
+    spawn::save_spawn(store, id, &spawn)
 }
 
 /// The kept agents among the settled `stages`: live in Aether with no turn
@@ -456,19 +593,27 @@ pub(super) fn parked(
 }
 
 /// What becomes of the agent of `settled`: `None` for one that ends with its
-/// task, as every agent not kept does.
+/// task, as every agent not kept or woken does. A woken one has no task to end
+/// with, so it ends with its attempt.
 pub(super) fn after_settle(store: &Store, settled: &StageRun) -> Result<Option<Kept>, ArchonError> {
     assert!(settled.state.is_terminal(), "only a settled attempt");
     let Some(agent) = settled.aether_agent.clone() else {
         return Ok(None);
     };
-    if !is_kept(store, &settled.id)? {
-        return Ok(None);
-    }
-    Ok(Some(match settled.state {
-        StageState::Completed => Kept::Park(agent),
-        _ => Kept::End(agent),
-    }))
+    let (kept, woken) = match load_spawn(store, &settled.id) {
+        Ok(spawn) => (spawn.request.keep, spawn.woken && spawn.resume.is_some()),
+        Err(ArchonError::NotFound(_)) => (false, false),
+        Err(error) => return Err(error),
+    };
+    assert!(
+        !woken || settled.aether_task.is_none(),
+        "a woken agent took its attempt without a task"
+    );
+    Ok(match (kept, &settled.state) {
+        (true, StageState::Completed) => Some(Kept::Park(agent)),
+        (true, _) => Some(Kept::End(agent)),
+        (false, _) => woken.then_some(Kept::End(agent)),
+    })
 }
 
 /// Park or end a kept agent, as [`after_settle`] found.

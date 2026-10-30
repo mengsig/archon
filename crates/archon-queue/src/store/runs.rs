@@ -494,8 +494,21 @@ fn write_stage(conn: &Connection, stage: &StageRun, holds_agent: bool) -> Result
     Ok(())
 }
 
+/// Whether `later` takes the agent of `earlier`, an attempt that failed for
+/// infrastructure, as the replacement that woke the agent in place (§6.3).
+fn woken_from(earlier: &StageRun, later: &StageRun) -> bool {
+    earlier.run == later.run
+        && earlier.stage_id == later.stage_id
+        && earlier.fan_index == later.fan_index
+        && earlier.attempt == later.attempt
+        && earlier.state.is_terminal()
+        && earlier.infrastructure_failure
+        && earlier.started_at < later.started_at
+}
+
 /// Whether `stage` holds its agent in the unique `aether_agent` column: a kept agent (§6.7)
-/// passes to the next attempt of its slot, named in `data`, with its [`super::handoffs`].
+/// passes to the next attempt of its slot, and a woken one to its replacement, named in
+/// `data`, with its [`super::handoffs`].
 fn claim_agent(conn: &Connection, stage: &StageRun) -> Result<bool, ArchonError> {
     let Some(agent) = &stage.aether_agent else {
         return Ok(false);
@@ -522,17 +535,18 @@ fn claim_agent(conn: &Connection, stage: &StageRun) -> Result<bool, ArchonError>
     let same_slot = holder.run == stage.run
         && holder.stage_id == stage.stage_id
         && holder.fan_index == stage.fan_index;
-    if same_slot && holder.attempt > stage.attempt {
+    if (same_slot && holder.attempt > stage.attempt) || woken_from(stage, &holder) {
         return Ok(false);
     }
-    if !same_slot || holder.attempt == stage.attempt || !holder.state.is_terminal() {
+    let woken = woken_from(&holder, stage);
+    if !woken && (!same_slot || holder.attempt == stage.attempt || !holder.state.is_terminal()) {
         return Err(ArchonError::Invalid(format!(
             "Aether agent {agent} already belongs to stage run {}",
             holder.id
         )));
     }
     assert!(
-        holder.attempt < stage.attempt,
+        woken || holder.attempt < stage.attempt,
         "a kept agent passes to a later attempt only"
     );
     super::handoffs::record(conn, agent, stage)?;

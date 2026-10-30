@@ -68,6 +68,17 @@ pub(crate) struct StoredSpawn {
     /// `request` is sent, then cleared (§6.7).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replaces: Option<AetherAgentId>,
+    /// This infrastructure replacement wakes its slot's failed agent in place
+    /// (`resume` holds it until a refusal clears it); a slot wakes one once.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub woken: bool,
+    /// Aether was asked to wake it; one asked again refuses, as it is awake.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub wake_asked: bool,
+    /// Not issued before this: an infrastructure retry waits out a cause
+    /// that clears with time, such as an engine or login that is down.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_before: Option<Timestamp>,
 }
 
 /// The agent kept from the slot's previous attempt, and what it is told to
@@ -129,6 +140,39 @@ pub(super) fn save_spawn(
 ) -> Result<(), ArchonError> {
     assert_eq!(spawn.request.idempotency_key, id.as_str());
     store.kv_set(&request_key(id), &serde_json::to_string(spawn)?)
+}
+
+/// Hold reserved stage run `id` until `until`, moving its deadline as far,
+/// so the wait costs its agent no working time.
+pub(super) fn hold_until(
+    store: &mut Store,
+    id: &StageRunId,
+    until: Timestamp,
+) -> Result<(), ArchonError> {
+    let mut spawn = load_spawn(store, id)?;
+    assert_eq!(
+        spawn.parent,
+        ParentBinding::Pending,
+        "only an unsent request waits"
+    );
+    let now = archon_core::now();
+    assert!(until > now, "a hold ends later");
+    spawn.request.deadline = spawn
+        .request
+        .deadline
+        .map(|deadline| deadline + (until - now));
+    spawn.not_before = Some(until);
+    save_spawn(store, id, &spawn)
+}
+
+/// Whether stage run `id` may be issued at `now`; one without a stored
+/// request is, so that issuing settles it.
+pub(super) fn due(store: &Store, id: &StageRunId, now: Timestamp) -> Result<bool, ArchonError> {
+    match load_spawn(store, id) {
+        Ok(spawn) => Ok(spawn.not_before.is_none_or(|until| until <= now)),
+        Err(ArchonError::NotFound(_)) => Ok(true),
+        Err(error) => Err(error),
+    }
 }
 
 fn record_host_context(
@@ -651,6 +695,9 @@ fn reserve_one(
         }),
         resume,
         replaces,
+        woken: false,
+        wake_asked: false,
+        not_before: None,
     };
     save_spawn(store, &id, &spawn)?;
     let stage = StageRun {

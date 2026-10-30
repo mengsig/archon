@@ -467,6 +467,10 @@ impl AgentBackend for AetherBackend {
         self.link.client()?.cancel(agent, reason).await
     }
 
+    async fn wake(&self, agent: &AetherAgentId) -> Result<(), ArchonError> {
+        self.link.client()?.wake(agent).await.map(|_| ())
+    }
+
     async fn update_agent(
         &self,
         agent: &AetherAgentId,

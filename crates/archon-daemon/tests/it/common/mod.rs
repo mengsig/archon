@@ -766,6 +766,10 @@ struct FakeState {
     lost_node_replies: u32,
     /// Agents `is_live` reports dead: cancelled ones and those `kill` took.
     dead: BTreeSet<AetherAgentId>,
+    /// Agents Aether holds as failed, which `wake` revives; it refuses others.
+    failed: BTreeSet<AetherAgentId>,
+    /// Agents `wake` revived, in order; live until cancelled or killed.
+    woken: Vec<AetherAgentId>,
     /// Every `is_live` call, in order.
     live_checks: Vec<AetherAgentId>,
     next_node: u32,
@@ -975,6 +979,19 @@ impl FakeBackend {
     /// `take_live_checks`.
     pub fn take_live_checks(&self) -> Vec<AetherAgentId> {
         std::mem::take(&mut self.state().live_checks)
+    }
+
+    /// Aether holds `agent` as failed, so `wake` revives it once.
+    pub fn fail_agent(&self, agent: &AetherAgentId) {
+        let mut state = self.state();
+        assert!(state.knows(agent), "only a created agent fails");
+        state.failed.insert(agent.clone());
+        state.in_turn.remove(agent);
+    }
+
+    /// Every agent `wake` revived, in order.
+    pub fn woken(&self) -> Vec<AetherAgentId> {
+        self.state().woken.clone()
     }
 
     /// Aether forgot `agent`: `is_live` reports it dead from now on.
@@ -1235,7 +1252,19 @@ impl AgentBackend for FakeBackend {
         if state.dead.contains(agent) {
             return Ok(false);
         }
-        Ok(state.is_node(agent) || state.in_turn.contains(agent) || state.is_kept(agent))
+        let woken = state.woken.contains(agent);
+        Ok(state.is_node(agent) || state.in_turn.contains(agent) || state.is_kept(agent) || woken)
+    }
+
+    async fn wake(&self, agent: &AetherAgentId) -> Result<(), ArchonError> {
+        let mut state = self.state();
+        if state.dead.contains(agent) || !state.failed.remove(agent) {
+            return Err(ArchonError::Invalid(format!(
+                "aether: agent {agent} did not fail; only a failed agent is woken"
+            )));
+        }
+        state.woken.push(agent.clone());
+        Ok(())
     }
 
     async fn cancel(&self, agent: &AetherAgentId, _reason: &str) -> Result<(), ArchonError> {

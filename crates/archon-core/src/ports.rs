@@ -281,6 +281,10 @@ pub trait AgentBackend: Send + Sync {
     /// Aether no longer knows is `false`, not an error.
     async fn is_live(&self, agent: &AetherAgentId) -> Result<bool, ArchonError>;
 
+    /// Revive the failed `agent` in place, with its transcript and session;
+    /// `Err` when Aether refuses, as it does for an agent that did not fail.
+    async fn wake(&self, agent: &AetherAgentId) -> Result<(), ArchonError>;
+
     /// Ask Aether to cancel an agent and its live descendants. Aether cancels
     /// cooperatively: `Ok` means accepted, not that any of them has ended.
     async fn cancel(&self, agent: &AetherAgentId, reason: &str) -> Result<(), ArchonError>;

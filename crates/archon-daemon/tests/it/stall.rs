@@ -323,3 +323,46 @@ async fn a_stalled_stage_near_its_deadline_still_stalls() {
     assert!(error.starts_with("agent stalled"), "{error}");
     assert_ne!(the_only_running(&h).await.id, first.id, "re-spawned");
 }
+
+/// A steer that extends the deadline while the held stage's own update is in
+/// flight keeps its later deadline, in the store and in Aether.
+#[tokio::test]
+async fn a_held_stage_keeps_a_later_deadline_a_steer_stored_meanwhile() {
+    let h = Harness::new().await;
+    h.enqueue("blocked while the operator extends it").await;
+    h.dispatch().await;
+    let stage = the_only_running(&h).await;
+    common::set_deadline(
+        &h,
+        &stage,
+        archon_core::now() + chrono::Duration::minutes(5),
+    )
+    .await;
+    h.backend
+        .set_pulse(&lead(&stage), TreePulse { held: true, ..DEAD });
+    let steered = archon_core::now() + chrono::Duration::hours(2);
+    let (ctx, id) = (h.ctx.clone(), stage.id.clone());
+    h.backend.on_next_update(move || {
+        let mut store = ctx
+            .store
+            .try_lock()
+            .expect("the store is free during an update");
+        common::write_deadline(&mut store, &id, steered);
+    });
+    sweep(&h).await;
+
+    assert_eq!(common::stored_deadline(&h, &stage).await, Some(steered));
+    let deadlines: Vec<_> = h
+        .backend
+        .updates()
+        .into_iter()
+        .map(|(_, u)| u.deadline)
+        .collect();
+    assert_eq!(deadlines.len(), 2, "{deadlines:?}");
+    assert!(deadlines[0] < Some(steered));
+    assert_eq!(
+        deadlines[1],
+        Some(steered),
+        "Aether ends with the later one"
+    );
+}

@@ -23,8 +23,9 @@ pub(super) fn near(deadline: Timestamp, now: Timestamp) -> bool {
     deadline < now + chrono::Duration::minutes(MARGIN_MINUTES)
 }
 
-/// Move the deadline of `stage` if Aether holds its tree; `true` when moved.
-/// A tree Aether cannot read now, or an update it refuses, leaves it as is.
+/// Move the deadline of `stage` if Aether holds its tree; `true` when it now
+/// lies ahead. A tree Aether cannot read now, or an update it refuses, leaves
+/// it as is. A later deadline a steer stored meanwhile is never shortened.
 pub(super) async fn hold_deadline(
     ctx: &DaemonContext,
     stage: &StageRun,
@@ -50,12 +51,35 @@ pub(super) async fn hold_deadline(
         return Ok(false);
     }
     let until = now + chrono::Duration::minutes(EXTENSION_MINUTES);
+    let Some(stored) = running_deadline(ctx, &stage.id).await? else {
+        return Ok(false);
+    };
+    if stored >= until {
+        return Ok(true);
+    }
     if !raise(ctx, lead, until).await? {
         return Ok(false);
     }
-    spawn::move_deadline(&mut *ctx.store.lock().await, &stage.id, until)?;
-    tracing::info!(stage = %stage.id, %until, "agent held by Aether; deadline moved");
+    let kept = spawn::move_deadline(&mut *ctx.store.lock().await, &stage.id, until)?;
+    // A steer stored a later one while ours was sent; Aether gets that again.
+    if kept > until && !raise(ctx, lead, kept).await? {
+        return Ok(false);
+    }
+    tracing::info!(stage = %stage.id, deadline = %kept, "agent held by Aether; deadline moved");
     Ok(true)
+}
+
+/// The deadline in stage `id`'s stored request as it is now; `None` once the
+/// stage stopped running or has none.
+async fn running_deadline(
+    ctx: &DaemonContext,
+    id: &StageRunId,
+) -> Result<Option<Timestamp>, ArchonError> {
+    let store = ctx.store.lock().await;
+    if store.stage_run(id)?.state != StageState::Running {
+        return Ok(None);
+    }
+    Ok(spawn::load_spawn(&store, id)?.request.deadline)
 }
 
 /// Raise the deadline of `lead` and the agents beneath it to `until`;

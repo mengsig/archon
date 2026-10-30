@@ -21,7 +21,7 @@ use archon_core::Timestamp;
 use archon_core::aether_ids::{AetherAgentId, AetherRunId, AetherTaskId};
 use archon_core::config::Config;
 use archon_core::error::ArchonError;
-use archon_core::id::{PipelineRunId, QueueItemId};
+use archon_core::id::{PipelineRunId, QueueItemId, StageRunId};
 use archon_core::model::{Effort, ModelChoice, ModelPlan};
 use archon_core::notify::{FeedEntry, NotificationKind};
 use archon_core::ports::{
@@ -789,6 +789,9 @@ struct FakeState {
     stalls: Vec<(String, Arc<tokio::sync::Semaphore>)>,
     /// What `pulse` reports of an agent's tree; an empty pulse otherwise.
     pulses: BTreeMap<AetherAgentId, TreePulse>,
+    /// Runs once, after the next `update_agent` is recorded: what else
+    /// happened while that update was in flight.
+    update_hook: Option<Box<dyn FnOnce() + Send>>,
 }
 
 impl FakeState {
@@ -1000,6 +1003,11 @@ impl FakeBackend {
         assert!(state.knows(agent), "kill knows only created agents");
         state.dead.insert(agent.clone());
         state.in_turn.remove(agent);
+    }
+
+    /// Run `hook` once, right after the next `update_agent` is recorded.
+    pub fn on_next_update(&self, hook: impl FnOnce() + Send + 'static) {
+        self.state().update_hook = Some(Box::new(hook));
     }
 
     /// `pulse` reports `pulse` for `agent`'s tree from now on.
@@ -1314,6 +1322,11 @@ impl AgentBackend for FakeBackend {
             )));
         }
         state.updates.push((agent.clone(), update));
+        let hook = state.update_hook.take();
+        drop(state);
+        if let Some(hook) = hook {
+            hook();
+        }
         Ok(())
     }
 
@@ -1477,8 +1490,12 @@ pub async fn expire_deadline(h: &Harness, stage: &StageRun) -> Timestamp {
 
 /// Set `stage`'s persisted deadline to `at`.
 pub async fn set_deadline(h: &Harness, stage: &StageRun, at: Timestamp) {
-    let key = format!("spawn_request:{}", stage.id);
-    let mut store = h.ctx.store.lock().await;
+    write_deadline(&mut *h.ctx.store.lock().await, &stage.id, at);
+}
+
+/// Set the deadline in stage run `id`'s stored request to `at`, as a steer does.
+pub fn write_deadline(store: &mut Store, id: &StageRunId, at: Timestamp) {
+    let key = format!("spawn_request:{id}");
     let raw = store.kv_get(&key).expect("kv").expect("stored spawn");
     let mut spawn: serde_json::Value = serde_json::from_str(&raw).expect("json");
     spawn["request"]["deadline"] = serde_json::to_value(at).expect("timestamp");

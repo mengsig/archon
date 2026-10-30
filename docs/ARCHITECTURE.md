@@ -1423,7 +1423,8 @@ in a new worktree off the base branch (§13).
   is less than 10 min away, read at most once a minute, or already past,
   archond moves it to 30 min from now, in Aether (with the agents beneath
   the lead when Aether updates a subtree) and in the stored request, and
-  never times it out while held.
+  never times it out while held. A later deadline a steer stored is kept,
+  and sent to Aether again if the steer landed while the move was in flight.
 - `infra` failures (`agent.failed` before its task settles, or Aether restart
   recovery failures) get `limits.infra_retries` (default 1) automatic
   retries. These retries do not count against a stage's `max_attempts`.

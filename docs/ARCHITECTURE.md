@@ -1433,8 +1433,10 @@ in a new worktree off the base branch (§13).
   continue: it keeps its worktree, transcript and history. A woken agent has
   no task, so it answers with its final message, read like a resumed
   attempt's (§6.7), and is stopped once that settles. Only when Aether
-  refuses the wake does a fresh agent start. A stall, and a failure of an
-  agent already woken, gets a fresh agent. The wake is tried once per slot,
+  refuses the wake does a fresh agent start. A kept agent resumed for a
+  later attempt is woken the same way, and its cost splits at each hand-off
+  and wake. A stall, and a failure of an agent already woken, gets a fresh
+  agent. The wake is tried once per slot,
   and a wake that took counts apart from the cold retries: it does not use
   up the slot's re-spawn. A failure whose error names a cause that clears
   with time (an unavailable or overloaded engine, a rate or usage limit, a

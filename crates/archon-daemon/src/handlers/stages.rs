@@ -131,24 +131,6 @@ fn pick(
     Ok(picked)
 }
 
-/// Whether a later stage run of `stage`'s slot and attempt woke its agent in
-/// place, wherever that agent went after.
-fn woke_its_agent(store: &Store, stage: &StageRun) -> Result<bool, ArchonError> {
-    assert!(stage.aether_agent.is_some(), "only an agent is woken");
-    let runs = store.stage_runs(&stage.run)?;
-    assert!(
-        runs.iter().any(|s| s.id == stage.id),
-        "a stage run belongs to its run"
-    );
-    Ok(runs.iter().any(|s| {
-        s.id != stage.id
-            && (&s.stage_id, s.fan_index, s.attempt)
-                == (&stage.stage_id, stage.fan_index, stage.attempt)
-            && s.aether_agent == stage.aether_agent
-            && s.started_at > stage.started_at
-    }))
-}
-
 /// Set `stage`'s cost to what the ledger charged its agent and every agent beneath it
 /// during this attempt, from hand-off to hand-off of a kept or woken agent; the split, when it
 /// delegated.
@@ -161,18 +143,14 @@ pub(super) fn charge(
         return Ok(None);
     };
     let handoffs = store.agent_handoffs(agent, estimates)?;
-    // The failed attempt its agent was woken from ends where its replacement starts.
-    let woken_from = stage.infrastructure_failure && woke_its_agent(store, stage)?;
-    let (from, until) = match woken_from {
-        true => (
-            handoffs.iter().rfind(|h| h.attempt < stage.attempt),
-            handoffs.iter().find(|h| h.attempt == stage.attempt),
-        ),
-        false => (
-            handoffs.iter().find(|h| h.attempt == stage.attempt),
-            handoffs.iter().find(|h| h.attempt > stage.attempt),
-        ),
-    };
+    // A run starts at its own hand-off (none for a fresh agent) and ends at the next.
+    let at = (stage.attempt, store.wakes_before(stage)?);
+    let from = handoffs.iter().find(|h| h.at() == at);
+    let until = handoffs.iter().find(|h| h.at() > at);
+    assert!(
+        from.is_none_or(|h| until.is_none_or(|u| h.at() < u.at())),
+        "a run ends after it starts"
+    );
     let span = |agent: &AetherAgentId, now: f64| {
         let start = from.map_or(0.0, |h| h.spent_by(agent));
         let end = until.map_or(now, |h| h.spent_by(agent));

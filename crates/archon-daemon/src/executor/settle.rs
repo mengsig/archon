@@ -523,7 +523,7 @@ async fn slot_retry(
     let retry = 1 + replaced - took.min(replaced);
     let wake = match tried || retry > kind.limit(ctx) {
         true => None,
-        false => resume::wake_for(&store, failed, error)?,
+        false => resume::wake_for(failed, error),
     };
     Ok((retry, wake))
 }

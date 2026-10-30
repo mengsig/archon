@@ -834,6 +834,52 @@ async fn a_woken_agent_kept_for_a_later_attempt_splits_its_cost() {
     assert_eq!(costs, [(1, 0.25), (1, 0.5), (2, 0.25)], "each span once");
 }
 
+/// A kept agent resumed for a fix that fails for infrastructure is woken in
+/// place too, and its cost splits at the resume and at the wake.
+#[tokio::test]
+async fn a_resumed_agent_that_fails_for_infrastructure_is_woken() {
+    let h = Harness::new().await;
+    let item = h.enqueue("a fix, then a flaky engine").await;
+    h.dispatch().await;
+    let agent = h.running().await.remove(0).aether_agent.unwrap();
+    charge(&h, &agent, 0.25).await;
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    one_reviewer_fails(&h).await;
+    h.dispatch().await;
+    let fix = h.running().await.remove(0);
+    assert_eq!((fix.attempt, fix.aether_agent.as_ref()), (2, Some(&agent)));
+    charge(&h, &agent, 0.5).await;
+    let spawned = h.backend.requests().len();
+    h.backend.fail_agent(&agent);
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "engine died".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+
+    assert_eq!(h.backend.woken(), std::slice::from_ref(&agent));
+    assert_eq!(h.backend.requests().len(), spawned, "no fresh agent");
+    let woken = h.running().await.remove(0);
+    assert_eq!(
+        (woken.attempt, woken.aether_agent.as_ref()),
+        (2, Some(&agent))
+    );
+    assert_ne!(woken.id, fix.id);
+    charge(&h, &agent, 1.0).await;
+    let Ok(Reply::ItemDetail(detail)) = h.cli(Request::GetItem { item: item.id }).await else {
+        panic!("item detail");
+    };
+    let costs: Vec<(u32, f64)> = detail
+        .stages
+        .iter()
+        .filter(|s| s.stage_id == "implement")
+        .map(|s| (s.attempt, s.cost_usd))
+        .collect();
+    assert_eq!(costs, [(1, 0.25), (2, 0.25), (2, 0.5)], "each span once");
+}
+
 /// The woken agent failing again gets the slot's cold retry, a fresh agent,
 /// and that one's failure is final: a wake spends no `infra_retries`.
 #[tokio::test]

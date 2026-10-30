@@ -507,37 +507,21 @@ pub(super) fn wakes(store: &Store, slot: &[&StageRun]) -> Result<(bool, usize), 
 }
 
 /// The agent of `failed` to wake in place for its replacement, told `error`;
-/// `None` without one, for a stall, whose agent the watchdog stopped, or when
-/// `failed` itself resumed its agent, whose attempt started at a hand-off.
-pub(super) fn wake_for(
-    store: &Store,
-    failed: &StageRun,
-    error: &str,
-) -> Result<Option<KeptAgent>, ArchonError> {
+/// `None` without one, or for a stall, whose agent the watchdog stopped.
+pub(super) fn wake_for(failed: &StageRun, error: &str) -> Option<KeptAgent> {
     assert!(
         failed.infrastructure_failure,
         "only infrastructure is woken from"
     );
-    let Some(agent) = failed
+    let agent = failed
         .aether_agent
         .clone()
-        .filter(|_| !stall::is_stall(error))
-    else {
-        return Ok(None);
-    };
-    let spawn = match load_spawn(store, &failed.id) {
-        Ok(spawn) => spawn,
-        Err(ArchonError::NotFound(_)) => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    if spawn.resume.is_some() {
-        return Ok(None);
-    }
-    Ok(Some(KeptAgent {
+        .filter(|_| !stall::is_stall(error))?;
+    Some(KeptAgent {
         agent,
         message: woken_note(error),
         asked_record: None,
-    }))
+    })
 }
 
 /// The agent a replacement resumes when it wakes `kept`, its slot's failed

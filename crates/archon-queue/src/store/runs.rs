@@ -506,6 +506,40 @@ fn woken_from(earlier: &StageRun, later: &StageRun) -> bool {
         && earlier.started_at < later.started_at
 }
 
+/// How many runs of `stage`'s slot and attempt started before it on its
+/// agent, each woken in place by the next.
+pub(super) fn wakes_before(conn: &Connection, stage: &StageRun) -> Result<u32, ArchonError> {
+    let Some(agent) = &stage.aether_agent else {
+        return Ok(0);
+    };
+    let mut statement = conn
+        .prepare_cached(
+            "SELECT data FROM stage_runs WHERE run = ?1 AND stage_id = ?2 AND fan_index = ?3
+                 AND attempt = ?4 AND started_at < ?5 AND id <> ?6",
+        )
+        .ctx("prepare a slot's earlier runs")?;
+    let rows = statement
+        .query_map(
+            params![
+                stage.run.as_str(),
+                stage.stage_id,
+                stage.fan_index,
+                stage.attempt,
+                ts(&stage.started_at),
+                stage.id.as_str()
+            ],
+            |row| row.get::<_, String>(0),
+        )
+        .ctx("read a slot's earlier runs")?;
+    let mut wakes = 0;
+    for data in rows {
+        let earlier: StageRun = from_json(&data.ctx("read a stage run")?, "stage run")?;
+        assert!(earlier.started_at < stage.started_at, "only earlier runs");
+        wakes += u32::from(earlier.aether_agent.as_ref() == Some(agent));
+    }
+    Ok(wakes)
+}
+
 /// Whether `stage` holds its agent in the unique `aether_agent` column: a kept agent (§6.7)
 /// passes to the next attempt of its slot, and a woken one to its replacement, named in
 /// `data`, with its [`super::handoffs`].
@@ -549,7 +583,9 @@ fn claim_agent(conn: &Connection, stage: &StageRun) -> Result<bool, ArchonError>
         woken || holder.attempt < stage.attempt,
         "a kept agent passes to a later attempt only"
     );
-    super::handoffs::record(conn, agent, stage)?;
+    let wake = if woken { wakes_before(conn, stage)? } else { 0 };
+    assert!(!woken || wake >= 1, "the woken holder ran before");
+    super::handoffs::record(conn, agent, stage, wake)?;
     let released = conn
         .execute(
             "UPDATE stage_runs SET aether_agent = NULL WHERE id = ?1",

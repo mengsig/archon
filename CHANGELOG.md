@@ -56,7 +56,8 @@
   from its summary, its `head:` and `base:` lines only at the top level and
   never naming other commits than its `structured` does. A summary's JSON verdict counts only in a column-0
   fenced block, never an example nested in a list, indented or quoted. An unreadable verdict, a choice or hedge such as
-  `PASS or FAIL`, `PASS, but two failed` or `PASS, pending fixes` included,
+  `PASS or FAIL`, `PASS, but two failed` or `PASS (pending fixes)` included
+  (any word between the verdict and a `—`, `:` or `.`),
   still counts as fail,
   and the refusal now quotes it.
 - A reviewer plan's effort is a floor, not a ceiling. The delegation

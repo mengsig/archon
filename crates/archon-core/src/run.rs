@@ -94,11 +94,9 @@ impl Verdict {
     }
 
     /// `None` when `text` does not open with a verdict word. A verdict word
-    /// counts only when the words up to the first explanation separator
-    /// (`—`, `:`, `;`, `.`, ` - `, a line break) name no other verdict, no
-    /// `or` and no `verdict` (the howto `VERDICT: PASS` or `VERDICT: FAIL`
-    /// quoted), and only a parenthetical aside holds words there: any other
-    /// word is a condition (`PASS, pending fixes`).
+    /// counts only when no word follows it before the first explanation
+    /// separator (`—`, `:`, `;`, `.`, ` - `, a line break): any is a choice
+    /// (`PASS or FAIL`) or a condition (`PASS, pending fixes`, `PASS (if CI agrees)`).
     fn leading(text: &str) -> Option<Self> {
         let mut words = text
             .split(|c: char| !c.is_alphanumeric())
@@ -113,18 +111,8 @@ impl Verdict {
             .next()
             .and_then(|head| head.split(" - ").next())
             .unwrap_or_default();
-        let choice = head.split(|c: char| !c.is_alphanumeric()).any(|word| {
-            ["or", "verdict"]
-                .iter()
-                .any(|w| word.eq_ignore_ascii_case(w))
-                || Self::of_word(word).is_some()
-        });
-        let conditioned = outside_parentheses(head).any(char::is_alphanumeric);
-        Some(if choice || conditioned {
-            Self::Unknown
-        } else {
-            verdict
-        })
+        let qualified = head.chars().any(char::is_alphanumeric);
+        Some(if qualified { Self::Unknown } else { verdict })
     }
 
     fn of_word(word: &str) -> Option<Self> {
@@ -257,20 +245,6 @@ fn closes(line: &str, open: (char, usize)) -> bool {
     let run = line.len() - rest.len();
     assert_eq!(run % open.0.len_utf8(), 0, "a run of one character");
     run / open.0.len_utf8() >= open.1 && rest.trim().is_empty()
-}
-
-/// The characters of `text` outside parentheses; an unclosed one runs to the end.
-fn outside_parentheses(text: &str) -> impl Iterator<Item = char> + '_ {
-    text.chars()
-        .scan(0usize, |depth, c| {
-            *depth = match c {
-                '(' => *depth + 1,
-                ')' => depth.saturating_sub(1),
-                _ => *depth,
-            };
-            Some((*depth == 0).then_some(c))
-        })
-        .flatten()
 }
 
 fn non_empty(text: &str) -> Option<&str> {
@@ -859,12 +833,14 @@ mod tests {
         }
         let explained = "VERDICT: PASS — 214 passed, 0 failed, or so CI says";
         assert_eq!(Verdict::extract(explained, None), Verdict::Pass);
-        let noted = "VERDICT: PASS (two advisory notes): nothing failed";
+        let noted = "VERDICT: PASS — two advisory notes (nothing failed)";
         assert_eq!(Verdict::extract(noted, None), Verdict::Pass);
         for said in [
             "PASS, pending fixes",
             "passed with two open nits",
             "PASS if CI agrees",
+            "PASS (pending fixes)",
+            "PASS (two advisory notes): nothing failed",
         ] {
             let line = format!("VERDICT: {said}");
             assert_eq!(Verdict::extract(&line, None), Verdict::Unknown, "{said}");

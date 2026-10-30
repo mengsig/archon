@@ -1491,13 +1491,17 @@ in a new worktree off the base branch (§13).
   An agent Aether `blocked` for inspection is not held: no person is asked
   about it. Aether blocks an agent for inspection when one of its tool calls
   has no known outcome, as when an older aetherd restarted mid-command. Once
-  the tree has been silent for `stall_minutes`, and no gate or question of
+  archond's own stream has heard nothing of the tree for `stall_minutes`
+  (Aether's `last_event_at` is not used here, as moving a held deadline
+  restarts it), and no gate or question of
   its item is open, archond sends each such agent a note and then resumes it
   (Aether's `resume`, not a subtree resume). The note says the command's
   outcome is unknown, so the agent should check the state it would have
   changed before repeating it. The feed tells of each resume. If Aether
-  refuses the resume, archond reads the tree again. If no agent is blocked
-  for inspection any more, someone else resumed it, and the stage goes on.
+  refuses to resume an agent, archond reads that agent again; if it is no
+  longer blocked for inspection, someone else resumed it, and the others are
+  still resumed. If the tree then has no agent blocked for inspection, the
+  stage goes on.
   Otherwise the stage fails at once as `infra` ("agent stalled: Aether
   blocked it for inspection … and refused to resume it: …"), so
   `limits.infra_retries` wakes or replaces it. If Aether does not answer,

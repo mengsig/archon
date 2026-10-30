@@ -970,6 +970,67 @@ async fn an_infra_failure_from_a_refused_login_waits_before_its_retry() {
     assert_eq!(h.backend.requests().len(), 1, "no fresh agent");
 }
 
+/// The cap a woken agent is given is read from its create, so a prune
+/// while its retry waits keeps that request, though the agent was not kept.
+#[tokio::test]
+async fn a_waiting_wake_keeps_the_request_its_cap_is_read_from() {
+    let h = Harness::new().await;
+    let item = h.enqueue("budgeted, a reviewer logged out").await;
+    let patch = archon_core::protocol::ItemPatch {
+        budget_usd: Some(10.0),
+        ..Default::default()
+    };
+    h.cli(Request::UpdateItem {
+        item: item.id.clone(),
+        patch,
+    })
+    .await
+    .expect("a budget");
+    h.dispatch().await;
+    h.settle_running(|_| completed("implemented")).await;
+    h.dispatch().await;
+    let reviewer = h.running().await.remove(0);
+    let agent = reviewer.aether_agent.clone().unwrap();
+    h.backend.fail_agent(&agent);
+    h.settle_running(|s| match s.fan_index {
+        0 => StageOutcome::Failed {
+            error: "model error from codex/gpt-5: Auth: not logged in".into(),
+            infra: true,
+        },
+        _ => verdict(true),
+    })
+    .await;
+    h.dispatch().await;
+    let held = h.live_stages().await.remove(0);
+    assert_eq!((held.stage_id.as_str(), held.fan_index), ("review", 0));
+    assert!(h.backend.woken().is_empty(), "the retry waits");
+
+    archon_daemon::prune::prune_once(&h.ctx, archon_core::now())
+        .await
+        .expect("prune");
+    let created = format!("spawn_request:{}", reviewer.id);
+    assert!(h.kv(&created).await.is_some(), "its create is kept");
+    let key = format!("spawn_request:{}", held.id);
+    let mut spawn: serde_json::Value =
+        serde_json::from_str(&h.kv(&key).await.expect("stored")).unwrap();
+    assert!(spawn["request"]["cost_budget_usd"].is_number(), "a grant");
+    spawn["not_before"] = serde_json::to_value(archon_core::now()).unwrap();
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&key, &spawn.to_string())
+        .unwrap();
+    h.dispatch().await;
+
+    assert_eq!(h.backend.woken(), std::slice::from_ref(&agent));
+    let woken = h.ctx.store.lock().await.stage_run(&held.id).unwrap();
+    assert_eq!(
+        (woken.state, woken.aether_agent),
+        (StageState::Running, Some(agent))
+    );
+}
+
 #[tokio::test]
 async fn spawn_unavailable_retries_under_the_same_key() {
     let h = Harness::new().await;

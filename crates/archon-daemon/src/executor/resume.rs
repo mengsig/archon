@@ -470,15 +470,17 @@ fn is_kept(store: &Store, stage: &StageRunId) -> Result<bool, ArchonError> {
 }
 
 /// Whether the request of settled `stage` is still read while its run's node
-/// lives: its agent is kept, which the node's retirement asks, or it woke its
-/// slot's failed agent, which the slot's next infrastructure retry asks.
+/// lives: its agent is kept, which the node's retirement asks; it woke its
+/// slot's failed agent, which the slot's next infrastructure retry asks; or
+/// its agent failed for infrastructure, and a wake regrants the cap it created.
 pub(super) fn request_in_use(store: &Store, stage: &StageRun) -> Result<bool, ArchonError> {
     assert!(
         stage.state.is_terminal(),
         "a live stage run always has its request"
     );
+    let wakeable = stage.infrastructure_failure && stage.aether_agent.is_some();
     let read = match load_spawn(store, &stage.id) {
-        Ok(spawn) => spawn.request.keep || spawn.woken,
+        Ok(spawn) => spawn.request.keep || spawn.woken || wakeable,
         Err(ArchonError::NotFound(_)) => false,
         Err(error) => return Err(error),
     };

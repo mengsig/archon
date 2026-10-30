@@ -77,11 +77,20 @@ one above it runs, up to the policy's cap.
 `auto_repair` (default `true`) covers a run that fails only because the gate
 refused the review or the ship record it owes (a delta read not anchored, a
 mistyped reviewer id, no review object, an unreadable verdict, an invalid ship
-record). archond then queues one retry of the item in the same worktree and
-branch, with a repair note in the brief that quotes the refusal and tells the
-agent to repair the record only; the feed says so and the item's history keeps
-the failed run. A second refusal fails the item with both reasons. Coverage and
-verdict rules are unchanged, and a cancelled or steered run is never repaired.
+record), or because archond refused to deliver something the record stage can
+fix in its own worktree (uncommitted changes, a tree that is not the record's,
+files that must not ship, a commit under a foreign identity or with an
+attribution trailer). archond then
+queues one retry of the item in the same worktree and branch, with a repair
+note in the brief that quotes the refusal and asks only for what was refused:
+a new ship record read after the last commit when only the record was refused,
+leaving the committed work as it is; a new review when the review was refused;
+a fix of what the delivery named, committed under the repository's own
+identity. It asks for a reviewer again only when the stage owes one. The feed
+says so and the item's history keeps the failed run. A second refusal fails the
+item with both reasons. Coverage, verdict and identity rules are unchanged: a
+commit under a foreign identity is still refused at the next delivery, and a
+cancelled or steered run is never repaired.
 Set it to `false` to retry such items by hand with `retry_item`.
 
 ```toml
@@ -89,7 +98,7 @@ Set it to `false` to retry such items by hand with `retry_item`.
 default_tier = "balanced"
 default_effort = "low"         # raised to medium, or high for a riskier change
 prefer_other_provider = true
-auto_repair = true             # one automatic retry when the review or ship record is refused
+auto_repair = true             # one automatic retry when the review, ship record or a fixable delivery is refused
 
 [models]                       # optional: leave it out to allow every ready model
 allow = ["claude-code/claude-opus-5-5", "codex/gpt-6.1-terra"]
@@ -156,7 +165,7 @@ max_active_runs = 0            # runs going at once; 0 = unlimited
 budget_usd_per_item = 0.0      # one item may spend this much; 0 = no cap
 budget_usd_total = 0.0         # all spend ever; 0 = no cap
 count_estimated_cost = true    # API-equivalent estimates (such as Codex usage) count toward budgets
-infra_retries = 1              # re-spawns after an infrastructure failure, per stage run
+infra_retries = 1              # retries after an infrastructure failure, per stage run; the first wakes the failed agent in place
 stall_minutes = 20             # stage watchdog: minutes a `running` agent tree may go without an event or live engine; 0 = off
 stall_fallback_minutes = 45    # the same silence when Aether does not report `engine_alive` (older Aether)
 # [limits.per_pipeline] sets the most runs of one pipeline at once (see above)

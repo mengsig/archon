@@ -189,6 +189,10 @@ async fn agent_died(
     if stage.state.is_terminal() {
         return Ok(());
     }
+    if ended_an_earlier_run(ctx, &stage, event.at).await? {
+        tracing::info!(stage = %stage.id, %agent, at = %event.at, "an earlier run's end replayed; ignored");
+        return Ok(());
+    }
     let outcome = match &event.kind {
         EventKind::AgentFailed { .. } if failed_past_deadline(ctx, &stage, event.at).await? => {
             tracing::info!(stage = %stage.id, at = %event.at, "agent failed at its deadline; timed out");
@@ -207,6 +211,24 @@ async fn agent_died(
         }
     };
     executor::stage_settled(ctx, agent, outcome).await
+}
+
+/// Whether an agent's end at `at` came before resumed or woken `stage` took it
+/// over: it ended the run the agent was taken from, already settled. A
+/// later end the sweep reads from Aether, should one come before `at`.
+async fn ended_an_earlier_run(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    at: Timestamp,
+) -> Result<bool, ArchonError> {
+    assert!(!stage.state.is_terminal(), "only a live stage run settles");
+    let store = ctx.store.lock().await;
+    let taken_over = match executor::load_spawn(&store, &stage.id) {
+        Ok(spawn) => spawn.resume.is_some(),
+        Err(ArchonError::NotFound(_)) => false,
+        Err(e) => return Err(e),
+    };
+    Ok(taken_over && at < stage.started_at)
 }
 
 /// Whether the agent failed at or past its stage's deadline: Aether stops it

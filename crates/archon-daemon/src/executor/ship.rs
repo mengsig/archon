@@ -3,6 +3,7 @@
 //! ends in a ship agent has that agent's claim checked here. Either way, PR
 //! evidence comes from GitHub, never from an agent's report.
 
+mod abbreviated;
 mod auto_merge;
 mod checks;
 mod deliver;
@@ -23,6 +24,7 @@ use crate::context::DaemonContext;
 
 pub(crate) use auto_merge::pay as pay_owed_merges;
 pub(crate) use auto_merge::withdraw as withdraw_owed_merge;
+pub(super) use checks::repairable as repairable_refusal;
 pub(super) use deliver::{LOCAL_COMMIT_KEY, base_of, deliver, delivering, queue, replay, stalled};
 pub(crate) use deliver::{prune_finished_ships, shipped_commit};
 pub(super) use existing::Locks as OntoLocks;
@@ -86,6 +88,33 @@ pub(super) async fn verify(
             infra: false,
         }),
     }
+}
+
+/// `outcome` with the abbreviated `commit` and `tree` of its ship record
+/// replaced by the full ids git resolves in the run worktree, so a short hash
+/// as `git commit` prints it ships like the full one.
+pub(super) async fn with_full_ids(
+    run: &PipelineRun,
+    outcome: StageOutcome,
+) -> Result<StageOutcome, ArchonError> {
+    assert!(run.workspace.is_absolute(), "a run has a worktree");
+    let StageOutcome::Completed {
+        summary,
+        structured: Some(mut data),
+    } = outcome
+    else {
+        return Ok(outcome);
+    };
+    let workspace = run.workspace.clone();
+    let data = tokio::task::spawn_blocking(move || {
+        abbreviated::resolve(&workspace, &mut data).map(|()| data)
+    })
+    .await
+    .map_err(|e| ArchonError::io("ship record id task", std::io::Error::other(e)))??;
+    Ok(StageOutcome::Completed {
+        summary,
+        structured: Some(data),
+    })
 }
 
 /// `outcome`, failed when the record stage claims "no change needed" but the

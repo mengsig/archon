@@ -73,6 +73,21 @@ pub fn agent_state(agent: &Agent) -> String {
         .to_owned()
 }
 
+/// How Aether says the ended `agent` ended: its state, then the error or
+/// reason it gives, which names a cause a retry may wait out.
+fn ended_why(agent: &Agent) -> String {
+    let state = agent_state(agent);
+    assert!(!state.is_empty(), "a state is named");
+    let said = ["error", "reason"]
+        .iter()
+        .find_map(|key| agent.status.get(*key).and_then(serde_json::Value::as_str))
+        .filter(|said| !said.trim().is_empty());
+    match said {
+        Some(said) => format!("Aether holds it as {state}: {said}"),
+        None => format!("Aether holds it as {state}"),
+    }
+}
+
 pub fn agent_is_live(agent: &Agent) -> bool {
     LIVE_STATES.contains(&agent_state(agent).as_str())
 }
@@ -467,6 +482,10 @@ impl AgentBackend for AetherBackend {
         self.link.client()?.cancel(agent, reason).await
     }
 
+    async fn wake(&self, agent: &AetherAgentId) -> Result<(), ArchonError> {
+        self.link.client()?.wake(agent).await.map(|_| ())
+    }
+
     async fn update_agent(
         &self,
         agent: &AetherAgentId,
@@ -608,8 +627,7 @@ impl AgentBackend for AetherBackend {
             Err(error) => return Err(error),
         };
         if !agent_is_live(&found) {
-            let state = agent_state(&found);
-            return Ok(Some(resumed::lost(&format!("Aether holds it as {state}"))));
+            return Ok(Some(resumed::lost(&ended_why(&found))));
         }
         if !resumed::is_idle(&found) {
             return Ok(None);

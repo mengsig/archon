@@ -25,7 +25,7 @@ pub mod template;
 
 pub use catalog::{Catalog, CatalogSources};
 pub use engine::{ApprovedProposal, EngineAction, OperatorWait, RunDriver, SpawnPlan};
-pub use gate::record_refusal;
+pub use gate::{record_refusal, refuses_ship_record};
 pub use ship::{ShipOutcome, ShipPlan, ShipRecord, attribution_lines, pr_body};
 pub use spec::PipelineSpec;
 pub use template::RunVars;

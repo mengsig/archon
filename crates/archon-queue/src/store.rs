@@ -104,10 +104,12 @@ pub struct SpendRow {
 }
 
 /// What a kept agent and every agent beneath it had been charged when it
-/// passed to `attempt` of its slot: where that attempt's cost starts.
+/// passed to `attempt` of its slot, or woke for it: where that run's cost starts.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentHandoff {
     pub attempt: u32,
+    /// How many runs of `attempt` held the agent before: 0 unless woken.
+    pub wake: u32,
     /// Each agent of the subtree the ledger had charged by then.
     pub spent: std::collections::BTreeMap<AetherAgentId, f64>,
 }
@@ -116,6 +118,10 @@ impl AgentHandoff {
     /// What `agent` had been charged by the hand-off; 0 if nothing.
     pub fn spent_by(&self, agent: &AetherAgentId) -> f64 {
         self.spent.get(agent).copied().unwrap_or(0.0)
+    }
+    /// Where the hand-off falls among its agent's: (attempt, wake).
+    pub fn at(&self) -> (u32, u32) {
+        (self.attempt, self.wake)
     }
 }
 
@@ -480,6 +486,11 @@ impl Store {
     pub fn stage_runs_for_item(&self, item: &QueueItemId) -> Result<Vec<StageRun>, ArchonError> {
         runs::stages_of_item(&self.conn, item)
     }
+    /// How many earlier runs of `stage`'s slot and attempt held its agent:
+    /// the wakes before it, 0 for one that got it any other way.
+    pub fn wakes_before(&self, stage: &StageRun) -> Result<u32, ArchonError> {
+        runs::wakes_before(&self.conn, stage)
+    }
     pub fn stage_run_by_agent(
         &self,
         agent: &AetherAgentId,
@@ -740,7 +751,7 @@ impl Store {
     ) -> Result<f64, ArchonError> {
         spend::for_agent(&self.conn, agent, estimates)
     }
-    /// Every time the kept agent `agent` passed to a later attempt, by attempt.
+    /// Every time the kept agent `agent` passed to a later attempt or woke, by attempt and wake.
     pub fn agent_handoffs(
         &self,
         agent: &AetherAgentId,

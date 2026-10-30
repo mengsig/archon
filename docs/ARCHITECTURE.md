@@ -1418,9 +1418,35 @@ in a new worktree off the base branch (§13).
   a garbled reply, Aether's `internal`) waits for the next sweep; a refused
   one settles `timed_out`. The watchdog's
   `infra` stall failure follows the same rule.
+  A tree Aether holds (an agent `blocked` on a usage limit or credentials,
+  or waiting for an approval) is suspended, not failed: when its deadline
+  is less than 10 min away, read at most once a minute, or already past,
+  archond moves it to 30 min from now, in Aether (the lead and every live
+  agent beneath it whose deadline is lower, one by one when Aether cannot
+  update a subtree) and in the stored request, and
+  never times it out while held. A later deadline a steer stored is kept,
+  and sent to Aether again if the steer landed while the move was in flight.
 - `infra` failures (`agent.failed` before its task settles, or Aether restart
   recovery failures) get `limits.infra_retries` (default 1) automatic
-  re-spawns. These retries do not count against a stage's `max_attempts`.
+  retries. These retries do not count against a stage's `max_attempts`.
+  The first one wakes the failed agent in place (Aether's `wake_agent`) when
+  Aether still has it, with a note that names the failure and asks it to
+  continue: it keeps its worktree, transcript and history. A woken agent has
+  no task, so it answers with its final message, read like a resumed
+  attempt's (§6.7), and is stopped once that settles. An end of its agent
+  dated before the woken or resumed run started, such as the failure it was
+  woken from replayed after a crash, ended the earlier run and is ignored;
+  a failed agent the sweep finds keeps Aether's error, so its retry still
+  waits out a passing cause. Only when Aether
+  refuses the wake does a fresh agent start. A kept agent resumed for a
+  later attempt is woken the same way, and its cost splits at each hand-off
+  and wake. A stall, and a failure of an agent already woken, gets a fresh
+  agent. The wake is tried once per slot,
+  and a wake that took counts apart from the cold retries: it does not use
+  up the slot's re-spawn. A failure whose error names a cause that clears
+  with time (an unavailable or overloaded engine, a rate or usage limit, a
+  refused login or credentials) is waited out: the retry is issued 5 min
+  later, and its deadline moves by the same wait.
 - **Stage watchdog.** Each sweep checks every `running` stage's agent tree.
   A tree is stalled when Aether holds one of its agents `running`, none of
   its engines is alive, and no Aether event of the tree (archond's stream or
@@ -2563,7 +2589,12 @@ returns:
 ```
 
 `ShipRecord::read` requires full object ids, a one-line title of at most
-256 characters and a non-empty body. The gate checks the record before the
+256 characters and a non-empty body. An abbreviated id (7 to 63 hex digits,
+as `git commit` prints one) is first resolved in the run worktree with
+`git rev-parse --verify <id>^{commit}` (or `^{tree}`), and the full id is
+what archond stores and delivers; one that names no single object of that
+type is refused, saying so. 40 digits are resolved too, as in a SHA-256
+worktree they abbreviate; elsewhere they stay the full SHA-1 id. The gate checks the record before the
 review: a pass without one fails the run at that stage, so no delivery is
 ever asked for without it. Stages after the record stage cannot commit
 (§8.2), so what they verified is that tree.

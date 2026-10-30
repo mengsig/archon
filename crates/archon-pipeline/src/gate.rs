@@ -31,6 +31,12 @@ pub fn record_refusal(error: &str) -> Option<&str> {
     })
 }
 
+/// Whether `refusal`, as [`record_refusal`] gives it, refuses the ship
+/// record rather than the review: the work and its review may well stand.
+pub fn refuses_ship_record(refusal: &str) -> bool {
+    refusal.starts_with(SHIP_REFUSAL)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum GroupResult {
     /// Summary of the group: the completed members' summaries joined.
@@ -323,8 +329,10 @@ mod tests {
             record_refusal(&review),
             Some("the review this pipeline declares is not on record: no review object")
         );
+        assert!(!refuses_ship_record(record_refusal(&review).unwrap()));
         let ship = format!("stage `a` failed after 2 of 2 fix loop(s): {SHIP_REFUSAL}: bad tree");
         assert!(record_refusal(&ship).unwrap().ends_with("bad tree"));
+        assert!(refuses_ship_record(record_refusal(&ship).unwrap()));
         assert_eq!(
             record_refusal("stage `a` failed: 1 of 1 agent(s) did not complete"),
             None

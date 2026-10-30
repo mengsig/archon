@@ -494,8 +494,55 @@ fn write_stage(conn: &Connection, stage: &StageRun, holds_agent: bool) -> Result
     Ok(())
 }
 
+/// Whether `later` takes the agent of `earlier`, an attempt that failed for
+/// infrastructure, as the replacement that woke the agent in place (§6.3).
+fn woken_from(earlier: &StageRun, later: &StageRun) -> bool {
+    earlier.run == later.run
+        && earlier.stage_id == later.stage_id
+        && earlier.fan_index == later.fan_index
+        && earlier.attempt == later.attempt
+        && earlier.state.is_terminal()
+        && earlier.infrastructure_failure
+        && earlier.started_at < later.started_at
+}
+
+/// How many runs of `stage`'s slot and attempt started before it on its
+/// agent, each woken in place by the next.
+pub(super) fn wakes_before(conn: &Connection, stage: &StageRun) -> Result<u32, ArchonError> {
+    let Some(agent) = &stage.aether_agent else {
+        return Ok(0);
+    };
+    let mut statement = conn
+        .prepare_cached(
+            "SELECT data FROM stage_runs WHERE run = ?1 AND stage_id = ?2 AND fan_index = ?3
+                 AND attempt = ?4 AND started_at < ?5 AND id <> ?6",
+        )
+        .ctx("prepare a slot's earlier runs")?;
+    let rows = statement
+        .query_map(
+            params![
+                stage.run.as_str(),
+                stage.stage_id,
+                stage.fan_index,
+                stage.attempt,
+                ts(&stage.started_at),
+                stage.id.as_str()
+            ],
+            |row| row.get::<_, String>(0),
+        )
+        .ctx("read a slot's earlier runs")?;
+    let mut wakes = 0;
+    for data in rows {
+        let earlier: StageRun = from_json(&data.ctx("read a stage run")?, "stage run")?;
+        assert!(earlier.started_at < stage.started_at, "only earlier runs");
+        wakes += u32::from(earlier.aether_agent.as_ref() == Some(agent));
+    }
+    Ok(wakes)
+}
+
 /// Whether `stage` holds its agent in the unique `aether_agent` column: a kept agent (§6.7)
-/// passes to the next attempt of its slot, named in `data`, with its [`super::handoffs`].
+/// passes to the next attempt of its slot, and a woken one to its replacement, named in
+/// `data`, with its [`super::handoffs`].
 fn claim_agent(conn: &Connection, stage: &StageRun) -> Result<bool, ArchonError> {
     let Some(agent) = &stage.aether_agent else {
         return Ok(false);
@@ -522,20 +569,23 @@ fn claim_agent(conn: &Connection, stage: &StageRun) -> Result<bool, ArchonError>
     let same_slot = holder.run == stage.run
         && holder.stage_id == stage.stage_id
         && holder.fan_index == stage.fan_index;
-    if same_slot && holder.attempt > stage.attempt {
+    if (same_slot && holder.attempt > stage.attempt) || woken_from(stage, &holder) {
         return Ok(false);
     }
-    if !same_slot || holder.attempt == stage.attempt || !holder.state.is_terminal() {
+    let woken = woken_from(&holder, stage);
+    if !woken && (!same_slot || holder.attempt == stage.attempt || !holder.state.is_terminal()) {
         return Err(ArchonError::Invalid(format!(
             "Aether agent {agent} already belongs to stage run {}",
             holder.id
         )));
     }
     assert!(
-        holder.attempt < stage.attempt,
+        woken || holder.attempt < stage.attempt,
         "a kept agent passes to a later attempt only"
     );
-    super::handoffs::record(conn, agent, stage)?;
+    let wake = if woken { wakes_before(conn, stage)? } else { 0 };
+    assert!(!woken || wake >= 1, "the woken holder ran before");
+    super::handoffs::record(conn, agent, stage, wake)?;
     let released = conn
         .execute(
             "UPDATE stage_runs SET aether_agent = NULL WHERE id = ?1",

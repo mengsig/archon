@@ -14,6 +14,7 @@ use archon_core::error::ArchonError;
 use archon_core::model::ModelPlan;
 use archon_core::notify::NotificationKind;
 use archon_core::outcome::{Correction, FailureClass};
+use archon_core::ports::resumed_reply_outcome;
 use archon_core::protocol::{EnqueueRequest, Reply, RepoPatch, RepoRef, Request};
 use archon_core::queue::{QueueItem, QueueState};
 use archon_core::repo::{Attribution, ShipMode};
@@ -697,6 +698,50 @@ async fn a_missing_ship_record_fails_the_stage_that_owes_it() {
         "{error}"
     );
     assert!(error.contains("`pr` is missing"), "{error}");
+    assert!(gh.calls().is_empty());
+}
+
+/// A record naming its commit and tree by the short hashes `git commit` and
+/// `git rev-parse --short` print ships that commit, stored by its full id.
+#[tokio::test]
+async fn a_short_commit_and_tree_ship_as_their_full_ids() {
+    let (h, gh) = delivering().await;
+    let (item, run) = started(&h, "direct").await;
+    let mut short = change(&run.workspace);
+    let full = short["commit"].as_str().unwrap().to_owned();
+    short["commit"] = json!(full[..7].to_uppercase());
+    short["tree"] = json!(git(
+        &run.workspace,
+        &["rev-parse", "--short", "HEAD^{tree}"]
+    ));
+    settle_with(&h, short).await;
+
+    let summary = succeeded(&h, &item).await;
+    assert!(summary.contains(&format!("(commit {full})")), "{summary}");
+    assert_eq!(pushed(&origin_of(&h), &run.branch), Some(full.clone()));
+    assert_eq!(gh.count("pr create"), 1);
+    let stages = h.ctx.store.lock().await.stage_runs(&run.id).unwrap();
+    let recorded = stages[0].structured.as_ref().unwrap();
+    assert_eq!(recorded["commit"], json!(full), "the full id is stored");
+}
+
+/// A short hash that names no commit of the worktree, or a commit's hash
+/// given for the tree, is refused and says why.
+#[tokio::test]
+async fn a_short_hash_that_names_no_such_object_is_refused() {
+    let (h, gh) = delivering().await;
+    let (item, run) = started(&h, "direct").await;
+    let mut wrong = change(&run.workspace);
+    let commit = wrong["commit"].as_str().unwrap().to_owned();
+    wrong["tree"] = json!(commit[..9]);
+    settle_with(&h, wrong).await;
+
+    let error = failed(&h, &item).await;
+    assert!(
+        error.contains("the ship record archond delivers is not on record"),
+        "{error}"
+    );
+    assert!(error.contains("names no single tree"), "{error}");
     assert!(gh.calls().is_empty());
 }
 
@@ -1576,4 +1621,145 @@ async fn a_steered_run_is_not_repaired() {
 
     failed(&h, &item).await;
     assert!(!brief_of(&h, &item).await.contains(REPAIR_OPENING));
+}
+
+/// A record whose hash names no object is repaired by asking for the hashes
+/// alone: the work stands, and `direct` owes no review to show again.
+#[tokio::test]
+async fn a_refused_ship_record_is_repaired_without_redoing_the_work() {
+    let (h, gh) = delivering_repairing(true).await;
+    let (item, run) = started(&h, "direct").await;
+    let mut wrong = change(&run.workspace);
+    let commit = wrong["commit"].as_str().unwrap().to_owned();
+    wrong["tree"] = json!(commit[..9]);
+    settle_with(&h, wrong).await;
+
+    assert_eq!(h.state(&item.id).await.kind(), "running", "repaired");
+    let brief = brief_of(&h, &item).await;
+    assert!(brief.contains(REPAIR_OPENING), "{brief}");
+    assert!(brief.contains("names no single tree"), "{brief}");
+    assert!(brief.contains("change no code and redo nothing"), "{brief}");
+    assert!(!brief.contains("Delegate one reviewer"), "{brief}");
+    assert!(!brief.contains("delegate one reviewer"), "{brief}");
+
+    settle_with(&h, record(&run.workspace)).await;
+    succeeded(&h, &item).await;
+    assert_eq!(pushed(&origin_of(&h), &run.branch), Some(commit));
+    assert_eq!(gh.count("pr create"), 1, "{:?}", gh.calls());
+}
+
+/// Uncommitted changes the stage left are its to commit: the delivery's
+/// refusal is repaired once, quoted, and the fixed branch ships.
+#[tokio::test]
+async fn a_delivery_refused_for_uncommitted_changes_is_repaired() {
+    let (h, gh) = delivering_repairing(true).await;
+    let (item, run) = started(&h, "direct").await;
+    let verified = change(&run.workspace);
+    std::fs::write(run.workspace.join("README.md"), "edited, not committed\n").unwrap();
+    settle_with(&h, verified).await;
+
+    assert_eq!(h.state(&item.id).await.kind(), "running", "repaired");
+    let brief = brief_of(&h, &item).await;
+    assert!(brief.contains(REPAIR_OPENING), "{brief}");
+    assert!(brief.contains("Archon refused to deliver"), "{brief}");
+    assert!(brief.contains("uncommitted changes"), "{brief}");
+    assert!(brief.contains("never one you set"), "{brief}");
+    let notices = h.notices(NotificationKind::Progress).await;
+    let line = notices.iter().find(|n| n.starts_with("delivery refused"));
+    let line = line.unwrap_or_else(|| panic!("{notices:?}"));
+    assert!(line.contains("retrying once to repair it"), "{line}");
+
+    git(
+        &run.workspace,
+        &["commit", "--quiet", "-am", "Commit the README"],
+    );
+    settle_with(&h, record(&run.workspace)).await;
+    succeeded(&h, &item).await;
+    assert_eq!(gh.count("pr create"), 1, "{:?}", gh.calls());
+}
+
+/// A foreign identity is routed to the repair with a note that says how to
+/// fix it without setting one, and stays refused while the commits keep it.
+#[tokio::test]
+async fn a_foreign_identity_is_repaired_once_and_still_refused() {
+    let (h, gh) = delivering_repairing(true).await;
+    let (item, run) = started(&h, "direct").await;
+    std::fs::write(run.workspace.join("change.txt"), "a change\n").unwrap();
+    git(&run.workspace, &["add", "change.txt"]);
+    let committed = Command::new("git")
+        .arg("-C")
+        .arg(&run.workspace)
+        .args(["commit", "--quiet", "-m", "Change the thing"])
+        .env("GIT_AUTHOR_EMAIL", "agent@elsewhere.invalid")
+        .env("GIT_COMMITTER_EMAIL", "agent@elsewhere.invalid")
+        .status()
+        .unwrap();
+    assert!(committed.success());
+    settle_with(&h, record(&run.workspace)).await;
+
+    assert_eq!(h.state(&item.id).await.kind(), "running", "repaired");
+    let brief = brief_of(&h, &item).await;
+    assert!(
+        brief.contains("never by setting an identity itself"),
+        "{brief}"
+    );
+
+    settle_with(&h, record(&run.workspace)).await;
+    let error = failed(&h, &item).await;
+    assert!(error.contains("were not made under this repository's git identity"));
+    assert!(error.contains("The first refusal was"), "{error}");
+    assert_eq!(pushed(&origin_of(&h), &run.branch), None);
+    assert!(gh.calls().is_empty());
+}
+
+/// A refusal the stage cannot fix in its worktree is not repaired.
+#[tokio::test]
+async fn a_delivery_refusal_the_stage_cannot_fix_is_not_repaired() {
+    let (h, _gh) = delivering_repairing(true).await;
+    let (item, run) = started(&h, "direct").await;
+    let tree = git(&h.repo, &["rev-parse", "main^{tree}"]);
+    let theirs = git(
+        &h.repo,
+        &["commit-tree", &tree, "-p", "main", "-m", "theirs"],
+    );
+    let onto = format!("{theirs}:refs/heads/{}", run.branch);
+    git(&h.repo, &["push", "--quiet", "origin", &onto]);
+    settle_changed(&h, json!({})).await;
+
+    let error = failed(&h, &item).await;
+    assert!(error.contains("Archon never force-pushes"), "{error}");
+    assert!(!brief_of(&h, &item).await.contains(REPAIR_OPENING));
+}
+
+/// A `direct` agent that failed for infrastructure is woken in place, hands
+/// in its ship record in its answer, and ends with its attempt.
+#[tokio::test]
+async fn a_woken_agent_ships_from_its_answer_and_ends() {
+    let (h, gh) = delivering().await;
+    let (item, run) = started(&h, "direct").await;
+    let agent = h.running().await.remove(0).aether_agent.unwrap();
+    h.backend.fail_agent(&agent);
+    h.settle_running(|_| StageOutcome::Failed {
+        error: "the engine went away".into(),
+        infra: true,
+    })
+    .await;
+    h.dispatch().await;
+    assert_eq!(h.backend.woken(), std::slice::from_ref(&agent));
+    assert_eq!(h.backend.requests().len(), 1, "no fresh agent");
+
+    let record = change(&run.workspace);
+    let reply = format!("Finished it.\n\n```json\n{record}\n```\n");
+    h.backend.answer(&agent, resumed_reply_outcome(&reply));
+    executor::turn_ended(&h.ctx, &agent)
+        .await
+        .expect("turn end");
+    h.dispatch().await;
+
+    succeeded(&h, &item).await;
+    assert_eq!(gh.count("pr create"), 1, "{:?}", gh.calls());
+    assert!(
+        h.backend.cancelled().contains(&agent),
+        "it ends with its attempt"
+    );
 }

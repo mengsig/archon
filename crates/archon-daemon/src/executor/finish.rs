@@ -44,7 +44,7 @@ pub(super) async fn finish_run(
 ) -> Result<FollowUp, ArchonError> {
     assert!(state.is_terminal(), "finish_run needs a terminal state");
     let mut repair = None;
-    match repair::decide(ctx, &run, &state).await? {
+    match repair::decide(ctx, table, &run, &state).await? {
         Decision::Finish => {}
         Decision::Repair(planned) => repair = Some(planned),
         Decision::Spent { first } => state = repair::with_first_refusal(state, &first),

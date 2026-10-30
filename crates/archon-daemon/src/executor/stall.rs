@@ -34,6 +34,9 @@ pub struct Activity {
     agents: std::sync::Mutex<BTreeMap<AetherAgentId, Timestamp>>,
     /// When each lead's tree was last read from Aether.
     looked: std::sync::Mutex<BTreeMap<AetherAgentId, Timestamp>>,
+    /// When each lead's tree was last read for a deadline it nears, apart
+    /// from `looked` so that read never takes the watchdog's.
+    deadline_looked: std::sync::Mutex<BTreeMap<AetherAgentId, Timestamp>>,
 }
 
 impl Activity {
@@ -55,6 +58,9 @@ impl Activity {
         drop(agents);
         let mut looked = self.looked.lock().expect("activity lock");
         looked.retain(|_, at| *at >= cutoff);
+        drop(looked);
+        let mut deadline_looked = self.deadline_looked.lock().expect("activity lock");
+        deadline_looked.retain(|_, at| *at >= cutoff);
     }
 
     /// The newest event of `lead` and the agents `beneath` it. The first
@@ -73,13 +79,28 @@ impl Activity {
     /// Whether `lead`'s tree may be read from Aether at `now`, recording the
     /// read when it may.
     fn may_read(&self, lead: &AetherAgentId, now: Timestamp) -> bool {
-        let mut looked = self.looked.lock().expect("activity lock");
-        if looked.get(lead).is_some_and(|at| now < *at + PULSE_EVERY) {
-            return false;
-        }
-        looked.insert(lead.clone(), now);
-        true
+        may_look(&self.looked, lead, now)
     }
+
+    /// [`Self::may_read`] for the read of a deadline `lead`'s stage nears.
+    pub(super) fn may_read_deadline(&self, lead: &AetherAgentId, now: Timestamp) -> bool {
+        may_look(&self.deadline_looked, lead, now)
+    }
+}
+
+/// Whether `lead` was last looked at in `book` at least `PULSE_EVERY` before
+/// `now`; recorded as looked at `now` when it was.
+fn may_look(
+    book: &std::sync::Mutex<BTreeMap<AetherAgentId, Timestamp>>,
+    lead: &AetherAgentId,
+    now: Timestamp,
+) -> bool {
+    let mut looked = book.lock().expect("activity lock");
+    if looked.get(lead).is_some_and(|at| now < *at + PULSE_EVERY) {
+        return false;
+    }
+    looked.insert(lead.clone(), now);
+    true
 }
 
 /// How long a stage may be silent, from `limits`.
@@ -164,13 +185,21 @@ pub fn judge(policy: &Policy, reading: &Reading) -> Verdict {
     }
 }
 
+/// Opens every failure a stalled stage settles with.
+const STALLED: &str = "agent stalled";
+
 /// The failure a stalled stage settles with.
 pub fn reason(silent: Duration, engine_known: bool) -> String {
     let minutes = silent.as_secs() / 60;
     match engine_known {
-        true => format!("agent stalled: no engine and no events for {minutes} min"),
-        false => format!("agent stalled: no events for {minutes} min (engine state not reported)"),
+        true => format!("{STALLED}: no engine and no events for {minutes} min"),
+        false => format!("{STALLED}: no events for {minutes} min (engine state not reported)"),
     }
+}
+
+/// Whether `error` is a stall the watchdog stopped the agent for.
+pub(super) fn is_stall(error: &str) -> bool {
+    error.starts_with(STALLED)
 }
 
 /// The running stages of `stages` that are stalled at `now`, with the
@@ -268,10 +297,7 @@ pub(super) fn mark_intent(
     stage: &StageRunId,
     reason: &str,
 ) -> Result<(), ArchonError> {
-    assert!(
-        reason.starts_with("agent stalled"),
-        "only the watchdog marks: {reason}"
-    );
+    assert!(is_stall(reason), "only the watchdog marks: {reason}");
     store.kv_set(&intent_key(stage), reason)
 }
 

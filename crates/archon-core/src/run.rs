@@ -145,29 +145,41 @@ impl Verdict {
 
 /// The only words a pass's explanation may hold besides numbers (`PASS — all
 /// 214 tests pass`): any other could make it conditional, so it reads `Unknown`.
-const PLAIN_SUCCESS: [&str; 18] = [
+const PLAIN_SUCCESS: [&str; 17] = [
     "all", "tests", "test", "checks", "check", "pass", "passes", "passed", "passing", "green",
-    "clean", "no", "findings", "issues", "lgtm", "ok", "ci", "and",
+    "clean", "findings", "issues", "lgtm", "ok", "ci", "and",
 ];
 
 /// Whether a pass's explanation could take it back: any word in it that is
-/// neither a number nor a [`PLAIN_SUCCESS`] word. A plain pass has none.
+/// neither a number nor a [`PLAIN_SUCCESS`] word, `no` before `findings` or
+/// `issues` aside. A plain pass has none.
 fn holds_back(explanation: &str) -> bool {
-    explanation
+    let words: Vec<&str> = explanation
         .split(|c: char| !c.is_alphanumeric())
         .filter(|word| !word.is_empty())
-        .any(|word| {
-            let plain = PLAIN_SUCCESS.iter().any(|ok| ok.eq_ignore_ascii_case(word));
-            !plain && !word.chars().all(|c| c.is_ascii_digit())
-        })
+        .collect();
+    let plain = |word: &str| PLAIN_SUCCESS.iter().any(|ok| ok.eq_ignore_ascii_case(word));
+    words.iter().enumerate().any(|(at, word)| {
+        let next = words.get(at + 1).copied().unwrap_or_default();
+        let denies_findings = word.eq_ignore_ascii_case("no")
+            && ["findings", "issues"]
+                .iter()
+                .any(|n| n.eq_ignore_ascii_case(next));
+        let number = word.chars().all(|c| c.is_ascii_digit());
+        !plain(word) && !number && !denies_findings
+    })
 }
 
 /// Whether a summary goes on after its verdict line with anything but blank
-/// lines and the `head:`/`base:` lines a review names its commits in.
+/// lines and the `head: <hex>`/`base: <hex>` lines a review names its commits in.
 fn trails_on(rest: &str) -> bool {
+    let is_commit = |value: &str| {
+        let value = value.trim().trim_matches(['`', '*']);
+        !value.is_empty() && value.bytes().all(|b| b.is_ascii_hexdigit())
+    };
     rest.lines().any(|line| {
         let commit = strip_label(line, "head").or_else(|| strip_label(line, "base"));
-        !line.trim().is_empty() && commit.is_none()
+        !line.trim().is_empty() && !commit.is_some_and(is_commit)
     })
 }
 
@@ -1019,13 +1031,17 @@ mod tests {
         assert_eq!(Verdict::extract(continued, None), Verdict::Unknown);
         let separate = "VERDICT: PASS\n\nDo not merge until CI is green";
         assert_eq!(Verdict::extract(separate, None), Verdict::Unknown);
-        let anchored = "VERDICT: PASS\nhead: abc123\nbase: def456";
+        let anchored = "VERDICT: PASS\nhead: abc123\nbase: `def456`";
         assert_eq!(Verdict::extract(anchored, None), Verdict::Pass);
+        let smuggled = "VERDICT: PASS\nhead: abc123 — do not merge";
+        assert_eq!(Verdict::extract(smuggled, None), Verdict::Unknown);
         for (said, want) in [
             ("PASS — no findings", Verdict::Pass),
             ("PASS — all checks green", Verdict::Pass),
             ("PASS — 214 passed, 0 failed", Verdict::Unknown),
             ("PASS — no blocking findings", Verdict::Unknown),
+            ("PASS — no tests", Verdict::Unknown),
+            ("PASS — no CI", Verdict::Unknown),
             (
                 "FAIL — do not merge until the blocker is fixed",
                 Verdict::Fail,

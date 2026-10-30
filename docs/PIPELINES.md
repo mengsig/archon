@@ -829,9 +829,10 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   (`PASS or FAIL`, `PASS, but two failed`, `PASS (pending fixes)`). A
   fail may be explained after one (`FAIL — two findings`). A pass may be
   explained only in plain success words and numbers (`all`, `tests`,
-  `checks`, `pass`, `passed`, `green`, `clean`, `no`, `findings`, `issues`,
-  `CI`, `ok`, `lgtm`, `and`: `PASS — all 214 tests pass`), and in a summary
-  only `head:` and `base:` lines may follow it; any other word could make
+  `checks`, `pass`, `passed`, `green`, `clean`, `findings`, `issues`,
+  `no findings`, `no issues`, `CI`, `ok`, `lgtm`, `and`:
+  `PASS — all 214 tests pass`), and in a summary only `head:` and `base:`
+  lines naming a commit may follow it; any other word could make
   it conditional (`PASS — merge only with green CI`), so it counts as fail.
   This errs on the safe side: a plain explanation such as
   `PASS — 0 failed` or `PASS — no blocking findings` is refused too, so

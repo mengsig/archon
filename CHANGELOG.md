@@ -42,6 +42,30 @@
   only `http`, `https` and `mailto` (opened with `noopener noreferrer`),
   and images become links that never load (#319, by @AmmarBattah in #327).
 
+### Agents
+
+- A ship record whose `commit` or `tree` is an abbreviated hash, as
+  `git commit` prints one, is resolved in the run worktree and stored in
+  full instead of failing the run; only a prefix that names no single
+  object of that type is refused, and the refusal says so.
+- The automatic repair asks only for what was refused: a refused ship
+  record alone gets a note to hand in a new record with full hashes and
+  change nothing, and a reviewer only when the stage owes one. A delivery
+  refused for what the record stage can fix in its worktree (uncommitted
+  changes, a tree that is not the record's, files that must not ship, a
+  foreign commit identity or an attribution trailer) is now repaired too; a foreign identity is still
+  refused until the commits carry the repository's own.
+- An infrastructure failure wakes the failed agent in place, with a note
+  that names the failure, when Aether still has it; it keeps its worktree
+  and history. A fresh agent starts only when Aether refuses the wake, and
+  a wake that took does not use up the stage's infrastructure retry. A
+  failure that names a passing cause (an unavailable engine, a rate or
+  usage limit, a refused login) is retried after 5 minutes, with the
+  deadline moved by the wait.
+- A stage whose agent Aether holds `blocked` (a usage limit, credentials)
+  or waiting on an approval is no longer timed out: its deadline is moved
+  on while it is held.
+
 ### Documentation
 
 - A "Get started in the chat" section in the README and a

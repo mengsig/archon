@@ -10,10 +10,11 @@ use archon_core::aether_ids::{AetherAgentId, AetherTaskId};
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
 use archon_core::run::{StageOutcome, StageRun, StageState};
+use archon_queue::Store;
 
 use super::{
-    FollowUp, descendants, load_spawn, resume, run_follow_up, run_node, settle, ship, siblings,
-    stall, team,
+    FollowUp, descendants, held, load_spawn, resume, run_follow_up, run_node, settle, ship,
+    siblings, stall, team,
 };
 use crate::context::DaemonContext;
 
@@ -34,10 +35,11 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
         ship,
         ..FollowUp::default()
     };
-    let running = {
+    let (running, expired, nearing) = {
         let store = ctx.store.lock().await;
         let mut finished: BTreeMap<PipelineRunId, bool> = BTreeMap::new();
         let mut running: Vec<StageRun> = Vec::new();
+        let (mut expired, mut nearing) = (Vec::new(), Vec::new());
         for stage in store.live_stage_runs()? {
             if in_flight.contains(&stage.id) {
                 continue;
@@ -61,17 +63,15 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
             if stage.aether_agent.is_some() && stage.aether_task.is_none() {
                 follow.resumed.push(stage.id.clone());
             }
-            let deadline = match load_spawn(&store, &stage.id) {
-                Ok(spawn) => spawn.request.deadline,
-                Err(ArchonError::NotFound(what)) => {
-                    tracing::warn!(stage = %stage.id, "no {what}; no deadline timer");
-                    None
-                }
-                Err(e) => return Err(e),
-            };
+            let deadline = stored_deadline(&store, &stage)?;
             if deadline.is_some_and(|d| d + grace < now) {
-                follow.time_out.push(stage.id);
-            } else if stage.state == StageState::Running {
+                expired.push(stage);
+                continue;
+            }
+            if stage.state == StageState::Running {
+                if deadline.is_some_and(|d| held::near(d, now)) {
+                    nearing.push(stage.clone());
+                }
                 running.push(stage);
             }
         }
@@ -83,11 +83,24 @@ pub(crate) async fn sweep_live_stages(ctx: &DaemonContext) -> Result<(), ArchonE
             .into_iter()
             .map(|(item, repo_name)| super::ItemBuild { item, repo_name })
             .collect();
-        running
+        (running, expired, nearing)
     };
+    follow.time_out = held::sweep(ctx, expired, &nearing, now).await?;
     let stalled = settle_stalled(ctx, &running, now, &mut follow).await;
     run_follow_up(ctx, follow).await?;
     stalled
+}
+
+/// The deadline in `stage`'s stored request; `None` without one.
+fn stored_deadline(store: &Store, stage: &StageRun) -> Result<Option<Timestamp>, ArchonError> {
+    match load_spawn(store, &stage.id) {
+        Ok(spawn) => Ok(spawn.request.deadline),
+        Err(ArchonError::NotFound(what)) => {
+            tracing::warn!(stage = %stage.id, "no {what}; no deadline timer");
+            Ok(None)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Settle the stages of `running` the watchdog finds stalled, adding what

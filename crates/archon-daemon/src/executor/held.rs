@@ -1,0 +1,117 @@
+//! A stage whose agents Aether holds (`blocked` on a usage limit or
+//! credentials, or waiting for an approval) is suspended, not failed: its
+//! deadline is moved on before it passes, so neither Aether nor the sweep
+//! ends it for time it could not work.
+
+use archon_core::Timestamp;
+use archon_core::aether_ids::AetherAgentId;
+use archon_core::error::ArchonError;
+use archon_core::id::StageRunId;
+use archon_core::ports::AgentUpdate;
+use archon_core::run::{StageRun, StageState};
+
+use super::{resume, spawn};
+use crate::context::DaemonContext;
+
+/// A held stage whose deadline is this near has it moved.
+pub(super) const MARGIN_MINUTES: i64 = 10;
+/// How far past `now` a held stage's deadline is moved.
+const EXTENSION_MINUTES: i64 = 30;
+
+/// Whether `deadline` is near enough at `now` for a held stage to move it.
+pub(super) fn near(deadline: Timestamp, now: Timestamp) -> bool {
+    deadline < now + chrono::Duration::minutes(MARGIN_MINUTES)
+}
+
+/// Move the deadline of `stage` if Aether holds its tree; `true` when moved.
+/// A tree Aether cannot read now, or an update it refuses, leaves it as is.
+pub(super) async fn hold_deadline(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    now: Timestamp,
+) -> Result<bool, ArchonError> {
+    assert_eq!(
+        stage.state,
+        StageState::Running,
+        "only a running stage is held"
+    );
+    let Some(lead) = &stage.aether_agent else {
+        return Ok(false);
+    };
+    let pulse = match ctx.backend.pulse(lead).await {
+        Ok(pulse) => pulse,
+        Err(error) if resume::unanswered(&error) => {
+            tracing::info!(%lead, %error, "pulse unanswered; the deadline stands");
+            return Ok(false);
+        }
+        Err(error) => return Err(error),
+    };
+    if !pulse.is_some_and(|pulse| pulse.held) {
+        return Ok(false);
+    }
+    let until = now + chrono::Duration::minutes(EXTENSION_MINUTES);
+    if !raise(ctx, lead, until).await? {
+        return Ok(false);
+    }
+    spawn::move_deadline(&mut *ctx.store.lock().await, &stage.id, until)?;
+    tracing::info!(stage = %stage.id, %until, "agent held by Aether; deadline moved");
+    Ok(true)
+}
+
+/// Raise the deadline of `lead` and the agents beneath it to `until`;
+/// `false` when Aether refuses, most likely because the agent ended.
+async fn raise(
+    ctx: &DaemonContext,
+    lead: &AetherAgentId,
+    until: Timestamp,
+) -> Result<bool, ArchonError> {
+    let update = AgentUpdate {
+        deadline: Some(until),
+        ..AgentUpdate::default()
+    };
+    assert!(!update.is_empty(), "a raise changes the deadline");
+    let raised = match ctx.backend.supports_subtree_update().await? {
+        true => ctx.backend.update_subtree(lead, update).await,
+        false => ctx.backend.update_agent(lead, update).await,
+    };
+    match raised {
+        Ok(()) => Ok(true),
+        Err(error) if resume::unanswered(&error) || error.is_store() => Err(error),
+        Err(refusal) => {
+            tracing::warn!(%lead, %refusal, "held agent's deadline not moved");
+            Ok(false)
+        }
+    }
+}
+
+/// Hold the deadlines of the `nearing` stages Aether holds, each read as
+/// often as the watchdog may, and return the `expired` ones it does not hold.
+pub(super) async fn sweep(
+    ctx: &DaemonContext,
+    expired: Vec<StageRun>,
+    nearing: &[StageRun],
+    now: Timestamp,
+) -> Result<Vec<StageRunId>, ArchonError> {
+    for stage in nearing {
+        assert_eq!(
+            stage.state,
+            StageState::Running,
+            "only a running stage nears its deadline"
+        );
+        let readable = stage
+            .aether_agent
+            .as_ref()
+            .is_some_and(|lead| ctx.activity.may_read(lead, now));
+        if readable {
+            hold_deadline(ctx, stage, now).await?;
+        }
+    }
+    let mut due = Vec::with_capacity(expired.len());
+    for stage in expired {
+        let held = stage.state == StageState::Running && hold_deadline(ctx, &stage, now).await?;
+        if !held {
+            due.push(stage.id);
+        }
+    }
+    Ok(due)
+}

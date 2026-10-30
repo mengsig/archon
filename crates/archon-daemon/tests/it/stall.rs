@@ -235,3 +235,68 @@ async fn zero_stall_minutes_leaves_a_dead_tree_to_its_timeout() {
     sweep(&h).await;
     assert_eq!(the_only_running(&h).await.id, stage.id);
 }
+
+/// An agent Aether holds (`blocked` on a usage limit or credentials) is
+/// suspended, not failed: its deadline moves on in Aether and in the store.
+#[tokio::test]
+async fn a_held_stage_near_its_deadline_has_it_moved() {
+    let h = Harness::new().await;
+    h.enqueue("blocked on a usage limit").await;
+    h.dispatch().await;
+    let stage = the_only_running(&h).await;
+    let soon = archon_core::now() + chrono::Duration::minutes(5);
+    common::set_deadline(&h, &stage, soon).await;
+    h.backend
+        .set_pulse(&lead(&stage), TreePulse { held: true, ..DEAD });
+    sweep(&h).await;
+
+    let moved = common::stored_deadline(&h, &stage)
+        .await
+        .expect("a deadline");
+    assert!(
+        moved > soon + chrono::Duration::minutes(20),
+        "{moved} after {soon}"
+    );
+    let updates = h.backend.updates();
+    assert_eq!(updates.len(), 1, "{updates:?}");
+    assert_eq!(updates[0].0, lead(&stage));
+    assert_eq!(updates[0].1.deadline, Some(moved));
+    assert_eq!(the_only_running(&h).await.id, stage.id);
+}
+
+#[tokio::test]
+async fn a_stage_near_its_deadline_that_is_not_held_keeps_it() {
+    let h = Harness::new().await;
+    h.enqueue("working to the end").await;
+    h.dispatch().await;
+    let stage = the_only_running(&h).await;
+    let soon = archon_core::now() + chrono::Duration::minutes(5);
+    common::set_deadline(&h, &stage, soon).await;
+    sweep(&h).await;
+
+    assert_eq!(common::stored_deadline(&h, &stage).await, Some(soon));
+    assert!(h.backend.updates().is_empty());
+}
+
+#[tokio::test]
+async fn a_held_stage_past_its_deadline_is_not_timed_out() {
+    let h = Harness::new().await;
+    let item = h.enqueue("held while the daemon was down").await;
+    h.dispatch().await;
+    let stage = the_only_running(&h).await;
+    common::expire_deadline(&h, &stage).await;
+    h.backend
+        .set_pulse(&lead(&stage), TreePulse { held: true, ..DEAD });
+    sweep(&h).await;
+
+    assert_eq!(the_only_running(&h).await.id, stage.id, "not timed out");
+    assert!(h.backend.cancelled().is_empty());
+    let moved = common::stored_deadline(&h, &stage)
+        .await
+        .expect("a deadline");
+    assert!(moved > archon_core::now() + chrono::Duration::minutes(20));
+    assert!(matches!(
+        h.state(&item.id).await,
+        QueueState::Running { .. }
+    ));
+}

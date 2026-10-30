@@ -1470,14 +1470,34 @@ pub async fn age_settlements_except(h: &Harness, run: &PipelineRunId, minutes: i
 /// Move `stage`'s persisted deadline two hours into the past, as if its
 /// agent had outlived it; returns the new deadline.
 pub async fn expire_deadline(h: &Harness, stage: &StageRun) -> Timestamp {
+    let past = archon_core::now() - chrono::Duration::hours(2);
+    set_deadline(h, stage, past).await;
+    past
+}
+
+/// Set `stage`'s persisted deadline to `at`.
+pub async fn set_deadline(h: &Harness, stage: &StageRun, at: Timestamp) {
     let key = format!("spawn_request:{}", stage.id);
     let mut store = h.ctx.store.lock().await;
     let raw = store.kv_get(&key).expect("kv").expect("stored spawn");
     let mut spawn: serde_json::Value = serde_json::from_str(&raw).expect("json");
-    let past = archon_core::now() - chrono::Duration::hours(2);
-    spawn["request"]["deadline"] = serde_json::to_value(past).expect("timestamp");
+    spawn["request"]["deadline"] = serde_json::to_value(at).expect("timestamp");
     store.kv_set(&key, &spawn.to_string()).expect("kv set");
-    past
+}
+
+/// `stage`'s persisted deadline.
+pub async fn stored_deadline(h: &Harness, stage: &StageRun) -> Option<Timestamp> {
+    let key = format!("spawn_request:{}", stage.id);
+    let raw = h
+        .ctx
+        .store
+        .lock()
+        .await
+        .kv_get(&key)
+        .expect("kv")
+        .expect("stored spawn");
+    let spawn: serde_json::Value = serde_json::from_str(&raw).expect("json");
+    serde_json::from_value(spawn["request"]["deadline"].clone()).expect("a deadline or null")
 }
 
 /// The `--exact` filter for test `name` in the module at `module_path`

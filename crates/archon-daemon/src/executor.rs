@@ -17,6 +17,7 @@ pub(crate) mod frozen;
 mod gate_news;
 mod gates;
 pub(crate) mod gh;
+mod held;
 pub(crate) mod initiative_ship;
 mod landed;
 mod lanes;

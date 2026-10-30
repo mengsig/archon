@@ -165,6 +165,26 @@ pub(super) fn hold_until(
     save_spawn(store, id, &spawn)
 }
 
+/// Move the deadline in stage run `id`'s stored request to `until`, as
+/// Aether now has it for an agent it holds.
+pub(super) fn move_deadline(
+    store: &mut Store,
+    id: &StageRunId,
+    until: Timestamp,
+) -> Result<(), ArchonError> {
+    let mut spawn = load_spawn(store, id)?;
+    assert!(until > archon_core::now(), "a held deadline lies ahead");
+    assert!(
+        spawn
+            .request
+            .deadline
+            .is_none_or(|deadline| deadline < until),
+        "a held deadline only moves later"
+    );
+    spawn.request.deadline = Some(until);
+    save_spawn(store, id, &spawn)
+}
+
 /// Whether stage run `id` may be issued at `now`; one without a stored
 /// request is, so that issuing settles it.
 pub(super) fn due(store: &Store, id: &StageRunId, now: Timestamp) -> Result<bool, ArchonError> {

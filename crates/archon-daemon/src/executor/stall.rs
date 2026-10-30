@@ -72,7 +72,7 @@ impl Activity {
 
     /// Whether `lead`'s tree may be read from Aether at `now`, recording the
     /// read when it may.
-    fn may_read(&self, lead: &AetherAgentId, now: Timestamp) -> bool {
+    pub(super) fn may_read(&self, lead: &AetherAgentId, now: Timestamp) -> bool {
         let mut looked = self.looked.lock().expect("activity lock");
         if looked.get(lead).is_some_and(|at| now < *at + PULSE_EVERY) {
             return false;

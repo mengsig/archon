@@ -70,7 +70,7 @@ parse_args() {
 }
 
 absolute_binary() {
-    [ -f "$1" ] && [ -x "$1" ] || die "$1 is not an executable file"
+    if ! { [ -f "$1" ] && [ -x "$1" ]; }; then die "$1 is not an executable file"; fi
     (cd "$(dirname "$1")" && printf '%s/%s\n' "$PWD" "$(basename "$1")")
 }
 
@@ -78,7 +78,7 @@ absolute_binary() {
 binaries() {
     if [ -z "$OLD_BIN" ]; then
         SOURCE=$(CDPATH='' cd -- "${SOURCE:-$TREE}" && pwd) || die "no source directory ${SOURCE:-$TREE}"
-        [ -f "$SOURCE/Cargo.toml" ] && [ -d "$SOURCE/crates/archon" ] || die "$SOURCE is not an archon checkout"
+        if ! { [ -f "$SOURCE/Cargo.toml" ] && [ -d "$SOURCE/crates/archon" ]; }; then die "$SOURCE is not an archon checkout"; fi
         say "building from $SOURCE at $(git -C "$SOURCE" rev-parse --short HEAD)"
         TARGET_DIR=${CARGO_TARGET_DIR:-$WORK/target}
         build_binaries

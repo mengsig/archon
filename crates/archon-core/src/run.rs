@@ -100,7 +100,8 @@ impl Verdict {
     /// `None` when `text` does not open with a verdict word. A verdict word
     /// counts only when no word follows it before the first explanation
     /// separator (`—`, `:`, `;`, `.`, ` - `, a line break): any is a choice
-    /// (`PASS or FAIL`) or a condition (`PASS, pending fixes`, `PASS (if CI agrees)`).
+    /// (`PASS or FAIL`) or a condition (`PASS, pending fixes`, `PASS (if CI agrees)`),
+    /// and a pass its explanation takes back ([`holds_back`]) is `Unknown` too.
     fn leading(text: &str) -> Option<Self> {
         let mut words = text
             .split(|c: char| !c.is_alphanumeric())
@@ -116,7 +117,12 @@ impl Verdict {
             .and_then(|head| head.split(" - ").next())
             .unwrap_or_default();
         let qualified = head.chars().any(char::is_alphanumeric);
-        Some(if qualified { Self::Unknown } else { verdict })
+        let held = verdict == Self::Pass && holds_back(first_paragraph(after));
+        Some(if qualified || held {
+            Self::Unknown
+        } else {
+            verdict
+        })
     }
 
     fn of_word(word: &str) -> Option<Self> {
@@ -126,6 +132,51 @@ impl Verdict {
             _ => None,
         }
     }
+}
+
+/// Words in a pass's explanation that make it conditional (`PASS — pending fixes`).
+const CONDITIONS: [&str; 11] = [
+    "pending",
+    "until",
+    "unless",
+    "if",
+    "once",
+    "provided",
+    "providing",
+    "assuming",
+    "conditional",
+    "conditionally",
+    "contingent",
+];
+const BLOCKERS: [&str; 4] = ["blocked", "blocker", "blockers", "blocking"];
+/// Words that, among the two before a blocker word, deny it (`no open blockers`).
+const DENIALS: [&str; 6] = ["no", "non", "zero", "0", "without", "nothing"];
+const DELIVERIES: [&str; 6] = ["merge", "merged", "merging", "ship", "land", "deliver"];
+/// Words that, right before a delivery word, withhold it (`do not merge`, `don't ship`).
+const REFUSALS: [&str; 4] = ["not", "t", "never", "cannot"];
+
+/// Whether a pass's explanation takes it back: a condition, a blocker it
+/// does not deny, or a refusal to merge. Such a pass reads as `Unknown`.
+fn holds_back(explanation: &str) -> bool {
+    let words: Vec<String> = explanation
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect();
+    let before = |at: usize, count: usize| &words[at.saturating_sub(count)..at];
+    words.iter().enumerate().any(|(at, word)| {
+        let word = word.as_str();
+        let denied = || before(at, 2).iter().any(|w| DENIALS.contains(&w.as_str()));
+        let refused = || before(at, 1).iter().any(|w| REFUSALS.contains(&w.as_str()));
+        CONDITIONS.contains(&word)
+            || (BLOCKERS.contains(&word) && !denied())
+            || (DELIVERIES.contains(&word) && refused())
+    })
+}
+
+/// `text` up to its first blank line: the paragraph a verdict word opens.
+fn first_paragraph(text: &str) -> &str {
+    text.split("\n\n").next().unwrap_or_default()
 }
 
 /// The last line of `text` that reads `VERDICT: …`, and its value. Lines in
@@ -948,6 +999,33 @@ mod tests {
             let field = json!({"verdict": said});
             let read = Verdict::extract("VERDICT: PASS", Some(&field));
             assert_eq!(read, Verdict::Unknown, "{said}");
+        }
+        let held = [
+            "PASS — pending fixes",
+            "PASS: if CI passes",
+            "PASS — do not merge until the blocking issue is fixed",
+            "PASS — don't ship yet",
+            "PASS. One blocker remains",
+        ];
+        for said in held {
+            let line = format!("VERDICT: {said}");
+            assert_eq!(Verdict::extract(&line, None), Verdict::Unknown, "{said}");
+            for key in ["verdict", "result", "status"] {
+                let field = json!({key: said});
+                let read = Verdict::extract("VERDICT: PASS", Some(&field));
+                assert_eq!(read, Verdict::Unknown, "{key}: {said}");
+            }
+        }
+        let later = json!({"verdict": "PASS\nDo not merge until CI is green"});
+        assert_eq!(Verdict::extract("", Some(&later)), Verdict::Unknown);
+        for said in [
+            "PASS — no blocking findings",
+            "PASS — non-blocking nits only",
+            "PASS — all 214 tests pass, nothing blocking",
+            "FAIL — do not merge until the blocker is fixed",
+        ] {
+            let line = format!("VERDICT: {said}");
+            assert_ne!(Verdict::extract(&line, None), Verdict::Unknown, "{said}");
         }
         let multiline = json!({"verdict": "PASS\nall 214 tests pass"});
         assert_eq!(Verdict::extract("", Some(&multiline)), Verdict::Pass);

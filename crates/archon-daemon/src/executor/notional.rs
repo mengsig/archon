@@ -45,7 +45,7 @@ fn labelled(error: &str) -> String {
     );
     let text = format!(
         "{error} (notional cost: Claude Code reports list-price dollars whether or not its \
-         login bills them, and Aether showed no subscription usage window for it, so the \
+         login bills them, and Aether showed no fresh subscription usage window with headroom for it, so the \
          budget was enforced; under a subscription, raise or unset the item's budget)"
     );
     assert!(text.starts_with(error), "Aether's words come first");

@@ -393,17 +393,21 @@ pub fn cost_enforcement(
     decided
 }
 
-/// Whether Aether reports a subscription's usage windows for `provider`:
-/// Claude Code reports its 5-hour and weekly windows only for a subscription
-/// login, never for an API key.
+/// Whether Aether shows a live subscription for `provider`: Claude Code
+/// reports its 5-hour and weekly windows only for a subscription login. Aether
+/// caches them by provider, so only fresh windows with headroom count; a login
+/// switched to an API key, often for an exhausted one, leaves them stale.
 fn shows_subscription(provider: &ProviderInfo) -> bool {
     let Some(headroom) = &provider.headroom else {
         return false;
     };
-    headroom
+    let mut windows = headroom
         .windows
         .iter()
-        .any(|window| matches!(window.name.as_str(), "five_hour" | "seven_day"))
+        .filter(|window| matches!(window.name.as_str(), "five_hour" | "seven_day"))
+        .peekable();
+    let shown = windows.peek().is_some();
+    !headroom.stale && shown && windows.all(|window| window.remaining_percent > 0)
 }
 
 /// `None` while the task is open.
@@ -1040,5 +1044,42 @@ mod tests {
         let mut req = node_request();
         req.workspace = "relative".into();
         run_node_create_agent(&req);
+    }
+
+    fn claude_code(headroom: serde_json::Value) -> ProviderInfo {
+        serde_json::from_value(serde_json::json!({"provider": "claude-code",
+            "protocol": "claude-code", "engine": true, "headroom": headroom}))
+        .unwrap()
+    }
+
+    #[test]
+    fn only_fresh_subscription_windows_with_headroom_lift_the_hard_cap() {
+        let model = ModelRef::new("claude-code", "claude-sonnet-5");
+        let window =
+            |name: &str, left: u64| serde_json::json!({"name": name, "remaining_percent": left});
+        let decide = |windows: Vec<serde_json::Value>, stale: bool| {
+            let provider = claude_code(serde_json::json!({"windows": windows, "stale": stale}));
+            cost_enforcement(&model, &[], &[provider])
+        };
+        let subscription = (false, Some(CostBilling::Subscription));
+        let unknown = (true, Some(CostBilling::Unknown));
+        assert_eq!(
+            decide(
+                vec![window("five_hour", 58), window("seven_day", 27)],
+                false
+            ),
+            subscription
+        );
+        // Cached windows a login switched to an API key left behind.
+        assert_eq!(decide(vec![window("five_hour", 58)], true), unknown);
+        // An exhausted subscription is the likeliest to be switched to a key.
+        assert_eq!(
+            decide(vec![window("five_hour", 58), window("seven_day", 0)], false),
+            unknown
+        );
+        assert_eq!(decide(vec![window("other", 58)], false), unknown);
+        assert_eq!(decide(vec![], false), unknown);
+        let no_usage = claude_code(serde_json::Value::Null);
+        assert_eq!(cost_enforcement(&model, &[], &[no_usage]), unknown);
     }
 }

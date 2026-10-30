@@ -677,6 +677,47 @@ async fn a_missing_ship_record_fails_the_stage_that_owes_it() {
     assert!(gh.calls().is_empty());
 }
 
+/// A record naming its commit and tree by the short hashes `git commit` and
+/// `git rev-parse --short` print ships that commit, stored by its full id.
+#[tokio::test]
+async fn a_short_commit_and_tree_ship_as_their_full_ids() {
+    let (h, gh) = delivering().await;
+    let (item, run) = started(&h, "direct").await;
+    let mut short = change(&run.workspace);
+    let full = short["commit"].as_str().unwrap().to_owned();
+    short["commit"] = json!(full[..7].to_uppercase());
+    short["tree"] = json!(git(&run.workspace, &["rev-parse", "--short", "HEAD^{tree}"]));
+    settle_with(&h, short).await;
+
+    let summary = succeeded(&h, &item).await;
+    assert!(summary.contains(&format!("(commit {full})")), "{summary}");
+    assert_eq!(pushed(&origin_of(&h), &run.branch), Some(full.clone()));
+    assert_eq!(gh.count("pr create"), 1);
+    let stages = h.ctx.store.lock().await.stage_runs(&run.id).unwrap();
+    let recorded = stages[0].structured.as_ref().unwrap();
+    assert_eq!(recorded["commit"], json!(full), "the full id is stored");
+}
+
+/// A short hash that names no commit of the worktree, or a commit's hash
+/// given for the tree, is refused and says why.
+#[tokio::test]
+async fn a_short_hash_that_names_no_such_object_is_refused() {
+    let (h, gh) = delivering().await;
+    let (item, run) = started(&h, "direct").await;
+    let mut wrong = change(&run.workspace);
+    let commit = wrong["commit"].as_str().unwrap().to_owned();
+    wrong["tree"] = json!(commit[..9]);
+    settle_with(&h, wrong).await;
+
+    let error = failed(&h, &item).await;
+    assert!(
+        error.contains("the ship record archond delivers is not on record"),
+        "{error}"
+    );
+    assert!(error.contains("names no single tree"), "{error}");
+    assert!(gh.calls().is_empty());
+}
+
 /// `direct` is the cheapest path: no model plan, one leaf agent, no review,
 /// and a pull request archond opened.
 #[tokio::test]

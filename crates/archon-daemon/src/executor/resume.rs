@@ -16,7 +16,7 @@ use archon_pipeline::{ShipRecord, SpawnPlan};
 use archon_queue::Store;
 
 use super::spawn::{self, KeptAgent};
-use super::{FollowUp, load_spawn, run_node, settle, steer, sweep};
+use super::{FollowUp, load_spawn, run_node, settle, ship, steer, sweep};
 use crate::context::DaemonContext;
 
 /// How long a kept agent may wait for findings before Aether ends it. Its
@@ -274,6 +274,13 @@ pub(super) async fn check(ctx: &DaemonContext, id: &StageRunId) -> Result<Follow
             return Ok(FollowUp::default());
         }
         Err(error) => return Err(error),
+    };
+    let outcome = match records_ship(ctx, &stage).await {
+        true => {
+            let run = ctx.store.lock().await.run(&stage.run)?;
+            ship::with_full_ids(&run, outcome).await?
+        }
+        false => outcome,
     };
     let Some(outcome) = recorded(ctx, &stage, &kept, outcome).await? else {
         return Ok(FollowUp::default());

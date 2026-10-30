@@ -56,7 +56,10 @@ pub(super) async fn settle(
     // reconnect reconciliation reads the task outcome and verifies it again.
     let outcome = ship::verify(ctx, &run, &stage, daemon_ships, outcome).await?;
     let outcome = match (review.records_ship, &record_stage) {
-        (true, _) => ship::verify_no_change(ctx, &run, outcome).await?,
+        (true, _) => {
+            let outcome = ship::with_full_ids(&run, outcome).await?;
+            ship::verify_no_change(ctx, &run, outcome).await?
+        }
         (false, Some(record)) => {
             ship::verify_standing_no_change(ctx, &run, record, &stage, outcome).await?
         }

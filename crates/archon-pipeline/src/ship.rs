@@ -79,9 +79,26 @@ pub fn no_change_reason(structured: Option<&Value>) -> Option<String> {
     (!reason.is_empty()).then_some(reason)
 }
 
+/// The record's object ids and the object type each must name; archond
+/// resolves an abbreviated one in the run worktree before the record is read.
+pub const RECORD_IDS: [(&str, &str); 2] = [("commit", "commit"), ("tree", "tree")];
+
+/// Whether `id` is an abbreviated git object id, as `git rev-parse --short`
+/// or `git commit` prints one: 7 or more hex digits, shorter than SHA-256.
+pub fn is_abbreviated_id(id: &str) -> bool {
+    let hex = id.bytes().all(|b| b.is_ascii_hexdigit());
+    hex && (7..64).contains(&id.len()) && id.len() != 40
+}
+
 /// `data[key]` as a full git object id: 40 (SHA-1) or 64 (SHA-256) hex digits.
 fn object_id(data: &Value, key: &str) -> Result<String, String> {
     let id = data.get(key).and_then(Value::as_str).unwrap_or("").trim();
+    if is_abbreviated_id(id) {
+        return Err(format!(
+            "`{key}` {id:?} names no single {key} in the run worktree (unknown or ambiguous): \
+             give the full hash `git rev-parse` prints"
+        ));
+    }
     let full = matches!(id.len(), 40 | 64) && id.bytes().all(|b| b.is_ascii_hexdigit());
     if !full {
         return Err(format!(
@@ -308,11 +325,24 @@ mod tests {
         }
         let mut short = record();
         short["tree"] = json!("89abcde");
+        let refused = ShipRecord::read(Some(&short)).unwrap_err();
         assert!(
-            ShipRecord::read(Some(&short))
-                .unwrap_err()
-                .contains("full hash")
+            refused.contains("names no single tree") && refused.contains("full hash"),
+            "an abbreviation left unresolved: {refused}"
         );
+        short["tree"] = json!("89abcd");
+        let refused = ShipRecord::read(Some(&short)).unwrap_err();
+        assert!(refused.contains("must be the full hash"), "{refused}");
+    }
+
+    #[test]
+    fn an_abbreviated_id_is_seven_to_sixty_three_hex_digits_but_not_forty() {
+        for short in ["a1b2c3d", "A1B2C3D4", &COMMIT[..39], &"f".repeat(63)] {
+            assert!(is_abbreviated_id(short), "{short}");
+        }
+        for not in ["a1b2c3", COMMIT, &"f".repeat(64), "a1b2c3g", "", "HEAD~1"] {
+            assert!(!is_abbreviated_id(not), "{not}");
+        }
     }
 
     #[test]

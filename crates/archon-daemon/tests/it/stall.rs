@@ -334,6 +334,31 @@ async fn a_held_stage_past_its_deadline_is_not_timed_out() {
     ));
 }
 
+/// A stage past its deadline whose tree Aether did not answer for is not
+/// timed out: Aether may hold it. The next sweep that reads it held moves it.
+#[tokio::test]
+async fn an_expired_stage_whose_pulse_is_unanswered_waits_for_the_next_read() {
+    let h = Harness::new().await;
+    h.enqueue("held, and Aether slow to say so").await;
+    h.dispatch().await;
+    let stage = the_only_running(&h).await;
+    common::expire_deadline(&h, &stage).await;
+    h.backend
+        .set_pulse(&lead(&stage), TreePulse { held: true, ..DEAD });
+    h.backend
+        .fail_next_pulse(ArchonError::Unavailable("aetherd busy".into()));
+    sweep(&h).await;
+
+    assert_eq!(the_only_running(&h).await.id, stage.id, "not timed out");
+    assert!(h.backend.cancelled().is_empty());
+    sweep(&h).await;
+    let moved = common::stored_deadline(&h, &stage)
+        .await
+        .expect("a deadline");
+    assert!(moved > archon_core::now() + chrono::Duration::minutes(20));
+    assert_eq!(the_only_running(&h).await.id, stage.id);
+}
+
 /// The deadline check of a stage near its deadline reads the tree too; it
 /// must not take the watchdog's read, or a stall would wait for the timeout.
 #[tokio::test]

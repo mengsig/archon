@@ -781,6 +781,7 @@ struct FakeState {
     /// Agents a stage agent delegated to, as Aether holds them.
     delegated: Vec<Descendant>,
     descendant_failures: VecDeque<ArchonError>,
+    pulse_failures: VecDeque<ArchonError>,
     /// Every `descendants` call, in order.
     descendant_checks: Vec<AetherAgentId>,
     /// What a kept agent said to end the turn it was resumed in.
@@ -1142,6 +1143,11 @@ impl FakeBackend {
         self.state().descendant_failures.push_back(error);
     }
 
+    /// The next `pulse` calls fail with these errors, in order.
+    pub fn fail_next_pulse(&self, error: ArchonError) {
+        self.state().pulse_failures.push_back(error);
+    }
+
     /// Hold every spawn whose objective contains `text` until the returned
     /// gate gets a permit.
     pub fn stall_spawns(&self, text: &str) -> Arc<tokio::sync::Semaphore> {
@@ -1385,7 +1391,10 @@ impl AgentBackend for FakeBackend {
     }
 
     async fn pulse(&self, agent: &AetherAgentId) -> Result<Option<TreePulse>, ArchonError> {
-        let state = self.state();
+        let mut state = self.state();
+        if let Some(error) = state.pulse_failures.pop_front() {
+            return Err(error);
+        }
         if !state.knows(agent) {
             return Ok(None);
         }

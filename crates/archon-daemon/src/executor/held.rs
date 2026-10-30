@@ -23,33 +23,56 @@ pub(super) fn near(deadline: Timestamp, now: Timestamp) -> bool {
     deadline < now + chrono::Duration::minutes(MARGIN_MINUTES)
 }
 
-/// Move the deadline of `stage` if Aether holds its tree; `true` when it now
-/// lies ahead. A tree Aether cannot read now, or an update it refuses, leaves
-/// it as is. A later deadline a steer stored meanwhile is never shortened.
+/// Move the deadline of `stage` if Aether holds its tree; `Some(true)` when it
+/// now lies ahead, `None` when Aether did not answer whether it holds it. An
+/// update it refuses leaves it as is; a later one a steer stored is kept.
 pub(super) async fn hold_deadline(
     ctx: &DaemonContext,
     stage: &StageRun,
     now: Timestamp,
-) -> Result<bool, ArchonError> {
+) -> Result<Option<bool>, ArchonError> {
     assert_eq!(
         stage.state,
         StageState::Running,
         "only a running stage is held"
     );
     let Some(lead) = &stage.aether_agent else {
-        return Ok(false);
+        return Ok(Some(false));
     };
     let pulse = match ctx.backend.pulse(lead).await {
         Ok(pulse) => pulse,
         Err(error) if resume::unanswered(&error) => {
-            tracing::info!(%lead, %error, "pulse unanswered; the deadline stands");
-            return Ok(false);
+            tracing::info!(%lead, %error, "pulse unanswered; whether it is held is read again next sweep");
+            return Ok(None);
         }
         Err(error) => return Err(error),
     };
     if !pulse.is_some_and(|pulse| pulse.held) {
-        return Ok(false);
+        return Ok(Some(false));
     }
+    match move_deadline(ctx, stage, lead, now).await {
+        Ok(ahead) => Ok(Some(ahead)),
+        Err(error) if resume::unanswered(&error) => {
+            tracing::info!(%lead, %error, "deadline move unanswered; tried again next sweep");
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Move held `stage`'s deadline, Aether's first, to 30 min past `now`;
+/// `true` when it now lies ahead.
+async fn move_deadline(
+    ctx: &DaemonContext,
+    stage: &StageRun,
+    lead: &AetherAgentId,
+    now: Timestamp,
+) -> Result<bool, ArchonError> {
+    assert_eq!(
+        stage.aether_agent.as_ref(),
+        Some(lead),
+        "the stage's own lead"
+    );
     let until = now + chrono::Duration::minutes(EXTENSION_MINUTES);
     // A steer's owed deadline is sent under the same lock, so neither lowers the other.
     let _steering = ctx.coordination.steering.hold(&stage.id).await;
@@ -142,7 +165,8 @@ async fn raise_each(
 }
 
 /// Hold the deadlines of the `nearing` stages Aether holds, each read at
-/// most once a minute, and return the `expired` ones it does not hold.
+/// most once a minute, and return the `expired` ones it says it does not
+/// hold; one it did not answer for waits for the next sweep.
 pub(super) async fn sweep(
     ctx: &DaemonContext,
     expired: Vec<StageRun>,
@@ -165,8 +189,11 @@ pub(super) async fn sweep(
     }
     let mut due = Vec::with_capacity(expired.len());
     for stage in expired {
-        let held = stage.state == StageState::Running && hold_deadline(ctx, &stage, now).await?;
-        if !held {
+        let held = match stage.state {
+            StageState::Running => hold_deadline(ctx, &stage, now).await?,
+            _ => Some(false),
+        };
+        if held == Some(false) {
             due.push(stage.id);
         }
     }

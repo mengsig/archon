@@ -1,7 +1,7 @@
 //! A light profile for reviewers without an explicit model plan.
 
 use archon_core::config::ReviewConfig;
-use archon_core::model::{ModelChoice, ModelRef};
+use archon_core::model::{Effort, ModelChoice, ModelRef};
 use archon_core::model_tier::{ModelCatalog, Tier};
 use archon_core::policy::ModelPolicy;
 
@@ -35,7 +35,7 @@ pub fn governed_reviewer_rules(
     governed: bool,
 ) -> String {
     if let Some(choices) = named.filter(|choices| !choices.is_empty()) {
-        return super::named_reviewer_rules(choices);
+        return super::named_reviewer_rules(choices, policy.max_effort);
     }
     let costed;
     let catalog = if governed {
@@ -45,9 +45,9 @@ pub fn governed_reviewer_rules(
         catalog
     };
     let tier = profile.default_tier;
-    let effort = policy.max_effort.map_or(profile.default_effort, |cap| {
-        cap.min(profile.default_effort)
-    });
+    let floor = profile.default_effort.max(Effort::Medium);
+    let floor = policy.max_effort.map_or(floor, |cap| cap.min(floor));
+    let effort = super::unnamed_reviewer_effort(floor, policy.max_effort);
     if let Some((model, resolved)) = resolve_default(tier, own, policy, profile, catalog) {
         assert!(
             policy.permits_model(&model),
@@ -66,7 +66,7 @@ pub fn governed_reviewer_rules(
             policy.describe()
         );
     }
-    unplaced_rules(own, policy, effort, governed)
+    unplaced_rules(own, policy, &effort, governed)
 }
 
 /// Why the reviewers owed cannot run under an item budget, `None` when they
@@ -153,16 +153,8 @@ fn unplaced_model<'a>(
 
 /// Neither the catalog nor the policy places a model: name one the policy
 /// permits, never one it would refuse, and never send the agent to look.
-fn unplaced_rules(
-    own: &ModelRef,
-    policy: &ModelPolicy,
-    effort: archon_core::model::Effort,
-    governed: bool,
-) -> String {
-    assert!(
-        policy.max_effort.is_none_or(|cap| effort <= cap),
-        "effort respects policy"
-    );
+fn unplaced_rules(own: &ModelRef, policy: &ModelPolicy, effort: &str, governed: bool) -> String {
+    assert!(!effort.is_empty(), "an effort to name");
     let Some(model) = unplaced_model(own, policy, governed) else {
         return format!(
             "- Delegate no reviewer: the model policy ({}) allows no model{}.\n",
@@ -283,11 +275,15 @@ mod tests {
         let mut config = ReviewConfig::default();
         let rules =
             reviewer_profile_rules(None, &own, &ModelPolicy::default(), &config, &catalog());
-        assert!(rules.contains("codex/balanced at tier balanced and effort low"));
+        assert!(rules.contains("codex/balanced at tier balanced and effort medium or higher"));
+        assert!(
+            rules.contains("high or higher when you rate the change's risk medium or high"),
+            "a configured low effort is raised to the floor: {rules}"
+        );
         config.prefer_other_provider = false;
         let rules =
             reviewer_profile_rules(None, &own, &ModelPolicy::default(), &config, &catalog());
-        assert!(rules.contains("claude-code/sonnet at tier balanced and effort low"));
+        assert!(rules.contains("claude-code/sonnet at tier balanced and effort medium or higher"));
         config.prefer_other_provider = true;
         config.default_effort = Effort::High;
         let policy =
@@ -358,7 +354,10 @@ mod tests {
             &ReviewConfig::default(),
             &single_fast_catalog(),
         );
-        assert!(rules.contains("on codex/luna at effort low"), "{rules}");
+        assert!(
+            rules.contains("on codex/luna at effort medium or higher"),
+            "{rules}"
+        );
         assert!(rules.contains("balanced unavailable under policy"));
         assert_no_lookup_instruction(&rules);
         assert!(!rules.contains("sonnet") && !rules.contains("sol"));
@@ -376,7 +375,10 @@ mod tests {
                 &config,
                 &catalog,
             );
-            assert!(rules.contains("on codex/luna at effort low"), "{rules}");
+            assert!(
+                rules.contains("on codex/luna at effort medium or higher"),
+                "{rules}"
+            );
             assert_no_lookup_instruction(&rules);
         }
         let rules = reviewer_profile_rules(
@@ -386,7 +388,10 @@ mod tests {
             &config,
             &ModelCatalog::default(),
         );
-        assert!(rules.contains("on third/other at effort low"), "{rules}");
+        assert!(
+            rules.contains("on third/other at effort medium or higher"),
+            "{rules}"
+        );
         let rules = reviewer_profile_rules(
             None,
             &own,
@@ -415,7 +420,7 @@ mod tests {
             &single_fast_catalog(),
         );
         assert!(
-            rules.contains("codex/sol at tier balanced and effort low"),
+            rules.contains("codex/sol at tier balanced and effort medium or higher"),
             "{rules}"
         );
     }
@@ -432,7 +437,10 @@ mod tests {
         );
         let narrowed = global.narrowed_by(&policy_allowing(&["codex/luna"]));
         let rules = reviewer_profile_rules(None, &own, &narrowed, &config, &single_fast_catalog());
-        assert!(rules.contains("on codex/luna at effort low"), "{rules}");
+        assert!(
+            rules.contains("on codex/luna at effort medium or higher"),
+            "{rules}"
+        );
         assert_no_lookup_instruction(&rules);
         assert!(!rules.contains("sonnet") && !rules.contains("sol"));
     }
@@ -446,7 +454,10 @@ mod tests {
         };
         let rules =
             reviewer_profile_rules(None, &own, &ModelPolicy::default(), &config, &catalog());
-        assert!(rules.contains("on codex/strong at effort low"), "{rules}");
+        assert!(
+            rules.contains("on codex/strong at effort medium or higher"),
+            "{rules}"
+        );
         assert!(rules.contains("frontier unavailable under policy"));
         assert_no_lookup_instruction(&rules);
     }

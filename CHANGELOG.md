@@ -42,6 +42,48 @@
   only `http`, `https` and `mailto` (opened with `noopener noreferrer`),
   and images become links that never load (#319, by @AmmarBattah in #327).
 
+### Fixed
+
+- Stage gates and delegated reviews read verdicts with one tolerant
+  parser: a structured `verdict` key, whatever it holds, then a structured
+  `result` or `status` that opens with a verdict word or a `VERDICT:`
+  label (an unreadable one counting as fail), then the summary's last
+  `VERDICT:` line at column 0 outside block
+  quotes (and the lines that continue one) and fences, in any letter case and
+  through markdown emphasis (`**Verdict:** PASS`), with `passed`, `approved`,
+  `failed` and `rejected` read as pass and fail. A test stage that passed
+  with `{"findings": []}` and `**Verdict:** PASS` in its summary no longer
+  fails its gate, and a reviewer whose `structured` gives no verdict is read
+  from its summary, its `head:` and `base:` lines only at the top level;
+  a review whose `structured`, summary JSON or `head:`/`base:` lines name
+  different commits is refused, a structured verdict included. A summary's JSON verdict counts only in a column-0
+  fenced block, never an example nested in a list, indented or quoted. An unreadable verdict, a choice or hedge such as
+  `PASS or FAIL`, `PASS, but two failed` or `PASS (pending fixes)` included
+  (any word between the verdict and a `—`, `:` or `.`), or a pass
+  explained in anything but plain success words and numbers
+  (`PASS — all 214 tests pass` counts; `PASS — merge only with green CI`
+  does not), or followed in the summary by any line but `head:` and `base:`,
+  still counts as fail,
+  and the refusal now quotes it. A structured pass beside a summary
+  whose final `VERDICT:` line or JSON verdict (`verdict`, `result` or
+  `status`) does not pass counts as fail too, and so does any pass beside
+  a finding of `blocking`, `blocker`, `critical` or `high` severity in
+  `structured` or the summary's JSON; a summary written as the
+  `{summary, structured}` arguments has its inner summary read too.
+- A reviewer plan's effort is a floor, not a ceiling. The delegation
+  watchdog cancelled a reviewer delegated above the planned effort in the
+  middle of its review, and let one below it run, which is how
+  thirty-second low-effort reviews passed. A reviewer at or above the plan,
+  up to the model policy's `max_effort`, now runs; one below it is
+  cancelled as it spawns, before it does work, with a message naming the
+  floor, and the contract states the floor so the lead delegates at it.
+  Reviewers no plan names are asked for at least medium effort, and at
+  least high when the lead rates the change's risk medium or high, whatever
+  `[review] default_effort` says, within the policy's cap. A re-review after
+  a fix now reads the whole change from its base, in the contract and in
+  the `adaptive`, `swarm` and `direct` prompts; Archon still counts delta
+  reads.
+
 ### Documentation
 
 - A "Get started in the chat" section in the README and a

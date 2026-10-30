@@ -67,8 +67,12 @@ preference, not a floor: Archon picks the best model the effective model policy
 from the lead when `prefer_other_provider` is set and a permitted model of
 another provider exists. If no permitted model reaches the tier, the contract
 names the best permitted one, or the lead's own model, and says so; the agent is
-never sent to look for a model the policy would refuse. The model policy's effort
-cap still applies. An explicit `<stage>.review` plan is unchanged.
+never sent to look for a model the policy would refuse. `default_effort` is a
+floor raised to at least medium: the contract asks for that effort or higher,
+and for at least high when the lead rates the change's risk medium or high. The
+model policy's effort cap still applies. In an explicit `<stage>.review` plan
+each effort is a floor too: a reviewer below it is cancelled as it spawns, and
+one above it runs, up to the policy's cap.
 
 `auto_repair` (default `true`) covers a run that fails only because the gate
 refused the review or the ship record it owes (a delta read not anchored, a
@@ -83,7 +87,7 @@ Set it to `false` to retry such items by hand with `retry_item`.
 ```toml
 [review]                       # reviewers with no explicit <stage>.review plan
 default_tier = "balanced"
-default_effort = "low"
+default_effort = "low"         # raised to medium, or high for a riskier change
 prefer_other_provider = true
 auto_repair = true             # one automatic retry when the review or ship record is refused
 

@@ -317,19 +317,30 @@ into each reviewer's instructions: call Aether's `complete_task` with a concise
 `summary` and the verdict object in the tool's `structured` argument. Each
 reviewer gives its own verdict on the commits it read, where `base` is the
 commit its diff starts from
-(the merge base for the whole change, an earlier reviewer's head for a
-re-review of a fix):
+(the merge base for the whole change; the contract asks a re-review of a
+fix to read the whole change too, though Archon still counts a delta read
+from an earlier reviewer's head):
 
 ```json
 {"verdict": "pass", "head": "<commit>", "base": "<commit>", "findings": []}
 ```
 
 For providers that auto-complete a task from final text, Archon also accepts
-this object as the entire `summary` when `structured` is absent, or the
+this object as the entire `summary` when `structured` states no verdict, or the
 `complete_task` arguments `{"summary": "...", "structured": {...}}` written
-out as that summary. An explicit `structured` value takes precedence, even if
-invalid. Prose, fenced blocks, and a `VERDICT:` line alone do not count as a
-delegated review.
+out as that summary, or a `VERDICT: PASS|FAIL` line beside `head:` and
+`base:` lines (a `structured` without a verdict may give these instead; a
+line in a fence, a quote or nested in a list is an example). A verdict,
+`structured` or not, is refused when its `structured` fields, the summary's
+JSON or any of its top-level `head:`/`base:` lines name different commits.
+JSON that states no `verdict`, such as a test report, leaves the
+`VERDICT:` line to decide. A
+`structured` that states a verdict takes precedence, even if invalid, but
+a structured pass is refused when the summary's final `VERDICT:` line or
+its JSON verdict does not pass too. The
+verdict word is read as stage gates read it (see "The stage contract"). Prose,
+and a `VERDICT:` line with no commit it read, do not count as a delegated
+review.
 
 The stage agent's `complete_task` names the agent id `delegate`
 returned for each reviewer the pass rests on, including a failed one whose
@@ -804,8 +815,41 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
 - **Review and test stages, and any gated stage.** The result carries
   `structured` data `{"verdict": "pass"|"fail", "findings": [{"severity",
   "title", "detail", "path"}]}`, and the summary ends with `VERDICT: PASS` or
-  `VERDICT: FAIL`. Archon reads the structured verdict first, then the last
-  `VERDICT:` line.
+  `VERDICT: FAIL`. Archon reads a structured `verdict` key first, whatever
+  it holds, then a structured `result` or `status` that opens with a
+  verdict word or a `VERDICT:` label (decisive even when unreadable), then
+  the summary's last `VERDICT:` line that starts at column 0 outside block quotes and fences (an indented
+  line belongs to a list item or code, and a line right after a quote
+  line, its `>` indented under four columns, lazily continues the quote's
+  paragraph as in CommonMark until a blank line or a block that interrupts
+  a paragraph: a heading, a thematic break, a bullet or `1.` item, a fence).
+  Letter case and markdown emphasis
+  (`**Verdict:** PASS`) do not matter, and `passed`, `approved`, `failed` and
+  `rejected` read as pass and fail. Anything else counts as fail, and so
+  does a choice or a hedge: any word after the verdict word, in
+  parentheses too, before the first `—`, `:`, `;`, `.`, ` - ` or line break
+  (`PASS or FAIL`, `PASS, but two failed`, `PASS (pending fixes)`). A
+  fail may be explained after one (`FAIL — two findings`). A pass may be
+  explained only in plain success words and numbers (`all`, `tests`,
+  `checks`, `pass`, `passed`, `green`, `clean`, `findings`, `issues`,
+  `no findings`, `no issues`, `CI`, `ok`, `lgtm`, `and`:
+  `PASS — all 214 tests pass`), and in a summary only `head:` and `base:`
+  lines naming a commit may follow it; any other word could make
+  it conditional (`PASS — merge only with green CI`), so it counts as fail.
+  This errs on the safe side: a plain explanation such as
+  `PASS — 0 failed` or `PASS — no blocking findings` is refused too, so
+  put details above the verdict line and end the summary with it.
+  A structured pass counts only when the summary's last `VERDICT:` line
+  and its JSON (the whole summary or its one fenced block) `verdict`,
+  `result` or `status`, where it has them, pass too. No pass, wherever it
+  is stated, counts beside a finding of `blocking`, `blocker`, `critical`
+  or `high` severity in `structured` or the summary's JSON. A summary
+  written as `{summary, structured}` has its inner summary read the same
+  way. The gate's refusal quotes what the agent wrote.
+  Known limitation: of CommonMark, the parser models only block quotes,
+  list indentation and fences, and reads other constructs as plain lines;
+  a verdict it cannot settle counts as fail, never as pass, so write a
+  plain `VERDICT:` line at column 0.
 - **The stage `[pipeline.ship]` names.** `## Ship record`: commit with the
   repository's git identity, leave a clean tree, do not push, and return
   `commit`, `tree`, `checks` and `pr` in `structured` (see "Shipping").
@@ -1109,13 +1153,14 @@ verifies and fixes the change. Its prompt has it spend where spending pays:
   allowed model. It runs the full build, lint and test suite once while
   they read. A reviewer is handed the acceptance criteria, the exact base
   and head commits, the changed paths, the checks with their results and
-  the known risks, not the conversation. Its effort is the lead's choice:
-  medium for ordinary risk, high where security or an invariant is at
+  the known risks, not the conversation. Its effort is the lead's choice,
+  never below the effort its contract names: medium for ordinary risk,
+  high where the risk is medium or more, or security or an invariant is at
   stake.
 - **Fixes.** Blocking findings are fixed in new commits and the affected
   checks rerun; the full suite runs again only for a fix with broad impact
   or where the project's policy demands it. A second look, by a new child
-  that reads the delta and the callers it affects, is owed after a failed
+  that reads the whole change again at the new head, is owed after a failed
   verdict, and after a pass only when a later commit changes production
   behaviour, security or an invariant, or adds scope. Advisory findings
   are listed and left. Two fix and re-review rounds are allowed before the

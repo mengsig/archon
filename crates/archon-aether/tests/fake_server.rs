@@ -716,6 +716,26 @@ async fn a_resumed_agent_that_cannot_answer_is_lost() {
     assert!(!matches!(error, ArchonError::NotFound(_)), "{error}");
 }
 
+/// A resumed or woken agent Aether holds as failed keeps the error it failed
+/// on, so a retry can wait out a cause that passes.
+#[tokio::test]
+async fn a_resumed_agent_that_failed_keeps_its_error() {
+    let (_dir, fake) = fake_aether().await;
+    let backend = backend(&fake, any_model()).await;
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    let mut failed = fake::agent(AGENT, None);
+    failed["status"] = json!({"state": "failed", "error": "Auth: not logged in"});
+    fake.script("get_agent", Scripted::reply("agent", failed));
+    let outcome = backend.resumed_outcome(&agent, "Fix it.").await.unwrap();
+    let Some(StageOutcome::Failed { infra: true, error }) = outcome else {
+        panic!("lost: {outcome:?}");
+    };
+    assert!(
+        error.ends_with("Aether holds it as failed: Auth: not logged in"),
+        "{error}"
+    );
+}
+
 /// The stop of a lead's helpers waits on this: the whole run is read once,
 /// archived agents included, and only what sits beneath the agent is returned.
 #[tokio::test]

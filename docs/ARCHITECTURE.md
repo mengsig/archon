@@ -1432,7 +1432,11 @@ in a new worktree off the base branch (§13).
   Aether still has it, with a note that names the failure and asks it to
   continue: it keeps its worktree, transcript and history. A woken agent has
   no task, so it answers with its final message, read like a resumed
-  attempt's (§6.7), and is stopped once that settles. Only when Aether
+  attempt's (§6.7), and is stopped once that settles. An end of its agent
+  dated before the woken or resumed run started, such as the failure it was
+  woken from replayed after a crash, ended the earlier run and is ignored;
+  a failed agent the sweep finds keeps Aether's error, so its retry still
+  waits out a passing cause. Only when Aether
   refuses the wake does a fresh agent start. A kept agent resumed for a
   later attempt is woken the same way, and its cost splits at each hand-off
   and wake. A stall, and a failure of an agent already woken, gets a fresh

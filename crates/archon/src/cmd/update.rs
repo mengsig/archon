@@ -67,8 +67,8 @@ impl Step {
 
 /// Before `archon`, `archon chat` or `archon tui` opens: check for newer
 /// releases and offer the one-step update. After an accepted update this
-/// process is replaced by the new archon with the same arguments; an update
-/// a signal ended returns the code to exit with instead.
+/// process is replaced by the installed archon with the same arguments; an
+/// update a signal ended returns the code to exit with instead.
 pub async fn before_launch() -> anyhow::Result<Option<ExitCode>> {
     use std::os::unix::process::CommandExt as _;
     // Resolved first: once the update replaces it, the running file has no path.

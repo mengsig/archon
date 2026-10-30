@@ -248,7 +248,7 @@ fn unix_now() -> u64 {
 #[derive(Debug, PartialEq)]
 pub enum Launch {
     Go,
-    /// The update installed a new archon: run it in this one's place.
+    /// The update ran: run the installed archon in this one's place.
     Again,
     /// A signal ended the update: exit with this code, opening nothing.
     Exit(std::process::ExitCode),
@@ -309,13 +309,14 @@ async fn ask(path: &Path, mut cache: Cache, found: &[Offer], source: &Source) ->
         Choice::Update => match super::run(UpdateArgs::everything(), false).await {
             Ok(code) if code == std::process::ExitCode::SUCCESS => Launch::Again,
             Ok(code) if super::interrupt::Interrupt::ended(code).is_some() => Launch::Exit(code),
+            // Opened by the installed archon, which also drops the update's signal handlers.
             Ok(_) => {
                 eprintln!("archon: the update did not finish cleanly; opening anyway");
-                Launch::Go
+                Launch::Again
             }
             Err(error) => {
                 eprintln!("archon: the update failed: {error:#}; opening anyway");
-                Launch::Go
+                Launch::Again
             }
         },
     }

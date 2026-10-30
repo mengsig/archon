@@ -114,6 +114,27 @@
 - A stage whose agent Aether holds `blocked` (a usage limit, credentials)
   or waiting on an approval is no longer timed out: its deadline is moved
   on while it is held.
+- A stage agent that Aether `blocked` for inspection no longer sits idle
+  until its deadline. Aether does this when a command's outcome was lost,
+  as when an older aetherd restarted mid-command. Once the stage has been
+  silent for `limits.stall_minutes`, with no gate or question open, the
+  agent gets a note to check the state before it repeats the command, and
+  is resumed. If Aether refuses the resume, the stage fails as
+  infrastructure at once, so its infrastructure retry wakes or replaces the
+  agent. While the watchdog is on, an inspection holds the deadline like
+  any other hold.
+- Some holds have no cause Aether names: not an approval, a usage limit or
+  credentials. When such a hold has been silent for
+  `limits.stall_fallback_minutes`, with no gate or question open, the
+  orchestrator is told once. The stage is never stopped for it.
+- A Claude Code stage under a subscription login no longer gets Aether's
+  hard dollar cap. Archon detects the login from the 5-hour and weekly
+  usage windows Aether reports for it, and the dollars it would be stopped
+  on are list-price, not billed. Its interim usage is not refused as
+  unaccounted either. Its cost is still recorded and shown, and Archon's
+  ledger budgets still count it. When Archon cannot tell whether a Claude
+  Code login bills, the cap stays, and a stop on it is labelled "notional
+  cost".
 - A kept agent resumed for a later attempt, or a failed one woken, gets an
   Aether cost cap of what it was charged so far plus its new grant. The
   cap read that spend from stage costs Archon never stored, so it was the

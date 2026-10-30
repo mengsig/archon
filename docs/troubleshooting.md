@@ -42,6 +42,7 @@ The daemon did not answer the change within the MCP call's 15 s budget, but may 
 - **"Daily budget reached"** / **"Total budget reached"** (not blockers) is what a waiting item shows in `archon queue show <id>` for the same hold; the next step it names is the matching `archon queue caps` command.
 - **"the item's budget is used up"** One item spent its own budget and failed with `BLOCKED:`. Raise it with `archon queue steer <id> --budget-usd <USD>`, then `archon queue retry <id>`.
 - **"cannot enforce the item's dollar budget"** Aether reported usage without a dollar cost, so the item's budget cannot be checked. Configure model pricing in Aether or pick a model that reports cost, then `archon queue retry <id>`.
+- **"(notional cost:"** Aether stopped a Claude Code stage at the item's dollar cap, but Archon could not tell whether that login bills the dollars: Aether showed no 5-hour or weekly usage window for it. Under a subscription the dollars are list price, not billed, so raise the budget with `archon queue steer <id> --budget-usd <USD>` or remove it, then `archon queue retry <id>`. When Aether does show those windows, Archon sets no hard cap at all. Its ledger budgets still count the reported dollars, though.
 - **"and a budget:"** The item asks for a review that its budget forbids. Run `archon queue steer <id> --budget-usd <USD>` or change the item's review, then `archon queue retry <id>`.
 
 ## An item failed or cannot start
@@ -54,6 +55,9 @@ The daemon did not answer the change within the MCP call's 15 s budget, but may 
 - **"so the run does not go on beside them"** Aether refused to stop the agents a stage had delegated to. Run `archon aether agents` to see them, then `archon queue retry <id>`.
 - **"still run in Aether after their cancel"** A stage ended, but agents it delegated to are still running. The item waits for them; `archon aether agents` shows them.
 - **"merging the team's branches failed"** The branches of a team stage could not be merged. Run `archon queue show <id> --full` for the git error, fix the branch, then `archon queue retry <id>`.
+- **"resumed … that Aether blocked for inspection"** (a progress notice) A command of the stage agent lost its outcome, most likely because aetherd restarted. Archon told the agent to check the state before repeating the command, and resumed it. Nothing to do.
+- **"Aether blocked it for inspection … and refused to resume it"** The stage failed as infrastructure, and `limits.infra_retries` wakes or replaces its agent. If it fails again, `archon aether agents` shows the agent's state. Then `archon queue retry <id>`.
+- **"has been held by Aether for N min with no approval, usage limit or credentials wait"** (an escalation to the orchestrator) Aether holds the stage for a reason it does not name. Archon keeps the stage running. Inspect the agent with `archon aether agents`, or steer, retry or cancel the item.
 - **"the lead is still fixing it"** A review has failed many rounds. The run goes on; stop it with `archon queue cancel <id>` or change course with `archon queue steer <id> --note "…"`.
 - **"tries again on every maintenance pass"** Maintenance of one item or initiative keeps failing. The error text names what to fix, for example a repository or branch; Archon says nothing more until it passes.
 

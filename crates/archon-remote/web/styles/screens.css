@@ -161,7 +161,7 @@
 .action-icon { display: grid; place-items: center; height: 24px; }
 .action-label { line-height: 1.2; text-align: center; }
 
-.brief { padding: var(--space-3) var(--space-4); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 16px; line-height: 1.5; }
+.brief { padding: var(--space-3) var(--space-4); overflow-wrap: anywhere; font-size: 16px; line-height: 1.5; }
 .card > .link-button { padding: 0 var(--space-4); width: 100%; }
 .dep-link { color: var(--accent); font-family: var(--font-mono); font-size: 14px; }
 .dep-link + .dep-link { margin-left: var(--space-2); }
@@ -209,8 +209,8 @@
 .timeline-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .timeline-name { font-weight: 600; overflow-wrap: anywhere; }
 .timeline-meta { font-size: 14px; color: var(--text-2); }
-.timeline-error { font-size: 14px; color: var(--red); white-space: pre-wrap; overflow-wrap: anywhere; }
-.timeline-summary { font-size: 15px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.timeline-error { font-size: 14px; color: var(--red); overflow-wrap: anywhere; }
+.timeline-summary { font-size: 15px; overflow-wrap: anywhere; }
 
 .artifact { display: grid; gap: var(--space-3); }
 .artifact-text {
@@ -242,7 +242,7 @@
 .question-head { display: flex; justify-content: space-between; align-items: center; }
 .question-number { font-size: 13px; font-weight: 700; color: var(--amber); letter-spacing: 0.02em; }
 .question-age { font-size: 13px; color: var(--text-3); }
-.question-text { font-size: 17px; font-weight: 500; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+.question-text { font-size: 17px; font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
 .question-item { font-size: 15px; color: var(--accent); }
 .question-options { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .option-button {
@@ -273,7 +273,7 @@
 .plain-row + .plain-row { border-top: 0.5px solid var(--separator); }
 .plain-row-head { display: flex; justify-content: space-between; align-items: center; }
 .plain-row-title { font-weight: 600; font-size: 15px; overflow-wrap: anywhere; }
-.plain-row-text { font-size: 15px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.plain-row-text { font-size: 15px; overflow-wrap: anywhere; }
 .plain-row-age { font-size: 13px; color: var(--text-3); }
 .plain-row .link-button { min-height: 32px; justify-self: start; }
 .plain-empty { padding: var(--space-4); text-align: center; font-size: 15px; }
@@ -302,6 +302,8 @@
 }
 .bubble-row { display: grid; gap: 3px; justify-items: start; max-width: 84%; }
 .bubble-row.from-operator { justify-self: end; justify-items: end; }
+/* A bubble holding a scroll box takes the full row, which its zero-width box cannot ask for. */
+.bubble-row:has(.md-pre, .md-scroll) { width: 84%; justify-items: stretch; }
 .bubble {
   padding: 9px 14px;
   border-radius: 20px;
@@ -310,7 +312,7 @@
 }
 .from-operator .bubble { background: var(--accent); color: var(--on-accent); box-shadow: none; border-bottom-right-radius: 6px; }
 .from-orchestrator .bubble { border-bottom-left-radius: 6px; }
-.bubble-text { font-size: 16.5px; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bubble-text { font-size: 16.5px; line-height: 1.4; overflow-wrap: anywhere; }
 .bubble-meta { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 2px var(--space-3); padding: 0 6px; font-size: 12px; color: var(--text-3); }
 .from-orchestrator .bubble-meta { justify-content: flex-start; }
 .bubble-meta .link-button { min-height: 28px; font-size: 13px; }
@@ -324,7 +326,7 @@
   padding: var(--space-1) var(--space-6);
   text-align: center;
 }
-.feed-line-text { display: grid; font-size: 14px; color: var(--text-2); overflow-wrap: anywhere; white-space: pre-wrap; }
+.feed-line-text { display: grid; justify-self: stretch; font-size: 14px; color: var(--text-2); overflow-wrap: anywhere; }
 .feed-line-label { font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; color: var(--text-3); }
 .feed-line .link-button { min-height: 30px; font-size: 14px; }
 .feed-question .feed-line-label, .feed-note-blocker .feed-line-label { color: var(--amber); }

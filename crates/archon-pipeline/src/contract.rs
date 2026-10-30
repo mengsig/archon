@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use archon_core::catalog::{Gate, StageKind, WorkspaceMode};
-use archon_core::model::{ModelChoice, ModelRef};
+use archon_core::model::{Effort, ModelChoice, ModelRef};
 use archon_core::policy::ModelPolicy;
 use archon_core::run::StageOutcome;
 use serde::Serialize;
@@ -474,20 +474,52 @@ pub fn reviewer_model_rules(
     policy: &ModelPolicy,
 ) -> String {
     match named {
-        Some(choices) if !choices.is_empty() => named_reviewer_rules(choices),
+        Some(choices) if !choices.is_empty() => named_reviewer_rules(choices, policy.max_effort),
         _ => fallback_reviewer_rules(own, policy),
     }
 }
 
-fn named_reviewer_rules(choices: &[ModelChoice]) -> String {
+/// The plan's reviewers: each effort is a floor, and `cap` (the policy's
+/// `max_effort`) the only ceiling.
+fn named_reviewer_rules(choices: &[ModelChoice], cap: Option<Effort>) -> String {
+    assert!(!choices.is_empty(), "a plan names reviewers");
     let models: Vec<String> = choices
         .iter()
-        .map(|c| format!("{} at effort {}", c.model, c.effort))
+        .map(|c| format!("{} at effort {}", c.model, effort_range(c.effort, cap)))
         .collect();
     format!(
         "- Delegate every reviewer with role `reviewer`, each on one of these models, \
-         taken in turn: {}. Archon cancels a child labelled `reviewer` on any other.\n",
+         taken in turn: {}. Each effort is a floor, never a ceiling: Archon cancels a \
+         child labelled `reviewer` on any other model, or below its model's effort, as it \
+         spawns.\n",
         models.join("; ")
+    )
+}
+
+/// `floor` and the higher efforts `cap` leaves: `high`, `high or higher`, `high up to max`.
+fn effort_range(floor: Effort, cap: Option<Effort>) -> String {
+    match cap {
+        Some(cap) if cap <= floor => floor.to_string(),
+        Some(cap) => format!("{floor} up to {cap}"),
+        None => format!("{floor} or higher"),
+    }
+}
+
+/// The effort of a reviewer no plan names, from `floor`, which `cap` already
+/// bounds: at least that, and at least high for a change of medium risk or more.
+pub(crate) fn unnamed_reviewer_effort(floor: Effort, cap: Option<Effort>) -> String {
+    assert!(
+        cap.is_none_or(|cap| floor <= cap),
+        "the floor respects the policy"
+    );
+    let risky = cap.map_or(Effort::High, |cap| cap.min(Effort::High));
+    let at = effort_range(floor, cap);
+    if risky <= floor {
+        return at;
+    }
+    format!(
+        "{at}, and {} when you rate the change's risk medium or high",
+        effort_range(risky, cap)
     )
 }
 
@@ -564,9 +596,9 @@ const REVIEW_CHECK_RULES: &str = "\
 - Delegate with `wait: false`, then use `wait_for` with `any: true`. On a blocking \
 fail, `cancel_agent` the reviewers still reading before you edit: they share your \
 workspace, and cancelled reviews do not count. Then fix and commit. Replace each \
-cancelled reviewer with a new whole-change read at the new head. Completed reads, \
-even fails, need only delta passes from the head they read (one can cover several), \
-and the fix at least one; an amend or rebase needs whole-change re-review.\n\
+cancelled reviewer with a new whole-change read at the new head. Every re-review \
+after a fix, a completed fail's too, is a whole-change read at the new head with \
+`base` at the change's start; one such pass covers all earlier reads.\n\
 - Archon checks a pass against Aether and the branch. Each agent named must be a \
 different one you delegated to yourself that completed with that verdict, and as many \
 as the review asks must have passed the branch head, or an earlier head whose later \
@@ -1018,7 +1050,7 @@ mod tests {
     }
 
     #[test]
-    fn review_holders_fix_early_and_request_only_missing_delta_passes() {
+    fn review_holders_fix_early_and_re_review_the_whole_change() {
         for reviewers in [1, 3] {
             let text = work_contract(owing(reviewers, false));
             for said in [
@@ -1027,9 +1059,8 @@ mod tests {
                 "On a blocking fail, `cancel_agent` the reviewers still reading before you edit",
                 "cancelled reviews do not count. Then fix and commit",
                 "Replace each cancelled reviewer with a new whole-change read at the new head",
-                "Completed reads, even fails, need only delta passes from the head they read (one can cover several)",
-                "and the fix at least one",
-                "an amend or rebase needs whole-change re-review",
+                "Every re-review after a fix, a completed fail's too, is a whole-change read at the new head",
+                "with `base` at the change's start; one such pass covers all earlier reads",
                 "a passing reviewer read with `base` at or before it",
                 "A fail stands until such a pass",
             ] {
@@ -1436,10 +1467,33 @@ mod tests {
         let own = model("claude-code/opus");
         let rules = reviewer_model_rules(Some(&named), &own, &ModelPolicy::default());
         assert!(rules.contains("role `reviewer`"), "{rules}");
+        assert!(rules.contains(
+            "claude-code/opus at effort medium or higher; claude-code/haiku at effort low or higher"
+        ));
+        assert!(rules.contains("Each effort is a floor, never a ceiling"));
+        assert!(rules.contains("on any other model, or below its model's effort, as it spawns"));
+        let capped = ModelPolicy::from_lists(&[], &[], Some(archon_core::model::Effort::Medium));
+        let rules = reviewer_model_rules(Some(&named), &own, &capped);
         assert!(
-            rules.contains("claude-code/opus at effort medium; claude-code/haiku at effort low")
+            rules.contains("opus at effort medium; claude-code/haiku at effort low up to medium")
         );
-        assert!(rules.contains("Archon cancels a child labelled `reviewer` on any other"));
+    }
+
+    #[test]
+    fn an_unnamed_reviewer_runs_at_medium_or_more_and_high_for_a_riskier_change() {
+        use archon_core::model::Effort::{High, Low, Medium, XHigh};
+        let open = unnamed_reviewer_effort(Medium, None);
+        assert_eq!(
+            open,
+            "medium or higher, and high or higher when you rate the change's risk medium or high"
+        );
+        assert_eq!(
+            unnamed_reviewer_effort(Medium, Some(XHigh)),
+            "medium up to x_high, and high up to x_high when you rate the change's risk medium or high"
+        );
+        assert_eq!(unnamed_reviewer_effort(Medium, Some(Medium)), "medium");
+        assert_eq!(unnamed_reviewer_effort(Low, Some(Low)), "low");
+        assert_eq!(unnamed_reviewer_effort(High, None), "high or higher");
     }
 
     /// The bench's smoke preset allows one model: a reviewer must run on it,

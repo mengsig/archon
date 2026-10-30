@@ -53,5 +53,5 @@ async function seedConversation(fixture) {
       if (err.code !== 'unavailable') throw err;
     }
   }
-  await notify(fixture.archond, 'outcome', 'The listener design is approved; implementation is next in line.');
+  await notify(fixture.archond, 'outcome', 'The listener design is **approved**. Next in line:\n\n- the `pairing` flow\n- a [web app](https://example.com) pass');
 }

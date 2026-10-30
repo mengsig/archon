@@ -1,6 +1,7 @@
 // An item's stage runs as a timeline: state, verdict, model, cost, summary.
 import { h } from '../../ui/dom.js';
 import { chip, emptyState } from '../../ui/components.js';
+import { renderMarkdown, clampedMarkdown } from '../../ui/markdown.js';
 import { stageLook, verdictLook, modelName, usd } from '../../core/format.js';
 
 const SUMMARY_CLAMP_CHARS = 280;
@@ -39,22 +40,8 @@ function stageNode(stage, delegation) {
         h('span', { class: 'chips' }, chip(look), verdict ? chip(verdict) : null)),
       h('p', { class: 'timeline-meta', text: meta }),
       delegation ? h('p', { class: 'timeline-meta', text: `${usd(delegation.direct_usd)} own + ${usd(delegation.delegated_usd)} for ${delegation.agents.length} delegated agent(s)` }) : null,
-      stage.state?.error ? h('p', { class: 'timeline-error', text: stage.state.error }) : null,
-      stage.summary ? clampedText(stage.summary) : null));
-}
-
-function clampedText(text) {
-  const long = text.length > SUMMARY_CLAMP_CHARS;
-  const body = h('p', { class: 'timeline-summary', text: long ? `${text.slice(0, SUMMARY_CLAMP_CHARS).trimEnd()}…` : text });
-  if (!long) return body;
-  const more = h('button', { class: 'link-button', type: 'button', 'aria-expanded': 'false' }, 'Show all');
-  more.addEventListener('click', () => {
-    const open = more.getAttribute('aria-expanded') === 'true';
-    body.textContent = open ? `${text.slice(0, SUMMARY_CLAMP_CHARS).trimEnd()}…` : text;
-    more.setAttribute('aria-expanded', String(!open));
-    more.textContent = open ? 'Show all' : 'Show less';
-  });
-  return h('div', {}, body, more);
+      stage.state?.error ? renderMarkdown(stage.state.error, { className: 'timeline-error' }) : null,
+      stage.summary ? clampedMarkdown(stage.summary, { limit: SUMMARY_CLAMP_CHARS, className: 'timeline-summary' }) : null));
 }
 
 function duration(stage) {

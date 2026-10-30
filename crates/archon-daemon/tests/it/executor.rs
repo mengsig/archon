@@ -2282,7 +2282,7 @@ async fn a_policy_narrowed_mid_run_bounds_the_next_lead_s_reviewers() {
     h.dispatch().await;
     let build = h.backend.requests().last().unwrap().clone();
     assert_eq!(build.labels["archon.stage"], "build");
-    let own = format!("on {MODEL} at tier balanced and effort low");
+    let own = format!("on {MODEL} at tier balanced and effort medium or higher");
     assert!(build.instructions.contains(&own), "{}", build.instructions);
     let named = build.instructions.matches(REVIEW_MODEL).count();
     assert_eq!(named, 0, "{}", build.instructions);
@@ -2366,7 +2366,7 @@ async fn adaptive_guarded_build_delegates_within_the_stated_policy_and_archond_s
     assert!(build.instructions.contains("\n## Review on record\n"));
     assert!(build.instructions.contains("\n## Ship record\n"));
     // The repository leaves the lead's model alone: its reviewers run on it.
-    let own = format!("on {MODEL} at tier balanced and effort low");
+    let own = format!("on {MODEL} at tier balanced and effort medium up to high, and high");
     assert!(build.instructions.contains(&own), "{}", build.instructions);
 
     let (built, reviewer) = reviewed_by_one(&h, "Verified; one reviewer passed it").await;
@@ -2417,7 +2417,7 @@ async fn a_completed_builder_named_as_the_reviewer_is_no_review() {
     h.settle_running(|_| built.clone()).await;
     let error = refused_review(&h, &item).await;
     assert!(error.contains(&format!("reviewer {builder}")), "{error}");
-    assert!(error.contains("no `verdict`"), "{error}");
+    assert!(error.contains("no readable verdict"), "{error}");
 }
 
 /// Codex can finish with JSON text that Aether stores only as the summary.

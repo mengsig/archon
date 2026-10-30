@@ -457,8 +457,8 @@ async fn prove(
 }
 
 /// The reviewed head the commits of an item `stacked` on a reviewed pull
-/// request must start after, once GitHub shows that pull request still open
-/// at it; `Err` refuses the delivery. `None` for an item stacked on none.
+/// request must start after, once GitHub shows that pull request open, or
+/// merged, at it; `Err` refuses the delivery. `None` for an item stacked on none.
 async fn stacked_since(
     ctx: &DaemonContext,
     repo: &Repo,
@@ -471,7 +471,8 @@ async fn stacked_since(
     let url = reviewed.pr.url();
     let binary = &ctx.config.github.binary;
     let shown = super::super::gh::view_headed(binary, repo, &url).await?;
-    let open = shown.pr.state == "OPEN";
+    // Merged at the reviewed head, its commits are still exactly those reviewed.
+    let open = matches!(shown.pr.state.as_str(), "OPEN" | "MERGED");
     let head = shown.pr.head_ref_oid.as_deref();
     if open && head == Some(reviewed.head_sha.as_str()) {
         return Ok(Ok(Some(reviewed.head_sha.clone())));
@@ -482,8 +483,8 @@ async fn stacked_since(
     };
     Ok(Err(format!(
         "this item is stacked on {url} as reviewed at {}, but {now}: Archon ships another \
-         author's commits only as a review passed them in an open pull request. Queue a new \
-         review item of it, or queue this work again once it merged",
+         author's commits only as a review passed them, in a pull request open or merged at \
+         that head. Queue a new review item of it, or queue this work again once it merged",
         reviewed.head_sha
     )))
 }

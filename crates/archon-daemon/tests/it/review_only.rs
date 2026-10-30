@@ -419,6 +419,41 @@ async fn a_review_whose_branch_moved_off_the_frozen_head_is_refused() {
     nothing_pushed_to_the_fork(&h, &gh, &head);
 }
 
+/// Local base refs are the worktree's to move: a review counts as whole only
+/// from the fork `origin`'s base gives, so a reviewer of the tail alone,
+/// after both base refs were moved to the first commit, passes nothing.
+#[tokio::test]
+async fn a_review_of_the_tail_after_the_base_refs_moved_passes_nothing() {
+    let (h, gh, first) = fork_pull_request().await;
+    let second = contributor_commit(&h, "second.txt", "the contributor's second commit\n");
+    gh.show(&second, "MERGEABLE", green());
+    grant_merge(&h).await;
+    let item = review_item(&h, &second, ReviewLevel::Standard).await;
+    let workspace = h.run(&item.id).await.workspace;
+    for base in ["refs/heads/main", "refs/remotes/origin/main"] {
+        git(&workspace, &["update-ref", base, &first]);
+    }
+
+    let lead = h.running().await.remove(0);
+    let reviewer = h
+        .backend
+        .delegate(lead.aether_agent.as_ref().unwrap(), REVIEW_MODEL);
+    let tail = json!({"verdict": "pass", "head": second, "base": first, "findings": []});
+    h.backend.complete_delegated(&reviewer, tail);
+    let passed = StageOutcome::Completed {
+        summary: format!("Reviewed {FORK_PR} at {second}; checks green"),
+        structured: Some(json!({"review": {"verdict": "pass", "reviewers": [reviewer.as_str()]}})),
+    };
+    h.settle_running(|_| passed.clone()).await;
+    h.dispatch().await;
+
+    let state = h.state(&item.id).await;
+    assert!(matches!(state, QueueState::Failed { .. }), "{state:?}");
+    assert!(h.orchestrator(request_merge(&item)).await.is_err());
+    assert!(!gh.calls().iter().any(|c| c.starts_with("pr merge")));
+    nothing_pushed_to_the_fork(&h, &gh, &second);
+}
+
 /// An item that `depends_on` the passed review, dispatched: its branch
 /// starts at the reviewed head, beneath which it is told to change nothing.
 async fn stacked_on(h: &Harness, review: &QueueItem, head: &str) -> QueueItem {
@@ -451,8 +486,13 @@ async fn settle_stacked(h: &Harness, item: &QueueItem, commit: impl FnOnce(&std:
 
 /// One more commit in `workspace` under the repository's git identity.
 fn own_commit(workspace: &std::path::Path) {
-    std::fs::write(workspace.join("own.txt"), "built on the patch\n").unwrap();
-    git(workspace, &["add", "own.txt"]);
+    own_commit_named(workspace, "own.txt");
+}
+
+/// [`own_commit`], writing `file`.
+fn own_commit_named(workspace: &std::path::Path, file: &str) {
+    std::fs::write(workspace.join(file), "built on the patch\n").unwrap();
+    git(workspace, &["add", file]);
     git(
         workspace,
         &["commit", "--quiet", "-m", "Build on the patch"],
@@ -591,6 +631,62 @@ async fn a_stack_whose_base_refs_were_moved_over_a_foreign_commit_is_refused() {
     };
     assert!(error.contains("other@example.com"), "{error}");
     assert!(!gh.calls().iter().any(|c| c.starts_with("pr create")));
+    nothing_pushed_to_the_fork(&h, &gh, &head);
+}
+
+/// One commit on `origin`'s `main` from a clone of its own; the harness
+/// repository's `main` stays where it was.
+fn advance_origin(h: &Harness) -> String {
+    let clone = h.dir.path().join("upstream");
+    let origin = origin_of(h);
+    let (from, into) = (origin.to_str().unwrap(), clone.to_str().unwrap());
+    git(h.dir.path(), &["clone", "--quiet", from, into]);
+    std::fs::write(clone.join("upstream.txt"), "upstream\n").unwrap();
+    git(&clone, &["add", "upstream.txt"]);
+    git(&clone, &["commit", "--quiet", "-m", "Upstream change"]);
+    git(&clone, &["push", "--quiet", "origin", "HEAD:main"]);
+    git(&clone, &["rev-parse", "HEAD"])
+}
+
+/// A refresh works on the stack's branch and keeps its provenance: a foreign
+/// commit a remote ref holds is refused there as in the stack's own run.
+#[tokio::test]
+async fn a_refresh_of_a_reviewed_stack_refuses_a_foreign_commit_a_remote_ref_holds() {
+    let (h, gh, head, review) = reviewed_fork().await;
+    let item = stacked_on(&h, &review, &head).await;
+    settle_stacked(&h, &item, own_commit).await;
+    assert!(matches!(
+        h.state(&item.id).await,
+        QueueState::Succeeded { .. }
+    ));
+    let upstream = advance_origin(&h);
+    let refresh = Request::RefreshItem {
+        item: item.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        stage_timeouts: Default::default(),
+    };
+    let Reply::Item(fix) = h.orchestrator(refresh).await.expect("queued") else {
+        panic!("a refresh item");
+    };
+    h.dispatch().await;
+
+    settle_stacked(&h, &fix, |workspace| {
+        git(workspace, &["merge", "--quiet", "--no-edit", &upstream]);
+        other_commit(workspace);
+        git(
+            workspace,
+            &["update-ref", "refs/remotes/origin/unrelated", "HEAD"],
+        );
+        own_commit_named(workspace, "again.txt");
+    })
+    .await;
+
+    let QueueState::Failed { error, .. } = h.state(&fix.id).await else {
+        panic!("refused: {:?}", h.state(&fix.id).await);
+    };
+    assert!(error.contains("other@example.com"), "{error}");
+    assert_eq!(gh.count("pr create"), 1, "only the stack's own");
     nothing_pushed_to_the_fork(&h, &gh, &head);
 }
 

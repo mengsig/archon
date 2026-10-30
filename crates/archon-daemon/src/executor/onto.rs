@@ -76,7 +76,8 @@ pub(super) fn reviewed_head(stages: &[StageRun]) -> Option<String> {
 /// The pull request a succeeded review item among `item`'s dependencies
 /// passed at its frozen head, the first in order: an item queued on it with
 /// no `onto` starts from that head, and those commits ship beneath its own,
-/// unchanged. `None` for an `onto` item or with no such dependency.
+/// unchanged. A refresh or restack fix answers for its owner, whose branch
+/// it works on. `None` for an `onto` item or with no such dependency.
 pub(crate) fn reviewed_dependency(
     store: &Store,
     item: &QueueItem,
@@ -84,6 +85,15 @@ pub(crate) fn reviewed_dependency(
     if item.onto.is_some() {
         return Ok(None);
     }
+    let owner = match store.stack_fix(&item.id)? {
+        Some(fix) => Some(store.item(&fix.owner)?),
+        None => None,
+    };
+    let item = owner.as_ref().unwrap_or(item);
+    assert!(
+        store.stack_fix(&item.id)?.is_none(),
+        "a stack fix's owner is no fix itself"
+    );
     for id in &item.dependencies {
         assert_ne!(id, &item.id, "no item depends on itself");
         let dependency = store.item(id)?;

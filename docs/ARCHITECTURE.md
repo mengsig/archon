@@ -968,6 +968,30 @@ reports dollar cost: Claude Code reports it, Codex does not, and an HTTP
 model needs pricing. Provider names may be customized. Protocols v14 to v17
 expose no explicit `reports_cost` flag; missing model/provider metadata or
 an unknown engine conservatively omits the hard cap and requires estimates.
+How Archon decides whether those dollars are billed (the stored request's
+`cost_billing`):
+- An HTTP provider (`engine: false`) with model pricing is `billed`.
+- A Claude Code provider is `subscription` when Aether's `providers` reply
+  shows a `five_hour` or `seven_day` usage window that is fresh (not
+  `stale`), and every such window has headroom left. Claude Code reports
+  those windows only for a subscription login, never for an API key. Aether
+  caches them by provider, so after a switch to an API key they go stale
+  (`usage_stale_after`, 15 min by default). An exhausted subscription, the
+  likeliest one to be switched, counts as `unknown`.
+  Such a stage gets no Aether hard cap, since its list-price dollars are
+  notional. Its interim usage is not refused as unaccounted, because Claude
+  Code completes its cost at turn end. Its dollars are still recorded, shown
+  and counted by the ledger checks below.
+- A Claude Code provider without those windows is `unknown` and keeps the
+  hard cap. A stop on that cap adds "(notional cost: …)" to its error,
+  because the dollars may not have been billed.
+- Codex and other engines have no billing mode: Aether reports no dollars
+  for them to cap.
+Known limitation: Aether names no plan for the current login, so a login
+switched from a subscription with headroom to an API key is still read as a
+subscription until its windows go stale. A stage started in that time has
+no hard cap. The ledger still counts its dollars and stops the run once the
+item budget is used up, but only when Claude Code reports cost, at turn end.
 The decision is persisted before creation so a keyed retry keeps its frame;
 Archon's original grant remains stored for accounting and team replacements.
 
@@ -1426,6 +1450,10 @@ in a new worktree off the base branch (§13).
   update a subtree) and in the stored request, and
   never times it out while held. A later deadline a steer stored is kept,
   and sent to Aether again if the steer landed while the move was in flight.
+  An agent `blocked` for inspection is moved on in the same way only while
+  the stage watchdog is on, because the watchdog resumes it or fails its
+  stage. With the watchdog off it keeps its deadline, so it cannot wait
+  forever.
 - `infra` failures (`agent.failed` before its task settles, or Aether restart
   recovery failures) get `limits.infra_retries` (default 1) automatic
   retries. These retries do not count against a stage's `max_attempts`.
@@ -1459,7 +1487,30 @@ in a new worktree off the base branch (§13).
   reported alive (a turn in flight), or while none of its agents is
   `running` (it waits on a wake: a task, a message or a deadline). Archond
   starts a tree's silence when it first looks, so a restart restarts the
-  watch, and reads a silent tree from Aether at most once a minute. A stalled stage is cancelled and settles as an `infra` failure
+  watch, and reads a silent tree from Aether at most once a minute.
+  An agent Aether `blocked` for inspection is not held: no person is asked
+  about it. Aether blocks an agent for inspection when one of its tool calls
+  has no known outcome, as when an older aetherd restarted mid-command. Once
+  archond's own stream has heard nothing of the tree for `stall_minutes`
+  (Aether's `last_event_at` is not used here, as moving a held deadline
+  restarts it), and no gate or question of
+  its item is open, archond sends each such agent a note and then resumes it
+  (Aether's `resume`, not a subtree resume). The note says the command's
+  outcome is unknown, so the agent should check the state it would have
+  changed before repeating it. The feed tells of each resume. If Aether
+  refuses to resume an agent, archond reads that agent again; if it is no
+  longer blocked for inspection, someone else resumed it, and the others are
+  still resumed. If the tree then has no agent blocked for inspection, the
+  stage goes on.
+  Otherwise the stage fails at once as `infra` ("agent stalled: Aether
+  blocked it for inspection … and refused to resume it: …"), so
+  `limits.infra_retries` wakes or replaces it. If Aether does not answer,
+  the next sweep tries again.
+  Some holds have no cause Aether names: not an approval, a usage or quota
+  limit (`exhausted`), or credentials. When such a hold, with no gate or
+  question open, has been silent for `stall_fallback_minutes`, the
+  orchestrator gets one escalation message per stage run. The stage is
+  never stopped for it. A stalled stage is cancelled and settles as an `infra` failure
   ("agent stalled: no engine and no events for N min"; recorded before the
   cancel goes out, so the cancel's own events settle it the same way), so
   `limits.infra_retries` re-spawns it on the same worktree once; a second

@@ -15,7 +15,8 @@ use archon_core::error::ArchonError;
 use archon_core::model::{Effort, ModelChoice};
 use archon_core::policy::ModelPolicy;
 use archon_core::ports::{
-    AgentBackend, AgentUpdate, DescendantState, NetworkPolicy, RunNodeRequest, SpawnRequest,
+    AgentBackend, AgentUpdate, CostBilling, DescendantState, NetworkPolicy, RunNodeRequest,
+    SpawnRequest,
 };
 use archon_core::run::StageOutcome;
 use common::{AGENT, RUN, TASK, WAIT, completed, connect};
@@ -45,6 +46,7 @@ fn spawn_request() -> SpawnRequest {
         leaf: true,
         cost_budget_usd: Some(5.0),
         aether_cost_budget: None,
+        cost_billing: None,
         deadline: None,
         attach_run: None,
         parent: Some(AetherAgentId::parse(NODE).unwrap()),
@@ -1195,4 +1197,186 @@ async fn an_unbudgeted_spawn_does_not_query_capabilities() {
     backend.spawn(req).await.unwrap();
     assert!(fake.received_named("list_models").is_empty());
     assert!(fake.received_named("providers").is_empty());
+}
+
+#[tokio::test]
+async fn clear_inspection_tells_then_resumes_only_the_agents_blocked_for_inspection() {
+    const LEAD: &str = "agt_01BX5ZZKBKACTAV9WEVGEMMVS1";
+    const BLOCKED: &str = "agt_01BX5ZZKBKACTAV9WEVGEMMVS2";
+    const QUOTA: &str = "agt_01BX5ZZKBKACTAV9WEVGEMMVS3";
+    let (_dir, fake) = fake_aether().await;
+    let mut lead = fake::agent(LEAD, Some(TASK));
+    lead["status"] = json!({"state": "waiting", "condition": {"on": "task", "id": TASK}});
+    let mut blocked = fake::agent(BLOCKED, None);
+    blocked["parent"] = json!(LEAD);
+    blocked["status"] = json!({"state": "blocked", "reason":
+        {"block": "inspection", "detail": "a tool call started before the restart"}});
+    let mut quota = fake::agent(QUOTA, None);
+    quota["parent"] = json!(LEAD);
+    quota["status"] = json!({"state": "blocked", "reason": {"block": "exhausted", "detail": "x"}});
+    fake.set_default("get_agent", Scripted::reply("agent", lead.clone()));
+    fake.set_default(
+        "list_agents",
+        Scripted::reply("agents", json!([lead, blocked.clone(), quota])),
+    );
+    fake.set_default(
+        "send_message",
+        Scripted::reply("message_sent", json!({"message_id": "msg_1"})),
+    );
+    fake.set_default("resume", Scripted::reply("agents", json!([blocked])));
+    let backend = backend(&fake, any_model()).await;
+    let lead_id = AetherAgentId::parse(LEAD).unwrap();
+
+    let pulse = backend.pulse(&lead_id).await.unwrap().expect("a tree");
+    assert!(
+        pulse.inspection && pulse.held && pulse.held_for_cause,
+        "{pulse:?}"
+    );
+    let resumed = backend
+        .clear_inspection(&lead_id, "check the state first", "inspect:1")
+        .await
+        .unwrap();
+
+    assert_eq!(resumed, [AetherAgentId::parse(BLOCKED).unwrap()]);
+    let told = fake.received_named("send_message");
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert_eq!(told[0]["to"], BLOCKED);
+    let order: Vec<String> = fake
+        .received()
+        .iter()
+        .filter_map(|frame| frame["cmd"].as_str().map(str::to_owned))
+        .filter(|cmd| cmd == "send_message" || cmd == "resume")
+        .collect();
+    assert_eq!(order, ["send_message", "resume"], "told before it runs");
+    let resume = &fake.received_named("resume")[0];
+    assert_eq!(resume["agent"], BLOCKED);
+    assert_eq!(
+        resume["subtree"], false,
+        "a subtree resume skips inspections"
+    );
+}
+
+#[tokio::test]
+async fn a_refused_resume_is_an_error_not_a_resumed_agent() {
+    let (_dir, fake) = fake_aether().await;
+    let mut blocked = fake::agent(AGENT, Some(TASK));
+    blocked["status"] =
+        json!({"state": "blocked", "reason": {"block": "inspection", "detail": "x"}});
+    fake.set_default("get_agent", Scripted::reply("agent", blocked.clone()));
+    fake.set_default("list_agents", Scripted::reply("agents", json!([blocked])));
+    fake.set_default(
+        "send_message",
+        Scripted::reply("message_sent", json!({"message_id": "msg_1"})),
+    );
+    fake.script(
+        "resume",
+        Scripted::refuse("invalid_argument", "agent is not under inspection"),
+    );
+    let backend = backend(&fake, any_model()).await;
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    let error = backend
+        .clear_inspection(&agent, "check the state first", "inspect:1")
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("not under inspection"),
+        "{error}"
+    );
+}
+
+/// Two agents are blocked for inspection and someone resumes the first after
+/// the tree is read: its refusal is no failure, and the second is resumed.
+#[tokio::test]
+async fn a_refusal_for_an_agent_resumed_meanwhile_is_skipped() {
+    const HELPER: &str = "agt_01BX5ZZKBKACTAV9WEVGEMMVS2";
+    let (_dir, fake) = fake_aether().await;
+    let inspection = json!({"state": "blocked", "reason": {"block": "inspection", "detail": "x"}});
+    let mut lead = fake::agent(AGENT, Some(TASK));
+    lead["status"] = inspection.clone();
+    let mut helper = fake::agent(HELPER, None);
+    helper["parent"] = json!(AGENT);
+    helper["status"] = inspection;
+    let mut running = lead.clone();
+    running["status"] = json!({"state": "running"});
+    fake.script("get_agent", Scripted::reply("agent", lead.clone()));
+    fake.script("get_agent", Scripted::reply("agent", running));
+    fake.set_default(
+        "list_agents",
+        Scripted::reply("agents", json!([lead, helper])),
+    );
+    fake.set_default(
+        "send_message",
+        Scripted::reply("message_sent", json!({"message_id": "msg_1"})),
+    );
+    fake.script(
+        "resume",
+        Scripted::refuse("invalid_argument", "agent is not under inspection"),
+    );
+    fake.script("resume", Scripted::reply("agents", json!([helper])));
+    let backend = backend(&fake, any_model()).await;
+    let agent = AetherAgentId::parse(AGENT).unwrap();
+    let resumed = backend
+        .clear_inspection(&agent, "check the state first", "inspect:1")
+        .await
+        .unwrap();
+    assert_eq!(resumed, [AetherAgentId::parse(HELPER).unwrap()]);
+    assert_eq!(fake.received_named("resume").len(), 2);
+}
+
+/// Claude Code reports list-price dollars whether or not its login bills
+/// them. Aether's 5-hour and weekly usage windows show a subscription, whose
+/// agent gets no hard cap; without them the cap stays and the billing is
+/// recorded as unknown, so a stop on it is labelled notional cost.
+#[tokio::test]
+async fn a_subscription_claude_code_stage_gets_no_hard_cap_on_notional_dollars() {
+    let (_dir, fake) = fake_aether().await;
+    fake.set_default(
+        "providers",
+        Scripted::reply(
+            "providers",
+            json!([{
+                "provider": "claude-code", "protocol": "claude-code", "engine": true,
+                "headroom": {"windows": [
+                    {"name": "five_hour", "window_minutes": 300, "remaining_percent": 58},
+                    {"name": "seven_day", "window_minutes": 10080, "remaining_percent": 27},
+                ], "stale": false},
+            }]),
+        ),
+    );
+    fake.set_default(
+        "get_task",
+        Scripted::reply(
+            "task",
+            fake::task(TASK, Some(AGENT), RUN, json!({"state": "assigned"})),
+        ),
+    );
+    fake.set_default(
+        "create_agent",
+        Scripted::reply("agent", fake::agent(AGENT, Some(TASK))),
+    );
+    let backend = backend(&fake, any_model()).await;
+    let mut req = spawn_request();
+    backend.prepare_spawn(&mut req, false).await.unwrap();
+    assert_eq!(req.aether_cost_budget, Some(false), "no hard cap");
+    assert_eq!(req.cost_billing, Some(CostBilling::Subscription));
+    assert_eq!(req.cost_budget_usd, Some(5.0), "Archon's grant is kept");
+    backend
+        .prepare_spawn(&mut req, false)
+        .await
+        .expect("a stored subscription is still accounted, estimates or not");
+    backend.spawn(req).await.unwrap();
+    let create = fake.received_named("create_agent").pop().unwrap();
+    assert_eq!(create["config"]["cost_budget"], Value::Null);
+
+    fake.set_default(
+        "providers",
+        Scripted::reply(
+            "providers",
+            json!([{"provider": "claude-code", "protocol": "claude-code", "engine": true}]),
+        ),
+    );
+    let mut unknown = spawn_request();
+    backend.prepare_spawn(&mut unknown, false).await.unwrap();
+    assert_eq!(unknown.aether_cost_budget, Some(true), "enforced");
+    assert_eq!(unknown.cost_billing, Some(CostBilling::Unknown));
 }

@@ -1,7 +1,9 @@
 //! A stage whose agents Aether holds (`blocked` on a usage limit or
 //! credentials, or waiting for an approval) is suspended, not failed: its
 //! deadline is moved on before it passes, so neither Aether nor the sweep
-//! ends it for time it could not work.
+//! ends it for time it could not work. An agent blocked for inspection counts
+//! only while the watchdog is on, which resumes it or fails its stage; with
+//! the watchdog off it keeps its deadline and cannot wait forever.
 
 use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
@@ -10,7 +12,7 @@ use archon_core::id::StageRunId;
 use archon_core::ports::{AgentUpdate, DescendantState};
 use archon_core::run::{StageRun, StageState};
 
-use super::{resume, spawn};
+use super::{resume, spawn, stall};
 use crate::context::DaemonContext;
 
 /// A held stage whose deadline is this near has it moved.
@@ -47,7 +49,8 @@ pub(super) async fn hold_deadline(
         }
         Err(error) => return Err(error),
     };
-    if !pulse.is_some_and(|pulse| pulse.held) {
+    let watched = stall::Policy::of(&ctx.config.limits).is_some();
+    if !pulse.is_some_and(|pulse| pulse.held || (pulse.inspection && watched)) {
         return Ok(Some(false));
     }
     match move_deadline(ctx, stage, lead, now).await {

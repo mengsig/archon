@@ -315,6 +315,7 @@ pub async fn spawning_stage(
         leaf: true,
         cost_budget_usd: None,
         aether_cost_budget: None,
+        cost_billing: None,
         deadline: None,
         attach_run: None,
         parent: node.map(agent_id),

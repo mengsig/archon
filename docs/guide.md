@@ -1202,7 +1202,9 @@ unchanged beneath the item's own. Only commits after that head need the
 repository's git identity, unless the base branch on GitHub already holds
 them. A rebased, amended or squashed contributor commit, or any other
 foreign commit, is refused as before, and so in an item queued on top of
-it, at any depth. If the contributor's pull request is
+it, at any depth. Archon never restacks such an item in place when a
+parent's branch moves; it tells you to run `archon queue refresh`, which
+makes the same checks. If the contributor's pull request is
 later squash-merged at that head, the stacked pull request still carries
 the original commits; `archon queue refresh` merges the new base into it
 and keeps the same checks. One merged at a different head is refused.

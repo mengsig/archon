@@ -712,8 +712,16 @@ async fn trusted_fork(
     );
     assert!(is_commit_id(&reviewed.head_sha), "frozen at enqueue");
     let url = reviewed.pr.url();
-    let base = super::gh::base_commit(&ctx.config.github.binary, &repo, &url).await?;
-    let Some(base) = base else {
+    let shown = super::gh::base_commit(&ctx.config.github.binary, &repo, &url).await?;
+    if shown.branch != reviewed.base_ref {
+        // A retarget can put the base inside the change and hide its start.
+        return Ok(Err(format!(
+            "{url} now targets `{}`, not `{}` as when it was queued: its change has no \
+             start to review from",
+            shown.branch, reviewed.base_ref
+        )));
+    }
+    let Some(base) = shown.commit else {
         return Ok(Err(format!(
             "GitHub shows no base commit for {url}: its change has no start to review from"
         )));

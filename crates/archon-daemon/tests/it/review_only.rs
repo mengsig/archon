@@ -10,6 +10,7 @@ use archon_core::autonomy::{AutonomyPatch, ReviewLevel};
 use archon_core::error::ArchonError;
 use archon_core::merge::{MergeAuthority, MergeRequest, MergeState};
 use archon_core::model::ModelPlan;
+use archon_core::notify::NotificationKind;
 use archon_core::protocol::{EnqueueRequest, Reply, RepoPatch, RepoRef, Request};
 use archon_core::pull_request::OntoTarget;
 use archon_core::queue::{QueueItem, QueueState};
@@ -522,6 +523,51 @@ async fn a_review_of_the_tail_against_a_mirror_s_base_passes_nothing() {
     assert!(!gh.calls().iter().any(|c| c.starts_with("pr merge")));
 }
 
+/// A pull request retargeted, while its review runs, to a branch whose head
+/// sits inside the change: a review of the tail from there passes nothing.
+#[tokio::test]
+async fn a_review_of_the_tail_against_a_retargeted_base_passes_nothing() {
+    let (h, gh, first) = fork_pull_request().await;
+    let second = contributor_commit(&h, "second.txt", "the contributor's second commit\n");
+    gh.show(&second, "MERGEABLE", green());
+    grant_merge(&h).await;
+    let item = review_item(&h, &second, ReviewLevel::Standard).await;
+    gh.headed(
+        200,
+        &json!({
+            "id": "PR_node200",
+            "number": 200,
+            "url": FORK_PR,
+            "state": "OPEN",
+            "headRefName": "patch",
+            "headRefOid": second,
+            "baseRefName": "staged",
+            "baseRefOid": first,
+            "isCrossRepository": true,
+            "headRepository": {"name": "r"},
+            "headRepositoryOwner": {"login": "contributor"},
+        }),
+    );
+
+    let lead = h.running().await.remove(0);
+    let reviewer = h
+        .backend
+        .delegate(lead.aether_agent.as_ref().unwrap(), REVIEW_MODEL);
+    let tail = json!({"verdict": "pass", "head": second, "base": first, "findings": []});
+    h.backend.complete_delegated(&reviewer, tail);
+    let passed = StageOutcome::Completed {
+        summary: format!("Reviewed {FORK_PR} at {second}; checks green"),
+        structured: Some(json!({"review": {"verdict": "pass", "reviewers": [reviewer.as_str()]}})),
+    };
+    h.settle_running(|_| passed.clone()).await;
+    h.dispatch().await;
+
+    let state = h.state(&item.id).await;
+    assert!(matches!(state, QueueState::Failed { .. }), "{state:?}");
+    assert!(h.orchestrator(request_merge(&item)).await.is_err());
+    assert!(!gh.calls().iter().any(|c| c.starts_with("pr merge")));
+}
+
 /// An item that `depends_on` the passed review, dispatched: its branch
 /// starts at the reviewed head, beneath which it is told to change nothing.
 async fn stacked_on(h: &Harness, review: &QueueItem, head: &str) -> QueueItem {
@@ -803,6 +849,46 @@ async fn a_stack_on_a_stack_carrying_a_foreign_commit_its_parent_branch_holds_is
         panic!("refused: {:?}", h.state(&second.id).await);
     };
     assert!(error.contains("other@example.com"), "{error}");
+    nothing_pushed_to_the_fork(&h, &gh, &head);
+}
+
+/// A shipped stack on a stack is never restacked in place: a foreign commit
+/// on its parent's branch is left for a refresh, told once, and not pushed.
+#[tokio::test]
+async fn a_moved_parent_of_a_shipped_stack_on_a_stack_is_not_merged_in_place() {
+    let (h, gh, head, review) = reviewed_fork().await;
+    let second = second_level(&h, &gh, &head, &review).await;
+    settle_stacked(&h, &second, |workspace| {
+        own_commit_named(workspace, "next.txt")
+    })
+    .await;
+    let branch = h.run(&second.id).await.branch;
+    let shipped = pushed(&origin_of(&h), &branch).expect("its branch");
+
+    let parent = h.run(&second.dependencies[0]).await.branch;
+    let outsider = h.dir.path().join("outsider");
+    let (from, to) = (origin_of(&h), outsider.to_str().unwrap().to_owned());
+    let clone = [
+        "clone",
+        "--quiet",
+        "--branch",
+        &parent,
+        from.to_str().unwrap(),
+        &to,
+    ];
+    git(h.dir.path(), &clone);
+    other_commit(&outsider);
+    git(&outsider, &["push", "--quiet", "origin", &parent]);
+    let moved = format!("{parent}:refs/heads/{parent}");
+    git(&h.repo, &["fetch", "--quiet", &to, &moved]);
+    for _ in 0..2 {
+        coordination::reconcile(&h.ctx).await.unwrap();
+    }
+
+    assert_eq!(pushed(&origin_of(&h), &branch).as_deref(), Some(&*shipped));
+    let held = h.notices(NotificationKind::Blocker).await;
+    let told = held.iter().filter(|n| n.contains("queue refresh")).count();
+    assert_eq!(told, 1, "{held:?}");
     nothing_pushed_to_the_fork(&h, &gh, &head);
 }
 

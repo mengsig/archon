@@ -5252,7 +5252,9 @@ push to; its branch starts at the frozen head (a fork's fetched from
 `refs/pull/<n>/head`) and its review covers the whole pull request from its
 merge base, the fork point with the base commit GitHub shows for that
 pull request (`baseRefOid`), fetched by id: no local ref, tracking ref or
-remote URL moves it. When the review is counted
+remote URL moves it. A pull request retargeted since enqueue, so that
+GitHub shows a base branch other than the frozen one, passes nothing.
+When the review is counted
 (§8.2), archond records the branch head it passed as `reviewed_head` in
 the stage's structured result, a key no agent can write; a branch moved
 off the frozen head is refused. A merge of that item then needs, besides
@@ -5279,8 +5281,11 @@ floor only commits in `origin`'s head of the reviewed pull request's base
 branch, read with `ls-remote` and fetched at delivery, are exempt: no local
 or tracking ref counts, nor a stack parent's branch. A
 refresh of such an item, or a fix of its stack, keeps that floor, and so
-does an item stacked on it, at any depth, through `depends_on`. Nothing
-is ever pushed to the reviewed pull request's branch.
+does an item stacked on it, at any depth, through `depends_on`. The
+restack sweep (§8.8) never merges a moved parent into such an item's branch
+in place: it tells the operator once per head to run `archon queue
+refresh`, whose delivery checks that floor. Nothing is ever pushed to the
+reviewed pull request's branch.
 
 **The merge.** A `merge_requests` row (store V13) is written before any
 GitHub write, and an item has at most one open. archond then runs `gh pr

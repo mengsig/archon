@@ -185,6 +185,9 @@ impl Verdict {
         let pass = match Said::from_structured(value) {
             Some(Said::Pass) => true,
             Some(Said::Fail) => false,
+            Some(Said::Unknown) if Said::lists_blocking(value) => {
+                return Err("its verdict passes but lists a blocking finding".to_owned());
+            }
             Some(Said::Unknown) => {
                 let said = Said::stated("", structured).unwrap_or_default();
                 return Err(format!(
@@ -671,6 +674,10 @@ mod tests {
                 .unwrap()
                 .pass
         );
+        let blocked =
+            json!({"verdict": "pass", "head": HEAD, "findings": [{"severity": "blocking"}]});
+        let refused = Verdict::read_result("", Some(&blocked)).unwrap_err();
+        assert!(refused.contains("lists a blocking finding"), "{refused}");
         let held = format!("VERDICT: PASS — merge only with green CI\nhead: {HEAD}");
         assert!(Verdict::read_result(&held, None).is_err());
         let trailing = format!("VERDICT: PASS\nhead: {HEAD}\nDo not merge yet.");

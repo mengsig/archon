@@ -2495,7 +2495,9 @@ too, before the first `—`, `:`, `;`, `.`, ` - ` or line break is a choice or
 a condition and reads as `Unknown`, as does a pass explained in any word but
 a few plain success words and numbers, or a summary's pass line followed by
 any line but `head:` and `base:`. A structured pass beside a summary
-`VERDICT:` line or JSON verdict that does not pass is `Unknown`. Reviewers' verdicts (§8.2) go through the same parser.
+`VERDICT:` line or JSON verdict that does not pass is `Unknown`, as is a
+structured pass that lists a `blocking`, `blocker`, `critical` or `high`
+finding. Reviewers' verdicts (§8.2) go through the same parser.
 
 Two error prefixes end a run at once, with no loop, no infra retry and the
 stage's live siblings cancelled (`StageOutcome::ends_run`):

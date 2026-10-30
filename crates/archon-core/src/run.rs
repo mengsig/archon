@@ -20,6 +20,9 @@ pub enum Verdict {
     Unknown,
 }
 
+/// Finding severities that a passing verdict cannot carry.
+const BLOCKING_SEVERITIES: [&str; 4] = ["blocking", "blocker", "critical", "high"];
+
 /// `structured` keys a result may give its verdict under, in the order read.
 const VERDICT_KEYS: [&str; 3] = ["verdict", "result", "status"];
 
@@ -50,13 +53,34 @@ impl Verdict {
 
     /// The verdict `structured` states: its `verdict` key whenever it has
     /// one, `Unknown` unless it reads as a verdict, else the first `result`
-    /// or `status` that opens with a verdict word or a `VERDICT:` label.
+    /// or `status` that opens with a verdict word or a `VERDICT:` label. A
+    /// pass that [lists a blocking finding](Self::lists_blocking) is `Unknown`.
     pub fn from_structured(structured: &serde_json::Value) -> Option<Self> {
-        if let Some(given) = structured.get(VERDICT_KEYS[0]) {
-            let text = given.as_str().unwrap_or_default();
-            return Some(Self::from_field(text).unwrap_or(Self::Unknown));
+        let stated = match structured.get(VERDICT_KEYS[0]) {
+            Some(given) => {
+                let text = given.as_str().unwrap_or_default();
+                Some(Self::from_field(text).unwrap_or(Self::Unknown))
+            }
+            None => Self::other_field(structured).map(|(_, verdict)| verdict),
+        };
+        match stated {
+            Some(Self::Pass) if Self::lists_blocking(structured) => Some(Self::Unknown),
+            stated => stated,
         }
-        Self::other_field(structured).map(|(_, verdict)| verdict)
+    }
+
+    /// Whether `structured.findings` holds one whose `severity` blocks a pass.
+    pub fn lists_blocking(structured: &serde_json::Value) -> bool {
+        let Some(findings) = structured.get("findings").and_then(|f| f.as_array()) else {
+            return false;
+        };
+        findings.iter().any(|finding| {
+            let severity = finding.get("severity").and_then(|s| s.as_str());
+            let severity = severity.unwrap_or_default().trim();
+            BLOCKING_SEVERITIES
+                .iter()
+                .any(|b| b.eq_ignore_ascii_case(severity))
+        })
     }
 
     /// The first `result` or `status` that states a verdict, and that verdict.
@@ -1120,6 +1144,18 @@ mod tests {
             let said = Verdict::stated(&summary, Some(&pass));
             assert_eq!(said.as_deref(), Some("fail"), "{summary}");
         }
+        for severity in ["blocking", "High", "critical"] {
+            let listed = json!({"verdict": "pass", "findings": [{"severity": severity}]});
+            assert_eq!(
+                Verdict::extract("", Some(&listed)),
+                Verdict::Unknown,
+                "{severity}"
+            );
+        }
+        let advisory = json!({"verdict": "pass", "findings": [{"severity": "advisory"}]});
+        assert_eq!(Verdict::extract("", Some(&advisory)), Verdict::Pass);
+        let failing = json!({"verdict": "fail", "findings": [{"severity": "blocking"}]});
+        assert_eq!(Verdict::extract("", Some(&failing)), Verdict::Fail);
         let report = json!({"tests": 214}).to_string();
         assert_eq!(Verdict::extract(&report, Some(&pass)), Verdict::Pass);
         let later = json!({"verdict": "PASS\nDo not merge until CI is green"});

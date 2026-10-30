@@ -841,7 +841,8 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   put details above the verdict line and end the summary with it.
   A structured pass counts only when the summary's last `VERDICT:` line
   and its verdict JSON (the whole summary or its one fenced block), where
-  it has them, pass too. The gate's refusal quotes what the agent wrote.
+  it has them, pass too, and when it lists no finding of `blocking`,
+  `blocker`, `critical` or `high` severity. The gate's refusal quotes what the agent wrote.
   Known limitation: of CommonMark, the parser models only block quotes,
   list indentation and fences, and reads other constructs as plain lines;
   a verdict it cannot settle counts as fail, never as pass, so write a

@@ -242,6 +242,13 @@ fn unreadable_verdict(member: &StageRun) -> String {
         return "missing (counts as fail)".to_owned();
     };
     let quoted: String = said.chars().take(MAX_QUOTED_VERDICT_CHARS).collect();
+    if member
+        .structured
+        .as_ref()
+        .is_some_and(Verdict::lists_blocking)
+    {
+        return format!("{quoted:?} beside a blocking finding (counts as fail)");
+    }
     format!("{quoted:?} unreadable as pass or fail (counts as fail)")
 }
 

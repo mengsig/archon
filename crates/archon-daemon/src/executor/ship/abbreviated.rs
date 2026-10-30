@@ -3,7 +3,8 @@
 //! git resolves it in the run worktree to exactly one object of that type.
 //! archond stores the full id, so every later check compares full ids; one
 //! that resolves to nothing, or to more than one object, is left for the gate
-//! to refuse. 40 digits are resolved too: in a SHA-256 worktree they abbreviate.
+//! to refuse. 40 digits are resolved too: in a SHA-256 worktree they abbreviate,
+//! so there an unresolved 40-digit id is marked for the gate to refuse.
 //! Blocking git that runs no program the worktree's config names.
 
 use std::path::Path;
@@ -31,9 +32,27 @@ pub(super) fn resolve(workspace: &Path, data: &mut Value) -> Result<(), ArchonEr
         let prefix = id.to_ascii_lowercase();
         if let Some(full) = full_id(workspace, &prefix, kind)? {
             fields.insert(key.to_owned(), Value::String(full));
+        } else if prefix.len() == 40 && is_sha256(workspace)? {
+            let marked = format!("{id} (names no single {kind} in this SHA-256 worktree)");
+            fields.insert(key.to_owned(), Value::String(marked));
         }
     }
     Ok(())
+}
+
+/// Whether `workspace` stores SHA-256 object ids, where 40 digits abbreviate.
+fn is_sha256(workspace: &Path) -> Result<bool, ArchonError> {
+    let ran = DaemonGit::sealed_in(workspace)
+        .args(["rev-parse", "--show-object-format"])
+        .output()?;
+    let format = ran.stdout_text()?;
+    if !ran.status.success() || !matches!(format.as_str(), "sha1" | "sha256") {
+        return Err(ArchonError::Protocol(format!(
+            "git rev-parse --show-object-format in {} printed {format:?}",
+            workspace.display()
+        )));
+    }
+    Ok(format == "sha256")
 }
 
 /// The one object of `kind` whose id starts with `prefix`; `None` when git
@@ -101,6 +120,19 @@ mod tests {
         let mut data = json!({"commit": commit[..40], "tree": tree[..40].to_uppercase()});
         resolve(dir.path(), &mut data).expect("git");
         assert_eq!(data, json!({"commit": commit, "tree": tree}));
+    }
+
+    #[test]
+    fn forty_digits_naming_nothing_in_a_sha256_worktree_are_refused() {
+        let (dir, commit, tree) = repo("sha256");
+        let unknown = "0".repeat(40);
+        let mut data = json!({"commit": unknown, "tree": tree, "pr": {"title": "t", "body": "b"}});
+        resolve(dir.path(), &mut data).expect("git");
+        assert_ne!(data["commit"], json!(unknown), "marked, not taken as SHA-1");
+        let refused = archon_pipeline::ship::ShipRecord::read(Some(&data)).unwrap_err();
+        assert!(refused.contains("SHA-256"), "{refused}");
+        data["commit"] = json!(commit);
+        assert!(archon_pipeline::ship::ShipRecord::read(Some(&data)).is_ok());
     }
 
     #[test]

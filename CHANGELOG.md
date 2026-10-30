@@ -65,6 +65,10 @@
 - A stage whose agent Aether holds `blocked` (a usage limit, credentials)
   or waiting on an approval is no longer timed out: its deadline is moved
   on while it is held.
+- A kept agent resumed for a later attempt, or a failed one woken, gets an
+  Aether cost cap of what it was charged so far plus its new grant. The
+  cap read that spend from stage costs Archon never stored, so it was the
+  grant alone and could stop the agent soon after it went on.
 
 ### Documentation
 

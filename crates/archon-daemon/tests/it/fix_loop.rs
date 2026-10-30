@@ -271,12 +271,18 @@ async fn a_resumed_agent_gets_its_spend_so_far_plus_a_new_grant() {
     let raw = spawn.to_string();
     h.ctx.store.lock().await.kv_set(&key(&first), &raw).unwrap();
     settle_recorded(&h, "added the greeting").await;
-    {
-        let mut store = h.ctx.store.lock().await;
-        let mut spent = store.stage_run(&first.id).unwrap();
-        spent.cost_usd = 7.5;
-        store.upsert_stage_run(&spent).unwrap();
-    }
+    let row = archon_queue::store::SpendRow {
+        agent: agent(&first),
+        item: Some(item.id.clone()),
+        cost_usd: 7.5,
+        cost_basis: archon_core::cost::CostBasis::ProviderReported,
+        cost_complete: None,
+        estimated_cost_usd: 0.25,
+        input_tokens: 10,
+        output_tokens: 5,
+        at: archon_core::now(),
+    };
+    h.ctx.store.lock().await.record_spend(&row).unwrap();
     h.dispatch().await;
 
     let fix = sent_back(&h).await;

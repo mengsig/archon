@@ -603,8 +603,9 @@ async fn spend(h: &Harness, item: &QueueItemId, stage: &StageRun, cost_usd: f64)
     h.ctx.store.lock().await.record_spend(&row).expect("spend");
 }
 
-/// A role woken after an infrastructure failure counts against its share
-/// only what it spent since the wake when it fails again.
+/// A role woken after an infrastructure failure gets Aether's cap raised to
+/// what it spent plus what is left of its share, and counts against that
+/// share only what it spent since the wake when it fails again.
 #[tokio::test]
 async fn a_woken_role_that_fails_again_keeps_what_is_left_of_its_share() {
     let h = Harness::new().await;
@@ -616,6 +617,17 @@ async fn a_woken_role_that_fails_again_keeps_what_is_left_of_its_share() {
         error: "engine died".into(),
         infra: true,
     };
+    let key = format!("spawn_request:{}", ui.id);
+    let mut stored: serde_json::Value =
+        serde_json::from_str(&h.kv(&key).await.expect("stored")).unwrap();
+    // As when Aether enforces the cap it was created with.
+    stored["request"]["aether_cost_budget"] = true.into();
+    h.ctx
+        .store
+        .lock()
+        .await
+        .kv_set(&key, &stored.to_string())
+        .unwrap();
     spend(&h, &item.id, &ui, 1.0).await;
     h.backend.fail_agent(&agent);
     executor::stage_settled(&h.ctx, &agent, failed())
@@ -626,6 +638,10 @@ async fn a_woken_role_that_fails_again_keeps_what_is_left_of_its_share() {
     let woken = h.running().await.into_iter().find(|s| role_of(s) == "ui");
     let woken = woken.expect("ui woken");
     assert_ne!(woken.id, ui.id);
+    let updates = h.backend.updates();
+    let (_, raised) = updates.iter().rfind(|(a, _)| *a == agent).expect("raised");
+    // 1.0 reported, then the 1.75 left of its share of 3.
+    assert_eq!(raised.cost_budget_usd, Some(2.75));
 
     // 1.25 before the wake, 0.5 since: 3 - 1.25 - 0.5 is left.
     spend(&h, &item.id, &woken, 1.5).await;

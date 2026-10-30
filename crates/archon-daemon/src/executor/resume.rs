@@ -203,8 +203,8 @@ pub(super) async fn hand_over(
     Ok(false)
 }
 
-/// Aether's new cap for `agent` resumed on `stage`: the cap counts its subtree's whole
-/// life, so earlier attempts' spend plus `grant`. `None` when it has no cap.
+/// Aether's new cap for `agent` resumed or woken on `stage`: the cap counts its subtree's
+/// whole life, so what the ledger charged it so far plus `grant`. `None` when it has no cap.
 fn regranted_cap(
     store: &Store,
     stage: &StageRun,
@@ -228,7 +228,10 @@ fn regranted_cap(
     if spawned.cost_budget_usd.is_none() || spawned.aether_cost_budget == Some(false) {
         return Ok(None);
     }
-    let spent: f64 = earlier.iter().map(|s| s.cost_usd).sum();
+    // Aether counts what it reported, never Archon's estimates.
+    let beneath = store.delegated_beneath(agent, false)?;
+    let spent =
+        store.spend_for_agent(agent, false)? + beneath.iter().map(|d| d.cost_usd).sum::<f64>();
     assert!(spent.is_finite() && spent >= 0.0, "spend is an amount");
     Ok(Some((spent + grant).max(steer::MIN_GRANT_USD)))
 }

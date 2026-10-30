@@ -14,7 +14,7 @@ notes = "Exploratory QA of a CLI, API or UI, before or after a change. Testers f
 id = "plan"
 kind = "work"
 prompt = "plan.md"
-timeout_minutes = 45
+timeout_minutes = 90
 
 [[stage]]
 id = "exercise"

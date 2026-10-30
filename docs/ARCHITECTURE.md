@@ -2436,9 +2436,34 @@ its contract carries no delegation section.
 > Propose stages change nothing, write only
 > `.archon/reports/proposal/index.html`, and list it in `structured.reports`.
 
+Every contract also tells the agent to stop only processes it started, by
+the PID it recorded, its process group or its Compose project, and never
+by name or pattern (`pkill`, `killall`, `pgrep -f … | xargs kill`): stage
+agents run as the operator's user, so a pattern kill reaches the
+operator's archond and aetherd and every stage they run.
+A stage in a worktree is also told how to keep a server up for a later
+stage: it starts it under `setsid` and writes the PID to
+`.archon/services/<name>.pid` in its worktree, a team role in its own. On
+Linux the stage-end reap spares that process, the process group it leads
+and its descendants while the run goes on, but not a group it only joined:
+`cmd &` leaves a server in its shell's group, often the engine's, with every
+stray of the stage. The run's end reaps them with the rest of what runs
+from the worktree; a service whose working directory and executable both
+lie outside it is not found, like any other process. A team role's PID
+files are left out of the commit of its uncommitted work.
+
 A team stage's contract names the agent's role and the other roles, keeps
 it to its own worktree and role, and asks it to commit on its branch
 without pushing: only commits are merged.
+
+Every stage agent's contract also gets a `## Deadline` section, written
+when the daemon builds the spawn request: the time its deadline falls
+(the stage's `timeout_minutes`, or the item's `stage_timeouts` entry, after
+its start), that Archon then stops it and everything it delegated, and,
+for a `work` or `team` stage in a worktree, that if its task has it commit
+it commits each working step, so a retry builds on it; a stage whose
+prompt says not to commit keeps to that. A kept agent resumed for a fix (§6.7) gets its new
+deadline after the findings.
 
 A stage agent that can delegate also gets a `## Delegation` section. The
 daemon writes it when it builds the spawn request, from what the agent can
@@ -2473,8 +2498,9 @@ states:
   a parent's instructions to a delegated child (§17), so the contract does
   not reach one: work only in the workspace it is given and never touch
   other worktrees, other branches or the operator's checkout; do not push;
-  never override the git identity; ask the operator nothing; and read only,
-  for a reviewer always and for every child of a read-only stage.
+  never override the git identity; ask the operator nothing; stop only
+  processes it started, never by name or pattern; and read only, for a
+  reviewer always and for every child of a read-only stage.
 
 The stage a pipeline's declared review names (§8.2) gets a
 `## Review on record` section in its contract: how many reviewers the

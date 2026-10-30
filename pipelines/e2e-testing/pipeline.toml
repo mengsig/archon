@@ -13,7 +13,7 @@ notes = "Scripted end-to-end journeys with screenshots. The e2e gate fails only 
 id = "setup"
 kind = "work"
 prompt = "setup.md"
-timeout_minutes = 60
+timeout_minutes = 120
 
 [[stage]]
 id = "e2e"

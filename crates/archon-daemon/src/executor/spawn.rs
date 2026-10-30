@@ -567,14 +567,19 @@ impl Target<'_> {
         own.copied().unwrap_or(plan.timeout_minutes)
     }
 
-    /// The stage contract, with its reviewers' models, the run's own sections
-    /// and, when the agent can delegate, the rules and model policy for that.
-    fn instructions(&self, plan: &SpawnPlan) -> String {
+    /// The stage contract, with its reviewers' models, its deadline `until`, the run's
+    /// own sections and, when the agent can delegate, the rules and model policy for that.
+    fn instructions(&self, plan: &SpawnPlan, until: Timestamp) -> String {
         assert!(!plan.instructions.is_empty(), "every stage has a contract");
         // An unreadable policy refuses this spawn when it is issued (`claim`).
         let policy = RepoEnv::new(self.repo.cloned()).map(|env| env.policy(self.config));
         let reviewers = reviewer_rules(plan, &policy, self);
-        let contract = format!("{}{reviewers}{}", plan.instructions, self.sections);
+        let minutes = self.timeout_minutes(plan);
+        let deadline = contract::deadline_rule(plan.kind, plan.workspace, minutes, until);
+        let contract = format!(
+            "{}{reviewers}{deadline}{}",
+            plan.instructions, self.sections
+        );
         if !self.delegates(plan) {
             return contract;
         }
@@ -638,7 +643,7 @@ fn reserve_one(
     // An infrastructure replacement is a fresh agent: the kept one was lost.
     let (resume, replaces) = match resume::takeover(store, &target.run.id, plan, retry.is_some())? {
         Takeover::Fresh => (None, None),
-        Takeover::Resume(kept) => (Some(kept), None),
+        Takeover::Resume(kept) => (Some(resume::with_deadline(kept, request.deadline)), None),
         Takeover::Replace(agent) => (None, Some(agent)),
     };
     let spawn = StoredSpawn {
@@ -714,6 +719,7 @@ fn build_request(
             .is_none_or(|root| workspace.starts_with(root)),
         "a team run's agents work under its team directory"
     );
+    let until = deadline(now, target.timeout_minutes(plan));
     SpawnRequest {
         host_context: Default::default(),
         idempotency_key: id.as_str().to_owned(),
@@ -721,7 +727,7 @@ fn build_request(
         // Every reserved spawn is bound to the run's node before it is sent.
         name: naming::stage_agent_name(naming::Placement::UnderRunNode, plan, retry),
         objective: plan.prompt.clone(),
-        instructions: target.instructions(plan),
+        instructions: target.instructions(plan, until),
         choice: plan.choice.clone(),
         workspace,
         repository: target.repo.map(|repo| repo.name.clone()),
@@ -731,7 +737,7 @@ fn build_request(
         leaf: !target.delegates(plan),
         cost_budget_usd: budget,
         aether_cost_budget: None,
-        deadline: Some(deadline(now, target.timeout_minutes(plan))),
+        deadline: Some(until),
         attach_run: run.aether_run.clone(),
         parent: None,
         network: None,

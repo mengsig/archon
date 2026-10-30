@@ -617,7 +617,8 @@ async fn a_no_change_result_on_a_clean_branch_succeeds_without_shipping() {
     assert!(gh.calls().is_empty(), "{:?}", gh.calls());
 }
 
-/// The proposal page a propose stage leaves untracked is Archon's, not a change.
+/// The proposal page a propose stage leaves untracked is Archon's, not a change,
+/// and so is a declared service's PID file.
 #[tokio::test]
 async fn a_no_change_result_beside_archon_s_own_report_pages_succeeds() {
     let (h, gh) = delivering().await;
@@ -625,6 +626,13 @@ async fn a_no_change_result_beside_archon_s_own_report_pages_succeeds() {
     let page = run.workspace.join(".archon/reports/proposal/index.html");
     std::fs::create_dir_all(page.parent().unwrap()).unwrap();
     std::fs::write(&page, "<p>the proposal</p>\n").unwrap();
+    let services = run.workspace.join(".archon/services");
+    std::fs::create_dir_all(&services).unwrap();
+    std::fs::write(services.join("web.pid"), "4242\n").unwrap();
+    // One staged by the stage, and one whose name git would quote.
+    std::fs::write(services.join("api.pid"), "4243\n").unwrap();
+    git(&run.workspace, &["add", ".archon/services/api.pid"]);
+    std::fs::write(services.join("sérver.pid"), "4244\n").unwrap();
     settle_with(&h, json!({"no_change": {"reason": "already done"}})).await;
     let summary = succeeded(&h, &item).await;
     assert!(summary.contains("No change was needed"), "{summary}");
@@ -656,7 +664,22 @@ async fn a_no_change_claim_beside_a_commit_or_a_dirty_tree_fails_the_stage() {
     let error = failed(&h, &item).await;
     assert!(error.contains("staged or untracked"), "{error}");
     assert!(error.contains("new_module.rs"), "{error}");
-    assert!(gh.calls().is_empty() && gh2.calls().is_empty() && gh3.calls().is_empty());
+
+    // Only a service's PID file is run state; anything else beside it is a change.
+    let (h, gh4) = delivering().await;
+    let (item, run) = started(&h, "direct").await;
+    let services = run.workspace.join(".archon/services");
+    std::fs::create_dir_all(services.join("web")).unwrap();
+    std::fs::write(services.join("web.pid"), "4242\n").unwrap();
+    std::fs::write(services.join("server.toml"), "port = 8080\n").unwrap();
+    std::fs::write(services.join("web/nested.pid"), "4243\n").unwrap();
+    settle_with(&h, json!({"no_change": {"reason": "nothing to do"}})).await;
+    let error = failed(&h, &item).await;
+    assert!(error.contains("server.toml"), "{error}");
+    assert!(error.contains("web/nested.pid"), "{error}");
+    assert!(!error.contains("web.pid"), "{error}");
+    let quiet = [&gh, &gh2, &gh3, &gh4];
+    assert!(quiet.iter().all(|gh| gh.calls().is_empty()));
 }
 
 /// A stage that leaves no usable record is told what is missing before

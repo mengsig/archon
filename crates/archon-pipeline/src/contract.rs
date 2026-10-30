@@ -82,6 +82,35 @@ pub fn instructions(
     out
 }
 
+/// The section naming when Archon stops a stage of `kind` in `mode`: `minutes`
+/// after its start, at `deadline`. Only a stage that may commit hears of
+/// committing, and only if its task has it commit: some work stages do not.
+pub fn deadline_rule(
+    kind: StageKind,
+    mode: WorkspaceMode,
+    minutes: u32,
+    deadline: archon_core::Timestamp,
+) -> String {
+    assert!(minutes >= 1, "validated stages have a timeout");
+    let commits =
+        mode == WorkspaceMode::Worktree && matches!(kind, StageKind::Work | StageKind::Team);
+    let pace = match commits {
+        true => {
+            "If your task has you commit, commit each working step as you go, so a \
+             retry builds on it. Finish"
+        }
+        false => "Finish",
+    };
+    let rule = format!(
+        "\n## Deadline\n\n\
+         - Archon stops you and every agent you delegated to at {at}, {minutes} minutes \
+         after your start, and the stage fails. {pace} with time to spare.\n",
+        at = deadline.format("%Y-%m-%d %H:%M UTC"),
+    );
+    debug_assert!(rule.ends_with('\n'), "sections end with a newline");
+    rule
+}
+
 /// Whether the record stage holds a review whose reviewers judge the risk.
 fn relays_reviewer(owed: Owed) -> bool {
     owed.review.is_some_and(|duty| duty.reviewers > 0)
@@ -226,6 +255,7 @@ fn contract_header(
          - Work only in `{workspace}`. {mode_rule}\n\
          - Nobody is watching: never ask the operator anything or wait for a reply. Make \
          the conservative choice and state every assumption in your summary.\n\
+         {PROCESS_RULE}\
          - `mcp__archon__message_orchestrator` relays an operator message meant for the \
          orchestrator (`kind=relay`, their exact text), reports a blocker outside your \
          stage (`kind=escalation`) or sends low-priority `info`. It returns at once: keep \
@@ -284,7 +314,10 @@ fn mode_rule(mode: WorkspaceMode) -> &'static str {
              another worktree, another branch or the operator's own checkout. Before you \
              finish, stop every server and Compose stack you started, unless whoever gave you \
              the task asked you to leave it running; then say in your result what still \
-             runs and how to stop it."
+             runs and how to stop it. To keep a server up for a later stage, start it under \
+             `setsid`, run it from your worktree, and write its PID, uncommitted, to \
+             `.archon/services/<name>.pid` there: Archon stops it when the run ends, and any \
+             other process you leave there when your stage ends."
         }
         WorkspaceMode::RepoReadonly => {
             "With a repository, it is a detached snapshot of the commit the repository has \
@@ -370,6 +403,13 @@ self-contained page that loads nothing from the network.\n\
 `{\"reports\": [\"/abs/…/index.html\"]}`. The operator may approve the proposal, \
 so the `summary` must state the approach on its own.\n";
 
+/// Whose processes an agent may stop: an agent runs as the operator's user,
+/// so a pattern kill reaches the operator's daemons and every stage they run.
+const PROCESS_RULE: &str = "\
+- Stop only processes you started, by the PID you recorded (`$!`), its process group \
+or its Compose project. Never kill by name or pattern (`pkill`, `killall`, \
+`pgrep -f … | xargs kill`): the operator's archond and aetherd run as your user.\n";
+
 const DELEGATE_CHILD_RULES: &str = "\
 - A child inherits none of this contract or of the stage prompt: Aether gives it \
 only the `objective` and `instructions` you pass to `delegate`. In every child's \
@@ -381,6 +421,8 @@ branches or the operator's own checkout;\n  \
 `--author`, no `GIT_AUTHOR_*` or `GIT_COMMITTER_*`, no identity taken from injected \
 context;\n  \
 - do not ask the operator questions or wait for replies;\n  \
+- stop only processes it started, by recorded PID, process group or Compose \
+project, and never kill by name or pattern;\n  \
 - read only, with no edits, commits, stashes or branch switches: for a reviewer \
 always, and for every child when your own workspace is READ-ONLY.\n";
 
@@ -718,8 +760,10 @@ experiment (mutant, probe, repro) in a ";
 const REVIEW_BOUNDS_FALLBACK: &str = "`mktemp -d` copy of tracked files only \
 (no build outputs, no literal /tmp; delete it after)";
 
-const REVIEW_BOUNDS_TAIL: &str = " under one `timeout 30s` for all its repeats \
-(`timeout 30s sh -c '…'` for loops and pipes); a hang or timeout counts as detected. \
+/// A timed-out experiment shows nothing: one that compiles may just be slow.
+const REVIEW_BOUNDS_TAIL: &str = " under one `timeout 30s` for all its repeats, \
+`timeout 120s` when it compiles (`timeout 30s sh -c '…'` for loops and pipes); a \
+timeout is inconclusive, never a finding or a detection on its own. \
 Run the project's own build and tests normally, uncapped. \
 No long hang proofs or background waits. Report incomplete checks; never pass \
 without the evidence the review requires.\n";
@@ -820,6 +864,32 @@ mod tests {
     }
 
     #[test]
+    fn the_deadline_names_its_time_and_asks_only_committing_stages_to_commit() {
+        let at: archon_core::Timestamp = "2026-10-30T14:05:00Z".parse().unwrap();
+        let work = deadline_rule(StageKind::Work, WorkspaceMode::Worktree, 180, at);
+        assert!(work.starts_with("\n## Deadline\n\n"), "{work}");
+        assert!(work.contains("at 2026-10-30 14:05 UTC, 180 minutes after your start"));
+        assert!(work.contains("every agent you delegated to"), "{work}");
+        assert!(
+            work.contains("If your task has you commit, commit each working step as you go"),
+            "{work}"
+        );
+        let team = deadline_rule(StageKind::Team, WorkspaceMode::Worktree, 90, at);
+        assert!(team.contains("If your task has you commit"), "{team}");
+        for (kind, mode) in [
+            (StageKind::Review, WorkspaceMode::Worktree),
+            (StageKind::Report, WorkspaceMode::Worktree),
+            (StageKind::Work, WorkspaceMode::RepoReadonly),
+            (StageKind::Work, WorkspaceMode::Scratch),
+        ] {
+            let text = deadline_rule(kind, mode, 45, at);
+            assert!(text.contains("45 minutes after your start"), "{text}");
+            assert!(text.contains("Finish with time to spare."), "{text}");
+            assert!(!text.contains("commit"), "{kind:?} in {mode:?}: {text}");
+        }
+    }
+
+    #[test]
     fn every_contract_names_the_workspace_and_blocked_prefix() {
         for kind in [
             StageKind::Propose,
@@ -838,6 +908,10 @@ mod tests {
                 None,
             );
             assert!(text.contains("Work only in `/w`"), "{kind:?}");
+            assert!(
+                text.contains("start it under `setsid`, run it from your worktree, and write its PID, uncommitted, to `.archon/services/<name>.pid` there: Archon stops it when the run ends"),
+                "{kind:?}"
+            );
             assert!(text.contains("`BLOCKED:`"), "{kind:?}");
             assert!(text.contains("complete_task"), "{kind:?}");
             assert!(
@@ -856,6 +930,13 @@ mod tests {
                 text.contains("call `fail_task`, never `complete_task`"),
                 "{kind:?}"
             );
+            for said in [
+                "- Stop only processes you started, by the PID you recorded (`$!`)",
+                "Never kill by name or pattern (`pkill`, `killall`, `pgrep -f … | xargs kill`)",
+                "the operator's archond and aetherd run as your user",
+            ] {
+                assert!(text.contains(said), "{kind:?}: missing {said:?}");
+            }
         }
     }
 
@@ -917,9 +998,10 @@ mod tests {
                     "read the code and run the checks the review needs",
                     copy,
                     "delete it after) under one `timeout 30s` for all its repeats",
+                    "`timeout 120s` when it compiles",
                     "Run the project's own build and tests normally, uncapped.",
                     "`timeout 30s sh -c '…'` for loops and pipes",
-                    "a hang or timeout counts as detected",
+                    "a timeout is inconclusive, never a finding or a detection on its own",
                     "No long hang proofs or background waits",
                     "never pass without the evidence the review requires",
                 ] {
@@ -935,8 +1017,9 @@ mod tests {
         let fallback = "- Reviewers: read the code and run the checks the review needs. Run each \
             ad-hoc experiment (mutant, probe, repro) in a `mktemp -d` copy of tracked files only \
             (no build outputs, no literal /tmp; delete it after) under one `timeout 30s` for all \
-            its repeats (`timeout 30s sh -c '…'` for loops and pipes); a hang or timeout counts \
-            as detected. Run the project's own build and tests normally, uncapped. No long hang \
+            its repeats, `timeout 120s` when it compiles (`timeout 30s sh -c '…'` for loops and \
+            pipes); a timeout is inconclusive, never a finding or a detection on its own. Run the \
+            project's own build and tests normally, uncapped. No long hang \
             proofs or background waits. Report incomplete checks; never pass without the \
             evidence the review requires.\n";
         assert_eq!(review_bounds(None), fallback);
@@ -1331,6 +1414,8 @@ mod tests {
                 "\n  - never override the git identity:",
                 "`--author`, no `GIT_AUTHOR_*` or `GIT_COMMITTER_*`",
                 "\n  - do not ask the operator questions or wait for replies;",
+                "\n  - stop only processes it started, by recorded PID, process group or \
+                 Compose project, and never kill by name or pattern;",
                 "\n  - read only, with no edits, commits, stashes or branch switches: for a \
                  reviewer always, and for every child when your own workspace is READ-ONLY.",
             ] {

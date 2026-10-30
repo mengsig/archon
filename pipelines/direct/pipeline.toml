@@ -22,5 +22,5 @@ notes = "The cheapest path to a shipped change: one agent, and no review unless 
 id = "implement"
 kind = "work"
 prompt = "implement.md"
-timeout_minutes = 60
+timeout_minutes = 180
 nudge = "The balanced tier at medium effort, high for a larger or subtle change; low only for docs, config or another trivial edit. The agent escalates a change that turns out risky."

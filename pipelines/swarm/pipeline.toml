@@ -24,7 +24,7 @@ id = "plan"
 kind = "work"
 prompt = "plan.md"
 tier = "strong"
-timeout_minutes = 60
+timeout_minutes = 120
 nudge = "The strong tier at medium effort (the default): it researches the change and writes the plan the workers build from, no product code."
 
 [[stage]]

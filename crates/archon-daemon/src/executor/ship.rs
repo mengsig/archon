@@ -24,6 +24,7 @@ use crate::context::DaemonContext;
 
 pub(crate) use auto_merge::pay as pay_owed_merges;
 pub(crate) use auto_merge::withdraw as withdraw_owed_merge;
+pub(super) use checks::repairable as repairable_refusal;
 pub(super) use deliver::{LOCAL_COMMIT_KEY, base_of, deliver, delivering, queue, replay, stalled};
 pub(crate) use deliver::{prune_finished_ships, shipped_commit};
 pub(super) use existing::Locks as OntoLocks;

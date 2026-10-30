@@ -17,9 +17,8 @@ use common::Harness;
 const RUNS: usize = 40;
 /// Queued items besides them, which every `status` reads.
 const QUEUED: usize = 200;
-/// Bounds a hang: a `status` queued behind recovery never answers while the
-/// test holds the run table. A loaded host stalls a debug build past 1 s.
-const STATUS_WAIT: Duration = Duration::from_secs(10);
+/// What the acceptance criterion allows a `status` during recovery.
+const STATUS_BUDGET: Duration = Duration::from_secs(1);
 
 /// A store with [`RUNS`] live runs and [`QUEUED`] items waiting behind them.
 async fn large_store() -> Harness {
@@ -42,9 +41,9 @@ async fn large_store() -> Harness {
 
 async fn recovery_of(client: &ArchonClient) -> Option<RecoveryProgress> {
     let asked = client.request(Request::Status(Default::default()));
-    let answer = tokio::time::timeout(STATUS_WAIT, asked)
+    let answer = tokio::time::timeout(STATUS_BUDGET, asked)
         .await
-        .expect("status answers during recovery, not after it");
+        .expect("status answers within its budget during recovery");
     match answer.expect("status is served during recovery") {
         Reply::Status(status) => status.recovery,
         other => panic!("status replied {other:?}"),

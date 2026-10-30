@@ -1122,6 +1122,13 @@ impl FakeBackend {
         state.unreadable.insert(task, error.to_owned());
     }
 
+    /// The delegated agent's own deadline is `at`, as copied at its spawn.
+    pub fn limit_delegated(&self, agent: &AetherAgentId, at: Timestamp) {
+        let mut state = self.state();
+        let delegated = state.delegated.iter_mut().find(|d| d.agent == *agent);
+        delegated.expect("a delegated agent").deadline = Some(at);
+    }
+
     /// The delegated agent ended as `ended`.
     pub fn end_delegated(&self, agent: &AetherAgentId, ended: DescendantState) {
         assert_ne!(ended, DescendantState::Live, "an ended agent is not live");
@@ -1316,7 +1323,11 @@ impl AgentBackend for FakeBackend {
         if let Some(error) = state.update_failures.pop_front() {
             return Err(error);
         }
-        if !state.knows(agent) || state.dead.contains(agent) {
+        let helper = state
+            .delegated
+            .iter()
+            .any(|d| d.agent == *agent && d.state == DescendantState::Live);
+        if !(state.knows(agent) || helper) || state.dead.contains(agent) {
             return Err(ArchonError::NotFound(format!(
                 "aether: no live agent {agent}"
             )));

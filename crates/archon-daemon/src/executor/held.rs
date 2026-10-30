@@ -7,7 +7,7 @@ use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::id::StageRunId;
-use archon_core::ports::AgentUpdate;
+use archon_core::ports::{AgentUpdate, DescendantState};
 use archon_core::run::{StageRun, StageState};
 
 use super::{resume, spawn};
@@ -98,7 +98,7 @@ async fn raise(
     assert!(!update.is_empty(), "a raise changes the deadline");
     let raised = match ctx.backend.supports_subtree_update().await? {
         true => ctx.backend.update_subtree(lead, update).await,
-        false => ctx.backend.update_agent(lead, update).await,
+        false => raise_each(ctx, lead, update).await,
     };
     match raised {
         Ok(()) => Ok(true),
@@ -108,6 +108,37 @@ async fn raise(
             Ok(false)
         }
     }
+}
+
+/// Raise `lead`, then each live helper beneath it whose deadline is lower,
+/// for an Aether that cannot update a subtree: a held helper may be the one
+/// Aether holds. A helper that ended refuses; one with no deadline keeps none.
+async fn raise_each(
+    ctx: &DaemonContext,
+    lead: &AetherAgentId,
+    update: AgentUpdate,
+) -> Result<(), ArchonError> {
+    let until = update.deadline.expect("a raise sets a deadline");
+    ctx.backend.update_agent(lead, update.clone()).await?;
+    let helpers = ctx.backend.descendants(lead).await?;
+    let lower = helpers.iter().filter(|helper| {
+        helper.state == DescendantState::Live && helper.deadline.is_some_and(|d| d < until)
+    });
+    for helper in lower {
+        assert_ne!(&helper.agent, lead, "an agent is not beneath itself");
+        match ctx
+            .backend
+            .update_agent(&helper.agent, update.clone())
+            .await
+        {
+            Ok(()) => {}
+            Err(error) if resume::unanswered(&error) || error.is_store() => return Err(error),
+            Err(refusal) => {
+                tracing::warn!(agent = %helper.agent, %refusal, "held helper's deadline not moved; it has most likely ended");
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Hold the deadlines of the `nearing` stages Aether holds, each read at

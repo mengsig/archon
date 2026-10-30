@@ -264,6 +264,39 @@ async fn a_held_stage_near_its_deadline_has_it_moved() {
     assert_eq!(the_only_running(&h).await.id, stage.id);
 }
 
+/// An Aether that cannot update a subtree has each live helper whose deadline
+/// is lower raised with the lead: the one it holds may be a helper.
+#[tokio::test]
+async fn a_held_stage_has_its_helpers_deadlines_moved_one_by_one() {
+    let h = Harness::new().await;
+    h.enqueue("a helper waits on an approval").await;
+    h.dispatch().await;
+    let stage = the_only_running(&h).await;
+    let soon = archon_core::now() + chrono::Duration::minutes(5);
+    common::set_deadline(&h, &stage, soon).await;
+    let held = h.backend.delegate(&lead(&stage), common::MODEL);
+    h.backend.limit_delegated(&held, soon);
+    let unlimited = h.backend.delegate(&lead(&stage), common::MODEL);
+    h.backend
+        .set_pulse(&lead(&stage), TreePulse { held: true, ..DEAD });
+    sweep(&h).await;
+
+    let moved = common::stored_deadline(&h, &stage)
+        .await
+        .expect("a deadline");
+    let raised: Vec<_> = h
+        .backend
+        .updates()
+        .into_iter()
+        .map(|u| (u.0, u.1.deadline))
+        .collect();
+    assert_eq!(
+        raised,
+        [(lead(&stage), Some(moved)), (held, Some(moved))],
+        "{unlimited} keeps no deadline"
+    );
+}
+
 #[tokio::test]
 async fn a_stage_near_its_deadline_that_is_not_held_keeps_it() {
     let h = Harness::new().await;

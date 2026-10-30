@@ -1421,8 +1421,9 @@ in a new worktree off the base branch (§13).
   A tree Aether holds (an agent `blocked` on a usage limit or credentials,
   or waiting for an approval) is suspended, not failed: when its deadline
   is less than 10 min away, read at most once a minute, or already past,
-  archond moves it to 30 min from now, in Aether (with the agents beneath
-  the lead when Aether updates a subtree) and in the stored request, and
+  archond moves it to 30 min from now, in Aether (the lead and every live
+  agent beneath it whose deadline is lower, one by one when Aether cannot
+  update a subtree) and in the stored request, and
   never times it out while held. A later deadline a steer stored is kept,
   and sent to Aether again if the steer landed while the move was in flight.
 - `infra` failures (`agent.failed` before its task settles, or Aether restart

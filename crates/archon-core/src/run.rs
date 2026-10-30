@@ -65,7 +65,7 @@ impl Verdict {
     /// What the last `VERDICT: <word>` line of `text` says, in any letter
     /// case and with light markdown (`**Verdict:** PASS`); `Unknown` when
     /// that line names no verdict, even if an earlier one did, or a pass is
-    /// explained beyond [`PLAIN_SUCCESS`] words or followed by other lines.
+    /// explained beyond plain success words or followed by other lines.
     pub fn from_summary(text: &str) -> Option<Self> {
         let (line, value) = last_verdict_line(text)?;
         let verdict = Self::from_word(value);

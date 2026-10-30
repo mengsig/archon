@@ -47,7 +47,8 @@
 - Stage gates and delegated reviews read verdicts with one tolerant
   parser: a structured `verdict` key, whatever it holds, then a structured
   `result` or `status` that opens with a verdict word or a `VERDICT:`
-  label, then the summary's last `VERDICT:` line at column 0 outside block
+  label (an unreadable one counting as fail), then the summary's last
+  `VERDICT:` line at column 0 outside block
   quotes (and the lines that continue one) and fences, in any letter case and
   through markdown emphasis (`**Verdict:** PASS`), with `passed`, `approved`,
   `failed` and `rejected` read as pass and fail. A test stage that passed

@@ -53,9 +53,13 @@ impl Verdict {
     }
 
     /// A field's verdict: its opening word, after a `VERDICT:` label if it
-    /// opens with one. A verdict further in is an example or a quote.
+    /// opens with one, which is `Unknown` when unreadable. A verdict further
+    /// in is an example or a quote.
     fn from_field(text: &str) -> Option<Self> {
-        Self::leading(strip_label(text, "verdict").unwrap_or(text))
+        match strip_label(text, "verdict") {
+            Some(value) => Some(Self::from_word(value)),
+            None => Self::leading(text),
+        }
     }
 
     /// What the last `VERDICT: <word>` line of `text` says, in any letter
@@ -868,6 +872,11 @@ mod tests {
             let labelled = json!({key: "**VERDICT:** FAIL — two findings"});
             let read = Verdict::extract("VERDICT: PASS", Some(&labelled));
             assert_eq!(read, Verdict::Fail, "{key}");
+            let unreadable = json!({key: "VERDICT: not passed"});
+            let read = Verdict::extract("VERDICT: PASS", Some(&unreadable));
+            assert_eq!(read, Verdict::Unknown, "{key}");
+            let said = Verdict::stated("VERDICT: PASS", Some(&unreadable));
+            assert_eq!(said.as_deref(), Some("VERDICT: not passed"), "{key}");
         }
         let choice = json!({"status": "PASS or FAIL"});
         let said = Verdict::stated("VERDICT: PASS", Some(&choice));

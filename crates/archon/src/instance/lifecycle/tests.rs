@@ -1,3 +1,4 @@
+use std::io::Write as _;
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
 use std::thread::JoinHandle;
@@ -257,25 +258,42 @@ fn a_slow_start_is_waited_for_while_the_daemon_is_healthy() {
     drop(listener.join().unwrap());
 }
 
+/// Stands in for an aetherd that recovers for `span`, adding a line to its
+/// startup log every `every`, and answers on `socket` only after that.
+fn log_then_bind(socket: PathBuf, every: Duration, span: Duration) -> JoinHandle<UnixListener> {
+    assert!(every < span, "it logs more than once before it answers");
+    let log = socket.with_extension("startup.log");
+    std::thread::spawn(move || {
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log)
+            .unwrap();
+        let started = Instant::now();
+        while started.elapsed() < span {
+            file.write_all(b"recovering\n").unwrap();
+            std::thread::sleep(every);
+        }
+        UnixListener::bind(&socket).unwrap()
+    })
+}
+
 #[test]
 fn a_slow_start_that_keeps_logging_outlasts_the_silence_limit() {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("aetherd.sock");
-    let log = dir.path().join("aetherd.startup.log");
-    let quiet = Duration::from_millis(400);
-    let writer = {
-        let log = log.clone();
-        std::thread::spawn(move || {
-            for step in 0..8 {
-                std::fs::write(&log, "recovering\n".repeat(step + 1)).unwrap();
-                std::thread::sleep(Duration::from_millis(150));
-            }
-        })
-    };
-    let listener = bind_after(socket.clone(), Duration::from_millis(1_300));
-    wait_for_slow_start(&socket, quiet, Duration::from_secs(10)).unwrap();
-    writer.join().unwrap();
-    drop(listener.join().unwrap());
+    // Forty writes fit in the silence limit, so a writer a loaded host stalls
+    // for a while still keeps the start alive.
+    let (every, quiet) = (Duration::from_millis(50), Duration::from_secs(2));
+    let span = quiet + Duration::from_secs(1);
+    let started = Instant::now();
+    let daemon = log_then_bind(socket.clone(), every, span);
+    wait_for_slow_start(&socket, quiet, Duration::from_secs(60)).unwrap();
+    assert!(
+        started.elapsed() >= span,
+        "it answered only after the limit"
+    );
+    drop(daemon.join().unwrap());
 }
 
 #[test]
@@ -294,8 +312,8 @@ fn aether_giving_up_on_a_living_daemon_is_waited_out_not_failed() {
         "echo 'Error: io: the daemon did not answer on the socket within 10s; it is still \
          running, and anything it wrote while starting is in the log' >&2; exit 1",
     );
-    let listener = bind_after(shim.instance.socket.clone(), Duration::from_millis(800));
     std::fs::create_dir_all(shim.instance.socket.parent().unwrap()).unwrap();
+    let listener = bind_after(shim.instance.socket.clone(), Duration::from_millis(800));
     let start = ensure_running(&shim.instance, &shim.program).unwrap();
     assert_eq!(start, Start::Started);
     assert_eq!(shim.calls().len(), 1, "aether daemon ran once, not retried");

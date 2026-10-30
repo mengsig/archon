@@ -81,6 +81,7 @@ impl Verdict {
             .or_else(|| fenced_json(summary));
         if let Some(data) = json {
             let read = Self::read_json(&data, structured)?;
+            read.claims_agree(summary, structured)?;
             return match Said::from_summary(summary) {
                 None => Ok(read),
                 Some(Said::Pass) if read.pass => Ok(read),
@@ -138,16 +139,28 @@ impl Verdict {
             None | Some(Value::Null) => None,
             given => Some(commit_of(given).ok_or("its `base:` line names no commit")?),
         };
-        same_commit("head", Some(&head), commit_of(field("head")))?;
-        same_commit("base", base.as_ref(), commit_of(field("base")))?;
         let listed = field("findings").and_then(Value::as_array);
-        Ok(Self {
+        let read = Self {
             pass,
             head,
             base,
             findings: listed.map(Vec::len),
             titles: listed.map(|list| finding_titles(list)).unwrap_or_default(),
-        })
+        };
+        read.claims_agree(summary, structured)?;
+        Ok(read)
+    }
+
+    /// `Err` when the summary's top-level `head:`/`base:` lines or a
+    /// `structured` without a verdict name other commits than this verdict read.
+    fn claims_agree(&self, summary: &str, structured: Option<&Value>) -> Result<(), String> {
+        for (label, read) in [("head", Some(&self.head)), ("base", self.base.as_ref())] {
+            let line = labelled(summary, label).and_then(|v| commit_of(Some(&Value::from(v))));
+            let field = commit_of(structured.and_then(|data| data.get(label)));
+            same_commit(label, read, line, "summary line")?;
+            same_commit(label, read, field, "structured field")?;
+        }
+        Ok(())
     }
 
     /// Read a reviewer's `{"verdict", "head", "base"}`; `Err` says, in words
@@ -250,18 +263,23 @@ fn labelled(text: &str, label: &str) -> Option<String> {
     Some(value.trim().trim_matches('`').to_owned())
 }
 
-/// `Err` when a summary line and a structured field name different commits
-/// as `label`; an abbreviation of the other counts as the same commit.
-fn same_commit(label: &str, line: Option<&String>, field: Option<String>) -> Result<(), String> {
-    let (Some(line), Some(field)) = (line, field) else {
+/// `Err` when `other`, from `source`, names another commit as `label` than
+/// the verdict `read`; an abbreviation of the other counts as the same commit.
+fn same_commit(
+    label: &str,
+    read: Option<&String>,
+    other: Option<String>,
+    source: &str,
+) -> Result<(), String> {
+    let (Some(read), Some(other)) = (read, other) else {
         return Ok(());
     };
-    debug_assert!(line.len() >= MIN_COMMIT_CHARS && field.len() >= MIN_COMMIT_CHARS);
-    if line.starts_with(field.as_str()) || field.starts_with(line.as_str()) {
+    debug_assert!(read.len() >= MIN_COMMIT_CHARS && other.len() >= MIN_COMMIT_CHARS);
+    if read.starts_with(other.as_str()) || other.starts_with(read.as_str()) {
         return Ok(());
     }
     Err(format!(
-        "its summary's `{label}: {line}` and its structured `{label}` {field:?} name different commits"
+        "it names two commits as `{label}`: {read} in its verdict and {other} in its {source}"
     ))
 }
 
@@ -666,11 +684,22 @@ mod tests {
         }
         let fenced_only = format!("```\nhead: {newer}\n```\nVERDICT: PASS");
         assert!(Verdict::read_result(&fenced_only, None).is_err());
+        let pass = json!({"verdict": "pass"});
         for label in ["head", "base"] {
             let other = format!("VERDICT: PASS\n{label}: {newer}");
             let refused = Verdict::read_result(&other, Some(&read_commits)).unwrap_err();
-            assert!(refused.contains("different commits"), "{refused}");
+            assert!(refused.contains("names two commits"), "{refused}");
+            let json_line = format!("```json\n{pass}\n```\n{label}: {newer}");
+            let refused = Verdict::read_result(&json_line, Some(&read_commits)).unwrap_err();
+            assert!(refused.contains("names two commits"), "{refused}");
+            let mut own = json!({"verdict": "pass", "head": HEAD, "base": "1234567"});
+            own[label] = json!(newer);
+            let refused = Verdict::read_result(&own.to_string(), Some(&read_commits)).unwrap_err();
+            assert!(refused.contains("names two commits"), "{refused}");
         }
+        let agreeing = format!("```json\n{pass}\n```\nhead: {}", &HEAD[..7]);
+        let read = Verdict::read_result(&agreeing, Some(&read_commits)).unwrap();
+        assert_eq!(read.head, HEAD);
     }
 
     #[test]

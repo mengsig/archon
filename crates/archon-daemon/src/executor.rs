@@ -622,8 +622,11 @@ async fn deliver_and_tidy(ctx: &DaemonContext, round: &mut Round, follow: Follow
     // One per owner, as each holds its owner's mark; before the cleanups, which mark it too.
     for Teardown { item, tree, mark } in follow.stacks {
         let torn = crate::compose::tear_down(ctx, &item, &tree, "after its run ended").await;
+        // The services its stages declared, and whatever else they left.
+        let reaped = reap::run_end(ctx, &tree).await;
         drop(mark);
         round.record(torn.map(|()| FollowUp::default()));
+        round.record(reaped);
     }
     for build in dedup(follow.release_builds) {
         round.record(release_item_build(ctx, build).await);

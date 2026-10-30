@@ -1126,6 +1126,13 @@ async fn a_week_long_timeout_gives_the_agent_a_week_long_deadline() {
     assert_eq!(requests.len(), 1);
     let week = chrono::Duration::days(7);
     assert_eq!(requests[0].deadline, Some(stage.started_at + week));
+    let until = (stage.started_at + week).format("%Y-%m-%d %H:%M UTC");
+    let told = format!("at {until}, 10080 minutes after your start");
+    assert!(
+        requests[0].instructions.contains(&told),
+        "{}",
+        requests[0].instructions
+    );
 }
 
 /// An item's `stage_timeouts` set after a first run reach the agent's
@@ -1168,6 +1175,12 @@ async fn an_item_timeout_set_before_a_retry_is_the_retried_agents_deadline() {
     let retried = h.backend.requests().pop().expect("the retried spawn");
     let wanted = stage.started_at + chrono::Duration::minutes(150);
     assert_eq!(retried.deadline, Some(wanted));
+    let told = "150 minutes after your start, and the stage fails. If your task has you commit";
+    assert!(
+        retried.instructions.contains(told),
+        "{}",
+        retried.instructions
+    );
 }
 
 /// Aether's `agent.failed` for `stage`'s agent, stamped `at`.

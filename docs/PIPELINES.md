@@ -190,6 +190,8 @@ once is set by `[limits]` instead.
   deadline is exactly that long after it starts: a larger value is refused,
   never shortened. An item may override it per stage with `stage_timeouts`
   (`enqueue`, `update_item`, `steer_item`) within `[limits] max_stage_timeout_minutes`.
+  The agent's contract names the deadline that applies, so give a stage
+  that builds and tests room for both.
 - Every `{{placeholder}}` in a prompt is a known variable (see below). The
   `team.*` variables are only allowed in a team stage's prompt.
 
@@ -297,7 +299,9 @@ and the stage delegates that many independent reviewers:
 Reviewers, delegated ones and a review stage's own, try mutants and repros
 in throwaway copies under `<data>/experiments/<item>`. Archon creates that
 directory before the stage starts and deletes it once the item settled and
-all its agents have stopped.
+all its agents have stopped. Each experiment runs under one `timeout 30s`,
+or `timeout 120s` when it compiles, and a timeout is inconclusive: a slow
+build is no finding, and no proof that a mutant was caught.
 
 An item that leaves `review` out gets the declared `level`, raised to the
 operator's ceiling when the ceiling asks for more. The ceiling still bounds

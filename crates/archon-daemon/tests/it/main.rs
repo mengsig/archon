@@ -79,6 +79,7 @@ mod restack_landed;
 mod retry;
 mod risk_label;
 mod server;
+mod services;
 mod ship;
 mod ship_coordination;
 mod snapshot;

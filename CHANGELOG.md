@@ -32,6 +32,55 @@
   that gave them the task asked to leave it running; then they report what
   still runs and how to stop it (#321).
 
+### Stage time
+
+- Built-in stages that build and test get longer timeouts: `direct`'s
+  `implement` 180 minutes (was 60, now as long as `adaptive`'s `build`),
+  `e2e-testing`'s `setup` and `swarm`'s `plan` 120 (were 60), and
+  `agent-testing`'s `plan`, `code-audit`'s `scope` and `refactor`'s
+  `review` 90 (were 45, 45 and 60). An ordinary change with a full check
+  and a reviewer no longer runs into a hard stop at an hour. The deadline
+  still stops the stage when it passes.
+- Every stage agent's contract names its deadline: the time Archon stops it
+  and every agent it delegated to, and how many minutes after its start that
+  is, with an item's own `stage_timeouts` applied. A `work` or `team` stage
+  in a worktree is told that, if its task has it commit, it commits each
+  working step as it goes, so a retry builds on it. An
+  agent resumed for a fix is told its new deadline with the findings.
+  Before, an agent saw its deadline only if it asked Aether.
+
+### Review experiments
+
+- A reviewer's ad-hoc experiment (a mutant, probe or repro) that times out
+  is inconclusive, never a finding or a detection on its own, and one that
+  compiles gets `timeout 120s` instead of 30s. A timeout counted as
+  detected before, so a mutant or repro whose build ran past 30 seconds
+  was reported as a hang it never showed.
+
+### Stage processes
+
+- Every stage contract tells the agent to stop only processes it started,
+  by the PID it recorded, its process group or its Compose project, and
+  never by name or pattern (`pkill`, `killall`, `pgrep -f … | xargs kill`):
+  agents run as the operator's user, so such a kill reached the operator's
+  archond and aetherd and every stage they ran. A delegating agent passes
+  the rule on to its children.
+- `e2e-testing`'s setup writes a `stop.sh` that stops what `start.sh`
+  recorded and nothing found by name, and setup and e2e confirm that none
+  of those recorded processes or containers still runs, not that nothing
+  runs at all. `agent-testing`'s plan records stop commands the same way.
+- A stage can keep a server up for a later stage of its run by starting it
+  under `setsid` and writing its PID to `.archon/services/<name>.pid` in the
+  worktree it works in, a team role's own included. The stage-end reap
+  spares that process, the process group it leads and its descendants while
+  the run goes on (not a group it only joined, which `cmd &` shares with
+  the engine's every stray), and the run's end reaps what still runs from
+  the worktree. Before, the reap stopped every process a stage left, so
+  setup could not hand a running app to the next stage. A malformed PID
+  file keeps nothing. The PID files do not count as a change when the run
+  ships, and a team role's are left out of the commit Archon makes of its
+  uncommitted work, so two roles can declare the same name.
+
 ### Mobile web app
 
 - Markdown renders in the mobile web app: chat bubbles and feed lines,

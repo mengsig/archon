@@ -46,7 +46,8 @@ Read `{{workspace}}/.archon/e2e/env.md` for the details.
    the retry, mark the scenario as passed and say it was flaky in `notes`. A
    step that fails twice is a failure.
 6. **Stop.** Always run `.archon/e2e/stop.sh` at the end, even after a
-   failure. Confirm that nothing is left running.
+   failure. Confirm that none of the processes or containers it recorded is
+   left running.
 
 ## Verdict
 

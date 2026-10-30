@@ -8,6 +8,7 @@
 
 use std::collections::BTreeSet;
 
+use archon_core::Timestamp;
 use archon_core::aether_ids::AetherAgentId;
 use archon_core::error::ArchonError;
 use archon_core::id::{PipelineRunId, StageRunId};
@@ -201,6 +202,21 @@ pub(super) async fn hand_over(
     tracing::info!(stage = %stage.id, %agent, %refusal, "kept agent cannot be resumed; spawning a fresh one");
     replace(ctx, agent).await?;
     Ok(false)
+}
+
+/// `kept` told the resumed or woken attempt's own deadline `until`, which replaces the one
+/// its contract named.
+pub(super) fn with_deadline(mut kept: KeptAgent, until: Option<Timestamp>) -> KeptAgent {
+    assert!(!kept.message.trim().is_empty(), "resumed with findings");
+    let Some(until) = until else {
+        return kept;
+    };
+    kept.message.push_str(&format!(
+        "\n\nArchon now stops you and every agent you delegated to at {}. If your task \
+         has you commit, commit each working step as you go. Finish with time to spare.",
+        until.format("%Y-%m-%d %H:%M UTC")
+    ));
+    kept
 }
 
 /// Aether's new cap for `agent` resumed or woken on `stage`: the cap counts its subtree's

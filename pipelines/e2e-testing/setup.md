@@ -39,7 +39,10 @@ as product defects, and do not paper over them.
    waits with a bounded timeout until a health check passes. It must be
    idempotent: running it twice must not start duplicates.
 3. **`.archon/e2e/stop.sh`** stops everything `start.sh` started, even after
-   a partial start, and exits 0 when nothing is running.
+   a partial start, by the PIDs, process groups or Compose project `start.sh`
+   recorded, and exits 0 when none of them runs. It never stops anything by
+   name or pattern (`pkill`, `killall`, `pgrep -f`): that would reach
+   processes it did not start, the operator's own daemons included.
 4. **`.archon/e2e/env.md`** is for the next agent. It gives the base URL or
    entry command, the test accounts or seed data, the tools available for
    driving the product (browser automation, HTTP client, CLI), where logs go,
@@ -47,8 +50,9 @@ as product defects, and do not paper over them.
 5. **Seed data** that the brief's scenarios need, created by a script under
    `.archon/e2e/`, never by hand.
 6. **Prove it works.** Run `start.sh`, confirm that the product answers (one
-   smoke request or command), run `stop.sh`, and confirm that nothing is left
-   running. Do this twice to prove idempotence.
+   smoke request or command), run `stop.sh`, and confirm that none of the
+   processes or containers `start.sh` recorded is left running. Do this twice
+   to prove idempotence.
 
 Never use production credentials or production services. If the product
 needs a secret or an external account you do not have, call `fail_task` with

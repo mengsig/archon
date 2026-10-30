@@ -499,12 +499,7 @@ async fn merge_parent(
     if fix_pending(ctx, item, parent, sha).await? {
         return Ok(());
     }
-    let reviewed = super::onto::reviewed_ancestry(&*ctx.store.lock().await, item)?;
-    if let Some(reviewed) = reviewed {
-        // Only a delivery proves a moved parent brings no unreviewed commit.
-        parent.needs_attention = Some(child_head.unwrap_or_default().to_owned());
-        tell_held(ctx, item, &reviewed.pr.url()).await?;
-        ctx.store.lock().await.save_stack_parent(parent)?;
+    if held_for_review(ctx, item, parent, child_head).await? {
         return Ok(());
     }
     let Some(mark) = mark_current(ctx, item, run).await? else {
@@ -552,26 +547,41 @@ pub(super) async fn mark_current(
     Ok(ctx.collecting.mark(item.id.clone()))
 }
 
-/// Tell the operator a stack on the reviewed pull request `reviewed` is never
-/// restacked in place; this is said once per pull request head.
-async fn tell_held(
+/// Whether `item` carries a reviewed pull request through its stack, so no
+/// parent is merged into its branch in place: only a delivery proves such a
+/// merge brings no unreviewed commit. Told once per pull request head.
+pub(super) async fn held_for_review(
     ctx: &DaemonContext,
     item: &QueueItem,
-    reviewed: &str,
-) -> Result<(), ArchonError> {
+    parent: &mut StackParent,
+    child_head: Option<&str>,
+) -> Result<bool, ArchonError> {
+    assert_eq!(parent.item, item.id, "one of the item's own parents");
+    let reviewed = super::onto::reviewed_ancestry(&*ctx.store.lock().await, item)?;
+    let Some(reviewed) = reviewed else {
+        return Ok(false);
+    };
     assert!(
-        item.onto.is_none(),
-        "an onto item carries no reviewed stack"
+        reviewed.review_only,
+        "only a review item passes a pull request"
     );
-    assert!(!reviewed.is_empty(), "a reviewed pull request URL");
+    let at = child_head.unwrap_or_default();
+    if parent.needs_attention.as_deref() == Some(at) {
+        return Ok(true);
+    }
+    parent.needs_attention = Some(at.to_owned());
     let text = format!(
-        "A parent of item {id} moved, but {id} is stacked on the reviewed pull request \
-         {reviewed}, so Archon does not merge the parent into its branch in place: run \
-         `archon queue refresh {id}` to restack it through a delivery that proves it carries \
-         the reviewed commits unchanged",
+        "Item {id}'s parent {} moved or merged, but {id} is stacked on the reviewed pull \
+         request {}, so Archon merges nothing into its branch in place and leaves it as \
+         delivered. Once none of its parents is open, `archon queue refresh {id}` restacks \
+         it through a delivery that proves it carries the reviewed commits unchanged",
+        parent.parent_item,
+        reviewed.pr.url(),
         id = item.id
     );
-    super::finish::notify(ctx, NotificationKind::Blocker, &text, Some(&item.id), None).await
+    super::finish::notify(ctx, NotificationKind::Blocker, &text, Some(&item.id), None).await?;
+    ctx.store.lock().await.save_stack_parent(parent)?;
+    Ok(true)
 }
 
 /// Tell the operator `origin` refused the restacked branch; this is said once

@@ -1187,6 +1187,11 @@ pull request, under the usual confirmation or `grant_merge`, only:
 - by the first method the repository allows, pinned to that head, so GitHub
   credits the contributor as the author; `merge = auto` never applies.
 
+The review covers the pull request from where it forked off its base at
+review time. A base branch force-pushed back past some of its commits
+afterwards brings those commits into the merge unread; branch protection
+that forbids force-pushes to the base prevents it.
+
 An item with review level `none`, or whose reviewers did not pass, has no
 review on record and merges nothing. A `review` item is never refreshed:
 `archon queue refresh` refuses it, so its frozen head never moves under its
@@ -1203,8 +1208,9 @@ repository's git identity, unless the base branch on GitHub already holds
 them. A rebased, amended or squashed contributor commit, or any other
 foreign commit, is refused as before, and so in an item queued on top of
 it, at any depth. Archon never restacks such an item in place when a
-parent's branch moves; it tells you to run `archon queue refresh`, which
-makes the same checks. If the contributor's pull request is
+parent moves or merges; it leaves the branch as delivered and tells you.
+Once none of its parents is open, `archon queue refresh` restacks it
+through a refresh item that makes the same checks. If the contributor's pull request is
 later squash-merged at that head, the stacked pull request still carries
 the original commits; `archon queue refresh` merges the new base into it
 and keeps the same checks. One merged at a different head is refused.

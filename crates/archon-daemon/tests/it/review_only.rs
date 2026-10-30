@@ -892,6 +892,95 @@ async fn a_moved_parent_of_a_shipped_stack_on_a_stack_is_not_merged_in_place() {
     nothing_pushed_to_the_fork(&h, &gh, &head);
 }
 
+/// A shipped stack on a stack whose parent GitHub squash-merged into `main`,
+/// its local branch since holding an unreviewed commit no delivery checked.
+/// Returns that stack and the head it shipped.
+async fn landed_under_a_foreign_commit() -> (Harness, FakeGh, String, QueueItem, String) {
+    let (h, gh, head, review) = reviewed_fork().await;
+    let second = second_level(&h, &gh, &head, &review).await;
+    settle_stacked(&h, &second, |workspace| {
+        own_commit_named(workspace, "next.txt")
+    })
+    .await;
+    let branch = h.run(&second.id).await.branch;
+    let shipped = pushed(&origin_of(&h), &branch).expect("its branch");
+
+    let parent = h.run(&second.dependencies[0]).await;
+    let outsider = h.dir.path().join("outsider");
+    let (from, to) = (origin_of(&h), outsider.to_str().unwrap().to_owned());
+    git(
+        h.dir.path(),
+        &["clone", "--quiet", from.to_str().unwrap(), &to],
+    );
+    let squashed = format!("origin/{}", parent.branch);
+    git(&outsider, &["merge", "--quiet", "--squash", &squashed]);
+    let identity = [
+        "-c",
+        "user.name=Maintainer",
+        "-c",
+        "user.email=m@example.com",
+    ];
+    git(
+        &outsider,
+        &[&identity[..], &["commit", "--quiet", "-m", "Squash"]].concat(),
+    );
+    git(&outsider, &["push", "--quiet", "origin", "main"]);
+    let mut store = h.ctx.store.lock().await;
+    let pr = store
+        .run_pull_request(&parent.id)
+        .unwrap()
+        .expect("its pull request")
+        .pr;
+    store.kv_set(&format!("pr_settled:{pr}"), "MERGED").unwrap();
+    drop(store);
+
+    git(&outsider, &["checkout", "--quiet", &branch]);
+    other_commit(&outsider);
+    git(&h.repo, &["fetch", "--quiet", &to, &branch]);
+    let reference = format!("refs/heads/{branch}");
+    git(&h.repo, &["update-ref", &reference, "FETCH_HEAD"]);
+    (h, gh, head, second, shipped)
+}
+
+/// The landing sweep merges a merged parent into no reviewed stack in place,
+/// so an unreviewed commit on its local branch is never pushed by it.
+#[tokio::test]
+async fn a_landed_parent_of_a_reviewed_stack_is_not_merged_in_place() {
+    let (h, gh, head, second, shipped) = landed_under_a_foreign_commit().await;
+    for _ in 0..2 {
+        coordination::reconcile(&h.ctx).await.unwrap();
+    }
+
+    let branch = h.run(&second.id).await.branch;
+    assert_eq!(pushed(&origin_of(&h), &branch).as_deref(), Some(&*shipped));
+    let held = h.notices(NotificationKind::Blocker).await;
+    let told = held.iter().filter(|n| n.contains("queue refresh")).count();
+    assert_eq!(told, 1, "{held:?}");
+    nothing_pushed_to_the_fork(&h, &gh, &head);
+}
+
+/// A refresh pushes no reviewed stack in place over its landed parent: the
+/// refresh item's delivery is held to the review.
+#[tokio::test]
+async fn a_refresh_of_a_reviewed_stack_pushes_nothing_in_place() {
+    let (h, gh, head, second, shipped) = landed_under_a_foreign_commit().await;
+    coordination::reconcile(&h.ctx).await.unwrap();
+    let refresh = Request::RefreshItem {
+        item: second.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        stage_timeouts: Default::default(),
+    };
+    let Reply::Item(refreshed) = h.orchestrator(refresh).await.expect("refreshed") else {
+        panic!("refresh replied no item");
+    };
+
+    assert_ne!(refreshed.id, second.id, "a refresh item is queued");
+    let branch = h.run(&second.id).await.branch;
+    assert_eq!(pushed(&origin_of(&h), &branch).as_deref(), Some(&*shipped));
+    nothing_pushed_to_the_fork(&h, &gh, &head);
+}
+
 /// Local base refs are the worktree's to move: only `origin`'s base head,
 /// read at delivery, exempts a commit from the identity check.
 #[tokio::test]

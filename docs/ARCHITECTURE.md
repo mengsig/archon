@@ -5268,7 +5268,11 @@ the above:
   `gh pr merge`. Known limit: GitHub cannot pin check states to a merge,
   so a check that turns red in the round trip after that read is not
   seen (Archon's own merges share this window). Branch protection or a
-  ruleset with required checks closes it.
+  ruleset with required checks closes it. Likewise the fork the review
+  covered is not checked against the base at merge: a base branch
+  force-pushed back past commits of the pull request after the review
+  brings those commits in unread. Branch protection that forbids
+  force-pushes to the base closes it.
 
 The method is chosen as for any merge, and no author is passed, so GitHub
 credits the pull request's author. An item that `depends_on` such a review
@@ -5282,9 +5286,11 @@ branch, read with `ls-remote` and fetched at delivery, are exempt: no local
 or tracking ref counts, nor a stack parent's branch. A
 refresh of such an item, or a fix of its stack, keeps that floor, and so
 does an item stacked on it, at any depth, through `depends_on`. The
-restack sweep (§8.8) never merges a moved parent into such an item's branch
-in place: it tells the operator once per head to run `archon queue
-refresh`, whose delivery checks that floor. Nothing is ever pushed to the
+restack sweep (§8.8) never merges a moved or merged parent into such an
+item's branch in place, nor does a refresh merge a landed parent there:
+the branch stays as delivered, the operator is told once per head, and once
+no parent is open `archon queue refresh` restacks it through a refresh
+item whose delivery checks that floor. Nothing is ever pushed to the
 reviewed pull request's branch.
 
 **The merge.** A `merge_requests` row (store V13) is written before any

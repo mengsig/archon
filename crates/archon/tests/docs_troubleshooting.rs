@@ -225,7 +225,7 @@ const BLOCKERS: &[(&str, &str)] = &[
     ),
     (
         "crates/archon/src/cmd/update/restart.rs",
-        "gave up the restart: stage agents still ran after",
+        "gave up the restart: its own spawns, merges or deliveries still ran after",
     ),
     (
         "crates/archon/src/cmd/update/restart.rs",

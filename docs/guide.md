@@ -1190,7 +1190,8 @@ pull request, under the usual confirmation or `grant_merge`, only:
 An item with review level `none`, or whose reviewers did not pass, has no
 review on record and merges nothing. A `review` item is never refreshed:
 `archon queue refresh` refuses it, so its frozen head never moves under its
-review; queue a new one to review a moved head.
+review; queue a new one to review a moved head. Nor is one that another
+item depends on retried: that item ships on the strength of its pass.
 
 **Building on it.** An item that `depends_on` a succeeded `review` item (no
 `onto`) starts from the head that review passed and opens its own pull

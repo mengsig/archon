@@ -8,7 +8,7 @@ use crate::common;
 
 use archon_core::autonomy::{AutonomyPatch, ReviewLevel};
 use archon_core::error::ArchonError;
-use archon_core::merge::{MergeRequest, MergeState};
+use archon_core::merge::{MergeAuthority, MergeRequest, MergeState};
 use archon_core::model::ModelPlan;
 use archon_core::protocol::{EnqueueRequest, Reply, RepoPatch, RepoRef, Request};
 use archon_core::pull_request::OntoTarget;
@@ -317,6 +317,28 @@ async fn another_s_pull_request_merges_only_with_its_checks_green() {
     assert!(!gh.calls().iter().any(|c| c.starts_with("pr merge")));
 }
 
+#[tokio::test]
+async fn the_question_for_another_s_red_pull_request_offers_no_check_override() {
+    let (h, gh, head, item) = reviewed_fork().await;
+    let red = json!([{"__typename": "CheckRun", "name": "ci", "status": "COMPLETED", "conclusion": "FAILURE"}]);
+    gh.show(&head, "MERGEABLE", red);
+
+    let asked = merge_of(h.orchestrator(request_merge(&item)).await);
+
+    assert_eq!(asked.state, MergeState::AwaitingOperator);
+    let MergeAuthority::Confirmed { question, .. } = &asked.authority else {
+        panic!("asked: {asked:?}");
+    };
+    let question = h.ctx.store.lock().await.question(question).unwrap();
+    assert_eq!(question.options, ["yes", "no"]);
+    assert!(
+        !question.text.contains("ignore-checks"),
+        "{}",
+        question.text
+    );
+    assert!(!gh.calls().iter().any(|c| c.starts_with("pr merge")));
+}
+
 /// A check that fails while the merge method is read stops the merge: the
 /// checks are read last, just before `gh pr merge`.
 #[tokio::test]
@@ -525,6 +547,35 @@ async fn a_stack_on_reviewed_fork_commits_ships_them_unchanged_in_a_pull_request
             .iter()
             .any(|c| c.starts_with("pr create --base main"))
     );
+    nothing_pushed_to_the_fork(&h, &gh, &head);
+}
+
+#[tokio::test]
+async fn a_review_a_running_stack_depends_on_is_never_retried() {
+    let (h, gh, head, review) = reviewed_fork().await;
+    let item = stacked_on(&h, &review, &head).await;
+
+    let retry = Request::RetryItem {
+        item: review.id.clone(),
+        model_plan: None,
+        model_reasons: None,
+        fresh: false,
+        brief_append: None,
+        stage_timeouts: Default::default(),
+    };
+    let refused = h.cli(retry).await.expect_err("the pass stays on record");
+
+    assert!(
+        refused.to_string().contains(&item.id.to_string()),
+        "{refused}"
+    );
+    assert!(matches!(
+        h.state(&review.id).await,
+        QueueState::Succeeded { .. }
+    ));
+    settle_stacked(&h, &item, own_commit).await;
+    let state = h.state(&item.id).await;
+    assert!(matches!(state, QueueState::Succeeded { .. }), "{state:?}");
     nothing_pushed_to_the_fork(&h, &gh, &head);
 }
 

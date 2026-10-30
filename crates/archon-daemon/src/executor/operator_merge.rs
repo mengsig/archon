@@ -846,7 +846,11 @@ async fn ask(
         id: QuestionId::new(),
         number: 0,
         text: question_text(shipped, reason.as_deref(), seen),
-        options: MERGE_OPTIONS.iter().map(|o| (*o).to_owned()).collect(),
+        options: MERGE_OPTIONS
+            .iter()
+            .filter(|o| !shipped.review_of || **o != "yes ignore-checks")
+            .map(|o| (*o).to_owned())
+            .collect(),
         item: Some(shipped.item.id.clone()),
         aether: None,
         asked_by: None,
@@ -893,6 +897,10 @@ fn question_text(shipped: &Shipped, reason: Option<&str>, seen: &ChecksSeen) -> 
         return text;
     }
     text.push_str(&format!("\nChecks: {}.", seen.describe()));
+    if shipped.review_of {
+        text.push_str(" It merges only with every check green.\nAnswer `yes` or `no`.");
+        return text;
+    }
     if !seen.all_green() {
         text.push_str(" Only `yes ignore-checks` merges it so.");
     }

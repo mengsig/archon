@@ -1380,7 +1380,9 @@ The legal edges are implemented in `QueueState::can_transition_to`:
   pull request it has, and the retry is a `retry_after_done` correction of
   the run that had passed (§19), written with the transition. A dependent
   still queued waits for it to succeed again; one that already started goes
-  on. Until it is retried, a `succeeded` item takes no steer or update.
+  on. A `succeeded` review-only item (§18.6) that any item depends on is
+  never retried, as a stack on it ships on the strength of its pass. Until
+  it is retried, a `succeeded` item takes no steer or update.
 
 When a dependency fails or is cancelled, its dependents move to `blocked` and
 the orchestrator gets an `item_blocked` trigger. When a dependency is retried,

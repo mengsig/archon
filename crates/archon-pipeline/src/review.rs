@@ -79,8 +79,8 @@ impl Verdict {
             return Ok(read);
         }
         // JSON that states no verdict (a test report) is evidence; the lines decide.
-        let verdict_json = summary_json(summary).filter(|data| data.get("verdict").is_some());
-        if let Some(data) = verdict_json {
+        let json = summary_json(summary);
+        if let Some(data) = json.clone().filter(|data| data.get("verdict").is_some()) {
             let read = Self::read_json(data, structured)?;
             read.claims_agree(summary, structured)?;
             return match Said::from_summary(summary) {
@@ -96,6 +96,9 @@ impl Verdict {
         match Said::from_summary(summary) {
             Some(Said::Pass) => Self::from_lines(summary, structured, true),
             Some(Said::Fail) => Self::from_lines(summary, structured, false),
+            None if json.is_some() => Err(format!(
+                "its summary's JSON carries no `verdict`: {VERDICT_HOWTO}"
+            )),
             Some(Said::Unknown) | None => Err(no_verdict(summary, structured)),
         }
     }

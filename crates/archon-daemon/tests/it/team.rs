@@ -587,6 +587,59 @@ async fn a_replaced_role_keeps_what_is_left_of_its_share() {
     assert_eq!(replacement.cost_budget_usd, Some(1.75));
 }
 
+/// Charge `stage`'s agent a running total of `cost_usd`, plus a 0.25 estimate.
+async fn spend(h: &Harness, item: &QueueItemId, stage: &StageRun, cost_usd: f64) {
+    let row = SpendRow {
+        agent: stage.aether_agent.clone().expect("running"),
+        item: Some(item.clone()),
+        cost_usd,
+        cost_basis: archon_core::cost::CostBasis::ProviderReported,
+        cost_complete: None,
+        estimated_cost_usd: 0.25,
+        input_tokens: 10,
+        output_tokens: 5,
+        at: archon_core::now(),
+    };
+    h.ctx.store.lock().await.record_spend(&row).expect("spend");
+}
+
+/// A role woken after an infrastructure failure counts against its share
+/// only what it spent since the wake when it fails again.
+#[tokio::test]
+async fn a_woken_role_that_fails_again_keeps_what_is_left_of_its_share() {
+    let h = Harness::new().await;
+    let (item, _) = start_team(&h, "flaky role, twice").await;
+    let ui = h.running().await.into_iter().find(|s| role_of(s) == "ui");
+    let ui = ui.expect("ui");
+    let agent = ui.aether_agent.clone().expect("running");
+    let failed = || StageOutcome::Failed {
+        error: "engine died".into(),
+        infra: true,
+    };
+    spend(&h, &item.id, &ui, 1.0).await;
+    h.backend.fail_agent(&agent);
+    executor::stage_settled(&h.ctx, &agent, failed())
+        .await
+        .expect("settles");
+    h.dispatch().await;
+    assert_eq!(h.backend.woken(), std::slice::from_ref(&agent));
+    let woken = h.running().await.into_iter().find(|s| role_of(s) == "ui");
+    let woken = woken.expect("ui woken");
+    assert_ne!(woken.id, ui.id);
+
+    // 1.25 before the wake, 0.5 since: 3 - 1.25 - 0.5 is left.
+    spend(&h, &item.id, &woken, 1.5).await;
+    h.backend.fail_agent(&agent);
+    executor::stage_settled(&h.ctx, &agent, failed())
+        .await
+        .expect("settles");
+    h.dispatch().await;
+
+    let cold = h.backend.requests().last().cloned().expect("a cold retry");
+    assert_eq!(cold.labels["archon.fan"], ui.fan_index.to_string());
+    assert_eq!(cold.cost_budget_usd, Some(1.25));
+}
+
 async fn latest_run(h: &Harness, item: &QueueItemId) -> PipelineRun {
     let runs = h.ctx.store.lock().await.runs_for_item(item).expect("runs");
     let latest = runs.into_iter().max_by_key(|r| r.started_at);

@@ -936,7 +936,7 @@ fn replacement_budget(
     };
     assert!(granted.is_finite(), "budgets are finite amounts");
     let spent = match &failed.aether_agent {
-        Some(agent) => store.spend_for_agent(agent, estimates)?,
+        Some(agent) => spent_on_run(store, failed, agent, estimates)?,
         None => 0.0,
     };
     let unspent = granted - spent.max(failed.cost_usd);
@@ -946,6 +946,30 @@ fn replacement_budget(
     let share = left.map_or(unspent, |left| left.min(unspent));
     debug_assert!(share > 0.0 && share <= granted);
     Ok(Some(Some(share)))
+}
+
+/// What `agent` spent on stage run `run` itself: since it was handed `run`,
+/// resumed or woken for it, as its grant counts only from there.
+fn spent_on_run(
+    store: &Store,
+    run: &StageRun,
+    agent: &AetherAgentId,
+    estimates: bool,
+) -> Result<f64, ArchonError> {
+    assert_eq!(
+        run.aether_agent.as_ref(),
+        Some(agent),
+        "the run's own agent"
+    );
+    let at = (run.attempt, store.wakes_before(run)?);
+    let handoffs = store.agent_handoffs(agent, estimates)?;
+    let before = handoffs
+        .iter()
+        .find(|h| h.at() == at)
+        .map_or(0.0, |h| h.spent_by(agent));
+    let spent = store.spend_for_agent(agent, estimates)? - before;
+    // A provider's settled total may land below an interim charge.
+    Ok(spent.max(0.0))
 }
 
 /// A stage run claimed for one `create_agent`.

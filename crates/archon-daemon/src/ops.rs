@@ -1,6 +1,7 @@
 //! The operator's drained upgrade and restart of Archon (ARCHITECTURE §16):
-//! hold dispatch until the running stage agents finish, install what was
-//! named, hand the restart to a detached `archon daemon relaunch`, stop,
+//! hold dispatch until the running stage agents finish (only archond's own
+//! work, for a restart that keeps Aether), install what was named, hand the
+//! restart to a detached `archon daemon relaunch`, stop,
 //! and report the versions once the next archond is up. archond never asks
 //! the network for releases by itself; only `CheckUpdates` does.
 
@@ -258,11 +259,13 @@ async fn upgrade(ctx: &DaemonContext, request: &UpgradeRequest) -> Result<bool, 
     feed::system(ctx, format!("Upgrade started: {what}.")).await?;
     let limit = Duration::from_secs(request.drain_secs);
     ctx.ops.hold(ctx, true);
-    let busy = drain(ctx, &what, limit).await?;
-    if busy > 0 && !request.requeue {
+    let busy = drain(ctx, &what, limit, request.keep_aether).await?;
+    let left = busy.holding(request.keep_aether);
+    if left > 0 && !request.requeue {
         let why = format!(
-            "{what} gave up: {busy} stage agents still ran after {}s, so nothing was restarted \
+            "{what} gave up: {left} {} still ran after {}s, so nothing was restarted \
              and dispatch goes on. Ask again with a longer wait, or with requeue to restart anyway.",
+            Busy::waited_for(request.keep_aether),
             limit.as_secs()
         );
         return give_up(ctx, why).await.map(|()| false);
@@ -283,7 +286,7 @@ async fn upgrade(ctx: &DaemonContext, request: &UpgradeRequest) -> Result<bool, 
             before,
             restart_aether,
         },
-        busy,
+        busy.agents,
     )
     .await
 }
@@ -339,27 +342,63 @@ async fn install_step(
     install::plan(program, &target, &binary, cargo_bin.as_deref())
 }
 
-/// Wait until no stage agent runs, or `limit` passes; how many still run.
-async fn drain(ctx: &DaemonContext, what: &str, limit: Duration) -> Result<u32, ArchonError> {
+/// What still runs while an upgrade drains.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Busy {
+    /// Stage agents running in Aether.
+    agents: u32,
+    /// archond's own work: spawns, team merges and deliveries under way.
+    own: u32,
+}
+
+impl Busy {
+    /// What a restart waits for. One that keeps Aether leaves its stage
+    /// agents running for the next archond, so it waits only for archond's own work.
+    fn holding(self, keeps_agents: bool) -> u32 {
+        match keeps_agents {
+            true => self.own,
+            false => self.agents.saturating_add(self.own),
+        }
+    }
+
+    fn waited_for(keeps_agents: bool) -> &'static str {
+        match keeps_agents {
+            true => "spawns, merges or deliveries of archond",
+            false => "stage agents",
+        }
+    }
+}
+
+/// Wait until nothing the restart waits for runs, or `limit` passes; what
+/// still runs then.
+async fn drain(
+    ctx: &DaemonContext,
+    what: &str,
+    limit: Duration,
+    keeps_agents: bool,
+) -> Result<Busy, ArchonError> {
+    assert!(!limit.is_zero(), "a drain waits at least a second");
     let deadline = Instant::now() + limit;
     let mut told = false;
     loop {
         let busy = busy(ctx).await?;
+        let holding = busy.holding(keeps_agents);
         let now = Instant::now();
-        if busy == 0 || now >= deadline {
+        if holding == 0 || now >= deadline {
             return Ok(busy);
         }
         let left = deadline - now;
         if !told {
             let note = format!(
-                "Holding dispatch until {busy} running stage agents finish, for at most {}s.",
+                "Holding dispatch until {holding} running {} finish, for at most {}s.",
+                Busy::waited_for(keeps_agents),
                 left.as_secs()
             );
             feed::system(ctx, note).await?;
             told = true;
         }
         let phase = format!(
-            "{what}: draining, {busy} still running, {}s left",
+            "{what}: draining, {holding} still running, {}s left",
             left.as_secs()
         );
         set_phase(ctx, phase).await;
@@ -368,25 +407,26 @@ async fn drain(ctx: &DaemonContext, what: &str, limit: Duration) -> Result<u32, 
 }
 
 /// Stage agents running, and spawns, merges and deliveries under way.
-async fn busy(ctx: &DaemonContext) -> Result<u32, ArchonError> {
+async fn busy(ctx: &DaemonContext) -> Result<Busy, ArchonError> {
     let working = {
         let table = ctx.runs.lock().await;
         table.in_flight.len() + table.merging.len() + table.shipping.len()
     };
-    let running = ctx
+    let agents = ctx
         .store
         .lock()
         .await
         .dispatch_snapshot(archon_core::now())?
         .running_total;
-    Ok(running.saturating_add(u32::try_from(working).unwrap_or(u32::MAX)))
+    let own = u32::try_from(working).unwrap_or(u32::MAX);
+    Ok(Busy { agents, own })
 }
 
 /// Record the upgrade for the next archond, then start the restart helper.
 async fn hand_off(
     ctx: &DaemonContext,
     restarted: Restarted,
-    busy: u32,
+    agents: u32,
 ) -> Result<bool, ArchonError> {
     let record = serde_json::to_string(&restarted)?;
     ctx.store.lock().await.kv_set(RESTART_KEY, &record)?;
@@ -402,11 +442,11 @@ async fn hand_off(
         return give_up(ctx, why).await.map(|()| false);
     }
     set_phase(ctx, format!("{}: restarting", restarted.what)).await;
-    feed::system(ctx, restart_note(restarted.restart_aether, busy)).await?;
+    feed::system(ctx, restart_note(restarted.restart_aether, agents)).await?;
     Ok(true)
 }
 
-fn restart_note(restart_aether: bool, busy: u32) -> String {
+fn restart_note(restart_aether: bool, agents: u32) -> String {
     let (what, left) = match restart_aether {
         true => (
             "archond and Archon's own aetherd",
@@ -414,7 +454,7 @@ fn restart_note(restart_aether: bool, busy: u32) -> String {
         ),
         false => ("archond", "keep running in Aether for the next archond"),
     };
-    match busy {
+    match agents {
         0 => format!("Restarting {what} now."),
         n => format!("Restarting {what} now; the {n} stage agents still running {left}."),
     }
@@ -603,6 +643,15 @@ mod tests {
             restart_aether: false,
         };
         assert_eq!(kept.helper_args(), ["daemon", "relaunch", "--keep-aether"]);
+    }
+
+    #[test]
+    fn a_restart_that_keeps_aether_waits_only_for_archonds_own_work() {
+        let busy = Busy { agents: 3, own: 0 };
+        assert_eq!(busy.holding(true), 0, "agents keep running in Aether");
+        assert_eq!(busy.holding(false), 3);
+        let busy = Busy { agents: 3, own: 2 };
+        assert_eq!((busy.holding(true), busy.holding(false)), (2, 5));
     }
 
     #[test]

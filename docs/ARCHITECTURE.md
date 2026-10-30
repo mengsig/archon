@@ -2539,7 +2539,8 @@ returns:
 as `git commit` prints one) is first resolved in the run worktree with
 `git rev-parse --verify <id>^{commit}` (or `^{tree}`), and the full id is
 what archond stores and delivers; one that names no single object of that
-type is refused, saying so. The gate checks the record before the
+type is refused, saying so. 40 digits are resolved too, as in a SHA-256
+worktree they abbreviate; elsewhere they stay the full SHA-1 id. The gate checks the record before the
 review: a pass without one fails the run at that stage, so no delivery is
 ever asked for without it. Stages after the record stage cannot commit
 (§8.2), so what they verified is that tree.

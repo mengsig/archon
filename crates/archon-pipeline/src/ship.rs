@@ -90,6 +90,13 @@ pub fn is_abbreviated_id(id: &str) -> bool {
     hex && (7..64).contains(&id.len()) && id.len() != 40
 }
 
+/// Whether git may resolve `id` to a longer object id in some worktree: 7 to
+/// 63 hex digits. 40 is a full SHA-1 id, or abbreviates a SHA-256 one.
+pub fn may_abbreviate(id: &str) -> bool {
+    let hex = id.bytes().all(|b| b.is_ascii_hexdigit());
+    hex && (7..64).contains(&id.len())
+}
+
 /// `data[key]` as a full git object id: 40 (SHA-1) or 64 (SHA-256) hex digits.
 fn object_id(data: &Value, key: &str) -> Result<String, String> {
     let id = data.get(key).and_then(Value::as_str).unwrap_or("").trim();
@@ -342,6 +349,16 @@ mod tests {
         }
         for not in ["a1b2c3", COMMIT, &"f".repeat(64), "a1b2c3g", "", "HEAD~1"] {
             assert!(!is_abbreviated_id(not), "{not}");
+        }
+    }
+
+    #[test]
+    fn forty_hex_digits_may_abbreviate_a_sha256_id() {
+        for id in ["a1b2c3d", COMMIT, &"f".repeat(63)] {
+            assert!(may_abbreviate(id), "{id}");
+        }
+        for not in ["a1b2c3", &"f".repeat(64), "a1b2c3g", ""] {
+            assert!(!may_abbreviate(not), "{not}");
         }
     }
 

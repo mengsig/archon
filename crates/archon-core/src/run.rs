@@ -152,7 +152,8 @@ fn last_verdict_line(text: &str) -> Option<(&str, &str)> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineKind {
     Prose,
-    /// A `>` block quote line, or a line that lazily continues its paragraph.
+    /// A `>` block quote line, indented under four columns, or a line that
+    /// lazily continues its paragraph.
     Quote,
     /// Indented outside a fence: nested in a list item, or code.
     Indented,
@@ -205,7 +206,7 @@ fn line_kind(scan: &mut Scan, line: &str) -> LineKind {
     match (scan.fence.is_some(), columns) {
         (true, 0) => LineKind::FenceOpen,
         (true, _) => LineKind::NestedFenceOpen,
-        (false, 0) if start.starts_with('>') => {
+        (false, 0..4) if start.starts_with('>') => {
             scan.quoted = true;
             LineKind::Quote
         }
@@ -766,8 +767,12 @@ mod tests {
         assert_eq!(Verdict::extract(earlier, None), Verdict::Fail);
         let after_quote = "> VERDICT: FAIL\n\nVERDICT: PASS";
         assert_eq!(Verdict::extract(after_quote, None), Verdict::Pass);
-        let lazy = "Blocking issue.\n> Example of a passing result:\nVERDICT: PASS";
-        assert_eq!(Verdict::extract(lazy, None), Verdict::Unknown);
+        for lazy in [
+            "Blocking issue.\n> Example of a passing result:\nVERDICT: PASS",
+            "Blocking issue.\n   > Example of a passing result:\nVERDICT: PASS",
+        ] {
+            assert_eq!(Verdict::extract(lazy, None), Verdict::Unknown, "{lazy:?}");
+        }
         let listed_after_quote = "> a note\n- **Verdict:** PASS";
         assert_eq!(Verdict::extract(listed_after_quote, None), Verdict::Pass);
         let mixed = "````\n~~~\nVERDICT: PASS\n```\n````\nFindings remain.";

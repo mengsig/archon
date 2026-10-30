@@ -329,7 +329,9 @@ For providers that auto-complete a task from final text, Archon also accepts
 this object as the entire `summary` when `structured` states no verdict, or the
 `complete_task` arguments `{"summary": "...", "structured": {...}}` written
 out as that summary, or a `VERDICT: PASS|FAIL` line beside `head:` and
-`base:` lines (a `structured` without a verdict may give these instead). A
+`base:` lines (a `structured` without a verdict may give these instead; a
+line in a fence, a quote or nested in a list is an example, and a line and
+a field naming different commits are refused). A
 `structured` that states a verdict takes precedence, even if invalid. The
 verdict word is read as stage gates read it (see "The stage contract"). Prose,
 and a `VERDICT:` line with no commit it read, do not count as a delegated
@@ -812,7 +814,8 @@ pipeline authors cannot forget it. The contract depends on the stage kind:
   it holds, then a structured `result` or `status` that opens with a
   verdict word or a `VERDICT:` label, then the summary's last `VERDICT:`
   line that starts at column 0 outside block quotes and fences (an indented
-  line belongs to a list item or code, and a line right after a quote line
+  line belongs to a list item or code, and a line right after a quote line,
+  its `>` indented under four columns,
   continues the quote until a blank line, a heading, a bullet or a fence).
   Letter case and markdown emphasis
   (`**Verdict:** PASS`) do not matter, and `passed`, `approved`, `failed` and

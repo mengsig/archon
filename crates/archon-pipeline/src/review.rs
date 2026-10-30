@@ -124,7 +124,8 @@ impl Verdict {
     }
 
     /// A verdict given as a `VERDICT:` line: the commit it read comes from
-    /// `head:`/`base:` lines, else from a `structured` that gave no verdict.
+    /// `head:`/`base:` lines, else from a `structured` that gave no verdict;
+    /// a line and a structured field naming different commits are refused.
     fn from_lines(summary: &str, structured: Option<&Value>, pass: bool) -> Result<Self, String> {
         let field = |key| structured.and_then(|data| data.get(key));
         let line = |label| labelled(summary, label).map(Value::from);
@@ -137,6 +138,8 @@ impl Verdict {
             None | Some(Value::Null) => None,
             given => Some(commit_of(given).ok_or("its `base:` line names no commit")?),
         };
+        same_commit("head", Some(&head), commit_of(field("head")))?;
+        same_commit("base", base.as_ref(), commit_of(field("base")))?;
         let listed = field("findings").and_then(Value::as_array);
         Ok(Self {
             pass,
@@ -237,10 +240,29 @@ fn no_verdict(summary: &str, structured: Option<&Value>) -> String {
     }
 }
 
-/// The value of the last line of `text` that reads `label: value`.
+/// The value of the last top-level line of `text` that reads `label: value`;
+/// one in a fence, a quote or indented under a list item is an example.
 fn labelled(text: &str, label: &str) -> Option<String> {
-    let value = text.lines().rev().find_map(|l| strip_label(l, label))?;
+    let value = markdown_lines(text)
+        .filter(|(kind, _)| *kind == LineKind::Prose)
+        .filter_map(|(_, line)| strip_label(line, label))
+        .last()?;
     Some(value.trim().trim_matches('`').to_owned())
+}
+
+/// `Err` when a summary line and a structured field name different commits
+/// as `label`; an abbreviation of the other counts as the same commit.
+fn same_commit(label: &str, line: Option<&String>, field: Option<String>) -> Result<(), String> {
+    let (Some(line), Some(field)) = (line, field) else {
+        return Ok(());
+    };
+    debug_assert!(line.len() >= MIN_COMMIT_CHARS && field.len() >= MIN_COMMIT_CHARS);
+    if line.starts_with(field.as_str()) || field.starts_with(line.as_str()) {
+        return Ok(());
+    }
+    Err(format!(
+        "its summary's `{label}: {line}` and its structured `{label}` {field:?} name different commits"
+    ))
 }
 
 /// Shortest abbreviated commit id a verdict may give.
@@ -578,6 +600,9 @@ mod tests {
         );
         let in_result = json!({"result": "FAILED", "head": HEAD});
         assert!(!Verdict::read_result("", Some(&in_result)).unwrap().pass);
+        let abbreviated = format!("VERDICT: PASS\nhead: {}", &HEAD[..7]);
+        let read = Verdict::read_result(&abbreviated, Some(&findings)).unwrap();
+        assert_eq!(read.head, HEAD[..7]);
         let json_verdict = json!({"verdict": "pass"}).to_string();
         let commits = json!({"head": HEAD, "findings": []});
         let read = Verdict::read_result(&json_verdict, Some(&commits)).unwrap();
@@ -624,6 +649,28 @@ mod tests {
         let fenced = format!("```json\n{pass}\n```\nVERDICT: not passed");
         let refused = Verdict::read_result(&fenced, None).unwrap_err();
         assert!(refused.contains("\"VERDICT: not passed\""), "{refused}");
+    }
+
+    #[test]
+    fn an_example_commit_never_stands_for_the_one_the_review_read() {
+        let read_commits = json!({"head": HEAD, "base": "1234567"});
+        let newer = "fedcba9876543";
+        for example in [
+            format!("Example:\n```\nhead: {newer}\nbase: 7654321\n```\nVERDICT: PASS"),
+            format!("Example:\n> head: {newer}\n\nVERDICT: PASS"),
+            format!("- Example:\n  head: {newer}\n\nVERDICT: PASS"),
+        ] {
+            let read = Verdict::read_result(&example, Some(&read_commits)).unwrap();
+            assert_eq!(read.head, HEAD, "{example:?}");
+            assert_eq!(read.base.as_deref(), Some("1234567"), "{example:?}");
+        }
+        let fenced_only = format!("```\nhead: {newer}\n```\nVERDICT: PASS");
+        assert!(Verdict::read_result(&fenced_only, None).is_err());
+        for label in ["head", "base"] {
+            let other = format!("VERDICT: PASS\n{label}: {newer}");
+            let refused = Verdict::read_result(&other, Some(&read_commits)).unwrap_err();
+            assert!(refused.contains("different commits"), "{refused}");
+        }
     }
 
     #[test]

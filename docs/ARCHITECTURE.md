@@ -2291,8 +2291,9 @@ Where Aether auto-completes a Codex reviewer from its final text, the verdict
 object arrives as the whole `summary` with no `structured`, alone or as the
 `structured` of a written-out `complete_task` call (`{summary, structured}`);
 Archon reads it only then, and a `structured` that states a verdict always
-wins. A `VERDICT:` line beside `head:` and `base:` lines is read too. Prose
-is no verdict.
+wins. A `VERDICT:` line beside `head:` and `base:` lines is read too, each
+at the top level as the verdict line is; one that names another commit than
+a `structured` `head` or `base` is refused. Prose is no verdict.
 
 A completion without the record, with any other verdict, or with a pass
 that names fewer reviewers than the level asks for fails the run at that

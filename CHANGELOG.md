@@ -65,9 +65,10 @@
   does not), or followed in the summary by any line but `head:` and `base:`,
   still counts as fail,
   and the refusal now quotes it. A structured pass beside a summary
-  whose final `VERDICT:` line or JSON verdict does not pass counts as fail
-  too, and so does a pass that lists a finding of `blocking`, `blocker`,
-  `critical` or `high` severity.
+  whose final `VERDICT:` line or JSON verdict (`verdict`, `result` or
+  `status`) does not pass counts as fail too, and so does any pass beside
+  a finding of `blocking`, `blocker`, `critical` or `high` severity in
+  `structured` or the summary's JSON.
 - A reviewer plan's effort is a floor, not a ceiling. The delegation
   watchdog cancelled a reviewer delegated above the planned effort in the
   middle of its review, and let one below it run, which is how

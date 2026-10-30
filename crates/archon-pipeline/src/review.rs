@@ -72,15 +72,23 @@ impl Verdict {
     /// `complete_task` arguments `{summary, structured}`, or in one fenced
     /// block), or a `VERDICT: PASS|FAIL` line beside `head:` and `base:` lines.
     /// Prose with none of these is never read as a verdict.
+    /// A pass counts only when nothing else in the result disputes it.
     pub fn read_result(summary: &str, structured: Option<&Value>) -> Result<Self, String> {
+        let read = Self::read_stated(summary, structured)?;
+        if read.pass && Said::pass_disputed(summary, structured) {
+            return Err(format!(
+                "it passes but its summary's final `VERDICT:` line or JSON verdict does not, \
+                 or it lists a blocking finding: {VERDICT_HOWTO}"
+            ));
+        }
+        Ok(read)
+    }
+
+    /// The verdict the result states, from the first form it gives one in.
+    fn read_stated(summary: &str, structured: Option<&Value>) -> Result<Self, String> {
         if structured.is_some_and(|data| Said::from_structured(data).is_some()) {
             let read = Self::read(structured)?;
             read.claims_agree(summary, structured)?;
-            if read.pass && Said::summary_disputes_pass(summary) {
-                return Err(format!(
-                    "its structured verdict passes but its summary's final `VERDICT:` line or JSON verdict does not: {VERDICT_HOWTO}"
-                ));
-            }
             return Ok(read);
         }
         // JSON that states no verdict (a test report) is evidence; the lines decide.
@@ -674,6 +682,14 @@ mod tests {
                 .unwrap()
                 .pass
         );
+        let evidence =
+            json!({"head": HEAD, "findings": [{"severity": "blocking", "title": "loss"}]});
+        let refused = Verdict::read_result("VERDICT: PASS", Some(&evidence)).unwrap_err();
+        assert!(refused.contains("lists a blocking finding"), "{refused}");
+        for key in ["result", "status"] {
+            let failed = json!({key: "fail", "head": HEAD}).to_string();
+            assert!(Verdict::read_result(&failed, Some(&pass)).is_err(), "{key}");
+        }
         let blocked =
             json!({"verdict": "pass", "head": HEAD, "findings": [{"severity": "blocking"}]});
         let refused = Verdict::read_result("", Some(&blocked)).unwrap_err();

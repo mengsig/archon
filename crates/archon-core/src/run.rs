@@ -28,27 +28,39 @@ const VERDICT_KEYS: [&str; 3] = ["verdict", "result", "status"];
 
 impl Verdict {
     /// `structured.verdict`, else a readable `structured.result` or `status`,
-    /// else the summary's last `VERDICT:` line. A structured pass counts only
-    /// when the summary's line or JSON verdict, if it has one, passes too.
+    /// else the summary's last `VERDICT:` line. A pass counts only when
+    /// nothing else in the result [disputes it](Self::pass_disputed).
     pub fn extract(summary: &str, structured: Option<&serde_json::Value>) -> Self {
-        match structured.and_then(Self::from_structured) {
-            Some(Self::Pass) if Self::summary_disputes_pass(summary) => Self::Unknown,
-            Some(given) => given,
-            None => Self::from_summary(summary).unwrap_or(Self::Unknown),
+        let verdict = structured
+            .and_then(Self::from_structured)
+            .or_else(|| Self::from_summary(summary))
+            .unwrap_or(Self::Unknown);
+        match verdict {
+            Self::Pass if Self::pass_disputed(summary, structured) => Self::Unknown,
+            verdict => verdict,
         }
     }
 
-    /// Whether `summary` takes a structured pass back: its last `VERDICT:`
-    /// line, or the verdict of its [`summary_json`], reads other than pass.
-    pub fn summary_disputes_pass(summary: &str) -> bool {
-        let json = summary_json(summary)
-            .filter(|data| data.get(VERDICT_KEYS[0]).is_some())
-            .and_then(|data| Self::from_structured(&data));
-        let line = Self::from_summary(summary);
-        [line, json]
+    /// Whether anything in a result takes a pass back: the summary's last
+    /// `VERDICT:` line or [`summary_json`] verdict reading other than pass,
+    /// or a blocking finding in `structured` or that JSON.
+    pub fn pass_disputed(summary: &str, structured: Option<&serde_json::Value>) -> bool {
+        let json = summary_json(summary);
+        let blocking = [structured, json.as_ref()]
             .into_iter()
             .flatten()
-            .any(|said| said != Self::Pass)
+            .any(Self::lists_blocking);
+        blocking || Self::summary_disagrees(summary, json.as_ref())
+    }
+
+    /// Whether the summary's last `VERDICT:` line or its JSON's verdict,
+    /// `result` or `status` reads as anything but pass.
+    fn summary_disagrees(summary: &str, json: Option<&serde_json::Value>) -> bool {
+        let said = [
+            Self::from_summary(summary),
+            json.and_then(Self::from_structured),
+        ];
+        said.into_iter().flatten().any(|said| said != Self::Pass)
     }
 
     /// The verdict `structured` states: its `verdict` key whenever it has
@@ -129,9 +141,10 @@ impl Verdict {
         };
         let given = structured.and_then(Self::from_structured);
         // The summary that takes a structured pass back is what refused it.
-        if given == Some(Self::Pass) && Self::summary_disputes_pass(summary) {
-            let json = || Some(quote(summary_json(summary)?.get(VERDICT_KEYS[0])?));
-            return line().map(str::to_owned).or_else(json);
+        let json = summary_json(summary);
+        if given == Some(Self::Pass) && Self::summary_disagrees(summary, json.as_ref()) {
+            let from_json = || VERDICT_KEYS.iter().find_map(|key| json.as_ref()?.get(key));
+            return line().map(str::to_owned).or_else(|| from_json().map(quote));
         }
         if let Some(given) = field(VERDICT_KEYS[0]) {
             return Some(quote(given));
@@ -1156,6 +1169,23 @@ mod tests {
         assert_eq!(Verdict::extract("", Some(&advisory)), Verdict::Pass);
         let failing = json!({"verdict": "fail", "findings": [{"severity": "blocking"}]});
         assert_eq!(Verdict::extract("", Some(&failing)), Verdict::Fail);
+        let evidence = json!({"head": "abcdef1", "findings": [{"severity": "blocking"}]});
+        assert_eq!(
+            Verdict::extract("VERDICT: PASS", Some(&evidence)),
+            Verdict::Unknown
+        );
+        let blocked = json!({"verdict": "pass", "findings": [{"severity": "high"}]}).to_string();
+        assert_eq!(Verdict::extract(&blocked, Some(&pass)), Verdict::Unknown);
+        for key in ["result", "status"] {
+            let failed = json!({key: "fail"}).to_string();
+            assert_eq!(
+                Verdict::extract(&failed, Some(&pass)),
+                Verdict::Unknown,
+                "{key}"
+            );
+            let said = Verdict::stated(&failed, Some(&pass));
+            assert_eq!(said.as_deref(), Some("fail"), "{key}");
+        }
         let report = json!({"tests": 214}).to_string();
         assert_eq!(Verdict::extract(&report, Some(&pass)), Verdict::Pass);
         let later = json!({"verdict": "PASS\nDo not merge until CI is green"});

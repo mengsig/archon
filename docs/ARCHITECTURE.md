@@ -5248,28 +5248,34 @@ queued `onto` it. At enqueue such an item freezes the pull request with
 `review_only` set, which alone admits a fork or a repository `gh` cannot
 push to; its branch starts at the frozen head (a fork's fetched from
 `refs/pull/<n>/head`) and its review covers the whole pull request from its
-merge base. When the review is counted (§8.2), archond records the branch
-head it passed as `reviewed_head` in the stage's structured result, a key no
-agent can write; a branch moved off the frozen head is refused. A merge of
-that item then needs, besides the above:
+merge base, the fork point with `origin`'s head of the base, fetched for
+the review, never a local or tracking ref. When the review is counted
+(§8.2), archond records the branch head it passed as `reviewed_head` in
+the stage's structured result, a key no agent can write; a branch moved
+off the frozen head is refused. A merge of that item then needs, besides
+the above:
 
 - a recorded `reviewed_head` equal to the frozen head, and GitHub's head
   still at it: a head that moved since is refused naming both commits;
 - every check green: `--ignore-checks`, `yes ignore-checks` and
   `merge_waive_checks` do not apply, and `merge = auto` never does. The
   checks are read again after the merge method, as the last read before
-  `gh pr merge`; GitHub enforces only required checks past that point.
+  `gh pr merge`. Known limit: GitHub cannot pin check states to a merge,
+  so a check that turns red in the round trip after that read is not
+  seen (Archon's own merges share this window). Branch protection or a
+  ruleset with required checks closes it.
 
 The method is chosen as for any merge, and no author is passed, so GitHub
 credits the pull request's author. An item that `depends_on` such a review
 item starts from its reviewed head and opens its own pull request into
 that pull request's base; at ship, `gh` must show the reviewed pull request
-open at that head, which becomes the floor of the attribution and foreign
-commit checks (§8.7): those commits must be ancestors of the item's head,
-unchanged, and every other foreign commit is still refused. Past that
+open, or merged, at that head, which becomes the floor of the attribution
+and foreign commit checks (§8.7): those commits must be ancestors of the
+item's head, unchanged, and every other foreign commit is still refused. Past that
 floor only commits in `origin`'s head of the base, read with `ls-remote`
-and fetched at delivery, are exempt: no local or tracking ref counts. Nothing is
-ever pushed to the reviewed pull request's branch.
+and fetched at delivery, are exempt: no local or tracking ref counts. A
+refresh of such an item, or a fix of its stack, keeps that floor. Nothing
+is ever pushed to the reviewed pull request's branch.
 
 **The merge.** A `merge_requests` row (store V13) is written before any
 GitHub write, and an item has at most one open. archond then runs `gh pr

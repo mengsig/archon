@@ -1181,7 +1181,9 @@ pull request, under the usual confirmation or `grant_merge`, only:
   pushed again) is refused with both commits; queue a new `review` item;
 - with every check green, read again just before the merge:
   `--ignore-checks`, a confirmation's `yes ignore-checks` and
-  `merge_waive_checks` do not apply to it;
+  `merge_waive_checks` do not apply to it. A check that fails in the
+  moment after that read is not seen: required checks in branch
+  protection or a ruleset close that gap;
 - by the first method the repository allows, pinned to that head, so GitHub
   credits the contributor as the author; `merge = auto` never applies.
 
@@ -1194,12 +1196,14 @@ review; queue a new one to review a moved head.
 `onto`) starts from the head that review passed and opens its own pull
 request into the reviewed pull request's base branch. Archon pushes nothing
 to the contributor's branch. At ship it checks that the reviewed pull
-request is still open at that head and that those commits sit unchanged
-beneath the item's own. Only commits after that head need the repository's
-git identity, unless the base branch on GitHub already holds them. A rebased, amended or squashed contributor commit, or any
-other foreign commit, is refused as before. If the contributor's pull
-request is later squash-merged, the stacked pull request still carries the
-original commits; `archon queue refresh` merges the new base into it.
+request is still open, or merged, at that head and that those commits sit
+unchanged beneath the item's own. Only commits after that head need the
+repository's git identity, unless the base branch on GitHub already holds
+them. A rebased, amended or squashed contributor commit, or any other
+foreign commit, is refused as before. If the contributor's pull request is
+later squash-merged at that head, the stacked pull request still carries
+the original commits; `archon queue refresh` merges the new base into it
+and keeps the same checks. One merged at a different head is refused.
 
 In a `ship = local` repository there is no pull request: `onto` names a
 finished item (`{item: "qi_…"}`) or the branch its last run left

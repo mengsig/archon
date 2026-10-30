@@ -2294,7 +2294,8 @@ Archon reads it only then, and a `structured` that states a verdict always
 wins. A `VERDICT:` line beside `head:` and `base:` lines is read too, each
 at the top level as the verdict line is. Any verdict, a structured one
 included, whose `structured` `head`/`base`, summary JSON and top-level
-`head:`/`base:` lines name different commits is refused. Prose is no verdict.
+`head:`/`base:` lines name different commits is refused. Summary JSON with
+no `verdict` key is evidence, not a verdict. Prose is no verdict.
 
 A completion without the record, with any other verdict, or with a pass
 that names fewer reviewers than the level asks for fails the run at that

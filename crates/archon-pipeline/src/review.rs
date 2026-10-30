@@ -78,7 +78,9 @@ impl Verdict {
             read.claims_agree(summary, structured)?;
             return Ok(read);
         }
-        if let Some(data) = summary_json(summary) {
+        // JSON that states no verdict (a test report) is evidence; the lines decide.
+        let verdict_json = summary_json(summary).filter(|data| data.get("verdict").is_some());
+        if let Some(data) = verdict_json {
             let read = Self::read_json(data, structured)?;
             read.claims_agree(summary, structured)?;
             return match Said::from_summary(summary) {
@@ -732,6 +734,13 @@ mod tests {
         }
         let twice = format!("head: {newer}\nhead: {HEAD}\nVERDICT: PASS");
         let refused = Verdict::read_result(&twice, None).unwrap_err();
+        assert!(refused.contains("names two commits"), "{refused}");
+        let report =
+            format!("Tests:\n```json\n{{\"tests\": 214}}\n```\nhead: {HEAD}\nVERDICT: PASS");
+        assert!(Verdict::read_result(&report, None).unwrap().pass);
+        let claims =
+            format!("```json\n{{\"head\": \"{newer}\"}}\n```\nhead: {HEAD}\nVERDICT: PASS");
+        let refused = Verdict::read_result(&claims, None).unwrap_err();
         assert!(refused.contains("names two commits"), "{refused}");
         let agreeing = format!("```json\n{pass}\n```\nhead: {}", &HEAD[..7]);
         let read = Verdict::read_result(&agreeing, Some(&read_commits)).unwrap();

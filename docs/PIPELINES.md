@@ -332,7 +332,9 @@ out as that summary, or a `VERDICT: PASS|FAIL` line beside `head:` and
 `base:` lines (a `structured` without a verdict may give these instead; a
 line in a fence, a quote or nested in a list is an example). A verdict,
 `structured` or not, is refused when its `structured` fields, the summary's
-JSON or any of its top-level `head:`/`base:` lines name different commits. A
+JSON or any of its top-level `head:`/`base:` lines name different commits.
+JSON that states no `verdict`, such as a test report, leaves the
+`VERDICT:` line to decide. A
 `structured` that states a verdict takes precedence, even if invalid. The
 verdict word is read as stage gates read it (see "The stage contract"). Prose,
 and a `VERDICT:` line with no commit it read, do not count as a delegated
